@@ -26762,6 +26762,7 @@ async function presentBloombergLiveNative(bounds = null, options = {}) {
   });
   return true;
 }
+window.__forgePresentBloombergLiveNative = presentBloombergLiveNative;
 
 function syncRealEstateModeUi() {
   document.body.classList.toggle("real-estate-mode", realEstateModeActive);
