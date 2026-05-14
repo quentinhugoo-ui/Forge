@@ -139,6 +139,7 @@ expect("real estate parser adapter registry captures SOTA tools", realEstatePars
 expect("real estate parser router emits normalized events", realEstateParserRouter.includes("normalized_events.jsonl") && realEstateParserRouter.includes("parseJsonLike") && realEstateParserRouter.includes("eventHash") && realEstateParserRouter.includes("selectAdapter"));
 expect("real estate parser router probes SOTA adapters before native fallback", realEstateParserRouter.includes("detectAvailableAdapters") && realEstateParserRouter.includes("spawnSync(command, [\"--version\"]") && realEstateParserRouter.includes("availableAdapters"));
 expect("real estate source pipeline orchestrates proofed stages", realEstateSourcePipeline.includes("pipeline_run.json") && realEstateSourcePipeline.includes("runStep(\"audit\"") && realEstateSourcePipeline.includes("proofHash") && realEstateSourcePipeline.includes("--adapters"));
+expect("WebExplorer surface click binding is boot-safe", appJs.includes('typeof handleWebExplorerSurfaceClick === "function"') && !appJs.includes('addEventListener("click", handleWebExplorerSurfaceClick)'));
 expect("real estate mode has a main house section button in the left titlebar", indexHtml.includes("realEstateHomeSectionBtn"));
 expect(
   "real estate main house button is before Google in the titlebar",

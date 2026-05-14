@@ -24263,7 +24263,11 @@ webExplorerToolActions = document.getElementById("forgeCanvasWebExplorerActions"
 webExplorerExtractTrigger = document.getElementById("forgeCanvasWebExtract");
 webExplorerScoreTrigger = document.getElementById("forgeCanvasWebScore");
 webExplorerActTrigger = document.getElementById("forgeCanvasWebAct");
-webExplorerSurface?.addEventListener("click", handleWebExplorerSurfaceClick);
+webExplorerSurface?.addEventListener("click", (event) => {
+  if (typeof handleWebExplorerSurfaceClick === "function") {
+    void handleWebExplorerSurfaceClick(event);
+  }
+});
 webExplorerLocalMode = true;
 webExplorerSnapshot = null;
 webExplorerActive = isWebExplorerSurface;
