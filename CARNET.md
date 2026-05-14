@@ -34,3 +34,5 @@ Compact decision log for Forge. Do not append transcripts, brainstorm dumps or l
 - Prefer proof/artifact references over raw large data in prompts.
 - Prefer one memory/Godel path over duplicated agent-specific memory stores.
 - Prefer deleting obsolete docs/code paths over documenting around them.
+- Before writing code beyond a purely mechanical one-line edit, research the freshest market/state-of-the-art techniques available, then implement the shortest locally verified circuit that can put Forge ahead of that state.
+- Every code change should reduce complexity: fewer middlemen, fewer duplicated functions, fewer branches, fewer runtime steps.

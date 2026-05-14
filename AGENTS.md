@@ -32,6 +32,19 @@ Prefer shorter circuits. Remove obsolete nodes before adding new ones.
 - For large/repeated/numerical/document-heavy work, use Forge/MCP discipline: keep raw data on disk, exchange compact manifests, hashes and artifacts.
 - Commit and push meaningful work to GitHub before risky cleanup.
 
+## Coding Doctrine
+
+Before writing code beyond a purely mechanical one-line edit, research the current state of the art when internet access is available: recent official docs, papers, serious repos, release notes and market direction. Then build as if Forge must live one step ahead of that state of the art, while staying verifiable locally.
+
+Every code change must reduce architectural drag:
+
+- delete obsolete code before adding new actors,
+- remove useless middlemen and duplicate nodes,
+- fuse functions when separation no longer buys clarity or safety,
+- shorten the path from intent to result,
+- add the fewest new files, branches, abstractions and runtime steps possible,
+- prefer one proven circuit over parallel pipelines.
+
 ## Current Architecture
 
 - Core library: `src/lib.rs`

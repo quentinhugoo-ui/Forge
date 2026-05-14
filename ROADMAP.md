@@ -18,6 +18,7 @@ The winning architecture is not the one with the most subsystems. It is the one 
    - Keep semantic, episodic and procedural memory evidence-aware.
    - Keep LLM notes scoped and trust-scored.
    - Keep Godel substitutions strict: same IO, same semantic fingerprint, enough samples, no unchecked external backend.
+   - Research current state-of-the-art memory/agent techniques before rewrites, then implement the shorter verified circuit.
 
 2. Protect the project from data loss.
    - GitHub remote is `https://github.com/quentinhugoo-ui/Forge.git`.
@@ -61,6 +62,7 @@ Remove or avoid:
 - duplicate "brain" implementations,
 - memory records without evidence or scope,
 - UI state that cannot be replayed through Tauri/MCP,
+- middlemen, wrappers and functions that only forward or rename work,
 - hidden generated files in source commits,
 - broad cleanup commands,
 - new pipelines that only rename existing flow.

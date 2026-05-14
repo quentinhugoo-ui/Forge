@@ -32,7 +32,8 @@ Do not treat old long docs as active doctrine. If the docs and code disagree, in
 - Protect user data and local work. Never delete recursively without resolving and checking the absolute target path.
 - Keep `C:\Users\quent\Documents\EVE\MAP` protected.
 - Do not commit caches, build outputs, secrets, `.vs/`, `target/`, `lab_findings.jsonl`, `.forge-store/`, `.forge-data/` or external datasets.
-- Prefer circuit court architecture: remove duplicate nodes before adding new ones.
+- Prefer short-circuit architecture: remove duplicate nodes, useless middlemen and dead branches before adding new ones.
+- Before writing code beyond a purely mechanical one-line edit, research the latest state of the art when internet access is available, then aim beyond it with code that is simpler, locally verifiable and easier to operate.
 - Large files, repeated compute, numerical/data-heavy work and proof artifacts should go through Forge/MCP or a compact command result, not raw LLM reading.
 - GitHub is the safety net. Commit and push meaningful work before risky cleanup.
 
@@ -88,6 +89,7 @@ Avoid:
 - parallel memory stores that do not share evidence,
 - UI-only state that cannot be replayed,
 - agent notes without scope, trust score or evidence,
+- useless middlemen between intent, memory, proof, compute and action,
 - pipelines that copy data instead of referencing content-addressed artifacts,
 - docs that become a second codebase.
 

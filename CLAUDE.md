@@ -28,12 +28,25 @@ Build/cache folders may be cleaned only with narrow guards:
 ## Work Style
 
 1. Read the local shape first with `rg`, `git status`, small file previews and targeted code search.
-2. Prefer editing the smallest set of files that solves the request.
-3. Remove duplicate paths before adding new architecture.
-4. Keep docs smaller after your change, not larger.
-5. Use content-addressed references, hashes and proof summaries for large artifacts.
-6. Preserve unrelated user changes.
-7. Verify with the narrowest meaningful command, then broaden if risk requires it.
+2. Before writing code beyond a purely mechanical one-line edit, research the current state of the art when internet access is available: recent official docs, papers, serious repos, release notes and market direction.
+3. Code for the future, but prove it locally. Fresh ideas are welcome only when they reduce complexity or capability debt.
+4. Prefer editing the smallest set of files that solves the request.
+5. Remove duplicate paths before adding new architecture.
+6. Keep docs smaller after your change, not larger.
+7. Use content-addressed references, hashes and proof summaries for large artifacts.
+8. Preserve unrelated user changes.
+9. Verify with the narrowest meaningful command, then broaden if risk requires it.
+
+## Architecture Lightness
+
+Every implementation should leave Forge simpler than it found it:
+
+- delete obsolete code and dead branches,
+- remove useless middlemen,
+- fuse functions when their split is ceremony rather than safety,
+- reduce the number of steps between intent and result,
+- add the fewest new actors, files, abstractions and runtime paths possible,
+- prefer one verified circuit over multiple parallel pipelines.
 
 ## Forge MCP Doctrine
 
