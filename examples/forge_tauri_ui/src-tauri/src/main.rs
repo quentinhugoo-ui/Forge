@@ -8977,7 +8977,7 @@ fn alpha_debug_log(
     details: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    if stage == "terminal.status" {
+    if stage == "terminal.status" && std::env::var("FORGE_TERMINAL_STATUS").as_deref() == Ok("1") {
         emit_terminal_status_line(details.as_deref().unwrap_or(""));
         return Ok(());
     }
@@ -28077,42 +28077,50 @@ fn backend_hint_for_gpu_name(name: &str) -> String {
 /// (cheap — adapter enumeration only).
 #[tauri::command]
 async fn get_hardware_info() -> Result<HardwareInfo, String> {
-    // Offload GPU adapter enumeration so this boot-time probe never occupies
-    // the Tauri command runtime while the UI is trying to load sessions/assets.
-    let runtime = tauri::async_runtime::spawn_blocking(scan::GpuNodeRuntime::bootstrap_best_effort)
-        .await
-        .map_err(|err| format!("hardware-info worker failed: {err}"))?;
-    let bs = runtime.bootstrap();
-    let nodes = runtime.node_ids();
-    let mut gpus: Vec<HardwareGpu> = nodes
-        .iter()
-        .map(|n| {
-            let label = n.backend.label();
-            let backend = if label.starts_with("CUDA") {
-                "cuda"
-            } else if label.starts_with("WGPU") {
-                "wgpu"
-            } else {
-                "inactive"
-            }
-            .to_string();
-            HardwareGpu {
-                vendor: format!("{:?}", n.vendor),
-                name: n.name.clone(),
-                backend,
-            }
-        })
-        .collect();
-    if gpus.is_empty() {
-        gpus = windows_gpu_name_fallback()
-            .into_iter()
-            .map(|name| HardwareGpu {
-                vendor: "Other".to_string(),
-                name: name.clone(),
-                backend: backend_hint_for_gpu_name(&name),
+    let full_probe = std::env::var("FORGE_HARDWARE_GPU_PROBE")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "debug" | "full"))
+        .unwrap_or(false);
+    let (gpus, cuda_enabled, nvrtc_available) = if full_probe {
+        // Full Forge GPU bootstrap is useful for diagnostics, but CUDA/NVRTC
+        // probing can hang on broken toolchains. Keep it opt-in.
+        let runtime = tauri::async_runtime::spawn_blocking(scan::GpuNodeRuntime::bootstrap_best_effort)
+            .await
+            .map_err(|err| format!("hardware-info worker failed: {err}"))?;
+        let bs = runtime.bootstrap();
+        let nodes = runtime.node_ids();
+        let mut gpus: Vec<HardwareGpu> = nodes
+            .iter()
+            .map(|n| {
+                let label = n.backend.label();
+                let backend = if label.starts_with("CUDA") {
+                    "cuda"
+                } else if label.starts_with("WGPU") {
+                    "wgpu"
+                } else {
+                    "inactive"
+                }
+                .to_string();
+                HardwareGpu {
+                    vendor: format!("{:?}", n.vendor),
+                    name: n.name.clone(),
+                    backend,
+                }
             })
             .collect();
-    }
+        if gpus.is_empty() {
+            gpus = windows_gpu_name_fallback()
+                .into_iter()
+                .map(|name| HardwareGpu {
+                    vendor: "Other".to_string(),
+                    name: name.clone(),
+                    backend: backend_hint_for_gpu_name(&name),
+                })
+                .collect();
+        }
+        (gpus, bs.cuda_enabled, bs.nvrtc_available)
+    } else {
+        (Vec::new(), false, false)
+    };
     let threads = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(0);
@@ -28122,8 +28130,8 @@ async fn get_hardware_info() -> Result<HardwareInfo, String> {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         gpus,
-        cuda_enabled: bs.cuda_enabled,
-        nvrtc_available: bs.nvrtc_available,
+        cuda_enabled,
+        nvrtc_available,
     })
 }
 
@@ -30604,10 +30612,18 @@ fn main() {
                 ),
             }
 
-            // Emit GPU capability report to stderr at startup so devs
-            // running from terminal see it immediately.
-            for line in gpu_capability_report() {
-                eprintln!("[forge-startup] {line}");
+            // CUDA/WGPU probing can hang on partially installed toolchains.
+            // Never run it on Tauri's setup thread; the UI must paint first.
+            if std::env::var("FORGE_STARTUP_GPU_REPORT").as_deref() == Ok("1") {
+                thread::spawn(|| {
+                    for line in gpu_capability_report() {
+                        eprintln!("[forge-startup] {line}");
+                    }
+                });
+            } else {
+                eprintln!(
+                    "[forge-startup] startup GPU report skipped; set FORGE_STARTUP_GPU_REPORT=1 for diagnostics"
+                );
             }
             let app_handle = app.handle().clone();
             match ensure_google_oauth_callback_server(&app_handle) {

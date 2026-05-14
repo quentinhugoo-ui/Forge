@@ -4602,10 +4602,18 @@ async function createAlphaPendingMcpSession(files, options = {}) {
   }
 }
 
-async function pollForgeJobs() {
+function invokeWithTimeout(invoke, command, args = {}, timeoutMs = 5000) {
+  return Promise.race([
+    invoke(command, args),
+    new Promise((_, reject) => window.setTimeout(() => reject(new Error("timeout")), timeoutMs)),
+  ]);
+}
+
+async function pollForgeJobs(options = {}) {
   const invokeJobs = forgeTauri?.invoke || window.__TAURI__?.core?.invoke;
   if (forgeJobsPolling || !invokeJobs) return;
   forgeJobsPolling = true;
+  const timeoutMs = Math.max(800, Number(options.timeoutMs || (options.bootSafe ? 1800 : 5000)));
   const pollStartedAt = performance.now ? performance.now() : Date.now();
   try {
     bootTrace("jobs.poll.begin", {
@@ -4616,10 +4624,10 @@ async function pollForgeJobs() {
       ? await forgeTauri.invoke("list_forge_jobs", { limit: 30 }, {
           section: "shell",
           bootSafe: true,
-          timeoutMs: 5000,
+          timeoutMs,
           dedupeKey: "jobs",
         })
-      : await invokeJobs("list_forge_jobs", { limit: 30 });
+      : await invokeWithTimeout(invokeJobs, "list_forge_jobs", { limit: 30 }, timeoutMs);
     const nextJobs = Array.isArray(jobs) ? jobs : [];
     forgeJobsLastPollMs = Math.max(0, Math.round(((performance.now ? performance.now() : Date.now()) - pollStartedAt) * 10) / 10);
     forgeJobsLastPollAt = Date.now();
@@ -4653,8 +4661,10 @@ async function pollForgeJobs() {
     }
     syncAlphaDropSurface();
     if (!forgeDraggedJobId) renderForgeJobs();
-    await refreshSelectedForgeJobManifest();
-    await refreshSelectedForgeJobLog();
+    if (selectedForgeJobId) {
+      await refreshSelectedForgeJobManifest();
+      await refreshSelectedForgeJobLog();
+    }
   } catch (err) {
     forgeJobsLastPollMs = Math.max(0, Math.round(((performance.now ? performance.now() : Date.now()) - pollStartedAt) * 10) / 10);
     forgeJobsLastPollAt = Date.now();
@@ -4787,6 +4797,9 @@ function buildForgeTerminalStatusLine() {
 }
 
 function emitForgeTerminalStatus() {
+  // Emergency off-switch: the operator status line must never block boot.
+  // Re-enable only behind an explicit flag after startup is proven stable.
+  if (window.__FORGE_ENABLE_TERMINAL_STATUS !== true) return;
   try {
     const invoke = window.__TAURI__?.core?.invoke;
     if (!invoke || isWebExplorerSurface) return;
@@ -19024,14 +19037,26 @@ if (window.__TAURI__) {
 // ── Start alpha RAF loop ──────────────────────────────────────────
 void loadWorkspaceBreadcrumb();
 if (!isWebExplorerSurface && window.__TAURI__?.core?.invoke) {
-  void pollForgeJobs();
-  setInterval(() => {
-    if (activeSection === "alpha" || selectedForgeJobId) void pollForgeJobs();
-  }, 1000);
-  window.addEventListener("load", () => {
+  const startBackgroundJobs = () => {
+    window.setTimeout(() => void pollForgeJobs({ bootSafe: true, timeoutMs: 1800 }), 1800);
+    window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      const hasLiveJobs = forgeJobs.some((job) => {
+        const status = String(job?.status || "").toLowerCase();
+        return status === "running" || status === "pending";
+      });
+      if (selectedForgeJobId || alphaActiveTab === "forge" || hasLiveJobs) {
+        void pollForgeJobs({ timeoutMs: 2500 });
+      }
+    }, 5000);
     window.setTimeout(emitForgeTerminalStatus, 2500);
     window.setInterval(emitForgeTerminalStatus, 10000);
-  }, { once: true });
+  };
+  if (document.readyState === "complete") {
+    startBackgroundJobs();
+  } else {
+    window.addEventListener("load", startBackgroundJobs, { once: true });
+  }
 }
 if (!isWebExplorerSurface) {
   scheduleAlphaRender();
@@ -24409,18 +24434,22 @@ async function loadAndRenderHardwareInfo() {
 }
 
 function scheduleHardwareInfoBoot() {
-  const delays = [600, 2200, 5000];
-  for (const delay of delays) {
+  const start = () => {
     window.setTimeout(() => {
       const stillPending = (panelHardwareCpu?.textContent || "").includes("Detecting")
         || (panelHardwareGpu?.textContent || "").includes("Detecting")
         || !panelHardwareGpuRows?.children?.length;
       if (stillPending) void loadAndRenderHardwareInfo();
-    }, delay);
+    }, 2200);
+  };
+  if (document.readyState === "complete") {
+    start();
+  } else {
+    window.addEventListener("load", start, { once: true });
   }
 }
 
-// Give the Tauri bridge and backend a few chances to come up cleanly in dev mode.
+// Keep hardware probing off the first paint path; a failed probe should not freeze boot.
 scheduleHardwareInfoBoot();
 
 // ── Web explorer surface ──────────────────────────────────────────
