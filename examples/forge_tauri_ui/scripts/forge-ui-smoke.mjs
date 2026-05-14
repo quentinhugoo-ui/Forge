@@ -95,7 +95,11 @@ expect(
 );
 expect("real estate properties panel label is plural", indexHtml.includes("<span>Biens</span>"));
 expect("real estate tools panel exists", indexHtml.includes('id="realEstateToolsPanel"'));
-expect("real estate tools panel has Google Workspace at the bottom", occurrenceOrder(realEstateToolsPanelHtml, "Portails", "Google Workspace", "Gmail", "Drive", "Agenda", "Sheets", "Docs"));
+expect("real estate tools panel keeps Google out of the fused tool list", !realEstateToolsPanelHtml.includes("Google Workspace"));
+expect(
+  "real estate tools panel exposes fused agency tools",
+  occurrenceOrder(realEstateToolsPanelHtml, "Mandat vendeur", "Diffusion", "Marche &amp; veille", "Pilotage agence", "Back-office", "RH &amp; equipe"),
+);
 expect("real estate tools panel does not expose KASM Programs", !realEstateToolsPanelHtml.includes("KASM Programs"));
 expect("real estate tools button opens a dedicated panel", appJs.includes("setRealEstateToolsPanelOpen(true)"));
 expect("real estate harvester backend module exists", realEstateHarvesterRs.includes("HarvesterRegistry") && realEstateHarvesterRs.includes("default_registry"));

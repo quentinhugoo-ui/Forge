@@ -26511,6 +26511,7 @@ function syncWebExplorerChatModeUi() {
 function setWebExplorerActive(nextActive) {
   const next = !!nextActive;
   if (isWebExplorerSurface) {
+    forgeSections?.setActive?.("webexplorer", next);
     if (next) {
       try {
         if (window.__forgeTradingChatBridge?.isActive?.()) window.__forgeCloseTrading?.();
@@ -26524,6 +26525,7 @@ function setWebExplorerActive(nextActive) {
     syncWebExplorerButtonState();
     syncTradingChatInvolvementControls();
     syncWebExplorerChatModeUi();
+    if (typeof syncRealEstateModeUi === "function") syncRealEstateModeUi();
     if (shouldShowWebExplorerStartScreen()) setWebExplorerStartScreen();
     else if (webExplorerSurface?.querySelector(".webexplorer-startscreen")) {
       beginWebExplorerTransition({ dismissStart: true });
@@ -26532,9 +26534,11 @@ function setWebExplorerActive(nextActive) {
     return;
   }
   if (webExplorerActive === next) {
+    forgeSections?.setActive?.("webexplorer", webExplorerActive);
     syncWebExplorerButtonState();
     syncTradingChatInvolvementControls();
     syncWebExplorerChatModeUi();
+    if (typeof syncRealEstateModeUi === "function") syncRealEstateModeUi();
     return;
   }
   if (next) {
@@ -26546,9 +26550,11 @@ function setWebExplorerActive(nextActive) {
     } catch (_) {}
   }
   webExplorerActive = next;
+  forgeSections?.setActive?.("webexplorer", webExplorerActive);
   syncWebExplorerButtonState();
   syncTradingChatInvolvementControls();
   syncWebExplorerChatModeUi();
+  if (typeof syncRealEstateModeUi === "function") syncRealEstateModeUi();
   if (webExplorerActive) {
     if (shouldShowWebExplorerStartScreen()) setWebExplorerStartScreen();
     else if (webExplorerSurface?.querySelector(".webexplorer-startscreen")) {
@@ -26580,6 +26586,262 @@ if (typeof window !== "undefined") {
   window.__forgeCloseWebExplorer = () => setWebExplorerActive(false);
   window.__forgeWebExplorerIsActive = () => isWebExplorerUiActive();
 }
+
+const REAL_ESTATE_MODE_STORAGE_KEY = "forge.realEstate.mode.v1";
+const realEstateModeBtn = document.getElementById("realEstateModeBtn");
+const realEstateHomeSectionBtn = document.getElementById("realEstateHomeSectionBtn");
+const realEstateNewSessionPanelBtn = document.getElementById("realEstateNewSessionPanelBtn");
+const realEstateToolsPanelBtn = document.getElementById("realEstateToolsPanelBtn");
+const realEstateAutomationsPanelBtn = document.getElementById("realEstateAutomationsPanelBtn");
+const realEstatePropertiesPanelBtn = document.getElementById("realEstatePropertiesPanelBtn");
+const realEstateCrmPanelBtn = document.getElementById("realEstateCrmPanelBtn");
+const realEstateToolsPanel = document.getElementById("realEstateToolsPanel");
+const realEstateToolsCloseBtn = document.getElementById("realEstateToolsCloseBtn");
+const realEstateCrmPanel = document.getElementById("realEstateCrmPanel");
+const realEstateCrmCloseBtn = document.getElementById("realEstateCrmCloseBtn");
+let realEstateModeActive = false;
+try {
+  realEstateModeActive = window.localStorage?.getItem?.(REAL_ESTATE_MODE_STORAGE_KEY) === "1";
+} catch (_) {}
+
+const REAL_ESTATE_SUPER_TOOLS = Object.freeze([
+  {
+    id: "mandat-vendeur",
+    label: "Mandat vendeur",
+    icon: "rapport",
+    prompt: "Ouvre un dossier mandat vendeur complet: estimation, pieces, diagnostics, conformite, objections, strategie prix et prochain angle de relance.",
+  },
+  {
+    id: "diffusion",
+    label: "Diffusion",
+    icon: "annonces",
+    prompt: "Pilote la diffusion de ce bien: annonce, site agence, portails, audit qualite, performance, tests de variantes et corrections prioritaires.",
+  },
+  {
+    id: "marche-veille",
+    label: "Marche & veille",
+    icon: "database",
+    prompt: "Analyse cette ville ou ce quartier avec DVF, cadastre, DPE, risques, urbanisme, actualite locale, concurrence, reputation et signaux faibles.",
+  },
+  {
+    id: "pilotage-agence",
+    label: "Pilotage agence",
+    icon: "energy",
+    prompt: "Construis le cockpit agence: pipeline, KPI, planning visites, coaching equipe, performance commerciaux, alertes et decisions de la semaine.",
+  },
+  {
+    id: "back-office",
+    label: "Back-office",
+    icon: "conformite",
+    prompt: "Controle le back-office agence: commissions, comptabilite, fiscalite, tresorerie, courtiers, assurances, notaires, travaux et risques dossier.",
+  },
+  {
+    id: "rh-equipe",
+    label: "RH & equipe",
+    icon: "matching",
+    prompt: "Prepare le plan RH agence: recrutement, onboarding, formation, scripts, repartition des leads, productivite et progression des negociateurs.",
+  },
+]);
+
+const REAL_ESTATE_CRM_TOOLS = Object.freeze([
+  {
+    id: "prospects",
+    label: "Prospects",
+    icon: "matching",
+    prompt: "Segmente les prospects, detecte les intentions fortes et propose les relances les plus rentables pour les prochaines 48 heures.",
+  },
+  {
+    id: "vendeurs",
+    label: "Vendeurs",
+    icon: "rapport",
+    prompt: "Priorise les vendeurs du CRM par probabilite de mandat, timing, risque de perte et angle de conversation verifiable.",
+  },
+  {
+    id: "acquereurs",
+    label: "Acquereurs",
+    icon: "matching",
+    prompt: "Classe les acquereurs par capacite, urgence, adequation avec les biens et probabilite de conversion en visite qualifiee.",
+  },
+  {
+    id: "partenaires",
+    label: "Partenaires",
+    icon: "site",
+    prompt: "Cartographie les notaires, courtiers, diagnostiqueurs, artisans et assureurs utiles, avec priorites de partenariat.",
+  },
+  {
+    id: "repondeur-ia",
+    label: "Repondeur IA",
+    icon: "portal",
+    prompt: "Configure le repondeur IA: scenarios d'appels, ton, qualification, transfert humain, resume CRM et suivi automatique.",
+  },
+  {
+    id: "chatbot-site",
+    label: "Chatbot site",
+    icon: "annonces",
+    prompt: "Conçois le chatbot du site agence: qualification vendeur/acquereur, estimation, prise de rendez-vous et synthese CRM.",
+  },
+]);
+
+function setComposerPrompt(text) {
+  const input = typeof primaryCanvasComposerInput === "function"
+    ? primaryCanvasComposerInput()
+    : forgeCanvasChatInput;
+  if (!input) return;
+  input.value = text || "";
+  input.focus?.({ preventScroll: true });
+  if (typeof autosizeCanvasChatInput === "function") autosizeCanvasChatInput();
+  if (typeof syncCanvasChatSendState === "function") syncCanvasChatSendState();
+}
+
+function createRealEstateToolButton(tool, extraClass = "") {
+  const button = document.createElement("button");
+  button.className = `real-estate-tool-item real-estate-super-tool ${extraClass}`.trim();
+  button.type = "button";
+  button.dataset.realEstateTool = tool.id;
+  button.dataset.prompt = tool.prompt || "";
+  const icon = document.createElement("span");
+  icon.className = "real-estate-tool-icon";
+  icon.dataset.toolIcon = tool.icon || "database";
+  icon.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.textContent = tool.label || tool.id;
+  button.append(icon, label);
+  return button;
+}
+
+function renderRealEstateToolPanel() {
+  const root = realEstateToolsPanel?.querySelector?.(".real-estate-tool-groups");
+  if (!root || root.dataset.fused === "true") return;
+  root.dataset.fused = "true";
+  root.replaceChildren(...REAL_ESTATE_SUPER_TOOLS.map((tool) => createRealEstateToolButton(tool)));
+}
+
+function renderRealEstateCrmPanel() {
+  const root = realEstateCrmPanel?.querySelector?.(".real-estate-tool-groups");
+  if (!root || root.dataset.fused === "true") return;
+  root.dataset.fused = "true";
+  root.replaceChildren(...REAL_ESTATE_CRM_TOOLS.map((tool) => createRealEstateToolButton(tool, "real-estate-crm-tool")));
+}
+
+function setRealEstateToolsPanelOpen(open) {
+  const next = realEstateModeActive && !!open;
+  if (realEstateToolsPanel) realEstateToolsPanel.hidden = !next;
+  document.body.classList.toggle("real-estate-tools-open", next);
+  realEstateToolsPanelBtn?.setAttribute("aria-expanded", next ? "true" : "false");
+  if (next) setRealEstateCrmPanelOpen(false);
+}
+
+function setRealEstateCrmPanelOpen(open) {
+  const next = realEstateModeActive && !!open;
+  if (realEstateCrmPanel) realEstateCrmPanel.hidden = !next;
+  document.body.classList.toggle("real-estate-crm-open", next);
+  realEstateCrmPanelBtn?.setAttribute("aria-expanded", next ? "true" : "false");
+  if (next) setRealEstateToolsPanelOpen(false);
+}
+
+function refreshRealEstateHarvesterStatus() {
+  if (!realEstateModeActive || !forgeTauri?.invoke) return;
+  void forgeTauri.invoke("real_estate_harvester_snapshot", {}, {
+    section: "real-estate",
+    timeoutMs: 6000,
+    dedupeKey: "snapshot",
+  }).catch(() => {});
+}
+
+async function presentBloombergLiveNative(bounds = null, options = {}) {
+  if (!forgeTauri?.invoke) return false;
+  await forgeTauri.invoke("bloomberg_live_native_present", {
+    bounds,
+    forceReload: !!options.forceReload,
+  }, {
+    section: "trading",
+    requiresActiveSection: true,
+    timeoutMs: 15000,
+    trace: true,
+    dedupeKey: "present",
+  });
+  return true;
+}
+
+function syncRealEstateModeUi() {
+  document.body.classList.toggle("real-estate-mode", realEstateModeActive);
+  realEstateModeBtn?.classList.toggle("is-active", realEstateModeActive);
+  realEstateModeBtn?.setAttribute("aria-pressed", realEstateModeActive ? "true" : "false");
+  if (realEstateHomeSectionBtn) realEstateHomeSectionBtn.hidden = !realEstateModeActive;
+  realEstateHomeSectionBtn?.classList.toggle("is-active", realEstateModeActive && !isWebExplorerUiActive());
+  forgeSections?.setActive?.("real-estate", realEstateModeActive);
+  forgeSections?.setActive?.("real-estate-main", realEstateModeActive && !isWebExplorerUiActive());
+  if (!realEstateModeActive) {
+    setRealEstateToolsPanelOpen(false);
+    setRealEstateCrmPanelOpen(false);
+  }
+}
+
+function setRealEstateModeActive(nextActive) {
+  realEstateModeActive = !!nextActive;
+  try {
+    window.localStorage?.setItem?.(REAL_ESTATE_MODE_STORAGE_KEY, realEstateModeActive ? "1" : "0");
+  } catch (_) {}
+  if (realEstateModeActive) {
+    try { window.__forgeCloseBoom?.(); } catch (_) {}
+    try { window.__forgeCloseTrading?.(); } catch (_) {}
+  }
+  syncRealEstateModeUi();
+  refreshRealEstateHarvesterStatus();
+}
+
+function handleRealEstateToolClick(event) {
+  const item = event.target?.closest?.(".real-estate-tool-item");
+  if (!item) return;
+  const prompt = item.dataset.prompt || "";
+  if (prompt) setComposerPrompt(prompt);
+}
+
+renderRealEstateToolPanel();
+renderRealEstateCrmPanel();
+syncRealEstateModeUi();
+
+realEstateModeBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setRealEstateModeActive(!realEstateModeActive);
+});
+
+realEstateHomeSectionBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (!realEstateModeActive) setRealEstateModeActive(true);
+  setRealEstateToolsPanelOpen(false);
+  setRealEstateCrmPanelOpen(false);
+  setWebExplorerActive(false);
+  setComposerPrompt("Ouvre l'accueil agence immo et prépare une synthèse opérationnelle: mandats, prospects, acquéreurs, biens, veille locale, planning et priorités du jour.");
+  syncRealEstateModeUi();
+});
+
+realEstateNewSessionPanelBtn?.addEventListener("click", () => {
+  if (typeof startAlphaNewSession === "function") startAlphaNewSession();
+  setComposerPrompt("Nouvelle session agence immo: analyse mon contexte agence, identifie les priorites et propose les actions a lancer.");
+});
+
+realEstateToolsPanelBtn?.addEventListener("click", () => {
+  if (document.body.classList.contains("real-estate-tools-open")) {
+    setRealEstateToolsPanelOpen(false);
+  } else {
+    setRealEstateToolsPanelOpen(true);
+  }
+  refreshRealEstateHarvesterStatus();
+});
+
+realEstateToolsCloseBtn?.addEventListener("click", () => setRealEstateToolsPanelOpen(false));
+realEstateCrmPanelBtn?.addEventListener("click", () => setRealEstateCrmPanelOpen(!document.body.classList.contains("real-estate-crm-open")));
+realEstateCrmCloseBtn?.addEventListener("click", () => setRealEstateCrmPanelOpen(false));
+realEstateToolsPanel?.addEventListener("click", handleRealEstateToolClick);
+realEstateCrmPanel?.addEventListener("click", handleRealEstateToolClick);
+realEstateAutomationsPanelBtn?.addEventListener("click", () => {
+  setComposerPrompt("Configure les automatisations agence: collectes autorisees, alertes ville/quartier, relances CRM, rappels visites, rapports vendeur et veille concurrence.");
+});
+realEstatePropertiesPanelBtn?.addEventListener("click", () => {
+  setComposerPrompt("Ouvre le catalogue des biens et construis une vue claire: statut, prix, marge de negociation, visites, diffusion, risques et prochaine action.");
+});
+
 registerWebExplorerToolsWithAtlas();
 
 webExplorerBtn?.addEventListener("click", (e) => {
@@ -29067,3 +29329,4 @@ function renderAlpha3d() {
 
 // Initial state on load
 updateAlpha3dButtonState();
+forgeSections?.markReady?.();

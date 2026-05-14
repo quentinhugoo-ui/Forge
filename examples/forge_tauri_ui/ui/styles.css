@@ -2963,7 +2963,15 @@ body.real-estate-crm-open #realEstateCrmPanelBtn {
   display: none !important;
 }
 
+.real-estate-crm-panel[hidden] {
+  display: none !important;
+}
+
 .real-estate-tools-panel {
+  display: none;
+}
+
+.real-estate-crm-panel {
   display: none;
 }
 
@@ -3135,6 +3143,18 @@ body.real-estate-mode.real-estate-tools-open #realEstateToolsPanel .real-estate-
 .real-estate-tool-item:hover {
   background: rgba(238,238,232,0.07);
   color: rgba(246,246,242,0.94);
+}
+
+.real-estate-super-tool {
+  min-height: 30px;
+  padding: 5px 6px;
+  font-size: 0.7rem;
+}
+
+.real-estate-super-tool .real-estate-tool-icon {
+  width: 17px;
+  height: 17px;
+  flex-basis: 17px;
 }
 
 .real-estate-tool-icon {
