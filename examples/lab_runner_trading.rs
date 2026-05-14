@@ -266,6 +266,79 @@ enum Focus {
     AlertPayloadCache,
 }
 
+macro_rules! focus_aliases {
+    ($($focus:ident: $($alias:literal)|+;)+) => {
+        &[$((&[$($alias),+], Focus::$focus)),+]
+    };
+}
+
+const FOCUS_ALIASES: &[(&[&str], Focus)] = focus_aliases! {
+    Core: "core"|"default";
+    UiFrame: "ui-frame"|"ui_frame"|"frame"|"overlay"|"overlays";
+    IndicatorWindows: "indicator-windows"|"indicator_windows"|"windows"|"indicators";
+    LiveMerge: "live-merge"|"live_merge"|"merge"|"market-feed"|"market_feed"|"live";
+    RefreshDedupe: "refresh-dedupe"|"refresh_dedupe"|"refresh-pipeline"|"refresh_pipeline"|"double-merge"|"double_merge"|"pipeline";
+    CanvasDocument: "canvas-document"|"canvas_document"|"document"|"canvas-doc"|"canvas_doc"|"set-document"|"set_document";
+    ViewportWindow: "viewport-window"|"viewport_window"|"logical-window"|"logical_window"|"visible-window"|"visible_window";
+    OverlayKey: "overlay-key"|"overlay_key"|"indicator-key"|"indicator_key"|"series-key"|"series_key";
+    ComparisonCharts: "comparison-charts"|"comparison_charts"|"compare-charts"|"compare_charts"|"extra-charts"|"extra_charts";
+    SignalMarkers: "signal-markers"|"signal_markers"|"signals"|"markers";
+    RenderEntries: "render-entries"|"render_entries"|"visible-render-entries"|"visible_render_entries"|"candle-render-entries"|"candle_render_entries";
+    HitTestSlot: "hit-test-slot"|"hit_test_slot"|"visible-slot"|"visible_slot"|"slot-hit"|"slot_hit"|"hit-test"|"hit_test";
+    SelectionLookup: "selection-lookup"|"selection_lookup"|"selected-candles"|"selected_candles"|"selection-key"|"selection_key";
+    IndicatorKeyCache: "indicator-key-cache"|"indicator_key_cache"|"overlay-indicator-key"|"overlay_indicator_key"|"settings-key-cache"|"settings_key_cache";
+    TradingSubbarCache: "trading-subbar-cache"|"trading_subbar_cache"|"subbar-cache"|"subbar_cache"|"indicator-subbar-cache"|"indicator_subbar_cache"|"chat-subbar-cache"|"chat_subbar_cache";
+    HeaderDockCache: "header-dock-cache"|"header_dock_cache"|"trading-header-cache"|"trading_header_cache"|"indicator-dock-cache"|"indicator_dock_cache";
+    ToolbarChromeCache: "toolbar-chrome-cache"|"toolbar_chrome_cache"|"trigger-chrome-cache"|"trigger_chrome_cache"|"chat-actions-cache"|"chat_actions_cache"|"topbar-trigger-cache"|"topbar_trigger_cache";
+    ComparisonPayloadCache: "comparison-payload-cache"|"comparison_payload_cache"|"extra-chart-payload-cache"|"extra_chart_payload_cache"|"extra-charts-cache"|"extra_charts_cache";
+    HistoryLoadCoalescing: "history-load-coalescing"|"history_load_coalescing"|"history-series-coalescing"|"history_series_coalescing"|"load-history-cache"|"load_history_cache"|"chart-series-request-cache"|"chart_series_request_cache";
+    SignalParseIndex: "signal-parse-index"|"signal_parse_index"|"parse-signal-index"|"parse_signal_index"|"signal-log-index"|"signal_log_index";
+    MetricSeriesCache: "metric-series-cache"|"metric_series_cache"|"metric-axis-cache"|"metric_axis_cache"|"axis-metric-series"|"axis_metric_series";
+    ThreeDPayloadCache: "3d-payload-cache"|"3d_payload_cache"|"three-d-payload-cache"|"three_d_payload_cache"|"payload-3d-cache"|"payload_3d_cache"|"volume-profile-3d"|"volume_profile_3d";
+    ThreeDGpuUploadCache: "3d-gpu-upload-cache"|"3d_gpu_upload_cache"|"three-d-gpu-upload-cache"|"three_d_gpu_upload_cache"|"webgl-upload-cache"|"webgl_upload_cache"|"bufferdata-cache"|"bufferdata_cache";
+    StrategyDagCache: "strategy-dag-cache"|"strategy_dag_cache"|"strategy-dag"|"strategy_dag"|"create-strategy-cache"|"create_strategy_cache"|"kasm-strategy-cache"|"kasm_strategy_cache";
+    SourceSeriesCache: "source-series-cache"|"source_series_cache"|"indicator-source-cache"|"indicator_source_cache"|"price-source-cache"|"price_source_cache";
+    TimeLabelCache: "time-label-cache"|"time_label_cache"|"axis-label-cache"|"axis_label_cache"|"intl-label-cache"|"intl_label_cache"|"timezone-label-cache"|"timezone_label_cache";
+    AssetCatalogCache: "asset-catalog-cache"|"asset_catalog_cache"|"available-assets-cache"|"available_assets_cache"|"library-assets-cache"|"library_assets_cache";
+    CatalogIndexCache: "catalog-index-cache"|"catalog_index_cache"|"catalog-map-cache"|"catalog_map_cache"|"history-catalog-index"|"history_catalog_index"|"broker-instrument-set"|"broker_instrument_set";
+    AssetSearchIndexCache: "asset-search-index-cache"|"asset_search_index_cache"|"asset-search-cache"|"asset_search_cache"|"compare-menu-model-cache"|"compare_menu_model_cache"|"mention-asset-cache"|"mention_asset_cache";
+    ContextSnapshotCache: "context-snapshot-cache"|"context_snapshot_cache"|"context-cache"|"context_cache"|"digest-cache"|"digest_cache"|"trading-context-cache"|"trading_context_cache";
+    AlertPayloadCache: "alert-payload-cache"|"alert_payload_cache"|"alert-cache"|"alert_cache"|"alert-modal-cache"|"alert_modal_cache"|"canvas-alert-cache"|"canvas_alert_cache";
+};
+
+type SeriesFocusRunner = fn(&[Bar], &str, usize);
+
+const SERIES_FOCUS_ROUTES: &[(Focus, SeriesFocusRunner)] = &[
+    (Focus::IndicatorWindows, run_indicator_windows_focus),
+    (Focus::LiveMerge, run_live_merge_focus),
+    (Focus::RefreshDedupe, run_refresh_dedupe_focus),
+    (Focus::CanvasDocument, run_canvas_document_focus),
+    (Focus::ViewportWindow, run_viewport_window_focus),
+    (Focus::OverlayKey, run_overlay_key_focus),
+    (Focus::ComparisonCharts, run_comparison_charts_focus),
+    (Focus::SignalMarkers, run_signal_markers_focus),
+    (Focus::RenderEntries, run_render_entries_focus),
+    (Focus::HitTestSlot, run_hit_test_slot_focus),
+    (Focus::SelectionLookup, run_selection_lookup_focus),
+    (Focus::IndicatorKeyCache, run_indicator_key_cache_focus),
+    (Focus::TradingSubbarCache, run_trading_subbar_cache_focus),
+    (Focus::HeaderDockCache, run_header_dock_cache_focus),
+    (Focus::ToolbarChromeCache, run_toolbar_chrome_cache_focus),
+    (Focus::ComparisonPayloadCache, run_comparison_payload_cache_focus),
+    (Focus::HistoryLoadCoalescing, run_history_load_coalescing_focus),
+    (Focus::SignalParseIndex, run_signal_parse_index_focus),
+    (Focus::MetricSeriesCache, run_metric_series_cache_focus),
+    (Focus::ThreeDPayloadCache, run_three_d_payload_cache_focus),
+    (Focus::ThreeDGpuUploadCache, run_three_d_gpu_upload_cache_focus),
+    (Focus::SourceSeriesCache, run_source_series_cache_focus),
+    (Focus::TimeLabelCache, run_time_label_cache_focus),
+    (Focus::AssetCatalogCache, run_asset_catalog_cache_focus),
+    (Focus::CatalogIndexCache, run_catalog_index_cache_focus),
+    (Focus::AssetSearchIndexCache, run_asset_search_index_cache_focus),
+    (Focus::ContextSnapshotCache, run_context_snapshot_cache_focus),
+    (Focus::AlertPayloadCache, run_alert_payload_cache_focus),
+];
+
 #[derive(Debug, Clone)]
 struct Config {
     bars: usize,
@@ -325,73 +398,48 @@ fn main() -> Result<(), Box<dyn Error>> {
         params.cache_key()
     );
 
-    match config.focus {
-        Focus::Core => {
-            let mut chart_runs = Vec::new();
-            for pass in 1..=config.repeat.max(2) {
-                chart_runs.push(run_chart_load(
-                    &mut cache,
-                    &bars,
-                    &series_hash,
-                    config.visible,
-                    params,
-                    pass,
-                ));
-            }
-            summarize_runs("chart_load", &chart_runs);
+    if !run_series_focus(config.focus, &bars, &series_hash, config.frames) {
+        match config.focus {
+            Focus::Core => {
+                let mut chart_runs = Vec::new();
+                for pass in 1..=config.repeat.max(2) {
+                    chart_runs.push(run_chart_load(
+                        &mut cache,
+                        &bars,
+                        &series_hash,
+                        config.visible,
+                        params,
+                        pass,
+                    ));
+                }
+                summarize_runs("chart_load", &chart_runs);
 
-            let mut strategy_runs = Vec::new();
-            for pass in 1..=config.repeat.max(2) {
-                strategy_runs.push(run_strategy(
-                    &mut cache,
-                    &bars,
-                    &series_hash,
-                    params,
-                    pass,
-                ));
+                let mut strategy_runs = Vec::new();
+                for pass in 1..=config.repeat.max(2) {
+                    strategy_runs.push(run_strategy(
+                        &mut cache,
+                        &bars,
+                        &series_hash,
+                        params,
+                        pass,
+                    ));
+                }
+                summarize_runs("strategy", &strategy_runs);
             }
-            summarize_runs("strategy", &strategy_runs);
+            Focus::UiFrame => run_ui_frame_focus(
+                &mut cache,
+                &bars,
+                &series_hash,
+                config.visible,
+                params,
+                config.frames,
+                config.repeat.max(2),
+            ),
+            Focus::StrategyDagCache => {
+                run_strategy_dag_cache_focus(&mut cache, &bars, &series_hash, config.repeat.max(2))
+            }
+            focus => unreachable!("series focus route missing for {focus:?}"),
         }
-        Focus::UiFrame => run_ui_frame_focus(
-            &mut cache,
-            &bars,
-            &series_hash,
-            config.visible,
-            params,
-            config.frames,
-            config.repeat.max(2),
-        ),
-        Focus::IndicatorWindows => run_indicator_windows_focus(&bars, &series_hash, config.frames),
-        Focus::LiveMerge => run_live_merge_focus(&bars, &series_hash, config.frames),
-        Focus::RefreshDedupe => run_refresh_dedupe_focus(&bars, &series_hash, config.frames),
-        Focus::CanvasDocument => run_canvas_document_focus(&bars, &series_hash, config.frames),
-        Focus::ViewportWindow => run_viewport_window_focus(&bars, &series_hash, config.frames),
-        Focus::OverlayKey => run_overlay_key_focus(&bars, &series_hash, config.frames),
-        Focus::ComparisonCharts => run_comparison_charts_focus(&bars, &series_hash, config.frames),
-        Focus::SignalMarkers => run_signal_markers_focus(&bars, &series_hash, config.frames),
-        Focus::RenderEntries => run_render_entries_focus(&bars, &series_hash, config.frames),
-        Focus::HitTestSlot => run_hit_test_slot_focus(&bars, &series_hash, config.frames),
-        Focus::SelectionLookup => run_selection_lookup_focus(&bars, &series_hash, config.frames),
-        Focus::IndicatorKeyCache => run_indicator_key_cache_focus(&bars, &series_hash, config.frames),
-        Focus::TradingSubbarCache => run_trading_subbar_cache_focus(&bars, &series_hash, config.frames),
-        Focus::HeaderDockCache => run_header_dock_cache_focus(&bars, &series_hash, config.frames),
-        Focus::ToolbarChromeCache => run_toolbar_chrome_cache_focus(&bars, &series_hash, config.frames),
-        Focus::ComparisonPayloadCache => run_comparison_payload_cache_focus(&bars, &series_hash, config.frames),
-        Focus::HistoryLoadCoalescing => run_history_load_coalescing_focus(&bars, &series_hash, config.frames),
-        Focus::SignalParseIndex => run_signal_parse_index_focus(&bars, &series_hash, config.frames),
-        Focus::MetricSeriesCache => run_metric_series_cache_focus(&bars, &series_hash, config.frames),
-        Focus::ThreeDPayloadCache => run_three_d_payload_cache_focus(&bars, &series_hash, config.frames),
-        Focus::ThreeDGpuUploadCache => run_three_d_gpu_upload_cache_focus(&bars, &series_hash, config.frames),
-        Focus::StrategyDagCache => {
-            run_strategy_dag_cache_focus(&mut cache, &bars, &series_hash, config.repeat.max(2))
-        }
-        Focus::SourceSeriesCache => run_source_series_cache_focus(&bars, &series_hash, config.frames),
-        Focus::TimeLabelCache => run_time_label_cache_focus(&bars, &series_hash, config.frames),
-        Focus::AssetCatalogCache => run_asset_catalog_cache_focus(&bars, &series_hash, config.frames),
-        Focus::CatalogIndexCache => run_catalog_index_cache_focus(&bars, &series_hash, config.frames),
-        Focus::AssetSearchIndexCache => run_asset_search_index_cache_focus(&bars, &series_hash, config.frames),
-        Focus::ContextSnapshotCache => run_context_snapshot_cache_focus(&bars, &series_hash, config.frames),
-        Focus::AlertPayloadCache => run_alert_payload_cache_focus(&bars, &series_hash, config.frames),
     }
 
     println!(
@@ -399,6 +447,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         cache.stats.hits, cache.stats.misses, cache.stats.avoided_units
     );
     Ok(())
+}
+
+fn run_series_focus(focus: Focus, bars: &[Bar], series_hash: &str, frames: usize) -> bool {
+    let Some((_, runner)) = SERIES_FOCUS_ROUTES
+        .iter()
+        .find(|(candidate, _)| *candidate == focus)
+    else {
+        return false;
+    };
+    runner(bars, series_hash, frames);
+    true
 }
 
 fn run_ui_frame_focus(
@@ -10032,103 +10091,18 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
 }
 
 fn parse_focus(value: &str) -> Result<Focus, Box<dyn Error>> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "core" | "default" => Ok(Focus::Core),
-        "ui-frame" | "ui_frame" | "frame" | "overlay" | "overlays" => Ok(Focus::UiFrame),
-        "indicator-windows" | "indicator_windows" | "windows" | "indicators" => {
-            Ok(Focus::IndicatorWindows)
-        }
-        "live-merge" | "live_merge" | "merge" | "market-feed" | "market_feed" | "live" => {
-            Ok(Focus::LiveMerge)
-        }
-        "refresh-dedupe" | "refresh_dedupe" | "refresh-pipeline" | "refresh_pipeline"
-        | "double-merge" | "double_merge" | "pipeline" => Ok(Focus::RefreshDedupe),
-        "canvas-document" | "canvas_document" | "document" | "canvas-doc" | "canvas_doc"
-        | "set-document" | "set_document" => Ok(Focus::CanvasDocument),
-        "viewport-window" | "viewport_window" | "logical-window" | "logical_window"
-        | "visible-window" | "visible_window" => Ok(Focus::ViewportWindow),
-        "overlay-key" | "overlay_key" | "indicator-key" | "indicator_key" | "series-key"
-        | "series_key" => Ok(Focus::OverlayKey),
-        "comparison-charts" | "comparison_charts" | "compare-charts" | "compare_charts"
-        | "extra-charts" | "extra_charts" => Ok(Focus::ComparisonCharts),
-        "signal-markers" | "signal_markers" | "signals" | "markers" => {
-            Ok(Focus::SignalMarkers)
-        }
-        "render-entries" | "render_entries" | "visible-render-entries"
-        | "visible_render_entries" | "candle-render-entries" | "candle_render_entries" => {
-            Ok(Focus::RenderEntries)
-        }
-        "hit-test-slot" | "hit_test_slot" | "visible-slot" | "visible_slot" | "slot-hit"
-        | "slot_hit" | "hit-test" | "hit_test" => Ok(Focus::HitTestSlot),
-        "selection-lookup" | "selection_lookup" | "selected-candles" | "selected_candles"
-        | "selection-key" | "selection_key" => Ok(Focus::SelectionLookup),
-        "indicator-key-cache" | "indicator_key_cache" | "overlay-indicator-key"
-        | "overlay_indicator_key" | "settings-key-cache" | "settings_key_cache" => {
-            Ok(Focus::IndicatorKeyCache)
-        }
-        "trading-subbar-cache" | "trading_subbar_cache" | "subbar-cache" | "subbar_cache"
-        | "indicator-subbar-cache" | "indicator_subbar_cache" | "chat-subbar-cache"
-        | "chat_subbar_cache" => Ok(Focus::TradingSubbarCache),
-        "header-dock-cache" | "header_dock_cache" | "trading-header-cache"
-        | "trading_header_cache" | "indicator-dock-cache" | "indicator_dock_cache" => {
-            Ok(Focus::HeaderDockCache)
-        }
-        "toolbar-chrome-cache" | "toolbar_chrome_cache" | "trigger-chrome-cache"
-        | "trigger_chrome_cache" | "chat-actions-cache" | "chat_actions_cache"
-        | "topbar-trigger-cache" | "topbar_trigger_cache" => {
-            Ok(Focus::ToolbarChromeCache)
-        }
-        "comparison-payload-cache" | "comparison_payload_cache" | "extra-chart-payload-cache"
-        | "extra_chart_payload_cache" | "extra-charts-cache" | "extra_charts_cache" => {
-            Ok(Focus::ComparisonPayloadCache)
-        }
-        "history-load-coalescing" | "history_load_coalescing" | "history-series-coalescing"
-        | "history_series_coalescing" | "load-history-cache" | "load_history_cache"
-        | "chart-series-request-cache" | "chart_series_request_cache" => {
-            Ok(Focus::HistoryLoadCoalescing)
-        }
-        "signal-parse-index" | "signal_parse_index" | "parse-signal-index"
-        | "parse_signal_index" | "signal-log-index" | "signal_log_index" => {
-            Ok(Focus::SignalParseIndex)
-        }
-        "metric-series-cache" | "metric_series_cache" | "metric-axis-cache"
-        | "metric_axis_cache" | "axis-metric-series" | "axis_metric_series" => {
-            Ok(Focus::MetricSeriesCache)
-        }
-        "3d-payload-cache" | "3d_payload_cache" | "three-d-payload-cache"
-        | "three_d_payload_cache" | "payload-3d-cache" | "payload_3d_cache"
-        | "volume-profile-3d" | "volume_profile_3d" => Ok(Focus::ThreeDPayloadCache),
-        "3d-gpu-upload-cache" | "3d_gpu_upload_cache" | "three-d-gpu-upload-cache"
-        | "three_d_gpu_upload_cache" | "webgl-upload-cache" | "webgl_upload_cache"
-        | "bufferdata-cache" | "bufferdata_cache" => Ok(Focus::ThreeDGpuUploadCache),
-        "strategy-dag-cache" | "strategy_dag_cache" | "strategy-dag" | "strategy_dag"
-        | "create-strategy-cache" | "create_strategy_cache" | "kasm-strategy-cache"
-        | "kasm_strategy_cache" => Ok(Focus::StrategyDagCache),
-        "source-series-cache" | "source_series_cache" | "indicator-source-cache"
-        | "indicator_source_cache" | "price-source-cache" | "price_source_cache" => {
-            Ok(Focus::SourceSeriesCache)
-        }
-        "time-label-cache" | "time_label_cache" | "axis-label-cache" | "axis_label_cache"
-        | "intl-label-cache" | "intl_label_cache" | "timezone-label-cache"
-        | "timezone_label_cache" => Ok(Focus::TimeLabelCache),
-        "asset-catalog-cache" | "asset_catalog_cache" | "available-assets-cache"
-        | "available_assets_cache" | "library-assets-cache" | "library_assets_cache" => {
-            Ok(Focus::AssetCatalogCache)
-        }
-        "catalog-index-cache" | "catalog_index_cache" | "catalog-map-cache" | "catalog_map_cache"
-        | "history-catalog-index" | "history_catalog_index" | "broker-instrument-set"
-        | "broker_instrument_set" => Ok(Focus::CatalogIndexCache),
-        "asset-search-index-cache" | "asset_search_index_cache" | "asset-search-cache"
-        | "asset_search_cache" | "compare-menu-model-cache" | "compare_menu_model_cache"
-        | "mention-asset-cache" | "mention_asset_cache" => Ok(Focus::AssetSearchIndexCache),
-        "context-snapshot-cache" | "context_snapshot_cache" | "context-cache" | "context_cache"
-        | "digest-cache" | "digest_cache" | "trading-context-cache" | "trading_context_cache" => {
-            Ok(Focus::ContextSnapshotCache)
-        }
-        "alert-payload-cache" | "alert_payload_cache" | "alert-cache" | "alert_cache"
-        | "alert-modal-cache" | "alert_modal_cache" | "canvas-alert-cache"
-        | "canvas_alert_cache" => Ok(Focus::AlertPayloadCache),
-        other => Err(format!("unknown --focus value: {other}").into()),
+    let normalized = value.trim().to_ascii_lowercase();
+    FOCUS_ALIASES
+        .iter()
+        .find_map(|(aliases, focus)| aliases.contains(&normalized.as_str()).then_some(*focus))
+        .ok_or_else(|| format!("unknown --focus value: {normalized}").into())
+}
+
+fn focus_usage_option(focus: Focus) -> &'static str {
+    if focus == Focus::StrategyDagCache {
+        "--repeat N"
+    } else {
+        "--frames N"
     }
 }
 
@@ -10145,36 +10119,15 @@ where
 
 fn print_usage() {
     println!("usage: cargo run --example lab_runner_trading -- [--bars N] [--visible N] [--repeat N]");
-    println!("       cargo run --example lab_runner_trading -- --focus ui-frame [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus indicator-windows [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus live-merge [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus refresh-dedupe [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus canvas-document [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus viewport-window [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus overlay-key [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus comparison-charts [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus signal-markers [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus render-entries [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus hit-test-slot [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus selection-lookup [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus indicator-key-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus trading-subbar-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus header-dock-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus toolbar-chrome-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus comparison-payload-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus history-load-coalescing [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus signal-parse-index [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus metric-series-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus 3d-payload-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus 3d-gpu-upload-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus strategy-dag-cache [--repeat N]");
-    println!("       cargo run --example lab_runner_trading -- --focus source-series-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus time-label-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus asset-catalog-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus catalog-index-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus asset-search-index-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus context-snapshot-cache [--frames N]");
-    println!("       cargo run --example lab_runner_trading -- --focus alert-payload-cache [--frames N]");
+    for &(aliases, focus) in FOCUS_ALIASES {
+        if focus != Focus::Core {
+            println!(
+                "       cargo run --example lab_runner_trading -- --focus {} [{}]",
+                aliases[0],
+                focus_usage_option(focus)
+            );
+        }
+    }
     println!("       cargo run --example lab_runner_trading -- --csv path.csv [--max-rows N]");
 }
 

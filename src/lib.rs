@@ -148,7 +148,7 @@ mod tmp_dir_tests {
 }
 
 // Φ.μ.7.2 — re-exports compat : `extract` est désormais physiquement
-// dans `agent/extract/`, et `numeric` dans `kasm/numeric/`. Les paths
+// dans les modules plats `agent.rs` et `kasm.rs`. Les paths
 // publics historiques `scan::extract` et `scan::numeric` sont préservés
 // via re-export sans churn de l'API surface.
 pub use agent::extract;

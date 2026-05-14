@@ -44,6 +44,54 @@ enum Mode {
     Help,
 }
 
+type SourceFocusRunner = fn(&mut BangerLab, &Config, usize, &str, &[u8]) -> io::Result<Vec<u8>>;
+type TopologyFocusRunner =
+    fn(&mut BangerLab, &Config, usize, &str, &[u8], &[u8]) -> io::Result<Vec<u8>>;
+
+const SOURCE_FOCUS_ROUTES: &[(&[&str], SourceFocusRunner)] = &[
+    (&["kasm", "kasm-spine", "command-spine", "command-spec"], run_kasm_spine_focus),
+    (&["mcp", "mcp-facade", "kasm-mcp", "mcp-spine"], run_mcp_facade_focus),
+    (&["world", "world-patch", "worldpatch", "patch"], run_world_patch_focus),
+    (&["hash-time", "rollback", "explain", "explain-hash"], run_hash_time_focus),
+    (&["metric", "metrics", "metric-spine", "metric-hash"], run_metric_spine_focus),
+    (&["program", "program-spec", "matrix", "matrix-run", "program-matrix"], run_program_matrix_focus),
+    (&["compute", "compute-ir", "compute-ir-spine", "gpu-compute"], run_compute_ir_spine_focus),
+    (&["skill", "skills", "skill-spec", "skill-spine"], run_skill_spine_focus),
+    (&["import-hash", "source-key", "source-fingerprint"], run_import_hash_focus),
+    (&["import-bounds", "bounds", "bounds-hint"], run_import_bounds_focus),
+    (&["import", "import-view", "normalize", "normalize-import"], run_import_view_focus),
+];
+
+const TOPOLOGY_FOCUS_ROUTES: &[(&[&str], TopologyFocusRunner)] = &[
+    (&["modifier", "modifiers", "modifier-plan"], run_modifier_plan_focus),
+    (&["asset-page", "asset-pages", "asset-page-spine"], run_asset_page_spine_focus),
+    (
+        &["asset-residency", "asset-memory", "virtual-asset-memory", "asset-residency-spine"],
+        run_asset_residency_spine_focus,
+    ),
+    (&["geocluster", "geo-cluster", "geocluster-spine", "meshletize"], run_geocluster_spine_focus),
+];
+
+const VIEWPORT_FOCUS_ALIASES: &[&str] = &[
+    "viewport", "viewport-cache", "slicer-reuse", "gpu", "gpu-resource", "gpu-resources",
+    "frame-loop", "idle-loop", "dirty-frame", "ui", "ui-render", "ui-coalesce",
+    "ui-contract", "pick", "picking", "pick-handle", "render", "render-ir", "render-asset",
+    "render-asset-spine",
+];
+const RENDER_ASSET_FOCUS_ALIASES: &[&str] =
+    &["render", "render-ir", "render-asset", "render-asset-spine"];
+const PICK_FOCUS_ALIASES: &[&str] = &["pick", "picking", "pick-handle"];
+const UI_FOCUS_ALIASES: &[&str] = &["ui", "ui-render", "ui-coalesce", "ui-contract"];
+const FRAME_LOOP_FOCUS_ALIASES: &[&str] = &["frame-loop", "idle-loop", "dirty-frame"];
+const GPU_RESOURCE_FOCUS_ALIASES: &[&str] = &["gpu", "gpu-resource", "gpu-resources"];
+const BANGER_PRIMARY_FOCI: &[&str] = &[
+    "pipeline", "kasm-spine", "mcp-facade", "world-patch", "hash-time", "metric-spine",
+    "program-matrix", "compute-ir-spine", "skill-spine", "render-asset-spine",
+    "asset-page-spine", "asset-residency-spine", "geocluster-spine", "import-view",
+    "import-hash", "import-bounds", "viewport", "gpu-resource", "frame-loop", "ui-coalesce",
+    "pick-handle", "modifier-plan",
+];
+
 #[derive(Clone, Debug)]
 struct StageRecord {
     pass: usize,
@@ -219,19 +267,68 @@ fn print_help() {
     println!("BOOM/Banger content-addressed lab runner");
     println!();
     println!("Usage:");
-    println!("  cargo run --example lab_runner_banger -- audit [--focus pipeline|kasm-spine|mcp-facade|world-patch|hash-time|metric-spine|program-matrix|compute-ir-spine|skill-spine|render-asset-spine|asset-page-spine|asset-residency-spine|geocluster-spine|import-view|import-hash|import-bounds|viewport|gpu-resource|frame-loop|ui-coalesce|pick-handle|modifier-plan] [--cache-mb N] [--triangles N] [--passes N] [--tag NAME]");
+    println!(
+        "  cargo run --example lab_runner_banger -- audit [--focus {}] [--cache-mb N] [--triangles N] [--passes N] [--tag NAME]",
+        BANGER_PRIMARY_FOCI.join("|")
+    );
     println!("  cargo run --example lab_runner_banger -- blender-probe [--blender PATH]");
     println!();
     println!("Primary target: measure Banger's own Blender-class power, latency, and recompute avoidance.");
     println!("The Blender probe is only an optional external baseline when Blender is installed.");
-    println!("The audit writes JSONL proof logs to .forge-store/banger-lab/lab_runner_banger.jsonl");
+    println!(
+        "The audit writes JSONL proof logs under {}",
+        default_store_dir().display()
+    );
 }
 
 fn default_store_dir() -> PathBuf {
+    if let Some(raw) = env::var_os("FORGE_STORE_DIR") {
+        let trimmed = raw.to_string_lossy().trim().to_string();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("banger-lab");
+        }
+    }
+    if let Some(appdata) = env::var_os("APPDATA") {
+        return PathBuf::from(appdata)
+            .join("com.forge.ui")
+            .join("forge-store")
+            .join("banger-lab");
+    }
     env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(".forge-store")
         .join("banger-lab")
+}
+
+fn focus_matches(focus: &str, aliases: &[&str]) -> bool {
+    aliases.iter().any(|alias| *alias == focus)
+}
+
+fn run_source_focus(
+    lab: &mut BangerLab,
+    config: &Config,
+    pass: usize,
+    label: &str,
+    source_bytes: &[u8],
+) -> Option<io::Result<Vec<u8>>> {
+    SOURCE_FOCUS_ROUTES
+        .iter()
+        .find(|(aliases, _)| focus_matches(&config.focus, aliases))
+        .map(|(_, runner)| runner(lab, config, pass, label, source_bytes))
+}
+
+fn run_topology_focus(
+    lab: &mut BangerLab,
+    config: &Config,
+    pass: usize,
+    label: &str,
+    normalized: &[u8],
+    topology: &[u8],
+) -> Option<io::Result<Vec<u8>>> {
+    TOPOLOGY_FOCUS_ROUTES
+        .iter()
+        .find(|(aliases, _)| focus_matches(&config.focus, aliases))
+        .map(|(_, runner)| runner(lab, config, pass, label, normalized, topology))
 }
 
 fn run_audit(config: Config) -> io::Result<()> {
@@ -311,85 +408,8 @@ fn run_pipeline(
     label: &str,
     source_bytes: &[u8],
 ) -> io::Result<Vec<u8>> {
-    if config.focus == "kasm"
-        || config.focus == "kasm-spine"
-        || config.focus == "command-spine"
-        || config.focus == "command-spec"
-    {
-        return run_kasm_spine_focus(lab, config, pass, label, source_bytes);
-    }
-
-    if config.focus == "mcp"
-        || config.focus == "mcp-facade"
-        || config.focus == "kasm-mcp"
-        || config.focus == "mcp-spine"
-    {
-        return run_mcp_facade_focus(lab, config, pass, label, source_bytes);
-    }
-
-    if config.focus == "world"
-        || config.focus == "world-patch"
-        || config.focus == "worldpatch"
-        || config.focus == "patch"
-    {
-        return run_world_patch_focus(lab, config, pass, label, source_bytes);
-    }
-
-    if config.focus == "hash-time"
-        || config.focus == "rollback"
-        || config.focus == "explain"
-        || config.focus == "explain-hash"
-    {
-        return run_hash_time_focus(lab, config, pass, label, source_bytes);
-    }
-
-    if config.focus == "metric"
-        || config.focus == "metrics"
-        || config.focus == "metric-spine"
-        || config.focus == "metric-hash"
-    {
-        return run_metric_spine_focus(lab, config, pass, label, source_bytes);
-    }
-    if config.focus == "program"
-        || config.focus == "program-spec"
-        || config.focus == "matrix"
-        || config.focus == "matrix-run"
-        || config.focus == "program-matrix"
-    {
-        return run_program_matrix_focus(lab, config, pass, label, source_bytes);
-    }
-    if config.focus == "compute"
-        || config.focus == "compute-ir"
-        || config.focus == "compute-ir-spine"
-        || config.focus == "gpu-compute"
-    {
-        return run_compute_ir_spine_focus(lab, config, pass, label, source_bytes);
-    }
-    if config.focus == "skill"
-        || config.focus == "skills"
-        || config.focus == "skill-spec"
-        || config.focus == "skill-spine"
-    {
-        return run_skill_spine_focus(lab, config, pass, label, source_bytes);
-    }
-
-    if config.focus == "import-hash"
-        || config.focus == "source-key"
-        || config.focus == "source-fingerprint"
-    {
-        return run_import_hash_focus(lab, config, pass, label, source_bytes);
-    }
-
-    if config.focus == "import-bounds" || config.focus == "bounds" || config.focus == "bounds-hint" {
-        return run_import_bounds_focus(lab, config, pass, label, source_bytes);
-    }
-
-    if config.focus == "import"
-        || config.focus == "import-view"
-        || config.focus == "normalize"
-        || config.focus == "normalize-import"
-    {
-        return run_import_view_focus(lab, config, pass, label, source_bytes);
+    if let Some(result) = run_source_focus(lab, config, pass, label, source_bytes) {
+        return result;
     }
 
     let normalize_schema = format!("normalize|{VERSION}|scale=6.0|tag={}", config.tag);
@@ -424,31 +444,8 @@ fn run_pipeline(
         },
     )?;
 
-    if config.focus == "modifier" || config.focus == "modifiers" || config.focus == "modifier-plan" {
-        return run_modifier_plan_focus(lab, config, pass, label, &normalized, &topology);
-    }
-
-    if config.focus == "asset-page"
-        || config.focus == "asset-pages"
-        || config.focus == "asset-page-spine"
-    {
-        return run_asset_page_spine_focus(lab, config, pass, label, &normalized, &topology);
-    }
-
-    if config.focus == "asset-residency"
-        || config.focus == "asset-memory"
-        || config.focus == "virtual-asset-memory"
-        || config.focus == "asset-residency-spine"
-    {
-        return run_asset_residency_spine_focus(lab, config, pass, label, &normalized, &topology);
-    }
-
-    if config.focus == "geocluster"
-        || config.focus == "geo-cluster"
-        || config.focus == "geocluster-spine"
-        || config.focus == "meshletize"
-    {
-        return run_geocluster_spine_focus(lab, config, pass, label, &normalized, &topology);
+    if let Some(result) = run_topology_focus(lab, config, pass, label, &normalized, &topology) {
+        return result;
     }
 
     let bevel_schema = format!("modifier_bevel|{VERSION}|width=0.14");
@@ -491,27 +488,7 @@ fn run_pipeline(
         config.layers,
         solid_tris.saturating_mul(config.layers as u64),
     )?;
-    if config.focus == "viewport"
-        || config.focus == "viewport-cache"
-        || config.focus == "slicer-reuse"
-        || config.focus == "gpu"
-        || config.focus == "gpu-resource"
-        || config.focus == "gpu-resources"
-        || config.focus == "frame-loop"
-        || config.focus == "idle-loop"
-        || config.focus == "dirty-frame"
-        || config.focus == "ui"
-        || config.focus == "ui-render"
-        || config.focus == "ui-coalesce"
-        || config.focus == "ui-contract"
-        || config.focus == "pick"
-        || config.focus == "picking"
-        || config.focus == "pick-handle"
-        || config.focus == "render"
-        || config.focus == "render-ir"
-        || config.focus == "render-asset"
-        || config.focus == "render-asset-spine"
-    {
+    if focus_matches(&config.focus, VIEWPORT_FOCUS_ALIASES) {
         return run_viewport_focus(lab, config, pass, label, &solid, &topology, &slice, solid_tris);
     }
 
@@ -2132,11 +2109,7 @@ fn run_viewport_focus(
         || Ok(build_preview_reuse_payload(config.layers, &slice_hash, &render_hash)),
     )?;
 
-    if config.focus == "render"
-        || config.focus == "render-ir"
-        || config.focus == "render-asset"
-        || config.focus == "render-asset-spine"
-    {
+    if focus_matches(&config.focus, RENDER_ASSET_FOCUS_ALIASES) {
         return run_render_asset_spine_focus(
             lab,
             config,
@@ -2153,7 +2126,7 @@ fn run_viewport_focus(
         );
     }
 
-    if config.focus == "pick" || config.focus == "picking" || config.focus == "pick-handle" {
+    if focus_matches(&config.focus, PICK_FOCUS_ALIASES) {
         return run_pick_handle_focus(
             lab,
             config,
@@ -2202,11 +2175,7 @@ fn run_viewport_focus(
         "selection_nodes",
         || Ok(build_selection_overlay_projection(&screen_pick, &render_passes)),
     )?;
-    if config.focus == "ui"
-        || config.focus == "ui-render"
-        || config.focus == "ui-coalesce"
-        || config.focus == "ui-contract"
-    {
+    if focus_matches(&config.focus, UI_FOCUS_ALIASES) {
         run_ui_coalesce_focus(
             lab,
             config,
@@ -2217,7 +2186,7 @@ fn run_viewport_focus(
             &screen_pick,
             &overlay,
         )
-    } else if config.focus == "frame-loop" || config.focus == "idle-loop" || config.focus == "dirty-frame" {
+    } else if focus_matches(&config.focus, FRAME_LOOP_FOCUS_ALIASES) {
         run_frame_loop_focus(
             lab,
             config,
@@ -2231,7 +2200,7 @@ fn run_viewport_focus(
             &overlay,
             solid_tris,
         )
-    } else if config.focus == "gpu" || config.focus == "gpu-resource" || config.focus == "gpu-resources" {
+    } else if focus_matches(&config.focus, GPU_RESOURCE_FOCUS_ALIASES) {
         run_gpu_resource_focus(
             lab,
             pass,

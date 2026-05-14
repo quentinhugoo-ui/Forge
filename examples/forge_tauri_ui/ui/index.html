@@ -178,18 +178,28 @@
 
             <section id="realEstateToolsPanel" class="real-estate-tools-panel" hidden aria-label="Modules agence immo">
               <div class="real-estate-tools-head"><span>Modules</span><button id="realEstateToolsCloseBtn" class="real-estate-tools-close" type="button" aria-label="Fermer les modules"><svg viewBox="0 0 24 24" focusable="false"><path d="m18 15-6-6-6 6" /></svg></button></div>
-              <div class="real-estate-tool-groups">
-                <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="mandat-vendeur"><span class="real-estate-tool-icon" data-tool-icon="rapport" aria-hidden="true"></span><span>Mandat vendeur</span></button>
-                <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="diffusion"><span class="real-estate-tool-icon" data-tool-icon="annonces" aria-hidden="true"></span><span>Diffusion</span></button>
-                <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="marche-veille"><span class="real-estate-tool-icon" data-tool-icon="database" aria-hidden="true"></span><span>Marche &amp; veille</span></button>
-                <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="pilotage-agence"><span class="real-estate-tool-icon" data-tool-icon="energy" aria-hidden="true"></span><span>Pilotage agence</span></button>
-                <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="back-office"><span class="real-estate-tool-icon" data-tool-icon="conformite" aria-hidden="true"></span><span>Back-office</span></button>
-                <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="rh-equipe"><span class="real-estate-tool-icon" data-tool-icon="matching" aria-hidden="true"></span><span>RH &amp; equipe</span></button>
+              <div class="real-estate-tool-scroll-shell">
+                <div class="real-estate-tool-groups">
+                  <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="mandat-vendeur"><span class="real-estate-tool-icon" data-tool-icon="rapport" aria-hidden="true"></span><span>Mandat vendeur</span></button>
+                  <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="diffusion"><span class="real-estate-tool-icon" data-tool-icon="annonces" aria-hidden="true"></span><span>Diffusion</span></button>
+                  <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="marche-veille"><span class="real-estate-tool-icon" data-tool-icon="database" aria-hidden="true"></span><span>Marche &amp; veille</span></button>
+                  <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="pilotage-agence"><span class="real-estate-tool-icon" data-tool-icon="energy" aria-hidden="true"></span><span>Pilotage agence</span></button>
+                  <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="back-office"><span class="real-estate-tool-icon" data-tool-icon="conformite" aria-hidden="true"></span><span>Back-office</span></button>
+                  <button class="real-estate-tool-item real-estate-super-tool" type="button" data-real-estate-tool="rh-equipe"><span class="real-estate-tool-icon" data-tool-icon="matching" aria-hidden="true"></span><span>RH &amp; equipe</span></button>
+                </div>
+                <div id="realEstateToolsScrollbar" class="forge-rail-scrollbar" aria-hidden="true">
+                  <div id="realEstateToolsScrollbarThumb" class="forge-rail-scrollbar-thumb"></div>
+                </div>
               </div>
             </section>
             <section id="realEstateCrmPanel" class="real-estate-crm-panel" hidden aria-label="Contacts agence immo">
               <div class="real-estate-tools-head"><span>Contacts</span><button id="realEstateCrmCloseBtn" class="real-estate-tools-close" type="button" aria-label="Fermer les contacts"><svg viewBox="0 0 24 24" focusable="false"><path d="m18 15-6-6-6 6" /></svg></button></div>
-              <div class="real-estate-tool-groups"></div>
+              <div class="real-estate-tool-scroll-shell">
+                <div class="real-estate-tool-groups"></div>
+                <div id="realEstateCrmScrollbar" class="forge-rail-scrollbar" aria-hidden="true">
+                  <div id="realEstateCrmScrollbarThumb" class="forge-rail-scrollbar-thumb"></div>
+                </div>
+              </div>
             </section>
             <section id="webExplorerHistoryPanel" class="webexplorer-history-panel" hidden aria-label="Web navigation history">
               <div class="webexplorer-history-section webexplorer-history-section-pinned">
@@ -1103,7 +1113,7 @@
     command: forge_mcp
     args: []
     env:
-      FORGE_STORE: .forge-store</code></pre>
+      FORGE_STORE_DIR: %APPDATA%\com.forge.ui\forge-store</code></pre>
                     <p>On startup Hermes launches <code>forge_mcp</code> as a subprocess, performs the MCP handshake, and registers the 8 tools alongside its built-in skills. Each connection runs as a long-lived asyncio task in a background daemon thread; if the subprocess dies, Hermes reconnects with exponential backoff (up to 5 retries, max 60 s).</p>
                     <p>Hermes only inherits a safe baseline of environment variables (<code>PATH</code>, <code>HOME</code>, <code>USER</code>, <code>LANG</code>, <code>LC_ALL</code>, <code>TERM</code>, <code>SHELL</code>, <code>TMPDIR</code>); anything else must be added explicitly under <code>env</code>. Forge's append-only design means it doesn't need any secrets passed in — workspace path is enough.</p>
                     <p>Hermes can also run <em>as</em> an MCP server (<code>hermes mcp serve</code>), exposing its conversations and platform connections to other clients. A symmetric Forge ↔ Hermes setup is therefore possible: each can call the other's tools.</p>
@@ -1112,7 +1122,7 @@
                     <table class="docs-table">
                       <thead><tr><th>Variable</th><th>Default</th><th>Role</th></tr></thead>
                       <tbody>
-                        <tr><td><code>FORGE_STORE</code></td><td><code>.forge-store</code></td><td>Workspace root for files and sessions.</td></tr>
+                        <tr><td><code>FORGE_STORE_DIR</code></td><td><code>%APPDATA%\com.forge.ui\forge-store</code></td><td>Runtime store for files, sessions, atlas and proofs.</td></tr>
                         <tr><td><code>FORGE_ATLAS</code></td><td><code>forge.cas</code></td><td>Append-only atlas path.</td></tr>
                         <tr><td><code>FORGE_GPU</code></td><td><code>auto</code></td><td><code>cuda</code> / <code>wgpu</code> / <code>cpu</code> / <code>auto</code>.</td></tr>
                         <tr><td><code>FORGE_LOG_LEVEL</code></td><td><code>info</code></td><td><code>error</code> / <code>warn</code> / <code>info</code> / <code>debug</code> / <code>trace</code>.</td></tr>
@@ -1153,7 +1163,7 @@
                     <h2>Data &amp; privacy</h2>
                     <ul class="docs-bullets">
                       <li><strong>Everything stays local.</strong> No file is sent to an Anthropic, Forge, or third-party server.</li>
-                      <li><strong>Storage:</strong> dropped files live in <code>.forge-store/</code> (at the project or workspace root); results live in <code>forge.cas</code> + <code>atlas</code>.</li>
+                      <li><strong>Storage:</strong> dropped files live in <code>%APPDATA%\com.forge.ui\forge-store</code> by default, or in <code>FORGE_STORE_DIR</code> when set; results live in the same store under CAS + atlas paths.</li>
                       <li><strong>Append-only atlas:</strong> never modified, never automatically purged. A computation, once proved, stays verifiable.</li>
                       <li><strong>Deletion:</strong> Archive or Delete in a session's context menu removes the references; CAS blobs remain (deduplication: they may be referenced elsewhere).</li>
                     </ul>
@@ -1186,7 +1196,7 @@
                     <p>An artifact's identity <em>is</em> its SHA-256. If a single byte is altered, the hash diverges and Forge refuses to load it. There is no "trusted by name" — only "trusted by content".</p>
 
                     <h3>Local-only by default</h3>
-                    <p>Sessions, programs, results, proofs all live under your workspace (<code>.forge-store/</code>, <code>forge.cas</code>, <code>atlas</code>). Sharing a result with a teammate is an explicit, opt-in action — copy the file, send the hash. Nothing leaks by accident.</p>
+                    <p>Sessions, programs, results and proofs live in the local Forge store (<code>%APPDATA%\com.forge.ui\forge-store</code> by default; <code>FORGE_STORE_DIR</code> overrides it). Sharing a result with a teammate is an explicit, opt-in action — copy the file, send the hash. Nothing leaks by accident.</p>
 
                     <h3>Token safety on every MCP call</h3>
                     <p>Every MCP response carries a <code>token_safety</code> field and returns indexes / summaries / references — never raw payloads. An untrusted agent cannot exfiltrate large blobs by request: the server enforces hard limits (16-64 KB on logs, 50 items per list).</p>

@@ -137,6 +137,7 @@ Tauri/MCP:
 ```powershell
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge_mcp
+node examples\forge_tauri_ui\scripts\forge-surface-manifest.mjs --check
 ```
 
 UI:
@@ -163,4 +164,4 @@ git commit -m "Short useful message"
 git push
 ```
 
-Keep out of Git: `.vs/`, `target/`, `target-msvc-tests/`, `.codex-tmp/`, `.forge-store/`, `.forge-data/`, `data/`, `examples/data/`, `examples/datasets/`, `lab_findings.jsonl`, `*.csv`, `*.parquet`, `.env*`, tokens, API keys and credentials.
+Keep out of Git: `.vs/`, `target/`, `target-msvc-tests/`, `.codex-tmp/`, `.forge-store/`, `.forge-data/`, `data/`, `examples/data/`, `examples/datasets/`, `lab_findings.jsonl`, `*.csv`, `*.parquet`, `.env*`, tokens, API keys and credentials. Runtime state defaults outside the repo at `%APPDATA%\com.forge.ui\forge-store` on Windows; `FORGE_STORE_DIR` is the explicit override.

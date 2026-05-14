@@ -2136,34 +2136,60 @@ pub fn upsert_geonode(store_path: &Path, args: &Value) -> Result<Value, String> 
         }
     }))
 }
-fn ensure_builtin_mars_geonodes(store_path: &Path) -> Result<(), String> {
+
+fn default_my_atlas_value(now: u64) -> Value {
+    json!({
+        "schema": "forge_my_atlas_v1",
+        "created_ms": now,
+        "updated_ms": now,
+        "programs": [],
+        "metric_tags": [],
+        "runs": [],
+        "web_blocks": [],
+        "doctrine": {
+            "content_addressed": true,
+            "after_first_run": "same program_hash + same input hashes + same params returns an Atlas hit instead of recomputing",
+            "agents_should": "reuse metric_tags and programs from My Atlas before creating new ones"
+        }
+    })
+}
+
+pub fn ensure_builtin_mars_geonodes(store_path: &Path) -> Result<(), String> {
     let atlas_dir = store_path.join("atlas");
     fs::create_dir_all(&atlas_dir)
         .map_err(|e| format!("create atlas dir '{}': {e}", atlas_dir.display()))?;
     let path = atlas_dir.join("my_atlas.json");
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
     let mut atlas = if path.exists() {
-        read_json_value(&path)?
+        match read_json_value(&path) {
+            Ok(value) => value,
+            Err(err) => {
+                let backup = atlas_dir.join(format!("my_atlas.corrupt-backup-{now}.json"));
+                let _ = fs::rename(&path, &backup);
+                eprintln!("[forge-atlas] repaired invalid my_atlas.json after decode failure: {err}");
+                default_my_atlas_value(now)
+            }
+        }
     } else {
-        json!({
-            "schema": "forge_my_atlas_v1",
-            "programs": [],
-            "metric_tags": [],
-            "runs": [],
-            "web_blocks": []
-        })
+        default_my_atlas_value(now)
     };
     if !atlas.is_object() {
-        atlas = json!({
-            "schema": "forge_my_atlas_v1",
-            "programs": [],
-            "metric_tags": [],
-            "runs": []
-        });
+        atlas = default_my_atlas_value(now);
     }
     let obj = atlas.as_object_mut().expect("atlas object");
     obj.entry("schema".to_string()).or_insert_with(|| json!("forge_my_atlas_v1"));
+    obj.entry("created_ms".to_string()).or_insert_with(|| json!(now));
+    obj.entry("updated_ms".to_string()).or_insert_with(|| json!(now));
     obj.entry("programs".to_string()).or_insert_with(|| json!([]));
     obj.entry("runs".to_string()).or_insert_with(|| json!([]));
+    obj.entry("web_blocks".to_string()).or_insert_with(|| json!([]));
+    obj.entry("doctrine".to_string()).or_insert_with(|| {
+        json!({
+            "content_addressed": true,
+            "after_first_run": "same program_hash + same input hashes + same params returns an Atlas hit instead of recomputing",
+            "agents_should": "reuse metric_tags and programs from My Atlas before creating new ones"
+        })
+    });
     let tags_value = obj.entry("metric_tags".to_string()).or_insert_with(|| json!([]));
     if !tags_value.is_array() {
         *tags_value = json!([]);
@@ -2199,7 +2225,6 @@ fn ensure_builtin_mars_geonodes(store_path: &Path) -> Result<(), String> {
         ("mars_juventae_chasma", "Juventae Chasma", "sub_region", -4.5, -63.0, json!("mars_valles_marineris")),
         ("mars_ganges_chasma", "Ganges Chasma", "sub_region", -7.5, -49.0, json!("mars_valles_marineris")),
     ];
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
     let mut changed = false;
     for (tag, title, class, lat, lon, parent) in geonodes {
         let is_mini = class == "sub_region";
@@ -5927,13 +5952,6 @@ fn quick_hash_bytes(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash
-}
-
-#[allow(dead_code)]
-fn file_hash_ref(path: &Path) -> Value {
-    quick_file_hash_path(path)
-        .map(|hash| json!({ "hash_algorithm": "forge_fnv1a64", "hash": format!("{hash:016x}") }))
-        .unwrap_or(Value::Null)
 }
 
 fn system_time_ms(time: SystemTime) -> u64 {

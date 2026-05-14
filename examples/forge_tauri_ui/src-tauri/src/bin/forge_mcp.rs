@@ -649,411 +649,199 @@ fn handle_request(request: JsonRpcRequest, session: &mut McpSession) -> Value {
     }
 }
 
+fn mcp_tool(name: &str, command: Option<&str>, description: &str, properties: Value, required: &[&str]) -> Value {
+    let mut schema = json!({ "type": "object", "properties": properties });
+    if !required.is_empty() {
+        schema["required"] = json!(required);
+    }
+    let mut tool = json!({ "name": name, "description": description, "inputSchema": schema });
+    if let Some(command) = command {
+        tool["displayName"] = json!(command);
+        tool["publicCommand"] = json!(command);
+    }
+    tool
+}
+
 fn tools_list() -> Vec<Value> {
     vec![
-        json!({
-            "name": "about",
-            "description": "Forge — local compute and visual-program engine for AI agents. FIRST CALL for large files, expensive/repetitive calculations, scientific/data/code/document analysis, programmable 2D/3D views, custom compute_program/visual_program specs, hashes, proofs or compact artifacts. Use Forge before Read/shell above 256 KB or 1,000 rows to avoid spending massive LLM tokens reading/calculating. Fast path: run { intent, inputs, plan_only:true } or run {} for one pending upload.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {}
-            }
-        }),
-        json!({
-            "name": "capabilities",
-            "displayName": "/metric",
-            "publicCommand": "/metric",
-            "description": "/metric - Forge capability GPS. Find examples plus universal creation routes for compute_program and visual_program specs: open Metric/Visual DSL, domain metrics, 2D/3D axes, overlays, artifacts and local execution. Built-in finance/DNA templates are examples, not limits. Use when the domain or program shape is unclear; otherwise call /program_ with plan_only=true directly.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "Optional capability/operator/domain/intent search, e.g. visual_program, 3D mapping, finance, kmer, code, volume anomalies, geospatial, audio." },
-                    "domain": { "type": "string", "description": "Optional compact domain filter: finance, code, documents, biology, chemistry, medicine, math, engineering, aerospace, simulation, timeseries, security, energy, geospatial, manufacturing, audio, images or any custom domain." },
-                    "capability": { "type": "string", "description": "Optional exact capability/template name such as universal_compute_program, universal_visual_program_2d_3d, csv_timeseries, kmer_sequence, source_code_metrics." },
-                    "detail": { "type": "string", "description": "compact (default) or detailed. Detailed returns matching operators and examples." },
-                    "detailed": { "type": "boolean", "description": "Set true to include detailed matching operators." }
-                }
-            }
-        }),
-        json!({
-            "name": "create",
-            "displayName": "/create_",
-            "publicCommand": "/create_",
-            "description": "/create_ - Create a reusable Forge program for any domain. Check atlas first when reuse is possible. Use compute_program for local calculations/simulations/metrics, or visual_program for programmable 2D/3D views over session files. Specs use compact Metric/Visual DSL tags with open-ended domain metrics; Forge compiles the metric graph, validates routes/dependencies/math contracts, stores the program and every metric tag in My Atlas by content hash and never needs raw file content in the LLM.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": { "type": "string", "maxLength": 24, "description": "Very short instrument/lens title — 24 characters max. Use a concise label like 'VWAP detune', 'RSI long', 'K-mer scan'. Longer titles are rejected." },
-                    "domain": { "type": "string", "description": "Free-form domain: finance, biology, chemistry, code, math, engineering, aerospace, medicine, geospatial, audio, images, networks, manufacturing, custom, etc." },
-                    "intent": { "type": "string", "description": "Natural-language reason for this program, e.g. invent a metric, model a 3D map, detect anomalies, simulate a system or measure k-mer hash quality." },
-                    "goal": { "type": "string", "description": "What the program should measure, discover or optimize." },
-                    "program_kind": { "type": "string", "description": "Optional: compute_program (default) or visual_program for programs that define 2D/3D file views." },
-                    "kind": { "type": "string", "description": "Alias for program_kind." },
-                    "template": { "type": "string", "description": "Optional existing template family, e.g. csv_timeseries, kmer_sequence, source_code_metrics." },
-                    "metrics": { "type": "array", "description": "Open Metric DSL tags. Each item can include tag/name, op, inputs, params, unit, goal, description, formula, algorithm, weight; agents may define domain-specific metrics instead of choosing from a closed catalog. For custom/invented metrics, formula and algorithm should describe the exact math shown in live compute cards. IMPORTANT: 'tag' is hard-capped at 16 characters (e.g. 'rsi_14', 'vwap', 'ema_delta'); 'name' at 18 characters (e.g. 'RSI 14', 'VWAP'). Longer values are truncated/rejected — keep node labels minimalist." },
-                    "views": { "type": "array", "description": "Visual program views. Each item can define type=2d or type=3d, axes x/y/z, color, size, overlays, labels, transforms and local viewer params." },
-                    "spec_text": { "type": "string", "description": "Optional Forge Metric/Visual DSL v1 spec containing <metric .../> and, for visual_program, <view id=\"...\" type=\"3d\" x=\"time_index\" y=\"momentum_24\" z=\"volatility_48\" color=\"forward_return_6\" /> balises." },
-                    "source_schema": { "type": "object", "description": "Optional schema/columns expected by the program. No source content." },
-                    "constraints": { "type": "object", "description": "Optional compute constraints: max windows, allowed ops, precision, cache policy." },
-                    "output_contract": { "type": "object", "description": "Optional expected compact outputs: tables, scores, proofs, artifact types." }
-                },
-                "required": ["title", "goal"]
-            }
-        }),
-        json!({
-            "name": "program_compile_validate_route",
-            "displayName": "/metric",
-            "publicCommand": "/metric",
-            "description": "/metric - Compile/validate/route a Forge program before storage or after reading one from Atlas. Checks metric contracts, formulas, algorithms, inputs/outputs, dtype/unit/domain/params, objective coverage, dependency map, unit dimensions, scientific validation, formula-to-executor binding and linter results. Use this to improve metric tags, choose reusable Atlas tags/programs, and repair vague or non-routable programs before /create_ or /program_.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "program_hash": { "type": "string", "description": "Existing My Atlas program hash to recompile/validate." },
-                    "title": { "type": "string", "maxLength": 24, "description": "Draft title when compiling before storage. 24 characters max." },
-                    "domain": { "type": "string" },
-                    "intent": { "type": "string" },
-                    "goal": { "type": "string" },
-                    "program_kind": { "type": "string" },
-                    "metrics": { "type": "array" },
-                    "views": { "type": "array" },
-                    "spec_text": { "type": "string" },
-                    "source_schema": { "type": "object" },
-                    "constraints": { "type": "object" },
-                    "output_contract": { "type": "object" }
-                }
-            }
-        }),
-        json!({
-            "name": "geonode",
-            "displayName": "/geo",
-            "publicCommand": "/geo",
-            "description": "/geo - Create or update a reusable Atlas GeoNode/MiniGeoNode for a named spatial coordinate anchor on any planet, moon, asteroid, solar-system body, star system or galactic object. Use when a user or assistant mentions a real place/object that is not already in My Atlas. If coordinates come from model knowledge, mark coordinate_source='llm_estimate' and include confidence. Surface lat/lon anchors can be injected into Planet visual_program views with tool=planet_sphere; astronomical ra/dec anchors are saved for future space/galaxy renderers.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["name"],
-                "properties": {
-                    "name": { "type": "string" },
-                    "tag": { "type": "string" },
-                    "body": { "type": "string" },
-                    "coordinate_system": { "type": "string" },
-                    "lat": { "type": "number", "minimum": -90, "maximum": 90 },
-                    "lon": { "type": "number", "minimum": -360, "maximum": 360 },
-                    "ra": { "type": "number", "minimum": 0, "maximum": 360 },
-                    "dec": { "type": "number", "minimum": -90, "maximum": 90 },
-                    "distance": { "type": "number" },
-                    "distance_unit": { "type": "string" },
-                    "node_kind": { "type": "string", "description": "geo_node or mini_geo_node." },
-                    "parent_geonode": { "type": "string" },
-                    "aliases": { "type": "array", "items": { "type": "string" } },
-                    "coordinate_source": { "type": "string" },
-                    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-                    "notes": { "type": "string" }
-                }
-            }
-        }),
-        json!({
-            "name": "run",
-            "displayName": "/program_",
-            "publicCommand": "/program_",
-            "description": "/program_ - Run Forge compute or visual programs locally. Main fast path for pending uploads, large files, reusable compute_program/visual_program specs, CPU/GPU jobs, 2D/3D mappings, simulations, searches and proof/artifact workflows. After the first run, the same program_hash + input hashes + params returns an instant My Atlas hit. Use run {} for the only pending upload, run { pending:true }, run { job_id:\"...\" }, or run { intent, inputs, plan_only:true }. Do not read raw files or compute manually in the LLM.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "intent": { "type": "string", "description": "Natural-language compute/visual intent, e.g. create a 3D metric map, find anomalies in this CSV, create DNA k-mer hash metrics, analyze code complexity or build a domain-specific simulator." },
-                    "plan_only": { "type": "boolean", "description": "If true, return a compact compute plan, cache/proof policy and next call without launching or sending raw data to the LLM." },
-                    "pending": { "type": "boolean", "description": "If true, claim the newest pending UI upload. If exactly one pending job exists, run {} does the same." },
-                    "job_id": { "type": "string", "description": "Pending Forge job id created by the UI upload dropbox." },
-                    "program_hash": { "type": "string", "description": "Reusable program hash returned by create or read { kind:\"programs\" }." },
-                    "program": { "type": "string", "description": "Program library selector: hash, title, or query for an existing Forge program/template." },
-                    "program_title": { "type": "string", "description": "Exact or fuzzy title of a program in the Forge library." },
-                    "program_query": { "type": "string", "description": "Search query for an existing program in the Forge library." },
-                    "capability": { "type": "string", "description": "Optional capability/template, e.g. universal_compute_program, universal_visual_program_2d_3d, alpha, csv_timeseries, kmer_sequence." },
-                    "inputs": { "type": "array", "description": "Input refs with path or job_id and optional role." },
-                    "params": { "type": "object", "description": "Runtime parameter overrides for programs/capabilities." },
-                    "title": { "type": "string", "description": "Optional human-readable title chosen by the agent." },
-                    "sl_points": { "type": "number" },
-                    "tp_points": { "type": "number" },
-                    "sl_display_points": { "type": "number" },
-                    "tp_display_points": { "type": "number" },
-                    "spread_display_points": { "type": "number" },
-                    "target_display_points_per_day": { "type": "number" },
-                    "point_size": { "type": "number" },
-                    "max_horizon_bars": { "type": "integer" },
-                    "train_split": { "type": "number" },
-                    "top_rules_per_side": { "type": "integer" },
-                    "engine": { "type": "string", "description": "auto (default), forge, forge_strict, or threshold." },
-                    "max_nodes": { "type": "integer" },
-                    "generations": { "type": "integer" },
-                    "beam_width": { "type": "integer" },
-                    "feature_limit": { "type": "integer" },
-                    "store_dir": { "type": "string" }
-                }
-            }
-        }),
-        json!({
-            "name": "jobs",
-            "description": "List Forge sessions and pending/running/completed jobs. Use to find a job_id before run/logs/read. Returns compact summaries so the agent does not spend tokens reading Forge files from disk.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit": { "type": "integer", "description": "Maximum jobs to list. Default 20." }
-                }
-            }
-        }),
-        json!({
-            "name": "sessions",
-            "description": "List/search Forge session history as compact manifests, source refs, statuses and artifact availability. No raw files.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit": { "type": "integer" },
-                    "query": { "type": "string" },
-                    "status": { "type": "string" }
-                }
-            }
-        }),
-        json!({
-            "name": "documents",
-            "description": "List saved document/source refs from Forge sessions. Returns metadata and references only.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit": { "type": "integer" },
-                    "query": { "type": "string" },
-                    "type": { "type": "string" }
-                }
-            }
-        }),
-        json!({
-            "name": "mapping",
-            "description": "Interpret programmable Forge 2D/3D visual mappings by compact refs, legends, axes, metrics and selection hints. No raw point clouds or source rows.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "mode": { "type": "string" },
-                    "vertex_index": { "type": "integer" }
-                }
-            }
-        }),
-        json!({
-            "name": "mapping_metrics",
-            "displayName": "/metric",
-            "publicCommand": "/metric",
-            "description": "/metric - Inspect the active file locally and return an extensible metric/recipe schema for 2D/3D visual programs: source columns, derived metrics, axes/color/size candidates and accepted agent-defined metrics. No source rows.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" }
-                }
-            }
-        }),
-        json!({
-            "name": "mapping_model",
-            "description": "Create or modify a programmable Forge 3D map from an agent recipe: axes XYZ, metrics, color, size, overlays, transform and objective. Forge reads the source locally and returns only artifact refs and compact diagnostics.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "recipe": { "type": "object" },
-                    "mode": { "type": "string" },
-                    "objective": { "type": "string" },
-                    "max_points": { "type": "integer" },
-                    "voxel_resolution": { "type": "integer" }
-                }
-            }
-        }),
-        json!({
-            "name": "visual_program",
-            "displayName": "/visualprogram_",
-            "publicCommand": "/visualprogram_",
-            "description": "/visualprogram_ - Run visual_program views locally on the active session file: 2D/3D axes, overlays, labels, color/size, transforms and open Metric/Visual DSL definitions. Returns compact artifact refs, hashes and diagnostics only.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["views"],
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "metrics": { "type": "array" },
-                    "views": { "type": "array" },
-                    "program_hash": { "type": "string" },
-                    "program_title": { "type": "string" },
-                    "program_goal": { "type": "string" },
-                    "max_points": { "type": "integer" },
-                    "voxel_resolution": { "type": "integer" }
-                }
-            }
-        }),
-        json!({
-            "name": "mapping_analysis",
-            "description": "Analyze a Forge 3D visual_program locally with PCA, voxel density, clusters, outliers, trajectory and geometry diagnostics. Compact statistics only; no raw points or rows.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "mode": { "type": "string" },
-                    "voxel_resolution": { "type": "integer" },
-                    "max_hotspots": { "type": "integer" },
-                    "max_clusters": { "type": "integer" }
-                }
-            }
-        }),
-        json!({
-            "name": "profile",
-            "description": "Read/update redacted Forge profile/provider settings, model choices, reasoning effort and local auth actions. Secrets are write-only.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "action": { "type": "string" },
-                    "provider": { "type": "string" },
-                    "model_ref": { "type": "string" },
-                    "reasoning_effort": { "type": "string" },
-                    "settings": { "type": "object" },
-                    "gemini_api_key": { "type": "string" }
-                }
-            }
-        }),
-        json!({
-            "name": "atlas",
-            "description": "Compact My Atlas overview: reusable programs, metric tags and completed run refs. Use before creating or running duplicate work.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "max_entries": { "type": "integer" },
-                    "query": { "type": "string", "description": "Search reusable Atlas programs, metric tags or completed runs." },
-                    "kind": { "type": "string", "description": "Optional filter: program, metric_tag, or run." }
-                }
-            }
-        }),
-        json!({
-            "name": "brain_recall",
-            "description": "Recall Forge Brain state, latest memory refs, scoped LLM notes and optional KASM program summaries. Returns hashes/refs/previews only.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scope": { "type": "string", "description": "Optional memory scope/section such as basic, google_suite, banger, trading or real_estate." },
-                    "section": { "type": "string" },
-                    "program_hash": { "type": "string", "description": "Optional KASM program hash to resolve through brain substitutions." },
-                    "hash": { "type": "string" }
-                }
-            }
-        }),
-        json!({
-            "name": "brain_commit",
-            "description": "Commit a bounded LLM observation note and/or a verified KASM program into Forge Brain. Program commits run brain tightening and semantic attractor publishing.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scope": { "type": "string" },
-                    "section": { "type": "string" },
-                    "kind": { "type": "string" },
-                    "source": { "type": "string" },
-                    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-                    "text": { "type": "string" },
-                    "observation": { "type": "string" },
-                    "program_hash": { "type": "string" },
-                    "samples": { "type": "integer" }
-                }
-            }
-        }),
-        json!({
-            "name": "brain_compare",
-            "description": "Compare two KASM programs by Forge semantic fingerprint and publish a verified attractor when they collapse to the same behavior.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["left_hash", "right_hash"],
-                "properties": {
-                    "left_hash": { "type": "string" },
-                    "right_hash": { "type": "string" },
-                    "a": { "type": "string" },
-                    "b": { "type": "string" },
-                    "samples": { "type": "integer" }
-                }
-            }
-        }),
-        json!({
-            "name": "brain_sleep",
-            "description": "Run a bounded semantic sleep pass over explicit program hashes: tighten, verify, and converge equivalent programs to shorter attractors.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "program_hashes": { "type": "array", "items": { "type": "string" } },
-                    "program_hash": { "type": "string" },
-                    "hash": { "type": "string" },
-                    "samples": { "type": "integer" }
-                }
-            }
-        }),
-        json!({
-            "name": "brain_explain",
-            "description": "Explain a Forge Brain hash or refs/brain/* ref as compact metadata: memory trace, state, LLM note or KASM program summary.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "hash": { "type": "string" },
-                    "program_hash": { "type": "string" },
-                    "memory_hash": { "type": "string" },
-                    "ref": { "type": "string" },
-                    "kind": { "type": "string", "description": "Use state to explain refs/brain/state." }
-                }
-            }
-        }),
-        json!({
-            "name": "update_session",
-            "description": "Update safe session metadata: title, pinned/protected flags, archive/status, tags or note.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["job_id"],
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "title": { "type": "string" },
-                    "status": { "type": "string" },
-                    "pinned": { "type": "boolean" },
-                    "protected": { "type": "boolean" },
-                    "archived": { "type": "boolean" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "note": { "type": "string" }
-                }
-            }
-        }),
-        json!({
-            "name": "read",
-            "description": "Read compact Forge results, hashes, proofs, artifact refs, bounded previews, reusable programs and 3D mappings. Heavy CSV/source/log/artifact content is not returned by default.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string", "description": "Compute job id." },
-                    "program_hash": { "type": "string", "description": "Optional program hash to read a reusable Forge program." },
-                    "kind": { "type": "string", "description": "Optional: job, program, artifacts, docs, preview." },
-                    "max_bytes": { "type": "integer", "description": "Only used for kind=preview; capped." }
-                }
-            }
-        }),
-        json!({
-            "name": "logs",
-            "description": "Stream live Forge compute progress by cursor. Use while a job runs or appears stuck. Returns bounded log chunks and next_cursor; do not open .log files directly.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "cursor": { "type": "integer", "description": "Byte offset returned by the previous call. Default 0." },
-                    "max_bytes": { "type": "integer", "description": "Maximum bytes to read. Default 65536, capped at 262144." }
-                },
-                "required": ["job_id"]
-            }
-        }),
-        json!({
-            "name": "cancel",
-            "description": "Cancel a Forge job safely by job_id. Use when the user asks to stop, abort, retry, or change parameters.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "reason": { "type": "string" }
-                },
-                "required": ["job_id"]
-            }
-        }),
+        mcp_tool("about", None, "Forge — local compute and visual-program engine for AI agents. FIRST CALL for large files, expensive/repetitive calculations, scientific/data/code/document analysis, programmable 2D/3D views, custom compute_program/visual_program specs, hashes, proofs or compact artifacts. Use Forge before Read/shell above 256 KB or 1,000 rows to avoid spending massive LLM tokens reading/calculating. Fast path: run { intent, inputs, plan_only:true } or run {} for one pending upload.", json!({}), &[]),
+        mcp_tool("capabilities", Some("/metric"), "/metric - Forge capability GPS. Find examples plus universal creation routes for compute_program and visual_program specs: open Metric/Visual DSL, domain metrics, 2D/3D axes, overlays, artifacts and local execution. Built-in finance/DNA templates are examples, not limits. Use when the domain or program shape is unclear; otherwise call /program_ with plan_only=true directly.", json!({
+            "query": { "type": "string", "description": "Optional capability/operator/domain/intent search, e.g. visual_program, 3D mapping, finance, kmer, code, volume anomalies, geospatial, audio." },
+            "domain": { "type": "string", "description": "Optional compact domain filter: finance, code, documents, biology, chemistry, medicine, math, engineering, aerospace, simulation, timeseries, security, energy, geospatial, manufacturing, audio, images or any custom domain." },
+            "capability": { "type": "string", "description": "Optional exact capability/template name such as universal_compute_program, universal_visual_program_2d_3d, csv_timeseries, kmer_sequence, source_code_metrics." },
+            "detail": { "type": "string", "description": "compact (default) or detailed. Detailed returns matching operators and examples." },
+            "detailed": { "type": "boolean", "description": "Set true to include detailed matching operators." }
+        }), &[]),
+        mcp_tool("create", Some("/create_"), "/create_ - Create a reusable Forge program for any domain. Check atlas first when reuse is possible. Use compute_program for local calculations/simulations/metrics, or visual_program for programmable 2D/3D views over session files. Specs use compact Metric/Visual DSL tags with open-ended domain metrics; Forge compiles the metric graph, validates routes/dependencies/math contracts, stores the program and every metric tag in My Atlas by content hash and never needs raw file content in the LLM.", json!({
+            "title": { "type": "string", "maxLength": 24, "description": "Very short instrument/lens title — 24 characters max. Use a concise label like 'VWAP detune', 'RSI long', 'K-mer scan'. Longer titles are rejected." },
+            "domain": { "type": "string", "description": "Free-form domain: finance, biology, chemistry, code, math, engineering, aerospace, medicine, geospatial, audio, images, networks, manufacturing, custom, etc." },
+            "intent": { "type": "string", "description": "Natural-language reason for this program, e.g. invent a metric, model a 3D map, detect anomalies, simulate a system or measure k-mer hash quality." },
+            "goal": { "type": "string", "description": "What the program should measure, discover or optimize." },
+            "program_kind": { "type": "string", "description": "Optional: compute_program (default) or visual_program for programs that define 2D/3D file views." },
+            "kind": { "type": "string", "description": "Alias for program_kind." },
+            "template": { "type": "string", "description": "Optional existing template family, e.g. csv_timeseries, kmer_sequence, source_code_metrics." },
+            "metrics": { "type": "array", "description": "Open Metric DSL tags. Each item can include tag/name, op, inputs, params, unit, goal, description, formula, algorithm, weight; agents may define domain-specific metrics instead of choosing from a closed catalog. For custom/invented metrics, formula and algorithm should describe the exact math shown in live compute cards. IMPORTANT: 'tag' is hard-capped at 16 characters (e.g. 'rsi_14', 'vwap', 'ema_delta'); 'name' at 18 characters (e.g. 'RSI 14', 'VWAP'). Longer values are truncated/rejected — keep node labels minimalist." },
+            "views": { "type": "array", "description": "Visual program views. Each item can define type=2d or type=3d, axes x/y/z, color, size, overlays, labels, transforms and local viewer params." },
+            "spec_text": { "type": "string", "description": "Optional Forge Metric/Visual DSL v1 spec containing <metric .../> and, for visual_program, <view id=\"...\" type=\"3d\" x=\"time_index\" y=\"momentum_24\" z=\"volatility_48\" color=\"forward_return_6\" /> balises." },
+            "source_schema": { "type": "object", "description": "Optional schema/columns expected by the program. No source content." },
+            "constraints": { "type": "object", "description": "Optional compute constraints: max windows, allowed ops, precision, cache policy." },
+            "output_contract": { "type": "object", "description": "Optional expected compact outputs: tables, scores, proofs, artifact types." }
+        }), &["title", "goal"]),
+        mcp_tool("program_compile_validate_route", Some("/metric"), "/metric - Compile/validate/route a Forge program before storage or after reading one from Atlas. Checks metric contracts, formulas, algorithms, inputs/outputs, dtype/unit/domain/params, objective coverage, dependency map, unit dimensions, scientific validation, formula-to-executor binding and linter results. Use this to improve metric tags, choose reusable Atlas tags/programs, and repair vague or non-routable programs before /create_ or /program_.", json!({
+            "program_hash": { "type": "string", "description": "Existing My Atlas program hash to recompile/validate." },
+            "title": { "type": "string", "maxLength": 24, "description": "Draft title when compiling before storage. 24 characters max." },
+            "domain": { "type": "string" },
+            "intent": { "type": "string" },
+            "goal": { "type": "string" },
+            "program_kind": { "type": "string" },
+            "metrics": { "type": "array" },
+            "views": { "type": "array" },
+            "spec_text": { "type": "string" },
+            "source_schema": { "type": "object" },
+            "constraints": { "type": "object" },
+            "output_contract": { "type": "object" }
+        }), &[]),
+        mcp_tool("geonode", Some("/geo"), "/geo - Create or update a reusable Atlas GeoNode/MiniGeoNode for a named spatial coordinate anchor on any planet, moon, asteroid, solar-system body, star system or galactic object. Use when a user or assistant mentions a real place/object that is not already in My Atlas. If coordinates come from model knowledge, mark coordinate_source='llm_estimate' and include confidence. Surface lat/lon anchors can be injected into Planet visual_program views with tool=planet_sphere; astronomical ra/dec anchors are saved for future space/galaxy renderers.", json!({
+            "name": { "type": "string" },
+            "tag": { "type": "string" },
+            "body": { "type": "string" },
+            "coordinate_system": { "type": "string" },
+            "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+            "lon": { "type": "number", "minimum": -360, "maximum": 360 },
+            "ra": { "type": "number", "minimum": 0, "maximum": 360 },
+            "dec": { "type": "number", "minimum": -90, "maximum": 90 },
+            "distance": { "type": "number" },
+            "distance_unit": { "type": "string" },
+            "node_kind": { "type": "string", "description": "geo_node or mini_geo_node." },
+            "parent_geonode": { "type": "string" },
+            "aliases": { "type": "array", "items": { "type": "string" } },
+            "coordinate_source": { "type": "string" },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "notes": { "type": "string" }
+        }), &["name"]),
+        mcp_tool("run", Some("/program_"), "/program_ - Run Forge compute or visual programs locally. Main fast path for pending uploads, large files, reusable compute_program/visual_program specs, CPU/GPU jobs, 2D/3D mappings, simulations, searches and proof/artifact workflows. After the first run, the same program_hash + input hashes + params returns an instant My Atlas hit. Use run {} for the only pending upload, run { pending:true }, run { job_id:\"...\" }, or run { intent, inputs, plan_only:true }. Do not read raw files or compute manually in the LLM.", json!({
+            "intent": { "type": "string", "description": "Natural-language compute/visual intent, e.g. create a 3D metric map, find anomalies in this CSV, create DNA k-mer hash metrics, analyze code complexity or build a domain-specific simulator." },
+            "plan_only": { "type": "boolean", "description": "If true, return a compact compute plan, cache/proof policy and next call without launching or sending raw data to the LLM." },
+            "pending": { "type": "boolean", "description": "If true, claim the newest pending UI upload. If exactly one pending job exists, run {} does the same." },
+            "job_id": { "type": "string", "description": "Pending Forge job id created by the UI upload dropbox." },
+            "program_hash": { "type": "string", "description": "Reusable program hash returned by create or read { kind:\"programs\" }." },
+            "program": { "type": "string", "description": "Program library selector: hash, title, or query for an existing Forge program/template." },
+            "program_title": { "type": "string", "description": "Exact or fuzzy title of a program in the Forge library." },
+            "program_query": { "type": "string", "description": "Search query for an existing program in the Forge library." },
+            "capability": { "type": "string", "description": "Optional capability/template, e.g. universal_compute_program, universal_visual_program_2d_3d, alpha, csv_timeseries, kmer_sequence." },
+            "inputs": { "type": "array", "description": "Input refs with path or job_id and optional role." },
+            "params": { "type": "object", "description": "Runtime parameter overrides for programs/capabilities." },
+            "title": { "type": "string", "description": "Optional human-readable title chosen by the agent." },
+            "sl_points": { "type": "number" },
+            "tp_points": { "type": "number" },
+            "sl_display_points": { "type": "number" },
+            "tp_display_points": { "type": "number" },
+            "spread_display_points": { "type": "number" },
+            "target_display_points_per_day": { "type": "number" },
+            "point_size": { "type": "number" },
+            "max_horizon_bars": { "type": "integer" },
+            "train_split": { "type": "number" },
+            "top_rules_per_side": { "type": "integer" },
+            "engine": { "type": "string", "description": "auto (default), forge, forge_strict, or threshold." },
+            "max_nodes": { "type": "integer" },
+            "generations": { "type": "integer" },
+            "beam_width": { "type": "integer" },
+            "feature_limit": { "type": "integer" },
+            "store_dir": { "type": "string" }
+        }), &[]),
+        mcp_tool("jobs", None, "List Forge sessions and pending/running/completed jobs. Use to find a job_id before run/logs/read. Returns compact summaries so the agent does not spend tokens reading Forge files from disk.", json!({ "limit": { "type": "integer", "description": "Maximum jobs to list. Default 20." } }), &[]),
+        mcp_tool("sessions", None, "List/search Forge session history as compact manifests, source refs, statuses and artifact availability. No raw files.", json!({ "limit": { "type": "integer" }, "query": { "type": "string" }, "status": { "type": "string" } }), &[]),
+        mcp_tool("documents", None, "List saved document/source refs from Forge sessions. Returns metadata and references only.", json!({ "limit": { "type": "integer" }, "query": { "type": "string" }, "type": { "type": "string" } }), &[]),
+        mcp_tool("mapping", None, "Interpret programmable Forge 2D/3D visual mappings by compact refs, legends, axes, metrics and selection hints. No raw point clouds or source rows.", json!({ "job_id": { "type": "string" }, "mode": { "type": "string" }, "vertex_index": { "type": "integer" } }), &[]),
+        mcp_tool("mapping_metrics", Some("/metric"), "/metric - Inspect the active file locally and return an extensible metric/recipe schema for 2D/3D visual programs: source columns, derived metrics, axes/color/size candidates and accepted agent-defined metrics. No source rows.", json!({ "job_id": { "type": "string" } }), &[]),
+        mcp_tool("mapping_model", None, "Create or modify a programmable Forge 3D map from an agent recipe: axes XYZ, metrics, color, size, overlays, transform and objective. Forge reads the source locally and returns only artifact refs and compact diagnostics.", json!({ "job_id": { "type": "string" }, "recipe": { "type": "object" }, "mode": { "type": "string" }, "objective": { "type": "string" }, "max_points": { "type": "integer" }, "voxel_resolution": { "type": "integer" } }), &[]),
+        mcp_tool("visual_program", Some("/visualprogram_"), "/visualprogram_ - Run visual_program views locally on the active session file: 2D/3D axes, overlays, labels, color/size, transforms and open Metric/Visual DSL definitions. Returns compact artifact refs, hashes and diagnostics only.", json!({ "job_id": { "type": "string" }, "metrics": { "type": "array" }, "views": { "type": "array" }, "program_hash": { "type": "string" }, "program_title": { "type": "string" }, "program_goal": { "type": "string" }, "max_points": { "type": "integer" }, "voxel_resolution": { "type": "integer" } }), &["views"]),
+        mcp_tool("mapping_analysis", None, "Analyze a Forge 3D visual_program locally with PCA, voxel density, clusters, outliers, trajectory and geometry diagnostics. Compact statistics only; no raw points or rows.", json!({ "job_id": { "type": "string" }, "mode": { "type": "string" }, "voxel_resolution": { "type": "integer" }, "max_hotspots": { "type": "integer" }, "max_clusters": { "type": "integer" } }), &[]),
+        mcp_tool("profile", None, "Read/update redacted Forge profile/provider settings, model choices, reasoning effort and local auth actions. Secrets are write-only.", json!({ "action": { "type": "string" }, "provider": { "type": "string" }, "model_ref": { "type": "string" }, "reasoning_effort": { "type": "string" }, "settings": { "type": "object" }, "gemini_api_key": { "type": "string" } }), &[]),
+        mcp_tool("atlas", None, "Compact My Atlas overview: reusable programs, metric tags and completed run refs. Use before creating or running duplicate work.", json!({ "max_entries": { "type": "integer" }, "query": { "type": "string", "description": "Search reusable Atlas programs, metric tags or completed runs." }, "kind": { "type": "string", "description": "Optional filter: program, metric_tag, or run." } }), &[]),
+        mcp_tool("brain_recall", None, "Recall Forge Brain state, latest memory refs, scoped LLM notes and optional KASM program summaries. Returns hashes/refs/previews only.", json!({ "scope": { "type": "string", "description": "Optional memory scope/section such as basic, google_suite, banger, trading or real_estate." }, "section": { "type": "string" }, "program_hash": { "type": "string", "description": "Optional KASM program hash to resolve through brain substitutions." }, "hash": { "type": "string" } }), &[]),
+        mcp_tool("brain_commit", None, "Commit a bounded LLM observation note and/or a verified KASM program into Forge Brain. Program commits run brain tightening and semantic attractor publishing.", json!({ "scope": { "type": "string" }, "section": { "type": "string" }, "kind": { "type": "string" }, "source": { "type": "string" }, "confidence": { "type": "number", "minimum": 0, "maximum": 1 }, "text": { "type": "string" }, "observation": { "type": "string" }, "program_hash": { "type": "string" }, "samples": { "type": "integer" } }), &[]),
+        mcp_tool("brain_compare", None, "Compare two KASM programs by Forge semantic fingerprint and publish a verified attractor when they collapse to the same behavior.", json!({ "left_hash": { "type": "string" }, "right_hash": { "type": "string" }, "a": { "type": "string" }, "b": { "type": "string" }, "samples": { "type": "integer" } }), &["left_hash", "right_hash"]),
+        mcp_tool("brain_sleep", None, "Run a bounded semantic sleep pass over explicit program hashes: tighten, verify, and converge equivalent programs to shorter attractors.", json!({ "program_hashes": { "type": "array", "items": { "type": "string" } }, "program_hash": { "type": "string" }, "hash": { "type": "string" }, "samples": { "type": "integer" } }), &[]),
+        mcp_tool("brain_explain", None, "Explain a Forge Brain hash or refs/brain/* ref as compact metadata: memory trace, state, LLM note or KASM program summary.", json!({ "hash": { "type": "string" }, "program_hash": { "type": "string" }, "memory_hash": { "type": "string" }, "ref": { "type": "string" }, "kind": { "type": "string", "description": "Use state to explain refs/brain/state." } }), &[]),
+        mcp_tool("update_session", None, "Update safe session metadata: title, pinned/protected flags, archive/status, tags or note.", json!({ "job_id": { "type": "string" }, "title": { "type": "string" }, "status": { "type": "string" }, "pinned": { "type": "boolean" }, "protected": { "type": "boolean" }, "archived": { "type": "boolean" }, "tags": { "type": "array", "items": { "type": "string" } }, "note": { "type": "string" } }), &["job_id"]),
+        mcp_tool("read", None, "Read compact Forge results, hashes, proofs, artifact refs, bounded previews, reusable programs and 3D mappings. Heavy CSV/source/log/artifact content is not returned by default.", json!({ "job_id": { "type": "string", "description": "Compute job id." }, "program_hash": { "type": "string", "description": "Optional program hash to read a reusable Forge program." }, "kind": { "type": "string", "description": "Optional: job, program, artifacts, docs, preview." }, "max_bytes": { "type": "integer", "description": "Only used for kind=preview; capped." } }), &[]),
+        mcp_tool("logs", None, "Stream live Forge compute progress by cursor. Use while a job runs or appears stuck. Returns bounded log chunks and next_cursor; do not open .log files directly.", json!({ "job_id": { "type": "string" }, "cursor": { "type": "integer", "description": "Byte offset returned by the previous call. Default 0." }, "max_bytes": { "type": "integer", "description": "Maximum bytes to read. Default 65536, capped at 262144." } }), &["job_id"]),
+        mcp_tool("cancel", None, "Cancel a Forge job safely by job_id. Use when the user asks to stop, abort, retry, or change parameters.", json!({ "job_id": { "type": "string" }, "reason": { "type": "string" } }), &["job_id"]),
     ]
+}
+
+const MCP_TOOL_ALIASES: &[(&str, &[&str])] = &[
+    ("about", &["about", "forge_about"]),
+    ("create", &["create", "/create_", "create_", "define", "forge_program_define", "forge_program_create"]),
+    ("indicator", &["/indicator", "indicator", "/indicator_", "indicator_", "/alert_", "alert_"]),
+    ("metric", &["/metric", "metric"]),
+    ("program_compile_validate_route", &["program_compile_validate_route", "compile_validate_route", "compile", "forge_program_compile_validate_route"]),
+    ("capabilities", &["capabilities", "ops", "operators", "forge_ops", "forge_program_ops"]),
+    ("programs", &["programs", "forge_programs_list"]),
+    ("program", &["program", "forge_program_read"]),
+    ("execute", &["execute", "forge_program_execute", "forge_program_run"]),
+    ("alpha", &["alpha", "forge_alpha_strategy_from_csv"]),
+    ("jobs", &["jobs", "forge_jobs_list"]),
+    ("pending", &["pending", "forge_pending_jobs_list"]),
+    ("read", &["read", "forge_job_read"]),
+    ("mapping", &["mapping", "visual_mapping", "forge_interpret_visual_mapping"]),
+    ("mapping_metrics", &["mapping_metrics", "metric_catalog_3d", "forge_3d_metric_catalog"]),
+    ("mapping_model", &["mapping_model", "model_mapping", "forge_model_3d_mapping", "forge_3d_model_view"]),
+    ("visual_program", &["visual_program", "/visualprogram", "visualprogram", "/visualprogram_", "visualprogram_", "run_visual_program", "forge_run_visual_program", "visual_program_run"]),
+    ("mapping_analysis", &["mapping_analysis", "analyze_mapping", "forge_analyze_3d_mapping"]),
+    ("profile", &["profile", "settings", "forge_profile_settings"]),
+    ("sessions", &["sessions", "history", "forge_list_sessions"]),
+    ("documents", &["documents", "docs", "forge_list_documents", "forge_docs_list"]),
+    ("atlas", &["atlas", "forge_atlas_overview"]),
+    ("brain_recall", &["brain_recall", "forge_brain_recall", "recall_memory"]),
+    ("brain_commit", &["brain_commit", "forge_brain_commit", "commit_memory"]),
+    ("brain_compare", &["brain_compare", "forge_brain_compare", "compare_memory"]),
+    ("brain_sleep", &["brain_sleep", "forge_brain_sleep", "memory_sleep"]),
+    ("brain_explain", &["brain_explain", "forge_brain_explain", "explain_memory"]),
+    ("geonode", &["geonode", "/geo", "geo", "/geo_", "geo_", "/minigeo", "minigeo", "/minigeo_", "minigeo_", "upsert_geonode", "forge_upsert_geonode"]),
+    ("update_session", &["update_session", "forge_update_session"]),
+    ("run", &["run", "/program_", "program_", "/strategy_", "strategy_", "claim", "forge_job_run_pending", "forge_job_claim"]),
+    ("logs", &["logs", "forge_job_log_tail"]),
+    ("artifacts", &["artifacts", "forge_job_artifacts"]),
+    ("inject", &["inject", "forge_job_inject_result"]),
+    ("rename", &["rename", "forge_job_update_title"]),
+    ("cancel", &["cancel", "forge_job_cancel"]),
+    ("legacy_docs", &["legacy_docs"]),
+    ("doc", &["doc", "forge_doc_read"]),
+    ("preview", &["preview", "forge_doc_preview"]),
+    ("doc_sessions", &["doc_sessions", "forge_doc_sessions"]),
+];
+
+const MCP_INTERNAL_TOOL_ROUTES: &[(&str, &str)] = &[
+    ("mapping", "forge_interpret_visual_mapping"),
+    ("mapping_metrics", "forge_3d_metric_catalog"),
+    ("mapping_model", "forge_model_3d_mapping"),
+    ("visual_program", "forge_run_visual_program"),
+    ("mapping_analysis", "forge_analyze_3d_mapping"),
+    ("profile", "forge_profile_settings"),
+    ("sessions", "forge_list_sessions"),
+    ("documents", "forge_list_documents"),
+    ("atlas", "forge_atlas_overview"),
+    ("brain_recall", "forge_brain_recall"),
+    ("brain_commit", "forge_brain_commit"),
+    ("brain_compare", "forge_brain_compare"),
+    ("brain_sleep", "forge_brain_sleep"),
+    ("brain_explain", "forge_brain_explain"),
+    ("geonode", "forge_upsert_geonode"),
+    ("update_session", "forge_update_session"),
+];
+
+fn canonical_mcp_tool_name(name: &str) -> Option<&'static str> {
+    MCP_TOOL_ALIASES
+        .iter()
+        .find_map(|(canonical, aliases)| aliases.contains(&name).then_some(*canonical))
+}
+
+fn internal_mcp_tool_route(canonical: &str) -> Option<&'static str> {
+    MCP_INTERNAL_TOOL_ROUTES
+        .iter()
+        .find_map(|(name, route)| (*name == canonical).then_some(*route))
 }
 
 fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, String> {
@@ -1062,15 +850,19 @@ fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, Strin
         .and_then(Value::as_str)
         .ok_or_else(|| "tools/call missing name".to_string())?;
     let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-    match name {
-        "about" | "forge_about" => mcp_tool_response(forge_about()),
-        "create" | "/create_" | "create_" | "define" | "forge_program_define" | "forge_program_create" => {
+    let canonical = canonical_mcp_tool_name(name).ok_or_else(|| format!("unknown Forge tool: {name}"))?;
+    if let Some(route) = internal_mcp_tool_route(canonical) {
+        return mcp_internal_tool_response(route, &args);
+    }
+    match canonical {
+        "about" => mcp_tool_response(forge_about()),
+        "create" => {
             let args: ProgramDefineArgs =
                 serde_json::from_value(args).map_err(|e| format!("bad arguments: {e}"))?;
             let result = define_program(args, &session.client)?;
             mcp_tool_response(result)
         }
-        "/indicator" | "indicator" | "/indicator_" | "indicator_" | "/alert_" | "alert_" => {
+        "indicator" => {
             if args.get("title").is_some() && args.get("goal").is_some() {
                 let args: ProgramDefineArgs =
                     serde_json::from_value(args).map_err(|e| format!("bad arguments: {e}"))?;
@@ -1081,7 +873,7 @@ fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, Strin
                 mcp_tool_response(result)
             }
         }
-        "/metric" | "metric" => {
+        "metric" => {
             let compile_like = ["program_hash", "title", "goal", "metrics", "views", "spec_text", "source_schema", "constraints", "output_contract"]
                 .iter()
                 .any(|key| args.get(*key).is_some());
@@ -1092,22 +884,19 @@ fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, Strin
             };
             mcp_tool_response(result)
         }
-        "program_compile_validate_route"
-        | "compile_validate_route"
-        | "compile"
-        | "forge_program_compile_validate_route" => {
+        "program_compile_validate_route" => {
             let result = program_compile_validate_route(&args)?;
             mcp_tool_response(result)
         }
-        "capabilities" | "ops" | "operators" | "forge_ops" | "forge_program_ops" => {
+        "capabilities" => {
             let result = list_metric_ops(&args);
             mcp_tool_response(result)
         }
-        "programs" | "forge_programs_list" => {
+        "programs" => {
             let result = list_programs(&args)?;
             mcp_tool_response(result)
         }
-        "program" | "forge_program_read" => {
+        "program" => {
             let program_hash = args
                 .get("program_hash")
                 .or_else(|| args.get("program_id"))
@@ -1116,19 +905,19 @@ fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, Strin
             let result = read_program(program_hash)?;
             mcp_tool_response(result)
         }
-        "execute" | "forge_program_execute" | "forge_program_run" => {
+        "execute" => {
             let args: ProgramExecuteArgs =
                 serde_json::from_value(args).map_err(|e| format!("bad arguments: {e}"))?;
             let result = execute_program(args, &session.client)?;
             mcp_tool_response(result)
         }
-        "alpha" | "forge_alpha_strategy_from_csv" => {
+        "alpha" => {
             let args: AlphaStrategyArgs =
                 serde_json::from_value(args).map_err(|e| format!("bad arguments: {e}"))?;
             let job = run_alpha_strategy(args, &session.client)?;
             mcp_tool_response(serde_json::to_value(job).map_err(|e| format!("encode strategy result: {e}"))?)
         }
-        "jobs" | "forge_jobs_list" => {
+        "jobs" => {
             let limit = bounded_limit(args.get("limit"), MCP_LIST_LIMIT_DEFAULT, MCP_LIST_LIMIT_MAX);
             let jobs = list_jobs(limit)?;
             let pending_count = jobs
@@ -1144,7 +933,7 @@ fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, Strin
                 "token_safety": token_safety()
             }))
         }
-        "pending" | "forge_pending_jobs_list" => {
+        "pending" => {
             let limit = bounded_limit(args.get("limit"), MCP_LIST_LIMIT_DEFAULT, MCP_LIST_LIMIT_MAX);
             let jobs = list_pending_jobs(limit)?;
             let pending_count = jobs.len();
@@ -1157,80 +946,32 @@ fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, Strin
                 "token_safety": token_safety()
             }))
         }
-        "read" | "forge_job_read" => {
+        "read" => {
             let result = read_dispatch(&args)?;
             mcp_tool_response(result)
         }
-        "mapping" | "visual_mapping" | "forge_interpret_visual_mapping" => {
-            mcp_internal_tool_response("forge_interpret_visual_mapping", &args)
-        }
-        "mapping_metrics" | "metric_catalog_3d" | "forge_3d_metric_catalog" => {
-            mcp_internal_tool_response("forge_3d_metric_catalog", &args)
-        }
-        "mapping_model" | "model_mapping" | "forge_model_3d_mapping" | "forge_3d_model_view" => {
-            mcp_internal_tool_response("forge_model_3d_mapping", &args)
-        }
-        "visual_program" | "/visualprogram" | "visualprogram" | "/visualprogram_" | "visualprogram_" | "run_visual_program" | "forge_run_visual_program" | "visual_program_run" => {
-            mcp_internal_tool_response("forge_run_visual_program", &args)
-        }
-        "mapping_analysis" | "analyze_mapping" | "forge_analyze_3d_mapping" => {
-            mcp_internal_tool_response("forge_analyze_3d_mapping", &args)
-        }
-        "profile" | "settings" | "forge_profile_settings" => {
-            mcp_internal_tool_response("forge_profile_settings", &args)
-        }
-        "sessions" | "history" | "forge_list_sessions" => {
-            mcp_internal_tool_response("forge_list_sessions", &args)
-        }
-        "documents" | "docs" | "forge_list_documents" | "forge_docs_list" => {
-            mcp_internal_tool_response("forge_list_documents", &args)
-        }
-        "atlas" | "forge_atlas_overview" => {
-            mcp_internal_tool_response("forge_atlas_overview", &args)
-        }
-        "brain_recall" | "forge_brain_recall" | "recall_memory" => {
-            mcp_internal_tool_response("forge_brain_recall", &args)
-        }
-        "brain_commit" | "forge_brain_commit" | "commit_memory" => {
-            mcp_internal_tool_response("forge_brain_commit", &args)
-        }
-        "brain_compare" | "forge_brain_compare" | "compare_memory" => {
-            mcp_internal_tool_response("forge_brain_compare", &args)
-        }
-        "brain_sleep" | "forge_brain_sleep" | "memory_sleep" => {
-            mcp_internal_tool_response("forge_brain_sleep", &args)
-        }
-        "brain_explain" | "forge_brain_explain" | "explain_memory" => {
-            mcp_internal_tool_response("forge_brain_explain", &args)
-        }
-        "geonode" | "/geo" | "geo" | "/geo_" | "geo_" | "/minigeo" | "minigeo" | "/minigeo_" | "minigeo_" | "upsert_geonode" | "forge_upsert_geonode" => {
-            mcp_internal_tool_response("forge_upsert_geonode", &args)
-        }
-        "update_session" | "forge_update_session" => {
-            mcp_internal_tool_response("forge_update_session", &args)
-        }
-        "run" | "/program_" | "program_" | "/strategy_" | "strategy_" | "claim" | "forge_job_run_pending" | "forge_job_claim" => {
+        "run" => {
             let result = run_dispatch(args, &session.client)?;
             mcp_tool_response(result)
         }
-        "logs" | "forge_job_log_tail" => {
+        "logs" => {
             let result = tail_job_log(&args)?;
             mcp_tool_response(result)
         }
-        "artifacts" | "forge_job_artifacts" => {
+        "artifacts" => {
             let job_id = job_id_arg(&args, "artifacts")?;
             let result = job_artifacts(job_id)?;
             mcp_tool_response(result)
         }
-        "inject" | "forge_job_inject_result" => {
+        "inject" => {
             let result = inject_job_result(&args, &session.client)?;
             mcp_tool_response(result)
         }
-        "rename" | "forge_job_update_title" => {
+        "rename" => {
             let result = update_job_title(&args)?;
             mcp_tool_response(result)
         }
-        "cancel" | "forge_job_cancel" => {
+        "cancel" => {
             let result = request_job_cancel(&args, &session.client)?;
             mcp_tool_response(result)
         }
@@ -1238,20 +979,20 @@ fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, Strin
             let result = list_documents(&args)?;
             mcp_tool_response(result)
         }
-        "doc" | "forge_doc_read" => {
+        "doc" => {
             let job_id = job_id_arg(&args, "doc")?;
             let result = document_summary(job_id)?;
             mcp_tool_response(result)
         }
-        "preview" | "forge_doc_preview" => {
+        "preview" => {
             let result = document_preview(&args)?;
             mcp_tool_response(result)
         }
-        "doc_sessions" | "forge_doc_sessions" => {
+        "doc_sessions" => {
             let result = document_sessions(&args)?;
             mcp_tool_response(result)
         }
-        _ => Err(format!("unknown Forge tool: {name}")),
+        _ => Err(format!("unrouted Forge tool: {canonical}")),
     }
 }
 
@@ -6833,139 +6574,8 @@ fn read_my_atlas_index() -> Result<Value, String> {
 }
 
 fn ensure_builtin_mars_geonodes() -> Result<(), String> {
-    let dir = my_atlas_dir()?;
-    fs::create_dir_all(&dir).map_err(|e| format!("create atlas dir '{}': {e}", dir.display()))?;
-    let path = my_atlas_index_path()?;
-    let mut atlas = if path.exists() {
-        read_json_value(&path)?
-    } else {
-        empty_my_atlas_index(now_ms())
-    };
-    if !atlas.is_object() {
-        atlas = empty_my_atlas_index(now_ms());
-    }
-    let tags = atlas_array_mut(&mut atlas, "metric_tags")?;
-    let mut seen: HashSet<String> = tags
-        .iter()
-        .filter_map(|item| item.get("tag").and_then(Value::as_str).map(str::to_string))
-        .collect();
-    let geonodes = [
-        ("mars_olympus_mons", "Olympus Mons", "major_region", 18.65, -133.8, Value::Null),
-        ("mars_jezero_crater", "Jezero Crater", "major_region", 18.38, 77.58, Value::Null),
-        ("mars_gale_crater", "Gale Crater", "major_region", -5.4, 137.8, Value::Null),
-        ("mars_valles_marineris", "Valles Marineris", "major_region", -14.0, -59.0, Value::Null),
-        ("mars_hellas_planitia", "Hellas Planitia", "major_region", -42.4, 70.5, Value::Null),
-        ("mars_elysium_mons", "Elysium Mons", "major_region", 24.5, 146.7, Value::Null),
-        ("mars_ascraeus_mons", "Ascraeus Mons", "major_region", 11.9, -104.1, Value::Null),
-        ("mars_pavonis_mons", "Pavonis Mons", "major_region", 0.0, -113.0, Value::Null),
-        ("mars_arsia_mons", "Arsia Mons", "major_region", -9.4, -121.0, Value::Null),
-        ("mars_argyre_planitia", "Argyre Planitia", "major_region", -49.5, -40.0, Value::Null),
-        ("mars_utopia_planitia", "Utopia Planitia", "major_region", 45.0, 110.0, Value::Null),
-        ("mars_planum_boreum", "Planum Boreum", "major_region", 88.0, 15.0, Value::Null),
-        ("mars_planum_australe", "Planum Australe", "major_region", -83.9, -160.0, Value::Null),
-        ("mars_korolev_crater", "Korolev Crater", "major_region", 73.0, 165.0, Value::Null),
-        ("mars_ius_chasma", "Ius Chasma", "sub_region", -7.0, -85.0, json!("mars_valles_marineris")),
-        ("mars_tithonium_chasma", "Tithonium Chasma", "sub_region", -5.0, -84.0, json!("mars_valles_marineris")),
-        ("mars_melas_chasma", "Melas Chasma", "sub_region", -10.0, -72.0, json!("mars_valles_marineris")),
-        ("mars_coprates_chasma", "Coprates Chasma", "sub_region", -13.5, -61.0, json!("mars_valles_marineris")),
-        ("mars_capri_chasma", "Capri Chasma", "sub_region", -14.0, -48.0, json!("mars_valles_marineris")),
-        ("mars_eos_chasma", "Eos Chasma", "sub_region", -12.0, -42.0, json!("mars_valles_marineris")),
-        ("mars_hebes_chasma", "Hebes Chasma", "sub_region", -1.0, -76.0, json!("mars_valles_marineris")),
-        ("mars_ophir_chasma", "Ophir Chasma", "sub_region", -4.0, -72.5, json!("mars_valles_marineris")),
-        ("mars_juventae_chasma", "Juventae Chasma", "sub_region", -4.5, -63.0, json!("mars_valles_marineris")),
-        ("mars_ganges_chasma", "Ganges Chasma", "sub_region", -7.5, -49.0, json!("mars_valles_marineris")),
-    ];
-    let now = now_ms();
-    let mut changed = false;
-    for (tag, title, class, lat, lon, parent) in geonodes {
-        let is_mini = class == "sub_region";
-        let node_kind = if is_mini { "mini_geo_node" } else { "geo_node" };
-        let geonode_level = if is_mini { "mini" } else { "region" };
-        let parent_geonode = parent.clone();
-        let sublocation_tags = if tag == "mars_valles_marineris" {
-            json!([
-                "mars_ius_chasma",
-                "mars_tithonium_chasma",
-                "mars_melas_chasma",
-                "mars_coprates_chasma",
-                "mars_capri_chasma",
-                "mars_eos_chasma",
-                "mars_hebes_chasma",
-                "mars_ophir_chasma",
-                "mars_juventae_chasma",
-                "mars_ganges_chasma"
-            ])
-        } else {
-            json!([])
-        };
-        if let Some(existing) = tags.iter_mut().find(|item| {
-            item.get("tag")
-                .and_then(Value::as_str)
-                .map(|value| value == tag)
-                .unwrap_or(false)
-        }) {
-            let before = existing.clone();
-            if let Some(obj) = existing.as_object_mut() {
-                obj.insert("node_kind".to_string(), json!(node_kind));
-                obj.insert("geonode_level".to_string(), json!(geonode_level));
-                obj.insert("parent_geonode".to_string(), parent_geonode);
-                obj.insert("sublocation_tags".to_string(), sublocation_tags);
-                obj.insert("metric_linkable".to_string(), json!(true));
-                obj.insert("accepts_metric_nodes".to_string(), json!(true));
-                obj.insert(
-                    "metric_binding_fields".to_string(),
-                    json!(["geo_ref", "geo_refs", "geonode", "geonode_tag", "parent_geonode"]),
-                );
-                obj.insert(
-                    "metric_binding_model".to_string(),
-                    json!("Metric Nodes attach results to this coordinate anchor with geo_ref=<geonode_or_minigeonode_tag>. Planet views render metric_layers at the referenced anchors."),
-                );
-                obj.entry("linked_metric_tags".to_string()).or_insert_with(|| json!([]));
-            }
-            if *existing != before {
-                changed = true;
-            }
-            continue;
-        }
-        if !seen.insert(tag.to_string()) {
-            continue;
-        }
-        tags.push(json!({
-            "kind": "metric_tag",
-            "node_kind": node_kind,
-            "tag": tag,
-            "title": title,
-            "domain": "geospatial",
-            "op": "geo_anchor",
-            "dtype": "geojson",
-            "body": "mars",
-            "lat": lat,
-            "lon": lon,
-            "parent": parent,
-            "parent_geonode": parent_geonode,
-            "geonode_level": geonode_level,
-            "class": class,
-            "sublocation_tags": sublocation_tags,
-            "metric_linkable": true,
-            "accepts_metric_nodes": true,
-            "metric_binding_fields": ["geo_ref", "geo_refs", "geonode", "geonode_tag", "parent_geonode"],
-            "metric_binding_model": "Metric Nodes attach results to this coordinate anchor with geo_ref=<geonode_or_minigeonode_tag>. Planet views render metric_layers at the referenced anchors.",
-            "linked_metric_tags": [],
-            "formula": format!("geo_anchor(body='mars', lat={lat}, lon={lon})"),
-            "algorithm": "Static Mars coordinate GeoNode seeded from the local Mars Planet bundle.",
-            "renderer_tool": "planet_sphere",
-            "source_bundle": "assets/lenses/mars-globe/mars-data.json",
-            "reusable": true,
-            "content_addressed": true,
-            "source_content_included": false,
-            "created_ms": now
-        }));
-        changed = true;
-    }
-    if changed || !path.exists() {
-        persist_json_pretty(&path, &atlas)?;
-    }
-    Ok(())
+    let store_path = forge_store_dir()?;
+    forge_agent_tools::ensure_builtin_mars_geonodes(&store_path)
 }
 
 fn persist_my_atlas_index(value: &Value) -> Result<(), String> {
@@ -9815,13 +9425,6 @@ fn list_jobs(limit: usize) -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
-#[allow(dead_code)]
-fn read_job(job_id: &str) -> Result<String, String> {
-    validate_job_id(job_id)?;
-    let path = find_job_manifest_path(job_id)?;
-    fs::read_to_string(&path).map_err(|e| format!("read job '{}': {e}", path.display()))
-}
-
 fn read_job_summary(job_id: &str) -> Result<Value, String> {
     Ok(json!({
         "job": sanitize_job_value(read_job_value(job_id)?),
@@ -10827,6 +10430,3 @@ fn write_mcp_message<W: Write>(
     }
     writer.flush().map_err(|e| format!("flush MCP response: {e}"))
 }
-
-#[allow(dead_code)]
-fn _assert_path_send_sync(_: &Path) {}

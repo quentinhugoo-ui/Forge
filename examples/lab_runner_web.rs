@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const DEFAULT_PASSES: usize = 3;
-const DEFAULT_LOG_PATH: &str = ".forge-store/lab_runner_web.jsonl";
 const SCORE_HASH_ROUNDS: u64 = 12;
 const DEFAULT_PAGE_CACHE_MAX: usize = 16;
 const DEFAULT_SUBTREE_CACHE_MAX: usize = 4_096;
@@ -369,7 +368,7 @@ struct Config {
 impl Config {
     fn from_args() -> io::Result<Self> {
         let mut passes = DEFAULT_PASSES;
-        let mut log_path = Some(PathBuf::from(DEFAULT_LOG_PATH));
+        let mut log_path = Some(default_log_path());
         let mut append = false;
         let mut page_cache_max = DEFAULT_PAGE_CACHE_MAX;
         let mut subtree_cache_max = DEFAULT_SUBTREE_CACHE_MAX;
@@ -455,10 +454,29 @@ impl Config {
     }
 }
 
+fn default_log_path() -> PathBuf {
+    if let Some(raw) = std::env::var_os("FORGE_STORE_DIR") {
+        let trimmed = raw.to_string_lossy().trim().to_string();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("lab_runner_web.jsonl");
+        }
+    }
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        return PathBuf::from(appdata)
+            .join("com.forge.ui")
+            .join("forge-store")
+            .join("lab_runner_web.jsonl");
+    }
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".forge-store")
+        .join("lab_runner_web.jsonl")
+}
+
 fn print_help() {
     println!("lab_runner_web: WebExplorer compute-reuse lab");
     println!("usage: cargo run --release --example lab_runner_web -- [--passes N] [--stress-pages N] [--page-cache-max N] [--subtree-cache-max N] [--jsonl PATH] [--append] [--no-log]");
-    println!("default log: {DEFAULT_LOG_PATH}");
+    println!("default log: {}", default_log_path().display());
 }
 
 fn fixtures() -> Vec<PageFixture> {

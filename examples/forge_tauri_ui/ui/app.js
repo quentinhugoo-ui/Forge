@@ -2619,6 +2619,8 @@ function pushAlphaSignal(sig) {
 const alphaStartBtn   = document.getElementById("alphaStartBtn");
 const alphaStatusText = document.getElementById("alphaStatusText");
 const alphaDropZone   = document.getElementById("alphaDropZone");
+const alphaDropZoneTitle = document.getElementById("alphaDropZoneTitle");
+const alphaDropZoneSub = document.getElementById("alphaDropZoneSub");
 const alphaFileInput  = document.getElementById("alphaFileInput");
 const alphaFileList   = document.getElementById("alphaFileList");
 const alphaFileTray   = document.getElementById("alphaFileTray");
@@ -2700,31 +2702,21 @@ function alphaTradingSetSelectionMode(enabled = false) {
   }
   scheduleAlphaRender();
 }
-const forgeCanvasChat = document.getElementById("forgeCanvasChat");
-const forgeCanvasChatInput = document.getElementById("forgeCanvasChatInput");
-const forgeCanvasChatGeminiInput = document.getElementById("forgeCanvasChatGeminiInput");
-const forgeCanvasChatClaudeInput = document.getElementById("forgeCanvasChatClaudeInput");
-const forgeCanvasChatSend = document.getElementById("forgeCanvasChatSend");
-const forgeCanvasChatAttach = document.getElementById("forgeCanvasChatAttach");
-const forgeCanvasChatPrograms = document.getElementById("forgeCanvasChatPrograms");
-const forgeCanvasChatTarget = document.getElementById("forgeCanvasChatTarget");
+const forgeCanvasChatDom = Object.fromEntries(`
+  forgeCanvasChat forgeCanvasChatCommandRail forgeCanvasChatCommandTokens forgeCanvasChatCommandInput
+  forgeCanvasChatInput forgeCanvasChatGeminiInput forgeCanvasChatClaudeInput forgeCanvasChatSend forgeCanvasChatAttach forgeCanvasChatPrograms forgeCanvasChatTarget
+  forgeCanvasChatLlmModeToggle forgeCanvasChatPromptDivider forgeCanvasChatPromptDividerClaude forgeCanvasChatModel forgeCanvasChatModelMenu forgeCanvasChatFileInput forgeCanvasChatAttachments
+  forgeCanvasChatProgramPicker forgeCanvasChatProgramPickerList forgeCanvasChatProgramPickerEmpty forgeCanvasChatVoiceOut forgeCanvasChatMic forgeCanvasChatDictationBar forgeCanvasChatStop
+`.trim().split(/\s+/).map((id) => [id, document.getElementById(id)]));
+const {
+  forgeCanvasChat, forgeCanvasChatCommandRail, forgeCanvasChatCommandTokens, forgeCanvasChatCommandInput,
+  forgeCanvasChatInput, forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput, forgeCanvasChatSend, forgeCanvasChatAttach, forgeCanvasChatPrograms, forgeCanvasChatTarget,
+  forgeCanvasChatLlmModeToggle, forgeCanvasChatPromptDivider, forgeCanvasChatPromptDividerClaude, forgeCanvasChatModel: forgeCanvasChatModelLabel, forgeCanvasChatModelMenu, forgeCanvasChatFileInput, forgeCanvasChatAttachments,
+  forgeCanvasChatProgramPicker, forgeCanvasChatProgramPickerList, forgeCanvasChatProgramPickerEmpty, forgeCanvasChatVoiceOut: forgeCanvasChatVoiceOutBtn, forgeCanvasChatMic: forgeCanvasChatMicBtn, forgeCanvasChatDictationBar, forgeCanvasChatStop: forgeCanvasChatStopBtn,
+} = forgeCanvasChatDom;
 const forgeCanvasChatTargetBtns = forgeCanvasChatTarget
   ? Array.from(forgeCanvasChatTarget.querySelectorAll("[data-target]"))
   : [];
-const forgeCanvasChatLlmModeToggle = document.getElementById("forgeCanvasChatLlmModeToggle");
-const forgeCanvasChatPromptDivider = document.getElementById("forgeCanvasChatPromptDivider");
-const forgeCanvasChatPromptDividerClaude = document.getElementById("forgeCanvasChatPromptDividerClaude");
-const forgeCanvasChatModelLabel = document.getElementById("forgeCanvasChatModel");
-const forgeCanvasChatModelMenu = document.getElementById("forgeCanvasChatModelMenu");
-const forgeCanvasChatFileInput = document.getElementById("forgeCanvasChatFileInput");
-const forgeCanvasChatAttachments = document.getElementById("forgeCanvasChatAttachments");
-const forgeCanvasChatProgramPicker = document.getElementById("forgeCanvasChatProgramPicker");
-const forgeCanvasChatProgramPickerList = document.getElementById("forgeCanvasChatProgramPickerList");
-const forgeCanvasChatProgramPickerEmpty = document.getElementById("forgeCanvasChatProgramPickerEmpty");
-const forgeCanvasChatVoiceOutBtn = document.getElementById("forgeCanvasChatVoiceOut");
-const forgeCanvasChatMicBtn = document.getElementById("forgeCanvasChatMic");
-const forgeCanvasChatDictationBar = document.getElementById("forgeCanvasChatDictationBar");
-const forgeCanvasChatStopBtn = document.getElementById("forgeCanvasChatStop");
 const forgeCanvasChatPendingFiles = [];
 const forgeCanvasChatPendingPrograms = [];
 let forgeCanvasChatAbortController = null;
@@ -3454,6 +3446,20 @@ function currentProjectLabel() {
   return newSessionTitle;
 }
 
+function workspaceRootLabelForCurrentShell() {
+  if (workspaceFolderInfo.path) return workspaceFolderInfo.name || (isRealEstateShellActive() ? "Espace agence" : "Forge");
+  return isRealEstateShellActive() ? "Agence" : "Forge";
+}
+
+function workspaceChooseLabelForCurrentShell() {
+  return isRealEstateShellActive() ? "Choisir le dossier agence" : "Choose workspace";
+}
+
+function workspaceRevealLabelForCurrentShell() {
+  if (isRealEstateShellActive()) return "Afficher le dossier agence";
+  return workspaceFolderInfo.revealLabel || "Show in Explorer";
+}
+
 function alphaFileKey(file) {
   if (!file) return "";
   return [
@@ -3797,7 +3803,7 @@ function startAlphaNewSession() {
   selectedForgeJobManifestId = "";
   alphaVerificationState = null;
   alphaProofRenderedKey = "";
-  newSessionTitle = "New session";
+  newSessionTitle = isRealEstateShellActive() ? "Nouvelle session immo" : "New session";
 
   alphaSessionFiles = [];
   alphaExtraCharts = [];
@@ -3877,8 +3883,8 @@ async function startAlphaEmptySession(event) {
   try {
     const job = await createAlphaPendingMcpSession([], {
       allowEmpty: true,
-      kind: "mcp_session",
-      title: currentProjectLabel() || "New session",
+      kind: isRealEstateShellActive() ? "real_estate_session" : "mcp_session",
+      title: currentProjectLabel() || (isRealEstateShellActive() ? "Nouvelle session immo" : "New session"),
     });
     if (job) {
       created = true;
@@ -3900,7 +3906,8 @@ function updateWorkspaceBreadcrumb() {
   const hasSource = !!(selectedForgeJobId || alphaPendingFile || alphaSessionFiles.length || alphaDocState.fileName);
   const boomWorkspaceOpen = !!(typeof bangerView !== "undefined" && bangerView && !bangerView.hidden);
   const webExplorerWorkspaceOpen = typeof isWebExplorerUiActive === "function" && isWebExplorerUiActive();
-  const canShowRightPanelToggle = hasSource || boomWorkspaceOpen || webExplorerWorkspaceOpen;
+  const workspaceHomeOpen = !hasSource && !boomWorkspaceOpen && !webExplorerWorkspaceOpen;
+  const canShowRightPanelToggle = hasSource || boomWorkspaceOpen || webExplorerWorkspaceOpen || workspaceHomeOpen;
   const breadcrumbState = alphaTradingHeaderState.active
     ? {
         mode: "trading",
@@ -3916,10 +3923,10 @@ function updateWorkspaceBreadcrumb() {
         mode: "workspace",
         label: currentProjectLabel(),
         hasSource,
-        hasWorkspace: hasSource || workspaceFolderChosen || !!workspaceFolderInfo.path,
-        workspaceName: workspaceFolderInfo.name || "Forge",
+        hasWorkspace: hasSource || workspaceFolderChosen || !!workspaceFolderInfo.path || isRealEstateShellActive(),
+        workspaceName: workspaceRootLabelForCurrentShell(),
         workspacePath: workspaceFolderInfo.path || "",
-        revealLabel: workspaceFolderInfo.revealLabel || "Show in Explorer",
+        revealLabel: workspaceRevealLabelForCurrentShell(),
         projectRenameActive: !!projectRenameActive,
         canShowRightPanelToggle,
         proofPanelOpen: !!alphaProofPanelOpen,
@@ -3948,7 +3955,7 @@ function updateWorkspaceBreadcrumb() {
     return;
   }
   const label = currentProjectLabel();
-  const hasWorkspace = hasSource || workspaceFolderChosen || !!workspaceFolderInfo.path;
+  const hasWorkspace = hasSource || workspaceFolderChosen || !!workspaceFolderInfo.path || isRealEstateShellActive();
   document.getElementById("topbarBreadcrumb")?.classList.remove("trading-header-mode");
   workspaceCrumb?.classList.remove("trading-broker-crumb");
   projectCrumb?.classList.remove("trading-asset-crumb");
@@ -3959,10 +3966,10 @@ function updateWorkspaceBreadcrumb() {
   }
   if (workspaceFolderName) {
     if (hasWorkspace) {
-      workspaceFolderName.textContent = workspaceFolderInfo.name || "Forge";
+      workspaceFolderName.textContent = workspaceRootLabelForCurrentShell();
       workspaceCrumb?.classList.remove("no-source");
     } else {
-      workspaceFolderName.textContent = "Choose workspace";
+      workspaceFolderName.textContent = workspaceChooseLabelForCurrentShell();
       workspaceCrumb?.classList.add("no-source");
     }
   }
@@ -3988,7 +3995,7 @@ function updateWorkspaceBreadcrumb() {
     }
   }
   const showBtn = workspaceMenu?.querySelector?.('[data-action="show-folder"]');
-  if (showBtn) showBtn.textContent = workspaceFolderInfo.revealLabel || "Show in Explorer";
+  if (showBtn) showBtn.textContent = workspaceRevealLabelForCurrentShell();
 }
 
 async function loadWorkspaceBreadcrumb() {
@@ -4045,7 +4052,9 @@ function showForgeJobMenu(job, anchor) {
   const jobId = job.jobId || job.job_id || "";
   forgeJobMenuJobId = jobId;
   const pinBtn = forgeJobMenu.querySelector('[data-action="pin"]');
-  if (pinBtn) pinBtn.textContent = job.pinned ? "Unpin project" : "Pin project";
+  if (pinBtn) pinBtn.textContent = job.pinned
+    ? (isRealEstateShellActive() ? "Désépingler le projet" : "Unpin project")
+    : (isRealEstateShellActive() ? "Épingler le projet" : "Pin project");
   forgeJobMenu.hidden = false;
   setCanvasDropdownScrim(true);
   const anchorRect = anchor.getBoundingClientRect();
@@ -4206,11 +4215,11 @@ function setPinDropActive(active, over = false) {
   if (!forgePinDrop) return;
   forgePinDrop.classList.toggle("drop-ready", active);
   forgePinDrop.classList.toggle("drop-over", active && over);
-  const pinned = forgeJobs.filter((job) => !!job.pinned);
+  const pinned = forgeJobsForCurrentShell().filter((job) => !!job.pinned);
   if (forgePinDropText) {
     forgePinDropText.textContent = active
-      ? "Drop here"
-      : (pinned[0] ? forgeJobLabel(pinned[0]) : "Drag to pin");
+      ? (isRealEstateShellActive() ? "Déposer ici" : "Drop here")
+      : (pinned[0] ? forgeJobLabelForCurrentShell(pinned[0]) : (isRealEstateShellActive() ? "Glisser pour épingler" : "Drag to pin"));
   }
 }
 
@@ -4309,6 +4318,34 @@ function updateForgeJobsBusyState() {
   }
 }
 
+function isRealEstateShellActive() {
+  try {
+    return !!realEstateModeActive;
+  } catch (_) {
+    return false;
+  }
+}
+
+function forgeJobIsRealEstate(job) {
+  const kind = String(job?.kind || "").toLowerCase();
+  if (/(real[_-]?estate|agence[_-]?immo|immobilier|immo)/.test(kind)) return true;
+  const label = String(forgeJobLabel(job) || "").toLowerCase();
+  return /\b(agence immo|immobilier|immo|mandat vendeur|estimation|vendeur|vendeurs|acqu[eé]reur|acquereur|dvf|cadastre|dpe|ademe|urbanisme|bien'ici|seloger|leboncoin)\b/i.test(label);
+}
+
+function forgeJobsForCurrentShell() {
+  return forgeJobs.filter((job) => isRealEstateShellActive() ? forgeJobIsRealEstate(job) : !forgeJobIsRealEstate(job));
+}
+
+function forgeJobLabelForCurrentShell(job) {
+  const label = forgeJobLabel(job);
+  if (!isRealEstateShellActive()) return label;
+  if (/^(new session|empty session|forge compute)$/i.test(String(label || "").trim())) {
+    return "Nouvelle session immo";
+  }
+  return label;
+}
+
 function createForgeJobItem(job) {
   const jobId = job.jobId || job.job_id || "";
   const status = String(job.status || "unknown");
@@ -4326,7 +4363,7 @@ function createForgeJobItem(job) {
 
   const title = document.createElement("div");
   title.className = "job-title";
-  title.textContent = forgeJobLabel(job);
+  title.textContent = forgeJobLabelForCurrentShell(job);
 
   const menuBtn = document.createElement("button");
   menuBtn.className = "job-menu-btn";
@@ -4356,13 +4393,27 @@ function createForgeJobItem(job) {
 
 function renderForgeJobs() {
   if (!forgeJobList || !forgePinnedJobList) return;
+  const visibleJobs = forgeJobsForCurrentShell();
+  const selectedJob = currentForgeJob();
+  if (selectedJob && !visibleJobs.some((job) => (job.jobId || job.job_id || "") === selectedForgeJobId)) {
+    saveAlphaCanvasSessionState(selectedForgeJobId);
+    selectedForgeJobId = "";
+    activeAlphaSessionJobId = "";
+    lastForgeJobLog = "";
+    selectedForgeJobManifest = null;
+    selectedForgeJobManifestId = "";
+    alphaVerificationState = null;
+    clearAlphaSessionVisualState();
+    newSessionTitle = isRealEstateShellActive() ? "Nouvelle session immo" : "New session";
+  }
   const listKey = [
+    isRealEstateShellActive() ? "real-estate" : "forge",
     selectedForgeJobId,
-    forgeJobs.map((job) => [
+    visibleJobs.map((job) => [
       job.jobId || job.job_id || "",
       job.status || "",
       job.pinned ? "1" : "0",
-      forgeJobLabel(job),
+      forgeJobLabelForCurrentShell(job),
     ].join("|")).join(";;"),
   ].join("::");
   if (listKey === forgeJobListRenderKey) {
@@ -4374,19 +4425,31 @@ function renderForgeJobs() {
   const pinnedScrollTop = forgePinnedJobList.scrollTop || 0;
   forgeJobList.innerHTML = "";
   forgePinnedJobList.innerHTML = "";
-  if (!forgeJobs.length) {
-    forgeJobList.innerHTML = '<li class="job-item muted">No compute job yet</li>';
+  if (!visibleJobs.length) {
+    forgeJobList.innerHTML = `<li class="job-item muted">${isRealEstateShellActive() ? "Aucune session immo" : "No compute job yet"}</li>`;
+    if (forgePinDrop && forgePinDropText) {
+      forgePinDrop.classList.remove("has-pinned", "busy");
+      forgePinDrop.dataset.jobId = "";
+      forgePinDropText.textContent = isRealEstateShellActive() ? "Glisser pour épingler" : "Drag to pin";
+      forgePinDrop.onclick = null;
+    }
+    if (forgePinMenuBtn) {
+      forgePinMenuBtn.hidden = true;
+      forgePinMenuBtn.onclick = null;
+    }
     queueForgeCustomScrollbarSync(forgeJobList);
     queueForgeCustomScrollbarSync(forgePinnedJobList);
     updateWorkspaceBreadcrumb();
     return;
   }
-  const pinned = forgeJobs.filter((job) => !!job.pinned);
-  const recent = forgeJobs.filter((job) => !job.pinned);
+  const pinned = visibleJobs.filter((job) => !!job.pinned);
+  const recent = visibleJobs.filter((job) => !job.pinned);
   if (forgePinDrop && forgePinDropText) {
     forgePinDrop.classList.toggle("has-pinned", pinned.length > 0);
     forgePinDrop.dataset.jobId = pinned[0] ? (pinned[0].jobId || pinned[0].job_id || "") : "";
-    forgePinDropText.textContent = pinned[0] ? forgeJobLabel(pinned[0]) : "Drag to pin";
+    forgePinDropText.textContent = pinned[0]
+      ? forgeJobLabelForCurrentShell(pinned[0])
+      : (isRealEstateShellActive() ? "Glisser pour épingler" : "Drag to pin");
     if (forgePinMenuBtn) {
       forgePinMenuBtn.hidden = !pinned[0];
       forgePinMenuBtn.onclick = pinned[0]
@@ -4407,7 +4470,7 @@ function renderForgeJobs() {
     forgePinnedJobList.appendChild(createForgeJobItem(job));
   }
   if (!recent.length) {
-    forgeJobList.innerHTML = '<li class="job-item muted">No recent job</li>';
+    forgeJobList.innerHTML = `<li class="job-item muted">${isRealEstateShellActive() ? "Aucune session immo récente" : "No recent job"}</li>`;
     queueForgeCustomScrollbarSync(forgeJobList);
     queueForgeCustomScrollbarSync(forgePinnedJobList);
     updateWorkspaceBreadcrumb();
@@ -4562,8 +4625,12 @@ async function createAlphaPendingMcpSession(files, options = {}) {
       request: {
         jobId: targetJobId || null,
         files: uploadFiles,
-        kind: options.kind || (batch.length === 0 ? "mcp_session" : "alpha_strategy_from_csv"),
-        title: options.title || currentProjectLabel() || batch[0]?.name || "Forge compute",
+        kind: options.kind || (
+          isRealEstateShellActive()
+            ? (batch.length === 0 ? "real_estate_session" : "real_estate_upload")
+            : (batch.length === 0 ? "mcp_session" : "alpha_strategy_from_csv")
+        ),
+        title: options.title || currentProjectLabel() || batch[0]?.name || (isRealEstateShellActive() ? "Nouvelle session immo" : "Forge compute"),
         allowEmpty,
       },
     });
@@ -7069,7 +7136,7 @@ function drawAlphaUnified(time) {
     return;
   }
 
-  const tradingSurface = isTradingPanelActive();
+  const tradingSurface = alphaShouldRenderTradingChartSurface();
   alphaCanvasWrap?.classList.toggle("is-trading-add-split", tradingSurface && alphaExtraChartLayout === "split" && alphaExtraCharts.length > 0);
   if (tradingSurface) {
     const fullBounds = getAlphaChartBounds();
@@ -7088,6 +7155,13 @@ function drawAlphaUnified(time) {
     return;
   }
   syncAlphaTradingSplitTopbar(null, []);
+
+  if (alphaDocState.candles.length) {
+    resetInactiveTradingChartSurface();
+    if (typeof syncAlphaCardFade === "function") syncAlphaCardFade(null);
+    renderAlphaLogLayer();
+    return;
+  }
 
   if (!alphaDocState.candles.length) {
     if (alphaDocState.fileName) {
@@ -7810,6 +7884,32 @@ const CANVAS_PHRASE_AGENT_BLOCKLIST = {
   "is dunking on the latest GPT release": ["codex", "openai", "gpt"],
 };
 
+const REAL_ESTATE_CANVAS_THINKING_PHRASES = [
+  "analyse les mandats",
+  "croise les signaux locaux",
+  "consulte la mémoire agence",
+  "prépare le plan d'action",
+  "recoupe DVF, DPE et cadastre",
+  "classe les priorités commerciales",
+  "cherche les angles de relance",
+  "synthétise la veille concurrence",
+];
+
+const REAL_ESTATE_CANVAS_THINKING_FIRST_PHRASES = [
+  "réfléchit",
+  "analyse",
+  "prépare la réponse",
+  "travaille sur le dossier",
+];
+
+function canvasThinkingPhrasePool() {
+  return isRealEstateShellActive() ? REAL_ESTATE_CANVAS_THINKING_PHRASES : CANVAS_THINKING_PHRASES;
+}
+
+function canvasThinkingFirstPhrasePool() {
+  return isRealEstateShellActive() ? REAL_ESTATE_CANVAS_THINKING_FIRST_PHRASES : CANVAS_THINKING_FIRST_PHRASES;
+}
+
 function isPhraseBlockedForAgent(phrase, selfLabelLower) {
   const blocks = CANVAS_PHRASE_AGENT_BLOCKLIST[phrase];
   if (!blocks) return false;
@@ -7817,19 +7917,20 @@ function isPhraseBlockedForAgent(phrase, selfLabelLower) {
 }
 
 function pickRandomThinkingPhrase(excludeIdx) {
-  if (CANVAS_THINKING_PHRASES.length <= 1) return 0;
+  const pool = canvasThinkingPhrasePool();
+  if (pool.length <= 1) return 0;
   const selfLabel = String(
     forgeCanvasChatPendingAssistants[0]?.label || ""
   ).toLowerCase();
   let nextIdx;
   let retries = 0;
   do {
-    nextIdx = Math.floor(Math.random() * CANVAS_THINKING_PHRASES.length);
+    nextIdx = Math.floor(Math.random() * pool.length);
     retries++;
     if (retries > 30) break; // safety net — never spin forever
   } while (
     nextIdx === excludeIdx
-    || isPhraseBlockedForAgent(CANVAS_THINKING_PHRASES[nextIdx], selfLabel)
+    || isPhraseBlockedForAgent(pool[nextIdx], selfLabel)
   );
   return nextIdx;
 }
@@ -7935,7 +8036,7 @@ function canvasThinkingTick() {
     } else {
       // Pick a new random phrase, never repeating the previous one.
       canvasThinkingPhraseIdx = pickRandomThinkingPhrase(canvasThinkingPhraseIdx);
-      canvasThinkingTargetText = resolveCanvasThinkingPhrase(CANVAS_THINKING_PHRASES[canvasThinkingPhraseIdx]);
+      canvasThinkingTargetText = resolveCanvasThinkingPhrase(canvasThinkingPhrasePool()[canvasThinkingPhraseIdx]);
       canvasThinkingCorrectIndex = 0;
       canvasThinkingTypoQueue = 0;
       canvasThinkingPhase = "typing";
@@ -7962,8 +8063,9 @@ function startCanvasThinkingRotation() {
   // the next phrase picked (in the erase→type transition) draws from the
   // full pool — the cheeky/borderline lines start appearing from then on.
   canvasThinkingPhraseIdx = -1;
-  canvasThinkingTargetText = CANVAS_THINKING_FIRST_PHRASES[
-    Math.floor(Math.random() * CANVAS_THINKING_FIRST_PHRASES.length)
+  const firstPhrases = canvasThinkingFirstPhrasePool();
+  canvasThinkingTargetText = firstPhrases[
+    Math.floor(Math.random() * firstPhrases.length)
   ];
   canvasThinkingDisplayText = "";
   canvasThinkingCorrectIndex = 0;
@@ -8322,7 +8424,9 @@ function setAlphaSidebarCollapsed(collapsed) {
   alphaContent?.classList.toggle("sidebar-collapsed", alphaSidebarCollapsed);
   alphaSidebarToggle?.classList.toggle("collapsed", alphaSidebarCollapsed);
   alphaSidebarToggle?.setAttribute("aria-expanded", String(!alphaSidebarCollapsed));
-  const label = alphaSidebarCollapsed ? "Show left panel" : "Hide left panel";
+  const label = isRealEstateShellActive()
+    ? (alphaSidebarCollapsed ? "Afficher le panneau gauche" : "Masquer le panneau gauche")
+    : (alphaSidebarCollapsed ? "Show left panel" : "Hide left panel");
   alphaSidebarToggle?.setAttribute("aria-label", label);
   alphaSidebarToggle?.setAttribute("title", label);
   refreshAlphaCanvasAfterLayoutChange();
@@ -8344,6 +8448,26 @@ function isTradingPanelActive() {
   } catch (_) {
     return false;
   }
+}
+
+function alphaShouldRenderTradingChartSurface() {
+  return isTradingPanelActive();
+}
+
+function resetInactiveTradingChartSurface() {
+  if (alphaShouldRenderTradingChartSurface()) return;
+  alphaTradingCrosshair.active = false;
+  alphaTradingSelectionActive = false;
+  alphaPriceScaleDragging = false;
+  alphaTimeScaleDragging = false;
+  alphaDocState.candleHover = -1;
+  alphaCanvasWrap?.classList.remove("is-trading-mode", "is-trading-surface", "is-trading-add-split", "is-trading-compare-open", "is-trading-header-menu-open", "has-trading-split-topbar");
+  document.getElementById("topbarBreadcrumb")?.classList.remove("trading-header-mode");
+}
+
+function refreshAlphaAfterSectionBoundary() {
+  resetInactiveTradingChartSurface();
+  scheduleAlphaRender?.({ force: true });
 }
 
 function defaultAlphaRightPanelMode() {
@@ -8678,7 +8802,7 @@ function renderAlphaRightPanelTabs() {
       { id: "orders", label: "Orders" },
     ]
     : [
-      { id: "proof", label: "Verification" },
+      { id: "proof", label: isRealEstateShellActive() ? "Vérification" : "Verification" },
       { id: "console", label: "Console" },
     ];
   alphaRightPanelTabs.innerHTML = "";
@@ -8909,7 +9033,7 @@ function renderAlphaRightPanel() {
         ? "WebExplorer"
       : alphaRightPanelMode === "console"
         ? "Console"
-        : "Right panel";
+        : (isRealEstateShellActive() ? "Panneau droit" : "Right panel");
   }
   if (alphaRightPanelTitle) {
     alphaRightPanelTitle.textContent = tradingActive
@@ -8918,7 +9042,7 @@ function renderAlphaRightPanel() {
         ? (alphaRightPanelMode === "console" ? "Web console" : "Proof HUD")
       : alphaRightPanelMode === "console"
         ? "Rust / KASM"
-        : "Verification";
+        : (isRealEstateShellActive() ? "Vérification" : "Verification");
   }
   renderAlphaRightPanelTabs();
   if (tradingActive && alphaRightPanelMode === "orders") {
@@ -8952,8 +9076,12 @@ function setAlphaProofPanelOpen(open) {
   }
   alphaContent?.classList.toggle("proof-open", alphaProofPanelOpen);
   alphaProofToggle?.classList.toggle("active", alphaProofPanelOpen);
-  alphaProofToggle?.setAttribute("aria-label", alphaProofPanelOpen ? "Close right panel" : "Open right panel");
-  alphaProofToggle?.setAttribute("title", alphaProofPanelOpen ? "Close right panel" : "Open right panel");
+  alphaProofToggle?.setAttribute("aria-label", alphaProofPanelOpen
+    ? (isRealEstateShellActive() ? "Fermer le panneau droit" : "Close right panel")
+    : (isRealEstateShellActive() ? "Ouvrir le panneau droit" : "Open right panel"));
+  alphaProofToggle?.setAttribute("title", alphaProofPanelOpen
+    ? (isRealEstateShellActive() ? "Fermer le panneau droit" : "Close right panel")
+    : (isRealEstateShellActive() ? "Ouvrir le panneau droit" : "Open right panel"));
   if (alphaProofPanelOpen) {
     alphaProofRenderedKey = "";
     alphaConsoleRenderedKey = "";
@@ -10277,7 +10405,6 @@ function attachInlineBarrelInteractions(barrelEl) {
       if (selectedCanvasReasoningEffort(runtime) === value) return;
       setCanvasReasoningEffort(runtime, value);
     }
-    void notifyCanvasRuntimeConfigChanged(runtime);
   };
   barrelEl.addEventListener("scroll", () => {
     if (barrelEl.classList.contains("expanded")) {
@@ -10347,7 +10474,6 @@ function cycleRuntimeField(runtime, field, direction = 1) {
     const nextOpt = opts[((idx < 0 ? 0 : idx) + (direction > 0 ? 1 : -1) + opts.length) % opts.length];
     setCanvasReasoningEffort(runtime, nextOpt.value);
   }
-  void notifyCanvasRuntimeConfigChanged(runtime);
 }
 
 function flipLabelTo(labelEl, newText) {
@@ -10595,12 +10721,10 @@ function openCanvasBarrelPicker(runtime) {
     setCanvasRuntimeModelRef(runtime, value);
     hydrateProviderModelPickers();
     syncCanvasChatModelLabel();
-    void notifyCanvasRuntimeConfigChanged(runtime);
   });
   attachBarrelInteractions(effortBarrel, efforts, (value) => {
     setCanvasReasoningEffort(runtime, value);
     syncCanvasChatModelLabel();
-    void notifyCanvasRuntimeConfigChanged(runtime);
   });
 }
 
@@ -10611,20 +10735,6 @@ function closeCanvasBarrelPicker() {
   document
     .querySelectorAll("#forgeCanvasChatModelAnchor .canvas-chat-model-chip.active-chip")
     .forEach((el) => el.classList.remove("active-chip"));
-}
-
-async function notifyCanvasRuntimeConfigChanged(runtime) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
-  try {
-    await invoke("forge_canvas_set_runtime_config", {
-      runtime,
-      modelRef: selectedCanvasModelRef(runtime),
-      reasoningEffort: selectedCanvasReasoningEffort(runtime),
-    });
-  } catch (_) {
-    // No backend handler — change still applies on next message dispatch.
-  }
 }
 
 function renderCanvasModelMenu() {
@@ -10755,7 +10865,9 @@ function setCanvasChatTargetMode(mode, activeOverride = null) {
     forgeCanvasChatPromptDividerClaude.hidden = !((hasCodex || hasGemini) && hasClaude);
   }
   if (forgeCanvasChatInput) {
-    forgeCanvasChatInput.setAttribute("aria-label", all ? "Codex prompt" : `${canvasChatTargetLabel(next)} prompt`);
+    forgeCanvasChatInput.setAttribute("aria-label", isRealEstateShellActive()
+      ? (all ? "Consigne Codex" : `Consigne ${canvasChatTargetLabel(next)}`)
+      : (all ? "Codex prompt" : `${canvasChatTargetLabel(next)} prompt`));
   }
   syncCanvasChatModelLabel();
   setCanvasModelMenuOpen(false);
@@ -10795,6 +10907,39 @@ function claudeCanvasChatText() {
   return String(forgeCanvasChatClaudeInput?.value || "").trim();
 }
 
+function normalizeCanvasCommandPrefix(raw = "") {
+  const token = String(raw || "").trim().split(/\s+/, 1)[0] || "";
+  if (!token || token === "/") return "";
+  const prefixed = token.startsWith("/") ? token : `/${token}`;
+  const clean = prefixed.replace(/[^/a-z0-9_-]/gi, "");
+  return clean === "/" ? "" : clean.toLowerCase();
+}
+
+function canvasCommandPrefixText() {
+  return normalizeCanvasCommandPrefix(forgeCanvasChatCommandInput?.value || "");
+}
+
+function withCanvasCommandPrefix(text = "") {
+  const command = canvasCommandPrefixText();
+  const body = String(text || "").trim();
+  if (!command) return body;
+  return body ? `${command} ${body}` : command;
+}
+
+function syncCanvasCommandRailState() {
+  const command = canvasCommandPrefixText();
+  const commandCh = command ? Math.min(34, Math.max(10, command.length + 2)) : 10;
+  if (forgeCanvasChatCommandRail) {
+    forgeCanvasChatCommandRail.classList.remove("has-command");
+    forgeCanvasChatCommandRail.toggleAttribute("data-has-command", !!command);
+    forgeCanvasChatCommandRail.style.setProperty("--canvas-command-ch", String(commandCh));
+  }
+  if (forgeCanvasChatCommandInput) {
+    forgeCanvasChatCommandInput.classList.toggle("has-command-value", !!command);
+  }
+  if (typeof syncCanvasChatSendState === "function") syncCanvasChatSendState();
+}
+
 /**
  * Primary chat text. In single-provider mode this is the active
  * provider's input; in multi mode (mode === "all") we keep returning the
@@ -10802,9 +10947,9 @@ function claudeCanvasChatText() {
  * date the per-provider split don't lose their fallback.
  */
 function primaryCanvasChatText() {
-  if (forgeCanvasChatTargetMode === "gemini") return geminiCanvasChatText();
-  if (forgeCanvasChatTargetMode === "claude") return claudeCanvasChatText();
-  return codexInputText();
+  if (forgeCanvasChatTargetMode === "gemini") return withCanvasCommandPrefix(geminiCanvasChatText());
+  if (forgeCanvasChatTargetMode === "claude") return withCanvasCommandPrefix(claudeCanvasChatText());
+  return withCanvasCommandPrefix(codexInputText());
 }
 
 /**
@@ -10817,7 +10962,7 @@ function currentCanvasChatText() {
   if (active.has("codex")) parts.push(codexInputText());
   if (active.has("gemini")) parts.push(geminiCanvasChatText());
   if (active.has("claude")) parts.push(claudeCanvasChatText());
-  return parts.filter(Boolean).join(" / ");
+  return withCanvasCommandPrefix(parts.filter(Boolean).join(" / "));
 }
 
 function canvasChatRuntimeTargets(text, geminiText = "", claudeText = "") {
@@ -12123,6 +12268,53 @@ function redactCanvasSecrets(text) {
   return String(text || "")
     .replace(/\bsk_[A-Za-z0-9]{20,}\b/g, "[ELEVENLABS_API_KEY_REDACTED]")
     .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, "[GOOGLE_API_KEY_REDACTED]");
+}
+
+function redactRealEstateClientData(text) {
+  let output = String(text || "");
+  const counts = {};
+  const replaceWithCount = (pattern, key, marker) => {
+    output = output.replace(pattern, () => {
+      counts[key] = (counts[key] || 0) + 1;
+      return marker;
+    });
+  };
+  replaceWithCount(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "email", "[EMAIL_CLIENT_REDACTED]");
+  replaceWithCount(/\bFR[0-9A-Z](?:[ -]?[0-9A-Z]){13,}\b/gi, "iban", "[IBAN_CLIENT_REDACTED]");
+  replaceWithCount(/\b(?:\+33|0033|0)[1-9](?:[\s.-]?\d{2}){4}\b/g, "phone", "[TELEPHONE_CLIENT_REDACTED]");
+  replaceWithCount(/\b[12]\s?\d{2}\s?\d{2}\s?\d{2}\s?\d{3}\s?\d{3}(?:\s?\d{2})?\b/g, "nir", "[NIR_CLIENT_REDACTED]");
+  const addressKeywords = /\b(adresse|address|rue|avenue|av\.|boulevard|bd|impasse|chemin|route|allee|allée|place|quai|residence|résidence)\b/i;
+  output = output.split(/(\r?\n)/).map((line) => {
+    if (!line || /^\r?\n$/.test(line)) return line;
+    if (!/\d/.test(line) || !addressKeywords.test(line)) return line;
+    counts.address = (counts.address || 0) + 1;
+    const labelMatch = line.match(/^(\s*(?:adresse|address)\s*[:=-]\s*)/i);
+    return labelMatch ? `${labelMatch[1]}[ADRESSE_CLIENT_REDACTED]` : "[ADRESSE_CLIENT_REDACTED]";
+  }).join("");
+  return { text: output, counts };
+}
+
+function redactCanvasForModel(text) {
+  const secretSafe = redactCanvasSecrets(text);
+  if (!realEstateModeActive) return secretSafe;
+  return redactRealEstateClientData(secretSafe).text;
+}
+
+function realEstatePrivacyPacketForModel(text) {
+  if (!realEstateModeActive) return "";
+  const counts = redactRealEstateClientData(redactCanvasSecrets(text)).counts;
+  const redactions = Object.entries(counts)
+    .filter(([, count]) => count > 0)
+    .map(([key, count]) => `${key}:${count}`)
+    .join(",");
+  return [
+    "FORGE_REAL_ESTATE_PRIVACY:",
+    "mode=local_first_client_data_minimized",
+    "scope=agence_immo",
+    "raw_client_files=local_only",
+    "provider_guard=backend_revalidates_before_runtime",
+    `redactions=${redactions || "none_detected"}`,
+  ].join("\n");
 }
 
 function canvasTextContainsSecret(text) {
@@ -13636,6 +13828,50 @@ const FORGE_CHAT_PLACEHOLDER_SCENARIOS = [
   },
 ];
 
+const REAL_ESTATE_CHAT_PLACEHOLDER_IDEAS = [
+  "Analyse 18 mois de mandats, visites et relances pour prédire les vendeurs à rappeler cette semaine",
+  "Croise DVF, DPE, cadastre, urbanisme et météo locale pour scorer le potentiel d'un quartier",
+  "Audite les annonces de l'agence et des concurrents pour sortir les angles qui convertissent mieux",
+  "Prépare un plan d'appels vendeur avec objections, preuves locales et timing de relance",
+  "Simule 500 scénarios de prix pour un bien avec risque de décrochage, marge et délai de vente",
+  "Classe les acquéreurs par capacité, urgence, financement probable et matching biens disponibles",
+  "Construis un cockpit agence: pipeline, KPI, trésorerie, visites, tâches et alertes critiques",
+  "Analyse les avis Google, réseaux sociaux et annonces concurrentes pour trouver les faiblesses du marché",
+  "Prépare une campagne de recrutement avec profils, scripts d'approche et score de potentiel commercial",
+  "Connecte courtiers, assurances, notaires et fiscalité pour détecter les dossiers à risque",
+];
+
+const REAL_ESTATE_CHAT_PLACEHOLDER_SCENARIOS = [
+  {
+    codex: "Analyse les mandats vendeurs et priorise les relances",
+    gemini: "Croise DVF, DPE, cadastre et urbanisme",
+    claude: "Prépare le rapport vendeur avec preuves locales",
+  },
+  {
+    codex: "Audite les annonces de l'agence et des concurrents",
+    gemini: "Mesure la performance SeLoger, Leboncoin et site agence",
+    claude: "Réécris les annonces avec angles de conversion",
+  },
+  {
+    codex: "Classe les prospects vendeurs par probabilité de mandat",
+    gemini: "Scanne la veille locale et les signaux faibles",
+    claude: "Prépare les scripts d'appel et les objections",
+  },
+  {
+    codex: "Construis le cockpit KPI agence pour la semaine",
+    gemini: "Simule trésorerie, commissions et planning visites",
+    claude: "Propose les décisions commerciales prioritaires",
+  },
+];
+
+function canvasChatPlaceholderIdeas() {
+  return isRealEstateShellActive() ? REAL_ESTATE_CHAT_PLACEHOLDER_IDEAS : FORGE_CHAT_PLACEHOLDER_IDEAS;
+}
+
+function canvasChatPlaceholderScenarios() {
+  return isRealEstateShellActive() ? REAL_ESTATE_CHAT_PLACEHOLDER_SCENARIOS : FORGE_CHAT_PLACEHOLDER_SCENARIOS;
+}
+
 let canvasChatPlaceholderTimer = null;
 let canvasChatPlaceholderRaf = null;
 let canvasChatPlaceholderIdx = 0;
@@ -13697,7 +13933,8 @@ function canvasChatPlaceholderTick() {
   if (document.activeElement === target || target.value) {
     return;
   }
-  const idea = FORGE_CHAT_PLACEHOLDER_IDEAS[canvasChatPlaceholderIdx];
+  const ideas = canvasChatPlaceholderIdeas();
+  const idea = ideas[canvasChatPlaceholderIdx % ideas.length];
   let nextDelay = 60;
   if (canvasChatPlaceholderPhase === "typing") {
     canvasChatPlaceholderCharIdx++;
@@ -13716,7 +13953,7 @@ function canvasChatPlaceholderTick() {
     canvasChatRenderPlaceholder(idea.slice(0, canvasChatPlaceholderCharIdx));
     if (canvasChatPlaceholderCharIdx <= 0) {
       canvasChatPlaceholderPhase = "typing";
-      canvasChatPlaceholderIdx = (canvasChatPlaceholderIdx + 1) % FORGE_CHAT_PLACEHOLDER_IDEAS.length;
+      canvasChatPlaceholderIdx = (canvasChatPlaceholderIdx + 1) % ideas.length;
       nextDelay = 180;
     } else {
       nextDelay = canvasChatErasingDelay();
@@ -13754,9 +13991,8 @@ function canvasChatMultiPlaceholderTick() {
     if (!f) continue;
     if (document.activeElement === f || f.value) return;
   }
-  const scenario = FORGE_CHAT_PLACEHOLDER_SCENARIOS[
-    canvasChatPlaceholderIdx % FORGE_CHAT_PLACEHOLDER_SCENARIOS.length
-  ];
+  const scenarios = canvasChatPlaceholderScenarios();
+  const scenario = scenarios[canvasChatPlaceholderIdx % scenarios.length];
   const longest = Math.max(scenario.codex.length, scenario.gemini.length, scenario.claude.length);
   const refIdea = scenario.codex.length >= scenario.gemini.length && scenario.codex.length >= scenario.claude.length
     ? scenario.codex
@@ -13795,7 +14031,7 @@ function canvasChatMultiPlaceholderTick() {
     if (canvasChatPlaceholderCharIdx <= 0) {
       // After erasing, briefly show the LLM names again before the next scenario.
       canvasChatPlaceholderPhase = "names";
-      canvasChatPlaceholderIdx = (canvasChatPlaceholderIdx + 1) % FORGE_CHAT_PLACEHOLDER_SCENARIOS.length;
+      canvasChatPlaceholderIdx = (canvasChatPlaceholderIdx + 1) % scenarios.length;
       nextDelay = 240;
     } else {
       nextDelay = canvasChatErasingDelay();
@@ -13846,13 +14082,13 @@ function syncCanvasChatSendState() {
   if (canvasChatBusyInCurrentSession()) {
     forgeCanvasChatSend.disabled = false;
     forgeCanvasChatSend.classList.add("ready");
-    forgeCanvasChatSend.setAttribute("aria-label", "Stop");
+    forgeCanvasChatSend.setAttribute("aria-label", isRealEstateShellActive() ? "Arrêter" : "Stop");
     return;
   }
   const ready = hasText || hasAttachments || hasAtlasItems;
   forgeCanvasChatSend.disabled = !ready;
   forgeCanvasChatSend.classList.toggle("ready", ready);
-  forgeCanvasChatSend.setAttribute("aria-label", "Send message");
+  forgeCanvasChatSend.setAttribute("aria-label", isRealEstateShellActive() ? "Envoyer le message" : "Send message");
 }
 
 function normalizeCanvasAttachmentTarget(target) {
@@ -14446,9 +14682,9 @@ async function runCanvasAssignedPrograms(stagedPrograms, stagedFiles, activeTarg
 
 async function sendForgeCanvasChatMessage(event) {
   event?.preventDefault?.();
-  const text = redactCanvasSecrets(primaryCanvasChatText());
-  const geminiText = forgeCanvasChatTargetMode === "all" ? redactCanvasSecrets(geminiCanvasChatText()) : "";
-  const claudeText = forgeCanvasChatTargetMode === "all" ? redactCanvasSecrets(claudeCanvasChatText()) : "";
+  const text = redactCanvasForModel(primaryCanvasChatText());
+  const geminiText = forgeCanvasChatTargetMode === "all" ? redactCanvasForModel(withCanvasCommandPrefix(geminiCanvasChatText())) : "";
+  const claudeText = forgeCanvasChatTargetMode === "all" ? redactCanvasForModel(withCanvasCommandPrefix(claudeCanvasChatText())) : "";
   const displayText = redactCanvasSecrets(currentCanvasChatText());
   const stagedFiles = forgeCanvasChatPendingFiles.slice();
   const stagedPrograms = forgeCanvasChatPendingPrograms.slice();
@@ -14463,7 +14699,9 @@ async function sendForgeCanvasChatMessage(event) {
   }
   if (forgeCanvasChatGeminiInput) forgeCanvasChatGeminiInput.value = "";
   if (forgeCanvasChatClaudeInput) forgeCanvasChatClaudeInput.value = "";
+  if (forgeCanvasChatCommandInput) forgeCanvasChatCommandInput.value = "";
   autosizeCanvasChatInput();
+  syncCanvasCommandRailState();
   syncTradingSlashCommandState();
   if (stagedFiles.length) clearCanvasChatPendingFiles();
   if (stagedPrograms.length) clearCanvasChatPendingPrograms();
@@ -14479,6 +14717,45 @@ async function sendForgeCanvasChatMessage(event) {
     ...stagedAtlasItems.map((it) => `${it.kind === "program" || it.kind === "instrument" ? "Instrument" : "Node"}: ${it.tag}`),
   ].join("\n") || `(${summaryParts.join(" + ")} attached)`;
   const userMessageText = displayText || attachmentOnlyText;
+  const realEstateToolCommand = realEstateModeActive
+    && !stagedFiles.length
+    && !stagedPrograms.length
+    && !stagedAtlasItems.length
+    ? realEstateCommandFromText(userMessageText)
+    : null;
+  if (realEstateToolCommand && userMessageText.trim() === realEstateToolCommand.command) {
+    appendCanvasChatMessage("user", userMessageText, {
+      turnId,
+      sessionJobId: turnSessionJobId || "",
+    });
+    setAlphaActiveTab("forge");
+    setCanvasChatBusy(true);
+    try {
+      const routed = await routeRealEstateToolCommand(userMessageText);
+      appendCanvasChatMessage("assistant", routed?.message || `Programme ${realEstateToolCommand.command} pret.`, {
+        turnId,
+        sessionJobId: turnSessionJobId || "",
+        agentLabel: "Forge",
+        local: true,
+        toolEvents: [
+          { tool: "real_estate_command_router", label: routed?.label || realEstateToolCommand.command },
+          { tool: "brain_recall", label: "scope agence_immo" },
+          { tool: "real_estate_harvester_snapshot", label: "Data Sync context" },
+        ],
+      });
+    } catch (err) {
+      appendCanvasChatMessage("assistant", `Commande ${realEstateToolCommand.command} reconnue, mais le contexte agence n'a pas pu etre charge: ${err}`, {
+        turnId,
+        sessionJobId: turnSessionJobId || "",
+        agentLabel: "Forge",
+        local: true,
+      });
+    } finally {
+      setCanvasChatBusy(false);
+      syncAlphaDropSurface?.();
+    }
+    return;
+  }
   if (isWebExplorerUiActive() && webExplorerLocalMode && /^\s*\/[a-z0-9_-]+/i.test(userMessageText)) {
     webExplorerLocalMode = false;
     syncTradingChatInvolvementControls();
@@ -14619,7 +14896,7 @@ async function sendForgeCanvasChatMessage(event) {
       return;
     }
     const messageWithAnnotations = (baseText, target) => {
-      const currentMessage = redactCanvasSecrets(baseText).trim();
+      const currentMessage = redactCanvasForModel(baseText).trim();
       const annotation = canvasAttachmentAnnotationForRuntime(target.runtime, target.label, stagedFiles, stagedPrograms, stagedAtlasItems);
       const parts = [];
       const isDecisionPoint = lastCanvasAssistantNeedsConfirmation();
@@ -14650,6 +14927,14 @@ async function sendForgeCanvasChatMessage(event) {
         : "";
       if (webExplorerContextPacket) {
         parts.push(webExplorerContextPacket);
+      }
+      const realEstatePrivacyPacket = realEstatePrivacyPacketForModel(baseText);
+      if (realEstatePrivacyPacket) {
+        parts.push(realEstatePrivacyPacket);
+      }
+      const realEstateContextPacket = realEstateModeActive ? realEstateCommandPacket(currentMessage) : "";
+      if (realEstateContextPacket) {
+        parts.push(realEstateContextPacket);
       }
       if (planetVisual) {
         const labels = Array.isArray(planetVisual.labels) && planetVisual.labels.length
@@ -14703,13 +14988,14 @@ async function sendForgeCanvasChatMessage(event) {
       try {
         const response = await invoke("forge_canvas_assistant_turn", {
           request: {
-            message: redactCanvasSecrets(target.messageForBroker),
+            message: redactCanvasForModel(target.messageForBroker),
             jobId: turnSessionJobId || currentAlphaSessionJobId() || null,
             modelRef: target.modelRef,
             reasoningEffort: target.reasoningEffort,
             runtime: target.runtime,
             maxLogLines: 24,
             turnId,
+            privacyScope: realEstateModeActive ? "agence_immo" : null,
           },
         });
         return { target, response };
@@ -15774,6 +16060,11 @@ forgeCanvasChat?.addEventListener("click", (event) => {
   clearAllCanvasChatPlaceholders();
   input.focus({ preventScroll: true });
 });
+forgeCanvasChatCommandRail?.addEventListener("click", (event) => {
+  if (event.target?.closest?.("button, a, input")) return;
+  event.preventDefault();
+  forgeCanvasChatCommandInput?.focus?.({ preventScroll: true });
+});
 window.addEventListener("message", (event) => {
   const data = event?.data;
   if (!data || typeof data !== "object" || data.type !== "forge:planet-action") return;
@@ -15787,6 +16078,16 @@ window.addEventListener("message", (event) => {
   }
 });
 
+forgeCanvasChatCommandInput?.addEventListener("input", () => {
+  syncCanvasCommandRailState();
+  syncTradingSlashCommandState();
+  stopCanvasChatPlaceholderAnimation();
+});
+forgeCanvasChatCommandInput?.addEventListener("blur", () => {
+  const command = canvasCommandPrefixText();
+  if (forgeCanvasChatCommandInput) forgeCanvasChatCommandInput.value = command;
+  syncCanvasCommandRailState();
+});
 forgeCanvasChatInput?.addEventListener("input", () => {
   autosizeCanvasChatInput();
   syncCanvasChatSendState();
@@ -15858,6 +16159,7 @@ function deleteCanvasSlashTokenBackward(targetInput) {
   targetInput.focus();
   targetInput.setSelectionRange?.(removeStart, removeStart);
   autosizeCanvasChatInput();
+  if (targetInput === forgeCanvasChatCommandInput) syncCanvasCommandRailState();
   syncCanvasChatSendState();
   syncTradingSlashCommandState();
   stopCanvasChatPlaceholderAnimation();
@@ -15880,6 +16182,7 @@ function handleCanvasChatKeydown(event) {
 forgeCanvasChatInput?.addEventListener("keydown", handleCanvasChatKeydown);
 forgeCanvasChatGeminiInput?.addEventListener("keydown", handleCanvasChatKeydown);
 forgeCanvasChatClaudeInput?.addEventListener("keydown", handleCanvasChatKeydown);
+forgeCanvasChatCommandInput?.addEventListener("keydown", handleCanvasChatKeydown);
 function clearAllCanvasChatPlaceholders() {
   if (forgeCanvasChatInput && !forgeCanvasChatInput.value) forgeCanvasChatInput.placeholder = "";
   if (forgeCanvasChatGeminiInput && !forgeCanvasChatGeminiInput.value) forgeCanvasChatGeminiInput.placeholder = "";
@@ -15903,6 +16206,7 @@ forgeCanvasChatInput?.addEventListener("blur", () => {
     startCanvasChatPlaceholderAnimation();
   }
 });
+syncCanvasCommandRailState();
 syncTradingSlashCommandState();
 forgeCanvasChatTargetBtns.forEach((button) => {
   button.addEventListener("click", (event) => {
@@ -16668,9 +16972,9 @@ function canvasSlashCommandToneClass(value = "") {
 }
 
 function syncTradingSlashCommandState() {
-  const fields = [forgeCanvasChatInput, forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput].filter(Boolean);
+  const fields = [forgeCanvasChatCommandInput, forgeCanvasChatInput, forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput].filter(Boolean);
   const activeField = primaryCanvasComposerInput?.() || forgeCanvasChatInput || null;
-  const activeValue = String(activeField?.value || "");
+  const activeValue = [canvasCommandPrefixText(), String(activeField?.value || "").trim()].filter(Boolean).join(" ");
   const activeToken = activeValue.trim().split(/\s+/)[0]?.toLowerCase() || "";
   const activeEntity = window.__forgeAtlasResolveSlashEntity?.(activeToken) || null;
   for (const field of fields) {
@@ -18233,8 +18537,9 @@ alphaCanvas.addEventListener("wheel", (e) => {
   const inPlot = x >= zones.plot.left && x <= zones.plot.right && y >= zones.plot.top && y <= zones.plot.bottom;
   const inTimeAxis = x >= zones.timeAxis.left && x <= zones.timeAxis.right && y >= zones.timeAxis.top && y <= zones.timeAxis.bottom;
   if (!inPlot && !inTimeAxis) return;
+  const tradingSurface = alphaShouldRenderTradingChartSurface();
+  if (!tradingSurface) return;
   e.preventDefault();
-  const tradingSurface = isTradingPanelActive();
   const isLikelyTrackpadPan = tradingSurface
     && !e.ctrlKey
     && !e.metaKey
@@ -18701,7 +19006,7 @@ alphaCanvas.addEventListener("mousedown", (e) => {
     scheduleAlphaRender();
     return;
   }
-  if (!tradingSurface && !alphaDocState.candles.length) return;
+  if (!tradingSurface) return;
   if (!inPlot) return;
   if (tradingSurface && alphaTradingSelectionToolState.enabled) {
     alphaTradingSelectionActive = true;
@@ -18750,7 +19055,7 @@ function handleAlphaChartMouseMove(e) {
   }
   const zones   = getAlphaChartInteractionZones();
   const plot    = zones.plot;
-  if (!tradingSurface && !alphaDocState.candles.length) return;
+  if (!tradingSurface) return;
   const viewport = tradingSurface
     ? alphaTradingResolveViewport(alphaDocState)
     : alphaResolveCandleViewport(alphaDocState, 5, 2000);
@@ -18951,9 +19256,7 @@ if (window.__TAURI__) {
   });
   window.__TAURI__.event.listen("forge-provider-terminal", (e) => {
     try {
-      handleCodexProviderTerminalEvent(e.payload);
-      handleGeminiProviderTerminalEvent(e.payload);
-      handleClaudeProviderTerminalEvent(e.payload);
+      ["codex", "gemini", "claude"].forEach((provider) => handleProviderTerminalEvent(provider, e.payload));
     } catch (err) {
       console.error("forge-provider-terminal listener failed", err);
     }
@@ -19523,109 +19826,50 @@ document.querySelectorAll(".mcp-filter-btn").forEach(btn => btn.addEventListener
 
 // ── LLM provider settings ────────────────────────────────────────
 
-const providerOverlay = document.getElementById("providerOverlay");
-const providerClose = document.getElementById("providerClose");
-const providerConnectionChip = document.getElementById("providerConnectionChip");
-const providerWorkbench = document.getElementById("providerWorkbench");
-const providerTerminalDeck = document.getElementById("providerTerminalDeck");
-const providerWorkbenchActiveLogo = document.getElementById("providerWorkbenchActiveLogo");
-const providerWorkbenchActiveLabel = document.getElementById("providerWorkbenchActiveLabel");
-const providerWorkbenchActiveMeta = document.getElementById("providerWorkbenchActiveMeta");
-const providerWorkbenchActiveState = document.getElementById("providerWorkbenchActiveState");
-const providerWorkbenchActiveDot = document.getElementById("providerWorkbenchActiveDot");
-const providerWorkbenchHint = document.getElementById("providerWorkbenchHint");
-const providerWorkbenchLaunch = document.getElementById("providerWorkbenchLaunch");
-const providerWorkbenchRefresh = document.getElementById("providerWorkbenchRefresh");
-const providerLauncherCodex = document.getElementById("providerLauncherCodex");
-const providerLauncherGemini = document.getElementById("providerLauncherGemini");
-const providerLauncherClaude = document.getElementById("providerLauncherClaude");
-const providerLauncherOanda = document.getElementById("providerLauncherOanda");
-const providerLauncherCodexDot = document.getElementById("providerLauncherCodexDot");
-const providerLauncherGeminiDot = document.getElementById("providerLauncherGeminiDot");
-const providerLauncherClaudeDot = document.getElementById("providerLauncherClaudeDot");
-const providerLauncherOandaDot = document.getElementById("providerLauncherOandaDot");
-const providerLauncherCodexState = document.getElementById("providerLauncherCodexState");
-const providerLauncherGeminiState = document.getElementById("providerLauncherGeminiState");
-const providerLauncherClaudeState = document.getElementById("providerLauncherClaudeState");
-const providerLauncherOandaState = document.getElementById("providerLauncherOandaState");
-const providerLauncherCodexMeta = document.getElementById("providerLauncherCodexMeta");
-const providerLauncherGeminiMeta = document.getElementById("providerLauncherGeminiMeta");
-const providerLauncherClaudeMeta = document.getElementById("providerLauncherClaudeMeta");
-const providerLauncherOandaMeta = document.getElementById("providerLauncherOandaMeta");
-const openAiProviderStatus = document.getElementById("openAiProviderStatus");
-const openAiProviderAccount = document.getElementById("openAiProviderAccount");
-const openAiProviderSource = document.getElementById("openAiProviderSource");
-const openAiProviderModelLabel = document.getElementById("openAiProviderModelLabel");
-const openAiProviderModel = document.getElementById("openAiProviderModel");
-const openAiProviderConnect = document.getElementById("openAiProviderConnect");
-const openAiProviderRefresh = document.getElementById("openAiProviderRefresh");
-const openAiProviderHint = document.getElementById("openAiProviderHint");
-const codexProviderTerminal = document.getElementById("codexProviderTerminal");
-const codexProviderTerminalState = document.getElementById("codexProviderTerminalState");
-const codexProviderTerminalViewport = document.getElementById("codexProviderTerminalViewport");
-const codexProviderTerminalOutput = document.getElementById("codexProviderTerminalOutput");
-const codexProviderTerminalInput = document.getElementById("codexProviderTerminalInput");
-const codexProviderTerminalSend = document.getElementById("codexProviderTerminalSend");
-const codexProviderTerminalStop = document.getElementById("codexProviderTerminalStop");
-const codexProviderTerminalClear = document.getElementById("codexProviderTerminalClear");
-const geminiProviderStatus = document.getElementById("geminiProviderStatus");
-const geminiProviderSource = document.getElementById("geminiProviderSource");
-const geminiProviderModelLabel = document.getElementById("geminiProviderModelLabel");
-const geminiProviderModel = document.getElementById("geminiProviderModel");
-const geminiProviderConnect = document.getElementById("geminiProviderConnect");
-const geminiProviderRefresh = document.getElementById("geminiProviderRefresh");
-const geminiProviderApiKey = document.getElementById("geminiProviderApiKey");
-const geminiProviderSaveKey = document.getElementById("geminiProviderSaveKey");
-const geminiProviderClearKey = document.getElementById("geminiProviderClearKey");
-const geminiProviderHint = document.getElementById("geminiProviderHint");
-const geminiProviderTerminal = document.getElementById("geminiProviderTerminal");
-const geminiProviderTerminalState = document.getElementById("geminiProviderTerminalState");
-const geminiProviderTerminalViewport = document.getElementById("geminiProviderTerminalViewport");
-const geminiProviderTerminalOutput = document.getElementById("geminiProviderTerminalOutput");
-const geminiProviderTerminalInput = document.getElementById("geminiProviderTerminalInput");
-const geminiProviderTerminalSend = document.getElementById("geminiProviderTerminalSend");
-const geminiProviderTerminalStop = document.getElementById("geminiProviderTerminalStop");
-const geminiProviderTerminalHide = document.getElementById("geminiProviderTerminalHide");
-const geminiProviderTerminalClear = document.getElementById("geminiProviderTerminalClear");
-const claudeProviderStatus = document.getElementById("claudeProviderStatus");
-const claudeProviderSource = document.getElementById("claudeProviderSource");
-const claudeProviderModelLabel = document.getElementById("claudeProviderModelLabel");
-const claudeProviderModel = document.getElementById("claudeProviderModel");
-const claudeProviderConnect = document.getElementById("claudeProviderConnect");
-const claudeProviderRefresh = document.getElementById("claudeProviderRefresh");
-const claudeProviderHint = document.getElementById("claudeProviderHint");
-const claudeProviderTerminal = document.getElementById("claudeProviderTerminal");
-const claudeProviderTerminalState = document.getElementById("claudeProviderTerminalState");
-const claudeProviderTerminalViewport = document.getElementById("claudeProviderTerminalViewport");
-const claudeProviderTerminalOutput = document.getElementById("claudeProviderTerminalOutput");
-const claudeProviderTerminalInput = document.getElementById("claudeProviderTerminalInput");
-const claudeProviderTerminalSend = document.getElementById("claudeProviderTerminalSend");
-const claudeProviderTerminalStop = document.getElementById("claudeProviderTerminalStop");
-const claudeProviderTerminalHide = document.getElementById("claudeProviderTerminalHide");
-const claudeProviderTerminalClear = document.getElementById("claudeProviderTerminalClear");
-const oandaProviderTerminal = document.getElementById("oandaProviderTerminal");
-const oandaProviderTerminalState = document.getElementById("oandaProviderTerminalState");
-const oandaProviderTerminalOutput = document.getElementById("oandaProviderTerminalOutput");
-const oandaProviderTerminalScrollbar = document.getElementById("oandaProviderTerminalScrollbar");
-const oandaProviderTerminalScrollbarThumb = document.getElementById("oandaProviderTerminalScrollbarThumb");
-const oandaProviderTerminalInput = document.getElementById("oandaProviderTerminalInput");
-const oandaProviderTerminalSend = document.getElementById("oandaProviderTerminalSend");
-const oandaProviderTerminalReset = document.getElementById("oandaProviderTerminalReset");
-const voiceProviderStatus = document.getElementById("voiceProviderStatus");
-const voiceProviderEngine = document.getElementById("voiceProviderEngine");
-const voiceProviderUsage = document.getElementById("voiceProviderUsage");
-const voiceProviderCache = document.getElementById("voiceProviderCache");
-const voiceProviderHint = document.getElementById("voiceProviderHint");
-const voiceElevenApiKey = document.getElementById("voiceElevenApiKey");
-const voiceElevenSaveKey = document.getElementById("voiceElevenSaveKey");
-const voiceElevenClearKey = document.getElementById("voiceElevenClearKey");
-const voiceElevenVoiceId = document.getElementById("voiceElevenVoiceId");
-const voiceElevenModel = document.getElementById("voiceElevenModel");
-const voiceMonthlyLimit = document.getElementById("voiceMonthlyLimit");
-const voiceOrpheusEndpoint = document.getElementById("voiceOrpheusEndpoint");
-const voiceOrpheusVoice = document.getElementById("voiceOrpheusVoice");
-const voiceAutoSpeak = document.getElementById("voiceAutoSpeak");
-
+const providerDom = Object.fromEntries(`
+  providerOverlay providerClose providerConnectionChip providerWorkbench providerTerminalDeck
+  providerWorkbenchActiveLogo providerWorkbenchActiveLabel providerWorkbenchActiveMeta providerWorkbenchActiveState providerWorkbenchActiveDot
+  providerWorkbenchHint providerWorkbenchLaunch providerWorkbenchRefresh
+  openAiProviderStatus openAiProviderAccount openAiProviderSource openAiProviderModelLabel openAiProviderModel openAiProviderConnect openAiProviderRefresh openAiProviderHint
+  geminiProviderStatus geminiProviderSource geminiProviderModelLabel geminiProviderModel geminiProviderConnect geminiProviderRefresh geminiProviderApiKey geminiProviderSaveKey geminiProviderClearKey geminiProviderHint
+  claudeProviderStatus claudeProviderSource claudeProviderModelLabel claudeProviderModel claudeProviderConnect claudeProviderRefresh claudeProviderHint
+  oandaProviderTerminal oandaProviderTerminalState oandaProviderTerminalOutput oandaProviderTerminalScrollbar oandaProviderTerminalScrollbarThumb oandaProviderTerminalInput oandaProviderTerminalSend oandaProviderTerminalReset
+  voiceProviderStatus voiceProviderEngine voiceProviderUsage voiceProviderCache voiceProviderHint voiceElevenApiKey voiceElevenSaveKey voiceElevenClearKey voiceElevenVoiceId voiceElevenModel voiceMonthlyLimit voiceOrpheusEndpoint voiceOrpheusVoice voiceAutoSpeak
+`.trim().split(/\s+/).map((id) => [id, document.getElementById(id)]));
+const {
+  providerOverlay, providerClose, providerConnectionChip, providerWorkbench, providerTerminalDeck,
+  providerWorkbenchActiveLogo, providerWorkbenchActiveLabel, providerWorkbenchActiveMeta, providerWorkbenchActiveState, providerWorkbenchActiveDot, providerWorkbenchHint, providerWorkbenchLaunch, providerWorkbenchRefresh,
+  openAiProviderStatus, openAiProviderAccount, openAiProviderSource, openAiProviderModelLabel, openAiProviderModel, openAiProviderConnect, openAiProviderRefresh, openAiProviderHint,
+  geminiProviderStatus, geminiProviderSource, geminiProviderModelLabel, geminiProviderModel, geminiProviderConnect, geminiProviderRefresh, geminiProviderApiKey, geminiProviderSaveKey, geminiProviderClearKey, geminiProviderHint,
+  claudeProviderStatus, claudeProviderSource, claudeProviderModelLabel, claudeProviderModel, claudeProviderConnect, claudeProviderRefresh, claudeProviderHint,
+  oandaProviderTerminal, oandaProviderTerminalState, oandaProviderTerminalOutput, oandaProviderTerminalScrollbar, oandaProviderTerminalScrollbarThumb, oandaProviderTerminalInput, oandaProviderTerminalSend, oandaProviderTerminalReset,
+  voiceProviderStatus, voiceProviderEngine, voiceProviderUsage, voiceProviderCache, voiceProviderHint, voiceElevenApiKey, voiceElevenSaveKey, voiceElevenClearKey, voiceElevenVoiceId, voiceElevenModel, voiceMonthlyLimit, voiceOrpheusEndpoint, voiceOrpheusVoice, voiceAutoSpeak,
+} = providerDom;
+const providerLaunchers = Object.fromEntries(Object.entries({
+  codex: "Codex",
+  gemini: "Gemini",
+  claude: "Claude",
+  oanda: "Oanda",
+}).map(([kind, suffix]) => [kind, {
+  button: document.getElementById(`providerLauncher${suffix}`),
+  dot: document.getElementById(`providerLauncher${suffix}Dot`),
+  state: document.getElementById(`providerLauncher${suffix}State`),
+  meta: document.getElementById(`providerLauncher${suffix}Meta`),
+}]));
+const providerTerminalEls = Object.fromEntries(["codex", "gemini", "claude"].map((provider) => {
+  const id = (suffix = "") => `${provider}ProviderTerminal${suffix}`;
+  return [provider, {
+    shell: document.getElementById(id()),
+    state: document.getElementById(id("State")),
+    viewport: document.getElementById(id("Viewport")),
+    output: document.getElementById(id("Output")),
+    input: document.getElementById(id("Input")),
+    send: document.getElementById(id("Send")),
+    stop: document.getElementById(id("Stop")),
+    hide: document.getElementById(id("Hide")),
+    clear: document.getElementById(id("Clear")),
+  }];
+}));
 let openAiProviderWatchTimer = null;
 let openAiProviderLastStatus = null;
 let codexProviderLastStatus = null;
@@ -19633,15 +19877,18 @@ let geminiProviderLastStatus = null;
 let claudeProviderLastStatus = null;
 let oandaProviderLastStatus = null;
 let voiceProviderLastStatus = null;
-let codexProviderTerminalOutputCache = "Ready.";
-let codexProviderTerminalRunning = false;
-let codexProviderTerminalOpening = false;
-let geminiProviderTerminalOutputCache = "Ready.";
-let geminiProviderTerminalRunning = false;
-let geminiProviderTerminalOpening = false;
-let claudeProviderTerminalOutputCache = "Ready.";
-let claudeProviderTerminalRunning = false;
-let claudeProviderTerminalOpening = false;
+const providerTerminalState = {
+  codex: { output: "Ready.", running: false, opening: false },
+  gemini: { output: "Ready.", running: false, opening: false },
+  claude: { output: "Ready.", running: false, opening: false },
+};
+const OANDA_TERMINAL_FIELDS = ["accountId", "apiKey", "baseUrl"];
+const OANDA_TERMINAL_FIELD_META = {
+  accountId: { label: "OANDA_ACCOUNT_ID", placeholder: "Paste your OANDA account id then press Enter", secret: false },
+  apiKey: { label: "OANDA_API_KEY", placeholder: "Paste your OANDA API key then press Enter", secret: true },
+  baseUrl: { label: "OANDA_BASE_URL", placeholder: "Paste your OANDA base URL then press Enter", secret: false },
+};
+const OANDA_TERMINAL_MARK_PATTERN = "aaabbababbbaaabaaabbaaaab";
 let oandaProviderTerminalBaseHtml = "";
 let oandaProviderTerminalLogHtml = "";
 let oandaProviderTerminalPhase = "boot";
@@ -19660,6 +19907,12 @@ let oandaProviderTerminalScrollbarDrag = null;
 const providerTerminalFilterCarry = { codex: "", gemini: "", claude: "" };
 const providerTerminalInstances = new Map();
 const providerTerminalLiveHydration = { codex: false, gemini: false, claude: false };
+const providerWorkbenchMetaRows = {
+  codex: ["Codex", "provider-logo-openai", () => selectedOpenAiModelRef(), () => codexProviderLastStatus || openAiProviderLastStatus],
+  gemini: ["Gemini", "provider-logo-gemini", () => selectedGeminiModelRef(), () => geminiProviderLastStatus],
+  claude: ["Claude", "provider-logo-claude", () => selectedClaudeModelRef(), () => claudeProviderLastStatus],
+  oanda: ["OANDA", "provider-logo-oanda", () => oandaProviderBaseUrlLabel(), () => oandaProviderLastStatus],
+};
 let activeProviderWorkbench = localStorage.getItem("forge.provider.workbench.active") || "codex";
 
 function storedOpenAiModelRef() {
@@ -19753,29 +20006,54 @@ function setStoredRuntimeModelRef(storageKey, model, normalizer) {
   } catch (_) {}
 }
 
+function cliProviderModelMeta(provider) {
+  const claude = provider === "claude";
+  return {
+    storageKey: claude ? "forge.claude.model" : "forge.gemini.model",
+    input: claude ? claudeProviderModel : geminiProviderModel,
+    label: claude ? claudeProviderModelLabel : geminiProviderModelLabel,
+    selected: claude ? selectedClaudeModelRef : selectedGeminiModelRef,
+    normalizer: claude ? normalizeClaudeModelRef : normalizeGeminiModelRef,
+    status: () => (claude ? claudeProviderLastStatus : geminiProviderLastStatus),
+  };
+}
+
+function hydrateCliProviderModelPicker(provider) {
+  const meta = cliProviderModelMeta(provider);
+  const stored = storedRuntimeModelRef(meta.storageKey);
+  const normalized = meta.normalizer(stored);
+  if (meta.input) meta.input.value = normalized;
+  if (normalized !== stored) setStoredRuntimeModelRef(meta.storageKey, normalized, meta.normalizer);
+  const selected = meta.selected();
+  if (meta.label) meta.label.textContent = selected;
+  const launcher = providerLauncherDom(provider).meta;
+  if (launcher) launcher.textContent = selected;
+}
+
+function commitCliProviderModel(provider) {
+  const meta = cliProviderModelMeta(provider);
+  if (meta.input) setStoredRuntimeModelRef(meta.storageKey, meta.input.value, meta.normalizer);
+  hydrateProviderModelPickers();
+  renderCliProviderStatus(provider, meta.status());
+}
+
+function bindCliProviderModelPicker(provider) {
+  const input = cliProviderModelMeta(provider).input;
+  if (!input) return;
+  ["change", "blur"].forEach((eventName) => {
+    input.addEventListener(eventName, () => commitCliProviderModel(provider));
+  });
+}
+
 function hydrateProviderModelPickers() {
   const stored = normalizeOpenAiModelRef(storedOpenAiModelRef());
   if (openAiProviderModel) openAiProviderModel.value = stored;
   if (stored !== storedOpenAiModelRef()) setStoredOpenAiModelRef(stored);
   if (openAiProviderModelLabel) openAiProviderModelLabel.textContent = selectedOpenAiModelRef();
-  const gemini = normalizeGeminiModelRef(storedRuntimeModelRef("forge.gemini.model"));
-  if (geminiProviderModel) geminiProviderModel.value = gemini;
-  if (gemini !== storedRuntimeModelRef("forge.gemini.model")) {
-    setStoredRuntimeModelRef("forge.gemini.model", gemini, normalizeGeminiModelRef);
-  }
-  if (geminiProviderModelLabel) geminiProviderModelLabel.textContent = selectedGeminiModelRef();
-  const claude = normalizeClaudeModelRef(storedRuntimeModelRef("forge.claude.model"));
-  if (claudeProviderModel) claudeProviderModel.value = claude;
-  if (claude !== storedRuntimeModelRef("forge.claude.model")) {
-    setStoredRuntimeModelRef("forge.claude.model", claude, normalizeClaudeModelRef);
-  }
-  if (claudeProviderModelLabel) claudeProviderModelLabel.textContent = selectedClaudeModelRef();
-  if (providerLauncherCodexMeta) providerLauncherCodexMeta.textContent = selectedOpenAiModelRef();
-  if (providerLauncherGeminiMeta) providerLauncherGeminiMeta.textContent = selectedGeminiModelRef();
-  if (providerLauncherClaudeMeta) providerLauncherClaudeMeta.textContent = selectedClaudeModelRef();
-  renderCliProviderTerminalShell("codex");
-  renderCliProviderTerminalShell("gemini");
-  renderCliProviderTerminalShell("claude");
+  const codexLauncherMeta = providerLauncherDom("codex").meta;
+  if (codexLauncherMeta) codexLauncherMeta.textContent = selectedOpenAiModelRef();
+  ["gemini", "claude"].forEach(hydrateCliProviderModelPicker);
+  ["codex", "gemini", "claude"].forEach(renderCliProviderTerminalShell);
   hydrateVoiceProviderSettings();
   syncCanvasChatModelLabel();
   renderProviderWorkbench();
@@ -20080,11 +20358,15 @@ function waitOandaTerminal(ms) {
 }
 
 function isOandaDigitOneHotkey(event) {
-  return event?.key === "1" || event?.code === "Digit1" || event?.code === "Numpad1";
+  return isOandaDigitHotkey(event, "1");
 }
 
 function isOandaDigitTwoHotkey(event) {
-  return event?.key === "2" || event?.code === "Digit2" || event?.code === "Numpad2";
+  return isOandaDigitHotkey(event, "2");
+}
+
+function isOandaDigitHotkey(event, digit) {
+  return event?.key === digit || event?.code === `Digit${digit}` || event?.code === `Numpad${digit}`;
 }
 
 function oandaProviderTerminalStatusText() {
@@ -20095,11 +20377,7 @@ function oandaProviderTerminalStatusText() {
 }
 
 function resetOandaProviderDraft() {
-  oandaProviderTerminalDraft = {
-    accountId: "",
-    apiKey: "",
-    baseUrl: "",
-  };
+  oandaProviderTerminalDraft = oandaProviderTerminalFieldState("");
   resetOandaProviderTerminalMaskedCarry();
 }
 
@@ -20114,49 +20392,27 @@ function oandaProviderTerminalIntroLines() {
 }
 
 function oandaProviderTerminalFieldOrder() {
-  return ["accountId", "apiKey", "baseUrl"];
+  return OANDA_TERMINAL_FIELDS;
 }
 
 function oandaProviderTerminalFieldMeta(field) {
-  if (field === "apiKey") {
-    return {
-      label: "OANDA_API_KEY",
-      placeholder: "Paste your OANDA API key then press Enter",
-      secret: true,
-    };
-  }
-  if (field === "baseUrl") {
-    return {
-      label: "OANDA_BASE_URL",
-      placeholder: "Paste your OANDA base URL then press Enter",
-      secret: false,
-    };
-  }
-  return {
-    label: "OANDA_ACCOUNT_ID",
-    placeholder: "Paste your OANDA account id then press Enter",
-    secret: false,
-  };
+  return OANDA_TERMINAL_FIELD_META[field] || OANDA_TERMINAL_FIELD_META.accountId;
+}
+
+function oandaProviderTerminalFieldState(value) {
+  return Object.fromEntries(OANDA_TERMINAL_FIELDS.map((field) => [field, value]));
 }
 
 function resetOandaProviderTerminalFieldFx() {
-  oandaProviderTerminalFieldFx = { accountId: null, apiKey: null, baseUrl: null };
+  oandaProviderTerminalFieldFx = oandaProviderTerminalFieldState(null);
 }
 
 function resetOandaProviderTerminalFieldVisibility(visible = true) {
-  oandaProviderTerminalFieldVisible = {
-    accountId: visible,
-    apiKey: visible,
-    baseUrl: visible,
-  };
+  oandaProviderTerminalFieldVisible = oandaProviderTerminalFieldState(visible);
 }
 
 function resetOandaProviderTerminalMaskedCarry() {
-  oandaProviderTerminalMaskedCarry = {
-    accountId: false,
-    apiKey: false,
-    baseUrl: false,
-  };
+  oandaProviderTerminalMaskedCarry = oandaProviderTerminalFieldState(false);
 }
 
 function resetOandaProviderTerminalLogs() {
@@ -20472,6 +20728,9 @@ function buildOandaProviderTerminalShell(connected) {
   const wordmark = oandaProviderTerminalIntroLines().map((line) => (
     `<div class="oanda-terminal-wordmark-line">${escapeOandaTerminalHtml(line)}</div>`
   )).join("");
+  const mark = [...OANDA_TERMINAL_MARK_PATTERN].map((slot) => (
+    `<span class="oanda-terminal-mark-block${slot === "a" ? " is-a" : slot === "b" ? " is-b" : ""}"></span>`
+  )).join("");
   const statusLine = connected
     ? `<div class="oanda-terminal-statusline"><span class="oanda-terminal-label">status</span><span class="oanda-terminal-keyword">encrypted</span> via ${escapeOandaTerminalHtml(statusRef?.authSource || "OANDA")}</div>
        <div class="oanda-terminal-statusline"><span class="oanda-terminal-label">account</span>${escapeOandaTerminalHtml(statusRef?.accountIdHint || "configured")}</div>
@@ -20490,31 +20749,7 @@ function buildOandaProviderTerminalShell(connected) {
     <div class="oanda-terminal-shellcopy">
       <div class="oanda-terminal-hero">
         <div class="oanda-terminal-mark" aria-hidden="true">
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block"></span>
-          <span class="oanda-terminal-mark-block"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block is-b"></span>
-          <span class="oanda-terminal-mark-block"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block is-b"></span>
-          <span class="oanda-terminal-mark-block is-b"></span>
-          <span class="oanda-terminal-mark-block"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block"></span>
-          <span class="oanda-terminal-mark-block is-b"></span>
-          <span class="oanda-terminal-mark-block is-b"></span>
-          <span class="oanda-terminal-mark-block"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block is-a"></span>
-          <span class="oanda-terminal-mark-block"></span>
+          ${mark}
         </div>
         <div class="oanda-terminal-hero-copy">
           <div class="oanda-terminal-bannerline"><span class="oanda-terminal-keyword">FORGE</span> PROVIDER TERMINAL</div>
@@ -20564,7 +20799,8 @@ function renderOandaProviderStatus(status, options = {}) {
   } else if (!busy) {
     clearPersistedOandaProviderTerminalPostState();
   }
-  if (providerLauncherOandaMeta) providerLauncherOandaMeta.textContent = oandaProviderBaseUrlLabel(status);
+  const oandaLauncherMeta = providerLauncherDom("oanda").meta;
+  if (oandaLauncherMeta) oandaLauncherMeta.textContent = oandaProviderBaseUrlLabel(status);
   renderProviderWorkbenchLauncher("oanda", oandaProviderLauncherState(status, { busy }), { muted: false });
   if (activeProviderWorkbench === "oanda") {
     if (oandaProviderLastStatus?.connected && !oandaProviderTerminalBusy) {
@@ -20838,17 +21074,11 @@ async function submitOandaProviderTerminalInput(forcedValue = null) {
 }
 
 function providerWorkbenchStatus(kind) {
-  if (kind === "codex") return codexProviderLastStatus || openAiProviderLastStatus;
-  if (kind === "claude") return claudeProviderLastStatus;
-  if (kind === "oanda") return oandaProviderLastStatus;
-  return geminiProviderLastStatus;
+  return providerWorkbenchMeta(kind).status();
 }
 
 function providerWorkbenchDisplayName(kind) {
-  if (kind === "codex") return "Codex";
-  if (kind === "claude") return "Claude";
-  if (kind === "oanda") return "OANDA";
-  return "Gemini";
+  return providerWorkbenchMeta(kind).label;
 }
 
 function providerStatusTextBlob(status) {
@@ -20942,50 +21172,20 @@ function setActiveTradingBroker(kind = "oanda") {
 }
 
 function providerWorkbenchModel(kind) {
-  if (kind === "codex") return selectedOpenAiModelRef();
-  if (kind === "claude") return selectedClaudeModelRef();
-  if (kind === "oanda") return oandaProviderBaseUrlLabel();
-  return selectedGeminiModelRef();
+  return providerWorkbenchMeta(kind).model();
 }
 
 function providerLauncherDom(kind) {
-  if (kind === "codex") {
-    return {
-      button: providerLauncherCodex,
-      dot: providerLauncherCodexDot,
-      state: providerLauncherCodexState,
-      meta: providerLauncherCodexMeta,
-    };
-  }
-  if (kind === "claude") {
-    return {
-      button: providerLauncherClaude,
-      dot: providerLauncherClaudeDot,
-      state: providerLauncherClaudeState,
-      meta: providerLauncherClaudeMeta,
-    };
-  }
-  if (kind === "oanda") {
-    return {
-      button: providerLauncherOanda,
-      dot: providerLauncherOandaDot,
-      state: providerLauncherOandaState,
-      meta: providerLauncherOandaMeta,
-    };
-  }
-  return {
-    button: providerLauncherGemini,
-    dot: providerLauncherGeminiDot,
-    state: providerLauncherGeminiState,
-    meta: providerLauncherGeminiMeta,
-  };
+  return providerLaunchers[kind] || providerLaunchers.gemini || {};
 }
 
 function providerWorkbenchLogoClass(kind) {
-  if (kind === "codex") return "provider-logo-openai";
-  if (kind === "claude") return "provider-logo-claude";
-  if (kind === "oanda") return "provider-logo-oanda";
-  return "provider-logo-gemini";
+  return providerWorkbenchMeta(kind).logo;
+}
+
+function providerWorkbenchMeta(kind) {
+  const [label, logo, model, status] = providerWorkbenchMetaRows[kind] || providerWorkbenchMetaRows.gemini;
+  return { label, logo, model, status };
 }
 
 function providerWorkbenchStateText(status) {
@@ -21020,44 +21220,23 @@ function filterProviderTerminalDisplayText(provider, text, options = {}) {
   return normalized;
 }
 
-function providerTerminalRawOutput(provider) {
-  if (provider === "codex") return codexProviderTerminalOutputCache || "";
-  if (provider === "claude") return claudeProviderTerminalOutputCache || "";
-  return geminiProviderTerminalOutputCache || "";
+function providerTerminalRuntimeState(provider) {
+  return providerTerminalState[provider] || null;
 }
 
+function providerTerminalRawOutput(provider) {
+  return providerTerminalRuntimeState(provider)?.output || "";
+}
+
+const providerTerminalProfileRows = {
+  codex: ["Codex", "OpenAI Codex CLI", "subscription", "OPENAI SUBSCRIPTION BRIDGE", "Codex CLI bridge for local Forge sessions", "Reuse local ChatGPT / Codex subscription auth, open the runtime directly inside Forge, and keep session routing on this machine."],
+  gemini: ["Gemini", "Gemini CLI", "auth", "GOOGLE CLI BRIDGE", "Gemini CLI bridge for local Forge sessions", "Launch Gemini directly inside Forge, reuse local CLI auth or the saved local API key, and keep installation plus login in one terminal surface."],
+  claude: ["Claude", "Claude Code CLI", "auth", "ANTHROPIC CLI BRIDGE", "Claude Code login bridge for local Forge sessions", "Open Claude Code inside Forge, finish Claude.ai authentication locally, and keep the linked workspace flow inside the embedded terminal."],
+};
+
 function providerTerminalStoryProfile(provider) {
-  if (provider === "codex") {
-    return {
-      name: "Codex",
-      runtime: "OpenAI Codex CLI",
-      metaLabel: "model",
-      sourceLabel: "subscription",
-      eyebrow: "OPENAI SUBSCRIPTION BRIDGE",
-      kicker: "Codex CLI bridge for local Forge sessions",
-      intro: "Reuse local ChatGPT / Codex subscription auth, open the runtime directly inside Forge, and keep session routing on this machine.",
-    };
-  }
-  if (provider === "claude") {
-    return {
-      name: "Claude",
-      runtime: "Claude Code CLI",
-      metaLabel: "model",
-      sourceLabel: "auth",
-      eyebrow: "ANTHROPIC CLI BRIDGE",
-      kicker: "Claude Code login bridge for local Forge sessions",
-      intro: "Open Claude Code inside Forge, finish Claude.ai authentication locally, and keep the linked workspace flow inside the embedded terminal.",
-    };
-  }
-  return {
-    name: "Gemini",
-    runtime: "Gemini CLI",
-    metaLabel: "model",
-    sourceLabel: "auth",
-    eyebrow: "GOOGLE CLI BRIDGE",
-    kicker: "Gemini CLI bridge for local Forge sessions",
-    intro: "Launch Gemini directly inside Forge, reuse local CLI auth or the saved local API key, and keep installation plus login in one terminal surface.",
-  };
+  const [name, runtime, sourceLabel, eyebrow, kicker, intro] = providerTerminalProfileRows[provider] || providerTerminalProfileRows.gemini;
+  return { name, runtime, metaLabel: "model", sourceLabel, eyebrow, kicker, intro };
 }
 
 function providerTerminalPixelGlyphs() {
@@ -21365,24 +21544,16 @@ function providerTerminalReplaySeed(provider, text) {
 }
 
 function providerTerminalIsRunning(kind) {
-  if (kind === "codex") return !!codexProviderTerminalRunning;
-  if (kind === "claude") return !!claudeProviderTerminalRunning;
-  if (kind === "oanda") return false;
-  return !!geminiProviderTerminalRunning;
+  return !!providerTerminalRuntimeState(kind)?.running;
 }
 
 function providerTerminalIsOpening(kind) {
-  if (kind === "codex") return !!codexProviderTerminalOpening;
-  if (kind === "claude") return !!claudeProviderTerminalOpening;
-  if (kind === "oanda") return false;
-  return !!geminiProviderTerminalOpening;
+  return !!providerTerminalRuntimeState(kind)?.opening;
 }
 
 function setProviderTerminalOpening(kind, opening) {
-  if (kind === "codex") codexProviderTerminalOpening = !!opening;
-  else if (kind === "claude") claudeProviderTerminalOpening = !!opening;
-  else if (kind === "oanda") return;
-  else geminiProviderTerminalOpening = !!opening;
+  const state = providerTerminalRuntimeState(kind);
+  if (state) state.opening = !!opening;
 }
 
 function providerWorkbenchCanOpen(kind) {
@@ -21411,9 +21582,7 @@ async function maybeAutoHealProvider(kind, status, options = {}) {
   if (now - last < 15000) return;
   providerAutoHealLastAttempt.set(kind, now);
   try {
-    if (kind === "codex") await connectCodexProvider({ background: true });
-    else if (kind === "claude") await connectClaudeProvider({ background: true });
-    else await connectGeminiProvider({ background: true });
+    await openProviderWorkbench(kind, { background: true });
   } catch (_) {}
 }
 
@@ -21427,21 +21596,30 @@ function startProviderAutoHealRobot() {
 async function maybeAutoLaunchProviderWorkbench(kind) {
   if (!providerWorkbenchCanOpen(kind)) return;
   if (providerTerminalIsRunning(kind) || providerTerminalIsOpening(kind)) return;
-  if (kind === "codex") await connectCodexProvider();
-  else if (kind === "claude") await connectClaudeProvider();
-  else if (kind === "oanda") {
+  await openProviderWorkbench(kind);
+}
+
+async function openProviderWorkbench(kind, options = {}) {
+  if (kind === "oanda") {
+    if (options.restart) {
+      startOandaProviderTerminal();
+      return;
+    }
     if (!oandaProviderTerminalBaseHtml || oandaProviderTerminalPhase === "boot") startOandaProviderTerminal({ preserveDraft: true });
     renderOandaProviderTerminal();
+    return;
   }
-  else await connectGeminiProvider();
+  if (kind === "codex") return connectCodexProvider(options);
+  if (kind === "claude") return connectClaudeProvider(options);
+  return connectGeminiProvider(options);
 }
 
 function syncActiveProviderTerminalShell(kind) {
   const active = ["codex", "gemini", "claude", "oanda"].includes(kind) ? kind : "codex";
   [
-    ["codex", codexProviderTerminal],
-    ["gemini", geminiProviderTerminal],
-    ["claude", claudeProviderTerminal],
+    ["codex", providerTerminalDom("codex").shell],
+    ["gemini", providerTerminalDom("gemini").shell],
+    ["claude", providerTerminalDom("claude").shell],
     ["oanda", oandaProviderTerminal],
   ].forEach(([name, shell]) => {
     if (!shell) return;
@@ -21457,7 +21635,8 @@ function setActiveProviderWorkbench(kind, options = {}) {
   activeProviderWorkbench = normalized;
   try { localStorage.setItem("forge.provider.workbench.active", normalized); } catch (_) {}
   if (isTradingBrokerProvider(normalized)) setActiveTradingBroker(normalized);
-  [["codex", providerLauncherCodex], ["gemini", providerLauncherGemini], ["claude", providerLauncherClaude], ["oanda", providerLauncherOanda]].forEach(([name, button]) => {
+  ["codex", "gemini", "claude", "oanda"].forEach((name) => {
+    const button = providerLauncherDom(name).button;
     const on = name === normalized;
     button?.classList.toggle("active", on);
     button?.setAttribute("aria-selected", on ? "true" : "false");
@@ -21580,37 +21759,53 @@ function renderProviderWorkbenchLauncher(kind, stateText, options = {}) {
 
 function mountProviderWorkbenchTerminals() {
   if (!providerTerminalDeck) return;
-  if (geminiProviderTerminal && geminiProviderTerminal.parentElement !== providerTerminalDeck) {
-    providerTerminalDeck.appendChild(geminiProviderTerminal);
-  }
-  if (claudeProviderTerminal && claudeProviderTerminal.parentElement !== providerTerminalDeck) {
-    providerTerminalDeck.appendChild(claudeProviderTerminal);
-  }
+  ["gemini", "claude"].forEach((provider) => {
+    const shell = providerTerminalDom(provider).shell;
+    if (shell && shell.parentElement !== providerTerminalDeck) providerTerminalDeck.appendChild(shell);
+  });
 }
+
+const providerTerminalText = {
+  codex: ["Open Codex in Forge", "Codex is preparing...", "Type a command or answer for Codex CLI", "Preparing Codex CLI"],
+  gemini: ["Start Gemini in Forge", "Gemini is preparing...", "Type a command or answer for Gemini CLI", "Preparing Gemini CLI"],
+  claude: ["Start Claude in Forge", "Claude is preparing...", "Type a command or answer for Claude Code CLI", "Preparing Claude Code CLI"],
+};
 
 function providerTerminalDom(provider) {
-  if (provider === "codex") {
-    return {
-      shell: codexProviderTerminal,
-      viewport: codexProviderTerminalViewport,
-      output: codexProviderTerminalOutput,
-    };
-  }
-  return provider === "claude"
-    ? {
-        shell: claudeProviderTerminal,
-        viewport: claudeProviderTerminalViewport,
-        output: claudeProviderTerminalOutput,
-      }
-    : {
-        shell: geminiProviderTerminal,
-        viewport: geminiProviderTerminalViewport,
-        output: geminiProviderTerminalOutput,
-      };
+  const text = providerTerminalText[provider] || providerTerminalText.gemini;
+  const [openText, preparingText, promptText, startMessage] = text;
+  return { ...(providerTerminalEls[provider] || providerTerminalEls.gemini || {}), openText, preparingText, promptText, startMessage };
 }
 
+const PROVIDER_TERMINAL_COMMANDS = {
+  codex: {
+    snapshot: "codex_terminal_snapshot",
+    start: "codex_terminal_start",
+    send_input: "codex_terminal_send_input",
+    resize: "codex_terminal_resize",
+    stop: "codex_terminal_stop",
+    clear: "codex_terminal_clear",
+  },
+  gemini: {
+    snapshot: "gemini_terminal_snapshot",
+    start: "gemini_terminal_start",
+    send_input: "gemini_terminal_send_input",
+    resize: "gemini_terminal_resize",
+    stop: "gemini_terminal_stop",
+    clear: "gemini_terminal_clear",
+  },
+  claude: {
+    snapshot: "claude_terminal_snapshot",
+    start: "claude_terminal_start",
+    send_input: "claude_terminal_send_input",
+    resize: "claude_terminal_resize",
+    stop: "claude_terminal_stop",
+    clear: "claude_terminal_clear",
+  },
+};
+
 function providerTerminalInvokeName(provider, action) {
-  return `${provider}_terminal_${action}`;
+  return PROVIDER_TERMINAL_COMMANDS[provider]?.[action] || `${provider}_terminal_${action}`;
 }
 
 function providerTerminalXtermGlobals() {
@@ -21744,92 +21939,103 @@ function ensureProviderTerminalEmulator(provider) {
   return runtime;
 }
 
-function setCodexProviderTerminalVisible(visible) {
-  if (!codexProviderTerminal) return;
-  if (visible) {
-    setActiveProviderWorkbench("codex", { focusTerminal: true, autoLaunch: false });
-  } else {
-    codexProviderTerminal.hidden = true;
-  }
+function providerTerminalCache(provider) {
+  return providerTerminalRuntimeState(provider)?.output || "Ready.";
 }
 
-function setCodexProviderTerminalOutput(text) {
-  providerTerminalFilterCarry.codex = "";
-  codexProviderTerminalOutputCache = filterProviderTerminalDisplayText("codex", text, { flush: true }) || "Ready.";
-  renderCliProviderTerminalShell("codex");
-  return codexProviderTerminalOutputCache;
+function setProviderTerminalCache(provider, value) {
+  const next = value || "Ready.";
+  const state = providerTerminalRuntimeState(provider);
+  if (state) state.output = next;
+  return next;
 }
 
-function appendCodexProviderTerminalOutput(text) {
-  const filtered = filterProviderTerminalDisplayText("codex", text);
+function setProviderTerminalRunning(provider, running) {
+  const state = providerTerminalRuntimeState(provider);
+  if (state) state.running = !!running;
+}
+
+function renderProviderTerminalUnavailable(provider) {
+  const message = `Open Forge as a Tauri app to launch ${providerWorkbenchDisplayName(provider)} inside Forge.`;
+  const status = { connected: false, installed: false, authSource: "none", message };
+  if (provider === "codex") renderCodexProviderStatus(status);
+  else renderCliProviderStatus(provider, status);
+}
+
+function setProviderTerminalVisible(provider, visible) {
+  const dom = providerTerminalDom(provider);
+  if (!dom.shell) return;
+  if (visible) setActiveProviderWorkbench(provider, { focusTerminal: true, autoLaunch: false });
+  else dom.shell.hidden = true;
+}
+
+function setProviderTerminalOutput(provider, text) {
+  providerTerminalFilterCarry[provider] = "";
+  const filtered = filterProviderTerminalDisplayText(provider, text, { flush: true }) || "Ready.";
+  const cached = setProviderTerminalCache(provider, filtered);
+  renderCliProviderTerminalShell(provider);
+  return cached;
+}
+
+function appendProviderTerminalOutput(provider, text) {
+  const filtered = filterProviderTerminalDisplayText(provider, text);
   if (!filtered) return "";
-  codexProviderTerminalOutputCache = `${codexProviderTerminalOutputCache || ""}${filtered}` || "Ready.";
-  renderCliProviderTerminalShell("codex");
+  setProviderTerminalCache(provider, `${providerTerminalCache(provider) || ""}${filtered}` || "Ready.");
+  renderCliProviderTerminalShell(provider);
   return filtered;
 }
 
-function renderCodexProviderTerminal(snapshot = {}, options = {}) {
+function renderProviderTerminal(provider, snapshot = {}, options = {}) {
+  const dom = providerTerminalDom(provider);
   const resetLiveTerminal = !!options.resetLiveTerminal;
   const running = !!snapshot.running;
-  codexProviderTerminalRunning = running;
+  setProviderTerminalRunning(provider, running);
   const phase = String(snapshot.phase || (running ? "running" : "idle")).trim();
   const message = String(snapshot.message || "").trim();
-  const label = message ? `${phase} · ${message}` : phase;
-  if (codexProviderTerminalState) codexProviderTerminalState.textContent = label;
+  if (dom.state) dom.state.textContent = message ? `${phase} · ${message}` : phase;
   let filteredSnapshotOutput = "";
   if (typeof snapshot.output === "string") {
-    filteredSnapshotOutput = setCodexProviderTerminalOutput(snapshot.output);
+    filteredSnapshotOutput = setProviderTerminalOutput(provider, snapshot.output);
     const canReplaySnapshot = resetLiveTerminal
-      && ensureProviderTerminalEmulator("codex")
-      && (!running || !providerTerminalLiveHydration.codex);
-    if (canReplaySnapshot) {
-      resetProviderTerminalEmulator("codex", filteredSnapshotOutput);
-    }
+      && ensureProviderTerminalEmulator(provider)
+      && (!running || !providerTerminalLiveHydration[provider]);
+    if (canReplaySnapshot) resetProviderTerminalEmulator(provider, filteredSnapshotOutput);
   }
-  if (codexProviderTerminalInput) {
-    codexProviderTerminalInput.disabled = !snapshot.readyForInput;
-    codexProviderTerminalInput.placeholder = snapshot.readyForInput
-      ? "Type a command or answer for Codex CLI"
-      : running
-        ? "Codex is preparing…"
-        : "Open Codex in Forge";
+  if (dom.input) {
+    dom.input.disabled = !snapshot.readyForInput;
+    dom.input.placeholder = snapshot.readyForInput ? dom.promptText : (running ? dom.preparingText : dom.openText);
   }
-  if (codexProviderTerminalSend) codexProviderTerminalSend.disabled = !snapshot.readyForInput;
-  if (codexProviderTerminalStop) codexProviderTerminalStop.disabled = !running;
-  renderCliProviderTerminalShell("codex");
-  setProviderTerminalLiveMode("codex", running);
+  if (dom.send) dom.send.disabled = !snapshot.readyForInput;
+  if (dom.stop) dom.stop.disabled = !running;
+  renderCliProviderTerminalShell(provider);
+  setProviderTerminalLiveMode(provider, running);
 }
 
-function handleCodexProviderTerminalEvent(payload) {
-  const provider = String(payload?.provider || "");
-  if (provider !== "codex") return;
+function handleProviderTerminalEvent(provider, payload) {
+  if (String(payload?.provider || "") !== provider) return;
   if (typeof payload?.outputDelta === "string" && payload.outputDelta) {
-    providerTerminalLiveHydration.codex = true;
-    const filteredDelta = appendCodexProviderTerminalOutput(payload.outputDelta);
-    if (filteredDelta && activeProviderWorkbench === "codex" && ensureProviderTerminalEmulator("codex")) {
-      writeProviderTerminalEmulator("codex", filteredDelta);
+    providerTerminalLiveHydration[provider] = true;
+    const filteredDelta = appendProviderTerminalOutput(provider, payload.outputDelta);
+    if (filteredDelta && activeProviderWorkbench === provider && ensureProviderTerminalEmulator(provider)) {
+      writeProviderTerminalEmulator(provider, filteredDelta);
     }
   }
   const snapshot = { ...payload };
   delete snapshot.outputDelta;
-  renderCodexProviderTerminal(snapshot);
-  if (activeProviderWorkbench === "codex") {
-    setCodexProviderTerminalVisible(true);
-  }
-  if (!payload?.running) {
-    setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 900);
-  }
+  renderProviderTerminal(provider, snapshot);
+  if (activeProviderWorkbench === provider) setProviderTerminalVisible(provider, true);
+  if (!payload?.running) setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 900);
 }
 
-async function refreshCodexProviderTerminalSnapshot() {
+async function refreshProviderTerminalSnapshot(provider) {
   const invoke = window.__TAURI__?.core?.invoke;
   if (!invoke) return null;
   try {
-    const snapshot = await invoke("codex_terminal_snapshot");
+    const snapshot = await invoke(providerTerminalInvokeName(provider, "snapshot"));
     const meaningful = snapshot && (snapshot.running || String(snapshot.phase || "") !== "idle" || String(snapshot.output || "").trim() !== "Ready.");
-    if (meaningful && activeProviderWorkbench === "codex") {
-      setCodexProviderTerminalVisible(true);
-      renderCodexProviderTerminal(snapshot, { resetLiveTerminal: true });
+    if (meaningful && activeProviderWorkbench === provider) {
+      setProviderTerminalVisible(provider, true);
+      renderProviderTerminal(provider, snapshot, { resetLiveTerminal: true });
     }
     return snapshot;
   } catch (_) {
@@ -21837,358 +22043,82 @@ async function refreshCodexProviderTerminalSnapshot() {
   }
 }
 
-async function startCodexProviderTerminal() {
+async function startProviderTerminal(provider) {
   const invoke = window.__TAURI__?.core?.invoke;
   if (!invoke) {
-    renderCodexProviderStatus({
-      connected: false,
-      installed: false,
-      authSource: "none",
-      message: "Open Forge as a Tauri app to launch Codex inside Forge.",
-    });
+    renderProviderTerminalUnavailable(provider);
     return;
   }
-  setProviderTerminalOpening("codex", true);
-  setCodexProviderTerminalVisible(true);
-  resetProviderTerminalEmulator("codex");
-  renderCodexProviderTerminal({
+  const dom = providerTerminalDom(provider);
+  setProviderTerminalOpening(provider, true);
+  setProviderTerminalVisible(provider, true);
+  resetProviderTerminalEmulator(provider);
+  renderProviderTerminal(provider, {
     running: true,
     readyForInput: false,
     phase: "opening",
-    message: "Preparing Codex CLI",
-    output: codexProviderTerminalOutputCache,
+    message: dom.startMessage,
+    output: providerTerminalCache(provider),
   });
   try {
-    const snapshot = await invoke("codex_terminal_start");
-    renderCodexProviderTerminal(snapshot || {}, { resetLiveTerminal: false });
+    const snapshot = await invoke(providerTerminalInvokeName(provider, "start"));
+    renderProviderTerminal(provider, snapshot || {}, { resetLiveTerminal: false });
   } finally {
-    setProviderTerminalOpening("codex", false);
+    setProviderTerminalOpening(provider, false);
   }
 }
 
-async function sendCodexProviderTerminalInput() {
+async function sendProviderTerminalInput(provider) {
   const invoke = window.__TAURI__?.core?.invoke;
-  const input = String(codexProviderTerminalInput?.value || "").trim();
+  const dom = providerTerminalDom(provider);
+  const input = String(dom.input?.value || "").trim();
   if (!invoke || !input) return;
-  codexProviderTerminalInput.value = "";
-  if (!providerTerminalInstances.get("codex")) {
-    appendCodexProviderTerminalOutput(`\n> ${input}\n`);
-  }
+  dom.input.value = "";
+  if (!providerTerminalInstances.get(provider)) appendProviderTerminalOutput(provider, `\n> ${input}\n`);
   try {
-    await invoke("codex_terminal_send_input", { input: `${input}\r` });
+    await invoke(providerTerminalInvokeName(provider, "send_input"), { input: `${input}\r` });
   } catch (err) {
-    appendCodexProviderTerminalOutput(`\n[forge] input failed: ${err}\n`);
-    void refreshCodexProviderTerminalSnapshot();
+    appendProviderTerminalOutput(provider, `\n[forge] input failed: ${err}\n`);
+    void refreshProviderTerminalSnapshot(provider);
   }
 }
 
-async function stopCodexProviderTerminal() {
+async function stopProviderTerminal(provider) {
   const invoke = window.__TAURI__?.core?.invoke;
   if (!invoke) return;
   try {
-    const snapshot = await invoke("codex_terminal_stop");
-    renderCodexProviderTerminal(snapshot || {}, { resetLiveTerminal: true });
+    const snapshot = await invoke(providerTerminalInvokeName(provider, "stop"));
+    renderProviderTerminal(provider, snapshot || {}, { resetLiveTerminal: true });
   } catch (err) {
-    appendCodexProviderTerminalOutput(`\n[forge] stop failed: ${err}\n`);
+    appendProviderTerminalOutput(provider, `\n[forge] stop failed: ${err}\n`);
   }
 }
 
-function setGeminiProviderTerminalVisible(visible) {
-  if (!geminiProviderTerminal) return;
-  if (visible) {
-    setActiveProviderWorkbench("gemini", { focusTerminal: true, autoLaunch: false });
-  } else {
-    geminiProviderTerminal.hidden = true;
-  }
-}
-
-function setGeminiProviderTerminalOutput(text) {
-  providerTerminalFilterCarry.gemini = "";
-  geminiProviderTerminalOutputCache = filterProviderTerminalDisplayText("gemini", text, { flush: true }) || "Ready.";
-  renderCliProviderTerminalShell("gemini");
-  return geminiProviderTerminalOutputCache;
-}
-
-function appendGeminiProviderTerminalOutput(text) {
-  const filtered = filterProviderTerminalDisplayText("gemini", text);
-  if (!filtered) return "";
-  geminiProviderTerminalOutputCache = `${geminiProviderTerminalOutputCache || ""}${filtered}` || "Ready.";
-  renderCliProviderTerminalShell("gemini");
-  return filtered;
-}
-
-function renderGeminiProviderTerminal(snapshot = {}, options = {}) {
-  const resetLiveTerminal = !!options.resetLiveTerminal;
-  const running = !!snapshot.running;
-  geminiProviderTerminalRunning = running;
-  const phase = String(snapshot.phase || (running ? "running" : "idle")).trim();
-  const message = String(snapshot.message || "").trim();
-  const label = message ? `${phase} · ${message}` : phase;
-  if (geminiProviderTerminalState) geminiProviderTerminalState.textContent = label;
-  let filteredSnapshotOutput = "";
-  if (typeof snapshot.output === "string") {
-    filteredSnapshotOutput = setGeminiProviderTerminalOutput(snapshot.output);
-    const canReplaySnapshot = resetLiveTerminal
-      && ensureProviderTerminalEmulator("gemini")
-      && (!running || !providerTerminalLiveHydration.gemini);
-    if (canReplaySnapshot) {
-      resetProviderTerminalEmulator("gemini", filteredSnapshotOutput);
-    }
-  }
-  if (geminiProviderTerminalInput) {
-    geminiProviderTerminalInput.disabled = !snapshot.readyForInput;
-    geminiProviderTerminalInput.placeholder = snapshot.readyForInput
-      ? "Type a command or answer for Gemini CLI"
-      : running
-        ? "Gemini is preparing…"
-        : "Start Gemini in Forge";
-  }
-  if (geminiProviderTerminalSend) geminiProviderTerminalSend.disabled = !snapshot.readyForInput;
-  if (geminiProviderTerminalStop) geminiProviderTerminalStop.disabled = !running;
-  renderCliProviderTerminalShell("gemini");
-  setProviderTerminalLiveMode("gemini", running);
-}
-
-function handleGeminiProviderTerminalEvent(payload) {
-  const provider = String(payload?.provider || "");
-  if (provider !== "gemini") return;
-  if (typeof payload?.outputDelta === "string" && payload.outputDelta) {
-    providerTerminalLiveHydration.gemini = true;
-    const filteredDelta = appendGeminiProviderTerminalOutput(payload.outputDelta);
-    if (filteredDelta && activeProviderWorkbench === "gemini" && ensureProviderTerminalEmulator("gemini")) {
-      writeProviderTerminalEmulator("gemini", filteredDelta);
-    }
-  }
-  const snapshot = { ...payload };
-  delete snapshot.outputDelta;
-  renderGeminiProviderTerminal(snapshot);
-  if (activeProviderWorkbench === "gemini") {
-    setGeminiProviderTerminalVisible(true);
-  }
-  if (!payload?.running) {
-    setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 900);
-  }
-}
-
-async function refreshGeminiProviderTerminalSnapshot() {
+async function clearProviderTerminal(provider) {
   const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return null;
   try {
-    const snapshot = await invoke("gemini_terminal_snapshot");
-    const meaningful = snapshot && (snapshot.running || String(snapshot.phase || "") !== "idle" || String(snapshot.output || "").trim() !== "Ready.");
-    if (meaningful && activeProviderWorkbench === "gemini") {
-      setGeminiProviderTerminalVisible(true);
-      renderGeminiProviderTerminal(snapshot, { resetLiveTerminal: true });
-    }
-    return snapshot;
+    setProviderTerminalOutput(provider, "Ready.");
+    resetProviderTerminalEmulator(provider);
+    const snapshot = await invoke?.(providerTerminalInvokeName(provider, "clear"));
+    renderProviderTerminal(provider, snapshot || {}, { resetLiveTerminal: true });
   } catch (_) {
-    return null;
+    setProviderTerminalOutput(provider, "Ready.");
+    resetProviderTerminalEmulator(provider);
   }
 }
 
-async function startGeminiProviderTerminal() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
-    renderCliProviderStatus("gemini", {
-      connected: false,
-      installed: false,
-      authSource: "none",
-      message: "Open Forge as a Tauri app to launch Gemini inside Forge.",
-    });
-    return;
-  }
-  setProviderTerminalOpening("gemini", true);
-  setGeminiProviderTerminalVisible(true);
-  resetProviderTerminalEmulator("gemini");
-  renderGeminiProviderTerminal({
-    running: true,
-    readyForInput: false,
-    phase: "opening",
-    message: "Preparing Gemini CLI",
-    output: geminiProviderTerminalOutputCache,
+function bindProviderTerminalControls(provider) {
+  const dom = providerTerminalDom(provider);
+  dom.send?.addEventListener("click", () => { void sendProviderTerminalInput(provider); });
+  dom.input?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void sendProviderTerminalInput(provider);
+    }
   });
-  try {
-    const snapshot = await invoke("gemini_terminal_start");
-    renderGeminiProviderTerminal(snapshot || {}, { resetLiveTerminal: false });
-  } finally {
-    setProviderTerminalOpening("gemini", false);
-  }
-}
-
-async function sendGeminiProviderTerminalInput() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  const input = String(geminiProviderTerminalInput?.value || "").trim();
-  if (!invoke || !input) return;
-  geminiProviderTerminalInput.value = "";
-  if (!providerTerminalInstances.get("gemini")) {
-    appendGeminiProviderTerminalOutput(`\n> ${input}\n`);
-  }
-  try {
-    await invoke("gemini_terminal_send_input", { input: `${input}\r` });
-  } catch (err) {
-    appendGeminiProviderTerminalOutput(`\n[forge] input failed: ${err}\n`);
-    void refreshGeminiProviderTerminalSnapshot();
-  }
-}
-
-async function stopGeminiProviderTerminal() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
-  try {
-    const snapshot = await invoke("gemini_terminal_stop");
-    renderGeminiProviderTerminal(snapshot || {}, { resetLiveTerminal: true });
-  } catch (err) {
-    appendGeminiProviderTerminalOutput(`\n[forge] stop failed: ${err}\n`);
-  }
-}
-
-function setClaudeProviderTerminalVisible(visible) {
-  if (!claudeProviderTerminal) return;
-  if (visible) {
-    setActiveProviderWorkbench("claude", { focusTerminal: true, autoLaunch: false });
-  } else {
-    claudeProviderTerminal.hidden = true;
-  }
-}
-
-function setClaudeProviderTerminalOutput(text) {
-  providerTerminalFilterCarry.claude = "";
-  claudeProviderTerminalOutputCache = filterProviderTerminalDisplayText("claude", text, { flush: true }) || "Ready.";
-  renderCliProviderTerminalShell("claude");
-  return claudeProviderTerminalOutputCache;
-}
-
-function appendClaudeProviderTerminalOutput(text) {
-  const filtered = filterProviderTerminalDisplayText("claude", text);
-  if (!filtered) return "";
-  claudeProviderTerminalOutputCache = `${claudeProviderTerminalOutputCache || ""}${filtered}` || "Ready.";
-  renderCliProviderTerminalShell("claude");
-  return filtered;
-}
-
-function renderClaudeProviderTerminal(snapshot = {}, options = {}) {
-  const resetLiveTerminal = !!options.resetLiveTerminal;
-  const running = !!snapshot.running;
-  claudeProviderTerminalRunning = running;
-  const phase = String(snapshot.phase || (running ? "running" : "idle")).trim();
-  const message = String(snapshot.message || "").trim();
-  const label = message ? `${phase} · ${message}` : phase;
-  if (claudeProviderTerminalState) claudeProviderTerminalState.textContent = label;
-  let filteredSnapshotOutput = "";
-  if (typeof snapshot.output === "string") {
-    filteredSnapshotOutput = setClaudeProviderTerminalOutput(snapshot.output);
-    const canReplaySnapshot = resetLiveTerminal
-      && ensureProviderTerminalEmulator("claude")
-      && (!running || !providerTerminalLiveHydration.claude);
-    if (canReplaySnapshot) {
-      resetProviderTerminalEmulator("claude", filteredSnapshotOutput);
-    }
-  }
-  if (claudeProviderTerminalInput) {
-    claudeProviderTerminalInput.disabled = !snapshot.readyForInput;
-    claudeProviderTerminalInput.placeholder = snapshot.readyForInput
-      ? "Type a command or answer for Claude Code CLI"
-      : running
-        ? "Claude is preparing…"
-        : "Start Claude in Forge";
-  }
-  if (claudeProviderTerminalSend) claudeProviderTerminalSend.disabled = !snapshot.readyForInput;
-  if (claudeProviderTerminalStop) claudeProviderTerminalStop.disabled = !running;
-  renderCliProviderTerminalShell("claude");
-  setProviderTerminalLiveMode("claude", running);
-}
-
-function handleClaudeProviderTerminalEvent(payload) {
-  const provider = String(payload?.provider || "");
-  if (provider !== "claude") return;
-  if (typeof payload?.outputDelta === "string" && payload.outputDelta) {
-    providerTerminalLiveHydration.claude = true;
-    const filteredDelta = appendClaudeProviderTerminalOutput(payload.outputDelta);
-    if (filteredDelta && activeProviderWorkbench === "claude" && ensureProviderTerminalEmulator("claude")) {
-      writeProviderTerminalEmulator("claude", filteredDelta);
-    }
-  }
-  const snapshot = { ...payload };
-  delete snapshot.outputDelta;
-  renderClaudeProviderTerminal(snapshot);
-  if (activeProviderWorkbench === "claude") {
-    setClaudeProviderTerminalVisible(true);
-  }
-  if (!payload?.running) {
-    setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 900);
-  }
-}
-
-async function refreshClaudeProviderTerminalSnapshot() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return null;
-  try {
-    const snapshot = await invoke("claude_terminal_snapshot");
-    const meaningful = snapshot && (snapshot.running || String(snapshot.phase || "") !== "idle" || String(snapshot.output || "").trim() !== "Ready.");
-    if (meaningful && activeProviderWorkbench === "claude") {
-      setClaudeProviderTerminalVisible(true);
-      renderClaudeProviderTerminal(snapshot, { resetLiveTerminal: true });
-    }
-    return snapshot;
-  } catch (_) {
-    return null;
-  }
-}
-
-async function startClaudeProviderTerminal() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
-    renderCliProviderStatus("claude", {
-      connected: false,
-      installed: false,
-      authSource: "none",
-      message: "Open Forge as a Tauri app to launch Claude inside Forge.",
-    });
-    return;
-  }
-  setProviderTerminalOpening("claude", true);
-  setClaudeProviderTerminalVisible(true);
-  resetProviderTerminalEmulator("claude");
-  renderClaudeProviderTerminal({
-    running: true,
-    readyForInput: false,
-    phase: "opening",
-    message: "Preparing Claude Code CLI",
-    output: claudeProviderTerminalOutputCache,
-  });
-  try {
-    const snapshot = await invoke("claude_terminal_start");
-    renderClaudeProviderTerminal(snapshot || {}, { resetLiveTerminal: false });
-  } finally {
-    setProviderTerminalOpening("claude", false);
-  }
-}
-
-async function sendClaudeProviderTerminalInput() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  const input = String(claudeProviderTerminalInput?.value || "").trim();
-  if (!invoke || !input) return;
-  claudeProviderTerminalInput.value = "";
-  if (!providerTerminalInstances.get("claude")) {
-    appendClaudeProviderTerminalOutput(`\n> ${input}\n`);
-  }
-  try {
-    await invoke("claude_terminal_send_input", { input: `${input}\r` });
-  } catch (err) {
-    appendClaudeProviderTerminalOutput(`\n[forge] input failed: ${err}\n`);
-    void refreshClaudeProviderTerminalSnapshot();
-  }
-}
-
-async function stopClaudeProviderTerminal() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
-  try {
-    const snapshot = await invoke("claude_terminal_stop");
-    renderClaudeProviderTerminal(snapshot || {}, { resetLiveTerminal: true });
-  } catch (err) {
-    appendClaudeProviderTerminalOutput(`\n[forge] stop failed: ${err}\n`);
-  }
+  dom.stop?.addEventListener("click", () => { void stopProviderTerminal(provider); });
+  dom.hide?.addEventListener("click", () => { setProviderTerminalVisible(provider, false); });
+  dom.clear?.addEventListener("click", () => { void clearProviderTerminal(provider); });
 }
 
 function renderCliProviderStatus(kind, status, options = {}) {
@@ -22262,7 +22192,8 @@ function renderCodexProviderStatus(status, options = {}) {
   const connected = !!status?.connected;
   const installed = !!status?.installed || connected;
   codexProviderLastStatus = status || codexProviderLastStatus;
-  if (providerLauncherCodexMeta) providerLauncherCodexMeta.textContent = selectedOpenAiModelRef();
+  const codexLauncherMeta = providerLauncherDom("codex").meta;
+  if (codexLauncherMeta) codexLauncherMeta.textContent = selectedOpenAiModelRef();
   renderProviderWorkbenchLauncher("codex", busy ? "checking" : connected ? "ready" : installed ? "auth" : "missing", { muted: !connected && !installed });
   renderCliProviderTerminalShell("codex");
   renderProviderWorkbench();
@@ -22448,7 +22379,7 @@ async function connectCodexProvider(options = {}) {
     providerWorkbenchHint.textContent = "Codex is opening inside Forge.";
   }
   try {
-    await startCodexProviderTerminal();
+    await startProviderTerminal("codex");
     watchCodexProviderLogin();
     setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 1200);
   } catch (err) {
@@ -22524,103 +22455,85 @@ async function clearGeminiProviderApiKey() {
   }
 }
 
-function watchClaudeProviderLogin() {
+function cliProviderConnectDom(provider) {
+  if (provider === "claude") {
+    return {
+      button: claudeProviderConnect,
+      hint: claudeProviderHint,
+      noInvokeMessage: "Open Forge as a Tauri app to log in to Claude.",
+      openingHint: "Claude Code is opening inside Forge.",
+      errorPrefix: "Claude login failed",
+      fallbackButtonText: "Log in Claude",
+      errorInstalledFallback: true,
+    };
+  }
+  return {
+    button: geminiProviderConnect,
+    hint: geminiProviderHint,
+    noInvokeMessage: "Open Forge as a Tauri app to install or connect Gemini CLI.",
+    openingHint: "Gemini CLI is opening inside Forge.",
+    errorPrefix: "Gemini setup failed",
+    fallbackButtonText: "Connect Gemini",
+    errorInstalledFallback: false,
+  };
+}
+
+function watchCliProviderLogin(provider) {
   let tries = 0;
   const timer = setInterval(async () => {
     tries += 1;
     await refreshCliProviderStatuses({ silent: true });
-    if (claudeProviderLastStatus?.connected || tries >= 40) clearInterval(timer);
+    if (providerWorkbenchStatus(provider)?.connected || tries >= 40) clearInterval(timer);
   }, 3000);
 }
 
-function watchGeminiProviderLogin() {
-  let tries = 0;
-  const timer = setInterval(async () => {
-    tries += 1;
-    await refreshCliProviderStatuses({ silent: true });
-    if (geminiProviderLastStatus?.connected || tries >= 40) clearInterval(timer);
-  }, 3000);
-}
-
-async function connectGeminiProvider(options = {}) {
+async function connectCliProvider(provider, options = {}) {
+  const meta = cliProviderConnectDom(provider);
   const invoke = window.__TAURI__?.core?.invoke;
   if (!invoke) {
-    renderCliProviderStatus("gemini", {
+    renderCliProviderStatus(provider, {
       connected: false,
       installed: false,
       authSource: "none",
-      message: "Open Forge as a Tauri app to install or connect Gemini CLI.",
+      message: meta.noInvokeMessage,
     });
     return;
   }
   if (!options.background) {
-    setActiveProviderWorkbench("gemini", { focusTerminal: true });
+    setActiveProviderWorkbench(provider, { focusTerminal: true });
   }
-  const oldText = geminiProviderConnect?.textContent;
-  if (geminiProviderConnect) {
-    geminiProviderConnect.disabled = true;
-    geminiProviderConnect.textContent = "Opening";
+  const oldText = meta.button?.textContent;
+  if (meta.button) {
+    meta.button.disabled = true;
+    meta.button.textContent = "Opening";
   }
   try {
-    if (!options.background && geminiProviderHint) {
-      geminiProviderHint.textContent = "Gemini CLI is opening inside Forge.";
+    if (!options.background && meta.hint) {
+      meta.hint.textContent = meta.openingHint;
     }
-    await startGeminiProviderTerminal();
-    watchGeminiProviderLogin();
+    await startProviderTerminal(provider);
+    watchCliProviderLogin(provider);
     setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 1200);
   } catch (err) {
-    renderCliProviderStatus("gemini", {
+    const status = providerWorkbenchStatus(provider);
+    renderCliProviderStatus(provider, {
       connected: false,
-      installed: !!geminiProviderLastStatus?.installed,
+      installed: meta.errorInstalledFallback || !!status?.installed,
       authSource: "error",
-      message: `Gemini setup failed: ${err}`,
+      message: `${meta.errorPrefix}: ${err}`,
     });
   } finally {
-    if (geminiProviderConnect) {
-      geminiProviderConnect.disabled = false;
-      geminiProviderConnect.textContent = oldText || "Connect Gemini";
+    if (meta.button) {
+      meta.button.disabled = false;
+      meta.button.textContent = oldText || meta.fallbackButtonText;
     }
   }
 }
 
-async function connectClaudeProvider(options = {}) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
-    renderCliProviderStatus("claude", {
-      connected: false,
-      installed: false,
-      authSource: "none",
-      message: "Open Forge as a Tauri app to log in to Claude.",
-    });
-    return;
-  }
-  if (!options.background) {
-    setActiveProviderWorkbench("claude", { focusTerminal: true });
-  }
-  const oldText = claudeProviderConnect?.textContent;
-  if (claudeProviderConnect) {
-    claudeProviderConnect.disabled = true;
-    claudeProviderConnect.textContent = "Opening";
-  }
-  try {
-    if (!options.background && claudeProviderHint) claudeProviderHint.textContent = "Claude Code is opening inside Forge.";
-    await startClaudeProviderTerminal();
-    watchClaudeProviderLogin();
-    setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 1200);
-  } catch (err) {
-    renderCliProviderStatus("claude", {
-      connected: false,
-      installed: true,
-      authSource: "error",
-      message: `Claude login failed: ${err}`,
-    });
-  } finally {
-    if (claudeProviderConnect) {
-      claudeProviderConnect.disabled = false;
-      claudeProviderConnect.textContent = oldText || "Log in Claude";
-    }
-  }
-}
+function watchClaudeProviderLogin() { return watchCliProviderLogin("claude"); }
+function watchGeminiProviderLogin() { return watchCliProviderLogin("gemini"); }
+async function connectGeminiProvider(options = {}) { return connectCliProvider("gemini", options); }
+async function connectClaudeProvider(options = {}) { return connectCliProvider("claude", options); }
 
 function openProviderOverlay(options = {}) {
   if (!providerOverlay) return;
@@ -22660,27 +22573,14 @@ if (providerOverlay) providerOverlay.addEventListener("mousedown", (event) => {
   if (providerWorkbench?.contains(target)) return;
   closeProviderOverlay();
 });
-if (providerLauncherCodex) providerLauncherCodex.addEventListener("click", () => {
-  setActiveProviderWorkbench("codex", { focusTerminal: true });
-  void maybeAutoLaunchProviderWorkbench("codex");
-});
-if (providerLauncherGemini) providerLauncherGemini.addEventListener("click", () => {
-  setActiveProviderWorkbench("gemini", { focusTerminal: true });
-  void maybeAutoLaunchProviderWorkbench("gemini");
-});
-if (providerLauncherClaude) providerLauncherClaude.addEventListener("click", () => {
-  setActiveProviderWorkbench("claude", { focusTerminal: true });
-  void maybeAutoLaunchProviderWorkbench("claude");
-});
-if (providerLauncherOanda) providerLauncherOanda.addEventListener("click", () => {
-  setActiveProviderWorkbench("oanda", { focusTerminal: true, ensureTerminal: false });
-  void maybeAutoLaunchProviderWorkbench("oanda");
+["codex", "gemini", "claude", "oanda"].forEach((kind) => {
+  providerLauncherDom(kind).button?.addEventListener("click", () => {
+    setActiveProviderWorkbench(kind, { focusTerminal: true, ensureTerminal: kind !== "oanda" });
+    void maybeAutoLaunchProviderWorkbench(kind);
+  });
 });
 if (providerWorkbenchLaunch) providerWorkbenchLaunch.addEventListener("click", () => {
-  if (activeProviderWorkbench === "codex") void connectCodexProvider();
-  else if (activeProviderWorkbench === "claude") void connectClaudeProvider();
-  else if (activeProviderWorkbench === "oanda") startOandaProviderTerminal();
-  else void connectGeminiProvider();
+  void openProviderWorkbench(activeProviderWorkbench, { restart: activeProviderWorkbench === "oanda" });
 });
 if (providerWorkbenchRefresh) providerWorkbenchRefresh.addEventListener("click", () => {
   void refreshProviderWorkbenchStatuses();
@@ -22879,16 +22779,6 @@ if (openAiProviderModel) openAiProviderModel.addEventListener("change", () => {
   setStoredOpenAiModelRef(openAiProviderModel.value);
   hydrateProviderModelPickers();
 });
-if (geminiProviderModel) geminiProviderModel.addEventListener("change", () => {
-  setStoredRuntimeModelRef("forge.gemini.model", geminiProviderModel.value, normalizeGeminiModelRef);
-  hydrateProviderModelPickers();
-  renderCliProviderStatus("gemini", geminiProviderLastStatus);
-});
-if (geminiProviderModel) geminiProviderModel.addEventListener("blur", () => {
-  setStoredRuntimeModelRef("forge.gemini.model", geminiProviderModel.value, normalizeGeminiModelRef);
-  hydrateProviderModelPickers();
-  renderCliProviderStatus("gemini", geminiProviderLastStatus);
-});
 if (geminiProviderSaveKey) geminiProviderSaveKey.addEventListener("click", () => {
   void saveGeminiProviderApiKey();
 });
@@ -22907,102 +22797,13 @@ if (geminiProviderApiKey) geminiProviderApiKey.addEventListener("keydown", (even
     void saveGeminiProviderApiKey();
   }
 });
-if (codexProviderTerminalSend) codexProviderTerminalSend.addEventListener("click", () => {
-  void sendCodexProviderTerminalInput();
-});
-if (codexProviderTerminalInput) codexProviderTerminalInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    void sendCodexProviderTerminalInput();
-  }
-});
-if (codexProviderTerminalStop) codexProviderTerminalStop.addEventListener("click", () => {
-  void stopCodexProviderTerminal();
-});
-if (codexProviderTerminalClear) codexProviderTerminalClear.addEventListener("click", async () => {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
-    setCodexProviderTerminalOutput("Ready.");
-    return;
-  }
-  try {
-    const snapshot = await invoke("codex_terminal_clear");
-    renderCodexProviderTerminal(snapshot || {}, { resetLiveTerminal: true });
-  } catch (_) {
-    setCodexProviderTerminalOutput("Ready.");
-  }
-});
-if (geminiProviderTerminalSend) geminiProviderTerminalSend.addEventListener("click", () => {
-  void sendGeminiProviderTerminalInput();
-});
-if (geminiProviderTerminalInput) geminiProviderTerminalInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    void sendGeminiProviderTerminalInput();
-  }
-});
-if (geminiProviderTerminalStop) geminiProviderTerminalStop.addEventListener("click", () => {
-  void stopGeminiProviderTerminal();
-});
-if (geminiProviderTerminalHide) geminiProviderTerminalHide.addEventListener("click", () => {
-  setGeminiProviderTerminalVisible(false);
-});
-if (geminiProviderTerminalClear) geminiProviderTerminalClear.addEventListener("click", async () => {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
-    setGeminiProviderTerminalOutput("Ready.");
-    return;
-  }
-  try {
-    const snapshot = await invoke("gemini_terminal_clear");
-    renderGeminiProviderTerminal(snapshot || {}, { resetLiveTerminal: true });
-  } catch (_) {
-    setGeminiProviderTerminalOutput("Ready.");
-  }
-});
-if (claudeProviderModel) claudeProviderModel.addEventListener("change", () => {
-  setStoredRuntimeModelRef("forge.claude.model", claudeProviderModel.value, normalizeClaudeModelRef);
-  hydrateProviderModelPickers();
-  renderCliProviderStatus("claude", claudeProviderLastStatus);
-});
-if (claudeProviderModel) claudeProviderModel.addEventListener("blur", () => {
-  setStoredRuntimeModelRef("forge.claude.model", claudeProviderModel.value, normalizeClaudeModelRef);
-  hydrateProviderModelPickers();
-  renderCliProviderStatus("claude", claudeProviderLastStatus);
-});
+["codex", "gemini", "claude"].forEach(bindProviderTerminalControls);
+["gemini", "claude"].forEach(bindCliProviderModelPicker);
 if (claudeProviderConnect) claudeProviderConnect.addEventListener("click", () => {
   void connectClaudeProvider();
 });
 if (claudeProviderRefresh) claudeProviderRefresh.addEventListener("click", () => {
   void refreshCliProviderStatuses();
-});
-if (claudeProviderTerminalSend) claudeProviderTerminalSend.addEventListener("click", () => {
-  void sendClaudeProviderTerminalInput();
-});
-if (claudeProviderTerminalInput) claudeProviderTerminalInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    void sendClaudeProviderTerminalInput();
-  }
-});
-if (claudeProviderTerminalStop) claudeProviderTerminalStop.addEventListener("click", () => {
-  void stopClaudeProviderTerminal();
-});
-if (claudeProviderTerminalHide) claudeProviderTerminalHide.addEventListener("click", () => {
-  setClaudeProviderTerminalVisible(false);
-});
-if (claudeProviderTerminalClear) claudeProviderTerminalClear.addEventListener("click", async () => {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
-    setClaudeProviderTerminalOutput("Ready.");
-    return;
-  }
-  try {
-    const snapshot = await invoke("claude_terminal_clear");
-    renderClaudeProviderTerminal(snapshot || {}, { resetLiveTerminal: true });
-  } catch (_) {
-    setClaudeProviderTerminalOutput("Ready.");
-  }
 });
 if (voiceElevenSaveKey) voiceElevenSaveKey.addEventListener("click", () => {
   void saveElevenLabsApiKey();
@@ -24380,7 +24181,7 @@ function renderGpuRows(gpus) {
     panelHardwareGpuRows.innerHTML = `
       <div class="panel-hardware-row">
         <span class="panel-hardware-label">GPU</span>
-        <span class="panel-hardware-text">No GPU detected</span>
+        <span class="panel-hardware-text">${isRealEstateShellActive() ? "Aucun GPU détecté" : "No GPU detected"}</span>
       </div>`;
     return;
   }
@@ -24395,8 +24196,8 @@ function renderGpuRows(gpus) {
 async function loadAndRenderHardwareInfo() {
   const invoke = forgeTauri?.invoke || window.__TAURI__?.core?.invoke;
   if (!invoke) {
-    if (panelHardwareCpu) panelHardwareCpu.textContent = "info unavailable";
-    if (panelHardwareGpu) panelHardwareGpu.textContent = "info unavailable";
+    if (panelHardwareCpu) panelHardwareCpu.textContent = isRealEstateShellActive() ? "info indisponible" : "info unavailable";
+    if (panelHardwareGpu) panelHardwareGpu.textContent = isRealEstateShellActive() ? "info indisponible" : "info unavailable";
     return;
   }
   try {
@@ -24429,8 +24230,8 @@ async function loadAndRenderHardwareInfo() {
     console.warn("[hardware-info] failed", err);
     forgeHardwareInfo = null;
     invalidateWebExplorerProofPanel();
-    if (panelHardwareCpu) panelHardwareCpu.textContent = "detection failed";
-    if (panelHardwareGpu) panelHardwareGpu.textContent = "detection failed";
+    if (panelHardwareCpu) panelHardwareCpu.textContent = isRealEstateShellActive() ? "détection échouée" : "detection failed";
+    if (panelHardwareGpu) panelHardwareGpu.textContent = isRealEstateShellActive() ? "détection échouée" : "detection failed";
   }
 }
 
@@ -24462,6 +24263,7 @@ webExplorerToolActions = document.getElementById("forgeCanvasWebExplorerActions"
 webExplorerExtractTrigger = document.getElementById("forgeCanvasWebExtract");
 webExplorerScoreTrigger = document.getElementById("forgeCanvasWebScore");
 webExplorerActTrigger = document.getElementById("forgeCanvasWebAct");
+webExplorerSurface?.addEventListener("click", handleWebExplorerSurfaceClick);
 webExplorerLocalMode = true;
 webExplorerSnapshot = null;
 webExplorerActive = isWebExplorerSurface;
@@ -24724,9 +24526,9 @@ function createWebExplorerHistoryItem(entry) {
   meta.className = "webexplorer-history-title-meta";
   const time = formatWebExplorerHistoryTime(entry.lastVisitedAt);
   meta.textContent = [
-    entry.kind === "search" ? "Google search" : (entry.domain || "Web page"),
+    entry.kind === "search" ? (isRealEstateShellActive() ? "Recherche Google" : "Google search") : (entry.domain || (isRealEstateShellActive() ? "Page web" : "Web page")),
     time,
-    Number(entry.visitCount || 0) > 1 ? `${entry.visitCount} visits` : "",
+    Number(entry.visitCount || 0) > 1 ? `${entry.visitCount} ${isRealEstateShellActive() ? "visites" : "visits"}` : "",
   ].filter(Boolean).join(" · ");
   title.appendChild(main);
   title.appendChild(meta);
@@ -24735,7 +24537,9 @@ function createWebExplorerHistoryItem(entry) {
   const pinBtn = document.createElement("button");
   pinBtn.type = "button";
   pinBtn.className = `webexplorer-history-pin-btn${entry.pinned ? " is-pinned" : ""}`;
-  pinBtn.setAttribute("aria-label", entry.pinned ? "Unpin web page" : "Pin web page");
+  pinBtn.setAttribute("aria-label", entry.pinned
+    ? (isRealEstateShellActive() ? "Désépingler la page web" : "Unpin web page")
+    : (isRealEstateShellActive() ? "Épingler la page web" : "Pin web page"));
   pinBtn.innerHTML = `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M9.5 3.75h5l-.6 5.2 3.35 3.2v1.35H6.75v-1.35l3.35-3.2-.6-5.2Z" />
@@ -24787,14 +24591,15 @@ function renderWebExplorerHistoryPanel(force = false) {
   const pinned = sorted.filter((entry) => entry.pinned);
   const recent = sorted.filter((entry) => !entry.pinned);
   const key = [
+    isRealEstateShellActive() ? "fr-immo" : "default",
     currentWebExplorerHistoryId(),
     pinned.map((entry) => `${entry.id}:${entry.title}:${entry.lastVisitedAt}:${entry.visitCount}`).join("|"),
     recent.map((entry) => `${entry.id}:${entry.title}:${entry.lastVisitedAt}:${entry.visitCount}`).join("|"),
   ].join("::");
   if (!force && key === webExplorerHistoryRenderKey) return;
   webExplorerHistoryRenderKey = key;
-  renderWebExplorerHistoryList(webExplorerPinnedHistoryList, pinned, "No pinned web page");
-  renderWebExplorerHistoryList(webExplorerHistoryList, recent, "No web history yet");
+  renderWebExplorerHistoryList(webExplorerPinnedHistoryList, pinned, isRealEstateShellActive() ? "Aucune page web épinglée" : "No pinned web page");
+  renderWebExplorerHistoryList(webExplorerHistoryList, recent, isRealEstateShellActive() ? "Aucun historique web" : "No web history yet");
   if (webExplorerClearHistoryBtn) webExplorerClearHistoryBtn.disabled = recent.length === 0;
   requestAnimationFrame(() => {
     queueForgeCustomScrollbarSync(webExplorerPinnedHistoryList);
@@ -25636,15 +25441,6 @@ function renderWebExplorerClonePage(blocks = []) {
             </div>
           </section>` : ""}
       </div>`;
-    for (const link of webExplorerSurface.querySelectorAll("a[href]")) {
-      link.addEventListener("click", (event) => {
-        const href = String(link.getAttribute("href") || "").trim();
-        if (!href) return;
-        event.preventDefault();
-        if (!/^https?:\/\//i.test(href)) return;
-        void navigateWebExplorerReaderCard(href);
-      });
-    }
     return true;
   }
   const images = [];
@@ -25721,7 +25517,7 @@ function renderWebExplorerClonePage(blocks = []) {
       if (["script", "style", "noscript", "img", "svg"].includes(tag)) return false;
       if (["application", "browser-surface", "viewport"].includes(role)) return false;
       const childCount = Array.isArray(node?.childIds) ? node.childIds.length : 0;
-      if (childCount > 4 && text.length > 120 && !["a", "h1", "h2", "h3", "p", "span", "li"].includes(tag)) return false;
+      if (childCount > 4 && realText.length > 120 && !["a", "h1", "h2", "h3", "p", "span", "li"].includes(tag)) return false;
       return true;
     })
     .sort((a, b) => Number(a?.bounds?.y || 0) - Number(b?.bounds?.y || 0));
@@ -25794,14 +25590,6 @@ function renderWebExplorerClonePage(blocks = []) {
           </div>
         </section>` : ""}
     </div>`;
-  for (const link of webExplorerSurface.querySelectorAll("a[href]")) {
-    link.addEventListener("click", (event) => {
-      const href = String(link.getAttribute("href") || "").trim();
-      if (!href) return;
-      event.preventDefault();
-      void navigateWebExplorerReaderCard(href);
-    });
-  }
   return true;
 }
 
@@ -25819,6 +25607,60 @@ function appendWebExplorerBlockCitation(block) {
   forgeCanvasChatInput.value = current ? `${current}\n\n${citation}` : citation;
   forgeCanvasChatInput.dispatchEvent(new Event("input", { bubbles: true }));
   scheduleWebExplorerChatFocus();
+}
+
+function webExplorerSurfaceClosest(target, selector) {
+  const node = target instanceof Element ? target : target?.parentElement;
+  const hit = node?.closest?.(selector) || null;
+  return hit && webExplorerSurface?.contains(hit) ? hit : null;
+}
+
+function webExplorerContentBlockById(blockId) {
+  const blocks = Array.isArray(webExplorerContentPlan?.blocks) ? webExplorerContentPlan.blocks : [];
+  return blocks.find((entry) => String(entry?.id || "") === blockId) || null;
+}
+
+async function handleWebExplorerSurfaceClick(event) {
+  if (!webExplorerSurface || !webExplorerSurface.contains(event.target)) return;
+  const mode = webExplorerSurface.dataset.mode || "";
+  if (mode === "reader") {
+    const actionBtn = webExplorerSurfaceClosest(event.target, "[data-reader-action]");
+    const card = webExplorerSurfaceClosest(event.target, ".webexplorer-reader-card[data-reader-block-id]");
+    if (actionBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = String(actionBtn.getAttribute("data-reader-action") || "").trim();
+      const blockId = String(card?.getAttribute("data-reader-block-id") || "").trim();
+      const block = webExplorerContentBlockById(blockId);
+      if (!block) return;
+      if (action === "open") {
+        const href = String(block?.href || card?.getAttribute("data-reader-href") || "").trim();
+        if (href) void navigateWebExplorerReaderCard(href);
+      } else if (action === "compare") {
+        toggleWebExplorerCompareBlock(blockId);
+      } else if (action === "cite") {
+        appendWebExplorerBlockCitation(block);
+      } else if (action === "save") {
+        const result = await saveWebExplorerBlockToAtlas(blockId);
+        if (result?.blockHash) renderWebExplorerContentPlan();
+      }
+      return;
+    }
+    if (card) {
+      const href = String(card.getAttribute("data-reader-href") || "").trim();
+      if (href) void navigateWebExplorerReaderCard(href);
+    }
+    return;
+  }
+
+  if (mode === "clone" || mode === "extract") {
+    const link = webExplorerSurfaceClosest(event.target, "a[href]");
+    const href = String(link?.getAttribute("href") || "").trim();
+    if (!href) return;
+    event.preventDefault();
+    if (mode === "clone" && !/^https?:\/\//i.test(href)) return;
+    void navigateWebExplorerReaderCard(href);
+  }
 }
 
 function toggleWebExplorerCompareBlock(blockId) {
@@ -25960,42 +25802,6 @@ function renderWebExplorerContentPlan() {
         }).join("")}
       </div>
     </div>`;
-  for (const card of webExplorerSurface.querySelectorAll(".webexplorer-reader-card")) {
-    const blockId = String(card.getAttribute("data-reader-block-id") || "").trim();
-    const block = blocks.find((entry) => String(entry?.id || "") === blockId) || null;
-    card.addEventListener("click", (event) => {
-      const actionBtn = event.target instanceof HTMLElement ? event.target.closest("[data-reader-action]") : null;
-      if (actionBtn) return;
-      const href = String(card.getAttribute("data-reader-href") || "").trim();
-      if (href) void navigateWebExplorerReaderCard(href);
-    });
-    for (const actionBtn of card.querySelectorAll("[data-reader-action]")) {
-      actionBtn.addEventListener("click", async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const action = String(actionBtn.getAttribute("data-reader-action") || "").trim();
-        if (!block) return;
-        if (action === "open") {
-          if (block.href) void navigateWebExplorerReaderCard(block.href);
-          return;
-        }
-        if (action === "compare") {
-          toggleWebExplorerCompareBlock(blockId);
-          return;
-        }
-        if (action === "cite") {
-          appendWebExplorerBlockCitation(block);
-          return;
-        }
-        if (action === "save") {
-          const result = await saveWebExplorerBlockToAtlas(blockId);
-          if (result?.blockHash) {
-            renderWebExplorerContentPlan();
-          }
-        }
-      });
-    }
-  }
   void hideNativeWebExplorer();
 }
 
@@ -26400,6 +26206,7 @@ function syncWebExplorerChatModeUi() {
       window.__forgeAlphaCanvasBridge?.setTradingHeader?.({ active: false });
     } catch (_) {}
     forgeCanvasChat?.classList.remove("is-trading-mode");
+    refreshAlphaAfterSectionBoundary();
     if (shouldShowWebExplorerStartScreen()) setWebExplorerStartScreen();
     else if (webExplorerSurface?.querySelector(".webexplorer-startscreen")) {
       beginWebExplorerTransition({ dismissStart: true });
@@ -26433,6 +26240,7 @@ function setWebExplorerActive(nextActive) {
       } catch (_) {}
       alphaCanvasWrap?.classList.remove("is-trading-mode", "is-trading-surface", "is-trading-compare-open", "is-trading-header-menu-open");
       document.getElementById("topbarBreadcrumb")?.classList.remove("trading-header-mode");
+      refreshAlphaAfterSectionBoundary();
     }
     syncWebExplorerButtonState();
     syncTradingChatInvolvementControls();
@@ -26509,100 +26317,248 @@ const realEstatePropertiesPanelBtn = document.getElementById("realEstateProperti
 const realEstateCrmPanelBtn = document.getElementById("realEstateCrmPanelBtn");
 const realEstateToolsPanel = document.getElementById("realEstateToolsPanel");
 const realEstateToolsCloseBtn = document.getElementById("realEstateToolsCloseBtn");
+const realEstateToolsScrollbar = document.getElementById("realEstateToolsScrollbar");
+const realEstateToolsScrollbarThumb = document.getElementById("realEstateToolsScrollbarThumb");
 const realEstateCrmPanel = document.getElementById("realEstateCrmPanel");
 const realEstateCrmCloseBtn = document.getElementById("realEstateCrmCloseBtn");
+const realEstateCrmScrollbar = document.getElementById("realEstateCrmScrollbar");
+const realEstateCrmScrollbarThumb = document.getElementById("realEstateCrmScrollbarThumb");
 let realEstateModeActive = false;
+let realEstateToolsPanelCloseTimer = 0;
+let realEstateCrmPanelCloseTimer = 0;
 try {
   realEstateModeActive = window.localStorage?.getItem?.(REAL_ESTATE_MODE_STORAGE_KEY) === "1";
 } catch (_) {}
 
-const REAL_ESTATE_SUPER_TOOLS = Object.freeze([
+const REAL_ESTATE_TOOL_GROUPS = Object.freeze([
   {
-    id: "mandat-vendeur",
-    label: "Mandat vendeur",
-    icon: "rapport",
-    prompt: "Ouvre un dossier mandat vendeur complet: estimation, pieces, diagnostics, conformite, objections, strategie prix et prochain angle de relance.",
+    label: "Production immo",
+    icon: "site",
+    tools: [
+      ["mandat-vendeur", "Mandat vendeur", "rapport"],
+      ["estimation", "Estimation", "estimation"],
+      ["rapport-vendeur", "Rapport vendeur", "rapport"],
+      ["diagnostics", "Diagnostics", "energy"],
+      ["conformite", "Conformite", "conformite"],
+      ["diffusion", "Diffusion", "annonces"],
+      ["audit-annonces", "Audit annonces", "portal"],
+      ["performance-diffusion", "Performance diffusion", "database"],
+    ],
   },
   {
-    id: "diffusion",
-    label: "Diffusion",
-    icon: "annonces",
-    prompt: "Pilote la diffusion de ce bien: annonce, site agence, portails, audit qualite, performance, tests de variantes et corrections prioritaires.",
-  },
-  {
-    id: "marche-veille",
     label: "Marche & veille",
     icon: "database",
-    prompt: "Analyse cette ville ou ce quartier avec DVF, cadastre, DPE, risques, urbanisme, actualite locale, concurrence, reputation et signaux faibles.",
+    tools: [
+      ["marche-veille", "Marche & veille", "database"],
+      ["dvf", "DVF", "database"],
+      ["cadastre", "Cadastre", "cadastre"],
+      ["dpe-ademe", "DPE / ADEME", "energy"],
+      ["georisques", "Georisques", "risk"],
+      ["urbanisme", "Urbanisme", "urbanisme"],
+      ["veille-locale", "Veille locale", "pin"],
+      ["concurrence", "Concurrence", "portal"],
+      ["reputation", "Reputation", "site"],
+    ],
   },
   {
-    id: "pilotage-agence",
+    label: "Contacts",
+    icon: "matching",
+    tools: [
+      ["prospects", "Prospects", "matching"],
+      ["vendeurs", "Vendeurs", "rapport"],
+      ["acquereurs", "Acquereurs", "matching"],
+      ["matching-acheteurs", "Matching acheteurs", "matching"],
+      ["repondeur-ia", "Repondeur IA", "portal"],
+      ["chatbot-site", "Chatbot site", "annonces"],
+      ["partenaires", "Partenaires", "site"],
+    ],
+  },
+  {
     label: "Pilotage agence",
     icon: "energy",
-    prompt: "Construis le cockpit agence: pipeline, KPI, planning visites, coaching equipe, performance commerciaux, alertes et decisions de la semaine.",
+    tools: [
+      ["pilotage-agence", "Pilotage agence", "energy"],
+      ["pipeline", "Pipeline", "database"],
+      ["kpi-agence", "KPI agence", "rapport"],
+      ["planning-visites", "Planning visites", "cadastre"],
+      ["coaching-equipe", "Coaching equipe", "matching"],
+      ["performance-commerciaux", "Performance commerciaux", "database"],
+    ],
   },
   {
-    id: "back-office",
     label: "Back-office",
     icon: "conformite",
-    prompt: "Controle le back-office agence: commissions, comptabilite, fiscalite, tresorerie, courtiers, assurances, notaires, travaux et risques dossier.",
+    tools: [
+      ["back-office", "Back-office", "conformite"],
+      ["comptabilite", "Comptabilite", "database"],
+      ["fiscalite", "Fiscalite", "rapport"],
+      ["tresorerie", "Tresorerie", "database"],
+      ["courtiers", "Courtiers", "matching"],
+      ["assurances", "Assurances", "conformite"],
+      ["notaires", "Notaires", "rapport"],
+      ["travaux", "Travaux", "energy"],
+    ],
   },
   {
-    id: "rh-equipe",
-    label: "RH & equipe",
+    label: "Equipe",
     icon: "matching",
-    prompt: "Prepare le plan RH agence: recrutement, onboarding, formation, scripts, repartition des leads, productivite et progression des negociateurs.",
+    tools: [
+      ["recrutement", "Recrutement", "matching"],
+      ["onboarding", "Onboarding", "site"],
+      ["formation", "Formation", "rapport"],
+    ],
   },
 ]);
 
-const REAL_ESTATE_CRM_TOOLS = Object.freeze([
-  {
-    id: "prospects",
-    label: "Prospects",
-    icon: "matching",
-    prompt: "Segmente les prospects, detecte les intentions fortes et propose les relances les plus rentables pour les prochaines 48 heures.",
-  },
-  {
-    id: "vendeurs",
-    label: "Vendeurs",
-    icon: "rapport",
-    prompt: "Priorise les vendeurs du CRM par probabilite de mandat, timing, risque de perte et angle de conversation verifiable.",
-  },
-  {
-    id: "acquereurs",
-    label: "Acquereurs",
-    icon: "matching",
-    prompt: "Classe les acquereurs par capacite, urgence, adequation avec les biens et probabilite de conversion en visite qualifiee.",
-  },
-  {
-    id: "partenaires",
-    label: "Partenaires",
-    icon: "site",
-    prompt: "Cartographie les notaires, courtiers, diagnostiqueurs, artisans et assureurs utiles, avec priorites de partenariat.",
-  },
-  {
-    id: "repondeur-ia",
-    label: "Repondeur IA",
-    icon: "portal",
-    prompt: "Configure le repondeur IA: scenarios d'appels, ton, qualification, transfert humain, resume CRM et suivi automatique.",
-  },
-  {
-    id: "chatbot-site",
-    label: "Chatbot site",
-    icon: "annonces",
-    prompt: "Conçois le chatbot du site agence: qualification vendeur/acquereur, estimation, prise de rendez-vous et synthese CRM.",
-  },
-]);
+const REAL_ESTATE_TOOLS = Object.freeze(REAL_ESTATE_TOOL_GROUPS.flatMap((group) =>
+  group.tools.map(([id, label, icon]) => Object.freeze({
+    id,
+    label,
+    icon,
+    command: `/${id.replace(/-/g, "_")}_`,
+  }))
+));
+const REAL_ESTATE_TOOL_BY_COMMAND = new Map(REAL_ESTATE_TOOLS.map((tool) => [tool.command, tool]));
+const REAL_ESTATE_CRM_TOOLS = Object.freeze(REAL_ESTATE_TOOLS.filter((tool) => [
+  "prospects",
+  "vendeurs",
+  "acquereurs",
+  "matching-acheteurs",
+  "repondeur-ia",
+  "chatbot-site",
+  "partenaires",
+].includes(tool.id)));
 
-function setComposerPrompt(text) {
+function setNodeText(node, text) {
+  if (node) node.textContent = text;
+}
+
+function setButtonTextByAction(root, action, text) {
+  const button = root?.querySelector?.(`[data-action="${action}"]`);
+  if (button) button.textContent = text;
+}
+
+function setProfileMenuText(action, text) {
+  const label = profileMenu?.querySelector?.(`[data-profile-action="${action}"] span`);
+  if (label) label.textContent = text;
+}
+
+function syncRealEstateFrontendLanguage() {
+  const fr = !!realEstateModeActive;
+  document.documentElement.lang = fr ? "fr" : "en";
+  const hasSource = !!(selectedForgeJobId || alphaPendingFile || alphaSessionFiles.length || alphaDocState.fileName);
+  if (!hasSource) {
+    newSessionTitle = fr ? "Nouvelle session immo" : "New session";
+  }
+
+  setNodeText(document.querySelector(".pin-section > .pin-heading"), fr ? "Épinglés" : "Pinned");
+  setNodeText(document.querySelector(".history-heading:not(.webexplorer-history-heading) > span"), fr ? "Récents" : "Recents");
+  setNodeText(document.querySelector(".webexplorer-history-section-pinned .pin-heading"), fr ? "Web épinglé" : "Pinned web");
+  setNodeText(document.querySelector(".webexplorer-history-heading > span"), fr ? "Historique web" : "Web history");
+  if (webExplorerClearHistoryBtn) webExplorerClearHistoryBtn.textContent = fr ? "Effacer" : "Clear";
+  if (forgePinDrop) forgePinDrop.setAttribute("aria-label", fr ? "Glisser une session immo ici pour l'épingler" : "Drag a calculation here to pin it");
+  if (forgePinDropText && !forgePinDrop.classList.contains("has-pinned")) {
+    forgePinDropText.textContent = fr ? "Glisser pour épingler" : "Drag to pin";
+  }
+  if (forgePinMenuBtn) forgePinMenuBtn.setAttribute("aria-label", fr ? "Réglages du projet épinglé" : "Pinned project settings");
+
+  if (alphaDropZoneTitle) alphaDropZoneTitle.textContent = fr ? "Dépose n'importe quel fichier" : "Drop any file";
+  if (alphaDropZoneSub) {
+    alphaDropZoneSub.textContent = fr
+      ? "Calcul lourd dans n'importe quel domaine immobilier — données agence, biens, mandats, prospects, annonces, veille, fiscalité, juridique, tout. Le LLM reste hors des fichiers et des maths, économisant massivement des tokens."
+      : "Heavy compute in any domain — data, code, medical imaging, genomics, anything. The LLM stays out of files and math, saving massive tokens.";
+  }
+  if (alphaDropZone) alphaDropZone.setAttribute("aria-label", fr ? "Déposer des fichiers agence" : "Upload OHLCV CSV files");
+  const sidebarLabel = alphaSidebarCollapsed
+    ? (fr ? "Afficher le panneau gauche" : "Show left panel")
+    : (fr ? "Masquer le panneau gauche" : "Hide left panel");
+  alphaSidebarToggle?.setAttribute("aria-label", sidebarLabel);
+  alphaSidebarToggle?.setAttribute("title", sidebarLabel);
+  const webExplorerBtn = document.getElementById("webexplorer");
+  webExplorerBtn?.setAttribute("aria-label", fr ? "Ouvrir Google" : "Open web explorer");
+  webExplorerBtn?.setAttribute("title", fr ? "Ouvrir Google" : "Open web explorer");
+  const searchBtn = document.getElementById("forgeSearchBtn");
+  searchBtn?.setAttribute("aria-label", fr ? "Rechercher les sessions et projets" : "Search sessions and projects");
+  searchBtn?.setAttribute("title", fr ? "Rechercher (Ctrl+K)" : "Search (Ctrl+K)");
+  const searchInput = document.getElementById("forgeSearchInput");
+  if (searchInput) searchInput.setAttribute("placeholder", fr ? "Rechercher sessions, projets, programmes…" : "Search sessions, projects, programs…");
+  document.getElementById("windowMinimize")?.setAttribute("aria-label", fr ? "Réduire" : "Minimize");
+  document.getElementById("windowMaximize")?.setAttribute("aria-label", fr ? "Agrandir" : "Maximize");
+  document.getElementById("windowClose")?.setAttribute("aria-label", fr ? "Fermer" : "Close");
+  forgeCanvasChat?.setAttribute("aria-label", fr ? "Parler à l'assistant agence dans cette session Forge" : "Talk to Codex in this Forge session");
+  forgeCanvasChatCommandInput?.setAttribute("aria-label", fr ? "Commande programme" : "Command prefix");
+  forgeCanvasChatGeminiInput?.setAttribute("aria-label", fr ? "Consigne Gemini" : "Gemini prompt");
+  forgeCanvasChatClaudeInput?.setAttribute("aria-label", fr ? "Consigne Claude" : "Claude prompt");
+
+  alphaProofToggle?.setAttribute("aria-label", alphaProofPanelOpen
+    ? (fr ? "Fermer le panneau droit" : "Close right panel")
+    : (fr ? "Ouvrir le panneau droit" : "Open right panel"));
+  alphaProofToggle?.setAttribute("title", alphaProofPanelOpen
+    ? (fr ? "Fermer le panneau droit" : "Close right panel")
+    : (fr ? "Ouvrir le panneau droit" : "Open right panel"));
+
+  setButtonTextByAction(workspaceMenu, "choose-folder", fr ? "Choisir le dossier agence" : "Choose workspace");
+  setButtonTextByAction(workspaceMenu, "show-folder", fr ? "Afficher le dossier agence" : "Show in Explorer");
+  setButtonTextByAction(workspaceMenu, "copy-path", fr ? "Copier le chemin du dossier agence" : "Copy folder path");
+
+  const jobMenu = document.getElementById("forgeJobMenu");
+  setButtonTextByAction(jobMenu, "pin", fr ? "Épingler le projet" : "Pin project");
+  setButtonTextByAction(jobMenu, "rename", fr ? "Renommer" : "Rename");
+  setButtonTextByAction(jobMenu, "archive", fr ? "Archiver" : "Archive");
+  setButtonTextByAction(jobMenu, "delete", fr ? "Supprimer" : "Delete");
+
+  setProfileMenuText("settings", fr ? "Réglages" : "Settings");
+  setProfileMenuText("api", fr ? "Fournisseurs IA" : "LLM providers");
+  setProfileMenuText("voice-api", fr ? "Voix & clés API" : "Voice & API keys");
+  setProfileMenuText("docs", fr ? "Documentation" : "Documentation");
+  setProfileMenuText("mcp", "MCP");
+  setProfileMenuText("daemon", fr ? "Service local" : "Daemon");
+  setProfileMenuText("archive", fr ? "Archives" : "Archive");
+  setProfileMenuText("edit-profile", fr ? "Modifier le profil" : "Edit profile");
+
+  const cpu = document.getElementById("panelHardwareCpu");
+  const gpu = document.getElementById("panelHardwareGpu");
+  if (cpu && /^(detection failed|détection échouée)$/i.test(cpu.textContent || "")) cpu.textContent = fr ? "détection échouée" : "detection failed";
+  if (gpu && /^(detection failed|détection échouée)$/i.test(gpu.textContent || "")) gpu.textContent = fr ? "détection échouée" : "detection failed";
+  document.querySelectorAll(".panel-hardware-text").forEach((node) => {
+    if (/^(No GPU detected|Aucun GPU détecté)$/i.test(node.textContent || "")) {
+      node.textContent = fr ? "Aucun GPU détecté" : "No GPU detected";
+    }
+  });
+}
+
+function setComposerPrompt(text, options = {}) {
   const input = typeof primaryCanvasComposerInput === "function"
     ? primaryCanvasComposerInput()
     : forgeCanvasChatInput;
   if (!input) return;
+  if (options.clearCommand !== false && forgeCanvasChatCommandInput) {
+    forgeCanvasChatCommandInput.value = "";
+  }
   input.value = text || "";
   input.focus?.({ preventScroll: true });
+  input.setSelectionRange?.(input.value.length, input.value.length);
+  syncCanvasCommandRailState();
   if (typeof autosizeCanvasChatInput === "function") autosizeCanvasChatInput();
   if (typeof syncCanvasChatSendState === "function") syncCanvasChatSendState();
+  if (typeof syncTradingSlashCommandState === "function") syncTradingSlashCommandState();
+}
+
+function setComposerCommand(command) {
+  const normalized = normalizeCanvasCommandPrefix(command);
+  if (!normalized || !forgeCanvasChatCommandInput) return;
+  forgeCanvasChatCommandInput.value = normalized;
+  const input = typeof primaryCanvasComposerInput === "function"
+    ? primaryCanvasComposerInput()
+    : forgeCanvasChatInput;
+  if (input && /^\/[a-z0-9_]+_\s*$/i.test(String(input.value || ""))) {
+    input.value = "";
+  }
+  syncCanvasCommandRailState();
+  input?.focus?.({ preventScroll: true });
+  if (input) input.setSelectionRange?.(input.value.length, input.value.length);
+  if (typeof autosizeCanvasChatInput === "function") autosizeCanvasChatInput();
+  if (typeof syncTradingSlashCommandState === "function") syncTradingSlashCommandState();
 }
 
 function createRealEstateToolButton(tool, extraClass = "") {
@@ -26610,7 +26566,8 @@ function createRealEstateToolButton(tool, extraClass = "") {
   button.className = `real-estate-tool-item real-estate-super-tool ${extraClass}`.trim();
   button.type = "button";
   button.dataset.realEstateTool = tool.id;
-  button.dataset.prompt = tool.prompt || "";
+  button.dataset.command = tool.command || "";
+  button.setAttribute("aria-label", `${tool.label} ${tool.command || ""}`.trim());
   const icon = document.createElement("span");
   icon.className = "real-estate-tool-icon";
   icon.dataset.toolIcon = tool.icon || "database";
@@ -26621,11 +26578,33 @@ function createRealEstateToolButton(tool, extraClass = "") {
   return button;
 }
 
+function createRealEstateToolGroup(group) {
+  const details = document.createElement("details");
+  details.className = "real-estate-tool-group";
+  details.open = true;
+  const summary = document.createElement("summary");
+  const icon = document.createElement("span");
+  icon.className = "real-estate-group-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = `<svg viewBox="0 0 24 24" focusable="false"><path d="M4 5h16" /><path d="M4 12h16" /><path d="M4 19h16" /></svg>`;
+  const label = document.createElement("span");
+  label.textContent = group.label || "Outils";
+  summary.append(icon, label);
+  details.append(summary);
+  const tools = Array.isArray(group.tools) ? group.tools : [];
+  for (const [id] of tools) {
+    const tool = REAL_ESTATE_TOOLS.find((entry) => entry.id === id);
+    if (tool) details.appendChild(createRealEstateToolButton(tool));
+  }
+  return details;
+}
+
 function renderRealEstateToolPanel() {
   const root = realEstateToolsPanel?.querySelector?.(".real-estate-tool-groups");
   if (!root || root.dataset.fused === "true") return;
   root.dataset.fused = "true";
-  root.replaceChildren(...REAL_ESTATE_SUPER_TOOLS.map((tool) => createRealEstateToolButton(tool)));
+  root.replaceChildren(...REAL_ESTATE_TOOL_GROUPS.map(createRealEstateToolGroup));
+  bindForgeCustomScrollbar?.(root, realEstateToolsScrollbar, realEstateToolsScrollbarThumb);
 }
 
 function renderRealEstateCrmPanel() {
@@ -26633,21 +26612,78 @@ function renderRealEstateCrmPanel() {
   if (!root || root.dataset.fused === "true") return;
   root.dataset.fused = "true";
   root.replaceChildren(...REAL_ESTATE_CRM_TOOLS.map((tool) => createRealEstateToolButton(tool, "real-estate-crm-tool")));
+  bindForgeCustomScrollbar?.(root, realEstateCrmScrollbar, realEstateCrmScrollbarThumb);
+}
+
+function syncRealEstatePanelBounds() {
+  const viewportHeight = Math.max(
+    0,
+    window.visualViewport?.height || window.innerHeight || document.documentElement?.clientHeight || 0,
+  );
+  let bottom = 210;
+  const reserveAbove = (node, margin = 22) => {
+    if (!node || node.hidden) return;
+    const rect = node.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0 || rect.top <= 0 || rect.top >= viewportHeight) return;
+    bottom = Math.max(bottom, Math.ceil(viewportHeight - rect.top + margin));
+  };
+  reserveAbove(forgeCanvasChat, 22);
+  reserveAbove(document.getElementById("forgeCanvasChatModelAnchor"), 14);
+  bottom = Math.max(176, Math.min(340, bottom));
+  document.documentElement?.style?.setProperty?.("--real-estate-tools-panel-bottom", `${bottom}px`);
+  queueForgeCustomScrollbarSync?.(realEstateToolsPanel?.querySelector?.(".real-estate-tool-groups"));
+  queueForgeCustomScrollbarSync?.(realEstateCrmPanel?.querySelector?.(".real-estate-tool-groups"));
+}
+
+function setRealEstateFloatingPanelVisibility(panel, open, closeTimerRef) {
+  if (!panel) return 0;
+  if (closeTimerRef) window.clearTimeout(closeTimerRef);
+  if (open) {
+    panel.hidden = false;
+    panel.classList.remove("is-closing");
+    requestAnimationFrame(() => {
+      panel.classList.add("is-visible");
+      queueForgeCustomScrollbarSync?.(panel.querySelector?.(".real-estate-tool-groups"));
+    });
+    return 0;
+  }
+  panel.classList.remove("is-visible");
+  panel.classList.add("is-closing");
+  return window.setTimeout(() => {
+    panel.classList.remove("is-closing");
+    panel.hidden = true;
+  }, 190);
 }
 
 function setRealEstateToolsPanelOpen(open) {
   const next = realEstateModeActive && !!open;
-  if (realEstateToolsPanel) realEstateToolsPanel.hidden = !next;
+  realEstateToolsPanelCloseTimer = setRealEstateFloatingPanelVisibility(
+    realEstateToolsPanel,
+    next,
+    realEstateToolsPanelCloseTimer,
+  );
   document.body.classList.toggle("real-estate-tools-open", next);
   realEstateToolsPanelBtn?.setAttribute("aria-expanded", next ? "true" : "false");
+  if (next) {
+    syncRealEstatePanelBounds();
+    requestAnimationFrame(syncRealEstatePanelBounds);
+  }
   if (next) setRealEstateCrmPanelOpen(false);
 }
 
 function setRealEstateCrmPanelOpen(open) {
   const next = realEstateModeActive && !!open;
-  if (realEstateCrmPanel) realEstateCrmPanel.hidden = !next;
+  realEstateCrmPanelCloseTimer = setRealEstateFloatingPanelVisibility(
+    realEstateCrmPanel,
+    next,
+    realEstateCrmPanelCloseTimer,
+  );
   document.body.classList.toggle("real-estate-crm-open", next);
   realEstateCrmPanelBtn?.setAttribute("aria-expanded", next ? "true" : "false");
+  if (next) {
+    syncRealEstatePanelBounds();
+    requestAnimationFrame(syncRealEstatePanelBounds);
+  }
   if (next) setRealEstateToolsPanelOpen(false);
 }
 
@@ -26684,13 +26720,24 @@ function syncRealEstateModeUi() {
   realEstateHomeSectionBtn?.classList.toggle("is-active", realEstateModeActive && !isWebExplorerUiActive());
   forgeSections?.setActive?.("real-estate", realEstateModeActive);
   forgeSections?.setActive?.("real-estate-main", realEstateModeActive && !isWebExplorerUiActive());
+  if (realEstateModeActive) {
+    resetInactiveTradingChartSurface();
+    refreshAlphaAfterSectionBoundary();
+  }
   if (!realEstateModeActive) {
     setRealEstateToolsPanelOpen(false);
     setRealEstateCrmPanelOpen(false);
   }
+  syncRealEstateFrontendLanguage();
+  forgeJobListRenderKey = "";
+  renderForgeJobs();
+  renderWebExplorerHistoryPanel?.(true);
+  updateWorkspaceBreadcrumb();
+  syncCanvasChatSendState();
 }
 
 function setRealEstateModeActive(nextActive) {
+  const previousActive = realEstateModeActive;
   realEstateModeActive = !!nextActive;
   try {
     window.localStorage?.setItem?.(REAL_ESTATE_MODE_STORAGE_KEY, realEstateModeActive ? "1" : "0");
@@ -26699,20 +26746,108 @@ function setRealEstateModeActive(nextActive) {
     try { window.__forgeCloseBoom?.(); } catch (_) {}
     try { window.__forgeCloseTrading?.(); } catch (_) {}
   }
+  const selectedJob = currentForgeJob?.();
+  const selectedBelongsToRealEstate = selectedJob ? forgeJobIsRealEstate(selectedJob) : false;
+  if (selectedJob && selectedBelongsToRealEstate !== realEstateModeActive) {
+    startAlphaNewSession?.();
+  } else if (previousActive !== realEstateModeActive && !selectedJob && !alphaPendingFile && !alphaSessionFiles.length && !alphaDocState.fileName) {
+    newSessionTitle = realEstateModeActive ? "Nouvelle session immo" : "New session";
+  }
+  if (previousActive !== realEstateModeActive && !codexInputText() && !geminiCanvasChatText() && !claudeCanvasChatText()) {
+    stopCanvasChatPlaceholderAnimation();
+    canvasChatPlaceholderIdx = 0;
+    canvasChatPlaceholderCharIdx = 0;
+    canvasChatPlaceholderPhase = forgeCanvasChatTargetMode === "all" ? "names" : "typing";
+    clearAllCanvasChatPlaceholders?.();
+    startCanvasChatPlaceholderAnimation?.();
+  }
   syncRealEstateModeUi();
   refreshRealEstateHarvesterStatus();
+}
+
+function realEstateCommandFromText(text) {
+  const token = String(text || "").trim().split(/\s+/, 1)[0] || "";
+  if (!/^\/[a-z0-9_]+_$/.test(token)) return null;
+  return REAL_ESTATE_TOOL_BY_COMMAND.get(token) || null;
+}
+
+function realEstateCommandPacket(text) {
+  const tool = realEstateCommandFromText(text);
+  if (!tool) return "";
+  return [
+    "FORGE_REAL_ESTATE_PROGRAM_COMMAND:",
+    `slash=${tool.command}`,
+    `program_name=${tool.command.slice(1, -1)}`,
+    `tool_id=${tool.id}`,
+    `label=${tool.label}`,
+    "scope=agence_immo",
+    "memory_layer=semantic",
+    "first_step=brain_recall(scope:agence_immo,memory_layer:semantic)",
+    "data_context=real_estate_harvester_snapshot",
+    "route=slash/MCP command -> Forge brain/memory -> KASM/Data Sync context -> answer/action",
+  ].join("\n");
+}
+
+function realEstateBrainRefLabel(context) {
+  const refs = context?.brain?.refs || context?.brain?.brain_context?.refs || null;
+  return refs?.scoped_layer_note?.hash
+    || refs?.scoped_llm_note?.hash
+    || refs?.latest_memory?.hash
+    || context?.brain?.brain_context?.scoped_note_hash
+    || "";
+}
+
+async function routeRealEstateToolCommand(text) {
+  const tool = realEstateCommandFromText(text);
+  if (!tool) return null;
+  let context = null;
+  if (forgeTauri?.invoke) {
+    context = await forgeTauri.invoke("real_estate_tool_command_context", {
+      command: tool.command,
+    }, {
+      section: "real-estate",
+      timeoutMs: 8000,
+      dedupeKey: tool.command,
+    });
+  }
+  const brainRef = realEstateBrainRefLabel(context);
+  const dataSyncState = context?.harvester_snapshot?.runtime?.status
+    || context?.harvester_snapshot?.status
+    || "snapshot";
+  return {
+    tool,
+    context,
+    label: `${tool.command} -> memoire agence`,
+    message: [
+      `Programme ${tool.command} pret pour ${tool.label}.`,
+      `Memoire agence: ${brainRef ? `ref ${brainRef}` : "rappel semantic pret"}.`,
+      `Data Sync: ${dataSyncState}.`,
+      "Ajoute une consigne apres la commande si tu veux lancer une analyse plus precise avec le LLM.",
+    ].join("\n"),
+  };
 }
 
 function handleRealEstateToolClick(event) {
   const item = event.target?.closest?.(".real-estate-tool-item");
   if (!item) return;
-  const prompt = item.dataset.prompt || "";
-  if (prompt) setComposerPrompt(prompt);
+  const command = item.dataset.command || "";
+  if (command) setComposerCommand(command);
 }
 
 renderRealEstateToolPanel();
 renderRealEstateCrmPanel();
 syncRealEstateModeUi();
+syncRealEstatePanelBounds();
+
+if (typeof ResizeObserver !== "undefined") {
+  const realEstatePanelBoundsObserver = new ResizeObserver(syncRealEstatePanelBounds);
+  [forgeCanvasChat, document.getElementById("forgeCanvasChatModelAnchor")]
+    .filter(Boolean)
+    .forEach((node) => realEstatePanelBoundsObserver.observe(node));
+}
+window.addEventListener("resize", syncRealEstatePanelBounds, { passive: true });
+window.visualViewport?.addEventListener?.("resize", syncRealEstatePanelBounds, { passive: true });
+window.visualViewport?.addEventListener?.("scroll", syncRealEstatePanelBounds, { passive: true });
 
 realEstateModeBtn?.addEventListener("click", (event) => {
   event.stopPropagation();

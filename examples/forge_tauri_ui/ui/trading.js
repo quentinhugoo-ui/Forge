@@ -7219,6 +7219,7 @@
     renderIndicatorDock();
     syncTradingWorkspaceButton();
     restoreUiSnapshot();
+    canvasBridge()?.forceImmediateRender?.();
   }
 
   function focusTradingSurface() {

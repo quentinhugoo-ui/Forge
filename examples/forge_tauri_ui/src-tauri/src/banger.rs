@@ -263,15 +263,6 @@ fn choose_primary_import_file(files: &[ImportFilePayload]) -> Option<(usize, Str
         .find_map(|(index, file)| boom_candidate_ext(&file.name).map(|ext| (index, ext)))
 }
 
-fn boom_workspace_dir() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir
-        .ancestors()
-        .nth(3)
-        .map(PathBuf::from)
-        .unwrap_or(manifest_dir)
-}
-
 fn boom_store_dir() -> PathBuf {
     if let Some(raw) = env::var_os("FORGE_STORE_DIR") {
         let trimmed = raw.to_string_lossy().trim().to_string();
@@ -279,7 +270,7 @@ fn boom_store_dir() -> PathBuf {
             return PathBuf::from(trimmed);
         }
     }
-    boom_workspace_dir().join(".forge-store")
+    crate::forge_store_dir()
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

@@ -26,7 +26,9 @@ Prefer shorter circuits. Remove obsolete nodes before adding new ones.
 
 ## Coding Doctrine
 
-Before writing code beyond a purely mechanical one-line edit, research the current state of the art when internet access is available: recent official docs, papers, serious repos, release notes and market direction. Then build as if Forge must live one step ahead of that state of the art, while staying verifiable locally.
+This doctrine is mandatory, not aspirational. For any non-trivial answer, plan, code change, refactor, architecture decision or cleanup, agents must use it as the main reasoning frame before choosing an implementation path.
+
+Before writing code beyond a purely mechanical one-line edit, research deeply the current state of the art when internet access is available: recent official docs, papers, serious repos, release notes and market direction. Treat that current state as the average floor, not the target. Then build as if Forge must live one step ahead of it: surf the incoming wave, not the already-visible one, while staying verifiable locally.
 
 Code at the frontier, not at the average. For meaningful work, identify the wall being broken: latency, memory, context size, proof quality, UI branching, sandbox reach, agent autonomy or developer experience. Treat established practice as the floor, then push one wall with a small hypothesis, a local verifier, and a rollback path.
 
@@ -37,6 +39,16 @@ Frontier code must be ambitious and disciplined:
 - promote an experiment only when it beats the current path on clarity, speed, capability or verifiability,
 - delete failed experiments quickly instead of documenting around them,
 - never trade data safety, user approval, reproducibility or semantic verification for novelty.
+
+Doctrine integration checklist:
+
+1. Name the wall being pushed before proposing or editing: latency, memory, context size, proof quality, UI branching, sandbox reach, agent autonomy or developer experience.
+2. State the frontier hypothesis in one compact sentence: what shorter verified circuit should replace the current path.
+3. Search current official docs, papers, serious repos, release notes or market direction when internet is available and the work is not mechanical; use them as the floor, then identify the next wave Forge should meet before it becomes mainstream.
+4. Keep the experiment behind a narrow interface, feature gate, deterministic test, proof hash, benchmark or compact manifest.
+5. Promote only if the new path beats the current one on clarity, speed, capability or verifiability.
+6. Delete failed experiments quickly; do not preserve them by adding explanatory docs around dead code.
+7. If the task is only analysis, still apply this checklist to the recommendation so the answer does not collapse into average refactoring advice.
 
 Every code change must reduce architectural drag:
 
@@ -49,21 +61,22 @@ Every code change must reduce architectural drag:
 
 ## Work Style
 
-1. Read the local shape first with `rg`, `git status`, small file previews and targeted code search.
-2. Prefer the smallest file set that solves the request.
-3. Keep docs smaller after the change whenever possible.
-4. Use content-addressed references, hashes and proof summaries for large artifacts.
-5. Verify with the narrowest meaningful command, then broaden if risk requires it.
-6. If docs and code disagree, inspect code and update docs.
-7. If you establish a list of objectives, put the live list in `ROADMAP.md` and remove objectives when they are done.
+1. For non-trivial work, apply the Coding Doctrine checklist first: wall, frontier hypothesis, verifier and rollback path.
+2. Read the local shape with `rg`, `git status`, small file previews and targeted code search.
+3. Prefer the smallest file set that solves the request.
+4. Keep docs smaller after the change whenever possible.
+5. Use content-addressed references, hashes and proof summaries for large artifacts.
+6. Verify with the narrowest meaningful command, then broaden if risk requires it.
+7. If docs and code disagree, inspect code and update docs.
+8. If you establish a list of objectives, put the live list in `ROADMAP.md` and remove objectives when they are done.
 
 ## Current Architecture
 
 - Core library: `src/lib.rs`
 - Brain/memory: `src/brain.rs`
-- Godel machine: `src/godel/**`
-- KASM runtime: `src/kasm/**`
-- Monster compute: `src/monster/**`
+- Godel machine: `src/godel.rs`
+- KASM runtime: `src/kasm.rs` plus dialect spec `src/kasm.td`
+- Monster compute: `src/monster.rs`
 - Tauri backend: `examples/forge_tauri_ui/src-tauri/src/**`
 - Tauri UI: `examples/forge_tauri_ui/ui/**`
 - Runtime architecture: `FORGE_RUNTIME_ARCHITECTURE.md`
@@ -85,10 +98,9 @@ The brain/memory layer must stay evidence-aware:
 Core files:
 
 - `src/brain.rs`
-- `src/godel/**`
+- `src/godel.rs`
 - `src/apply.rs`
-- `src/monster/exec.rs`
-- `src/monster/dispatch.rs`
+- `src/monster.rs`
 - `examples/forge_tauri_ui/src-tauri/src/forge_agent_tools.rs`
 - `examples/forge_tauri_ui/src-tauri/src/bin/forge_mcp.rs`
 
@@ -113,6 +125,7 @@ cargo check --lib --tests
 cargo test brain --lib
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge_mcp
+node examples\forge_tauri_ui\scripts\forge-surface-manifest.mjs --check
 node examples\forge_tauri_ui\scripts\forge-ui-smoke.mjs
 ```
 

@@ -1,0 +1,548 @@
+{
+  "schemaVersion": 1,
+  "scope": "real-estate-public-mega-harvester",
+  "updatedAt": "2026-05-15",
+  "policy": {
+    "defaultMode": "metadata-first",
+    "rawDataRule": "store raw payloads locally, exchange compact manifests, hashes, previews and parser proofs",
+    "forbidden": [
+      "captcha bypass",
+      "paywall bypass",
+      "login scraping without explicit tenant-owned connector",
+      "personal owner data from restricted foncier datasets"
+    ]
+  },
+  "parsers": {
+    "json": "structured_json",
+    "geojson": "structured_geojson",
+    "csv": "streaming_table",
+    "txt": "line_or_delimited_text",
+    "csv.gz": "compressed_streaming_table",
+    "xlsx": "workbook_table",
+    "xls": "workbook_table",
+    "parquet": "columnar_table",
+    "xml": "structured_xml",
+    "rss": "feed_xml",
+    "atom": "feed_xml",
+    "pdf": "pdf_text_then_table_then_ocr_if_needed",
+    "html": "html_metadata_and_links",
+    "zip": "archive_manifest_then_recursive_parse",
+    "wfs": "geospatial_feature_service",
+    "wms": "geospatial_map_service",
+    "gtfs": "zip_csv_gtfs",
+    "gtfs-rt": "protobuf_gtfs_rt"
+  },
+  "sources": [
+    {
+      "id": "data_gouv_api_catalog",
+      "label": "Catalogue API data.gouv.fr",
+      "priority": "P0",
+      "domain": "source_discovery",
+      "access": "open",
+      "license": "metadata",
+      "cadence": "weekly",
+      "collector": "source_discovery_collector",
+      "urls": [
+        {
+          "kind": "api_root",
+          "url": "https://www.data.gouv.fr/api/1/",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        },
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=valeurs%20foncieres&page_size=1",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        },
+        {
+          "kind": "dataservice_search",
+          "url": "https://www.data.gouv.fr/api/1/dataservices/?q=donn%C3%A9es%20fonci%C3%A8res&page_size=1",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["dataset_id", "resource_url", "resource_format", "license", "frequency", "last_update", "organization"],
+      "serves": ["all_collectors"]
+    },
+    {
+      "id": "data_gouv_full_catalog_dataset",
+      "label": "Catalogue complet data.gouv.fr",
+      "priority": "P0",
+      "domain": "source_discovery",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "weekly",
+      "collector": "source_discovery_collector",
+      "urls": [
+        {
+          "kind": "catalog_page",
+          "url": "https://www.data.gouv.fr/datasets/catalogue-des-donnees-de-data-gouv-fr",
+          "method": "GET",
+          "expectedFormats": ["html", "csv"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["datasets_catalog", "resources_catalog", "apis_catalog", "formats", "resource_sizes"],
+      "serves": ["all_collectors"]
+    },
+    {
+      "id": "data_gouv_tabular_api",
+      "label": "API tabulaire data.gouv.fr",
+      "priority": "P0",
+      "domain": "source_discovery",
+      "access": "open",
+      "license": "metadata",
+      "cadence": "weekly",
+      "collector": "source_discovery_collector",
+      "urls": [
+        {
+          "kind": "documentation",
+          "url": "https://www.data.gouv.fr/dataservices/api-tabulaire-data-gouv-fr-beta",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["supported_formats", "size_limits", "profile_links", "data_preview_links"],
+      "serves": ["csv_collectors", "excel_collectors", "parquet_collectors"]
+    },
+    {
+      "id": "ban_address_api",
+      "label": "Base Adresse Nationale / API Adresse",
+      "priority": "P0",
+      "domain": "geocoding",
+      "access": "open",
+      "license": "open",
+      "cadence": "daily",
+      "collector": "address_ban_collector",
+      "urls": [
+        {
+          "kind": "sample_search",
+          "url": "https://api-adresse.data.gouv.fr/search/?q=8%20boulevard%20du%20port&limit=1",
+          "method": "GET",
+          "expectedFormats": ["geojson", "json"],
+          "parser": "geojson"
+        }
+      ],
+      "extract": ["label", "score", "housenumber", "street", "postcode", "citycode", "city", "coordinates"],
+      "serves": ["address_resolution", "geo_join_keys", "all_geo_collectors"]
+    },
+    {
+      "id": "api_geo_admin",
+      "label": "API Géo / découpage administratif",
+      "priority": "P0",
+      "domain": "geocoding",
+      "access": "open",
+      "license": "open",
+      "cadence": "weekly",
+      "collector": "address_ban_collector",
+      "urls": [
+        {
+          "kind": "sample_communes",
+          "url": "https://geo.api.gouv.fr/communes?nom=Paris&fields=code,nom,centre,departement,region&format=json&geometry=centre",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["code_insee", "commune", "department", "region", "center"],
+      "serves": ["geo_join_keys", "zone_rollups"]
+    },
+    {
+      "id": "rnb_building_api",
+      "label": "Référentiel National des Bâtiments",
+      "priority": "P0",
+      "domain": "building",
+      "access": "open",
+      "license": "open",
+      "cadence": "weekly",
+      "collector": "building_rnb_collector",
+      "urls": [
+        {
+          "kind": "dataservice",
+          "url": "https://www.data.gouv.fr/dataservices/api-rnb",
+          "method": "GET",
+          "expectedFormats": ["html", "json"],
+          "parser": "html"
+        },
+        {
+          "kind": "public_service",
+          "url": "https://rnb.beta.gouv.fr/",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["rnb_id", "building_status", "bbox", "diff_since", "vector_tiles"],
+      "serves": ["building_join_keys", "dpe_join", "cadastre_join"]
+    },
+    {
+      "id": "dvf_donnees_foncieres",
+      "label": "API Données foncières / DVF+",
+      "priority": "P0",
+      "domain": "transactions",
+      "access": "mixed_open_and_restricted",
+      "license": "open_for_dvf_plus",
+      "cadence": "daily",
+      "collector": "dvf_plus_collector",
+      "urls": [
+        {
+          "kind": "dataservice",
+          "url": "https://www.data.gouv.fr/dataservices/api-donnees-foncieres",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        },
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=DVF%2B%20open-data&page_size=1",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["mutation_id", "date", "price", "surface", "parcel", "commune", "geojson", "territory_indicators"],
+      "serves": ["estimation", "market_liquidity", "price_anomalies"]
+    },
+    {
+      "id": "dvf_raw_dataset",
+      "label": "Demandes de valeurs foncières",
+      "priority": "P0",
+      "domain": "transactions",
+      "access": "open",
+      "license": "open",
+      "cadence": "monthly",
+      "collector": "dvf_plus_collector",
+      "urls": [
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/datasets/donnees-de-valeurs-foncieres",
+          "method": "GET",
+          "expectedFormats": ["html", "csv", "txt", "zip"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["resource_urls", "resource_formats", "millésimes", "mutations"],
+      "serves": ["estimation", "market_history"]
+    },
+    {
+      "id": "dpe_logements_ademe",
+      "label": "DPE logements ADEME",
+      "priority": "P0",
+      "domain": "energy",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "daily",
+      "collector": "dpe_ademe_collector",
+      "urls": [
+        {
+          "kind": "dataservice",
+          "url": "https://www.data.gouv.fr/dataservices/api-dpe-logements",
+          "method": "GET",
+          "expectedFormats": ["html", "json"],
+          "parser": "html"
+        },
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=DPE%20Logements%20existants&page_size=1",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["dpe_id", "date", "class_energy", "class_ges", "address", "surface", "construction_period", "heating", "ventilation"],
+      "serves": ["renovation_score", "energy_cost_pressure", "seller_signal"]
+    },
+    {
+      "id": "apicarto_cadastre_ign",
+      "label": "API Carto IGN / Cadastre",
+      "priority": "P0",
+      "domain": "cadastre",
+      "access": "open",
+      "license": "official_service",
+      "cadence": "weekly",
+      "collector": "cadastre_collector",
+      "urls": [
+        {
+          "kind": "documentation",
+          "url": "https://apicarto.ign.fr/api/doc/",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["commune", "section", "parcelle", "geometry", "centroid", "division"],
+      "serves": ["parcel_join", "urbanism_join", "land_potential"]
+    },
+    {
+      "id": "geoportail_urbanisme_gpu",
+      "label": "Géoportail de l'Urbanisme / API GPU",
+      "priority": "P0",
+      "domain": "urbanism",
+      "access": "open",
+      "license": "official_service",
+      "cadence": "weekly",
+      "collector": "urbanisme_gpu_collector",
+      "urls": [
+        {
+          "kind": "api_root",
+          "url": "https://www.geoportail-urbanisme.gouv.fr/api",
+          "method": "GET",
+          "expectedFormats": ["json", "html"],
+          "parser": "json"
+        },
+        {
+          "kind": "documentation",
+          "url": "https://www.geoportail-urbanisme.gouv.fr/services/?subcategory=services_api",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["documents", "plu", "pos", "cc", "psmv", "sup", "zonage", "prescriptions"],
+      "serves": ["constructibility", "constraint_score", "seller_angle"]
+    },
+    {
+      "id": "georisques_public",
+      "label": "Géorisques",
+      "priority": "P0",
+      "domain": "risk",
+      "access": "open",
+      "license": "official_service",
+      "cadence": "weekly",
+      "collector": "georisques_collector",
+      "urls": [
+        {
+          "kind": "sample_risk_pdf",
+          "url": "https://www.georisques.gouv.fr/api/v1/rapport_pdf?latlon=2.2354806%2C48.8361521",
+          "method": "GET",
+          "expectedFormats": ["pdf"],
+          "parser": "pdf"
+        },
+        {
+          "kind": "service_home",
+          "url": "https://www.georisques.gouv.fr/",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["flood", "clay", "radon", "land_movement", "cavities", "icpe", "sis", "catnat", "ppr"],
+      "serves": ["risk_score", "insurance", "diagnostics"]
+    },
+    {
+      "id": "transport_data_gouv_pan",
+      "label": "Point d'Accès National transport.data.gouv.fr",
+      "priority": "P1",
+      "domain": "mobility",
+      "access": "open",
+      "license": "dataset_specific",
+      "cadence": "daily",
+      "collector": "transport_collector",
+      "urls": [
+        {
+          "kind": "datasets_api",
+          "url": "https://transport.data.gouv.fr/api/datasets",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        },
+        {
+          "kind": "documentation",
+          "url": "https://doc.transport.data.gouv.fr/outils/outils-disponibles-sur-le-pan/api",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["gtfs", "gtfs_rt", "stops", "routes", "irve", "zfe", "bike", "parking", "resource_history"],
+      "serves": ["accessibility_score", "buyer_matching", "area_attractiveness"]
+    },
+    {
+      "id": "insee_api_catalog",
+      "label": "INSEE APIs",
+      "priority": "P1",
+      "domain": "demography_business",
+      "access": "open_or_subscription",
+      "license": "official_service",
+      "cadence": "weekly",
+      "collector": "insee_local_collector",
+      "urls": [
+        {
+          "kind": "catalog",
+          "url": "https://www.insee.fr/fr/information/8184146",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["sirene", "melodi", "bdm", "local_data", "metadata"],
+      "serves": ["demography", "business_churn", "local_economy"]
+    },
+    {
+      "id": "sirene_open_data",
+      "label": "Sirene open data",
+      "priority": "P1",
+      "domain": "business",
+      "access": "open_or_account",
+      "license": "official_service",
+      "cadence": "weekly",
+      "collector": "sirene_business_collector",
+      "urls": [
+        {
+          "kind": "dataservice_search",
+          "url": "https://www.data.gouv.fr/api/1/dataservices/?q=API%20Sirene&page_size=1",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["siren", "siret", "naf", "creation_date", "closure_date", "legal_category", "workforce_band", "address"],
+      "serves": ["local_business_vitality", "recruitment", "commerce_churn"]
+    },
+    {
+      "id": "france_travail_jobs",
+      "label": "API Offres d'emploi France Travail",
+      "priority": "P1",
+      "domain": "jobs",
+      "access": "open_with_api_terms",
+      "license": "official_service",
+      "cadence": "daily",
+      "collector": "jobs_market_collector",
+      "urls": [
+        {
+          "kind": "dataservice",
+          "url": "https://www.data.gouv.fr/dataservices/api-offres-demploi",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["job_title", "commune", "department", "contract", "sector", "company", "active_offer_count"],
+      "serves": ["employment_momentum", "recruitment", "buyer_solvency_proxy"]
+    },
+    {
+      "id": "boamp_dila_open_data",
+      "label": "BOAMP / DILA marchés publics",
+      "priority": "P1",
+      "domain": "public_procurement",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "daily",
+      "collector": "public_procurement_collector",
+      "urls": [
+        {
+          "kind": "documentation_pdf",
+          "url": "https://echanges.dila.gouv.fr/OPENDATA/BOAMP/DILA_BOAMP_Presentation_20220628.pdf",
+          "method": "GET",
+          "expectedFormats": ["pdf"],
+          "parser": "pdf"
+        },
+        {
+          "kind": "open_data_directory",
+          "url": "https://echanges.dila.gouv.fr/OPENDATA/BOAMP/",
+          "method": "GET",
+          "expectedFormats": ["html", "xml", "zip"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["buyer", "place", "procedure", "object", "amount", "dates", "works_keywords", "award_status"],
+      "serves": ["public_works_signal", "neighborhood_future_change", "contractor_market"]
+    },
+    {
+      "id": "meteo_data_gouv",
+      "label": "Météo-France open data",
+      "priority": "P2",
+      "domain": "weather_climate",
+      "access": "open",
+      "license": "dataset_specific",
+      "cadence": "daily",
+      "collector": "weather_climate_collector",
+      "urls": [
+        {
+          "kind": "portal",
+          "url": "https://meteo.data.gouv.fr/",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        },
+        {
+          "kind": "organization_datasets",
+          "url": "https://www.data.gouv.fr/api/1/organizations/meteo-france/datasets/?page_size=1",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["temperature", "rain", "heatwave", "drought", "hail", "station", "history", "forecast"],
+      "serves": ["climate_risk", "clay_risk_proxy", "comfort_summer", "insurance"]
+    },
+    {
+      "id": "education_open_data",
+      "label": "Open data Éducation Nationale",
+      "priority": "P2",
+      "domain": "schools",
+      "access": "open",
+      "license": "dataset_specific",
+      "cadence": "weekly",
+      "collector": "education_services_collector",
+      "urls": [
+        {
+          "kind": "catalog_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=annuaire%20education&page_size=1",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["school_name", "type", "address", "commune", "sector", "students", "services"],
+      "serves": ["family_attractiveness", "buyer_matching", "area_score"]
+    },
+    {
+      "id": "ademe_rge_and_aides",
+      "label": "ADEME RGE et aides rénovation",
+      "priority": "P2",
+      "domain": "renovation",
+      "access": "open",
+      "license": "dataset_specific",
+      "cadence": "weekly",
+      "collector": "renovation_collector",
+      "urls": [
+        {
+          "kind": "ademe_dataservices",
+          "url": "https://www.data.gouv.fr/organizations/ademe/dataservices",
+          "method": "GET",
+          "expectedFormats": ["html"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["rge_company", "renovation_aid", "energy_subsidy", "territory", "work_type"],
+      "serves": ["renovation_roi", "artisan_capacity", "seller_report"]
+    },
+    {
+      "id": "social_perception_public_feeds",
+      "label": "Flux publics locaux et perception",
+      "priority": "P3",
+      "domain": "local_news_perception",
+      "access": "open_public_feeds_only",
+      "license": "source_specific",
+      "cadence": "daily",
+      "collector": "local_news_collector",
+      "urls": [
+        {
+          "kind": "data_gouv_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=actualit%C3%A9s%20locales&page_size=1",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["feed_url", "title", "date", "place", "topic", "public_signal", "sentiment_proxy"],
+      "serves": ["weak_signals", "local_watch", "reputation"]
+    }
+  ]
+}

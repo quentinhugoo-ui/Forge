@@ -1030,6 +1030,72 @@ fn real_estate_harvester_run_tool(
     real_estate_harvester::run_tool(&store_path, &tool_id)
 }
 
+fn normalize_real_estate_tool_command(command: &str) -> Result<String, String> {
+    let token = command
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
+    if !token.starts_with('/') || !token.ends_with('_') {
+        return Err("real estate tool commands must use /(nom_outil)_".to_string());
+    }
+    let body = &token[1..token.len().saturating_sub(1)];
+    if body.is_empty()
+        || body.len() > 64
+        || !body
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+    {
+        return Err("invalid real estate tool command name".to_string());
+    }
+    Ok(format!("/{body}_"))
+}
+
+#[tauri::command]
+fn real_estate_tool_command_context(
+    command: String,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<JsonValue, String> {
+    let command = normalize_real_estate_tool_command(&command)?;
+    let program_name = command
+        .trim_start_matches('/')
+        .trim_end_matches('_')
+        .to_string();
+    let tool_id = program_name.replace('_', "-");
+    let store_path = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.store_path.clone()
+    };
+    let snapshot = real_estate_harvester::snapshot(&store_path).ok();
+    let brain = forge_agent_tools::call_internal_tool(
+        &store_path,
+        "forge_brain_recall",
+        &json!({
+            "scope": "agence_immo",
+            "memory_layer": "semantic",
+            "limit": 8
+        }),
+        None,
+    )?;
+    Ok(json!({
+        "kind": "real_estate_tool_command_context",
+        "command": command,
+        "program_name": program_name,
+        "tool_id": tool_id,
+        "scope": "agence_immo",
+        "memory_layer": "semantic",
+        "route": {
+            "slash": command,
+            "program_to_run": true,
+            "brain_first": "brain_recall",
+            "memory_scope": "agence_immo",
+            "data_sync": "real_estate_harvester_snapshot"
+        },
+        "harvester_snapshot": snapshot,
+        "brain": brain
+    }))
+}
+
 const WEB_EXPLORER_SCOPE_DEFAULT: &str = "default";
 const WEB_EXPLORER_SCOPE_AGENCY: &str = "agency";
 
@@ -3401,6 +3467,7 @@ struct ForgeCanvasAssistantRequest {
     runtime: Option<String>,
     max_log_lines: Option<usize>,
     turn_id: Option<String>,
+    privacy_scope: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -3554,13 +3621,168 @@ fn provider_display_name(provider: &str) -> &'static str {
     }
 }
 
-fn provider_terminal_running(provider: &str) -> bool {
-    let session = match provider {
-        "codex" => codex_provider_terminal_lock().lock().ok().and_then(|guard| guard.clone()),
-        "gemini" => gemini_provider_terminal_lock().lock().ok().and_then(|guard| guard.clone()),
-        "claude" => claude_provider_terminal_lock().lock().ok().and_then(|guard| guard.clone()),
+fn provider_terminal_lock(provider: &str) -> Option<&'static Mutex<Option<Arc<ProviderTerminalSession>>>> {
+    match provider {
+        "codex" => Some(codex_provider_terminal_lock()),
+        "gemini" => Some(gemini_provider_terminal_lock()),
+        "claude" => Some(claude_provider_terminal_lock()),
         _ => None,
+    }
+}
+
+fn provider_terminal_idle_snapshot(provider: &str) -> ProviderTerminalSnapshot {
+    ProviderTerminalSnapshot {
+        provider: provider.to_string(),
+        phase: "idle".to_string(),
+        message: "Ready".to_string(),
+        running: false,
+        ready_for_input: false,
+        pid: None,
+        output: "Ready.".to_string(),
+    }
+}
+
+fn configure_provider_terminal_ansi(command: &mut PtyCommandBuilder) {
+    command.env_remove("NO_COLOR");
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+}
+
+fn launch_provider_terminal_command<F>(
+    app: &tauri::AppHandle,
+    session: &Arc<ProviderTerminalSession>,
+    command: PtyCommandBuilder,
+    provider: &str,
+    failure_title: &str,
+    failure_subject: &str,
+    running_message: &str,
+    health: F,
+) where
+    F: FnOnce() -> OpenAiSubscriptionStatus,
+{
+    if let Err(err) = spawn_provider_pty_command(app.clone(), session.clone(), command) {
+        update_provider_terminal_status(Some(app), session, "error", failure_title, false, false);
+        append_provider_terminal_output(Some(app), session, &format!("\nfailed to start {failure_subject}: {err}\n"));
+        return;
+    }
+    update_provider_terminal_status(Some(app), session, "running", running_message, true, true);
+    let status = health();
+    remember_provider_cli_health(provider, &status);
+}
+
+fn provider_terminal_session(provider: &str, required_state: &str) -> Result<Arc<ProviderTerminalSession>, String> {
+    let display = provider_display_name(provider);
+    provider_terminal_lock(provider)
+        .ok_or_else(|| format!("Unknown provider terminal: {provider}"))?
+        .lock()
+        .map_err(|_| format!("{display} terminal lock failed"))?
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| format!("{display} terminal is not {required_state}"))
+}
+
+fn provider_terminal_snapshot(provider: &str) -> Result<ProviderTerminalSnapshot, String> {
+    let Some(lock) = provider_terminal_lock(provider) else {
+        return Ok(provider_terminal_idle_snapshot(provider));
     };
+    if let Ok(guard) = lock.lock() {
+        if let Some(session) = guard.as_ref() {
+            return Ok(session.snapshot());
+        }
+    }
+    Ok(provider_terminal_idle_snapshot(provider))
+}
+
+fn provider_terminal_send_input(provider: &str, input: String) -> Result<ProviderTerminalSnapshot, String> {
+    let display = provider_display_name(provider);
+    let session = provider_terminal_session(provider, "running")?;
+    let mut guard = session
+        .writer
+        .lock()
+        .map_err(|_| format!("{display} terminal input lock failed"))?;
+    let writer = guard
+        .as_mut()
+        .ok_or_else(|| format!("{display} terminal is not ready for input"))?;
+    writer
+        .write_all(input.as_bytes())
+        .and_then(|_| writer.flush())
+        .map_err(|e| format!("{display} terminal write failed: {e}"))?;
+    Ok(session.snapshot())
+}
+
+fn provider_terminal_resize(provider: &str, cols: u16, rows: u16) -> Result<ProviderTerminalSnapshot, String> {
+    let session = provider_terminal_session(provider, "running")?;
+    resize_provider_terminal_session(&session, cols, rows)?;
+    Ok(session.snapshot())
+}
+
+fn provider_terminal_stop(provider: &str) -> Result<ProviderTerminalSnapshot, String> {
+    let display = provider_display_name(provider);
+    let session = provider_terminal_session(provider, "running")?;
+    let pid = session.pid.lock().ok().and_then(|guard| *guard);
+    if let Some(pid) = pid {
+        let _ = kill_process_tree(pid);
+    }
+    if let Ok(mut guard) = session.child.lock() {
+        if let Some(child) = guard.as_mut() {
+            let _ = child.kill();
+        }
+    }
+    if let Ok(mut guard) = session.writer.lock() {
+        *guard = None;
+    }
+    if let Ok(mut guard) = session.master.lock() {
+        *guard = None;
+    }
+    update_provider_terminal_status(
+        None,
+        &session,
+        "stopped",
+        &format!("{display} stopped by Forge"),
+        false,
+        false,
+    );
+    Ok(session.snapshot())
+}
+
+fn provider_terminal_clear(provider: &str, app: tauri::AppHandle) -> Result<ProviderTerminalSnapshot, String> {
+    let session = provider_terminal_session(provider, "available")?;
+    if let Ok(mut guard) = session.output.lock() {
+        *guard = "Ready.".to_string();
+    }
+    emit_provider_terminal_snapshot(Some(&app), &session, None);
+    Ok(session.snapshot())
+}
+
+fn provider_terminal_start_session<F>(
+    provider: &'static str,
+    app: tauri::AppHandle,
+    launch: F,
+) -> Result<Arc<ProviderTerminalSession>, String>
+where
+    F: FnOnce(tauri::AppHandle, Arc<ProviderTerminalSession>) + Send + 'static,
+{
+    let lock = provider_terminal_lock(provider)
+        .ok_or_else(|| format!("Unknown provider terminal: {provider}"))?;
+    if let Ok(guard) = lock.lock() {
+        if let Some(existing) = guard.as_ref() {
+            if existing.running.load(Ordering::Relaxed) {
+                return Ok(existing.clone());
+            }
+        }
+    }
+    let session = ProviderTerminalSession::new(provider);
+    lock.lock()
+        .map_err(|_| format!("{} terminal lock failed", provider_display_name(provider)))?
+        .replace(session.clone());
+    let session_bg = session.clone();
+    thread::spawn(move || launch(app, session_bg));
+    Ok(session)
+}
+
+fn provider_terminal_running(provider: &str) -> bool {
+    let session = provider_terminal_lock(provider)
+        .and_then(|lock| lock.lock().ok().and_then(|guard| guard.clone()));
     session
         .as_ref()
         .map(|session| session.running.load(Ordering::Relaxed))
@@ -4028,304 +4250,6 @@ fn forge_program_build_emit_create_steps(
             compiler.cloned().unwrap_or_else(|| json!({ "status": status })),
         );
     }
-}
-
-#[allow(dead_code)]
-fn forge_dynamic_tool_specs() -> Vec<JsonValue> {
-    vec![
-        json!({
-            "name": "forge_session_context",
-            "description": "Read the compact context for the current Forge session: selected job, file refs, recent logs, available programs and proof/artifact references. Never returns raw file contents.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string", "description": "Optional Forge session/job id. Defaults to the active canvas session." },
-                    "max_log_lines": { "type": "integer", "minimum": 0, "maximum": 120, "description": "How many recent log lines to include. Use 0 when only compact manifests/proofs are needed." }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_list_programs",
-            "description": "List reusable Forge programs already created in the local program registry, with hashes and compact metadata.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_interpret_visual_mapping",
-            "description": "Interpret a programmable Forge 3D/visual mapping by compact artifact refs, legends, axes, metrics, mode summaries and selected point hints. Use this to explain what a 2D/3D visual_program reveals without returning raw PLY points or source rows.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string", "description": "Optional Forge session/job id. Defaults to the active canvas session." },
-                    "mode": { "type": "string", "description": "Optional 3D view mode, e.g. phase, heightmap, manifold, lattice or candles3d." },
-                    "vertex_index": { "type": "integer", "minimum": 0, "description": "Optional selected 3D vertex index; returned as a compact bar-index hint only." },
-                    "selection": { "type": "object", "description": "Optional selection object with mode and vertex_index." }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_3d_metric_catalog",
-            "description": "Inspect the active file locally and return an extensible metric/recipe schema for 2D/3D visual programs: source columns, typed roles, derived metrics, axes/color/size candidates and accepted agent-defined metrics. No source rows or values.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string", "description": "Optional Forge session/job id. Defaults to the active canvas session." }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_model_3d_mapping",
-            "description": "Create or modify a programmable 3D map from an agent metric recipe. The agent can reshape axes XYZ, color, size, transforms and objective for any domain; Forge reads the file locally, materializes artifacts and returns compact diagnostics only.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string", "description": "Optional Forge session/job id. Defaults to the active canvas session." },
-                    "recipe": {
-                        "type": "object",
-                        "description": "3D visual_program recipe: mode, objective, axes {x,y,z}, color, size, overlays, transform, metric definitions and optional max_points."
-                    },
-                    "mode": { "type": "string" },
-                    "objective": { "type": "string" },
-                    "max_points": { "type": "integer", "minimum": 64, "maximum": 1000000 },
-                    "voxel_resolution": { "type": "integer", "minimum": 12, "maximum": 96 }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_run_visual_program",
-            "description": "Run a visual_program on the active session file. Materializes configured 2D/3D views from open Metric/Visual DSL definitions: axes, overlays, color, size, labels and transforms. A visual_program may use the Planet renderer tool (`tool=planet_sphere`, UI label Planet) to display GeoNodes and MiniGeoNodes on bodies such as Mars, Moon or Jupiter; Planet is a renderer used inside Lenses, not a compute_program by itself. Normal metric Nodes can attach their output to a GeoNode/MiniGeoNode with `geo_ref`, `geo_refs`, `geonode` or `geonode_tag`. Forge reads data locally and returns only compact artifact refs, hashes and diagnostics.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["views"],
-                "properties": {
-                    "job_id": { "type": "string", "description": "Optional Forge session/job id. Defaults to the active canvas session." },
-                    "program_hash": { "type": "string" },
-                    "program_title": { "type": "string" },
-                    "program_goal": { "type": "string" },
-                    "metrics": { "type": "array", "description": "Open Metric DSL nodes used by the visual views. GeoNodes use kind=geo_node with lat/lon/body. MiniGeoNodes use kind=mini_geo_node and parent_geonode for precise sublocations. Normal metric Nodes can link to either with geo_ref=<geonode tag>." },
-                    "views": { "type": "array", "description": "Visual DSL views. Each view can be type=2d, type=3d or type=planet. Planet views use tool=planet_sphere, body=mars|moon|jupiter|earth|custom, geonodes=<GeoNode/MiniGeoNode ids> and metric_layers=<metric ids linked by geo_ref>." },
-                    "max_points": { "type": "integer", "minimum": 64, "maximum": 1000000 },
-                    "voxel_resolution": { "type": "integer", "minimum": 12, "maximum": 96 }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_analyze_3d_mapping",
-            "description": "Analyze a Forge 3D visual_program locally with PCA, voxel density, clusters, outliers, trajectory and geometry diagnostics. Returns compact statistics so the LLM can interpret the whole map without reading raw points or source rows.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string", "description": "Optional Forge session/job id. Defaults to the active canvas session." },
-                    "mode": { "type": "string", "description": "Optional 3D view mode filter, e.g. phase, heightmap, manifold, lattice or candles3d." },
-                    "voxel_resolution": { "type": "integer", "minimum": 12, "maximum": 96, "description": "Local voxel grid resolution used for density and connected components. Default 40." },
-                    "max_hotspots": { "type": "integer", "minimum": 1, "maximum": 24 },
-                    "max_clusters": { "type": "integer", "minimum": 1, "maximum": 24 }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_profile_settings",
-            "description": "Read or update Forge profile/provider settings, model choices, reasoning effort and local provider auth actions. Secrets are write-only and never returned.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "action": { "type": "string", "description": "get, update, set_model, set_reasoning, save_gemini_key, clear_gemini_key, login_claude or login_openai." },
-                    "provider": { "type": "string", "description": "codex, gemini or claude." },
-                    "model_ref": { "type": "string" },
-                    "reasoning_effort": { "type": "string" },
-                    "settings": { "type": "object" },
-                    "gemini_api_key": { "type": "string", "description": "Write-only. Never returned." }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_list_sessions",
-            "description": "List/search Forge session history as compact manifests, source refs, statuses and artifact availability. No raw files.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 80 },
-                    "query": { "type": "string" },
-                    "status": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_list_documents",
-            "description": "List saved document/source refs from Forge sessions. Returns metadata and references only; use programs for interpretation.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 80 },
-                    "query": { "type": "string" },
-                    "type": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_atlas_overview",
-            "description": "Return My Atlas: reusable local Instruments/Lenses, Nodes and completed content-addressed runs. Check this before creating or running near-duplicate work; if a run result exists, use its refs immediately instead of recomputing. Counts, hashes and refs only.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "max_entries": { "type": "integer", "minimum": 1, "maximum": 80 },
-                    "query": { "type": "string", "description": "Search My Atlas for a reusable Instrument, Lens, Node or run." },
-                    "kind": { "type": "string", "description": "Optional filter: program, metric_tag, geonode, mini_geonode, or run." }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_upsert_geonode",
-            "description": "Create or update a reusable Atlas GeoNode/MiniGeoNode for a named spatial coordinate anchor on any planet, moon, asteroid, solar-system body, star system or galactic object. Use this when the user or assistant mentions a real place/object that is not already in My Atlas. The LLM may provide known coordinates, but must mark estimated coordinates with coordinate_source=llm_estimate and a confidence value; prefer atlas/query reuse first. Surface lat/lon anchors can be injected into Planet visual_program views with tool=planet_sphere; astronomical ra/dec anchors are saved for future space/galaxy renderers.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["name"],
-                "properties": {
-                    "name": { "type": "string", "description": "Human-readable place name, e.g. Eberswalde Crater." },
-                    "tag": { "type": "string", "description": "Optional stable Atlas tag. Defaults to body_slug_name." },
-                    "body": { "type": "string", "description": "Planetary/astronomical body or scope, e.g. mars, moon, europa, titan, ceres, solar_system, milky_way." },
-                    "coordinate_system": { "type": "string", "description": "planetocentric_latlon, planetographic_latlon, icrs_ra_dec, galactic_l_b, ecliptic, custom, etc." },
-                    "lat": { "type": "number", "minimum": -90, "maximum": 90 },
-                    "lon": { "type": "number", "minimum": -360, "maximum": 360 },
-                    "ra": { "type": "number", "minimum": 0, "maximum": 360 },
-                    "dec": { "type": "number", "minimum": -90, "maximum": 90 },
-                    "distance": { "type": "number" },
-                    "distance_unit": { "type": "string" },
-                    "node_kind": { "type": "string", "description": "geo_node or mini_geo_node. If parent_geonode is set, MiniGeoNode is inferred." },
-                    "parent_geonode": { "type": "string", "description": "Optional parent GeoNode tag for precise sublocations." },
-                    "aliases": { "type": "array", "items": { "type": "string" } },
-                    "coordinate_source": { "type": "string", "description": "llm_estimate, user_supplied, atlas_import, nasa_gazetteer, etc." },
-                    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-                    "notes": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_update_session",
-            "description": "Update safe session metadata such as title, pinned/protected flags, archive/status, tags or agent note.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["job_id"],
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "title": { "type": "string" },
-                    "status": { "type": "string" },
-                    "pinned": { "type": "boolean" },
-                    "protected": { "type": "boolean" },
-                    "archived": { "type": "boolean" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "note": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_list_capabilities",
-            "displayName": "/metric",
-            "publicCommand": "/metric",
-            "description": "/metric - List Forge capabilities, examples and universal creation routes. Built-in finance/DNA tools are only examples: agents can create reusable Instruments (compute_program) and Lenses (visual_program) with open Metric/Visual DSL Nodes, GeoNodes/MiniGeoNodes for real coordinates, Planet renderer views (`planet_sphere`) and local execution over session files.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "domain": { "type": "string", "description": "Optional domain such as finance, timeseries, documents, biology, code, security, chemistry, medicine, engineering, aerospace, simulation, math, energy, manufacturing, geospatial, audio, images, networks or any user-defined domain." },
-                    "detailed": { "type": "boolean", "description": "Return detailed template metadata." }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_create_program",
-            "displayName": "/create_",
-            "publicCommand": "/create_",
-            "description": "/create_ - Create a reusable Forge Instrument or Lens for any domain only after the design is explicit. Before calling /create_, keep the full checklist internal: objective, exact metric/view Node count, each Node's role, formulas/algorithms/coding logic, tool/executor routing, inputs/outputs and validation plan. In chat, do not dump that full inventory unless the user asks; write only 1-3 brief natural sentences summarizing the creation step. If the user is exploring, gives only a vague idea, or has not clearly settled the objective/features/validation target, do not call /create_: ask adaptive domain questions or propose concise candidate directions, then wait for a clear user decision. If CURRENT_TURN_DECISION_POINT is present, interpret the user's answer naturally from the visible conversation: acceptance or delegation means choose robust defaults and create; refusal, changed objective, or request for another idea means revise and do not create. Use compute_program for local calculations/simulations/metrics (Instrument), or visual_program for programmable 2D/3D/Planet views (Lens). Planet is a visual renderer tool used only inside visual_program views (`tool=planet_sphere`). GeoNodes (`kind=geo_node`) carry named lat/lon/body anchors, MiniGeoNodes (`kind=mini_geo_node`) carry precise sublocations with parent_geonode, and normal metric Nodes link to either with geo_ref/geonode fields. Specs use compact Metric/Visual DSL Nodes with open-ended metrics; every created Instrument/Lens and Node is saved to My Atlas for reuse. If the returned compiler status is needs_repair, do not run it: briefly explain what you will fix, create a corrected version, then run only the compiled version.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["title", "goal"],
-                "properties": {
-                    "title": { "type": "string" },
-                    "domain": { "type": "string" },
-                    "intent": { "type": "string" },
-                    "goal": { "type": "string" },
-                    "program_kind": { "type": "string", "description": "compute_program for a Forge Instrument, or visual_program for a 2D/3D/Planet Forge Lens." },
-                    "kind": { "type": "string", "description": "Alias for program_kind." },
-                    "template": { "type": "string" },
-                    "metrics": { "type": "array", "description": "Open Metric DSL nodes; agents may define domain-specific metrics instead of choosing from a closed catalog. GeoNodes use kind=geo_node with lat/lon/body; MiniGeoNodes use kind=mini_geo_node with parent_geonode; normal metric Nodes attach with geo_ref, geo_refs, geonode or geonode_tag." },
-                    "views": { "type": "array", "description": "Visual DSL views: type=2d, type=3d or type=planet. Planet views use tool=planet_sphere, body=mars|moon|jupiter|earth|custom, geonodes=<GeoNode/MiniGeoNode ids> and metric_layers=<linked metric ids>." },
-                    "spec_text": { "type": "string", "description": "Compact Instrument/Lens spec with <metric .../> and optional <view .../> Nodes. For 3D Lenses include x/y/z axes. For Planet Lenses include <metric kind='geo_node' ... lat='lat' lon='lon' body='mars' />, optional <metric kind='mini_geo_node' parent_geonode='...' ... />, normal metric Nodes with geo_ref='...', and <view type='planet' tool='planet_sphere' body='mars' geonodes='...' metric_layers='...' />." }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_compile_validate_route",
-            "displayName": "/metric",
-            "publicCommand": "/metric",
-            "description": "/metric - Compile, validate and route a draft or Atlas program without reading raw data. Use this before storing/running complex programs or when improving metric tags. It checks formula, algorithm, inputs, output, dtype, unit, domain, params, objective coverage, dependency map, unit/dimension consistency, scientific validation, executor routing and formula-to-executor binding. It tells you which Atlas tags/programs can be reused and what must be repaired.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "program_hash": { "type": "string", "description": "Existing My Atlas program hash to recompile/validate." },
-                    "title": { "type": "string" },
-                    "domain": { "type": "string" },
-                    "goal": { "type": "string" },
-                    "program_kind": { "type": "string" },
-                    "metrics": { "type": "array" },
-                    "views": { "type": "array" },
-                    "spec_text": { "type": "string" },
-                    "source_schema": { "type": "object" },
-                    "constraints": { "type": "object" },
-                    "output_contract": { "type": "object" }
-                },
-                "additionalProperties": true
-            }
-        }),
-        json!({
-            "name": "forge_run_program",
-            "displayName": "/program_",
-            "publicCommand": "/program_",
-            "description": "/program_ - Run or plan a Forge compute_program or visual_program on the current session files only after the user explicitly approved a concrete program. Forge executes locally and indexes the result in My Atlas; after the first run, the same program_hash + input hashes + params returns an instant Atlas hit instead of recomputing. Do not run when the user is exploring an idea, inventing an indicator, missing tag count/tools/formulas/algorithms, asking to improve a proposal, or says the program is not complete enough; revise and ask before launching.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string", "description": "Optional Forge session/job id. Defaults to active canvas session." },
-                    "program_hash": { "type": "string" },
-                    "program": { "type": "string" },
-                    "title": { "type": "string" },
-                    "inputs": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "required": ["path"],
-                            "properties": {
-                                "path": { "type": "string" },
-                                "role": { "type": "string" }
-                            },
-                            "additionalProperties": false
-                        }
-                    },
-                    "dry_run": { "type": "boolean" },
-                    "plan_only": { "type": "boolean" }
-                },
-                "additionalProperties": false
-            }
-        }),
-    ]
 }
 
 fn forge_dynamic_tool_specs_compact() -> Vec<JsonValue> {
@@ -6862,20 +6786,18 @@ impl WebExplorerSession {
     }
 }
 
-#[tauri::command]
-async fn codex_provider_status() -> Result<OpenAiSubscriptionStatus, String> {
-    Ok(codex_cli_status(None))
+macro_rules! provider_status_command {
+    ($name:ident, $status:ident) => {
+        #[tauri::command]
+        async fn $name() -> Result<OpenAiSubscriptionStatus, String> {
+            Ok($status(None))
+        }
+    };
 }
 
-#[tauri::command]
-async fn gemini_provider_status() -> Result<OpenAiSubscriptionStatus, String> {
-    Ok(gemini_cli_status(None))
-}
-
-#[tauri::command]
-async fn claude_provider_status() -> Result<OpenAiSubscriptionStatus, String> {
-    Ok(claude_cli_status(None))
-}
+provider_status_command!(codex_provider_status, codex_cli_status);
+provider_status_command!(gemini_provider_status, gemini_cli_status);
+provider_status_command!(claude_provider_status, claude_cli_status);
 
 #[derive(Serialize, Clone)]
 struct CanvasRuntimeModel {
@@ -6885,29 +6807,13 @@ struct CanvasRuntimeModel {
 }
 
 fn canvas_runtime_catalog(runtime: &str) -> Vec<CanvasRuntimeModel> {
-    let codex_present = codex_cli_status(None).connected;
-    let claude_present = claude_cli_status(None).connected;
-    let gemini_present = gemini_cli_status(None).connected;
-    match runtime {
-        "codex" => vec![
-            CanvasRuntimeModel { id: "gpt-5.5".into(),       label: "GPT 5.5".into(),  available: codex_present },
-            CanvasRuntimeModel { id: "gpt-5.4".into(),       label: "GPT 5.4".into(),  available: codex_present },
-            CanvasRuntimeModel { id: "gpt-5.3-codex".into(), label: "GPT 5.3".into(),  available: codex_present },
-        ],
-        "claude" => vec![
-            CanvasRuntimeModel { id: "claude-code-default".into(), label: "Default".into(),    available: claude_present },
-            CanvasRuntimeModel { id: "opus".into(),                label: "Opus 4.7".into(),   available: claude_present },
-            CanvasRuntimeModel { id: "sonnet".into(),              label: "Sonnet 4.6".into(), available: claude_present },
-            CanvasRuntimeModel { id: "haiku".into(),               label: "Haiku 4.5".into(),  available: claude_present },
-        ],
-        "gemini" => vec![
-            CanvasRuntimeModel { id: "gemini-3-pro".into(),     label: "Gemini 3 Pro".into(),     available: gemini_present },
-            CanvasRuntimeModel { id: "gemini-2.5-pro".into(),   label: "Gemini 2.5 Pro".into(),   available: gemini_present },
-            CanvasRuntimeModel { id: "gemini-2.5-flash".into(), label: "Gemini 2.5 Flash".into(), available: gemini_present },
-            CanvasRuntimeModel { id: "gemini-2.0-flash".into(), label: "Gemini 2.0 Flash".into(), available: gemini_present },
-        ],
-        _ => Vec::new(),
-    }
+    let (available, models): (bool, &[(&str, &str)]) = match runtime {
+        "codex" => (codex_cli_status(None).connected, &[("gpt-5.5", "GPT 5.5"), ("gpt-5.4", "GPT 5.4"), ("gpt-5.3-codex", "GPT 5.3")]),
+        "claude" => (claude_cli_status(None).connected, &[("claude-code-default", "Default"), ("opus", "Opus 4.7"), ("sonnet", "Sonnet 4.6"), ("haiku", "Haiku 4.5")]),
+        "gemini" => (gemini_cli_status(None).connected, &[("gemini-3-pro", "Gemini 3 Pro"), ("gemini-2.5-pro", "Gemini 2.5 Pro"), ("gemini-2.5-flash", "Gemini 2.5 Flash"), ("gemini-2.0-flash", "Gemini 2.0 Flash")]),
+        _ => return Vec::new(),
+    };
+    models.iter().map(|(id, label)| CanvasRuntimeModel { id: (*id).into(), label: (*label).into(), available }).collect()
 }
 
 /// Returns the model catalog the runtime CLI can drive — id, display
@@ -6918,39 +6824,43 @@ async fn forge_canvas_list_runtime_models(runtime: String) -> Result<Vec<CanvasR
     Ok(canvas_runtime_catalog(runtime.as_str()))
 }
 
-#[tauri::command]
-async fn codex_terminal_snapshot() -> Result<ProviderTerminalSnapshot, String> {
-    if let Ok(guard) = codex_provider_terminal_lock().lock() {
-        if let Some(session) = guard.as_ref() {
-            return Ok(session.snapshot());
+macro_rules! provider_terminal_commands {
+    ($snapshot:ident, $start:ident, $send:ident, $resize:ident, $stop:ident, $clear:ident, $provider:literal, $spawn:ident) => {
+        #[tauri::command]
+        async fn $snapshot() -> Result<ProviderTerminalSnapshot, String> {
+            provider_terminal_snapshot($provider)
         }
-    }
-    Ok(ProviderTerminalSnapshot {
-        provider: "codex".to_string(),
-        phase: "idle".to_string(),
-        message: "Ready".to_string(),
-        running: false,
-        ready_for_input: false,
-        pid: None,
-        output: "Ready.".to_string(),
-    })
+
+        #[tauri::command]
+        async fn $start(app: tauri::AppHandle) -> Result<ProviderTerminalSnapshot, String> {
+            let session = $spawn(app)?;
+            Ok(session.snapshot())
+        }
+
+        #[tauri::command]
+        async fn $send(input: String) -> Result<ProviderTerminalSnapshot, String> {
+            provider_terminal_send_input($provider, input)
+        }
+
+        #[tauri::command]
+        async fn $resize(cols: u16, rows: u16) -> Result<ProviderTerminalSnapshot, String> {
+            provider_terminal_resize($provider, cols, rows)
+        }
+
+        #[tauri::command]
+        async fn $stop() -> Result<ProviderTerminalSnapshot, String> {
+            provider_terminal_stop($provider)
+        }
+
+        #[tauri::command]
+        async fn $clear(app: tauri::AppHandle) -> Result<ProviderTerminalSnapshot, String> {
+            provider_terminal_clear($provider, app)
+        }
+    };
 }
 
 fn spawn_codex_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<ProviderTerminalSession>, String> {
-    if let Ok(guard) = codex_provider_terminal_lock().lock() {
-        if let Some(existing) = guard.as_ref() {
-            if existing.running.load(Ordering::Relaxed) {
-                return Ok(existing.clone());
-            }
-        }
-    }
-    let session = ProviderTerminalSession::new("codex");
-    if let Ok(mut guard) = codex_provider_terminal_lock().lock() {
-        *guard = Some(session.clone());
-    }
-    let session_bg = session.clone();
-    let app_bg = app.clone();
-    thread::spawn(move || {
+    provider_terminal_start_session("codex", app, |app_bg, session_bg| {
         let workspace = forge_workspace_dir();
         let runtime_candidate = codex_command_candidates()
             .into_iter()
@@ -6989,9 +6899,7 @@ fn spawn_codex_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<Pr
             PtyCommandBuilder::new(&runtime_candidate)
         };
         command.cwd(&workspace);
-        command.env_remove("NO_COLOR");
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
+        configure_provider_terminal_ansi(&mut command);
         if connected {
             update_provider_terminal_status(
                 Some(&app_bg),
@@ -7012,164 +6920,35 @@ fn spawn_codex_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<Pr
                 false,
             );
         }
-        if let Err(err) = spawn_provider_pty_command(app_bg.clone(), session_bg.clone(), command) {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "error",
-                "Codex launch failed",
-                false,
-                false,
-            );
-            append_provider_terminal_output(
-                Some(&app_bg),
-                &session_bg,
-                &format!("\nfailed to start Codex CLI: {err}\n"),
-            );
-            return;
-        }
-        update_provider_terminal_status(
-            Some(&app_bg),
+        launch_provider_terminal_command(
+            &app_bg,
             &session_bg,
-            "running",
+            command,
+            "codex",
+            "Codex launch failed",
+            "Codex CLI",
             if connected { "Codex is live in Forge" } else { "Codex login is live in Forge" },
-            true,
-            true,
+            || codex_cli_status(None),
         );
-        remember_provider_cli_health("codex", &codex_cli_status(None));
-    });
-    Ok(session)
-}
-
-#[tauri::command]
-async fn codex_terminal_start(app: tauri::AppHandle) -> Result<ProviderTerminalSnapshot, String> {
-    let session = spawn_codex_provider_terminal_session(app)?;
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn codex_terminal_send_input(input: String) -> Result<ProviderTerminalSnapshot, String> {
-    let session = codex_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Codex terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Codex terminal is not running".to_string())?;
-    let mut guard = session
-        .writer
-        .lock()
-        .map_err(|_| "Codex terminal input lock failed".to_string())?;
-    let writer = guard
-        .as_mut()
-        .ok_or_else(|| "Codex terminal is not ready for input".to_string())?;
-    writer
-        .write_all(input.as_bytes())
-        .and_then(|_| writer.flush())
-        .map_err(|e| format!("Codex terminal write failed: {e}"))?;
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn codex_terminal_resize(cols: u16, rows: u16) -> Result<ProviderTerminalSnapshot, String> {
-    let session = codex_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Codex terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Codex terminal is not running".to_string())?;
-    resize_provider_terminal_session(&session, cols, rows)?;
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn codex_terminal_stop() -> Result<ProviderTerminalSnapshot, String> {
-    let session = codex_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Codex terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Codex terminal is not running".to_string())?;
-    let pid = session.pid.lock().ok().and_then(|guard| *guard);
-    if let Some(pid) = pid {
-        let _ = kill_process_tree(pid);
-    }
-    if let Ok(mut guard) = session.child.lock() {
-        if let Some(child) = guard.as_mut() {
-            let _ = child.kill();
-        }
-    }
-    if let Ok(mut guard) = session.writer.lock() {
-        *guard = None;
-    }
-    if let Ok(mut guard) = session.master.lock() {
-        *guard = None;
-    }
-    update_provider_terminal_status(None, &session, "stopped", "Codex stopped by Forge", false, false);
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn codex_terminal_clear(app: tauri::AppHandle) -> Result<ProviderTerminalSnapshot, String> {
-    let session = codex_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Codex terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Codex terminal is not available".to_string())?;
-    if let Ok(mut guard) = session.output.lock() {
-        *guard = "Ready.".to_string();
-    }
-    emit_provider_terminal_snapshot(Some(&app), &session, None);
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn gemini_terminal_snapshot() -> Result<ProviderTerminalSnapshot, String> {
-    if let Ok(guard) = gemini_provider_terminal_lock().lock() {
-        if let Some(session) = guard.as_ref() {
-            return Ok(session.snapshot());
-        }
-    }
-    Ok(ProviderTerminalSnapshot {
-        provider: "gemini".to_string(),
-        phase: "idle".to_string(),
-        message: "Ready".to_string(),
-        running: false,
-        ready_for_input: false,
-        pid: None,
-        output: "Ready.".to_string(),
     })
 }
 
+provider_terminal_commands!(
+    codex_terminal_snapshot,
+    codex_terminal_start,
+    codex_terminal_send_input,
+    codex_terminal_resize,
+    codex_terminal_stop,
+    codex_terminal_clear,
+    "codex",
+    spawn_codex_provider_terminal_session
+);
+
 fn spawn_gemini_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<ProviderTerminalSession>, String> {
-    if let Ok(guard) = gemini_provider_terminal_lock().lock() {
-        if let Some(existing) = guard.as_ref() {
-            if existing.running.load(Ordering::Relaxed) {
-                return Ok(existing.clone());
-            }
-        }
-    }
-    let session = ProviderTerminalSession::new("gemini");
-    if let Ok(mut guard) = gemini_provider_terminal_lock().lock() {
-        *guard = Some(session.clone());
-    }
-    let session_bg = session.clone();
-    let app_bg = app.clone();
-    thread::spawn(move || {
+    provider_terminal_start_session("gemini", app, |app_bg, session_bg| {
         let workspace = forge_workspace_dir();
         let bootstrap = gemini_bootstrap_status();
-        let candidate = gemini_cli_binary_path();
-        let appdata_npm = std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .map(|dir| dir.join("npm"));
-        let gemini_cmd = candidate
-            .clone()
-            .or_else(|| appdata_npm.as_ref().map(|dir| dir.join("gemini.cmd")))
-            .unwrap_or_else(|| PathBuf::from("gemini.cmd"));
-        let gemini_script = appdata_npm
-            .as_ref()
-            .map(|dir| dir.join("node_modules").join("@google").join("gemini-cli").join("bundle").join("gemini.js"))
-            .unwrap_or_else(|| PathBuf::from("gemini.js"));
+        let paths = gemini_cli_paths();
         let node = node_binary_path();
         let npm = npm_binary_path();
 
@@ -7182,106 +6961,53 @@ fn spawn_gemini_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<P
             false,
         );
 
-        if candidate.is_none() && !bootstrap.node_available {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "needs-node",
-                "Node.js is required before Forge can install Gemini CLI",
-                false,
-                false,
-            );
-            append_provider_terminal_output(
-                Some(&app_bg),
-                &session_bg,
-                "\nNode.js was not found on this machine.\nInstall Node.js, reopen Forge, then click Connect in Forge again.\n",
-            );
+        if !provider_terminal_bootstrap_ready(
+            &app_bg,
+            &session_bg,
+            paths.candidate.is_some(),
+            bootstrap,
+            "Gemini CLI",
+            "Connect",
+        ) {
             return;
         }
 
-        if candidate.is_none() && !bootstrap.npm_available {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "needs-npm",
-                "npm is required before Forge can install Gemini CLI",
-                false,
-                false,
-            );
-            append_provider_terminal_output(
-                Some(&app_bg),
-                &session_bg,
-                "\nnpm was not found on this machine.\nForge needs a working Node.js/npm runtime to install Gemini CLI automatically.\n",
-            );
-            return;
-        }
-
-        let installing = !gemini_script.exists() && !gemini_cmd.exists();
+        let installing = !paths.runtime.exists() && !paths.cmd.exists();
         let mut command = if installing {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "installing",
-                "Installing Gemini CLI in Forge",
-                true,
-                false,
-            );
-            let npm = match npm.as_ref() {
-                Some(path) => path,
-                None => {
-                    update_provider_terminal_status(
-                        Some(&app_bg),
-                        &session_bg,
-                        "needs-npm",
-                        "npm is required before Forge can install Gemini CLI",
-                        false,
-                        false,
-                    );
-                    append_provider_terminal_output(
-                        Some(&app_bg),
-                        &session_bg,
-                        "\nnpm disappeared before Forge could start the install.\n",
-                    );
-                    return;
-                }
-            };
             #[cfg(windows)]
             let launch_line = if let Some(node) = node.as_ref() {
                 format!(
                     "{} {}",
-                    cmd_quote_arg(&node.display().to_string()),
-                    cmd_quote_arg(&gemini_script.display().to_string())
+                    shell_quote_arg(&node.display().to_string()),
+                    shell_quote_arg(&paths.runtime.display().to_string())
                 )
             } else {
-                cmd_quote_arg(&gemini_cmd.display().to_string())
+                shell_quote_arg(&paths.cmd.display().to_string())
             };
             #[cfg(not(windows))]
             let launch_line = "exec gemini".to_string();
-            #[cfg(windows)]
-            let npm_launch = cmd_quote_arg(&npm.display().to_string());
-            #[cfg(not(windows))]
-            let npm_launch = sh_quote_arg(&npm.display().to_string());
-            let install_line = format!(
-                "{} install -g @google/gemini-cli && {}",
-                npm_launch,
+            let Some(command) = provider_terminal_global_install_command(
+                &app_bg,
+                &session_bg,
+                &workspace,
+                npm.as_deref(),
+                "Installing Gemini CLI in Forge",
+                "Gemini CLI",
+                "@google/gemini-cli",
                 launch_line
-            );
-            pty_shell_command(install_line, &workspace)
-        } else if gemini_script.exists() {
+            ) else {
+                return;
+            };
+            command
+        } else if paths.runtime.exists() {
             let node = match node.as_ref() {
                 Some(node) => node,
                 None => {
-                    update_provider_terminal_status(
-                        Some(&app_bg),
+                    provider_terminal_fail(
+                        &app_bg,
                         &session_bg,
                         "needs-node",
                         "Node.js is required to launch Gemini CLI",
-                        false,
-                        false,
-                    );
-                    append_provider_terminal_output(
-                        Some(&app_bg),
-                        &session_bg,
                         "\nGemini CLI is installed, but Node.js is no longer available to launch it.\n",
                     );
                     return;
@@ -7289,185 +7015,54 @@ fn spawn_gemini_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<P
             };
             let mut cmd = PtyCommandBuilder::new(node);
             cmd.cwd(&workspace);
-            cmd.arg(&gemini_script);
+            cmd.arg(&paths.runtime);
             cmd
         } else {
-            let mut cmd = if cfg!(windows) && is_windows_batch_candidate(&gemini_cmd) {
+            let mut cmd = if cfg!(windows) && is_windows_batch_candidate(&paths.cmd) {
                 let mut shell = PtyCommandBuilder::new("cmd");
                 shell.arg("/C");
-                shell.arg(&gemini_cmd);
+                shell.arg(&paths.cmd);
                 shell
             } else {
-                PtyCommandBuilder::new(&gemini_cmd)
+                PtyCommandBuilder::new(&paths.cmd)
             };
             cmd.cwd(&workspace);
             cmd
         };
-        command.env_remove("NO_COLOR");
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
+        configure_provider_terminal_ansi(&mut command);
         if let Some((api_key, _)) = gemini_configured_api_key() {
             command.env("GEMINI_API_KEY", api_key);
         }
 
-        if let Err(err) = spawn_provider_pty_command(app_bg.clone(), session_bg.clone(), command) {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "error",
-                "Gemini launch failed",
-                false,
-                false,
-            );
-            append_provider_terminal_output(
-                Some(&app_bg),
-                &session_bg,
-                &format!("\nfailed to start Gemini CLI: {err}\n"),
-            );
-            return;
-        }
-        update_provider_terminal_status(
-            Some(&app_bg),
+        launch_provider_terminal_command(
+            &app_bg,
             &session_bg,
-            "running",
+            command,
+            "gemini",
+            "Gemini launch failed",
+            "Gemini CLI",
             "Gemini is live in Forge",
-            true,
-            true,
+            || gemini_cli_status(None),
         );
-        remember_provider_cli_health("gemini", &gemini_cli_status(None));
-    });
-    Ok(session)
-}
-
-#[tauri::command]
-async fn gemini_terminal_start(app: tauri::AppHandle) -> Result<ProviderTerminalSnapshot, String> {
-    let session = spawn_gemini_provider_terminal_session(app)?;
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn gemini_terminal_send_input(input: String) -> Result<ProviderTerminalSnapshot, String> {
-    let session = gemini_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Gemini terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Gemini terminal is not running".to_string())?;
-    let mut guard = session
-        .writer
-        .lock()
-        .map_err(|_| "Gemini terminal input lock failed".to_string())?;
-    let writer = guard
-        .as_mut()
-        .ok_or_else(|| "Gemini terminal is not ready for input".to_string())?;
-    writer
-        .write_all(input.as_bytes())
-        .and_then(|_| writer.flush())
-        .map_err(|e| format!("Gemini terminal write failed: {e}"))?;
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn gemini_terminal_resize(cols: u16, rows: u16) -> Result<ProviderTerminalSnapshot, String> {
-    let session = gemini_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Gemini terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Gemini terminal is not running".to_string())?;
-    resize_provider_terminal_session(&session, cols, rows)?;
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn gemini_terminal_stop() -> Result<ProviderTerminalSnapshot, String> {
-    let session = gemini_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Gemini terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Gemini terminal is not running".to_string())?;
-    let pid = session.pid.lock().ok().and_then(|guard| *guard);
-    if let Some(pid) = pid {
-        let _ = kill_process_tree(pid);
-    }
-    if let Ok(mut guard) = session.child.lock() {
-        if let Some(child) = guard.as_mut() {
-            let _ = child.kill();
-        }
-    }
-    if let Ok(mut guard) = session.writer.lock() {
-        *guard = None;
-    }
-    if let Ok(mut guard) = session.master.lock() {
-        *guard = None;
-    }
-    update_provider_terminal_status(None, &session, "stopped", "Gemini stopped by Forge", false, false);
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn gemini_terminal_clear(app: tauri::AppHandle) -> Result<ProviderTerminalSnapshot, String> {
-    let session = gemini_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Gemini terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Gemini terminal is not available".to_string())?;
-    if let Ok(mut guard) = session.output.lock() {
-        *guard = "Ready.".to_string();
-    }
-    emit_provider_terminal_snapshot(Some(&app), &session, None);
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn claude_terminal_snapshot() -> Result<ProviderTerminalSnapshot, String> {
-    if let Ok(guard) = claude_provider_terminal_lock().lock() {
-        if let Some(session) = guard.as_ref() {
-            return Ok(session.snapshot());
-        }
-    }
-    Ok(ProviderTerminalSnapshot {
-        provider: "claude".to_string(),
-        phase: "idle".to_string(),
-        message: "Ready".to_string(),
-        running: false,
-        ready_for_input: false,
-        pid: None,
-        output: "Ready.".to_string(),
     })
 }
 
+provider_terminal_commands!(
+    gemini_terminal_snapshot,
+    gemini_terminal_start,
+    gemini_terminal_send_input,
+    gemini_terminal_resize,
+    gemini_terminal_stop,
+    gemini_terminal_clear,
+    "gemini",
+    spawn_gemini_provider_terminal_session
+);
+
 fn spawn_claude_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<ProviderTerminalSession>, String> {
-    if let Ok(guard) = claude_provider_terminal_lock().lock() {
-        if let Some(existing) = guard.as_ref() {
-            if existing.running.load(Ordering::Relaxed) {
-                return Ok(existing.clone());
-            }
-        }
-    }
-    let session = ProviderTerminalSession::new("claude");
-    if let Ok(mut guard) = claude_provider_terminal_lock().lock() {
-        *guard = Some(session.clone());
-    }
-    let session_bg = session.clone();
-    let app_bg = app.clone();
-    thread::spawn(move || {
+    provider_terminal_start_session("claude", app, |app_bg, session_bg| {
         let workspace = forge_workspace_dir();
         let bootstrap = gemini_bootstrap_status();
-        let candidate = claude_cli_binary_path();
-        let appdata_npm = std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .map(|dir| dir.join("npm"));
-        let claude_cmd = candidate
-            .clone()
-            .or_else(|| appdata_npm.as_ref().map(|dir| dir.join("claude.cmd")))
-            .unwrap_or_else(|| PathBuf::from("claude.cmd"));
-        let claude_exe = appdata_npm
-            .as_ref()
-            .map(|dir| dir.join("node_modules").join("@anthropic-ai").join("claude-code").join("bin").join("claude.exe"))
-            .unwrap_or_else(|| PathBuf::from("claude.exe"));
+        let paths = claude_cli_paths();
         let npm = npm_binary_path();
 
         update_provider_terminal_status(
@@ -7479,48 +7074,25 @@ fn spawn_claude_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<P
             false,
         );
 
-        if candidate.is_none() && !bootstrap.node_available {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "needs-node",
-                "Node.js is required before Forge can install Claude",
-                false,
-                false,
-            );
-            append_provider_terminal_output(
-                Some(&app_bg),
-                &session_bg,
-                "\nNode.js was not found on this machine.\nInstall Node.js, reopen Forge, then click Log in Forge again.\n",
-            );
+        if !provider_terminal_bootstrap_ready(
+            &app_bg,
+            &session_bg,
+            paths.candidate.is_some(),
+            bootstrap,
+            "Claude",
+            "Log in",
+        ) {
             return;
         }
 
-        if candidate.is_none() && !bootstrap.npm_available {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "needs-npm",
-                "npm is required before Forge can install Claude",
-                false,
-                false,
-            );
-            append_provider_terminal_output(
-                Some(&app_bg),
-                &session_bg,
-                "\nnpm was not found on this machine.\nForge needs a working Node.js/npm runtime to install Claude automatically.\n",
-            );
-            return;
-        }
-
-        let installing = !claude_exe.exists() && !claude_cmd.exists();
+        let installing = !paths.runtime.exists() && !paths.cmd.exists();
         let runtime_candidate = if installing {
             None
-        } else if claude_exe.exists() {
-            Some(claude_exe.clone())
-        } else if claude_cmd.exists() {
-            Some(claude_cmd.clone())
-        } else if let Some(candidate) = candidate.clone() {
+        } else if paths.runtime.exists() {
+            Some(paths.runtime.clone())
+        } else if paths.cmd.exists() {
+            Some(paths.cmd.clone())
+        } else if let Some(candidate) = paths.candidate.clone() {
             Some(candidate)
         } else {
             update_provider_terminal_status(
@@ -7550,38 +7122,11 @@ fn spawn_claude_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<P
             || claude_credentials_present();
 
         let mut command = if installing {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "installing",
-                "Installing Claude Code CLI in Forge",
-                true,
-                false,
-            );
-            let npm = match npm.as_ref() {
-                Some(path) => path,
-                None => {
-                    update_provider_terminal_status(
-                        Some(&app_bg),
-                        &session_bg,
-                        "needs-npm",
-                        "npm is required before Forge can install Claude",
-                        false,
-                        false,
-                    );
-                    append_provider_terminal_output(
-                        Some(&app_bg),
-                        &session_bg,
-                        "\nnpm disappeared before Forge could start the install.\n",
-                    );
-                    return;
-                }
-            };
             #[cfg(windows)]
-            let runtime_launch = if claude_exe != PathBuf::from("claude.exe") {
-                cmd_quote_arg(&claude_exe.display().to_string())
+            let runtime_launch = if paths.runtime != PathBuf::from("claude.exe") {
+                shell_quote_arg(&paths.runtime.display().to_string())
             } else {
-                cmd_quote_arg(&claude_cmd.display().to_string())
+                shell_quote_arg(&paths.cmd.display().to_string())
             };
             #[cfg(not(windows))]
             let runtime_launch = if connected {
@@ -7597,16 +7142,19 @@ fn spawn_claude_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<P
             };
             #[cfg(not(windows))]
             let final_launch = runtime_launch;
-            #[cfg(windows)]
-            let npm_launch = cmd_quote_arg(&npm.display().to_string());
-            #[cfg(not(windows))]
-            let npm_launch = sh_quote_arg(&npm.display().to_string());
-            let install_line = format!(
-                "{} install -g @anthropic-ai/claude-code && {}",
-                npm_launch,
+            let Some(command) = provider_terminal_global_install_command(
+                &app_bg,
+                &session_bg,
+                &workspace,
+                npm.as_deref(),
+                "Installing Claude Code CLI in Forge",
+                "Claude",
+                "@anthropic-ai/claude-code",
                 final_launch
-            );
-            pty_shell_command(install_line, &workspace)
+            ) else {
+                return;
+            };
+            command
         } else {
             let runtime_candidate = runtime_candidate
                 .as_ref()
@@ -7631,9 +7179,7 @@ fn spawn_claude_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<P
         command.env_remove("CLAUDE_CODE_USE_BEDROCK");
         command.env_remove("CLAUDE_CODE_USE_VERTEX");
         command.env_remove("CLAUDE_CODE_USE_FOUNDRY");
-        command.env_remove("NO_COLOR");
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
+        configure_provider_terminal_ansi(&mut command);
         if connected {
             update_provider_terminal_status(
                 Some(&app_bg),
@@ -7654,142 +7200,44 @@ fn spawn_claude_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<P
             );
         }
 
-        if let Err(err) = spawn_provider_pty_command(app_bg.clone(), session_bg.clone(), command) {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "error",
-                "Claude launch failed",
-                false,
-                false,
-            );
-            append_provider_terminal_output(
-                Some(&app_bg),
-                &session_bg,
-                &format!("\nfailed to start Claude Code CLI: {err}\n"),
-            );
-            return;
-        }
-        update_provider_terminal_status(
-            Some(&app_bg),
+        launch_provider_terminal_command(
+            &app_bg,
             &session_bg,
-            "running",
+            command,
+            "claude",
+            "Claude launch failed",
+            "Claude Code CLI",
             if connected { "Claude is live in Forge" } else { "Claude login is live in Forge" },
-            true,
-            true,
+            || claude_cli_status(None),
         );
-        remember_provider_cli_health("claude", &claude_cli_status(None));
-    });
-    Ok(session)
+    })
 }
 
-#[tauri::command]
-async fn claude_terminal_start(app: tauri::AppHandle) -> Result<ProviderTerminalSnapshot, String> {
-    let session = spawn_claude_provider_terminal_session(app)?;
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn claude_terminal_send_input(input: String) -> Result<ProviderTerminalSnapshot, String> {
-    let session = claude_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Claude terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Claude terminal is not running".to_string())?;
-    let mut guard = session
-        .writer
-        .lock()
-        .map_err(|_| "Claude terminal input lock failed".to_string())?;
-    let writer = guard
-        .as_mut()
-        .ok_or_else(|| "Claude terminal is not ready for input".to_string())?;
-    writer
-        .write_all(input.as_bytes())
-        .and_then(|_| writer.flush())
-        .map_err(|e| format!("Claude terminal write failed: {e}"))?;
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn claude_terminal_resize(cols: u16, rows: u16) -> Result<ProviderTerminalSnapshot, String> {
-    let session = claude_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Claude terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Claude terminal is not running".to_string())?;
-    resize_provider_terminal_session(&session, cols, rows)?;
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn claude_terminal_stop() -> Result<ProviderTerminalSnapshot, String> {
-    let session = claude_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Claude terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Claude terminal is not running".to_string())?;
-    let pid = session.pid.lock().ok().and_then(|guard| *guard);
-    if let Some(pid) = pid {
-        let _ = kill_process_tree(pid);
-    }
-    if let Ok(mut guard) = session.child.lock() {
-        if let Some(child) = guard.as_mut() {
-            let _ = child.kill();
-        }
-    }
-    if let Ok(mut guard) = session.writer.lock() {
-        *guard = None;
-    }
-    if let Ok(mut guard) = session.master.lock() {
-        *guard = None;
-    }
-    update_provider_terminal_status(None, &session, "stopped", "Claude stopped by Forge", false, false);
-    Ok(session.snapshot())
-}
-
-#[tauri::command]
-async fn claude_terminal_clear(app: tauri::AppHandle) -> Result<ProviderTerminalSnapshot, String> {
-    let session = claude_provider_terminal_lock()
-        .lock()
-        .map_err(|_| "Claude terminal lock failed".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "Claude terminal is not available".to_string())?;
-    if let Ok(mut guard) = session.output.lock() {
-        *guard = "Ready.".to_string();
-    }
-    emit_provider_terminal_snapshot(Some(&app), &session, None);
-    Ok(session.snapshot())
-}
+provider_terminal_commands!(
+    claude_terminal_snapshot,
+    claude_terminal_start,
+    claude_terminal_send_input,
+    claude_terminal_resize,
+    claude_terminal_stop,
+    claude_terminal_clear,
+    "claude",
+    spawn_claude_provider_terminal_session
+);
 
 #[tauri::command]
 async fn claude_subscription_login() -> Result<OpenAiSubscriptionLoginResult, String> {
-    let candidate = claude_cli_binary_path();
-    let appdata_npm = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .map(|dir| dir.join("npm"));
-    let claude_cmd = candidate
-        .clone()
-        .or_else(|| appdata_npm.as_ref().map(|dir| dir.join("claude.cmd")))
-        .unwrap_or_else(|| PathBuf::from("claude.cmd"));
-    let claude_exe = appdata_npm
-        .as_ref()
-        .map(|dir| dir.join("node_modules").join("@anthropic-ai").join("claude-code").join("bin").join("claude.exe"))
-        .unwrap_or_else(|| PathBuf::from("claude.exe"));
+    let paths = claude_cli_paths();
     let npm = npm_binary_path().unwrap_or_else(|| PathBuf::from("npm.cmd"));
-    let command = if candidate.is_some() {
-        format!("{} auth login", claude_cmd.display())
+    let command = if paths.candidate.is_some() {
+        format!("{} auth login", paths.cmd.display())
     } else {
         format!("{} install -g @anthropic-ai/claude-code && claude auth login", npm.display())
     };
     #[cfg(windows)]
     {
-        let quoted_claude_cmd = claude_cmd.display().to_string().replace('\'', "''");
-        let quoted_claude_exe = claude_exe.display().to_string().replace('\'', "''");
-        let quoted_npm = npm.display().to_string().replace('\'', "''");
+        let quoted_claude_cmd = ps_path(&paths.cmd);
+        let quoted_claude_exe = ps_path(&paths.runtime);
+        let quoted_npm = ps_path(&npm);
         let script = format!(
             "$ErrorActionPreference='Continue'; \
              $claudeCmd = '{quoted_claude_cmd}'; \
@@ -7809,24 +7257,11 @@ async fn claude_subscription_login() -> Result<OpenAiSubscriptionLoginResult, St
              Write-Host ''; \
              Write-Host 'When the login is finished, return to Forge and refresh LLM providers.'"
         );
-        std::process::Command::new("cmd")
-            .args([
-                "/C",
-                "start",
-                "",
-                "powershell",
-                "-NoExit",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &script,
-            ])
-            .spawn()
-            .map_err(|e| format!("failed to start Claude subscription login: {e}"))?;
+        spawn_powershell_terminal(&script, "Claude subscription login")?;
         return Ok(OpenAiSubscriptionLoginResult {
             started: true,
             command,
-            message: if candidate.is_some() {
+            message: if paths.candidate.is_some() {
                 "Claude Code subscription login opened. Choose Claude.ai Pro/Max OAuth, then refresh."
                     .to_string()
             } else {
@@ -7837,8 +7272,8 @@ async fn claude_subscription_login() -> Result<OpenAiSubscriptionLoginResult, St
     }
     #[cfg(not(windows))]
     {
-        let mut command_proc = if candidate.is_some() {
-            let mut cmd = std::process::Command::new(&claude_cmd);
+        let mut command_proc = if paths.candidate.is_some() {
+            let mut cmd = std::process::Command::new(&paths.cmd);
             cmd.args(["auth", "login"]);
             cmd
         } else {
@@ -7860,33 +7295,22 @@ async fn claude_subscription_login() -> Result<OpenAiSubscriptionLoginResult, St
 
 #[tauri::command]
 async fn gemini_subscription_login() -> Result<OpenAiSubscriptionLoginResult, String> {
-    let candidate = gemini_cli_binary_path();
     let workspace = forge_workspace_dir();
-    let appdata_npm = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .map(|dir| dir.join("npm"));
-    let gemini_cmd = candidate
-        .clone()
-        .or_else(|| appdata_npm.as_ref().map(|dir| dir.join("gemini.cmd")))
-        .unwrap_or_else(|| PathBuf::from("gemini.cmd"));
-    let gemini_script = appdata_npm
-        .as_ref()
-        .map(|dir| dir.join("node_modules").join("@google").join("gemini-cli").join("bundle").join("gemini.js"))
-        .unwrap_or_else(|| PathBuf::from("gemini.js"));
+    let paths = gemini_cli_paths();
     let node = node_binary_path().unwrap_or_else(|| PathBuf::from("node"));
     let npm = npm_binary_path().unwrap_or_else(|| PathBuf::from("npm.cmd"));
-    let command = if candidate.is_some() {
-        format!("{} (interactive Gemini CLI)", gemini_cmd.display())
+    let command = if paths.candidate.is_some() {
+        format!("{} (interactive Gemini CLI)", paths.cmd.display())
     } else {
         format!("{} install -g @google/gemini-cli && gemini", npm.display())
     };
     #[cfg(windows)]
     {
-        let quoted_workspace = workspace.display().to_string().replace('\'', "''");
-        let quoted_gemini_cmd = gemini_cmd.display().to_string().replace('\'', "''");
-        let quoted_gemini_script = gemini_script.display().to_string().replace('\'', "''");
-        let quoted_node = node.display().to_string().replace('\'', "''");
-        let quoted_npm = npm.display().to_string().replace('\'', "''");
+        let quoted_workspace = ps_path(&workspace);
+        let quoted_gemini_cmd = ps_path(&paths.cmd);
+        let quoted_gemini_script = ps_path(&paths.runtime);
+        let quoted_node = ps_path(&node);
+        let quoted_npm = ps_path(&npm);
         let script = format!(
             "$ErrorActionPreference='Continue'; \
              Set-Location '{quoted_workspace}'; \
@@ -7913,24 +7337,11 @@ async fn gemini_subscription_login() -> Result<OpenAiSubscriptionLoginResult, St
              Write-Host ''; \
              Write-Host 'When Gemini is ready, return to Forge and click Refresh.'"
         );
-        std::process::Command::new("cmd")
-            .args([
-                "/C",
-                "start",
-                "",
-                "powershell",
-                "-NoExit",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &script,
-            ])
-            .spawn()
-            .map_err(|e| format!("failed to start Gemini setup: {e}"))?;
+        spawn_powershell_terminal(&script, "Gemini setup")?;
         return Ok(OpenAiSubscriptionLoginResult {
             started: true,
             command,
-            message: if candidate.is_some() {
+            message: if paths.candidate.is_some() {
                 "Gemini CLI opened. Finish any Google sign-in there, then return to Forge and click Refresh."
                     .to_string()
             } else {
@@ -7941,8 +7352,8 @@ async fn gemini_subscription_login() -> Result<OpenAiSubscriptionLoginResult, St
     }
     #[cfg(not(windows))]
     {
-        let mut command_proc = if candidate.is_some() {
-            Command::new(&gemini_cmd)
+        let mut command_proc = if paths.candidate.is_some() {
+            Command::new(&paths.cmd)
         } else {
             let mut install = Command::new(&npm);
             install.args(["install", "-g", "@google/gemini-cli"]);
@@ -7979,20 +7390,7 @@ async fn openai_subscription_login() -> Result<OpenAiSubscriptionLoginResult, St
             }; \
             Write-Host ''; \
             Write-Host 'Forge detects Codex OAuth at ~/.codex/auth.json.'";
-        std::process::Command::new("cmd")
-            .args([
-                "/C",
-                "start",
-                "",
-                "powershell",
-                "-NoExit",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                script,
-            ])
-            .spawn()
-            .map_err(|e| format!("failed to start OpenAI sign-in: {e}"))?;
+        spawn_powershell_terminal(script, "OpenAI sign-in")?;
         return Ok(OpenAiSubscriptionLoginResult {
             started: true,
             command,
@@ -8624,6 +8022,41 @@ fn sh_quote_arg(raw: &str) -> String {
     format!("'{}'", raw.replace('\'', "'\"'\"'"))
 }
 
+fn shell_quote_arg(raw: &str) -> String {
+    #[cfg(windows)]
+    {
+        cmd_quote_arg(raw)
+    }
+    #[cfg(not(windows))]
+    {
+        sh_quote_arg(raw)
+    }
+}
+
+#[cfg(windows)]
+fn ps_path(path: &Path) -> String {
+    path.display().to_string().replace('\'', "''")
+}
+
+#[cfg(windows)]
+fn spawn_powershell_terminal(script: &str, context: &str) -> Result<(), String> {
+    std::process::Command::new("cmd")
+        .args([
+            "/C",
+            "start",
+            "",
+            "powershell",
+            "-NoExit",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("failed to start {context}: {e}"))
+}
+
 fn pty_shell_command(line: String, cwd: &Path) -> PtyCommandBuilder {
     #[cfg(windows)]
     {
@@ -8641,6 +8074,137 @@ fn pty_shell_command(line: String, cwd: &Path) -> PtyCommandBuilder {
         cmd.arg(line);
         cmd
     }
+}
+
+fn appdata_npm_dir() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|dir| dir.join("npm"))
+}
+
+struct NpmCliPaths {
+    candidate: Option<PathBuf>,
+    cmd: PathBuf,
+    runtime: PathBuf,
+}
+
+fn npm_cli_paths(
+    candidate: Option<PathBuf>,
+    cmd_name: &str,
+    runtime_parts: &[&str],
+    runtime_fallback: &str,
+) -> NpmCliPaths {
+    let appdata_npm = appdata_npm_dir();
+    NpmCliPaths {
+        candidate: candidate.clone(),
+        cmd: candidate
+            .or_else(|| appdata_npm.as_ref().map(|dir| dir.join(cmd_name)))
+            .unwrap_or_else(|| PathBuf::from(cmd_name)),
+        runtime: appdata_npm
+            .as_ref()
+            .map(|dir| nested_npm_target(dir, runtime_parts))
+            .unwrap_or_else(|| PathBuf::from(runtime_fallback)),
+    }
+}
+
+fn gemini_cli_paths() -> NpmCliPaths {
+    npm_cli_paths(
+        gemini_cli_binary_path(),
+        "gemini.cmd",
+        &["node_modules", "@google", "gemini-cli", "bundle", "gemini.js"],
+        "gemini.js",
+    )
+}
+
+fn claude_cli_paths() -> NpmCliPaths {
+    npm_cli_paths(
+        claude_cli_binary_path(),
+        "claude.cmd",
+        &["node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"],
+        "claude.exe",
+    )
+}
+
+fn provider_terminal_fail(
+    app: &tauri::AppHandle,
+    session: &ProviderTerminalSession,
+    state: &str,
+    message: &str,
+    output: &str,
+) {
+    update_provider_terminal_status(Some(app), session, state, message, false, false);
+    append_provider_terminal_output(Some(app), session, output);
+}
+
+fn provider_terminal_bootstrap_ready(
+    app: &tauri::AppHandle,
+    session: &ProviderTerminalSession,
+    candidate_present: bool,
+    bootstrap: GeminiBootstrapStatus,
+    install_name: &str,
+    retry_action: &str,
+) -> bool {
+    if candidate_present {
+        return true;
+    }
+    if !bootstrap.node_available {
+        provider_terminal_fail(
+            app,
+            session,
+            "needs-node",
+            &format!("Node.js is required before Forge can install {install_name}"),
+            &format!(
+                "\nNode.js was not found on this machine.\nInstall Node.js, reopen Forge, then click {retry_action} in Forge again.\n"
+            ),
+        );
+        return false;
+    }
+    if !bootstrap.npm_available {
+        provider_terminal_fail(
+            app,
+            session,
+            "needs-npm",
+            &format!("npm is required before Forge can install {install_name}"),
+            &format!(
+                "\nnpm was not found on this machine.\nForge needs a working Node.js/npm runtime to install {install_name} automatically.\n"
+            ),
+        );
+        return false;
+    }
+    true
+}
+
+fn provider_terminal_global_install_command(
+    app: &tauri::AppHandle,
+    session: &ProviderTerminalSession,
+    workspace: &Path,
+    npm: Option<&Path>,
+    install_status: &str,
+    install_name: &str,
+    package: &str,
+    launch_line: String,
+) -> Option<PtyCommandBuilder> {
+    update_provider_terminal_status(Some(app), session, "installing", install_status, true, false);
+    let npm = match npm {
+        Some(path) => path,
+        None => {
+            provider_terminal_fail(
+                app,
+                session,
+                "needs-npm",
+                &format!("npm is required before Forge can install {install_name}"),
+                "\nnpm disappeared before Forge could start the install.\n",
+            );
+            return None;
+        }
+    };
+    let install_line = format!(
+        "{} install -g {} && {}",
+        shell_quote_arg(&npm.display().to_string()),
+        package,
+        launch_line
+    );
+    Some(pty_shell_command(install_line, workspace))
 }
 
 fn spawn_provider_pty_command(
@@ -8737,10 +8301,7 @@ fn spawn_provider_pty_command(
             if let Ok(mut guard) = session_wait.pid.lock() {
                 *guard = None;
             }
-            let display = match session_wait.provider.as_str() {
-                "claude" => "Claude",
-                _ => "Gemini",
-            };
+            let display = provider_display_name(&session_wait.provider);
             let message = if let Some(err) = code.strip_prefix("error:") {
                 format!("{display} ended with an error: {err}")
             } else if let Some(signal) = code.strip_prefix("signal:") {
@@ -17591,13 +17152,13 @@ fn forge_mcp_jobs_dir_candidate() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    let cwd = std::env::current_dir().ok()?;
-    let looks_like_repo = cwd.join(".git").exists() || cwd.join(".codex").exists() || cwd.join("Cargo.toml").exists();
-    if looks_like_repo {
-        Some(cwd.join(".forge-store").join("jobs"))
-    } else {
-        None
+    if let Some(path) = std::env::var_os("FORGE_STORE_DIR") {
+        let store = PathBuf::from(path);
+        if !store.as_os_str().is_empty() {
+            return Some(store.join("jobs"));
+        }
     }
+    None
 }
 
 fn forge_job_mirror_dirs(primary_jobs_dir: &Path) -> Vec<PathBuf> {
@@ -18297,155 +17858,7 @@ fn load_existing_my_atlas_json(store_path: &Path) -> Result<JsonValue, String> {
 }
 
 fn ensure_builtin_mars_geonodes(store_path: &Path) -> Result<(), String> {
-    let atlas_dir = store_path.join("atlas");
-    std::fs::create_dir_all(&atlas_dir)
-        .map_err(|e| format!("create Forge atlas dir: {e}"))?;
-    let path = atlas_dir.join("my_atlas.json");
-    let mut atlas = load_existing_my_atlas_json(store_path)?;
-    if !atlas.is_object() {
-        atlas = default_my_atlas_json();
-    }
-    let obj = atlas.as_object_mut().expect("atlas object");
-    obj.entry("schema".to_string())
-        .or_insert_with(|| json!("forge_my_atlas_v1"));
-    obj.entry("programs".to_string()).or_insert_with(|| json!([]));
-    obj.entry("runs".to_string()).or_insert_with(|| json!([]));
-    obj.entry("web_blocks".to_string())
-        .or_insert_with(|| json!([]));
-    let tags = obj
-        .entry("metric_tags".to_string())
-        .or_insert_with(|| json!([]));
-    if !tags.is_array() {
-        *tags = json!([]);
-    }
-    let tags = tags.as_array_mut().expect("metric_tags array");
-    let mut seen: HashSet<String> = tags
-        .iter()
-        .filter_map(|item| item.get("tag").and_then(JsonValue::as_str).map(str::to_string))
-        .collect();
-    let geonodes = [
-        ("mars_olympus_mons", "Olympus Mons", "major_region", 18.65, -133.8, JsonValue::Null),
-        ("mars_jezero_crater", "Jezero Crater", "major_region", 18.38, 77.58, JsonValue::Null),
-        ("mars_gale_crater", "Gale Crater", "major_region", -5.4, 137.8, JsonValue::Null),
-        ("mars_valles_marineris", "Valles Marineris", "major_region", -14.0, -59.0, JsonValue::Null),
-        ("mars_hellas_planitia", "Hellas Planitia", "major_region", -42.4, 70.5, JsonValue::Null),
-        ("mars_elysium_mons", "Elysium Mons", "major_region", 24.5, 146.7, JsonValue::Null),
-        ("mars_ascraeus_mons", "Ascraeus Mons", "major_region", 11.9, -104.1, JsonValue::Null),
-        ("mars_pavonis_mons", "Pavonis Mons", "major_region", 0.0, -113.0, JsonValue::Null),
-        ("mars_arsia_mons", "Arsia Mons", "major_region", -9.4, -121.0, JsonValue::Null),
-        ("mars_argyre_planitia", "Argyre Planitia", "major_region", -49.5, -40.0, JsonValue::Null),
-        ("mars_utopia_planitia", "Utopia Planitia", "major_region", 45.0, 110.0, JsonValue::Null),
-        ("mars_planum_boreum", "Planum Boreum", "major_region", 88.0, 15.0, JsonValue::Null),
-        ("mars_planum_australe", "Planum Australe", "major_region", -83.9, -160.0, JsonValue::Null),
-        ("mars_korolev_crater", "Korolev Crater", "major_region", 73.0, 165.0, JsonValue::Null),
-        ("mars_ius_chasma", "Ius Chasma", "sub_region", -7.0, -85.0, json!("mars_valles_marineris")),
-        ("mars_tithonium_chasma", "Tithonium Chasma", "sub_region", -5.0, -84.0, json!("mars_valles_marineris")),
-        ("mars_melas_chasma", "Melas Chasma", "sub_region", -10.0, -72.0, json!("mars_valles_marineris")),
-        ("mars_coprates_chasma", "Coprates Chasma", "sub_region", -13.5, -61.0, json!("mars_valles_marineris")),
-        ("mars_capri_chasma", "Capri Chasma", "sub_region", -14.0, -48.0, json!("mars_valles_marineris")),
-        ("mars_eos_chasma", "Eos Chasma", "sub_region", -12.0, -42.0, json!("mars_valles_marineris")),
-        ("mars_hebes_chasma", "Hebes Chasma", "sub_region", -1.0, -76.0, json!("mars_valles_marineris")),
-        ("mars_ophir_chasma", "Ophir Chasma", "sub_region", -4.0, -72.5, json!("mars_valles_marineris")),
-        ("mars_juventae_chasma", "Juventae Chasma", "sub_region", -4.5, -63.0, json!("mars_valles_marineris")),
-        ("mars_ganges_chasma", "Ganges Chasma", "sub_region", -7.5, -49.0, json!("mars_valles_marineris")),
-    ];
-    let created_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    let mut inserted = false;
-    for (tag, title, class, lat, lon, parent) in geonodes {
-        let is_mini = class == "sub_region";
-        let node_kind = if is_mini { "mini_geo_node" } else { "geo_node" };
-        let geonode_level = if is_mini { "mini" } else { "region" };
-        let parent_geonode = parent.clone();
-        let sublocation_tags = if tag == "mars_valles_marineris" {
-            json!([
-                "mars_ius_chasma",
-                "mars_tithonium_chasma",
-                "mars_melas_chasma",
-                "mars_coprates_chasma",
-                "mars_capri_chasma",
-                "mars_eos_chasma",
-                "mars_hebes_chasma",
-                "mars_ophir_chasma",
-                "mars_juventae_chasma",
-                "mars_ganges_chasma"
-            ])
-        } else {
-            json!([])
-        };
-        if let Some(existing) = tags.iter_mut().find(|item| {
-            item.get("tag")
-                .and_then(JsonValue::as_str)
-                .map(|value| value == tag)
-                .unwrap_or(false)
-        }) {
-            let before = existing.clone();
-            if let Some(obj) = existing.as_object_mut() {
-                obj.insert("node_kind".to_string(), json!(node_kind));
-                obj.insert("geonode_level".to_string(), json!(geonode_level));
-                obj.insert("parent_geonode".to_string(), parent_geonode);
-                obj.insert("sublocation_tags".to_string(), sublocation_tags);
-                obj.insert("metric_linkable".to_string(), json!(true));
-                obj.insert("accepts_metric_nodes".to_string(), json!(true));
-                obj.insert(
-                    "metric_binding_fields".to_string(),
-                    json!(["geo_ref", "geo_refs", "geonode", "geonode_tag", "parent_geonode"]),
-                );
-                obj.insert(
-                    "metric_binding_model".to_string(),
-                    json!("Metric Nodes attach results to this coordinate anchor with geo_ref=<geonode_or_minigeonode_tag>. Planet views render metric_layers at the referenced anchors."),
-                );
-                obj.entry("linked_metric_tags".to_string()).or_insert_with(|| json!([]));
-            }
-            if *existing != before {
-                inserted = true;
-            }
-            continue;
-        }
-        if !seen.insert(tag.to_string()) {
-            continue;
-        }
-        tags.push(json!({
-            "kind": "metric_tag",
-            "node_kind": node_kind,
-            "tag": tag,
-            "title": title,
-            "domain": "geospatial",
-            "op": "geo_anchor",
-            "dtype": "geojson",
-            "body": "mars",
-            "lat": lat,
-            "lon": lon,
-            "parent": parent,
-            "parent_geonode": parent_geonode,
-            "geonode_level": geonode_level,
-            "class": class,
-            "sublocation_tags": sublocation_tags,
-            "metric_linkable": true,
-            "accepts_metric_nodes": true,
-            "metric_binding_fields": ["geo_ref", "geo_refs", "geonode", "geonode_tag", "parent_geonode"],
-            "metric_binding_model": "Metric Nodes attach results to this coordinate anchor with geo_ref=<geonode_or_minigeonode_tag>. Planet views render metric_layers at the referenced anchors.",
-            "linked_metric_tags": [],
-            "formula": format!("geo_anchor(body='mars', lat={lat}, lon={lon})"),
-            "algorithm": "Static Mars coordinate GeoNode seeded from the local Mars Planet bundle.",
-            "renderer_tool": "planet_sphere",
-            "source_bundle": "assets/lenses/mars-globe/mars-data.json",
-            "reusable": true,
-            "content_addressed": true,
-            "source_content_included": false,
-            "created_ms": created_ms
-        }));
-        inserted = true;
-    }
-    if inserted || !path.exists() {
-        let bytes = serde_json::to_vec_pretty(&atlas)
-            .map_err(|e| format!("encode My Atlas: {e}"))?;
-        std::fs::write(&path, bytes)
-            .map_err(|e| format!("write My Atlas: {e}"))?;
-    }
-    Ok(())
+    forge_agent_tools::ensure_builtin_mars_geonodes(store_path)
 }
 
 fn forge_mcp_binary_path() -> Result<PathBuf, String> {
@@ -21201,40 +20614,6 @@ fn ensure_claude_forge_mcp_config(
     Ok(config_path)
 }
 
-#[allow(dead_code)]
-fn wait_child_with_timeout(
-    child: &mut std::process::Child,
-    timeout: Duration,
-) -> Result<Option<std::process::ExitStatus>, String> {
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(Some(status)),
-            Ok(None) => {}
-            Err(err) => return Err(format!("wait Codex process: {err}")),
-        }
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Ok(None);
-        }
-        thread::sleep(Duration::from_millis(120));
-    }
-}
-
-#[allow(dead_code)]
-fn build_codex_canvas_prompt(user_message: &str) -> String {
-    format!(
-        "Tu es Codex directement intégré dans le canvas de Forge.\n\
-        Réponds en français naturel, concis, et parle comme un assistant présent dans la session actuelle.\n\
-        Tu reçois un snapshot compact de Forge: job_id, fichiers, programmes, logs récents, artefacts et preuves.\n\
-        Ne demande jamais à l'utilisateur de coller un CSV brut. Ne cite pas de token OAuth, ne révèle aucun secret.\n\
-        Si l'utilisateur demande un calcul, explique l'action Forge que tu vas lancer via le broker interne; ne prétends pas avoir lancé un outil si ce tour ne contient qu'un snapshot.\n\
-        \n\
-        MESSAGE_UTILISATEUR:\n{user_message}\n"
-    )
-}
-
 fn canvas_message_needs_forge_tools(user_message: &str, has_active_job: bool) -> bool {
     let lower = user_message.to_lowercase();
     if user_message.contains("CURRENT_TURN_DECISION_POINT:") {
@@ -22059,6 +21438,308 @@ fn sanitize_canvas_assistant_message(text: &str) -> String {
     } else {
         cleaned
     }
+}
+
+#[derive(Clone, Default)]
+struct RealEstatePrivacyRedactionCounts {
+    email: usize,
+    phone: usize,
+    iban: usize,
+    nir: usize,
+    address: usize,
+}
+
+impl RealEstatePrivacyRedactionCounts {
+    fn total(&self) -> usize {
+        self.email + self.phone + self.iban + self.nir + self.address
+    }
+
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "email": self.email,
+            "phone": self.phone,
+            "iban": self.iban,
+            "nir": self.nir,
+            "address": self.address,
+            "total": self.total()
+        })
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "email={},phone={},iban={},nir={},address={},total={}",
+            self.email,
+            self.phone,
+            self.iban,
+            self.nir,
+            self.address,
+            self.total()
+        )
+    }
+}
+
+fn forge_real_estate_privacy_applies(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    message.contains("FORGE_REAL_ESTATE_PRIVACY:")
+        || message.contains("FORGE_REAL_ESTATE_PROGRAM_COMMAND:")
+        || lower.contains("scope=agence_immo")
+        || lower.contains("agence immo")
+}
+
+fn forge_privacy_hash(text: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in text.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn redact_real_estate_address_lines(
+    text: &str,
+    counts: &mut RealEstatePrivacyRedactionCounts,
+) -> String {
+    let keywords = [
+        "adresse",
+        "address",
+        "rue",
+        "avenue",
+        "av.",
+        "boulevard",
+        "bd",
+        "impasse",
+        "chemin",
+        "route",
+        "allee",
+        "place",
+        "quai",
+        "residence",
+    ];
+    let mut output = String::with_capacity(text.len());
+    for part in text.split_inclusive('\n') {
+        let newline = if part.ends_with("\r\n") {
+            "\r\n"
+        } else if part.ends_with('\n') {
+            "\n"
+        } else {
+            ""
+        };
+        let line = if newline.is_empty() {
+            part
+        } else {
+            &part[..part.len() - newline.len()]
+        };
+        let lower = line.to_lowercase();
+        let trimmed = lower.trim_start();
+        let looks_like_internal_route =
+            trimmed.starts_with("route=") || trimmed.starts_with("data_context=");
+        let should_redact = !looks_like_internal_route
+            && line.chars().any(|ch| ch.is_ascii_digit())
+            && keywords.iter().any(|keyword| lower.contains(keyword));
+        if should_redact {
+            counts.address += 1;
+            if lower.trim_start().starts_with("adresse") || lower.trim_start().starts_with("address")
+            {
+                if let Some(idx) = line.find(':').or_else(|| line.find('=')).or_else(|| line.find('-'))
+                {
+                    output.push_str(&line[..=idx]);
+                    output.push_str(" [ADRESSE_CLIENT_REDACTED]");
+                } else {
+                    output.push_str("[ADRESSE_CLIENT_REDACTED]");
+                }
+            } else {
+                output.push_str("[ADRESSE_CLIENT_REDACTED]");
+            }
+        } else {
+            output.push_str(line);
+        }
+        output.push_str(newline);
+    }
+    output
+}
+
+fn token_core_for_privacy(token: &str) -> String {
+    token
+        .trim_matches(|ch: char| {
+            !(ch.is_ascii_alphanumeric() || matches!(ch, '@' | '.' | '+' | '-' | '_'))
+        })
+        .to_string()
+}
+
+fn looks_like_email_token(token: &str) -> bool {
+    let Some((left, domain)) = token.split_once('@') else {
+        return false;
+    };
+    !left.is_empty()
+        && domain.contains('.')
+        && domain
+            .rsplit_once('.')
+            .map(|(_, suffix)| suffix.len() >= 2 && suffix.chars().all(|ch| ch.is_ascii_alphabetic()))
+            .unwrap_or(false)
+}
+
+fn looks_like_iban_token(token: &str) -> bool {
+    let compact = token
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    compact.starts_with("FR")
+        && (16..=34).contains(&compact.len())
+        && compact.chars().all(|ch| ch.is_ascii_alphanumeric())
+}
+
+fn redact_real_estate_tokens(
+    text: &str,
+    counts: &mut RealEstatePrivacyRedactionCounts,
+) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut token = String::new();
+    let flush_token = |token: &mut String,
+                       output: &mut String,
+                       counts: &mut RealEstatePrivacyRedactionCounts| {
+        if token.is_empty() {
+            return;
+        }
+        let core = token_core_for_privacy(token);
+        if looks_like_email_token(&core) {
+            counts.email += 1;
+            output.push_str("[EMAIL_CLIENT_REDACTED]");
+        } else if looks_like_iban_token(&core) {
+            counts.iban += 1;
+            output.push_str("[IBAN_CLIENT_REDACTED]");
+        } else {
+            output.push_str(token);
+        }
+        token.clear();
+    };
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            flush_token(&mut token, &mut output, counts);
+            output.push(ch);
+        } else {
+            token.push(ch);
+        }
+    }
+    flush_token(&mut token, &mut output, counts);
+    output
+}
+
+fn redact_real_estate_digit_sequences(
+    text: &str,
+    counts: &mut RealEstatePrivacyRedactionCounts,
+) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    let mut iter = text.char_indices().peekable();
+    while let Some((idx, ch)) = iter.next() {
+        if !(ch.is_ascii_digit() || ch == '+') {
+            continue;
+        }
+        let mut end = idx + ch.len_utf8();
+        let mut digit_count = usize::from(ch.is_ascii_digit());
+        while let Some(&(next_idx, next_ch)) = iter.peek() {
+            if next_ch.is_ascii_digit()
+                || matches!(next_ch, ' ' | '.' | '-' | '(' | ')' | '/')
+            {
+                iter.next();
+                end = next_idx + next_ch.len_utf8();
+                if next_ch.is_ascii_digit() {
+                    digit_count += 1;
+                }
+            } else {
+                break;
+            }
+        }
+        if digit_count < 10 {
+            continue;
+        }
+        let segment = &text[idx..end];
+        let compact = segment.trim();
+        let digits = segment
+            .chars()
+            .filter(|ch| ch.is_ascii_digit())
+            .collect::<String>();
+        let has_phone_separator = segment
+            .chars()
+            .any(|ch| matches!(ch, ' ' | '.' | '-' | '(' | ')'));
+        let is_nir = (13..=15).contains(&digits.len())
+            && (digits.starts_with('1') || digits.starts_with('2'));
+        let is_phone = (10..=14).contains(&digits.len())
+            && (compact.starts_with("+33")
+                || compact.starts_with("0033")
+                || digits.starts_with('0')
+                || (digits.starts_with("33") && has_phone_separator));
+        if is_nir || is_phone {
+            output.push_str(&text[cursor..idx]);
+            if is_nir {
+                counts.nir += 1;
+                output.push_str("[NIR_CLIENT_REDACTED]");
+            } else {
+                counts.phone += 1;
+                output.push_str("[TELEPHONE_CLIENT_REDACTED]");
+            }
+            cursor = end;
+        }
+    }
+    output.push_str(&text[cursor..]);
+    output
+}
+
+fn redact_real_estate_client_text(text: &str) -> (String, RealEstatePrivacyRedactionCounts) {
+    let mut counts = RealEstatePrivacyRedactionCounts::default();
+    let address_safe = redact_real_estate_address_lines(text, &mut counts);
+    let token_safe = redact_real_estate_tokens(&address_safe, &mut counts);
+    let digit_safe = redact_real_estate_digit_sequences(&token_safe, &mut counts);
+    (digit_safe, counts)
+}
+
+fn forge_real_estate_privacy_envelope(
+    message: &str,
+    counts: &RealEstatePrivacyRedactionCounts,
+    original_hash: &str,
+    sanitized_hash: &str,
+) -> String {
+    if message.contains("FORGE_REAL_ESTATE_PRIVACY_BACKEND_GUARD:") {
+        return message.to_string();
+    }
+    [
+        "FORGE_REAL_ESTATE_PRIVACY_BACKEND_GUARD:".to_string(),
+        "mode=local_first_client_data_minimized".to_string(),
+        "scope=agence_immo".to_string(),
+        "raw_client_files=local_only".to_string(),
+        "external_runtime_payload=redacted_before_dispatch".to_string(),
+        format!("redactions={}", counts.summary()),
+        format!("original_hash={original_hash}"),
+        format!("sanitized_hash={sanitized_hash}"),
+        "instruction=Never ask the user to paste raw client files or reveal personal identifiers; use Forge compact hashes, proofs, summaries and local memory refs.".to_string(),
+        String::new(),
+        message.to_string(),
+    ]
+    .join("\n")
+}
+
+fn append_real_estate_privacy_audit(store_path: &Path, event: &JsonValue) -> Result<(), String> {
+    let dir = store_path.join("audit");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("create privacy audit dir: {err}"))?;
+    let path = dir.join("real_estate_privacy_audit.jsonl");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|err| format!("open privacy audit: {err}"))?;
+    let line = serde_json::to_string(event).map_err(|err| format!("serialize privacy audit: {err}"))?;
+    writeln!(file, "{line}").map_err(|err| format!("write privacy audit: {err}"))
+}
+
+fn with_real_estate_privacy_tool_event(
+    privacy_event: &Option<JsonValue>,
+    mut events: Vec<JsonValue>,
+) -> Vec<JsonValue> {
+    if let Some(event) = privacy_event {
+        events.insert(0, event.clone());
+    }
+    events
 }
 
 fn forge_canvas_on_demand_context(job_id: Option<String>, has_active_job: bool) -> JsonValue {
@@ -23298,57 +22979,6 @@ fn emit_canvas_assistant_event(
     }
 }
 
-#[allow(dead_code)]
-fn summarize_codex_json_event(value: &JsonValue) -> Option<String> {
-    let event_type = value.get("type").and_then(JsonValue::as_str).unwrap_or("");
-    match event_type {
-        "thread.started" => Some("Codex ouvre un tour local pour cette session Forge.".to_string()),
-        "turn.started" => Some("Codex commence à raisonner sur la session actuelle.".to_string()),
-        "turn.completed" => {
-            if let Some(usage) = value.get("usage") {
-                let input = usage
-                    .get("input_tokens")
-                    .and_then(JsonValue::as_u64)
-                    .unwrap_or(0);
-                let output = usage
-                    .get("output_tokens")
-                    .and_then(JsonValue::as_u64)
-                    .unwrap_or(0);
-                Some(format!("Codex a terminé le tour · entrée={input} tokens · sortie={output} tokens."))
-            } else {
-                Some("Codex a terminé le tour.".to_string())
-            }
-        }
-        "turn.failed" => Some("Codex n'a pas réussi à terminer ce tour.".to_string()),
-        "error" => value
-            .get("message")
-            .and_then(JsonValue::as_str)
-            .map(|message| format!("Erreur Codex: {message}")),
-        "item.started" | "item.completed" => {
-            let item = value.get("item").unwrap_or(&JsonValue::Null);
-            let item_type = item.get("type").and_then(JsonValue::as_str).unwrap_or("");
-            match item_type {
-                "agent_message" => None,
-                "reasoning" => Some("Codex travaille avec le contexte compact de Forge.".to_string()),
-                "command_execution" => item
-                    .get("command")
-                    .and_then(JsonValue::as_str)
-                    .map(|command| format!("Codex prépare une commande locale: {command}"))
-                    .or_else(|| Some("Codex prépare une commande locale.".to_string())),
-                "mcp_tool_call" => item
-                    .get("name")
-                    .and_then(JsonValue::as_str)
-                    .map(|name| format!("Codex appelle l'outil MCP {name}."))
-                    .or_else(|| Some("Codex appelle un outil MCP.".to_string())),
-                "web_search" => Some("Codex consulte le web.".to_string()),
-                _ if !item_type.is_empty() => Some(format!("Événement Codex: {item_type}.")),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
 fn codex_notification_thread_id(value: &JsonValue) -> Option<&str> {
     value
         .get("params")
@@ -23685,166 +23315,9 @@ fn run_codex_canvas_app_server(
     ))
 }
 
-#[allow(dead_code)]
-fn run_codex_canvas_exec(
-    user_message: String,
-    _context: JsonValue,
-    model_ref: Option<String>,
-    app: Option<tauri::AppHandle>,
-    turn_id: String,
-) -> Result<(String, JsonValue), String> {
-    let reasoning_effort = "medium";
-    let prompt = build_codex_canvas_prompt_light(&user_message, true, None, reasoning_effort);
-    let model = codex_bridge_model_arg(model_ref.as_deref());
-    let output_path = std::env::temp_dir().join(format!(
-        "forge-codex-canvas-{}-{}.md",
-        std::process::id(),
-        now_epoch_ms()
-    ));
-    let mut errors = Vec::new();
-    for candidate in codex_command_candidates() {
-        if candidate.is_absolute() && !candidate.exists() {
-            continue;
-        }
-        let mut command = Command::new(&candidate);
-        command
-            .current_dir(forge_workspace_dir())
-            .arg("-a")
-            .arg("never")
-            .arg("exec")
-            .arg("--ephemeral")
-            .arg("--json")
-            .arg("--sandbox")
-            .arg("read-only")
-            .arg("-c")
-            .arg(format!("model_reasoning_effort=\"{reasoning_effort}\""))
-            .arg("--output-last-message")
-            .arg(&output_path);
-        if let Some(ref model) = model {
-            command.arg("-m").arg(model);
-        }
-        command
-            .arg("-")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(err) => {
-                errors.push(format!("{}: {err}", candidate.display()));
-                continue;
-            }
-        };
-        emit_canvas_assistant_event(
-            app.as_ref(),
-            &turn_id,
-            "codex_bridge",
-            "J'ouvre Codex avec le contexte compact de cette session.",
-            json!({
-                "runtime": "Codex CLI",
-                "mode": "codex exec",
-                "path": candidate.display().to_string()
-            }),
-        );
-        let stdout_handle = child.stdout.take().map(|stdout| {
-            let app_for_stdout = app.clone();
-            let turn_for_stdout = turn_id.clone();
-            thread::spawn(move || {
-                let reader = BufReader::new(stdout);
-                for line in reader.lines().flatten() {
-                    let Ok(value) = serde_json::from_str::<JsonValue>(&line) else {
-                        continue;
-                    };
-                    if let Some(summary) = summarize_codex_json_event(&value) {
-                        emit_canvas_assistant_event(
-                            app_for_stdout.as_ref(),
-                            &turn_for_stdout,
-                            "codex_event",
-                            summary,
-                            value,
-                        );
-                    }
-                }
-            })
-        });
-        if let Some(stdin) = child.stdin.as_mut() {
-            if let Err(err) = stdin.write_all(prompt.as_bytes()) {
-                let _ = child.kill();
-                if let Some(handle) = stdout_handle {
-                    let _ = handle.join();
-                }
-                errors.push(format!("{} stdin: {err}", candidate.display()));
-                continue;
-            }
-        }
-        drop(child.stdin.take());
-        let status = wait_child_with_timeout(&mut child, Duration::from_secs(90))?;
-        if let Some(handle) = stdout_handle {
-            let _ = handle.join();
-        }
-        let Some(status) = status else {
-            emit_canvas_assistant_event(
-                app.as_ref(),
-                &turn_id,
-                "codex_bridge",
-                "Codex n'a pas fini ce tour en 90 secondes.",
-                json!({
-                    "runtime": "Codex CLI",
-                    "path": candidate.display().to_string(),
-                    "timeout_seconds": 90
-                }),
-            );
-            errors.push(format!("{} timed out after 90s", candidate.display()));
-            continue;
-        };
-        let final_message = std::fs::read_to_string(&output_path).unwrap_or_default();
-        let _ = std::fs::remove_file(&output_path);
-        if status.success() && !final_message.trim().is_empty() {
-            emit_canvas_assistant_event(
-                app.as_ref(),
-                &turn_id,
-                "codex_bridge",
-                "Codex a renvoyé la réponse finale pour le canva.",
-                json!({
-                    "runtime": "Codex CLI",
-                    "path": candidate.display().to_string(),
-                    "status": "ok"
-                }),
-            );
-            return Ok((
-                final_message.trim().to_string(),
-                json!({
-                    "status": "ok",
-                    "runtime": "Codex CLI",
-                    "path": candidate.display().to_string(),
-                    "mode": "codex exec",
-                    "sandbox": "read-only",
-                    "model": model,
-                }),
-            ));
-        }
-        errors.push(format!(
-            "{} exited with {}{}",
-            candidate.display(),
-            status,
-            if final_message.trim().is_empty() {
-                ""
-            } else {
-                " and wrote a partial message"
-            }
-        ));
-    }
-    let _ = std::fs::remove_file(&output_path);
-    Err(if errors.is_empty() {
-        "No Codex CLI runtime candidate was found.".to_string()
-    } else {
-        errors.join(" | ")
-    })
-}
-
 #[tauri::command]
 async fn forge_canvas_assistant_turn(
-    request: ForgeCanvasAssistantRequest,
+    mut request: ForgeCanvasAssistantRequest,
     state: tauri::State<'_, Mutex<ForgeAppState>>,
     app: tauri::AppHandle,
 ) -> Result<ForgeCanvasAssistantResponse, String> {
@@ -23906,6 +23379,54 @@ async fn forge_canvas_assistant_turn(
         None
     };
     let reasoning_effort = normalize_canvas_reasoning_effort(request.reasoning_effort.as_deref());
+    let store_path_for_codex_tools = {
+        let app_state = state.lock().map_err(|e| e.to_string())?;
+        app_state.store_path.clone()
+    };
+    let request_privacy_scope = request
+        .privacy_scope
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    let privacy_tool_event = if request_privacy_scope == "agence_immo"
+        || forge_real_estate_privacy_applies(&request.message)
+    {
+        let original_message = request.message.clone();
+        let original_hash = forge_privacy_hash(&original_message);
+        let (sanitized_message, redaction_counts) =
+            redact_real_estate_client_text(&original_message);
+        let sanitized_hash = forge_privacy_hash(&sanitized_message);
+        request.message = forge_real_estate_privacy_envelope(
+            &sanitized_message,
+            &redaction_counts,
+            &original_hash,
+            &sanitized_hash,
+        );
+        let event = json!({
+            "tool": "real_estate_privacy_guard",
+            "transport": "backend",
+            "scope": "agence_immo",
+            "mode": "local_first_client_data_minimized",
+            "runtime": runtime,
+            "requestedRuntime": requested_runtime,
+            "privacyScope": "agence_immo",
+            "redactions": redaction_counts.to_json(),
+            "originalHash": original_hash,
+            "sanitizedHash": sanitized_hash,
+            "audit": "real_estate_privacy_audit.jsonl"
+        });
+        let _ = append_real_estate_privacy_audit(&store_path_for_codex_tools, &event);
+        emit_canvas_assistant_event(
+            Some(&app),
+            &turn_id,
+            "privacy_guard",
+            "Confidentialite agence: donnees client minimisees avant runtime.",
+            event.clone(),
+        );
+        Some(event)
+    } else {
+        None
+    };
     let use_gemini = runtime == "gemini";
     let use_claude = runtime == "claude";
     let user_message = request.message.trim();
@@ -23931,10 +23452,13 @@ async fn forge_canvas_assistant_turn(
                 assistant_message: reply,
                 provider,
                 context: forge_canvas_on_demand_context(request.job_id.clone(), has_active_job),
-                tool_events: vec![json!({
+                tool_events: with_real_estate_privacy_tool_event(
+                    &privacy_tool_event,
+                    vec![json!({
                     "tool": "token_usage",
                     "label": "0 fresh · local"
-                })],
+                    })],
+                ),
                 codex_bridge: json!({
                     "status": "ok",
                     "runtime": "local_micro_reply",
@@ -23999,7 +23523,7 @@ async fn forge_canvas_assistant_turn(
                     assistant_message,
                     provider,
                     context: forge_canvas_on_demand_context(request.job_id.clone(), has_active_job),
-                    tool_events: vec![
+                    tool_events: with_real_estate_privacy_tool_event(&privacy_tool_event, vec![
                         json!({
                             "tool": "semantic_cache",
                             "transport": "local",
@@ -24010,7 +23534,7 @@ async fn forge_canvas_assistant_turn(
                             "tool": "token_usage",
                             "label": "0 fresh · local cache"
                         })
-                    ],
+                    ]),
                     codex_bridge: json!({
                         "status": "ok",
                         "runtime": "local_semantic_cache",
@@ -24058,7 +23582,7 @@ async fn forge_canvas_assistant_turn(
                 assistant_message: reply.message,
                 provider,
                 context,
-                tool_events: vec![
+                tool_events: with_real_estate_privacy_tool_event(&privacy_tool_event, vec![
                     json!({
                         "tool": "backend_direct",
                         "transport": "local",
@@ -24069,7 +23593,7 @@ async fn forge_canvas_assistant_turn(
                         "tool": "token_usage",
                         "label": "0 fresh · backend"
                     }),
-                ],
+                ]),
                 codex_bridge: json!({
                     "status": "ok",
                     "runtime": "local_backend_direct",
@@ -24449,6 +23973,7 @@ async fn forge_canvas_assistant_turn(
     } else {
         Vec::new()
     };
+    let tool_events = with_real_estate_privacy_tool_event(&privacy_tool_event, tool_events);
     Ok(ForgeCanvasAssistantResponse {
         assistant_message,
         provider,
@@ -26301,6 +25826,11 @@ pub(crate) fn forge_store_dir() -> PathBuf {
         if !trimmed.is_empty() {
             return PathBuf::from(trimmed);
         }
+    }
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        return PathBuf::from(appdata)
+            .join("com.forge.ui")
+            .join("forge-store");
     }
     forge_workspace_dir().join(".forge-store")
 }
@@ -30703,6 +30233,7 @@ fn main() {
             drag_main_window,
             real_estate_harvester_snapshot,
             real_estate_harvester_run_tool,
+            real_estate_tool_command_context,
             open_webexplorer_window,
             webexplorer_native_present,
             webexplorer_native_hide,

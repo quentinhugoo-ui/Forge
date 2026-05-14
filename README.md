@@ -9,10 +9,10 @@ The product direction is simple: shorten the path between intent, memory, proof,
 ## Current Shape
 
 - Core crate: `scan`, rooted in `src/lib.rs`.
-- KASM runtime: `src/kasm/**`.
-- Monster compute path: `src/monster/**`.
+- KASM runtime: `src/kasm.rs` plus dialect spec `src/kasm.td`.
+- Monster compute path: `src/monster.rs`.
 - Brain and memory: `src/brain.rs`.
-- Godel machine: `src/godel/**`.
+- Godel machine: `src/godel.rs`.
 - Tauri workbench: `examples/forge_tauri_ui/**`.
 - MCP binary: `examples/forge_tauri_ui/src-tauri/src/bin/forge_mcp.rs`.
 - Main UI sections: shell/alpha/forge, WebExplorer, Google/provider tools, Banger/3D, trading with Bloomberg native panel, and real-estate/real-estate-main with contacts/fused agency tools.
@@ -44,6 +44,7 @@ cargo check --lib --tests
 cargo test brain --lib
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge_mcp
+node examples\forge_tauri_ui\scripts\forge-surface-manifest.mjs --check
 node examples\forge_tauri_ui\scripts\forge-ui-smoke.mjs
 ```
 
@@ -68,4 +69,4 @@ Current remote:
 origin https://github.com/quentinhugoo-ui/Forge.git
 ```
 
-Local generated data stays local unless explicitly requested: `.forge-store/`, `.forge-data/`, `data/`, `examples/data/`, datasets, `lab_findings.jsonl`, credentials and tokens.
+Local generated data stays local unless explicitly requested. Runtime state defaults to `%APPDATA%\com.forge.ui\forge-store` on Windows, or to `FORGE_STORE_DIR` when set; workspace `.forge-store/` is legacy/override-only and must not be committed. Keep `.forge-data/`, `data/`, `examples/data/`, datasets, `lab_findings.jsonl`, credentials and tokens out of Git.

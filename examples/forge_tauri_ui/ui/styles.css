@@ -2901,7 +2901,7 @@ body.real-estate-mode .alpha-panel .real-estate-panel-actions {
 
 body.real-estate-mode.real-estate-tools-open .alpha-panel,
 body.real-estate-mode.real-estate-crm-open .alpha-panel {
-  overflow: visible;
+  overflow: hidden;
 }
 
 body.real-estate-mode.real-estate-tools-open .alpha-panel .real-estate-panel-actions,
@@ -2967,23 +2967,16 @@ body.real-estate-crm-open #realEstateCrmPanelBtn {
   display: none !important;
 }
 
-.real-estate-tools-panel {
-  display: none;
-}
-
+.real-estate-tools-panel,
 .real-estate-crm-panel {
-  display: none;
-}
-
-body.real-estate-mode.real-estate-tools-open .real-estate-tools-panel,
-body.real-estate-mode.real-estate-crm-open .real-estate-crm-panel {
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 0;
-  z-index: 42;
+  position: fixed;
+  left: calc(16px + var(--left-panel-width, 279px));
+  top: 56px;
+  bottom: var(--real-estate-tools-panel-bottom, 210px);
+  z-index: 26;
   width: 244px;
-  max-width: min(244px, calc(100vw - 100% - 28px));
-  height: 100%;
+  max-width: min(244px, calc(100vw - 32px - var(--left-panel-width, 279px)));
+  height: auto;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -2995,9 +2988,37 @@ body.real-estate-mode.real-estate-crm-open .real-estate-crm-panel {
   border-radius: 4px;
   background: var(--surface);
   box-shadow: 14px 0 34px rgba(0,0,0,0.24);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate3d(-8px, 0, 0) scale(0.985);
+  transform-origin: left top;
+  transition:
+    opacity 150ms ease,
+    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s linear 180ms;
+  will-change: opacity, transform;
 }
 
-body.real-estate-mode.real-estate-tools-open #realEstateToolsPanel .real-estate-tools-head {
+.real-estate-tools-panel.is-visible,
+.real-estate-crm-panel.is-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translate3d(0, 0, 0) scale(1);
+  transition:
+    opacity 150ms ease,
+    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s;
+}
+
+.real-estate-tools-panel.is-closing,
+.real-estate-crm-panel.is-closing {
+  visibility: visible;
+}
+
+body.real-estate-mode.real-estate-tools-open #realEstateToolsPanel .real-estate-tools-head,
+#realEstateToolsPanel.is-closing .real-estate-tools-head {
   min-height: 0;
   height: 0;
   padding: 0;
@@ -3005,11 +3026,13 @@ body.real-estate-mode.real-estate-tools-open #realEstateToolsPanel .real-estate-
   overflow: visible;
 }
 
-body.real-estate-mode.real-estate-tools-open #realEstateToolsPanel .real-estate-tools-head span {
+body.real-estate-mode.real-estate-tools-open #realEstateToolsPanel .real-estate-tools-head span,
+#realEstateToolsPanel.is-closing .real-estate-tools-head span {
   display: none;
 }
 
-body.real-estate-mode.real-estate-tools-open #realEstateToolsPanel .real-estate-tools-close {
+body.real-estate-mode.real-estate-tools-open #realEstateToolsPanel .real-estate-tools-close,
+#realEstateToolsPanel.is-closing .real-estate-tools-close {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -3057,18 +3080,29 @@ body.real-estate-mode.real-estate-tools-open #realEstateToolsPanel .real-estate-
   stroke-linejoin: round;
 }
 
-.real-estate-tool-groups {
+.real-estate-tool-scroll-shell {
+  position: relative;
+  flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+}
+
+.real-estate-tool-groups {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 7px;
+  padding: 0 10px 28px 0;
   scrollbar-width: none;
 }
 
 .real-estate-tool-groups::-webkit-scrollbar {
   width: 0;
   height: 0;
+  display: none;
 }
 
 .real-estate-tool-group {
@@ -3146,9 +3180,9 @@ body.real-estate-mode.real-estate-tools-open #realEstateToolsPanel .real-estate-
 }
 
 .real-estate-super-tool {
-  min-height: 30px;
-  padding: 5px 6px;
-  font-size: 0.7rem;
+  min-height: 25px;
+  padding: 3px 6px 3px 22px;
+  font-size: 0.66rem;
 }
 
 .real-estate-super-tool .real-estate-tool-icon {
@@ -7431,13 +7465,14 @@ body.webexplorer-surface #workspaceFolderName {
 }
 
 .canvas-chat-command-rail {
+  --canvas-command-ch: 10;
   flex: 0 0 auto;
-  min-width: 108px;
+  min-width: 96px;
   min-height: 30px;
-  max-width: min(52%, 380px);
+  max-width: min(64%, 420px);
   display: inline-flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: 9px;
   padding: 0 2px 0 0;
   cursor: text;
   color: rgba(238,238,232,0.58);
@@ -7550,10 +7585,10 @@ body.webexplorer-surface #workspaceFolderName {
 
 .canvas-chat-command-input {
   appearance: none;
-  flex: 0 0 104px;
-  width: 104px;
-  min-width: 82px;
-  max-width: 142px;
+  flex: 0 0 clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
+  width: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
+  min-width: 76px;
+  max-width: min(42vw, 286px);
   height: 24px;
   border: 0;
   padding: 2px 0;
@@ -7571,7 +7606,7 @@ body.webexplorer-surface #workspaceFolderName {
 
 .canvas-chat-command-input:focus,
 .canvas-chat-command-input:not(:placeholder-shown) {
-  width: 112px;
+  width: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
 }
 
 .canvas-chat-command-input.has-suggestion::placeholder {
@@ -7583,9 +7618,9 @@ body.webexplorer-surface #workspaceFolderName {
 }
 
 .canvas-chat-command-rail.has-command .canvas-chat-command-input {
-  flex-basis: 34px;
-  width: 34px;
-  min-width: 30px;
+  flex-basis: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
+  width: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
+  min-width: 76px;
 }
 
 .canvas-chat.is-secure-encrypted .canvas-chat-command-rail.has-command .canvas-chat-command-input {
@@ -12597,18 +12632,8 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   cursor: default;
 }
 
-#codexProviderTerminal,
-#codexProviderTerminal button,
-#codexProviderTerminal input,
-#codexProviderTerminal textarea,
-#geminiProviderTerminal,
-#geminiProviderTerminal button,
-#geminiProviderTerminal input,
-#geminiProviderTerminal textarea,
-#claudeProviderTerminal,
-#claudeProviderTerminal button,
-#claudeProviderTerminal input,
-#claudeProviderTerminal textarea {
+:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal),
+:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal) :is(button, input, textarea) {
   font-family: "Cascadia Mono", Consolas, "SF Mono", monospace;
 }
 
@@ -12633,9 +12658,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   --provider-story-error: #ff8a8a;
 }
 
-#codexProviderTerminal .provider-terminal-screen,
-#geminiProviderTerminal .provider-terminal-screen,
-#claudeProviderTerminal .provider-terminal-screen {
+:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal) .provider-terminal-screen {
   display: flex;
   min-height: clamp(480px, calc(100dvh - 232px), 690px);
   height: clamp(480px, calc(100dvh - 232px), 690px);
@@ -12644,9 +12667,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   position: relative;
 }
 
-#codexProviderTerminal .provider-terminal-output,
-#geminiProviderTerminal .provider-terminal-output,
-#claudeProviderTerminal .provider-terminal-output {
+:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal) .provider-terminal-output {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -12662,28 +12683,22 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   -ms-overflow-style: none;
 }
 
-#codexProviderTerminal .provider-terminal-output::-webkit-scrollbar,
-#geminiProviderTerminal .provider-terminal-output::-webkit-scrollbar,
-#claudeProviderTerminal .provider-terminal-output::-webkit-scrollbar {
+:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal) .provider-terminal-output::-webkit-scrollbar {
   width: 0 !important;
   height: 0 !important;
   display: none;
 }
 
-#codexProviderTerminal.terminal-live .provider-terminal-output,
-#geminiProviderTerminal.terminal-live .provider-terminal-output,
-#claudeProviderTerminal.terminal-live .provider-terminal-output {
+:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal).terminal-live .provider-terminal-output {
   display: flex;
 }
 
-#codexProviderTerminal.terminal-live .provider-terminal-screen > .provider-terminal-viewport,
-#geminiProviderTerminal.terminal-live .provider-terminal-screen > .provider-terminal-viewport,
-#claudeProviderTerminal.terminal-live .provider-terminal-screen > .provider-terminal-viewport {
+:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal).terminal-live .provider-terminal-screen > .provider-terminal-viewport {
   display: block;
   z-index: 2;
 }
 
-.provider-story-shellcopy {
+:is(.provider-story-shellcopy, .oanda-terminal-shellcopy) {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -12692,7 +12707,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   overflow: visible;
 }
 
-.provider-story-hero {
+:is(.provider-story-hero, .oanda-terminal-hero) {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);
   gap: 14px;
@@ -12700,73 +12715,91 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   flex: 0 0 auto;
 }
 
-.provider-story-mark {
+:is(.provider-story-mark, .oanda-terminal-mark) {
   display: grid;
   grid-template-columns: repeat(5, 15px);
   grid-auto-rows: 15px;
   gap: 4px;
+}
+
+.provider-story-mark {
   padding-top: 8px;
 }
 
-.provider-story-mark-block {
+.oanda-terminal-mark {
+  padding-top: 4px;
+}
+
+:is(.provider-story-mark-block, .oanda-terminal-mark-block) {
   background: transparent;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
 }
 
-.provider-story-mark-block.is-a {
+:is(.provider-story-mark-block, .oanda-terminal-mark-block).is-a {
   background: var(--provider-story-accent, var(--forge-voice-accent));
   box-shadow: 0 0 18px rgba(49,200,178,0.18);
 }
 
-.provider-story-mark-block.is-b {
+:is(.provider-story-mark-block, .oanda-terminal-mark-block).is-b {
   background: var(--provider-story-mark-b, #6aa8ff);
   box-shadow: 0 0 18px rgba(106,168,255,0.16);
 }
 
-.provider-story-hero-copy {
+:is(.provider-story-hero-copy, .oanda-terminal-hero-copy) {
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
 }
 
-.provider-story-bannerline {
+:is(.provider-story-bannerline, .oanda-terminal-bannerline) {
   color: rgba(238,238,232,0.76);
   font: 700 0.8rem/1.36 "Cascadia Mono", Consolas, "SF Mono", monospace;
   letter-spacing: 0.08em;
 }
 
-.provider-story-wordmark {
+:is(.provider-story-wordmark, .oanda-terminal-wordmark) {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.provider-story-wordmark-line {
+:is(.provider-story-wordmark-line, .oanda-terminal-wordmark-line) {
   color: #f3f3ef;
   font: 700 clamp(0.86rem, 0.95vw, 1rem)/1 "Cascadia Mono", Consolas, "SF Mono", monospace;
   letter-spacing: 0.03em;
   white-space: pre;
 }
 
-.provider-story-kicker {
-  color: rgba(238,238,232,0.92);
+:is(.provider-story-kicker, .oanda-terminal-kicker) {
   font: 700 0.8rem/1.36 "Cascadia Mono", Consolas, "SF Mono", monospace;
 }
 
-.provider-story-intro {
+.provider-story-kicker {
+  color: rgba(238,238,232,0.92);
+}
+
+.oanda-terminal-kicker {
+  color: rgba(238,238,232,0.88);
+}
+
+:is(.provider-story-intro, .oanda-terminal-intro) {
   max-width: 760px;
   color: rgba(238,238,232,0.78);
   font: 0.8rem/1.36 "Cascadia Mono", Consolas, "SF Mono", monospace;
   overflow-wrap: anywhere;
 }
 
-.provider-story-keyword {
+.oanda-terminal-intro {
+  white-space: normal;
+}
+
+:is(.provider-story-keyword, .oanda-terminal-keyword) {
   color: var(--provider-story-accent, var(--forge-voice-accent));
   text-shadow: 0 0 12px rgba(49,200,178,0.18);
 }
 
-.provider-story-keyword-alt {
+:is(.provider-story-keyword-alt, .oanda-terminal-keyword-alt) {
   color: var(--provider-story-accent-alt, var(--forge-terminal-accent-alt));
   text-shadow: 0 0 10px rgba(226,182,63,0.14);
 }
@@ -12776,62 +12809,102 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   text-shadow: 0 0 10px rgba(255,138,138,0.12);
 }
 
-.provider-story-panel {
+:is(.provider-story-panel, .oanda-terminal-panel) {
   display: flex;
   flex-direction: column;
   gap: 8px;
   flex: 0 0 auto;
 }
 
+.oanda-terminal-panel {
+  min-height: auto;
+  overflow: visible;
+}
+
 .provider-story-statusline,
 .provider-story-step,
-.provider-story-logline {
+.provider-story-logline,
+.oanda-terminal-statusline,
+.oanda-terminal-step,
+.oanda-terminal-logline,
+.oanda-terminal-choice-row,
+.oanda-terminal-field-label {
   color: #f3f3ef;
   font: 0.8rem/1.36 "Cascadia Mono", Consolas, "SF Mono", monospace;
 }
 
-.provider-story-statusline {
+:is(.provider-story-statusline, .oanda-terminal-statusline) {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
 }
 
-.provider-story-label {
+:is(.provider-story-label, .oanda-terminal-label) {
   color: rgba(238,238,232,0.52);
   min-width: 82px;
 }
 
-.provider-story-step {
+.oanda-terminal-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(238,238,232,0.92);
+}
+
+:is(.provider-story-step, .oanda-terminal-step) {
   color: rgba(238,238,232,0.82);
+}
+
+.provider-story-step {
   padding-top: 2px;
 }
 
-.provider-story-logfeed {
+.oanda-terminal-step {
+  flex: 0 0 auto;
+}
+
+:is(.provider-story-logfeed, .oanda-terminal-logfeed) {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.provider-story-logfeed {
   padding-top: 4px;
 }
 
-.provider-story-logline {
+.oanda-terminal-logfeed {
+  flex: 0 0 auto;
+  min-height: auto;
+  padding-top: 2px;
+  overflow: visible;
+}
+
+:is(.provider-story-logline, .oanda-terminal-logline) {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  color: #f3f3ef;
 }
 
-.provider-story-logline-success {
+.oanda-terminal-logline {
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+:is(.provider-story-logline-success, .oanda-terminal-logline-success) {
   color: var(--provider-story-accent, var(--forge-voice-accent));
 }
 
-.provider-story-logline-error {
+:is(.provider-story-logline-error, .oanda-terminal-logline-error) {
   color: var(--provider-story-error, #ff8a8a);
 }
 
-.provider-story-logline-accent {
+:is(.provider-story-logline-accent, .oanda-terminal-logline-accent) {
   color: var(--provider-story-accent-alt, var(--forge-terminal-accent-alt));
 }
 
-.provider-story-logline-muted {
+:is(.provider-story-logline-muted, .oanda-terminal-logline-muted) {
   color: rgba(238,238,232,0.6);
 }
 
@@ -12990,124 +13063,6 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   background: rgba(255,255,255,0.03);
 }
 
-.oanda-terminal-shellcopy {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 100%;
-  height: auto;
-  overflow: visible;
-}
-
-.oanda-terminal-hero {
-  display: grid;
-  grid-template-columns: 110px minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
-  flex: 0 0 auto;
-}
-
-.oanda-terminal-mark {
-  display: grid;
-  grid-template-columns: repeat(5, 15px);
-  grid-auto-rows: 15px;
-  gap: 4px;
-  padding-top: 4px;
-}
-
-.oanda-terminal-mark-block {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
-}
-
-.oanda-terminal-mark-block.is-a {
-  background: var(--forge-voice-accent);
-  box-shadow: 0 0 18px rgba(49,200,178,0.18);
-}
-
-.oanda-terminal-mark-block.is-b {
-  background: #6aa8ff;
-  box-shadow: 0 0 18px rgba(106,168,255,0.16);
-}
-
-.oanda-terminal-hero-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.oanda-terminal-bannerline {
-  color: rgba(238,238,232,0.76);
-  font: 700 0.8rem/1.36 "Cascadia Mono", Consolas, "SF Mono", monospace;
-  letter-spacing: 0.08em;
-}
-
-.oanda-terminal-wordmark {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.oanda-terminal-wordmark-line {
-  color: #f3f3ef;
-  font: 700 clamp(0.86rem, 0.95vw, 1rem)/1 "Cascadia Mono", Consolas, "SF Mono", monospace;
-  letter-spacing: 0.03em;
-  white-space: pre;
-}
-
-.oanda-terminal-kicker {
-  color: rgba(238,238,232,0.88);
-  font: 700 0.8rem/1.36 "Cascadia Mono", Consolas, "SF Mono", monospace;
-}
-
-.oanda-terminal-intro {
-  max-width: 760px;
-  color: rgba(238,238,232,0.78);
-  font: 0.8rem/1.36 "Cascadia Mono", Consolas, "SF Mono", monospace;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.oanda-terminal-keyword {
-  color: var(--forge-voice-accent);
-  text-shadow: 0 0 12px rgba(49,200,178,0.18);
-}
-
-.oanda-terminal-keyword-alt {
-  color: var(--forge-terminal-accent-alt);
-  text-shadow: 0 0 10px rgba(226,182,63,0.14);
-}
-
-.oanda-terminal-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: 0 0 auto;
-  min-height: auto;
-  overflow: visible;
-}
-
-.oanda-terminal-statusline,
-.oanda-terminal-step,
-.oanda-terminal-logline,
-.oanda-terminal-choice-row,
-.oanda-terminal-field-label {
-  color: #f3f3ef;
-  font: 0.8rem/1.36 "Cascadia Mono", Consolas, "SF Mono", monospace;
-}
-
-.oanda-terminal-statusline {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.oanda-terminal-label {
-  color: rgba(238,238,232,0.52);
-  min-width: 82px;
-}
-
 .oanda-terminal-form {
   display: flex;
   flex-direction: column;
@@ -13119,13 +13074,6 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   display: flex;
   flex-direction: column;
   gap: 3px;
-}
-
-.oanda-terminal-field-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: rgba(238,238,232,0.92);
 }
 
 .oanda-terminal-field-glyph {
@@ -13196,54 +13144,14 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
 }
 
 
-.oanda-terminal-step {
-  color: rgba(238,238,232,0.82);
-  flex: 0 0 auto;
-}
-
 .oanda-terminal-step-muted {
   margin-left: 10px;
   color: rgba(238,238,232,0.46);
 }
 
-.oanda-terminal-logfeed {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: 0 0 auto;
-  min-height: auto;
-  padding-top: 2px;
-  overflow: visible;
-}
-
-.oanda-terminal-logline {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  color: #f3f3ef;
-  overflow: hidden;
-  flex: 0 0 auto;
-}
-
 .oanda-terminal-logline.is-erasing {
   animation: oanda-terminal-erase-line 240ms steps(16, end) forwards;
   transform-origin: left center;
-}
-
-.oanda-terminal-logline-success {
-  color: var(--forge-voice-accent);
-}
-
-.oanda-terminal-logline-error {
-  color: #ff8a8a;
-}
-
-.oanda-terminal-logline-accent {
-  color: var(--forge-terminal-accent-alt);
-}
-
-.oanda-terminal-logline-muted {
-  color: rgba(238,238,232,0.6);
 }
 
 .oanda-terminal-logline-pending {
@@ -13311,52 +13219,33 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
 }
 
 @container (max-width: 1080px) {
-  .oanda-terminal-hero {
+  :is(.oanda-terminal-hero, .provider-story-hero) {
     grid-template-columns: 78px minmax(0, 1fr);
     gap: 12px;
   }
-  .oanda-terminal-mark {
+  :is(.oanda-terminal-mark, .provider-story-mark) {
     grid-template-columns: repeat(5, 11px);
     grid-auto-rows: 11px;
     gap: 3px;
-  }
-  .oanda-terminal-bannerline {
-    font-size: 0.8rem;
   }
   .oanda-terminal-wordmark-line {
     font-size: 0.74rem;
   }
-  .oanda-terminal-kicker {
+  :is(.provider-story-wordmark-line, .provider-story-kicker, .provider-story-intro) {
     font-size: 0.8rem;
+    line-height: 1.36;
   }
   .oanda-terminal-intro {
     max-width: 100%;
-    font-size: 0.8rem;
-    line-height: 1.36;
-  }
-  .provider-story-hero {
-    grid-template-columns: 78px minmax(0, 1fr);
-    gap: 12px;
-  }
-  .provider-story-mark {
-    grid-template-columns: repeat(5, 11px);
-    grid-auto-rows: 11px;
-    gap: 3px;
-  }
-  .provider-story-wordmark-line,
-  .provider-story-kicker,
-  .provider-story-intro {
-    font-size: 0.8rem;
-    line-height: 1.36;
   }
 }
 
 @container (max-width: 760px) {
-  .oanda-terminal-hero {
+  :is(.oanda-terminal-hero, .provider-story-hero) {
     grid-template-columns: 1fr;
     gap: 10px;
   }
-  .oanda-terminal-mark {
+  :is(.oanda-terminal-mark, .provider-story-mark) {
     justify-self: start;
   }
   .oanda-terminal-hero-copy {
@@ -13365,23 +13254,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   .oanda-terminal-wordmark-line {
     font-size: 0.68rem;
   }
-  .oanda-terminal-kicker {
-    font-size: 0.8rem;
-  }
-  .oanda-terminal-intro {
-    font-size: 0.8rem;
-    line-height: 1.36;
-  }
-  .provider-story-hero {
-    grid-template-columns: 1fr;
-    gap: 10px;
-  }
-  .provider-story-mark {
-    justify-self: start;
-  }
-  .provider-story-wordmark-line,
-  .provider-story-kicker,
-  .provider-story-intro {
+  :is(.provider-story-wordmark-line, .provider-story-kicker, .provider-story-intro) {
     font-size: 0.8rem;
     line-height: 1.36;
   }
@@ -13480,9 +13353,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   #oandaProviderTerminal .provider-terminal-output {
     padding: 18px 22px 18px 16px;
   }
-  #codexProviderTerminal .provider-terminal-output,
-  #geminiProviderTerminal .provider-terminal-output,
-  #claudeProviderTerminal .provider-terminal-output {
+  :is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal) .provider-terminal-output {
     padding: 18px 22px 18px 16px;
   }
   .oanda-terminal-hero {
