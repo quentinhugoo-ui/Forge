@@ -4960,6 +4960,30 @@ body.webexplorer-surface #workspaceFolderName {
   transition: none;
 }
 
+#topbarBreadcrumb.trading-header-mode .trading-compare-menu[data-anchor="split"] {
+  position: fixed;
+  z-index: 48;
+  order: initial;
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 220px;
+  max-width: min(1040px, calc(100vw - 40px));
+  max-height: min(72vh, 560px);
+  overflow: auto;
+  padding: 0;
+  margin: 0;
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+#topbarBreadcrumb.trading-header-mode .trading-compare-menu[data-anchor="split"].is-open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
 .trading-compare-menu[data-mode="display"] {
   min-width: 236px;
   max-width: 260px;

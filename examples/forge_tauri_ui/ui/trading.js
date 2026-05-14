@@ -3166,6 +3166,7 @@
     state.headerMenuHideTimer = window.setTimeout(() => {
       els.compareMenu.hidden = true;
       els.compareMenu.dataset.mode = "none";
+      els.compareMenu.dataset.anchor = "none";
       setDropdownScrim(false);
       syncCompareShellState();
       state.headerMenuHideTimer = 0;
@@ -3570,12 +3571,19 @@
       window.clearTimeout(state.headerMenuHideTimer);
       state.headerMenuHideTimer = 0;
     }
+    const splitHeaderTrigger = !!trigger.closest?.(".trading-split-topbar-mirror");
+    if (splitHeaderTrigger && (mode === "compare" || mode === "add")) {
+      state.compareSearch = "";
+      state.uiCache.compareMenuModelKey = "";
+      state.uiCache.headerMenuKey = "";
+    }
     renderHeaderMenu(mode);
     state.headerMenuTriggerEl = trigger;
     els.compareMenu.dataset.mode = mode;
+    els.compareMenu.dataset.anchor = splitHeaderTrigger ? "split" : "topbar";
     els.compareMenu.hidden = false;
     setDropdownScrim(true);
-    if (mode === "compare" || mode === "add" || mode === "indicator-settings") {
+    if ((mode === "compare" || mode === "add" || mode === "indicator-settings") && !splitHeaderTrigger) {
       if (els.compareSearchWrap) els.compareSearchWrap.hidden = !(mode === "compare" || mode === "add");
       if (els.compareSearchInput) els.compareSearchInput.value = (mode === "compare" || mode === "add") ? String(state.compareSearch || "") : "";
       els.compareMenu.style.left = "";
@@ -3583,7 +3591,9 @@
     } else {
       if (els.compareSearchWrap) els.compareSearchWrap.hidden = true;
       const rect = trigger.getBoundingClientRect();
-      const targetWidth = mode === "display" ? 260 : ((mode === "asset" || mode === "split-asset") ? 320 : (mode === "indicator-settings" ? 420 : 360));
+      const targetWidth = mode === "display"
+        ? 260
+        : ((mode === "asset" || mode === "split-asset") ? 320 : (mode === "indicator-settings" ? 420 : 360));
       const preferredLeft = mode === "display" ? (rect.right - targetWidth) : rect.left;
       const left = Math.max(12, Math.min(preferredLeft, window.innerWidth - targetWidth - 12));
       els.compareMenu.style.left = `${left}px`;
@@ -7323,7 +7333,7 @@
     if (!tokenNode) return;
     handleTradingTokenClick(event, tokenNode.dataset.tradingToken || "");
   }, true);
-  document.addEventListener("click", (event) => {
+  function handleSplitHeaderAction(event) {
     if (!state.active) return;
     const actionNode = event.target?.closest?.("[data-trading-split-action][data-trading-split-index]");
     if (!actionNode) return;
@@ -7345,6 +7355,12 @@
     } else if (action === "timeframe") {
       void selectSplitGranularity(splitIndex, actionNode.dataset.tradingGranularity || DEFAULT_GRANULARITY);
     }
+  }
+  document.addEventListener("pointerdown", handleSplitHeaderAction, true);
+  document.addEventListener("click", handleSplitHeaderAction, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    handleSplitHeaderAction(event);
   }, true);
   els.compareTrigger?.addEventListener("click", (event) => {
     if (handleTradingTokenClick(event, headerTokenForCompare())) return;
