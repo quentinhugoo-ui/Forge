@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "entrypoints": [
+    "ui/forge-section-registry.js",
+    "ui/forge-tauri-bridge.js",
+    "ui/forge-boot.js",
+    "ui/forge-window-controls.js",
+    "ui/forge-webexplorer-config.js",
+    "ui/app.js",
+    "ui/trading.js",
+    "ui/banger.js"
+  ],
+  "sections": [
+    {
+      "id": "shell",
+      "owner": "Forge shell",
+      "files": [
+        "ui/app.js",
+        "ui/forge-section-registry.js",
+        "ui/forge-tauri-bridge.js",
+        "ui/forge-boot.js",
+        "ui/forge-window-controls.js"
+      ],
+      "lifecycle": "always-active"
+    },
+    {
+      "id": "alpha",
+      "owner": "Alpha canvas",
+      "files": [
+        "ui/app.js"
+      ],
+      "lifecycle": "shell-section"
+    },
+    {
+      "id": "forge",
+      "owner": "Legacy Forge page",
+      "files": [
+        "ui/app.js"
+      ],
+      "lifecycle": "shell-section"
+    },
+    {
+      "id": "webexplorer",
+      "owner": "WebExplorer",
+      "files": [
+        "ui/forge-webexplorer-config.js",
+        "ui/app.js"
+      ],
+      "lifecycle": "active-toggle",
+      "nativePresentCommands": [
+        "webexplorer_native_present"
+      ],
+      "nativeHideCommands": [
+        "webexplorer_native_hide"
+      ]
+    },
+    {
+      "id": "real-estate",
+      "owner": "Agence immo mode",
+      "files": [
+        "ui/forge-webexplorer-config.js",
+        "ui/app.js"
+      ],
+      "lifecycle": "active-toggle"
+    },
+    {
+      "id": "real-estate-main",
+      "owner": "Accueil agence immo",
+      "files": [
+        "ui/app.js"
+      ],
+      "lifecycle": "active-toggle"
+    },
+    {
+      "id": "trading",
+      "owner": "Trading workspace",
+      "files": [
+        "ui/trading.js",
+        "ui/app.js"
+      ],
+      "lifecycle": "open-close",
+      "nativePresentCommands": [
+        "bloomberg_live_native_present"
+      ],
+      "nativeHideCommands": [
+        "bloomberg_live_native_hide"
+      ]
+    },
+    {
+      "id": "banger",
+      "owner": "Banger viewport",
+      "files": [
+        "ui/banger.js"
+      ],
+      "lifecycle": "open-close"
+    }
+  ],
+  "sensitiveCommands": [
+    {
+      "command": "webexplorer_native_present",
+      "owner": "webexplorer",
+      "requiresBridge": true,
+      "requiresActiveSection": true,
+      "forbidDirectInvoke": true
+    },
+    {
+      "command": "bloomberg_live_native_present",
+      "owner": "trading",
+      "requiresBridge": true,
+      "requiresActiveSection": true,
+      "forbidDirectInvoke": true
+    },
+    {
+      "command": "get_hardware_info",
+      "owner": "shell",
+      "requiresBridge": true,
+      "allowRawFallback": true,
+      "bootSafe": true
+    },
+    {
+      "command": "list_forge_jobs",
+      "owner": "shell",
+      "requiresBridge": true,
+      "allowRawFallback": true,
+      "bootSafe": true
+    }
+  ],
+  "sharedGlobalPrefixes": [
+    "__forgeAlpha",
+    "__forgeAtlas",
+    "__forgeBoom",
+    "__forgeClose",
+    "__forgeOpen",
+    "__forgePending",
+    "__forgeRealEstate",
+    "__forgeSchedule",
+    "__forgeSwitch",
+    "__forgeTrading",
+    "__forgeWebExplorer"
+  ]
+}

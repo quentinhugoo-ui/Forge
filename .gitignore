@@ -1,0 +1,51 @@
+target/
+.vs/
+.tmp/
+.codex-tmp/
+.codex/
+.gemini/
+.claude/
+*.swp
+*.bak
+
+# Lab append-only log : croît à plusieurs centaines de MB sans rotation.
+# C'est de la donnée de R&D locale, pas du code de prod. Pas dans git.
+# Pour archiver : `cargo run --release --example lab_runner -- prune 100000`
+# qui garde les N dernières entrées.
+lab_findings.jsonl
+
+.forge-store/
+**/.forge-store/
+
+# Storage local Forge — ne pas tracker
+forge.cas
+.forge-data/
+data/
+
+# Données externes (prix marché OANDA, datasets) — JAMAIS dans le repo.
+# Vivent dans C:\Users\quent\Documents\Forge-data\ ou autre chemin
+# pointé par l'env var FORGE_DATA_DIR. Forge lit depuis l'env var,
+# jamais de chemin hardcodé qui résiderait dans le repo.
+examples/data/
+examples/datasets/
+*.csv
+*.parquet
+
+# Secrets — JAMAIS committés. Tokens (OANDA, Stripe, OpenAI…) en
+# env vars uniquement (cf. CLAUDE.md global §03 + §04 rotation 90j).
+.env
+.env.*
+*.token
+oanda_token*
+api_keys*
+secrets*
+
+# Tauri build artifacts
+examples/forge_tauri_ui/src-tauri/build.rs
+examples/forge_tauri_ui/src-tauri/capabilities/
+examples/forge_tauri_ui/src-tauri/gen/
+examples/forge_tauri_ui/src-tauri/icons/
+examples/forge_tauri_ui/src-tauri/tauri.conf.json
+examples/forge_tauri_ui/src-tauri/target-local-release/
+examples/forge_tauri_ui/.codex-tmp/
+examples/forge_tauri_ui/src-tauri/.codex-tmp/
