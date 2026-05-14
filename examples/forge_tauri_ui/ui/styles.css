@@ -4945,7 +4945,8 @@ body.webexplorer-surface #workspaceFolderName {
   max-width: 260px;
 }
 
-.trading-compare-menu[data-mode="asset"] {
+.trading-compare-menu[data-mode="asset"],
+.trading-compare-menu[data-mode="split-asset"] {
   min-width: 300px;
   max-width: 320px;
 }
@@ -5404,6 +5405,17 @@ body.webexplorer-surface #workspaceFolderName {
   user-select: none;
 }
 
+.trading-split-topbar-cell button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
 .trading-split-topbar-main {
   height: 24px;
   display: flex;
@@ -5412,6 +5424,14 @@ body.webexplorer-surface #workspaceFolderName {
   padding: 4px 2px 0 2px;
   min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+}
+
+.trading-split-topbar-broker-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -5467,6 +5487,8 @@ body.webexplorer-surface #workspaceFolderName {
 }
 
 .trading-split-topbar-asset {
+  display: inline-flex;
+  align-items: center;
   flex: 0 1 auto;
   min-width: 0;
   max-width: 168px;
@@ -5474,6 +5496,12 @@ body.webexplorer-surface #workspaceFolderName {
   text-overflow: ellipsis;
   color: rgba(104, 208, 196, 0.96);
   font: 650 0.9rem Geist, "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
+}
+
+.trading-split-topbar-asset-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .trading-split-topbar-action {

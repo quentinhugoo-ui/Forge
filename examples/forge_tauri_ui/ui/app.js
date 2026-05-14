@@ -19,6 +19,15 @@ const forgeSurfaceMode = forgeRuntimeUrl.searchParams.get("surface") || "";
 const forgeWindowLabel = forgeRuntimeUrl.searchParams.get("window")
   || (forgeSurfaceMode === "webexplorer" ? "webexplorer" : "main");
 const isWebExplorerSurface = forgeSurfaceMode === "webexplorer";
+const forgeSections = window.ForgeSectionRegistry || null;
+const forgeTauri = window.ForgeTauriBridge || null;
+forgeSections?.register?.({ id: "shell", label: "Forge shell", kind: "foundation", active: true, lazy: false, bootSafe: true });
+forgeSections?.register?.({ id: "alpha", label: "Alpha canvas", kind: "shell-section", active: true, lazy: false });
+forgeSections?.register?.({ id: "forge", label: "Legacy Forge page", kind: "shell-section", active: false });
+forgeSections?.register?.({ id: "webexplorer", label: "WebExplorer", kind: "workspace", active: isWebExplorerSurface });
+forgeSections?.register?.({ id: "real-estate", label: "Agence immo mode", kind: "mode", active: false });
+forgeSections?.register?.({ id: "real-estate-main", label: "Accueil agence immo", kind: "workspace", parent: "real-estate", active: false });
+forgeSections?.register?.({ id: "trading", label: "Trading workspace", kind: "workspace", active: false });
 let forgeHardwareInfo = null;
 let alpha3dToggle = null;
 let marsLensView = null;
@@ -130,39 +139,6 @@ window.addEventListener("unhandledrejection", (event) => {
   });
 });
 
-function stripNativeTitleTooltips(root) {
-  if (!root) return;
-  if (root instanceof Element && root.hasAttribute("title")) {
-    root.removeAttribute("title");
-  }
-  if (!(root instanceof Element || root instanceof Document || root instanceof DocumentFragment)) return;
-  root.querySelectorAll?.("[title]")?.forEach((node) => {
-    node.removeAttribute("title");
-  });
-}
-
-function suppressNativeTitleTooltips() {
-  stripNativeTitleTooltips(document);
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (mutation.type === "attributes" && mutation.attributeName === "title" && mutation.target instanceof Element) {
-        mutation.target.removeAttribute("title");
-        continue;
-      }
-      if (mutation.type !== "childList") continue;
-      mutation.addedNodes.forEach((node) => stripNativeTitleTooltips(node));
-    }
-  });
-  observer.observe(document.documentElement, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    attributeFilter: ["title"],
-  });
-}
-
-suppressNativeTitleTooltips();
-
 let dpr = window.devicePixelRatio || 1;
 let width = 0;
 let height = 0;
@@ -183,55 +159,6 @@ let selectedKind = kindSelect.value;
 const selectedMode = "dispatch";
 let previewToken = 0;
 
-function invokeWindowCommand(command, payload = {}) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
-  void invoke(command, { ...payload, label: forgeWindowLabel }).catch((err) => {
-    console.warn(`window command failed: ${command}`, err);
-  });
-}
-
-function invokeMainWindowCommand(command, payload = {}) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
-  void invoke(command, { ...payload, label: "main" }).catch((err) => {
-    console.warn(`main window command failed: ${command}`, err);
-  });
-}
-
-windowTitlebar?.addEventListener("mousedown", (event) => {
-  if (event.button !== 0) return;
-  if (event.target?.closest?.(".window-btn, .sidebar-toggle, .titlebar-web-btn")) return;
-  invokeWindowCommand("drag_main_window");
-});
-
-function bindMainWindowControl(button, command) {
-  if (!button || button.dataset.windowControlBound === "true") return;
-  button.dataset.windowControlBound = "true";
-  button.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  }, true);
-  button.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  }, true);
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    invokeWindowCommand(command);
-  }, true);
-  button.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    event.stopPropagation();
-    invokeWindowCommand(command);
-  }, true);
-}
-
-bindMainWindowControl(windowMinimize, "minimize_main_window");
-bindMainWindowControl(windowMaximize, "toggle_maximize_main_window");
-bindMainWindowControl(windowClose, "close_main_window");
 alphaProofToggle?.addEventListener("click", () => {
   if (!alphaProofPanelOpen) {
     setAlphaRightPanelMode(defaultAlphaRightPanelMode(), { skipRender: true });
@@ -4919,14 +4846,22 @@ async function createAlphaPendingMcpSession(files, options = {}) {
 }
 
 async function pollForgeJobs() {
-  if (forgeJobsPolling || !window.__TAURI__?.core?.invoke) return;
+  const invokeJobs = forgeTauri?.invoke || window.__TAURI__?.core?.invoke;
+  if (forgeJobsPolling || !invokeJobs) return;
   forgeJobsPolling = true;
   try {
     bootTrace("jobs.poll.begin", {
       currentJobs: forgeJobs.length,
       selectedForgeJobId,
     });
-    const jobs = await window.__TAURI__.core.invoke("list_forge_jobs", { limit: 30 });
+    const jobs = forgeTauri?.invoke
+      ? await forgeTauri.invoke("list_forge_jobs", { limit: 30 }, {
+          section: "shell",
+          bootSafe: true,
+          timeoutMs: 5000,
+          dedupeKey: "jobs",
+        })
+      : await invokeJobs("list_forge_jobs", { limit: 30 });
     const nextJobs = Array.isArray(jobs) ? jobs : [];
     bootTrace("jobs.poll.done", {
       returned: nextJobs.length,
@@ -7242,10 +7177,16 @@ function drawAlphaUnified(time) {
   }
 
   const tradingSurface = isTradingPanelActive();
+  alphaCanvasWrap?.classList.toggle("is-trading-add-split", tradingSurface && alphaExtraChartLayout === "split" && alphaExtraCharts.length > 0);
   if (tradingSurface) {
     const fullBounds = getAlphaChartBounds();
+    syncAlphaTradingSplitTopbar(fullBounds, alphaTradingSplitChartDocs());
     alphaTradingViewportEnsure(alphaDocState);
     if (typeof syncAlphaCardFade === "function") syncAlphaCardFade(fullBounds);
+    if (drawAlphaTradingSplitCharts(time, fullBounds)) {
+      renderAlphaLogLayer();
+      return;
+    }
     drawAlphaCandles(time, fullBounds, false, alphaDocState, {
       showIndicators: true,
       showSignals: false,
@@ -7253,6 +7194,7 @@ function drawAlphaUnified(time) {
     renderAlphaLogLayer();
     return;
   }
+  syncAlphaTradingSplitTopbar(null, []);
 
   if (!alphaDocState.candles.length) {
     if (alphaDocState.fileName) {
@@ -15714,7 +15656,20 @@ function setAlphaCanvasDocument(payload = {}) {
   const previousEnd = Number(alphaDocState.candleViewEnd);
   const previousZoom = alphaDocPriceZoom(alphaDocState);
   const previousPan = Number(alphaDocState.pricePan || 0);
-  alphaExtraCharts = [];
+  const previousTradingInstrument = String(alphaDocState.tradingInstrument || "").trim();
+  const previousTradingGranularity = String(alphaDocState.tradingGranularity || "").trim().toUpperCase();
+  const nextTradingInstrument = String(payload.tradingInstrument || "").trim();
+  const nextTradingGranularity = String(payload.tradingGranularity || "").trim().toUpperCase();
+  const previousExtraCharts = alphaExtraCharts;
+  const previousExtraChartLayout = alphaExtraChartLayout;
+  const preserveExtraCharts = tradingSurface
+    && previousExtraChartLayout === "split"
+    && Array.isArray(previousExtraCharts)
+    && previousExtraCharts.length > 0
+    && previousTradingInstrument === nextTradingInstrument
+    && previousTradingGranularity === nextTradingGranularity;
+  alphaExtraCharts = preserveExtraCharts ? previousExtraCharts : [];
+  alphaExtraChartLayout = preserveExtraCharts ? previousExtraChartLayout : "overlay";
   alphaDocState.candles = candles;
   alphaDocState.logicalBars = alphaBuildLogicalBars(candles);
   alphaDocState.chartDisplayMode = alphaNormalizeChartDisplayMode(payload.chartDisplayMode || alphaDocState.chartDisplayMode);
@@ -15740,8 +15695,8 @@ function setAlphaCanvasDocument(payload = {}) {
   alphaDocState.fileSize = Number(payload.fileSize) || 0;
   alphaDocState.previewKind = String(payload.previewKind || (candles.length ? "CSV" : ""));
   alphaDocState.previewRows = Array.isArray(payload.previewRows) ? payload.previewRows : [];
-  alphaDocState.tradingInstrument = String(payload.tradingInstrument || "").trim();
-  alphaDocState.tradingGranularity = String(payload.tradingGranularity || "").trim().toUpperCase();
+  alphaDocState.tradingInstrument = nextTradingInstrument;
+  alphaDocState.tradingGranularity = nextTradingGranularity;
   if (candles.length) {
     recomputeIndicators(candles);
   }
@@ -15756,10 +15711,14 @@ function setAlphaCanvasDocument(payload = {}) {
     alpha3dState.pressureKey = "";
     void refreshAlpha3dPressureModel(true);
   }
+  alphaCanvasWrap?.classList.toggle("is-trading-add-split", alphaExtraChartLayout === "split" && alphaExtraCharts.length > 0);
   scheduleAlphaRender();
 }
 
 function setAlphaCanvasExtraCharts(entries = []) {
+  alphaExtraChartLayout = Array.isArray(entries) && entries.some((entry) => String(entry?.layout || "").trim().toLowerCase() === "split")
+    ? "split"
+    : "overlay";
   alphaExtraCharts = Array.isArray(entries)
     ? entries.map((entry) => ({
       candles: alphaNormalizeCanvasCandles(entry?.candles),
@@ -15772,10 +15731,16 @@ function setAlphaCanvasExtraCharts(entries = []) {
       fileSize: Number(entry?.fileSize || 0),
       instrument: String(entry?.instrument || ""),
       instrumentLabel: String(entry?.instrumentLabel || entry?.instrument || ""),
+      tradingInstrument: String(entry?.tradingInstrument || entry?.instrument || ""),
+      tradingGranularity: String(entry?.tradingGranularity || alphaDocState.tradingGranularity || "").trim().toUpperCase(),
+      brokerLabel: String(entry?.brokerLabel || alphaTradingHeaderState.brokerLabel || tradingBrokerDisplayName(activeTradingBroker)),
+      brokerLogoKind: String(entry?.brokerLogoKind || alphaTradingHeaderState.brokerLogoKind || "").trim().toLowerCase(),
       displayName: String(entry?.displayName || ""),
+      layout: String(entry?.layout || alphaExtraChartLayout || "overlay"),
       comparison: true,
     }))
     : [];
+  alphaCanvasWrap?.classList.toggle("is-trading-add-split", alphaExtraChartLayout === "split" && alphaExtraCharts.length > 0);
   scheduleAlphaRender();
 }
 
@@ -24519,7 +24484,7 @@ function renderGpuRows(gpus) {
 }
 
 async function loadAndRenderHardwareInfo() {
-  const invoke = window.__TAURI__?.core?.invoke;
+  const invoke = forgeTauri?.invoke || window.__TAURI__?.core?.invoke;
   if (!invoke) {
     if (panelHardwareCpu) panelHardwareCpu.textContent = "info unavailable";
     if (panelHardwareGpu) panelHardwareGpu.textContent = "info unavailable";
@@ -24527,10 +24492,17 @@ async function loadAndRenderHardwareInfo() {
   }
   try {
     bootTrace("hardware.begin");
-    const info = await Promise.race([
-      invoke("get_hardware_info"),
-      new Promise((_, reject) => window.setTimeout(() => reject(new Error("timeout")), 5000)),
-    ]);
+    const info = forgeTauri?.invoke
+      ? await forgeTauri.invoke("get_hardware_info", {}, {
+          section: "shell",
+          bootSafe: true,
+          timeoutMs: 5000,
+          dedupeKey: "hardware",
+        })
+      : await Promise.race([
+          invoke("get_hardware_info"),
+          new Promise((_, reject) => window.setTimeout(() => reject(new Error("timeout")), 5000)),
+        ]);
     bootTrace("hardware.done", {
       cpu: info?.cpu_brand || "",
       gpuCount: Array.isArray(info?.gpus) ? info.gpus.length : 0,
@@ -26173,7 +26145,7 @@ async function hideNativeWebExplorer() {
 }
 
 async function presentNativeWebExplorer(options = {}) {
-  const invoke = window.__TAURI__?.core?.invoke;
+  const invoke = forgeTauri?.invoke;
   if (!invoke || !isWebExplorerUiActive()) return false;
   if (shouldShowWebExplorerStartScreen()) {
     await hideNativeWebExplorer();
@@ -26189,9 +26161,15 @@ async function presentNativeWebExplorer(options = {}) {
       active: isWebExplorerUiActive(),
       localMode: webExplorerLocalMode,
     });
-    await invoke("webexplorer_native_present", {
+    await forgeTauri.invoke("webexplorer_native_present", {
       bounds,
       forceReload: !!options.forceReload,
+    }, {
+      section: "webexplorer",
+      requiresActiveSection: true,
+      timeoutMs: 15000,
+      trace: true,
+      dedupeKey: "present",
     });
     const elapsedMs = performance.now() - startedAt;
     alphaTrace("webexplorer.native.present.ok", {

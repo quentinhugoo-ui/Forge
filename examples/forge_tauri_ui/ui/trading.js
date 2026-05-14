@@ -551,6 +551,7 @@
     ordersOutput: "No order sent yet.",
     compareInstruments: [],
     addInstruments: [],
+    addGranularities: {},
     compareSearch: "",
     compareScrollTop: 0,
     chatSubbarMode: "none",
@@ -565,6 +566,7 @@
     headerMenuScrollTop: {},
     headerMenuMode: "none",
     headerMenuTriggerEl: null,
+    splitHeaderTargetIndex: 0,
     headerMenuHideTimer: 0,
     universeHistorySyncDone: false,
     universeHistorySyncPromise: null,
@@ -1352,9 +1354,21 @@
     return out;
   }
 
+  function addedChartGranularity(instrument) {
+    const key = String(instrument || "").trim();
+    return String(
+      (key && state.addGranularities?.[key])
+      || state.selectedGranularity
+      || DEFAULT_GRANULARITY,
+    ).trim().toUpperCase();
+  }
+
   function setAddedChartInstruments(instruments = []) {
     const seen = new Set();
     const out = [];
+    const previousGranularities = state.addGranularities && typeof state.addGranularities === "object"
+      ? state.addGranularities
+      : {};
     for (const value of Array.isArray(instruments) ? instruments : []) {
       const instrument = String(value || "").trim();
       if (!instrument || instrument === state.selectedInstrument || seen.has(instrument)) continue;
@@ -1362,6 +1376,16 @@
       out.push(instrument);
     }
     state.addInstruments = out.slice(-MAX_ADDED_CHARTS);
+    const nextGranularities = {};
+    for (const instrument of state.addInstruments) {
+      nextGranularities[instrument] = String(previousGranularities[instrument] || state.selectedGranularity || DEFAULT_GRANULARITY).toUpperCase();
+    }
+    state.addGranularities = nextGranularities;
+  }
+
+  function splitHeaderInstrument(splitIndex = state.splitHeaderTargetIndex) {
+    const index = Math.max(1, Number(splitIndex) || 1);
+    return addedChartInstruments()[index - 1] || "";
   }
 
   function syncTradingHeader() {
@@ -3475,13 +3499,14 @@
         subtitle: option.subtitle,
         active: option.value === state.chartDisplayMode,
       }));
-    } else if (mode === "asset") {
+    } else if (mode === "asset" || mode === "split-asset") {
+      const splitInstrument = mode === "split-asset" ? splitHeaderInstrument() : "";
       items = assetSearchIndex().records.map((record) => ({
-        kind: "asset",
+        kind: mode === "split-asset" ? "split-asset" : "asset",
         value: record.name,
         title: record.brokerCode,
         subtitle: record.asset.displayName || record.asset.assetClass || record.name,
-        active: record.name === state.selectedInstrument,
+        active: record.name === (mode === "split-asset" ? splitInstrument : state.selectedInstrument),
       }));
     } else {
       items = assetSearchIndex().records
@@ -3558,7 +3583,7 @@
     } else {
       if (els.compareSearchWrap) els.compareSearchWrap.hidden = true;
       const rect = trigger.getBoundingClientRect();
-      const targetWidth = mode === "display" ? 260 : (mode === "asset" ? 320 : (mode === "indicator-settings" ? 420 : 360));
+      const targetWidth = mode === "display" ? 260 : ((mode === "asset" || mode === "split-asset") ? 320 : (mode === "indicator-settings" ? 420 : 360));
       const preferredLeft = mode === "display" ? (rect.right - targetWidth) : rect.left;
       const left = Math.max(12, Math.min(preferredLeft, window.innerWidth - targetWidth - 12));
       els.compareMenu.style.left = `${left}px`;
@@ -3598,13 +3623,18 @@
     const cachedKey = [
       assetUniverseRevision,
       splitActive ? "split" : "overlay",
-      state.selectedGranularity,
-      targets.map((instrument) => `${instrument}:${cachedSeriesRevision(instrument, state.selectedGranularity)}`).join("|"),
+      targets.map((instrument) => {
+        const granularity = splitActive ? addedChartGranularity(instrument) : state.selectedGranularity;
+        return `${instrument}:${granularity}:${cachedSeriesRevision(instrument, granularity)}`;
+      }).join("|"),
     ].join("::");
     if (
       state.uiCache.extraChartsKey === cachedKey
       && Array.isArray(state.uiCache.extraChartsValue)
-      && (!hasTauriInvoke() || targets.every((instrument) => cachedSeriesRevision(instrument, state.selectedGranularity) > 0))
+      && (!hasTauriInvoke() || targets.every((instrument) => {
+        const granularity = splitActive ? addedChartGranularity(instrument) : state.selectedGranularity;
+        return cachedSeriesRevision(instrument, granularity) > 0;
+      }))
     ) {
       canvasBridge()?.setExtraCharts?.(state.uiCache.extraChartsValue);
       syncTradingHeader();
@@ -3613,10 +3643,11 @@
     const extraCharts = [];
     const brokerInstrumentSet = activeBrokerInstrumentSet();
     for (const instrument of targets) {
-      let candles = getCachedSeries(instrument, state.selectedGranularity);
+      const granularity = splitActive ? addedChartGranularity(instrument) : state.selectedGranularity;
+      let candles = getCachedSeries(instrument, granularity);
       if (!candles.length && hasTauriInvoke()) {
-        candles = await loadHistorySeries(instrument, state.selectedGranularity, {
-          maxRows: chartTailRows(state.selectedGranularity),
+        candles = await loadHistorySeries(instrument, granularity, {
+          maxRows: chartTailRows(granularity),
         });
       }
       if (!candles.length) continue;
@@ -3625,11 +3656,11 @@
         instrument,
         instrumentLabel: brokerInstrumentCode(instrument) || instrument,
         tradingInstrument: instrument,
-        tradingGranularity: state.selectedGranularity,
+        tradingGranularity: granularity,
         brokerLabel: brokerInstrumentSet.has(instrument) ? selectedBrokerLabel() : "PAPERTRADING",
         brokerLogoKind: brokerInstrumentSet.has(instrument) ? selectedBrokerLogoKind() : "",
         displayName: asset?.displayName || instrument,
-        fileName: `${instrument}_${state.selectedGranularity}.csv`,
+        fileName: `${instrument}_${granularity}.csv`,
         layout: splitActive ? "split" : "overlay",
         candles,
       });
@@ -3637,10 +3668,15 @@
     const finalKey = [
       assetUniverseRevision,
       splitActive ? "split" : "overlay",
-      state.selectedGranularity,
-      targets.map((instrument) => `${instrument}:${cachedSeriesRevision(instrument, state.selectedGranularity)}`).join("|"),
+      targets.map((instrument) => {
+        const granularity = splitActive ? addedChartGranularity(instrument) : state.selectedGranularity;
+        return `${instrument}:${granularity}:${cachedSeriesRevision(instrument, granularity)}`;
+      }).join("|"),
     ].join("::");
-    const cacheable = !hasTauriInvoke() || targets.every((instrument) => cachedSeriesRevision(instrument, state.selectedGranularity) > 0);
+    const cacheable = !hasTauriInvoke() || targets.every((instrument) => {
+      const granularity = splitActive ? addedChartGranularity(instrument) : state.selectedGranularity;
+      return cachedSeriesRevision(instrument, granularity) > 0;
+    });
     if (cacheable) {
       state.uiCache.extraChartsKey = finalKey;
       state.uiCache.extraChartsValue = extraCharts;
@@ -6721,6 +6757,45 @@
     await syncComparisonSeries();
   }
 
+  async function selectSplitInstrument(splitIndex, instrument) {
+    const next = String(instrument || "").trim();
+    if (!next || next === state.selectedInstrument) return;
+    const slot = Math.max(0, (Number(splitIndex) || 1) - 1);
+    const current = addedChartInstruments();
+    const previous = current[slot] || "";
+    const inheritedGranularity = String(
+      (previous && state.addGranularities?.[previous])
+      || state.selectedGranularity
+      || DEFAULT_GRANULARITY,
+    ).toUpperCase();
+    if (!previous) {
+      setAddedChartInstruments([...current, next]);
+    } else {
+      const replaced = current.map((item, index) => (index === slot ? next : item));
+      setAddedChartInstruments(replaced);
+    }
+    state.addGranularities[next] = inheritedGranularity;
+    if (previous && previous !== next) delete state.addGranularities[previous];
+    state.splitHeaderTargetIndex = Math.max(1, slot + 1);
+    invalidateAssetUniverseCache();
+    state.uiCache.headerMenuKey = "";
+    renderHeaderMenu("split-asset");
+    await syncComparisonSeries();
+  }
+
+  async function selectSplitGranularity(splitIndex, granularity) {
+    const target = splitHeaderInstrument(splitIndex);
+    const next = String(granularity || "").trim().toUpperCase();
+    if (!target || !next) return;
+    const allowed = availableGranularities(target);
+    const resolved = allowed.includes(next) ? next : (allowed[0] || DEFAULT_GRANULARITY);
+    if (addedChartGranularity(target) === resolved) return;
+    state.addGranularities[target] = resolved;
+    invalidateExtraChartsCache();
+    state.uiCache.headerMenuKey = "";
+    await syncComparisonSeries();
+  }
+
   function selectChartDisplayMode(mode) {
     const next = normalizeChartDisplayMode(mode);
     if (next === state.chartDisplayMode) {
@@ -7248,6 +7323,29 @@
     if (!tokenNode) return;
     handleTradingTokenClick(event, tokenNode.dataset.tradingToken || "");
   }, true);
+  document.addEventListener("click", (event) => {
+    if (!state.active) return;
+    const actionNode = event.target?.closest?.("[data-trading-split-action][data-trading-split-index]");
+    if (!actionNode) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    const splitIndex = Math.max(1, Number(actionNode.dataset.tradingSplitIndex) || 1);
+    const action = String(actionNode.dataset.tradingSplitAction || "").trim().toLowerCase();
+    state.splitHeaderTargetIndex = splitIndex;
+    if (action === "broker") {
+      openHeaderMenu(actionNode, "broker");
+    } else if (action === "asset") {
+      state.uiCache.headerMenuKey = "";
+      openHeaderMenu(actionNode, "split-asset");
+    } else if (action === "compare") {
+      openHeaderMenu(actionNode, "compare");
+    } else if (action === "add") {
+      openHeaderMenu(actionNode, "add");
+    } else if (action === "timeframe") {
+      void selectSplitGranularity(splitIndex, actionNode.dataset.tradingGranularity || DEFAULT_GRANULARITY);
+    }
+  }, true);
   els.compareTrigger?.addEventListener("click", (event) => {
     if (handleTradingTokenClick(event, headerTokenForCompare())) return;
     event.preventDefault();
@@ -7286,6 +7384,8 @@
       selectChartDisplayMode(value);
     } else if (kind === "asset") {
       void selectInstrument(value || DEFAULT_INSTRUMENT);
+    } else if (kind === "split-asset") {
+      void selectSplitInstrument(state.splitHeaderTargetIndex || 1, value || "");
     } else if (kind === "add") {
       void selectAddInstrument(value || "");
     } else {
