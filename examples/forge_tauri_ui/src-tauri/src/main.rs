@@ -27856,6 +27856,49 @@ struct HardwareInfo {
     nvrtc_available: bool,
 }
 
+#[cfg(feature = "wgpu")]
+fn vendor_label_from_pci(vendor: u32) -> String {
+    match vendor {
+        0x10de => "Nvidia".to_string(),
+        0x1002 | 0x1022 => "Amd".to_string(),
+        0x8086 => "Intel".to_string(),
+        0x106b => "Apple".to_string(),
+        0x1414 => "Microsoft".to_string(),
+        _ => "Other".to_string(),
+    }
+}
+
+#[cfg(feature = "wgpu")]
+fn wgpu_gpu_name_fallback() -> Vec<HardwareGpu> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let gpus = std::panic::catch_unwind(|| {
+            let instance = wgpu::Instance::default();
+            pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+                .into_iter()
+                .map(|adapter| {
+                    let info = adapter.get_info();
+                    HardwareGpu {
+                        vendor: vendor_label_from_pci(info.vendor),
+                        name: info.name,
+                        backend: "wgpu".to_string(),
+                    }
+                })
+                .filter(|gpu| !gpu.name.trim().is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+        let _ = tx.send(gpus);
+    });
+    rx.recv_timeout(Duration::from_millis(1200))
+        .unwrap_or_default()
+}
+
+#[cfg(not(feature = "wgpu"))]
+fn wgpu_gpu_name_fallback() -> Vec<HardwareGpu> {
+    Vec::new()
+}
+
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct WebExplorerRendererProbe {
@@ -28119,7 +28162,7 @@ async fn get_hardware_info() -> Result<HardwareInfo, String> {
         }
         (gpus, bs.cuda_enabled, bs.nvrtc_available)
     } else {
-        (Vec::new(), false, false)
+        (wgpu_gpu_name_fallback(), false, false)
     };
     let threads = std::thread::available_parallelism()
         .map(|n| n.get())

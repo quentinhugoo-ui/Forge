@@ -124,7 +124,8 @@ function forgeTraceIsUseful(stage) {
   if (/(\.error|\.failed|\.blocked|\.timeout|js\.error|unhandledrejection)/i.test(key)) return true;
   if (/^(backend\.prepare|start\.|prestart\.|upload\.|bridge\.invoke\.error)/i.test(key)) return true;
   return !(
-    /(^|\.)(jobs\.poll|hardware)\.(begin|done)$/i.test(key) ||
+    /(^|\.)jobs\.poll\.(begin|done)$/i.test(key) ||
+    /(^|\.)hardware\.begin$/i.test(key) ||
     /(^|\.)(listeners\.bound|google\.oauth\.status)$/i.test(key) ||
     /(^|\.)(webexplorer\.native\.hide|trading\.bloomberg\.native\.hide)\.(begin|ok)$/i.test(key) ||
     /hide\.noop\.no-webview$/i.test(key)
