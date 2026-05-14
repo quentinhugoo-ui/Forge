@@ -40,11 +40,21 @@
     }
   }
 
+  function verboseLogsEnabled() {
+    try {
+      if (window.__FORGE_VERBOSE_LOGS === true) return true;
+      if (new URLSearchParams(window.location.search || "").has("forgeVerboseLogs")) return true;
+      return window.localStorage?.getItem("forge.verboseLogs") === "true";
+    } catch (_) {
+      return false;
+    }
+  }
+
   function debugLog(stage, details = "") {
     const invoke = rawInvoke();
     const payload = serialize(details);
     try {
-      console.info(`[forge-bridge] ${stage}`, details);
+      if (verboseLogsEnabled()) console.info(`[forge-bridge] ${stage}`, details);
     } catch (_) {}
     if (!invoke) return Promise.resolve(false);
     return invoke("alpha_debug_log", {

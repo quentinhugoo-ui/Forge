@@ -1211,11 +1211,6 @@
     };
   }
 
-  function mapAlertForCanvas(alert) {
-    const record = normalizeAlertRecord(alert);
-    return mapNormalizedAlertForCanvas(record);
-  }
-
   function mapNormalizedAlertForCanvas(record) {
     return {
       id: record.id,
@@ -2658,13 +2653,6 @@
       }
     }
     syncTradingChatActions();
-  }
-
-  function syncSplitTriggerLabel() {
-    if (!els.content) return;
-    const splitActive = !!els.content.classList.contains("has-split-view");
-    if (!state.active) return;
-    els.compareTrigger?.setAttribute("data-trading-split", splitActive ? "true" : "false");
   }
 
   function syncCanvasAlerts() {

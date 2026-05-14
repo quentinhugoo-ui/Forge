@@ -320,7 +320,7 @@ mod tests {
         let value = price.saturating_mul(qty);
         // 105.125 * 1.75 = 183.96875 = 183 + 0.96875 = 183 + 31/32
         let expected_int = 183i32;
-        let expected_frac_q31_32 = (31u32 * (1u32 << 27));
+        let expected_frac_q31_32 = 31u32 * (1u32 << 27);
         assert_eq!(value.integer_part(), expected_int);
         assert_eq!(value.fractional_part(), expected_frac_q31_32);
     }

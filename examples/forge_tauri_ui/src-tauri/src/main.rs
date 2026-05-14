@@ -8802,13 +8802,67 @@ fn emit_alpha_signal_reset(app: &tauri::AppHandle) {
     let _ = app.emit("alpha-signal-reset", "");
 }
 
+fn terminal_status_len() -> &'static Mutex<usize> {
+    static LEN: OnceLock<Mutex<usize>> = OnceLock::new();
+    LEN.get_or_init(|| Mutex::new(0))
+}
+
+fn clear_terminal_status_line() {
+    let mut guard = match terminal_status_len().lock() {
+        Ok(guard) => guard,
+        Err(_) => return,
+    };
+    if *guard > 0 {
+        eprint!("\r{}\r", " ".repeat(*guard));
+        let _ = std::io::stderr().flush();
+        *guard = 0;
+    }
+}
+
+fn emit_terminal_status_line(message: &str) {
+    let mut guard = match terminal_status_len().lock() {
+        Ok(guard) => guard,
+        Err(_) => return,
+    };
+    let line = format!("[forge-status] {}", message.trim());
+    let pad = guard.saturating_sub(line.len());
+    eprint!("\r{line}{}", " ".repeat(pad));
+    let _ = std::io::stderr().flush();
+    *guard = line.len();
+}
+
+fn alpha_trace_terminal_worthy(source: &str, message: &str) -> bool {
+    if std::env::var("FORGE_TERMINAL_TRACE")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "debug" | "trace"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    let msg = message.to_ascii_lowercase();
+    msg.contains(".error")
+        || msg.contains(" error")
+        || msg.contains("failed")
+        || msg.contains("timeout")
+        || msg.contains("blocked")
+        || msg.contains("panic")
+        || msg.contains("unhandledrejection")
+        || msg.contains("cannot ")
+        || msg.contains("unavailable")
+        || (!source.is_empty() && msg.contains("denied"))
+}
+
 fn alpha_trace<R: Runtime>(app: &tauri::AppHandle<R>, source: &str, message: impl AsRef<str>) {
+    let message = message.as_ref();
     let ts_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let line = format!("[alpha-trace {ts_ms}] {source}: {}", message.as_ref());
-    eprintln!("{line}");
+    let line = format!("[alpha-trace {ts_ms}] {source}: {message}");
+    if alpha_trace_terminal_worthy(source, message) {
+        clear_terminal_status_line();
+        eprintln!("{line}");
+    }
 
     if let Ok(app_dir) = app.path().app_data_dir() {
         let _ = std::fs::create_dir_all(&app_dir);
@@ -8923,6 +8977,10 @@ fn alpha_debug_log(
     details: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    if stage == "terminal.status" {
+        emit_terminal_status_line(details.as_deref().unwrap_or(""));
+        return Ok(());
+    }
     match details {
         Some(details) if !details.trim().is_empty() => {
             alpha_trace(&app, "frontend", format!("{stage} {details}"));
@@ -8946,7 +9004,63 @@ struct ForgeJobEntry {
     bars: Option<u64>,
     agents: Option<JsonValue>,
     context_accounting: Option<JsonValue>,
+    performance: Option<JsonValue>,
     last_modified_ms: u64,
+}
+
+fn json_number_as_f64(value: Option<&JsonValue>) -> Option<f64> {
+    value.and_then(|v| {
+        v.as_f64()
+            .or_else(|| v.as_i64().map(|n| n as f64))
+            .or_else(|| v.as_u64().map(|n| n as f64))
+    })
+}
+
+fn seconds_to_ns(value: Option<&JsonValue>) -> Option<u64> {
+    json_number_as_f64(value).map(|seconds| (seconds.max(0.0) * 1_000_000_000.0).round() as u64)
+}
+
+fn millis_to_ns(value: Option<&JsonValue>) -> Option<u64> {
+    json_number_as_f64(value).map(|ms| (ms.max(0.0) * 1_000_000.0).round() as u64)
+}
+
+fn direct_ns(value: Option<&JsonValue>) -> Option<u64> {
+    json_number_as_f64(value).map(|ns| ns.max(0.0).round() as u64)
+}
+
+fn forge_job_performance(value: &JsonValue) -> Option<JsonValue> {
+    let perf = value
+        .get("performance")
+        .or_else(|| value.get("performance_ns"))
+        .or_else(|| value.get("performanceNs"))
+        .unwrap_or(&JsonValue::Null);
+    let perf_get = |snake: &str, camel: &str| perf.get(snake).or_else(|| perf.get(camel));
+
+    let synth_ns = direct_ns(perf_get("synth_ns", "synthNs"))
+        .or_else(|| seconds_to_ns(value.get("synth_seconds").or_else(|| value.get("synthSeconds"))));
+    let eval_ns = direct_ns(perf_get("eval_ns", "evalNs"))
+        .or_else(|| seconds_to_ns(value.get("eval_seconds").or_else(|| value.get("evalSeconds"))));
+    let total_ns = direct_ns(perf_get("total_ns", "totalNs"))
+        .or_else(|| direct_ns(value.get("total_elapsed_ns").or_else(|| value.get("totalElapsedNs"))))
+        .or_else(|| seconds_to_ns(value.get("total_seconds").or_else(|| value.get("totalSeconds"))))
+        .or_else(|| seconds_to_ns(value.get("elapsed_seconds").or_else(|| value.get("elapsedSeconds"))))
+        .or_else(|| millis_to_ns(value.get("elapsed_ms").or_else(|| value.get("elapsedMs"))))
+        .or_else(|| synth_ns.zip(eval_ns).map(|(synth, eval)| synth.saturating_add(eval)));
+    let backend_ns = direct_ns(perf_get("backend_ns", "backendNs"))
+        .or_else(|| millis_to_ns(value.get("backend_open_ms").or_else(|| value.get("backendOpenMs"))));
+
+    if total_ns.is_none() && synth_ns.is_none() && eval_ns.is_none() && backend_ns.is_none() {
+        return None;
+    }
+    Some(json!({
+        "totalNs": total_ns,
+        "synthNs": synth_ns,
+        "evalNs": eval_ns,
+        "backendNs": backend_ns,
+        "candidates": value.get("candidates_evaluated").or_else(|| value.get("candidatesEvaluated")).cloned().unwrap_or(JsonValue::Null),
+        "bars": value.get("bars").cloned().unwrap_or(JsonValue::Null),
+        "source": "manifest"
+    }))
 }
 
 #[derive(Deserialize)]
@@ -17890,6 +18004,7 @@ async fn create_forge_pending_job(
             "exact_tokens": null,
             "note": "Pending UI upload: no MCP agent has claimed this job yet."
         })),
+        performance: None,
         last_modified_ms: modified_ms,
     })
 }
@@ -18017,6 +18132,7 @@ async fn list_forge_jobs(
             .get("context_accounting")
             .cloned()
             .or_else(|| value.get("contextAccounting").cloned());
+        let performance = forge_job_performance(&value);
         let last_modified_ms = modified
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -18033,6 +18149,7 @@ async fn list_forge_jobs(
             bars,
             agents,
             context_accounting,
+            performance,
             last_modified_ms,
         });
     }
@@ -22741,6 +22858,8 @@ fn kill_process_tree(pid: u32) -> bool {
     {
         Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .map(|status| status.success())
             .unwrap_or(false)

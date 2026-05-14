@@ -2,6 +2,7 @@ target/
 .vs/
 .tmp/
 .codex-tmp/
+.chrome-debug/
 .codex/
 .gemini/
 .claude/

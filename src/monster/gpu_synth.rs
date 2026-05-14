@@ -91,6 +91,7 @@ fn unpack_job(job: u32) -> (u32, u8) {
 }
 
 #[inline]
+#[cfg(any(test, all(feature = "cuda", feature = "wgpu")))]
 fn dense_jobs_for_pairs(n_pairs: usize) -> Vec<u32> {
     let mut jobs = Vec::with_capacity(n_pairs * N_OPS as usize);
     for pair_idx in 0..n_pairs as u32 {
@@ -102,6 +103,7 @@ fn dense_jobs_for_pairs(n_pairs: usize) -> Vec<u32> {
 }
 
 #[inline]
+#[cfg(all(feature = "cuda", feature = "wgpu"))]
 fn preferred_cuda_split_pairs(n_pairs: usize) -> usize {
     if n_pairs <= 2 {
         1
@@ -758,6 +760,7 @@ fn score_split_cuda_wgpu(batch: &SynthGpuBatch) -> io::Result<Vec<SynthGpuResult
 
 // â”€â”€â”€ Shared helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+#[cfg(any(feature = "cuda", feature = "wgpu"))]
 fn parse_gpu_results(raw: &[u8], jobs: &[u32]) -> Vec<SynthGpuResult> {
     let total_jobs = jobs.len();
     let mut results = Vec::with_capacity(total_jobs);
@@ -774,16 +777,19 @@ fn parse_gpu_results(raw: &[u8], jobs: &[u32]) -> Vec<SynthGpuResult> {
     results
 }
 
+#[cfg(feature = "wgpu")]
 fn bytemuck_cast_slice_i64(data: &[i64]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8) }
 }
 
+#[cfg(feature = "wgpu")]
 fn bytemuck_cast_slice_u32(data: &[u32]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) }
 }
 
 // â”€â”€â”€ WGSL Shader â”€â”€â”€â”€ï¿½ï¿½â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+#[cfg(feature = "wgpu")]
 const SYNTH_WGSL_SHADER: &str = r#"
 struct Params {
     n_examples: u32,

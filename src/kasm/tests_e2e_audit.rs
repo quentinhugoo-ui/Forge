@@ -21,12 +21,9 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::kasm::{
-        execute, execute_with_fractal, FractalDispatcher,
-        Node, Op, Program, Target, Ty, KasmError,
-    };
+    use crate::kasm::{execute, execute_with_fractal, KasmError, Node, Op, Program, Target, Ty};
     use crate::kasm::self_host::SelfHostingRuntime;
-    use crate::store::{Hash, Store};
+    use crate::store::Store;
     use crate::{fresh_tmp_path, TmpDir};
     use std::sync::Arc;
 

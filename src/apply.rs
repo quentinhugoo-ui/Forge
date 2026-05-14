@@ -328,7 +328,7 @@ mod tests {
             let store = Store::open(dir.as_ref()).expect("store1");
             let atlas =
                 std::sync::Arc::new(Atlas::open(dir.as_ref().join("forge.atlas")).expect("atlas1"));
-            let mut node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
+            let node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
             node.attach_atlas(atlas.clone());
 
             let prog = affine_program();
@@ -347,7 +347,7 @@ mod tests {
         let store = Store::open(dir.as_ref()).expect("store2");
         let atlas =
             std::sync::Arc::new(Atlas::open(dir.as_ref().join("forge.atlas")).expect("atlas2"));
-        let mut node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
+        let node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
         node.attach_atlas(atlas.clone());
 
         let prog = affine_program();
@@ -378,7 +378,7 @@ mod tests {
         let atlas = std::sync::Arc::new(
             Atlas::open(dir.as_ref().join("forge.atlas")).expect("atlas"),
         );
-        let mut node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
+        let node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
         node.attach_atlas(atlas.clone());
 
         let prog = affine_program();
@@ -402,7 +402,7 @@ mod tests {
         let atlas = std::sync::Arc::new(
             Atlas::open(dir.as_ref().join("forge.atlas")).expect("atlas"),
         );
-        let mut node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
+        let node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
         node.attach_atlas(atlas.clone());
 
         let prog = affine_program();
@@ -430,7 +430,7 @@ mod tests {
             let atlas = std::sync::Arc::new(
                 Atlas::open(dir.as_ref().join("forge.atlas")).expect("atlas1"),
             );
-            let mut node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
+            let node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
             node.attach_atlas(atlas.clone());
 
             let prog = affine_program();
@@ -445,7 +445,7 @@ mod tests {
         let atlas = std::sync::Arc::new(
             Atlas::open(dir.as_ref().join("forge.atlas")).expect("atlas2"),
         );
-        let mut node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
+        let node = MonsterNode::new(store, MemoryGovernor::new(1024 * 1024));
         node.attach_atlas(atlas.clone());
 
         let prog = affine_program();

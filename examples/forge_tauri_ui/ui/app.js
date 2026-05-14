@@ -108,10 +108,34 @@ let alpha3dLegendMeta = null;
 let alpha3dZSelector = null;
 let alpha3dZMetricEl = null;
 
+function forgeVerboseTerminalLogsEnabled() {
+  try {
+    if (window.__FORGE_VERBOSE_LOGS === true) return true;
+    if (new URLSearchParams(window.location.search || "").has("forgeVerboseLogs")) return true;
+    return window.localStorage?.getItem("forge.verboseLogs") === "true";
+  } catch (_) {
+    return false;
+  }
+}
+
+function forgeTraceIsUseful(stage) {
+  if (forgeVerboseTerminalLogsEnabled()) return true;
+  const key = String(stage || "");
+  if (/(\.error|\.failed|\.blocked|\.timeout|js\.error|unhandledrejection)/i.test(key)) return true;
+  if (/^(backend\.prepare|start\.|prestart\.|upload\.|bridge\.invoke\.error)/i.test(key)) return true;
+  return !(
+    /(^|\.)(jobs\.poll|hardware)\.(begin|done)$/i.test(key) ||
+    /(^|\.)(listeners\.bound|google\.oauth\.status)$/i.test(key) ||
+    /(^|\.)(webexplorer\.native\.hide|trading\.bloomberg\.native\.hide)\.(begin|ok)$/i.test(key) ||
+    /hide\.noop\.no-webview$/i.test(key)
+  );
+}
+
 function bootTrace(stage, details = "") {
   try {
+    if (!forgeTraceIsUseful(`boot.${stage}`)) return;
     const payload = typeof details === "string" ? details : JSON.stringify(details);
-    console.info(`[forge-boot] ${stage}`, details);
+    if (forgeVerboseTerminalLogsEnabled()) console.info(`[forge-boot] ${stage}`, details);
     const tauriApi = window.__TAURI__;
     if (!tauriApi?.core?.invoke) return;
     void tauriApi.core.invoke("alpha_debug_log", {
@@ -195,18 +219,6 @@ const runState = {
   chunkDone: 0,
   chunkTotal: 0,
   report: null,
-};
-
-// Ã‰tat de l'animation pÃ©dagogique kmer_hash : avance d'un k-mer toutes les
-// ~1.6s, et Ã  l'intÃ©rieur de chaque k-mer surligne 6 Ã©tapes successives :
-// extract â†’ encode â†’ pack â†’ splitmix step1 â†’ step2 â†’ step3+final.
-const mechState = {
-  startTime: 0,
-  msPerStep: 280,
-  stepsPerKmer: 6,
-  currentKmer: "",
-  currentClasses: [], // 0=A 1=C 2=G 3=T 255=N
-  cachedSeqLen: 0,
 };
 
 // SplitMix64 en BigInt â€” bit-pour-bit identique Ã  ref_splitmix64 cÃ´tÃ© Rust.
@@ -496,264 +508,6 @@ function findWrappedLineIndex(globalCharIndex) {
     if (globalCharIndex >= start && globalCharIndex <= end) return i;
   }
   return -1;
-}
-
-function complementBase(c) {
-  if (c === "A") return "T";
-  if (c === "T") return "A";
-  if (c === "C") return "G";
-  if (c === "G") return "C";
-  return "N";
-}
-
-function drawOverlayLabel(text) {
-  ctx.font = "11px Segoe UI, sans-serif";
-  const w = ctx.measureText(text).width + 14;
-  ctx.fillStyle = "rgba(17,25,29,0.88)";
-  ctx.strokeStyle = "rgba(111,151,168,0.9)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.roundRect(docState.leftPad, 8, w, 20, 6);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = "rgba(198,220,231,0.95)";
-  ctx.fillText(text, docState.leftPad + 7, 13);
-}
-
-function isAnimating() {
-  return runState.phase === "running" || runState.phase === "done";
-}
-
-// Animation INLINE sur les lettres de la sÃ©quence : aucune chip flottante,
-// aucun panneau sÃ©parÃ©. Les 32 ATCG de la fenÃªtre se transforment SUR PLACE
-// en leur 2-bit, puis fusionnent en hex packed, puis le hex se mute Ã©tape
-// par Ã©tape jusqu'au hash final, le tout dans la mÃªme rangÃ©e de texte.
-//   step 0 â€” capture  : les 32 lettres pulsent dans leur couleur
-//   step 1 â€” encode   : chaque lettre devient son code 2-bit (Aâ†’00, Câ†’01â€¦)
-//   step 2 â€” pack     : les bits fusionnent en un hex u64 (centrÃ© dans la fenÃªtre)
-//   step 3 â€” + Ï†       : le hex se mute (x += golden ratio) avec shake
-//   step 4 â€” Ã— c1      : nouveau hex (x = (x^x>>30) * c1) avec shake
-//   step 5 â€” Ã— c2 â†’ hash : hex final (x ^ x>>31), glow vert, stable
-function drawKmerInlineAnimation(kmer, kmerIdx, stepActive, time, anchor) {
-  const winW = 32 * docState.charWidth;
-  const lineH = docState.lineHeight;
-  const ax = anchor.x;
-  const ay = anchor.y;
-  const stepProgress = (time % mechState.msPerStep) / mechState.msPerStep; // 0..1
-  const glow = 0.5 + 0.5 * Math.sin(time * 0.014);
-
-  // On efface la zone des 32 lettres (la couleur de fond du canvas est
-  // celle de drawMicroGrid : #0e1011) puis on redessine ce que cette
-  // Ã©tape de l'algo affiche Ã€ LA PLACE des lettres.
-  ctx.fillStyle = "#0e1011";
-  ctx.fillRect(ax - 1, ay - 2, winW + 2, lineH + 3);
-
-  ctx.textBaseline = "top";
-
-  if (stepActive === 0) {
-    // CAPTURE : les 32 ATCG restent visibles, leurs cellules pulsent
-    // dans la couleur du nuclÃ©otide.
-    ctx.font = "12px Consolas, Monaco, monospace";
-    const reveal = Math.min(1, stepProgress * 1.4);
-    const litCount = Math.floor(reveal * 32);
-    for (let i = 0; i < kmer.length; i += 1) {
-      const cx = ax + i * docState.charWidth;
-      if (i < litCount) {
-        ctx.fillStyle = nucColor(kmer[i]).replace("1)", `${(0.30 + glow * 0.25).toFixed(2)})`);
-        ctx.fillRect(cx, ay, docState.charWidth, lineH);
-        ctx.fillStyle = "rgba(255,255,255,0.96)";
-      } else {
-        ctx.fillStyle = "rgba(223,233,237,0.85)";
-      }
-      ctx.fillText(kmer[i], cx, ay);
-    }
-    return;
-  }
-
-  if (stepActive === 1) {
-    // ENCODE : chaque lettre devient son code 2-bit, Ã  sa propre place.
-    // Police plus petite pour faire tenir 2 chars dans la cellule d'1.
-    const reveal = Math.min(1, stepProgress * 1.4);
-    const morphedCount = Math.floor(reveal * 32);
-    ctx.font = "12px Consolas, Monaco, monospace";
-    for (let i = 0; i < kmer.length; i += 1) {
-      const cx = ax + i * docState.charWidth;
-      if (i >= morphedCount) {
-        // pas encore morphÃ©e : la lettre reste affichÃ©e
-        ctx.fillStyle = nucColor(kmer[i]).replace("1)", "0.55)");
-        ctx.fillRect(cx, ay, docState.charWidth, lineH);
-        ctx.fillStyle = "rgba(240,240,240,0.92)";
-        ctx.fillText(kmer[i], cx, ay);
-      } else {
-        // morphÃ©e : le 2-bit prend la place
-        const b = nucBits(kmer[i]);
-        const txt = b === 255 ? "Â·Â·" : b.toString(2).padStart(2, "0");
-        ctx.fillStyle = nucColor(kmer[i]).replace("1)", "0.30)");
-        ctx.fillRect(cx, ay, docState.charWidth, lineH);
-        ctx.fillStyle = nucColor(kmer[i]);
-        ctx.font = "9px Consolas, Monaco, monospace";
-        ctx.fillText(txt, cx + 0.5, ay + 4);
-        ctx.font = "12px Consolas, Monaco, monospace";
-      }
-    }
-    return;
-  }
-
-  // Ã‰TAPES 2-5 : packed â†’ +Ï† â†’ Ã—c1 â†’ Ã—c2 (hash final), affichÃ©es en hex
-  // au centre de la fenÃªtre, Ã  la mÃªme rangÃ©e que le texte du doc.
-  const { value: packed } = packKmer(kmer);
-  const sm = splitmix64Steps(packed);
-  let label, value, color;
-  if (stepActive === 2) {
-    label = "pack u64";
-    value = hex64(packed);
-    color = "rgba(184,224,240,1)";
-  } else if (stepActive === 3) {
-    label = "+ Ï†";
-    value = hex64(sm.after_add);
-    color = "rgba(184,224,240,1)";
-  } else if (stepActive === 4) {
-    label = "Ã— c1";
-    value = hex64(sm.after_mul1);
-    color = "rgba(184,224,240,1)";
-  } else {
-    label = "hash";
-    value = hex64(sm.final_hash);
-    color = "rgba(140,232,170,1)";
-  }
-
-  // Fond lÃ©ger dans la fenÃªtre pour que le hex se dÃ©tache du #0e1011
-  ctx.fillStyle =
-    stepActive === 5 ? "rgba(140,232,170,0.12)" : "rgba(133,196,223,0.10)";
-  ctx.fillRect(ax, ay, winW, lineH);
-
-  // Petit label Ã  gauche dans la fenÃªtre
-  ctx.font = "10px Segoe UI, sans-serif";
-  ctx.fillStyle = "rgba(170,185,195,0.95)";
-  ctx.fillText(label, ax + 4, ay + 3);
-
-  // Hex centrÃ© dans la fenÃªtre, char par char, avec shake aux Ã©tapes
-  // de mixing pour suggÃ©rer la transformation.
-  ctx.font = "12px Consolas, Monaco, monospace";
-  const charPx = 7.4;
-  const valueWidth = value.length * charPx;
-  const valueOriginX = ax + 36 + Math.max(0, (winW - 36 - valueWidth) / 2);
-  const isMix = stepActive === 3 || stepActive === 4;
-  const isFinal = stepActive === 5;
-  for (let i = 0; i < value.length; i += 1) {
-    const jx = isMix ? (Math.random() - 0.5) * 1.6 : 0;
-    const jy = isMix ? (Math.random() - 0.5) * 1.6 : 0;
-    if (isFinal) {
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 6 + glow * 3;
-    }
-    ctx.fillStyle = color;
-    ctx.fillText(value[i], valueOriginX + i * charPx + jx, ay + 1 + jy);
-  }
-  ctx.shadowBlur = 0;
-}
-
-function drawProgramAnimation(time) {
-  if (!isAnimating()) return;
-  if (!docState.dnaSequence || docState.dnaSequence.length < 32) return;
-  if (!docState.dnaRawOffsets || docState.dnaRawOffsets.length < 32) return;
-
-  const seqLen = docState.dnaSequence.length;
-
-  // Avancement temporel rÃ©gulier indÃ©pendant de runState.chunkDone : la
-  // computation rÃ©elle finit en quelques ms, mais l'animation pÃ©dagogique
-  // doit dÃ©filer Ã  vitesse humaine (â‰ˆ 1 k-mer / 1.7 s).
-  if (mechState.startTime === 0 || mechState.cachedSeqLen !== seqLen) {
-    mechState.startTime = time;
-    mechState.cachedSeqLen = seqLen;
-  }
-  const elapsed = time - mechState.startTime;
-  const totalKmerWindow = Math.max(1, seqLen - 32);
-  const stepDur = mechState.msPerStep;
-  const cycleDur = stepDur * mechState.stepsPerKmer;
-  const kmerOrdinal = Math.floor(elapsed / cycleDur);
-  const stepInCycle = Math.floor((elapsed % cycleDur) / stepDur);
-
-  // Avancement SÃ‰QUENTIEL : k-mer 0, puis 1, puis 2...
-  // Le calcul Rust est trop rapide pour Ãªtre animÃ© en direct (il finit en
-  // <1s). On rejoue l'algorithme dans l'ordre, lettre par lettre, Ã 
-  // vitesse lisible par un humain.
-  const idx = kmerOrdinal % totalKmerWindow;
-
-  // Chercher un k-mer qui tient entiÃ¨rement sur une ligne visible.
-  // Si le k-mer actuel dÃ©borde (p.x + 32 chars > fin de ligne), on prend
-  // le dÃ©but de la ligne d'aprÃ¨s.
-  const rawIdx = docState.dnaRawOffsets[Math.min(idx, docState.dnaRawOffsets.length - 1)];
-
-  // Auto-scroll : si le k-mer n'est pas visible, scroller pour le montrer.
-  let p = mapCharToVisiblePosition(rawIdx);
-  if (!p) {
-    const lineIndex = findWrappedLineIndex(rawIdx);
-    if (lineIndex >= 0) {
-      const vis = visibleDocLines();
-      const targetScroll = Math.max(0, lineIndex - Math.floor(vis * 0.3));
-      const maxScroll = Math.max(0, docState.wrappedLines.length - vis);
-      docState.scrollLines = Math.min(maxScroll, targetScroll);
-      p = mapCharToVisiblePosition(rawIdx);
-    }
-  }
-  // Si la fenÃªtre dÃ©borde le bord droit du canvas, sauter Ã  la ligne suivante
-  // en cherchant la premiÃ¨re position qui rentre entiÃ¨rement.
-  if (p && p.x + 32 * docState.charWidth > width - 10) {
-    const nextLineIdx = p.lineIndex + 1;
-    if (nextLineIdx < docState.wrappedLines.length) {
-      const nextOffset = docState.lineStartOffsets[nextLineIdx];
-      const pp = mapCharToVisiblePosition(nextOffset);
-      if (pp) p = pp;
-    }
-  }
-
-  const baseY = p ? p.y : -1;
-  const winW = 32 * docState.charWidth;
-  const halfW = 16 * docState.charWidth;
-  const phase = Math.sin(time * 0.01) * 0.5 + 0.5;
-
-  // FenÃªtre Ã  afficher : 32 chars depuis la position p ajustÃ©e
-  const kmerFromP = p
-    ? docState.dnaSequence.slice(idx, idx + 32)
-    : docState.dnaSequence.slice(idx, idx + 32);
-
-  if (selectedKind === "kmer_hash") {
-    if (p) drawKmerInlineAnimation(kmerFromP, idx, stepInCycle, time, p);
-    return;
-  }
-
-  if (!p) return;
-
-  if (selectedKind === "kmer_complement") {
-    drawOverlayLabel("complement: A<->T, C<->G on the window");
-    ctx.fillStyle = `rgba(170, 204, 153, ${0.2 + phase * 0.15})`;
-    ctx.fillRect(p.x, baseY - 1, winW, docState.lineHeight);
-    const comp = kmerFromP
-      .slice(0, 12)
-      .split("")
-      .map(complementBase)
-      .join("");
-    ctx.fillStyle = "rgba(205,232,197,0.98)";
-    ctx.font = "11px Consolas, Monaco, monospace";
-    ctx.fillText(`-> ${comp}...`, Math.min(width - 190, p.x + winW + 8), baseY);
-  } else if (selectedKind === "kmer_double_mix") {
-    drawOverlayLabel("double mix: hash then re-hash");
-    ctx.fillStyle = `rgba(205, 161, 228, ${0.18 + phase * 0.15})`;
-    ctx.fillRect(p.x, baseY - 1, winW, docState.lineHeight);
-    ctx.fillStyle = "rgba(227,202,241,0.95)";
-    ctx.font = "11px Consolas, Monaco, monospace";
-    ctx.fillText("h1 -> h2", Math.min(width - 120, p.x + winW + 8), baseY);
-  } else if (selectedKind === "kmer_strobemer") {
-    drawOverlayLabel("strobemer: split 16/16, hash left + hash right, XOR");
-    ctx.fillStyle = `rgba(125, 205, 175, ${0.2 + phase * 0.12})`;
-    ctx.fillRect(p.x, baseY - 1, halfW, docState.lineHeight);
-    ctx.fillStyle = `rgba(233, 178, 121, ${0.2 + (1 - phase) * 0.12})`;
-    ctx.fillRect(p.x + halfW, baseY - 1, halfW, docState.lineHeight);
-    ctx.fillStyle = "rgba(220,235,229,0.96)";
-    ctx.font = "11px Consolas, Monaco, monospace";
-    ctx.fillText("hL ^ hR", Math.min(width - 120, p.x + winW + 8), baseY);
-  }
 }
 
 let doneTimestamp = 0;
@@ -1503,7 +1257,6 @@ async function startComputation() {
   runState.chunkDone = 0;
   runState.chunkTotal = 0;
   runState.report = null;
-  mechState.startTime = 0;
   doneTimestamp = 0;
 
   setRunning(true);
@@ -3314,6 +3067,9 @@ const alphaNodes      = document.getElementById("alphaNodes");
 let forgeJobs = [];
 let selectedForgeJobId = "";
 let activeAlphaSessionJobId = "";
+let forgeJobsLastPollMs = 0;
+let forgeJobsLastPollAt = 0;
+let forgeJobsLastPollError = "";
 const forgeCustomScrollbarBindings = new Map();
 
 function pruneForgeCustomScrollbarBindings() {
@@ -4850,6 +4606,7 @@ async function pollForgeJobs() {
   const invokeJobs = forgeTauri?.invoke || window.__TAURI__?.core?.invoke;
   if (forgeJobsPolling || !invokeJobs) return;
   forgeJobsPolling = true;
+  const pollStartedAt = performance.now ? performance.now() : Date.now();
   try {
     bootTrace("jobs.poll.begin", {
       currentJobs: forgeJobs.length,
@@ -4864,6 +4621,9 @@ async function pollForgeJobs() {
         })
       : await invokeJobs("list_forge_jobs", { limit: 30 });
     const nextJobs = Array.isArray(jobs) ? jobs : [];
+    forgeJobsLastPollMs = Math.max(0, Math.round(((performance.now ? performance.now() : Date.now()) - pollStartedAt) * 10) / 10);
+    forgeJobsLastPollAt = Date.now();
+    forgeJobsLastPollError = "";
     bootTrace("jobs.poll.done", {
       returned: nextJobs.length,
     });
@@ -4896,10 +4656,146 @@ async function pollForgeJobs() {
     await refreshSelectedForgeJobManifest();
     await refreshSelectedForgeJobLog();
   } catch (err) {
+    forgeJobsLastPollMs = Math.max(0, Math.round(((performance.now ? performance.now() : Date.now()) - pollStartedAt) * 10) / 10);
+    forgeJobsLastPollAt = Date.now();
+    forgeJobsLastPollError = err?.message || String(err);
     bootTrace("jobs.poll.error", err?.message || String(err));
     if (alphaActiveTab === "forge") appendAlphaForge(`[mcp] jobs poll failed: ${err}`);
   } finally {
     forgeJobsPolling = false;
+  }
+}
+
+function compactTerminalText(value, max = 96) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
+}
+
+function forgeJobStatusCounts() {
+  const counts = { running: 0, pending: 0, failed: 0, completed: 0, other: 0 };
+  for (const job of forgeJobs || []) {
+    const status = String(job?.status || "").toLowerCase();
+    if (status === "running") counts.running += 1;
+    else if (status === "pending") counts.pending += 1;
+    else if (status === "failed" || status === "error") counts.failed += 1;
+    else if (status === "completed" || status === "done") counts.completed += 1;
+    else counts.other += 1;
+  }
+  return counts;
+}
+
+function numberOrZero(value) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function secondsToNs(value) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 1_000_000_000) : 0;
+}
+
+function formatNsValue(ns) {
+  const n = numberOrZero(ns);
+  if (!n) return "0";
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}s`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}ms`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}us`;
+  return `${Math.round(n)}ns`;
+}
+
+function jobPerfNs(job) {
+  const perf = job?.performance || {};
+  const synthNs = numberOrZero(perf.synthNs ?? perf.synth_ns) || secondsToNs(job?.synth_seconds ?? job?.synthSeconds);
+  const evalNs = numberOrZero(perf.evalNs ?? perf.eval_ns) || secondsToNs(job?.eval_seconds ?? job?.evalSeconds);
+  const totalNs = numberOrZero(perf.totalNs ?? perf.total_ns)
+    || numberOrZero(job?.total_elapsed_ns ?? job?.totalElapsedNs)
+    || secondsToNs(job?.total_seconds ?? job?.totalSeconds ?? job?.elapsed_seconds ?? job?.elapsedSeconds)
+    || (synthNs && evalNs ? synthNs + evalNs : 0);
+  return {
+    totalNs,
+    synthNs,
+    evalNs,
+    backendNs: numberOrZero(perf.backendNs ?? perf.backend_ns),
+    candidates: numberOrZero(perf.candidates ?? job?.candidates_evaluated ?? job?.candidatesEvaluated),
+    id: job?.jobId || job?.job_id || "",
+  };
+}
+
+function alphaReportPerfNs() {
+  const report = alphaRunState?.report || {};
+  const synthNs = secondsToNs(report.synth_seconds ?? report.synthSeconds);
+  const evalNs = secondsToNs(report.eval_seconds ?? report.evalSeconds);
+  return {
+    totalNs: synthNs + evalNs,
+    synthNs,
+    evalNs,
+    backendNs: 0,
+    candidates: numberOrZero(report.candidates_evaluated ?? report.candidatesEvaluated),
+    id: selectedForgeJobId || "alpha",
+  };
+}
+
+function formatForgePerfNsSummary() {
+  const samples = (forgeJobs || [])
+    .map(jobPerfNs)
+    .filter((perf) => perf.totalNs || perf.synthNs || perf.evalNs || perf.backendNs);
+  const live = alphaReportPerfNs();
+  if (live.totalNs || live.synthNs || live.evalNs) samples.unshift(live);
+  if (!samples.length) return "samples=0";
+  const totals = samples.map((perf) => perf.totalNs || perf.synthNs + perf.evalNs || perf.backendNs).filter(Boolean);
+  const latest = samples[0];
+  const sum = totals.reduce((acc, n) => acc + n, 0);
+  const avg = totals.length ? sum / totals.length : 0;
+  const max = totals.length ? Math.max(...totals) : 0;
+  const parts = [
+    `samples=${samples.length}`,
+    `latest=${formatNsValue(latest.totalNs || latest.synthNs + latest.evalNs || latest.backendNs)}`,
+  ];
+  if (latest.synthNs || latest.evalNs) {
+    parts.push(`synth=${formatNsValue(latest.synthNs)}`);
+    parts.push(`eval=${formatNsValue(latest.evalNs)}`);
+  }
+  parts.push(`avg=${formatNsValue(avg)}`);
+  parts.push(`max=${formatNsValue(max)}`);
+  if (latest.candidates) parts.push(`cand=${Math.round(latest.candidates)}`);
+  return parts.join(",");
+}
+
+function buildForgeTerminalStatusLine() {
+  const counts = forgeJobStatusCounts();
+  const bridgeStats = window.ForgeTauriBridge?.getStats?.() || {};
+  const staleSeconds = forgeJobsLastPollAt ? Math.round((Date.now() - forgeJobsLastPollAt) / 1000) : 0;
+  const health = forgeJobsLastPollError || Number(bridgeStats.timeouts || 0) > 0 || counts.failed > 0
+    ? "degraded"
+    : "ok";
+  const alphaPhase = alphaRunning ? "running" : (alphaRunState?.phase || "idle");
+  const section = String(activeSection || window.__forgeActiveSection?.() || "shell");
+  const selected = selectedForgeJobId ? shortHash(selectedForgeJobId, 8, 4) : "-";
+  const bits = [
+    `health=${health}`,
+    `ui=${section}`,
+    `jobs=${forgeJobs.length} r=${counts.running} p=${counts.pending} f=${counts.failed} c=${counts.completed}`,
+    `poll=${forgeJobsLastPollMs || 0}ms age=${staleSeconds}s`,
+    `alpha=${alphaPhase}`,
+    `selected=${selected}`,
+    `perf_ns ${formatForgePerfNsSummary()}`,
+    `bridge calls=${bridgeStats.calls || 0} err=${bridgeStats.errors || 0} timeout=${bridgeStats.timeouts || 0} inflight=${bridgeStats.inflight || 0}`,
+  ];
+  const problem = forgeJobsLastPollError || bridgeStats.lastError || "";
+  if (problem) bits.push(`last=${compactTerminalText(problem, 80)}`);
+  return bits.join(" | ");
+}
+
+function emitForgeTerminalStatus() {
+  try {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke || isWebExplorerSurface) return;
+    void invoke("alpha_debug_log", {
+      stage: "terminal.status",
+      details: buildForgeTerminalStatusLine(),
+    }).catch(() => {});
+  } catch (err) {
+    alphaTrace("terminal.status.error", err?.message || String(err));
   }
 }
 
@@ -4971,8 +4867,9 @@ function computeQuickFileHashDecimal(buf) {
 }
 
 function alphaTrace(stage, details = "") {
+  if (!forgeTraceIsUseful(stage)) return;
   const payload = typeof details === "string" ? details : JSON.stringify(details);
-  console.info(`[alpha-trace] ${stage}`, details);
+  if (forgeVerboseTerminalLogsEnabled()) console.info(`[alpha-trace] ${stage}`, details);
   const tauriApi = window.__TAURI__;
   if (!tauriApi?.core?.invoke) return;
   void tauriApi.core.invoke("alpha_debug_log", {
@@ -5143,18 +5040,6 @@ function calcVWAP(candles) {
     cumV  += c.volume || 1;
     return cumPV / cumV;
   });
-}
-
-// EMA crossover signals: long when fast crosses above slow, short vice versa.
-function detectEMACrossoverSignals(candles, fast, slow) {
-  const sigs = [];
-  for (let i = 1; i < candles.length; i++) {
-    const wa = fast[i-1] > slow[i-1];
-    const wb = fast[i]   > slow[i];
-    if (!wa && wb) sigs.push({ time: candles[i].time, type: "long",  price: candles[i].close, barIndex: i });
-    if ( wa && !wb) sigs.push({ time: candles[i].time, type: "short", price: candles[i].close, barIndex: i });
-  }
-  return sigs;
 }
 
 function recomputeIndicators(candles) {
@@ -6029,13 +5914,6 @@ function drawAlphaLogLines(x, y, width, height, emptyText) {
     alphaCtx.fillStyle = alphaLogLineColor(line);
     alphaCtx.fillText(line, x + pad, y + pad + (i - start) * lineH);
   }
-}
-
-function drawAlphaForgeLogs() {
-  const W = alphaCanvas.clientWidth;
-  const H = alphaCanvas.clientHeight;
-  alphaCtx.clearRect(0, 0, W, H);
-  drawAlphaLogLines(18, 18, W - 36, H - 36, "No logs - drop a CSV or let an agent start a job.");
 }
 
 function alphaDrawChartPriceSeries(ctx, entries, yOf, mode, options = {}) {
@@ -19150,6 +19028,10 @@ if (!isWebExplorerSurface && window.__TAURI__?.core?.invoke) {
   setInterval(() => {
     if (activeSection === "alpha" || selectedForgeJobId) void pollForgeJobs();
   }, 1000);
+  window.addEventListener("load", () => {
+    window.setTimeout(emitForgeTerminalStatus, 2500);
+    window.setInterval(emitForgeTerminalStatus, 10000);
+  }, { once: true });
 }
 if (!isWebExplorerSurface) {
   scheduleAlphaRender();

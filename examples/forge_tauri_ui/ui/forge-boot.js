@@ -5,10 +5,26 @@
     return window.ForgeTauriBridge || null;
   }
 
+  function verboseLogsEnabled() {
+    try {
+      if (window.__FORGE_VERBOSE_LOGS === true) return true;
+      if (new URLSearchParams(window.location.search || "").has("forgeVerboseLogs")) return true;
+      return window.localStorage?.getItem("forge.verboseLogs") === "true";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function traceIsUseful(stage) {
+    if (verboseLogsEnabled()) return true;
+    return /(\.error|\.failed|\.blocked|\.timeout|js\.error|unhandledrejection)/i.test(String(stage || ""));
+  }
+
   function trace(stage, details = "") {
     try {
+      if (!traceIsUseful(stage)) return;
       const payload = typeof details === "string" ? details : JSON.stringify(details);
-      console.info(`[forge-boot] ${stage}`, details);
+      if (verboseLogsEnabled()) console.info(`[forge-boot] ${stage}`, details);
       if (bridge()?.debugLog) {
         void bridge().debugLog(`boot.${stage}`, payload);
         return;

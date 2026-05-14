@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use super::dispatch::{BatchInput, PackedOutput};
 use super::hotplan::{HotPlan, HotProgram};
 use super::MonsterNode;
+#[cfg(any(feature = "cuda", feature = "wgpu"))]
 use crate::kasm::Ty;
 
 /// Persisted first-install bootstrap plan.

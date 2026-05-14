@@ -9033,49 +9033,6 @@
     }
   }
 
-  function drawGizmo() {
-    if (!els.gizmo) return;
-    // Axes projected from camera basis (approx: just rotate by camera angles)
-    const ce = Math.cos(camera.elevation), se = Math.sin(camera.elevation);
-    const ca = Math.cos(camera.azimuth),   sa = Math.sin(camera.azimuth);
-    // Build a rough view rotation (3x3) without translation
-    // World axes in view space:
-    const project = (vx, vy, vz) => {
-      // Rotate world → camera
-      // First azimuth around Z, then elevation around camera's right
-      const x1 =  ca * vx + sa * vy;
-      const y1 = -sa * vx + ca * vy;
-      const z1 =  vz;
-      const y2 =  ce * y1 + se * z1;
-      const z2 = -se * y1 + ce * z1;
-      // Screen: x right, y up (SVG y flipped)
-      return [x1 * 22, -z2 * 22];
-    };
-    const axes = [
-      { v: [ 1, 0, 0], col: AXIS_HEX.x,    lbl: "X" },
-      { v: [-1, 0, 0], col: AXIS_HEX.xNeg, lbl: "-X" },
-      { v: [ 0, 1, 0], col: AXIS_HEX.y,    lbl: "Y" },
-      { v: [ 0,-1, 0], col: AXIS_HEX.yNeg, lbl: "-Y" },
-      { v: [ 0, 0, 1], col: AXIS_HEX.z,    lbl: "Z" },
-      { v: [ 0, 0,-1], col: AXIS_HEX.zNeg, lbl: "-Z" },
-    ];
-    const nodes = axes.map((a) => {
-      const [px, py] = project(a.v[0], a.v[1], a.v[2]);
-      const depth = a.v[0] * sa * ce + a.v[1] * -ca * ce + a.v[2] * se;
-      return { ...a, px, py, depth };
-    }).sort((a, b) => a.depth - b.depth);
-    const parts = [];
-    parts.push('<circle cx="0" cy="0" r="2.2" fill="rgba(232,236,244,0.34)" />');
-    for (const a of nodes) {
-      const isNeg = a.lbl.startsWith("-");
-      const lineW = isNeg ? 1.2 : 1.7;
-      const dotR = isNeg ? 3.2 : 4.7;
-      parts.push(`<line x1="0" y1="0" x2="${a.px.toFixed(1)}" y2="${a.py.toFixed(1)}" stroke="${a.col}" stroke-opacity="${isNeg ? "0.55" : "0.88"}" stroke-width="${lineW}" stroke-linecap="round"/>`);
-      parts.push(`<circle cx="${a.px.toFixed(1)}" cy="${a.py.toFixed(1)}" r="${dotR}" fill="${a.col}" fill-opacity="${isNeg ? "0.52" : "0.86"}" />`);
-    }
-    els.gizmo.innerHTML = parts.join("");
-  }
-
   function drawGizmoAccurate(_proj = lastProj, view = lastView) {
     if (!els.gizmo || !view) return;
     const projectAxis = (vx, vy, vz) => {
