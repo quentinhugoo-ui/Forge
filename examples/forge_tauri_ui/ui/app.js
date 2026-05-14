@@ -1802,6 +1802,7 @@ const alphaSection = document.getElementById("alphaSection");
 
 function switchSection(name) {
   activeSection = name;
+  forgeSections?.setShellSection?.(name);
   forgeSection.hidden = name !== "forge";
   alphaSection.hidden = name !== "alpha";
   navForge.classList.toggle("active", name === "forge");
