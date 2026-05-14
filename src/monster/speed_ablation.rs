@@ -243,7 +243,7 @@ pub struct SpeedAblationAudit {
     pub ordering_relaxed_audits: u32,
     /// Σ.18 : count des fonctions hot avec `#[inline(always)]` ajouté.
     pub inline_always_applied: u32,
-    /// Σ.19 : doc PGO workflow exposée (true si README/CARNET documentent).
+    /// Σ.19 : doc PGO workflow exposée (true si README/docs documentent).
     pub pgo_workflow_documented: bool,
     /// Σ.20 : count des `pub` → `pub(crate)` appliqués (audit Wave 14).
     pub pub_to_crate_audits: u32,

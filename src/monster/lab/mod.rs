@@ -2808,7 +2808,7 @@ fn run_lab_batch_impl(iterations: usize) -> io::Result<()> {
 
     // Φ.ν.7.b — LiveAtlas: unified ATLASV2 inline atlas. Replaces HotAtlas
     // (custom format) + NoopAtlasIngest stub + the previous Φ.ν.7 forge.cas
-    // externalization (D9 amputated for perf — see CARNET). Programs are
+    // externalization (D9 amputated for perf — see Git history). Programs are
     // RAM-resident via `Arc<Program>`; one file (atlas-live.bin) holds the
     // serialized snapshot. Migration from legacy `hot-atlas.bin` runs
     // inside `LiveAtlas::open` if V2 file doesn't exist.

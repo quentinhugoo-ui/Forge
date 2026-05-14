@@ -4,7 +4,7 @@
 //! `src/introspection.rs` (le sous-dossier ne contenait qu'un fichier
 //! réel + un mod.rs de 9 lignes — pure indirection).
 //!
-//! Module qui prépare le terrain pour Ω-Φ.0..Ω-Φ.4 (cf. CARNET.md). Le
+//! Module qui prépare le terrain pour Ω-Φ.0..Ω-Φ.4 (cf. Git history). Le
 //! premier sous-cap est `LiveSnapshot` — capture content-addressed et
 //! reproductible de l'état logique d'une `MonsterNode`.
 //!

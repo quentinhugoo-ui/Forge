@@ -9,7 +9,7 @@
 //! Aucune étape autonome, aucun coordinateur additionnel. Le critère
 //! Ω-5.5 alias **Jour 0** : la boucle applique sa première rewrite sans
 //! intervention humaine. La date + le hash de la rewrite + le diff
-//! métrique sont gravés dans `CARNET.md`.
+//! métrique sont gravés par le commit/proof artifact correspondant.
 
 use std::cell::RefCell;
 use std::rc::Rc;

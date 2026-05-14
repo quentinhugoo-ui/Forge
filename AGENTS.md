@@ -120,4 +120,4 @@ The GitHub `master` branch is a clean snapshot history. The older local history 
 
 ## Documentation Rule
 
-Docs are context for agents, not an archive. Historical detail belongs in Git history. If a doc becomes noisy, compress it. Live objectives belong in `ROADMAP.md`, not in `CARNET.md` or private side lists.
+Docs are context for agents, not an archive. Historical detail belongs in Git history. If a doc becomes noisy, compress it. Live objectives belong in `ROADMAP.md`, not in private side lists.

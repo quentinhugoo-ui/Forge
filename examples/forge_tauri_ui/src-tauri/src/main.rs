@@ -113,7 +113,7 @@ use scan::{
 // ║       arithmétique). Constantes hash : copier de                   ║
 // ║       `src/kasm/program.rs::hash_i64`.                             ║
 // ║                                                                    ║
-// ║  Voir aussi : CLAUDE.md §6.1, CARNET.md entrée Φ.12.0+12.1.        ║
+// ║  Voir aussi : AGENTS.md et Git history.                            ║
 // ╚════════════════════════════════════════════════════════════════════╝
 
 /// SplitMix64 mixer reference (constants from kasm/program.rs:413).

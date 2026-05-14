@@ -20,7 +20,7 @@
 //! - Comparer l'énergie minimale entre deux versions d'un optimizer.
 //! - Préparer le terrain pour Ω-6.x où des KASM-réversibles seront introduits
 //!   (XOR avec carry preservé, contre-add, etc.) qui auront `Bijective`.
-//! - Mesurer une "journée MonsterNode" en joules cumulés (critère CARNET.md).
+//! - Mesurer une "journée MonsterNode" en joules cumulés (critère historique).
 //!
 //! ## Doctrine via negativa
 //!

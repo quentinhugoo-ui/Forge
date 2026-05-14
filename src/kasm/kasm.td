@@ -3,7 +3,7 @@
 // Ω-1.1 — Spécification formelle du dialecte `kasm` au format TableGen
 // LLVM/MLIR. Cet artifact est consommable par `mlir-tblgen` lorsque la
 // toolchain LLVM/MLIR est disponible. Tant qu'elle ne l'est pas (cf. mur
-// Windows toolchain documenté dans CARNET.md), ce fichier sert de
+// Windows toolchain documenté dans Git history), ce fichier sert de
 // **spécification de référence** : il fixe la sémantique du dialecte que
 // `src/kasm/mlir.rs` émet et parse.
 //
