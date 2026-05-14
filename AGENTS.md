@@ -28,6 +28,16 @@ Prefer shorter circuits. Remove obsolete nodes before adding new ones.
 
 Before writing code beyond a purely mechanical one-line edit, research the current state of the art when internet access is available: recent official docs, papers, serious repos, release notes and market direction. Then build as if Forge must live one step ahead of that state of the art, while staying verifiable locally.
 
+Code at the frontier, not at the average. For meaningful work, identify the wall being broken: latency, memory, context size, proof quality, UI branching, sandbox reach, agent autonomy or developer experience. Treat established practice as the floor, then push one wall with a small hypothesis, a local verifier, and a rollback path.
+
+Frontier code must be ambitious and disciplined:
+
+- prefer designs that collapse steps, remove actors or turn repeated decisions into verified reusable programs,
+- prototype experimental ideas behind narrow interfaces, deterministic tests, proof hashes, benchmarks or feature gates,
+- promote an experiment only when it beats the current path on clarity, speed, capability or verifiability,
+- delete failed experiments quickly instead of documenting around them,
+- never trade data safety, user approval, reproducibility or semantic verification for novelty.
+
 Every code change must reduce architectural drag:
 
 - delete obsolete code before adding new actors,
