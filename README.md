@@ -15,13 +15,16 @@ The product direction is simple: shorten the path between intent, memory, proof,
 - Godel machine: `src/godel/**`.
 - Tauri workbench: `examples/forge_tauri_ui/**`.
 - MCP binary: `examples/forge_tauri_ui/src-tauri/src/bin/forge_mcp.rs`.
-- Main UI sections: base Forge, Google/provider tools, Banger/3D, trading, real estate intelligence.
+- Main UI sections: shell/alpha/forge, WebExplorer, Google/provider tools, Banger/3D, trading with Bloomberg native panel, and real-estate/real-estate-main with contacts/fused agency tools.
+- Runtime integrations: Google OAuth, provider terminals, OANDA trading, native WebExplorer, Bloomberg live, Banger GPU lifecycle, real estate harvester.
 
 ## Agent Instructions
 
 Agents should read `AGENTS.md`.
 
 `CLAUDE.md` intentionally imports `AGENTS.md` with `@AGENTS.md` so Claude Code and Codex share one doctrine instead of two divergent copies.
+
+For the slash commands, sandbox levels, MCP surface and brain/memory runtime, read `FORGE_RUNTIME_ARCHITECTURE.md`.
 
 The short version:
 
@@ -31,6 +34,8 @@ The short version:
 - reduce architecture drag with every change,
 - use Forge/MCP discipline for large data, repeated compute and proof artifacts,
 - commit and push meaningful work before risky cleanup.
+
+For the exact live architecture and agent rules, `AGENTS.md` wins over this README.
 
 ## Quick Checks
 

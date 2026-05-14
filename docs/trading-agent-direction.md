@@ -14,6 +14,7 @@ An agent should be able to inspect market context, request compact metrics, prop
 - Pressure/3D view: `examples/forge_tauri_ui/src-tauri/src/trading_pressure.rs`
 - UI: `examples/forge_tauri_ui/ui/trading.js`, `examples/forge_tauri_ui/ui/app.js`, `examples/forge_tauri_ui/ui/styles.css`
 - Lab runner: `examples/lab_runner_trading.rs`
+- Native market/news panel: Bloomberg live commands are section-gated through the shared Tauri bridge.
 
 ## Rules
 
@@ -46,4 +47,5 @@ indicator agreement, signal age, drawdown, exposure
 - Route agent-written metrics through the existing Forge/Tauri bridge.
 - Cache metric outputs by content/config hash.
 - Preserve chart split/overlay state through the existing UI bridge rather than a parallel store.
+- Keep split-chart menus anchored through the existing topbar/menu system, not a second dropdown implementation.
 - Keep proof summaries short enough to send to any LLM.

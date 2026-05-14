@@ -1,6 +1,6 @@
 # CARNET
 
-Compact decision log for Forge. Do not append transcripts, brainstorm dumps or long historical plans here. Keep entries short enough that an agent can read the whole file.
+Non-active decision log for Forge. Do not append transcripts, objectives, brainstorm dumps or long historical plans here. Live objectives belong in `ROADMAP.md`; historical detail belongs in Git history.
 
 ## 2026-05-14 - GitHub backup
 
@@ -24,10 +24,11 @@ Compact decision log for Forge. Do not append transcripts, brainstorm dumps or l
 
 ## 2026-05-14 - Docs compaction
 
-- Active docs were reduced to a small set: `AGENTS.md`, `README.md`, `CLAUDE.md`, `ROADMAP.md`, `TOOLS&SANDBOX.md`.
+- Active docs were reduced to a small set: `AGENTS.md`, `README.md`, `CLAUDE.md`, `ROADMAP.md`, `FORGE_RUNTIME_ARCHITECTURE.md`.
 - Historical detail stays in Git, not in the live context.
 - New rule: if documentation becomes too noisy, compress it immediately instead of adding another document.
 - `AGENTS.md` is now the single agent doctrine; `CLAUDE.md` imports it and `README.md` stays human-facing.
+- Follow-up audit matched docs against code and added missing current surfaces: WebExplorer, Bloomberg native bridge, real estate contacts/fused tools, MCP brain tools and active UI sections.
 
 ## Permanent Decisions
 
