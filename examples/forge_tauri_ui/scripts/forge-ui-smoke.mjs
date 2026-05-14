@@ -137,6 +137,7 @@ expect("real estate source discovery writes source manifests", realEstateSourceD
 expect("real estate raw downloader writes content-addressed files", realEstateRawDownloader.includes("raw_downloads.jsonl") && realEstateRawDownloader.includes("rawPathForHash") && realEstateRawDownloader.includes("cacheStatus"));
 expect("real estate parser adapter registry captures SOTA tools", realEstateParserAdapters.includes('"duckdb"') && realEstateParserAdapters.includes('"tika"') && realEstateParserAdapters.includes('"docling"') && realEstateParserAdapters.includes('"magika"'));
 expect("real estate parser router emits normalized events", realEstateParserRouter.includes("normalized_events.jsonl") && realEstateParserRouter.includes("parseJsonLike") && realEstateParserRouter.includes("eventHash") && realEstateParserRouter.includes("selectAdapter"));
+expect("real estate parser router probes SOTA adapters before native fallback", realEstateParserRouter.includes("detectAvailableAdapters") && realEstateParserRouter.includes("spawnSync(command, [\"--version\"]") && realEstateParserRouter.includes("availableAdapters"));
 expect("real estate source pipeline orchestrates proofed stages", realEstateSourcePipeline.includes("pipeline_run.json") && realEstateSourcePipeline.includes("runStep(\"audit\"") && realEstateSourcePipeline.includes("proofHash") && realEstateSourcePipeline.includes("--adapters"));
 expect("real estate mode has a main house section button in the left titlebar", indexHtml.includes("realEstateHomeSectionBtn"));
 expect(

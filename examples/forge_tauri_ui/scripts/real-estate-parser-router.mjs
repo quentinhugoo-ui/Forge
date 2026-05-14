@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -35,6 +36,7 @@ if (!existsSync(adaptersPath)) fail(`parser adapters registry not found: ${adapt
 
 const startedAt = new Date().toISOString();
 const adapterRegistry = JSON.parse(readFileSync(adaptersPath, "utf8"));
+const availableAdapters = detectAvailableAdapters(adapterRegistry);
 const runId = sha256(`${startedAt}:${downloadsPath}:${adaptersPath}:${limit}`).slice(0, 16);
 const failures = [];
 const rawRecords = readJsonl(downloadsPath)
@@ -268,6 +270,7 @@ function buildSummary() {
     parsers,
     statuses,
     adapters,
+    availableAdapters,
     failures,
   };
   summary.proofHash = sha256(JSON.stringify({
@@ -278,6 +281,7 @@ function buildSummary() {
     parsers,
     statuses,
     adapters,
+    availableAdapters,
     failures,
     events: events.map((event) => event.eventHash),
   }));
@@ -286,7 +290,7 @@ function buildSummary() {
 
 function selectAdapter(format) {
   const route = adapterRegistry.routes?.[format] ?? adapterRegistry.routes?.unknown ?? ["native"];
-  const selected = route.includes("native") ? "native" : route[route.length - 1];
+  const selected = route.find((adapter) => adapter === "native" || availableAdapters[adapter]) ?? "native";
   const preferred = route[0] ?? "native";
   const selectedMeta = adapterRegistry.adapters?.[selected] ?? {};
   return {
@@ -296,9 +300,33 @@ function selectAdapter(format) {
     route,
     mode: selected === preferred ? "preferred" : "fallback",
     reason: selectedMeta.sotaReason ?? "deterministic local fallback",
-    externalAdaptersPending: route.filter((adapter) => adapter !== "native"),
+    available: selected === "native" || Boolean(availableAdapters[selected]),
+    externalAdaptersPending: route.filter((adapter) => adapter !== "native" && !availableAdapters[adapter]),
     universalModel: Object.keys(adapterRegistry.universalEventModel ?? {}),
   };
+}
+
+function detectAvailableAdapters(registry) {
+  const out = { native: true };
+  for (const [name, adapter] of Object.entries(registry.adapters ?? {})) {
+    if (name === "native") {
+      out.native = true;
+      continue;
+    }
+    out[name] = commandExists(adapter.command);
+  }
+  return out;
+}
+
+function commandExists(command) {
+  if (!command) return false;
+  const result = spawnSync(command, ["--version"], {
+    encoding: "utf8",
+    stdio: "ignore",
+    timeout: 1500,
+    windowsHide: true,
+  });
+  return !result.error && typeof result.status === "number";
 }
 
 function readJsonl(path) {
