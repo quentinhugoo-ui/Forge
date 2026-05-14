@@ -27,6 +27,7 @@ Compact decision log for Forge. Do not append transcripts, brainstorm dumps or l
 - Active docs were reduced to a small set: `AGENTS.md`, `README.md`, `CLAUDE.md`, `ROADMAP.md`, `TOOLS&SANDBOX.md`.
 - Historical detail stays in Git, not in the live context.
 - New rule: if documentation becomes too noisy, compress it immediately instead of adding another document.
+- `AGENTS.md` is now the single agent doctrine; `CLAUDE.md` imports it and `README.md` stays human-facing.
 
 ## Permanent Decisions
 
