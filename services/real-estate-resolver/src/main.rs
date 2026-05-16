@@ -64,18 +64,39 @@ fn main() -> Result<(), String> {
 }
 
 fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
-    let mut buffer = [0_u8; 32 * 1024];
-    let bytes_read = stream
-        .read(&mut buffer)
-        .map_err(|err| format!("read request: {err}"))?;
-    if bytes_read == 0 {
-        return Ok(());
-    }
-    let request = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
-    let request_line = request.lines().next().unwrap_or_default().to_string();
+    let mut request_bytes = Vec::with_capacity(32 * 1024);
+    let mut buffer = [0_u8; 8192];
+    let header_end = loop {
+        let bytes_read = stream
+            .read(&mut buffer)
+            .map_err(|err| format!("read request: {err}"))?;
+        if bytes_read == 0 {
+            if request_bytes.is_empty() {
+                return Ok(());
+            }
+            return write_json_response(
+                &mut stream,
+                400,
+                &json!({ "error": "bad_request", "message": "incomplete request headers" }),
+            );
+        }
+        request_bytes.extend_from_slice(&buffer[..bytes_read]);
+        if let Some(index) = find_header_end(&request_bytes) {
+            break index;
+        }
+        if request_bytes.len() > 256 * 1024 {
+            return write_json_response(
+                &mut stream,
+                413,
+                &json!({ "error": "payload_too_large", "message": "headers exceed limit" }),
+            );
+        }
+    };
+    let header_text = String::from_utf8_lossy(&request_bytes[..header_end]).to_string();
+    let request_line = header_text.lines().next().unwrap_or_default().to_string();
     let mut content_length = 0_usize;
     let mut auth_header = String::new();
-    for line in request.lines().skip(1) {
+    for line in header_text.lines().skip(1) {
         if line.is_empty() {
             break;
         }
@@ -89,16 +110,43 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
                 .unwrap_or_default();
         }
     }
-    let body = request
-        .split("\r\n\r\n")
-        .nth(1)
-        .or_else(|| request.split("\n\n").nth(1))
-        .unwrap_or_default();
-    let body = if content_length > 0 && body.len() >= content_length {
-        &body[..content_length]
+    let body_start = header_end
+        + if request_bytes.get(header_end..header_end + 4) == Some(b"\r\n\r\n") {
+            4
+        } else {
+            2
+        };
+    while request_bytes.len().saturating_sub(body_start) < content_length {
+        let bytes_read = stream
+            .read(&mut buffer)
+            .map_err(|err| format!("read request body: {err}"))?;
+        if bytes_read == 0 {
+            break;
+        }
+        request_bytes.extend_from_slice(&buffer[..bytes_read]);
+    }
+    let body_bytes = if content_length > 0 {
+        let available = request_bytes.len().saturating_sub(body_start);
+        if available < content_length {
+            return write_json_response(
+                &mut stream,
+                400,
+                &json!({ "error": "bad_request", "message": "request body shorter than content-length" }),
+            );
+        }
+        &request_bytes[body_start..body_start + content_length]
     } else {
-        body
+        &request_bytes[body_start..]
     };
+    let body = String::from_utf8_lossy(body_bytes).to_string();
+
+    if request_line.starts_with("GET /health ") {
+        return write_json_response(
+            &mut stream,
+            200,
+            &json!({ "ok": true, "service": "forge-real-estate-resolver" }),
+        );
+    }
 
     let expected_token = resolver_token();
     if let Some(expected) = expected_token {
@@ -115,14 +163,6 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
         }
     }
 
-    if request_line.starts_with("GET /health ") {
-        return write_json_response(
-            &mut stream,
-            200,
-            &json!({ "ok": true, "service": "forge-real-estate-resolver" }),
-        );
-    }
-
     if !request_line.starts_with("POST /api/agency/resolve ") {
         return write_json_response(
             &mut stream,
@@ -131,8 +171,16 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
         );
     }
 
-    let payload: ResolveRequest = serde_json::from_str(body)
-        .map_err(|err| format!("decode request json: {err}"))?;
+    let payload: ResolveRequest = match serde_json::from_str(&body) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return write_json_response(
+                &mut stream,
+                400,
+                &json!({ "error": "bad_request", "message": format!("decode request json: {err}") }),
+            );
+        }
+    };
     let agency_name = payload
         .agency_name
         .unwrap_or_else(|| "Agence Forge".to_string())
@@ -170,6 +218,13 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
     )
 }
 
+fn find_header_end(bytes: &[u8]) -> Option<usize> {
+    bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .or_else(|| bytes.windows(2).position(|window| window == b"\n\n"))
+}
+
 fn write_json_response(
     stream: &mut TcpStream,
     status: u16,
@@ -177,8 +232,11 @@ fn write_json_response(
 ) -> Result<(), String> {
     let reason = match status {
         200 => "OK",
+        400 => "Bad Request",
         401 => "Unauthorized",
         404 => "Not Found",
+        413 => "Payload Too Large",
+        500 => "Internal Server Error",
         _ => "OK",
     };
     let body = serde_json::to_string(payload).map_err(|err| format!("encode response: {err}"))?;
