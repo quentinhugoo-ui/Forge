@@ -1,0 +1,9 @@
+[package]
+name = "forge-real-estate-resolver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { version = "0.13.3", default-features = false, features = ["blocking", "json", "rustls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
