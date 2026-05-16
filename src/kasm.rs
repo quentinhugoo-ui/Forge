@@ -14,13 +14,15 @@
 //! Public paths (`crate::kasm::Program`, `crate::kasm::execute`, ...)
 //! are preserved through the re-exports below.
 
-
-
-
 pub use interpreter::{compose, execute, execute_with_fractal, try_execute_i64_inline, FractalDispatcher};
 pub use mlir::{
     canonical_mlir_text, emit_mlir, hash_mlir_canonical, hash_mlir_canonical_hex, parse_mlir,
     MlirError,
+};
+pub use interop::{
+    compile_wit_export_stub, lower_mlir_func_to_kasm, parse_wit_component_contract,
+    InteropError, KasmAbiType, MlirLoweringReport, WasmComponentContract, WasmFunction,
+    WasmInterface, WasmWorld,
 };
 pub use optimizer::{canonicalize, cse, semantic_fingerprint, simplify, static_output};
 pub use program::{MultiMethod, Program};
@@ -5107,6 +5109,841 @@ mod tests {
             %n2 = kasm.output %n1 : i64\n\
             }\n";
         assert!(parse_mlir(bad).is_err());
+    }
+}
+
+}
+
+pub mod interop {
+//! KASM interop front doors for WASM Component Model/WIT and external MLIR.
+//!
+//! This is intentionally an importer/lowering layer, not a runtime dependency:
+//! WIT gives KASM typed component contracts, and simple MLIR arithmetic can be
+//! lowered into native KASM DAGs. Unsupported constructs fail closed.
+
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+
+use super::program::Program;
+use super::types::{KasmError, Node, Target, Ty, MAX_SLOTS};
+
+#[derive(Debug)]
+pub enum InteropError {
+    Wit(String),
+    Mlir(String),
+    UnsupportedType(String),
+    UnsupportedOp(String),
+    MissingWorld(String),
+    MissingFunction(String),
+    TooManySlots(usize),
+    BadInteger(String),
+    Kasm(KasmError),
+}
+
+impl std::fmt::Display for InteropError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InteropError::Wit(msg) => write!(f, "WIT parse error: {msg}"),
+            InteropError::Mlir(msg) => write!(f, "MLIR lowering error: {msg}"),
+            InteropError::UnsupportedType(ty) => write!(f, "unsupported interop type: {ty}"),
+            InteropError::UnsupportedOp(op) => write!(f, "unsupported interop op: {op}"),
+            InteropError::MissingWorld(name) => write!(f, "missing WIT world: {name}"),
+            InteropError::MissingFunction(name) => write!(f, "missing function: {name}"),
+            InteropError::TooManySlots(count) => write!(f, "too many ABI slots: {count}"),
+            InteropError::BadInteger(value) => write!(f, "bad integer literal: {value}"),
+            InteropError::Kasm(err) => write!(f, "kasm: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for InteropError {}
+
+impl From<KasmError> for InteropError {
+    fn from(err: KasmError) -> Self {
+        InteropError::Kasm(err)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum KasmAbiType {
+    Bool,
+    S32,
+    S64,
+    U32,
+    U64,
+    F64,
+    String,
+    Unit,
+    Unsupported(String),
+}
+
+impl KasmAbiType {
+    pub fn from_wit(raw: &str) -> Self {
+        match raw.trim() {
+            "bool" => Self::Bool,
+            "s32" => Self::S32,
+            "s64" => Self::S64,
+            "u32" => Self::U32,
+            "u64" => Self::U64,
+            "f64" => Self::F64,
+            "string" => Self::String,
+            "" | "unit" => Self::Unit,
+            other => Self::Unsupported(other.to_string()),
+        }
+    }
+
+    pub fn to_kasm_ty(&self) -> Result<Ty, InteropError> {
+        match self {
+            KasmAbiType::Bool => Ok(Ty::Bool),
+            KasmAbiType::S32 | KasmAbiType::S64 | KasmAbiType::U32 | KasmAbiType::U64 => Ok(Ty::I64),
+            KasmAbiType::F64 => Ok(Ty::F64),
+            KasmAbiType::Unit | KasmAbiType::String | KasmAbiType::Unsupported(_) => {
+                Err(InteropError::UnsupportedType(format!("{self:?}")))
+            }
+        }
+    }
+
+    fn is_numeric_or_bool(&self) -> bool {
+        matches!(
+            self,
+            KasmAbiType::Bool
+                | KasmAbiType::S32
+                | KasmAbiType::S64
+                | KasmAbiType::U32
+                | KasmAbiType::U64
+                | KasmAbiType::F64
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmFunction {
+    pub name: String,
+    pub params: Vec<(String, KasmAbiType)>,
+    pub result: KasmAbiType,
+}
+
+impl WasmFunction {
+    pub fn kasm_input_types(&self) -> Result<Vec<Ty>, InteropError> {
+        self.params.iter().map(|(_, ty)| ty.to_kasm_ty()).collect()
+    }
+
+    pub fn kasm_output_types(&self) -> Result<Vec<Ty>, InteropError> {
+        if self.result == KasmAbiType::Unit {
+            Ok(Vec::new())
+        } else {
+            Ok(vec![self.result.to_kasm_ty()?])
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmInterface {
+    pub name: String,
+    pub functions: Vec<WasmFunction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmWorld {
+    pub name: String,
+    pub imports: Vec<WasmFunction>,
+    pub exports: Vec<WasmFunction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmComponentContract {
+    pub package: Option<String>,
+    pub interfaces: Vec<WasmInterface>,
+    pub worlds: Vec<WasmWorld>,
+    pub contract_hash: String,
+}
+
+pub fn parse_wit_component_contract(text: &str) -> Result<WasmComponentContract, InteropError> {
+    let canonical = strip_wit_comments(text)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let package = canonical.lines().find_map(|line| {
+        line.strip_prefix("package ")
+            .and_then(|rest| rest.strip_suffix(';'))
+            .map(|value| value.trim().to_string())
+    });
+    let mut interfaces = Vec::new();
+    let mut worlds = Vec::new();
+    let lines: Vec<&str> = canonical.lines().collect();
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = lines[i];
+        if let Some(name) = block_name(line, "interface") {
+            let (body, next) = collect_block(&lines, i)?;
+            let functions = parse_wit_functions(&body, None)?;
+            interfaces.push(WasmInterface { name, functions });
+            i = next;
+            continue;
+        }
+        if let Some(name) = block_name(line, "world") {
+            let (body, next) = collect_block(&lines, i)?;
+            let imports = parse_wit_functions(&body, Some("import"))?;
+            let exports = parse_wit_functions(&body, Some("export"))?;
+            worlds.push(WasmWorld { name, imports, exports });
+            i = next;
+            continue;
+        }
+        i += 1;
+    }
+    let contract_hash = hash_text("kasm-wit-contract-v0", &canonical);
+    Ok(WasmComponentContract { package, interfaces, worlds, contract_hash })
+}
+
+pub fn compile_wit_export_stub(
+    wit_text: &str,
+    world_name: &str,
+    export_name: &str,
+) -> Result<Program, InteropError> {
+    let contract = parse_wit_component_contract(wit_text)?;
+    let world = contract
+        .worlds
+        .iter()
+        .find(|world| world.name == world_name)
+        .ok_or_else(|| InteropError::MissingWorld(world_name.to_string()))?;
+    let function = world
+        .exports
+        .iter()
+        .find(|function| function.name == export_name)
+        .ok_or_else(|| InteropError::MissingFunction(export_name.to_string()))?;
+    compile_wasm_function_contract_stub(function)
+}
+
+fn compile_wasm_function_contract_stub(function: &WasmFunction) -> Result<Program, InteropError> {
+    if function.params.len() > MAX_SLOTS as usize {
+        return Err(InteropError::TooManySlots(function.params.len()));
+    }
+    if function.result == KasmAbiType::Unit {
+        return Err(InteropError::UnsupportedType("unit result has no KASM output".into()));
+    }
+    if !function.params.iter().all(|(_, ty)| ty.is_numeric_or_bool()) || !function.result.is_numeric_or_bool() {
+        return Err(InteropError::UnsupportedType("only numeric/bool WIT signatures lower to KASM v0".into()));
+    }
+
+    let mut nodes = Vec::new();
+    for (slot, (_, ty)) in function.params.iter().enumerate() {
+        nodes.push(match ty.to_kasm_ty()? {
+            Ty::I64 => Node::input(slot as u8),
+            Ty::Bool => Node { op: super::types::Op::Input, ty: Ty::Bool, a: 0, b: 0, imm: slot as i16 },
+            Ty::F64 => Node::input_f64(slot as u8),
+            Ty::VecI64 => return Err(InteropError::UnsupportedType("vec<i64>".into())),
+        });
+    }
+    let output_ty = function.result.to_kasm_ty()?;
+    let result_ref = if nodes.is_empty() {
+        nodes.push(match output_ty {
+            Ty::F64 => Node::const_f64(0),
+            Ty::Bool => Node::eq(0, 0),
+            Ty::I64 => Node::const_i64(0),
+            Ty::VecI64 => return Err(InteropError::UnsupportedType("vec<i64>".into())),
+        });
+        0
+    } else {
+        let mut current = 0u16;
+        for idx in 1..nodes.len() {
+            nodes.push(Node::hash64(current));
+            let hashed = (nodes.len() - 1) as u16;
+            nodes.push(Node::bit_xor(hashed, idx as u16));
+            current = (nodes.len() - 1) as u16;
+        }
+        if output_ty == Ty::F64 {
+            nodes.push(Node::f64_from_i64(current));
+            (nodes.len() - 1) as u16
+        } else if output_ty == Ty::Bool {
+            nodes.push(Node::const_i64(0));
+            let zero = (nodes.len() - 1) as u16;
+            nodes.push(Node::eq(current, zero));
+            (nodes.len() - 1) as u16
+        } else {
+            current
+        }
+    };
+    nodes.push(Node::output(result_ref, output_ty));
+    Program::new(Target::Auto, function.params.len() as u8, 1, nodes.len() as u32, nodes).map_err(Into::into)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MlirLoweringReport {
+    pub function: String,
+    pub lowered_ops: usize,
+    pub lowered_loops: usize,
+    pub inputs: usize,
+    pub outputs: usize,
+    pub program_hash: String,
+}
+
+pub fn lower_mlir_func_to_kasm(text: &str, function_name: &str) -> Result<(Program, MlirLoweringReport), InteropError> {
+    let (signature, body) = extract_mlir_func(text, function_name)?;
+    if signature.args.len() > MAX_SLOTS as usize {
+        return Err(InteropError::TooManySlots(signature.args.len()));
+    }
+    if signature.results.len() != 1 {
+        return Err(InteropError::Mlir("only one-result MLIR funcs lower to KASM v0".into()));
+    }
+    let mut nodes = Vec::new();
+    let mut values = BTreeMap::<String, (u16, Ty)>::new();
+    let mut const_values = BTreeMap::<String, i64>::new();
+    for (slot, (name, ty)) in signature.args.iter().enumerate() {
+        let kasm_ty = mlir_type_to_kasm(ty)?;
+        let node = match kasm_ty {
+            Ty::I64 => Node::input(slot as u8),
+            Ty::Bool => Node { op: super::types::Op::Input, ty: Ty::Bool, a: 0, b: 0, imm: slot as i16 },
+            Ty::F64 => Node::input_f64(slot as u8),
+            Ty::VecI64 => return Err(InteropError::UnsupportedType(ty.clone())),
+        };
+        nodes.push(node);
+        values.insert(name.clone(), (slot as u16, kasm_ty));
+    }
+    let mut lowered_ops = 0usize;
+    let mut lowered_loops = 0usize;
+    let mut return_value = None;
+    let lines: Vec<&str> = body.lines().collect();
+    let mut line_idx = 0usize;
+    while line_idx < lines.len() {
+        let raw = lines[line_idx];
+        let line = raw.trim();
+        if line.is_empty() || line == "{" || line == "}" {
+            line_idx += 1;
+            continue;
+        }
+        if line.starts_with("return ") || line.starts_with("func.return ") {
+            let value_name = line
+                .split_whitespace()
+                .nth(1)
+                .ok_or_else(|| InteropError::Mlir("return missing operand".into()))?;
+            let (idx, ty) = *values
+                .get(value_name)
+                .ok_or_else(|| InteropError::Mlir(format!("unknown return value {value_name}")))?;
+            return_value = Some((idx, ty));
+            line_idx += 1;
+            continue;
+        }
+        let Some((lhs, rhs)) = line.split_once(" = ") else {
+            line_idx += 1;
+            continue;
+        };
+        let lhs = lhs.trim().to_string();
+        if rhs.trim_start().starts_with("scf.for ") {
+            let (loop_body, next_idx) = collect_mlir_nested_block(&lines, line_idx)?;
+            let (result_idx, result_ty, ops) =
+                lower_scf_for(rhs.trim(), &loop_body, &mut nodes, &values, &const_values)?;
+            values.insert(lhs, (result_idx, result_ty));
+            lowered_ops += ops;
+            lowered_loops += 1;
+            line_idx = next_idx;
+            continue;
+        }
+        let node = lower_mlir_op(rhs.trim(), &values)?;
+        let ty = node.ty;
+        nodes.push(node);
+        values.insert(lhs, ((nodes.len() - 1) as u16, ty));
+        if let Some(value) = parse_mlir_constant_i64(rhs.trim())? {
+            const_values.insert(line.split_once(" = ").unwrap().0.trim().to_string(), value);
+        }
+        lowered_ops += 1;
+        line_idx += 1;
+    }
+    let (result_idx, result_ty) = return_value.ok_or_else(|| InteropError::Mlir("missing return".into()))?;
+    nodes.push(Node::output(result_idx, result_ty));
+    let program = Program::new(Target::Auto, signature.args.len() as u8, 1, nodes.len() as u32, nodes)?;
+    let report = MlirLoweringReport {
+        function: function_name.to_string(),
+        lowered_ops,
+        lowered_loops,
+        inputs: signature.args.len(),
+        outputs: 1,
+        program_hash: program.structural_hash_hex(),
+    };
+    Ok((program, report))
+}
+
+fn strip_wit_comments(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines() {
+        let line = line.split("//").next().unwrap_or("");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+fn block_name(line: &str, keyword: &str) -> Option<String> {
+    let rest = line.strip_prefix(keyword)?.trim_start();
+    let name = rest.split([' ', '{']).next()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+fn collect_block(lines: &[&str], start: usize) -> Result<(String, usize), InteropError> {
+    let mut body = String::new();
+    let mut depth = 0i32;
+    for (idx, line) in lines.iter().enumerate().skip(start) {
+        depth += line.matches('{').count() as i32;
+        depth -= line.matches('}').count() as i32;
+        if idx > start {
+            body.push_str(line);
+            body.push('\n');
+        }
+        if idx >= start && depth == 0 {
+            return Ok((body, idx + 1));
+        }
+    }
+    Err(InteropError::Wit("unterminated block".into()))
+}
+
+fn parse_wit_functions(body: &str, direction: Option<&str>) -> Result<Vec<WasmFunction>, InteropError> {
+    let mut functions = Vec::new();
+    for stmt in body.split(';') {
+        let stmt = stmt.trim();
+        if !stmt.contains(": func") {
+            continue;
+        }
+        let stmt = match direction {
+            Some(prefix) => {
+                let Some(rest) = stmt.strip_prefix(prefix) else {
+                    continue;
+                };
+                rest.trim()
+            }
+            None => stmt,
+        };
+        functions.push(parse_wit_function(stmt)?);
+    }
+    Ok(functions)
+}
+
+fn parse_wit_function(stmt: &str) -> Result<WasmFunction, InteropError> {
+    let (name, rest) = stmt
+        .split_once(":")
+        .ok_or_else(|| InteropError::Wit(format!("bad function declaration `{stmt}`")))?;
+    let rest = rest.trim();
+    let args_start = rest.find('(').ok_or_else(|| InteropError::Wit(format!("missing params in `{stmt}`")))?;
+    let args_end = rest[args_start + 1..]
+        .find(')')
+        .map(|idx| idx + args_start + 1)
+        .ok_or_else(|| InteropError::Wit(format!("unterminated params in `{stmt}`")))?;
+    let params_text = &rest[args_start + 1..args_end];
+    let mut params = Vec::new();
+    for param in params_text.split(',').map(str::trim).filter(|part| !part.is_empty()) {
+        let (name, ty) = param
+            .split_once(':')
+            .ok_or_else(|| InteropError::Wit(format!("bad param `{param}`")))?;
+        params.push((name.trim().to_string(), KasmAbiType::from_wit(ty.trim())));
+    }
+    let result = rest[args_end + 1..]
+        .split_once("->")
+        .map(|(_, ty)| KasmAbiType::from_wit(ty.trim()))
+        .unwrap_or(KasmAbiType::Unit);
+    Ok(WasmFunction { name: name.trim().to_string(), params, result })
+}
+
+#[derive(Debug)]
+struct MlirSignature {
+    args: Vec<(String, String)>,
+    results: Vec<String>,
+}
+
+fn extract_mlir_func(text: &str, name: &str) -> Result<(MlirSignature, String), InteropError> {
+    let needle = format!("func.func @{name}");
+    let start = text
+        .find(&needle)
+        .ok_or_else(|| InteropError::MissingFunction(name.to_string()))?;
+    let after = &text[start..];
+    let header_end = after.find('{').ok_or_else(|| InteropError::Mlir("func body missing `{`".into()))?;
+    let header = after[..header_end].trim();
+    let end = find_matching_brace(after, header_end)?;
+    Ok((parse_mlir_signature(header)?, after[header_end + 1..end].to_string()))
+}
+
+fn parse_mlir_signature(header: &str) -> Result<MlirSignature, InteropError> {
+    let args_start = header.find('(').ok_or_else(|| InteropError::Mlir("signature missing args".into()))?;
+    let args_end = header[args_start + 1..]
+        .find(')')
+        .map(|idx| idx + args_start + 1)
+        .ok_or_else(|| InteropError::Mlir("signature args not closed".into()))?;
+    let mut args = Vec::new();
+    for arg in header[args_start + 1..args_end].split(',').map(str::trim).filter(|arg| !arg.is_empty()) {
+        let (name, ty) = arg
+            .split_once(':')
+            .ok_or_else(|| InteropError::Mlir(format!("bad arg `{arg}`")))?;
+        args.push((name.trim().to_string(), ty.trim().to_string()));
+    }
+    let results = header[args_end + 1..]
+        .split_once("->")
+        .map(|(_, rest)| {
+            rest.trim()
+                .trim_start_matches('(')
+                .trim_end_matches(')')
+                .split(',')
+                .map(str::trim)
+                .filter(|ty| !ty.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(MlirSignature { args, results })
+}
+
+fn lower_mlir_op(rhs: &str, values: &BTreeMap<String, (u16, Ty)>) -> Result<Node, InteropError> {
+    if rhs.starts_with("arith.constant ") {
+        let value = rhs
+            .split_whitespace()
+            .nth(1)
+            .ok_or_else(|| InteropError::Mlir("constant missing value".into()))?;
+        let value = value.parse::<i16>().map_err(|_| InteropError::BadInteger(value.to_string()))?;
+        return Ok(Node::const_i64(value));
+    }
+    let op = rhs.split_whitespace().next().unwrap_or("");
+    let operands = rhs
+        .split_once(' ')
+        .map(|(_, rest)| rest.split(':').next().unwrap_or(rest))
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|part| part.starts_with('%'))
+        .collect::<Vec<_>>();
+    let binary = |ctor: fn(u16, u16) -> Node| -> Result<Node, InteropError> {
+        if operands.len() != 2 {
+            return Err(InteropError::Mlir(format!("{op} expects 2 operands")));
+        }
+        let a = values.get(operands[0]).ok_or_else(|| InteropError::Mlir(format!("unknown value {}", operands[0])))?.0;
+        let b = values.get(operands[1]).ok_or_else(|| InteropError::Mlir(format!("unknown value {}", operands[1])))?.0;
+        Ok(ctor(a, b))
+    };
+    match op {
+        "arith.addi" => binary(Node::add),
+        "arith.subi" => binary(Node::sub),
+        "arith.muli" => binary(Node::mul),
+        "arith.andi" => binary(Node::bit_and),
+        "arith.ori" => binary(Node::bit_or),
+        "arith.xori" => binary(Node::bit_xor),
+        "arith.cmpi" => {
+            if rhs.contains(" eq,") {
+                binary(Node::eq)
+            } else if rhs.contains(" slt,") {
+                binary(Node::lt)
+            } else if rhs.contains(" sle,") {
+                binary(Node::le)
+            } else {
+                Err(InteropError::UnsupportedOp(rhs.to_string()))
+            }
+        }
+        _ => Err(InteropError::UnsupportedOp(op.to_string())),
+    }
+}
+
+const MLIR_SCF_FOR_UNROLL_MAX: i64 = 64;
+
+fn lower_scf_for(
+    rhs: &str,
+    body: &[String],
+    nodes: &mut Vec<Node>,
+    outer_values: &BTreeMap<String, (u16, Ty)>,
+    outer_consts: &BTreeMap<String, i64>,
+) -> Result<(u16, Ty, usize), InteropError> {
+    let spec = parse_scf_for_header(rhs, outer_consts)?;
+    if spec.trip_count < 0 || spec.trip_count > MLIR_SCF_FOR_UNROLL_MAX {
+        return Err(InteropError::UnsupportedOp(format!(
+            "scf.for trip count {} exceeds KASM unroll budget {}",
+            spec.trip_count, MLIR_SCF_FOR_UNROLL_MAX
+        )));
+    }
+    let (mut acc_idx, acc_ty) = *outer_values
+        .get(&spec.init_value)
+        .ok_or_else(|| InteropError::Mlir(format!("unknown scf.for init {}", spec.init_value)))?;
+    let result_ty = mlir_type_to_kasm(&spec.result_type)?;
+    if result_ty != acc_ty {
+        return Err(InteropError::Mlir("scf.for result type does not match iter_arg".into()));
+    }
+    let mut lowered_ops = 0usize;
+    for step_idx in 0..spec.trip_count {
+        let iter_value = spec.lower + step_idx * spec.step;
+        if iter_value < i16::MIN as i64 || iter_value > i16::MAX as i64 {
+            return Err(InteropError::BadInteger(iter_value.to_string()));
+        }
+        nodes.push(Node::const_i64(iter_value as i16));
+        let iter_ref = (nodes.len() - 1) as u16;
+        let mut local_values = outer_values.clone();
+        let mut local_consts = outer_consts.clone();
+        local_values.insert(spec.iter_var.clone(), (iter_ref, Ty::I64));
+        local_consts.insert(spec.iter_var.clone(), iter_value);
+        local_values.insert(spec.acc_var.clone(), (acc_idx, acc_ty));
+        let mut yielded = None;
+        for raw in body {
+            let line = raw.trim();
+            if line.is_empty() || line == "{" || line == "}" {
+                continue;
+            }
+            if line.starts_with("scf.yield ") {
+                let value_name = line
+                    .split_whitespace()
+                    .nth(1)
+                    .ok_or_else(|| InteropError::Mlir("scf.yield missing value".into()))?;
+                let (idx, ty) = *local_values
+                    .get(value_name)
+                    .ok_or_else(|| InteropError::Mlir(format!("unknown scf.yield value {value_name}")))?;
+                yielded = Some((idx, ty));
+                continue;
+            }
+            let Some((lhs, rhs)) = line.split_once(" = ") else {
+                continue;
+            };
+            if rhs.trim_start().starts_with("scf.for ") {
+                return Err(InteropError::UnsupportedOp("nested scf.for".into()));
+            }
+            let node = lower_mlir_op(rhs.trim(), &local_values)?;
+            let ty = node.ty;
+            nodes.push(node);
+            local_values.insert(lhs.trim().to_string(), ((nodes.len() - 1) as u16, ty));
+            if let Some(value) = parse_mlir_constant_i64(rhs.trim())? {
+                local_consts.insert(lhs.trim().to_string(), value);
+            }
+            lowered_ops += 1;
+        }
+        let (next_acc, next_ty) = yielded.ok_or_else(|| InteropError::Mlir("scf.for body missing scf.yield".into()))?;
+        if next_ty != acc_ty {
+            return Err(InteropError::Mlir("scf.yield type does not match iter_arg".into()));
+        }
+        acc_idx = next_acc;
+    }
+    Ok((acc_idx, result_ty, lowered_ops))
+}
+
+struct ScfForSpec {
+    iter_var: String,
+    lower: i64,
+    step: i64,
+    trip_count: i64,
+    acc_var: String,
+    init_value: String,
+    result_type: String,
+}
+
+fn parse_scf_for_header(rhs: &str, consts: &BTreeMap<String, i64>) -> Result<ScfForSpec, InteropError> {
+    let header = rhs.trim().trim_end_matches('{').trim();
+    let rest = header
+        .strip_prefix("scf.for ")
+        .ok_or_else(|| InteropError::Mlir("expected scf.for".into()))?;
+    let tokens: Vec<&str> = rest.split_whitespace().collect();
+    if tokens.len() < 7 || tokens.get(1) != Some(&"=") || tokens.get(3) != Some(&"to") || tokens.get(5) != Some(&"step") {
+        return Err(InteropError::Mlir(format!("bad scf.for header `{rhs}`")));
+    }
+    let lower = const_ref(tokens[2], consts)?;
+    let upper = const_ref(tokens[4], consts)?;
+    let step = const_ref(tokens[6], consts)?;
+    if step <= 0 {
+        return Err(InteropError::UnsupportedOp("scf.for requires positive constant step".into()));
+    }
+    let trip_count = if upper <= lower { 0 } else { (upper - lower + step - 1) / step };
+    let iter_args_start = header
+        .find("iter_args(")
+        .ok_or_else(|| InteropError::Mlir("scf.for requires iter_args".into()))?;
+    let iter_args_rest = &header[iter_args_start + "iter_args(".len()..];
+    let iter_args_end = iter_args_rest
+        .find(')')
+        .ok_or_else(|| InteropError::Mlir("scf.for iter_args not closed".into()))?;
+    let (acc_var, init_value) = iter_args_rest[..iter_args_end]
+        .split_once('=')
+        .ok_or_else(|| InteropError::Mlir("scf.for iter_args expects `%acc = %init`".into()))?;
+    let result_type = header
+        .split_once("->")
+        .map(|(_, rest)| rest.trim().trim_start_matches('(').trim_end_matches(')').trim().to_string())
+        .ok_or_else(|| InteropError::Mlir("scf.for missing result type".into()))?;
+    Ok(ScfForSpec {
+        iter_var: tokens[0].to_string(),
+        lower,
+        step,
+        trip_count,
+        acc_var: acc_var.trim().to_string(),
+        init_value: init_value.trim().to_string(),
+        result_type,
+    })
+}
+
+fn const_ref(token: &str, consts: &BTreeMap<String, i64>) -> Result<i64, InteropError> {
+    token
+        .parse::<i64>()
+        .ok()
+        .or_else(|| consts.get(token).copied())
+        .ok_or_else(|| InteropError::Mlir(format!("expected constant loop bound, got {token}")))
+}
+
+fn parse_mlir_constant_i64(rhs: &str) -> Result<Option<i64>, InteropError> {
+    if !rhs.starts_with("arith.constant ") {
+        return Ok(None);
+    }
+    let value = rhs
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| InteropError::Mlir("constant missing value".into()))?;
+    value
+        .parse::<i64>()
+        .map(Some)
+        .map_err(|_| InteropError::BadInteger(value.to_string()))
+}
+
+fn collect_mlir_nested_block(lines: &[&str], start: usize) -> Result<(Vec<String>, usize), InteropError> {
+    let mut depth = lines[start].matches('{').count() as i32 - lines[start].matches('}').count() as i32;
+    if depth <= 0 {
+        return Err(InteropError::Mlir("nested MLIR block missing `{`".into()));
+    }
+    let mut body = Vec::new();
+    for idx in start + 1..lines.len() {
+        let line = lines[idx];
+        let close_count = line.matches('}').count() as i32;
+        if depth - close_count <= 0 {
+            return Ok((body, idx + 1));
+        }
+        body.push(line.to_string());
+        depth += line.matches('{').count() as i32 - close_count;
+    }
+    Err(InteropError::Mlir("unterminated nested MLIR block".into()))
+}
+
+fn find_matching_brace(text: &str, open_idx: usize) -> Result<usize, InteropError> {
+    let mut depth = 0i32;
+    for (idx, ch) in text.char_indices().skip_while(|(idx, _)| *idx < open_idx) {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(InteropError::Mlir("unmatched `{`".into()))
+}
+
+fn mlir_type_to_kasm(ty: &str) -> Result<Ty, InteropError> {
+    match ty.trim() {
+        "i1" => Ok(Ty::Bool),
+        "i32" | "i64" => Ok(Ty::I64),
+        "f64" => Ok(Ty::F64),
+        other => Err(InteropError::UnsupportedType(other.to_string())),
+    }
+}
+
+fn hash_text(domain: &str, text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kasm::execute;
+
+    #[test]
+    fn wit_world_exports_lower_to_kasm_contract_stub() {
+        let wit = r#"
+            package forge:demo@0.1.0;
+
+            interface math {
+              add: func(x: s64, y: s64) -> s64;
+            }
+
+            world plugin {
+              export add: func(x: s64, y: s64) -> s64;
+            }
+        "#;
+        let contract = parse_wit_component_contract(wit).expect("wit");
+        assert_eq!(contract.package.as_deref(), Some("forge:demo@0.1.0"));
+        assert_eq!(contract.interfaces[0].functions[0].name, "add");
+        assert_eq!(contract.worlds[0].exports[0].kasm_input_types().unwrap(), vec![Ty::I64, Ty::I64]);
+
+        let program = compile_wit_export_stub(wit, "plugin", "add").expect("stub");
+        assert_eq!(program.inputs(), 2);
+        assert_eq!(program.outputs(), 1);
+        assert!(program.nodes().iter().any(|node| node.op == super::super::types::Op::Hash64));
+    }
+
+    #[test]
+    fn mlir_arith_func_lowers_to_executable_kasm() {
+        let mlir = r#"
+            module {
+              func.func @mix(%arg0: i64, %arg1: i64) -> i64 {
+                %0 = arith.addi %arg0, %arg1 : i64
+                %1 = arith.muli %0, %arg1 : i64
+                return %1 : i64
+              }
+            }
+        "#;
+        let (program, report) = lower_mlir_func_to_kasm(mlir, "mix").expect("lower");
+        assert_eq!(report.lowered_ops, 2);
+        let mut input = Vec::new();
+        input.extend_from_slice(&3i64.to_le_bytes());
+        input.extend_from_slice(&4i64.to_le_bytes());
+        let output = execute(&program, &input).expect("execute");
+        assert_eq!(i64::from_le_bytes(output[..8].try_into().unwrap()), 28);
+    }
+
+    #[test]
+    fn mlir_bounded_scf_for_unrolls_to_kasm() {
+        let mlir = r#"
+            module {
+              func.func @accumulate(%arg0: i64, %arg1: i64) -> i64 {
+                %c0 = arith.constant 0 : index
+                %c4 = arith.constant 4 : index
+                %c1 = arith.constant 1 : index
+                %sum = scf.for %i = %c0 to %c4 step %c1 iter_args(%acc = %arg0) -> (i64) {
+                  %next = arith.addi %acc, %arg1 : i64
+                  scf.yield %next : i64
+                }
+                return %sum : i64
+              }
+            }
+        "#;
+        let (program, report) = lower_mlir_func_to_kasm(mlir, "accumulate").expect("lower scf.for");
+        assert_eq!(report.lowered_loops, 1);
+        assert_eq!(report.lowered_ops, 7);
+        let mut input = Vec::new();
+        input.extend_from_slice(&10i64.to_le_bytes());
+        input.extend_from_slice(&3i64.to_le_bytes());
+        let output = execute(&program, &input).expect("execute");
+        assert_eq!(i64::from_le_bytes(output[..8].try_into().unwrap()), 22);
+    }
+
+    #[test]
+    fn mlir_scf_for_requires_small_constant_bounds() {
+        let mlir = r#"
+            module {
+              func.func @too_large(%arg0: i64) -> i64 {
+                %c0 = arith.constant 0 : index
+                %c65 = arith.constant 65 : index
+                %c1 = arith.constant 1 : index
+                %sum = scf.for %i = %c0 to %c65 step %c1 iter_args(%acc = %arg0) -> (i64) {
+                  scf.yield %acc : i64
+                }
+                return %sum : i64
+              }
+            }
+        "#;
+        let err = lower_mlir_func_to_kasm(mlir, "too_large").expect_err("loop budget denied");
+        assert!(matches!(err, InteropError::UnsupportedOp(_)));
+    }
+
+    #[test]
+    fn wit_rich_types_fail_closed_without_external_abi() {
+        let wit = r#"
+            package forge:demo@0.1.0;
+            world plugin {
+              export title: func(name: string) -> string;
+            }
+        "#;
+        let err = compile_wit_export_stub(wit, "plugin", "title").expect_err("string ABI denied");
+        assert!(matches!(err, InteropError::UnsupportedType(_)));
     }
 }
 

@@ -1,3 +1,6 @@
+// @ts-nocheck
+import "./controller.js";
+
 // Banger — minimal Blender-style 3D viewport (WebGL2)
 // Self-contained; wires the BOOM titlebar button and the overlay shell.
 
@@ -24,130 +27,21 @@
     console.warn("[banger] required elements missing — aborting wire-up");
     return;
   }
-  window.ForgeSectionRegistry?.register?.({
-    id: "banger",
-    label: "Banger",
-    kind: "tool-section",
-    parent: "alpha",
-    lazy: true,
-  });
   els.stage = els.view.closest(".canvas-stage");
-
-  // ---------- mat4 helpers (column-major, Float32Array) ----------
-  const M4 = {
-    identity() { const m=new Float32Array(16); m[0]=m[5]=m[10]=m[15]=1; return m; },
-    perspective(fovY, aspect, near, far) {
-      const f = 1 / Math.tan(fovY / 2);
-      const nf = 1 / (near - far);
-      const m = new Float32Array(16);
-      m[0]=f/aspect; m[5]=f; m[10]=(far+near)*nf; m[11]=-1; m[14]=2*far*near*nf;
-      return m;
-    },
-    lookAt(eye, target, up) {
-      const z0=eye[0]-target[0], z1=eye[1]-target[1], z2=eye[2]-target[2];
-      let zl = Math.hypot(z0,z1,z2); zl = zl===0?1:1/zl;
-      const zx=z0*zl, zy=z1*zl, zz=z2*zl;
-      let xx=up[1]*zz-up[2]*zy, xy=up[2]*zx-up[0]*zz, xz=up[0]*zy-up[1]*zx;
-      let xl = Math.hypot(xx,xy,xz); xl = xl===0?1:1/xl;
-      xx*=xl; xy*=xl; xz*=xl;
-      const yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
-      const m = new Float32Array(16);
-      m[0]=xx; m[1]=yx; m[2]=zx; m[3]=0;
-      m[4]=xy; m[5]=yy; m[6]=zy; m[7]=0;
-      m[8]=xz; m[9]=yz; m[10]=zz; m[11]=0;
-      m[12]=-(xx*eye[0]+xy*eye[1]+xz*eye[2]);
-      m[13]=-(yx*eye[0]+yy*eye[1]+yz*eye[2]);
-      m[14]=-(zx*eye[0]+zy*eye[1]+zz*eye[2]);
-      m[15]=1;
-      return m;
-    },
-    multiply(a, b) {
-      const out = new Float32Array(16);
-      for (let i=0;i<4;i++) for (let j=0;j<4;j++) {
-        out[i*4+j] = a[0*4+j]*b[i*4+0]+a[1*4+j]*b[i*4+1]+a[2*4+j]*b[i*4+2]+a[3*4+j]*b[i*4+3];
-      }
-      return out;
-    },
-    transformVec4(m, x, y, z, w = 1) {
-      return [
-        m[0] * x + m[4] * y + m[8]  * z + m[12] * w,
-        m[1] * x + m[5] * y + m[9]  * z + m[13] * w,
-        m[2] * x + m[6] * y + m[10] * z + m[14] * w,
-        m[3] * x + m[7] * y + m[11] * z + m[15] * w,
-      ];
-    },
-  };
+  let bangerController = null;
 
   // ---------- shaders ----------
-  const VS_MESH = `#version 300 es
-    precision highp float;
-    in vec3 aPos;
-    in vec3 aNormal;
-    uniform mat4 uModel;
-    uniform mat4 uProj;
-    uniform mat4 uView;
-    uniform vec2 uClipOffset;
-    out vec3 vNormal;
-    out vec3 vWorld;
-    void main() {
-      vec4 worldPos = uModel * vec4(aPos, 1.0);
-      vNormal = normalize(mat3(uModel) * aNormal);
-      vWorld  = worldPos.xyz;
-      gl_Position = uProj * uView * worldPos;
-      gl_Position.xy += uClipOffset * gl_Position.w;
-    }
-  `;
-  const FS_MESH = `#version 300 es
-    precision highp float;
-    in vec3 vNormal;
-    in vec3 vWorld;
-    out vec4 fragColor;
-    uniform vec3 uColor;
-    void main() {
-      vec3 N = normalize(vNormal);
-      vec3 L = normalize(vec3(0.6, 0.9, 0.7));
-      float ndl = max(dot(N, L), 0.0);
-      vec3 ambient = vec3(0.18, 0.18, 0.22);
-      vec3 diffuse = uColor * (0.55 + 0.55 * ndl);
-      vec3 col = ambient + diffuse;
-      // soft rim
-      float rim = pow(1.0 - max(dot(N, vec3(0.0,0.0,1.0)), 0.0), 2.0);
-      col += rim * 0.08 * vec3(1.0, 0.7, 0.4);
-      fragColor = vec4(col, 1.0);
-    }
-  `;
-  const VS_LINE = `#version 300 es
-    precision highp float;
-    in vec3 aPos;
-    in vec3 aColor;
-    uniform mat4 uProj;
-    uniform mat4 uView;
-    uniform vec2 uClipOffset;
-    out vec3 vColor;
-    out vec3 vViewPos;
-    void main() {
-      vColor = aColor;
-      vec4 viewPos = uView * vec4(aPos, 1.0);
-      vViewPos = viewPos.xyz;
-      gl_Position = uProj * viewPos;
-      gl_Position.xy += uClipOffset * gl_Position.w;
-    }
-  `;
-  const FS_LINE = `#version 300 es
-    precision highp float;
-    in vec3 vColor;
-    in vec3 vViewPos;
-    out vec4 fragColor;
-    uniform float uFadeNear;
-    uniform float uFadeFar;
-    void main() {
-      float dist = length(vViewPos);
-      float fade = 1.0 - smoothstep(uFadeNear, uFadeFar, dist);
-      fade = clamp(fade, 0.0, 1.0);
-      fragColor = vec4(vColor * fade, fade);
-    }
-  `;
-
+  const {
+    M4,
+    AXIS_RGB,
+    AXIS_HEX,
+    makeCube,
+    makeGrid,
+    VS_MESH,
+    FS_MESH,
+    VS_LINE,
+    FS_LINE,
+  } = window.ForgeBangerCatalog || {};
   function compile(gl, type, src) {
     const sh = gl.createShader(type);
     gl.shaderSource(sh, src);
@@ -167,74 +61,6 @@
       return null;
     }
     return p;
-  }
-
-  // ---------- geometry ----------
-  function makeCube() {
-    // 6 faces × 2 tris × 3 verts, with per-face normals
-    const f = [
-      // +X
-      [[ 1,-1,-1],[ 1, 1,-1],[ 1, 1, 1],[ 1,-1, 1],[ 1, 0, 0]],
-      // -X
-      [[-1,-1, 1],[-1, 1, 1],[-1, 1,-1],[-1,-1,-1],[-1, 0, 0]],
-      // +Y
-      [[-1, 1,-1],[-1, 1, 1],[ 1, 1, 1],[ 1, 1,-1],[ 0, 1, 0]],
-      // -Y
-      [[-1,-1, 1],[-1,-1,-1],[ 1,-1,-1],[ 1,-1, 1],[ 0,-1, 0]],
-      // +Z
-      [[-1,-1, 1],[ 1,-1, 1],[ 1, 1, 1],[-1, 1, 1],[ 0, 0, 1]],
-      // -Z
-      [[ 1,-1,-1],[-1,-1,-1],[-1, 1,-1],[ 1, 1,-1],[ 0, 0,-1]],
-    ];
-    const pos = [], nrm = [];
-    for (const face of f) {
-      const [a,b,c,d,n] = face;
-      const tris = [a,b,c, a,c,d];
-      for (const v of tris) { pos.push(...v); nrm.push(...n); }
-    }
-    return { pos: new Float32Array(pos), nrm: new Float32Array(nrm), count: pos.length / 3 };
-  }
-
-  const AXIS_RGB = {
-    x: [0.96, 0.43, 0.56],
-    y: [0.23, 0.84, 0.68],
-    z: [0.47, 0.58, 0.98],
-  };
-  const AXIS_HEX = {
-    x: "#f56d90",
-    xNeg: "#9d4761",
-    y: "#3bd6ad",
-    yNeg: "#24836c",
-    z: "#7894fa",
-    zNeg: "#495caa",
-  };
-
-  function makeGrid(half = 320, step = 1) {
-    const pos = [], col = [];
-    const minor = [0.18, 0.185, 0.20];
-    const major = [0.29, 0.295, 0.315];
-    for (let i = -half; i <= half; i += step) {
-      const c = (i === 0) ? null : (i % 10 === 0 ? major : minor);
-      if (c) {
-        // line parallel to X (varying x, fixed y=i)
-        pos.push(-half, i, 0,  half, i, 0);
-        col.push(...c, ...c);
-        // line parallel to Y
-        pos.push(i, -half, 0,  i, half, 0);
-        col.push(...c, ...c);
-      }
-    }
-    // X axis (red)
-    pos.push(-half, 0, 0,  half, 0, 0);
-    col.push(...AXIS_RGB.x, ...AXIS_RGB.x);
-    // Y axis (green)
-    pos.push(0, -half, 0,  0, half, 0);
-    col.push(...AXIS_RGB.y, ...AXIS_RGB.y);
-    return {
-      pos: new Float32Array(pos),
-      col: new Float32Array(col),
-      count: pos.length / 3,
-    };
   }
 
   function isBoom3dFileName(name) {
@@ -1306,13 +1132,11 @@
   // Tauri IPC bridge to the native BangerEngine (P1a). If Tauri isn't loaded
   // (e.g. plain-browser dev), backendInvoke returns null and the WebGL
   // viewport still works — but the native engine just won't be claimed.
-  const tauriInvoke = (typeof window !== "undefined" && window.__TAURI__ && window.__TAURI__.core)
-    ? window.__TAURI__.core.invoke
-    : null;
   let backendBusy = null; // most-recent in-flight backend call, for sequencing
   function backendInvoke(cmd, args = undefined) {
-    if (!tauriInvoke) return Promise.resolve(null);
-    return tauriInvoke(cmd, args && typeof args === "object" ? args : undefined).catch((err) => {
+    const runtimeInvoke = window.ForgeShellRuntime?.tauri?.invoke || window.ForgeTauriBridge?.invoke || null;
+    if (!runtimeInvoke) return Promise.resolve(null);
+    return runtimeInvoke(cmd, args && typeof args === "object" ? args : {}, { section: "banger" }).catch((err) => {
       console.warn(`[banger] backend ${cmd} failed:`, err);
       return null;
     });
@@ -9333,7 +9157,9 @@
     setBoomActive(true);
     if (typeof window !== "undefined") {
       window.__forgeBoomIsActive = true;
-      window.ForgeSectionRegistry?.activate?.("banger");
+      if (bangerController) {
+        bangerController.publishActive(true);
+      }
       window.__forgeBoomConsoleContext = buildBoomConsoleContext;
       window.__forgeBoomExecuteTool = executeBoomTool;
     }
@@ -9363,7 +9189,9 @@
     boomUiContract = null;
     if (typeof window !== "undefined") {
       window.__forgeBoomIsActive = false;
-      window.ForgeSectionRegistry?.deactivate?.("banger");
+      if (bangerController) {
+        bangerController.publishActive(false);
+      }
       window.__forgeBoomConsoleContext = () => ({ active: false });
       window.__forgeBoomExecuteTool = () => ({ ok: false, tool: "boom.unavailable", detail: { error: "inactive" }, context: { active: false } });
       window.__forgeBoomUiContract = null;
@@ -9374,6 +9202,10 @@
   }
 
   function toggleBanger() {
+    if (bangerController) {
+      bangerController.toggle();
+      return;
+    }
     if (window.__forgeRealEstateModeActive && !isViewVisible()) return;
     if (isViewVisible()) closeOverlay();
     else openOverlay();
@@ -9420,12 +9252,21 @@
     activate();
   });
   if (typeof window !== "undefined") {
+    bangerController = window.ForgeBangerController?.create?.({
+      runtime: window.ForgeShellRuntime,
+      button: els.boomBtn,
+      isVisible: isViewVisible,
+      isBlocked: () => !!window.__forgeRealEstateModeActive,
+      open: openOverlay,
+      close: closeOverlay,
+      syncButton: setBoomActive,
+    }) || null;
     window.__forgeBoomIsActive = false;
     window.__forgeBoomConsoleContext = () => ({ active: false });
     window.__forgeBoomExecuteTool = () => ({ ok: false, tool: "boom.unavailable", detail: { error: "inactive" }, context: { active: false } });
     window.__forgeBoomPreview3dFiles = previewBoom3dFiles;
-    window.__forgeOpenBoom = openOverlay;
-    window.__forgeCloseBoom = closeOverlay;
+    window.__forgeOpenBoom = () => (bangerController ? bangerController.open() : openOverlay());
+    window.__forgeCloseBoom = () => (bangerController ? bangerController.close() : closeOverlay());
     exposeBoomAuditState();
   }
 
@@ -9433,15 +9274,6 @@
   // Direct listener (works in plain browsers); plus capture-phase delegation
   // because Tauri's titlebar drag-region absorbs bubble-phase clicks
   // from siblings — see the same pattern around #forgeSearchBtn in app.js.
-  els.boomBtn.addEventListener("click", toggleBanger);
-  document.addEventListener("click", (e) => {
-    const hit = e.target?.closest?.("#bangerBoomBtn");
-    if (!hit) return;
-    e.preventDefault();
-    e.stopPropagation();
-    toggleBanger();
-  }, true);
-  els.exitBtn?.addEventListener("click", closeOverlay);
 
   // ResizeObserver to follow stage size changes (panels collapsing, window resize).
   if ("ResizeObserver" in window) {

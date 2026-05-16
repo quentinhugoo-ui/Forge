@@ -1,7 +1,13 @@
+declare global {
+  interface Window {
+    ForgeWebExplorerConfig?: unknown;
+  }
+}
+
 (function () {
   "use strict";
 
-  const freeze = (value) => Object.freeze(value);
+  const freeze = <T>(value: T): Readonly<T> => Object.freeze(value);
 
   const config = freeze({
     storageKeys: freeze({
@@ -122,3 +128,5 @@
 
   window.ForgeWebExplorerConfig = config;
 })();
+
+export {};

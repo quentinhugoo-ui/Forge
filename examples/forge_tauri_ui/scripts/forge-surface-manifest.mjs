@@ -83,13 +83,13 @@ const reductionGoal = {
 };
 const lineBudgets = {
   "examples/forge_tauri_ui/src-tauri/src/main.rs": 8000,
-  "examples/forge_tauri_ui/ui/app.js": 7000,
+  "examples/forge_tauri_ui/ui/src/shell/surface.ts": 7000,
   "examples/forge_tauri_ui/ui/styles.css": 3500,
   "examples/lab_runner_trading.rs": 2500,
   "examples/forge_tauri_ui/src-tauri/src/bin/forge_mcp.rs": 3000,
   "examples/forge_tauri_ui/src-tauri/src/trading.rs": 3500,
-  "examples/forge_tauri_ui/ui/banger.js": 2500,
-  "examples/forge_tauri_ui/ui/trading.js": 3000,
+  "examples/forge_tauri_ui/ui/src/sections/banger/surface.ts": 2500,
+  "examples/forge_tauri_ui/ui/src/sections/trading/surface.ts": 3000,
   "examples/lab_runner_banger.rs": 2000,
   "examples/forge_tauri_ui/src-tauri/src/forge_agent_tools.rs": 2500,
 };
@@ -392,13 +392,17 @@ function extractMcpTools() {
   const toolsStart = text.indexOf("fn tools_list()");
   const callStart = text.indexOf("fn handle_tool_call");
   const toolsBlock = toolsStart >= 0 && callStart > toolsStart ? text.slice(toolsStart, callStart) : "";
+  const compactStart = text.indexOf("fn compact_tools_list()");
+  const compactEnd = text.indexOf("fn env_flag", compactStart);
+  const compactBlock = compactStart >= 0 && compactEnd > compactStart ? text.slice(compactStart, compactEnd) : "";
   const visible = [];
-  const namePattern = /"name"\s*:\s*"([a-z][a-z0-9_]+)"/g;
-  for (let match; (match = namePattern.exec(toolsBlock));) {
+  const defaultVisibleBlock = compactBlock || toolsBlock;
+  const namePattern = /"name"\s*:\s*"([a-z][a-z0-9_.]+)"/g;
+  for (let match; (match = namePattern.exec(defaultVisibleBlock));) {
     visible.push(match[1]);
   }
-  const helperPattern = /mcp_tool\(\s*"([a-z][a-z0-9_]+)"/g;
-  for (let match; (match = helperPattern.exec(toolsBlock));) {
+  const helperPattern = /mcp_tool\(\s*"([a-z][a-z0-9_.]+)"/g;
+  for (let match; (match = helperPattern.exec(defaultVisibleBlock));) {
     visible.push(match[1]);
   }
 
@@ -430,14 +434,14 @@ function extractMcpTools() {
 function extractUiSurface(registeredTauriCommands) {
   const ownership = JSON.parse(read("ui/SECTION_OWNERSHIP.json") || "{}");
   const entrypoints = ownership.entrypoints || [
-    "ui/forge-section-registry.js",
-    "ui/forge-tauri-bridge.js",
-    "ui/forge-boot.js",
-    "ui/forge-window-controls.js",
-    "ui/forge-webexplorer-config.js",
-    "ui/app.js",
-    "ui/trading.js",
-    "ui/banger.js",
+    "ui/dist/forge-section-registry.js",
+    "ui/dist/forge-tauri-bridge.js",
+    "ui/dist/forge-boot.js",
+    "ui/dist/forge-window-controls.js",
+    "ui/dist/forge-webexplorer-config.js",
+    "ui/src/shell/surface.ts",
+    "ui/src/sections/trading/surface.ts",
+    "ui/src/sections/banger/surface.ts",
   ];
   const sources = entrypoints.map((file) => ({ file, text: read(file) }));
   const invocations = [];
@@ -560,29 +564,10 @@ function extractUiSurface(registeredTauriCommands) {
 
 function validate(manifest) {
   const expectedMcp = [
-    "about",
-    "capabilities",
-    "create",
-    "run",
-    "jobs",
-    "sessions",
-    "documents",
-    "mapping",
-    "mapping_metrics",
-    "mapping_model",
-    "visual_program",
-    "mapping_analysis",
-    "profile",
-    "atlas",
-    "brain_recall",
-    "brain_commit",
-    "brain_compare",
-    "brain_sleep",
-    "brain_explain",
-    "update_session",
-    "read",
-    "logs",
-    "cancel",
+    "forge.search",
+    "forge.execute",
+    "forge.read_projection",
+    "forge.cancel",
   ];
   const expectedSections = ["shell", "alpha", "forge", "webexplorer", "real-estate", "real-estate-main", "trading", "banger"];
   const expectedSensitive = ["webexplorer_native_present", "bloomberg_live_native_present"];

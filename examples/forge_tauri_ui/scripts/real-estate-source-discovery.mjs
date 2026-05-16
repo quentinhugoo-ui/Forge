@@ -56,6 +56,7 @@ for (const source of registry.sources ?? []) {
 const summary = buildSummary();
 
 mkdirSync(dataDir, { recursive: true });
+writeFileSync(manifestPath, "");
 for (const record of records) {
   appendFileSync(manifestPath, `${JSON.stringify(record)}\n`);
 }

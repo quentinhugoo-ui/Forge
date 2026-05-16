@@ -49,5 +49,9 @@ examples/forge_tauri_ui/src-tauri/icons/
 examples/forge_tauri_ui/src-tauri/tauri.conf.json
 examples/forge_tauri_ui/src-tauri/target-local-release/
 examples/forge_tauri_ui/.codex-tmp/
+examples/forge_tauri_ui/node_modules/
+examples/forge_tauri_ui/ui/dist/
 examples/forge_tauri_ui/.tmp-source-discovery/
+examples/forge_tauri_ui/.tmp-source-review/
+examples/forge_tauri_ui/.tmp-source-review-live/
 examples/forge_tauri_ui/src-tauri/.codex-tmp/

@@ -18,6 +18,7 @@ const harvesterDir = join(storePath, "real-estate-harvester");
 const dataDir = join(harvesterDir, "data");
 const eventsPath = join(dataDir, "normalized_events.jsonl");
 const latestPath = join(dataDir, "parser_router_latest.json");
+const universalSchemaVersion = 1;
 
 function argValue(name) {
   const prefix = `${name}=`;
@@ -45,6 +46,7 @@ const rawRecords = readJsonl(downloadsPath)
 const events = [];
 
 mkdirSync(dataDir, { recursive: true });
+writeFileSync(eventsPath, "");
 
 for (const raw of rawRecords) {
   const produced = routeRecord(raw);
@@ -80,6 +82,7 @@ function parseJsonLike(raw, bytes, format, adapterPlan) {
     const resources = [];
     const geo = [];
     const records = [];
+    const tableSample = tableSampleFromJson(value);
     walkJson(value, (node, path) => {
       if (!node || typeof node !== "object" || Array.isArray(node)) return;
       const url = stringValue(node.url) ?? stringValue(node.latest) ?? stringValue(node.href) ?? stringValue(node.download_url);
@@ -107,7 +110,8 @@ function parseJsonLike(raw, bytes, format, adapterPlan) {
         recordCount: estimateRecordCount(value),
         discoveredUrls: resources.slice(0, 64),
         geoHints: geo.slice(0, 32),
-        fieldHints: uniqueFieldHints(records).slice(0, 64),
+        fieldHints: uniqueFieldHints(records.concat(tableSample.rows.map((row) => Object.keys(row)))).slice(0, 64),
+        tableSample,
         textPreview: "",
         parseStatus: "ok",
       }),
@@ -135,6 +139,7 @@ function parseDelimitedLike(raw, bytes, format, adapterPlan) {
   const lines = text.split(/\r?\n/).filter(Boolean);
   const delimiter = guessDelimiter(lines.slice(0, 5));
   const header = splitDelimited(lines[0] ?? "", delimiter).map(cleanCell).filter(Boolean);
+  const tableSample = tableSampleFromDelimited(lines, delimiter, header);
   return [
     eventBase(raw, adapterPlan, {
       eventType: format === "csv" ? "csv_summary" : "text_summary",
@@ -143,6 +148,7 @@ function parseDelimitedLike(raw, bytes, format, adapterPlan) {
       discoveredUrls: discoverUrls(text).slice(0, 64),
       geoHints: [],
       fieldHints: header.slice(0, 128),
+      tableSample,
       textPreview: lines.slice(0, 6).join("\n").slice(0, 1000),
       parseStatus: "ok",
       delimiter,
@@ -153,6 +159,7 @@ function parseDelimitedLike(raw, bytes, format, adapterPlan) {
 function parseXmlLike(raw, bytes, adapterPlan) {
   const text = boundedText(bytes);
   const tags = [...text.matchAll(/<([A-Za-z_][\w:.-]*)\b/g)].map((match) => match[1]);
+  const fieldHints = topValues(tags, 64);
   return [
     eventBase(raw, adapterPlan, {
       eventType: "xml_summary",
@@ -160,7 +167,7 @@ function parseXmlLike(raw, bytes, adapterPlan) {
       recordCount: countRepeatedTags(tags),
       discoveredUrls: discoverUrls(text).slice(0, 64),
       geoHints: [],
-      fieldHints: topValues(tags, 64),
+      fieldHints,
       textPreview: text.replace(/\s+/g, " ").slice(0, 1000),
       parseStatus: "ok",
     }),
@@ -214,7 +221,7 @@ function unsupportedPlaceholder(raw, bytes, format, adapterPlan) {
 }
 
 function eventBase(raw, adapterPlan, payload) {
-  return {
+  const base = {
     kind: "real_estate_normalized_event",
     schemaVersion: 1,
     runId,
@@ -233,6 +240,8 @@ function eventBase(raw, adapterPlan, payload) {
     freshness: raw.freshness,
     ...payload,
   };
+  base.universal = buildUniversalIngestion(raw, adapterPlan, base);
+  return base;
 }
 
 function finalizeEvent(event) {
@@ -240,17 +249,271 @@ function finalizeEvent(event) {
   return event;
 }
 
+function buildUniversalIngestion(raw, adapterPlan, event) {
+  const fieldHints = event.fieldHints ?? [];
+  const tableSample = event.tableSample ?? emptyTableSample();
+  const entityCandidates = entityCandidatesFromEvent(event, tableSample);
+  const parsedElements = parsedElementsFromEvent(event, tableSample);
+  const metricSeeds = metricSeedsFromEvent(event, tableSample, entityCandidates);
+  const datasetHash = sha256(`${raw.sourceId}:${raw.sourceLabel ?? ""}:${raw.sourceLicense ?? ""}`).slice(0, 24);
+  const distributionHash = sha256(`${raw.url ?? ""}:${raw.parentUrl ?? ""}:${event.format}`).slice(0, 24);
+  return {
+    schemaVersion: universalSchemaVersion,
+    dataset: {
+      id: `dataset:${datasetHash}`,
+      sourceId: raw.sourceId,
+      label: raw.sourceLabel ?? raw.sourceId,
+      license: raw.sourceLicense ?? "",
+      priority: raw.sourcePriority ?? "",
+      collector: raw.collector ?? "",
+      freshness: raw.freshness ?? "",
+    },
+    distribution: {
+      id: `distribution:${distributionHash}`,
+      url: raw.url,
+      parentUrl: raw.parentUrl,
+      format: event.format,
+      parser: event.parser,
+      adapter: adapterPlan.selected,
+    },
+    rawArtifact: {
+      hash: raw.rawHash,
+      path: raw.rawPath,
+      bytes: event.rawBytes ?? null,
+      contentAddressed: Boolean(raw.rawHash && raw.rawPath?.includes(raw.rawHash.slice(0, 2))),
+    },
+    parsedElements,
+    entityCandidates,
+    edges: edgesFromEvent(raw, entityCandidates),
+    lineageEvent: {
+      job: "real-estate-parser-router",
+      runId,
+      inputHash: raw.rawHash,
+      outputKind: event.eventType,
+      adapterRoute: adapterPlan.route,
+      adapterSelected: adapterPlan.selected,
+      proofInputs: ["rawHash", "adapterPlan", "fieldHints", "tableSample", "entityCandidates"],
+    },
+    metricSeeds,
+    quality: {
+      parseStatus: event.parseStatus,
+      recordCount: event.recordCount ?? 0,
+      fieldCount: fieldHints.length,
+      sampleRowCount: tableSample.rows.length,
+      discoveredUrlCount: event.discoveredUrls?.length ?? 0,
+      geoHintCount: event.geoHints?.length ?? 0,
+    },
+  };
+}
+
+function parsedElementsFromEvent(event, tableSample) {
+  const elements = [];
+  if (tableSample.columns.length || tableSample.rows.length) {
+    elements.push({
+      kind: "table",
+      id: sha256(`table:${event.rawHash}:${tableSample.columns.join("|")}`).slice(0, 24),
+      columns: tableSample.columns,
+      rows: tableSample.rows,
+      rowCountEstimate: event.recordCount ?? tableSample.rows.length,
+    });
+  }
+  if (event.textPreview) {
+    elements.push({
+      kind: "document_text",
+      id: sha256(`text:${event.rawHash}:${event.textPreview}`).slice(0, 24),
+      preview: event.textPreview,
+      chars: event.textPreview.length,
+    });
+  }
+  for (const hint of event.geoHints ?? []) {
+    elements.push({
+      kind: "geo_hint",
+      id: sha256(`geo:${event.rawHash}:${hint.path}:${hint.preview}`).slice(0, 24),
+      path: hint.path,
+      preview: hint.preview,
+    });
+  }
+  return elements.slice(0, 32);
+}
+
+function entityCandidatesFromEvent(event, tableSample) {
+  const candidates = [];
+  const fields = new Set([...(event.fieldHints ?? []), ...tableSample.columns]);
+  for (const field of fields) {
+    const kind = entityKindForField(field);
+    if (!kind) continue;
+    candidates.push({
+      kind,
+      evidence: "field_name",
+      field,
+      confidence: confidenceForField(kind, field),
+    });
+  }
+  for (const geo of event.geoHints ?? []) {
+    candidates.push({
+      kind: "geo_coordinate",
+      evidence: "geo_hint",
+      field: geo.path,
+      confidence: 0.86,
+    });
+  }
+  return dedupeCandidates(candidates).slice(0, 64);
+}
+
+function metricSeedsFromEvent(event, tableSample, entityCandidates) {
+  return [
+    {
+      key: "raw_record_count",
+      value: event.recordCount ?? 0,
+      unit: "records",
+      confidence: event.parseStatus === "ok" ? 0.85 : 0.25,
+    },
+    {
+      key: "field_surface_area",
+      value: tableSample.columns.length || (event.fieldHints?.length ?? 0),
+      unit: "fields",
+      confidence: 0.75,
+    },
+    {
+      key: "entity_candidate_count",
+      value: entityCandidates.length,
+      unit: "candidates",
+      confidence: 0.7,
+    },
+    {
+      key: "external_url_count",
+      value: event.discoveredUrls?.length ?? 0,
+      unit: "urls",
+      confidence: 0.8,
+    },
+  ];
+}
+
+function edgesFromEvent(raw, entityCandidates) {
+  const edges = [
+    {
+      from: `source:${raw.sourceId}`,
+      to: `raw:${raw.rawHash}`,
+      type: "produced",
+    },
+  ];
+  for (const candidate of entityCandidates.slice(0, 16)) {
+    edges.push({
+      from: `raw:${raw.rawHash}`,
+      to: `${candidate.kind}:${sha256(candidate.field).slice(0, 16)}`,
+      type: "mentions_candidate",
+    });
+  }
+  return edges;
+}
+
+function tableSampleFromJson(value) {
+  const rows = findJsonRows(value)
+    .filter((row) => row && typeof row === "object" && !Array.isArray(row))
+    .slice(0, 8)
+    .map((row) => compactRow(row));
+  const columns = uniqueFieldHints(rows.map((row) => Object.keys(row))).slice(0, 128);
+  return { kind: "json_table_sample", columns, rows };
+}
+
+function findJsonRows(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.features)) return value.features.map((feature) => ({ ...(feature.properties ?? {}), geometry: feature.geometry ? "present" : "" }));
+  if (Array.isArray(value?.data)) return value.data;
+  if (Array.isArray(value?.resources)) return value.resources;
+  if (Array.isArray(value?.results)) return value.results;
+  if (Array.isArray(value?.items)) return value.items;
+  if (value && typeof value === "object") return [value];
+  return [];
+}
+
+function tableSampleFromDelimited(lines, delimiter, header) {
+  const columns = header.length ? header : splitDelimited(lines[0] ?? "", delimiter).map((_, index) => `col_${index + 1}`);
+  const dataLines = header.length ? lines.slice(1, 9) : lines.slice(0, 8);
+  const rows = dataLines.map((line) => {
+    const cells = splitDelimited(line, delimiter).map(cleanCell);
+    const row = {};
+    columns.slice(0, 64).forEach((column, index) => {
+      row[column] = compactScalar(cells[index]);
+    });
+    return row;
+  });
+  return { kind: "delimited_table_sample", columns: columns.slice(0, 128), rows };
+}
+
+function emptyTableSample() {
+  return { kind: "none", columns: [], rows: [] };
+}
+
+function compactRow(row) {
+  const out = {};
+  for (const [key, value] of Object.entries(row).slice(0, 64)) out[key] = compactScalar(value);
+  return out;
+}
+
+function compactScalar(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.slice(0, 160);
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return `[array:${value.length}]`;
+  if (typeof value === "object") return "[object]";
+  return String(value).slice(0, 160);
+}
+
+function entityKindForField(field) {
+  const normalized = String(field ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  if (/\b(adresse|address|numero_voie|nom_voie|voie|street)\b/.test(normalized)) return "address";
+  if (/\b(commune|code_insee|insee|departement|department|territory|region|code_postal|postal)\b/.test(normalized)) return "admin_area";
+  if (/\b(latitude|longitude|lat|lon|lng|coord|geometry|geometrie|geo)\b/.test(normalized)) return "geo_coordinate";
+  if (/\b(parcelle|cadastre|section|numero_parcelle)\b/.test(normalized)) return "parcel";
+  if (/\b(batiment|building|rnb|immeuble)\b/.test(normalized)) return "building";
+  if (/\b(dpe|energie|ges|chauffage|consommation)\b/.test(normalized)) return "energy_diagnostic";
+  if (/\b(prix|valeur|mutation|loyer|rent|price|montant)\b/.test(normalized)) return "market_value";
+  if (/\b(date|annee|year|timestamp|created|updated)\b/.test(normalized)) return "time";
+  if (/\b(siren|siret|naf|entreprise|company|etablissement)\b/.test(normalized)) return "business";
+  if (/\b(risque|alea|inondation|argile|radon|icpe|catnat)\b/.test(normalized)) return "risk";
+  if (/\b(plu|urbanisme|servitude|zonage|zone)\b/.test(normalized)) return "urbanism";
+  if (/\b(article|news|title|headline|publication)\b/.test(normalized)) return "local_news";
+  if (/\b(url|link|href|image)\b/.test(normalized)) return "external_reference";
+  return "";
+}
+
+function confidenceForField(kind, field) {
+  const normalized = String(field ?? "").toLowerCase();
+  if (["code_insee", "siren", "siret", "latitude", "longitude", "dpe", "rnb"].some((token) => normalized.includes(token))) return 0.9;
+  if (["address", "adresse", "prix", "parcelle", "plu"].some((token) => normalized.includes(token))) return 0.82;
+  return kind ? 0.68 : 0;
+}
+
+function dedupeCandidates(candidates) {
+  const seen = new Set();
+  const out = [];
+  for (const candidate of candidates) {
+    const key = `${candidate.kind}:${candidate.field}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(candidate);
+  }
+  return out;
+}
+
 function buildSummary() {
   const eventTypes = {};
   const parsers = {};
   const statuses = {};
   const adapters = {};
+  const universalObjects = {};
+  const entityKinds = {};
   let recordCount = 0;
   for (const event of events) {
     eventTypes[event.eventType] = (eventTypes[event.eventType] ?? 0) + 1;
     parsers[event.parser] = (parsers[event.parser] ?? 0) + 1;
     statuses[event.parseStatus] = (statuses[event.parseStatus] ?? 0) + 1;
     adapters[event.adapterPlan?.selected ?? "unknown"] = (adapters[event.adapterPlan?.selected ?? "unknown"] ?? 0) + 1;
+    for (const key of Object.keys(event.universal ?? {})) universalObjects[key] = (universalObjects[key] ?? 0) + 1;
+    for (const candidate of event.universal?.entityCandidates ?? []) {
+      entityKinds[candidate.kind] = (entityKinds[candidate.kind] ?? 0) + 1;
+    }
     recordCount += event.recordCount ?? 0;
   }
   const summary = {
@@ -271,6 +534,8 @@ function buildSummary() {
     statuses,
     adapters,
     availableAdapters,
+    universalObjects,
+    entityKinds,
     failures,
   };
   summary.proofHash = sha256(JSON.stringify({
@@ -282,6 +547,8 @@ function buildSummary() {
     statuses,
     adapters,
     availableAdapters,
+    universalObjects,
+    entityKinds,
     failures,
     events: events.map((event) => event.eventHash),
   }));
@@ -399,7 +666,7 @@ function splitDelimited(line, delimiter) {
 }
 
 function cleanCell(value) {
-  return String(value ?? "").replace(/^"|"$/g, "").trim();
+  return String(value ?? "").replace(/^\uFEFF/, "").replace(/^ï»¿/, "").replace(/^"|"$/g, "").trim();
 }
 
 function countRepeatedTags(tags) {

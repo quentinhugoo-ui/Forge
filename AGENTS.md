@@ -9,7 +9,7 @@ This is the single source of truth for coding agents. Keep it short and current.
 Forge is a compact local agent OS:
 
 ```text
-LLM intent -> brain/memory -> Godel verification -> KASM/Monster compute -> proof/artifact -> Tauri/MCP action
+LLM CLI -> ForgeSlash/Intent -> Godel verification -> KASM/FBC/Monster compute -> proof/artifact -> Tauri action
 ```
 
 Prefer shorter circuits. Remove obsolete nodes before adding new ones.
@@ -21,7 +21,7 @@ Prefer shorter circuits. Remove obsolete nodes before adding new ones.
 - Never run recursive delete/move without resolved absolute path guards.
 - Do not commit caches, build outputs, datasets, secrets, `.vs/`, `target/`, `.forge-store/`, `.forge-data/` or `lab_findings.jsonl`.
 - Use `rg` for search and compact command outputs for large files.
-- For large/repeated/numerical/document-heavy work, use Forge/MCP discipline: keep raw data on disk, exchange compact manifests, hashes and artifacts.
+- For large/repeated/numerical/document-heavy work, use Forge direct-command discipline first: keep raw data on disk, exchange compact manifests, hashes and artifacts. MCP is only the external compatibility bridge.
 - Commit and push meaningful work to GitHub before risky cleanup.
 
 ## Coding Doctrine
@@ -80,10 +80,14 @@ Every code change must reduce architectural drag:
 - Tauri backend: `examples/forge_tauri_ui/src-tauri/src/**`
 - Tauri UI: `examples/forge_tauri_ui/ui/**`
 - Runtime architecture: `FORGE_RUNTIME_ARCHITECTURE.md`
+- Native bytecode direction: `FORGE_NATIVE_BYTECODE.md`
+- Direct agent CLI: `examples/forge_tauri_ui/src-tauri/src/bin/forge_agent.rs`
+- Direct agent runtime: `examples/forge_tauri_ui/src-tauri/src/forge_agent_runtime.rs`
 - UI sections: shell, alpha, forge, WebExplorer, real-estate, real-estate-main, trading and banger.
-- Native section bridge: WebExplorer and Bloomberg live actions must pass through `forge-tauri-bridge.js` and `SECTION_OWNERSHIP.json`.
+- UI source is TypeScript under `examples/forge_tauri_ui/ui/src/**`; browser JavaScript under `ui/dist/**/*.js` is generated only.
+- Native section bridge: WebExplorer and Bloomberg live actions must pass through `ui/src/shell/tauri-bridge.ts` / generated `ui/dist/forge-tauri-bridge.js` and `SECTION_OWNERSHIP.json`.
 - MCP server: `examples/forge_tauri_ui/src-tauri/src/bin/forge_mcp.rs`
-- MCP visible tools: about, capabilities, create, program_compile_validate_route, geonode, run, jobs, sessions, documents, mapping, mapping_metrics, mapping_model, visual_program, mapping_analysis, profile, atlas, brain_recall, brain_commit, brain_compare, brain_sleep, brain_explain, update_session, read, logs, cancel.
+- MCP surface contract: MCP is transport for external LLM clients, not the Forge OS action language. The internal primary path is `forge_agent` direct CLI plus ForgeSlash/KASM/FBC. The external compatibility surface is `forge.search`, `forge.execute`, `forge.read_projection`, `forge.cancel`; the broad MCP catalog remains callable as legacy/internal compatibility via `FORGE_MCP_SURFACE=broad` or `FORGE_MCP_LEGACY_SURFACE=1`.
 
 ## Brain, Memory And Godel
 
@@ -110,13 +114,24 @@ The Tauri UI is already large. Do not add a new UI path if an existing section/r
 
 Use these coordination files before adding new actors:
 
-- `examples/forge_tauri_ui/ui/forge-section-registry.js`
-- `examples/forge_tauri_ui/ui/forge-tauri-bridge.js`
-- `examples/forge_tauri_ui/ui/forge-boot.js`
+- `examples/forge_tauri_ui/ui/src/shell/legacy-section-registry.ts`
+- `examples/forge_tauri_ui/ui/src/shell/tauri-bridge.ts`
+- `examples/forge_tauri_ui/ui/src/shell/boot.ts`
+- `examples/forge_tauri_ui/ui/src/shell/click-router.ts`
 - `examples/forge_tauri_ui/ui/SECTION_OWNERSHIP.json`
 - `examples/forge_tauri_ui/ui/SECTION_CONTRACT.md`
 
-Current heavy UI files are `app.js`, `trading.js`, `styles.css` and Tauri `main.rs`. Shrink them only when extraction removes duplication or a real ownership conflict.
+No hand-written JavaScript is allowed outside generated `ui/dist/**/*.js`; see `examples/forge_tauri_ui/ui/src/MANUAL_JS_LOCK.md`.
+
+Current heavy UI source files are `ui/src/shell/surface.ts`, `ui/src/sections/trading/surface.ts`, `ui/src/sections/banger/surface.ts`, `ui/styles.css` and Tauri `main.rs`. Shrink them only when extraction removes duplication or a real ownership conflict.
+
+Real-estate shell logic is split into section runtimes:
+
+- `ui/src/sections/real-estate/runtime-context.ts`
+- `ui/src/sections/real-estate/onboarding-runtime.ts`
+- `ui/src/sections/real-estate/language-runtime.ts`
+- `ui/src/sections/real-estate/mode-runtime.ts`
+- `ui/src/sections/real-estate/panel-runtime.ts`
 
 ## Useful Checks
 
@@ -127,6 +142,9 @@ cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge_mcp
 node examples\forge_tauri_ui\scripts\forge-surface-manifest.mjs --check
 node examples\forge_tauri_ui\scripts\forge-ui-smoke.mjs
+node examples\forge_tauri_ui\scripts\forge-ui-section-audit.mjs
+node examples\forge_tauri_ui\scripts\forge-tauri-bus-audit.mjs --strict
+cd examples\forge_tauri_ui; npm.cmd run audit:js-debt
 ```
 
 ## Git Safety

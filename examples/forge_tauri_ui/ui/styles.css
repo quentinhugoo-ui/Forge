@@ -2826,6 +2826,35 @@ body.real-estate-mode .alpha-panel .panel-tabs {
   color: rgba(238,238,232,0.52);
 }
 
+.real-estate-init-progress {
+  width: min(240px, 42vw);
+  height: 2px;
+  margin-top: 18px;
+  background: rgba(238,238,232,0.12);
+  overflow: hidden;
+}
+
+.real-estate-init-progress-bar {
+  display: block;
+  width: 4%;
+  height: 100%;
+  background: rgba(96, 224, 203, 0.84);
+  transition: width 760ms cubic-bezier(.22, .61, .36, 1);
+}
+
+body.real-estate-llm-initializing .dropbox-icon {
+  opacity: 0.72;
+}
+
+body.real-estate-llm-initializing .dropbox-icon-chevron {
+  animation: forge-init-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes forge-init-breathe {
+  0%, 100% { transform: translateY(0); opacity: 0.42; }
+  50% { transform: translateY(5px); opacity: 1; }
+}
+
 .empty-session-btn {
   appearance: none;
   flex: 0 0 auto;
@@ -6523,6 +6552,11 @@ body.webexplorer-surface #workspaceFolderName {
   display: none;
   width: 0;
   height: 0;
+}
+
+.log-layer.is-empty {
+  overflow: hidden !important;
+  scroll-behavior: auto;
 }
 
 .log-layer::-webkit-scrollbar,

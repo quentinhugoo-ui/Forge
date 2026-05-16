@@ -12,7 +12,7 @@ An agent should be able to inspect market context, request compact metrics, prop
 - Strategy synthesis: `examples/forge_tauri_ui/src-tauri/src/synth_strategy.rs`
 - Indicators: `examples/forge_tauri_ui/src-tauri/src/kasm_indicators.rs`
 - Pressure/3D view: `examples/forge_tauri_ui/src-tauri/src/trading_pressure.rs`
-- UI: `examples/forge_tauri_ui/ui/trading.js`, `examples/forge_tauri_ui/ui/app.js`, `examples/forge_tauri_ui/ui/styles.css`
+- UI: `examples/forge_tauri_ui/ui/src/sections/trading/surface.ts`, `examples/forge_tauri_ui/ui/src/sections/trading/controller.ts`, `examples/forge_tauri_ui/ui/src/sections/trading/catalog.ts`, `examples/forge_tauri_ui/ui/src/shell/surface.ts`, `examples/forge_tauri_ui/ui/styles.css`
 - Lab runner: `examples/lab_runner_trading.rs`
 - Native market/news panel: Bloomberg live commands are section-gated through the shared Tauri bridge.
 

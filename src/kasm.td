@@ -225,4 +225,23 @@ def Kasm_OutputOp : Kasm_Op<"output"> {
   let assemblyFormat = "$value attr-dict `:` type($result)";
 }
 
+//===---------------------------------------------------------------------===//
+// Proprietary interop contract
+//===---------------------------------------------------------------------===//
+//
+// KASM can ingest WebAssembly Component Model ideas and MLIR syntax without
+// linking to non-proprietary runtimes in the core:
+//
+// * WIT is parsed by Forge-owned Rust in `src/kasm.rs::interop` as a typed
+//   contract format. Numeric/bool exports can become KASM stubs; rich
+//   canonical-ABI values such as `string`, `record`, `list`, `resource` fail
+//   closed until Forge defines its own lowering.
+// * External MLIR text can be lowered only through the Forge-owned importer.
+//   The current admitted subset is `func.func`, simple `arith.*` scalar ops
+//   and small constant-bound `scf.for` loops unrolled into native KASM nodes.
+//   There is no `mlir-opt`, LLVM, Wasmtime or Component Model runtime in the
+//   trusted execution path.
+// * This TableGen file remains the reference shape of the KASM dialect; the
+//   interop layer is a front door into this dialect, not a second bytecode.
+
 #endif // KASM_DIALECT

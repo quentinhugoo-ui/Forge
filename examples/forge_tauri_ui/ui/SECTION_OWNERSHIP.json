@@ -1,25 +1,63 @@
 {
   "version": 1,
   "entrypoints": [
-    "ui/forge-section-registry.js",
-    "ui/forge-tauri-bridge.js",
-    "ui/forge-boot.js",
-    "ui/forge-window-controls.js",
-    "ui/forge-webexplorer-config.js",
-    "ui/app.js",
-    "ui/trading.js",
-    "ui/banger.js"
+    "ui/dist/forge-section-registry.js",
+    "ui/dist/forge-tauri-bridge.js",
+    "ui/dist/forge-shell-runtime.js",
+    "ui/dist/forge-real-estate.js",
+    "ui/dist/forge-trading.js",
+    "ui/dist/forge-banger.js",
+    "ui/dist/forge-boot.js",
+    "ui/dist/forge-window-controls.js",
+    "ui/dist/forge-hardware.js",
+    "ui/dist/forge-sidebar.js",
+    "ui/dist/forge-shell-guardian.js",
+    "ui/dist/forge-search-palette.js",
+    "ui/dist/forge-webexplorer-config.js",
+    "ui/dist/forge-app.js"
   ],
   "sections": [
     {
       "id": "shell",
       "owner": "Forge shell",
       "files": [
-        "ui/app.js",
-        "ui/forge-section-registry.js",
-        "ui/forge-tauri-bridge.js",
-        "ui/forge-boot.js",
-        "ui/forge-window-controls.js"
+        "ui/src/shell/surface.ts",
+        "ui/dist/forge-shell-runtime.js",
+        "ui/dist/forge-real-estate.js",
+        "ui/dist/forge-trading.js",
+        "ui/dist/forge-banger.js",
+        "ui/src/shell/types.ts",
+        "ui/src/shell/shell-machine.ts",
+        "ui/src/shell/section-registry.ts",
+        "ui/src/shell/shell-actions.ts",
+        "ui/src/shell/tauri-client.ts",
+        "src-tauri/src/forge_kernel.rs",
+        "ui/src/sections/manifests.ts",
+        "ui/src/sections/real-estate/tools.ts",
+        "ui/src/sections/real-estate/tool-renderer.ts",
+        "ui/src/sections/real-estate/onboarding.ts",
+        "ui/src/sections/real-estate/onboarding-runtime.ts",
+        "ui/src/sections/real-estate/language-runtime.ts",
+        "ui/src/sections/real-estate/mode-runtime.ts",
+        "ui/src/sections/real-estate/panel-runtime.ts",
+        "ui/src/sections/real-estate/runtime-context.ts",
+        "ui/src/main.ts",
+        "ui/dist/forge-section-registry.js",
+        "ui/dist/forge-tauri-bridge.js",
+        "ui/dist/forge-boot.js",
+        "ui/dist/forge-window-controls.js",
+        "ui/dist/forge-hardware.js",
+        "ui/dist/forge-sidebar.js",
+        "ui/src/shell/legacy-section-registry.ts",
+        "ui/src/shell/tauri-bridge.ts",
+        "ui/src/shell/boot.ts",
+        "ui/src/shell/window-controls.ts",
+        "ui/src/shell/hardware.ts",
+        "ui/src/shell/sidebar.ts",
+        "ui/dist/forge-shell-guardian.js",
+        "ui/src/shell/guardian.ts",
+        "ui/dist/forge-search-palette.js",
+        "ui/src/shell/search-palette.ts"
       ],
       "lifecycle": "always-active"
     },
@@ -27,7 +65,7 @@
       "id": "alpha",
       "owner": "Alpha canvas",
       "files": [
-        "ui/app.js"
+        "ui/src/shell/surface.ts"
       ],
       "lifecycle": "shell-section"
     },
@@ -35,7 +73,7 @@
       "id": "forge",
       "owner": "Legacy Forge page",
       "files": [
-        "ui/app.js"
+        "ui/src/shell/surface.ts"
       ],
       "lifecycle": "shell-section"
     },
@@ -43,8 +81,10 @@
       "id": "webexplorer",
       "owner": "WebExplorer",
       "files": [
-        "ui/forge-webexplorer-config.js",
-        "ui/app.js"
+        "ui/dist/forge-webexplorer-config.js",
+        "ui/src/sections/webexplorer/config.ts",
+        "ui/src/shell/surface.ts",
+        "ui/dist/forge-real-estate.js"
       ],
       "lifecycle": "active-toggle",
       "nativePresentCommands": [
@@ -58,8 +98,12 @@
       "id": "real-estate",
       "owner": "Agence immo mode",
       "files": [
-        "ui/forge-webexplorer-config.js",
-        "ui/app.js"
+        "ui/dist/forge-webexplorer-config.js",
+        "ui/src/sections/webexplorer/config.ts",
+        "ui/src/shell/surface.ts",
+        "ui/src/sections/real-estate/language-runtime.ts",
+        "ui/src/sections/real-estate/mode-runtime.ts",
+        "ui/src/sections/real-estate/panel-runtime.ts"
       ],
       "lifecycle": "active-toggle"
     },
@@ -67,7 +111,11 @@
       "id": "real-estate-main",
       "owner": "Accueil agence immo",
       "files": [
-        "ui/app.js"
+        "ui/src/shell/surface.ts",
+        "ui/dist/forge-real-estate.js",
+        "ui/src/sections/real-estate/language-runtime.ts",
+        "ui/src/sections/real-estate/mode-runtime.ts",
+        "ui/src/sections/real-estate/panel-runtime.ts"
       ],
       "lifecycle": "active-toggle"
     },
@@ -75,8 +123,12 @@
       "id": "trading",
       "owner": "Trading workspace",
       "files": [
-        "ui/trading.js",
-        "ui/app.js"
+        "ui/src/sections/trading/surface.ts",
+        "ui/dist/forge-trading.js",
+        "ui/src/sections/trading/controller.ts",
+        "ui/src/sections/trading/catalog.ts",
+        "ui/src/sections/trading/state.ts",
+        "ui/src/shell/surface.ts"
       ],
       "lifecycle": "open-close",
       "nativePresentCommands": [
@@ -90,7 +142,10 @@
       "id": "banger",
       "owner": "Banger viewport",
       "files": [
-        "ui/banger.js"
+        "ui/src/sections/banger/surface.ts",
+        "ui/dist/forge-banger.js",
+        "ui/src/sections/banger/controller.ts",
+        "ui/src/sections/banger/catalog.ts"
       ],
       "lifecycle": "open-close"
     }

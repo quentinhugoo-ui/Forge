@@ -1,0 +1,199 @@
+// Static WebGL/math catalog for the Banger surface.
+// Source of truth lives in TypeScript during the JS cutover.
+
+type Vec3 = readonly [number, number, number];
+type Vec4 = [number, number, number, number];
+
+function at(values: Float32Array, index: number): number {
+  return values[index] ?? 0;
+}
+
+// ---------- mat4 helpers (column-major, Float32Array) ----------
+export const M4 = {
+  identity(): Float32Array { const m=new Float32Array(16); m[0]=m[5]=m[10]=m[15]=1; return m; },
+  perspective(fovY: number, aspect: number, near: number, far: number): Float32Array {
+    const f = 1 / Math.tan(fovY / 2);
+    const nf = 1 / (near - far);
+    const m = new Float32Array(16);
+    m[0]=f/aspect; m[5]=f; m[10]=(far+near)*nf; m[11]=-1; m[14]=2*far*near*nf;
+    return m;
+  },
+  lookAt(eye: Vec3, target: Vec3, up: Vec3): Float32Array {
+    const z0=eye[0]-target[0], z1=eye[1]-target[1], z2=eye[2]-target[2];
+    let zl = Math.hypot(z0,z1,z2); zl = zl===0?1:1/zl;
+    const zx=z0*zl, zy=z1*zl, zz=z2*zl;
+    let xx=up[1]*zz-up[2]*zy, xy=up[2]*zx-up[0]*zz, xz=up[0]*zy-up[1]*zx;
+    let xl = Math.hypot(xx,xy,xz); xl = xl===0?1:1/xl;
+    xx*=xl; xy*=xl; xz*=xl;
+    const yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
+    const m = new Float32Array(16);
+    m[0]=xx; m[1]=yx; m[2]=zx; m[3]=0;
+    m[4]=xy; m[5]=yy; m[6]=zy; m[7]=0;
+    m[8]=xz; m[9]=yz; m[10]=zz; m[11]=0;
+    m[12]=-(xx*eye[0]+xy*eye[1]+xz*eye[2]);
+    m[13]=-(yx*eye[0]+yy*eye[1]+yz*eye[2]);
+    m[14]=-(zx*eye[0]+zy*eye[1]+zz*eye[2]);
+    m[15]=1;
+    return m;
+  },
+  multiply(a: Float32Array, b: Float32Array): Float32Array {
+    const out = new Float32Array(16);
+    for (let i=0;i<4;i++) for (let j=0;j<4;j++) {
+      out[i*4+j] = at(a,0*4+j)*at(b,i*4+0)+at(a,1*4+j)*at(b,i*4+1)+at(a,2*4+j)*at(b,i*4+2)+at(a,3*4+j)*at(b,i*4+3);
+    }
+    return out;
+  },
+  transformVec4(m: Float32Array, x: number, y: number, z: number, w = 1): Vec4 {
+    return [
+      at(m,0) * x + at(m,4) * y + at(m,8)  * z + at(m,12) * w,
+      at(m,1) * x + at(m,5) * y + at(m,9)  * z + at(m,13) * w,
+      at(m,2) * x + at(m,6) * y + at(m,10) * z + at(m,14) * w,
+      at(m,3) * x + at(m,7) * y + at(m,11) * z + at(m,15) * w,
+    ];
+  },
+};
+
+export const AXIS_RGB = {
+  x: [0.96, 0.43, 0.56],
+  y: [0.23, 0.84, 0.68],
+  z: [0.47, 0.58, 0.98],
+};
+export const AXIS_HEX = {
+  x: "#f56d90",
+  xNeg: "#9d4761",
+  y: "#3bd6ad",
+  yNeg: "#24836c",
+  z: "#7894fa",
+  zNeg: "#495caa",
+};
+
+export function makeCube(): { pos: Float32Array; nrm: Float32Array; count: number } {
+  const faces: Array<[Vec3, Vec3, Vec3, Vec3, Vec3]> = [
+    [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1], [1, 0, 0]],
+    [[-1, -1, 1], [-1, 1, 1], [-1, 1, -1], [-1, -1, -1], [-1, 0, 0]],
+    [[-1, 1, -1], [-1, 1, 1], [1, 1, 1], [1, 1, -1], [0, 1, 0]],
+    [[-1, -1, 1], [-1, -1, -1], [1, -1, -1], [1, -1, 1], [0, -1, 0]],
+    [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1], [0, 0, 1]],
+    [[1, -1, -1], [-1, -1, -1], [-1, 1, -1], [1, 1, -1], [0, 0, -1]],
+  ];
+  const pos: number[] = [];
+  const nrm: number[] = [];
+  for (const face of faces) {
+    const [a, b, c, d, n] = face;
+    for (const v of [a, b, c, a, c, d]) {
+      pos.push(...v);
+      nrm.push(...n);
+    }
+  }
+  return { pos: new Float32Array(pos), nrm: new Float32Array(nrm), count: pos.length / 3 };
+}
+
+export function makeGrid(half = 320, step = 1): { pos: Float32Array; col: Float32Array; count: number } {
+  const pos: number[] = [];
+  const col: number[] = [];
+  const minor: Vec3 = [0.18, 0.185, 0.20];
+  const major: Vec3 = [0.29, 0.295, 0.315];
+  for (let i = -half; i <= half; i += step) {
+    const c = i === 0 ? null : (i % 10 === 0 ? major : minor);
+    if (!c) continue;
+    pos.push(-half, i, 0, half, i, 0);
+    col.push(...c, ...c);
+    pos.push(i, -half, 0, i, half, 0);
+    col.push(...c, ...c);
+  }
+  pos.push(-half, 0, 0, half, 0, 0);
+  col.push(...AXIS_RGB.x, ...AXIS_RGB.x);
+  pos.push(0, -half, 0, 0, half, 0);
+  col.push(...AXIS_RGB.y, ...AXIS_RGB.y);
+  return { pos: new Float32Array(pos), col: new Float32Array(col), count: pos.length / 3 };
+}
+
+export const VS_MESH = `#version 300 es
+  precision highp float;
+  in vec3 aPos;
+  in vec3 aNormal;
+  uniform mat4 uModel;
+  uniform mat4 uProj;
+  uniform mat4 uView;
+  uniform vec2 uClipOffset;
+  out vec3 vNormal;
+  out vec3 vWorld;
+  void main() {
+    vec4 worldPos = uModel * vec4(aPos, 1.0);
+    vNormal = normalize(mat3(uModel) * aNormal);
+    vWorld  = worldPos.xyz;
+    gl_Position = uProj * uView * worldPos;
+    gl_Position.xy += uClipOffset * gl_Position.w;
+  }
+`;
+export const FS_MESH = `#version 300 es
+  precision highp float;
+  in vec3 vNormal;
+  in vec3 vWorld;
+  out vec4 fragColor;
+  uniform vec3 uColor;
+  void main() {
+    vec3 N = normalize(vNormal);
+    vec3 L = normalize(vec3(0.6, 0.9, 0.7));
+    float ndl = max(dot(N, L), 0.0);
+    vec3 ambient = vec3(0.18, 0.18, 0.22);
+    vec3 diffuse = uColor * (0.55 + 0.55 * ndl);
+    vec3 col = ambient + diffuse;
+    // soft rim
+    float rim = pow(1.0 - max(dot(N, vec3(0.0,0.0,1.0)), 0.0), 2.0);
+    col += rim * 0.08 * vec3(1.0, 0.7, 0.4);
+    fragColor = vec4(col, 1.0);
+  }
+`;
+export const VS_LINE = `#version 300 es
+  precision highp float;
+  in vec3 aPos;
+  in vec3 aColor;
+  uniform mat4 uProj;
+  uniform mat4 uView;
+  uniform vec2 uClipOffset;
+  out vec3 vColor;
+  out vec3 vViewPos;
+  void main() {
+    vColor = aColor;
+    vec4 viewPos = uView * vec4(aPos, 1.0);
+    vViewPos = viewPos.xyz;
+    gl_Position = uProj * viewPos;
+    gl_Position.xy += uClipOffset * gl_Position.w;
+  }
+`;
+export const FS_LINE = `#version 300 es
+  precision highp float;
+  in vec3 vColor;
+  in vec3 vViewPos;
+  out vec4 fragColor;
+  uniform float uFadeNear;
+  uniform float uFadeFar;
+  void main() {
+    float dist = length(vViewPos);
+    float fade = 1.0 - smoothstep(uFadeNear, uFadeFar, dist);
+    fade = clamp(fade, 0.0, 1.0);
+    fragColor = vec4(vColor * fade, fade);
+  }
+`;
+
+
+export const ForgeBangerCatalog = Object.freeze({
+  M4,
+  AXIS_RGB,
+  AXIS_HEX,
+  makeCube,
+  makeGrid,
+  VS_MESH,
+  FS_MESH,
+  VS_LINE,
+  FS_LINE,
+});
+
+declare global {
+  interface Window {
+    ForgeBangerCatalog?: typeof ForgeBangerCatalog;
+  }
+}
+
+window.ForgeBangerCatalog = ForgeBangerCatalog;

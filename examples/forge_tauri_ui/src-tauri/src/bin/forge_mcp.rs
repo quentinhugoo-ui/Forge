@@ -11,13 +11,25 @@ mod synth_strategy;
 mod kasm_indicators;
 #[path = "../forge_agent_tools.rs"]
 mod forge_agent_tools;
+#[path = "../forge_intent.rs"]
+mod forge_intent;
+#[allow(dead_code)]
+#[path = "../forge_agent_runtime.rs"]
+mod forge_agent_runtime;
+#[path = "../forge_fbc_host.rs"]
+mod forge_fbc_host;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use scan::fbc::{
+    execute_app_registry_batch, parse_app_section_registry_v0, tool_cell_output_artifact_json,
+    ForgeVmConfig,
+};
 use scan::{Hash, MemoryGovernor, MonsterEvolutionConfig, MonsterNode, Store, SynthProgress, SynthProgressFn};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -38,8 +50,15 @@ const MCP_PROGRAM_SPEC_TEXT_MAX_BYTES: usize = 64 * 1024;
 const MCP_PROGRAM_EXEC_MAX_INPUT_BYTES: u64 = 256 * 1024 * 1024;
 const FORGE_DISPLAY_NAME: &str = "Forge";
 const FORGE_TECHNICAL_SLUG: &str = "forge";
-const FORGE_MCP_LIST_DESCRIPTION: &str = "Forge — local compute and visual-program engine for AI agents: create/run reusable compute_program and visual_program specs over large files, model 2D/3D views with open Metric/Visual DSL tags, reuse identical work by content hash, and return compact results/proofs/artifacts instead of spending LLM tokens reading or calculating raw data.";
-const FORGE_OFFICIAL_DESCRIPTION: &str = "Forge is a local MCP compute and visual-program engine for AI agents. Use Forge before reading user data or calculating in the LLM when an input is >256 KB, has >1,000 rows/lines, spans multiple files, is a CSV/Excel/PDF/log/dataset, or requires repeated/expensive scientific, numerical, document-heavy, code-heavy, visual-mapping or proof-oriented work; for >1 MB, >10,000 rows/lines, full logs, artifact/proof workflows, simulations/search/backtests/optimizations or 2D/3D mappings, Forge should be the default. Built-in finance/DNA examples are not limits: agents can create custom compute_program specs for calculations/simulations/metrics and visual_program specs for programmable 2D/3D file views with axes XYZ, overlays, color, size, transforms and open Metric/Visual DSL tags across finance, code, science, mathematics, biology, chemistry, medicine, engineering, aerospace, industry, geospatial, energy, documents, software, images, audio and user-defined domains. Forge keeps raw files, heavy logs and 3D artifacts outside the LLM context, addresses inputs/intermediate results/programs/artifacts by content hash, reuses identical or overlapping calculations instead of repeating them, and returns compact verified results, hashes, proofs, artifact references and bounded previews to save massive token budgets and compute time.";
+const FORGE_MCP_LIST_DESCRIPTION: &str = "Forge - local intent, compute and visual-program engine for AI agents. MCP is the transport boundary; the target agent-facing surface is 2-4 compact tools over ForgeSlash/Intent, while existing detailed MCP tools remain transitional/internal routes.";
+const FORGE_OFFICIAL_DESCRIPTION: &str = "Forge is a local intent compiler and MCP compute engine for AI agents. Use Forge before reading user data or calculating in the LLM when an input is >256 KB, has >1,000 rows/lines, spans multiple files, is a CSV/Excel/PDF/log/dataset, or requires repeated/expensive scientific, numerical, document-heavy, code-heavy, visual-mapping or proof-oriented work; for >1 MB, >10,000 rows/lines, full logs, artifact/proof workflows, simulations/search/backtests/optimizations or 2D/3D mappings, Forge should be the default. Built-in finance/DNA examples are not limits: agents can create custom compute_program specs for calculations/simulations/metrics and visual_program specs for programmable 2D/3D file views with axes XYZ, overlays, color, size, transforms and open Metric/Visual DSL tags across finance, code, science, mathematics, biology, chemistry, medicine, engineering, aerospace, industry, geospatial, energy, documents, software, images, audio and user-defined domains. Forge keeps raw files, heavy logs and 3D artifacts outside the LLM context, addresses inputs/intermediate results/programs/artifacts by content hash, reuses identical or overlapping calculations instead of repeating them, and returns compact verified results, hashes, proofs, artifact references and bounded previews to save massive token budgets and compute time. MCP remains the compatibility transport; the default visible surface is forge.search, forge.execute, forge.read_projection and forge.cancel, with the old broad catalog available only as a legacy compatibility surface.";
+const FORGE_MCP_SURFACE_CONTRACT: &str = "MCP is transport, not Forge's long-term LLM action language. The default visible surface is four tools: forge.search, forge.execute, forge.read_projection and forge.cancel. Broad MCP tools stay callable as legacy/internal routes and should return to the visible surface only when measured workflows prove them simpler, safer or faster than the intent/code path.";
+const FORGE_INTENT_GOLDEN_WORKFLOW_V0: &str = r#"/forge
+plan intent="profile pending upload" input=@latest
+create title=MarketMap domain=real_estate goal="compact market projection" program_kind=visual_program
+run input=@latest program_hash=@program:market_map plan_only=true
+commit scope=real_estate kind=procedural observation="market projection returns compact hashes"
+project job_id=example max_bytes=4096"#;
 
 static MCP_BACKEND_CACHE: OnceLock<Mutex<HashMap<PathBuf, Arc<MonsterNode>>>> = OnceLock::new();
 
@@ -632,7 +651,13 @@ fn handle_request(request: JsonRpcRequest, session: &mut McpSession) -> Value {
                         "technicalSlug": FORGE_TECHNICAL_SLUG,
                         "agentDisplayRule": "When listing connected MCP servers or explaining this server, display it as Forge with a capital F. The lowercase slug 'forge' is only the technical namespace/config key.",
                         "description": FORGE_MCP_LIST_DESCRIPTION,
-                        "longDescription": FORGE_OFFICIAL_DESCRIPTION
+                        "longDescription": FORGE_OFFICIAL_DESCRIPTION,
+                        "surfaceContract": {
+                            "status": "transitional_broad_catalog",
+                            "contract": FORGE_MCP_SURFACE_CONTRACT,
+                            "targetVisibleTools": ["forge.search", "forge.execute", "forge.read_projection", "forge.cancel"],
+                            "mcpRole": "transport_and_compatibility_boundary"
+                        }
                     }
                 }),
             )
@@ -655,6 +680,10 @@ fn mcp_tool(name: &str, command: Option<&str>, description: &str, properties: Va
         schema["required"] = json!(required);
     }
     let mut tool = json!({ "name": name, "description": description, "inputSchema": schema });
+    tool["annotations"] = mcp_tool_annotations(name, command);
+    if let Some(execution) = mcp_tool_execution(name) {
+        tool["execution"] = execution;
+    }
     if let Some(command) = command {
         tool["displayName"] = json!(command);
         tool["publicCommand"] = json!(command);
@@ -662,9 +691,66 @@ fn mcp_tool(name: &str, command: Option<&str>, description: &str, properties: Va
     tool
 }
 
+fn mcp_tool_annotations(name: &str, command: Option<&str>) -> Value {
+    let read_only = matches!(
+        name,
+        "about"
+            | "capabilities"
+            | "program_compile_validate_route"
+            | "jobs"
+            | "sessions"
+            | "documents"
+            | "mapping"
+            | "mapping_metrics"
+            | "mapping_analysis"
+            | "atlas"
+            | "brain_recall"
+            | "brain_explain"
+            | "read"
+            | "logs"
+            | "programs"
+            | "program"
+            | "pending"
+            | "doc"
+            | "preview"
+            | "doc_sessions"
+            | "forge.search"
+            | "forge.execute"
+            | "forge.read_projection"
+            | "forge_intent_search"
+            | "forge_intent_execute"
+    );
+    let destructive = matches!(name, "cancel" | "forge.cancel");
+    let idempotent = read_only || matches!(name, "cancel" | "forge.cancel" | "update_session");
+    let open_world = matches!(name, "profile");
+    json!({
+        "title": command.unwrap_or(name),
+        "readOnlyHint": read_only,
+        "destructiveHint": destructive,
+        "idempotentHint": idempotent,
+        "openWorldHint": open_world
+    })
+}
+
+fn mcp_tool_execution(name: &str) -> Option<Value> {
+    matches!(name, "run" | "visual_program" | "forge.execute")
+        .then(|| json!({ "taskSupport": "optional" }))
+}
+
+fn mcp_opt_in_tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
+    mcp_tool(name, None, description, properties, required)
+}
+
 fn tools_list() -> Vec<Value> {
-    vec![
+    if compact_mcp_surface_enabled() {
+        return compact_tools_list();
+    }
+    let mut tools = vec![
         mcp_tool("about", None, "Forge — local compute and visual-program engine for AI agents. FIRST CALL for large files, expensive/repetitive calculations, scientific/data/code/document analysis, programmable 2D/3D views, custom compute_program/visual_program specs, hashes, proofs or compact artifacts. Use Forge before Read/shell above 256 KB or 1,000 rows to avoid spending massive LLM tokens reading/calculating. Fast path: run { intent, inputs, plan_only:true } or run {} for one pending upload.", json!({}), &[]),
+        mcp_tool("fbc_runtime", Some("/fbc_"), "/fbc_ - Experimental Forge Native Bytecode runtime snapshot for the whole app. Compiles SECTION_OWNERSHIP sections and sensitive native commands into FBC/KASM2 v0 ToolCells, runs the verifier/interpreter, writes compact proof artifacts, and returns only hashes/projections; no raw filesystem/network/secrets are exposed.", json!({
+            "backend": { "type": "string", "description": "Optional backend selector: auto, fbc_interpreter, kasm_native, gpu, microvm_fallback." },
+            "write_artifacts": { "type": "boolean", "description": "Default true. Writes compact FBC projection/artifact JSON under the Forge store." }
+        }), &[]),
         mcp_tool("capabilities", Some("/metric"), "/metric - Forge capability GPS. Find examples plus universal creation routes for compute_program and visual_program specs: open Metric/Visual DSL, domain metrics, 2D/3D axes, overlays, artifacts and local execution. Built-in finance/DNA templates are examples, not limits. Use when the domain or program shape is unclear; otherwise call /program_ with plan_only=true directly.", json!({
             "query": { "type": "string", "description": "Optional capability/operator/domain/intent search, e.g. visual_program, 3D mapping, finance, kmer, code, volume anomalies, geospatial, audio." },
             "domain": { "type": "string", "description": "Optional compact domain filter: finance, code, documents, biology, chemistry, medicine, math, engineering, aerospace, simulation, timeseries, security, energy, geospatial, manufacturing, audio, images or any custom domain." },
@@ -768,15 +854,132 @@ fn tools_list() -> Vec<Value> {
         mcp_tool("read", None, "Read compact Forge results, hashes, proofs, artifact refs, bounded previews, reusable programs and 3D mappings. Heavy CSV/source/log/artifact content is not returned by default.", json!({ "job_id": { "type": "string", "description": "Compute job id." }, "program_hash": { "type": "string", "description": "Optional program hash to read a reusable Forge program." }, "kind": { "type": "string", "description": "Optional: job, program, artifacts, docs, preview." }, "max_bytes": { "type": "integer", "description": "Only used for kind=preview; capped." } }), &[]),
         mcp_tool("logs", None, "Stream live Forge compute progress by cursor. Use while a job runs or appears stuck. Returns bounded log chunks and next_cursor; do not open .log files directly.", json!({ "job_id": { "type": "string" }, "cursor": { "type": "integer", "description": "Byte offset returned by the previous call. Default 0." }, "max_bytes": { "type": "integer", "description": "Maximum bytes to read. Default 65536, capped at 262144." } }), &["job_id"]),
         mcp_tool("cancel", None, "Cancel a Forge job safely by job_id. Use when the user asks to stop, abort, retry, or change parameters.", json!({ "job_id": { "type": "string" }, "reason": { "type": "string" } }), &["job_id"]),
+    ];
+    if intent_mcp_surface_enabled() {
+        tools.push(mcp_opt_in_tool(
+            "forge_intent_search",
+            "Opt-in Forge intent facade search. Returns compact action signatures and examples over the current internal routes without exposing full MCP schemas.",
+            json!({
+                "query": { "type": "string", "description": "Capability, domain or action intent to search." },
+                "limit": { "type": "integer", "description": "Maximum compact candidates. Default 4, capped at 8." }
+            }),
+            &[],
+        ));
+        tools.push(mcp_opt_in_tool(
+            "forge_intent_execute",
+            "Opt-in ForgeSlash v0 facade executor. Parses, compiles, policy-checks and returns a ForgeProjection without raw data; execution stays gated until parity.",
+            json!({
+                "program": { "type": "string", "description": "ForgeSlash v0 program, for example /forge plan intent=\"inspect latest upload\" input=@latest" },
+                "max_bytes": { "type": "integer", "description": "Projection budget. Default 4096, capped at 16384." },
+                "execute_safe": { "type": "boolean", "description": "If true, execute only read-only and plan_only steps; side-effect routes are skipped with proofs." },
+                "mode": { "type": "string", "description": "Optional: plan (default), execute_safe, or execute_approved." },
+                "approve_side_effects": { "type": "boolean", "description": "Required for mode=execute_approved when the intent contains create, non-plan run or brain_commit." },
+                "approved_intent_hash": { "type": "string", "description": "Intent hash observed in a previous projection; required for side-effect approval." },
+                "approved_policy_hash": { "type": "string", "description": "Policy hash observed in a previous projection; required for side-effect approval." },
+                "allow_run_side_effects": { "type": "boolean", "description": "Extra gate for non-plan run steps; defaults false even when other side effects are approved." }
+            }),
+            &["program"],
+        ));
+    }
+    tools
+}
+
+fn compact_tools_list() -> Vec<Value> {
+    vec![
+        mcp_tool(
+            "forge.search",
+            None,
+            "Compact Forge intent search. Use to discover the next ForgeSlash action, capability family or projection route without exposing the transitional MCP catalog.",
+            json!({
+                "query": { "type": "string", "description": "Intent, domain, capability or task shape to search." },
+                "limit": { "type": "integer", "description": "Maximum compact candidates. Default 4, capped at 8." }
+            }),
+            &[],
+        ),
+        mcp_tool(
+            "forge.execute",
+            None,
+            "Compact Forge executor. Accepts a ForgeSlash v0 program, validates/routes it, and returns a bounded projection. Raw data stays on disk.",
+            json!({
+                "program": { "type": "string", "description": "ForgeSlash v0 program, for example /forge plan intent=\"inspect latest upload\" input=@latest" },
+                "max_bytes": { "type": "integer", "description": "Projection budget. Default 4096, capped at 16384." },
+                "execute_safe": { "type": "boolean", "description": "If true, execute only read-only and plan_only steps; side-effect routes are skipped with proofs." },
+                "mode": { "type": "string", "description": "Optional: plan (default), execute_safe, or execute_approved." },
+                "approve_side_effects": { "type": "boolean", "description": "Required for mode=execute_approved when the intent contains create, non-plan run or brain_commit." },
+                "approved_intent_hash": { "type": "string", "description": "Intent hash observed in a previous projection; required for side-effect approval." },
+                "approved_policy_hash": { "type": "string", "description": "Policy hash observed in a previous projection; required for side-effect approval." },
+                "allow_run_side_effects": { "type": "boolean", "description": "Extra gate for non-plan run steps; defaults false even when other side effects are approved." }
+            }),
+            &["program"],
+        ),
+        mcp_tool(
+            "forge.read_projection",
+            None,
+            "Read compact Forge projections, job summaries, artifact refs, hashes and bounded previews. Heavy source/log/artifact content is not returned by default.",
+            json!({
+                "job_id": { "type": "string", "description": "Optional Forge job id." },
+                "program_hash": { "type": "string", "description": "Optional reusable program hash." },
+                "kind": { "type": "string", "description": "Optional: job, program, artifacts, docs, preview." },
+                "max_bytes": { "type": "integer", "description": "Only used for bounded previews; capped." }
+            }),
+            &[],
+        ),
+        mcp_tool(
+            "forge.cancel",
+            None,
+            "Cancel a Forge job safely by job_id.",
+            json!({
+                "job_id": { "type": "string" },
+                "reason": { "type": "string" }
+            }),
+            &["job_id"],
+        ),
     ]
+}
+
+fn env_flag(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+fn compact_mcp_surface_enabled() -> bool {
+    if let Ok(value) = env::var("FORGE_MCP_SURFACE") {
+        let value = value.trim().to_ascii_lowercase();
+        if matches!(value.as_str(), "broad" | "legacy" | "full") {
+            return false;
+        }
+        if matches!(value.as_str(), "compact" | "frontier" | "intent") {
+            return true;
+        }
+    }
+    !(env_flag("FORGE_MCP_LEGACY_SURFACE") || env_flag("FORGE_MCP_BROAD_SURFACE"))
+}
+
+fn intent_mcp_surface_enabled() -> bool {
+    env_flag("FORGE_INTENT_MCP_SURFACE")
+}
+
+fn visible_tool_names() -> Vec<String> {
+    visible_tool_names_from(tools_list())
+}
+
+fn visible_tool_names_from(tools: Vec<Value>) -> Vec<String> {
+    tools
+        .into_iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_string))
+        .collect()
 }
 
 const MCP_TOOL_ALIASES: &[(&str, &[&str])] = &[
     ("about", &["about", "forge_about"]),
+    ("fbc_runtime", &["fbc_runtime", "forge_fbc_runtime", "/fbc_", "fbc_", "forge.native_bytecode"]),
     ("create", &["create", "/create_", "create_", "define", "forge_program_define", "forge_program_create"]),
     ("indicator", &["/indicator", "indicator", "/indicator_", "indicator_", "/alert_", "alert_"]),
     ("metric", &["/metric", "metric"]),
     ("program_compile_validate_route", &["program_compile_validate_route", "compile_validate_route", "compile", "forge_program_compile_validate_route"]),
+    ("forge_intent_search", &["forge_intent_search", "forge.search"]),
     ("capabilities", &["capabilities", "ops", "operators", "forge_ops", "forge_program_ops"]),
     ("programs", &["programs", "forge_programs_list"]),
     ("program", &["program", "forge_program_read"]),
@@ -784,7 +987,7 @@ const MCP_TOOL_ALIASES: &[(&str, &[&str])] = &[
     ("alpha", &["alpha", "forge_alpha_strategy_from_csv"]),
     ("jobs", &["jobs", "forge_jobs_list"]),
     ("pending", &["pending", "forge_pending_jobs_list"]),
-    ("read", &["read", "forge_job_read"]),
+    ("read", &["read", "forge_job_read", "forge.read_projection", "forge_intent_read_projection"]),
     ("mapping", &["mapping", "visual_mapping", "forge_interpret_visual_mapping"]),
     ("mapping_metrics", &["mapping_metrics", "metric_catalog_3d", "forge_3d_metric_catalog"]),
     ("mapping_model", &["mapping_model", "model_mapping", "forge_model_3d_mapping", "forge_3d_model_view"]),
@@ -801,12 +1004,13 @@ const MCP_TOOL_ALIASES: &[(&str, &[&str])] = &[
     ("brain_explain", &["brain_explain", "forge_brain_explain", "explain_memory"]),
     ("geonode", &["geonode", "/geo", "geo", "/geo_", "geo_", "/minigeo", "minigeo", "/minigeo_", "minigeo_", "upsert_geonode", "forge_upsert_geonode"]),
     ("update_session", &["update_session", "forge_update_session"]),
+    ("forge_intent_execute", &["forge_intent_execute", "forge.execute"]),
     ("run", &["run", "/program_", "program_", "/strategy_", "strategy_", "claim", "forge_job_run_pending", "forge_job_claim"]),
     ("logs", &["logs", "forge_job_log_tail"]),
     ("artifacts", &["artifacts", "forge_job_artifacts"]),
     ("inject", &["inject", "forge_job_inject_result"]),
     ("rename", &["rename", "forge_job_update_title"]),
-    ("cancel", &["cancel", "forge_job_cancel"]),
+    ("cancel", &["cancel", "forge_job_cancel", "forge.cancel"]),
     ("legacy_docs", &["legacy_docs"]),
     ("doc", &["doc", "forge_doc_read"]),
     ("preview", &["preview", "forge_doc_preview"]),
@@ -844,18 +1048,462 @@ fn internal_mcp_tool_route(canonical: &str) -> Option<&'static str> {
         .find_map(|(name, route)| (*name == canonical).then_some(*route))
 }
 
+#[cfg(test)]
+mod mcp_surface_tests {
+    use super::*;
+
+    #[test]
+    fn compact_facade_is_default_visible_surface_and_aliases_still_route() {
+        assert_eq!(canonical_mcp_tool_name("forge.search"), Some("forge_intent_search"));
+        assert_eq!(canonical_mcp_tool_name("forge.execute"), Some("forge_intent_execute"));
+        assert_eq!(canonical_mcp_tool_name("forge.read_projection"), Some("read"));
+        assert_eq!(canonical_mcp_tool_name("forge.cancel"), Some("cancel"));
+
+        let visible_names = visible_tool_names();
+        assert_eq!(
+            visible_names,
+            vec![
+                "forge.search".to_string(),
+                "forge.execute".to_string(),
+                "forge.read_projection".to_string(),
+                "forge.cancel".to_string(),
+            ]
+        );
+        assert!(!visible_names.iter().any(|name| name == "forge_intent_search"));
+        assert!(!visible_names.iter().any(|name| name == "forge_intent_execute"));
+    }
+
+    #[test]
+    fn compact_surface_exposes_exact_frontier_tools() {
+        let visible_names = visible_tool_names_from(compact_tools_list());
+        assert_eq!(
+            visible_names,
+            vec![
+                "forge.search".to_string(),
+                "forge.execute".to_string(),
+                "forge.read_projection".to_string(),
+                "forge.cancel".to_string(),
+            ]
+        );
+        assert_eq!(visible_names.len(), 4);
+    }
+
+    #[test]
+    fn compact_cutover_readiness_is_current_default() {
+        let readiness = compact_cutover_readiness();
+        assert_eq!(readiness["kind"].as_str(), Some("forge_compact_cutover_readiness_v0"));
+        assert_eq!(readiness["compact_surface_exact"].as_bool(), Some(true));
+        assert_eq!(readiness["intent_routes_live"].as_bool(), Some(true));
+        assert_eq!(
+            readiness["approved_side_effect_gate_live"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(readiness["exact_intent_cache_live"].as_bool(), Some(true));
+        assert_eq!(readiness["projection_replay_live"].as_bool(), Some(true));
+        assert_eq!(readiness["broad_catalog_hidden"].as_bool(), Some(true));
+        assert_eq!(readiness["status"].as_str(), Some("ready_as_current_default"));
+    }
+
+    #[test]
+    fn visible_tools_carry_mcp_safety_annotations() {
+        for tool in tools_list() {
+            let name = tool["name"].as_str().unwrap_or("");
+            let annotations = tool.get("annotations").expect("annotations");
+            assert!(annotations["readOnlyHint"].is_boolean(), "{name} readOnlyHint");
+            assert!(
+                annotations["destructiveHint"].is_boolean(),
+                "{name} destructiveHint"
+            );
+            assert!(
+                annotations["idempotentHint"].is_boolean(),
+                "{name} idempotentHint"
+            );
+            assert!(
+                annotations["openWorldHint"].is_boolean(),
+                "{name} openWorldHint"
+            );
+        }
+    }
+
+    #[test]
+    fn compact_surface_annotations_are_decision_ready() {
+        let tools = compact_tools_list();
+        let by_name: HashMap<_, _> = tools
+            .iter()
+            .map(|tool| (tool["name"].as_str().unwrap(), tool))
+            .collect();
+
+        assert_eq!(
+            by_name["forge.search"]["annotations"]["readOnlyHint"],
+            true
+        );
+        assert_eq!(
+            by_name["forge.execute"]["annotations"]["readOnlyHint"],
+            true
+        );
+        assert_eq!(
+            by_name["forge.read_projection"]["annotations"]["readOnlyHint"],
+            true
+        );
+        assert_eq!(
+            by_name["forge.cancel"]["annotations"]["destructiveHint"],
+            true
+        );
+        assert_eq!(
+            by_name["forge.cancel"]["annotations"]["idempotentHint"],
+            true
+        );
+        assert_eq!(
+            by_name["forge.execute"]["execution"]["taskSupport"],
+            "optional"
+        );
+    }
+
+    #[test]
+    fn policy_visible_tool_list_is_derived_from_tools_list() {
+        let policy = forge_tool_selection_policy();
+        let policy_tools: Vec<String> = policy["visible_tools"]
+            .as_array()
+            .expect("visible_tools array")
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+
+        assert_eq!(policy_tools, visible_tool_names());
+        assert_eq!(
+            policy["current_visible_tool_budget"].as_u64(),
+            Some(policy_tools.len() as u64)
+        );
+    }
+
+    #[test]
+    fn intent_execute_facade_returns_projection_without_running_side_effects() {
+        let result = forge_intent_execute_projection(forge_intent::FORGE_SLASH_V0_EXAMPLE, 4096)
+            .expect("valid ForgeSlash example");
+        assert_eq!(result["ok"].as_bool(), Some(true));
+        assert_eq!(result["mode"].as_str(), Some("planned_no_side_effects"));
+        assert_eq!(result["raw_data_returned"].as_bool(), Some(false));
+        assert!(result["forge_projection"]["trace_hash"].as_str().is_some());
+        assert_eq!(
+            result["forge_projection"]["raw_data_returned"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn intent_execute_projection_plans_without_claiming_pending_jobs() {
+        let result = forge_intent_execute_projection(
+            r#"/forge plan intent="profile market data" input=@latest"#,
+            4096,
+        )
+        .expect("valid projection");
+        assert_eq!(result["mode"].as_str(), Some("planned_no_side_effects"));
+        assert_eq!(result["raw_data_returned"].as_bool(), Some(false));
+        let steps = result["compiled_route_plan"]["steps"]
+            .as_array()
+            .expect("compiled route steps");
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0]["route"].as_str(), Some("run"));
+        assert_eq!(steps[0]["side_effect"].as_bool(), Some(false));
+        assert_eq!(steps[0]["arguments"]["plan_only"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn intent_execute_safe_runs_plan_steps_without_claiming_pending_jobs() {
+        let result = forge_intent_execute_safe_v0(
+            r#"/forge plan intent="profile market data" input=@latest"#,
+            4096,
+        )
+        .expect("valid safe execution");
+        assert_eq!(result["mode"].as_str(), Some("execute_safe"));
+        assert_eq!(result["raw_data_returned"].as_bool(), Some(false));
+        let steps = result["executed_steps"].as_array().expect("executed steps");
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0]["status"].as_str(), Some("executed_safe"));
+        assert_eq!(steps[0]["result_summary"]["plan_only"].as_bool(), Some(true));
+        assert!(steps[0]["result_hash"].as_str().is_some());
+        assert_eq!(
+            result["execution_report"]["executed_step_count"].as_u64(),
+            Some(1)
+        );
+        assert!(result["execution_report"]["execution_hash"].as_str().is_some());
+    }
+
+    #[test]
+    fn intent_execute_safe_report_hash_is_stable() {
+        let source = r#"/forge plan intent="profile market data" input=@latest"#;
+        let first = forge_intent_execute_safe_v0(source, 4096).expect("first safe execution");
+        let second = forge_intent_execute_safe_v0(source, 4096).expect("second safe execution");
+        assert_eq!(
+            first["execution_report"]["execution_hash"],
+            second["execution_report"]["execution_hash"]
+        );
+        assert_eq!(
+            first["execution_report"]["executed_steps_hash"],
+            second["execution_report"]["executed_steps_hash"]
+        );
+    }
+
+    #[test]
+    fn intent_facade_response_omits_broad_policy_envelope() {
+        let session = McpSession {
+            client: McpClientInfo {
+                name: "test".to_string(),
+                version: None,
+                model: None,
+                token_mode: "unknown".to_string(),
+            },
+        };
+        let mut params = json!({
+            "arguments": {
+                "program": "/forge plan intent=\"profile market data\" input=@latest",
+                "execute_safe": true
+            }
+        });
+        params
+            .as_object_mut()
+            .expect("params object")
+            .insert("name".to_string(), json!("forge_intent_execute"));
+        let response = handle_tool_call(&params, &session)
+        .expect("intent facade response");
+        let text = response["content"][0]["text"].as_str().expect("text payload");
+        assert!(!text.contains("\"agent_instructions\""));
+        assert!(!text.contains("\"tool_selection_policy\""));
+        let payload: Value = serde_json::from_str(text).expect("json payload");
+        assert_eq!(payload["surface"].as_str(), Some("forge_intent_compact_v0"));
+        assert_eq!(payload["data"]["mode"].as_str(), Some("execute_safe"));
+        assert!(payload["data"]["execution_report"]["execution_hash"].as_str().is_some());
+    }
+
+    #[test]
+    fn persisted_intent_projection_round_trips_by_execution_hash() {
+        let mut projection = forge_intent_execute_safe_v0(
+            r#"/forge plan intent="profile market data" input=@latest"#,
+            1024,
+        )
+        .expect("safe projection");
+        let store = std::env::temp_dir().join(format!(
+            "forge-intent-projection-test-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let persisted = persist_forge_intent_projection_to_store(&store, &mut projection)
+            .expect("persist projection");
+        let execution_hash = persisted["execution_hash"]
+            .as_str()
+            .expect("execution hash")
+            .to_string();
+        let read = read_forge_intent_projection_from_store(
+            &store,
+            &json!({ "execution_hash": execution_hash }),
+        )
+        .expect("read projection");
+        assert_eq!(read["found"].as_bool(), Some(true));
+        assert_eq!(
+            read["execution_report"]["execution_hash"],
+            persisted["execution_hash"]
+        );
+        assert_eq!(read["raw_data_returned"].as_bool(), Some(false));
+        assert_eq!(read["executed_steps"][0]["result_summary"]["plan_only"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn persisted_intent_projection_is_indexed_listed_and_searchable() {
+        let mut projection = forge_intent_execute_safe_v0(
+            r#"/forge plan intent="profile market data" input=@latest"#,
+            1024,
+        )
+        .expect("safe projection");
+        let store = std::env::temp_dir().join(format!(
+            "forge-intent-index-test-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let persisted = persist_forge_intent_projection_to_store(&store, &mut projection)
+            .expect("persist projection");
+        let execution_hash = persisted["execution_hash"].as_str().expect("execution hash");
+        let listed = read_forge_intent_projection_from_store(&store, &json!({ "limit": 4 }))
+            .expect("list projections");
+        assert_eq!(listed["kind"].as_str(), Some("forge_intent_projection_list_v0"));
+        assert_eq!(listed["entries"][0]["execution_hash"].as_str(), Some(execution_hash));
+
+        let search = forge_intent_search_with_store("profile market projection", 8, Some(&store));
+        let results = search["results"].as_array().expect("search results");
+        assert!(
+            results.iter().any(|item| {
+                item.get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| id.starts_with("projection:"))
+                    .unwrap_or(false)
+            }),
+            "projection index should be visible to forge.search"
+        );
+    }
+
+    #[test]
+    fn forge_search_returns_executable_next_call_and_never_dead_ends() {
+        let search = forge_intent_search_with_store("memory commit semantic note", 4, None);
+        assert_eq!(search["kind"].as_str(), Some("forge_search_result_v1"));
+        assert_eq!(search["surface"].as_str(), Some("forge.search_default"));
+        assert!(search["result_count"].as_u64().unwrap_or(0) > 0);
+        assert_eq!(search["raw_data_returned"].as_bool(), Some(false));
+        assert!(search["next_call"]["tool"].as_str().is_some());
+        assert!(
+            search["route_plan"]["steps"]
+                .as_array()
+                .map(|steps| !steps.is_empty())
+                .unwrap_or(false)
+        );
+
+        let fallback = forge_intent_search_with_store("zzzzzzzz-no-route", 4, None);
+        assert!(fallback["result_count"].as_u64().unwrap_or(0) > 0);
+        assert_eq!(fallback["next_call"]["tool"].as_str(), Some("forge.search"));
+    }
+
+    #[test]
+    fn exact_intent_cache_hits_only_when_mode_and_budget_match() {
+        let mut projection = forge_intent_execute_safe_v0(
+            r#"/forge plan intent="profile market data" input=@latest"#,
+            2048,
+        )
+        .expect("safe projection");
+        let intent_hash = projection["intent_hash"].as_str().expect("intent hash").to_string();
+        let store = std::env::temp_dir().join(format!(
+            "forge-intent-cache-test-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        persist_forge_intent_projection_to_store(&store, &mut projection).expect("persist projection");
+
+        let hit = forge_agent_runtime::lookup_cached_direct_projection(&store, Some(&intent_hash), "execute_safe", 1024)
+            .expect("cache lookup")
+            .expect("cache hit");
+        assert_eq!(hit["cache_hit"].as_bool(), Some(true));
+        assert_eq!(
+            hit["cache_lookup"]["cache_reason"].as_str().or_else(|| hit["cache_reason"].as_str()),
+            Some("exact_intent_mode_and_budget")
+        );
+
+        let wrong_mode = forge_agent_runtime::lookup_cached_direct_projection(
+            &store,
+            Some(&intent_hash),
+            "planned_no_side_effects",
+            1024,
+        )
+        .expect("wrong mode cache lookup");
+        assert!(wrong_mode.is_none());
+
+        let too_small_budget =
+            forge_agent_runtime::lookup_cached_direct_projection(&store, Some(&intent_hash), "execute_safe", 4096)
+                .expect("budget cache lookup");
+        assert!(too_small_budget.is_none());
+    }
+
+    #[test]
+    fn execute_approved_requires_matching_hash_gate_for_side_effects() {
+        let source = r#"/forge run input=@latest intent="claim real work""#;
+        let client = test_client();
+        let result = forge_intent_execute_approved_v0(
+            source,
+            1024,
+            false,
+            None,
+            None,
+            false,
+            &client,
+        )
+        .expect("approval-required projection");
+
+        assert_eq!(result["mode"].as_str(), Some("approval_required"));
+        assert_eq!(result["approval_gate"]["ok"].as_bool(), Some(false));
+        assert_eq!(result["approval_gate"]["approval_required"].as_bool(), Some(true));
+        assert_eq!(
+            result["approval_gate"]["reason"].as_str(),
+            Some("side_effects_require_approve_side_effects_and_matching_intent_policy_hashes")
+        );
+        assert_eq!(result["executed_steps"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn execute_approved_runs_only_after_intent_and_policy_hash_match() {
+        let source = r#"/forge run input=@latest intent="claim real work""#;
+        let planned = forge_intent_execute_projection(source, 1024).expect("planned projection");
+        let intent_hash = planned["intent_hash"].as_str().expect("intent hash");
+        let policy_hash = planned["policy_report"]["policy_hash"]
+            .as_str()
+            .expect("policy hash");
+        let client = test_client();
+        let result = forge_intent_execute_approved_v0(
+            source,
+            1024,
+            true,
+            Some(intent_hash),
+            Some(policy_hash),
+            false,
+            &client,
+        )
+        .expect("approved projection");
+
+        assert_eq!(result["mode"].as_str(), Some("execute_approved"));
+        assert_eq!(result["approval_gate"]["ok"].as_bool(), Some(true));
+        assert_eq!(result["execution_report"]["mode"].as_str(), Some("execute_approved"));
+        assert_eq!(
+            result["execution_report"]["side_effects_allowed"].as_bool(),
+            Some(true)
+        );
+        let steps = result["executed_steps"].as_array().expect("executed steps");
+        assert_eq!(steps.len(), 1);
+        assert_eq!(
+            steps[0]["status"].as_str(),
+            Some("skipped_unapproved_run_side_effect")
+        );
+        assert_eq!(result["execution_report"]["skipped_step_count"].as_u64(), Some(1));
+    }
+
+    #[test]
+    fn golden_intent_workflow_is_hash_stable_and_compact() {
+        let result = forge_intent_golden_workflow_smoke_v0();
+        assert_eq!(result["ok"].as_bool(), Some(true));
+        assert_eq!(
+            result["stable_hashes_across_two_projections"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(result["projection"]["raw_data_returned"].as_bool(), Some(false));
+        assert_eq!(result["target_visible_tool_count"].as_u64(), Some(4));
+    }
+}
+
+#[cfg(test)]
+fn test_client() -> McpClientInfo {
+    McpClientInfo {
+        name: "test".to_string(),
+        version: None,
+        model: None,
+        token_mode: "unknown".to_string(),
+    }
+}
+
 fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, String> {
     let name = params
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| "tools/call missing name".to_string())?;
     let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    if matches!(name, "forge.read_projection" | "forge_intent_read_projection") {
+        let result = forge_read_projection_compact_v0(&args)?;
+        return mcp_intent_tool_response(result);
+    }
     let canonical = canonical_mcp_tool_name(name).ok_or_else(|| format!("unknown Forge tool: {name}"))?;
     if let Some(route) = internal_mcp_tool_route(canonical) {
         return mcp_internal_tool_response(route, &args);
     }
     match canonical {
         "about" => mcp_tool_response(forge_about()),
+        "fbc_runtime" => {
+            let result = forge_fbc_runtime_snapshot_mcp(&args)?;
+            mcp_tool_response(result)
+        }
         "create" => {
             let args: ProgramDefineArgs =
                 serde_json::from_value(args).map_err(|e| format!("bad arguments: {e}"))?;
@@ -887,6 +1535,72 @@ fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, Strin
         "program_compile_validate_route" => {
             let result = program_compile_validate_route(&args)?;
             mcp_tool_response(result)
+        }
+        "forge_intent_search" => {
+            let query = args.get("query").and_then(Value::as_str).unwrap_or("");
+            let limit = args
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(4)
+                .clamp(1, 8) as usize;
+            let result = forge_intent_search(query, limit);
+            mcp_intent_tool_response(result)
+        }
+        "forge_intent_execute" => {
+            let source = args
+                .get("program")
+                .or_else(|| args.get("intent_program"))
+                .or_else(|| args.get("source"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "forge_intent_execute requires a ForgeSlash v0 program string".to_string())?;
+            let max_bytes = args
+                .get("max_bytes")
+                .and_then(Value::as_u64)
+                .unwrap_or(4096)
+                .clamp(512, 16 * 1024) as usize;
+            let execute_safe = args
+                .get("execute_safe")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                || args
+                    .get("mode")
+                    .and_then(Value::as_str)
+                    .map(|mode| mode.eq_ignore_ascii_case("execute_safe"))
+                    .unwrap_or(false);
+            let execute_approved = args
+                .get("approve_side_effects")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                || args
+                    .get("mode")
+                    .and_then(Value::as_str)
+                    .map(|mode| mode.eq_ignore_ascii_case("execute_approved"))
+                    .unwrap_or(false);
+            let cache_enabled = !args
+                .get("cache")
+                .and_then(Value::as_bool)
+                .map(|enabled| !enabled)
+                .unwrap_or(false)
+                && !args
+                    .get("no_cache")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+            let result = if execute_approved {
+                forge_intent_execute_approved_persisted_v0(
+                    source,
+                    max_bytes,
+                    args.get("approve_side_effects").and_then(Value::as_bool).unwrap_or(false),
+                    args.get("approved_intent_hash").and_then(Value::as_str),
+                    args.get("approved_policy_hash").and_then(Value::as_str),
+                    args.get("allow_run_side_effects").and_then(Value::as_bool).unwrap_or(false),
+                    &session.client,
+                )?
+            } else if execute_safe {
+                forge_intent_execute_safe_persisted_v0(source, max_bytes, cache_enabled)?
+            } else {
+                forge_intent_execute_projection_persisted_v0(source, max_bytes, cache_enabled)?
+            };
+            mcp_intent_tool_response(result)
         }
         "capabilities" => {
             let result = list_metric_ops(&args);
@@ -997,13 +1711,7 @@ fn handle_tool_call(params: &Value, session: &McpSession) -> Result<Value, Strin
 }
 
 fn mcp_internal_tool_response(tool: &str, args: &Value) -> Result<Value, String> {
-    let store_path = forge_agent_tools::resolve_store_path()?;
-    let active_job = args
-        .get("job_id")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(active_job_id_from_env);
-    let result = forge_agent_tools::call_internal_tool(&store_path, tool, args, active_job.as_deref())?;
+    let result = call_internal_tool_value(tool, args)?;
     if matches!(
         tool,
         "forge_analyze_3d_mapping"
@@ -1016,7 +1724,642 @@ fn mcp_internal_tool_response(tool: &str, args: &Value) -> Result<Value, String>
     mcp_tool_response(result)
 }
 
+fn call_internal_tool_value(tool: &str, args: &Value) -> Result<Value, String> {
+    let store_path = forge_agent_tools::resolve_store_path()?;
+    let active_job = args
+        .get("job_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(active_job_id_from_env);
+    forge_agent_tools::call_internal_tool(&store_path, tool, args, active_job.as_deref())
+}
+
+fn forge_intent_execute_projection(source: &str, max_bytes: usize) -> Result<Value, String> {
+    forge_agent_runtime::direct_plan_projection(source, max_bytes)
+}
+
+fn forge_intent_execute_projection_persisted_v0(source: &str, max_bytes: usize, cache_enabled: bool) -> Result<Value, String> {
+    let mut projection = forge_intent_execute_projection(source, max_bytes)?;
+    let store_path = forge_store_dir()?;
+    if cache_enabled {
+        if let Some(cached) = forge_agent_runtime::lookup_cached_direct_projection(
+            &store_path,
+            projection.get("intent_hash").and_then(Value::as_str),
+            "planned_no_side_effects",
+            max_bytes,
+        )? {
+            return Ok(cached);
+        }
+    }
+    persist_forge_intent_projection_to_store(&store_path, &mut projection)?;
+    Ok(projection)
+}
+
+fn forge_intent_execute_safe_v0(source: &str, max_bytes: usize) -> Result<Value, String> {
+    forge_agent_runtime::direct_safe_execution_with(source, max_bytes, |idx, step, budget| {
+        execute_compiled_intent_step_safe_v0(idx, step, budget)
+    })
+}
+
+fn forge_intent_execute_safe_persisted_v0(source: &str, max_bytes: usize, cache_enabled: bool) -> Result<Value, String> {
+    if cache_enabled {
+        let planned = forge_intent_execute_projection(source, max_bytes)?;
+        let store_path = forge_store_dir()?;
+        if let Some(cached) = forge_agent_runtime::lookup_cached_direct_projection(
+            &store_path,
+            planned.get("intent_hash").and_then(Value::as_str),
+            "execute_safe",
+            max_bytes,
+        )? {
+            return Ok(cached);
+        }
+    }
+    let mut projection = forge_intent_execute_safe_v0(source, max_bytes)?;
+    let store_path = forge_store_dir()?;
+    persist_forge_intent_projection_to_store(&store_path, &mut projection)?;
+    Ok(projection)
+}
+
+fn forge_intent_execute_approved_persisted_v0(
+    source: &str,
+    max_bytes: usize,
+    approve_side_effects: bool,
+    approved_intent_hash: Option<&str>,
+    approved_policy_hash: Option<&str>,
+    allow_run_side_effects: bool,
+    client: &McpClientInfo,
+) -> Result<Value, String> {
+    let mut projection = forge_intent_execute_approved_v0(
+        source,
+        max_bytes,
+        approve_side_effects,
+        approved_intent_hash,
+        approved_policy_hash,
+        allow_run_side_effects,
+        client,
+    )?;
+    let store_path = forge_store_dir()?;
+    persist_forge_intent_projection_to_store(&store_path, &mut projection)?;
+    Ok(projection)
+}
+
+fn forge_intent_execute_approved_v0(
+    source: &str,
+    max_bytes: usize,
+    approve_side_effects: bool,
+    approved_intent_hash: Option<&str>,
+    approved_policy_hash: Option<&str>,
+    allow_run_side_effects: bool,
+    client: &McpClientInfo,
+) -> Result<Value, String> {
+    forge_agent_runtime::direct_approved_execution_with(
+        source,
+        max_bytes,
+        approve_side_effects,
+        approved_intent_hash,
+        approved_policy_hash,
+        allow_run_side_effects,
+        |idx, step, budget| {
+            execute_compiled_intent_step_approved_v0(
+                idx,
+                step,
+                budget,
+                allow_run_side_effects,
+                client,
+            )
+        },
+    )
+}
+
+fn intent_projection_store_dir(store_path: &Path) -> PathBuf {
+    store_path.join("intent-projections")
+}
+
+fn intent_projection_index_path(store_path: &Path) -> PathBuf {
+    intent_projection_store_dir(store_path).join("index.json")
+}
+
+fn persist_forge_intent_projection_to_store(store_path: &Path, projection: &mut Value) -> Result<Value, String> {
+    let execution_hash = projection
+        .get("execution_report")
+        .and_then(|report| report.get("execution_hash"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let trace_hash = projection
+        .get("trace_card")
+        .and_then(|trace| trace.get("trace_hash"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let intent_hash = projection
+        .get("intent_hash")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let projection_hash = execution_hash
+        .clone()
+        .or_else(|| trace_hash.clone())
+        .or_else(|| intent_hash.clone())
+        .ok_or_else(|| "intent projection missing execution, trace and intent hashes".to_string())?;
+    validate_content_hash(&projection_hash, "projection_hash")?;
+    let dir = intent_projection_store_dir(store_path);
+    fs::create_dir_all(&dir).map_err(|e| format!("create intent projection dir '{}': {e}", dir.display()))?;
+    let projection_ref = format!("refs/intent/projection/{projection_hash}");
+    let persisted = json!({
+        "kind": "forge_intent_projection_ref_v0",
+        "projection_hash": projection_hash,
+        "projection_ref": projection_ref,
+        "execution_hash": execution_hash,
+        "trace_hash": trace_hash,
+        "intent_hash": intent_hash,
+        "stored_ms": now_ms(),
+        "raw_data_returned": false
+    });
+    if let Value::Object(obj) = projection {
+        obj.insert("persisted_projection".to_string(), persisted.clone());
+    }
+    let path = dir.join(format!("{projection_hash}.json"));
+    persist_json_pretty(&path, projection)?;
+    update_intent_projection_index(store_path, projection, &persisted)?;
+    Ok(persisted)
+}
+
+fn empty_intent_projection_index(now: u128) -> Value {
+    json!({
+        "kind": "forge_intent_projection_index_v0",
+        "created_ms": now,
+        "updated_ms": now,
+        "raw_data_returned": false,
+        "entries": []
+    })
+}
+
+fn read_intent_projection_index(store_path: &Path) -> Result<Value, String> {
+    let path = intent_projection_index_path(store_path);
+    if path.exists() {
+        read_json_value(&path)
+    } else {
+        Ok(empty_intent_projection_index(now_ms()))
+    }
+}
+
+fn persist_intent_projection_index(store_path: &Path, index: &Value) -> Result<(), String> {
+    let dir = intent_projection_store_dir(store_path);
+    fs::create_dir_all(&dir).map_err(|e| format!("create intent projection dir '{}': {e}", dir.display()))?;
+    persist_json_pretty(&intent_projection_index_path(store_path), index)
+}
+
+fn update_intent_projection_index(store_path: &Path, projection: &Value, persisted: &Value) -> Result<(), String> {
+    let mut index = read_intent_projection_index(store_path)?;
+    let now = now_ms();
+    let projection_hash = persisted
+        .get("projection_hash")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "persisted projection missing projection_hash".to_string())?;
+    let entry = compact_projection_index_entry(projection, persisted, now);
+    let entries = index
+        .as_object_mut()
+        .ok_or_else(|| "intent projection index root is not an object".to_string())?
+        .entry("entries".to_string())
+        .or_insert_with(|| json!([]));
+    let entries = entries
+        .as_array_mut()
+        .ok_or_else(|| "intent projection index entries is not an array".to_string())?;
+    entries.retain(|item| {
+        item.get("projection_hash")
+            .and_then(Value::as_str)
+            != Some(projection_hash)
+    });
+    entries.insert(0, entry);
+    entries.truncate(128);
+    if let Value::Object(ref mut obj) = index {
+        obj.insert("updated_ms".to_string(), json!(now));
+        obj.insert("raw_data_returned".to_string(), json!(false));
+    }
+    persist_intent_projection_index(store_path, &index)
+}
+
+fn compact_projection_index_entry(projection: &Value, persisted: &Value, now: u128) -> Value {
+    json!({
+        "kind": "forge_intent_projection_index_entry_v0",
+        "projection_hash": persisted.get("projection_hash").cloned().unwrap_or(Value::Null),
+        "projection_ref": persisted.get("projection_ref").cloned().unwrap_or(Value::Null),
+        "execution_hash": persisted.get("execution_hash").cloned().unwrap_or(Value::Null),
+        "trace_hash": persisted.get("trace_hash").cloned().unwrap_or(Value::Null),
+        "intent_hash": persisted.get("intent_hash").cloned().unwrap_or(Value::Null),
+        "stored_ms": persisted.get("stored_ms").cloned().unwrap_or_else(|| json!(now)),
+        "mode": projection.get("mode").cloned().unwrap_or(Value::Null),
+        "surface": projection.get("surface").cloned().unwrap_or(Value::Null),
+        "ok": projection.get("ok").cloned().unwrap_or(Value::Null),
+        "bounded_preview_bytes": projection.pointer("/forge_projection/bounded_preview_bytes").cloned().unwrap_or(Value::Null),
+        "source_preview": projection
+            .get("source")
+            .and_then(Value::as_str)
+            .map(|source| source.chars().take(240).collect::<String>())
+            .unwrap_or_default(),
+        "route_count": projection.pointer("/trace_card/route_count").cloned().unwrap_or(Value::Null),
+        "side_effect_count": projection.pointer("/trace_card/side_effect_count").cloned().unwrap_or(Value::Null),
+        "execution": {
+            "step_count": projection.pointer("/execution_report/step_count").cloned().unwrap_or(Value::Null),
+            "executed_step_count": projection.pointer("/execution_report/executed_step_count").cloned().unwrap_or(Value::Null),
+            "error_count": projection.pointer("/execution_report/error_count").cloned().unwrap_or(Value::Null)
+        },
+        "promotion": {
+            "distillation_target": projection.pointer("/distillation_analysis/target").cloned().unwrap_or(Value::Null),
+            "program_status": projection.pointer("/promotion_manifest/status").cloned().unwrap_or(Value::Null),
+            "skill_status": projection.pointer("/skill_promotion_manifest/status").cloned().unwrap_or(Value::Null),
+            "router_status": projection.pointer("/router_promotion_manifest/status").cloned().unwrap_or(Value::Null)
+        },
+        "raw_data_returned": false
+    })
+}
+
+fn forge_read_projection_compact_v0(args: &Value) -> Result<Value, String> {
+    let store_path = forge_store_dir()?;
+    if projection_request_is_fbc(args) {
+        return read_fbc_app_projection_from_store(&store_path, args);
+    }
+    if args.get("job_id").and_then(Value::as_str).is_some() {
+        return read_forge_job_projection_via_fbc(&store_path, args);
+    }
+    read_forge_intent_projection_from_store(&store_path, args)
+}
+
+fn projection_request_is_fbc(args: &Value) -> bool {
+    ["kind", "ref", "projection_ref", "scope"]
+        .iter()
+        .filter_map(|key| args.get(*key).and_then(Value::as_str))
+        .any(|value| {
+            let lower = value.to_ascii_lowercase();
+            lower == "fbc"
+                || lower == "fbc_app"
+                || lower == "app_fbc"
+                || lower.contains("fbc/app")
+                || lower.contains("forge_fbc")
+        })
+}
+
+fn read_fbc_app_projection_from_store(store_path: &Path, args: &Value) -> Result<Value, String> {
+    let manifest_path = store_path
+        .join("fbc")
+        .join("app")
+        .join("app_fbc_registry_batch.json");
+    if !manifest_path.exists() {
+        return Ok(json!({
+            "kind": "forge_fbc_app_projection_read_v0",
+            "found": false,
+            "raw_data_returned": false,
+            "reason": "FBC app projection has not been materialized yet; call fbc_runtime or forge_fbc_runtime_snapshot first",
+            "manifest_path": manifest_path.display().to_string()
+        }));
+    }
+    let manifest = read_json_value(&manifest_path)?;
+    let records = manifest
+        .get("records")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let limit = bounded_limit(args.get("limit"), 16, 64);
+    let records = records.into_iter().take(limit).collect::<Vec<_>>();
+    Ok(json!({
+        "kind": "forge_fbc_app_projection_read_v0",
+        "found": true,
+        "raw_data_returned": false,
+        "manifest_path": manifest_path.display().to_string(),
+        "graph_hash": manifest.get("graphHash").cloned().unwrap_or(Value::Null),
+        "ledger_root_hash": manifest.get("ledgerRootHash").cloned().unwrap_or(Value::Null),
+        "tool_count": manifest.get("toolCount").cloned().unwrap_or(Value::Null),
+        "ok_count": manifest.get("okCount").cloned().unwrap_or(Value::Null),
+        "denied_count": manifest.get("deniedCount").cloned().unwrap_or(Value::Null),
+        "record_count": records.len(),
+        "records": records
+    }))
+}
+
+fn read_forge_job_projection_via_fbc(store_path: &Path, args: &Value) -> Result<Value, String> {
+    let job_id = args
+        .get("job_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "job projection requires job_id".to_string())?;
+    let limit = bounded_limit(args.get("limit"), 8, 32) as u16;
+    let fbc = forge_fbc_host::execute_job_read_projection(Some(store_path), job_id, limit)?;
+    let fbc_query = fbc.output;
+    let jobs = list_jobs(limit as usize)?;
+    let selected = if job_id == "latest" {
+        jobs.first().cloned()
+    } else {
+        jobs.into_iter()
+            .find(|job| job.get("job_id").or_else(|| job.get("jobId")).and_then(Value::as_str) == Some(job_id))
+    };
+    Ok(json!({
+        "kind": "forge_job_projection_read_via_fbc_v0",
+        "found": selected.is_some(),
+        "raw_data_returned": false,
+        "fbc_query": fbc_query,
+        "fbc_proof": fbc.proof,
+        "fbc_ledger_hash": fbc.ledger_hash,
+        "job": selected.unwrap_or(Value::Null),
+        "store_path": store_path.display().to_string()
+    }))
+}
+
+fn read_forge_intent_projection_from_store(store_path: &Path, args: &Value) -> Result<Value, String> {
+    let query_hash = intent_projection_query_hash(args);
+    let dir = intent_projection_store_dir(store_path);
+    if !dir.exists() {
+        return Ok(json!({
+            "kind": "forge_intent_projection_read_v0",
+            "found": false,
+            "query_hash": query_hash,
+            "raw_data_returned": false,
+            "reason": "intent projection store is empty"
+        }));
+    }
+    if query_hash.is_none() {
+        return list_intent_projections_from_index(store_path, args);
+    }
+    if let Some(hash) = query_hash.as_deref() {
+        validate_content_hash(hash, "projection query hash")?;
+        let direct = dir.join(format!("{hash}.json"));
+        if direct.exists() {
+            return compact_read_projection_value(read_forge_intent_projection_file(store_path, hash)?, query_hash);
+        }
+    }
+    let mut scanned = 0usize;
+    for entry in fs::read_dir(&dir).map_err(|e| format!("read intent projection dir '{}': {e}", dir.display()))? {
+        let entry = entry.map_err(|e| format!("read intent projection entry: {e}"))?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        scanned += 1;
+        if scanned > 256 {
+            break;
+        }
+        let value = read_json_value(&path)?;
+        if intent_projection_matches(&value, args) {
+            return compact_read_projection_value(value, query_hash);
+        }
+    }
+    Ok(json!({
+        "kind": "forge_intent_projection_read_v0",
+        "found": false,
+        "query_hash": query_hash,
+        "scanned": scanned,
+        "raw_data_returned": false
+    }))
+}
+
+fn read_forge_intent_projection_file(store_path: &Path, projection_hash: &str) -> Result<Value, String> {
+    validate_content_hash(projection_hash, "projection_hash")?;
+    let path = intent_projection_store_dir(store_path).join(format!("{projection_hash}.json"));
+    read_json_value(&path)
+}
+
+fn list_intent_projections_from_index(store_path: &Path, args: &Value) -> Result<Value, String> {
+    let limit = bounded_limit(args.get("limit"), 8, 32);
+    let index = read_intent_projection_index(store_path)?;
+    let entries: Vec<Value> = index
+        .get("entries")
+        .and_then(Value::as_array)
+        .map(|entries| entries.iter().take(limit).cloned().collect())
+        .unwrap_or_default();
+    Ok(json!({
+        "kind": "forge_intent_projection_list_v0",
+        "found": !entries.is_empty(),
+        "result_count": entries.len(),
+        "limit": limit,
+        "raw_data_returned": false,
+        "entries": entries
+    }))
+}
+
+fn intent_projection_query_hash(args: &Value) -> Option<String> {
+    let direct = args
+        .get("projection_hash")
+        .or_else(|| args.get("execution_hash"))
+        .or_else(|| args.get("trace_hash"))
+        .or_else(|| args.get("intent_hash"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if direct.is_some() {
+        return direct;
+    }
+    args.get("ref")
+        .or_else(|| args.get("projection_ref"))
+        .and_then(Value::as_str)
+        .and_then(|value| value.rsplit('/').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn intent_projection_matches(value: &Value, args: &Value) -> bool {
+    let Some(query) = intent_projection_query_hash(args) else {
+        return false;
+    };
+    [
+        "/persisted_projection/projection_hash",
+        "/persisted_projection/execution_hash",
+        "/persisted_projection/trace_hash",
+        "/persisted_projection/intent_hash",
+        "/execution_report/execution_hash",
+        "/trace_card/trace_hash",
+        "/intent_hash",
+    ]
+    .iter()
+    .any(|pointer| value.pointer(pointer).and_then(Value::as_str) == Some(query.as_str()))
+}
+
+fn compact_read_projection_value(value: Value, query_hash: Option<String>) -> Result<Value, String> {
+    Ok(json!({
+        "kind": "forge_intent_projection_read_v0",
+        "found": true,
+        "query_hash": query_hash,
+        "raw_data_returned": false,
+        "persisted_projection": value.get("persisted_projection").cloned().unwrap_or(Value::Null),
+        "mode": value.get("mode").cloned().unwrap_or(Value::Null),
+        "surface": value.get("surface").cloned().unwrap_or(Value::Null),
+        "ok": value.get("ok").cloned().unwrap_or(Value::Null),
+        "intent_hash": value.get("intent_hash").cloned().unwrap_or(Value::Null),
+        "policy_hash": value.pointer("/policy_report/policy_hash").cloned().unwrap_or(Value::Null),
+        "trace_hash": value.pointer("/trace_card/trace_hash").cloned().unwrap_or(Value::Null),
+        "execution_report": value.get("execution_report").cloned().unwrap_or(Value::Null),
+        "forge_projection": value.get("forge_projection").cloned().unwrap_or(Value::Null),
+        "executed_steps": value.get("executed_steps").cloned().unwrap_or_else(|| json!([])),
+        "promotion": {
+            "distillation": value.get("distillation_analysis").cloned().unwrap_or(Value::Null),
+            "program": value.get("promotion_manifest").cloned().unwrap_or(Value::Null),
+            "skill": value.get("skill_promotion_manifest").cloned().unwrap_or(Value::Null),
+            "router": value.get("router_promotion_manifest").cloned().unwrap_or(Value::Null)
+        }
+    }))
+}
+
+fn execute_compiled_intent_step_safe_v0(index: usize, step: &Value, result_budget_bytes: usize) -> Value {
+    let route = step.get("route").and_then(Value::as_str).unwrap_or("");
+    let command_hash = step.get("command_hash").and_then(Value::as_str).unwrap_or("");
+    let args = step.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let side_effect = step.get("side_effect").and_then(Value::as_bool).unwrap_or(true);
+    if side_effect {
+        return json!({
+            "index": index,
+            "route": route,
+            "command_hash": command_hash,
+            "status": "skipped_side_effect",
+            "reason": "execute_safe runs only read-only and plan_only intent steps"
+        });
+    }
+    let result = match route {
+        "run" => {
+            if args.get("plan_only").and_then(Value::as_bool).unwrap_or(false) {
+                Ok(plan_run(args))
+            } else {
+                Ok(json!({
+                    "status": "skipped_non_plan_run",
+                    "reason": "run is executable in execute_safe only when plan_only=true"
+                }))
+            }
+        }
+        "read" => read_dispatch(&args),
+        "brain_recall" => call_internal_tool_value("forge_brain_recall", &args),
+        "brain_explain" => call_internal_tool_value("forge_brain_explain", &args),
+        other => Ok(json!({
+            "status": "skipped_unsupported_safe_route",
+            "reason": "route is not in the execute_safe allowlist",
+            "route": other
+        })),
+    };
+    match result {
+        Ok(value) => forge_agent_runtime::compact_step_result(
+            index,
+            route,
+            command_hash,
+            "executed_safe",
+            value,
+            result_budget_bytes,
+        ),
+        Err(err) => json!({
+            "index": index,
+            "route": route,
+            "command_hash": command_hash,
+            "status": "error",
+            "raw_data_returned": false,
+            "error": err
+        }),
+    }
+}
+
+fn execute_compiled_intent_step_approved_v0(
+    index: usize,
+    step: &Value,
+    result_budget_bytes: usize,
+    allow_run_side_effects: bool,
+    client: &McpClientInfo,
+) -> Value {
+    let route = step.get("route").and_then(Value::as_str).unwrap_or("");
+    let command_hash = step.get("command_hash").and_then(Value::as_str).unwrap_or("");
+    let args = step.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let side_effect = step.get("side_effect").and_then(Value::as_bool).unwrap_or(true);
+    if !side_effect {
+        return execute_compiled_intent_step_safe_v0(index, step, result_budget_bytes);
+    }
+    let result = match route {
+        "create" => serde_json::from_value::<ProgramDefineArgs>(args.clone())
+            .map_err(|err| format!("bad create intent arguments: {err}"))
+            .and_then(|args| define_program(args, client)),
+        "brain_commit" => call_internal_tool_value("forge_brain_commit", &args),
+        "run" => {
+            if allow_run_side_effects {
+                run_dispatch(args, client)
+            } else {
+                return json!({
+                    "index": index,
+                    "route": route,
+                    "command_hash": command_hash,
+                    "status": "skipped_unapproved_run_side_effect",
+                    "raw_data_returned": false,
+                    "reason": "non-plan run requires allow_run_side_effects=true in addition to matching approval hashes"
+                });
+            }
+        }
+        other => Ok(json!({
+            "status": "skipped_unsupported_side_effect_route",
+            "reason": "route is not executable by execute_approved",
+            "route": other
+        })),
+    };
+    match result {
+        Ok(value) => forge_agent_runtime::compact_step_result(
+            index,
+            route,
+            command_hash,
+            "executed_side_effect",
+            value,
+            result_budget_bytes,
+        ),
+        Err(err) => json!({
+            "index": index,
+            "route": route,
+            "command_hash": command_hash,
+            "status": "error",
+            "raw_data_returned": false,
+            "error": err
+        }),
+    }
+}
+
+fn forge_intent_golden_workflow_smoke_v0() -> Value {
+    let search = forge_intent_search("pending upload visual program brain commit projection", 4);
+    let first = forge_intent_execute_projection(FORGE_INTENT_GOLDEN_WORKFLOW_V0, 4096);
+    let second = forge_intent_execute_projection(FORGE_INTENT_GOLDEN_WORKFLOW_V0, 4096);
+    match (first, second) {
+        (Ok(first), Ok(second)) => {
+            let stable_hashes = first["intent_hash"] == second["intent_hash"]
+                && first["trace_card"]["trace_hash"] == second["trace_card"]["trace_hash"]
+                && first["forge_projection"]["trace_hash"] == second["forge_projection"]["trace_hash"];
+            json!({
+                "ok": stable_hashes
+                    && first["ok"].as_bool().unwrap_or(false)
+                    && first["raw_data_returned"].as_bool() == Some(false),
+                "status": "step_17_golden_smoke_no_side_effects",
+                "search_result_count": search["result_count"],
+                "stable_hashes_across_two_projections": stable_hashes,
+                "default_visible_tool_count": visible_tool_names().len(),
+                "target_visible_tool_count": 4,
+                "public_routing_nodes_after_cutover": ["forge.search", "forge.execute", "forge.read_projection", "forge.cancel"],
+                "intent_hash": first["intent_hash"],
+                "trace_hash": first["trace_card"]["trace_hash"],
+                "route_count": first["trace_card"]["route_count"],
+                "side_effect_count": first["trace_card"]["side_effect_count"],
+                "distillation_target": first["distillation_analysis"]["target"],
+                "promotion_status": first["promotion_manifest"]["status"],
+                "projection": first["forge_projection"],
+                "search": search,
+                "source": FORGE_INTENT_GOLDEN_WORKFLOW_V0
+            })
+        }
+        (Err(err), _) | (_, Err(err)) => json!({
+            "ok": false,
+            "status": "step_17_golden_smoke_failed",
+            "error": err,
+            "source": FORGE_INTENT_GOLDEN_WORKFLOW_V0
+        }),
+    }
+}
+
 fn forge_about() -> Value {
+    let intent_search_smoke = forge_intent_search("visual program mapping", 3);
+    let forge_slash_smoke = match forge_intent_execute_projection(forge_intent::FORGE_SLASH_V0_EXAMPLE, 4096) {
+        Ok(result) => result,
+        Err(err) => json!({
+            "ok": false,
+            "error": err,
+            "example": forge_intent::FORGE_SLASH_V0_EXAMPLE
+        }),
+    };
     json!({
         "name": FORGE_DISPLAY_NAME,
         "display_name": FORGE_DISPLAY_NAME,
@@ -1025,6 +2368,36 @@ fn forge_about() -> Value {
         "agent_display_rule": "Always display this MCP server as Forge with a capital F. The lowercase slug 'forge' is only the technical namespace/config key.",
         "short_description": "Forge is a local compute engine for AI agents.",
         "official_description": FORGE_OFFICIAL_DESCRIPTION,
+        "surface_contract": {
+            "contract": FORGE_MCP_SURFACE_CONTRACT,
+            "status": "step_1_frozen_goal",
+            "mcp_role": "transport_and_compatibility_boundary",
+            "default_visible_tool_target": ["forge.search", "forge.execute", "forge.read_projection", "forge.cancel"],
+            "compact_surface_default": "tools/list exposes only forge.search, forge.execute, forge.read_projection and forge.cancel by default.",
+            "legacy_surface_escape_hatch": "FORGE_MCP_SURFACE=broad or FORGE_MCP_LEGACY_SURFACE=1 restores the transitional broad MCP catalog for compatibility debugging.",
+            "tool_annotations": "Every visible tool declares MCP safety annotations: readOnlyHint, destructiveHint, idempotentHint and openWorldHint.",
+            "opt_in_intent_surface_env": "FORGE_INTENT_MCP_SURFACE=1 exposes forge_intent_search and forge_intent_execute for parity testing without changing the default manifest.",
+            "safe_execution_mode": "forge.execute mode=execute_safe executes only read-only and plan_only lowered routes; side-effect steps are skipped with per-step proofs.",
+            "safe_execution_report": "execute_safe returns forge_intent_execution_report_v0 with result_hash per executed step, executed_steps_hash and execution_hash for replay/cache/router evidence.",
+            "approved_execution_gate": "forge.execute mode=execute_approved requires approve_side_effects=true plus matching approved_intent_hash and approved_policy_hash; non-plan run also requires allow_run_side_effects=true.",
+            "transitional_current_catalog": "Existing detailed MCP tools remain callable while the intent compiler proves parity.",
+            "direct_mcp_exception_rule": "Keep a direct MCP tool visible only when measured workflows prove it simpler, safer or faster than the intent/code path.",
+            "cutover_readiness": compact_cutover_readiness()
+        },
+        "forge_slash_v0": {
+            "status": "step_2_source_contract",
+            "grammar": forge_intent::FORGE_SLASH_V0_GRAMMAR,
+            "verbs": ["recall", "plan", "create", "run", "project", "commit", "explain"],
+            "authority": "Intent programs carry refs, hashes and bounded parameters only; raw filesystem paths are rejected before execution.",
+            "parser_smoke": forge_slash_smoke
+        },
+        "forge_intent_search_v0": {
+            "status": "step_5_internal_index",
+            "surface": "forge.search_default",
+            "contract": "Return compact intent signatures, replay candidates and executable next_call plans over current tools/capabilities/slash aliases; never return full schemas by default.",
+            "smoke": intent_search_smoke
+        },
+        "forge_intent_golden_workflow_v0": forge_intent_golden_workflow_smoke_v0(),
         "agent_doctrine": {
             "default_reflex": "If user data is >256 KB, >1,000 rows/lines, multi-file, CSV/Excel/PDF/log/dataset, repetitive, scientific/numerical/document-heavy, or needs proof/artifacts, use Forge before reading or calculating inside the LLM. If it is >1 MB, >10,000 rows/lines, a full log, simulation/search/backtest/optimization or artifact/proof workflow, Forge is the default path.",
             "read_vs_forge_thresholds": {
@@ -6516,6 +7889,94 @@ fn read_json_value(path: &Path) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(|e| format!("decode json '{}': {e}", path.display()))
 }
 
+fn forge_fbc_runtime_snapshot_mcp(args: &Value) -> Result<Value, String> {
+    let store_path = forge_store_dir()?;
+    let ownership_path = forge_workspace_dir_mcp()
+        .join("examples")
+        .join("forge_tauri_ui")
+        .join("ui")
+        .join("SECTION_OWNERSHIP.json");
+    let ownership_json = fs::read_to_string(&ownership_path)
+        .map_err(|e| format!("read SECTION_OWNERSHIP '{}': {e}", ownership_path.display()))?;
+    let registry = parse_app_section_registry_v0(&ownership_json)
+        .map_err(|e| format!("parse app FBC registry: {e:?}"))?;
+    let mut config = ForgeVmConfig::default();
+    config.backend = args
+        .get("backend")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("auto")
+        .to_string();
+    let batch = execute_app_registry_batch(&ownership_json, &config)
+        .map_err(|e| format!("execute app FBC registry: {e:?}"))?;
+    let output_dir = store_path.join("fbc").join("app");
+    let manifest_path = output_dir.join("app_fbc_registry_batch.json");
+    if args
+        .get("write_artifacts")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+    {
+        fs::create_dir_all(&output_dir)
+            .map_err(|e| format!("create FBC app output dir '{}': {e}", output_dir.display()))?;
+        for record in &batch.records {
+            let artifact = tool_cell_output_artifact_json(
+                record,
+                &batch.graph_hash,
+                &registry.registry_hash,
+                &batch.ledger_root_hash,
+            );
+            let path = output_dir.join(format!("{}.json", safe_fbc_artifact_name_mcp(&record.command)));
+            fs::write(&path, format!("{artifact}\n"))
+                .map_err(|e| format!("write FBC artifact '{}': {e}", path.display()))?;
+        }
+        fs::write(&manifest_path, format!("{}\n", batch.projection_json))
+            .map_err(|e| format!("write FBC manifest '{}': {e}", manifest_path.display()))?;
+    }
+    let projection = serde_json::from_str::<Value>(&batch.projection_json)
+        .unwrap_or_else(|_| json!({ "kind": "forge_fbc_projection_parse_error" }));
+    Ok(json!({
+        "kind": "forge_fbc_app_runtime_snapshot_v0",
+        "source": "forge_mcp_fbc_runtime",
+        "job_id": format!("fbc-app-{}", now_ms()),
+        "registry_hash": registry.registry_hash,
+        "graph_hash": batch.graph_hash,
+        "section_count": registry.section_count,
+        "sensitive_command_count": registry.sensitive_command_count,
+        "cell_count": batch.tool_count,
+        "ok_count": batch.ok_count,
+        "denied_count": batch.denied_count,
+        "ledger_root_hash": batch.ledger_root_hash,
+        "manifest_path": manifest_path.display().to_string(),
+        "output_dir": output_dir.display().to_string(),
+        "raw_input_returned": false,
+        "capability_only": true,
+        "projection": projection
+    }))
+}
+
+fn forge_workspace_dir_mcp() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .ancestors()
+        .nth(3)
+        .map(PathBuf::from)
+        .unwrap_or(manifest_dir)
+}
+
+fn safe_fbc_artifact_name_mcp(command: &str) -> String {
+    let mut out = command
+        .trim_matches('/')
+        .trim_end_matches('_')
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '_' })
+        .collect::<String>();
+    if out.is_empty() {
+        out = "fbc_artifact".to_string();
+    }
+    out
+}
+
 fn forge_store_dir() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("FORGE_STORE_DIR") {
         return Ok(PathBuf::from(path));
@@ -6854,6 +8315,32 @@ fn mcp_tool_response(value: Value) -> Result<Value, String> {
     }))
 }
 
+fn mcp_intent_tool_response(value: Value) -> Result<Value, String> {
+    let payload = json!({
+        "server_identity": {
+            "display_name": FORGE_DISPLAY_NAME,
+            "canonical_name": FORGE_DISPLAY_NAME,
+            "technical_slug": FORGE_TECHNICAL_SLUG
+        },
+        "surface": "forge_intent_compact_v0",
+        "raw_data_returned": false,
+        "data": value,
+        "token_safety": {
+            "compact_response": true,
+            "source_content_included": false,
+            "artifact_content_included": false,
+            "raw_input_not_returned": true,
+            "policy": "Intent facade responses return compact projections, hashes and bounded execution evidence; broad workflow doctrine stays in about/tool policy."
+        }
+    });
+    let text = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("encode MCP intent response: {e}"))?;
+    Ok(json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": false
+    }))
+}
+
 fn mcp_compact_tool_response(value: Value) -> Result<Value, String> {
     let payload = json!({
         "server_identity": {
@@ -7038,9 +8525,18 @@ fn mcp_agent_instructions() -> Value {
 }
 
 fn forge_tool_selection_policy() -> Value {
+    let visible_tools = visible_tool_names();
+    let current_visible_tool_count = visible_tools.len();
     json!({
-        "visible_tool_budget": 23,
-        "visible_tools": ["about", "capabilities", "create", "run", "jobs", "sessions", "documents", "mapping", "mapping_metrics", "mapping_model", "visual_program", "mapping_analysis", "profile", "atlas", "brain_recall", "brain_commit", "brain_compare", "brain_sleep", "brain_explain", "update_session", "read", "logs", "cancel"],
+        "status": if compact_mcp_surface_enabled() { "compact_cutover_candidate" } else { "transitional_broad_catalog" },
+        "surface_contract": FORGE_MCP_SURFACE_CONTRACT,
+        "compact_cutover_readiness": compact_cutover_readiness(),
+        "target_visible_tool_budget": 4,
+        "target_visible_tools": ["forge.search", "forge.execute", "forge.read_projection", "forge.cancel"],
+        "current_visible_tool_budget": current_visible_tool_count,
+        "visible_tools": visible_tools,
+        "tool_annotations": "All visible tools expose MCP annotations for read-only, destructive, idempotent and open-world planning hints.",
+        "via_negativa_audit": mcp_via_negativa_audit(current_visible_tool_count),
         "public_command_language": {
             "capabilities": "/metric",
             "program_compile_validate_route": "/metric",
@@ -7093,6 +8589,406 @@ fn forge_tool_selection_policy() -> Value {
             "Do not create new visible MCP tools for each domain; use /create_, /program_ and /metric."
         ]
     })
+}
+
+fn compact_cutover_readiness() -> Value {
+    let compact_names = visible_tool_names_from(compact_tools_list());
+    let target = vec![
+        "forge.search".to_string(),
+        "forge.execute".to_string(),
+        "forge.read_projection".to_string(),
+        "forge.cancel".to_string(),
+    ];
+    let compact_surface_exact = compact_names == target;
+    let current_names = visible_tool_names();
+    let broad_catalog_hidden = current_names == target;
+    let intent_routes_live = canonical_mcp_tool_name("forge.search") == Some("forge_intent_search")
+        && canonical_mcp_tool_name("forge.execute") == Some("forge_intent_execute")
+        && canonical_mcp_tool_name("forge.read_projection") == Some("read")
+        && canonical_mcp_tool_name("forge.cancel") == Some("cancel");
+    let approved_gate_live = true;
+    let exact_cache_live = true;
+    let projection_replay_live = true;
+    let ready_to_make_default = compact_surface_exact
+        && intent_routes_live
+        && approved_gate_live
+        && exact_cache_live
+        && projection_replay_live
+        && broad_catalog_hidden;
+    json!({
+        "kind": "forge_compact_cutover_readiness_v0",
+        "status": if ready_to_make_default {
+            "ready_as_current_default"
+        } else if compact_surface_exact && intent_routes_live && approved_gate_live && exact_cache_live && projection_replay_live {
+            "ready_behind_env"
+        } else {
+            "not_ready"
+        },
+        "ready_to_make_default": ready_to_make_default,
+        "compact_surface_exact": compact_surface_exact,
+        "compact_visible_tools": compact_names,
+        "current_visible_tools": current_names,
+        "current_visible_tool_count": current_names.len(),
+        "target_visible_tool_count": target.len(),
+        "broad_catalog_hidden": broad_catalog_hidden,
+        "intent_routes_live": intent_routes_live,
+        "approved_side_effect_gate_live": approved_gate_live,
+        "exact_intent_cache_live": exact_cache_live,
+        "projection_replay_live": projection_replay_live,
+        "default_surface": "compact",
+        "legacy_escape_hatches": ["FORGE_MCP_SURFACE=broad", "FORGE_MCP_LEGACY_SURFACE=1", "FORGE_MCP_BROAD_SURFACE=1"],
+        "remaining_cutover_blocker": if broad_catalog_hidden {
+            Value::Null
+        } else {
+            json!("default tools/list still exposes the transitional broad MCP catalog")
+        },
+        "raw_data_returned": false
+    })
+}
+
+fn mcp_via_negativa_audit(current_visible_tool_count: usize) -> Value {
+    let alias_count: usize = MCP_TOOL_ALIASES.iter().map(|(_, aliases)| aliases.len()).sum();
+    let internal_route_count = MCP_INTERNAL_TOOL_ROUTES.len();
+    json!({
+        "wall": "context_size_latency_proof_quality",
+        "target": "collapse broad MCP tool selection into a compact intent facade",
+        "current_visible_tool_count": current_visible_tool_count,
+        "target_visible_tool_count": 4,
+        "visible_tools_to_remove_from_default_surface": current_visible_tool_count.saturating_sub(4),
+        "canonical_alias_groups": MCP_TOOL_ALIASES.len(),
+        "handled_aliases": alias_count,
+        "internal_route_count": internal_route_count,
+        "first_fusion_candidates": [
+            "capabilities + program_compile_validate_route + mapping_metrics -> forge.search",
+            "create + run + visual_program + mapping_model + mapping_analysis -> forge.execute",
+            "jobs + sessions + documents + atlas + read + logs -> forge.read_projection",
+            "brain_recall + brain_commit + brain_compare + brain_sleep + brain_explain -> ForgeSlash recall/commit/explain verbs"
+        ],
+        "facade_aliases_live_but_not_visible": {
+            "forge.search": "forge_intent_search",
+            "forge.execute": "forge_intent_execute",
+            "forge.read_projection": "read",
+            "forge.cancel": "cancel"
+        },
+        "do_not_add": [
+            "new visible MCP tools for domains",
+            "parallel UI-only intent runners",
+            "forwarding-only wrappers around existing MCP calls"
+        ],
+        "promotion_rule": "A direct MCP tool survives the default surface only with a measured proof that it is simpler, safer or faster than the intent/code path."
+    })
+}
+
+fn forge_intent_search(query: &str, limit: usize) -> Value {
+    let store_path = forge_store_dir().ok();
+    forge_intent_search_with_store(query, limit, store_path.as_deref())
+}
+
+fn forge_intent_search_with_store(query: &str, limit: usize, store_path: Option<&Path>) -> Value {
+    let needle = query.trim().to_ascii_lowercase();
+    let limit = limit.clamp(1, 8);
+    let mut entries = forge_intent_search_index();
+    if let Some(store_path) = store_path {
+        entries.extend(forge_intent_projection_search_entries(store_path));
+    }
+    let mut scored: Vec<(usize, Value)> = entries
+        .into_iter()
+        .map(|entry| (intent_search_score(&entry, &needle), entry))
+        .filter(|(score, _)| needle.is_empty() || *score > 0)
+        .collect();
+    if scored.is_empty() {
+        scored = forge_intent_search_fallback_entries()
+            .into_iter()
+            .map(|entry| (0, entry))
+            .collect();
+    }
+    scored.sort_by(|(left_score, left), (right_score, right)| {
+        right_score
+            .cmp(left_score)
+            .then_with(|| left["id"].as_str().cmp(&right["id"].as_str()))
+    });
+    let results: Vec<Value> = scored
+        .into_iter()
+        .take(limit)
+        .map(|(score, mut entry)| {
+            let next_call = forge_intent_search_next_call(&entry, query);
+            if let Value::Object(ref mut obj) = entry {
+                obj.insert("score".to_string(), json!(score));
+                obj.insert("next_call".to_string(), next_call);
+            }
+            entry
+        })
+        .collect();
+    let recommended = results.first().cloned().unwrap_or(Value::Null);
+    let next_call = recommended
+        .get("next_call")
+        .cloned()
+        .unwrap_or_else(|| json!({
+            "tool": "forge.search",
+            "arguments": { "query": query, "limit": limit },
+            "reason": "search returned no route; retry discovery"
+        }));
+    json!({
+        "kind": "forge_search_result_v1",
+        "query": query,
+        "mode": "compact_intent_router",
+        "surface": "forge.search_default",
+        "full_schemas_returned": false,
+        "includes_projection_index": store_path.is_some(),
+        "result_count": results.len(),
+        "recommended": recommended,
+        "next_call": next_call,
+        "route_plan": forge_intent_search_route_plan(&results, query),
+        "raw_data_returned": false,
+        "results": results
+    })
+}
+
+fn forge_intent_search_fallback_entries() -> Vec<Value> {
+    forge_intent_search_index()
+        .into_iter()
+        .filter(|entry| {
+            matches!(
+                entry.get("id").and_then(Value::as_str),
+                Some("discover" | "execute" | "projection")
+            )
+        })
+        .collect()
+}
+
+fn forge_intent_search_next_call(entry: &Value, query: &str) -> Value {
+    let target = entry
+        .get("target_tool")
+        .and_then(Value::as_str)
+        .unwrap_or("forge.search");
+    let example = entry.get("example").and_then(Value::as_str).unwrap_or("");
+    let reason = entry.get("summary").and_then(Value::as_str).unwrap_or("");
+    match target {
+        "forge.execute" => json!({
+            "tool": "forge.execute",
+            "arguments": {
+                "source": if example.trim_start().starts_with("/forge") {
+                    example
+                } else {
+                    "/forge plan intent=\"route this request through Forge\" input=@latest"
+                },
+                "max_bytes": 4096
+            },
+            "reason": reason,
+            "approval_required_for_side_effects": true
+        }),
+        "forge.read_projection" => {
+            if let Some(hash) = entry
+                .pointer("/projection/execution_hash")
+                .and_then(Value::as_str)
+                .or_else(|| entry.pointer("/projection/projection_hash").and_then(Value::as_str))
+            {
+                json!({
+                    "tool": "forge.read_projection",
+                    "arguments": { "execution_hash": hash, "max_bytes": 4096 },
+                    "reason": reason
+                })
+            } else {
+                json!({
+                    "tool": "forge.read_projection",
+                    "arguments": { "limit": 8 },
+                    "reason": reason
+                })
+            }
+        }
+        "forge.cancel" => json!({
+            "tool": "forge.cancel",
+            "arguments": { "job_id": "<job_id>", "reason": query },
+            "reason": reason,
+            "requires_job_id": true
+        }),
+        other if other == "forge.search" || other == "fbc_runtime" => json!({
+            "tool": "forge.search",
+            "arguments": { "query": query, "limit": 4 },
+            "reason": reason,
+            "follow_up": if other == "fbc_runtime" {
+                json!({ "legacy_tool": "fbc_runtime", "note": "callable as a legacy/internal route, not part of the visible default schema" })
+            } else {
+                Value::Null
+            }
+        }),
+        _ => json!({
+            "tool": "forge.search",
+            "arguments": { "query": query, "limit": 4 },
+            "reason": reason
+        }),
+    }
+}
+
+fn forge_intent_search_route_plan(results: &[Value], query: &str) -> Value {
+    let next = results
+        .first()
+        .and_then(|entry| entry.get("next_call"))
+        .cloned()
+        .unwrap_or_else(|| json!({
+            "tool": "forge.search",
+            "arguments": { "query": query, "limit": 4 }
+        }));
+    json!({
+        "kind": "forge_search_route_plan_v1",
+        "steps": [
+            {
+                "step": "execute_recommended_next_call",
+                "call": next
+            },
+            {
+                "step": "read_or_replay_projection",
+                "call": {
+                    "tool": "forge.read_projection",
+                    "arguments": { "limit": 8 }
+                }
+            }
+        ],
+        "raw_data_returned": false
+    })
+}
+
+fn forge_intent_projection_search_entries(store_path: &Path) -> Vec<Value> {
+    let Ok(index) = read_intent_projection_index(store_path) else {
+        return Vec::new();
+    };
+    index
+        .get("entries")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .take(32)
+                .filter_map(|entry| {
+                    let projection_hash = entry.get("projection_hash").and_then(Value::as_str)?;
+                    Some(json!({
+                        "id": format!("projection:{projection_hash}"),
+                        "target_tool": "forge.read_projection",
+                        "verbs": ["project", "explain"],
+                        "current_routes": ["forge.read_projection"],
+                        "slash_aliases": ["forge.read_projection"],
+                        "tags": ["projection", "execution_hash", "trace_hash", "intent_hash", "cache", "replay"],
+                        "compact_signature": "forge.read_projection execution_hash=<hash> -> compact persisted intent projection",
+                        "example": format!("forge.read_projection {{ execution_hash: \"{}\" }}", entry.get("execution_hash").and_then(Value::as_str).unwrap_or(projection_hash)),
+                        "summary": "Persisted intent projection with compact hashes, promotion status and bounded execution evidence.",
+                        "projection": entry
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn intent_search_score(entry: &Value, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 1;
+    }
+    let mut score = 0usize;
+    for term in needle.split_whitespace() {
+        let haystack = serde_json::to_string(entry)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if haystack.contains(term) {
+            score += 1;
+        }
+        if entry.get("id").and_then(Value::as_str).is_some_and(|id| id.contains(term)) {
+            score += 2;
+        }
+    }
+    score
+}
+
+fn forge_intent_search_index() -> Vec<Value> {
+    vec![
+        json!({
+            "id": "discover",
+            "target_tool": "forge.search",
+            "verbs": ["recall", "plan", "explain"],
+            "current_routes": ["capabilities", "program_compile_validate_route", "mapping_metrics", "atlas"],
+            "slash_aliases": ["/metric"],
+            "tags": ["capability", "template", "metric", "visual", "domain", "atlas", "reuse"],
+            "compact_signature": "forge.search query=<intent|domain|capability> -> compact candidates + examples",
+            "example": "/forge plan intent=\"find useful metrics for this file\" input=@latest",
+            "summary": "Discover capabilities, reusable programs, metric routes and examples without exposing full MCP schemas."
+        }),
+        json!({
+            "id": "execute",
+            "target_tool": "forge.execute",
+            "verbs": ["plan", "create", "run"],
+            "current_routes": ["create", "run", "visual_program", "mapping_model", "mapping_analysis"],
+            "slash_aliases": ["/create_", "/program_", "/visualprogram_"],
+            "tags": ["run", "compute", "visual_program", "mapping", "program", "plan_only", "artifact"],
+            "compact_signature": "forge.execute program=<ForgeSlash> -> validate + route + run + projection",
+            "example": "/forge run input=@latest intent=\"create a compact 3D visual program\" plan_only=true",
+            "summary": "Validate and execute compute or visual intents while keeping raw files outside the LLM context."
+        }),
+        json!({
+            "id": "projection",
+            "target_tool": "forge.read_projection",
+            "verbs": ["project", "explain"],
+            "current_routes": ["jobs", "sessions", "documents", "read", "logs", "atlas"],
+            "slash_aliases": ["read", "logs"],
+            "tags": ["job", "session", "document", "preview", "proof", "artifact", "logs", "hash"],
+            "compact_signature": "forge.read_projection ref=<job|program|artifact> max_bytes=<n> -> bounded refs/previews",
+            "example": "/forge project job_id=latest max_bytes=4096",
+            "summary": "Read compact hashes, metrics, previews and proof/artifact refs instead of raw data."
+        }),
+        json!({
+            "id": "fbc_runtime",
+            "target_tool": "fbc_runtime",
+            "verbs": ["verify", "project", "snapshot"],
+            "current_routes": ["fbc_runtime"],
+            "slash_aliases": ["/fbc_"],
+            "tags": ["fbc", "kasm2", "bytecode", "verifier", "capability", "proof", "app_runtime"],
+            "compact_signature": "/fbc_ backend=auto -> app sections + sensitive commands as verified FBC proof projection",
+            "example": "fbc_runtime { backend: \"auto\", write_artifacts: true }",
+            "summary": "Compile the whole app ownership surface into FBC/KASM2 v0 cells and return compact proofs without raw host access."
+        }),
+        json!({
+            "id": "brain",
+            "target_tool": "forge.execute",
+            "verbs": ["recall", "commit", "explain"],
+            "current_routes": ["brain_recall", "brain_commit", "brain_compare", "brain_sleep", "brain_explain"],
+            "slash_aliases": ["brain commands"],
+            "tags": ["memory", "brain", "semantic", "episodic", "procedural", "godel", "distill"],
+            "compact_signature": "forge.execute program=<recall|commit|explain> -> scoped evidence-aware memory route",
+            "example": "/forge recall scope=real_estate",
+            "summary": "Use the evidence-aware Forge brain without adding a parallel memory store."
+        }),
+        json!({
+            "id": "geo",
+            "target_tool": "forge.execute",
+            "verbs": ["create", "commit"],
+            "current_routes": ["geonode"],
+            "slash_aliases": ["/geo", "/minigeo"],
+            "tags": ["geo", "planet", "anchor", "coordinate", "atlas", "visual_program"],
+            "compact_signature": "forge.execute program=<create geo anchor> -> Atlas GeoNode/MiniGeoNode",
+            "example": "/forge create kind=geonode title=mars_anchor goal=\"anchor a named location\"",
+            "summary": "Create reusable spatial anchors for visual programs and Atlas references."
+        }),
+        json!({
+            "id": "profile",
+            "target_tool": "forge.execute",
+            "verbs": ["recall", "commit"],
+            "current_routes": ["profile", "update_session"],
+            "slash_aliases": ["profile", "settings"],
+            "tags": ["profile", "provider", "model", "settings", "session", "metadata"],
+            "compact_signature": "forge.execute program=<profile/session intent> -> safe settings/session update",
+            "example": "/forge commit scope=profile kind=semantic observation=\"preferred model policy changed\"",
+            "summary": "Route settings and safe session metadata changes through bounded intents."
+        }),
+        json!({
+            "id": "cancel",
+            "target_tool": "forge.cancel",
+            "verbs": [],
+            "current_routes": ["cancel"],
+            "slash_aliases": ["cancel"],
+            "tags": ["stop", "abort", "cancel", "job"],
+            "compact_signature": "forge.cancel job_id=<id> reason=<text>",
+            "example": "forge.cancel { job_id: \"...\", reason: \"user changed parameters\" }",
+            "summary": "Stop running work safely without routing through a broad tool catalog."
+        }),
+    ]
 }
 
 fn workflow_guidance(value: &Value) -> Value {

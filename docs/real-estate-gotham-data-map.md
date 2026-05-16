@@ -35,6 +35,24 @@ Artefacts opérationnels:
 - `examples/forge_tauri_ui/scripts/real-estate-source-discovery.mjs`: collector source discovery qui extrait les ressources réelles exploitables et écrit `source_manifest.jsonl` dans le store Forge.
 - `examples/forge_tauri_ui/scripts/real-estate-raw-downloader.mjs`: downloader brut content-addressed qui lit `source_manifest.jsonl`, télécharge les ressources filtrées, écrit les fichiers par hash et journalise `raw_downloads.jsonl`.
 - `examples/forge_tauri_ui/scripts/real-estate-parser-router.mjs`: routeur de parsing qui lit `raw_downloads.jsonl`, choisit le parser par format et produit `normalized_events.jsonl`.
+- `examples/forge_tauri_ui/scripts/real-estate-entity-resolver.mjs`: resolver déterministe qui lit `normalized_events.jsonl`, canonise les candidats et produit `entity_graph.jsonl`.
+- `examples/forge_tauri_ui/scripts/real-estate-intel-pack-builder.mjs`: builder qui lit `entity_graph.jsonl` + `normalized_events.jsonl` et produit `intel_packs.jsonl` pour KASM/brain/LLM.
+- `examples/forge_tauri_ui/scripts/real-estate-kasm-seed-builder.mjs`: builder qui lit `intel_packs.jsonl` et produit `kasm_metric_seeds.jsonl`, un mini feature store local pour simulations KASM.
+- `examples/forge_tauri_ui/scripts/real-estate-kasm-simulator.mjs`: orchestrateur qui appelle le lab Rust `lab_runner_immo`, écrit `kasm_rust_compute.json`, `kasm_simulation_results.jsonl` et `ranked_actions.json`.
+- `examples/forge_tauri_ui/scripts/real-estate-brain-commit.mjs`: bridge mémoire qui lit `ranked_actions.json`, `kasm_rust_compute.json` et `intel_packs.jsonl`, puis écrit `real_estate_memory_commits.jsonl` prêt pour `brain_commit`.
+
+Doctrine SOTA:
+
+- Crawlers/API: Scrapy et Crawlee restent le plancher pour queues, retries, politeness et pipelines; Forge doit garder le HTTP/API propre en premier et n'utiliser le navigateur que comme render worker.
+- Formats: DuckDB est le plancher pour CSV/JSON/Parquet tabulaires; Tika est le plancher universel metadata/texte multi-formats; Docling est le plancher PDF/OCR/layout/table; Magika est le plancher detection contenu quand extension/MIME mentent.
+- Forge ajoute l'edge local: chaque artefact est content-addressed, chaque run a un proof hash, chaque event porte `adapterPlan`, et le routeur sonde les adapters disponibles avant fallback natif.
+- Si un adapter SOTA n'est pas installe, le pipeline ne casse pas: il marque l'adapter comme indisponible, garde le raw hash et produit un event differe ou natif.
+- Le `parser-router` produit aussi une enveloppe universelle par raw: `dataset`, `distribution`, `rawArtifact`, `parsedElements`, `entityCandidates`, `edges`, `lineageEvent`, `metricSeeds`, `quality`. C'est l'interface stable pour KASM, brain/memory et les futurs intel packs.
+- Le `entity-resolver` suit le plancher Splink/Dedupe: blocking/canonicité d'abord, scoring explicite et preuves par hash, puis seulement plus tard apprentissage actif ou matching probabiliste.
+- Le `intel-pack-builder` suit le plancher Great Expectations/Soda/OpenLineage: qualité, contrat, provenance, puis produit des packs LLM-safe avec score d'utilisabilité, signaux, trous de données, actions et preuves.
+- Le `kasm-seed-builder` suit le plancher Feature Store/observability: transformer les packs en features numériques versionnées, puis laisser KASM simuler sans relire les raws.
+- Le `kasm-simulator` pousse le mur calcul: le JS reste un adaptateur d'artefacts, pendant que `lab_runner_immo` lit `kasm_metric_seeds.jsonl`, expanse les seeds en espace métrique massif, exécute une matrice propriétés x scénarios x horizons, cache les étapes content-addressed et retourne seulement scores, hashes, work items et actions classées.
+- Le `brain-commit` pousse le mur context-size: les actions classées deviennent des notes sémantiques compactes, hashées et ancrées dans les preuves, afin que les commandes immo puissent rappeler le résultat avant tout calcul LLM natif.
 
 Principe d'ordre:
 
@@ -42,7 +60,8 @@ Principe d'ordre:
 2. Normaliser adresses, parcelles, bâtiments, communes, zones et dates.
 3. Créer des snapshots temporels par source.
 4. Calculer des métriques KASM par zone, rue, bâtiment, marché, risque, demande et concurrence.
-5. Seulement ensuite brancher CRM, biens agence, Google Workspace et dossiers internes.
+5. Publier les actions classées vers la mémoire sémantique agence.
+6. Seulement ensuite brancher CRM, biens agence, Google Workspace et dossiers internes.
 
 ### Armée De Collectors Publics Prioritaires
 
@@ -68,6 +87,23 @@ Principe d'ordre:
 | `health_services_collector` | P2 | FINESS, annuaires santé ouverts, data.gouv | Médecins, pharmacies, établissements, temps d'accès approximatif | Attractivité seniors/familles, zones sous-dotées. |
 | `tourism_short_rental_collector` | P3 | data.gouv tourisme, offices publics, réglementation locale, sources autorisées | Flux tourisme, événements, règles meublés, saisonnalité | Investisseurs, locatif, tension marché, risque réglementaire. |
 | `social_perception_collector` | P3 | Forums publics, avis publics, pétitions publiques, réseaux publics via API autorisée | Mentions, thèmes, polarité, lieux, fréquence, signaux de plaintes/enthousiasme | Perception quartier, réputation, signaux faibles très précoces. |
+
+### Sources Publiques Verrouillées - Vague 2
+
+Ces sources complètent le socle public brut hors biens agence. Elles sont ajoutées au registre `real-estate-public-sources.json` en mode metadata-first: le discovery extrait les ressources réelles, le downloader conserve les raws par hash, puis le parser route CSV/JSON/GeoJSON/XLSX/Parquet/PDF/HTML selon le format.
+
+| Collector brut | Priorité | Source libre/API verrouillée | Formats probables | Données à extraire | Intel visée |
+|---|---:|---|---|---|---|
+| `local_taxation_collector` | P2 | DGFiP REI, fiscalité locale des particuliers géo | CSV, XLSX, JSON, GeoJSON | Taxe foncière bâtie/non bâtie, TEOM, CFE, bases, taux, commune, année | Coût de détention, pression fiscale, argument vendeur/acquéreur. |
+| `connectivity_collector` | P2 | ARCEP Ma connexion internet, répertoire `data.arcep.fr/fixe/maconnexioninternet` | CSV, XLSX | Éligibilité fibre, technologies, fermeture cuivre, commune, IRIS, bâtiment/adresse | Télétravail, attractivité cadres, objection connectivité. |
+| `health_services_collector` | P2 | FINESS/openFINESS et recherches data.gouv santé | CSV | Établissements, catégorie, capacité, adresse, commune, coordonnées, statut | Attractivité seniors/familles, accès santé, zones sous-dotées. |
+| `education_services_collector` | P2 | INSEE BPE + accès aux équipements | CSV, Parquet | Écoles, commerces, services, santé, équipements par commune/IRIS, distance/temps d'accès | Qualité de vie, matching acquéreurs, score quartier. |
+| `sport_culture_collector` | P2 | API Data ES, RES, Base Mérimée | API, CSV, JSON, GeoServices | Équipements sportifs, accessibilité, monuments historiques, patrimoine, localisation | Attractivité émotionnelle, contraintes patrimoniales, argumentaire quartier. |
+| `environment_collector` | P2 | Atmo Data, indices qualité air, cartes stratégiques du bruit | API, GeoJSON, SHP, TIFF, CSV | Indice ATMO, polluants, pollen, Lden/Lnight, route/rail/aérien/industrie | Décote bruit/pollution, objections, assurance, confort. |
+| `public_security_collector` | P2 | SSMSI séries chronologiques et jeux agrégés crimes/délits | CSV, JSON | Indicateurs agrégés, territoire, période, unité, définition, source | Risque réputation quartier, objection acquéreur, veille locale. |
+| `energy_price_collector` | P2 | Enedis open data, ODRÉ/RTE à brancher ensuite | API Opendatasoft, CSV, JSON | Consommation/production par commune/IRIS, secteur, thermosensibilité, période | Pression coût énergie, rénovation, stress DPE, valeur verte. |
+| `renovation_collector` | P2 | API Professionnels RGE, ADEME | API, JSON, HTML | Entreprises RGE, domaines travaux, validité, adresse, commune, SIRET | Capacité travaux locale, ROI rénovation, rapport vendeur. |
+| `tourism_short_rental_collector` | P3 | DATAtourisme open data | CSV, NT/RDF, HTML | POI, événements, activités, itinéraires, lieux, catégories, coordonnées | Potentiel investisseur, saisonnalité, tension location courte durée. |
 
 ### Contrat Raw Collector
 

@@ -12,6 +12,7 @@ pub mod compute_core;
 pub mod cpu_bits;
 pub mod cpu_simd;
 pub mod fast_hash;
+pub mod fbc;
 pub mod godel;
 pub mod introspection;
 pub mod landauer;
@@ -161,8 +162,8 @@ pub use codec::{
 pub use brain::{
     brain_semantic_ref, brain_substitution_ref, publish_program_substitution,
     publish_semantic_attractor, resolve_program_hash, tighten_program_for_execution, BrainAction,
-    BrainMemory, ForgeBrain, BRAIN_HEAD_REF, BRAIN_LATEST_ACTIVE_REF, BRAIN_SEMANTIC_REF_PREFIX,
-    BRAIN_STATE_REF, BRAIN_SUBSTITUTION_REF_PREFIX,
+    BrainMemory, BrainProofProjection, ForgeBrain, BRAIN_HEAD_REF, BRAIN_LATEST_ACTIVE_REF,
+    BRAIN_SEMANTIC_REF_PREFIX, BRAIN_STATE_REF, BRAIN_SUBSTITUTION_REF_PREFIX,
 };
 pub use kasm::{PartialEvalReport, RewriteReport};
 pub use key::CallKey;

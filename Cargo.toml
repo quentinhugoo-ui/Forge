@@ -55,6 +55,10 @@ name = "lab_runner_banger"
 path = "examples/lab_runner_banger.rs"
 
 [[example]]
+name = "lab_runner_fbc"
+path = "examples/lab_runner_fbc.rs"
+
+[[example]]
 name = "lab_runner_web"
 path = "examples/lab_runner_web.rs"
 

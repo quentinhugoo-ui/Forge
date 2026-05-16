@@ -50,6 +50,7 @@ const downloadRecords = [];
 
 mkdirSync(dataDir, { recursive: true });
 mkdirSync(rawDir, { recursive: true });
+writeFileSync(downloadsPath, "");
 
 for (const resource of resources.slice(0, limit)) {
   const record = live ? await downloadResource(resource) : plannedRecord(resource);
@@ -91,6 +92,7 @@ function selectResources(sourceRecords) {
       seen.add(resource.url);
       selected.push({
         runId,
+        downloadScore: scoreResource(sourceRecord, resource, format),
         sourceManifestRunId: sourceRecord.runId,
         sourceRecordHash: sourceRecord.recordHash,
         sourceId: resource.sourceId ?? sourceRecord.sourceId,
@@ -113,10 +115,40 @@ function selectResources(sourceRecords) {
     }
   }
   return selected.sort((a, b) =>
-    String(a.sourcePriority).localeCompare(String(b.sourcePriority))
+    b.downloadScore - a.downloadScore
+    || String(a.sourcePriority).localeCompare(String(b.sourcePriority))
     || a.sourceId.localeCompare(b.sourceId)
     || a.url.localeCompare(b.url)
   );
+}
+
+function scoreResource(sourceRecord, resource, format) {
+  const url = String(resource.url ?? "").toLowerCase();
+  const parentUrl = String(resource.parentUrl ?? sourceRecord.finalUrl ?? "").toLowerCase();
+  const title = String(resource.title ?? "").toLowerCase();
+  const sourceDetected = normalizeFormat(sourceRecord.detectedFormat);
+  const formatScore = {
+    geojson: 120,
+    json: 115,
+    csv: 110,
+    "csv.gz": 108,
+    parquet: 106,
+    xlsx: 94,
+    xls: 86,
+    xml: 78,
+    pdf: 72,
+    zip: 68,
+    txt: 35,
+    html: 20,
+  }[format] ?? 10;
+  let score = formatScore;
+  if (sourceDetected === "json" || sourceDetected === "geojson") score += 25;
+  if (resource.jsonPath) score += 20;
+  if (resource.mime && !String(resource.mime).toLowerCase().includes("html")) score += 8;
+  if (/(dataset|resource|download|api|data|donnees|valeurs|foncieres|dpe|cadastre|geojson|csv|parquet)/.test(url + " " + title)) score += 16;
+  if (/(guides\.data\.gouv|documentation|reference|github\.com|\/api\/publier|\/api\/modifier|rss\.xml|readme\.md)/.test(url + " " + parentUrl)) score -= 80;
+  if (resource.filesize && resource.filesize > maxBytes && !allowLarge) score -= 45;
+  return score;
 }
 
 function plannedRecord(resource) {

@@ -41,21 +41,25 @@ function sectionRegistered(sources, sectionId) {
   const registerPattern = new RegExp(
     `(?:ForgeSectionRegistry|forgeSections)\\?\\.register\\?\\.\\(\\s*\\{[\\s\\S]{0,260}?id:\\s*["']${escapeRegExp(sectionId)}["']`,
   );
-  return sources.some((source) => registerPattern.test(source.text));
+  const manifestPattern = new RegExp(`\\{\\s*id:\\s*["']${escapeRegExp(sectionId)}["']`);
+  return sources.some((source) => registerPattern.test(source.text) || manifestPattern.test(source.text));
 }
 
 function sectionLifecycleControlled(sources, sectionId) {
   const patterns = [
     new RegExp(`ForgeSectionRegistry\\?\\.(?:activate|deactivate)\\?\\.\\(\\s*["']${escapeRegExp(sectionId)}["']`),
     new RegExp(`forgeSections\\?\\.setActive\\?\\.\\(\\s*["']${escapeRegExp(sectionId)}["']`),
+    new RegExp(`setActive\\?\\.\\(\\s*["']${escapeRegExp(sectionId)}["']`),
     new RegExp(`ForgeSectionRegistry\\?\\.setActive\\?\\.\\(\\s*["']${escapeRegExp(sectionId)}["']`),
+    new RegExp(`section:\\s*["']${escapeRegExp(sectionId)}["'][\\s\\S]{0,180}?active:`),
+    new RegExp(`type:\\s*["']SET_SURFACE_ACTIVE["'][\\s\\S]{0,180}?section:\\s*["']${escapeRegExp(sectionId)}["']`),
   ];
   return sources.some((source) => patterns.some((pattern) => pattern.test(source.text)));
 }
 
 function findInvocations(source) {
   const invocations = [];
-  const pattern = /(?<callee>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(\s*["'](?<command>[a-z][a-z0-9_]{2,})["']/g;
+  const pattern = /(?<callee>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*(?:<[^>]+>)?\s*\(\s*["'](?<command>[a-z][a-z0-9_]{2,})["']/g;
   for (let match; (match = pattern.exec(source.text));) {
     invocations.push({
       file: source.path,
@@ -83,22 +87,26 @@ function findGlobalWrites(source) {
 
 const manifest = JSON.parse(read("ui/SECTION_OWNERSHIP.json"));
 const indexHtml = read("ui/index.html");
+const manifestFiles = Array.from(new Set([
+  ...manifest.entrypoints,
+  ...manifest.sections.flatMap((section) => section.files || []),
+]));
 const sources = Object.fromEntries(
-  manifest.entrypoints.map((relativePath) => [relativePath, { path: relativePath, text: read(relativePath) }]),
+  manifestFiles.map((relativePath) => [relativePath, { path: relativePath, text: read(relativePath) }]),
 );
 const sourceList = Object.values(sources);
 
 expect(
   "section registry and bridge must load before app.js",
-  scriptOrder(indexHtml, ["forge-section-registry.js", "forge-tauri-bridge.js", "forge-boot.js", "forge-window-controls.js", "forge-webexplorer-config.js", "app.js"]),
+  scriptOrder(indexHtml, ["dist/forge-section-registry.js", "dist/forge-tauri-bridge.js", "dist/forge-boot.js", "dist/forge-window-controls.js", "dist/forge-webexplorer-config.js", "dist/forge-app.js"]),
 );
 
 for (const section of manifest.sections) {
   const sectionSources = section.files.map((file) => sources[file]).filter(Boolean);
   expect(`${section.id}: every owned file must exist`, sectionSources.length === section.files.length);
-  expect(`${section.id}: section must be registered`, sectionRegistered(sectionSources, section.id));
+  expect(`${section.id}: section must be registered`, sectionRegistered(sourceList, section.id));
   if (section.lifecycle !== "always-active" && section.lifecycle !== "shell-section") {
-    expect(`${section.id}: lifecycle must be mirrored in ForgeSectionRegistry`, sectionLifecycleControlled(sectionSources, section.id));
+    expect(`${section.id}: lifecycle must be mirrored in ForgeSectionRegistry`, sectionLifecycleControlled(sourceList, section.id));
   }
 }
 
@@ -112,12 +120,12 @@ for (const invocation of invocations) {
 for (const rule of manifest.sensitiveCommands) {
   const hits = invocationsByCommand.get(rule.command) || [];
   expect(`${rule.command}: command must be referenced`, hits.length > 0);
-  const bridgeHits = hits.filter((hit) => hit.callee === "forgeTauri.invoke");
+  const bridgeHits = hits.filter((hit) => hit.callee === "forgeTauri.invoke" || hit.callee === "forgeInvoke" || hit.callee === "deps.invoke");
   if (rule.requiresBridge) {
     expect(`${rule.command}: command must have a ForgeTauriBridge path`, bridgeHits.length > 0);
   }
   for (const hit of hits) {
-    const isBridgeInvoke = hit.callee === "forgeTauri.invoke";
+    const isBridgeInvoke = hit.callee === "forgeTauri.invoke" || hit.callee === "forgeInvoke" || hit.callee === "deps.invoke";
     if (rule.requiresBridge && !rule.allowRawFallback) {
       expect(
         `${rule.command}: ${hit.file}:${hit.line} must use ForgeTauriBridge`,
@@ -147,7 +155,9 @@ for (const rule of manifest.sensitiveCommands) {
   }
 }
 
-const globalWrites = sourceList.flatMap(findGlobalWrites);
+const globalWrites = sourceList
+  .filter((source) => !source.path.startsWith("ui/dist/"))
+  .flatMap(findGlobalWrites);
 const writesByGlobal = new Map();
 for (const write of globalWrites) {
   if (!writesByGlobal.has(write.global)) writesByGlobal.set(write.global, new Set());

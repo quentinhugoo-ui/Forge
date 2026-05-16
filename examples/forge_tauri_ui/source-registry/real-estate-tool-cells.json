@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "kind": "forge_real_estate_tool_cells",
+  "defaults": {
+    "engine": "kasm_dataflow_query_v1",
+    "experimentalEngines": ["forge_bytecode_v0"],
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agencyProfileHash": { "type": "string" },
+        "question": { "type": "string" },
+        "targetCity": { "type": "string" },
+        "entityIds": { "type": "array", "items": { "type": "string" } },
+        "timeHorizonDays": { "type": "integer", "minimum": 1, "maximum": 730 }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "toolId": { "type": "string" },
+        "command": { "type": "string" },
+        "status": { "type": "string" },
+        "proofHash": { "type": "string" },
+        "graphProofHash": { "type": "string" },
+        "summary": { "type": "object" },
+        "evidenceRefs": { "type": "array", "items": { "type": "object" } },
+        "rankedActions": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["toolId", "command", "status", "proofHash", "summary", "evidenceRefs", "rankedActions"]
+    },
+    "permissions": ["read:living_dataflow_graph", "read:intel_packs", "read:kasm_metric_seeds", "write:tool_cell_outputs"],
+    "denied": ["network:direct", "filesystem:raw_client_files", "secret:read"]
+  },
+  "toolCells": [
+    { "id": "mandat-vendeur", "group": "Production immo", "focus": ["entity", "signal", "intelPack", "score"], "query": "seller_mandate_opportunity" },
+    { "id": "estimation", "group": "Production immo", "focus": ["entity", "score", "intelPack"], "query": "pricing_estimation_context" },
+    { "id": "rapport-vendeur", "group": "Production immo", "focus": ["intelPack", "signal", "score"], "query": "seller_report_pack" },
+    { "id": "diagnostics", "group": "Production immo", "focus": ["entity", "signal"], "query": "diagnostic_risk_energy" },
+    { "id": "conformite", "group": "Production immo", "focus": ["entity", "signal", "memoryFact"], "query": "compliance_trace" },
+    { "id": "diffusion", "group": "Production immo", "focus": ["intelPack", "score", "action"], "query": "listing_distribution_plan" },
+    { "id": "audit-annonces", "group": "Production immo", "focus": ["signal", "score", "action"], "query": "listing_audit" },
+    { "id": "performance-diffusion", "group": "Production immo", "focus": ["score", "action"], "query": "distribution_performance" },
+
+    { "id": "marche-veille", "group": "Marche & veille", "focus": ["source", "event", "entity", "signal", "intelPack", "score", "action"], "query": "market_watch" },
+    { "id": "dvf", "group": "Marche & veille", "focus": ["source", "raw", "event", "entity", "score"], "query": "dvf_market_prices" },
+    { "id": "cadastre", "group": "Marche & veille", "focus": ["source", "raw", "entity"], "query": "parcel_context" },
+    { "id": "dpe-ademe", "group": "Marche & veille", "focus": ["source", "event", "signal", "score"], "query": "energy_dpe_signals" },
+    { "id": "georisques", "group": "Marche & veille", "focus": ["source", "event", "signal"], "query": "risk_exposure" },
+    { "id": "urbanisme", "group": "Marche & veille", "focus": ["source", "entity", "signal"], "query": "urbanism_plu_signals" },
+    { "id": "veille-locale", "group": "Marche & veille", "focus": ["source", "event", "signal", "intelPack"], "query": "local_news_watch" },
+    { "id": "concurrence", "group": "Marche & veille", "focus": ["entity", "signal", "score", "action"], "query": "competitor_watch" },
+    { "id": "reputation", "group": "Marche & veille", "focus": ["source", "signal", "score"], "query": "agency_reputation" },
+
+    { "id": "prospects", "group": "Contacts", "focus": ["entity", "signal", "score", "action"], "query": "prospect_prioritization" },
+    { "id": "vendeurs", "group": "Contacts", "focus": ["entity", "signal", "score", "action"], "query": "seller_leads" },
+    { "id": "acquereurs", "group": "Contacts", "focus": ["entity", "signal", "score"], "query": "buyer_context" },
+    { "id": "matching-acheteurs", "group": "Contacts", "focus": ["entity", "score", "action"], "query": "buyer_matching" },
+    { "id": "repondeur-ia", "group": "Contacts", "focus": ["memoryFact", "action"], "query": "voice_agent_context" },
+    { "id": "chatbot-site", "group": "Contacts", "focus": ["intelPack", "memoryFact", "action"], "query": "website_chatbot_context" },
+    { "id": "partenaires", "group": "Contacts", "focus": ["entity", "signal", "score"], "query": "partner_network" },
+
+    { "id": "pilotage-agence", "group": "Pilotage agence", "focus": ["score", "action", "memoryFact"], "query": "agency_control_tower" },
+    { "id": "pipeline", "group": "Pilotage agence", "focus": ["entity", "score", "action"], "query": "pipeline_health" },
+    { "id": "kpi-agence", "group": "Pilotage agence", "focus": ["score", "action"], "query": "agency_kpis" },
+    { "id": "planning-visites", "group": "Pilotage agence", "focus": ["entity", "action"], "query": "visit_planning" },
+    { "id": "coaching-equipe", "group": "Pilotage agence", "focus": ["score", "memoryFact", "action"], "query": "team_coaching" },
+    { "id": "performance-commerciaux", "group": "Pilotage agence", "focus": ["score", "action"], "query": "sales_performance" },
+
+    { "id": "back-office", "group": "Back-office", "focus": ["memoryFact", "action"], "query": "backoffice_context" },
+    { "id": "comptabilite", "group": "Back-office", "focus": ["score", "memoryFact", "action"], "query": "accounting_context" },
+    { "id": "fiscalite", "group": "Back-office", "focus": ["signal", "score", "memoryFact"], "query": "tax_context" },
+    { "id": "tresorerie", "group": "Back-office", "focus": ["score", "action"], "query": "cashflow_watch" },
+    { "id": "courtiers", "group": "Back-office", "focus": ["entity", "signal", "score"], "query": "broker_context" },
+    { "id": "assurances", "group": "Back-office", "focus": ["signal", "score", "memoryFact"], "query": "insurance_context" },
+    { "id": "notaires", "group": "Back-office", "focus": ["entity", "memoryFact", "action"], "query": "notary_context" },
+    { "id": "travaux", "group": "Back-office", "focus": ["signal", "score", "action"], "query": "renovation_roi" },
+
+    { "id": "recrutement", "group": "Equipe", "focus": ["source", "entity", "signal", "score"], "query": "recruitment_watch" },
+    { "id": "onboarding", "group": "Equipe", "focus": ["memoryFact", "action"], "query": "employee_onboarding" },
+    { "id": "formation", "group": "Equipe", "focus": ["score", "memoryFact", "action"], "query": "training_plan" }
+  ]
+}

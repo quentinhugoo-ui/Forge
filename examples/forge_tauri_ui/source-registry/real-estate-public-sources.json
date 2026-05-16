@@ -543,6 +543,349 @@
       ],
       "extract": ["feed_url", "title", "date", "place", "topic", "public_signal", "sentiment_proxy"],
       "serves": ["weak_signals", "local_watch", "reputation"]
+    },
+    {
+      "id": "dgfip_local_taxation_rei",
+      "label": "DGFiP fiscalite locale REI",
+      "priority": "P2",
+      "domain": "local_taxation",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "yearly",
+      "collector": "local_taxation_collector",
+      "urls": [
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/datasets/58da72bbc751df38734d8658/?resource_id=d7dd9f79-703c-4dbc-8c7c-a8e2318ec811",
+          "method": "GET",
+          "expectedFormats": ["html", "csv", "xlsx"],
+          "parser": "html"
+        },
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=REI%20fiscalit%C3%A9%20directe%20locale&page_size=3",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["commune", "taxe_fonciere_batie", "taxe_fonciere_non_batie", "taxe_habitation", "cfe", "teom", "base_imposition", "taux"],
+      "serves": ["fiscalite", "estimation", "seller_report", "holding_cost"]
+    },
+    {
+      "id": "dgfip_local_taxation_geo",
+      "label": "Fiscalite locale des particuliers geo",
+      "priority": "P2",
+      "domain": "local_taxation",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "yearly",
+      "collector": "local_taxation_collector",
+      "urls": [
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/fr/datasets/fiscalite-locale-des-particuliers-geo/",
+          "method": "GET",
+          "expectedFormats": ["html", "csv", "json", "geojson"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["code_insee", "commune", "taux_global_tfpb", "taux_global_tfnb", "taux_habitation", "geometry", "year"],
+      "serves": ["fiscalite", "rapport_vendeur", "zone_holding_cost"]
+    },
+    {
+      "id": "arcep_ma_connexion_internet",
+      "label": "ARCEP Ma connexion internet",
+      "priority": "P2",
+      "domain": "connectivity",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "quarterly",
+      "collector": "connectivity_collector",
+      "urls": [
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/datasets/ma-connexion-internet",
+          "method": "GET",
+          "expectedFormats": ["html", "csv", "xlsx"],
+          "parser": "html"
+        },
+        {
+          "kind": "raw_directory",
+          "url": "https://data.arcep.fr/fixe/maconnexioninternet/",
+          "method": "GET",
+          "expectedFormats": ["html", "csv"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["address_or_building", "commune", "iris", "technology", "fiber_eligibility", "copper_closure", "operator", "quarter"],
+      "serves": ["connectivity_score", "buyer_matching", "remote_work_fit", "area_score"]
+    },
+    {
+      "id": "finess_health_open_data",
+      "label": "FINESS et etablissements de sante",
+      "priority": "P2",
+      "domain": "health_services",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "monthly",
+      "collector": "health_services_collector",
+      "urls": [
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=FINESS%20%C3%A9tablissements%20sant%C3%A9&page_size=3",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        },
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/datasets/open-finess",
+          "method": "GET",
+          "expectedFormats": ["html", "csv"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["finess_id", "name", "category", "address", "commune", "coordinates", "capacity", "status"],
+      "serves": ["health_access_score", "senior_family_attractiveness", "area_score"]
+    },
+    {
+      "id": "insee_bpe_equipment",
+      "label": "INSEE Base Permanente des Equipements",
+      "priority": "P2",
+      "domain": "local_services",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "yearly",
+      "collector": "education_services_collector",
+      "urls": [
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/fr/datasets/base-permanente-des-equipements-1/",
+          "method": "GET",
+          "expectedFormats": ["html", "csv"],
+          "parser": "html"
+        },
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/datasets/donnees-sur-la-localisation-et-lacces-de-la-population-aux-equipements",
+          "method": "GET",
+          "expectedFormats": ["html", "parquet"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["equipment_type", "domain", "subdomain", "commune", "iris", "coordinates", "count", "nearest_distance", "nearest_duration"],
+      "serves": ["schools_services_score", "commerce_score", "family_attractiveness", "buyer_matching"]
+    },
+    {
+      "id": "data_es_sports_api",
+      "label": "API Data ES equipements sportifs",
+      "priority": "P2",
+      "domain": "sport_culture",
+      "access": "open",
+      "license": "official_service",
+      "cadence": "daily",
+      "collector": "sport_culture_collector",
+      "urls": [
+        {
+          "kind": "dataservice",
+          "url": "https://www.data.gouv.fr/dataservices/api-data-es",
+          "method": "GET",
+          "expectedFormats": ["html", "json"],
+          "parser": "html"
+        },
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=Recensement%20des%20%C3%A9quipements%20sportifs&page_size=3",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["equipment_id", "installation", "sport_type", "address", "coordinates", "accessibility", "owner", "daily_update"],
+      "serves": ["quality_of_life_score", "family_attractiveness", "local_watch"]
+    },
+    {
+      "id": "culture_base_merimee",
+      "label": "Base Merimee monuments historiques",
+      "priority": "P2",
+      "domain": "culture_heritage",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "monthly",
+      "collector": "sport_culture_collector",
+      "urls": [
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/datasets/base-merimee-1/",
+          "method": "GET",
+          "expectedFormats": ["html", "csv", "json"],
+          "parser": "html"
+        },
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=Base%20M%C3%A9rim%C3%A9e%20monuments%20historiques&page_size=3",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["merimee_id", "name", "protection", "period", "address", "coordinates", "heritage_type"],
+      "serves": ["heritage_premium", "urbanism_constraints", "seller_report"]
+    },
+    {
+      "id": "atmo_france_air_quality",
+      "label": "Atmo France qualite de l'air",
+      "priority": "P2",
+      "domain": "environment",
+      "access": "open",
+      "license": "ODbL",
+      "cadence": "daily",
+      "collector": "environment_collector",
+      "urls": [
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/datasets/6729ed3a87591d8ff72ab95c/",
+          "method": "GET",
+          "expectedFormats": ["html", "pdf", "json"],
+          "parser": "html"
+        },
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=indice%20qualit%C3%A9%20air%20Atmo&page_size=3",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["indice_atmo", "pollutant", "episode", "pollen", "emissions", "epci", "region", "date"],
+      "serves": ["environment_score", "health_objections", "area_watch"]
+    },
+    {
+      "id": "strategic_noise_maps",
+      "label": "Cartes strategiques du bruit",
+      "priority": "P2",
+      "domain": "noise",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "yearly",
+      "collector": "environment_collector",
+      "urls": [
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=cartes%20strat%C3%A9giques%20du%20bruit&page_size=5",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        },
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=niveau%20exposition%20bruit%20Lden&page_size=5",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["lden", "lnight", "road_noise", "rail_noise", "air_noise", "industrial_noise", "threshold_exceedance", "geometry"],
+      "serves": ["noise_discount", "diagnostics", "seller_report", "buyer_objections"]
+    },
+    {
+      "id": "ssmsi_security_statistics",
+      "label": "SSMSI statistiques securite interieure",
+      "priority": "P2",
+      "domain": "public_security",
+      "access": "open_aggregated",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "monthly",
+      "collector": "public_security_collector",
+      "urls": [
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/datasets/service-statistique-ministeriel-de-la-securite-interieure-base-des-series-chronologiques",
+          "method": "GET",
+          "expectedFormats": ["html", "csv"],
+          "parser": "html"
+        },
+        {
+          "kind": "dataset_search",
+          "url": "https://www.data.gouv.fr/api/1/datasets/?q=crimes%20d%C3%A9lits%20commune%20SSMSI&page_size=5",
+          "method": "GET",
+          "expectedFormats": ["json"],
+          "parser": "json"
+        }
+      ],
+      "extract": ["indicator", "period", "territory", "value", "unit", "definition", "source_publication"],
+      "serves": ["area_risk_proxy", "seller_report", "buyer_objections", "local_watch"]
+    },
+    {
+      "id": "datatourisme_open_data",
+      "label": "DATAtourisme open data",
+      "priority": "P3",
+      "domain": "tourism",
+      "access": "open",
+      "license": "Licence Ouverte / Open Licence 2.0",
+      "cadence": "daily",
+      "collector": "tourism_short_rental_collector",
+      "urls": [
+        {
+          "kind": "dataset",
+          "url": "https://www.data.gouv.fr/fr/datasets/datatourisme-la-base-nationale-des-donnees-du-tourisme-en-open-data/",
+          "method": "GET",
+          "expectedFormats": ["html", "csv", "txt"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["poi", "event", "activity", "itinerary", "place", "coordinates", "category", "update_date"],
+      "serves": ["tourism_pressure", "investor_report", "local_watch", "short_rental_signal"]
+    },
+    {
+      "id": "enedis_open_energy",
+      "label": "Enedis open data energie",
+      "priority": "P2",
+      "domain": "energy",
+      "access": "open_aggregated",
+      "license": "source_specific",
+      "cadence": "monthly",
+      "collector": "energy_price_collector",
+      "urls": [
+        {
+          "kind": "api_dataset",
+          "url": "https://enedis.opendatasoft.com/explore/dataset/bilan-electrique/api/",
+          "method": "GET",
+          "expectedFormats": ["html", "json"],
+          "parser": "html"
+        },
+        {
+          "kind": "catalog",
+          "url": "https://data.enedis.fr/",
+          "method": "GET",
+          "expectedFormats": ["html", "json"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["commune", "iris", "sector", "consumption_mwh", "production_mwh", "thermosensitivity", "sites_count", "period"],
+      "serves": ["energy_cost_pressure", "renovation_roi", "dpe_objections", "area_watch"]
+    },
+    {
+      "id": "ademe_rge_professionnels_api",
+      "label": "API professionnels RGE",
+      "priority": "P2",
+      "domain": "renovation",
+      "access": "open",
+      "license": "official_service",
+      "cadence": "weekly",
+      "collector": "renovation_collector",
+      "urls": [
+        {
+          "kind": "dataservice",
+          "url": "https://www.data.gouv.fr/fr/dataservices/api-professionnels-rge/",
+          "method": "GET",
+          "expectedFormats": ["html", "json"],
+          "parser": "html"
+        }
+      ],
+      "extract": ["company", "siret", "rge_domain", "qualification", "address", "commune", "validity", "work_type"],
+      "serves": ["travaux", "diagnostics", "renovation_roi", "rapport_vendeur"]
     }
   ]
 }

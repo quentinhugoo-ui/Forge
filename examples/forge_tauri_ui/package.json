@@ -1,0 +1,21 @@
+{
+  "name": "forge-tauri-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run typecheck && npm run build:runtime",
+    "build:runtime": "node scripts/build-ui-runtime.mjs",
+    "check:ui": "node scripts/forge-ui-smoke.mjs",
+    "audit:cutover": "node scripts/forge-cutover-audit.mjs",
+    "audit:js-debt": "node scripts/forge-cutover-audit.mjs --strict",
+    "audit:tauri-bus": "node scripts/forge-tauri-bus-audit.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.0",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0"
+  }
+}

@@ -8,6 +8,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = join(root, "scripts");
 const defaultRegistryPath = join(root, "source-registry", "real-estate-public-sources.json");
 const defaultAdaptersPath = join(root, "source-registry", "real-estate-parser-adapters.json");
+const defaultToolCellsPath = join(root, "source-registry", "real-estate-tool-cells.json");
 const defaultStorePath = join(root, ".forge-data");
 
 const args = new Set(process.argv.slice(2));
@@ -15,18 +16,31 @@ const live = args.has("--live");
 const pretty = args.has("--pretty");
 const registryPath = resolve(argValue("--registry") ?? defaultRegistryPath);
 const adaptersPath = resolve(argValue("--adapters") ?? defaultAdaptersPath);
+const toolCellsPath = resolve(argValue("--tool-cells") ?? defaultToolCellsPath);
 const storePath = resolve(argValue("--store") ?? process.env.FORGE_STORE_PATH ?? defaultStorePath);
 const timeoutMs = Number(argValue("--timeout-ms") ?? 8000);
 const maxBytes = Number(argValue("--max-bytes") ?? 1024 * 1024);
 const discoveryBytes = Number(argValue("--discovery-bytes") ?? 512 * 1024);
 const downloadLimit = Number(argValue("--download-limit") ?? 32);
 const parserLimit = Number(argValue("--parser-limit") ?? 64);
-const stages = new Set((argValue("--stages") ?? "audit,discovery,download,parse").split(",").map((it) => it.trim()).filter(Boolean));
+const stages = new Set((argValue("--stages") ?? "audit,discovery,download,parse,resolve,intel,seeds,simulate,memory,dataflow,toolcells,evidence").split(",").map((it) => it.trim()).filter(Boolean));
 
 const dataDir = join(storePath, "real-estate-harvester", "data");
 const sourceManifestPath = join(dataDir, "source_manifest.jsonl");
 const rawDownloadsPath = join(dataDir, "raw_downloads.jsonl");
 const normalizedEventsPath = join(dataDir, "normalized_events.jsonl");
+const entityGraphPath = join(dataDir, "entity_graph.jsonl");
+const intelPacksPath = join(dataDir, "intel_packs.jsonl");
+const kasmMetricSeedsPath = join(dataDir, "kasm_metric_seeds.jsonl");
+const kasmSimulationResultsPath = join(dataDir, "kasm_simulation_results.jsonl");
+const rankedActionsPath = join(dataDir, "ranked_actions.json");
+const kasmRustComputePath = join(dataDir, "kasm_rust_compute.json");
+const memoryCommitsPath = join(dataDir, "real_estate_memory_commits.jsonl");
+const livingDataflowGraphPath = join(dataDir, "living_dataflow_graph.json");
+const livingDataflowGraphJsonlPath = join(dataDir, "living_dataflow_graph.jsonl");
+const toolCellOutputsDir = join(dataDir, "tool_cell_outputs");
+const evidenceMemoryFactsPath = join(dataDir, "evidence_memory_facts.jsonl");
+const evidenceMemoryLatestPath = join(dataDir, "evidence_memory_latest.json");
 const pipelineLatestPath = join(dataDir, "pipeline_run.json");
 const pipelineLedgerPath = join(dataDir, "pipeline_runs.jsonl");
 
@@ -36,6 +50,7 @@ const stepResults = [];
 
 if (!existsSync(registryPath)) fail(`registry not found: ${registryPath}`);
 if (!existsSync(adaptersPath)) fail(`parser adapters registry not found: ${adaptersPath}`);
+if (!existsSync(toolCellsPath)) fail(`tool cells registry not found: ${toolCellsPath}`);
 mkdirSync(dataDir, { recursive: true });
 
 if (stages.has("audit")) {
@@ -87,6 +102,101 @@ if (stages.has("parse")) {
       `--limit=${parserLimit}`,
     ]));
   }
+}
+
+if (stages.has("resolve")) {
+  if (!existsSync(normalizedEventsPath)) {
+    stepResults.push(skippedStep("resolve", "missing_normalized_events", normalizedEventsPath));
+  } else {
+    stepResults.push(runStep("resolve", "real-estate-entity-resolver.mjs", [
+      `--events=${normalizedEventsPath}`,
+      `--store=${storePath}`,
+      "--pretty",
+      `--limit=${parserLimit}`,
+    ]));
+  }
+}
+
+if (stages.has("intel")) {
+  if (!existsSync(entityGraphPath) || !existsSync(normalizedEventsPath)) {
+    stepResults.push(skippedStep("intel", "missing_graph_or_events", `${entityGraphPath} | ${normalizedEventsPath}`));
+  } else {
+    stepResults.push(runStep("intel", "real-estate-intel-pack-builder.mjs", [
+      `--graph=${entityGraphPath}`,
+      `--events=${normalizedEventsPath}`,
+      `--store=${storePath}`,
+      "--pretty",
+      `--limit=${parserLimit}`,
+    ]));
+  }
+}
+
+if (stages.has("seeds")) {
+  if (!existsSync(intelPacksPath)) {
+    stepResults.push(skippedStep("seeds", "missing_intel_packs", intelPacksPath));
+  } else {
+    stepResults.push(runStep("seeds", "real-estate-kasm-seed-builder.mjs", [
+      `--packs=${intelPacksPath}`,
+      `--store=${storePath}`,
+      "--pretty",
+      `--limit=${parserLimit}`,
+    ]));
+  }
+}
+
+if (stages.has("simulate")) {
+  if (!existsSync(kasmMetricSeedsPath)) {
+    stepResults.push(skippedStep("simulate", "missing_kasm_metric_seeds", kasmMetricSeedsPath));
+  } else {
+    stepResults.push(runStep("simulate", "real-estate-kasm-simulator.mjs", [
+      `--seeds=${kasmMetricSeedsPath}`,
+      `--store=${storePath}`,
+      "--pretty",
+      `--limit=${parserLimit}`,
+    ]));
+  }
+}
+
+if (stages.has("memory")) {
+  if (!existsSync(rankedActionsPath) || !existsSync(kasmRustComputePath)) {
+    stepResults.push(skippedStep("memory", "missing_ranked_actions_or_compute", `${rankedActionsPath} | ${kasmRustComputePath}`));
+  } else {
+    stepResults.push(runStep("memory", "real-estate-brain-commit.mjs", [
+      `--ranked=${rankedActionsPath}`,
+      `--compute=${kasmRustComputePath}`,
+      `--packs=${intelPacksPath}`,
+      `--store=${storePath}`,
+      "--pretty",
+      `--limit=${parserLimit}`,
+    ]));
+  }
+}
+
+if (stages.has("dataflow")) {
+  stepResults.push(runStep("dataflow", "real-estate-living-dataflow-graph.mjs", [
+    `--store=${storePath}`,
+    "--pretty",
+    `--limit=${parserLimit}`,
+  ]));
+}
+
+if (stages.has("toolcells")) {
+  stepResults.push(runStep("toolcells", "real-estate-tool-cell-runner.mjs", [
+    `--registry=${toolCellsPath}`,
+    `--store=${storePath}`,
+    "--tool=marche-veille",
+    "--engine=forge_bytecode_v0",
+    "--refresh-fbc",
+    "--pretty",
+  ]));
+}
+
+if (stages.has("evidence")) {
+  stepResults.push(runStep("evidence", "real-estate-evidence-memory-builder.mjs", [
+    `--store=${storePath}`,
+    "--pretty",
+    `--limit=${parserLimit}`,
+  ]));
 }
 
 const pipeline = buildPipelineReport();
@@ -163,11 +273,24 @@ function buildPipelineReport() {
     finishedAt: new Date().toISOString(),
     registryPath: registryPath.replaceAll("\\", "/"),
     adaptersPath: adaptersPath.replaceAll("\\", "/"),
+    toolCellsPath: toolCellsPath.replaceAll("\\", "/"),
     storePath: storePath.replaceAll("\\", "/"),
     artifacts: {
       sourceManifest: sourceManifestPath.replaceAll("\\", "/"),
       rawDownloads: rawDownloadsPath.replaceAll("\\", "/"),
       normalizedEvents: normalizedEventsPath.replaceAll("\\", "/"),
+      entityGraph: entityGraphPath.replaceAll("\\", "/"),
+      intelPacks: intelPacksPath.replaceAll("\\", "/"),
+      kasmMetricSeeds: kasmMetricSeedsPath.replaceAll("\\", "/"),
+      kasmRustCompute: kasmRustComputePath.replaceAll("\\", "/"),
+      kasmSimulationResults: kasmSimulationResultsPath.replaceAll("\\", "/"),
+      rankedActions: rankedActionsPath.replaceAll("\\", "/"),
+      memoryCommits: memoryCommitsPath.replaceAll("\\", "/"),
+      livingDataflowGraph: livingDataflowGraphPath.replaceAll("\\", "/"),
+      livingDataflowGraphJsonl: livingDataflowGraphJsonlPath.replaceAll("\\", "/"),
+      toolCellOutputs: toolCellOutputsDir.replaceAll("\\", "/"),
+      evidenceMemoryFacts: evidenceMemoryFactsPath.replaceAll("\\", "/"),
+      evidenceMemoryLatest: evidenceMemoryLatestPath.replaceAll("\\", "/"),
       latest: pipelineLatestPath.replaceAll("\\", "/"),
       ledger: pipelineLedgerPath.replaceAll("\\", "/"),
     },

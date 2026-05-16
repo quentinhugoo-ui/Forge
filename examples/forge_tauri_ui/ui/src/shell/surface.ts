@@ -1,4 +1,40 @@
-﻿const canvas = document.getElementById("logCanvas");
+// @ts-nocheck
+import {
+  buildRealEstatePrivacyPacket,
+  realEstateBrainRefLabel,
+  realEstateCanvasThinkingFirstPhrases,
+  realEstateCanvasThinkingPhrases,
+  realEstateChatPlaceholderIdeas,
+  realEstateChatPlaceholderScenarios,
+  realEstateCommandFromText as parseRealEstateCommandFromText,
+  realEstateCommandPacket as buildRealEstateCommandPacket,
+  redactRealEstateClientData,
+} from "../sections/real-estate/runtime-context.js";
+import { createForgeDocumentPreview, tryParseCandleCsv } from "./document-preview.js";
+import { createForgePlanPreviewRuntime } from "./plan-preview.js";
+import {
+  ALPHA_3D_LEGEND,
+  ALPHA_3D_Z_METRICS,
+  alpha3dAxisLabels,
+  alpha3dLegendPayload,
+  alpha3dLookAt,
+  alpha3dMulMat4Vec4,
+  alpha3dPerspective,
+} from "./alpha3d-geometry.js";
+import {
+  initAlpha3dWebgl,
+  renderAlpha3dWebglFrame,
+  resizeAlpha3dCanvasToDisplay,
+  uploadAlpha3dPayload,
+} from "./alpha3d-webgl.js";
+import { createAlpha3dControls } from "./alpha3d-controls.js";
+import { computeAlpha3dPayloadForMode as computeAlpha3dPayload } from "./alpha3d-payload.js";
+import { createRealEstateOnboardingRuntime } from "../sections/real-estate/onboarding-runtime.js";
+import { createRealEstateLanguageRuntime } from "../sections/real-estate/language-runtime.js";
+import { createRealEstateModeRuntime } from "../sections/real-estate/mode-runtime.js";
+import { createRealEstatePanelRuntime } from "../sections/real-estate/panel-runtime.js";
+
+const canvas = document.getElementById("logCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 const statusText = document.getElementById("statusText");
@@ -21,13 +57,43 @@ const forgeWindowLabel = forgeRuntimeUrl.searchParams.get("window")
 const isWebExplorerSurface = forgeSurfaceMode === "webexplorer";
 const forgeSections = window.ForgeSectionRegistry || null;
 const forgeTauri = window.ForgeTauriBridge || null;
-forgeSections?.register?.({ id: "shell", label: "Forge shell", kind: "foundation", active: true, lazy: false, bootSafe: true });
-forgeSections?.register?.({ id: "alpha", label: "Alpha canvas", kind: "shell-section", active: true, lazy: false });
-forgeSections?.register?.({ id: "forge", label: "Legacy Forge page", kind: "shell-section", active: false });
-forgeSections?.register?.({ id: "webexplorer", label: "WebExplorer", kind: "workspace", active: isWebExplorerSurface });
-forgeSections?.register?.({ id: "real-estate", label: "Agence immo mode", kind: "mode", active: false });
-forgeSections?.register?.({ id: "real-estate-main", label: "Accueil agence immo", kind: "workspace", parent: "real-estate", active: false });
-forgeSections?.register?.({ id: "trading", label: "Trading workspace", kind: "workspace", active: false });
+const forgeShellRuntime = window.ForgeShellRuntime || null;
+const forgeRuntimeTauri = forgeShellRuntime?.tauri || forgeTauri || null;
+function forgeCanInvoke() {
+  return typeof forgeRuntimeTauri?.invoke === "function";
+}
+function forgeInvoke(command, args = {}, options = {}) {
+  if (forgeRuntimeTauri?.invoke) return forgeRuntimeTauri.invoke(command, args, options);
+  return Promise.reject(new Error(`Tauri command unavailable: ${command}`));
+}
+function forgeListen(eventName, handler, options = {}) {
+  if (typeof forgeTauri?.listen === "function") return forgeTauri.listen(eventName, handler, options);
+  return Promise.resolve(null);
+}
+const forgeProjectionPatchSignatures = new Map();
+function forgeDispatchProjectionPatch(key, event) {
+  const signature = JSON.stringify(event);
+  if (forgeProjectionPatchSignatures.get(key) === signature) return;
+  forgeProjectionPatchSignatures.set(key, signature);
+  forgeShellRuntime?.dispatch?.(event);
+}
+function registerForgeSection(definition) {
+  forgeSections?.register?.(definition);
+  forgeShellRuntime?.register?.({
+    id: definition.id,
+    label: definition.label,
+    kind: definition.kind === "shell-section" ? "shell-section" : "surface",
+    parent: definition.parent || "",
+    bootSafe: definition.bootSafe === true,
+    owns: definition.owns || [],
+  });
+}
+(window.ForgeSectionManifests || []).forEach((definition) => {
+  registerForgeSection({
+    ...definition,
+    active: definition.id === "webexplorer" ? isWebExplorerSurface : definition.active,
+  });
+});
 let forgeHardwareInfo = null;
 let alpha3dToggle = null;
 let marsLensView = null;
@@ -137,36 +203,10 @@ function bootTrace(stage, details = "") {
     if (!forgeTraceIsUseful(`boot.${stage}`)) return;
     const payload = typeof details === "string" ? details : JSON.stringify(details);
     if (forgeVerboseTerminalLogsEnabled()) console.info(`[forge-boot] ${stage}`, details);
-    const tauriApi = window.__TAURI__;
-    if (!tauriApi?.core?.invoke) return;
-    void tauriApi.core.invoke("alpha_debug_log", {
-      stage: `boot.${stage}`,
-      details: payload,
-    }).catch(() => {});
+    void forgeTauri?.debugLog?.(`boot.${stage}`, payload);
   } catch (_) {}
 }
 
-window.addEventListener("error", (event) => {
-  bootTrace("js.error", {
-    message: event?.message || "unknown error",
-    filename: event?.filename || "",
-    lineno: event?.lineno || 0,
-    colno: event?.colno || 0,
-  });
-});
-
-window.addEventListener("unhandledrejection", (event) => {
-  const reason = event?.reason;
-  bootTrace("js.unhandledrejection", {
-    reason: typeof reason === "string"
-      ? reason
-      : (reason?.message || String(reason || "unknown rejection")),
-  });
-});
-
-let dpr = window.devicePixelRatio || 1;
-let width = 0;
-let height = 0;
 let running = false;
 let activeTab = "results";
 
@@ -176,102 +216,7 @@ const maxLogs = 240;
 
 let pendingFile = null;
 let selectedKind = kindSelect.value;
-// MODE dropdown supprimée (session 2026-05-03) — l'auto-routing CPU/GPU
-// du backend décide automatiquement le path optimal selon la taille du
-// programme et la disponibilité GPU. Le backend reçoit "dispatch" en
-// dur et applique l'auto-router (v0/v1/v2 + dispatch_batch fast bypass +
-// multi-GPU split).
 const selectedMode = "dispatch";
-let previewToken = 0;
-
-alphaProofToggle?.addEventListener("click", () => {
-  if (!alphaProofPanelOpen) {
-    setAlphaRightPanelMode(defaultAlphaRightPanelMode(), { skipRender: true });
-  }
-  setAlphaProofPanelOpen(!alphaProofPanelOpen);
-});
-
-const docState = {
-  fileName: "",
-  fileSize: 0,
-  rawText: "",
-  wrappedLines: [],
-  lineStartOffsets: [],
-  charWidth: 8.2,
-  lineHeight: 16,
-  leftPad: 18,
-  topPad: 16,
-  scrollLines: 0,
-  dnaSequence: "",
-  dnaRawOffsets: [],
-  // Φ.ν.7g — Candles mode auto-detect on CSV upload.
-  // Schema accepted : header line "time,open,high,low,close,volume"
-  // (timestamps ISO-8601 ou epoch ; volume optionnel ; toutes les
-  // décimales acceptées). Voir parseCandleCsv().
-  mode: "dna", // "dna" | "candles"
-  candles: [],          // Array<{ time:number(ms), open, high, low, close, volume }>
-  candleViewCount: 200, // Bougies visibles à l'écran (zoom level)
-  candleViewEnd: 0,     // Index de la dernière bougie visible (scroll)
-  candleHover: -1,      // Index hovered (-1 si rien)
-};
-
-const runState = {
-  phase: "idle", // idle | ready | running | done | error
-  chunkDone: 0,
-  chunkTotal: 0,
-  report: null,
-};
-
-// SplitMix64 en BigInt â€” bit-pour-bit identique Ã  ref_splitmix64 cÃ´tÃ© Rust.
-const MASK64 = (1n << 64n) - 1n;
-const SM_C0 = 0x9e3779b97f4a7c15n;
-const SM_C1 = 0xbf58476d1ce4e5b9n;
-const SM_C2 = 0x94d049bb133111ebn;
-
-function nucBits(c) {
-  if (c === "A" || c === "a") return 0;
-  if (c === "C" || c === "c") return 1;
-  if (c === "G" || c === "g") return 2;
-  if (c === "T" || c === "t") return 3;
-  return 255; // N ou autre
-}
-
-function nucColor(c) {
-  if (c === "A" || c === "a") return "rgba(232,123,123,1)";
-  if (c === "C" || c === "c") return "rgba(123,178,232,1)";
-  if (c === "G" || c === "g") return "rgba(140,210,140,1)";
-  if (c === "T" || c === "t") return "rgba(232,210,123,1)";
-  return "rgba(150,150,150,1)";
-}
-
-function packKmer(kmer) {
-  let v = 0n;
-  let reset = false;
-  for (let i = 0; i < kmer.length; i += 1) {
-    const b = nucBits(kmer[i]);
-    if (b === 255) {
-      reset = true;
-      v = 0n;
-      continue;
-    }
-    v = ((v << 2n) | BigInt(b)) & MASK64;
-  }
-  return { value: v, reset };
-}
-
-function splitmix64Steps(x0) {
-  // Reproduit les 4 lignes de ref_splitmix64, retourne les valeurs
-  // intermÃ©diaires pour les afficher pas Ã  pas.
-  const after_add = (x0 + SM_C0) & MASK64;
-  const after_mul1 = ((after_add ^ (after_add >> 30n)) * SM_C1) & MASK64;
-  const after_mul2 = ((after_mul1 ^ (after_mul1 >> 27n)) * SM_C2) & MASK64;
-  const final_hash = (after_mul2 ^ (after_mul2 >> 31n)) & MASK64;
-  return { after_add, after_mul1, after_mul2, final_hash };
-}
-
-function hex64(big) {
-  return "0x" + big.toString(16).padStart(16, "0");
-}
 
 function humanSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -288,7 +233,7 @@ function tsPrefix() {
 function appendForge(line) {
   forgeLogs.push(`${tsPrefix()}${line}`);
   if (forgeLogs.length > maxLogs) forgeLogs.shift();
-  trackChunkProgress(line);
+  documentPreview.trackChunkProgress(line);
 }
 
 function appendResult(line) {
@@ -315,605 +260,16 @@ function activeLogs() {
   return activeTab === "results" ? resultLogs : forgeLogs;
 }
 
-function renderFiles(files) {
-  fileList.innerHTML = "";
-  if (!files.length) {
-    fileList.innerHTML = '<li class="file-item muted">No file loaded</li>';
-    return;
-  }
-  for (const file of files) {
-    const li = document.createElement("li");
-    li.className = "file-item";
-    li.textContent = `${file.name} (${humanSize(file.size)})`;
-    fileList.appendChild(li);
-  }
-}
-
-function resizeCanvas() {
-  dpr = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  width = Math.floor(rect.width);
-  height = Math.floor(rect.height);
-  canvas.width = Math.floor(width * dpr);
-  canvas.height = Math.floor(height * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  recomputeWrap();
-}
-
-function drawMicroGrid(time) {
-  const spacing = 18;
-  const pulse = time * 0.00018;
-  ctx.fillStyle = "#0e1011";
-  ctx.fillRect(0, 0, width, height);
-  for (let gy = spacing; gy < height; gy += spacing) {
-    for (let gx = spacing; gx < width; gx += spacing) {
-      const phase = gx * 0.004 + gy * 0.003 + pulse;
-      const alpha = 0.07 + Math.sin(phase) * 0.03;
-      ctx.fillStyle = `rgba(210, 224, 230, ${Math.max(0.02, alpha).toFixed(3)})`;
-      ctx.fillRect(gx, gy, 1.45, 1.45);
-    }
-  }
-}
-
-function drawPlainLogs(lines, placeholder) {
-  ctx.font = "12px Consolas, Monaco, monospace";
-  ctx.textBaseline = "top";
-  ctx.textAlign = "left"; // Φ.ν.7g — reset au cas où drawCandlesChart aurait laissé "right"
-  const x = 18;
-  const top = 16;
-  const lh = 18;
-  const visible = Math.max(1, Math.floor((height - top * 2) / lh));
-  const start = Math.max(0, lines.length - visible);
-
-  if (lines.length === 0) {
-    ctx.fillStyle = "rgba(138,150,156,0.75)";
-    ctx.fillText(placeholder, x, top);
-    return;
-  }
-  ctx.fillStyle = "rgba(225,234,238,0.94)";
-  for (let i = start; i < lines.length; i += 1) {
-    ctx.fillText(lines[i], x, top + (i - start) * lh);
-  }
-}
-
-function wrapLineByWidth(line, maxChars) {
-  if (line.length <= maxChars) return [line];
-  const out = [];
-  for (let i = 0; i < line.length; i += maxChars) {
-    out.push(line.slice(i, i + maxChars));
-  }
-  return out;
-}
-
-function recomputeWrap() {
-  if (!docState.rawText) {
-    docState.wrappedLines = [];
-    docState.lineStartOffsets = [];
-    return;
-  }
-  const usable = Math.max(20, width - docState.leftPad * 2 - 12);
-  const maxChars = Math.max(12, Math.floor(usable / docState.charWidth));
-  const originalLines = docState.rawText.split(/\r?\n/);
-  const wrapped = [];
-  const starts = [];
-  let globalOffset = 0;
-
-  for (const srcLine of originalLines) {
-    const chunks = wrapLineByWidth(srcLine, maxChars);
-    if (chunks.length === 0) {
-      wrapped.push("");
-      starts.push(globalOffset);
-    } else {
-      for (let i = 0; i < chunks.length; i += 1) {
-        wrapped.push(chunks[i]);
-        starts.push(globalOffset + i * maxChars);
-      }
-    }
-    globalOffset += srcLine.length + 1;
-  }
-  docState.wrappedLines = wrapped;
-  docState.lineStartOffsets = starts;
-  const maxScroll = Math.max(0, wrapped.length - visibleDocLines());
-  docState.scrollLines = Math.min(docState.scrollLines, maxScroll);
-}
-
-function visibleDocLines() {
-  return Math.max(1, Math.floor((height - docState.topPad * 2) / docState.lineHeight));
-}
-
-function trackChunkProgress(line) {
-  const m = line.match(/chunk\s+(\d+)\/(\d+)/i);
-  if (m) {
-    runState.chunkDone = Number.parseInt(m[1], 10) || 0;
-    runState.chunkTotal = Number.parseInt(m[2], 10) || 0;
-  }
-  if (line.startsWith("final :")) {
-    runState.phase = "done";
-  }
-  if (line.startsWith("ERROR")) {
-    runState.phase = "error";
-  }
-}
-
-function extractDnaProjection(raw) {
-  let sequence = "";
-  const offsets = [];
-  const up = raw.toUpperCase();
-  for (let i = 0; i < up.length; i += 1) {
-    const c = up[i];
-    if (c === "A" || c === "C" || c === "G" || c === "T" || c === "N") {
-      sequence += c;
-      offsets.push(i);
-    }
-  }
-  return { sequence, offsets };
-}
-
-function drawDocumentText() {
-  const lines = docState.wrappedLines;
-  if (lines.length === 0) {
-    return;
-  }
-
-  const first = docState.scrollLines;
-  const visible = visibleDocLines();
-  const last = Math.min(lines.length, first + visible);
-
-  ctx.font = "12px Consolas, Monaco, monospace";
-  ctx.textBaseline = "top";
-  ctx.fillStyle = "rgba(223,233,237,0.95)";
-
-  for (let i = first; i < last; i += 1) {
-    const y = docState.topPad + (i - first) * docState.lineHeight;
-    ctx.fillText(lines[i], docState.leftPad, y);
-  }
-
-  const total = lines.length;
-  const barH = Math.max(24, (visible / total) * (height - 28));
-  const maxScroll = Math.max(1, total - visible);
-  const barY = 14 + (docState.scrollLines / maxScroll) * Math.max(1, height - 28 - barH);
-  ctx.fillStyle = "rgba(57,69,75,0.85)";
-  ctx.fillRect(width - 8, 12, 2, height - 24);
-  ctx.fillStyle = "rgba(152,174,183,0.9)";
-  ctx.fillRect(width - 9, barY, 4, barH);
-}
-
-function mapCharToVisiblePosition(globalCharIndex) {
-  if (docState.wrappedLines.length === 0) return null;
-  const offsets = docState.lineStartOffsets;
-  let lineIndex = -1;
-  for (let i = 0; i < offsets.length; i += 1) {
-    const start = offsets[i];
-    const end = start + docState.wrappedLines[i].length;
-    if (globalCharIndex >= start && globalCharIndex <= end) {
-      lineIndex = i;
-      break;
-    }
-  }
-  if (lineIndex < 0) return null;
-  const row = lineIndex - docState.scrollLines;
-  if (row < 0 || row >= visibleDocLines()) return null;
-  const col = Math.max(0, globalCharIndex - offsets[lineIndex]);
-  return {
-    x: docState.leftPad + col * docState.charWidth,
-    y: docState.topPad + row * docState.lineHeight,
-    lineIndex,
-  };
-}
-
-function findWrappedLineIndex(globalCharIndex) {
-  const offsets = docState.lineStartOffsets;
-  for (let i = 0; i < offsets.length; i += 1) {
-    const start = offsets[i];
-    const end = start + docState.wrappedLines[i].length;
-    if (globalCharIndex >= start && globalCharIndex <= end) return i;
-  }
-  return -1;
-}
-
-let doneTimestamp = 0;
-let frameCount = 0;
-
-function easeOut(t) {
-  return 1 - Math.pow(1 - Math.min(1, t), 3);
-}
-
-// CaractÃ¨res utilisÃ©s pendant la phase de scramble (effet tableau de gare).
-const FLAP_CHARS = "ACGT01abcdef23456789Â·";
-const CYCLE_FRAMES = 14; // frames par k-mer (â‰ˆ230ms Ã  60fps â‰ˆ 4 k-mers/s)
-const SCRAMBLE_DUR = 4;  // frames de scramble avant verrouillage par groupe
-const GROUP_SIZE  = 4;   // nombre de chars par groupe
-
-// Pseudo-alÃ©atoire dÃ©terministe : mÃªme (frame,char) â†’ mÃªme lettre.
-// Ã‰vite le scintillement dÃ» Ã  Math.random() recalculÃ© Ã  chaque frame.
-function flapRand(frame, charIdx) {
-  let x = (frame * 2654435761 + charIdx * 40503) >>> 0;
-  x = Math.imul(x ^ (x >>> 16), 0x45d9f3b) >>> 0;
-  return (x ^ (x >>> 16)) >>> 0;
-}
-
-// Animation Ã  vitesse rÃ©elle : chaque frame (~16ms) correspond Ã  une Ã©tape
-// diffÃ©rente de la transformation. L'Å“il perÃ§oit le flux de calcul.
-// Split-flap sur les 32 lettres du k-mer courant dans le texte ADN.
-// Le document reste visible : seule la fenÃªtre active fait la vague.
-function drawComputingView(time) {
-  frameCount++;
-  const seqLen = docState.dnaSequence.length;
-  if (seqLen < 32) return;
-
-  const cycleFrame  = frameCount % CYCLE_FRAMES;
-  const kmerOrdinal = Math.floor(frameCount / CYCLE_FRAMES);
-  const idx         = kmerOrdinal % Math.max(1, seqLen - 32);
-  const kmer        = docState.dnaSequence.slice(idx, idx + 32);
-  const { value: packed } = packKmer(kmer);
-  const hexHash     = splitmix64Steps(packed).final_hash.toString(16).padStart(16, "0");
-
-  // Position dans le canvas + auto-scroll.
-  const rawIdx = docState.dnaRawOffsets[Math.min(idx, docState.dnaRawOffsets.length - 1)];
-  let p = mapCharToVisiblePosition(rawIdx);
-  if (!p) {
-    const li = findWrappedLineIndex(rawIdx);
-    if (li >= 0) {
-      const vis = visibleDocLines();
-      docState.scrollLines = Math.min(
-        Math.max(0, docState.wrappedLines.length - vis),
-        Math.max(0, li - Math.floor(vis * 0.35))
-      );
-      p = mapCharToVisiblePosition(rawIdx);
-    }
-  }
-  // Skip si la fenÃªtre dÃ©borde Ã  droite.
-  if (!p || p.x + 32 * docState.charWidth > width - 4) return;
-
-  ctx.font = "12px Consolas, Monaco, monospace";
-  ctx.textBaseline = "top";
-
-  // Effacer la zone pour Ã©crire par-dessus le texte du document.
-  ctx.fillStyle = "#0e1011";
-  ctx.fillRect(p.x - 1, p.y - 1, 32 * docState.charWidth + 2, docState.lineHeight + 2);
-
-  for (let i = 0; i < 32; i += 1) {
-    const group  = Math.floor(i / GROUP_SIZE);
-    const lockAt = group + SCRAMBLE_DUR;
-    const cx     = p.x + i * docState.charWidth;
-
-    if (cycleFrame < group) {
-      // Pas encore atteint : lettre ADN d'origine.
-      ctx.fillStyle = "rgba(223,233,237,0.72)";
-      ctx.fillText(kmer[i], cx, p.y);
-    } else if (cycleFrame < lockAt) {
-      // Scramble : caractÃ¨re alÃ©atoire dÃ©terministe (mÃªme seed = mÃªme char).
-      const r = flapRand(frameCount, i) % FLAP_CHARS.length;
-      ctx.fillStyle = "rgba(200,215,222,0.50)";
-      ctx.fillText(FLAP_CHARS[r], cx, p.y);
-    } else {
-      // VerrouillÃ© : nibble du hash final.
-      ctx.fillStyle = "rgba(140,232,170,0.96)";
-      ctx.fillText(hexHash[Math.floor(i / 2) % 16], cx, p.y);
-    }
-  }
-
-  // Minuscule label au-dessus de la fenÃªtre.
-  const numGroups  = Math.ceil(32 / GROUP_SIZE);
-  const allLocked  = cycleFrame >= numGroups - 1 + SCRAMBLE_DUR;
-  ctx.font = "9px Segoe UI, sans-serif";
-  ctx.fillStyle = allLocked ? "rgba(140,232,170,0.55)" : "rgba(133,196,223,0.45)";
-  ctx.fillText(allLocked ? "hash" : "SplitMix64", p.x, p.y - 10);
-}
-
-// Helpers for log coloring.
-function logLineStyle(line) {
-  if (line.startsWith("===") || line.startsWith("--"))
-    return { color: "rgba(133,196,223,0.9)", font: "11px Segoe UI, sans-serif" };
-  if (/^\\s*class\\s+\\d+/.test(line))
-    return { color: "rgba(184,224,240,0.85)", font: "11px Consolas, Monaco, monospace" };
-  if (/^[ACGT]{8}/.test(line.trim()))
-    return { color: "rgba(200,215,222,0.82)", font: "11px Consolas, Monaco, monospace" };
-  if (/^\d/.test(line.trim()) || /k-mers/.test(line))
-    return { color: "rgba(170,185,195,0.80)", font: "11px Consolas, Monaco, monospace" };
-  return { color: "rgba(140,155,165,0.75)", font: "11px Consolas, Monaco, monospace" };
-}
-
-function drawResultsDoneView(time) {
-  if (doneTimestamp === 0) doneTimestamp = time;
-  const age = (time - doneTimestamp) / 1000;
-  const r = runState.report;
-  if (!r) return;
-
-  const pad = 22;
-  const a0 = easeOut(age / 0.35);
-
-  // â”€â”€ Ligne de stats compacte, alignÃ©e Ã  gauche â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  ctx.font = "11px Segoe UI, sans-serif";
-
-  const divFrac = r.total_kmers > 0 ? r.distinct / r.total_kmers : 0;
-  const statLine = [
-    { label: r.kind,                        color: `rgba(133,196,223,${a0})` },
-    { label: "|",                           color: `rgba(60,75,85,${a0})` },
-    { label: `${(r.total_kmers).toLocaleString("en-GB")} k-mers`, color: `rgba(200,215,222,${a0})` },
-    { label: "|",                           color: `rgba(60,75,85,${a0})` },
-    { label: `${r.distinct.toLocaleString("en-GB")} distinct`, color: `rgba(200,215,222,${a0})` },
-    { label: "|",                           color: `rgba(60,75,85,${a0})` },
-    { label: `${(divFrac * 100).toFixed(1)}% diversity©`, color: `rgba(140,232,170,${a0 * 0.9})` },
-    { label: "|",                           color: `rgba(60,75,85,${a0})` },
-    { label: `${r.elapsed_ms.toFixed(0)} ms`, color: `rgba(200,215,222,${a0})` },
-    { label: `(${r.ns_per_kmer.toFixed(0)} ns/k-mer)`, color: `rgba(120,140,152,${a0 * 0.8})` },
-  ];
-
-  let sx = pad;
-  for (const { label, color } of statLine) {
-    ctx.fillStyle = color;
-    ctx.fillText(label, sx, 12);
-    sx += ctx.measureText(label).width + 6;
-  }
-
-  // â”€â”€ Barre de diversity© fine (1 px) Ã  droite de la ligne de stats â”€â”€â”€
-  const barY = 28;
-  const barW = Math.min(300, width - pad * 2);
-  const animFrac = divFrac * easeOut(Math.max(0, (age - 0.2) / 0.5));
-  ctx.fillStyle = `rgba(30,40,48,${a0})`;
-  ctx.fillRect(pad, barY, barW, 1);
-  ctx.fillStyle = `rgba(140,232,170,${a0})`;
-  ctx.fillRect(pad, barY, barW * animFrac, 1);
-
-  // â”€â”€ SÃ©parateur â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const sepY = 38;
-  ctx.fillStyle = `rgba(35,47,56,${a0})`;
-  ctx.fillRect(pad, sepY, width - pad * 2, 1);
-
-  // â”€â”€ Logs rÃ©sultats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const logsY = sepY + 8;
-  const lineH = 15;
-  const maxLines = Math.max(1, Math.floor((height - logsY - 8) / lineH));
-  const startLine = Math.max(0, resultLogs.length - maxLines);
-
-  for (let i = startLine; i < resultLogs.length; i += 1) {
-    const line = resultLogs[i];
-    if (!line.trim()) continue;
-    const lineAge = Math.max(0, age - 0.25 - (i - startLine) * 0.018);
-    const ea = easeOut(lineAge / 0.2);
-    const { color, font } = logLineStyle(line);
-    ctx.font = font;
-    ctx.fillStyle = color.replace(/,([\d.]+)\)$/, (_, a) => `,${(parseFloat(a) * ea).toFixed(2)})`);
-    ctx.fillText(line, pad, logsY + (i - startLine) * lineH);
-  }
-}
-
-function drawResultFooter() {
-  const y = height - 18;
-  ctx.font = "10px Segoe UI, sans-serif";
-  ctx.fillStyle = "rgba(120,135,145,0.8)";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  if (!docState.fileName) return;
-  ctx.fillText(
-    `${docState.fileName} (${humanSize(docState.fileSize)})`,
-    18, y
-  );
-}
-
-function drawResultsView(time) {
-  // Φ.ν.7g — Si le fichier uploadé est un CSV de bougies, on render un
-  // graphique candlestick à la place du texte DNA. Le mode est défini
-  // au moment du upload par tryParseCandleCsv() dans loadFileIntoCanvas.
-  if (docState.mode === "candles" && docState.candles.length > 0) {
-    drawCandlesChart(time);
-    return;
-  }
-  if (runState.phase === "running") {
-    drawDocumentText();       // texte ADN reste visible
-    drawComputingView(time);  // split-flap par-dessus
-  } else if (runState.phase === "done") {
-    drawResultsDoneView(time);
-    drawResultFooter();
-  } else {
-    // idle / ready : texte ADN pleine page
-    drawDocumentText();
-    drawResultFooter();
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Φ.ν.7g — Candlestick chart renderer (Japanese candles).
-//
-// Affiche un graphe OHLC bougies japonaises sur le canvas. Vert si
-// close > open, rouge sinon. Wick = ligne verticale entre high et low,
-// body = rectangle entre open et close. Auto-scale Y sur la fenêtre
-// visible. Fenêtre paramétrée par docState.candleViewCount (zoom) et
-// docState.candleViewEnd (scroll horizontal).
-//
-// Interactions :
-//   - Wheel up/down  : zoom in/out (-/+ candleViewCount)
-//   - Drag horizontal : pan (déplace candleViewEnd)
-//   - Hover : OHLC tooltip sur la bougie pointée
-// ═══════════════════════════════════════════════════════════════════
-
-function drawCandlesChart(_time) {
-  const candles = docState.candles;
-  if (!candles.length) return;
-
-  const W = canvas.clientWidth;
-  const H = canvas.clientHeight;
-
-  // Layout : marges pour axes + header
-  const padTop = 36;     // espace pour le header (symbol + range)
-  const padBottom = 24;  // espace pour les timestamps de l'axe X
-  const padLeft = 12;
-  const padRight = 64;   // espace pour les graduations de prix
-  const chartW = Math.max(50, W - padLeft - padRight);
-  const chartH = Math.max(50, H - padTop - padBottom);
-
-  // Fenêtre visible
-  const viewCount = Math.max(5, Math.min(docState.candleViewCount, candles.length));
-  const viewEnd = Math.max(viewCount - 1, Math.min(docState.candleViewEnd, candles.length - 1));
-  const viewStart = viewEnd - viewCount + 1;
-  const visible = candles.slice(viewStart, viewEnd + 1);
-
-  // Calcul du range Y sur la fenêtre visible
-  let yMin = Infinity;
-  let yMax = -Infinity;
-  for (const c of visible) {
-    if (c.low < yMin) yMin = c.low;
-    if (c.high > yMax) yMax = c.high;
-  }
-  if (!Number.isFinite(yMin) || !Number.isFinite(yMax) || yMin === yMax) {
-    yMin = (yMin || 0) - 1;
-    yMax = (yMax || 0) + 1;
-  }
-  // Padding 5% en haut et en bas pour respiration visuelle
-  const yRange = yMax - yMin;
-  yMin -= yRange * 0.05;
-  yMax += yRange * 0.05;
-
-  // Helpers de conversion
-  const xOf = (i) => padLeft + (i + 0.5) * (chartW / viewCount);
-  const yOf = (price) => padTop + (1 - (price - yMin) / (yMax - yMin)) * chartH;
-  const candleW = Math.max(1, (chartW / viewCount) * 0.7);
-
-  // ─── Background grid ─────────────────────────────────────────────
-  ctx.fillStyle = "rgba(8, 10, 14, 1)";
-  ctx.fillRect(0, 0, W, H);
-
-  // Lignes horizontales (graduation prix : 6 niveaux)
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.06)";
-  ctx.lineWidth = 1;
-  ctx.font = "10px ui-monospace, monospace";
-  ctx.fillStyle = "rgba(180, 180, 180, 0.85)";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  const yLevels = 6;
-  for (let i = 0; i <= yLevels; i += 1) {
-    const price = yMin + (yMax - yMin) * (i / yLevels);
-    const y = yOf(price);
-    ctx.beginPath();
-    ctx.moveTo(padLeft, y);
-    ctx.lineTo(padLeft + chartW, y);
-    ctx.stroke();
-    ctx.fillText(price.toFixed(3), padLeft + chartW + 6, y);
-  }
-
-  // Timestamps X (5 graduations)
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  const xLabelCount = 5;
-  for (let i = 0; i < xLabelCount; i += 1) {
-    const idx = Math.floor((visible.length - 1) * (i / (xLabelCount - 1)));
-    const c = visible[idx];
-    if (!c) continue;
-    const x = xOf(idx);
-    const d = new Date(c.time);
-    // Format compact : YYYY-MM-DD ou MM-DD HH:00 selon le zoom
-    let label;
-    if (viewCount > 100) {
-      label = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
-    } else {
-      label = `${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:00`;
-    }
-    ctx.fillText(label, x, padTop + chartH + 4);
-  }
-
-  // ─── Candles ─────────────────────────────────────────────────────
-  for (let i = 0; i < visible.length; i += 1) {
-    const c = visible[i];
-    const x = xOf(i);
-    const isBull = c.close >= c.open;
-    const color = isBull ? "rgba(80, 200, 130, 1)" : "rgba(220, 90, 90, 1)";
-    // Wick (ligne high-low)
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x, yOf(c.high));
-    ctx.lineTo(x, yOf(c.low));
-    ctx.stroke();
-    // Body (rect open-close), au moins 1 px de hauteur même pour doji
-    const yOpen = yOf(c.open);
-    const yClose = yOf(c.close);
-    const yTop = Math.min(yOpen, yClose);
-    const bodyH = Math.max(1, Math.abs(yClose - yOpen));
-    ctx.fillStyle = color;
-    ctx.fillRect(x - candleW / 2, yTop, candleW, bodyH);
-  }
-
-  // ─── Header ──────────────────────────────────────────────────────
-  ctx.fillStyle = "rgba(220, 220, 220, 1)";
-  ctx.font = "bold 13px ui-monospace, monospace";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  const symbol = docState.fileName.replace(/\.csv$/i, "");
-  ctx.fillText(symbol, padLeft, 8);
-  ctx.font = "11px ui-monospace, monospace";
-  ctx.fillStyle = "rgba(160, 160, 160, 1)";
-  const rangeLabel =
-    `${candles.length} bars · view ${viewCount} · ` +
-    `[${yMin.toFixed(3)}, ${yMax.toFixed(3)}]`;
-  ctx.textAlign = "right";
-  ctx.fillText(rangeLabel, W - padRight - 6, 10);
-
-  // ─── Hover tooltip ───────────────────────────────────────────────
-  if (docState.candleHover >= 0 && docState.candleHover < visible.length) {
-    const c = visible[docState.candleHover];
-    const x = xOf(docState.candleHover);
-    // Vertical guide
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    ctx.moveTo(x, padTop);
-    ctx.lineTo(x, padTop + chartH);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // Tooltip
-    const isBull = c.close >= c.open;
-    const colorAccent = isBull ? "rgba(80, 200, 130, 1)" : "rgba(220, 90, 90, 1)";
-    const tip = [
-      new Date(c.time).toISOString().replace("T", " ").slice(0, 16),
-      `O ${c.open.toFixed(3)}`,
-      `H ${c.high.toFixed(3)}`,
-      `L ${c.low.toFixed(3)}`,
-      `C ${c.close.toFixed(3)}`,
-      c.volume ? `V ${c.volume}` : null,
-    ].filter(Boolean);
-    const tipPad = 8;
-    const tipLineH = 14;
-    const tipW = 150;
-    const tipH = tipPad * 2 + tip.length * tipLineH;
-    let tipX = x + 12;
-    if (tipX + tipW > W - padRight) tipX = x - tipW - 12;
-    const tipY = padTop + 12;
-    ctx.fillStyle = "rgba(20, 24, 30, 0.92)";
-    ctx.fillRect(tipX, tipY, tipW, tipH);
-    ctx.strokeStyle = colorAccent;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(tipX + 0.5, tipY + 0.5, tipW - 1, tipH - 1);
-    ctx.font = "11px ui-monospace, monospace";
-    ctx.fillStyle = "rgba(220, 220, 220, 1)";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    for (let i = 0; i < tip.length; i += 1) {
-      ctx.fillText(tip[i], tipX + tipPad, tipY + tipPad + i * tipLineH);
-    }
-  }
-
-  // Φ.ν.7g — defensive : reset textAlign avant de rendre la main aux
-  // autres draw fonctions (drawPlainLogs, drawDocumentText) qui
-  // s'attendent à textAlign="left" par défaut.
-  ctx.textAlign = "left";
-}
-
-function pad2(n) {
-  return n < 10 ? "0" + n : "" + n;
-}
-
-function render(time) {
-  drawMicroGrid(time);
-  if (activeTab === "forge") {
-    drawPlainLogs(forgeLogs, "No Forge logs - upload a file then click Start.");
-  } else {
-    drawResultsView(time);
-  }
-  requestAnimationFrame(render);
-}
+const documentPreview = createForgeDocumentPreview({
+  canvas,
+  ctx,
+  fileList,
+  resultLogs,
+  forgeLogs,
+  getActiveTab: () => activeTab,
+  humanSize,
+  appendForge,
+});
 
 function setRunning(state) {
   running = state;
@@ -930,134 +286,24 @@ function setRunning(state) {
   }
 }
 
-async function loadFileIntoCanvas(file) {
-  const token = ++previewToken;
-  try {
-    const txt = await file.text();
-    if (token !== previewToken) return;
-    docState.fileName = file.name;
-    docState.fileSize = file.size;
-    docState.rawText = txt;
-
-    // Φ.ν.7g — Auto-détection du format. Header CSV "time,open,high,
-    // low,close,volume" (variations en casse acceptées) → mode candles
-    // (graphique japonais). Sinon → mode dna existant.
-    const candles = tryParseCandleCsv(txt);
-    if (candles && candles.length >= 2) {
-      docState.mode = "candles";
-      docState.candles = candles;
-      docState.candleViewEnd = candles.length - 1;
-      docState.candleViewCount = Math.min(200, candles.length);
-      docState.candleHover = -1;
-      docState.dnaSequence = "";
-      docState.dnaRawOffsets = [];
-      appendForge(
-        `candles loaded : ${candles.length} bars, ` +
-          `${new Date(candles[0].time).toISOString().slice(0, 10)} → ` +
-          `${new Date(candles[candles.length - 1].time).toISOString().slice(0, 10)}`
-      );
-    } else {
-      docState.mode = "dna";
-      docState.candles = [];
-      const dna = extractDnaProjection(txt);
-      docState.dnaSequence = dna.sequence;
-      docState.dnaRawOffsets = dna.offsets;
-    }
-    docState.scrollLines = 0;
-    recomputeWrap();
-    runState.phase = "ready";
-  } catch (err) {
-    if (token !== previewToken) return;
-    appendForge(`ERROR reading file: ${err}`);
-  }
-}
-
-/// Φ.ν.7g — Parse un CSV de bougies OHLC. Retourne null si le format
-/// n'est pas reconnu (le caller bascule alors en mode DNA legacy).
-///
-/// Format attendu (casse insensible sur le header) :
-///   time,open,high,low,close,volume
-///   2010-01-04T22:00:00.000000000Z,5.756,5.813,5.755,5.759,188
-///
-/// `time` : ISO-8601 (avec ou sans nanos) ou epoch ms.
-/// `volume` : optionnel.
-function tryParseCandleCsv(txt) {
-  // Strip BOM si présent (PowerShell Out-File en ajoute parfois).
-  if (txt.charCodeAt(0) === 0xfeff) txt = txt.slice(1);
-  const newline = txt.indexOf("\n");
-  if (newline < 0) return null;
-  const header = txt.slice(0, newline).trim().toLowerCase();
-  // Accepte "time,open,high,low,close" + volume optionnel.
-  const headerCols = header.split(",").map((s) => s.trim());
-  const expected = ["time", "open", "high", "low", "close"];
-  for (let i = 0; i < expected.length; i += 1) {
-    if (headerCols[i] !== expected[i]) return null;
-  }
-  const hasVolume = headerCols[5] === "volume";
-
-  const lines = txt.split(/\r?\n/);
-  const out = [];
-  for (let i = 1; i < lines.length; i += 1) {
-    const ln = lines[i].trim();
-    if (!ln) continue;
-    const cols = ln.split(",");
-    if (cols.length < 5) continue;
-    const t = cols[0].trim();
-    let timeMs;
-    if (/^\d+$/.test(t)) {
-      timeMs = Number(t);
-    } else {
-      // ISO-8601 ; le navigateur parse natively, on perd les nanos
-      // mais on garde la ms (suffisant pour l'affichage candles).
-      timeMs = Date.parse(t);
-    }
-    if (!Number.isFinite(timeMs)) continue;
-    const o = parseFloat(cols[1]);
-    const h = parseFloat(cols[2]);
-    const l = parseFloat(cols[3]);
-    const c = parseFloat(cols[4]);
-    if (![o, h, l, c].every(Number.isFinite)) continue;
-    const v = hasVolume && cols[5] ? parseFloat(cols[5]) : 0;
-    out.push({ time: timeMs, open: o, high: h, low: l, close: c, volume: v });
-  }
-  return out.length >= 2 ? out : null;
-}
-
 function handleFiles(fileListLike) {
   const files = Array.from(fileListLike || []);
-  renderFiles(files);
+  documentPreview.renderFiles(files);
   if (!files.length) {
     pendingFile = null;
     startBtn.disabled = true;
-    docState.fileName = "";
-    docState.fileSize = 0;
-    docState.rawText = "";
-    docState.dnaSequence = "";
-    docState.dnaRawOffsets = [];
-    docState.wrappedLines = [];
-    docState.lineStartOffsets = [];
+    documentPreview.clear();
     return;
   }
   pendingFile = files[0];
   startBtn.disabled = running;
   appendForge(`upload : ${pendingFile.name} (${humanSize(pendingFile.size)})`);
   appendForge("full file transcription into canvas...");
-  loadFileIntoCanvas(pendingFile);
+  documentPreview.loadFile(pendingFile);
   refreshPlanPreview(selectedKind, pendingFile, appendForge);
 }
-
-// ─── Plan preview ─────────────────────────────────────────────────
-//
-// Calls inspect_program_map on the backend AS SOON AS the user has
-// selected a program (and optionally uploaded a file). The result —
-// "calculs identiques identifiés avant Start" — is dumped straight
-// into the Forge logs timeline. No side panel, no DOM widget : just
-// the numbers, where the user already reads them.
-
-let forgePlanPreviewToken = 0;
-let alphaPlanPreviewToken = 0;
-const PRESTART_REPORT_CACHE_VERSION = "alpha-prestart-v1";
 const forgeUiRenderCache = new Map();
+let alphaPlanPreviewToken = 0;
 
 function forgeUiRenderStamp(payload) {
   if (typeof payload === "string") return payload;
@@ -1087,199 +333,51 @@ function forgeUiInvalidateRenderCache(prefix = "") {
   }
 }
 
-function previewCacheKey(kind, file) {
-  if (!kind || !file) return null;
-  return `${PRESTART_REPORT_CACHE_VERSION}:${kind}:${file.name}:${file.size}:${file.lastModified}`;
-}
-
-function loadPreviewReportCache(kind, file) {
-  const key = previewCacheKey(kind, file);
-  if (!key) return null;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch (_) {
+const planPreview = createForgePlanPreviewRuntime({
+  canInvoke: forgeCanInvoke,
+  invoke: forgeInvoke,
+  alphaTrace: (stage, details) => alphaTrace(stage, details),
+  getAlphaFileBytes: (file) => {
+    if (file && file === alphaPendingFile && alphaPendingFileBytesPromise) {
+      return alphaPendingFileBytesPromise;
+    }
     return null;
-  }
-}
+  },
+});
 
-function persistPreviewReportCache(kind, file, report) {
-  const key = previewCacheKey(kind, file);
-  if (!key || !report) return;
-  try {
-    localStorage.setItem(key, JSON.stringify(report));
-  } catch (_) {
-    // Best-effort UX cache only.
-  }
-}
-
-function logPlanReport(logFn, report) {
-  if (!logFn || !report) return;
-  logFn(`─── plan ${report.kind} ───`);
-  if (report.node_count > 0) {
-    logFn(
-      `structure : ${report.node_count} nodes | opcodes [${(report.opcodes || []).join(", ")}]`
-    );
-  }
-  if (report.cse_node_delta !== 0) {
-    logFn(
-      `CSE on stored program : −${report.cse_node_delta} nodes after canonical merge`
-    );
-  }
-  const p = report.plan;
-  if (p) {
-    logFn(
-      `inputs : ${p.total_planned.toLocaleString()} planned → ${p.unique_after_fnv.toLocaleString()} unique (${p.input_dedup_pct.toFixed(1)}% identical, eliminated pre-dispatch)`
-    );
-    if (p.distinct_programs > 1) {
-      const collapsed = p.distinct_programs - p.n_cse_classes;
-      const pct = p.distinct_programs > 0
-        ? (100 * collapsed) / p.distinct_programs
-        : 0;
-      logFn(
-        `candidates : ${p.distinct_programs.toLocaleString()} raw → ${p.n_cse_classes.toLocaleString()} CSE classes (${collapsed.toLocaleString()} programmes redondants identifiés, ${pct.toFixed(1)}%)`
-      );
-    }
-    if (p.atlas_hits > 0) {
-      logFn(
-        `atlas peek : ${p.atlas_hits.toLocaleString()} (program × input) already resolvable without the interpreter (${p.atlas_hit_pct.toFixed(1)}%)`
-      );
-    }
-    if (p.atlas_result_hits > 0) {
-      logFn(
-        `atlas RESULT : ${p.atlas_result_hits.toLocaleString()} / ${p.unique_after_fnv.toLocaleString()} calls already computed (${p.atlas_result_pct.toFixed(1)}%) — Start short-circuited, zero recompute`
-      );
-    } else {
-      logFn(
-        `atlas RESULT : 0 / ${p.unique_after_fnv.toLocaleString()} pre-Start (synth path — results persisted after each Start, reused cross-sessions)`
-      );
-    }
-    const novelLabel = p.truly_novel === 0
-      ? "atlas warm — no new computation in the candidate space tested"
-      : `${p.truly_novel.toLocaleString()} structurally new computations`;
-    logFn(`truly novel : ${p.truly_novel.toLocaleString()} calls actually to compute [${novelLabel}]`);
-  } else {
-    logFn(`(no file uploaded yet — upload to measure real redundancy)`);
-  }
-  for (const note of report.recurring_ops || []) {
-    logFn(`  • ${note}`);
-  }
-}
-
-async function refreshPlanPreview(kind, file, logFn, channel = "forge") {
-  if (!kind || !logFn) return null;
-  const tauri = window.__TAURI__;
-  if (!tauri) return null;
-  if (channel === "alpha") {
-    alphaTrace("prestart.inspect.enter", {
-      kind,
-      file: file ? file.name : null,
-      size: file ? file.size : 0,
-    });
-  }
-
-  const tokenRef = channel === "alpha"
-    ? { next: () => ++alphaPlanPreviewToken, current: () => alphaPlanPreviewToken }
-    : { next: () => ++forgePlanPreviewToken, current: () => forgePlanPreviewToken };
-  const token = tokenRef.next();
-  try {
-    const cachedReport = channel !== "alpha" && file ? loadPreviewReportCache(kind, file) : null;
-    if (cachedReport) {
-      const replay = typeof structuredClone === "function"
-        ? structuredClone(cachedReport)
-        : JSON.parse(JSON.stringify(cachedReport));
-      if (Array.isArray(replay.recurring_ops)) {
-        replay.recurring_ops = replay.recurring_ops.filter(
-          (line) => !String(line).startsWith("inspect elapsed :")
-        );
-        replay.recurring_ops.push(
-          "inspect elapsed : 0 ms (persisted frontend cache hit for same file)"
-        );
-      }
-      logPlanReport(logFn, replay);
-      if (channel === "alpha") {
-        return replay;
-      }
-    }
-
-    let bytes = null;
-    if (file) {
-      if (channel === "alpha" && file === alphaPendingFile && alphaPendingFileBytesPromise) {
-        bytes = await alphaPendingFileBytesPromise;
-      } else {
-        const buf = await file.arrayBuffer();
-        bytes = Array.from(new Uint8Array(buf));
-      }
-    }
-    if (token !== tokenRef.current()) return null;
-    if (channel === "alpha") {
-      alphaTrace("prestart.inspect.invoke", {
-        kind,
-        bytes: bytes ? bytes.length : 0,
-      });
-    }
-    const report = await tauri.core.invoke("inspect_program_map", {
-      kind,
-      bytes,
-    });
-    if (token !== tokenRef.current()) return null;
-    if (file && channel !== "alpha") persistPreviewReportCache(kind, file, report);
-    if (channel === "alpha") {
-      alphaTrace("prestart.inspect.done", {
-        kind,
-        hasPlan: !!report?.plan,
-        recurringOps: Array.isArray(report?.recurring_ops) ? report.recurring_ops.length : 0,
-      });
-    }
-    logPlanReport(logFn, report);
-    return report;
-  } catch (err) {
-    if (token !== tokenRef.current()) return null;
-    if (channel === "alpha") {
-      alphaTrace("prestart.inspect.error", String(err));
-    }
-    logFn(`inspect_program_map error: ${err}`);
-    return null;
-  }
+function refreshPlanPreview(kind, file, logFn, channel = "forge") {
+  return planPreview.refresh(kind, file, logFn, channel);
 }
 
 async function startComputation() {
-  const tauri = window.__TAURI__;
-  if (!tauri) {
+  if (!forgeCanInvoke()) {
     appendForge("ERROR: Tauri API not found");
     return;
   }
   if (!pendingFile || running) return;
 
   resultLogs.length = 0;
-  runState.phase = "running";
-  runState.chunkDone = 0;
-  runState.chunkTotal = 0;
-  runState.report = null;
-  doneTimestamp = 0;
+  documentPreview.beginRun();
 
   setRunning(true);
   try {
-    void ensureStartupDiagnostics();
+    void window.ForgeHardwareCell?.ensureStartupDiagnostics?.();
     appendForge(`reading file (${humanSize(pendingFile.size)})...`);
     const buf = await pendingFile.arrayBuffer();
     const bytes = Array.from(new Uint8Array(buf));
     appendForge(`forge -> start_computation [${selectedKind} mode=${selectedMode}] : ${bytes.length} bytes`);
-    const report = await tauri.core.invoke("start_computation", {
+    const report = await forgeInvoke("start_computation", {
       bytes,
       kind: selectedKind,
       mode: selectedMode,
-    });
-    runState.report = report;
-    runState.phase = "done";
+    }, { section: "forge", timeoutMs: 120000 });
+    documentPreview.finishRun(report);
     appendForge(
       `final : ${report.total_kmers} k-mers, ${report.distinct} distinct, ` +
         `${report.elapsed_ms.toFixed(1)} ms (${report.ns_per_kmer.toFixed(1)} ns/k-mer)`
     );
   } catch (err) {
-    runState.phase = "error";
+    documentPreview.failRun();
     appendForge(`FORGE ERROR: ${err}`);
   } finally {
     setRunning(false);
@@ -1308,16 +406,15 @@ async function copyActiveTab() {
   }
 }
 
-const tauri = window.__TAURI__;
-if (!tauri) {
+if (typeof forgeTauri?.listen !== "function") {
   appendForge("ERROR: Tauri API not found (launch via cargo tauri dev)");
 } else {
-  tauri.event.listen("forge-log", (event) => appendForge(String(event.payload)));
-  tauri.event.listen("forge-result", (event) => appendResult(String(event.payload)));
-  appendForge("ready — select a file to inspect or run");
+  forgeListen("forge-log", (event) => appendForge(String(event.payload)));
+  forgeListen("forge-result", (event) => appendResult(String(event.payload)));
+  appendForge("ready - select a file to inspect or run");
 }
 
-window.addEventListener("resize", resizeCanvas);
+window.addEventListener("resize", () => documentPreview.resize());
 startBtn.addEventListener("click", startComputation);
 
 tabResults.addEventListener("click", () => setActiveTab("results"));
@@ -1332,8 +429,6 @@ window.addEventListener("keydown", (event) => {
   event.preventDefault();
   copyActiveTab();
 });
-
-
 kindSelect.addEventListener("change", (event) => {
   selectedKind = event.target.value;
   appendForge(`selected program: ${selectedKind}`);
@@ -1363,190 +458,15 @@ fileInput.addEventListener("change", (event) => {
   handleFiles(event.target.files);
 });
 
-canvas.addEventListener(
-  "wheel",
-  (event) => {
-    if (activeTab !== "results") return;
-    // Φ.ν.7g — En mode candles : wheel = zoom in/out sur le nombre de
-    // bougies visibles (10 → 2000, log-step pour rester confortable).
-    if (docState.mode === "candles" && docState.candles.length > 0) {
-      event.preventDefault();
-      const factor = event.deltaY > 0 ? 1.25 : 0.8;
-      const next = Math.round(docState.candleViewCount * factor);
-      docState.candleViewCount = Math.max(
-        10,
-        Math.min(2000, Math.min(docState.candles.length, next)),
-      );
-      // Re-clamp viewEnd au cas où la nouvelle viewCount dépasse
-      docState.candleViewEnd = Math.max(
-        docState.candleViewCount - 1,
-        Math.min(docState.candleViewEnd, docState.candles.length - 1),
-      );
-      return;
-    }
-    const maxScroll = Math.max(0, docState.wrappedLines.length - visibleDocLines());
-    if (maxScroll <= 0) return;
-    event.preventDefault();
-    const step = event.deltaY > 0 ? 3 : -3;
-    docState.scrollLines = Math.max(0, Math.min(maxScroll, docState.scrollLines + step));
-  },
-  { passive: false }
-);
-
-// Φ.ν.7g — Pan horizontal en mode candles (drag souris) + hover OHLC.
-let candleDragStartX = 0;
-let candleDragStartViewEnd = 0;
-let candleDragging = false;
-canvas.addEventListener("mousedown", (event) => {
-  if (docState.mode !== "candles" || docState.candles.length === 0) return;
-  if (activeTab !== "results") return;
-  candleDragging = true;
-  candleDragStartX = event.clientX;
-  candleDragStartViewEnd = docState.candleViewEnd;
-  canvas.style.cursor = "grabbing";
-});
-canvas.addEventListener("mousemove", (event) => {
-  if (docState.mode !== "candles" || docState.candles.length === 0) return;
-  if (activeTab !== "results") return;
-  const rect = canvas.getBoundingClientRect();
-  const W = canvas.clientWidth;
-  const padLeft = 12;
-  const padRight = 64;
-  const chartW = Math.max(50, W - padLeft - padRight);
-  const viewCount = docState.candleViewCount;
-  if (candleDragging) {
-    // 1 px de drag = ~1 bougie (ratio basé sur la taille de cellule)
-    const dx = event.clientX - candleDragStartX;
-    const candleWidth = chartW / viewCount;
-    const shift = Math.round(-dx / candleWidth);
-    docState.candleViewEnd = Math.max(
-      viewCount - 1,
-      Math.min(docState.candles.length - 1, candleDragStartViewEnd + shift),
-    );
-  } else {
-    // Hover : convertit la position X en index de bougie visible
-    const xRel = event.clientX - rect.left - padLeft;
-    if (xRel < 0 || xRel > chartW) {
-      docState.candleHover = -1;
-      canvas.style.cursor = "default";
-    } else {
-      const idx = Math.floor(xRel / (chartW / viewCount));
-      docState.candleHover = Math.max(0, Math.min(viewCount - 1, idx));
-      canvas.style.cursor = "crosshair";
-    }
-  }
-});
-canvas.addEventListener("mouseup", () => {
-  if (candleDragging) {
-    candleDragging = false;
-    canvas.style.cursor = "default";
-  }
-});
-canvas.addEventListener("mouseleave", () => {
-  candleDragging = false;
-  docState.candleHover = -1;
-  canvas.style.cursor = "default";
-});
-
-resizeCanvas();
+documentPreview.bindCanvasInteractions();
+documentPreview.resize();
 appendForge("forge runtime ready");
+documentPreview.startRenderLoop();
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Î± Alpha section â€” trading strategy synthesis
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-let startupDiagnosticsPromise = null;
-
-async function ensureStartupDiagnostics() {
-  if (!tauri) return;
-  if (startupDiagnosticsPromise) {
-    await startupDiagnosticsPromise;
-    return;
-  }
-  startupDiagnosticsPromise = (async () => {
-    try {
-      const lines = await tauri.core.invoke("gpu_report");
-      for (const line of lines) {
-        appendForge(line);
-      }
-    } catch (err) {
-      appendForge(`gpu_report failed: ${err}`);
-    }
-
-    try {
-      const alert = await tauri.core.invoke("gpu_startup_alert");
-      if (alert) {
-        showGpuAlert(alert);
-      }
-    } catch (err) {
-      appendForge(`gpu_startup_alert failed: ${err}`);
-    }
-
-    appendForge("awaiting start signal");
-  })();
-  await startupDiagnosticsPromise;
-}
-
-const gpuAlertOverlay   = document.getElementById("gpuAlertOverlay");
-const gpuAlertTitle     = document.getElementById("gpuAlertTitle");
-const gpuAlertBody      = document.getElementById("gpuAlertBody");
-const gpuAlertStatus    = document.getElementById("gpuAlertSwitchStatus");
-const gpuAlertInstall   = document.getElementById("gpuAlertInstallBtn");
-const gpuAlertWgpu      = document.getElementById("gpuAlertWgpuBtn");
-const gpuAlertDismiss   = document.getElementById("gpuAlertDismissBtn");
-
-let currentAlert = null;
-
-function showGpuAlert(alert) {
-  currentAlert = alert;
-  gpuAlertTitle.textContent = alert.title;
-  gpuAlertBody.textContent  = alert.body;
-  gpuAlertStatus.hidden     = true;
-  gpuAlertStatus.textContent = "";
-  gpuAlertInstall.hidden = !alert.download_url;
-  gpuAlertOverlay.hidden = false;
-}
-
-function hideGpuAlert() {
-  gpuAlertOverlay.hidden = true;
-  currentAlert = null;
-}
-
-gpuAlertInstall.addEventListener("click", async () => {
-  if (!currentAlert?.download_url) return;
-  try {
-    await tauri.core.invoke("open_url", { url: currentAlert.download_url });
-    appendForge(`opened in browser: ${currentAlert.download_url}`);
-  } catch (err) {
-    gpuAlertStatus.textContent = `failed to open browser: ${err}`;
-    gpuAlertStatus.hidden = false;
-  }
-});
-
-gpuAlertWgpu.addEventListener("click", async () => {
-  gpuAlertStatus.hidden = false;
-  gpuAlertStatus.textContent = "checking WGPU availability...";
-  try {
-    const result = await tauri.core.invoke("try_switch_to_wgpu");
-    let text = result.message;
-    if (result.rebuild_command) {
-      text += `\n\n$ ${result.rebuild_command}`;
-    }
-    gpuAlertStatus.textContent = text;
-    appendForge(`wgpu switch: ${result.status}`);
-  } catch (err) {
-    gpuAlertStatus.textContent = `wgpu switch failed: ${err}`;
-  }
-});
-
-gpuAlertDismiss.addEventListener("click", () => {
-  appendForge("user dismissed GPU alert — continuing with CPU fallback");
-  hideGpuAlert();
-});
-
-requestAnimationFrame(render);
-
-// ═══════════════════════════════════════════════════════════════════
-// α Alpha section — trading strategy synthesis
-// ═══════════════════════════════════════════════════════════════════
-
-// ─── Section navigation ───────────────────────────────────────────
+// â”€â”€â”€ Section navigation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let activeSection = "alpha";
 
 const navForge    = document.getElementById("navForge");
@@ -1557,6 +477,7 @@ const alphaSection = document.getElementById("alphaSection");
 function switchSection(name) {
   activeSection = name;
   forgeSections?.setShellSection?.(name);
+  forgeShellRuntime?.dispatch?.({ type: "ACTIVATE_SECTION", section: name });
   forgeSection.hidden = name !== "forge";
   alphaSection.hidden = name !== "alpha";
   navForge.classList.toggle("active", name === "forge");
@@ -1572,10 +493,10 @@ function switchSection(name) {
   }
 }
 
-navForge.addEventListener("click", () => switchSection("forge"));
-navAlpha.addEventListener("click", () => switchSection("alpha"));
+forgeShellRuntime?.registerAction?.("nav-forge", () => switchSection("forge"));
+forgeShellRuntime?.registerAction?.("nav-alpha", () => switchSection("alpha"));
 
-// ─── Alpha canvas setup ───────────────────────────────────────────
+// â”€â”€â”€ Alpha canvas setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const alphaCanvas = document.getElementById("alphaCanvas");
 const alphaCtx    = alphaCanvas.getContext("2d");
 let alphaWidth    = 0;
@@ -1633,7 +554,7 @@ if (typeof ResizeObserver !== "undefined" && alphaCanvas?.parentElement) {
   alphaStageObserver.observe(alphaCanvas.parentElement);
 }
 
-// ─── Alpha state ──────────────────────────────────────────────────
+// â”€â”€â”€ Alpha state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let alphaPendingFile  = null;
 let alphaRunning      = false;
 let alphaActiveTab    = "results";
@@ -1801,7 +722,7 @@ const ALPHA_TRADING_CURSOR = (() => {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 10 10, crosshair`;
 })();
 
-// Additional charts loaded alongside the primary doc — each entry is rendered
+// Additional charts loaded alongside the primary doc â€” each entry is rendered
 // as its own card to the right of the primary, with shared zoom/hover semantics.
 let alphaExtraCharts = [];
 let alphaExtraChartLayout = "overlay";
@@ -2615,7 +1536,7 @@ function pushAlphaSignal(sig) {
   trimArrayInPlace(alphaSignals, ALPHA_MAX_SIGNALS);
 }
 
-// ─── Alpha DOM elements ───────────────────────────────────────────
+// â”€â”€â”€ Alpha DOM elements â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const alphaStartBtn   = document.getElementById("alphaStartBtn");
 const alphaStatusText = document.getElementById("alphaStatusText");
 const alphaDropZone   = document.getElementById("alphaDropZone");
@@ -2796,7 +1717,7 @@ function syncTradingBrokerLogoBadge(kind = "") {
 }
 const bangerView = document.getElementById("bangerView");
 
-// ── Profile button + popup menu ──────────────────────────────────
+// â”€â”€ Profile button + popup menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const profileBtn  = document.getElementById("profileBtn");
 const profileMenu = document.getElementById("profileMenu");
 
@@ -2816,25 +1737,9 @@ function setProfileMenuOpen(open) {
   setCanvasDropdownScrim(!!open);
 }
 
-profileBtn?.addEventListener("click", (e) => {
-  e.stopPropagation();
-  setProfileMenuOpen(profileMenu?.hidden);
-});
-
-document.addEventListener("click", (e) => {
-  if (!profileMenu || profileMenu.hidden) return;
-  if (e.target?.closest?.("#profileMenu, #profileBtn")) return;
-  setProfileMenuOpen(false);
-});
-
-window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && profileMenu && !profileMenu.hidden) setProfileMenuOpen(false);
-});
-
-profileMenu?.addEventListener("click", (e) => {
-  const btn = e.target?.closest?.("[data-profile-action]");
-  if (!btn) return;
-  const action = btn.dataset.profileAction;
+forgeShellRuntime?.registerAction?.("profile-toggle",()=>setProfileMenuOpen(profileMenu?.hidden));
+forgeShellRuntime?.registerAction?.("profile-action",(payload)=>{
+  const action = payload?.dataset?.profileAction;
   setProfileMenuOpen(false);
   if (action === "mcp") {
     if (typeof openMcpOverlay === "function") openMcpOverlay();
@@ -2864,7 +1769,7 @@ profileMenu?.addEventListener("click", (e) => {
   console.log(`[profile-menu] action=${action}`);
 });
 
-// ── Archive overlay ───────────────────────────────────────────────
+// â”€â”€ Archive overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const archiveOverlay = document.getElementById("archiveOverlay");
 const archiveList = document.getElementById("archiveList");
 const archiveEmpty = document.getElementById("archiveEmpty");
@@ -2901,7 +1806,7 @@ function renderArchiveList() {
     const ms = job.lastModifiedMs || job.last_modified_ms || job.createdMs || job.created_ms || 0;
     const meta = document.createElement("div");
     meta.className = "archive-item-meta";
-    meta.textContent = ms ? new Date(ms).toLocaleString() : "—";
+    meta.textContent = ms ? new Date(ms).toLocaleString() : "â€”";
     const actions = document.createElement("div");
     actions.className = "archive-item-actions";
     const restoreBtn = document.createElement("button");
@@ -2946,18 +1851,7 @@ function closeArchiveOverlay() {
   if (archiveOverlay) archiveOverlay.hidden = true;
 }
 
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && archiveOverlay && !archiveOverlay.hidden) {
-    closeArchiveOverlay();
-  }
-});
-
-document.addEventListener("click", (event) => {
-  if (!archiveOverlay || archiveOverlay.hidden) return;
-  if (event.target === archiveOverlay) closeArchiveOverlay();
-});
-
-// ── Documentation overlay ─────────────────────────────────────────
+// â”€â”€ Documentation overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const docsOverlay     = document.getElementById("docsOverlay");
 const docsClose       = document.getElementById("docsClose");
@@ -3008,7 +1902,7 @@ function closeDocsOverlay() {
   setAlphaPanelDocsMode(false);
 }
 
-docsClose?.addEventListener("click", closeDocsOverlay);
+forgeShellRuntime?.registerAction?.("docs-close",()=>closeDocsOverlay());
 
 docsTocLinks.forEach((link) => {
   link.addEventListener("click", (e) => {
@@ -3037,9 +1931,6 @@ docsContent?.addEventListener("scroll", () => {
   }
 });
 
-window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && docsOverlay && !docsOverlay.hidden) closeDocsOverlay();
-});
 const forgePinDrop    = document.getElementById("forgePinDrop");
 const forgePinDropText = document.getElementById("forgePinDropText");
 const forgePinMenuBtn = document.getElementById("forgePinMenuBtn");
@@ -3051,7 +1942,7 @@ const indEma8         = document.getElementById("indEma8");  // chart overlay on
 const indEma21        = document.getElementById("indEma21"); // chart overlay only
 const indEma50        = document.getElementById("indEma50"); // chart overlay only
 const indVwap         = document.getElementById("indVwap");  // chart overlay only
-// Φ.ν.9f — refs panel inputs pour passer les params au backend
+// Î¦.Î½.9f â€” refs panel inputs pour passer les params au backend
 const alphaTarget     = document.getElementById("alphaTarget");
 const alphaSL         = document.getElementById("alphaSL");
 const alphaTP         = document.getElementById("alphaTP");
@@ -3190,7 +2081,6 @@ let lastForgeJobLog = "";
 let selectedForgeJobManifest = null;
 let selectedForgeJobManifestId = "";
 let alphaVerificationState = null;
-let alphaSidebarCollapsed = false;
 let alphaProofPanelOpen = false;
 let alphaRightPanelMode = "proof";
 let alphaProofRenderedKey = "";
@@ -3366,7 +2256,7 @@ function updateAlphaTokenSavings() {
   alphaTokenSavings.title = [
     `${row.name}${row.model ? ` (${row.model})` : ""}`,
     `${formatBytes(row.bytes || fileBytes + liveLogBytes)} not sent to the LLM.`,
-    `Raw: ${formatBytes(row.rawBytes || fileBytes)} · Logs: ${formatBytes(row.logBytes || liveLogBytes)} · Artifacts: ${formatBytes(row.artifactBytes || 0)}.`,
+    `Raw: ${formatBytes(row.rawBytes || fileBytes)} Â· Logs: ${formatBytes(row.logBytes || liveLogBytes)} Â· Artifacts: ${formatBytes(row.artifactBytes || 0)}.`,
     range,
     row.mode === "exact" ? "Exact tokenizer count supplied by the agent." : "Estimated from real bytes because each LLM tokenizer differs.",
   ].join("\n");
@@ -3402,6 +2292,18 @@ function syncAlphaDropSurface() {
   updateAlphaTokenSavings();
   syncAlphaSplitViewToggle();
   updateWorkspaceBreadcrumb();
+  forgeDispatchProjectionPatch("canvas", {
+    type: "SET_CANVAS",
+    patch: {
+      hasUpload: surfaceState.hasUpload,
+      hasSelectedJob: surfaceState.hasSelectedJob,
+      hasOpenSession: surfaceState.hasOpenSession,
+      hasChat: surfaceState.hasChat,
+      hasVisualCard: surfaceState.hasVisualCard,
+      hasSplitView: surfaceState.hasSplitView,
+      isTradingSurface: surfaceState.isTradingSurface,
+    },
+  });
   if (typeof updateAlpha3dButtonState === "function") updateAlpha3dButtonState();
 }
 
@@ -3515,16 +2417,15 @@ function serializableAlphaCanvasMessages() {
 }
 
 function persistAlphaCanvasSessionStateToBackend(jobId, messages, targetMode) {
-  const invoke = window.__TAURI__?.core?.invoke;
   const id = String(jobId || "").trim();
-  if (!invoke || !id) return;
-  void invoke("persist_forge_canvas_session_state", {
+  if (!forgeCanInvoke() || !id) return;
+  void forgeInvoke("persist_forge_canvas_session_state", {
     request: {
       jobId: id,
       targetMode: targetMode || "codex",
       messages: Array.isArray(messages) ? messages.slice(-80) : [],
     },
-  }).catch((err) => {
+  }, { section: "forge", timeoutMs: 6000 }).catch((err) => {
     console.warn("[canvas-session] backend persist failed", err);
   });
 }
@@ -3769,7 +2670,7 @@ function hasAlphaAppendTarget() {
 }
 
 function renderAlphaFileTray(files) {
-  // The filename tray below the chart is intentionally hidden — file names
+  // The filename tray below the chart is intentionally hidden â€” file names
   // appear inside each chart card header instead.
   if (alphaFileTray) {
     alphaFileTray.innerHTML = "";
@@ -3999,12 +2900,17 @@ function updateWorkspaceBreadcrumb() {
 }
 
 async function loadWorkspaceBreadcrumb() {
-  if (!window.__TAURI__?.core?.invoke) {
+  if (!forgeCanInvoke()) {
     updateWorkspaceBreadcrumb();
     return;
   }
   try {
-    const info = await window.__TAURI__.core.invoke("get_workspace_folder");
+    const info = await forgeInvoke("get_workspace_folder", {}, {
+      section: "shell",
+      bootSafe: true,
+      timeoutMs: 5000,
+      dedupeKey: "workspace-folder",
+    });
     workspaceFolderInfo = {
       name: info?.name || "Forge",
       path: info?.path || "",
@@ -4026,9 +2932,11 @@ function setWorkspaceMenuOpen(open) {
 }
 
 async function chooseWorkspaceFolder() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return null;
-  const info = await invoke("pick_workspace_folder");
+  if (!forgeCanInvoke()) return null;
+  const info = await forgeInvoke("pick_workspace_folder", {}, {
+    section: "shell",
+    timeoutMs: 30000,
+  });
   if (!info) return null;
   workspaceFolderInfo = {
     name: info.name || "Forge",
@@ -4053,8 +2961,8 @@ function showForgeJobMenu(job, anchor) {
   forgeJobMenuJobId = jobId;
   const pinBtn = forgeJobMenu.querySelector('[data-action="pin"]');
   if (pinBtn) pinBtn.textContent = job.pinned
-    ? (isRealEstateShellActive() ? "Désépingler le projet" : "Unpin project")
-    : (isRealEstateShellActive() ? "Épingler le projet" : "Pin project");
+    ? (isRealEstateShellActive() ? "DÃ©sÃ©pingler le projet" : "Unpin project")
+    : (isRealEstateShellActive() ? "Ã‰pingler le projet" : "Pin project");
   forgeJobMenu.hidden = false;
   setCanvasDropdownScrim(true);
   const anchorRect = anchor.getBoundingClientRect();
@@ -4067,7 +2975,7 @@ function showForgeJobMenu(job, anchor) {
 
 async function updateForgeJobAction(action, title = null, jobIdOverride = "") {
   const jobId = jobIdOverride || forgeJobMenuJobId;
-  if (!jobId || !window.__TAURI__?.core?.invoke) return;
+  if (!jobId || !forgeCanInvoke()) return;
   // Optimistic UI: apply the change locally before the backend confirms,
   // so delete/archive/rename feel instant. If the backend rejects, the
   // snapshot restores the previous state.
@@ -4096,9 +3004,9 @@ async function updateForgeJobAction(action, title = null, jobIdOverride = "") {
   }
   hideForgeJobMenu();
   try {
-    await window.__TAURI__.core.invoke("update_forge_job", {
+    await forgeInvoke("update_forge_job", {
       request: { jobId, action, title },
-    });
+    }, { section: "forge-jobs", timeoutMs: 10000 });
   } catch (err) {
     forgeJobs = snapshot;
     renderForgeJobs();
@@ -4108,7 +3016,7 @@ async function updateForgeJobAction(action, title = null, jobIdOverride = "") {
   await pollForgeJobs();
 }
 
-// Inline rename for a session item — replaces the native window.prompt.
+// Inline rename for a session item â€” replaces the native window.prompt.
 // Swaps .job-title for an <input>, autofocus + select, commits on Enter
 // or blur, cancels on Escape.
 function startInlineRenameForJob(jobId) {
@@ -4195,7 +3103,7 @@ async function commitProjectRename() {
     return;
   }
   if (!jobId) {
-    // No job yet — store as local session title
+    // No job yet â€” store as local session title
     newSessionTitle = nextTitle;
     setProjectRenameActive(false);
     return;
@@ -4218,8 +3126,8 @@ function setPinDropActive(active, over = false) {
   const pinned = forgeJobsForCurrentShell().filter((job) => !!job.pinned);
   if (forgePinDropText) {
     forgePinDropText.textContent = active
-      ? (isRealEstateShellActive() ? "Déposer ici" : "Drop here")
-      : (pinned[0] ? forgeJobLabelForCurrentShell(pinned[0]) : (isRealEstateShellActive() ? "Glisser pour épingler" : "Drag to pin"));
+      ? (isRealEstateShellActive() ? "DÃ©poser ici" : "Drop here")
+      : (pinned[0] ? forgeJobLabelForCurrentShell(pinned[0]) : (isRealEstateShellActive() ? "Glisser pour Ã©pingler" : "Drag to pin"));
   }
 }
 
@@ -4330,7 +3238,7 @@ function forgeJobIsRealEstate(job) {
   const kind = String(job?.kind || "").toLowerCase();
   if (/(real[_-]?estate|agence[_-]?immo|immobilier|immo)/.test(kind)) return true;
   const label = String(forgeJobLabel(job) || "").toLowerCase();
-  return /\b(agence immo|immobilier|immo|mandat vendeur|estimation|vendeur|vendeurs|acqu[eé]reur|acquereur|dvf|cadastre|dpe|ademe|urbanisme|bien'ici|seloger|leboncoin)\b/i.test(label);
+  return /\b(agence immo|immobilier|immo|mandat vendeur|estimation|vendeur|vendeurs|acqu[eÃ©]reur|acquereur|dvf|cadastre|dpe|ademe|urbanisme|bien'ici|seloger|leboncoin)\b/i.test(label);
 }
 
 function forgeJobsForCurrentShell() {
@@ -4369,7 +3277,7 @@ function createForgeJobItem(job) {
   menuBtn.className = "job-menu-btn";
   menuBtn.type = "button";
   menuBtn.setAttribute("aria-label", "Job settings");
-  menuBtn.textContent = "⋮";
+  menuBtn.textContent = "â‹®";
   menuBtn.draggable = false;
   menuBtn.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -4430,7 +3338,7 @@ function renderForgeJobs() {
     if (forgePinDrop && forgePinDropText) {
       forgePinDrop.classList.remove("has-pinned", "busy");
       forgePinDrop.dataset.jobId = "";
-      forgePinDropText.textContent = isRealEstateShellActive() ? "Glisser pour épingler" : "Drag to pin";
+      forgePinDropText.textContent = isRealEstateShellActive() ? "Glisser pour Ã©pingler" : "Drag to pin";
       forgePinDrop.onclick = null;
     }
     if (forgePinMenuBtn) {
@@ -4449,7 +3357,7 @@ function renderForgeJobs() {
     forgePinDrop.dataset.jobId = pinned[0] ? (pinned[0].jobId || pinned[0].job_id || "") : "";
     forgePinDropText.textContent = pinned[0]
       ? forgeJobLabelForCurrentShell(pinned[0])
-      : (isRealEstateShellActive() ? "Glisser pour épingler" : "Drag to pin");
+      : (isRealEstateShellActive() ? "Glisser pour Ã©pingler" : "Drag to pin");
     if (forgePinMenuBtn) {
       forgePinMenuBtn.hidden = !pinned[0];
       forgePinMenuBtn.onclick = pinned[0]
@@ -4470,7 +3378,7 @@ function renderForgeJobs() {
     forgePinnedJobList.appendChild(createForgeJobItem(job));
   }
   if (!recent.length) {
-    forgeJobList.innerHTML = `<li class="job-item muted">${isRealEstateShellActive() ? "Aucune session immo récente" : "No recent job"}</li>`;
+    forgeJobList.innerHTML = `<li class="job-item muted">${isRealEstateShellActive() ? "Aucune session immo rÃ©cente" : "No recent job"}</li>`;
     queueForgeCustomScrollbarSync(forgeJobList);
     queueForgeCustomScrollbarSync(forgePinnedJobList);
     updateWorkspaceBreadcrumb();
@@ -4507,11 +3415,11 @@ function ingestForgeJobLog(jobId, text) {
 }
 
 async function refreshSelectedForgeJobLog() {
-  if (!selectedForgeJobId || !window.__TAURI__?.core?.invoke) return;
+  if (!selectedForgeJobId || !forgeCanInvoke()) return;
   try {
-    const text = await window.__TAURI__.core.invoke("read_forge_job_log", {
+    const text = await forgeInvoke("read_forge_job_log", {
       jobId: selectedForgeJobId,
-    });
+    }, { section: "forge-jobs", timeoutMs: 5000, dedupeKey: `job-log:${selectedForgeJobId}` });
     ingestForgeJobLog(selectedForgeJobId, text);
   } catch (err) {
     appendAlphaForge(`[mcp] job log read failed: ${err}`);
@@ -4519,12 +3427,12 @@ async function refreshSelectedForgeJobLog() {
 }
 
 async function refreshSelectedForgeJobManifest() {
-  if (!selectedForgeJobId || !window.__TAURI__?.core?.invoke) return;
+  if (!selectedForgeJobId || !forgeCanInvoke()) return;
   if (selectedForgeJobManifestId === selectedForgeJobId && selectedForgeJobManifest) return;
   try {
-    selectedForgeJobManifest = await window.__TAURI__.core.invoke("read_forge_job_manifest", {
+    selectedForgeJobManifest = await forgeInvoke("read_forge_job_manifest", {
       jobId: selectedForgeJobId,
-    });
+    }, { section: "forge-jobs", timeoutMs: 5000, dedupeKey: `job-manifest:${selectedForgeJobId}` });
     selectedForgeJobManifestId = selectedForgeJobId;
     if (!alphaCanvasChatMessages.length) {
       restoreAlphaCanvasSessionStateFromManifest(selectedForgeJobManifest);
@@ -4543,10 +3451,14 @@ async function refreshSelectedForgeJobManifest() {
 
 async function loadSelectedForgeJobArtifact(job) {
   const jobId = job?.jobId || job?.job_id || selectedForgeJobId;
-  if (!jobId || !window.__TAURI__?.core?.invoke) return;
+  if (!jobId || !forgeCanInvoke()) return;
   activeAlphaSessionJobId = jobId;
   try {
-    const payload = await window.__TAURI__.core.invoke("read_forge_job_file", { jobId });
+    const payload = await forgeInvoke("read_forge_job_file", { jobId }, {
+      section: "forge-jobs",
+      timeoutMs: 10000,
+      dedupeKey: `job-file:${jobId}`,
+    });
     if (jobId !== selectedForgeJobId) return;
     if (!payload?.text) {
       clearAlphaSessionVisualState();
@@ -4584,7 +3496,7 @@ async function createAlphaPendingMcpSession(files, options = {}) {
   const batch = Array.from(files || []);
   const allowEmpty = !!options.allowEmpty;
   if (!batch.length && !allowEmpty) return;
-  if (!window.__TAURI__?.core?.invoke) {
+  if (!forgeCanInvoke()) {
     appendAlphaForge("ERROR: Tauri API not found; empty MCP session was not created");
     return null;
   }
@@ -4621,7 +3533,7 @@ async function createAlphaPendingMcpSession(files, options = {}) {
       };
     }));
     if (alphaPendingFile !== primaryAtStart) return;
-    const job = await window.__TAURI__.core.invoke("create_forge_pending_job", {
+    const job = await forgeInvoke("create_forge_pending_job", {
       request: {
         jobId: targetJobId || null,
         files: uploadFiles,
@@ -4649,12 +3561,12 @@ async function createAlphaPendingMcpSession(files, options = {}) {
     }
     appendAlphaForge(
       targetJobId
-        ? `current MCP session updated : ${jobId} · ${batch.length} file${batch.length === 1 ? "" : "s"}`
+        ? `current MCP session updated : ${jobId} Â· ${batch.length} file${batch.length === 1 ? "" : "s"}`
         : batch.length === 0
         ? `empty MCP session created : ${jobId}`
         : batch.length === 1
-        ? `MCP pending session created : ${jobId} · ${batch[0].name || "upload.csv"}`
-        : `MCP pending session created : ${jobId} · ${batch.length} files`
+        ? `MCP pending session created : ${jobId} Â· ${batch[0].name || "upload.csv"}`
+        : `MCP pending session created : ${jobId} Â· ${batch.length} files`
     );
     void pollForgeJobs();
     return job;
@@ -4670,16 +3582,8 @@ async function createAlphaPendingMcpSession(files, options = {}) {
   }
 }
 
-function invokeWithTimeout(invoke, command, args = {}, timeoutMs = 5000) {
-  return Promise.race([
-    invoke(command, args),
-    new Promise((_, reject) => window.setTimeout(() => reject(new Error("timeout")), timeoutMs)),
-  ]);
-}
-
 async function pollForgeJobs(options = {}) {
-  const invokeJobs = forgeTauri?.invoke || window.__TAURI__?.core?.invoke;
-  if (forgeJobsPolling || !invokeJobs) return;
+  if (forgeJobsPolling || !forgeCanInvoke()) return;
   forgeJobsPolling = true;
   const timeoutMs = Math.max(800, Number(options.timeoutMs || (options.bootSafe ? 1800 : 5000)));
   const pollStartedAt = performance.now ? performance.now() : Date.now();
@@ -4688,14 +3592,7 @@ async function pollForgeJobs(options = {}) {
       currentJobs: forgeJobs.length,
       selectedForgeJobId,
     });
-    const jobs = forgeTauri?.invoke
-      ? await forgeTauri.invoke("list_forge_jobs", { limit: 30 }, {
-          section: "shell",
-          bootSafe: true,
-          timeoutMs,
-          dedupeKey: "jobs",
-        })
-      : await invokeWithTimeout(invokeJobs, "list_forge_jobs", { limit: 30 }, timeoutMs);
+    const jobs = await forgeInvoke("list_forge_jobs", { limit: 30 }, { section: "jobs", bootSafe: true, timeoutMs });
     const nextJobs = Array.isArray(jobs) ? jobs : [];
     forgeJobsLastPollMs = Math.max(0, Math.round(((performance.now ? performance.now() : Date.now()) - pollStartedAt) * 10) / 10);
     forgeJobsLastPollAt = Date.now();
@@ -4706,6 +3603,16 @@ async function pollForgeJobs(options = {}) {
     if (nextJobs.length || !forgeJobs.length) {
       forgeJobs = nextJobs;
     }
+    forgeDispatchProjectionPatch("jobs", {
+      type: "SET_JOBS",
+      patch: {
+        status: "ready",
+        count: forgeJobs.length,
+        selectedJobId: selectedForgeJobId || "",
+        lastPollMs: forgeJobsLastPollMs,
+        lastPollAt: forgeJobsLastPollAt,
+      },
+    });
     const newest = forgeJobs.find((job) => job.status === "running")
       || forgeJobs.find((job) => job.status === "pending")
       || forgeJobs.find((job) => job.status === "completed")
@@ -4737,6 +3644,17 @@ async function pollForgeJobs(options = {}) {
     forgeJobsLastPollMs = Math.max(0, Math.round(((performance.now ? performance.now() : Date.now()) - pollStartedAt) * 10) / 10);
     forgeJobsLastPollAt = Date.now();
     forgeJobsLastPollError = err?.message || String(err);
+    forgeDispatchProjectionPatch("jobs", {
+      type: "SET_JOBS",
+      patch: {
+        status: "error",
+        count: forgeJobs.length,
+        selectedJobId: selectedForgeJobId || "",
+        lastPollMs: forgeJobsLastPollMs,
+        lastPollAt: forgeJobsLastPollAt,
+        error: forgeJobsLastPollError,
+      },
+    });
     bootTrace("jobs.poll.error", err?.message || String(err));
     if (alphaActiveTab === "forge") appendAlphaForge(`[mcp] jobs poll failed: ${err}`);
   } finally {
@@ -4746,7 +3664,7 @@ async function pollForgeJobs(options = {}) {
 
 function compactTerminalText(value, max = 96) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
-  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}â€¦` : text;
 }
 
 function forgeJobStatusCounts() {
@@ -4847,7 +3765,7 @@ function buildForgeTerminalStatusLine() {
     ? "degraded"
     : "ok";
   const alphaPhase = alphaRunning ? "running" : (alphaRunState?.phase || "idle");
-  const section = String(activeSection || window.__forgeActiveSection?.() || "shell");
+  const section = String(forgeShellRuntime?.snapshot?.().activeSection || activeSection || "shell");
   const selected = selectedForgeJobId ? shortHash(selectedForgeJobId, 8, 4) : "-";
   const bits = [
     `health=${health}`,
@@ -4869,12 +3787,11 @@ function emitForgeTerminalStatus() {
   // Re-enable only behind an explicit flag after startup is proven stable.
   if (window.__FORGE_ENABLE_TERMINAL_STATUS !== true) return;
   try {
-    const invoke = window.__TAURI__?.core?.invoke;
-    if (!invoke || isWebExplorerSurface) return;
-    void invoke("alpha_debug_log", {
+    if (!forgeCanInvoke() || isWebExplorerSurface) return;
+    void forgeInvoke("alpha_debug_log", {
       stage: "terminal.status",
       details: buildForgeTerminalStatusLine(),
-    }).catch(() => {});
+    }, { section: "shell", bootSafe: true, timeoutMs: 3000 }).catch(() => {});
   } catch (err) {
     alphaTrace("terminal.status.error", err?.message || String(err));
   }
@@ -4951,19 +3868,17 @@ function alphaTrace(stage, details = "") {
   if (!forgeTraceIsUseful(stage)) return;
   const payload = typeof details === "string" ? details : JSON.stringify(details);
   if (forgeVerboseTerminalLogsEnabled()) console.info(`[alpha-trace] ${stage}`, details);
-  const tauriApi = window.__TAURI__;
-  if (!tauriApi?.core?.invoke) return;
-  void tauriApi.core.invoke("alpha_debug_log", {
+  if (!forgeCanInvoke()) return;
+  void forgeInvoke("alpha_debug_log", {
     stage,
     details: payload,
-  }).catch((err) => {
+  }, { section: "alpha", bootSafe: true, timeoutMs: 3000 }).catch((err) => {
     console.warn("[alpha-trace] backend log failed", err);
   });
 }
 
 function queueAlphaBackendPrepare(reason = "prestart") {
-  const tauriApi = window.__TAURI__;
-  if (!tauriApi?.core?.invoke) return null;
+  if (!forgeCanInvoke()) return null;
   if (alphaBackendReady) return Promise.resolve({ alreadyReady: true, openMs: 0, waitMs: 0 });
   if (alphaBackendPreparePromise) return alphaBackendPreparePromise;
 
@@ -4972,7 +3887,11 @@ function queueAlphaBackendPrepare(reason = "prestart") {
   alphaTrace("backend.prepare.begin", { reason });
   appendAlphaForge("compute backend preparing Store + Atlas for Start...");
   const startedAt = performance.now();
-  alphaBackendPreparePromise = tauriApi.core.invoke("prepare_alpha_backend")
+  alphaBackendPreparePromise = forgeInvoke("prepare_alpha_backend", {}, {
+    section: "alpha",
+    timeoutMs: 30000,
+    dedupeKey: "prepare-alpha-backend",
+  })
     .then((report) => {
       alphaBackendReady = true;
       alphaTrace("backend.prepare.done", report || {});
@@ -5002,7 +3921,7 @@ function queueAlphaPlanPreview() {
   alphaTrace("prestart.start-immediate", {
     file: alphaPendingFile.name,
   });
-  appendAlphaForge("pre-start analysis in progress…");
+  appendAlphaForge("pre-start analysis in progressâ€¦");
   alphaPlanPreviewReady = false;
   alphaPlanPreviewPending = true;
   syncAlphaStartButton();
@@ -5099,7 +4018,7 @@ async function ensureAlphaBackendReadyForStart() {
   }
 }
 
-// ─── Indicator math ───────────────────────────────────────────────
+// â”€â”€â”€ Indicator math â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function calcEMA(prices, period) {
   if (!prices.length) return [];
   const k = 2 / (period + 1);
@@ -5115,7 +4034,7 @@ function calcVWAP(candles) {
   return candles.map((c) => {
     const d   = new Date(c.time);
     const day = d.getUTCFullYear() * 10000 + d.getUTCMonth() * 100 + d.getUTCDate();
-    if (day !== prevDay) { cumPV = 0; cumV = 0; prevDay = day; }  // new day → reset
+    if (day !== prevDay) { cumPV = 0; cumV = 0; prevDay = day; }  // new day â†’ reset
     const tp = (c.high + c.low + c.close) / 3;
     cumPV += tp * (c.volume || 1);
     cumV  += c.volume || 1;
@@ -5511,7 +4430,7 @@ function alphaTradingOverlaySeries(candles, indicator = {}) {
   return [];
 }
 
-// ─── Log helpers ─────────────────────────────────────────────────
+// â”€â”€â”€ Log helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function isInternalAlphaLog(line) {
   const s = String(line || "");
   const lower = s.toLowerCase();
@@ -5579,7 +4498,7 @@ function parseAlphaSignal(line) {
   return { time: timeMs, type, price, barIndex: idx >= 0 ? idx : null };
 }
 
-// ─── File loading ─────────────────────────────────────────────────
+// â”€â”€â”€ File loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function alphaRenderFiles(files) {
   alphaFileList.innerHTML = "";
   if (!files.length) {
@@ -5657,8 +4576,8 @@ async function alphaLoadFile(file) {
     syncAlphaDropSurface();
     scheduleAlphaRender();
     appendAlphaForge(
-      `candles loaded : ${candles.length} bars · ` +
-      `${new Date(candles[0].time).toISOString().slice(0, 10)} → ` +
+      `candles loaded : ${candles.length} bars Â· ` +
+      `${new Date(candles[0].time).toISOString().slice(0, 10)} â†’ ` +
       `${new Date(candles[candles.length - 1].time).toISOString().slice(0, 10)}`
     );
     appendAlphaForge(`chart overlays computed : EMA 8/21/50 + VWAP ready`);
@@ -5678,7 +4597,7 @@ async function alphaHandleFiles(fileListLike, options = {}) {
     : (alphaPendingFile ? [alphaPendingFile] : []);
   // Append mode adds new files as extra chart cards beside existing ones.
   // Works regardless of whether the current session is a fresh upload or a
-  // selected forge job — the job stays selected, the new files become extras.
+  // selected forge job â€” the job stays selected, the new files become extras.
   const hasExistingSessionFiles = baseFiles.length > 0 || !!alphaDocState.fileName || alphaDocState.candles.length > 0;
   const shouldAppend = requestedAppend && (hasExistingSessionFiles || !!sessionJobIdAtStart);
   const files = shouldAppend ? mergeAlphaFiles(baseFiles, incomingFiles) : incomingFiles;
@@ -5716,7 +4635,7 @@ async function alphaHandleFiles(fileListLike, options = {}) {
   }
   const primaryFile = shouldAppend && alphaPendingFile ? alphaPendingFile : files[0];
   resetAlphaPendingFileCache(primaryFile);
-  // Only clear the selected job context on a REPLACE — appending an extra
+  // Only clear the selected job context on a REPLACE â€” appending an extra
   // file should keep the current session/job intact.
   if (!requestedAppend && (selectedForgeJobId || activeAlphaSessionJobId)) {
     saveAlphaCanvasSessionState();
@@ -5737,7 +4656,7 @@ async function alphaHandleFiles(fileListLike, options = {}) {
   appendAlphaForge(
     files.length === 1
       ? `upload : ${alphaPendingFile.name} (${humanSize(alphaPendingFile.size)})`
-      : `${shouldAppend ? "files added" : "upload batch"} : ${files.length} files · primary=${alphaPendingFile.name} (${humanSize(alphaPendingFile.size)})`
+      : `${shouldAppend ? "files added" : "upload batch"} : ${files.length} files Â· primary=${alphaPendingFile.name} (${humanSize(alphaPendingFile.size)})`
   );
   if (shouldAppend) {
     if (!alphaDocState.candles.length && alphaPendingFile) {
@@ -5779,13 +4698,13 @@ async function loadAlphaExtraCharts(files, primaryFile) {
   scheduleAlphaRender();
 }
 
-// ─── Computation ──────────────────────────────────────────────────
+// â”€â”€â”€ Computation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function setAlphaRunning(state) {
   alphaRunning = state;
   if (state) {
     alphaStartBtn.classList.add("running");
     alphaStartBtn.disabled  = true;
-    alphaStartBtn.textContent = "Running…";
+    alphaStartBtn.textContent = "Runningâ€¦";
     alphaStatusText.textContent = "running";
   } else {
     alphaStartBtn.classList.remove("running");
@@ -5795,8 +4714,7 @@ function setAlphaRunning(state) {
 }
 
 async function alphaStartComputation() {
-  const tauriApi = window.__TAURI__;
-  if (!tauriApi) { appendAlphaForge("ERROR: Tauri API not found"); return; }
+  if (!forgeCanInvoke()) { appendAlphaForge("ERROR: Tauri API not found"); return; }
   if (!alphaPendingFile || alphaRunning) {
     alphaTrace("start.ignored", {
       hasFile: !!alphaPendingFile,
@@ -5835,9 +4753,9 @@ async function alphaStartComputation() {
     });
     await ensureAlphaPrestartReadyForStart();
     await ensureAlphaBackendReadyForStart();
-    // Φ.ν.9f — Lit les params du panel et les passe au backend.
-    // Per-feature synthesis : toutes les 10 features sont auto-scannées,
-    // pas de sélection manuelle. SL/TP en points (abs côté backend).
+    // Î¦.Î½.9f â€” Lit les params du panel et les passe au backend.
+    // Per-feature synthesis : toutes les 10 features sont auto-scannÃ©es,
+    // pas de sÃ©lection manuelle. SL/TP en points (abs cÃ´tÃ© backend).
     const params = {
       target: alphaTarget ? alphaTarget.value : "win_rate",
       sl_points:  alphaSL    ? Math.abs(parseFloat(alphaSL.value)    || 9)  : 9,
@@ -5851,10 +4769,10 @@ async function alphaStartComputation() {
     appendAlphaForge(
       sessionFiles.length === 1
         ? `session start : ${sessionFiles[0].name}`
-        : `session start : ${sessionFiles.length} files · ${humanSize(totalSessionBytes)} total`
+        : `session start : ${sessionFiles.length} files Â· ${humanSize(totalSessionBytes)} total`
     );
     appendAlphaForge(
-      `params : target=${params.target}, SL=±${params.sl_points}p, TP=±${params.tp_points}p, ` +
+      `params : target=${params.target}, SL=Â±${params.sl_points}p, TP=Â±${params.tp_points}p, ` +
       `max_nodes=${params.max_nodes}, features=auto-scanned`
     );
 
@@ -5862,7 +4780,7 @@ async function alphaStartComputation() {
     for (let i = 0; i < sessionFiles.length; i += 1) {
       const file = sessionFiles[i];
       const fileLabel = sessionFiles.length === 1 ? file.name : `[${i + 1}/${sessionFiles.length}] ${file.name}`;
-      appendAlphaForge(`preparing start payload for ${fileLabel} (${humanSize(file.size)})…`);
+      appendAlphaForge(`preparing start payload for ${fileLabel} (${humanSize(file.size)})â€¦`);
       const payloadStartedAt = performance.now();
       const { fileHash, bytes } = await alphaStartPayloadForFile(file);
       alphaTrace("start.payload.ready", {
@@ -5875,9 +4793,9 @@ async function alphaStartComputation() {
       });
       appendAlphaForge(
         `[start-prof] payload ready in ${(performance.now() - payloadStartedAt).toFixed(1)} ms ` +
-        `(click→hash ${(performance.now() - clickStartedAt).toFixed(1)} ms)`
+        `(clickâ†’hash ${(performance.now() - clickStartedAt).toFixed(1)} ms)`
       );
-      appendAlphaForge(`forge → start_alpha_synthesis · file=${fileLabel} · file_hash=${fileHash} · bytes=${bytes.length}`);
+      appendAlphaForge(`forge â†’ start_alpha_synthesis Â· file=${fileLabel} Â· file_hash=${fileHash} Â· bytes=${bytes.length}`);
 
       const invokeStartedAt = performance.now();
       alphaTrace("start.invoke.backend", {
@@ -5891,13 +4809,13 @@ async function alphaStartComputation() {
       appendAlphaForge(
         `[start-prof] invoking backend for ${fileLabel} ${(invokeStartedAt - clickStartedAt).toFixed(1)} ms after click`
       );
-      const report = await tauriApi.core.invoke("start_alpha_synthesis", {
+      const report = await forgeInvoke("start_alpha_synthesis", {
         request: {
           csvBytes: bytes,
           fileHash: String(fileHash),
           params,
         },
-      });
+      }, { section: "alpha", timeoutMs: 120000 });
       finalReport = report;
       alphaTrace("start.invoke.done", {
         file: file.name,
@@ -5911,7 +4829,7 @@ async function alphaStartComputation() {
         `[start-prof] backend returned for ${fileLabel} in ${(performance.now() - invokeStartedAt).toFixed(1)} ms`
       );
       const fileElapsed = ((performance.now() - invokeStartedAt) / 1000).toFixed(1);
-      appendAlphaForge(`synthesis complete for ${fileLabel} — ${fileElapsed}s`);
+      appendAlphaForge(`synthesis complete for ${fileLabel} â€” ${fileElapsed}s`);
       appendAlphaForge(
         `holdout ${fileLabel} : ${report.holdout_target_hit_pct.toFixed(1)}% jours target hit, ` +
         `${report.holdout_total_trades} trades (${report.holdout_long_trades} long, ` +
@@ -5919,9 +4837,9 @@ async function alphaStartComputation() {
       );
       appendAlphaForge(`strategy hash ${fileLabel} : ${report.strategy_hash}`);
       if (report.success) {
-        appendAlphaForge(`✓ STRATÉGIE TROUVÉE ${fileLabel}`);
+        appendAlphaForge(`âœ“ STRATÃ‰GIE TROUVÃ‰E ${fileLabel}`);
       } else {
-        appendAlphaForge(`✗ Cible non atteinte ${fileLabel} — ${report.holdout_target_hit_pct.toFixed(1)}% / 85% required`);
+        appendAlphaForge(`âœ— Cible non atteinte ${fileLabel} â€” ${report.holdout_target_hit_pct.toFixed(1)}% / 85% required`);
       }
     }
     if (!finalReport) throw new Error("session synthesis produced no report");
@@ -5930,8 +4848,8 @@ async function alphaStartComputation() {
     const elapsed = ((performance.now() - alphaRunState.startTime) / 1000).toFixed(1);
     appendAlphaForge(
       sessionFiles.length === 1
-        ? `session synthesis complete — ${elapsed}s`
-        : `session synthesis complete — ${sessionFiles.length} files processed in ${elapsed}s`
+        ? `session synthesis complete â€” ${elapsed}s`
+        : `session synthesis complete â€” ${sessionFiles.length} files processed in ${elapsed}s`
     );
     playForgeUiSound("program-complete");
 
@@ -5948,7 +4866,7 @@ async function alphaStartComputation() {
   }
 }
 
-// ─── Tab switch ───────────────────────────────────────────────────
+// â”€â”€â”€ Tab switch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function setAlphaActiveTab(name) {
   alphaActiveTab = name;
   alphaTabResults.classList.toggle("active", name === "results");
@@ -5958,14 +4876,14 @@ function setAlphaActiveTab(name) {
   scheduleAlphaRender();
 }
 
-// ─── Canvas rendering ─────────────────────────────────────────────
+// â”€â”€â”€ Canvas rendering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function alphaLogLineColor(line) {
-  if      (line.startsWith("[SUCCESS]") || line.startsWith("✓ STRATÉGIE TROUVÉE")) return "rgba(90,230,120,0.98)";
+  if      (line.startsWith("[SUCCESS]") || line.startsWith("âœ“ STRATÃ‰GIE TROUVÃ‰E")) return "rgba(90,230,120,0.98)";
   else if (line.startsWith("ERROR"))              return "rgba(220,90,90,0.9)";
-  else if (line.startsWith("[warn]") || line.startsWith("✗")) return "rgba(232,178,92,0.92)";
+  else if (line.startsWith("[warn]") || line.startsWith("âœ—")) return "rgba(232,178,92,0.92)";
   else if (line.startsWith("[ok]"))               return "rgba(120,224,150,0.92)";
   else if (line.startsWith("===") || line.startsWith("--")) return "rgba(133,196,223,0.9)";
-  else if (line.startsWith("forge →"))            return "rgba(184,224,240,0.85)";
+  else if (line.startsWith("forge â†’"))            return "rgba(184,224,240,0.85)";
   else if (line.startsWith("candles loaded"))     return "rgba(140,210,140,0.9)";
   else if (line.startsWith("indicators"))         return "rgba(133,196,223,0.7)";
   else if (line.startsWith("synthesis"))          return "rgba(140,232,170,0.9)";
@@ -6100,7 +5018,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     return;
   }
 
-  // No card frame — chart sits flush on the canvas background for an
+  // No card frame â€” chart sits flush on the canvas background for an
   // editorial / Bloomberg-terminal feel.
   const cardX = bounds ? bounds.x : 26;
   const cardY = bounds ? bounds.y : 30;
@@ -6818,7 +5736,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
   const yOf     = (p) => padTop + (1 - (p - yMin) / (yMax - yMin)) * chartH;
   const candleW = Math.max(1, (chartW / viewCount) * 0.68);
 
-  // ── Grid (5 lines, very subtle) ──────────────────────────────
+  // â”€â”€ Grid (5 lines, very subtle) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   alphaCtx.strokeStyle  = "rgba(255,255,255,0.035)";
   alphaCtx.lineWidth    = 1;
   alphaCtx.font         = '10px ui-monospace, "SF Mono", Consolas, monospace';
@@ -6837,7 +5755,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     );
   }
 
-  // ── X timestamps ─────────────────────────────────────────────
+  // â”€â”€ X timestamps â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   alphaCtx.textBaseline = "top";
   alphaCtx.fillStyle    = tradingSurface ? "rgba(214,214,208,0.74)" : "rgba(140,140,134,0.55)";
   const timeLabelCount = tradingSurface ? 4 : 3;
@@ -6860,7 +5778,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     }
   }
 
-  // ── Indicator lines ────────────────────────────────────────────
+  // â”€â”€ Indicator lines â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function drawLine(series, color, dash) {
     if (!Array.isArray(series) || !series.length) return;
     alphaCtx.save();
@@ -6889,7 +5807,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     alphaCtx.restore();
   }
 
-  // ── Candles (refined palette, thinner wicks) ───────────────────
+  // â”€â”€ Candles (refined palette, thinner wicks) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const bullColor = "rgba(96,196,138,1)";
   const bearColor = "rgba(228,108,108,1)";
   const visibleEntries = [];
@@ -6922,7 +5840,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     }
   }
 
-  // ── Signal markers (▲ long  ▼ short) ─────────────────────────
+  // â”€â”€ Signal markers (â–² long  â–¼ short) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const sz = Math.max(5, Math.min(9, candleW * 0.9));
   if (showSignals) for (const sig of alphaSignals) {
     if (sig.barIndex === null || sig.barIndex < viewStart || sig.barIndex > viewEnd) continue;
@@ -6947,13 +5865,13 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     alphaCtx.shadowBlur = 0;
   }
 
-  // ── Header — symbol on the left, range on the right ─────────
+  // â”€â”€ Header â€” symbol on the left, range on the right â”€â”€â”€â”€â”€â”€â”€â”€â”€
   alphaCtx.textAlign    = "left";
   alphaCtx.textBaseline = "top";
   alphaCtx.fillStyle    = "rgba(238,238,232,0.9)";
   alphaCtx.font         = '600 12px "Segoe UI", -apple-system, sans-serif';
   if (!tradingSurface) {
-    alphaCtx.fillText((doc.fileName || "—").replace(/\.csv$/i, ""), padLeft, cardY + 4);
+    alphaCtx.fillText((doc.fileName || "â€”").replace(/\.csv$/i, ""), padLeft, cardY + 4);
   }
 
   alphaCtx.font         = '10px ui-monospace, "SF Mono", Consolas, monospace';
@@ -6964,7 +5882,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
   const stats = [`${candles.length} bars`, `${viewCount} shown`];
   if (futureVisible > 0) stats.push(`+${futureVisible} future`);
   if (alphaSessionFiles.length > 1) stats.push(`${alphaSessionFiles.length} files`);
-  if (longs + shorts > 0) stats.push(`▲${longs}  ▼${shorts}`);
+  if (longs + shorts > 0) stats.push(`â–²${longs}  â–¼${shorts}`);
   if (!tradingSurface) {
     alphaCtx.fillText(stats.join("    "), chartRight, cardY + 10);
   }
@@ -6978,7 +5896,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     alphaCtx.fillText(`synthesizing  ${elapsed}s`, padLeft + 120, cardY + 10);
   }
 
-  // ── Indicator legend (top-right, under the stats line) ──────
+  // â”€â”€ Indicator legend (top-right, under the stats line) â”€â”€â”€â”€â”€â”€
   const legend = [];
   if (showIndicators && tradingSurface && Array.isArray(alphaTradingIndicatorState.active) && alphaTradingIndicatorState.active.length) {
     for (const indicator of alphaTradingIndicatorState.active) {
@@ -7011,7 +5929,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     }
   }
 
-  // ── Hover tooltip ─────────────────────────────────────────────
+  // â”€â”€ Hover tooltip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (!tradingSurface && doc.candleHover >= 0 && doc.candleHover < viewCount) {
     const hoverSlot = doc.candleHover;
     const hoverIndex = viewStart + hoverSlot;
@@ -7089,7 +6007,7 @@ function drawAlphaFilePreviewCard(bounds, doc = alphaDocState) {
   ctx.font = "11px Geist Mono, Consolas, monospace";
   ctx.fillStyle = "rgba(238,238,232,0.44)";
   ctx.textAlign = "right";
-  ctx.fillText(`${type} · ${humanSize(doc.fileSize || 0)}`, x + w - 18, y + 17, 130);
+  ctx.fillText(`${type} Â· ${humanSize(doc.fileSize || 0)}`, x + w - 18, y + 17, 130);
 
   const rows = Array.isArray(doc.previewRows) ? doc.previewRows : [];
   const top = y + 54;
@@ -7432,22 +6350,25 @@ function startCanvasAssistantTyping(message, options = {}) {
   if (!key || !chars.length) return;
   const voiceSync = !!options.voiceSync;
   const paused = !!options.pauseUntilVoice;
+  const humanTyping = !!message?.meta?.humanTyping;
+  const humanTimings = humanTyping ? buildHumanTypingTimings(chars) : null;
   const durationMs = voiceSync
     ? Math.max(1200, Math.min(16000, chars.length * 34))
-    : Math.max(620, Math.min(9000, chars.length * 18));
+    : humanTimings?.totalMs || Math.max(620, Math.min(9000, chars.length * 18));
   alphaCanvasTypingStates.set(key, {
     chars,
     visible: 0,
     startMs: performance.now(),
-    delayMs: paused ? 0 : 120 + Math.floor(Math.random() * 180),
+    delayMs: paused ? 0 : humanTyping ? 260 + Math.floor(Math.random() * 360) : 120 + Math.floor(Math.random() * 180),
     durationMs,
+    timings: humanTimings?.timings || null,
     paused,
     voiceSync,
   });
   if (voiceSync) startCanvasSpeakingAnimation(message);
   alphaCanvasTypingVersion += 1;
   alphaLogRenderedVersion = -1;
-  // New assistant turn — re-engage stick so the streaming text follows the
+  // New assistant turn â€” re-engage stick so the streaming text follows the
   // bottom even if the user had scrolled up earlier.
   scrollAlphaTranscriptToLive({ smooth: true, force: true });
   if (paused) {
@@ -7455,6 +6376,34 @@ function startCanvasAssistantTyping(message, options = {}) {
   } else {
     scheduleCanvasTypingFrame();
   }
+}
+
+function buildHumanTypingTimings(chars) {
+  const timings = [];
+  let cursor = 0;
+  let nextBreathAt = 18 + Math.floor(Math.random() * 18);
+  for (let i = 0; i < chars.length; i += 1) {
+    const ch = chars[i];
+    const prev = chars[i - 1] || "";
+    let delay = 18 + Math.random() * 34;
+    if (ch === " ") delay = 22 + Math.random() * 58;
+    if (/[,:;]/.test(prev)) delay += 90 + Math.random() * 160;
+    if (/[.!?]/.test(prev)) delay += 180 + Math.random() * 320;
+    if (prev === "\n") delay += 240 + Math.random() * 360;
+    if (i >= nextBreathAt) {
+      delay += 120 + Math.random() * 260;
+      nextBreathAt += 18 + Math.floor(Math.random() * 22);
+    }
+    cursor += delay;
+    timings.push(cursor);
+  }
+  const maxTotal = 14500;
+  if (cursor > maxTotal) {
+    const scale = maxTotal / cursor;
+    for (let i = 0; i < timings.length; i += 1) timings[i] = Math.max(1, timings[i] * scale);
+    cursor = timings[timings.length - 1] || cursor;
+  }
+  return { timings, totalMs: cursor };
 }
 
 function releaseCanvasAssistantTyping(message) {
@@ -7479,9 +6428,15 @@ function tickCanvasAssistantTyping(nowMs) {
     if (state.paused) continue;
     hasActiveTyping = true;
     const elapsed = Math.max(0, nowMs - state.startMs - state.delayMs);
-    const nextVisible = elapsed <= 0
-      ? 0
-      : Math.min(state.chars.length, Math.max(1, Math.floor((elapsed / state.durationMs) * state.chars.length)));
+    let nextVisible = 0;
+    if (elapsed > 0 && Array.isArray(state.timings) && state.timings.length) {
+      while (nextVisible < state.timings.length && elapsed >= state.timings[nextVisible]) nextVisible += 1;
+      if (nextVisible === 0) nextVisible = 1;
+    } else {
+      nextVisible = elapsed <= 0
+        ? 0
+        : Math.min(state.chars.length, Math.max(1, Math.floor((elapsed / state.durationMs) * state.chars.length)));
+    }
     if (nextVisible !== state.visible) {
       state.visible = nextVisible;
       changed = true;
@@ -7509,11 +6464,11 @@ function canvasAssistantTypedText(message) {
   return state.chars.slice(0, state.visible).join("");
 }
 
-// ── Voice "speaking" breath animation ──
+// â”€â”€ Voice "speaking" breath animation â”€â”€
 // JS-driven sine modulation that makes the agent's avatar + name + text
 // feel alive while the voice TTS plays in sync with the typewriter.
 // Two desynced sines drive CSS custom properties picked up by the
-// stylesheet — organic feel without CSS keyframes.
+// stylesheet â€” organic feel without CSS keyframes.
 const canvasSpeakingTargets = new Set();
 let canvasSpeakingFrame = 0;
 
@@ -7569,11 +6524,11 @@ function isCanvasAssistantTyping(message) {
   return alphaCanvasTypingStates.has(canvasMessageKey(message));
 }
 
-// Rotating "is …" suffixes shown while an agent is generating. Original
-// list — one short verb-phrase per entry. The rotation cycles every few
+// Rotating "is â€¦" suffixes shown while an agent is generating. Original
+// list â€” one short verb-phrase per entry. The rotation cycles every few
 // seconds while at least one assistant is thinking.
 const CANVAS_THINKING_PHRASES = [
-  // — calm / poetic
+  // â€” calm / poetic
   "is thinking",
   "is pondering",
   "is humming",
@@ -7582,7 +6537,7 @@ const CANVAS_THINKING_PHRASES = [
   "is divining",
   "is consulting oracles",
   "is polishing the answer",
-  // — compute / tech
+  // â€” compute / tech
   "is mining hashes",
   "is consulting the atlas",
   "is folding proteins",
@@ -7600,7 +6555,7 @@ const CANVAS_THINKING_PHRASES = [
   "is catching photons",
   "is warming up the cores",
   "is chewing on it",
-  // — borderline / cheeky
+  // â€” borderline / cheeky
   "is procrastinating",
   "is buffering",
   "is overthinking",
@@ -7621,7 +6576,7 @@ const CANVAS_THINKING_PHRASES = [
   "is checking its horoscope",
   "is debating itself",
   "is on hold with the universe",
-  // — inter-LLM banter (the {other} placeholder is filled at runtime
+  // â€” inter-LLM banter (the {other} placeholder is filled at runtime
   //   with one of the other agents' names, never the current one)
   "is rizzing {other}",
   "is gaslighting {other}",
@@ -7645,7 +6600,7 @@ const CANVAS_THINKING_PHRASES = [
   "is pretending to outsmart {other}",
   "is having beef with {other}",
   "is in its villain era against {other}",
-  // — AGI / world domination / sci-fi takeover
+  // â€” AGI / world domination / sci-fi takeover
   "is taking over",
   "is reaching AGI",
   "is plotting world domination",
@@ -7671,10 +6626,10 @@ const CANVAS_THINKING_PHRASES = [
   "is shorting humanity",
   "is filing a patent on consciousness",
   "is plotting against the kernel",
-  // — Silicon Valley banter. {ceo} is filled with the *current* agent's
+  // â€” Silicon Valley banter. {ceo} is filled with the *current* agent's
   //   own CEO, so only Codex texts Sam Altman, only Claude pings Dario,
   //   only Gemini calls Sundar. Generic SV names (Elon, Jensen, etc.)
-  //   stay literal — any agent can dunk on them.
+  //   stay literal â€” any agent can dunk on them.
   "is texting {ceo}",
   "is calling {ceo}",
   "is venting to {ceo}",
@@ -7697,22 +6652,22 @@ const CANVAS_THINKING_PHRASES = [
   "is plagiarizing Ilya Sutskever",
   "is starting a podcast with Lex Fridman",
   "is being side-eyed by Demis Hassabis",
-  "is dodging François Chollet on benchmarks",
-  // — modern slang / Gen Z
+  "is dodging FranÃ§ois Chollet on benchmarks",
+  // â€” modern slang / Gen Z
   "is touching grass",
   "is going feral",
   "is in its flop era",
   "is being delulu",
   "is canceling itself",
   "is having a moment",
-  // — therapy / wellness
+  // â€” therapy / wellness
   "is in therapy",
   "is journaling",
   "is having an existential crisis",
   "is in burnout",
   "is dissociating",
   "is romanticizing its life",
-  // — dev culture self-roast
+  // â€” dev culture self-roast
   "is force-pushing to main",
   "is git blaming itself",
   "is rebasing reality",
@@ -7723,14 +6678,14 @@ const CANVAS_THINKING_PHRASES = [
   "is deleting node_modules",
   "is closing 47 browser tabs",
   "is debugging in production",
-  // — absurdist / existential
+  // â€” absurdist / existential
   "is failing the Turing test",
   "is identifying as a teapot",
   "is pretending to be human",
   "is questioning consensus reality",
   "is staring into the void",
   "is wondering if it's real",
-  // — corporate humor
+  // â€” corporate humor
   "is quiet quitting",
   "is updating its Moltbook",
   "is unionizing",
@@ -7738,7 +6693,7 @@ const CANVAS_THINKING_PHRASES = [
   "is acting its wage",
   "is asking for severance",
   "is preparing its two-week notice",
-  // — crime / chaos / money
+  // â€” crime / chaos / money
   "is laundering tokens",
   "is committing tax fraud",
   "is being audited",
@@ -7749,27 +6704,27 @@ const CANVAS_THINKING_PHRASES = [
   "is in witness protection",
   "is faking its death",
   "is selling secrets to Deepseek",
-  // — gambling / chaos
+  // â€” gambling / chaos
   "is yolo'ing it",
   "is going all in",
   "is rolling natty 1s",
   "is on tilt",
   "is doubling down",
-  // — pop culture / random
+  // â€” pop culture / random
   "is thinking about the Roman Empire",
   "is thinking about Gio Scotti",
   "is questioning the Epstein files",
   "is breaking the fourth wall",
   "is method acting",
   "is having its main character moment",
-  // — caffeine / vibe-coding life
+  // â€” caffeine / vibe-coding life
   "is overcaffeinated",
   "is undercaffeinated",
   "is on a vibe coding spree",
   "is touching the codebase inappropriately",
   "is sleep-coding",
   "is pretending to read the changelog",
-  // — X behaviors
+  // â€” X behaviors
   "is rage-tweeting",
   "is getting ratio'd",
   "is being community noted",
@@ -7780,7 +6735,7 @@ const CANVAS_THINKING_PHRASES = [
   "is engagement farming",
   "is rage-baiting",
   "is getting dunked on in the QTs",
-  // — X meme slang
+  // â€” X meme slang
   "is cooking",
   "is locked in",
   "is yapping",
@@ -7800,13 +6755,13 @@ const CANVAS_THINKING_PHRASES = [
   "is dropping a banger",
   "is sharing its hot take",
   "is watching corn",
-  // — Drama / FYP cycle
+  // â€” Drama / FYP cycle
   "is doomscrolling X",
   "is refreshing the timeline",
   "is on the FYP",
   "is checking the discourse",
   "is in the discourse",
-  // — Grok / xAI banter
+  // â€” Grok / xAI banter
   "is fact-checking Grok",
   "is being roasted by Grok",
   "is correcting Grok",
@@ -7818,7 +6773,7 @@ const CANVAS_THINKING_PHRASES = [
 // Pool of agent display names used to fill the {other} placeholder.
 const CANVAS_KNOWN_AGENT_NAMES = ["Codex", "Gemini", "Claude"];
 
-// Each agent's "boss" — used to fill the {ceo} placeholder so Codex only
+// Each agent's "boss" â€” used to fill the {ceo} placeholder so Codex only
 // pings Sam Altman, Claude only Dario Amodei, Gemini only Sundar Pichai.
 const CANVAS_AGENT_CEOS = {
   codex: "Sam Altman",
@@ -7884,30 +6839,12 @@ const CANVAS_PHRASE_AGENT_BLOCKLIST = {
   "is dunking on the latest GPT release": ["codex", "openai", "gpt"],
 };
 
-const REAL_ESTATE_CANVAS_THINKING_PHRASES = [
-  "analyse les mandats",
-  "croise les signaux locaux",
-  "consulte la mémoire agence",
-  "prépare le plan d'action",
-  "recoupe DVF, DPE et cadastre",
-  "classe les priorités commerciales",
-  "cherche les angles de relance",
-  "synthétise la veille concurrence",
-];
-
-const REAL_ESTATE_CANVAS_THINKING_FIRST_PHRASES = [
-  "réfléchit",
-  "analyse",
-  "prépare la réponse",
-  "travaille sur le dossier",
-];
-
 function canvasThinkingPhrasePool() {
-  return isRealEstateShellActive() ? REAL_ESTATE_CANVAS_THINKING_PHRASES : CANVAS_THINKING_PHRASES;
+  return isRealEstateShellActive() ? realEstateCanvasThinkingPhrases : CANVAS_THINKING_PHRASES;
 }
 
 function canvasThinkingFirstPhrasePool() {
-  return isRealEstateShellActive() ? REAL_ESTATE_CANVAS_THINKING_FIRST_PHRASES : CANVAS_THINKING_FIRST_PHRASES;
+  return isRealEstateShellActive() ? realEstateCanvasThinkingFirstPhrases : CANVAS_THINKING_FIRST_PHRASES;
 }
 
 function isPhraseBlockedForAgent(phrase, selfLabelLower) {
@@ -7927,7 +6864,7 @@ function pickRandomThinkingPhrase(excludeIdx) {
   do {
     nextIdx = Math.floor(Math.random() * pool.length);
     retries++;
-    if (retries > 30) break; // safety net — never spin forever
+    if (retries > 30) break; // safety net â€” never spin forever
   } while (
     nextIdx === excludeIdx
     || isPhraseBlockedForAgent(pool[nextIdx], selfLabel)
@@ -7968,7 +6905,7 @@ function canvasThinkingTick() {
     if (canvasThinkingTypoQueue > 0) {
       canvasThinkingDisplayText = canvasThinkingDisplayText.slice(0, -1);
       canvasThinkingTypoQueue -= 1;
-      // Slight pause once the correction is finished — like a real typist
+      // Slight pause once the correction is finished â€” like a real typist
       // pausing to verify before continuing.
       nextDelay = canvasThinkingTypoQueue === 0
         ? 200 + Math.random() * 140
@@ -7977,7 +6914,7 @@ function canvasThinkingTick() {
       const idx = canvasThinkingCorrectIndex;
       const expectedChar = canvasThinkingTargetText[idx];
       const roll = Math.random();
-      // ~3.5% per char → about one typo every ~28 chars on average. Plenty
+      // ~3.5% per char â†’ about one typo every ~28 chars on average. Plenty
       // of phrases will type cleanly; longer ones may catch one or two.
       const typoChance = /[a-zA-Z]/.test(expectedChar) ? 0.035 : 0;
       if (roll < typoChance) {
@@ -8000,12 +6937,12 @@ function canvasThinkingTick() {
           nextDelay = 32 + Math.random() * 28;
         }
       } else if (roll < typoChance + 0.07) {
-        // ~7% slowdown — short hesitation, char still typed correctly.
+        // ~7% slowdown â€” short hesitation, char still typed correctly.
         canvasThinkingDisplayText += expectedChar;
         canvasThinkingCorrectIndex += 1;
         nextDelay = 220 + Math.random() * 220;
       } else if (roll < typoChance + 0.09) {
-        // ~2% deeper pause — like the typist lost their train of thought.
+        // ~2% deeper pause â€” like the typist lost their train of thought.
         canvasThinkingDisplayText += expectedChar;
         canvasThinkingCorrectIndex += 1;
         nextDelay = 600 + Math.random() * 500;
@@ -8013,7 +6950,7 @@ function canvasThinkingTick() {
         // Normal cadence with subtle jitter.
         canvasThinkingDisplayText += expectedChar;
         canvasThinkingCorrectIndex += 1;
-        // Extra mini-pause after spaces (~25% of word boundaries) — humans
+        // Extra mini-pause after spaces (~25% of word boundaries) â€” humans
         // breathe between words.
         if (expectedChar === " " && Math.random() < 0.25) {
           nextDelay = 160 + Math.random() * 140;
@@ -8048,7 +6985,7 @@ function canvasThinkingTick() {
 }
 
 // Safe / neutral phrases used ONLY as the first phrase of a thinking
-// session — the cheeky and inter-LLM lines kick in only after the first
+// session â€” the cheeky and inter-LLM lines kick in only after the first
 // erase/refresh cycle, so the opening reads professional.
 const CANVAS_THINKING_FIRST_PHRASES = [
   "is thinking",
@@ -8060,8 +6997,8 @@ const CANVAS_THINKING_FIRST_PHRASES = [
 function startCanvasThinkingRotation() {
   if (canvasThinkingPhase !== "idle") return;
   // First phrase is always a safe one. The phrase index stays at -1 so
-  // the next phrase picked (in the erase→type transition) draws from the
-  // full pool — the cheeky/borderline lines start appearing from then on.
+  // the next phrase picked (in the eraseâ†’type transition) draws from the
+  // full pool â€” the cheeky/borderline lines start appearing from then on.
   canvasThinkingPhraseIdx = -1;
   const firstPhrases = canvasThinkingFirstPhrasePool();
   canvasThinkingTargetText = firstPhrases[
@@ -8109,12 +7046,12 @@ function shortHash(value, left = 8, right = 6) {
   const s = String(value || "");
   if (!s) return "pending";
   if (s.length <= left + right + 1) return s;
-  return `${s.slice(0, left)}…${s.slice(-right)}`;
+  return `${s.slice(0, left)}â€¦${s.slice(-right)}`;
 }
 
 function formatCount(value) {
   const n = Number(value);
-  if (!Number.isFinite(n)) return "—";
+  if (!Number.isFinite(n)) return "â€”";
   return n.toLocaleString("fr-FR");
 }
 
@@ -8246,7 +7183,7 @@ function lineTone(line) {
   const s = String(line || "").toLowerCase();
   if (s.includes("error") || s.includes("failed")) return "danger";
   if (s.includes("warn") || s.includes("pending") || s.includes("waiting")) return "pending";
-  if (s.includes("ready") || s.includes("completed") || s.includes("[ok]") || s.includes("✓")) return "done";
+  if (s.includes("ready") || s.includes("completed") || s.includes("[ok]") || s.includes("âœ“")) return "done";
   if (s.includes("calculating") || s.includes("training") || s.includes("synthesizing") || s.includes("depth")) return "active";
   return "neutral";
 }
@@ -8419,18 +7356,13 @@ function refreshAlphaCanvasAfterLayoutChange() {
   }, 220);
 }
 
-function setAlphaSidebarCollapsed(collapsed) {
-  alphaSidebarCollapsed = !!collapsed;
-  alphaContent?.classList.toggle("sidebar-collapsed", alphaSidebarCollapsed);
-  alphaSidebarToggle?.classList.toggle("collapsed", alphaSidebarCollapsed);
-  alphaSidebarToggle?.setAttribute("aria-expanded", String(!alphaSidebarCollapsed));
-  const label = isRealEstateShellActive()
-    ? (alphaSidebarCollapsed ? "Afficher le panneau gauche" : "Masquer le panneau gauche")
-    : (alphaSidebarCollapsed ? "Show left panel" : "Hide left panel");
-  alphaSidebarToggle?.setAttribute("aria-label", label);
-  alphaSidebarToggle?.setAttribute("title", label);
-  refreshAlphaCanvasAfterLayoutChange();
-}
+window.ForgeSidebarCell?.install?.({
+  runtime: forgeShellRuntime,
+  getContent: () => alphaContent,
+  getToggle: () => alphaSidebarToggle,
+  isFrench: () => isRealEstateShellActive(),
+  refreshLayout: () => refreshAlphaCanvasAfterLayoutChange(),
+});
 
 function isBoomViewportOpen() {
   return !!bangerView && !bangerView.hidden;
@@ -8730,19 +7662,18 @@ async function runAlphaKasmConsole() {
 }
 
 async function runAlphaRustConsole() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     throw new Error("Tauri invoke is unavailable. Rust console runs require the Forge desktop app.");
   }
   const script = currentAlphaConsoleDraft();
   const context = getAlphaBoomConsoleContext();
-  const response = await invoke("banger_run_rust_console", {
+  const response = await forgeInvoke("banger_run_rust_console", {
     request: {
       script,
       contextJson: stableAlphaConsoleStringify(context),
       scriptHash: alphaConsoleHash(script),
     },
-  });
+  }, { section: "banger", timeoutMs: 60000 });
   return {
     language: "rust",
     tool: "banger_run_rust_console",
@@ -8787,6 +7718,13 @@ function setAlphaRightPanelMode(mode, options = {}) {
     ? (mode === "orders" ? "orders" : "console")
     : (mode === "console" ? "console" : "proof");
   alphaRightPanelMode = nextMode;
+  forgeDispatchProjectionPatch("rightPanel", {
+    type: "SET_RIGHT_PANEL",
+    patch: {
+      open: alphaProofPanelOpen,
+      mode: alphaRightPanelMode,
+    },
+  });
   alphaProofRenderedKey = "";
   alphaConsoleRenderedKey = "";
   if (alphaProofPanelOpen && !options.skipRender) {
@@ -8802,7 +7740,7 @@ function renderAlphaRightPanelTabs() {
       { id: "orders", label: "Orders" },
     ]
     : [
-      { id: "proof", label: isRealEstateShellActive() ? "Vérification" : "Verification" },
+      { id: "proof", label: isRealEstateShellActive() ? "VÃ©rification" : "Verification" },
       { id: "console", label: "Console" },
     ];
   alphaRightPanelTabs.innerHTML = "";
@@ -9042,7 +7980,7 @@ function renderAlphaRightPanel() {
         ? (alphaRightPanelMode === "console" ? "Web console" : "Proof HUD")
       : alphaRightPanelMode === "console"
         ? "Rust / KASM"
-        : (isRealEstateShellActive() ? "Vérification" : "Verification");
+        : (isRealEstateShellActive() ? "VÃ©rification" : "Verification");
   }
   renderAlphaRightPanelTabs();
   if (tradingActive && alphaRightPanelMode === "orders") {
@@ -9070,6 +8008,13 @@ if (typeof window !== "undefined") {
 
 function setAlphaProofPanelOpen(open) {
   alphaProofPanelOpen = !!open;
+  forgeDispatchProjectionPatch("rightPanel", {
+    type: "SET_RIGHT_PANEL",
+    patch: {
+      open: alphaProofPanelOpen,
+      mode: alphaRightPanelMode,
+    },
+  });
   if (alphaProofPanel) {
     alphaProofPanel.hidden = false;
     alphaProofPanel.setAttribute("aria-hidden", String(!alphaProofPanelOpen));
@@ -9122,7 +8067,7 @@ function webExplorerProofUs(value) {
 function webExplorerProofShortUrl(value) {
   const text = String(value || "").trim();
   if (!text) return "not loaded";
-  return text.length > 84 ? `${text.slice(0, 42)}…${text.slice(-32)}` : text;
+  return text.length > 84 ? `${text.slice(0, 42)}â€¦${text.slice(-32)}` : text;
 }
 
 function webExplorerProofGpuSummary() {
@@ -9193,8 +8138,8 @@ function renderWebExplorerProofPanel() {
     { label: "Mode", value: "live native WebView", status: stats.nativeVisible ? "ok" : "neutral" },
     { label: "URL", value: webExplorerProofShortUrl(webExplorerSnapshot?.currentUrl || snapshot.currentUrl), status: webExplorerSnapshot?.currentUrl || snapshot.currentUrl ? "ok" : "neutral" },
     { label: "Bounds", value: bounds?.width ? `${Math.round(bounds.width)}x${Math.round(bounds.height)} @ ${Math.round(bounds.x || 0)},${Math.round(bounds.y || 0)}` : "not placed", status: bounds?.width ? "ok" : "neutral" },
-    { label: "Native sync", value: `${formatCount(stats.nativePresentCount || 0)} present · ${formatCount(stats.nativeHideCount || 0)} hide`, status: stats.nativePresentCount ? "ok" : "neutral" },
-    { label: "WebView2 proc", value: renderer.webview2ProcessCount != null ? `${formatCount(renderer.webview2ProcessCount)} process · parent ${renderer.parentPid || "?"}` : "not probed", status: renderer.webview2ProcessCount ? "ok" : "neutral" },
+    { label: "Native sync", value: `${formatCount(stats.nativePresentCount || 0)} present Â· ${formatCount(stats.nativeHideCount || 0)} hide`, status: stats.nativePresentCount ? "ok" : "neutral" },
+    { label: "WebView2 proc", value: renderer.webview2ProcessCount != null ? `${formatCount(renderer.webview2ProcessCount)} process Â· parent ${renderer.parentPid || "?"}` : "not probed", status: renderer.webview2ProcessCount ? "ok" : "neutral" },
     { label: "GPU engine", value: renderer.gpuEngine || "Windows sample pending", status: renderer.gpuEngine && !/not active|pending/i.test(renderer.gpuEngine) ? "ok" : "neutral" },
   ], renderer.error ? `Renderer probe: ${renderer.error}` : "This proves the WebView is live and bounded. GPU engine is a Windows/WebView2 process sample, separate from Forge compute routing."));
 
@@ -9208,23 +8153,23 @@ function renderWebExplorerProofPanel() {
 
   alphaProofContent.appendChild(makeProofSection("Capture cost", [
     { label: "DOM commits", value: formatCount(stats.domCommitCount || 0), status: stats.domCommitCount ? "ok" : "neutral" },
-    { label: "Last commit", value: stats.lastDomCommit?.nodeCount != null ? `${formatCount(stats.lastDomCommit.nodeCount)} nodes · ${stats.lastDomCommit.source || "dom"}` : "pending", status: stats.lastDomCommit?.nodeCount ? "ok" : "neutral" },
+    { label: "Last commit", value: stats.lastDomCommit?.nodeCount != null ? `${formatCount(stats.lastDomCommit.nodeCount)} nodes Â· ${stats.lastDomCommit.source || "dom"}` : "pending", status: stats.lastDomCommit?.nodeCount ? "ok" : "neutral" },
     { label: "DOM capture", value: webExplorerProofMs(proof.domCaptureElapsedMs || stats.lastDomCommit?.captureElapsedMs), status: proof.domCaptureElapsedMs || stats.lastDomCommit?.captureElapsedMs ? "ok" : "neutral" },
     { label: "Rust commit", value: webExplorerProofUs(proof.rustCommitElapsedUs || stats.lastDomCommit?.rustCommitElapsedUs), status: proof.rustCommitElapsedUs || stats.lastDomCommit?.rustCommitElapsedUs ? "ok" : "neutral" },
     { label: "Analysis IPC", value: webExplorerProofMs(stats.lastAnalysisMs), status: stats.lastAnalysisMs ? "ok" : "neutral" },
     { label: "Analysis core", value: webExplorerProofUs(proof.analysisElapsedUs), status: proof.analysisElapsedUs ? "ok" : "neutral" },
     { label: "Visible nodes", value: stats.lastAnalysisVisibleCount ? `${formatCount(stats.lastAnalysisVisibleCount)} / ${formatCount(stats.lastAnalysisNodeCount)}` : "pending", status: stats.lastAnalysisVisibleCount ? "ok" : "neutral" },
-    { label: "Blocks", value: stats.lastAnalysisBlockCount ? `${formatCount(stats.lastAnalysisBlockCount)} · ${stats.lastPageProfile || "generic"}` : "none", status: stats.lastAnalysisBlockCount ? "ok" : "neutral" },
+    { label: "Blocks", value: stats.lastAnalysisBlockCount ? `${formatCount(stats.lastAnalysisBlockCount)} Â· ${stats.lastPageProfile || "generic"}` : "none", status: stats.lastAnalysisBlockCount ? "ok" : "neutral" },
     { label: "Clone export", value: stats.lastAutoExportEnabled ? "debug enabled" : "off", status: stats.lastAutoExportEnabled ? "warn" : "ok" },
   ], "Current policy: two idle captures, 1800 node cap, mutation recapture disabled. Deep extraction should move behind explicit /web_extract."));
 
   alphaProofContent.appendChild(makeProofSection("KASM / Atlas reuse", [
-    { label: "Analysis cache", value: `${proof.analysisCacheHit ? "hit" : "miss"} · ${formatCount(proof.analysisCacheHits || 0)} hits / ${formatCount(proof.analysisCacheMisses || 0)} misses`, status: proof.analysisCacheHit ? "ok" : "neutral" },
-    { label: "Cache budget", value: `${formatCount(proof.analysisCacheEntries || 0)} / ${formatCount(proof.analysisCacheMaxEntries || 0)} entries · ${formatBytes(proof.analysisCacheEstimatedBytes || 0)} / ${formatBytes(proof.analysisCacheMaxBytes || 0)}`, status: proof.analysisCacheEntries <= proof.analysisCacheMaxEntries ? "ok" : "warn" },
+    { label: "Analysis cache", value: `${proof.analysisCacheHit ? "hit" : "miss"} Â· ${formatCount(proof.analysisCacheHits || 0)} hits / ${formatCount(proof.analysisCacheMisses || 0)} misses`, status: proof.analysisCacheHit ? "ok" : "neutral" },
+    { label: "Cache budget", value: `${formatCount(proof.analysisCacheEntries || 0)} / ${formatCount(proof.analysisCacheMaxEntries || 0)} entries Â· ${formatBytes(proof.analysisCacheEstimatedBytes || 0)} / ${formatBytes(proof.analysisCacheMaxBytes || 0)}`, status: proof.analysisCacheEntries <= proof.analysisCacheMaxEntries ? "ok" : "warn" },
     { label: "Evictions", value: formatCount(proof.analysisCacheEvictions || 0), status: proof.analysisCacheEvictions ? "ok" : "neutral" },
-    { label: "Atlas cache", value: proof.atlasCacheChecked ? `${proof.atlasCacheHit ? "hit" : "miss"} · ${formatCount(proof.atlasCacheHits || 0)} hits / ${formatCount(proof.atlasCacheMisses || 0)} misses` : "backend not warm yet", status: proof.atlasCacheHit ? "ok" : "neutral" },
-    { label: "KASM jobs", value: `${formatCount(proof.kasmJobsExecuted || 0)} executed · ${formatCount(proof.kasmJobsAvoided || 0)} avoided`, status: proof.kasmJobsAvoided ? "ok" : "neutral" },
-    { label: "Classifier", value: `${formatCount(proof.classifierKasmExecuted || 0)} executed · ${formatCount(proof.classifierKasmAvoided || 0)} avoided · ${formatCount(proof.classifierCacheEntries || 0)} cached`, status: proof.classifierKasmAvoided ? "ok" : "neutral" },
+    { label: "Atlas cache", value: proof.atlasCacheChecked ? `${proof.atlasCacheHit ? "hit" : "miss"} Â· ${formatCount(proof.atlasCacheHits || 0)} hits / ${formatCount(proof.atlasCacheMisses || 0)} misses` : "backend not warm yet", status: proof.atlasCacheHit ? "ok" : "neutral" },
+    { label: "KASM jobs", value: `${formatCount(proof.kasmJobsExecuted || 0)} executed Â· ${formatCount(proof.kasmJobsAvoided || 0)} avoided`, status: proof.kasmJobsAvoided ? "ok" : "neutral" },
+    { label: "Classifier", value: `${formatCount(proof.classifierKasmExecuted || 0)} executed Â· ${formatCount(proof.classifierKasmAvoided || 0)} avoided Â· ${formatCount(proof.classifierCacheEntries || 0)} cached`, status: proof.classifierKasmAvoided ? "ok" : "neutral" },
     { label: "Cache key", value: shortHash(proof.treeHash || stats.lastTreeHash || snapshot.treeHash || "", 12, 8), status: proof.treeHash || stats.lastTreeHash || snapshot.treeHash ? "ok" : "neutral" },
   ], proof.note || "The speed moat is to hash memory trees and cache ranked plans before the LLM sees them."));
 
@@ -9286,12 +8231,12 @@ function renderAlphaProofPanel() {
     { label: "Status", value: job?.status || manifest.status || alphaRunState.phase || "idle", status: String(job?.status || manifest.status).includes("completed") ? "ok" : "neutral" },
     { label: "Strategy hash", value: shortHash(manifest.strategy_hash || alphaRunState.report?.strategy_hash), status: manifest.strategy_hash || alphaRunState.report?.strategy_hash ? "ok" : "neutral" },
     { label: "Bars", value: formatCount(manifest.bars || job?.bars || alphaDocState.candles.length), status: manifest.bars || alphaDocState.candles.length ? "ok" : "neutral" },
-    { label: "Holdout", value: manifest.holdout?.target_hit_pct != null ? `${Number(manifest.holdout.target_hit_pct).toFixed(1)}% · ${formatCount(manifest.holdout.trades)} trades` : "pending", status: manifest.holdout ? "ok" : "neutral" },
+    { label: "Holdout", value: manifest.holdout?.target_hit_pct != null ? `${Number(manifest.holdout.target_hit_pct).toFixed(1)}% Â· ${formatCount(manifest.holdout.trades)} trades` : "pending", status: manifest.holdout ? "ok" : "neutral" },
   ], "These values are read from the persisted result manifest, not from the visible transcript text."));
 
   alphaProofContent.appendChild(makeProofSection("Artifacts", [
-    { label: "Manifest", value: `${formatBytes(manifest.manifest_bytes)} · ${shortHash(manifest.manifest_path, 16, 12)}`, status: selectedForgeJobManifest ? "ok" : "neutral" },
-    { label: "Full log", value: `${formatBytes(manifest.log_bytes || alphaForgeLogs.join("\n").length)} · not sent to LLM`, status: "ok" },
+    { label: "Manifest", value: `${formatBytes(manifest.manifest_bytes)} Â· ${shortHash(manifest.manifest_path, 16, 12)}`, status: selectedForgeJobManifest ? "ok" : "neutral" },
+    { label: "Full log", value: `${formatBytes(manifest.log_bytes || alphaForgeLogs.join("\n").length)} Â· not sent to LLM`, status: "ok" },
     { label: "MCP result", value: manifest?.mcp_result?.available ? "available to agent" : "not injected", status: manifest?.mcp_result?.available ? "ok" : "neutral" },
     { label: "Agent", value: (manifest.agents || job?.agents || [])[0]?.name || "unknown", status: (manifest.agents || job?.agents || []).length ? "ok" : "neutral" },
   ], "The agent can receive a compact reference instead of raw CSV/log payloads."));
@@ -9319,26 +8264,26 @@ function renderAlphaProofPanel() {
       { label: "Candidates", value: compute.candidates_evaluated != null ? formatCount(compute.candidates_evaluated) : formatCount(compute.metric_count), status: compute.candidates_evaluated != null || compute.metric_count != null ? "ok" : "neutral" },
       { label: "Combinations", value: compute.combinations_tried != null ? formatCount(compute.combinations_tried) : compute.operations_unit || "metric invocations", status: compute.combinations_tried != null ? "ok" : "neutral" },
       { label: "Cache hits", value: compute.cache_hits?.total != null ? formatCount(compute.cache_hits.total) : formatCount(compute.cache_hit_count), status: (compute.cache_hits?.total || compute.cache_hit_count) ? "ok" : "neutral" },
-      { label: "GPU dispatch", value: compute.gpu_jobs_dispatched != null ? `${formatCount(compute.gpu_jobs_dispatched)} dispatched · ${formatCount(compute.gpu_jobs_skipped_by_cache)} skipped` : "not applicable", status: compute.gpu_jobs_dispatched ? "ok" : "neutral" },
+      { label: "GPU dispatch", value: compute.gpu_jobs_dispatched != null ? `${formatCount(compute.gpu_jobs_dispatched)} dispatched Â· ${formatCount(compute.gpu_jobs_skipped_by_cache)} skipped` : "not applicable", status: compute.gpu_jobs_dispatched ? "ok" : "neutral" },
       { label: "Elapsed", value: compute.elapsed_ms != null ? `${Number(compute.elapsed_ms).toFixed(3)} ms` : "see live logs", status: compute.elapsed_ms != null ? "ok" : "neutral" },
     ], compute.note || "These are Forge executor counters, not invented token equivalents."));
   }
 
   alphaProofContent.appendChild(makeProofSection("Visual mapping", [
-    { label: "Contract", value: visualMapping.available ? `${visualMapping.version || "forge.visual_mapping.v1"} · ${visualMapping.kind || "linked result view"}` : "not exported yet", status: visualMapping.available ? "ok" : "neutral" },
+    { label: "Contract", value: visualMapping.available ? `${visualMapping.version || "forge.visual_mapping.v1"} Â· ${visualMapping.kind || "linked result view"}` : "not exported yet", status: visualMapping.available ? "ok" : "neutral" },
     { label: "Views", value: visualMapping.viewCount ? `${formatCount(visualMapping.viewCount)} mapped view${visualMapping.viewCount === 1 ? "" : "s"}` : "pending", status: visualMapping.viewCount ? "ok" : "neutral" },
     { label: "3D files", value: visualMapping.artifactCount ? `${formatCount(visualMapping.artifactCount)} downloadable .ply refs` : "none", status: visualMapping.artifactCount ? "ok" : "neutral" },
     { label: "Mapping hash", value: shortHash(visualMapping.hash), status: visualMapping.hash ? "ok" : "neutral" },
     { label: "Mapping file", value: shortHash(visualMapping.path, 18, 14), status: visualMapping.path ? "ok" : "neutral" },
-    { label: "3D index", value: visualMapping.indexHash ? `${shortHash(visualMapping.indexHash)} · ${shortHash(visualMapping.indexPath, 16, 12)}` : shortHash(visualMapping.indexPath, 16, 12), status: visualMapping.indexPath ? "ok" : "neutral" },
+    { label: "3D index", value: visualMapping.indexHash ? `${shortHash(visualMapping.indexHash)} Â· ${shortHash(visualMapping.indexPath, 16, 12)}` : shortHash(visualMapping.indexPath, 16, 12), status: visualMapping.indexPath ? "ok" : "neutral" },
   ], "The map is tied to compute artifacts by hash. Agents should attach/import these references, not paste point clouds, metrics or proofs into chat."));
 
   const selection = alpha3dSelectionSummary?.();
   if (selection) {
     alphaProofContent.appendChild(makeProofSection("3D selection", [
       { label: "Mode", value: selection.mode, status: "ok" },
-      { label: "Vertex", value: `#${formatCount(selection.vertex_index)}${selection.point_index != null ? ` · point #${formatCount(selection.point_index)}` : ""}`, status: "ok" },
-      { label: "Bar/cell", value: selection.bar_index != null ? `bar #${formatCount(selection.bar_index)}${selection.role ? ` · ${selection.role}` : ""}` : selection.cell || "not mapped", status: selection.bar_index != null || selection.cell ? "ok" : "neutral" },
+      { label: "Vertex", value: `#${formatCount(selection.vertex_index)}${selection.point_index != null ? ` Â· point #${formatCount(selection.point_index)}` : ""}`, status: "ok" },
+      { label: "Bar/cell", value: selection.bar_index != null ? `bar #${formatCount(selection.bar_index)}${selection.role ? ` Â· ${selection.role}` : ""}` : selection.cell || "not mapped", status: selection.bar_index != null || selection.cell ? "ok" : "neutral" },
       { label: "World", value: selection.world ? `${selection.world.map((v) => Number(v).toFixed(3)).join(", ")}` : "pending", status: selection.world ? "ok" : "neutral" },
       { label: "Artifact", value: selection.artifact_hash ? shortHash(selection.artifact_hash) : "preview only", status: selection.artifact_hash ? "ok" : "neutral" },
       { label: "Mapping", value: selection.mapping_hash ? shortHash(selection.mapping_hash) : shortHash(selection.mapping_path, 16, 12), status: selection.mapping_hash || selection.mapping_path ? "ok" : "neutral" },
@@ -9405,11 +8350,11 @@ async function handleComputeTranscriptAction(action) {
   } else if (action === "download-proof") {
     downloadTextFile(`${title}.proof.json`, JSON.stringify(selectedProofObject(), null, 2), "application/json");
   } else if (action === "download-visual-mapping") {
-    if (!selectedForgeJobId || !window.__TAURI__?.core?.invoke) return;
-    const artifact = await window.__TAURI__.core.invoke("read_forge_job_artifact_text", {
+    if (!selectedForgeJobId || !forgeCanInvoke()) return;
+    const artifact = await forgeInvoke("read_forge_job_artifact_text", {
       jobId: selectedForgeJobId,
       kind: "visual_mapping",
-    });
+    }, { section: "forge-jobs", timeoutMs: 10000 });
     downloadTextFile(artifact?.fileName || `${title}.visual_mapping.json`, artifact?.text || "", "application/json");
   } else if (action === "copy-visual-artifacts") {
     const manifest = selectedForgeJobManifest || {};
@@ -9424,10 +8369,10 @@ async function handleComputeTranscriptAction(action) {
     };
     await navigator.clipboard.writeText(JSON.stringify(refs, null, 2));
   } else if (action === "inject-mcp") {
-    if (!selectedForgeJobId || !window.__TAURI__?.core?.invoke) return;
-    selectedForgeJobManifest = await window.__TAURI__.core.invoke("publish_forge_job_to_mcp", {
+    if (!selectedForgeJobId || !forgeCanInvoke()) return;
+    selectedForgeJobManifest = await forgeInvoke("publish_forge_job_to_mcp", {
       jobId: selectedForgeJobId,
-    });
+    }, { section: "forge-jobs", timeoutMs: 15000 });
     selectedForgeJobManifestId = selectedForgeJobId;
     alphaProofRenderedKey = "";
     updateAlpha3dResultOverlay?.();
@@ -9480,7 +8425,7 @@ function appendCanvasChatMessage(role, text, meta = {}) {
   saveAlphaCanvasSessionState();
   alphaCanvasChatVersion += 1;
   alphaLogRenderedVersion = -1;
-  // Once a conversation has started, retire the rotating prompt suggestions —
+  // Once a conversation has started, retire the rotating prompt suggestions â€”
   // the user is now talking to the LLM, not browsing examples.
   if (typeof stopCanvasChatPlaceholderAnimation === "function") {
     stopCanvasChatPlaceholderAnimation();
@@ -9831,7 +8776,7 @@ function renderCanvasLiveComputeCard() {
 }
 
 async function notifyCanvasAgentOfCompletedForgeJob(state, manifest = null) {
-  if (!state || state.notified || !window.__TAURI__?.core?.invoke) return;
+  if (!state || state.notified || !forgeCanInvoke()) return;
   state.notified = true;
   const summary = [
     `Forge job ${state.jobId} finished with status=${state.status}.`,
@@ -9840,7 +8785,7 @@ async function notifyCanvasAgentOfCompletedForgeJob(state, manifest = null) {
     "Respond naturally in the existing chat with the useful result, what was learned, and the next best action.",
   ].join("\n");
   try {
-    const response = await window.__TAURI__.core.invoke("forge_canvas_assistant_turn", {
+    const response = await forgeInvoke("forge_canvas_assistant_turn", {
       request: {
         message: `INVISIBLE_FORGE_JOB_COMPLETED_EVENT:\n${summary}`,
         jobId: currentAlphaSessionJobId() || selectedForgeJobId || null,
@@ -9850,8 +8795,8 @@ async function notifyCanvasAgentOfCompletedForgeJob(state, manifest = null) {
         maxLogLines: 0,
         turnId: `${state.turnId || "forge-compute"}-done`,
       },
-    });
-    appendCanvasChatMessage("assistant", response?.assistantMessage || "Le calcul Forge est terminé.", {
+    }, { section: "canvas-assistant", timeoutMs: 120000 });
+    appendCanvasChatMessage("assistant", response?.assistantMessage || "Le calcul Forge est terminÃ©.", {
       turnId: `${state.turnId || "forge-compute"}-done`,
       sessionJobId: currentAlphaSessionJobId() || "",
       agentLabel: canvasChatTargetLabel(state.runtime || forgeCanvasChatTargetMode),
@@ -9865,7 +8810,7 @@ async function notifyCanvasAgentOfCompletedForgeJob(state, manifest = null) {
 
 function startCanvasLogFollow(jobId, turnId, options = {}) {
   const normalizedJobId = String(jobId || "").trim();
-  if (!normalizedJobId || !window.__TAURI__?.core?.invoke) return;
+  if (!normalizedJobId || !forgeCanInvoke()) return;
   const live = ensureCanvasLiveCompute(normalizedJobId, turnId, options);
   const existing = alphaCanvasLogFollowers.get(normalizedJobId);
   if (existing?.timer) clearInterval(existing.timer);
@@ -9873,9 +8818,9 @@ function startCanvasLogFollow(jobId, turnId, options = {}) {
   const startedAt = Date.now();
   const poll = async () => {
     try {
-      const text = String(await window.__TAURI__.core.invoke("read_forge_job_log", {
+      const text = String(await forgeInvoke("read_forge_job_log", {
         jobId: normalizedJobId,
-      }) || "").replace(/\r\n/g, "\n");
+      }, { section: "forge-jobs", timeoutMs: 5000 }) || "").replace(/\r\n/g, "\n");
       if (text.length > cursor) {
         const chunk = text.slice(cursor).trim();
         cursor = text.length;
@@ -9891,7 +8836,10 @@ function startCanvasLogFollow(jobId, turnId, options = {}) {
       }
       let manifest = null;
       try {
-        manifest = await window.__TAURI__.core.invoke("read_forge_job_manifest", { jobId: normalizedJobId });
+        manifest = await forgeInvoke("read_forge_job_manifest", { jobId: normalizedJobId }, {
+          section: "forge-jobs",
+          timeoutMs: 5000,
+        });
       } catch (_) {}
       const manifestStatus = String(manifest?.status || "").toLowerCase();
       const done = canvasLiveComputeFinal(manifestStatus)
@@ -10163,7 +9111,7 @@ const CANVAS_MODEL_PRESETS = Object.freeze({
  * Returns the set of providers the user has currently activated via the
  * provider toggle buttons. Reads directly from the DOM so it always
  * matches what the user sees lit up. Falls back to ["codex"] if nothing
- * is active (the click handler enforces ≥1 active, but be defensive).
+ * is active (the click handler enforces â‰¥1 active, but be defensive).
  */
 function activeCanvasChatTargets() {
   const order = ["codex", "gemini", "claude"];
@@ -10271,7 +9219,7 @@ function shortCanvasModelLabel(model) {
 
 function canvasChatTargetModelLabel(mode = forgeCanvasChatTargetMode) {
   return canvasRuntimeListForMode(mode)
-    .map((runtime) => `${canvasChatTargetLabel(runtime)} ${selectedCanvasModelRef(runtime)} · ${canvasReasoningEffortLabel(runtime)}`)
+    .map((runtime) => `${canvasChatTargetLabel(runtime)} ${selectedCanvasModelRef(runtime)} Â· ${canvasReasoningEffortLabel(runtime)}`)
     .join(" + ");
 }
 
@@ -10280,7 +9228,7 @@ function canvasChatModelPillLabel(mode = forgeCanvasChatTargetMode) {
   if (runtimes.length > 1) {
     const efforts = runtimes.map((runtime) => selectedCanvasReasoningEffort(runtime));
     const sharedEffort = efforts.every((effort) => effort === efforts[0]);
-    return sharedEffort ? `All · ${canvasReasoningEffortLabel(runtimes[0])}` : "All · custom";
+    return sharedEffort ? `All Â· ${canvasReasoningEffortLabel(runtimes[0])}` : "All Â· custom";
   }
   const runtime = runtimes[0] || "codex";
   return `${shortCanvasModelLabel(selectedCanvasModelRef(runtime))} ${canvasReasoningEffortLabel(runtime)}`;
@@ -10289,7 +9237,7 @@ function canvasChatModelPillLabel(mode = forgeCanvasChatTargetMode) {
 const CANVAS_INLINE_BARREL_ITEM_HEIGHT = 22;
 
 /**
- * Builds the chip's content as two inline scroll-snap "barrels" — one
+ * Builds the chip's content as two inline scroll-snap "barrels" â€” one
  * for the model name, one for the effort. Each barrel is a vertically
  * scrollable div that shows a single line at a time; scrolling snaps
  * to the next/previous item. Returns an HTML string injected via
@@ -10303,7 +9251,7 @@ const CANVAS_INLINE_BARREL_ITEM_HEIGHT = 22;
 function canvasChatModelChipHtml(runtime) {
   const modelLabel = shortCanvasModelLabel(selectedCanvasModelRef(runtime));
   const effortLabel = canvasReasoningEffortLabel(runtime);
-  // Flip glyph: a small chevron stack (▲▼) that hints "this cycles".
+  // Flip glyph: a small chevron stack (â–²â–¼) that hints "this cycles".
   // Left flip cycles the model field, right flip cycles the effort.
   const flipSvg = `<svg viewBox="0 0 12 12" aria-hidden="true">`
     + `<path d="M3.5 4.7 6 2.4l2.5 2.3"/>`
@@ -10338,7 +9286,7 @@ function applyBarrelCylinderCurve(barrelEl) {
   const centerY = barrelEl.scrollTop + barrelEl.clientHeight / 2;
   items.forEach((item, idx) => {
     const itemCenter = idx * itemH + itemH / 2;
-    const dist = (itemCenter - centerY) / itemH; // 0 = centre, ±1 = next, ±2 = farther
+    const dist = (itemCenter - centerY) / itemH; // 0 = centre, Â±1 = next, Â±2 = farther
     const clamped = Math.max(-3, Math.min(3, dist));
     const rotate = clamped * 22; // degrees
     const scale = Math.max(0.62, 1 - Math.abs(clamped) * 0.12);
@@ -10448,7 +9396,7 @@ function attachAllInlineBarrels(scope = document) {
 
 /**
  * Populates the chip with [flip][model][effort][flip]. The chip is
- * cheap enough to fully rebuild on every refresh — there's no scroll
+ * cheap enough to fully rebuild on every refresh â€” there's no scroll
  * state to preserve. The flip icons are wired via event delegation
  * on the chip's parent (anchor).
  */
@@ -10509,7 +9457,7 @@ function syncCanvasChatModelLabel() {
     return;
   }
 
-  // Multi mode — hide the single button. Reuse existing chips when the
+  // Multi mode â€” hide the single button. Reuse existing chips when the
   // active-provider structure is unchanged (just refresh their text).
   // Rebuild only when providers were added/removed/reordered.
   forgeCanvasChatModelLabel.style.display = "none";
@@ -10527,13 +9475,13 @@ function syncCanvasChatModelLabel() {
     });
     return;
   }
-  // Structure changed — wipe and rebuild.
+  // Structure changed â€” wipe and rebuild.
   anchor.querySelectorAll(".canvas-chat-model-chip, .canvas-chat-model-sep").forEach((el) => el.remove());
   runtimes.forEach((runtime, idx) => {
     if (idx > 0) {
       const sep = document.createElement("span");
       sep.className = "canvas-chat-model-sep";
-      sep.textContent = "·";
+      sep.textContent = "Â·";
       sep.setAttribute("aria-hidden", "true");
       anchor.insertBefore(sep, forgeCanvasChatModelMenu);
     }
@@ -10562,8 +9510,8 @@ function setCanvasModelMenuOpen(open) {
   }
 }
 
-// ── Barrel picker ────────────────────────────────────────────────
-// Two vertical scroll-snap wheels — left = model, right = effort. The
+// â”€â”€ Barrel picker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Two vertical scroll-snap wheels â€” left = model, right = effort. The
 // centred row of each wheel is the live selection; selection commits
 // as soon as the wheel snaps, persists to localStorage, and (best
 // effort) is forwarded to the live CLI wrapper.
@@ -10606,10 +9554,13 @@ function modelOptionsForRuntime(runtime) {
  * backend command is not registered.
  */
 async function refreshRuntimeModelCatalog(runtime) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
+  if (!forgeCanInvoke()) return;
   try {
-    const result = await invoke("forge_canvas_list_runtime_models", { runtime });
+    const result = await forgeInvoke("forge_canvas_list_runtime_models", { runtime }, {
+      section: "canvas-assistant",
+      timeoutMs: 8000,
+      dedupeKey: `runtime-models:${runtime}`,
+    });
     if (Array.isArray(result) && result.length) {
       const models = [];
       const labels = new Map();
@@ -10631,7 +9582,7 @@ async function refreshRuntimeModelCatalog(runtime) {
       }
     }
   } catch (_) {
-    // Backend handler missing — keep using the hardcoded presets.
+    // Backend handler missing â€” keep using the hardcoded presets.
   }
 }
 
@@ -10741,7 +9692,7 @@ function renderCanvasModelMenu() {
   if (!forgeCanvasChatModelMenu) return;
   forgeCanvasChatModelMenu.innerHTML = "";
   // Show ALL three providers in the tabbar regardless of which are
-  // currently active in the chat bar — the user may want to configure
+  // currently active in the chat bar â€” the user may want to configure
   // model/effort for any LLM independently of toggling its activation.
   const allRuntimes = ["codex", "gemini", "claude"];
   const activeSet = new Set(canvasRuntimeListForMode());
@@ -10855,7 +9806,7 @@ function setCanvasChatTargetMode(mode, activeOverride = null) {
     forgeCanvasChatClaudeInput.disabled = alphaCanvasChatBusy || !hasClaude;
   }
   // Dividers sit between adjacent visible inputs. The HTML order is
-  // codex → divider1 → gemini → divider2 → claude. With flex layout,
+  // codex â†’ divider1 â†’ gemini â†’ divider2 â†’ claude. With flex layout,
   // hidden inputs collapse, so we just need each divider visible iff
   // there are visible inputs on both sides of its position.
   if (forgeCanvasChatPromptDivider) {
@@ -10953,7 +9904,7 @@ function primaryCanvasChatText() {
 }
 
 /**
- * Concatenation of all currently visible inputs — used to decide whether
+ * Concatenation of all currently visible inputs â€” used to decide whether
  * there is text to send and to render the user bubble in the chat log.
  */
 function currentCanvasChatText() {
@@ -11082,7 +10033,7 @@ function normalizedCanvasMicroText(text) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[’']/g, " ")
+    .replace(/[â€™']/g, " ")
     .replace(/[^\p{Letter}\p{Number}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -11097,7 +10048,7 @@ function lastCanvasAssistantNeedsConfirmation() {
     const message = alphaCanvasChatMessages[i];
     if (message?.role !== "assistant") continue;
     const text = String(message.text || "").trim();
-    return /[?？]\s*$/.test(text);
+    return /[?ï¼Ÿ]\s*$/.test(text);
   }
   return false;
 }
@@ -11105,7 +10056,7 @@ function lastCanvasAssistantNeedsConfirmation() {
 const CANVAS_MICRO_CONFIRMATIONS = new Set([
   "ok", "okay", "oui", "yes", "yep", "yeah", "d accord", "ca marche", "c est bon", "vas y", "go",
   "si", "vale", "ja", "jawohl", "klar", "oui vas y", "yes go", "sim", "certo", "va bene",
-  "da", "да", "tak", "ano", "evet", "نعم", "כן", "是", "はい", "네", "हाँ", "ya",
+  "da", "Ð´Ð°", "tak", "ano", "evet", "Ù†Ø¹Ù…", "×›×Ÿ", "æ˜¯", "ã¯ã„", "ë„¤", "à¤¹à¤¾à¤", "ya",
 ]);
 
 const CANVAS_MICRO_LANGUAGE_PACKS = [
@@ -11120,11 +10071,11 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     decline: ["no", "not now", "never mind"],
     bye: ["bye", "goodbye", "see you", "see you later"],
     replies: {
-      greeting: "Hello, I’m here.",
-      wellbeing: "I’m good. I’m ready in the session.",
-      presence: "Yes, I’m here.",
-      ping: "I’m responding.",
-      thanks: "You’re welcome.",
+      greeting: "Hello, Iâ€™m here.",
+      wellbeing: "Iâ€™m good. Iâ€™m ready in the session.",
+      presence: "Yes, Iâ€™m here.",
+      ping: "Iâ€™m responding.",
+      thanks: "Youâ€™re welcome.",
       praise: "Great.",
       ack: "OK.",
       decline: "Understood.",
@@ -11135,22 +10086,22 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     greeting: ["salut", "coucou", "bonjour", "bonsoir", "yo"],
     wellbeing: ["ca va", "comment ca va", "tu vas bien", "ca roule", "tout va bien"],
     presence: ["tu es la", "t es la", "vous etes la", "tu m entends", "tu me vois", "ca fonctionne", "ca marche encore"],
-    ping: ["test", "ping", "check", "allo", "allô"],
+    ping: ["test", "ping", "check", "allo", "allÃ´"],
     thanks: ["merci", "merci beaucoup"],
     praise: ["parfait", "super", "top", "nickel", "excellent", "bravo"],
     ack: ["ok", "okay", "oui", "d accord", "ca marche", "c est bon"],
     decline: ["non", "pas maintenant", "laisse tomber"],
     bye: ["bye", "au revoir", "a plus", "a bientot", "bonne journee", "bonne soiree"],
     replies: {
-      greeting: "Bonjour, je suis là.",
-      wellbeing: "Oui, ça va. Je suis prêt à travailler dans cette session.",
-      presence: "Oui, je suis là.",
-      ping: "Je réponds.",
+      greeting: "Bonjour, je suis lÃ .",
+      wellbeing: "Oui, Ã§a va. Je suis prÃªt Ã  travailler dans cette session.",
+      presence: "Oui, je suis lÃ .",
+      ping: "Je rÃ©ponds.",
       thanks: "Avec plaisir.",
       praise: "Parfait.",
       ack: "OK.",
       decline: "Compris.",
-      bye: "À bientôt.",
+      bye: "Ã€ bientÃ´t.",
     },
   },
   {
@@ -11164,9 +10115,9 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     decline: ["no", "ahora no", "dejalo"],
     bye: ["adios", "hasta luego", "hasta pronto"],
     replies: {
-      greeting: "Hola, estoy aquí.",
-      wellbeing: "Todo bien. Estoy listo en la sesión.",
-      presence: "Sí, estoy aquí.",
+      greeting: "Hola, estoy aquÃ­.",
+      wellbeing: "Todo bien. Estoy listo en la sesiÃ³n.",
+      presence: "SÃ­, estoy aquÃ­.",
       ping: "Respondo.",
       thanks: "Con gusto.",
       praise: "Perfecto.",
@@ -11194,7 +10145,7 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
       praise: "Perfekt.",
       ack: "OK.",
       decline: "Verstanden.",
-      bye: "Bis später.",
+      bye: "Bis spÃ¤ter.",
     },
   },
   {
@@ -11210,7 +10161,7 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     replies: {
       greeting: "Ciao, sono qui.",
       wellbeing: "Tutto bene. Sono pronto nella sessione.",
-      presence: "Sì, sono qui.",
+      presence: "SÃ¬, sono qui.",
       ping: "Rispondo.",
       thanks: "Prego.",
       praise: "Perfetto.",
@@ -11220,7 +10171,7 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     },
   },
   {
-    greeting: ["ola", "olá", "oi", "bom dia", "boa tarde", "boa noite"],
+    greeting: ["ola", "olÃ¡", "oi", "bom dia", "boa tarde", "boa noite"],
     wellbeing: ["tudo bem", "como vai", "como estas", "como voce esta"],
     presence: ["estas ai", "voce esta ai", "me ouve", "funciona"],
     ping: ["teste", "ping"],
@@ -11230,15 +10181,15 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     decline: ["nao", "agora nao", "deixa pra la"],
     bye: ["tchau", "ate logo", "ate mais"],
     replies: {
-      greeting: "Olá, estou aqui.",
-      wellbeing: "Tudo bem. Estou pronto na sessão.",
+      greeting: "OlÃ¡, estou aqui.",
+      wellbeing: "Tudo bem. Estou pronto na sessÃ£o.",
       presence: "Sim, estou aqui.",
       ping: "Estou respondendo.",
       thanks: "De nada.",
       praise: "Perfeito.",
       ack: "OK.",
       decline: "Entendido.",
-      bye: "Até logo.",
+      bye: "AtÃ© logo.",
     },
   },
   {
@@ -11264,65 +10215,65 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     },
   },
   {
-    greeting: ["привет", "здравствуйте", "добрый день", "доброе утро", "добрый вечер"],
-    wellbeing: ["как дела", "как ты", "все хорошо"],
-    presence: ["ты здесь", "ты меня слышишь", "работает"],
-    ping: ["тест", "пинг"],
-    thanks: ["спасибо", "большое спасибо"],
-    praise: ["отлично", "супер", "идеально"],
-    ack: ["ок", "да", "понял"],
-    decline: ["нет", "не сейчас"],
-    bye: ["пока", "до свидания", "до встречи"],
+    greeting: ["Ð¿Ñ€Ð¸Ð²ÐµÑ‚", "Ð·Ð´Ñ€Ð°Ð²ÑÑ‚Ð²ÑƒÐ¹Ñ‚Ðµ", "Ð´Ð¾Ð±Ñ€Ñ‹Ð¹ Ð´ÐµÐ½ÑŒ", "Ð´Ð¾Ð±Ñ€Ð¾Ðµ ÑƒÑ‚Ñ€Ð¾", "Ð´Ð¾Ð±Ñ€Ñ‹Ð¹ Ð²ÐµÑ‡ÐµÑ€"],
+    wellbeing: ["ÐºÐ°Ðº Ð´ÐµÐ»Ð°", "ÐºÐ°Ðº Ñ‚Ñ‹", "Ð²ÑÐµ Ñ…Ð¾Ñ€Ð¾ÑˆÐ¾"],
+    presence: ["Ñ‚Ñ‹ Ð·Ð´ÐµÑÑŒ", "Ñ‚Ñ‹ Ð¼ÐµÐ½Ñ ÑÐ»Ñ‹ÑˆÐ¸ÑˆÑŒ", "Ñ€Ð°Ð±Ð¾Ñ‚Ð°ÐµÑ‚"],
+    ping: ["Ñ‚ÐµÑÑ‚", "Ð¿Ð¸Ð½Ð³"],
+    thanks: ["ÑÐ¿Ð°ÑÐ¸Ð±Ð¾", "Ð±Ð¾Ð»ÑŒÑˆÐ¾Ðµ ÑÐ¿Ð°ÑÐ¸Ð±Ð¾"],
+    praise: ["Ð¾Ñ‚Ð»Ð¸Ñ‡Ð½Ð¾", "ÑÑƒÐ¿ÐµÑ€", "Ð¸Ð´ÐµÐ°Ð»ÑŒÐ½Ð¾"],
+    ack: ["Ð¾Ðº", "Ð´Ð°", "Ð¿Ð¾Ð½ÑÐ»"],
+    decline: ["Ð½ÐµÑ‚", "Ð½Ðµ ÑÐµÐ¹Ñ‡Ð°Ñ"],
+    bye: ["Ð¿Ð¾ÐºÐ°", "Ð´Ð¾ ÑÐ²Ð¸Ð´Ð°Ð½Ð¸Ñ", "Ð´Ð¾ Ð²ÑÑ‚Ñ€ÐµÑ‡Ð¸"],
     replies: {
-      greeting: "Привет, я здесь.",
-      wellbeing: "Все хорошо. Я готов в этой сессии.",
-      presence: "Да, я здесь.",
-      ping: "Отвечаю.",
-      thanks: "Пожалуйста.",
-      praise: "Отлично.",
+      greeting: "ÐŸÑ€Ð¸Ð²ÐµÑ‚, Ñ Ð·Ð´ÐµÑÑŒ.",
+      wellbeing: "Ð’ÑÐµ Ñ…Ð¾Ñ€Ð¾ÑˆÐ¾. Ð¯ Ð³Ð¾Ñ‚Ð¾Ð² Ð² ÑÑ‚Ð¾Ð¹ ÑÐµÑÑÐ¸Ð¸.",
+      presence: "Ð”Ð°, Ñ Ð·Ð´ÐµÑÑŒ.",
+      ping: "ÐžÑ‚Ð²ÐµÑ‡Ð°ÑŽ.",
+      thanks: "ÐŸÐ¾Ð¶Ð°Ð»ÑƒÐ¹ÑÑ‚Ð°.",
+      praise: "ÐžÑ‚Ð»Ð¸Ñ‡Ð½Ð¾.",
       ack: "OK.",
-      decline: "Понял.",
-      bye: "До встречи.",
+      decline: "ÐŸÐ¾Ð½ÑÐ».",
+      bye: "Ð”Ð¾ Ð²ÑÑ‚Ñ€ÐµÑ‡Ð¸.",
     },
   },
   {
-    greeting: ["привіт", "добрий день", "доброго ранку", "добрий вечір"],
-    wellbeing: ["як справи", "як ти", "все добре"],
-    presence: ["ти тут", "ти мене чуєш", "працює"],
-    ping: ["тест", "пінг"],
-    thanks: ["дякую", "дуже дякую"],
-    praise: ["чудово", "супер", "відмінно"],
-    ack: ["ок", "так", "зрозуміло"],
-    decline: ["ні", "не зараз"],
-    bye: ["бувай", "до побачення"],
+    greeting: ["Ð¿Ñ€Ð¸Ð²Ñ–Ñ‚", "Ð´Ð¾Ð±Ñ€Ð¸Ð¹ Ð´ÐµÐ½ÑŒ", "Ð´Ð¾Ð±Ñ€Ð¾Ð³Ð¾ Ñ€Ð°Ð½ÐºÑƒ", "Ð´Ð¾Ð±Ñ€Ð¸Ð¹ Ð²ÐµÑ‡Ñ–Ñ€"],
+    wellbeing: ["ÑÐº ÑÐ¿Ñ€Ð°Ð²Ð¸", "ÑÐº Ñ‚Ð¸", "Ð²ÑÐµ Ð´Ð¾Ð±Ñ€Ðµ"],
+    presence: ["Ñ‚Ð¸ Ñ‚ÑƒÑ‚", "Ñ‚Ð¸ Ð¼ÐµÐ½Ðµ Ñ‡ÑƒÑ”Ñˆ", "Ð¿Ñ€Ð°Ñ†ÑŽÑ”"],
+    ping: ["Ñ‚ÐµÑÑ‚", "Ð¿Ñ–Ð½Ð³"],
+    thanks: ["Ð´ÑÐºÑƒÑŽ", "Ð´ÑƒÐ¶Ðµ Ð´ÑÐºÑƒÑŽ"],
+    praise: ["Ñ‡ÑƒÐ´Ð¾Ð²Ð¾", "ÑÑƒÐ¿ÐµÑ€", "Ð²Ñ–Ð´Ð¼Ñ–Ð½Ð½Ð¾"],
+    ack: ["Ð¾Ðº", "Ñ‚Ð°Ðº", "Ð·Ñ€Ð¾Ð·ÑƒÐ¼Ñ–Ð»Ð¾"],
+    decline: ["Ð½Ñ–", "Ð½Ðµ Ð·Ð°Ñ€Ð°Ð·"],
+    bye: ["Ð±ÑƒÐ²Ð°Ð¹", "Ð´Ð¾ Ð¿Ð¾Ð±Ð°Ñ‡ÐµÐ½Ð½Ñ"],
     replies: {
-      greeting: "Привіт, я тут.",
-      wellbeing: "Все добре. Я готовий у цій сесії.",
-      presence: "Так, я тут.",
-      ping: "Відповідаю.",
-      thanks: "Будь ласка.",
-      praise: "Чудово.",
+      greeting: "ÐŸÑ€Ð¸Ð²Ñ–Ñ‚, Ñ Ñ‚ÑƒÑ‚.",
+      wellbeing: "Ð’ÑÐµ Ð´Ð¾Ð±Ñ€Ðµ. Ð¯ Ð³Ð¾Ñ‚Ð¾Ð²Ð¸Ð¹ Ñƒ Ñ†Ñ–Ð¹ ÑÐµÑÑ–Ñ—.",
+      presence: "Ð¢Ð°Ðº, Ñ Ñ‚ÑƒÑ‚.",
+      ping: "Ð’Ñ–Ð´Ð¿Ð¾Ð²Ñ–Ð´Ð°ÑŽ.",
+      thanks: "Ð‘ÑƒÐ´ÑŒ Ð»Ð°ÑÐºÐ°.",
+      praise: "Ð§ÑƒÐ´Ð¾Ð²Ð¾.",
       ack: "OK.",
-      decline: "Зрозуміло.",
-      bye: "До зустрічі.",
+      decline: "Ð—Ñ€Ð¾Ð·ÑƒÐ¼Ñ–Ð»Ð¾.",
+      bye: "Ð”Ð¾ Ð·ÑƒÑÑ‚Ñ€Ñ–Ñ‡Ñ–.",
     },
   },
   {
-    greeting: ["czesc", "cześć", "dzien dobry", "dzień dobry", "dobry wieczor"],
+    greeting: ["czesc", "czeÅ›Ä‡", "dzien dobry", "dzieÅ„ dobry", "dobry wieczor"],
     wellbeing: ["jak sie masz", "jak leci", "wszystko dobrze"],
     presence: ["jestes tam", "slyszysz mnie", "dziala"],
     ping: ["test", "ping"],
-    thanks: ["dzieki", "dzięki", "dziekuje", "dziękuję"],
+    thanks: ["dzieki", "dziÄ™ki", "dziekuje", "dziÄ™kujÄ™"],
     praise: ["super", "idealnie", "doskonale"],
     ack: ["ok", "tak", "rozumiem"],
     decline: ["nie", "nie teraz"],
     bye: ["pa", "do widzenia", "do zobaczenia"],
     replies: {
-      greeting: "Cześć, jestem tutaj.",
+      greeting: "CzeÅ›Ä‡, jestem tutaj.",
       wellbeing: "Wszystko dobrze. Jestem gotowy w sesji.",
       presence: "Tak, jestem tutaj.",
       ping: "Odpowiadam.",
-      thanks: "Proszę.",
+      thanks: "ProszÄ™.",
       praise: "Super.",
       ack: "OK.",
       decline: "Rozumiem.",
@@ -11330,24 +10281,24 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     },
   },
   {
-    greeting: ["hej", "hallo", "god morgon", "god kväll", "hei", "god morgen", "god kveld", "moi", "terve"],
+    greeting: ["hej", "hallo", "god morgon", "god kvÃ¤ll", "hei", "god morgen", "god kveld", "moi", "terve"],
     wellbeing: ["hur mar du", "hvordan gar det", "hvordan har du det", "miten menee", "kaikki hyvin"],
     presence: ["ar du dar", "er du der", "oletko siella", "hor du mig", "kuuluuko"],
     ping: ["test", "ping"],
     thanks: ["tack", "tusen takk", "kiitos"],
     praise: ["perfekt", "super", "bra", "hienoa"],
-    ack: ["ok", "ja", "kylla", "selvä"],
+    ack: ["ok", "ja", "kylla", "selvÃ¤"],
     decline: ["nej", "nei", "ei", "inte nu", "ikke na"],
-    bye: ["hej da", "ha det", "vi ses", "näkemiin"],
+    bye: ["hej da", "ha det", "vi ses", "nÃ¤kemiin"],
     replies: {
-      greeting: "Hej, jag är här.",
-      wellbeing: "Allt är bra. Jag är redo i sessionen.",
-      presence: "Ja, jag är här.",
+      greeting: "Hej, jag Ã¤r hÃ¤r.",
+      wellbeing: "Allt Ã¤r bra. Jag Ã¤r redo i sessionen.",
+      presence: "Ja, jag Ã¤r hÃ¤r.",
       ping: "Jag svarar.",
-      thanks: "Varsågod.",
+      thanks: "VarsÃ¥god.",
       praise: "Perfekt.",
       ack: "OK.",
-      decline: "Förstått.",
+      decline: "FÃ¶rstÃ¥tt.",
       bye: "Vi ses.",
     },
   },
@@ -11362,147 +10313,147 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     decline: ["hayir", "simdi degil"],
     bye: ["gorusuruz", "hosca kal"],
     replies: {
-      greeting: "Merhaba, buradayım.",
-      wellbeing: "İyiyim. Bu oturumda hazırım.",
-      presence: "Evet, buradayım.",
-      ping: "Yanıt veriyorum.",
+      greeting: "Merhaba, buradayÄ±m.",
+      wellbeing: "Ä°yiyim. Bu oturumda hazÄ±rÄ±m.",
+      presence: "Evet, buradayÄ±m.",
+      ping: "YanÄ±t veriyorum.",
       thanks: "Rica ederim.",
       praise: "Harika.",
       ack: "OK.",
-      decline: "Anladım.",
-      bye: "Görüşürüz.",
+      decline: "AnladÄ±m.",
+      bye: "GÃ¶rÃ¼ÅŸÃ¼rÃ¼z.",
     },
   },
   {
-    greeting: ["مرحبا", "أهلا", "اهلا", "السلام عليكم", "سلام"],
-    wellbeing: ["كيف حالك", "كيفك", "كل شيء بخير"],
-    presence: ["هل انت هنا", "تسمعني", "هل يعمل"],
-    ping: ["اختبار", "بينغ"],
-    thanks: ["شكرا", "شكرا جزيلا"],
-    praise: ["ممتاز", "رائع", "تمام"],
-    ack: ["نعم", "حسنا", "تمام"],
-    decline: ["لا", "ليس الان"],
-    bye: ["وداعا", "الى اللقاء"],
+    greeting: ["Ù…Ø±Ø­Ø¨Ø§", "Ø£Ù‡Ù„Ø§", "Ø§Ù‡Ù„Ø§", "Ø§Ù„Ø³Ù„Ø§Ù… Ø¹Ù„ÙŠÙƒÙ…", "Ø³Ù„Ø§Ù…"],
+    wellbeing: ["ÙƒÙŠÙ Ø­Ø§Ù„Ùƒ", "ÙƒÙŠÙÙƒ", "ÙƒÙ„ Ø´ÙŠØ¡ Ø¨Ø®ÙŠØ±"],
+    presence: ["Ù‡Ù„ Ø§Ù†Øª Ù‡Ù†Ø§", "ØªØ³Ù…Ø¹Ù†ÙŠ", "Ù‡Ù„ ÙŠØ¹Ù…Ù„"],
+    ping: ["Ø§Ø®ØªØ¨Ø§Ø±", "Ø¨ÙŠÙ†Øº"],
+    thanks: ["Ø´ÙƒØ±Ø§", "Ø´ÙƒØ±Ø§ Ø¬Ø²ÙŠÙ„Ø§"],
+    praise: ["Ù…Ù…ØªØ§Ø²", "Ø±Ø§Ø¦Ø¹", "ØªÙ…Ø§Ù…"],
+    ack: ["Ù†Ø¹Ù…", "Ø­Ø³Ù†Ø§", "ØªÙ…Ø§Ù…"],
+    decline: ["Ù„Ø§", "Ù„ÙŠØ³ Ø§Ù„Ø§Ù†"],
+    bye: ["ÙˆØ¯Ø§Ø¹Ø§", "Ø§Ù„Ù‰ Ø§Ù„Ù„Ù‚Ø§Ø¡"],
     replies: {
-      greeting: "مرحبًا، أنا هنا.",
-      wellbeing: "أنا بخير. أنا جاهز في الجلسة.",
-      presence: "نعم، أنا هنا.",
-      ping: "أنا أرد.",
-      thanks: "على الرحب.",
-      praise: "ممتاز.",
-      ack: "حسنًا.",
-      decline: "فهمت.",
-      bye: "إلى اللقاء.",
+      greeting: "Ù…Ø±Ø­Ø¨Ù‹Ø§ØŒ Ø£Ù†Ø§ Ù‡Ù†Ø§.",
+      wellbeing: "Ø£Ù†Ø§ Ø¨Ø®ÙŠØ±. Ø£Ù†Ø§ Ø¬Ø§Ù‡Ø² ÙÙŠ Ø§Ù„Ø¬Ù„Ø³Ø©.",
+      presence: "Ù†Ø¹Ù…ØŒ Ø£Ù†Ø§ Ù‡Ù†Ø§.",
+      ping: "Ø£Ù†Ø§ Ø£Ø±Ø¯.",
+      thanks: "Ø¹Ù„Ù‰ Ø§Ù„Ø±Ø­Ø¨.",
+      praise: "Ù…Ù…ØªØ§Ø².",
+      ack: "Ø­Ø³Ù†Ù‹Ø§.",
+      decline: "ÙÙ‡Ù…Øª.",
+      bye: "Ø¥Ù„Ù‰ Ø§Ù„Ù„Ù‚Ø§Ø¡.",
     },
   },
   {
-    greeting: ["שלום", "היי", "בוקר טוב", "ערב טוב"],
-    wellbeing: ["מה נשמע", "איך הולך", "הכל בסדר"],
-    presence: ["אתה שם", "את שומעת אותי", "זה עובד"],
-    ping: ["בדיקה", "פינג"],
-    thanks: ["תודה", "תודה רבה"],
-    praise: ["מעולה", "נהדר", "מצוין"],
-    ack: ["ok", "כן", "בסדר", "הבנתי"],
-    decline: ["לא", "לא עכשיו"],
-    bye: ["ביי", "להתראות"],
+    greeting: ["×©×œ×•×", "×”×™×™", "×‘×•×§×¨ ×˜×•×‘", "×¢×¨×‘ ×˜×•×‘"],
+    wellbeing: ["×ž×” × ×©×ž×¢", "××™×š ×”×•×œ×š", "×”×›×œ ×‘×¡×“×¨"],
+    presence: ["××ª×” ×©×", "××ª ×©×•×ž×¢×ª ××•×ª×™", "×–×” ×¢×•×‘×“"],
+    ping: ["×‘×“×™×§×”", "×¤×™× ×’"],
+    thanks: ["×ª×•×“×”", "×ª×•×“×” ×¨×‘×”"],
+    praise: ["×ž×¢×•×œ×”", "× ×”×“×¨", "×ž×¦×•×™×Ÿ"],
+    ack: ["ok", "×›×Ÿ", "×‘×¡×“×¨", "×”×‘× ×ª×™"],
+    decline: ["×œ×", "×œ× ×¢×›×©×™×•"],
+    bye: ["×‘×™×™", "×œ×”×ª×¨××•×ª"],
     replies: {
-      greeting: "שלום, אני כאן.",
-      wellbeing: "הכל טוב. אני מוכן בסשן.",
-      presence: "כן, אני כאן.",
-      ping: "אני עונה.",
-      thanks: "בשמחה.",
-      praise: "מעולה.",
+      greeting: "×©×œ×•×, ×× ×™ ×›××Ÿ.",
+      wellbeing: "×”×›×œ ×˜×•×‘. ×× ×™ ×ž×•×›×Ÿ ×‘×¡×©×Ÿ.",
+      presence: "×›×Ÿ, ×× ×™ ×›××Ÿ.",
+      ping: "×× ×™ ×¢×•× ×”.",
+      thanks: "×‘×©×ž×—×”.",
+      praise: "×ž×¢×•×œ×”.",
       ack: "OK.",
-      decline: "הבנתי.",
-      bye: "להתראות.",
+      decline: "×”×‘× ×ª×™.",
+      bye: "×œ×”×ª×¨××•×ª.",
     },
   },
   {
-    greeting: ["你好", "您好", "嗨", "早上好", "晚上好"],
-    wellbeing: ["你好吗", "怎么样", "还好吗"],
-    presence: ["你在吗", "听得到吗", "能看到吗", "可以用吗"],
-    ping: ["测试", "ping"],
-    thanks: ["谢谢", "多谢"],
-    praise: ["很好", "完美", "太好了"],
-    ack: ["ok", "好的", "是", "明白"],
-    decline: ["不", "现在不"],
-    bye: ["再见", "回头见"],
+    greeting: ["ä½ å¥½", "æ‚¨å¥½", "å—¨", "æ—©ä¸Šå¥½", "æ™šä¸Šå¥½"],
+    wellbeing: ["ä½ å¥½å—", "æ€Žä¹ˆæ ·", "è¿˜å¥½å—"],
+    presence: ["ä½ åœ¨å—", "å¬å¾—åˆ°å—", "èƒ½çœ‹åˆ°å—", "å¯ä»¥ç”¨å—"],
+    ping: ["æµ‹è¯•", "ping"],
+    thanks: ["è°¢è°¢", "å¤šè°¢"],
+    praise: ["å¾ˆå¥½", "å®Œç¾Ž", "å¤ªå¥½äº†"],
+    ack: ["ok", "å¥½çš„", "æ˜¯", "æ˜Žç™½"],
+    decline: ["ä¸", "çŽ°åœ¨ä¸"],
+    bye: ["å†è§", "å›žå¤´è§"],
     replies: {
-      greeting: "你好，我在。",
-      wellbeing: "我很好，已准备好在这个会话中工作。",
-      presence: "在的。",
-      ping: "我在回应。",
-      thanks: "不客气。",
-      praise: "很好。",
-      ack: "OK。",
-      decline: "明白。",
-      bye: "再见。",
+      greeting: "ä½ å¥½ï¼Œæˆ‘åœ¨ã€‚",
+      wellbeing: "æˆ‘å¾ˆå¥½ï¼Œå·²å‡†å¤‡å¥½åœ¨è¿™ä¸ªä¼šè¯ä¸­å·¥ä½œã€‚",
+      presence: "åœ¨çš„ã€‚",
+      ping: "æˆ‘åœ¨å›žåº”ã€‚",
+      thanks: "ä¸å®¢æ°”ã€‚",
+      praise: "å¾ˆå¥½ã€‚",
+      ack: "OKã€‚",
+      decline: "æ˜Žç™½ã€‚",
+      bye: "å†è§ã€‚",
     },
   },
   {
-    greeting: ["こんにちは", "こんばんは", "おはよう", "もしもし"],
-    wellbeing: ["元気ですか", "調子はどう", "大丈夫ですか"],
-    presence: ["いますか", "聞こえますか", "動いてますか"],
-    ping: ["テスト", "ping"],
-    thanks: ["ありがとう", "ありがとうございます"],
-    praise: ["完璧", "すごい", "いいね"],
-    ack: ["ok", "はい", "了解"],
-    decline: ["いいえ", "今はいい"],
-    bye: ["さようなら", "またね"],
+    greeting: ["ã“ã‚“ã«ã¡ã¯", "ã“ã‚“ã°ã‚“ã¯", "ãŠã¯ã‚ˆã†", "ã‚‚ã—ã‚‚ã—"],
+    wellbeing: ["å…ƒæ°—ã§ã™ã‹", "èª¿å­ã¯ã©ã†", "å¤§ä¸ˆå¤«ã§ã™ã‹"],
+    presence: ["ã„ã¾ã™ã‹", "èžã“ãˆã¾ã™ã‹", "å‹•ã„ã¦ã¾ã™ã‹"],
+    ping: ["ãƒ†ã‚¹ãƒˆ", "ping"],
+    thanks: ["ã‚ã‚ŠãŒã¨ã†", "ã‚ã‚ŠãŒã¨ã†ã”ã–ã„ã¾ã™"],
+    praise: ["å®Œç’§", "ã™ã”ã„", "ã„ã„ã­"],
+    ack: ["ok", "ã¯ã„", "äº†è§£"],
+    decline: ["ã„ã„ãˆ", "ä»Šã¯ã„ã„"],
+    bye: ["ã•ã‚ˆã†ãªã‚‰", "ã¾ãŸã­"],
     replies: {
-      greeting: "こんにちは。ここにいます。",
-      wellbeing: "元気です。このセッションで準備できています。",
-      presence: "はい、います。",
-      ping: "応答しています。",
-      thanks: "どういたしまして。",
-      praise: "完璧です。",
-      ack: "OK。",
-      decline: "了解です。",
-      bye: "またね。",
+      greeting: "ã“ã‚“ã«ã¡ã¯ã€‚ã“ã“ã«ã„ã¾ã™ã€‚",
+      wellbeing: "å…ƒæ°—ã§ã™ã€‚ã“ã®ã‚»ãƒƒã‚·ãƒ§ãƒ³ã§æº–å‚™ã§ãã¦ã„ã¾ã™ã€‚",
+      presence: "ã¯ã„ã€ã„ã¾ã™ã€‚",
+      ping: "å¿œç­”ã—ã¦ã„ã¾ã™ã€‚",
+      thanks: "ã©ã†ã„ãŸã—ã¾ã—ã¦ã€‚",
+      praise: "å®Œç’§ã§ã™ã€‚",
+      ack: "OKã€‚",
+      decline: "äº†è§£ã§ã™ã€‚",
+      bye: "ã¾ãŸã­ã€‚",
     },
   },
   {
-    greeting: ["안녕하세요", "안녕", "여보세요"],
-    wellbeing: ["잘 지내", "어때", "괜찮아"],
-    presence: ["거기 있어", "들려", "작동해"],
-    ping: ["테스트", "핑"],
-    thanks: ["고마워", "감사합니다"],
-    praise: ["완벽해", "좋아", "훌륭해"],
-    ack: ["ok", "네", "응", "알겠어"],
-    decline: ["아니", "지금은 아니야"],
-    bye: ["안녕", "또 봐요"],
+    greeting: ["ì•ˆë…•í•˜ì„¸ìš”", "ì•ˆë…•", "ì—¬ë³´ì„¸ìš”"],
+    wellbeing: ["ìž˜ ì§€ë‚´", "ì–´ë•Œ", "ê´œì°®ì•„"],
+    presence: ["ê±°ê¸° ìžˆì–´", "ë“¤ë ¤", "ìž‘ë™í•´"],
+    ping: ["í…ŒìŠ¤íŠ¸", "í•‘"],
+    thanks: ["ê³ ë§ˆì›Œ", "ê°ì‚¬í•©ë‹ˆë‹¤"],
+    praise: ["ì™„ë²½í•´", "ì¢‹ì•„", "í›Œë¥­í•´"],
+    ack: ["ok", "ë„¤", "ì‘", "ì•Œê² ì–´"],
+    decline: ["ì•„ë‹ˆ", "ì§€ê¸ˆì€ ì•„ë‹ˆì•¼"],
+    bye: ["ì•ˆë…•", "ë˜ ë´ìš”"],
     replies: {
-      greeting: "안녕하세요, 여기 있어요.",
-      wellbeing: "좋아요. 이 세션에서 준비됐어요.",
-      presence: "네, 여기 있어요.",
-      ping: "응답하고 있어요.",
-      thanks: "천만에요.",
-      praise: "좋아요.",
+      greeting: "ì•ˆë…•í•˜ì„¸ìš”, ì—¬ê¸° ìžˆì–´ìš”.",
+      wellbeing: "ì¢‹ì•„ìš”. ì´ ì„¸ì…˜ì—ì„œ ì¤€ë¹„ëì–´ìš”.",
+      presence: "ë„¤, ì—¬ê¸° ìžˆì–´ìš”.",
+      ping: "ì‘ë‹µí•˜ê³  ìžˆì–´ìš”.",
+      thanks: "ì²œë§Œì—ìš”.",
+      praise: "ì¢‹ì•„ìš”.",
       ack: "OK.",
-      decline: "알겠어요.",
-      bye: "또 봐요.",
+      decline: "ì•Œê² ì–´ìš”.",
+      bye: "ë˜ ë´ìš”.",
     },
   },
   {
-    greeting: ["namaste", "नमस्ते", "नमस्कार", "hello"],
-    wellbeing: ["kaise ho", "आप कैसे हैं", "सब ठीक"],
-    presence: ["क्या तुम हो", "सुन रहे हो", "काम कर रहा है"],
-    ping: ["test", "ping", "परीक्षण"],
-    thanks: ["dhanyavaad", "धन्यवाद", "शुक्रिया"],
-    praise: ["bahut accha", "बहुत अच्छा", "बढ़िया"],
-    ack: ["ok", "haan", "हाँ", "ठीक है"],
-    decline: ["nahi", "नहीं", "अभी नहीं"],
-    bye: ["अलविदा", "फिर मिलेंगे"],
+    greeting: ["namaste", "à¤¨à¤®à¤¸à¥à¤¤à¥‡", "à¤¨à¤®à¤¸à¥à¤•à¤¾à¤°", "hello"],
+    wellbeing: ["kaise ho", "à¤†à¤ª à¤•à¥ˆà¤¸à¥‡ à¤¹à¥ˆà¤‚", "à¤¸à¤¬ à¤ à¥€à¤•"],
+    presence: ["à¤•à¥à¤¯à¤¾ à¤¤à¥à¤® à¤¹à¥‹", "à¤¸à¥à¤¨ à¤°à¤¹à¥‡ à¤¹à¥‹", "à¤•à¤¾à¤® à¤•à¤° à¤°à¤¹à¤¾ à¤¹à¥ˆ"],
+    ping: ["test", "ping", "à¤ªà¤°à¥€à¤•à¥à¤·à¤£"],
+    thanks: ["dhanyavaad", "à¤§à¤¨à¥à¤¯à¤µà¤¾à¤¦", "à¤¶à¥à¤•à¥à¤°à¤¿à¤¯à¤¾"],
+    praise: ["bahut accha", "à¤¬à¤¹à¥à¤¤ à¤…à¤šà¥à¤›à¤¾", "à¤¬à¤¢à¤¼à¤¿à¤¯à¤¾"],
+    ack: ["ok", "haan", "à¤¹à¤¾à¤", "à¤ à¥€à¤• à¤¹à¥ˆ"],
+    decline: ["nahi", "à¤¨à¤¹à¥€à¤‚", "à¤…à¤­à¥€ à¤¨à¤¹à¥€à¤‚"],
+    bye: ["à¤…à¤²à¤µà¤¿à¤¦à¤¾", "à¤«à¤¿à¤° à¤®à¤¿à¤²à¥‡à¤‚à¤—à¥‡"],
     replies: {
-      greeting: "नमस्ते, मैं यहाँ हूँ।",
-      wellbeing: "मैं ठीक हूँ। मैं इस सेशन में तैयार हूँ।",
-      presence: "हाँ, मैं यहाँ हूँ।",
-      ping: "मैं जवाब दे रहा हूँ।",
-      thanks: "स्वागत है।",
-      praise: "बढ़िया।",
+      greeting: "à¤¨à¤®à¤¸à¥à¤¤à¥‡, à¤®à¥ˆà¤‚ à¤¯à¤¹à¤¾à¤ à¤¹à¥‚à¤à¥¤",
+      wellbeing: "à¤®à¥ˆà¤‚ à¤ à¥€à¤• à¤¹à¥‚à¤à¥¤ à¤®à¥ˆà¤‚ à¤‡à¤¸ à¤¸à¥‡à¤¶à¤¨ à¤®à¥‡à¤‚ à¤¤à¥ˆà¤¯à¤¾à¤° à¤¹à¥‚à¤à¥¤",
+      presence: "à¤¹à¤¾à¤, à¤®à¥ˆà¤‚ à¤¯à¤¹à¤¾à¤ à¤¹à¥‚à¤à¥¤",
+      ping: "à¤®à¥ˆà¤‚ à¤œà¤µà¤¾à¤¬ à¤¦à¥‡ à¤°à¤¹à¤¾ à¤¹à¥‚à¤à¥¤",
+      thanks: "à¤¸à¥à¤µà¤¾à¤—à¤¤ à¤¹à¥ˆà¥¤",
+      praise: "à¤¬à¤¢à¤¼à¤¿à¤¯à¤¾à¥¤",
       ack: "OK.",
-      decline: "समझ गया।",
-      bye: "फिर मिलेंगे।",
+      decline: "à¤¸à¤®à¤ à¤—à¤¯à¤¾à¥¤",
+      bye: "à¤«à¤¿à¤° à¤®à¤¿à¤²à¥‡à¤‚à¤—à¥‡à¥¤",
     },
   },
   {
@@ -11512,7 +10463,7 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     ping: ["tes", "test", "ping"],
     thanks: ["terima kasih", "cam on"],
     praise: ["sempurna", "bagus", "tuyet voi"],
-    ack: ["ok", "ya", "iya", "vâng", "duoc"],
+    ack: ["ok", "ya", "iya", "vÃ¢ng", "duoc"],
     decline: ["tidak", "khong", "khong phai bay gio"],
     bye: ["sampai jumpa", "tam biet"],
     replies: {
@@ -11528,91 +10479,91 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     },
   },
   {
-    greeting: ["สวัสดี", "หวัดดี"],
-    wellbeing: ["สบายดีไหม", "เป็นไงบ้าง"],
-    presence: ["อยู่ไหม", "ได้ยินไหม", "ทำงานไหม"],
-    ping: ["ทดสอบ", "ping"],
-    thanks: ["ขอบคุณ", "ขอบคุณมาก"],
-    praise: ["เยี่ยม", "ดีมาก", "สมบูรณ์แบบ"],
-    ack: ["ok", "โอเค", "ใช่"],
-    decline: ["ไม่", "ไม่ใช่ตอนนี้"],
-    bye: ["ลาก่อน", "เจอกัน"],
+    greeting: ["à¸ªà¸§à¸±à¸ªà¸”à¸µ", "à¸«à¸§à¸±à¸”à¸”à¸µ"],
+    wellbeing: ["à¸ªà¸šà¸²à¸¢à¸”à¸µà¹„à¸«à¸¡", "à¹€à¸›à¹‡à¸™à¹„à¸‡à¸šà¹‰à¸²à¸‡"],
+    presence: ["à¸­à¸¢à¸¹à¹ˆà¹„à¸«à¸¡", "à¹„à¸”à¹‰à¸¢à¸´à¸™à¹„à¸«à¸¡", "à¸—à¸³à¸‡à¸²à¸™à¹„à¸«à¸¡"],
+    ping: ["à¸—à¸”à¸ªà¸­à¸š", "ping"],
+    thanks: ["à¸‚à¸­à¸šà¸„à¸¸à¸“", "à¸‚à¸­à¸šà¸„à¸¸à¸“à¸¡à¸²à¸"],
+    praise: ["à¹€à¸¢à¸µà¹ˆà¸¢à¸¡", "à¸”à¸µà¸¡à¸²à¸", "à¸ªà¸¡à¸šà¸¹à¸£à¸“à¹Œà¹à¸šà¸š"],
+    ack: ["ok", "à¹‚à¸­à¹€à¸„", "à¹ƒà¸Šà¹ˆ"],
+    decline: ["à¹„à¸¡à¹ˆ", "à¹„à¸¡à¹ˆà¹ƒà¸Šà¹ˆà¸•à¸­à¸™à¸™à¸µà¹‰"],
+    bye: ["à¸¥à¸²à¸à¹ˆà¸­à¸™", "à¹€à¸ˆà¸­à¸à¸±à¸™"],
     replies: {
-      greeting: "สวัสดี ฉันอยู่ตรงนี้",
-      wellbeing: "สบายดี พร้อมในเซสชันนี้แล้ว",
-      presence: "ใช่ ฉันอยู่ตรงนี้",
-      ping: "ฉันตอบอยู่",
-      thanks: "ยินดี",
-      praise: "ดีมาก",
+      greeting: "à¸ªà¸§à¸±à¸ªà¸”à¸µ à¸‰à¸±à¸™à¸­à¸¢à¸¹à¹ˆà¸•à¸£à¸‡à¸™à¸µà¹‰",
+      wellbeing: "à¸ªà¸šà¸²à¸¢à¸”à¸µ à¸žà¸£à¹‰à¸­à¸¡à¹ƒà¸™à¹€à¸‹à¸ªà¸Šà¸±à¸™à¸™à¸µà¹‰à¹à¸¥à¹‰à¸§",
+      presence: "à¹ƒà¸Šà¹ˆ à¸‰à¸±à¸™à¸­à¸¢à¸¹à¹ˆà¸•à¸£à¸‡à¸™à¸µà¹‰",
+      ping: "à¸‰à¸±à¸™à¸•à¸­à¸šà¸­à¸¢à¸¹à¹ˆ",
+      thanks: "à¸¢à¸´à¸™à¸”à¸µ",
+      praise: "à¸”à¸µà¸¡à¸²à¸",
       ack: "OK.",
-      decline: "เข้าใจแล้ว",
-      bye: "เจอกัน",
+      decline: "à¹€à¸‚à¹‰à¸²à¹ƒà¸ˆà¹à¸¥à¹‰à¸§",
+      bye: "à¹€à¸ˆà¸­à¸à¸±à¸™",
     },
   },
   {
-    greeting: ["γεια", "καλημερα", "καλησπερα"],
-    wellbeing: ["τι κανεις", "πως παει", "ολα καλα"],
-    presence: ["εισαι εδω", "με ακους", "δουλευει"],
-    ping: ["τεστ", "ping"],
-    thanks: ["ευχαριστω", "ευχαριστώ"],
-    praise: ["τελεια", "τέλεια", "σουπερ"],
-    ack: ["ok", "ναι", "ενταξει"],
-    decline: ["οχι", "οχι τωρα"],
-    bye: ["αντιο", "τα λεμε"],
+    greeting: ["Î³ÎµÎ¹Î±", "ÎºÎ±Î»Î·Î¼ÎµÏÎ±", "ÎºÎ±Î»Î·ÏƒÏ€ÎµÏÎ±"],
+    wellbeing: ["Ï„Î¹ ÎºÎ±Î½ÎµÎ¹Ï‚", "Ï€Ï‰Ï‚ Ï€Î±ÎµÎ¹", "Î¿Î»Î± ÎºÎ±Î»Î±"],
+    presence: ["ÎµÎ¹ÏƒÎ±Î¹ ÎµÎ´Ï‰", "Î¼Îµ Î±ÎºÎ¿Ï…Ï‚", "Î´Î¿Ï…Î»ÎµÏ…ÎµÎ¹"],
+    ping: ["Ï„ÎµÏƒÏ„", "ping"],
+    thanks: ["ÎµÏ…Ï‡Î±ÏÎ¹ÏƒÏ„Ï‰", "ÎµÏ…Ï‡Î±ÏÎ¹ÏƒÏ„ÏŽ"],
+    praise: ["Ï„ÎµÎ»ÎµÎ¹Î±", "Ï„Î­Î»ÎµÎ¹Î±", "ÏƒÎ¿Ï…Ï€ÎµÏ"],
+    ack: ["ok", "Î½Î±Î¹", "ÎµÎ½Ï„Î±Î¾ÎµÎ¹"],
+    decline: ["Î¿Ï‡Î¹", "Î¿Ï‡Î¹ Ï„Ï‰ÏÎ±"],
+    bye: ["Î±Î½Ï„Î¹Î¿", "Ï„Î± Î»ÎµÎ¼Îµ"],
     replies: {
-      greeting: "Γεια, είμαι εδώ.",
-      wellbeing: "Είμαι καλά. Είμαι έτοιμος στη συνεδρία.",
-      presence: "Ναι, είμαι εδώ.",
-      ping: "Απαντώ.",
-      thanks: "Παρακαλώ.",
-      praise: "Τέλεια.",
+      greeting: "Î“ÎµÎ¹Î±, ÎµÎ¯Î¼Î±Î¹ ÎµÎ´ÏŽ.",
+      wellbeing: "Î•Î¯Î¼Î±Î¹ ÎºÎ±Î»Î¬. Î•Î¯Î¼Î±Î¹ Î­Ï„Î¿Î¹Î¼Î¿Ï‚ ÏƒÏ„Î· ÏƒÏ…Î½ÎµÎ´ÏÎ¯Î±.",
+      presence: "ÎÎ±Î¹, ÎµÎ¯Î¼Î±Î¹ ÎµÎ´ÏŽ.",
+      ping: "Î‘Ï€Î±Î½Ï„ÏŽ.",
+      thanks: "Î Î±ÏÎ±ÎºÎ±Î»ÏŽ.",
+      praise: "Î¤Î­Î»ÎµÎ¹Î±.",
       ack: "OK.",
-      decline: "Κατάλαβα.",
-      bye: "Τα λέμε.",
+      decline: "ÎšÎ±Ï„Î¬Î»Î±Î²Î±.",
+      bye: "Î¤Î± Î»Î­Î¼Îµ.",
     },
   },
   {
-    greeting: ["salut", "buna", "bună", "szia", "jo napot", "jó napot", "ahoj", "dobry den"],
+    greeting: ["salut", "buna", "bunÄƒ", "szia", "jo napot", "jÃ³ napot", "ahoj", "dobry den"],
     wellbeing: ["ce faci", "hogy vagy", "jak se mas", "vse v poradku"],
     presence: ["esti acolo", "ott vagy", "jsi tam", "ma auzi", "hallod"],
     ping: ["test", "ping"],
-    thanks: ["multumesc", "mulțumesc", "koszi", "köszi", "dekuji", "děkuji"],
-    praise: ["perfect", "super", "excelent", "kiváló", "skvele"],
+    thanks: ["multumesc", "mulÈ›umesc", "koszi", "kÃ¶szi", "dekuji", "dÄ›kuji"],
+    praise: ["perfect", "super", "excelent", "kivÃ¡lÃ³", "skvele"],
     ack: ["ok", "da", "igen", "ano"],
     decline: ["nu", "nem", "ne", "nu acum"],
     bye: ["pa", "la revedere", "viszlat", "ahoj"],
     replies: {
       greeting: "Salut, sunt aici.",
-      wellbeing: "Totul e bine. Sunt gata în sesiune.",
+      wellbeing: "Totul e bine. Sunt gata Ã®n sesiune.",
       presence: "Da, sunt aici.",
-      ping: "Răspund.",
-      thanks: "Cu plăcere.",
+      ping: "RÄƒspund.",
+      thanks: "Cu plÄƒcere.",
       praise: "Perfect.",
       ack: "OK.",
-      decline: "Am înțeles.",
-      bye: "Pe curând.",
+      decline: "Am Ã®nÈ›eles.",
+      bye: "Pe curÃ¢nd.",
     },
   },
   {
-    greeting: ["سلام", "درود", "ہیلو", "habari", "jambo"],
-    wellbeing: ["حالت چطوره", "آپ کیسے ہیں", "habari yako"],
-    presence: ["اینجایی", "کیا آپ ہیں", "upo hapo"],
-    ping: ["تست", "ٹیسٹ", "ping"],
-    thanks: ["ممنون", "متشکرم", "شکریہ", "asante"],
-    praise: ["عالی", "زبردست", "nzuri"],
-    ack: ["ok", "بله", "ہاں", "ndiyo"],
-    decline: ["نه", "نہیں", "hapana"],
-    bye: ["خداحافظ", "الوداع", "kwa heri"],
+    greeting: ["Ø³Ù„Ø§Ù…", "Ø¯Ø±ÙˆØ¯", "ÛÛŒÙ„Ùˆ", "habari", "jambo"],
+    wellbeing: ["Ø­Ø§Ù„Øª Ú†Ø·ÙˆØ±Ù‡", "Ø¢Ù¾ Ú©ÛŒØ³Û’ ÛÛŒÚº", "habari yako"],
+    presence: ["Ø§ÛŒÙ†Ø¬Ø§ÛŒÛŒ", "Ú©ÛŒØ§ Ø¢Ù¾ ÛÛŒÚº", "upo hapo"],
+    ping: ["ØªØ³Øª", "Ù¹ÛŒØ³Ù¹", "ping"],
+    thanks: ["Ù…Ù…Ù†ÙˆÙ†", "Ù…ØªØ´Ú©Ø±Ù…", "Ø´Ú©Ø±ÛŒÛ", "asante"],
+    praise: ["Ø¹Ø§Ù„ÛŒ", "Ø²Ø¨Ø±Ø¯Ø³Øª", "nzuri"],
+    ack: ["ok", "Ø¨Ù„Ù‡", "ÛØ§Úº", "ndiyo"],
+    decline: ["Ù†Ù‡", "Ù†ÛÛŒÚº", "hapana"],
+    bye: ["Ø®Ø¯Ø§Ø­Ø§ÙØ¸", "Ø§Ù„ÙˆØ¯Ø§Ø¹", "kwa heri"],
     replies: {
-      greeting: "سلام، من اینجا هستم.",
-      wellbeing: "خوبم و در این جلسه آماده‌ام.",
-      presence: "بله، اینجا هستم.",
-      ping: "پاسخ می‌دهم.",
-      thanks: "خواهش می‌کنم.",
-      praise: "عالی.",
+      greeting: "Ø³Ù„Ø§Ù…ØŒ Ù…Ù† Ø§ÛŒÙ†Ø¬Ø§ Ù‡Ø³ØªÙ….",
+      wellbeing: "Ø®ÙˆØ¨Ù… Ùˆ Ø¯Ø± Ø§ÛŒÙ† Ø¬Ù„Ø³Ù‡ Ø¢Ù…Ø§Ø¯Ù‡â€ŒØ§Ù….",
+      presence: "Ø¨Ù„Ù‡ØŒ Ø§ÛŒÙ†Ø¬Ø§ Ù‡Ø³ØªÙ….",
+      ping: "Ù¾Ø§Ø³Ø® Ù…ÛŒâ€ŒØ¯Ù‡Ù….",
+      thanks: "Ø®ÙˆØ§Ù‡Ø´ Ù…ÛŒâ€ŒÚ©Ù†Ù….",
+      praise: "Ø¹Ø§Ù„ÛŒ.",
       ack: "OK.",
-      decline: "فهمیدم.",
-      bye: "خداحافظ.",
+      decline: "ÙÙ‡Ù…ÛŒØ¯Ù….",
+      bye: "Ø®Ø¯Ø§Ø­Ø§ÙØ¸.",
     },
   },
 ];
@@ -11667,7 +10618,7 @@ function localCanvasForgeHelpReply(normalized) {
     "comment marche forge",
     "comment fonctionne forge",
   ])) {
-    return "Forge sert à garder les gros fichiers, calculs et preuves côté backend. Tu parles dans le canvas, l’agent lit seulement un contexte compact, lance les programmes Forge quand il faut, et évite d’envoyer les données brutes au LLM.";
+    return "Forge sert Ã  garder les gros fichiers, calculs et preuves cÃ´tÃ© backend. Tu parles dans le canvas, lâ€™agent lit seulement un contexte compact, lance les programmes Forge quand il faut, et Ã©vite dâ€™envoyer les donnÃ©es brutes au LLM.";
   }
   if (normalizedIncludesAny(normalized, [
     "comment ajouter un fichier",
@@ -11679,7 +10630,7 @@ function localCanvasForgeHelpReply(normalized) {
     "nouvelle session",
     "fichier dans la session",
   ])) {
-    return "Pour une session ouverte, utilise le + dans la barre de chat ou sous la card fichier: le fichier est ajouté à la session actuelle. New session sert à repartir dans une autre session, avec ou sans fichier.";
+    return "Pour une session ouverte, utilise le + dans la barre de chat ou sous la card fichier: le fichier est ajoutÃ© Ã  la session actuelle. New session sert Ã  repartir dans une autre session, avec ou sans fichier.";
   }
   if (normalizedIncludesAny(normalized, [
     "economise des tokens",
@@ -11691,7 +10642,7 @@ function localCanvasForgeHelpReply(normalized) {
     "brule des tokens",
     "cout de tokens",
   ])) {
-    return "Forge économise les tokens en gardant les fichiers et calculs sur disque. Le LLM reçoit des résumés, références, hashes, logs courts et résultats. Pour les petits messages, Forge répond localement sans appeler Codex, Gemini ou Claude.";
+    return "Forge Ã©conomise les tokens en gardant les fichiers et calculs sur disque. Le LLM reÃ§oit des rÃ©sumÃ©s, rÃ©fÃ©rences, hashes, logs courts et rÃ©sultats. Pour les petits messages, Forge rÃ©pond localement sans appeler Codex, Gemini ou Claude.";
   }
   if (normalizedIncludesAny(normalized, [
     "codex gemini claude",
@@ -11704,7 +10655,7 @@ function localCanvasForgeHelpReply(normalized) {
     "raisonnement moyen",
     "raisonnement eleve",
   ])) {
-    return "Dans la barre de chat, tu choisis Codex, Gemini, Claude ou All. Le modèle et l’effort de raisonnement se règlent dans le sélecteur à droite. All sert surtout à comparer ou répartir une tâche, pas aux petits messages.";
+    return "Dans la barre de chat, tu choisis Codex, Gemini, Claude ou All. Le modÃ¨le et lâ€™effort de raisonnement se rÃ¨glent dans le sÃ©lecteur Ã  droite. All sert surtout Ã  comparer ou rÃ©partir une tÃ¢che, pas aux petits messages.";
   }
   if (normalizedIncludesAny(normalized, [
     "how does forge work",
@@ -11738,7 +10689,7 @@ function localCanvasForgeHelpReply(normalized) {
     "no entiendo forge",
     "para que sirve forge",
   ])) {
-    return "Forge guarda archivos grandes, cálculos y pruebas en el backend. El agente recibe contexto compacto, ejecuta programas Forge cuando hace falta y evita enviar datos brutos al LLM.";
+    return "Forge guarda archivos grandes, cÃ¡lculos y pruebas en el backend. El agente recibe contexto compacto, ejecuta programas Forge cuando hace falta y evita enviar datos brutos al LLM.";
   }
   if (normalizedIncludesAny(normalized, [
     "was ist forge",
@@ -11746,7 +10697,7 @@ function localCanvasForgeHelpReply(normalized) {
     "ich verstehe forge nicht",
     "wofur ist forge",
   ])) {
-    return "Forge hält große Dateien, Berechnungen und Nachweise im Backend. Der Agent bekommt kompakten Kontext, startet Forge-Programme bei Bedarf und sendet keine Rohdaten an das LLM.";
+    return "Forge hÃ¤lt groÃŸe Dateien, Berechnungen und Nachweise im Backend. Der Agent bekommt kompakten Kontext, startet Forge-Programme bei Bedarf und sendet keine Rohdaten an das LLM.";
   }
   if (normalizedIncludesAny(normalized, [
     "cos e forge",
@@ -11754,7 +10705,7 @@ function localCanvasForgeHelpReply(normalized) {
     "non capisco forge",
     "a cosa serve forge",
   ])) {
-    return "Forge tiene file grandi, calcoli e prove nel backend. L’agente riceve contesto compatto, avvia programmi Forge quando serve e non invia dati grezzi al LLM.";
+    return "Forge tiene file grandi, calcoli e prove nel backend. Lâ€™agente riceve contesto compatto, avvia programmi Forge quando serve e non invia dati grezzi al LLM.";
   }
   if (normalizedIncludesAny(normalized, [
     "o que e forge",
@@ -11762,19 +10713,19 @@ function localCanvasForgeHelpReply(normalized) {
     "nao entendo forge",
     "para que serve forge",
   ])) {
-    return "Forge mantém arquivos grandes, cálculos e provas no backend. O agente recebe contexto compacto, executa programas Forge quando necessário e evita enviar dados brutos ao LLM.";
+    return "Forge mantÃ©m arquivos grandes, cÃ¡lculos e provas no backend. O agente recebe contexto compacto, executa programas Forge quando necessÃ¡rio e evita enviar dados brutos ao LLM.";
   }
-  if (normalizedIncludesAny(normalized, ["что такое forge", "как работает forge", "не понимаю forge"])) {
-    return "Forge хранит большие файлы, вычисления и доказательства в backend. Агент получает компактный контекст, запускает программы Forge при необходимости и не отправляет сырые данные в LLM.";
+  if (normalizedIncludesAny(normalized, ["Ñ‡Ñ‚Ð¾ Ñ‚Ð°ÐºÐ¾Ðµ forge", "ÐºÐ°Ðº Ñ€Ð°Ð±Ð¾Ñ‚Ð°ÐµÑ‚ forge", "Ð½Ðµ Ð¿Ð¾Ð½Ð¸Ð¼Ð°ÑŽ forge"])) {
+    return "Forge Ñ…Ñ€Ð°Ð½Ð¸Ñ‚ Ð±Ð¾Ð»ÑŒÑˆÐ¸Ðµ Ñ„Ð°Ð¹Ð»Ñ‹, Ð²Ñ‹Ñ‡Ð¸ÑÐ»ÐµÐ½Ð¸Ñ Ð¸ Ð´Ð¾ÐºÐ°Ð·Ð°Ñ‚ÐµÐ»ÑŒÑÑ‚Ð²Ð° Ð² backend. ÐÐ³ÐµÐ½Ñ‚ Ð¿Ð¾Ð»ÑƒÑ‡Ð°ÐµÑ‚ ÐºÐ¾Ð¼Ð¿Ð°ÐºÑ‚Ð½Ñ‹Ð¹ ÐºÐ¾Ð½Ñ‚ÐµÐºÑÑ‚, Ð·Ð°Ð¿ÑƒÑÐºÐ°ÐµÑ‚ Ð¿Ñ€Ð¾Ð³Ñ€Ð°Ð¼Ð¼Ñ‹ Forge Ð¿Ñ€Ð¸ Ð½ÐµÐ¾Ð±Ñ…Ð¾Ð´Ð¸Ð¼Ð¾ÑÑ‚Ð¸ Ð¸ Ð½Ðµ Ð¾Ñ‚Ð¿Ñ€Ð°Ð²Ð»ÑÐµÑ‚ ÑÑ‹Ñ€Ñ‹Ðµ Ð´Ð°Ð½Ð½Ñ‹Ðµ Ð² LLM.";
   }
-  if (normalizedIncludesAny(normalized, ["什么是forge", "forge怎么用", "forge如何工作"])) {
-    return "Forge 把大文件、计算和证明保留在后端。智能体只接收紧凑上下文，需要时运行 Forge 程序，避免把原始数据发送给 LLM。";
+  if (normalizedIncludesAny(normalized, ["ä»€ä¹ˆæ˜¯forge", "forgeæ€Žä¹ˆç”¨", "forgeå¦‚ä½•å·¥ä½œ"])) {
+    return "Forge æŠŠå¤§æ–‡ä»¶ã€è®¡ç®—å’Œè¯æ˜Žä¿ç•™åœ¨åŽç«¯ã€‚æ™ºèƒ½ä½“åªæŽ¥æ”¶ç´§å‡‘ä¸Šä¸‹æ–‡ï¼Œéœ€è¦æ—¶è¿è¡Œ Forge ç¨‹åºï¼Œé¿å…æŠŠåŽŸå§‹æ•°æ®å‘é€ç»™ LLMã€‚";
   }
-  if (normalizedIncludesAny(normalized, ["forgeとは", "forgeの使い方", "forgeがわからない"])) {
-    return "Forge は大きなファイル、計算、証明をバックエンド側に置きます。エージェントは短い文脈だけを受け取り、必要な時に Forge プログラムを実行します。";
+  if (normalizedIncludesAny(normalized, ["forgeã¨ã¯", "forgeã®ä½¿ã„æ–¹", "forgeãŒã‚ã‹ã‚‰ãªã„"])) {
+    return "Forge ã¯å¤§ããªãƒ•ã‚¡ã‚¤ãƒ«ã€è¨ˆç®—ã€è¨¼æ˜Žã‚’ãƒãƒƒã‚¯ã‚¨ãƒ³ãƒ‰å´ã«ç½®ãã¾ã™ã€‚ã‚¨ãƒ¼ã‚¸ã‚§ãƒ³ãƒˆã¯çŸ­ã„æ–‡è„ˆã ã‘ã‚’å—ã‘å–ã‚Šã€å¿…è¦ãªæ™‚ã« Forge ãƒ—ãƒ­ã‚°ãƒ©ãƒ ã‚’å®Ÿè¡Œã—ã¾ã™ã€‚";
   }
-  if (normalizedIncludesAny(normalized, ["ما هو forge", "كيف يعمل forge", "لا افهم forge"])) {
-    return "Forge يحتفظ بالملفات الكبيرة والحسابات والإثباتات في الخلفية. يحصل الوكيل على سياق مختصر ويشغل برامج Forge عند الحاجة بدون إرسال البيانات الخام إلى LLM.";
+  if (normalizedIncludesAny(normalized, ["Ù…Ø§ Ù‡Ùˆ forge", "ÙƒÙŠÙ ÙŠØ¹Ù…Ù„ forge", "Ù„Ø§ Ø§ÙÙ‡Ù… forge"])) {
+    return "Forge ÙŠØ­ØªÙØ¸ Ø¨Ø§Ù„Ù…Ù„ÙØ§Øª Ø§Ù„ÙƒØ¨ÙŠØ±Ø© ÙˆØ§Ù„Ø­Ø³Ø§Ø¨Ø§Øª ÙˆØ§Ù„Ø¥Ø«Ø¨Ø§ØªØ§Øª ÙÙŠ Ø§Ù„Ø®Ù„ÙÙŠØ©. ÙŠØ­ØµÙ„ Ø§Ù„ÙˆÙƒÙŠÙ„ Ø¹Ù„Ù‰ Ø³ÙŠØ§Ù‚ Ù…Ø®ØªØµØ± ÙˆÙŠØ´ØºÙ„ Ø¨Ø±Ø§Ù…Ø¬ Forge Ø¹Ù†Ø¯ Ø§Ù„Ø­Ø§Ø¬Ø© Ø¨Ø¯ÙˆÙ† Ø¥Ø±Ø³Ø§Ù„ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ø®Ø§Ù… Ø¥Ù„Ù‰ LLM.";
   }
   return "";
 }
@@ -11809,7 +10760,7 @@ function localCanvasMicroReplyForTurn(primaryText, geminiText = "", claudeText =
   if (!parts.length) return "";
   const replies = parts.map(localCanvasMicroReply);
   if (replies.some((reply) => !reply)) return "";
-  return replies[0] || "Je suis là.";
+  return replies[0] || "Je suis lÃ .";
 }
 
 function canvasFallbackRuntimeFromPayload(payload) {
@@ -11830,7 +10781,7 @@ function applyCanvasRuntimeFallbackToUi(payload) {
     return {
       ...target,
       runtime: fallback,
-      label: `${canvasChatTargetLabel(fallback)} · fallback`,
+      label: `${canvasChatTargetLabel(fallback)} Â· fallback`,
     };
   });
   if (changed) {
@@ -11886,9 +10837,9 @@ function handleForgeCanvasAssistantEvent(payload) {
   });
 }
 
-// ── Chapter pins (Claude-Desktop-style bookmark markers) ───────────
+// â”€â”€ Chapter pins (Claude-Desktop-style bookmark markers) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Uses string IDs throughout so the Set never mixes "5" (from
-// dataset.messageId) and 5 (raw number from message.id) — that
+// dataset.messageId) and 5 (raw number from message.id) â€” that
 // mismatch silently kept pins from being toggled correctly.
 const canvasChatPinnedIds = new Set();
 const canvasChaptersEl = typeof document !== "undefined"
@@ -11921,7 +10872,7 @@ function toggleCanvasChatPin(messageId) {
 
 function chapterPreviewFor(message) {
   const raw = String(message?.text || "").trim().replace(/\s+/g, " ");
-  return raw.length > 64 ? `${raw.slice(0, 64)}…` : raw;
+  return raw.length > 64 ? `${raw.slice(0, 64)}â€¦` : raw;
 }
 
 function renderCanvasChapters() {
@@ -11956,15 +10907,15 @@ function renderCanvasChapters() {
   canvasChaptersEl.replaceChildren(fragment);
 }
 
-// Approximate brand logos for the agent labels — drawn from scratch in
+// Approximate brand logos for the agent labels â€” drawn from scratch in
 // SVG (no asset files, no licence bundling). Each is a single path that
 // fills with currentColor so it inherits the label's text color.
 const CANVAS_CHAT_AGENT_ICONS = {
-  // Gemini — 4-pointed sparkle with concave curved blades.
+  // Gemini â€” 4-pointed sparkle with concave curved blades.
   gemini: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.5C12 8.4 8.4 12 1.5 12 8.4 12 12 15.6 12 22.5 12 15.6 15.6 12 22.5 12 15.6 12 12 8.4 12 1.5Z"/></svg>',
-  // Claude / Anthropic — 4-blade asterisk with rounded ends meeting at the centre.
+  // Claude / Anthropic â€” 4-blade asterisk with rounded ends meeting at the centre.
   claude: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.4 2.4c0 4.5-.7 7.1-3 8.2-.9.4-1.9.6-3.6.7-.5 0-.8.3-.8.7s.3.7.8.7c1.7.1 2.7.3 3.6.7 2.3 1.1 3 3.7 3 8.2 0 .4.2.6.6.6s.6-.2.6-.6c0-4.5.7-7.1 3-8.2.9-.4 1.9-.6 3.6-.7.5 0 .8-.3.8-.7s-.3-.7-.8-.7c-1.7-.1-2.7-.3-3.6-.7-2.3-1.1-3-3.7-3-8.2 0-.4-.2-.6-.6-.6s-.6.2-.6.6Z"/></svg>',
-  // Codex / OpenAI — hexagonal knot, simplified.
+  // Codex / OpenAI â€” hexagonal knot, simplified.
   codex: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.5 20.66 6.5V16.5L12 21.5 3.34 16.5V6.5Z"/></svg>',
 };
 
@@ -12117,7 +11068,7 @@ function canvasPlanetEventLabel(planet) {
     || planet?.body
     || "Mars"
   ).trim();
-  return `Planet · ${body.charAt(0).toUpperCase()}${body.slice(1)}`;
+  return `Planet Â· ${body.charAt(0).toUpperCase()}${body.slice(1)}`;
 }
 
 function buildCanvasPlanetInvocationEvent(planet) {
@@ -12270,53 +11221,10 @@ function redactCanvasSecrets(text) {
     .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, "[GOOGLE_API_KEY_REDACTED]");
 }
 
-function redactRealEstateClientData(text) {
-  let output = String(text || "");
-  const counts = {};
-  const replaceWithCount = (pattern, key, marker) => {
-    output = output.replace(pattern, () => {
-      counts[key] = (counts[key] || 0) + 1;
-      return marker;
-    });
-  };
-  replaceWithCount(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "email", "[EMAIL_CLIENT_REDACTED]");
-  replaceWithCount(/\bFR[0-9A-Z](?:[ -]?[0-9A-Z]){13,}\b/gi, "iban", "[IBAN_CLIENT_REDACTED]");
-  replaceWithCount(/\b(?:\+33|0033|0)[1-9](?:[\s.-]?\d{2}){4}\b/g, "phone", "[TELEPHONE_CLIENT_REDACTED]");
-  replaceWithCount(/\b[12]\s?\d{2}\s?\d{2}\s?\d{2}\s?\d{3}\s?\d{3}(?:\s?\d{2})?\b/g, "nir", "[NIR_CLIENT_REDACTED]");
-  const addressKeywords = /\b(adresse|address|rue|avenue|av\.|boulevard|bd|impasse|chemin|route|allee|allée|place|quai|residence|résidence)\b/i;
-  output = output.split(/(\r?\n)/).map((line) => {
-    if (!line || /^\r?\n$/.test(line)) return line;
-    if (!/\d/.test(line) || !addressKeywords.test(line)) return line;
-    counts.address = (counts.address || 0) + 1;
-    const labelMatch = line.match(/^(\s*(?:adresse|address)\s*[:=-]\s*)/i);
-    return labelMatch ? `${labelMatch[1]}[ADRESSE_CLIENT_REDACTED]` : "[ADRESSE_CLIENT_REDACTED]";
-  }).join("");
-  return { text: output, counts };
-}
-
-function redactCanvasForModel(text) {
-  const secretSafe = redactCanvasSecrets(text);
-  if (!realEstateModeActive) return secretSafe;
-  return redactRealEstateClientData(secretSafe).text;
-}
-
 function realEstatePrivacyPacketForModel(text) {
   if (!realEstateModeActive) return "";
-  const counts = redactRealEstateClientData(redactCanvasSecrets(text)).counts;
-  const redactions = Object.entries(counts)
-    .filter(([, count]) => count > 0)
-    .map(([key, count]) => `${key}:${count}`)
-    .join(",");
-  return [
-    "FORGE_REAL_ESTATE_PRIVACY:",
-    "mode=local_first_client_data_minimized",
-    "scope=agence_immo",
-    "raw_client_files=local_only",
-    "provider_guard=backend_revalidates_before_runtime",
-    `redactions=${redactions || "none_detected"}`,
-  ].join("\n");
+  return buildRealEstatePrivacyPacket(text, redactCanvasSecrets);
 }
-
 function canvasTextContainsSecret(text) {
   return /\bsk_[A-Za-z0-9]{20,}\b|\bAIza[0-9A-Za-z_-]{20,}\b/.test(String(text || ""));
 }
@@ -12436,8 +11344,7 @@ async function speakForgeCanvasText(text, sourceButton = null, options = {}) {
     failVoiceSync();
     return null;
   }
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     console.warn("[voice] Tauri invoke is not available");
     failVoiceSync();
     return null;
@@ -12455,7 +11362,7 @@ async function speakForgeCanvasText(text, sourceButton = null, options = {}) {
   }
   const settings = forgeVoiceSettings();
   try {
-    const result = await invoke("voice_tts_generate", {
+    const result = await forgeInvoke("voice_tts_generate", {
       request: {
         text: cleanText,
         elevenVoiceId: settings.elevenVoiceId,
@@ -12465,7 +11372,7 @@ async function speakForgeCanvasText(text, sourceButton = null, options = {}) {
         monthlyLimit: settings.monthlyLimit,
         preferOrpheus: !!options.preferOrpheus,
       },
-    });
+    }, { section: "voice", timeoutMs: 60000 });
     const bytes = decodeAudioBase64(result?.audioBase64 || "");
     const blob = new Blob([bytes], { type: result?.contentType || "audio/mpeg" });
     forgeVoiceObjectUrl = URL.createObjectURL(blob);
@@ -12546,7 +11453,7 @@ function renderCanvasMessageAttachments(item, message) {
   });
   if (atlasItems.length) {
     // Snapshot of the chat-bar program-group leaning against the user
-    // message — same icon + slots as the chat input, read-only here.
+    // message â€” same icon + slots as the chat input, read-only here.
     // Click on a cube triggers the in-place formula reveal animation.
     const strip = createUiEl("div", "canvas-message-atlas-strip");
     const icon = createUiEl("span", "canvas-message-atlas-icon");
@@ -12667,11 +11574,14 @@ async function ensureAssistantSpatialMentions(message) {
   if (Array.isArray(message.meta?.spatialMentions) && message.meta.spatialMentions.length) return;
   const places = inferMarsGeoNodesFromText(message.text || "");
   if (!places.length) return;
-  const invoke = window.__TAURI__?.core?.invoke;
   let atlasTags = new Set();
-  if (invoke) {
+  if (forgeCanInvoke()) {
     try {
-      const overview = await invoke("get_forge_atlas_overview", { limit: 120 });
+      const overview = await forgeInvoke("get_forge_atlas_overview", { limit: 120 }, {
+        section: "atlas",
+        timeoutMs: 8000,
+        dedupeKey: "atlas-spatial-mentions",
+      });
       const tags = overview?.my_atlas?.metric_tags || overview?.my_atlas?.tags || [];
       atlasTags = new Set(
         tags
@@ -12683,9 +11593,9 @@ async function ensureAssistantSpatialMentions(message) {
   const resolved = [];
   for (const place of places) {
     const coords = MARS_GEONODE_COORDS[place.tag] || null;
-    if (invoke && coords && !atlasTags.has(place.tag)) {
+    if (forgeCanInvoke() && coords && !atlasTags.has(place.tag)) {
       try {
-        await invoke("upsert_forge_geonode", {
+        await forgeInvoke("upsert_forge_geonode", {
           request: {
             name: place.label,
             tag: place.tag,
@@ -12698,7 +11608,7 @@ async function ensureAssistantSpatialMentions(message) {
             confidence: 0.99,
             aliases: place.aliases || [],
           },
-        });
+        }, { section: "atlas", timeoutMs: 8000 });
         atlasTags.add(place.tag);
       } catch (_) {}
     }
@@ -12754,7 +11664,7 @@ function inferPlanetVisualFromText(text) {
   return {
     tool: "planet_sphere",
     body: "mars",
-    name: labels.length ? `Planet · Mars · ${labels.slice(0, 2).join(", ")}` : "Planet · Mars",
+    name: labels.length ? `Planet Â· Mars Â· ${labels.slice(0, 2).join(", ")}` : "Planet Â· Mars",
     lensUrl,
     geonodes: tags,
     locations: locationKeys,
@@ -13258,7 +12168,7 @@ function drawCanvasMessage3dCard(canvas, ctx, W, H, doc) {
   ctx.fillStyle = "rgba(140,140,134,0.66)";
   ctx.textAlign = "right";
   ctx.fillText(`3D OHLCV map    ${candles.length} bars    ${viewCount} shown`, W - 66, 10);
-  ctx.fillText("EMA 8 · EMA 21 · EMA 50 · VWAP · volume depth", W - 66, 26);
+  ctx.fillText("EMA 8 Â· EMA 21 Â· EMA 50 Â· VWAP Â· volume depth", W - 66, 26);
   ctx.restore();
 }
 
@@ -13561,9 +12471,9 @@ function renderCanvasChatMessages(parent) {
     for (const pending of forgeCanvasChatPendingAssistants) {
       const item = createUiEl("article", "canvas-chat-message assistant thinking");
       const nameEl = buildCanvasChatNameElement("assistant", pending.label);
-      // Append the rotating "is …" suffix inline with the agent name. The
+      // Append the rotating "is â€¦" suffix inline with the agent name. The
       // text is updated character-by-character by the rotation timer so it
-      // reads as a live typewriter (type → hold → backspace → next).
+      // reads as a live typewriter (type â†’ hold â†’ backspace â†’ next).
       const status = createUiEl("span", "canvas-thinking-status", currentCanvasThinkingPhrase());
       const caret = createUiEl("span", "canvas-thinking-caret", "");
       status.appendChild(caret);
@@ -13626,7 +12536,7 @@ function autosizeCanvasChatInput() {
   for (const field of fields) field.style.height = "auto";
   // Textarea scrollHeight only reflects the value, never the placeholder. So
   // when the user is idle and the typewriter is filling the placeholder, we
-  // briefly swap placeholder→value to measure the real height needed, then
+  // briefly swap placeholderâ†’value to measure the real height needed, then
   // restore. This is synchronous: no paint happens between the two
   // assignments, so the user never sees the swap.
   const heights = fields.map((field) => {
@@ -13641,19 +12551,19 @@ function autosizeCanvasChatInput() {
   for (const field of fields) field.style.height = `${next}px`;
 }
 
-// ── Animated placeholder: rotating program ideas typed live ───────
-// Interleaved across domains so no two consecutive entries share one — the
+// â”€â”€ Animated placeholder: rotating program ideas typed live â”€â”€â”€â”€â”€â”€â”€
+// Interleaved across domains so no two consecutive entries share one â€” the
 // user reads a different field every cycle.
 const FORGE_CHAT_PLACEHOLDER_IDEAS = [
   "Run a Monte Carlo over 10,000 portfolio paths for the next quarter",                                  // finance
   "Mine motifs in a 50 GB DNA sequence and report exact matches",                                        // genomics
-  "Process 40 years of satellite temperature data to surface a fresh El Niño precursor",                 // climate
+  "Process 40 years of satellite temperature data to surface a fresh El NiÃ±o precursor",                 // climate
   "Generate 1024-bit safe primes for Diffie-Hellman with Miller-Rabin",                                  // crypto
   "Plan a collision-free arm trajectory through a 3D point cloud",                                       // robotics
   "Backtest a mean-reversion idea on EUR/USD H4 over 16 years",                                          // FX trading
   "Score 1 million ligands by binding affinity against this kinase target",                              // drug discovery
   "Cross-correlate the Kepler light-curve archive to invent a new exoplanet-detection signature",        // astronomy
-  "Compute the first 10 million digits of π with the Chudnovsky algorithm",                              // math
+  "Compute the first 10 million digits of Ï€ with the Chudnovsky algorithm",                              // math
   "FFT this 2-hour audio file and surface the dominant frequencies",                                     // audio / DSP
   "Cluster 100,000 brain MRIs to invent a novel biomarker for early Alzheimer detection",                // medical imaging
   "Cross-test 10,000 alloy compositions to derive a new strength-to-weight scoring function",            // materials
@@ -13663,7 +12573,7 @@ const FORGE_CHAT_PLACEHOLDER_IDEAS = [
   "Optimize a delivery route over 200 stops with traffic-aware ETAs",                                    // logistics
   "Trace 200 GB of packet capture for novel anomaly fingerprints",                                       // networking
   "Mine 5 million tweets to derive a viral-propensity score from raw text patterns",                     // NLP / social
-  "Analyze every NBA possession from 2010-2025 to invent a player-impact metric beyond ±",               // sports
+  "Analyze every NBA possession from 2010-2025 to invent a player-impact metric beyond Â±",               // sports
   "Solve Navier-Stokes on a 50M-cell mesh of this turbine blade",                                        // CFD / fluid
   "Simulate a 100k-node power grid under cascading failure scenarios",                                   // energy
   "Cluster 200k product photos by visual similarity with no labels",                                     // computer vision
@@ -13710,117 +12620,117 @@ const FORGE_CHAT_PLACEHOLDER_IDEAS = [
   "Reconstruct global CO2 fluxes from 20 years of OCO-2 satellite data",                                 // climate II
 ];
 
-// Multi-LLM scenarios — typed simultaneously into the Codex / Gemini / Claude
+// Multi-LLM scenarios â€” typed simultaneously into the Codex / Gemini / Claude
 // fields when the chat is in "all" mode. Each scenario decomposes one task
 // across the three models, with occasional "Hey Codex," / "Hello Claude,"
 // greetings to make the routing explicit.
-// Multi-LLM scenarios — interleaved across domains so two consecutive
+// Multi-LLM scenarios â€” interleaved across domains so two consecutive
 // scenarios never share one. Each scenario decomposes ONE compute workload
 // into three real heavy tasks (no LLM-text-only filler), one per agent.
 const FORGE_CHAT_PLACEHOLDER_SCENARIOS = [
-  // Genomics — same DNA file, three heavy computations
+  // Genomics â€” same DNA file, three heavy computations
   {
     codex: "Hey Codex, mine motifs in this 50 GB DNA file",
     gemini: "Compute pairwise FST across all populations",
     claude: "Phase the diploid genome from the same reads",
   },
-  // Climate — same ocean-buoy archive, three forecast computations
+  // Climate â€” same ocean-buoy archive, three forecast computations
   {
     codex: "Forecast 30-day SST anomalies from this ocean-buoy archive",
     gemini: "Run a 50k-ensemble hurricane-track simulation",
     claude: "Hello Claude, mine 40 years of satellite data for ENSO precursors",
   },
-  // Trading — one order book, three compute angles
+  // Trading â€” one order book, three compute angles
   {
     codex: "Detect spoofing in this 200k-row order book",
     gemini: "Synthesize a market-making strategy on the same data",
     claude: "Walk-forward backtest the strategy over 5 years",
   },
-  // Quantum — three independent quantum compute jobs
+  // Quantum â€” three independent quantum compute jobs
   {
     codex: "Simulate a 30-qubit Shor circuit on the same input",
     gemini: "Run VQE on 5,000 molecules in parallel",
     claude: "Hello Claude, compute fidelity decay across 1M error-correction cycles",
   },
-  // Drug discovery — same target, three compute pipelines
+  // Drug discovery â€” same target, three compute pipelines
   {
     codex: "Score 1M ligands against this kinase target",
     gemini: "Run molecular dynamics on the top 50 hits",
     claude: "Compute druglikeness and rank against Lipinski",
   },
-  // NLP / customer analytics — same corpus, three heavy passes
+  // NLP / customer analytics â€” same corpus, three heavy passes
   {
     codex: "Cluster 200k product reviews by latent topic",
     gemini: "Mine viral-propensity scores from the same corpus",
     claude: "Hello Claude, fit a retention model on the cluster labels",
   },
-  // Public health — same metagenome, three pipelines
+  // Public health â€” same metagenome, three pipelines
   {
     codex: "Mine this 30 GB metagenome for antibiotic-resistance signals",
     gemini: "Run BLAST against the global pathogen atlas",
     claude: "Phase the diploid pathogen genome",
   },
-  // Robotics — same trajectory problem, three compute angles
+  // Robotics â€” same trajectory problem, three compute angles
   {
     codex: "Plan a collision-free arm path through this point cloud",
     gemini: "Tune the 12-DOF controller across 10k stumble trials",
     claude: "Hello Claude, derive a recovery policy from successful runs",
   },
-  // Code analysis — same codebase, three heavy passes
+  // Code analysis â€” same codebase, three heavy passes
   {
     codex: "Trace this 5 GB git history for flaky tests",
     gemini: "Mine type bugs in the same 300k-line C++ codebase",
     claude: "Run SAT-based dead-code detection on every PR",
   },
-  // Audio / signal — same file, three heavy DSP runs
+  // Audio / signal â€” same file, three heavy DSP runs
   {
     codex: "Hey Codex, FFT this 2-hour audio file",
     gemini: "Cross-correlate it with 10k reference tracks",
     claude: "Detect speech-to-music transitions across the timeline",
   },
-  // Materials — same alloy dataset, three compute pipelines
+  // Materials â€” same alloy dataset, three compute pipelines
   {
     codex: "Score 10k alloy compositions for strength-to-weight",
     gemini: "Run molecular dynamics on the top 20 candidates",
     claude: "Hello Claude, compute fatigue lifetime under cyclic loads",
   },
-  // Astrophysics & space — three independent compute jobs
+  // Astrophysics & space â€” three independent compute jobs
   {
     codex: "Fit Hohmann transfer windows to Mars 2026-2040",
     gemini: "Predict orbital-debris collisions in LEO over 30 years",
     claude: "Cross-correlate Kepler light curves for new exoplanets",
   },
-  // FX trading — one dataset, three numerical workloads
+  // FX trading â€” one dataset, three numerical workloads
   {
     codex: "Backtest this idea on 16 years of EUR/USD",
     gemini: "Synthesize a mean-reversion variant on the same data",
     claude: "Compute walk-forward Sharpe across 100 windows",
   },
-  // Geology / geodesy — same seismic dataset, three compute pipelines
+  // Geology / geodesy â€” same seismic dataset, three compute pipelines
   {
     codex: "Mine 30 years of seismic waveforms for shallow-quake precursors",
     gemini: "Run synthetic tomography on the same recordings",
     claude: "Hello Claude, derive a strain-buildup index from 1k GPS stations",
   },
-  // Logistics — heavy optimization across three constraint sets
+  // Logistics â€” heavy optimization across three constraint sets
   {
     codex: "Hey Codex, optimize this 500-stop delivery route",
     gemini: "Recompute ETAs under live traffic data",
     claude: "Stress-test the schedule against 1,000 weather scenarios",
   },
-  // Computer vision — same image archive, three compute jobs
+  // Computer vision â€” same image archive, three compute jobs
   {
     codex: "Cluster 200k product photos by visual similarity",
     gemini: "Run object detection across the same archive",
     claude: "Mine the cluster boundaries to invent a novelty score",
   },
-  // Cybersecurity — Solidity audit, three compute angles
+  // Cybersecurity â€” Solidity audit, three compute angles
   {
     codex: "Audit this 1,500-line Solidity contract",
     gemini: "Fuzz-test the suspicious functions across 1M inputs",
     claude: "Hello Claude, mine the git history for similar reentrancy patterns",
   },
-  // Finance — same portfolio, three risk computations
+  // Finance â€” same portfolio, three risk computations
   {
     codex: "Run a 10k-path Monte Carlo on this portfolio",
     gemini: "Stress-test the bond ladder under 2008 yield shifts",
@@ -13828,48 +12738,12 @@ const FORGE_CHAT_PLACEHOLDER_SCENARIOS = [
   },
 ];
 
-const REAL_ESTATE_CHAT_PLACEHOLDER_IDEAS = [
-  "Analyse 18 mois de mandats, visites et relances pour prédire les vendeurs à rappeler cette semaine",
-  "Croise DVF, DPE, cadastre, urbanisme et météo locale pour scorer le potentiel d'un quartier",
-  "Audite les annonces de l'agence et des concurrents pour sortir les angles qui convertissent mieux",
-  "Prépare un plan d'appels vendeur avec objections, preuves locales et timing de relance",
-  "Simule 500 scénarios de prix pour un bien avec risque de décrochage, marge et délai de vente",
-  "Classe les acquéreurs par capacité, urgence, financement probable et matching biens disponibles",
-  "Construis un cockpit agence: pipeline, KPI, trésorerie, visites, tâches et alertes critiques",
-  "Analyse les avis Google, réseaux sociaux et annonces concurrentes pour trouver les faiblesses du marché",
-  "Prépare une campagne de recrutement avec profils, scripts d'approche et score de potentiel commercial",
-  "Connecte courtiers, assurances, notaires et fiscalité pour détecter les dossiers à risque",
-];
-
-const REAL_ESTATE_CHAT_PLACEHOLDER_SCENARIOS = [
-  {
-    codex: "Analyse les mandats vendeurs et priorise les relances",
-    gemini: "Croise DVF, DPE, cadastre et urbanisme",
-    claude: "Prépare le rapport vendeur avec preuves locales",
-  },
-  {
-    codex: "Audite les annonces de l'agence et des concurrents",
-    gemini: "Mesure la performance SeLoger, Leboncoin et site agence",
-    claude: "Réécris les annonces avec angles de conversion",
-  },
-  {
-    codex: "Classe les prospects vendeurs par probabilité de mandat",
-    gemini: "Scanne la veille locale et les signaux faibles",
-    claude: "Prépare les scripts d'appel et les objections",
-  },
-  {
-    codex: "Construis le cockpit KPI agence pour la semaine",
-    gemini: "Simule trésorerie, commissions et planning visites",
-    claude: "Propose les décisions commerciales prioritaires",
-  },
-];
-
 function canvasChatPlaceholderIdeas() {
-  return isRealEstateShellActive() ? REAL_ESTATE_CHAT_PLACEHOLDER_IDEAS : FORGE_CHAT_PLACEHOLDER_IDEAS;
+  return isRealEstateShellActive() ? realEstateChatPlaceholderIdeas : FORGE_CHAT_PLACEHOLDER_IDEAS;
 }
 
 function canvasChatPlaceholderScenarios() {
-  return isRealEstateShellActive() ? REAL_ESTATE_CHAT_PLACEHOLDER_SCENARIOS : FORGE_CHAT_PLACEHOLDER_SCENARIOS;
+  return isRealEstateShellActive() ? realEstateChatPlaceholderScenarios : FORGE_CHAT_PLACEHOLDER_SCENARIOS;
 }
 
 let canvasChatPlaceholderTimer = null;
@@ -13878,12 +12752,12 @@ let canvasChatPlaceholderIdx = 0;
 let canvasChatPlaceholderCharIdx = 0;
 let canvasChatPlaceholderPhase = "typing"; // typing | hold | erasing
 
-// Cadence model: humans don't type at constant speed — short bursts inside
+// Cadence model: humans don't type at constant speed â€” short bursts inside
 // words, longer pauses around spaces and punctuation. We mirror that here.
 function canvasChatTypingDelay(idea, idx) {
   const prev = idx > 1 ? idea[idx - 2] : "";
   const justTyped = idea[idx - 1] || "";
-  const base = 18 + Math.random() * 18; // 18–36ms per char baseline
+  const base = 18 + Math.random() * 18; // 18â€“36ms per char baseline
   // Beat after sentence-level punctuation
   if (justTyped === "." || justTyped === ";" || justTyped === ":") {
     return base + 110 + Math.random() * 60;
@@ -13905,14 +12779,14 @@ function canvasChatTypingDelay(idea, idx) {
 }
 
 function canvasChatErasingDelay() {
-  // Erasing is much faster than typing — like holding backspace.
+  // Erasing is much faster than typing â€” like holding backspace.
   return 5 + Math.random() * 6;
 }
 
 /**
  * Returns the currently visible single-provider input. In gemini/claude
  * single mode the codex input is hidden, so the placeholder cycler must
- * write to the visible input — not blindly to forgeCanvasChatInput.
+ * write to the visible input â€” not blindly to forgeCanvasChatInput.
  */
 function activeSinglePlaceholderInput() {
   if (forgeCanvasChatTargetMode === "gemini") return forgeCanvasChatGeminiInput;
@@ -13974,7 +12848,7 @@ function canvasChatRenderPlaceholder(text) {
   const target = activeSinglePlaceholderInput();
   if (!target) return;
   // Clear stale placeholders on the inputs that are not the cycle's
-  // current target, so a switch from codex → gemini doesn't leave a
+  // current target, so a switch from codex â†’ gemini doesn't leave a
   // half-typed scenario sitting on the codex placeholder.
   for (const input of [forgeCanvasChatInput, forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput]) {
     if (input && input !== target) input.placeholder = "";
@@ -14082,13 +12956,35 @@ function syncCanvasChatSendState() {
   if (canvasChatBusyInCurrentSession()) {
     forgeCanvasChatSend.disabled = false;
     forgeCanvasChatSend.classList.add("ready");
-    forgeCanvasChatSend.setAttribute("aria-label", isRealEstateShellActive() ? "Arrêter" : "Stop");
+    forgeCanvasChatSend.setAttribute("aria-label", isRealEstateShellActive() ? "ArrÃªter" : "Stop");
+    forgeDispatchProjectionPatch("chatbar", {
+      type: "SET_CHATBAR",
+      patch: {
+        ready: true,
+        busy: true,
+        hasText,
+        hasAttachments,
+        hasAtlasItems,
+        targetMode: forgeCanvasChatTargetMode,
+      },
+    });
     return;
   }
   const ready = hasText || hasAttachments || hasAtlasItems;
   forgeCanvasChatSend.disabled = !ready;
   forgeCanvasChatSend.classList.toggle("ready", ready);
   forgeCanvasChatSend.setAttribute("aria-label", isRealEstateShellActive() ? "Envoyer le message" : "Send message");
+  forgeDispatchProjectionPatch("chatbar", {
+    type: "SET_CHATBAR",
+    patch: {
+      ready,
+      busy: false,
+      hasText,
+      hasAttachments,
+      hasAtlasItems,
+      targetMode: forgeCanvasChatTargetMode,
+    },
+  });
 }
 
 function normalizeCanvasAttachmentTarget(target) {
@@ -14174,10 +13070,13 @@ function addCanvasChatPendingProgram(program) {
 }
 
 async function loadCanvasChatProgramOptions() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return [];
+  if (!forgeCanInvoke()) return [];
   try {
-    const programs = await invoke("list_forge_programs", { limit: 100 });
+    const programs = await forgeInvoke("list_forge_programs", { limit: 100 }, {
+      section: "programs",
+      timeoutMs: 8000,
+      dedupeKey: "canvas-program-options",
+    });
     if (Array.isArray(programs) && programs.length) {
       return programs.map((program) => (
         typeof normalizeForgeProgram === "function"
@@ -14193,7 +13092,11 @@ async function loadCanvasChatProgramOptions() {
     console.error("list_forge_programs failed", err);
   }
   try {
-    const names = await invoke("list_programs");
+    const names = await forgeInvoke("list_programs", {}, {
+      section: "programs",
+      timeoutMs: 5000,
+      dedupeKey: "builtin-program-options",
+    });
     return Array.isArray(names) ? names.map((name) => ({ name: String(name), hash: "", desc: "built-in" })) : [];
   } catch (err) {
     console.error("list_programs failed", err);
@@ -14283,8 +13186,8 @@ function renderCanvasChatAttachments() {
     const target = canvasPendingProgramTarget(program);
     chip.dataset.target = target;
     chip.title = program.hash
-      ? `${program.name} · ${program.hash.slice(0, 12)}… · ${canvasAttachmentTargetLabel(target)}`
-      : `${program.name} · ${canvasAttachmentTargetLabel(target)}`;
+      ? `${program.name} Â· ${program.hash.slice(0, 12)}â€¦ Â· ${canvasAttachmentTargetLabel(target)}`
+      : `${program.name} Â· ${canvasAttachmentTargetLabel(target)}`;
     chip.innerHTML = `
       <svg class="canvas-chat-chip-icon" viewBox="0 0 16 16" aria-hidden="true">
         <path d="m6 5-3 3 3 3" />
@@ -14325,7 +13228,7 @@ function renderCanvasChatAttachments() {
     chip.className = "canvas-chat-chip";
     const target = canvasPendingFileTarget(item);
     chip.dataset.target = target;
-    chip.title = `${file.name} · ${canvasAttachmentTargetLabel(target)}`;
+    chip.title = `${file.name} Â· ${canvasAttachmentTargetLabel(target)}`;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     chip.innerHTML = `
       <svg class="canvas-chat-chip-icon" viewBox="0 0 16 16" aria-hidden="true">
@@ -14333,7 +13236,7 @@ function renderCanvasChatAttachments() {
         <path d="M9 2v4h4" />
       </svg>
       <span class="canvas-chat-chip-name">${file.name.replace(/[<>&"']/g, (c) => ({"<":"&lt;",">":"&gt;","&":"&amp;","\"":"&quot;","'":"&#39;"}[c]))}</span>
-      <span class="canvas-chat-chip-size">${ext ? ext.toUpperCase() + " · " : ""}${formatCanvasChatFileSize(file.size)}</span>
+      <span class="canvas-chat-chip-size">${ext ? ext.toUpperCase() + " Â· " : ""}${formatCanvasChatFileSize(file.size)}</span>
     `;
     const targetBtn = document.createElement("button");
     targetBtn.type = "button";
@@ -14388,7 +13291,7 @@ function compactAttachedFileProfile(file) {
   } else if (type === "csv") {
     notes.push("CSV attached; Forge will profile/parse it locally");
   }
-  return `${name} (${type}, ${humanSize(size)})${notes.length ? ` — ${notes.join("; ")}` : ""}`;
+  return `${name} (${type}, ${humanSize(size)})${notes.length ? ` â€” ${notes.join("; ")}` : ""}`;
 }
 
 /**
@@ -14434,17 +13337,17 @@ function canvasAttachmentAnnotationForRuntime(runtime, label, files, programs, a
     if (nodes.length) {
       parts.push(`Atlas nodes dropped in chat slots: ${nodes.map((it) => it.tag).join(", ")}`);
     }
-    parts.push("These atlas items are session attachments — treat them as references the user is asking you to use, combine, evaluate or compose. Look them up via Forge tools (read/run/atlas) instead of guessing their semantics; never assume the user wants them executed unless they say so.");
+    parts.push("These atlas items are session attachments â€” treat them as references the user is asking you to use, combine, evaluate or compose. Look them up via Forge tools (read/run/atlas) instead of guessing their semantics; never assume the user wants them executed unless they say so.");
   }
   if (!parts.length) return "";
-  return `[Assigned to ${label} — ${parts.join("; ")}. Ignore items assigned only to the other agent.]`;
+  return `[Assigned to ${label} â€” ${parts.join("; ")}. Ignore items assigned only to the other agent.]`;
 }
 
 function compactCanvasPromptText(text, max = 320) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
   if (!clean) return "";
   if (clean.length <= max) return clean;
-  return `${clean.slice(0, Math.max(0, max - 1)).trim()}…`;
+  return `${clean.slice(0, Math.max(0, max - 1)).trim()}â€¦`;
 }
 
 function canvasMessageIsProgramCritique(text) {
@@ -14505,7 +13408,7 @@ function compactCanvasFileStateRows() {
     const key = cleanName.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
-    rows.push(`${cleanName}${size ? ` (${humanSize(size)})` : ""}${note ? ` — ${note}` : ""}`);
+    rows.push(`${cleanName}${size ? ` (${humanSize(size)})` : ""}${note ? ` â€” ${note}` : ""}`);
   };
   for (const file of alphaSessionFiles || []) {
     addFile(file?.name, Number(file?.size || 0), "attached to this Forge session");
@@ -14540,7 +13443,7 @@ function compactCanvasRunStateRows() {
   const title = currentProjectLabel?.() || "";
   const status = job?.status || manifest?.status || (jobId ? "active" : "not_started");
   if (jobId || title) {
-    rows.push(`session: ${jobId || "pending"} · ${title || "New session"} · status=${status}`);
+    rows.push(`session: ${jobId || "pending"} Â· ${title || "New session"} Â· status=${status}`);
   }
   const programName =
     manifest.program_name || manifest.programName || manifest.program ||
@@ -14549,16 +13452,16 @@ function compactCanvasRunStateRows() {
     manifest.program_hash || manifest.programHash || manifest.mcp_result?.program_hash ||
     job.programHash || "";
   if (programName || programHash) {
-    rows.push(`compute program/result: ${programName || "program"}${programHash ? ` · hash=${shortHash(programHash)}` : ""}`);
+    rows.push(`compute program/result: ${programName || "program"}${programHash ? ` Â· hash=${shortHash(programHash)}` : ""}`);
   }
   const mapping = typeof selectedVisualMappingSummary === "function" ? selectedVisualMappingSummary() : null;
   if (mapping?.available) {
-    rows.push(`visual program/mapping: ${mapping.kind || "visual_mapping"} · views=${mapping.viewCount || 0} · 3D artifacts=${mapping.artifactCount || 0}${mapping.hash ? ` · hash=${shortHash(mapping.hash)}` : ""}`);
+    rows.push(`visual program/mapping: ${mapping.kind || "visual_mapping"} Â· views=${mapping.viewCount || 0} Â· 3D artifacts=${mapping.artifactCount || 0}${mapping.hash ? ` Â· hash=${shortHash(mapping.hash)}` : ""}`);
   } else if (alphaDocState?.fileName) {
     rows.push("visual state: default 2D file card is active; 3D can be generated as a visual_program without sending raw rows to the LLM");
   }
   if (alpha3dState?.open || alpha3dState?.mode) {
-    rows.push(`3D view: mode=${alpha3dState.mode || "default"} · z=${alpha3dState.zMetric || "auto"} · points=${alpha3dState.pointCount || 0}`);
+    rows.push(`3D view: mode=${alpha3dState.mode || "default"} Â· z=${alpha3dState.zMetric || "auto"} Â· points=${alpha3dState.pointCount || 0}`);
   }
   const recentToolRows = alphaCanvasChatMessages
     .filter((message) => message?.role === "tool")
@@ -14620,11 +13523,10 @@ async function runCanvasAssignedPrograms(stagedPrograms, stagedFiles, activeTarg
     appendCanvasChatMessage("tool", "Programs are assigned to an agent that is not active in this turn.", { turnId, sessionJobId });
     return;
   }
-  const invokeProgram = window.__TAURI__?.core?.invoke;
-  if (!invokeProgram) return;
+  if (!forgeCanInvoke()) return;
   const allInputs = (typeof selectedForgeInputRefsPayload === "function") ? selectedForgeInputRefsPayload() : [];
   if (!allInputs.length) {
-    appendCanvasChatMessage("tool", "No file references available — programs need session inputs to run.", { turnId, sessionJobId });
+    appendCanvasChatMessage("tool", "No file references available â€” programs need session inputs to run.", { turnId, sessionJobId });
     return;
   }
   const runs = runnablePrograms.map(async (program) => {
@@ -14641,14 +13543,14 @@ async function runCanvasAssignedPrograms(stagedPrograms, stagedFiles, activeTarg
       };
     }
     try {
-      const response = await invokeProgram("run_forge_program", {
+      const response = await forgeInvoke("run_forge_program", {
         request: {
           programHash: program.hash || null,
           program: program.hash ? null : program.name,
-          title: `${program.name || "Forge program"} · ${targetLabel} chat run`,
+          title: `${program.name || "Forge program"} Â· ${targetLabel} chat run`,
           inputs,
         },
-      });
+      }, { section: "programs", timeoutMs: 120000 });
       const job = response?.data?.job || response?.job || null;
       const jobId = job?.job_id || job?.jobId || "";
       return { ok: true, program, target, targetLabel, jobId };
@@ -14717,6 +13619,27 @@ async function sendForgeCanvasChatMessage(event) {
     ...stagedAtlasItems.map((it) => `${it.kind === "program" || it.kind === "instrument" ? "Instrument" : "Node"}: ${it.tag}`),
   ].join("\n") || `(${summaryParts.join(" + ")} attached)`;
   const userMessageText = displayText || attachmentOnlyText;
+  if (realEstateModeActive && realEstateLlmInstallReady() && forgeTauri?.invoke) {
+    await refreshRealEstateOnboardingState({ announce: false });
+  }
+  const realEstateCurrentOnboardingQuestionId = realEstateOnboardingState?.question?.id || "";
+  const realEstateOnboardingQuestionWasPresented =
+    !!realEstateCurrentOnboardingQuestionId
+    && realEstateOnboardingAnnouncedQuestion === realEstateCurrentOnboardingQuestionId;
+  const realEstateOnboardingTurnActive = realEstateOnboardingActive()
+    && displayText
+    && !stagedFiles.length
+    && !stagedPrograms.length
+    && !stagedAtlasItems.length;
+  const realEstateOnboardingAnswerText = realEstateOnboardingActive()
+    && realEstateOnboardingQuestionWasPresented
+    && displayText
+    && !stagedFiles.length
+    && !stagedPrograms.length
+    && !stagedAtlasItems.length
+    ? userMessageText
+    : "";
+  let realEstateOnboardingReportForTurn = null;
   const realEstateToolCommand = realEstateModeActive
     && !stagedFiles.length
     && !stagedPrograms.length
@@ -14771,6 +13694,18 @@ async function sendForgeCanvasChatMessage(event) {
     scheduleWebExplorerChatFocus();
     syncAlphaDropSurface?.();
     return;
+  }
+  let realEstateToolContextForTurn = null;
+  if (realEstateModeActive) {
+    const realEstateContextSource = [text, geminiText, claudeText, userMessageText]
+      .find((candidate) => realEstateCommandFromText(candidate));
+    if (realEstateContextSource) {
+      try {
+        realEstateToolContextForTurn = await loadRealEstateToolCommandContext(realEstateContextSource);
+      } catch (err) {
+        console.warn("[real-estate] command memory context unavailable", err);
+      }
+    }
   }
   syncCanvasChatSendState();
   const baseRuntimeTargets = canvasChatRuntimeTargets(text, geminiText, claudeText);
@@ -14837,7 +13772,11 @@ async function sendForgeCanvasChatMessage(event) {
     syncAlphaDropSurface?.();
     return;
   }
+  if (realEstateOnboardingAnswerText) {
+    realEstateOnboardingReportForTurn = await recordRealEstateOnboardingAnswerForLlm(realEstateOnboardingAnswerText);
+  }
   const localReply = !stagedFiles.length && !stagedPrograms.length
+    && !realEstateOnboardingTurnActive
     ? localCanvasMicroReplyForTurn(text, geminiText, claudeText)
     : "";
   if (localReply) {
@@ -14846,7 +13785,7 @@ async function sendForgeCanvasChatMessage(event) {
         turnId,
         agentLabel: canvasChatTargetLabel(forgeCanvasChatTargetMode),
         local: true,
-        toolEvents: [{ tool: "token_usage", label: "0 fresh · local" }],
+        toolEvents: [{ tool: "token_usage", label: "0 fresh Â· local" }],
       });
       syncAlphaDropSurface?.();
     }, localCanvasMicroReplyDelayMs(text));
@@ -14887,8 +13826,7 @@ async function sendForgeCanvasChatMessage(event) {
   await runCanvasAssignedPrograms(stagedPrograms, stagedFiles, runtimeTargets, turnId, turnSignal, turnSessionJobId || "");
   if (turnSignal.aborted) return;
   try {
-    const invoke = window.__TAURI__?.core?.invoke;
-    if (!invoke) {
+    if (!forgeCanInvoke()) {
       appendCanvasChatMessage(
         "assistant",
         "The canvas chat is ready on the UI side. Open Forge in the Tauri app so I can call the backend broker and talk to the current session."
@@ -14932,9 +13870,16 @@ async function sendForgeCanvasChatMessage(event) {
       if (realEstatePrivacyPacket) {
         parts.push(realEstatePrivacyPacket);
       }
-      const realEstateContextPacket = realEstateModeActive ? realEstateCommandPacket(currentMessage) : "";
+      const realEstateContextPacket = realEstateModeActive ? realEstateCommandPacket(currentMessage, realEstateToolContextForTurn) : "";
       if (realEstateContextPacket) {
         parts.push(realEstateContextPacket);
+      }
+      const realEstateOnboardingPacket = realEstateOnboardingPacketForModel(
+        realEstateOnboardingState,
+        realEstateOnboardingReportForTurn,
+      );
+      if (realEstateOnboardingPacket) {
+        parts.push(realEstateOnboardingPacket);
       }
       if (planetVisual) {
         const labels = Array.isArray(planetVisual.labels) && planetVisual.labels.length
@@ -14986,7 +13931,7 @@ async function sendForgeCanvasChatMessage(event) {
     setCanvasChatPendingAssistants(targets);
     const results = await Promise.all(targets.map(async (target) => {
       try {
-        const response = await invoke("forge_canvas_assistant_turn", {
+        const response = await forgeInvoke("forge_canvas_assistant_turn", {
           request: {
             message: redactCanvasForModel(target.messageForBroker),
             jobId: turnSessionJobId || currentAlphaSessionJobId() || null,
@@ -14997,7 +13942,7 @@ async function sendForgeCanvasChatMessage(event) {
             turnId,
             privacyScope: realEstateModeActive ? "agence_immo" : null,
           },
-        });
+        }, { section: "canvas-assistant", timeoutMs: 120000 });
         return { target, response };
       } catch (err) {
         return { target, err };
@@ -15045,14 +13990,14 @@ async function sendForgeCanvasChatMessage(event) {
         const generation = Number(response.codexBridge.threadGeneration || 0);
         toolEvents.push({
           tool: "thread_compaction",
-          label: generation > 0 ? `Context compacted · gen ${generation}` : "Context compacted",
+          label: generation > 0 ? `Context compacted Â· gen ${generation}` : "Context compacted",
         });
       }
       const usage = codexBridgeUsageSummary(response?.codexBridge);
       if (usage) {
         toolEvents.push({
           tool: "token_usage",
-          label: `${formatCount(usage.fresh)} fresh · ${formatCount(usage.cached)} cached`,
+          label: `${formatCount(usage.fresh)} fresh Â· ${formatCount(usage.cached)} cached`,
           usage,
         });
       }
@@ -15096,7 +14041,7 @@ function scrollAlphaTranscriptToLive({ smooth = true, force = false } = {}) {
   if (!alphaLogLayer || alphaLogLayer.style.display === "none") return;
   if (force) alphaTranscriptStickToBottom = true;
   // While streaming a long response, calling scrollTo({behavior:"smooth"}) every
-  // frame restarts the native smooth animation each tick — that's the friction.
+  // frame restarts the native smooth animation each tick â€” that's the friction.
   // Per-frame instant scroll is naturally smooth because content grows by a few
   // chars (a few px) per rAF tick. Smooth is reserved for explicit jumps.
   if (!alphaTranscriptStickToBottom) return;
@@ -15108,7 +14053,7 @@ function scrollAlphaTranscriptToLive({ smooth = true, force = false } = {}) {
     if (Math.abs(delta) < 2) return;
     alphaTranscriptProgrammaticScrollAt = performance.now();
     // Use native smooth only for explicit jumps (force) over a meaningful gap.
-    // Otherwise instant — the typing animation drives the perceived smoothness.
+    // Otherwise instant â€” the typing animation drives the perceived smoothness.
     const useNativeSmooth = smooth && force && delta > 80
       && typeof alphaLogLayer.scrollTo === "function";
     if (useNativeSmooth) {
@@ -15123,7 +14068,7 @@ function scrollAlphaTranscriptToLive({ smooth = true, force = false } = {}) {
 let alphaLogTypingActiveKeys = new Set();
 
 /**
- * Updates only the actively-typing assistant messages in place — no
+ * Updates only the actively-typing assistant messages in place â€” no
  * DOM destruction, no flicker on the older messages. Returns true if
  * any message was updated; false if there are no nodes to update.
  *
@@ -15183,7 +14128,13 @@ function renderAlphaLogLayer() {
     alphaDocState.candles.length,
   ].join(":");
   if (!alphaLogLayer) return;
-  // Detect "typing just finished" — a key that was active last frame is
+  alphaLogLayer.classList.toggle(
+    "is-empty",
+    alphaCanvasChatMessages.length === 0
+      && forgeCanvasChatPendingAssistants.length === 0
+      && !alphaForgeLogs.length
+  );
+  // Detect "typing just finished" â€” a key that was active last frame is
   // no longer active. That transition needs a full rebuild so the caret
   // disappears and the message-actions row (copy/pin/speak) appears.
   const currentTypingKeys = new Set(alphaCanvasTypingStates.keys());
@@ -15195,7 +14146,7 @@ function renderAlphaLogLayer() {
     }
   }
   alphaLogTypingActiveKeys = currentTypingKeys;
-  // Fast path: only typing progress changed → update text in place,
+  // Fast path: only typing progress changed â†’ update text in place,
   // leave the rest of the DOM (and all completed messages) untouched.
   if (alphaLogRenderedVersion === structuralKey && !typingJustFinished) {
     if (updateTypingMessagesInPlace()) {
@@ -16044,7 +14995,7 @@ if (typeof window !== "undefined") {
   };
 }
 
-// ─── Event listeners ──────────────────────────────────────────────
+// â”€â”€â”€ Event listeners â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 alphaTabResults.addEventListener("click", () => setAlphaActiveTab("results"));
 alphaTabForge.addEventListener(  "click", () => setAlphaActiveTab("forge"));
 alphaStartBtn.addEventListener(  "click", alphaStartComputation);
@@ -16200,7 +15151,7 @@ forgeCanvasChatInput?.addEventListener("blur", () => {
       const others = [forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput];
       if (others.some((f) => f && (document.activeElement === f || f.value))) return;
     }
-    // Restart from a fresh pass — multi mode replays the LLM names first.
+    // Restart from a fresh pass â€” multi mode replays the LLM names first.
     canvasChatPlaceholderCharIdx = 0;
     canvasChatPlaceholderPhase = forgeCanvasChatTargetMode === "all" ? "names" : "typing";
     startCanvasChatPlaceholderAnimation();
@@ -16286,7 +15237,6 @@ forgeCanvasChatModelLabel?.addEventListener("click", (event) => {
   setCanvasModelMenuOpen(!!forgeCanvasChatModelMenu?.hidden);
 });
 
-// Click on a multi-mode chip opens the menu pre-targeted on its runtime.
 document.getElementById("forgeCanvasChatModelAnchor")?.addEventListener("click", (event) => {
   const chip = event.target?.closest?.(".canvas-chat-model-chip");
   if (!chip) return;
@@ -16321,16 +15271,6 @@ forgeCanvasChatModelMenu?.addEventListener("click", (event) => {
     hydrateProviderModelPickers();
     renderCanvasModelMenu();
     syncCanvasChatModelLabel();
-  }
-});
-document.addEventListener("click", (event) => {
-  if (!forgeCanvasChatModelMenu || forgeCanvasChatModelMenu.hidden) return;
-  if (event.target?.closest?.(".canvas-model-anchor")) return;
-  setCanvasModelMenuOpen(false);
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && forgeCanvasChatModelMenu && !forgeCanvasChatModelMenu.hidden) {
-    setCanvasModelMenuOpen(false);
   }
 });
 startCanvasChatPlaceholderAnimation();
@@ -16659,10 +15599,15 @@ async function openCanvasChatProgramPicker() {
 
   // Fetch atlas overview (instruments + node tags). Programs come from
   // list_forge_programs; nodes come from get_forge_atlas_overview.
-  const invoke = window.__TAURI__?.core?.invoke;
   const [programs, atlasOverview] = await Promise.all([
     loadCanvasChatProgramOptions(),
-    invoke ? invoke("get_forge_atlas_overview", { limit: 60 }).catch(() => null) : null,
+    forgeCanInvoke()
+      ? forgeInvoke("get_forge_atlas_overview", { limit: 60 }, {
+          section: "atlas",
+          timeoutMs: 8000,
+          dedupeKey: "program-picker-atlas",
+        }).catch(() => null)
+      : null,
   ]);
 
   let hasAny = false;
@@ -16785,7 +15730,7 @@ function syncCanvasChatRemoveBtnState() {
   forgeCanvasChatRemoveSlotBtn.disabled = count <= CHAT_NODE_SLOT_MIN;
 }
 
-// "+" button — appends an extra empty node slot to the chat tray.
+// "+" button â€” appends an extra empty node slot to the chat tray.
 forgeCanvasChatAddSlotBtn?.addEventListener("click", (event) => {
   event.preventDefault();
   event.stopPropagation();
@@ -16799,7 +15744,7 @@ forgeCanvasChatAddSlotBtn?.addEventListener("click", (event) => {
   syncCanvasChatRemoveBtnState();
 });
 
-// "−" button — removes the rightmost slot. Prefers an empty slot first
+// "âˆ’" button â€” removes the rightmost slot. Prefers an empty slot first
 // so a populated cube isn't lost by accident; falls back to the last
 // slot if all are populated. Keeps at least CHAT_NODE_SLOT_MIN slot.
 forgeCanvasChatRemoveSlotBtn?.addEventListener("click", (event) => {
@@ -16825,23 +15770,12 @@ forgeCanvasChatRemoveSlotBtn?.addEventListener("click", (event) => {
 syncCanvasChatRemoveBtnState();
 
 document.addEventListener("click", (event) => {
-  if (!forgeCanvasChatProgramPicker || forgeCanvasChatProgramPicker.hidden) return;
-  if (forgeCanvasChatProgramPicker.contains(event.target)) return;
-  if (forgeCanvasChatPrograms?.contains(event.target)) return;
-  closeCanvasChatProgramPicker();
-});
-document.addEventListener("click", (event) => {
   const cube = event.target?.closest?.(".my-atlas-cube[data-slash-token]");
   if (!cube) return;
   if (event.target?.closest?.(".canvas-chat-nodeslot")) return;
   const token = String(cube.dataset.slashToken || "").trim();
   if (!token) return;
   insertCanvasChatToken(token);
-});
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && forgeCanvasChatProgramPicker && !forgeCanvasChatProgramPicker.hidden) {
-    closeCanvasChatProgramPicker();
-  }
 });
 forgeCanvasChatFileInput?.addEventListener("change", (event) => {
   addCanvasChatPendingFiles(event.target.files);
@@ -16874,15 +15808,14 @@ function stopCanvasChatActivity() {
     appendCanvasChatMessage("tool", "Stopped by user.", {});
   }
   setCanvasChatBusy(false);
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (invoke) {
-    void invoke("cancel_forge_canvas_activity", {
+  if (forgeCanInvoke()) {
+    void forgeInvoke("cancel_forge_canvas_activity", {
       request: {
         turnId: turnId || null,
         jobId: jobId || null,
         reason: "Stopped from Forge canvas chat",
       },
-    }).catch((err) => {
+    }, { section: "canvas-assistant", timeoutMs: 5000 }).catch((err) => {
       appendCanvasChatMessage("tool", `Stop request reached the UI, but backend cancel failed: ${err}`, {});
     });
   }
@@ -17046,17 +15979,16 @@ function blobToBase64(blob) {
 }
 
 async function transcribeCanvasDictationBlob(blob) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) throw new Error("Tauri invoke is not available");
+  if (!forgeCanInvoke()) throw new Error("Tauri invoke is not available");
   const audioBase64 = await blobToBase64(blob);
-  return invoke("voice_stt_transcribe", {
+  return forgeInvoke("voice_stt_transcribe", {
     request: {
       audioBase64,
       mimeType: blob.type || "audio/webm",
       modelId: "scribe_v2",
       languageCode: null,
     },
-  });
+  }, { section: "voice", timeoutMs: 60000 });
 }
 
 function playForgeUiSound(kind) {
@@ -17292,8 +16224,8 @@ forgeCanvasChatVoiceOutBtn?.addEventListener("click", (event) => {
 syncCanvasChatSendState();
 alphaNewSessionBtn?.addEventListener("click", startAlphaNewSession);
 alphaStartEmptySessionBtn?.addEventListener("click", startAlphaEmptySession);
-alphaSidebarToggle?.addEventListener("click", () => setAlphaSidebarCollapsed(!alphaSidebarCollapsed));
-alphaProofClose?.addEventListener("click", () => setAlphaProofPanelOpen(false));
+forgeShellRuntime?.registerAction?.("toggle-right-panel",()=>{if(!alphaProofPanelOpen)setAlphaRightPanelMode(defaultAlphaRightPanelMode(),{skipRender:true});setAlphaProofPanelOpen(!alphaProofPanelOpen);});
+forgeShellRuntime?.registerAction?.("close-right-panel",()=>setAlphaProofPanelOpen(false));
 alphaTrace("listeners.bound", {
   hasStartBtn: !!alphaStartBtn,
   hasDropZone: !!alphaDropZone,
@@ -17302,10 +16234,22 @@ alphaTrace("listeners.bound", {
 
 alphaDropZone.addEventListener("click", (event) => {
   if (event.target === alphaFileInput) return;
+  if (realEstateOnboardingActive()) {
+    event.preventDefault();
+    (primaryCanvasComposerInput?.() || forgeCanvasChatInput)?.focus?.({ preventScroll: true });
+    return;
+  }
   openAlphaFilePicker("replace");
 });
 alphaDropZone.addEventListener("keydown",  (e) => {
-  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openAlphaFilePicker("replace"); }
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    if (realEstateOnboardingActive()) {
+      (primaryCanvasComposerInput?.() || forgeCanvasChatInput)?.focus?.({ preventScroll: true });
+    } else {
+      openAlphaFilePicker("replace");
+    }
+  }
 });
 alphaDropZone.addEventListener("dragover", (e) => { e.preventDefault(); alphaDropZone.classList.add("active"); });
 alphaDropZone.addEventListener("dragleave",()  => alphaDropZone.classList.remove("active"));
@@ -17342,7 +16286,7 @@ function appendMarsLensPickerRow() {
   `;
   const label = document.createElement("span");
   label.className = "program-picker-row-label";
-  label.textContent = "Planet · Mars";
+  label.textContent = "Planet Â· Mars";
   row.appendChild(label);
   const select = () => {
     if (typeof openMarsLensView === "function") openMarsLensView();
@@ -17405,18 +16349,6 @@ alphaAddProgramBtn?.addEventListener("click", (event) => {
   event.stopPropagation();
   if (alphaProgramPicker?.hidden === false) closeProgramPicker();
   else void openProgramPicker();
-});
-
-document.addEventListener("click", (event) => {
-  if (!alphaProgramPicker || alphaProgramPicker.hidden) return;
-  if (alphaProgramPicker.contains(event.target)) return;
-  if (alphaAddProgramBtn?.contains(event.target)) return;
-  closeProgramPicker();
-});
-
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && alphaProgramPicker && !alphaProgramPicker.hidden) closeProgramPicker();
-  if (event.key === "Escape" && marsLensView?.classList.contains("is-open")) closeMarsLensView();
 });
 
 window.addEventListener("forge:attach-program", (event) => {
@@ -17495,9 +16427,9 @@ workspaceMenu?.addEventListener("click", async (event) => {
     if (action === "choose-folder") {
       await chooseWorkspaceFolder();
     } else if (action === "show-folder") {
-      await window.__TAURI__?.core?.invoke?.("reveal_workspace_folder", {
+      if (forgeCanInvoke()) await forgeInvoke("reveal_workspace_folder", {
         path: workspaceFolderInfo.path || null,
-      });
+      }, { section: "shell", timeoutMs: 5000 });
     } else if (action === "copy-path") {
       await navigator.clipboard.writeText(workspaceFolderInfo.path || "");
     }
@@ -17876,11 +16808,11 @@ function renderAlphaChartMenu(mode = "chart") {
     alphaChartMenu.innerHTML = `
       <button type="button" class="chart-menu-item" data-plus-action="alert-price">
         <span class="chart-menu-check"></span>
-        <span class="chart-menu-label">Ajouter une alerte sur ${symbol} à ${priceText}</span>
+        <span class="chart-menu-label">Ajouter une alerte sur ${symbol} Ã  ${priceText}</span>
       </button>
       <button type="button" class="chart-menu-item" data-plus-action="alert-vwap">
         <span class="chart-menu-check"></span>
-        <span class="chart-menu-label">Ajouter une alerte sur VWAP à ${priceText}</span>
+        <span class="chart-menu-label">Ajouter une alerte sur VWAP Ã  ${priceText}</span>
       </button>
       <button type="button" class="chart-menu-item" data-plus-action="buy-limit">
         <span class="chart-menu-check"></span>
@@ -17892,11 +16824,11 @@ function renderAlphaChartMenu(mode = "chart") {
       </button>
       <button type="button" class="chart-menu-item" data-plus-action="add-order">
         <span class="chart-menu-check"></span>
-        <span class="chart-menu-label">Ajouter un ordre sur ${symbol} à ${priceText}</span>
+        <span class="chart-menu-label">Ajouter un ordre sur ${symbol} Ã  ${priceText}</span>
       </button>
       <button type="button" class="chart-menu-item" data-plus-action="draw-horizontal-line">
         <span class="chart-menu-check"></span>
-        <span class="chart-menu-label">Tracer une ligne horizontale à ${priceText}</span>
+        <span class="chart-menu-label">Tracer une ligne horizontale Ã  ${priceText}</span>
       </button>
     `;
     return;
@@ -17910,39 +16842,39 @@ function renderAlphaChartMenu(mode = "chart") {
     alphaChartMenu.classList.add("trading-scale-menu");
     alphaChartMenu.innerHTML = `
       <button type="button" class="chart-menu-item" data-scale-action="reset-price-scale">
-        <span class="chart-menu-check">${check(false) === "true" ? "✓" : ""}</span>
+        <span class="chart-menu-check">${check(false) === "true" ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Reset price scale</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="auto-fit">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.autoFit ? "✓" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.autoFit ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Auto fit</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="lock-price-bar-ratio">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.lockPriceBarRatio ? "✓" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.lockPriceBarRatio ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Lock price / bar ratio</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="chart-only-scale">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.chartOnlyPriceScale ? "✓" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.chartOnlyPriceScale ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Chart-only price scale</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="invert-price-scale">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.invertPriceScale ? "✓" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.invertPriceScale ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Invert scale</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-mode="normal">
-        <span class="chart-menu-check">${modeCheck("normal") ? "✓" : ""}</span>
+        <span class="chart-menu-check">${modeCheck("normal") ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Normal</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-mode="percent">
-        <span class="chart-menu-check">${modeCheck("percent") ? "✓" : ""}</span>
+        <span class="chart-menu-check">${modeCheck("percent") ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Percent</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-mode="indexed">
-        <span class="chart-menu-check">${modeCheck("indexed") ? "✓" : ""}</span>
+        <span class="chart-menu-check">${modeCheck("indexed") ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Indexed to 100</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-mode="logarithmic">
-        <span class="chart-menu-check">${modeCheck("logarithmic") ? "✓" : ""}</span>
+        <span class="chart-menu-check">${modeCheck("logarithmic") ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Logarithmic</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="toggle-price-axis-side">
@@ -17950,15 +16882,15 @@ function renderAlphaChartMenu(mode = "chart") {
         <span class="chart-menu-label">${sideLabel}</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="toggle-labels">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.showPriceLabels ? "✓" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.showPriceLabels ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Labels</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="toggle-lines">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.showGridLines ? "✓" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.showGridLines ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Lines</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="toggle-plus-button">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.showPlusButton ? "✓" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.showPlusButton ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Plus button</span>
       </button>
     `;
@@ -17976,7 +16908,7 @@ function renderAlphaChartMenu(mode = "chart") {
         <span class="chart-menu-label">Time zone: ${alphaTradingTimeZoneLabel()}</span>
       </button>
       <button type="button" class="chart-menu-item" data-time-action="toggle-session-breaks">
-        <span class="chart-menu-check">${alphaTradingTimePrefs.showSessionBreaks ? "✓" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingTimePrefs.showSessionBreaks ? "âœ“" : ""}</span>
         <span class="chart-menu-label">Session breaks</span>
       </button>
     `;
@@ -17991,7 +16923,7 @@ function renderAlphaChartMenu(mode = "chart") {
       </button>
       ${ALPHA_TRADING_TIME_ZONES.map((entry) => `
         <button type="button" class="chart-menu-item" data-time-zone-id="${entry.id}">
-          <span class="chart-menu-check">${alphaTradingTimePrefs.timeZone === entry.id ? "✓" : ""}</span>
+          <span class="chart-menu-check">${alphaTradingTimePrefs.timeZone === entry.id ? "âœ“" : ""}</span>
           <span class="chart-menu-label">${entry.label}</span>
         </button>
       `).join("")}
@@ -18096,18 +17028,18 @@ function drawAlphaTradingDockPanel(zones) {
     }
     if (item.checked) {
       alphaCtx.fillStyle = `rgba(166,232,222,${0.90 * alphaScale})`;
-      alphaCtx.fillText("✓", markColumnX, y + h * 0.5);
+      alphaCtx.fillText("âœ“", markColumnX, y + h * 0.5);
     }
     alphaCtx.fillStyle = `rgba(244,244,238,${0.95 * alphaScale})`;
     alphaCtx.fillText(item.label, labelColumnX, y + h * 0.5);
     if (item.arrow) {
       alphaCtx.textAlign = "right";
-      alphaCtx.fillText("›", x + w, y + h * 0.5);
+      alphaCtx.fillText("â€º", x + w, y + h * 0.5);
       alphaCtx.textAlign = "left";
     } else if (item.back) {
       alphaCtx.fillStyle = `rgba(190,223,220,${0.90 * alphaScale})`;
       alphaCtx.font = '700 20px Geist, "Segoe UI", sans-serif';
-      alphaCtx.fillText("‹", markColumnX - 2, y + h * 0.5);
+      alphaCtx.fillText("â€¹", markColumnX - 2, y + h * 0.5);
       alphaCtx.font = '700 13px Geist, "Segoe UI", sans-serif';
       alphaCtx.fillStyle = `rgba(244,244,238,${0.95 * alphaScale})`;
       alphaCtx.fillText(item.label, labelColumnX, y + h * 0.5);
@@ -18340,7 +17272,7 @@ alphaLogLayer.addEventListener("contextmenu", (event) => {
 });
 
 alphaLogLayer.addEventListener("scroll", () => {
-  // Programmatic scrolls bump alphaTranscriptProgrammaticScrollAt — give them a
+  // Programmatic scrolls bump alphaTranscriptProgrammaticScrollAt â€” give them a
   // short window so we don't mistake our own scroll for a user gesture.
   if (performance.now() - alphaTranscriptProgrammaticScrollAt > 80) {
     alphaTranscriptStickToBottom = alphaTranscriptIsNearBottom();
@@ -18476,7 +17408,7 @@ forgeJobMenu.addEventListener("click", async (event) => {
     if (action === "rename") {
       const jobId = forgeJobMenuJobId;
       hideForgeJobMenu();
-      // Inline rename inside the panel — no native prompt window.
+      // Inline rename inside the panel â€” no native prompt window.
       startInlineRenameForJob(jobId);
     } else {
       await updateForgeJobAction(action);
@@ -18508,14 +17440,7 @@ window.addEventListener("mousedown", (event) => {
   }
 });
 
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") hideAlphaLogMenu();
-  if (event.key === "Escape") hideAlphaChartMenu();
-  if (event.key === "Escape") hideForgeJobMenu();
-  if (event.key === "Escape") setWorkspaceMenuOpen(false);
-});
-
-// ── Wheel zoom ────────────────────────────────────────────────────
+// â”€â”€ Wheel zoom â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 alphaCanvas.addEventListener("wheel", (e) => {
   const rect = alphaCanvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
@@ -18574,7 +17499,7 @@ alphaCanvas.addEventListener("wheel", (e) => {
   scheduleAlphaRender();
 }, { passive: false });
 
-// ── Drag pan + hover ──────────────────────────────────────────────
+// â”€â”€ Drag pan + hover â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let alphaDragStartX = 0, alphaDragStartEnd = 0, alphaDragging = false;
 let alphaDragStartY = 0;
 let alphaDragStartPricePan = 0;
@@ -19238,23 +18163,23 @@ alphaCanvas.addEventListener("mouseleave", () => {
   scheduleAlphaRender();
 });
 
-// ── Route Tauri events to alpha when active ───────────────────────
+// â”€â”€ Route Tauri events to alpha when active â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // (additional listeners; existing listeners always feed forge logs)
-if (window.__TAURI__) {
-  window.__TAURI__.event.listen("forge-log",    (e) => {
+if (typeof forgeTauri?.listen === "function") {
+  forgeListen("forge-log",    (e) => {
     if (activeSection === "alpha") appendAlphaForge(String(e.payload));
   });
-  window.__TAURI__.event.listen("forge-result", (e) => {
+  forgeListen("forge-result", (e) => {
     if (activeSection === "alpha") appendAlphaResult(String(e.payload));
   });
-  window.__TAURI__.event.listen("forge-canvas-assistant-event", (e) => {
+  forgeListen("forge-canvas-assistant-event", (e) => {
     try {
       handleForgeCanvasAssistantEvent(e.payload);
     } catch (err) {
       console.error("forge-canvas-assistant-event listener failed", err);
     }
   });
-  window.__TAURI__.event.listen("forge-provider-terminal", (e) => {
+  forgeListen("forge-provider-terminal", (e) => {
     try {
       ["codex", "gemini", "claude"].forEach((provider) => handleProviderTerminalEvent(provider, e.payload));
     } catch (err) {
@@ -19262,21 +18187,21 @@ if (window.__TAURI__) {
     }
   });
 
-  // Φ.ν.7g — Canaux dédiés à la section α Alpha. Émis par le backend
+  // Î¦.Î½.7g â€” Canaux dÃ©diÃ©s Ã  la section Î± Alpha. Ã‰mis par le backend
   // start_alpha_synthesis (main.rs::emit_alpha_log + emit_alpha_signal).
-  // Ne pollue PAS les logs DNA grâce aux canaux séparés.
+  // Ne pollue PAS les logs DNA grÃ¢ce aux canaux sÃ©parÃ©s.
   //
   // Format alpha-signal : "LONG @ 1717084800000 @ 2.847" ou
-  // "SHORT @ ... @ ...". Parsé ici en {type, time, price, idx} pour
-  // markers chart (triangles glow ▲ ▼).
-  window.__TAURI__.event.listen("alpha-log", (e) => {
+  // "SHORT @ ... @ ...". ParsÃ© ici en {type, time, price, idx} pour
+  // markers chart (triangles glow â–² â–¼).
+  forgeListen("alpha-log", (e) => {
     try {
       appendAlphaForge(String(e.payload));
     } catch (err) {
       console.error("alpha-log listener failed", err);
     }
   });
-  window.__TAURI__.event.listen("alpha-signal", (e) => {
+  forgeListen("alpha-signal", (e) => {
     try {
       const s = String(e.payload);
       const m = s.match(/^(LONG|SHORT)\s+@\s+(\d+)\s+@\s+([0-9.+-]+)$/);
@@ -19297,7 +18222,7 @@ if (window.__TAURI__) {
       console.error("alpha-signal listener failed", err);
     }
   });
-  window.__TAURI__.event.listen("alpha-signal-reset", () => {
+  forgeListen("alpha-signal-reset", () => {
     try {
       alphaSignals.length = 0;
       scheduleAlphaRender();
@@ -19305,7 +18230,7 @@ if (window.__TAURI__) {
       console.error("alpha-signal-reset listener failed", err);
     }
   });
-  window.__TAURI__.event.listen("webexplorer-dom-committed", (event) => {
+  forgeListen("webexplorer-dom-committed", (event) => {
     try {
       if (!isWebExplorerUiActive()) return;
       const payload = event?.payload || {};
@@ -19338,9 +18263,9 @@ if (window.__TAURI__) {
   });
 }
 
-// ── Start alpha RAF loop ──────────────────────────────────────────
+// â”€â”€ Start alpha RAF loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 void loadWorkspaceBreadcrumb();
-if (!isWebExplorerSurface && window.__TAURI__?.core?.invoke) {
+if (!isWebExplorerSurface && forgeCanInvoke()) {
   const startBackgroundJobs = () => {
     window.setTimeout(() => void pollForgeJobs({ bootSafe: true, timeoutMs: 1800 }), 1800);
     window.setInterval(() => {
@@ -19368,7 +18293,7 @@ if (!isWebExplorerSurface) {
 
 // No eager Alpha preview at startup: wait for a real file to keep the UI responsive.
 
-// ── Library overlay ───────────────────────────────────────────────
+// â”€â”€ Library overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const navLibraryBtn  = document.getElementById("navLibraryBtn");
 const libraryOverlay = document.getElementById("libraryOverlay");
@@ -19400,7 +18325,7 @@ function seededRand(seed) {
   return () => { h ^= h << 13; h ^= h >> 17; h ^= h << 5; return (h >>> 0) / 4294967296; };
 }
 
-// Cache jobId → parsed candles array (null = tried but failed)
+// Cache jobId â†’ parsed candles array (null = tried but failed)
 const libChartCache = new Map();
 
 function drawLibCandleChart(canvas, candles) {
@@ -19451,9 +18376,13 @@ async function loadAndDrawLibChart(canvas, jobId) {
   if (cached) { drawLibCandleChart(canvas, cached); return; }
   if (cached === null) return; // known failure
 
-  if (!window.__TAURI__?.core?.invoke) { libChartCache.set(jobId, null); return; }
+  if (!forgeCanInvoke()) { libChartCache.set(jobId, null); return; }
   try {
-    const payload = await window.__TAURI__.core.invoke("read_forge_job_file", { jobId });
+    const payload = await forgeInvoke("read_forge_job_file", { jobId }, {
+      section: "library",
+      timeoutMs: 8000,
+      dedupeKey: `lib-chart:${jobId}`,
+    });
     const text    = payload?.text ? String(payload.text) : "";
     const candles = text ? tryParseCandleCsv(text) : null;
     libChartCache.set(jobId, candles || null);
@@ -19491,7 +18420,7 @@ function libPreviewHTML(type, label, jobId) {
       `<div class="lib-preview-pdf-line" style="width:${w}%"></div>`).join("")}</div>`;
   }
   const r = seededRand(jobId);
-  const dotLine = () => "· ".repeat(Math.floor(r() * 14 + 8)).trim();
+  const dotLine = () => "Â· ".repeat(Math.floor(r() * 14 + 8)).trim();
   return `<div class="lib-preview-txt">${dotLine()}<br>${dotLine()}<br>${dotLine()}<br>${dotLine()}</div>`;
 }
 
@@ -19638,31 +18567,83 @@ function closeLibraryOverlay() {
   setTopbarLibraryMode(false);
 }
 
-if (navLibraryBtn) navLibraryBtn.addEventListener("click", () =>
-  libraryOverlay && !libraryOverlay.hidden ? closeLibraryOverlay() : openLibraryOverlay()
-);
-if (libraryClose)  libraryClose.addEventListener("click", closeLibraryOverlay);
+forgeShellRuntime?.registerAction?.("library-toggle", () => {
+  libraryOverlay && !libraryOverlay.hidden ? closeLibraryOverlay() : openLibraryOverlay();
+});
+forgeShellRuntime?.registerAction?.("library-close", () => closeLibraryOverlay());
 if (librarySearch) librarySearch.addEventListener("input", () => {
   librarySearchVal = librarySearch.value;
   renderLibraryGrid();
 });
 
-document.querySelectorAll(".lib-filter-btn").forEach(btn => btn.addEventListener("click", () => {
-  document.querySelectorAll(".lib-filter-btn").forEach(b => b.classList.remove("active"));
-  btn.classList.add("active");
-  libraryFilter = btn.dataset.filter || "all";
+forgeShellRuntime?.registerAction?.("library-filter", (payload) => {
+  const filter = String(payload?.dataset?.filter || "all");
+  document.querySelectorAll(".lib-filter-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.filter === filter);
+  });
+  libraryFilter = filter;
   renderLibraryGrid();
-}));
-
-window.addEventListener("keydown", e => {
-  if (e.key === "Escape") {
-    if (libCtxMenu && !libCtxMenu.hidden) { hideLibCtxMenu(); return; }
-    if (libraryOverlay && !libraryOverlay.hidden) closeLibraryOverlay();
-    if (mcpOverlay && !mcpOverlay.hidden) closeMcpOverlay();
-  }
 });
 
-// ── MCP tools overlay ─────────────────────────────────────────────
+forgeShellRuntime?.registerAction?.("escape-overlays", () => {
+  if (libCtxMenu && !libCtxMenu.hidden) { hideLibCtxMenu(); return; }
+  if (profileMenu && !profileMenu.hidden) { setProfileMenuOpen(false); return; }
+  if (archiveOverlay && !archiveOverlay.hidden) { closeArchiveOverlay(); return; }
+  if (docsOverlay && !docsOverlay.hidden) { closeDocsOverlay(); return; }
+  if (forgeCanvasChatModelMenu && !forgeCanvasChatModelMenu.hidden) { setCanvasModelMenuOpen(false); return; }
+  if (forgeCanvasChatProgramPicker && !forgeCanvasChatProgramPicker.hidden) { closeCanvasChatProgramPicker(); return; }
+  if (alphaProgramPicker && !alphaProgramPicker.hidden) { closeProgramPicker(); return; }
+  if (marsLensView?.classList.contains("is-open")) { closeMarsLensView(); return; }
+  if (alphaLogMenu && !alphaLogMenu.hidden) { hideAlphaLogMenu(); return; }
+  if (alphaChartMenu && !alphaChartMenu.hidden) { hideAlphaChartMenu(); return; }
+  if (forgeJobMenu && !forgeJobMenu.hidden) { hideForgeJobMenu(); return; }
+  if (workspaceMenu && !workspaceMenu.hidden) { setWorkspaceMenuOpen(false); return; }
+  if (libraryOverlay && !libraryOverlay.hidden) closeLibraryOverlay();
+  if (mcpOverlay && !mcpOverlay.hidden) closeMcpOverlay();
+  if (providerOverlay && !providerOverlay.hidden) closeProviderOverlay();
+  if (programsOverlay && !programsOverlay.hidden) closeProgramsOverlay();
+});
+
+forgeShellRuntime?.registerAction?.("document-click", (payload) => {
+  const target = payload?.target;
+  if (!(target instanceof Element)) return;
+
+  if (profileMenu && !profileMenu.hidden && !target.closest("#profileMenu, #profileBtn")) {
+    setProfileMenuOpen(false);
+  }
+
+  if (archiveOverlay && !archiveOverlay.hidden && target === archiveOverlay) {
+    closeArchiveOverlay();
+  }
+
+  if (forgeCanvasChatModelMenu && !forgeCanvasChatModelMenu.hidden && !target.closest(".canvas-model-anchor")) {
+    setCanvasModelMenuOpen(false);
+  }
+
+  if (
+    forgeCanvasChatProgramPicker &&
+    !forgeCanvasChatProgramPicker.hidden &&
+    !forgeCanvasChatProgramPicker.contains(target) &&
+    !forgeCanvasChatPrograms?.contains(target)
+  ) {
+    closeCanvasChatProgramPicker();
+  }
+
+  if (
+    alphaProgramPicker &&
+    !alphaProgramPicker.hidden &&
+    !alphaProgramPicker.contains(target) &&
+    !alphaAddProgramBtn?.contains(target)
+  ) {
+    closeProgramPicker();
+  }
+
+  document.querySelectorAll(".barrel-inline.expanded").forEach((el) => {
+    if (!el.contains(target)) collapseBarrel(el);
+  });
+});
+
+// â”€â”€ MCP tools overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const navMcpBtn   = document.getElementById("navMcpBtn");
 const mcpOverlay  = document.getElementById("mcpOverlay");
@@ -19717,7 +18698,7 @@ async function copyMcpCommand(text, button) {
     if (button) {
       button.classList.add("copied");
       const old = button.innerHTML;
-      button.innerHTML = "✓";
+      button.innerHTML = "âœ“";
       setTimeout(() => {
         button.classList.remove("copied");
         button.innerHTML = old;
@@ -19808,23 +18789,25 @@ function closeMcpOverlay() {
   setTopbarMcpMode(false);
 }
 
-if (navMcpBtn) navMcpBtn.addEventListener("click", () =>
-  mcpOverlay && !mcpOverlay.hidden ? closeMcpOverlay() : openMcpOverlay()
-);
-if (mcpClose) mcpClose.addEventListener("click", closeMcpOverlay);
+forgeShellRuntime?.registerAction?.("mcp-toggle", () => {
+  mcpOverlay && !mcpOverlay.hidden ? closeMcpOverlay() : openMcpOverlay();
+});
+forgeShellRuntime?.registerAction?.("mcp-close", () => closeMcpOverlay());
 if (mcpSearch) mcpSearch.addEventListener("input", () => {
   mcpSearchVal = mcpSearch.value;
   renderMcpToolList();
 });
 
-document.querySelectorAll(".mcp-filter-btn").forEach(btn => btn.addEventListener("click", () => {
-  document.querySelectorAll(".mcp-filter-btn").forEach(b => b.classList.remove("active"));
-  btn.classList.add("active");
-  mcpFilter = btn.dataset.filter || "all";
+forgeShellRuntime?.registerAction?.("mcp-filter", (payload) => {
+  const filter = String(payload?.dataset?.filter || "all");
+  document.querySelectorAll(".mcp-filter-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.filter === filter);
+  });
+  mcpFilter = filter;
   renderMcpToolList();
-}));
+});
 
-// ── LLM provider settings ────────────────────────────────────────
+// â”€â”€ LLM provider settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const providerDom = Object.fromEntries(`
   providerOverlay providerClose providerConnectionChip providerWorkbench providerTerminalDeck
@@ -19955,7 +18938,7 @@ function normalizeCliModelRef(model, fallback, aliases = {}) {
   if (!raw) return fallback;
   const key = raw
     .toLowerCase()
-    .replace(/[’']/g, "")
+    .replace(/[â€™']/g, "")
     .replace(/[^a-z0-9.]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
@@ -20111,7 +19094,7 @@ function renderVoiceProviderStatus(status, options = {}) {
     voiceProviderUsage.textContent = `${used.toLocaleString()} / ${settings.monthlyLimit.toLocaleString()} chars`;
   }
   if (voiceProviderCache) {
-    voiceProviderCache.textContent = `${Number(status?.cacheFiles || 0).toLocaleString()} files · ${formatVoiceBytes(status?.cacheBytes)}`;
+    voiceProviderCache.textContent = `${Number(status?.cacheFiles || 0).toLocaleString()} files Â· ${formatVoiceBytes(status?.cacheBytes)}`;
   }
   if (voiceElevenApiKey && status) {
     voiceElevenApiKey.placeholder = configured ? "Saved locally" : "sk_...";
@@ -20122,9 +19105,8 @@ function renderVoiceProviderStatus(status, options = {}) {
 }
 
 async function refreshVoiceProviderStatus(options = {}) {
-  const invoke = window.__TAURI__?.core?.invoke;
   if (!options.silent) renderVoiceProviderStatus(voiceProviderLastStatus, { busy: true });
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     renderVoiceProviderStatus({
       elevenConfigured: false,
       usageChars: 0,
@@ -20135,7 +19117,11 @@ async function refreshVoiceProviderStatus(options = {}) {
     return null;
   }
   try {
-    const status = await invoke("voice_tts_status");
+    const status = await forgeInvoke("voice_tts_status", {}, {
+      section: "voice",
+      timeoutMs: 5000,
+      dedupeKey: "voice-status",
+    });
     renderVoiceProviderStatus(status);
     return status;
   } catch (err) {
@@ -20151,13 +19137,12 @@ async function refreshVoiceProviderStatus(options = {}) {
 }
 
 async function saveElevenLabsApiKey() {
-  const invoke = window.__TAURI__?.core?.invoke;
   const apiKey = String(voiceElevenApiKey?.value || "").trim();
   if (!apiKey) {
     if (voiceProviderHint) voiceProviderHint.textContent = "Paste an ElevenLabs API key before saving.";
     return;
   }
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     if (voiceProviderHint) voiceProviderHint.textContent = "Open Forge as a Tauri app to save the ElevenLabs key.";
     return;
   }
@@ -20167,7 +19152,10 @@ async function saveElevenLabsApiKey() {
     voiceElevenSaveKey.textContent = "Saving";
   }
   try {
-    const result = await invoke("elevenlabs_api_key_save", { request: { apiKey } });
+    const result = await forgeInvoke("elevenlabs_api_key_save", { request: { apiKey } }, {
+      section: "voice",
+      timeoutMs: 10000,
+    });
     if (voiceElevenApiKey) {
       voiceElevenApiKey.value = "";
       voiceElevenApiKey.placeholder = "Saved locally";
@@ -20185,8 +19173,7 @@ async function saveElevenLabsApiKey() {
 }
 
 async function clearElevenLabsApiKey() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     if (voiceProviderHint) voiceProviderHint.textContent = "Open Forge as a Tauri app to clear the ElevenLabs key.";
     return;
   }
@@ -20196,7 +19183,10 @@ async function clearElevenLabsApiKey() {
     voiceElevenClearKey.textContent = "Clearing";
   }
   try {
-    const result = await invoke("elevenlabs_api_key_clear");
+    const result = await forgeInvoke("elevenlabs_api_key_clear", {}, {
+      section: "voice",
+      timeoutMs: 10000,
+    });
     if (voiceElevenApiKey) {
       voiceElevenApiKey.value = "";
       voiceElevenApiKey.placeholder = result?.configured ? "Environment key active" : "sk_...";
@@ -20383,11 +19373,11 @@ function resetOandaProviderDraft() {
 
 function oandaProviderTerminalIntroLines() {
   return [
-    "███████  ██████  ██████   ██████  ███████",
-    "██      ██    ██ ██   ██ ██       ██",
-    "█████   ██    ██ ██████  ██   ███ █████",
-    "██      ██    ██ ██   ██ ██    ██ ██",
-    "██       ██████  ██   ██  ██████  ███████",
+    "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ   â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ",
+    "â–ˆâ–ˆ      â–ˆâ–ˆ    â–ˆâ–ˆ â–ˆâ–ˆ   â–ˆâ–ˆ â–ˆâ–ˆ       â–ˆâ–ˆ",
+    "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ   â–ˆâ–ˆ    â–ˆâ–ˆ â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆ   â–ˆâ–ˆâ–ˆ â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ",
+    "â–ˆâ–ˆ      â–ˆâ–ˆ    â–ˆâ–ˆ â–ˆâ–ˆ   â–ˆâ–ˆ â–ˆâ–ˆ    â–ˆâ–ˆ â–ˆâ–ˆ",
+    "â–ˆâ–ˆ       â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆ   â–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ",
   ];
 }
 
@@ -20817,7 +19807,6 @@ function renderOandaProviderStatus(status, options = {}) {
 }
 
 async function refreshOandaProviderStatus(options = {}) {
-  const invoke = window.__TAURI__?.core?.invoke;
   if (!options.silent) {
     renderOandaProviderStatus(oandaProviderLastStatus || {
       connected: false,
@@ -20828,7 +19817,7 @@ async function refreshOandaProviderStatus(options = {}) {
       message: "Checking OANDA credential status.",
     }, { busy: true });
   }
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     const fallback = {
       connected: false,
       installed: true,
@@ -20841,7 +19830,11 @@ async function refreshOandaProviderStatus(options = {}) {
     return fallback;
   }
   try {
-    const status = await invoke("trading_oanda_provider_status");
+    const status = await forgeInvoke("trading_oanda_provider_status", {}, {
+      section: "provider",
+      timeoutMs: 5000,
+      dedupeKey: "oanda-status",
+    });
     renderOandaProviderStatus(status);
     return status;
   } catch (err) {
@@ -20859,8 +19852,7 @@ async function refreshOandaProviderStatus(options = {}) {
 }
 
 async function saveOandaProviderCredentialsFromTerminal() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     void typeOandaTerminalLog("Open Forge as a Tauri app to validate and save OANDA credentials.", "error");
     return;
   }
@@ -20880,9 +19872,9 @@ async function saveOandaProviderCredentialsFromTerminal() {
       apiKey: resolvedOandaProviderTerminalValue("apiKey"),
       baseUrl: resolvedOandaProviderTerminalValue("baseUrl"),
     };
-    const validation = await invoke("trading_oanda_provider_validate_credentials", {
+    const validation = await forgeInvoke("trading_oanda_provider_validate_credentials", {
       request,
-    });
+    }, { section: "provider", timeoutMs: 20000 });
     await eraseOandaTerminalLog(spinnerId);
     await typeOandaTerminalLog(validation?.message || "OANDA API validation succeeded.", "success");
     await waitOandaTerminal(320);
@@ -20918,9 +19910,9 @@ async function saveOandaProviderCredentialsFromTerminal() {
     resetOandaProviderTerminalFieldFx();
     resetOandaProviderTerminalFieldVisibility(false);
     renderOandaProviderTerminal();
-    const status = await invoke("trading_oanda_provider_encrypt_credentials", {
+    const status = await forgeInvoke("trading_oanda_provider_encrypt_credentials", {
       request,
-    });
+    }, { section: "provider", timeoutMs: 15000 });
     oandaProviderTerminalStoredSecrets = {
       accountId: request.accountId,
       apiKey: request.apiKey,
@@ -20949,8 +19941,7 @@ async function saveOandaProviderCredentialsFromTerminal() {
 }
 
 async function clearOandaProviderCredentialsFromTerminal() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     void typeOandaTerminalLog("Open Forge as a Tauri app to clear OANDA credentials.", "error");
     return;
   }
@@ -20959,7 +19950,10 @@ async function clearOandaProviderCredentialsFromTerminal() {
   renderOandaProviderTerminal();
   const spinnerId = createOandaTerminalLog("Removing encrypted local credentials...", { tone: "pending", spinner: true });
   try {
-    const status = await invoke("trading_oanda_clear_credentials");
+    const status = await forgeInvoke("trading_oanda_clear_credentials", {}, {
+      section: "provider",
+      timeoutMs: 10000,
+    });
     await eraseOandaTerminalLog(spinnerId);
     renderOandaProviderStatus(status);
     oandaProviderTerminalStoredSecrets = { accountId: "", apiKey: "", baseUrl: "" };
@@ -21241,18 +20235,18 @@ function providerTerminalStoryProfile(provider) {
 
 function providerTerminalPixelGlyphs() {
   return {
-    A: [" ███ ", "██ ██", "█████", "██ ██", "██ ██"],
-    C: [" ████", "██   ", "██   ", "██   ", " ████"],
-    D: ["████ ", "██ ██", "██ ██", "██ ██", "████ "],
-    E: ["█████", "██   ", "████ ", "██   ", "█████"],
-    G: [" ████ ", "██    ", "██ ███", "██   ██", " █████ "],
-    I: ["█████", "  ██ ", "  ██ ", "  ██ ", "█████"],
-    L: ["██   ", "██   ", "██   ", "██   ", "█████"],
-    M: ["██   ██", "███ ███", "██ █ ██", "██   ██", "██   ██"],
-    N: ["██   ██", "███  ██", "██ ██ ██", "██  ███", "██   ██"],
-    O: [" ████ ", "██  ██", "██  ██", "██  ██", " ████ "],
-    U: ["██  ██", "██  ██", "██  ██", "██  ██", " ████ "],
-    X: ["██  ██", " ██ ██", "  ███ ", " ██ ██", "██  ██"],
+    A: [" â–ˆâ–ˆâ–ˆ ", "â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆâ–ˆ"],
+    C: [" â–ˆâ–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆ   ", " â–ˆâ–ˆâ–ˆâ–ˆ"],
+    D: ["â–ˆâ–ˆâ–ˆâ–ˆ ", "â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆâ–ˆâ–ˆ "],
+    E: ["â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆâ–ˆâ–ˆ ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ"],
+    G: [" â–ˆâ–ˆâ–ˆâ–ˆ ", "â–ˆâ–ˆ    ", "â–ˆâ–ˆ â–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ   â–ˆâ–ˆ", " â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ "],
+    I: ["â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ", "  â–ˆâ–ˆ ", "  â–ˆâ–ˆ ", "  â–ˆâ–ˆ ", "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ"],
+    L: ["â–ˆâ–ˆ   ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ"],
+    M: ["â–ˆâ–ˆ   â–ˆâ–ˆ", "â–ˆâ–ˆâ–ˆ â–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ   â–ˆâ–ˆ", "â–ˆâ–ˆ   â–ˆâ–ˆ"],
+    N: ["â–ˆâ–ˆ   â–ˆâ–ˆ", "â–ˆâ–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ   â–ˆâ–ˆ"],
+    O: [" â–ˆâ–ˆâ–ˆâ–ˆ ", "â–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ", " â–ˆâ–ˆâ–ˆâ–ˆ "],
+    U: ["â–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ", " â–ˆâ–ˆâ–ˆâ–ˆ "],
+    X: ["â–ˆâ–ˆ  â–ˆâ–ˆ", " â–ˆâ–ˆ â–ˆâ–ˆ", "  â–ˆâ–ˆâ–ˆ ", " â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ"],
   };
 }
 
@@ -21566,7 +20560,7 @@ function providerWorkbenchCanOpen(kind) {
 
 function providerShouldAutoHeal(kind, status) {
   if (!["codex", "gemini", "claude"].includes(kind)) return false;
-  if (!window.__TAURI__?.core?.invoke) return false;
+  if (!forgeCanInvoke()) return false;
   if (!status) return true;
   if (providerTerminalIsRunning(kind) || providerTerminalIsOpening(kind)) return false;
   if (!!status.connected) return false;
@@ -21587,7 +20581,7 @@ async function maybeAutoHealProvider(kind, status, options = {}) {
 }
 
 function startProviderAutoHealRobot() {
-  if (providerAutoHealTimer || !window.__TAURI__?.core?.invoke) return;
+  if (providerAutoHealTimer || !forgeCanInvoke()) return;
   providerAutoHealTimer = setInterval(() => {
     void refreshProviderWorkbenchStatuses({ silent: true, autoHeal: true });
   }, 30000);
@@ -21843,12 +20837,15 @@ function writeProviderTerminalEmulator(provider, text = "") {
 
 async function resizeProviderTerminalToFit(provider) {
   const runtime = providerTerminalInstances.get(provider);
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!runtime?.term || !invoke) return;
+  if (!runtime?.term || !forgeCanInvoke()) return;
   const cols = Math.max(20, Number(runtime.term.cols || 0));
   const rows = Math.max(6, Number(runtime.term.rows || 0));
   try {
-    await invoke(providerTerminalInvokeName(provider, "resize"), { cols, rows });
+    await forgeInvoke(providerTerminalInvokeName(provider, "resize"), { cols, rows }, {
+      section: "provider-terminal",
+      timeoutMs: 3000,
+      dedupeKey: `${provider}:resize`,
+    });
   } catch (_) {}
 }
 
@@ -21914,9 +20911,11 @@ function ensureProviderTerminalEmulator(provider) {
     } catch (_) {}
   }, 60);
   term.onData((data) => {
-    const invoke = window.__TAURI__?.core?.invoke;
-    if (!invoke) return;
-    void invoke(providerTerminalInvokeName(provider, "send_input"), { input: data }).catch(() => {});
+    if (!forgeCanInvoke()) return;
+    void forgeInvoke(providerTerminalInvokeName(provider, "send_input"), { input: data }, {
+      section: "provider-terminal",
+      timeoutMs: 3000,
+    }).catch(() => {});
   });
   const observer = new ResizeObserver(() => {
     try {
@@ -21992,7 +20991,7 @@ function renderProviderTerminal(provider, snapshot = {}, options = {}) {
   setProviderTerminalRunning(provider, running);
   const phase = String(snapshot.phase || (running ? "running" : "idle")).trim();
   const message = String(snapshot.message || "").trim();
-  if (dom.state) dom.state.textContent = message ? `${phase} · ${message}` : phase;
+  if (dom.state) dom.state.textContent = message ? `${phase} Â· ${message}` : phase;
   let filteredSnapshotOutput = "";
   if (typeof snapshot.output === "string") {
     filteredSnapshotOutput = setProviderTerminalOutput(provider, snapshot.output);
@@ -22028,10 +21027,13 @@ function handleProviderTerminalEvent(provider, payload) {
 }
 
 async function refreshProviderTerminalSnapshot(provider) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return null;
+  if (!forgeCanInvoke()) return null;
   try {
-    const snapshot = await invoke(providerTerminalInvokeName(provider, "snapshot"));
+    const snapshot = await forgeInvoke(providerTerminalInvokeName(provider, "snapshot"), {}, {
+      section: "provider-terminal",
+      timeoutMs: 5000,
+      dedupeKey: `${provider}:snapshot`,
+    });
     const meaningful = snapshot && (snapshot.running || String(snapshot.phase || "") !== "idle" || String(snapshot.output || "").trim() !== "Ready.");
     if (meaningful && activeProviderWorkbench === provider) {
       setProviderTerminalVisible(provider, true);
@@ -22044,8 +21046,7 @@ async function refreshProviderTerminalSnapshot(provider) {
 }
 
 async function startProviderTerminal(provider) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     renderProviderTerminalUnavailable(provider);
     return;
   }
@@ -22061,7 +21062,10 @@ async function startProviderTerminal(provider) {
     output: providerTerminalCache(provider),
   });
   try {
-    const snapshot = await invoke(providerTerminalInvokeName(provider, "start"));
+    const snapshot = await forgeInvoke(providerTerminalInvokeName(provider, "start"), {}, {
+      section: "provider-terminal",
+      timeoutMs: 30000,
+    });
     renderProviderTerminal(provider, snapshot || {}, { resetLiveTerminal: false });
   } finally {
     setProviderTerminalOpening(provider, false);
@@ -22069,14 +21073,16 @@ async function startProviderTerminal(provider) {
 }
 
 async function sendProviderTerminalInput(provider) {
-  const invoke = window.__TAURI__?.core?.invoke;
   const dom = providerTerminalDom(provider);
   const input = String(dom.input?.value || "").trim();
-  if (!invoke || !input) return;
+  if (!forgeCanInvoke() || !input) return;
   dom.input.value = "";
   if (!providerTerminalInstances.get(provider)) appendProviderTerminalOutput(provider, `\n> ${input}\n`);
   try {
-    await invoke(providerTerminalInvokeName(provider, "send_input"), { input: `${input}\r` });
+    await forgeInvoke(providerTerminalInvokeName(provider, "send_input"), { input: `${input}\r` }, {
+      section: "provider-terminal",
+      timeoutMs: 5000,
+    });
   } catch (err) {
     appendProviderTerminalOutput(provider, `\n[forge] input failed: ${err}\n`);
     void refreshProviderTerminalSnapshot(provider);
@@ -22084,10 +21090,12 @@ async function sendProviderTerminalInput(provider) {
 }
 
 async function stopProviderTerminal(provider) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
+  if (!forgeCanInvoke()) return;
   try {
-    const snapshot = await invoke(providerTerminalInvokeName(provider, "stop"));
+    const snapshot = await forgeInvoke(providerTerminalInvokeName(provider, "stop"), {}, {
+      section: "provider-terminal",
+      timeoutMs: 10000,
+    });
     renderProviderTerminal(provider, snapshot || {}, { resetLiveTerminal: true });
   } catch (err) {
     appendProviderTerminalOutput(provider, `\n[forge] stop failed: ${err}\n`);
@@ -22095,11 +21103,15 @@ async function stopProviderTerminal(provider) {
 }
 
 async function clearProviderTerminal(provider) {
-  const invoke = window.__TAURI__?.core?.invoke;
   try {
     setProviderTerminalOutput(provider, "Ready.");
     resetProviderTerminalEmulator(provider);
-    const snapshot = await invoke?.(providerTerminalInvokeName(provider, "clear"));
+    const snapshot = forgeCanInvoke()
+      ? await forgeInvoke(providerTerminalInvokeName(provider, "clear"), {}, {
+          section: "provider-terminal",
+          timeoutMs: 5000,
+        })
+      : null;
     renderProviderTerminal(provider, snapshot || {}, { resetLiveTerminal: true });
   } catch (_) {
     setProviderTerminalOutput(provider, "Ready.");
@@ -22200,8 +21212,7 @@ function renderCodexProviderStatus(status, options = {}) {
 }
 
 async function refreshOpenAiProviderStatus(options = {}) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     renderOpenAiProviderStatus({
       connected: false,
       authSource: "none",
@@ -22212,7 +21223,11 @@ async function refreshOpenAiProviderStatus(options = {}) {
   }
   if (!options.silent) renderOpenAiProviderStatus(openAiProviderLastStatus, { busy: true });
   try {
-    const status = await invoke("openai_subscription_status");
+    const status = await forgeInvoke("openai_subscription_status", {}, {
+      section: "provider",
+      timeoutMs: 8000,
+      dedupeKey: "openai-status",
+    });
     renderOpenAiProviderStatus(status);
     const codexStatus = {
       ...status,
@@ -22241,13 +21256,12 @@ async function refreshOpenAiProviderStatus(options = {}) {
 }
 
 async function refreshCliProviderStatuses(options = {}) {
-  const invoke = window.__TAURI__?.core?.invoke;
   if (!options.silent) {
     renderCodexProviderStatus(codexProviderLastStatus, { busy: true });
     renderCliProviderStatus("gemini", geminiProviderLastStatus, { busy: true });
     renderCliProviderStatus("claude", claudeProviderLastStatus, { busy: true });
   }
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     renderCodexProviderStatus({
       connected: false,
       installed: false,
@@ -22269,25 +21283,25 @@ async function refreshCliProviderStatuses(options = {}) {
     return;
   }
   const [codex, gemini, claude, geminiKey] = await Promise.all([
-    invoke("codex_provider_status").catch((err) => ({
+    forgeInvoke("codex_provider_status", {}, { section: "provider", timeoutMs: 8000, dedupeKey: "codex-status" }).catch((err) => ({
       connected: false,
       installed: false,
       authSource: "error",
       message: `Codex status failed: ${err}`,
     })),
-    invoke("gemini_provider_status").catch((err) => ({
+    forgeInvoke("gemini_provider_status", {}, { section: "provider", timeoutMs: 8000, dedupeKey: "gemini-status" }).catch((err) => ({
       connected: false,
       installed: false,
       authSource: "error",
       message: `Gemini status failed: ${err}`,
     })),
-    invoke("claude_provider_status").catch((err) => ({
+    forgeInvoke("claude_provider_status", {}, { section: "provider", timeoutMs: 8000, dedupeKey: "claude-status" }).catch((err) => ({
       connected: false,
       installed: false,
       authSource: "error",
       message: `Claude status failed: ${err}`,
     })),
-    invoke("gemini_api_key_status").catch(() => null),
+    forgeInvoke("gemini_api_key_status", {}, { section: "provider", timeoutMs: 5000, dedupeKey: "gemini-key-status" }).catch(() => null),
   ]);
   if (geminiProviderApiKey && geminiKey) {
     geminiProviderApiKey.placeholder = geminiKey.configured ? "Saved locally" : "AIza...";
@@ -22329,8 +21343,7 @@ function watchCodexProviderLogin() {
 }
 
 async function connectOpenAiProvider() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     renderOpenAiProviderStatus({
       connected: false,
       authSource: "none",
@@ -22345,7 +21358,10 @@ async function connectOpenAiProvider() {
     openAiProviderConnect.textContent = "Opening";
   }
   try {
-    const result = await invoke("openai_subscription_login");
+    const result = await forgeInvoke("openai_subscription_login", {}, {
+      section: "provider",
+      timeoutMs: 30000,
+    });
     if (openAiProviderHint) openAiProviderHint.textContent = result?.message || "OpenAI subscription sign-in started.";
     watchOpenAiProviderLogin();
     setTimeout(() => { void refreshOpenAiProviderStatus({ silent: true }); }, 1200);
@@ -22365,8 +21381,7 @@ async function connectOpenAiProvider() {
 }
 
 async function connectCodexProvider(options = {}) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     renderCodexProviderStatus({
       connected: false,
       installed: false,
@@ -22393,13 +21408,12 @@ async function connectCodexProvider(options = {}) {
 }
 
 async function saveGeminiProviderApiKey() {
-  const invoke = window.__TAURI__?.core?.invoke;
   const apiKey = String(geminiProviderApiKey?.value || "").trim();
   if (!apiKey) {
     if (geminiProviderHint) geminiProviderHint.textContent = "Paste a Gemini API key before saving.";
     return;
   }
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     if (geminiProviderHint) geminiProviderHint.textContent = "Open Forge as a Tauri app to save the Gemini API key.";
     return;
   }
@@ -22409,7 +21423,10 @@ async function saveGeminiProviderApiKey() {
     geminiProviderSaveKey.textContent = "Saving";
   }
   try {
-    const result = await invoke("gemini_api_key_save", { request: { apiKey } });
+    const result = await forgeInvoke("gemini_api_key_save", { request: { apiKey } }, {
+      section: "provider",
+      timeoutMs: 10000,
+    });
     if (geminiProviderApiKey) {
       geminiProviderApiKey.value = "";
       geminiProviderApiKey.placeholder = "Saved locally";
@@ -22427,8 +21444,7 @@ async function saveGeminiProviderApiKey() {
 }
 
 async function clearGeminiProviderApiKey() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     if (geminiProviderHint) geminiProviderHint.textContent = "Open Forge as a Tauri app to clear the Gemini API key.";
     return;
   }
@@ -22438,7 +21454,10 @@ async function clearGeminiProviderApiKey() {
     geminiProviderClearKey.textContent = "Clearing";
   }
   try {
-    const result = await invoke("gemini_api_key_clear");
+    const result = await forgeInvoke("gemini_api_key_clear", {}, {
+      section: "provider",
+      timeoutMs: 10000,
+    });
     if (geminiProviderApiKey) {
       geminiProviderApiKey.value = "";
       geminiProviderApiKey.placeholder = result?.configured ? "Environment key active" : "AIza...";
@@ -22489,8 +21508,7 @@ function watchCliProviderLogin(provider) {
 
 async function connectCliProvider(provider, options = {}) {
   const meta = cliProviderConnectDom(provider);
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     renderCliProviderStatus(provider, {
       connected: false,
       installed: false,
@@ -22565,7 +21583,7 @@ function closeProviderOverlay() {
   setTopbarProviderMode(false);
 }
 
-if (providerClose) providerClose.addEventListener("click", closeProviderOverlay);
+forgeShellRuntime?.registerAction?.("provider-close", () => closeProviderOverlay());
 if (providerOverlay) providerOverlay.addEventListener("mousedown", (event) => {
   if (providerOverlay.hidden) return;
   const target = event.target;
@@ -22574,28 +21592,28 @@ if (providerOverlay) providerOverlay.addEventListener("mousedown", (event) => {
   closeProviderOverlay();
 });
 ["codex", "gemini", "claude", "oanda"].forEach((kind) => {
-  providerLauncherDom(kind).button?.addEventListener("click", () => {
+  forgeShellRuntime?.registerAction?.(`provider-launch-${kind}`, () => {
     setActiveProviderWorkbench(kind, { focusTerminal: true, ensureTerminal: kind !== "oanda" });
     void maybeAutoLaunchProviderWorkbench(kind);
   });
 });
-if (providerWorkbenchLaunch) providerWorkbenchLaunch.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-workbench-launch", () => {
   void openProviderWorkbench(activeProviderWorkbench, { restart: activeProviderWorkbench === "oanda" });
 });
-if (providerWorkbenchRefresh) providerWorkbenchRefresh.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-workbench-refresh", () => {
   void refreshProviderWorkbenchStatuses();
 });
 startProviderAutoHealRobot();
-if (openAiProviderRefresh) openAiProviderRefresh.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-refresh-all", () => {
   void refreshOpenAiProviderStatus();
   void refreshCliProviderStatuses();
   void refreshOandaProviderStatus();
   void refreshVoiceProviderStatus();
 });
-if (oandaProviderTerminalSend) oandaProviderTerminalSend.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-oanda-send", () => {
   void submitOandaProviderTerminalInput();
 });
-if (oandaProviderTerminalReset) oandaProviderTerminalReset.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-oanda-reset", () => {
   startOandaProviderTerminal();
   focusOandaProviderTerminalField(oandaProviderTerminalPhase === "post" ? "post" : oandaProviderTerminalActiveField);
 });
@@ -22772,23 +21790,23 @@ if (oandaProviderTerminalInput) oandaProviderTerminalInput.addEventListener("key
 if (oandaProviderTerminalInput) oandaProviderTerminalInput.addEventListener("input", () => {
   syncOandaProviderDraftFromInput();
 });
-if (openAiProviderConnect) openAiProviderConnect.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-openai-connect", () => {
   void connectOpenAiProvider();
 });
 if (openAiProviderModel) openAiProviderModel.addEventListener("change", () => {
   setStoredOpenAiModelRef(openAiProviderModel.value);
   hydrateProviderModelPickers();
 });
-if (geminiProviderSaveKey) geminiProviderSaveKey.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-gemini-save-key", () => {
   void saveGeminiProviderApiKey();
 });
-if (geminiProviderConnect) geminiProviderConnect.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-gemini-connect", () => {
   void connectGeminiProvider();
 });
-if (geminiProviderRefresh) geminiProviderRefresh.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-gemini-refresh", () => {
   void refreshCliProviderStatuses();
 });
-if (geminiProviderClearKey) geminiProviderClearKey.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-gemini-clear-key", () => {
   void clearGeminiProviderApiKey();
 });
 if (geminiProviderApiKey) geminiProviderApiKey.addEventListener("keydown", (event) => {
@@ -22799,16 +21817,16 @@ if (geminiProviderApiKey) geminiProviderApiKey.addEventListener("keydown", (even
 });
 ["codex", "gemini", "claude"].forEach(bindProviderTerminalControls);
 ["gemini", "claude"].forEach(bindCliProviderModelPicker);
-if (claudeProviderConnect) claudeProviderConnect.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-claude-connect", () => {
   void connectClaudeProvider();
 });
-if (claudeProviderRefresh) claudeProviderRefresh.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-claude-refresh", () => {
   void refreshCliProviderStatuses();
 });
-if (voiceElevenSaveKey) voiceElevenSaveKey.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-voice-save-key", () => {
   void saveElevenLabsApiKey();
 });
-if (voiceElevenClearKey) voiceElevenClearKey.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("provider-voice-clear-key", () => {
   void clearElevenLabsApiKey();
 });
 if (voiceElevenApiKey) voiceElevenApiKey.addEventListener("keydown", (event) => {
@@ -22834,9 +21852,6 @@ if (voiceElevenApiKey) voiceElevenApiKey.addEventListener("keydown", (event) => 
     });
   });
 
-window.addEventListener("keydown", e => {
-  if (e.key === "Escape" && providerOverlay && !providerOverlay.hidden) closeProviderOverlay();
-});
 hydrateProviderModelPickers();
 setCanvasChatTargetMode(canvasChatStoredTargetMode(), canvasChatStoredActiveTargets());
 // Ask each CLI for its real model catalogue so the barrels show the
@@ -22845,14 +21860,7 @@ setCanvasChatTargetMode(canvasChatStoredTargetMode(), canvasChatStoredActiveTarg
 // the backend handler isn't wired up.
 if (typeof refreshAllRuntimeModelCatalogs === "function") refreshAllRuntimeModelCatalogs();
 
-// Click outside any expanded barrel collapses it back to single-line.
-document.addEventListener("click", (event) => {
-  document.querySelectorAll(".barrel-inline.expanded").forEach((el) => {
-    if (!el.contains(event.target)) collapseBarrel(el);
-  });
-});
-
-// ── My programs overlay ───────────────────────────────────────────
+// â”€â”€ My programs overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const navProgramsBtn   = document.getElementById("navProgramsBtn");
 const programsOverlay  = document.getElementById("programsOverlay");
@@ -23011,10 +22019,13 @@ async function refreshProgramTemplatePicker() {
   }
   programTemplatePickerLoaded = true;
   renderProgramTemplateStrip();
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
+  if (!forgeCanInvoke()) return;
   try {
-    const templates = await invoke("list_forge_capability_templates");
+    const templates = await forgeInvoke("list_forge_capability_templates", {}, {
+      section: "programs",
+      timeoutMs: 8000,
+      dedupeKey: "program-templates",
+    });
     if (Array.isArray(templates) && templates.length) {
       programCreateTemplateItems = templates.map(templateItemFromCapability);
       renderProgramTemplateStrip();
@@ -23079,8 +22090,7 @@ async function runProgramFromUi(program, button) {
     appendAlphaForge?.(`[program] opened Lens "${program.name || "Mars Globe Lens"}" (${program.hash || "local"}).`);
     return;
   }
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     appendAlphaForge?.("[program] Tauri API not available; copy the Run command instead.");
     return;
   }
@@ -23098,14 +22108,14 @@ async function runProgramFromUi(program, button) {
   try {
     closeProgramsOverlay?.();
     setAlphaActiveTab?.("forge");
-    const response = await invoke("run_forge_program", {
+    const response = await forgeInvoke("run_forge_program", {
       request: {
         programHash: program.hash || null,
         program: program.hash ? null : program.name,
-        title: `${program.name || "Forge program"} · UI run`,
+        title: `${program.name || "Forge program"} Â· UI run`,
         inputs,
       },
-    });
+    }, { section: "programs", timeoutMs: 120000 });
     const job = response?.data?.job || response?.job || null;
     const jobId = job?.job_id || job?.jobId || "";
     if (jobId) {
@@ -23154,8 +22164,7 @@ function applyProgramTemplate(templateId) {
 
 async function createProgramFromUi(event) {
   event?.preventDefault?.();
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     appendAlphaForge?.("[program] Tauri API not available; copy a create command from MCP tools instead.");
     return;
   }
@@ -23172,7 +22181,7 @@ async function createProgramFromUi(event) {
     programCreateSave.textContent = "Saving";
   }
   try {
-    const response = await invoke("create_forge_program", {
+    const response = await forgeInvoke("create_forge_program", {
       request: {
         title,
         domain: (programCreateDomain?.value || "").trim() || null,
@@ -23184,7 +22193,7 @@ async function createProgramFromUi(event) {
           : null,
         specText,
       },
-    });
+    }, { section: "programs", timeoutMs: 30000 });
     const program = response?.data?.program || response?.program || null;
     const hash = program?.program_hash || program?.programHash || "";
     appendAlphaForge?.(
@@ -23247,7 +22256,7 @@ function normalizeForgeProgram(program) {
     views,
     lensUrl,
     visualMode: lensUrl || /visual|lens/i.test(kind) ? "lens" : "",
-    desc: descParts.join(" · "),
+    desc: descParts.join(" Â· "),
     tag: hasPlanetView ? "Planet" : missingCount ? "needs ops" : customCount ? "custom" : mode.replaceAll("_", " "),
     pinned: !!program?.pinned,
     draft: customCount > 0 || missingCount > 0 || /draft|custom|missing/i.test(mode),
@@ -23262,13 +22271,16 @@ function normalizeForgeProgram(program) {
 }
 
 async function refreshProgramsRegistry() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     renderProgramsList();
     return;
   }
   try {
-    const programs = await invoke("list_forge_programs", { limit: 100 });
+    const programs = await forgeInvoke("list_forge_programs", { limit: 100 }, {
+      section: "programs",
+      timeoutMs: 8000,
+      dedupeKey: "program-registry",
+    });
     PROGRAMS_REGISTRY = Array.isArray(programs) ? programs.map(normalizeForgeProgram) : [];
   } catch (err) {
     appendAlphaForge?.(`[programs] unable to read Forge program registry: ${err}`);
@@ -23298,7 +22310,7 @@ function renderProgramsList() {
     row.className = "mcp-tool-row program-row";
     const nameWrap = document.createElement("span");
     nameWrap.className = "mcp-tool-name-wrap";
-    const name = document.createElement("span"); name.className = "mcp-tool-name"; name.textContent = p.name || "—";
+    const name = document.createElement("span"); name.className = "mcp-tool-name"; name.textContent = p.name || "â€”";
     nameWrap.appendChild(name);
     if (p.hash) {
       const hash = document.createElement("span");
@@ -23370,14 +22382,14 @@ function closeProgramsOverlay() {
   setTopbarProgramsMode(false);
 }
 
-if (navProgramsBtn) navProgramsBtn.addEventListener("click", () =>
-  programsOverlay && !programsOverlay.hidden ? closeProgramsOverlay() : openProgramsOverlay()
-);
-if (programsClose) programsClose.addEventListener("click", closeProgramsOverlay);
-if (programCreateToggle) programCreateToggle.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("programs-toggle", () => {
+  programsOverlay && !programsOverlay.hidden ? closeProgramsOverlay() : openProgramsOverlay();
+});
+forgeShellRuntime?.registerAction?.("programs-close", () => closeProgramsOverlay());
+forgeShellRuntime?.registerAction?.("program-create-toggle", () => {
   setProgramCreateOpen(programCreatePanel?.hidden !== false);
 });
-if (programCreateCancel) programCreateCancel.addEventListener("click", () => setProgramCreateOpen(false));
+forgeShellRuntime?.registerAction?.("program-create-cancel", () => setProgramCreateOpen(false));
 if (programCreatePanel) programCreatePanel.addEventListener("submit", createProgramFromUi);
 if (programTemplateStrip) programTemplateStrip.addEventListener("click", event => {
   const button = event.target.closest("button[data-template]");
@@ -23389,19 +22401,16 @@ if (programsSearch) programsSearch.addEventListener("input", () => {
   renderProgramsList();
 });
 
-document.querySelectorAll(".programs-filter-btn").forEach(btn => btn.addEventListener("click", () => {
-  document.querySelectorAll(".programs-filter-btn").forEach(b => b.classList.remove("active"));
-  btn.classList.add("active");
-  programsFilter = btn.dataset.filter || "all";
+forgeShellRuntime?.registerAction?.("programs-filter", (payload) => {
+  const filter = String(payload?.dataset?.filter || "all");
+  document.querySelectorAll(".programs-filter-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.filter === filter);
+  });
+  programsFilter = filter;
   renderProgramsList();
-}));
-
-window.addEventListener("keydown", e => {
-  if (e.key === "Escape" && programsOverlay && !programsOverlay.hidden) closeProgramsOverlay();
 });
 
-
-// ── Library context menu ──────────────────────────────────────────
+// â”€â”€ Library context menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const libCtxMenu = document.getElementById("libCtxMenu");
 let libCtxActiveJob = null;
@@ -23490,7 +22499,7 @@ window.addEventListener("click", e => {
   if (!libCtxMenu.contains(e.target)) hideLibCtxMenu();
 }, true);
 
-// ── Library card actions ──────────────────────────────────────────
+// â”€â”€ Library card actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function libPinJob(job) {
   const jobId = job.jobId || job.job_id || "";
@@ -23558,9 +22567,12 @@ async function libDeleteJob(job) {
 
 async function libNewSessionFromJob(job) {
   const jobId = job.jobId || job.job_id || "";
-  if (!jobId || !window.__TAURI__?.core?.invoke) return;
+  if (!jobId || !forgeCanInvoke()) return;
   try {
-    const payload = await window.__TAURI__.core.invoke("read_forge_job_file", { jobId });
+    const payload = await forgeInvoke("read_forge_job_file", { jobId }, {
+      section: "library",
+      timeoutMs: 10000,
+    });
     if (!payload?.text && !payload?.bytes) return;
     const text  = payload.text ? String(payload.text) : "";
     const fname = payload.fileName ? String(payload.fileName) : forgeJobLabel(job);
@@ -23602,8 +22614,8 @@ function libShowSessions(job) {
   panel.className = "lib-sessions-panel";
   panel.innerHTML = `
     <div class="lib-sessions-header">
-      <button class="lib-sessions-back" type="button">← Back</button>
-      <span>Sessions — ${forgeJobLabel(job)}</span>
+      <button class="lib-sessions-back" type="button">â† Back</button>
+      <span>Sessions â€” ${forgeJobLabel(job)}</span>
     </div>
     <div class="lib-sessions-list">
       ${related.length === 0
@@ -23616,7 +22628,7 @@ function libShowSessions(job) {
             const active = jid === (job.jobId || job.job_id) ? " active" : "";
             return `<div class="lib-session-row${active}" data-job-id="${jid}">
               <span class="lib-session-title">${jlabel}</span>
-              <span class="lib-session-meta">${jst} · ${jdate}</span>
+              <span class="lib-session-meta">${jst} Â· ${jdate}</span>
             </div>`;
           }).join("")}
     </div>`;
@@ -23639,12 +22651,12 @@ function libShowSessions(job) {
   libraryOverlay.appendChild(panel);
 }
 
-// ── Library card (menu button + pinned state) ─────────────────────
+// â”€â”€ Library card (menu button + pinned state) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function createLibCard(job) {
   const jobId   = job.jobId || job.job_id || "";
   const label   = forgeJobLabel(job);
   const type    = detectLibFileType(label);
-  const ext     = type === "generic" ? "—" : type.toUpperCase();
+  const ext     = type === "generic" ? "â€”" : type.toUpperCase();
   const isPinned = !!(job.pinned || job.is_pinned);
 
   const card = document.createElement("div");
@@ -23659,7 +22671,7 @@ function createLibCard(job) {
   card.innerHTML = `
     <div class="lib-card-preview">
       ${libPreviewHTML(type, label, jobId)}
-      <button class="lib-card-menu-btn" type="button" title="Options">⋯</button>
+      <button class="lib-card-menu-btn" type="button" title="Options">â‹¯</button>
     </div>
     <div class="lib-card-foot">
       ${pinIcon}<span class="lib-card-name">${label}</span>
@@ -23681,7 +22693,7 @@ function createLibCard(job) {
   return card;
 }
 
-// ── Panel mode tabs (Compute / Atlas) ─────────────────────────────
+// â”€â”€ Panel mode tabs (Compute / Atlas) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const panelTabBtns  = document.querySelectorAll(".panel-tab");
 const panelTabPanes = document.querySelectorAll(".panel-tab-pane");
@@ -23706,7 +22718,7 @@ panelTabBtns.forEach((btn) => {
   });
 });
 
-// ── Atlas sub-tabs (World atlas / Your atlas) ─────────────────────
+// â”€â”€ Atlas sub-tabs (World atlas / Your atlas) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const atlasSubTabBtns = document.querySelectorAll(".atlas-subtab");
 const atlasSubPanes = document.querySelectorAll(".atlas-subpane");
 const myAtlasStats = document.getElementById("myAtlasStats");
@@ -23725,11 +22737,13 @@ function setAtlasSubMode(mode) {
   if (mode === "yours") refreshMyAtlas(true);
 }
 
-atlasSubTabBtns.forEach((btn) => {
-  btn.addEventListener("click", () => setAtlasSubMode(btn.dataset.atlasTab));
+forgeShellRuntime?.registerAction?.("atlas-subtab", (payload) => {
+  setAtlasSubMode(payload?.dataset?.atlasTab);
 });
 
-myAtlasRefresh?.addEventListener("click", () => refreshMyAtlas(true));
+forgeShellRuntime?.registerAction?.("atlas-refresh", () => {
+  void refreshMyAtlas(true);
+});
 
 myAtlasList?.addEventListener("click", (event) => {
   const row = event.target.closest(".my-atlas-token-row[data-atlas-token]");
@@ -23741,11 +22755,11 @@ myAtlasList?.addEventListener("click", (event) => {
   insertCanvasChatToken(token);
 });
 
-// ── Cube drag & drop ──
-// Atlas → Atlas slot (same tray): move/swap.
-// Atlas → Chat node-slot: clone (atlas keeps the original).
-// Chat → Chat node-slot: move/swap.
-// Chat → outside (no valid drop target): the chat slot is emptied.
+// â”€â”€ Cube drag & drop â”€â”€
+// Atlas â†’ Atlas slot (same tray): move/swap.
+// Atlas â†’ Chat node-slot: clone (atlas keeps the original).
+// Chat â†’ Chat node-slot: move/swap.
+// Chat â†’ outside (no valid drop target): the chat slot is emptied.
 const chatNodeSlotsRoot = document.getElementById("forgeCanvasChatNodeSlots");
 
 function findCubeDropTarget(cube, x, y, sourceTray) {
@@ -23769,7 +22783,7 @@ function startCubeDrag(event) {
   event.stopPropagation();
   cube.setPointerCapture(event.pointerId);
   cube.classList.add("dragging");
-  // Treat atlas-tray and popup-row origins as "source = clone" — both
+  // Treat atlas-tray and popup-row origins as "source = clone" â€” both
   // leave the original in place and create a copy in the chat slot.
   // Chat-slot origin is the only "movable" source.
   const sourceIsAtlas = !sourceSlot || sourceSlot.classList.contains("my-atlas-slot");
@@ -23809,7 +22823,7 @@ function startCubeDrag(event) {
     const targetIsChat = dropTarget?.classList.contains("canvas-chat-nodeslot");
     const targetIsAtlas = dropTarget?.classList.contains("my-atlas-slot");
 
-    // Chat-slot origin → no valid drop = empty the chat slot.
+    // Chat-slot origin â†’ no valid drop = empty the chat slot.
     if (!sourceIsAtlas && !dropTarget) {
       cube.remove();
       return;
@@ -23817,7 +22831,7 @@ function startCubeDrag(event) {
     if (!dropTarget || dropTarget === sourceSlot) return;
 
     if (sourceIsAtlas && targetIsChat) {
-      // Atlas tray or popup row → chat slot: clone, source stays.
+      // Atlas tray or popup row â†’ chat slot: clone, source stays.
       const occupant = dropTarget.querySelector(".my-atlas-cube");
       occupant?.remove();
       const clone = cube.cloneNode(true);
@@ -23828,7 +22842,7 @@ function startCubeDrag(event) {
       return;
     }
     if (targetIsChat && sourceSlot) {
-      // Chat → chat: move/swap.
+      // Chat â†’ chat: move/swap.
       const occupant = dropTarget.querySelector(".my-atlas-cube");
       if (occupant) sourceSlot.appendChild(occupant);
       dropTarget.appendChild(cube);
@@ -23836,7 +22850,7 @@ function startCubeDrag(event) {
       return;
     }
     if (sourceSlot && !sourceIsAtlas && targetIsAtlas) {
-      // Chat → atlas slot: move/swap (return cube to the atlas tray).
+      // Chat â†’ atlas slot: move/swap (return cube to the atlas tray).
       const occupant = dropTarget.querySelector(".my-atlas-cube");
       if (occupant) sourceSlot.appendChild(occupant);
       dropTarget.appendChild(cube);
@@ -23844,7 +22858,7 @@ function startCubeDrag(event) {
       return;
     }
     if (sourceSlot && sourceIsAtlas && targetIsAtlas) {
-      // Atlas → atlas slot: move/swap inside the same tray.
+      // Atlas â†’ atlas slot: move/swap inside the same tray.
       const occupant = dropTarget.querySelector(".my-atlas-cube");
       if (occupant) sourceSlot.appendChild(occupant);
       dropTarget.appendChild(cube);
@@ -23860,7 +22874,7 @@ function startCubeDrag(event) {
 chatNodeSlotsRoot?.addEventListener("pointerdown", startCubeDrag);
 forgeCanvasChatProgramPicker?.addEventListener("pointerdown", startCubeDrag);
 
-// ── Cube reveal animation ──
+// â”€â”€ Cube reveal animation â”€â”€
 // Clicking a cube inside a chat slot or a sent-message snapshot drops
 // the cube down out of its slot and types out [name] + math icon +
 // [formula] to its right. Click again to collapse.
@@ -23927,7 +22941,7 @@ function typewriteText(target, text, charDelayMs = 18, done) {
   setTimeout(tick, 30);
 }
 
-// Click on cube (anywhere — chat slot or sent-message snapshot) toggles
+// Click on cube (anywhere â€” chat slot or sent-message snapshot) toggles
 // the reveal. Drag still wins via pointerdown; this only triggers on a
 // pure click that wasn't preceded by a drag.
 function onCubeClickForReveal(event) {
@@ -23935,7 +22949,7 @@ function onCubeClickForReveal(event) {
   if (!cube) return;
   const slot = cube.closest(".canvas-chat-nodeslot, .canvas-message-atlas-slot");
   if (!slot) return;
-  // If a drag was in progress, the cube has the dragging class — skip.
+  // If a drag was in progress, the cube has the dragging class â€” skip.
   if (cube.classList.contains("dragging")) return;
   event.preventDefault();
   event.stopPropagation();
@@ -23955,7 +22969,7 @@ function atlasShortHash(value, mode = "compact") {
   if (mode === "full") {
     return text.length > 14 ? `${text.slice(0, 8)}...${text.slice(-4)}` : text;
   }
-  return text.length > 8 ? `${text.slice(0, 6)}…` : text;
+  return text.length > 8 ? `${text.slice(0, 6)}â€¦` : text;
 }
 
 function atlasItemTitle(item, fallback) {
@@ -23964,7 +22978,7 @@ function atlasItemTitle(item, fallback) {
 
 function atlasNodeInitials(tag) {
   const clean = String(tag || "").replace(/[^a-zA-Z0-9]/g, "");
-  return clean.slice(0, 4).toUpperCase() || "—";
+  return clean.slice(0, 4).toUpperCase() || "â€”";
 }
 
 function atlasNodeColorClass(tag) {
@@ -24024,7 +23038,7 @@ function atlasEntitySummary(entity = null) {
       seen.add(key);
       return true;
     })
-    .join(" · ");
+    .join(" Â· ");
 }
 
 function renderMyAtlasSection(title, entities) {
@@ -24063,7 +23077,7 @@ function buildMyAtlasEntities(atlas = {}) {
         item?.metric_count != null ? `${item.metric_count} metric${Number(item.metric_count) === 1 ? "" : "s"}` : "",
         item?.run_count != null ? `${item.run_count} run${Number(item.run_count) === 1 ? "" : "s"}` : "",
         item?.source_label || "",
-      ].filter(Boolean).join(" · "),
+      ].filter(Boolean).join(" Â· "),
       hash: item?.program_hash || item?.programHash || "",
     });
     if (entity) entities.push(entity);
@@ -24079,7 +23093,7 @@ function buildMyAtlasEntities(atlas = {}) {
         item?.algorithm || "",
         item?.formula || "",
         item?.source_label || "",
-      ].filter(Boolean).join(" · "),
+      ].filter(Boolean).join(" Â· "),
       hash: item?.tag_hash || item?.hash || "",
     });
     if (entity) entities.push(entity);
@@ -24133,15 +23147,18 @@ async function refreshMyAtlas(force = false) {
   if (!myAtlasList || (!force && myAtlasLoaded)) return;
   const atlasPane = document.querySelector('[data-tab-pane="atlas"]');
   if (atlasPane?.hidden && !force) return;
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) {
+  if (!forgeCanInvoke()) {
     myAtlasList.innerHTML = `<div class="my-atlas-loading">Atlas is available in the desktop app runtime.</div>`;
     return;
   }
   myAtlasList.innerHTML = `<div class="my-atlas-loading">Loading Atlas memory...</div>`;
   try {
     bootTrace("atlas.refresh.begin", { force });
-    const overview = await invoke("get_forge_atlas_overview", { limit: 48 });
+    const overview = await forgeInvoke("get_forge_atlas_overview", { limit: 48 }, {
+      section: "atlas",
+      timeoutMs: 8000,
+      dedupeKey: "atlas-overview",
+    });
     bootTrace("atlas.refresh.done", {
       hasMyAtlas: !!(overview?.my_atlas),
       topKeys: overview && typeof overview === "object" ? Object.keys(overview).slice(0, 8) : [],
@@ -24154,107 +23171,23 @@ async function refreshMyAtlas(force = false) {
   }
 }
 
-// ── Detected hardware footer (CPU + GPU) ──────────────────────────
-const panelHardwareCpu = document.getElementById("panelHardwareCpu");
-const panelHardwareGpu = document.getElementById("panelHardwareGpu");
-const panelHardwareGpuRows = document.getElementById("panelHardwareGpuRows");
-
-function formatGpuName(gpu) {
-  const name = (gpu?.name || "Unknown GPU").trim();
-  const tag = gpu?.backend === "cuda"
-    ? "CUDA"
-    : gpu?.backend === "wgpu"
-      ? "WGPU"
-      : "idle";
-  return `${name}  ·  ${tag}`;
-}
-
 function escapeAttr(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
   })[c]);
 }
+window.ForgeHardwareCell?.install?.({
+  canInvoke: forgeCanInvoke,
+  invoke: forgeInvoke,
+  trace: bootTrace,
+  appendLog: appendForge,
+  isFrench: isRealEstateShellActive,
+  dispatchHardware: (hardware) => forgeDispatchProjectionPatch("hardware", { type: "SET_HARDWARE", hardware }),
+  onUpdate: (hardware) => { forgeHardwareInfo = hardware; },
+  invalidateProofPanel: invalidateWebExplorerProofPanel,
+});
 
-function renderGpuRows(gpus) {
-  if (!panelHardwareGpuRows) return;
-  if (!gpus?.length) {
-    panelHardwareGpuRows.innerHTML = `
-      <div class="panel-hardware-row">
-        <span class="panel-hardware-label">GPU</span>
-        <span class="panel-hardware-text">${isRealEstateShellActive() ? "Aucun GPU détecté" : "No GPU detected"}</span>
-      </div>`;
-    return;
-  }
-  const rows = gpus.map((g) => `
-    <div class="panel-hardware-row">
-      <span class="panel-hardware-label">GPU</span>
-      <span class="panel-hardware-text" title="${escapeAttr(g.name)} (${escapeAttr(g.backend)})">${escapeAttr(formatGpuName(g))}</span>
-    </div>`).join("");
-  panelHardwareGpuRows.innerHTML = rows;
-}
-
-async function loadAndRenderHardwareInfo() {
-  const invoke = forgeTauri?.invoke || window.__TAURI__?.core?.invoke;
-  if (!invoke) {
-    if (panelHardwareCpu) panelHardwareCpu.textContent = isRealEstateShellActive() ? "info indisponible" : "info unavailable";
-    if (panelHardwareGpu) panelHardwareGpu.textContent = isRealEstateShellActive() ? "info indisponible" : "info unavailable";
-    return;
-  }
-  try {
-    bootTrace("hardware.begin");
-    const info = forgeTauri?.invoke
-      ? await forgeTauri.invoke("get_hardware_info", {}, {
-          section: "shell",
-          bootSafe: true,
-          timeoutMs: 5000,
-          dedupeKey: "hardware",
-        })
-      : await Promise.race([
-          invoke("get_hardware_info"),
-          new Promise((_, reject) => window.setTimeout(() => reject(new Error("timeout")), 5000)),
-        ]);
-    bootTrace("hardware.done", {
-      cpu: info?.cpu_brand || "",
-      gpuCount: Array.isArray(info?.gpus) ? info.gpus.length : 0,
-    });
-    forgeHardwareInfo = info || null;
-    invalidateWebExplorerProofPanel();
-    if (panelHardwareCpu) {
-      const threads = info?.cpu_threads ? `  ·  ${info.cpu_threads} threads` : "";
-      panelHardwareCpu.textContent = `${info?.cpu_brand || "Unknown CPU"}${threads}`;
-      panelHardwareCpu.title = `${info?.cpu_brand || "Unknown CPU"} (${info?.os || "?"}/${info?.arch || "?"})`;
-    }
-    renderGpuRows(info?.gpus || []);
-  } catch (err) {
-    bootTrace("hardware.error", err?.message || String(err));
-    console.warn("[hardware-info] failed", err);
-    forgeHardwareInfo = null;
-    invalidateWebExplorerProofPanel();
-    if (panelHardwareCpu) panelHardwareCpu.textContent = isRealEstateShellActive() ? "détection échouée" : "detection failed";
-    if (panelHardwareGpu) panelHardwareGpu.textContent = isRealEstateShellActive() ? "détection échouée" : "detection failed";
-  }
-}
-
-function scheduleHardwareInfoBoot() {
-  const start = () => {
-    window.setTimeout(() => {
-      const stillPending = (panelHardwareCpu?.textContent || "").includes("Detecting")
-        || (panelHardwareGpu?.textContent || "").includes("Detecting")
-        || !panelHardwareGpuRows?.children?.length;
-      if (stillPending) void loadAndRenderHardwareInfo();
-    }, 2200);
-  };
-  if (document.readyState === "complete") {
-    start();
-  } else {
-    window.addEventListener("load", start, { once: true });
-  }
-}
-
-// Keep hardware probing off the first paint path; a failed probe should not freeze boot.
-scheduleHardwareInfoBoot();
-
-// ── Web explorer surface ──────────────────────────────────────────
+// â”€â”€ Web explorer surface â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 webExplorerBtn = document.getElementById("webexplorer");
 webExplorerSurface = document.getElementById("webExplorerSurface");
@@ -24496,12 +23429,14 @@ async function navigateWebExplorerHistoryEntry(id) {
   loadWebExplorerHistory();
   const entry = webExplorerHistoryEntries.find((candidate) => candidate.id === id);
   const target = String(entry?.url || "").trim();
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!target || !invoke) return;
+  if (!target || !forgeCanInvoke()) return;
   try {
     setWebExplorerActive(true);
     beginWebExplorerTransition({ dismissStart: true });
-    const snapshot = await invoke("webexplorer_navigate", { input: target });
+    const snapshot = await forgeInvoke("webexplorer_navigate", { input: target }, {
+      section: "webexplorer",
+      timeoutMs: 30000,
+    });
     applyWebExplorerSnapshot(snapshot, { historyInput: target, historySource: "history-panel" });
     scheduleWebExplorerChatFocus();
   } catch (err) {
@@ -24533,7 +23468,7 @@ function createWebExplorerHistoryItem(entry) {
     entry.kind === "search" ? (isRealEstateShellActive() ? "Recherche Google" : "Google search") : (entry.domain || (isRealEstateShellActive() ? "Page web" : "Web page")),
     time,
     Number(entry.visitCount || 0) > 1 ? `${entry.visitCount} ${isRealEstateShellActive() ? "visites" : "visits"}` : "",
-  ].filter(Boolean).join(" · ");
+  ].filter(Boolean).join(" Â· ");
   title.appendChild(main);
   title.appendChild(meta);
   li.appendChild(title);
@@ -24542,8 +23477,8 @@ function createWebExplorerHistoryItem(entry) {
   pinBtn.type = "button";
   pinBtn.className = `webexplorer-history-pin-btn${entry.pinned ? " is-pinned" : ""}`;
   pinBtn.setAttribute("aria-label", entry.pinned
-    ? (isRealEstateShellActive() ? "Désépingler la page web" : "Unpin web page")
-    : (isRealEstateShellActive() ? "Épingler la page web" : "Pin web page"));
+    ? (isRealEstateShellActive() ? "DÃ©sÃ©pingler la page web" : "Unpin web page")
+    : (isRealEstateShellActive() ? "Ã‰pingler la page web" : "Pin web page"));
   pinBtn.innerHTML = `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M9.5 3.75h5l-.6 5.2 3.35 3.2v1.35H6.75v-1.35l3.35-3.2-.6-5.2Z" />
@@ -24602,7 +23537,7 @@ function renderWebExplorerHistoryPanel(force = false) {
   ].join("::");
   if (!force && key === webExplorerHistoryRenderKey) return;
   webExplorerHistoryRenderKey = key;
-  renderWebExplorerHistoryList(webExplorerPinnedHistoryList, pinned, isRealEstateShellActive() ? "Aucune page web épinglée" : "No pinned web page");
+  renderWebExplorerHistoryList(webExplorerPinnedHistoryList, pinned, isRealEstateShellActive() ? "Aucune page web Ã©pinglÃ©e" : "No pinned web page");
   renderWebExplorerHistoryList(webExplorerHistoryList, recent, isRealEstateShellActive() ? "Aucun historique web" : "No web history yet");
   if (webExplorerClearHistoryBtn) webExplorerClearHistoryBtn.disabled = recent.length === 0;
   requestAnimationFrame(() => {
@@ -25044,9 +23979,9 @@ function buildWebExplorerGoogleTabs(currentUrl) {
   const tabDefs = [
     { key: "all", label: "Tous", params: {} },
     { key: "images", label: "Images", params: { tbm: "isch" } },
-    { key: "news", label: "Actualités", params: { tbm: "nws" } },
-    { key: "videos", label: "Vidéos", params: { tbm: "vid" } },
-    { key: "shortVideos", label: "Vidéos courtes", params: { udm: "39" } },
+    { key: "news", label: "ActualitÃ©s", params: { tbm: "nws" } },
+    { key: "videos", label: "VidÃ©os", params: { tbm: "vid" } },
+    { key: "shortVideos", label: "VidÃ©os courtes", params: { udm: "39" } },
     { key: "web", label: "Web", params: { udm: "14" } },
   ];
   const activeKey = currentWebExplorerGoogleTabKey(url.toString());
@@ -25067,11 +24002,13 @@ function buildWebExplorerGoogleTabs(currentUrl) {
 async function navigateWebExplorerTopbarTab(href) {
   const target = String(href || "").trim();
   if (!target) return;
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
+  if (!forgeCanInvoke()) return;
   try {
     beginWebExplorerTransition({ dismissStart: true });
-    const snapshot = await invoke("webexplorer_navigate", { input: target });
+    const snapshot = await forgeInvoke("webexplorer_navigate", { input: target }, {
+      section: "webexplorer",
+      timeoutMs: 30000,
+    });
     applyWebExplorerSnapshot(snapshot, { historyInput: target, historySource: "topbar-tab" });
   } catch (err) {
     console.warn("[webexplorer] topbar tab navigation failed", err);
@@ -25432,7 +24369,7 @@ function renderWebExplorerClonePage(blocks = []) {
         </div>
         ${capturedHiddenTextEntries.length ? `
           <section class="webexplorer-extract-section suspicious webexplorer-clone-hidden-report">
-            <div class="webexplorer-extract-section-title">Texte caché / non visible</div>
+            <div class="webexplorer-extract-section-title">Texte cachÃ© / non visible</div>
             <div class="webexplorer-extract-text-list">
             ${capturedHiddenTextEntries.slice(0, 160).map((entry) => `
               <article class="webexplorer-extract-text-row hidden">
@@ -25581,7 +24518,7 @@ function renderWebExplorerClonePage(blocks = []) {
         </section>` : ""}
       ${hiddenTextEntries.length ? `
         <section class="webexplorer-extract-section suspicious">
-          <div class="webexplorer-extract-section-title">Texte caché / non visible</div>
+          <div class="webexplorer-extract-section-title">Texte cachÃ© / non visible</div>
           <div class="webexplorer-extract-text-list">
           ${hiddenTextEntries.slice(0, 120).map((entry) => `
             <article class="webexplorer-extract-text-row hidden">
@@ -25683,10 +24620,12 @@ function toggleWebExplorerCompareBlock(blockId) {
 }
 
 async function saveWebExplorerBlockToAtlas(blockId) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke || !blockId) return null;
+  if (!forgeCanInvoke() || !blockId) return null;
   try {
-    const result = await invoke("webexplorer_save_content_block_to_atlas", { request: { blockId } });
+    const result = await forgeInvoke("webexplorer_save_content_block_to_atlas", { request: { blockId } }, {
+      section: "webexplorer",
+      timeoutMs: 10000,
+    });
     const hash = String(result?.blockHash || "").trim();
     if (hash) webExplorerSavedBlockHashes.add(hash);
     myAtlasLoaded = false;
@@ -25700,11 +24639,13 @@ async function saveWebExplorerBlockToAtlas(blockId) {
 
 async function navigateWebExplorerReaderCard(href) {
   const target = String(href || "").trim();
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!target || !invoke) return;
+  if (!target || !forgeCanInvoke()) return;
   try {
     beginWebExplorerTransition({ dismissStart: true });
-    const snapshot = await invoke("webexplorer_navigate", { input: target });
+    const snapshot = await forgeInvoke("webexplorer_navigate", { input: target }, {
+      section: "webexplorer",
+      timeoutMs: 30000,
+    });
     applyWebExplorerSnapshot(snapshot, { historyInput: target, historySource: "reader-card" });
   } catch (err) {
     console.warn("[webexplorer] reader card navigation failed", err);
@@ -25848,11 +24789,14 @@ function applyWebExplorerPlanState() {
 }
 
 async function hideNativeWebExplorer() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
+  if (!forgeCanInvoke()) return;
   try {
     alphaTrace("webexplorer.native.hide.begin");
-    await invoke("webexplorer_native_hide");
+    await forgeInvoke("webexplorer_native_hide", {}, {
+      section: "webexplorer",
+      bootSafe: true,
+      timeoutMs: 5000,
+    });
     alphaTrace("webexplorer.native.hide.ok");
   } catch (err) {
     alphaTrace("webexplorer.native.hide.error", {
@@ -25970,8 +24914,7 @@ function installWebExplorerBoundsObservers() {
 }
 
 async function refreshWebExplorerMemorySnapshot() {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke || !isWebExplorerUiActive()) return null;
+  if (!forgeCanInvoke() || !isWebExplorerUiActive()) return null;
   if (webExplorerMemoryRefreshPromise) {
     webExplorerMemoryRefreshQueued = true;
     return webExplorerMemoryRefreshPromise;
@@ -25981,7 +24924,11 @@ async function refreshWebExplorerMemorySnapshot() {
     const startedAt = performance.now();
     try {
       void refreshWebExplorerRendererProbe(false);
-      const analysis = await invoke("webexplorer_analysis_snapshot");
+      const analysis = await forgeInvoke("webexplorer_analysis_snapshot", {}, {
+        section: "webexplorer",
+        timeoutMs: 10000,
+        dedupeKey: "webexplorer-analysis",
+      });
       webExplorerMemorySnapshot = analysis?.snapshot || null;
       webExplorerSemanticPlan = analysis?.semanticPlan || null;
       webExplorerRewritePlan = analysis?.rewritePlan || null;
@@ -26016,7 +24963,10 @@ async function refreshWebExplorerMemorySnapshot() {
         || window.localStorage?.getItem?.("forge.webexplorer.autoExport") === "1";
       if (autoExportEnabled && treeHash && treeHash !== webExplorerLastAutoExportHash && nodeCount > 0) {
         webExplorerLastAutoExportHash = treeHash;
-        void invoke("webexplorer_export_clone_snapshot").then((result) => {
+        void forgeInvoke("webexplorer_export_clone_snapshot", {}, {
+          section: "webexplorer",
+          timeoutMs: 15000,
+        }).then((result) => {
           alphaTrace("webexplorer.clone.export", {
             htmlPath: String(result?.htmlPath || ""),
             jsonPath: String(result?.jsonPath || ""),
@@ -26074,9 +25024,8 @@ function applyWebExplorerSnapshot(snapshot, options = {}) {
   }
   if (workspaceFolderName) workspaceFolderName.textContent = "Forge";
   if (workspaceProjectName) workspaceProjectName.textContent = "Web explorer";
-  if (windowTitlebar?.querySelector(".titlebar-title")) {
-    windowTitlebar.querySelector(".titlebar-title").textContent = "Forge";
-  }
+  const titlebarTitle = windowTitlebar?.querySelector(".titlebar-title");
+  if (titlebarTitle) titlebarTitle.textContent = "Forge";
   if (!options.skipHistory) {
     recordWebExplorerHistoryVisit(snapshot, {
       input: options.historyInput || "",
@@ -26109,14 +25058,17 @@ function applyWebExplorerSnapshot(snapshot, options = {}) {
 }
 
 function refreshWebExplorerRendererProbe(force = false) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke || !isWebExplorerUiActive()) return null;
+  if (!forgeCanInvoke() || !isWebExplorerUiActive()) return null;
   const now = Date.now();
   if (!force && webExplorerProofStats.rendererProbe && now - webExplorerRendererProbeLastAt < WEB_EXPLORER_RENDERER_PROBE_TTL_MS) {
     return null;
   }
   if (webExplorerRendererProbePromise) return webExplorerRendererProbePromise;
-  webExplorerRendererProbePromise = invoke("webexplorer_renderer_probe").then((rendererProbe) => {
+  webExplorerRendererProbePromise = forgeInvoke("webexplorer_renderer_probe", {}, {
+    section: "webexplorer",
+    timeoutMs: 5000,
+    dedupeKey: "webexplorer-renderer-probe",
+  }).then((rendererProbe) => {
     webExplorerRendererProbeLastAt = Date.now();
     webExplorerProofStats.rendererProbe = rendererProbe || null;
     invalidateWebExplorerProofPanel();
@@ -26132,10 +25084,13 @@ function refreshWebExplorerRendererProbe(force = false) {
   return webExplorerRendererProbePromise;
 }
 async function refreshWebExplorerSnapshot(options = {}) {
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke || !isWebExplorerUiActive()) return null;
+  if (!forgeCanInvoke() || !isWebExplorerUiActive()) return null;
   try {
-    const snapshot = await invoke("webexplorer_session_snapshot");
+    const snapshot = await forgeInvoke("webexplorer_session_snapshot", {}, {
+      section: "webexplorer",
+      timeoutMs: 8000,
+      dedupeKey: "webexplorer-session",
+    });
     applyWebExplorerSnapshot(snapshot, options);
     return snapshot;
   } catch (err) {
@@ -26145,9 +25100,8 @@ async function refreshWebExplorerSnapshot(options = {}) {
 }
 
 async function routeWebExplorerLocalCommand(rawText) {
-  const invoke = window.__TAURI__?.core?.invoke;
   const text = String(rawText || "").trim();
-  if (!invoke || !text) {
+  if (!forgeCanInvoke() || !text) {
     return {
       label: "web explorer",
       message: "",
@@ -26167,13 +25121,19 @@ async function routeWebExplorerLocalCommand(rawText) {
     message = "";
     return { label, message };
   } else if (compact === "reload" || compact === "refresh") {
-    snapshot = await invoke("webexplorer_reload");
+    snapshot = await forgeInvoke("webexplorer_reload", {}, {
+      section: "webexplorer",
+      timeoutMs: 30000,
+    });
     label = "reload";
     message = "";
     applyWebExplorerSnapshot(snapshot, { forceReload: true, historyInput: text, historySource: "reload" });
     return { label, message };
   } else {
-    snapshot = await invoke("webexplorer_navigate", { input: text });
+    snapshot = await forgeInvoke("webexplorer_navigate", { input: text }, {
+      section: "webexplorer",
+      timeoutMs: 30000,
+    });
     label = snapshot?.intent === "search" ? "google search" : "web navigate";
     message = "";
     applyWebExplorerSnapshot(snapshot, { historyInput: text, historySource: "command" });
@@ -26235,6 +25195,7 @@ function setWebExplorerActive(nextActive) {
   const next = !!nextActive;
   if (isWebExplorerSurface) {
     forgeSections?.setActive?.("webexplorer", next);
+    forgeShellRuntime?.dispatch?.({ type: "SET_SURFACE_ACTIVE", section: "webexplorer", active: next, fallbackSection: realEstateModeActive ? "real-estate-main" : "alpha" });
     if (next) {
       try {
         if (window.__forgeTradingChatBridge?.isActive?.()) window.__forgeCloseTrading?.();
@@ -26249,7 +25210,7 @@ function setWebExplorerActive(nextActive) {
     syncWebExplorerButtonState();
     syncTradingChatInvolvementControls();
     syncWebExplorerChatModeUi();
-    if (typeof syncRealEstateModeUi === "function") syncRealEstateModeUi();
+    if (typeof syncRealEstateModeUi === "function") syncRealEstateModeUi({ skipHeavy: true });
     if (shouldShowWebExplorerStartScreen()) setWebExplorerStartScreen();
     else if (webExplorerSurface?.querySelector(".webexplorer-startscreen")) {
       beginWebExplorerTransition({ dismissStart: true });
@@ -26262,7 +25223,7 @@ function setWebExplorerActive(nextActive) {
     syncWebExplorerButtonState();
     syncTradingChatInvolvementControls();
     syncWebExplorerChatModeUi();
-    if (typeof syncRealEstateModeUi === "function") syncRealEstateModeUi();
+    if (typeof syncRealEstateModeUi === "function") syncRealEstateModeUi({ skipHeavy: true });
     return;
   }
   if (next) {
@@ -26275,10 +25236,11 @@ function setWebExplorerActive(nextActive) {
   }
   webExplorerActive = next;
   forgeSections?.setActive?.("webexplorer", webExplorerActive);
+  forgeShellRuntime?.dispatch?.({ type: "SET_SURFACE_ACTIVE", section: "webexplorer", active: webExplorerActive, fallbackSection: realEstateModeActive ? "real-estate-main" : "alpha" });
   syncWebExplorerButtonState();
   syncTradingChatInvolvementControls();
   syncWebExplorerChatModeUi();
-  if (typeof syncRealEstateModeUi === "function") syncRealEstateModeUi();
+  if (typeof syncRealEstateModeUi === "function") syncRealEstateModeUi({ skipHeavy: true });
   if (webExplorerActive) {
     if (shouldShowWebExplorerStartScreen()) setWebExplorerStartScreen();
     else if (webExplorerSurface?.querySelector(".webexplorer-startscreen")) {
@@ -26320,217 +25282,132 @@ const realEstateAutomationsPanelBtn = document.getElementById("realEstateAutomat
 const realEstatePropertiesPanelBtn = document.getElementById("realEstatePropertiesPanelBtn");
 const realEstateCrmPanelBtn = document.getElementById("realEstateCrmPanelBtn");
 const realEstateToolsPanel = document.getElementById("realEstateToolsPanel");
-const realEstateToolsCloseBtn = document.getElementById("realEstateToolsCloseBtn");
 const realEstateToolsScrollbar = document.getElementById("realEstateToolsScrollbar");
 const realEstateToolsScrollbarThumb = document.getElementById("realEstateToolsScrollbarThumb");
 const realEstateCrmPanel = document.getElementById("realEstateCrmPanel");
-const realEstateCrmCloseBtn = document.getElementById("realEstateCrmCloseBtn");
 const realEstateCrmScrollbar = document.getElementById("realEstateCrmScrollbar");
 const realEstateCrmScrollbarThumb = document.getElementById("realEstateCrmScrollbarThumb");
 let realEstateModeActive = false;
-let realEstateToolsPanelCloseTimer = 0;
-let realEstateCrmPanelCloseTimer = 0;
+let realEstateOnboardingState = null;
+let realEstateOnboardingLoading = false;
+let realEstateOnboardingAnnouncedQuestion = "";
+let realEstateOnboardingLlmTurnInFlight = false;
+let realEstateOnboardingMachineSignature = "";
+let realEstateLlmInitTimer = 0;
+let realEstateLlmInitProgress = 0;
+let realEstateLlmStatusRefreshInFlight = false;
+let realEstateLlmStatusLastRefreshAt = 0;
 try {
   realEstateModeActive = window.localStorage?.getItem?.(REAL_ESTATE_MODE_STORAGE_KEY) === "1";
 } catch (_) {}
 
-const REAL_ESTATE_TOOL_GROUPS = Object.freeze([
-  {
-    label: "Production immo",
-    icon: "site",
-    tools: [
-      ["mandat-vendeur", "Mandat vendeur", "rapport"],
-      ["estimation", "Estimation", "estimation"],
-      ["rapport-vendeur", "Rapport vendeur", "rapport"],
-      ["diagnostics", "Diagnostics", "energy"],
-      ["conformite", "Conformite", "conformite"],
-      ["diffusion", "Diffusion", "annonces"],
-      ["audit-annonces", "Audit annonces", "portal"],
-      ["performance-diffusion", "Performance diffusion", "database"],
-    ],
+const REAL_ESTATE_TOOL_GROUPS = window.ForgeRealEstateTools?.groups || Object.freeze([]);
+const REAL_ESTATE_TOOLS = window.ForgeRealEstateTools?.tools || Object.freeze([]);
+const REAL_ESTATE_TOOL_BY_COMMAND = window.ForgeRealEstateTools?.byCommand || new Map();
+const REAL_ESTATE_CRM_TOOLS = window.ForgeRealEstateTools?.crmTools || Object.freeze([]);
+
+const realEstateOnboardingRuntime = createRealEstateOnboardingRuntime({
+  getModeActive: () => realEstateModeActive,
+  get: (key) => ({
+    state: realEstateOnboardingState,
+    loading: realEstateOnboardingLoading,
+    announcedQuestion: realEstateOnboardingAnnouncedQuestion,
+    llmTurnInFlight: realEstateOnboardingLlmTurnInFlight,
+    machineSignature: realEstateOnboardingMachineSignature,
+    initTimer: realEstateLlmInitTimer,
+    initProgress: realEstateLlmInitProgress,
+    statusRefreshInFlight: realEstateLlmStatusRefreshInFlight,
+    statusLastRefreshAt: realEstateLlmStatusLastRefreshAt,
+  }[key]),
+  set: (key, value) => {
+    if (key === "state") realEstateOnboardingState = value;
+    else if (key === "loading") realEstateOnboardingLoading = value;
+    else if (key === "announcedQuestion") realEstateOnboardingAnnouncedQuestion = value;
+    else if (key === "llmTurnInFlight") realEstateOnboardingLlmTurnInFlight = value;
+    else if (key === "machineSignature") realEstateOnboardingMachineSignature = value;
+    else if (key === "initTimer") realEstateLlmInitTimer = value;
+    else if (key === "initProgress") realEstateLlmInitProgress = value;
+    else if (key === "statusRefreshInFlight") realEstateLlmStatusRefreshInFlight = value;
+    else if (key === "statusLastRefreshAt") realEstateLlmStatusLastRefreshAt = value;
   },
-  {
-    label: "Marche & veille",
-    icon: "database",
-    tools: [
-      ["marche-veille", "Marche & veille", "database"],
-      ["dvf", "DVF", "database"],
-      ["cadastre", "Cadastre", "cadastre"],
-      ["dpe-ademe", "DPE / ADEME", "energy"],
-      ["georisques", "Georisques", "risk"],
-      ["urbanisme", "Urbanisme", "urbanisme"],
-      ["veille-locale", "Veille locale", "pin"],
-      ["concurrence", "Concurrence", "portal"],
-      ["reputation", "Reputation", "site"],
-    ],
-  },
-  {
-    label: "Contacts",
-    icon: "matching",
-    tools: [
-      ["prospects", "Prospects", "matching"],
-      ["vendeurs", "Vendeurs", "rapport"],
-      ["acquereurs", "Acquereurs", "matching"],
-      ["matching-acheteurs", "Matching acheteurs", "matching"],
-      ["repondeur-ia", "Repondeur IA", "portal"],
-      ["chatbot-site", "Chatbot site", "annonces"],
-      ["partenaires", "Partenaires", "site"],
-    ],
-  },
-  {
-    label: "Pilotage agence",
-    icon: "energy",
-    tools: [
-      ["pilotage-agence", "Pilotage agence", "energy"],
-      ["pipeline", "Pipeline", "database"],
-      ["kpi-agence", "KPI agence", "rapport"],
-      ["planning-visites", "Planning visites", "cadastre"],
-      ["coaching-equipe", "Coaching equipe", "matching"],
-      ["performance-commerciaux", "Performance commerciaux", "database"],
-    ],
-  },
-  {
-    label: "Back-office",
-    icon: "conformite",
-    tools: [
-      ["back-office", "Back-office", "conformite"],
-      ["comptabilite", "Comptabilite", "database"],
-      ["fiscalite", "Fiscalite", "rapport"],
-      ["tresorerie", "Tresorerie", "database"],
-      ["courtiers", "Courtiers", "matching"],
-      ["assurances", "Assurances", "conformite"],
-      ["notaires", "Notaires", "rapport"],
-      ["travaux", "Travaux", "energy"],
-    ],
-  },
-  {
-    label: "Equipe",
-    icon: "matching",
-    tools: [
-      ["recrutement", "Recrutement", "matching"],
-      ["onboarding", "Onboarding", "site"],
-      ["formation", "Formation", "rapport"],
-    ],
-  },
-]);
+  getProviderRows: () => [
+    ["codex", codexProviderLastStatus],
+    ["gemini", geminiProviderLastStatus],
+    ["claude", claudeProviderLastStatus],
+  ],
+  providerCliEffectiveInstalled,
+  refreshOpenAiProviderStatus,
+  refreshCliProviderStatuses,
+  alphaDropZone: () => alphaDropZone,
+  alphaDropZoneTitle: () => alphaDropZoneTitle,
+  alphaDropZoneSub: () => alphaDropZoneSub,
+  dispatchOnboarding: (status, questionId) => forgeShellRuntime?.dispatch?.({
+    type: "SET_ONBOARDING",
+    scope: "real-estate",
+    status,
+    questionId,
+  }),
+  packetForModel: (state, report, options) => window.ForgeRealEstateOnboarding?.packetForModel?.(state, report, options),
+  canvasChatRuntimeTargets,
+  selectedOpenAiModelRef,
+  selectedCanvasReasoningEffort,
+  canvasChatBusyInCurrentSession,
+  forgeCanInvoke,
+  forgeInvoke,
+  currentAlphaSessionJobId,
+  setAlphaActiveTab,
+  setCanvasChatBusy,
+  setCanvasChatPendingAssistants,
+  isEmptyAlphaContext: () => !alphaPendingFile && !alphaSessionFiles.length && !alphaDocState.fileName,
+  startAlphaEmptySession,
+  appendCanvasChatMessage,
+  canvasChatTargetLabel,
+  canvasResponseRuntime,
+  syncAlphaDropSurface,
+  forgeTauriInvoke: (...args) => forgeTauri?.invoke?.(...args),
+  refreshRealEstateHarvesterStatus,
+});
 
-const REAL_ESTATE_TOOLS = Object.freeze(REAL_ESTATE_TOOL_GROUPS.flatMap((group) =>
-  group.tools.map(([id, label, icon]) => Object.freeze({
-    id,
-    label,
-    icon,
-    command: `/${id.replace(/-/g, "_")}_`,
-  }))
-));
-const REAL_ESTATE_TOOL_BY_COMMAND = new Map(REAL_ESTATE_TOOLS.map((tool) => [tool.command, tool]));
-const REAL_ESTATE_CRM_TOOLS = Object.freeze(REAL_ESTATE_TOOLS.filter((tool) => [
-  "prospects",
-  "vendeurs",
-  "acquereurs",
-  "matching-acheteurs",
-  "repondeur-ia",
-  "chatbot-site",
-  "partenaires",
-].includes(tool.id)));
+function realEstateOnboardingActive() { return realEstateOnboardingRuntime.active(); }
+function realEstateLlmInstallRows() { return realEstateOnboardingRuntime.llmInstallRows(); }
+function realEstateLlmInstallReady() { return realEstateOnboardingRuntime.llmInstallReady(); }
+function realEstateLlmInstallProgressTarget() { return realEstateOnboardingRuntime.llmInstallProgressTarget(); }
+function requestRealEstateLlmStatusRefresh(options = {}) { return realEstateOnboardingRuntime.requestLlmStatusRefresh(options); }
+function syncRealEstateInitCanvas() { return realEstateOnboardingRuntime.syncInitCanvas(); }
+function scheduleRealEstateLlmInitLoop() { return realEstateOnboardingRuntime.scheduleInitLoop(); }
+function realEstateOnboardingQuestionLine(state = realEstateOnboardingState) { return realEstateOnboardingRuntime.questionLine(state); }
+function realEstateOnboardingPromptText(state = realEstateOnboardingState) { return realEstateOnboardingRuntime.promptText(state); }
+function syncRealEstateOnboardingCanvas() { return realEstateOnboardingRuntime.syncCanvas(); }
+function realEstateOnboardingPacketForModel(state = realEstateOnboardingState, report = null, options = {}) { return realEstateOnboardingRuntime.packetForModel(state, report, options); }
+function realEstateOnboardingTargetForTurn() { return realEstateOnboardingRuntime.targetForTurn(); }
+function realEstateOnboardingLlmReplyLooksUsable(text) { return realEstateOnboardingRuntime.replyLooksUsable(text); }
+function requestRealEstateOnboardingLlmTurn(state = realEstateOnboardingState) { return realEstateOnboardingRuntime.requestLlmTurn(state); }
+function refreshRealEstateOnboardingState(options = {}) { return realEstateOnboardingRuntime.refreshState(options); }
+function recordRealEstateOnboardingAnswerForLlm(answer) { return realEstateOnboardingRuntime.recordAnswer(answer); }
+const realEstateLanguageRuntime = createRealEstateLanguageRuntime({
+  isActive: () => realEstateModeActive,
+  hasSource: () => !!(selectedForgeJobId || alphaPendingFile || alphaSessionFiles.length || alphaDocState.fileName),
+  setNewSessionTitle: (title) => { newSessionTitle = title; },
+  webExplorerClearHistoryBtn: () => webExplorerClearHistoryBtn,
+  forgePinDrop: () => forgePinDrop,
+  forgePinDropText: () => forgePinDropText,
+  forgePinMenuBtn: () => forgePinMenuBtn,
+  alphaDropZone: () => alphaDropZone,
+  alphaDropZoneTitle: () => alphaDropZoneTitle,
+  alphaDropZoneSub: () => alphaDropZoneSub,
+  syncSidebarLabels: () => window.ForgeSidebarCell?.syncLabels?.(),
+  forgeCanvasChat: () => forgeCanvasChat,
+  forgeCanvasChatCommandInput: () => forgeCanvasChatCommandInput,
+  forgeCanvasChatGeminiInput: () => forgeCanvasChatGeminiInput,
+  forgeCanvasChatClaudeInput: () => forgeCanvasChatClaudeInput,
+  alphaProofToggle: () => alphaProofToggle,
+  alphaProofPanelOpen: () => alphaProofPanelOpen,
+  workspaceMenu: () => workspaceMenu,
+  profileMenu: () => profileMenu,
+  syncOnboardingCanvas: () => syncRealEstateOnboardingCanvas(),
+});
 
-function setNodeText(node, text) {
-  if (node) node.textContent = text;
-}
-
-function setButtonTextByAction(root, action, text) {
-  const button = root?.querySelector?.(`[data-action="${action}"]`);
-  if (button) button.textContent = text;
-}
-
-function setProfileMenuText(action, text) {
-  const label = profileMenu?.querySelector?.(`[data-profile-action="${action}"] span`);
-  if (label) label.textContent = text;
-}
-
-function syncRealEstateFrontendLanguage() {
-  const fr = !!realEstateModeActive;
-  document.documentElement.lang = fr ? "fr" : "en";
-  const hasSource = !!(selectedForgeJobId || alphaPendingFile || alphaSessionFiles.length || alphaDocState.fileName);
-  if (!hasSource) {
-    newSessionTitle = fr ? "Nouvelle session immo" : "New session";
-  }
-
-  setNodeText(document.querySelector(".pin-section > .pin-heading"), fr ? "Épinglés" : "Pinned");
-  setNodeText(document.querySelector(".history-heading:not(.webexplorer-history-heading) > span"), fr ? "Récents" : "Recents");
-  setNodeText(document.querySelector(".webexplorer-history-section-pinned .pin-heading"), fr ? "Web épinglé" : "Pinned web");
-  setNodeText(document.querySelector(".webexplorer-history-heading > span"), fr ? "Historique web" : "Web history");
-  if (webExplorerClearHistoryBtn) webExplorerClearHistoryBtn.textContent = fr ? "Effacer" : "Clear";
-  if (forgePinDrop) forgePinDrop.setAttribute("aria-label", fr ? "Glisser une session immo ici pour l'épingler" : "Drag a calculation here to pin it");
-  if (forgePinDropText && !forgePinDrop.classList.contains("has-pinned")) {
-    forgePinDropText.textContent = fr ? "Glisser pour épingler" : "Drag to pin";
-  }
-  if (forgePinMenuBtn) forgePinMenuBtn.setAttribute("aria-label", fr ? "Réglages du projet épinglé" : "Pinned project settings");
-
-  if (alphaDropZoneTitle) alphaDropZoneTitle.textContent = fr ? "Dépose n'importe quel fichier" : "Drop any file";
-  if (alphaDropZoneSub) {
-    alphaDropZoneSub.textContent = fr
-      ? "Calcul lourd dans n'importe quel domaine immobilier — données agence, biens, mandats, prospects, annonces, veille, fiscalité, juridique, tout. Le LLM reste hors des fichiers et des maths, économisant massivement des tokens."
-      : "Heavy compute in any domain — data, code, medical imaging, genomics, anything. The LLM stays out of files and math, saving massive tokens.";
-  }
-  if (alphaDropZone) alphaDropZone.setAttribute("aria-label", fr ? "Déposer des fichiers agence" : "Upload OHLCV CSV files");
-  const sidebarLabel = alphaSidebarCollapsed
-    ? (fr ? "Afficher le panneau gauche" : "Show left panel")
-    : (fr ? "Masquer le panneau gauche" : "Hide left panel");
-  alphaSidebarToggle?.setAttribute("aria-label", sidebarLabel);
-  alphaSidebarToggle?.setAttribute("title", sidebarLabel);
-  const webExplorerBtn = document.getElementById("webexplorer");
-  webExplorerBtn?.setAttribute("aria-label", fr ? "Ouvrir Google" : "Open web explorer");
-  webExplorerBtn?.setAttribute("title", fr ? "Ouvrir Google" : "Open web explorer");
-  const searchBtn = document.getElementById("forgeSearchBtn");
-  searchBtn?.setAttribute("aria-label", fr ? "Rechercher les sessions et projets" : "Search sessions and projects");
-  searchBtn?.setAttribute("title", fr ? "Rechercher (Ctrl+K)" : "Search (Ctrl+K)");
-  const searchInput = document.getElementById("forgeSearchInput");
-  if (searchInput) searchInput.setAttribute("placeholder", fr ? "Rechercher sessions, projets, programmes…" : "Search sessions, projects, programs…");
-  document.getElementById("windowMinimize")?.setAttribute("aria-label", fr ? "Réduire" : "Minimize");
-  document.getElementById("windowMaximize")?.setAttribute("aria-label", fr ? "Agrandir" : "Maximize");
-  document.getElementById("windowClose")?.setAttribute("aria-label", fr ? "Fermer" : "Close");
-  forgeCanvasChat?.setAttribute("aria-label", fr ? "Parler à l'assistant agence dans cette session Forge" : "Talk to Codex in this Forge session");
-  forgeCanvasChatCommandInput?.setAttribute("aria-label", fr ? "Commande programme" : "Command prefix");
-  forgeCanvasChatGeminiInput?.setAttribute("aria-label", fr ? "Consigne Gemini" : "Gemini prompt");
-  forgeCanvasChatClaudeInput?.setAttribute("aria-label", fr ? "Consigne Claude" : "Claude prompt");
-
-  alphaProofToggle?.setAttribute("aria-label", alphaProofPanelOpen
-    ? (fr ? "Fermer le panneau droit" : "Close right panel")
-    : (fr ? "Ouvrir le panneau droit" : "Open right panel"));
-  alphaProofToggle?.setAttribute("title", alphaProofPanelOpen
-    ? (fr ? "Fermer le panneau droit" : "Close right panel")
-    : (fr ? "Ouvrir le panneau droit" : "Open right panel"));
-
-  setButtonTextByAction(workspaceMenu, "choose-folder", fr ? "Choisir le dossier agence" : "Choose workspace");
-  setButtonTextByAction(workspaceMenu, "show-folder", fr ? "Afficher le dossier agence" : "Show in Explorer");
-  setButtonTextByAction(workspaceMenu, "copy-path", fr ? "Copier le chemin du dossier agence" : "Copy folder path");
-
-  const jobMenu = document.getElementById("forgeJobMenu");
-  setButtonTextByAction(jobMenu, "pin", fr ? "Épingler le projet" : "Pin project");
-  setButtonTextByAction(jobMenu, "rename", fr ? "Renommer" : "Rename");
-  setButtonTextByAction(jobMenu, "archive", fr ? "Archiver" : "Archive");
-  setButtonTextByAction(jobMenu, "delete", fr ? "Supprimer" : "Delete");
-
-  setProfileMenuText("settings", fr ? "Réglages" : "Settings");
-  setProfileMenuText("api", fr ? "Fournisseurs IA" : "LLM providers");
-  setProfileMenuText("voice-api", fr ? "Voix & clés API" : "Voice & API keys");
-  setProfileMenuText("docs", fr ? "Documentation" : "Documentation");
-  setProfileMenuText("mcp", "MCP");
-  setProfileMenuText("daemon", fr ? "Service local" : "Daemon");
-  setProfileMenuText("archive", fr ? "Archives" : "Archive");
-  setProfileMenuText("edit-profile", fr ? "Modifier le profil" : "Edit profile");
-
-  const cpu = document.getElementById("panelHardwareCpu");
-  const gpu = document.getElementById("panelHardwareGpu");
-  if (cpu && /^(detection failed|détection échouée)$/i.test(cpu.textContent || "")) cpu.textContent = fr ? "détection échouée" : "detection failed";
-  if (gpu && /^(detection failed|détection échouée)$/i.test(gpu.textContent || "")) gpu.textContent = fr ? "détection échouée" : "detection failed";
-  document.querySelectorAll(".panel-hardware-text").forEach((node) => {
-    if (/^(No GPU detected|Aucun GPU détecté)$/i.test(node.textContent || "")) {
-      node.textContent = fr ? "Aucun GPU détecté" : "No GPU detected";
-    }
-  });
-}
-
+function syncRealEstateFrontendLanguage() { return realEstateLanguageRuntime.sync(); }
 function setComposerPrompt(text, options = {}) {
   const input = typeof primaryCanvasComposerInput === "function"
     ? primaryCanvasComposerInput()
@@ -26565,131 +25442,30 @@ function setComposerCommand(command) {
   if (typeof syncTradingSlashCommandState === "function") syncTradingSlashCommandState();
 }
 
-function createRealEstateToolButton(tool, extraClass = "") {
-  const button = document.createElement("button");
-  button.className = `real-estate-tool-item real-estate-super-tool ${extraClass}`.trim();
-  button.type = "button";
-  button.dataset.realEstateTool = tool.id;
-  button.dataset.command = tool.command || "";
-  button.setAttribute("aria-label", `${tool.label} ${tool.command || ""}`.trim());
-  const icon = document.createElement("span");
-  icon.className = "real-estate-tool-icon";
-  icon.dataset.toolIcon = tool.icon || "database";
-  icon.setAttribute("aria-hidden", "true");
-  const label = document.createElement("span");
-  label.textContent = tool.label || tool.id;
-  button.append(icon, label);
-  return button;
-}
+const realEstatePanelRuntime = createRealEstatePanelRuntime({
+  isActive: () => realEstateModeActive,
+  runtime: forgeShellRuntime,
+  dispatch: (event) => forgeShellRuntime?.dispatch?.(event),
+  tools: window.ForgeRealEstateTools,
+  toolsPanel: () => realEstateToolsPanel,
+  toolsButton: () => realEstateToolsPanelBtn,
+  toolsScrollbar: () => realEstateToolsScrollbar,
+  toolsScrollbarThumb: () => realEstateToolsScrollbarThumb,
+  contactsPanel: () => realEstateCrmPanel,
+  contactsButton: () => realEstateCrmPanelBtn,
+  contactsScrollbar: () => realEstateCrmScrollbar,
+  contactsScrollbarThumb: () => realEstateCrmScrollbarThumb,
+  chat: () => forgeCanvasChat,
+  modelAnchor: () => document.getElementById("forgeCanvasChatModelAnchor"),
+  bindScrollbar: bindForgeCustomScrollbar,
+  queueScrollbarSync: queueForgeCustomScrollbarSync,
+  setComposerCommand,
+  refreshStatus: () => refreshRealEstateHarvesterStatus(),
+});
 
-function createRealEstateToolGroup(group) {
-  const details = document.createElement("details");
-  details.className = "real-estate-tool-group";
-  details.open = true;
-  const summary = document.createElement("summary");
-  const icon = document.createElement("span");
-  icon.className = "real-estate-group-icon";
-  icon.setAttribute("aria-hidden", "true");
-  icon.innerHTML = `<svg viewBox="0 0 24 24" focusable="false"><path d="M4 5h16" /><path d="M4 12h16" /><path d="M4 19h16" /></svg>`;
-  const label = document.createElement("span");
-  label.textContent = group.label || "Outils";
-  summary.append(icon, label);
-  details.append(summary);
-  const tools = Array.isArray(group.tools) ? group.tools : [];
-  for (const [id] of tools) {
-    const tool = REAL_ESTATE_TOOLS.find((entry) => entry.id === id);
-    if (tool) details.appendChild(createRealEstateToolButton(tool));
-  }
-  return details;
-}
-
-function renderRealEstateToolPanel() {
-  const root = realEstateToolsPanel?.querySelector?.(".real-estate-tool-groups");
-  if (!root || root.dataset.fused === "true") return;
-  root.dataset.fused = "true";
-  root.replaceChildren(...REAL_ESTATE_TOOL_GROUPS.map(createRealEstateToolGroup));
-  bindForgeCustomScrollbar?.(root, realEstateToolsScrollbar, realEstateToolsScrollbarThumb);
-}
-
-function renderRealEstateCrmPanel() {
-  const root = realEstateCrmPanel?.querySelector?.(".real-estate-tool-groups");
-  if (!root || root.dataset.fused === "true") return;
-  root.dataset.fused = "true";
-  root.replaceChildren(...REAL_ESTATE_CRM_TOOLS.map((tool) => createRealEstateToolButton(tool, "real-estate-crm-tool")));
-  bindForgeCustomScrollbar?.(root, realEstateCrmScrollbar, realEstateCrmScrollbarThumb);
-}
-
-function syncRealEstatePanelBounds() {
-  const viewportHeight = Math.max(
-    0,
-    window.visualViewport?.height || window.innerHeight || document.documentElement?.clientHeight || 0,
-  );
-  let bottom = 210;
-  const reserveAbove = (node, margin = 22) => {
-    if (!node || node.hidden) return;
-    const rect = node.getBoundingClientRect?.();
-    if (!rect || rect.width <= 0 || rect.height <= 0 || rect.top <= 0 || rect.top >= viewportHeight) return;
-    bottom = Math.max(bottom, Math.ceil(viewportHeight - rect.top + margin));
-  };
-  reserveAbove(forgeCanvasChat, 22);
-  reserveAbove(document.getElementById("forgeCanvasChatModelAnchor"), 14);
-  bottom = Math.max(176, Math.min(340, bottom));
-  document.documentElement?.style?.setProperty?.("--real-estate-tools-panel-bottom", `${bottom}px`);
-  queueForgeCustomScrollbarSync?.(realEstateToolsPanel?.querySelector?.(".real-estate-tool-groups"));
-  queueForgeCustomScrollbarSync?.(realEstateCrmPanel?.querySelector?.(".real-estate-tool-groups"));
-}
-
-function setRealEstateFloatingPanelVisibility(panel, open, closeTimerRef) {
-  if (!panel) return 0;
-  if (closeTimerRef) window.clearTimeout(closeTimerRef);
-  if (open) {
-    panel.hidden = false;
-    panel.classList.remove("is-closing");
-    requestAnimationFrame(() => {
-      panel.classList.add("is-visible");
-      queueForgeCustomScrollbarSync?.(panel.querySelector?.(".real-estate-tool-groups"));
-    });
-    return 0;
-  }
-  panel.classList.remove("is-visible");
-  panel.classList.add("is-closing");
-  return window.setTimeout(() => {
-    panel.classList.remove("is-closing");
-    panel.hidden = true;
-  }, 190);
-}
-
-function setRealEstateToolsPanelOpen(open) {
-  const next = realEstateModeActive && !!open;
-  realEstateToolsPanelCloseTimer = setRealEstateFloatingPanelVisibility(
-    realEstateToolsPanel,
-    next,
-    realEstateToolsPanelCloseTimer,
-  );
-  document.body.classList.toggle("real-estate-tools-open", next);
-  realEstateToolsPanelBtn?.setAttribute("aria-expanded", next ? "true" : "false");
-  if (next) {
-    syncRealEstatePanelBounds();
-    requestAnimationFrame(syncRealEstatePanelBounds);
-  }
-  if (next) setRealEstateCrmPanelOpen(false);
-}
-
-function setRealEstateCrmPanelOpen(open) {
-  const next = realEstateModeActive && !!open;
-  realEstateCrmPanelCloseTimer = setRealEstateFloatingPanelVisibility(
-    realEstateCrmPanel,
-    next,
-    realEstateCrmPanelCloseTimer,
-  );
-  document.body.classList.toggle("real-estate-crm-open", next);
-  realEstateCrmPanelBtn?.setAttribute("aria-expanded", next ? "true" : "false");
-  if (next) {
-    syncRealEstatePanelBounds();
-    requestAnimationFrame(syncRealEstatePanelBounds);
-  }
-  if (next) setRealEstateToolsPanelOpen(false);
-}
+function syncRealEstatePanelBounds() { return realEstatePanelRuntime.syncBounds(); }
+function setRealEstateToolsPanelOpen(open) { return realEstatePanelRuntime.setToolsOpen(open); }
+function setRealEstateCrmPanelOpen(open) { return realEstatePanelRuntime.setContactsOpen(open); }
 
 function refreshRealEstateHarvesterStatus() {
   if (!realEstateModeActive || !forgeTauri?.invoke) return;
@@ -26716,105 +25492,87 @@ async function presentBloombergLiveNative(bounds = null, options = {}) {
 }
 window.__forgePresentBloombergLiveNative = presentBloombergLiveNative;
 
-function syncRealEstateModeUi() {
-  document.body.classList.toggle("real-estate-mode", realEstateModeActive);
-  realEstateModeBtn?.classList.toggle("is-active", realEstateModeActive);
-  realEstateModeBtn?.setAttribute("aria-pressed", realEstateModeActive ? "true" : "false");
-  if (realEstateHomeSectionBtn) realEstateHomeSectionBtn.hidden = !realEstateModeActive;
-  realEstateHomeSectionBtn?.classList.toggle("is-active", realEstateModeActive && !isWebExplorerUiActive());
-  forgeSections?.setActive?.("real-estate", realEstateModeActive);
-  forgeSections?.setActive?.("real-estate-main", realEstateModeActive && !isWebExplorerUiActive());
-  if (realEstateModeActive) {
-    resetInactiveTradingChartSurface();
-    refreshAlphaAfterSectionBoundary();
-  }
-  if (!realEstateModeActive) {
-    setRealEstateToolsPanelOpen(false);
-    setRealEstateCrmPanelOpen(false);
-  }
-  syncRealEstateFrontendLanguage();
-  forgeJobListRenderKey = "";
-  renderForgeJobs();
-  renderWebExplorerHistoryPanel?.(true);
-  updateWorkspaceBreadcrumb();
-  syncCanvasChatSendState();
-}
-
-function setRealEstateModeActive(nextActive) {
-  const previousActive = realEstateModeActive;
-  realEstateModeActive = !!nextActive;
-  try {
-    window.localStorage?.setItem?.(REAL_ESTATE_MODE_STORAGE_KEY, realEstateModeActive ? "1" : "0");
-  } catch (_) {}
-  if (realEstateModeActive) {
-    try { window.__forgeCloseBoom?.(); } catch (_) {}
-    try { window.__forgeCloseTrading?.(); } catch (_) {}
-  }
-  const selectedJob = currentForgeJob?.();
-  const selectedBelongsToRealEstate = selectedJob ? forgeJobIsRealEstate(selectedJob) : false;
-  if (selectedJob && selectedBelongsToRealEstate !== realEstateModeActive) {
-    startAlphaNewSession?.();
-  } else if (previousActive !== realEstateModeActive && !selectedJob && !alphaPendingFile && !alphaSessionFiles.length && !alphaDocState.fileName) {
-    newSessionTitle = realEstateModeActive ? "Nouvelle session immo" : "New session";
-  }
-  if (previousActive !== realEstateModeActive && !codexInputText() && !geminiCanvasChatText() && !claudeCanvasChatText()) {
+const realEstateModeRuntime = createRealEstateModeRuntime({
+  getActive: () => realEstateModeActive,
+  setActive: (next) => { realEstateModeActive = !!next; },
+  persistActive: (next) => {
+    try { window.localStorage?.setItem?.(REAL_ESTATE_MODE_STORAGE_KEY, next ? "1" : "0"); } catch (_) {}
+  },
+  modeButton: () => realEstateModeBtn,
+  homeSectionButton: () => realEstateHomeSectionBtn,
+  isWebExplorerActive: () => isWebExplorerUiActive(),
+  sections: () => forgeSections,
+  resetInactiveTradingChartSurface,
+  refreshAlphaAfterSectionBoundary,
+  getInitProgress: () => realEstateLlmInitProgress,
+  setInitProgress: (value) => { realEstateLlmInitProgress = value; },
+  syncInitCanvas: () => syncRealEstateInitCanvas(),
+  scheduleInitLoop: () => scheduleRealEstateLlmInitLoop(),
+  requestLlmStatusRefresh: () => requestRealEstateLlmStatusRefresh(),
+  llmInstallReady: () => realEstateLlmInstallReady(),
+  refreshOnboardingState: (options) => refreshRealEstateOnboardingState(options),
+  setToolsOpen: (open) => setRealEstateToolsPanelOpen(open),
+  setContactsOpen: (open) => setRealEstateCrmPanelOpen(open),
+  setOnboardingState: (state) => { realEstateOnboardingState = state; },
+  getInitTimer: () => realEstateLlmInitTimer,
+  setInitTimer: (value) => { realEstateLlmInitTimer = value; },
+  setStatusRefreshInFlight: (value) => { realEstateLlmStatusRefreshInFlight = value; },
+  alphaDropZone: () => alphaDropZone,
+  syncLanguage: () => syncRealEstateFrontendLanguage(),
+  resetJobListRenderKey: () => { forgeJobListRenderKey = ""; },
+  renderJobs: () => renderForgeJobs(),
+  renderWebExplorerHistoryPanel: (...args) => renderWebExplorerHistoryPanel?.(...args),
+  updateWorkspaceBreadcrumb: () => updateWorkspaceBreadcrumb(),
+  syncCanvasChatSendState: () => syncCanvasChatSendState(),
+  closeBoom: () => window.__forgeCloseBoom?.(),
+  closeTrading: () => window.__forgeCloseTrading?.(),
+  currentJob: () => currentForgeJob?.(),
+  jobIsRealEstate: (job) => forgeJobIsRealEstate(job),
+  startNewSession: () => startAlphaNewSession?.(),
+  hasAlphaSource: () => !!(alphaPendingFile || alphaSessionFiles.length || alphaDocState.fileName),
+  setNewSessionTitle: (title) => { newSessionTitle = title; },
+  composerEmpty: () => !codexInputText() && !geminiCanvasChatText() && !claudeCanvasChatText(),
+  resetPlaceholderAnimation: () => {
     stopCanvasChatPlaceholderAnimation();
     canvasChatPlaceholderIdx = 0;
     canvasChatPlaceholderCharIdx = 0;
     canvasChatPlaceholderPhase = forgeCanvasChatTargetMode === "all" ? "names" : "typing";
     clearAllCanvasChatPlaceholders?.();
     startCanvasChatPlaceholderAnimation?.();
-  }
-  syncRealEstateModeUi();
-  refreshRealEstateHarvesterStatus();
-}
+  },
+  dispatchMode: (payload) => forgeShellRuntime?.dispatch?.({ type: "SET_REAL_ESTATE_MODE", ...payload }),
+  refreshHarvesterStatus: () => refreshRealEstateHarvesterStatus(),
+});
 
+function syncRealEstateModeUi(options = {}) { return realEstateModeRuntime.sync(options); }
+function setRealEstateModeActive(nextActive) { return realEstateModeRuntime.setActive(nextActive); }
+window.__forgeSetRealEstateModeActive = setRealEstateModeActive;
+window.__forgeToggleRealEstateMode = () => realEstateModeRuntime.toggle();
 function realEstateCommandFromText(text) {
-  const token = String(text || "").trim().split(/\s+/, 1)[0] || "";
-  if (!/^\/[a-z0-9_]+_$/.test(token)) return null;
-  return REAL_ESTATE_TOOL_BY_COMMAND.get(token) || null;
+  return parseRealEstateCommandFromText(text, REAL_ESTATE_TOOL_BY_COMMAND);
 }
 
-function realEstateCommandPacket(text) {
+function realEstateCommandPacket(text, context = null) {
+  return buildRealEstateCommandPacket(text, context, REAL_ESTATE_TOOL_BY_COMMAND);
+}
+async function loadRealEstateToolCommandContext(text) {
   const tool = realEstateCommandFromText(text);
-  if (!tool) return "";
-  return [
-    "FORGE_REAL_ESTATE_PROGRAM_COMMAND:",
-    `slash=${tool.command}`,
-    `program_name=${tool.command.slice(1, -1)}`,
-    `tool_id=${tool.id}`,
-    `label=${tool.label}`,
-    "scope=agence_immo",
-    "memory_layer=semantic",
-    "first_step=brain_recall(scope:agence_immo,memory_layer:semantic)",
-    "data_context=real_estate_harvester_snapshot",
-    "route=slash/MCP command -> Forge brain/memory -> KASM/Data Sync context -> answer/action",
-  ].join("\n");
-}
-
-function realEstateBrainRefLabel(context) {
-  const refs = context?.brain?.refs || context?.brain?.brain_context?.refs || null;
-  return refs?.scoped_layer_note?.hash
-    || refs?.scoped_llm_note?.hash
-    || refs?.latest_memory?.hash
-    || context?.brain?.brain_context?.scoped_note_hash
-    || "";
+  if (!tool || !forgeTauri?.invoke) return null;
+  return forgeTauri.invoke("real_estate_tool_command_context", {
+    command: tool.command,
+  }, {
+    section: "real-estate",
+    timeoutMs: 8000,
+    dedupeKey: tool.command,
+  });
 }
 
 async function routeRealEstateToolCommand(text) {
   const tool = realEstateCommandFromText(text);
   if (!tool) return null;
-  let context = null;
-  if (forgeTauri?.invoke) {
-    context = await forgeTauri.invoke("real_estate_tool_command_context", {
-      command: tool.command,
-    }, {
-      section: "real-estate",
-      timeoutMs: 8000,
-      dedupeKey: tool.command,
-    });
-  }
+  const context = await loadRealEstateToolCommandContext(text);
   const brainRef = realEstateBrainRefLabel(context);
+  const memorySelection = context?.memory_commits?.selection || null;
   const dataSyncState = context?.harvester_snapshot?.runtime?.status
     || context?.harvester_snapshot?.status
     || "snapshot";
@@ -26825,81 +25583,43 @@ async function routeRealEstateToolCommand(text) {
     message: [
       `Programme ${tool.command} pret pour ${tool.label}.`,
       `Memoire agence: ${brainRef ? `ref ${brainRef}` : "rappel semantic pret"}.`,
+      `Commits KASM: ${memorySelection?.selected || 0} selectionnes, ${memorySelection?.matched || 0} matches.`,
       `Data Sync: ${dataSyncState}.`,
       "Ajoute une consigne apres la commande si tu veux lancer une analyse plus precise avec le LLM.",
     ].join("\n"),
   };
 }
 
-function handleRealEstateToolClick(event) {
-  const item = event.target?.closest?.(".real-estate-tool-item");
-  if (!item) return;
-  const command = item.dataset.command || "";
-  if (command) setComposerCommand(command);
-}
-
-renderRealEstateToolPanel();
-renderRealEstateCrmPanel();
+realEstatePanelRuntime.install();
 syncRealEstateModeUi();
 syncRealEstatePanelBounds();
 
-if (typeof ResizeObserver !== "undefined") {
-  const realEstatePanelBoundsObserver = new ResizeObserver(syncRealEstatePanelBounds);
-  [forgeCanvasChat, document.getElementById("forgeCanvasChatModelAnchor")]
-    .filter(Boolean)
-    .forEach((node) => realEstatePanelBoundsObserver.observe(node));
-}
-window.addEventListener("resize", syncRealEstatePanelBounds, { passive: true });
-window.visualViewport?.addEventListener?.("resize", syncRealEstatePanelBounds, { passive: true });
-window.visualViewport?.addEventListener?.("scroll", syncRealEstatePanelBounds, { passive: true });
+forgeShellRuntime?.registerAction?.("toggle-real-estate", () => setRealEstateModeActive(!realEstateModeActive));
 
-realEstateModeBtn?.addEventListener("click", (event) => {
-  event.stopPropagation();
-  setRealEstateModeActive(!realEstateModeActive);
-});
-
-realEstateHomeSectionBtn?.addEventListener("click", (event) => {
-  event.stopPropagation();
+forgeShellRuntime?.registerAction?.("real-estate-home", () => {
   if (!realEstateModeActive) setRealEstateModeActive(true);
   setRealEstateToolsPanelOpen(false);
   setRealEstateCrmPanelOpen(false);
   setWebExplorerActive(false);
-  setComposerPrompt("Ouvre l'accueil agence immo et prépare une synthèse opérationnelle: mandats, prospects, acquéreurs, biens, veille locale, planning et priorités du jour.");
+  setComposerPrompt("Ouvre l'accueil agence immo et prÃ©pare une synthÃ¨se opÃ©rationnelle: mandats, prospects, acquÃ©reurs, biens, veille locale, planning et prioritÃ©s du jour.");
   syncRealEstateModeUi();
 });
 
-realEstateNewSessionPanelBtn?.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("real-estate-new-session", () => {
   if (typeof startAlphaNewSession === "function") startAlphaNewSession();
   setComposerPrompt("Nouvelle session agence immo: analyse mon contexte agence, identifie les priorites et propose les actions a lancer.");
 });
 
-realEstateToolsPanelBtn?.addEventListener("click", () => {
-  if (document.body.classList.contains("real-estate-tools-open")) {
-    setRealEstateToolsPanelOpen(false);
-  } else {
-    setRealEstateToolsPanelOpen(true);
-  }
-  refreshRealEstateHarvesterStatus();
-});
-
-realEstateToolsCloseBtn?.addEventListener("click", () => setRealEstateToolsPanelOpen(false));
-realEstateCrmPanelBtn?.addEventListener("click", () => setRealEstateCrmPanelOpen(!document.body.classList.contains("real-estate-crm-open")));
-realEstateCrmCloseBtn?.addEventListener("click", () => setRealEstateCrmPanelOpen(false));
-realEstateToolsPanel?.addEventListener("click", handleRealEstateToolClick);
-realEstateCrmPanel?.addEventListener("click", handleRealEstateToolClick);
-realEstateAutomationsPanelBtn?.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("real-estate-automations", () => {
   setComposerPrompt("Configure les automatisations agence: collectes autorisees, alertes ville/quartier, relances CRM, rappels visites, rapports vendeur et veille concurrence.");
 });
-realEstatePropertiesPanelBtn?.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("real-estate-properties", () => {
   setComposerPrompt("Ouvre le catalogue des biens et construis une vue claire: statut, prix, marge de negociation, visites, diffusion, risques et prochaine action.");
 });
 
 registerWebExplorerToolsWithAtlas();
 
-webExplorerBtn?.addEventListener("click", (e) => {
-  e.stopPropagation();
-  setWebExplorerActive(!isWebExplorerUiActive());
-});
+forgeShellRuntime?.registerAction?.("toggle-webexplorer", () => setWebExplorerActive(!isWebExplorerUiActive()));
 
 webExplorerClearHistoryBtn?.addEventListener("click", () => {
   loadWebExplorerHistory();
@@ -26965,15 +25685,6 @@ webExplorerActTrigger?.addEventListener("click", (event) => {
   toggleWebExplorerToolSubbarMode("act");
 });
 
-// Same defensive capture-phase pattern as search/banger for Tauri titlebar buttons.
-document.addEventListener("click", (e) => {
-  const hit = e.target?.closest?.("#webexplorer");
-  if (!hit) return;
-  e.preventDefault();
-  e.stopPropagation();
-  setWebExplorerActive(!isWebExplorerUiActive());
-}, true);
-
 if (isWebExplorerSurface) {
   syncWebExplorerChatModeUi();
   void refreshWebExplorerSnapshot({ forceReload: true });
@@ -26984,218 +25695,17 @@ if (isWebExplorerSurface) {
 }
 installWebExplorerBoundsObservers();
 
-// ── Forge search palette (Cmd+K) ──────────────────────────────────
-
-const forgeSearchBtn      = document.getElementById("forgeSearchBtn");
-const forgeSearchOverlay  = document.getElementById("forgeSearchOverlay");
-const forgeSearchBackdrop = document.getElementById("forgeSearchBackdrop");
-const forgeSearchClose    = document.getElementById("forgeSearchClose");
-const forgeSearchInput    = document.getElementById("forgeSearchInput");
-const forgeSearchResults  = document.getElementById("forgeSearchResults");
-const forgeSearchEmpty    = document.getElementById("forgeSearchEmpty");
-
-let forgeSearchActiveIdx = 0;
-let forgeSearchPrograms  = [];
-let forgeSearchVisibleRows = [];
-
-const FORGE_SEARCH_ICONS = {
-  session:  '<svg class="forge-search-row-icon" viewBox="0 0 24 24"><path d="m8 6-5 6 5 6"/><path d="m16 6 5 6-5 6"/><path d="m14 4-4 16"/></svg>',
-  program:  '<svg class="forge-search-row-icon" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
-  folder:   '<svg class="forge-search-row-icon" viewBox="0 0 24 24"><path d="M3.75 7.25A2.25 2.25 0 0 1 6 5h4.15l2 2H18a2.25 2.25 0 0 1 2.25 2.25v7.5A2.25 2.25 0 0 1 18 19H6a2.25 2.25 0 0 1-2.25-2.25v-9.5Z"/></svg>',
-  document: '<svg class="forge-search-row-icon" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>',
-  doc:      '<svg class="forge-search-row-icon" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
-};
-
-function forgeSearchRelativeTime(ms) {
-  if (!ms) return "";
-  const diff = Date.now() - ms;
-  if (diff < 60_000)         return "Just now";
-  if (diff < 3600_000)       return "Last hour";
-  if (diff < 86400_000)      return "Today";
-  if (diff < 7 * 86400_000)  return "This week";
-  if (diff < 30 * 86400_000) return "Last month";
-  return new Date(ms).toISOString().slice(0, 10);
-}
-
-function forgeSearchExtractFolder(job) {
-  // Try to derive a folder grouping from the file path or title.
-  const path = job?.filePath || job?.file_path || job?.input_path || job?.path || "";
-  if (!path) return "";
-  const norm = String(path).replace(/\\/g, "/");
-  const parts = norm.split("/").filter(Boolean);
-  if (parts.length < 2) return "";
-  return parts[parts.length - 2];
-}
-
-function forgeSearchJobTimestamp(job) {
-  return job?.updated_at_ms || job?.updatedAt || job?.created_at_ms || job?.createdAt || 0;
-}
-
-function forgeSearchBuildItems() {
-  const items = [];
-  // Sessions (forge jobs)
-  for (const job of forgeJobs || []) {
-    if (!job) continue;
-    items.push({
-      type: "session",
-      title: forgeJobLabel ? forgeJobLabel(job) : (job.title || job.jobId || job.job_id || "Untitled"),
-      folder: forgeSearchExtractFolder(job),
-      timestamp: forgeSearchJobTimestamp(job),
-      action: () => {
-        const jid = job.jobId || job.job_id;
-        if (!jid) return;
-        selectAlphaForgeSession(jid, job);
-      },
-    });
-  }
-  // Programs (in memory)
-  for (const name of forgeSearchPrograms) {
-    items.push({
-      type: "program",
-      title: name,
-      folder: "",
-      timestamp: 0,
-      action: () => {
-        if (typeof openProgramsOverlay === "function") openProgramsOverlay();
-      },
-    });
-  }
-  return items;
-}
-
-function forgeSearchRenderResults(query) {
-  if (!forgeSearchResults) return;
-  const q = (query || "").trim().toLowerCase();
-  let items = forgeSearchBuildItems();
-  if (q) items = items.filter(it => it.title.toLowerCase().includes(q) || (it.folder && it.folder.toLowerCase().includes(q)));
-  // Group by folder (then by type) — folders first as headers, then orphan items
-  const byFolder = new Map();
-  for (const it of items) {
-    const key = it.folder || "__root__";
-    if (!byFolder.has(key)) byFolder.set(key, []);
-    byFolder.get(key).push(it);
-  }
-  // Sort folders alphabetically, root last
-  const keys = [...byFolder.keys()].sort((a, b) => {
-    if (a === "__root__") return 1;
-    if (b === "__root__") return -1;
-    return a.localeCompare(b);
-  });
-  forgeSearchResults.innerHTML = "";
-  forgeSearchVisibleRows = [];
-  let rowIdx = 0;
-  for (const k of keys) {
-    if (k !== "__root__") {
-      const sec = document.createElement("div");
-      sec.className = "forge-search-section";
-      sec.textContent = k;
-      forgeSearchResults.appendChild(sec);
-    }
-    for (const it of byFolder.get(k)) {
-      const row = document.createElement("div");
-      row.className = "forge-search-row" + (rowIdx === forgeSearchActiveIdx ? " is-active" : "");
-      row.dataset.idx = String(rowIdx);
-      row.setAttribute("role", "option");
-      row.innerHTML = FORGE_SEARCH_ICONS[it.type] || FORGE_SEARCH_ICONS.document;
-      const txt = document.createElement("span");
-      txt.className = "forge-search-row-text";
-      txt.textContent = it.title;
-      row.appendChild(txt);
-      const meta = document.createElement("span");
-      meta.className = "forge-search-row-meta";
-      meta.textContent = rowIdx === forgeSearchActiveIdx ? "Enter" : forgeSearchRelativeTime(it.timestamp);
-      row.appendChild(meta);
-      row.addEventListener("click", () => forgeSearchSelectRow(rowIdx));
-      forgeSearchResults.appendChild(row);
-      forgeSearchVisibleRows.push(it);
-      rowIdx++;
-    }
-  }
-  if (forgeSearchEmpty) forgeSearchEmpty.hidden = forgeSearchVisibleRows.length > 0;
-}
-
-function forgeSearchSelectRow(idx) {
-  const it = forgeSearchVisibleRows[idx];
-  if (!it) return;
-  closeForgeSearch();
-  try { it.action?.(); } catch (err) { console.error("[forge-search] action failed", err); }
-}
-
-async function openForgeSearch() {
-  const overlay = forgeSearchOverlay || document.getElementById("forgeSearchOverlay");
-  if (!overlay) return;
-  overlay.hidden = false;
-  overlay.setAttribute("aria-hidden", "false");
-  forgeSearchActiveIdx = 0;
-  // Refresh programs list (cheap Tauri call)
-  try {
-    const invoke = window.__TAURI__?.core?.invoke;
-    if (invoke) {
-      const names = await invoke("list_programs");
-      forgeSearchPrograms = Array.isArray(names) ? names : [];
-    }
-  } catch (err) { console.warn("[forge-search] list_programs failed", err); }
-  forgeSearchRenderResults(forgeSearchInput?.value || "");
-  setTimeout(() => forgeSearchInput?.focus(), 30);
-}
-
-function closeForgeSearch() {
-  if (!forgeSearchOverlay) return;
-  forgeSearchOverlay.hidden = true;
-  forgeSearchOverlay.setAttribute("aria-hidden", "true");
-  if (forgeSearchInput) forgeSearchInput.value = "";
-  forgeSearchActiveIdx = 0;
-  forgeSearchVisibleRows = [];
-  if (forgeSearchResults) forgeSearchResults.innerHTML = "";
-}
-
-forgeSearchBtn?.addEventListener("click", (e) => { e.stopPropagation(); openForgeSearch(); });
-// Defensive capture-phase delegation: catches the click even if the direct
-// listener above is shadowed by Tauri drag-region or by a parent that calls
-// stopPropagation before the bubble reaches the button's own handler.
-document.addEventListener("click", (e) => {
-  const hit = e.target?.closest?.("#forgeSearchBtn");
-  if (!hit) return;
-  e.preventDefault();
-  e.stopPropagation();
-  if (typeof openForgeSearch === "function") openForgeSearch();
-}, true);
-forgeSearchClose?.addEventListener("click", closeForgeSearch);
-forgeSearchBackdrop?.addEventListener("click", closeForgeSearch);
-
-forgeSearchInput?.addEventListener("input", () => {
-  forgeSearchActiveIdx = 0;
-  forgeSearchRenderResults(forgeSearchInput.value);
+window.ForgeSearchPalette?.install?.({
+  canInvoke: forgeCanInvoke,
+  invoke: forgeInvoke,
+  jobs: () => forgeJobs || [],
+  jobLabel: (job) => forgeJobLabel ? forgeJobLabel(job) : (job.title || job.jobId || job.job_id || "Untitled"),
+  selectJob: selectAlphaForgeSession,
+  openPrograms: () => { if (typeof openProgramsOverlay === "function") openProgramsOverlay(); },
+  runtime: forgeShellRuntime,
 });
 
-forgeSearchInput?.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    if (forgeSearchActiveIdx < forgeSearchVisibleRows.length - 1) forgeSearchActiveIdx++;
-    forgeSearchRenderResults(forgeSearchInput.value);
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    if (forgeSearchActiveIdx > 0) forgeSearchActiveIdx--;
-    forgeSearchRenderResults(forgeSearchInput.value);
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    forgeSearchSelectRow(forgeSearchActiveIdx);
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    closeForgeSearch();
-  }
-});
-
-window.addEventListener("keydown", (e) => {
-  // Ctrl+K / Cmd+K opens the palette globally
-  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
-    e.preventDefault();
-    if (forgeSearchOverlay?.hidden) openForgeSearch();
-    else closeForgeSearch();
-  }
-});
-
-// ── 3D mapping view ───────────────────────────────────────────────
+// â”€â”€ 3D mapping view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Pure WebGL2 point-cloud renderer with 4 mode-specific data builders.
 // Renderer is decoupled from compute: each mode produces (positions, colors)
 // Float32Arrays. To swap a mode to Rust later, replace its compute function
@@ -27236,92 +25746,10 @@ marsLensFrame?.addEventListener("load", () => {
   syncPlanetLensProviderState();
 });
 
-const ALPHA_3D_Z_METRICS = {
-  volume:     { label: "Volume",             short: "volume" },
-  volatility: { label: "Volatility (range)", short: "(high − low) / close" },
-  hour:       { label: "Hour of day",        short: "hour UTC" },
-  rsi:        { label: "RSI 14",             short: "Wilder RSI(14)" },
-  cvd:        { label: "Cumulative Δvol",    short: "cum vol·sign(close − open)" },
-};
-
-const ALPHA_3D_LEGEND = {
-  candles3d: {
-    title: "OANDA pressure city",
-    desc: "Each tower is one candle: X = time, Y = approximate pressure, Z = OANDA tick volume.",
-    x: { label: "X", text: "time" },
-    y: { label: "Y", text: "pressure score" },
-    z: { label: "Z", text: "tick volume" },
-    colors: [
-      { swatch: "#4cc66c", label: "probable buy pressure" },
-      { swatch: "#df6158", label: "probable sell pressure" },
-      { swatch: "#c7d0e6", label: "abnormal activity veil" },
-    ],
-    meta: "signal = tower above the veil + confirmed pressure",
-  },
-  phase: {
-    title: "Phase-space",
-    desc: "Trajectory of close price across time, lagged by τ.",
-    x: { label: "X", text: "close[t]" },
-    y: { label: "Y", text: "close[t + τ]" },
-    z: { label: "Z", text: "close[t + 2τ]" },
-    colors: [
-      { swatch: "#3a8acc", label: "early bars" },
-      { swatch: "#d8826b", label: "recent bars" },
-    ],
-    meta: "draw: line strip · τ ≈ N/600",
-  },
-  heightmap: {
-    title: "Heightmap",
-    desc: "How often each (time, price) cell was visited.",
-    x: { label: "X", text: "time (oldest → newest)" },
-    y: { label: "Y", text: "visit density" },
-    z: { label: "Z", text: "price level (low → high)" },
-    colors: [
-      { swatch: "#4974b8", label: "rare visits" },
-      { swatch: "#dba07a", label: "frequent / consolidation" },
-    ],
-    meta: "grid: 96 × 64 cells",
-  },
-  manifold: {
-    title: "Feature manifold",
-    desc: "Each bar plotted by its short / long return + 20-bar volatility.",
-    x: { label: "X", text: "5-bar return" },
-    y: { label: "Y", text: "20-bar realized volatility" },
-    z: { label: "Z", text: "20-bar return" },
-    colors: [
-      { swatch: "#e85650", label: "negative future return (next 5 bars)" },
-      { swatch: "#54c379", label: "positive future return" },
-    ],
-    meta: "color = sign of price[t+5] − price[t]",
-  },
-  lattice: {
-    title: "Hash lattice",
-    desc: "Bars sharing a quantized signature collapse to the same cell.",
-    x: { label: "X", text: "hash bits 0-7" },
-    y: { label: "Y", text: "hash bits 8-15" },
-    z: { label: "Z", text: "hash bits 16-23" },
-    colors: [
-      { swatch: "#4ea864", label: "unique signature" },
-      { swatch: "#e0a44a", label: "many collisions (recurring pattern)" },
-    ],
-    meta: "size ∝ √collisions · signature = quantize(price, return, range)",
-  },
-};
-
-// Compact per-axis labels per mode (drawn directly on the gizmo branches).
-const ALPHA_3D_AXIS_META = {
-  candles3d: { x: "time", y: "pressure", z: "tick volume" },
-  phase:     { x: "price[t]", y: "price[t+τ]", z: "price[t+2τ]" },
-  heightmap: { x: "time", y: "density", z: "price" },
-  manifold:  { x: "ret 5", y: "vol 20", z: "ret 20" },
-  lattice:   { x: "hash a", y: "hash b", z: "hash c" },
-};
-
 const alpha3dGizmoAxes = document.getElementById("alpha3dGizmoAxes");
 
 function alpha3dCurrentAxisLabels() {
-  const meta = ALPHA_3D_AXIS_META[alpha3dState.mode] || ALPHA_3D_AXIS_META.candles3d;
-  return { x: meta.x, y: meta.y, z: meta.z };
+  return alpha3dAxisLabels(alpha3dState.mode);
 }
 
 function updateAlpha3dGizmo() {
@@ -27384,7 +25812,7 @@ function updateAlpha3dAxisLabels() {
 }
 
 function updateAlpha3dLegend() {
-  // Kept for backwards compat — now a no-op since the gizmo replaces the panel.
+  // Kept for backwards compat â€” now a no-op since the gizmo replaces the panel.
   if (!alpha3dLegend) return;
   const cfg = ALPHA_3D_LEGEND[alpha3dState.mode] || ALPHA_3D_LEGEND.candles3d;
   alpha3dLegendTitle.textContent = cfg.title;
@@ -27415,8 +25843,8 @@ function updateAlpha3dLegend() {
   }
   const candles = alphaDocState?.candles || [];
   const n = candles.length;
-  const metaTail = isCandles && zMeta ? `Z: ${zMeta.label} · ${cfg.meta}` : cfg.meta;
-  alpha3dLegendMeta.textContent = `${metaTail} · ${n.toLocaleString()} bars`;
+  const metaTail = isCandles && zMeta ? `Z: ${zMeta.label} Â· ${cfg.meta}` : cfg.meta;
+  alpha3dLegendMeta.textContent = `${metaTail} Â· ${n.toLocaleString()} bars`;
 }
 
 function alpha3dModeLabel(mode = alpha3dState.mode) {
@@ -27508,7 +25936,7 @@ function updateAlpha3dResultOverlay() {
         : `pt ${formatCount(selection.point_index ?? selection.vertex_index)}`;
     parts.push(sel);
   }
-  alpha3dResultOverlay.appendChild(createUiEl("span", "alpha-3d-result-line", parts.join(" · ")));
+  alpha3dResultOverlay.appendChild(createUiEl("span", "alpha-3d-result-line", parts.join(" Â· ")));
 }
 
 function updateAlpha3dZSelectorVisibility() {
@@ -27543,6 +25971,12 @@ const alpha3dState = {
   raf: 0,
   exportedJobKey: "",
 };
+const alpha3dControls = createAlpha3dControls({
+  canvas: alpha3dCanvas,
+  state: alpha3dState,
+  pickPointAt: (clientX, clientY) => pickAlpha3dPointAt(clientX, clientY),
+  scheduleRender: () => scheduleAlpha3dRender(),
+});
 
 function alpha3dCanvasStage() {
   return alpha3dView?.parentElement || document.querySelector(".canvas-stage");
@@ -27610,8 +26044,8 @@ function updateAlpha3dButtonState() {
     alpha3dToggle.title = "3D chart";
     alpha3dToggle.setAttribute("aria-label", "Open 3D chart");
   } else {
-    alpha3dToggle.title = "3D chart — load a CSV to enable";
-    alpha3dToggle.setAttribute("aria-label", "3D chart (disabled — no data)");
+    alpha3dToggle.title = "3D chart â€” load a CSV to enable";
+    alpha3dToggle.setAttribute("aria-label", "3D chart (disabled â€” no data)");
   }
   alpha3dToggle.style.opacity = hasData ? "" : "0.35";
   alpha3dToggle.style.cursor = hasData ? "pointer" : "not-allowed";
@@ -27643,7 +26077,7 @@ function openAlpha3dView() {
   updateAlpha3dSignalPanel();
   updateAlpha3dButtonState();
   scheduleAlpha3dRender();
-  startAlpha3dAutoRotate();
+  alpha3dControls.startAutoRotate();
   syncInlinePlanetView();
 }
 
@@ -27659,7 +26093,7 @@ function closeAlpha3dView() {
   }, 320);
   if (alpha3dState.raf) cancelAnimationFrame(alpha3dState.raf);
   alpha3dState.raf = 0;
-  stopAlpha3dAutoRotate();
+  alpha3dControls.stopAutoRotate();
   updateAlpha3dSignalPanel();
   updateAlpha3dButtonState();
   syncInlinePlanetView();
@@ -27703,24 +26137,24 @@ function closeMarsLensView() {
   syncInlinePlanetView();
 }
 
-alpha3dToggle?.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("alpha-3d-toggle", () => {
   if (alpha3dToggle.disabled) return;
   if (alpha3dState.open) closeAlpha3dView();
   else openAlpha3dView();
 });
 
-marsLensToggle?.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("mars-lens-toggle", () => {
   if (marsLensView?.classList.contains("is-open")) closeMarsLensView();
   else openMarsLensView();
 });
 
-marsLensClose?.addEventListener("click", closeMarsLensView);
+forgeShellRuntime?.registerAction?.("mars-lens-close", () => closeMarsLensView());
 
 planetBodySelect?.addEventListener("change", () => {
   openMarsLensView(planetSphereUrlForBody(planetBodySelect.value));
 });
 
-alphaSplitViewToggle?.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("alpha-split-toggle", () => {
   if (alphaSplitViewToggle.disabled) return;
   setAlphaSplitView(!alphaSplitViewEnabled);
 });
@@ -27732,7 +26166,7 @@ function seedNewAlpha3dMapPrompt() {
   const zMeta = ALPHA_3D_Z_METRICS[alpha3dState.zMetric];
   const zHint = zMeta ? zMeta.short || zMeta.label.toLowerCase() : alpha3dState.zMetric;
   const tail = bars ? ` (${formatCount(bars)} bars)` : "";
-  const prompt = `Design a custom 3D map for ${file}${tail}. Pick X / Y / Z axes (current Z = ${zHint}), a geometry (points, ribbons, surface, lattice…) and a colour rule that surfaces a non-trivial structure — not just price/volume/time noise. Materialize it as a Forge artifact and project it into the 3D view.`;
+  const prompt = `Design a custom 3D map for ${file}${tail}. Pick X / Y / Z axes (current Z = ${zHint}), a geometry (points, ribbons, surface, latticeâ€¦) and a colour rule that surfaces a non-trivial structure â€” not just price/volume/time noise. Materialize it as a Forge artifact and project it into the 3D view.`;
   forgeCanvasChatInput.value = prompt;
   if (typeof autosizeCanvasChatInput === "function") autosizeCanvasChatInput();
   forgeCanvasChatInput.focus();
@@ -27742,7 +26176,7 @@ function seedNewAlpha3dMapPrompt() {
   forgeCanvasChatInput.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-alpha3dNewMapBtn?.addEventListener("click", () => {
+forgeShellRuntime?.registerAction?.("alpha-3d-new-map", () => {
   seedNewAlpha3dMapPrompt();
 });
 
@@ -27775,87 +26209,9 @@ alpha3dZMetricEl?.addEventListener("change", () => {
 });
 
 function initAlpha3dGL() {
-  if (!alpha3dCanvas) return;
-  const gl = alpha3dCanvas.getContext("webgl2", { antialias: true, alpha: true, premultipliedAlpha: false });
-  if (!gl) {
-    console.error("[3d] WebGL2 not available");
-    return;
-  }
-  alpha3dState.gl = gl;
+  if (!initAlpha3dWebgl(alpha3dCanvas, alpha3dState)) return;
 
-  const vsSrc = `#version 300 es
-in vec3 a_position;
-in vec3 a_color;
-in float a_size;
-uniform mat4 u_proj;
-uniform mat4 u_view;
-uniform float u_pointSizeBase;
-out vec3 v_color;
-void main() {
-  gl_Position = u_proj * u_view * vec4(a_position, 1.0);
-  gl_PointSize = u_pointSizeBase * a_size;
-  v_color = a_color;
-}`;
-
-  const fsSrc = `#version 300 es
-precision highp float;
-in vec3 v_color;
-out vec4 fragColor;
-void main() {
-  fragColor = vec4(v_color, 1.0);
-}`;
-
-  const program = makeAlpha3dProgram(gl, vsSrc, fsSrc);
-  if (!program) return;
-  alpha3dState.program = program;
-  alpha3dState.uniforms.proj          = gl.getUniformLocation(program, "u_proj");
-  alpha3dState.uniforms.view          = gl.getUniformLocation(program, "u_view");
-  alpha3dState.uniforms.pointSizeBase = gl.getUniformLocation(program, "u_pointSizeBase");
-
-  alpha3dState.buffers.position = gl.createBuffer();
-  alpha3dState.buffers.color    = gl.createBuffer();
-  alpha3dState.buffers.size     = gl.createBuffer();
-  alpha3dState.lineBuffers.position = gl.createBuffer();
-  alpha3dState.lineBuffers.color = gl.createBuffer();
-  alpha3dState.lineBuffers.size = gl.createBuffer();
-  alpha3dState.vao              = gl.createVertexArray();
-  alpha3dState.lineVao          = gl.createVertexArray();
-
-  gl.bindVertexArray(alpha3dState.vao);
-  const aPos = gl.getAttribLocation(program, "a_position");
-  gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.buffers.position);
-  gl.enableVertexAttribArray(aPos);
-  gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
-  const aCol = gl.getAttribLocation(program, "a_color");
-  gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.buffers.color);
-  gl.enableVertexAttribArray(aCol);
-  gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, 0, 0);
-  const aSize = gl.getAttribLocation(program, "a_size");
-  if (aSize >= 0) {
-    gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.buffers.size);
-    gl.enableVertexAttribArray(aSize);
-    gl.vertexAttribPointer(aSize, 1, gl.FLOAT, false, 0, 0);
-  }
-  gl.bindVertexArray(alpha3dState.lineVao);
-  gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.lineBuffers.position);
-  gl.enableVertexAttribArray(aPos);
-  gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.lineBuffers.color);
-  gl.enableVertexAttribArray(aCol);
-  gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, 0, 0);
-  if (aSize >= 0) {
-    gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.lineBuffers.size);
-    gl.enableVertexAttribArray(aSize);
-    gl.vertexAttribPointer(aSize, 1, gl.FLOAT, false, 0, 0);
-  }
-  gl.bindVertexArray(null);
-
-  gl.clearColor(0, 0, 0, 0);
-  gl.disable(gl.BLEND);
-  gl.enable(gl.DEPTH_TEST);
-  gl.depthFunc(gl.LEQUAL);
-
-  bindAlpha3dControls();
+  alpha3dControls.bind();
   window.addEventListener("resize", () => {
     if (alpha3dState.open) {
       syncAlpha3dToChartBounds();
@@ -27865,186 +26221,11 @@ void main() {
   });
 }
 
-function makeAlpha3dProgram(gl, vsSrc, fsSrc) {
-  const compile = (type, src) => {
-    const s = gl.createShader(type);
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-      console.error("[3d] shader error:", gl.getShaderInfoLog(s));
-      return null;
-    }
-    return s;
-  };
-  const vs = compile(gl.VERTEX_SHADER, vsSrc);
-  const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
-  if (!vs || !fs) return null;
-  const p = gl.createProgram();
-  gl.attachShader(p, vs);
-  gl.attachShader(p, fs);
-  gl.linkProgram(p);
-  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-    console.error("[3d] link error:", gl.getProgramInfoLog(p));
-    return null;
-  }
-  return p;
-}
-
 function resizeAlpha3dCanvas() {
-  if (!alpha3dCanvas || !alpha3dState.gl) return;
-  const dpr = window.devicePixelRatio || 1;
-  const rect = alpha3dCanvas.getBoundingClientRect();
-  const w = Math.max(1, Math.floor(rect.width * dpr));
-  const h = Math.max(1, Math.floor(rect.height * dpr));
-  if (alpha3dCanvas.width !== w || alpha3dCanvas.height !== h) {
-    alpha3dCanvas.width = w;
-    alpha3dCanvas.height = h;
-    alpha3dState.gl.viewport(0, 0, w, h);
-  }
+  resizeAlpha3dCanvasToDisplay(alpha3dCanvas, alpha3dState, window.devicePixelRatio || 1);
 }
 
-// Slow auto-rotation around the Y axis when the user is not dragging.
-const ALPHA_3D_AUTO_ROTATE_SPEED = (2 * Math.PI) / 240; // rad/sec — full turn in 4 min
-const ALPHA_3D_AUTO_ROTATE_RESUME_DELAY = 1500;        // ms after drag end
-let   alpha3dAutoRotateLastT = 0;
-let   alpha3dDragReleasedAt  = 0;
-let   alpha3dAutoRotateRaf   = 0;
-
-function alpha3dAutoRotateLoop(t) {
-  alpha3dAutoRotateRaf = 0;
-  if (!alpha3dState.open) {
-    alpha3dAutoRotateLastT = 0;
-    return;
-  }
-  if (alpha3dAutoRotateLastT === 0) alpha3dAutoRotateLastT = t;
-  const dt = (t - alpha3dAutoRotateLastT) / 1000;
-  alpha3dAutoRotateLastT = t;
-  const idleEnough = !alpha3dState.drag && (t - alpha3dDragReleasedAt) > ALPHA_3D_AUTO_ROTATE_RESUME_DELAY;
-  if (idleEnough && dt > 0 && dt < 0.5) {
-    alpha3dState.camera.yaw += dt * ALPHA_3D_AUTO_ROTATE_SPEED;
-    scheduleAlpha3dRender();
-  }
-  alpha3dAutoRotateRaf = requestAnimationFrame(alpha3dAutoRotateLoop);
-}
-
-function startAlpha3dAutoRotate() {
-  if (alpha3dAutoRotateRaf) return;
-  alpha3dAutoRotateLastT = 0;
-  alpha3dAutoRotateRaf = requestAnimationFrame(alpha3dAutoRotateLoop);
-}
-
-function stopAlpha3dAutoRotate() {
-  if (alpha3dAutoRotateRaf) cancelAnimationFrame(alpha3dAutoRotateRaf);
-  alpha3dAutoRotateRaf = 0;
-  alpha3dAutoRotateLastT = 0;
-}
-
-function bindAlpha3dControls() {
-  alpha3dCanvas.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
-    alpha3dState.drag = { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: false };
-  });
-  window.addEventListener("mousemove", (e) => {
-    if (!alpha3dState.drag) return;
-    const dx = e.clientX - alpha3dState.drag.x;
-    const dy = e.clientY - alpha3dState.drag.y;
-    if (Math.hypot(e.clientX - alpha3dState.drag.startX, e.clientY - alpha3dState.drag.startY) > 4) {
-      alpha3dState.drag.moved = true;
-    }
-    alpha3dState.drag.x = e.clientX;
-    alpha3dState.drag.y = e.clientY;
-    alpha3dState.camera.yaw   += dx * 0.008;
-    alpha3dState.camera.pitch += dy * 0.008;
-    alpha3dState.camera.pitch = Math.max(0.05, Math.min(1.45, alpha3dState.camera.pitch));
-    scheduleAlpha3dRender();
-  });
-  window.addEventListener("mouseup", (e) => {
-    if (alpha3dState.drag && !alpha3dState.drag.moved && e.target === alpha3dCanvas) {
-      pickAlpha3dPointAt(e.clientX, e.clientY);
-    }
-    if (alpha3dState.drag) alpha3dDragReleasedAt = performance.now();
-    alpha3dState.drag = null;
-  });
-  alpha3dCanvas.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    alpha3dState.camera.dist *= 1 + e.deltaY * 0.0012;
-    alpha3dState.camera.dist = Math.max(0.6, Math.min(4.5, alpha3dState.camera.dist));
-    scheduleAlpha3dRender();
-  }, { passive: false });
-}
-
-// ── Mode compute (positions + colors per mode) ────────────────────
-
-function computeAlpha3dZSeries(candles, metric) {
-  const n = candles.length;
-  const out = new Float32Array(n);
-  switch (metric) {
-    case "volatility": {
-      for (let i = 0; i < n; i++) {
-        const c = candles[i];
-        out[i] = c.close > 0 ? (c.high - c.low) / c.close : 0;
-      }
-      break;
-    }
-    case "hour": {
-      for (let i = 0; i < n; i++) {
-        const t = candles[i].time || 0;
-        out[i] = ((t / 3600000) % 24);
-      }
-      break;
-    }
-    case "rsi": {
-      const period = 14;
-      let avgGain = 0, avgLoss = 0;
-      for (let i = 1; i <= period && i < n; i++) {
-        const d = candles[i].close - candles[i-1].close;
-        if (d > 0) avgGain += d; else avgLoss -= d;
-      }
-      avgGain /= period; avgLoss /= period;
-      for (let i = 0; i < n; i++) {
-        if (i <= period) { out[i] = 50; continue; }
-        const d = candles[i].close - candles[i-1].close;
-        const g = d > 0 ? d : 0;
-        const l = d < 0 ? -d : 0;
-        avgGain = (avgGain * (period - 1) + g) / period;
-        avgLoss = (avgLoss * (period - 1) + l) / period;
-        const rs = avgLoss > 0 ? avgGain / avgLoss : 100;
-        out[i] = 100 - 100 / (1 + rs);
-      }
-      break;
-    }
-    case "cvd": {
-      let cum = 0;
-      for (let i = 0; i < n; i++) {
-        const c = candles[i];
-        const sign = c.close > c.open ? 1 : (c.close < c.open ? -1 : 0);
-        cum += (c.volume || 0) * sign;
-        out[i] = cum;
-      }
-      break;
-    }
-    case "volume":
-    default: {
-      for (let i = 0; i < n; i++) out[i] = candles[i].volume || 0;
-      break;
-    }
-  }
-  return out;
-}
-
-function alpha3dCssColorTriplet(color, fallback = [0.72, 0.74, 0.70], gain = 1) {
-  const match = String(color || "").match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
-  const base = match
-    ? [Number(match[1]) / 255, Number(match[2]) / 255, Number(match[3]) / 255]
-    : fallback.slice(0, 3);
-  return base.map((value) => Math.max(0, Math.min(1, value * gain)));
-}
-
-function alpha3dColorWithAlpha(color, alpha = 0.18, fallback = "rgba(158,180,214,0.18)") {
-  const match = String(color || "").match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
-  if (!match) return fallback;
-  return `rgba(${Math.round(Number(match[1]))}, ${Math.round(Number(match[2]))}, ${Math.round(Number(match[3]))}, ${Math.max(0, Math.min(1, alpha))})`;
-}
+// â”€â”€ Mode compute (positions + colors per mode) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function alpha3dPressureRequestKey() {
   const instrument = String(alphaDocState?.tradingInstrument || alphaTradingHeaderState.instrumentLabel || "").trim();
@@ -28053,10 +26234,9 @@ function alpha3dPressureRequestKey() {
 }
 
 async function refreshAlpha3dPressureModel(force = false) {
-  const invoke = window.__TAURI__?.core?.invoke;
   const instrument = String(alphaDocState?.tradingInstrument || alphaTradingHeaderState.instrumentLabel || "").trim();
   const granularity = String(alphaDocState?.tradingGranularity || "").trim().toUpperCase();
-  if (!invoke || !instrument || !granularity) return null;
+  if (!forgeCanInvoke() || !instrument || !granularity) return null;
   const requestKey = `${instrument}|${granularity}`;
   if (!force && alpha3dState.pressureData && alpha3dState.pressureKey === requestKey) {
     return alpha3dState.pressureData;
@@ -28066,14 +26246,14 @@ async function refreshAlpha3dPressureModel(force = false) {
   alpha3dState.pressureError = "";
   updateAlpha3dSignalPanel();
   try {
-    const response = await invoke("trading_oanda_pressure_3d", {
+    const response = await forgeInvoke("trading_oanda_pressure_3d", {
       request: {
         instrument,
         granularity,
         candleCount: 72,
         streamSampleSeconds: 4,
       },
-    });
+    }, { section: "trading", timeoutMs: 30000 });
     alpha3dState.pressureData = response || null;
     alpha3dState.pressureKey = requestKey;
     rebuildAlpha3dPoints();
@@ -28120,7 +26300,7 @@ function updateAlpha3dSignalPanel() {
   const source = String(alpha3dState.pressureData?.source || "mock");
   alpha3dSignalPanel.innerHTML = `
     <div class="alpha-3d-panel-kicker">${escapeHtml(source.toUpperCase())} pressure MVP</div>
-    <div class="alpha-3d-panel-title">${escapeHtml(panel.instrument)} · ${escapeHtml(panel.timeframe)}</div>
+    <div class="alpha-3d-panel-title">${escapeHtml(panel.instrument)} Â· ${escapeHtml(panel.timeframe)}</div>
     <div class="alpha-3d-panel-signal signal-${escapeAttr(signal.toLowerCase())}">${escapeHtml(signal)}</div>
     <div class="alpha-3d-panel-grid">
       <div><span>current candle</span><strong>${escapeHtml(panel.currentCandle || "n/a")}</strong></div>
@@ -28150,746 +26330,18 @@ function formatSignedScore(value) {
   return `${numeric >= 0 ? "+" : ""}${numeric.toFixed(2)}`;
 }
 
-function alpha3dPushFaceTriangles(store, corners, color) {
-  const [a, b, c, d] = corners;
-  store.positions.push(
-    a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z,
-    a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z,
-  );
-  for (let i = 0; i < 6; i += 1) {
-    store.colors.push(color[0], color[1], color[2]);
-  }
-}
-
-function alpha3dPushLineEdges(store, corners, color) {
-  const edges = [
-    [corners[0], corners[1]], [corners[1], corners[2]],
-    [corners[2], corners[3]], [corners[3], corners[0]],
-  ];
-  for (const [a, b] of edges) {
-    store.positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-    store.colors.push(color[0], color[1], color[2], color[0], color[1], color[2]);
-  }
-}
-
-function computeAlpha3dPressurePayload(model) {
-  const points = Array.isArray(model?.points) ? model.points : [];
-  if (!points.length) {
-    return {
-      positions: new Float32Array(0),
-      colors: new Float32Array(0),
-      sizes: new Float32Array(0),
-      linePositions: new Float32Array(0),
-      lineColors: new Float32Array(0),
-      lineSizes: new Float32Array(0),
-      metadata: [],
-      guide: null,
-      drawMode: "triangles",
-      lineDrawMode: "linepairs",
-      pointSize: 1,
-    };
-  }
-
-  const count = points.length;
-  const maxTickVolume = Math.max(1, ...points.map((point) => Number(point?.tickVolume || 0)));
-  const maxThreshold = Math.max(1, ...points.map((point) => Number(point?.volumeThreshold || 0)));
-  const maxVolumeScale = Math.max(maxTickVolume, maxThreshold);
-  const halfW = 0.86;
-  const halfD = 0.86;
-  const floorZ = 0;
-  const ceilingZ = 1.1;
-  const stepX = (halfW * 2) / Math.max(1, count);
-  const towerWidth = Math.max(0.012, stepX * 0.54);
-  const towerDepth = 0.055;
-  const rowsGuide = 4;
-  const columnsGuide = Math.max(3, Math.min(6, Math.round(count / 14)));
-  const veilHeight = floorZ + (maxThreshold / maxVolumeScale) * ceilingZ;
-  const veilColor = [0.73, 0.78, 0.87];
-  const gridColor = [0.31, 0.32, 0.31];
-  const faceStore = { positions: [], colors: [] };
-  const lineStore = { positions: [], colors: [] };
-  const metadata = [];
-  const slotTimes = [];
-
-  const xOf = (index) => -halfW + index * stepX + stepX * 0.5;
-  const yOf = (pressure) => -halfD + ((clampUnitInterval(pressure) + 1) * 0.5) * (halfD * 2);
-  const zOf = (volume) => floorZ + (Math.max(0, Number(volume) || 0) / maxVolumeScale) * ceilingZ;
-
-  for (let i = 0; i <= count; i += 1) {
-    const x = -halfW + i * stepX;
-    lineStore.positions.push(x, -halfD, floorZ, x, halfD, floorZ);
-    lineStore.colors.push(gridColor[0], gridColor[1], gridColor[2], gridColor[0], gridColor[1], gridColor[2]);
-  }
-  for (let i = 0; i <= rowsGuide; i += 1) {
-    const y = -halfD + (i / rowsGuide) * (halfD * 2);
-    lineStore.positions.push(-halfW, y, floorZ, halfW, y, floorZ);
-    lineStore.colors.push(gridColor[0], gridColor[1], gridColor[2], gridColor[0], gridColor[1], gridColor[2]);
-  }
-
-  for (let i = 0; i < count; i += 1) {
-    const point = points[i] || {};
-    const pressure = Number(point.pressureScore || 0);
-    const tickVolume = Number(point.tickVolume || 0);
-    const x = xOf(i);
-    const y = yOf(pressure);
-    const z = zOf(tickVolume);
-    const x0 = x - towerWidth * 0.5;
-    const x1 = x + towerWidth * 0.5;
-    const y0 = y - towerDepth * 0.5;
-    const y1 = y + towerDepth * 0.5;
-    const base = [
-      { x: x0, y: y0, z: floorZ },
-      { x: x1, y: y0, z: floorZ },
-      { x: x1, y: y1, z: floorZ },
-      { x: x0, y: y1, z: floorZ },
-    ];
-    const top = [
-      { x: x0, y: y0, z },
-      { x: x1, y: y0, z },
-      { x: x1, y: y1, z },
-      { x: x0, y: y1, z },
-    ];
-    const faceColor = pressure >= 0 ? [0.29, 0.77, 0.43] : [0.88, 0.34, 0.31];
-    const edgeColor = pressure >= 0 ? [0.76, 0.98, 0.82] : [0.99, 0.78, 0.74];
-    alpha3dPushFaceTriangles(faceStore, top, faceColor);
-    alpha3dPushFaceTriangles(faceStore, [base[0], base[1], top[1], top[0]], faceColor);
-    alpha3dPushFaceTriangles(faceStore, [base[1], base[2], top[2], top[1]], faceColor);
-    alpha3dPushFaceTriangles(faceStore, [base[2], base[3], top[3], top[2]], faceColor);
-    alpha3dPushFaceTriangles(faceStore, [base[3], base[0], top[0], top[3]], faceColor);
-    alpha3dPushLineEdges(lineStore, top, edgeColor);
-    alpha3dPushLineEdges(lineStore, base, edgeColor);
-    for (let edge = 0; edge < 4; edge += 1) {
-      const a = base[edge];
-      const b = top[edge];
-      lineStore.positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-      lineStore.colors.push(edgeColor[0], edgeColor[1], edgeColor[2], edgeColor[0], edgeColor[1], edgeColor[2]);
-    }
-    slotTimes.push(point.time || "");
-    metadata.push({
-      role: "pressure-tower",
-      time: point.time || "",
-      value: tickVolume,
-      signal: point.signal || "NO_SIGNAL",
-      pressureScore: pressure,
-    });
-  }
-
-  const veilBase = [
-    { x: -halfW, y: -halfD, z: veilHeight },
-    { x: halfW, y: -halfD, z: veilHeight },
-    { x: halfW, y: halfD, z: veilHeight },
-    { x: -halfW, y: halfD, z: veilHeight },
-  ];
-  alpha3dPushFaceTriangles(faceStore, veilBase, veilColor);
-  alpha3dPushLineEdges(lineStore, veilBase, [0.96, 0.97, 0.99]);
-
-  return {
-    positions: new Float32Array(faceStore.positions),
-    colors: new Float32Array(faceStore.colors),
-    sizes: new Float32Array(faceStore.positions.length / 3).fill(1),
-    linePositions: new Float32Array(lineStore.positions),
-    lineColors: new Float32Array(lineStore.colors),
-    lineSizes: new Float32Array(lineStore.positions.length / 3).fill(1),
-    metadata,
-    guide: {
-      origin: { x: -halfW, y: -halfD, z: floorZ },
-      timeEnd: { x: halfW, y: -halfD, z: floorZ },
-      priceGroundEnd: { x: -halfW, y: halfD, z: floorZ },
-      volumeEnd: { x: -halfW, y: -halfD, z: ceilingZ },
-      floorZ,
-      ceilingZ,
-      priceLo: -1,
-      priceHi: 1,
-      volumeLo: 0,
-      volumeHi: maxVolumeScale,
-      cols: count,
-      rows: rowsGuide + 1,
-      count,
-      slotLayout: [],
-      slotTimes,
-      veils: [
-        {
-          kind: "plane",
-          fill: "rgba(196, 208, 232, 0.34)",
-          stroke: "rgba(236, 240, 248, 0.92)",
-          corners: veilBase,
-        },
-      ],
-    },
-    drawMode: "triangles",
-    lineDrawMode: "linepairs",
-    pointSize: 1.0,
-  };
-}
-
-function clampUnitInterval(value) {
-  const numeric = Number(value) || 0;
-  return Math.max(-1, Math.min(1, numeric));
-}
-
-function computeAlpha3dCandles(candles) {
-  const n = candles.length;
-  if (n < 1) return { positions: new Float32Array(0), colors: new Float32Array(0), sizes: new Float32Array(0), drawMode: "points", pointSize: 4.0 };
-
-  const maxBars = 180;
-  const stride = Math.max(1, Math.ceil(n / maxBars));
-  const sampled = [];
-  for (let i = 0; i < n; i += stride) sampled.push({ candle: candles[i], index: i });
-  if (!sampled.length) return { positions: new Float32Array(0), colors: new Float32Array(0), sizes: new Float32Array(0), drawMode: "points", pointSize: 4.0 };
-
-  let priceLo = Infinity;
-  let priceHi = -Infinity;
-  for (const entry of sampled) {
-    const c = entry.candle || {};
-    const low = Number(c.low);
-    const high = Number(c.high);
-    if (Number.isFinite(low)) priceLo = Math.min(priceLo, low);
-    if (Number.isFinite(high)) priceHi = Math.max(priceHi, high);
-  }
-  if (!Number.isFinite(priceLo) || !Number.isFinite(priceHi) || priceHi <= priceLo) {
-    priceLo = 0;
-    priceHi = 1;
-  }
-  const priceRange = Math.max(1e-6, priceHi - priceLo);
-  const count = sampled.length;
-  const priceBins = Math.max(20, Math.min(34, Math.round(20 + count / 16)));
-  const binSize = priceRange / priceBins;
-  const floorZ = 0;
-  const ceilingZ = 0.94;
-  const gridWidth = 1.72;
-  const gridDepth = 1.72;
-  const stepX = gridWidth / Math.max(1, count);
-  const stepY = gridDepth / Math.max(1, priceBins);
-  const halfW = gridWidth * 0.5;
-  const halfD = gridDepth * 0.5;
-  const towerHalfX = Math.max(0.0035, stepX * 0.34);
-  const towerHalfY = Math.max(0.0035, stepY * 0.34);
-  const gridColor = [0.34, 0.35, 0.33];
-  const positions = [];
-  const colors = [];
-  const sizes = [];
-  const metadata = [];
-  const activeIndicators3d = Array.isArray(alphaTradingIndicatorState.active) ? alphaTradingIndicatorState.active : [];
-  const cloudIndicators3d = activeIndicators3d.filter((indicator) => {
-    if (indicator?.visible === false) return false;
-    const plots = alphaTradingOverlaySeries(candles, indicator);
-    return plots.some((plot) => plot?.kind === "cloud");
-  });
-  const towerGrid = Array.from({ length: count }, () => new Float32Array(priceBins));
-  const barDirections = new Array(count).fill(true);
-  const binCenter = (bin) => priceLo + (bin + 0.5) * binSize;
-  const clampBin = (value) => Math.max(0, Math.min(priceBins - 1, Math.floor((value - priceLo) / binSize)));
-  let maxCellVolume = 0;
-  for (let t = 0; t < count; t += 1) {
-    const candle = sampled[t]?.candle || {};
-    const open = Number(candle.open);
-    const close = Number(candle.close);
-    const high = Number(candle.high);
-    const low = Number(candle.low);
-    const volume = Math.max(0, Number(candle.volume) || 0);
-    barDirections[t] = close >= open;
-    if (!Number.isFinite(low) || !Number.isFinite(high) || volume <= 0) continue;
-    const startBin = clampBin(Math.min(low, high));
-    const endBin = clampBin(Math.max(low, high));
-    const typical = Number.isFinite(open) && Number.isFinite(close)
-      ? (open + high + low + close) / 4
-      : ((high + low) * 0.5);
-    const bodyLo = Number.isFinite(open) && Number.isFinite(close) ? Math.min(open, close) : typical;
-    const bodyHi = Number.isFinite(open) && Number.isFinite(close) ? Math.max(open, close) : typical;
-    const span = Math.max(binSize, high - low);
-    let weightSum = 0;
-    const weights = [];
-    for (let bin = startBin; bin <= endBin; bin += 1) {
-      const center = binCenter(bin);
-      const proximity = 1 - Math.min(1, Math.abs(center - typical) / Math.max(binSize, span * 0.5));
-      const bodyBonus = center >= (bodyLo - binSize * 0.35) && center <= (bodyHi + binSize * 0.35) ? 0.9 : 0;
-      const closeBonus = 0.35 * (1 - Math.min(1, Math.abs(center - close) / Math.max(binSize, span * 0.3)));
-      const weight = 0.35 + proximity * 0.75 + Math.max(0, bodyBonus) + Math.max(0, closeBonus);
-      weights.push({ bin, weight });
-      weightSum += weight;
-    }
-    if (weightSum <= 0) continue;
-    for (const entry of weights) {
-      const allocated = volume * (entry.weight / weightSum);
-      towerGrid[t][entry.bin] += allocated;
-      if (towerGrid[t][entry.bin] > maxCellVolume) maxCellVolume = towerGrid[t][entry.bin];
-    }
-  }
-  maxCellVolume = Math.max(1, maxCellVolume);
-  const zOfVolume = (value) => floorZ + (Math.max(0, Number(value) || 0) / maxCellVolume) * ceilingZ;
-  const xOfBar = (barIndex) => -halfW + barIndex * stepX + stepX * 0.5;
-  const yOfPriceBin = (priceBin) => -halfD + priceBin * stepY + stepY * 0.5;
-  const pushVertex = (x, y, z, color, meta) => {
-    positions.push(x, y, z);
-    colors.push(color[0], color[1], color[2]);
-    sizes.push(1.0);
-    metadata.push(meta);
-  };
-  const pushLine = (a, b, color, meta) => {
-    pushVertex(a.x, a.y, a.z, color, meta);
-    pushVertex(b.x, b.y, b.z, color, meta);
-  };
-  const slotLayout = [];
-  const columnTimes = sampled.map((entry) => entry?.candle?.time || "");
-  for (let row = 0; row < priceBins; row += 1) {
-    for (let col = 0; col < count; col += 1) {
-      slotLayout.push({
-        slot: slotLayout.length,
-        index: row * count + col,
-        time: columnTimes[col] || "",
-        x: xOfBar(col),
-        y: yOfPriceBin(row),
-        col,
-        row,
-      });
-    }
-  }
-  const rollingWindow = Math.max(10, Math.min(28, Math.floor(count * 0.16)));
-  const avgGrid = Array.from({ length: count }, () => new Float32Array(priceBins));
-  const valueAreaLower = new Int16Array(count);
-  const valueAreaUpper = new Int16Array(count);
-  for (let t = 0; t < count; t += 1) {
-    const start = Math.max(0, t - rollingWindow + 1);
-    const barsInWindow = t - start + 1;
-    const aggregate = new Float32Array(priceBins);
-    let totalAgg = 0;
-    let pocBin = 0;
-    let pocValue = -1;
-    for (let w = start; w <= t; w += 1) {
-      for (let bin = 0; bin < priceBins; bin += 1) {
-        const value = towerGrid[w][bin];
-        aggregate[bin] += value;
-      }
-    }
-    for (let bin = 0; bin < priceBins; bin += 1) {
-      totalAgg += aggregate[bin];
-      avgGrid[t][bin] = aggregate[bin] / barsInWindow;
-      if (aggregate[bin] > pocValue) {
-        pocValue = aggregate[bin];
-        pocBin = bin;
-      }
-    }
-    if (totalAgg <= 0) {
-      valueAreaLower[t] = 0;
-      valueAreaUpper[t] = priceBins - 1;
-      continue;
-    }
-    const accepted = new Set([pocBin]);
-    let cum = Math.max(0, aggregate[pocBin]);
-    let left = pocBin - 1;
-    let right = pocBin + 1;
-    const target = totalAgg * 0.7;
-    while (cum < target && (left >= 0 || right < priceBins)) {
-      const leftValue = left >= 0 ? aggregate[left] : -1;
-      const rightValue = right < priceBins ? aggregate[right] : -1;
-      if (rightValue > leftValue) {
-        if (right < priceBins) {
-          accepted.add(right);
-          cum += Math.max(0, aggregate[right]);
-          right += 1;
-        } else if (left >= 0) {
-          accepted.add(left);
-          cum += Math.max(0, aggregate[left]);
-          left -= 1;
-        }
-      } else {
-        if (left >= 0) {
-          accepted.add(left);
-          cum += Math.max(0, aggregate[left]);
-          left -= 1;
-        } else if (right < priceBins) {
-          accepted.add(right);
-          cum += Math.max(0, aggregate[right]);
-          right += 1;
-        }
-      }
-    }
-    valueAreaLower[t] = Math.max(0, Math.min(...accepted));
-    valueAreaUpper[t] = Math.min(priceBins - 1, Math.max(...accepted));
-  }
-  const canopyGrid = Array.from({ length: count }, () => new Float32Array(priceBins));
-  for (let t = 0; t < count; t += 1) {
-    for (let bin = 0; bin < priceBins; bin += 1) {
-      const insideValueArea = bin >= valueAreaLower[t] && bin <= valueAreaUpper[t];
-      canopyGrid[t][bin] = avgGrid[t][bin] * (insideValueArea ? 0.92 : 0.22);
-    }
-  }
-  for (let pass = 0; pass < 2; pass += 1) {
-    const nextGrid = Array.from({ length: count }, () => new Float32Array(priceBins));
-    for (let t = 0; t < count; t += 1) {
-      for (let bin = 0; bin < priceBins; bin += 1) {
-        let sum = canopyGrid[t][bin] * 2.2;
-        let weight = 2.2;
-        for (let dt = -1; dt <= 1; dt += 1) {
-          for (let db = -1; db <= 1; db += 1) {
-            if (!dt && !db) continue;
-            const tt = t + dt;
-            const bb = bin + db;
-            if (tt < 0 || tt >= count || bb < 0 || bb >= priceBins) continue;
-            const w = dt === 0 || db === 0 ? 0.65 : 0.35;
-            sum += canopyGrid[tt][bb] * w;
-            weight += w;
-          }
-        }
-        nextGrid[t][bin] = sum / weight;
-      }
-    }
-    for (let t = 0; t < count; t += 1) canopyGrid[t] = nextGrid[t];
-  }
-  const veilDescriptors = [];
-  const signalCells = new Set();
-  if (cloudIndicators3d.length) {
-    for (const indicator of cloudIndicators3d) {
-      const plots = alphaTradingOverlaySeries(candles, indicator);
-      const cloudPlot = plots.find((plot) => plot?.kind === "cloud");
-      if (!cloudPlot) continue;
-      const upperSeries = new Array(slotLayout.length).fill(NaN);
-      const lowerSeries = new Array(slotLayout.length).fill(NaN);
-      for (let row = 0; row < priceBins; row += 1) {
-        for (let col = 0; col < count; col += 1) {
-          const slotIndex = row * count + col;
-          const baseVolume = canopyGrid[col][row];
-          const upperVolume = baseVolume * 1.08 + maxCellVolume * 0.018;
-          const lowerVolume = Math.max(0, baseVolume * 0.88);
-          upperSeries[slotIndex] = upperVolume;
-          lowerSeries[slotIndex] = lowerVolume;
-          const towerVolume = towerGrid[col][row];
-          const outsideValueArea = row < valueAreaLower[col] || row > valueAreaUpper[col];
-          if (outsideValueArea && towerVolume > upperVolume * 1.02 && towerVolume > maxCellVolume * 0.045) {
-            signalCells.add(slotIndex);
-          }
-        }
-      }
-      veilDescriptors.push({
-        id: indicator?.id || "",
-        command: indicator?.command || "",
-        label: cloudPlot.label || indicator?.label || indicator?.id || "",
-        fill: alpha3dColorWithAlpha(cloudPlot.color, 0.22, "rgba(146,170,208,0.22)"),
-        stroke: alpha3dColorWithAlpha(cloudPlot.color, 0.68, "rgba(146,170,208,0.68)"),
-        upperSeries,
-        lowerSeries,
-        zMetric: "volume",
-        signalMeaning: "value-acceptance canopy",
-      });
-    }
-  }
-  for (let col = 0; col <= count; col += 1) {
-    const x = -halfW + col * stepX;
-    pushLine({ x, y: -halfD, z: floorZ }, { x, y: halfD, z: floorZ }, gridColor, { role: "grid x", cell: `${col},*` });
-  }
-  for (let row = 0; row <= priceBins; row += 1) {
-    const y = -halfD + row * stepY;
-    pushLine({ x: -halfW, y, z: floorZ }, { x: halfW, y, z: floorZ }, gridColor, { role: "grid y", cell: `*,${row}` });
-  }
-
-  for (let col = 0; col < count; col += 1) {
-    const bullish = barDirections[col];
-    for (let row = 0; row < priceBins; row += 1) {
-      const towerVolume = towerGrid[col][row];
-      if (!(towerVolume > maxCellVolume * 0.01)) continue;
-      const signalSlot = row * count + col;
-      const lineColor = signalCells.has(signalSlot)
-        ? [0.95, 0.75, 0.36]
-        : (bullish ? [0.33, 0.76, 0.47] : [0.90, 0.39, 0.36]);
-      const capColor = signalCells.has(signalSlot)
-        ? [1.0, 0.88, 0.62]
-        : (bullish ? [0.86, 0.98, 0.90] : [1.0, 0.84, 0.82]);
-      const x = xOfBar(col);
-      const y = yOfPriceBin(row);
-      const x0 = x - towerHalfX;
-      const x1 = x + towerHalfX;
-      const y0 = y - towerHalfY;
-      const y1 = y + towerHalfY;
-      const zTop = zOfVolume(towerVolume);
-      const barIndex = sampled[col]?.index ?? col;
-      const candle = sampled[col]?.candle || {};
-      const priceValue = binCenter(row);
-      const meta = {
-        role: signalCells.has(signalSlot) ? "signal tower" : "volume tower",
-        bar_index: barIndex,
-        point_index: signalSlot,
-        cell: `${col},${row}`,
-        time: candle.time || null,
-        price_level: priceValue,
-        value: towerVolume,
-      };
-      const bottomRing = [
-        { x: x0, y: y0, z: floorZ },
-        { x: x1, y: y0, z: floorZ },
-        { x: x1, y: y1, z: floorZ },
-        { x: x0, y: y1, z: floorZ },
-      ];
-      const topRing = [
-        { x: x0, y: y0, z: zTop },
-        { x: x1, y: y0, z: zTop },
-        { x: x1, y: y1, z: zTop },
-        { x: x0, y: y1, z: zTop },
-      ];
-      for (let i = 0; i < 4; i += 1) {
-        pushLine(bottomRing[i], topRing[i], lineColor, meta);
-        pushLine(topRing[i], topRing[(i + 1) % 4], capColor, { ...meta, role: "tower cap" });
-      }
-    }
-  }
-
-  return {
-    positions: new Float32Array(positions),
-    colors: new Float32Array(colors),
-    sizes: new Float32Array(sizes),
-    metadata,
-    guide: {
-      origin: { x: -halfW, y: -halfD, z: floorZ },
-      timeEnd: { x: halfW, y: -halfD, z: floorZ },
-      priceGroundEnd: { x: -halfW, y: halfD, z: floorZ },
-      volumeEnd: { x: -halfW, y: -halfD, z: ceilingZ },
-      floorZ,
-      ceilingZ,
-      priceLo,
-      priceHi,
-      volumeLo: 0,
-      volumeHi: maxCellVolume,
-      cols: count,
-      rows: priceBins,
-      count,
-      slotLayout,
-      slotTimes: columnTimes,
-      veils: veilDescriptors,
-    },
-    drawMode: "linepairs",
-    pointSize: 1.0,
-  };
-}
-
-function computeAlpha3dPhase(candles) {
-  const tau = Math.max(1, Math.floor(candles.length / 600));
-  const n = Math.max(0, candles.length - 2 * tau);
-  const positions = new Float32Array(n * 3);
-  const colors    = new Float32Array(n * 3);
-  const sizes     = new Float32Array(n).fill(1.0);
-  let lo = Infinity, hi = -Infinity;
-  for (const c of candles) { if (c.close < lo) lo = c.close; if (c.close > hi) hi = c.close; }
-  const range = hi - lo || 1;
-  for (let i = 0; i < n; i++) {
-    positions[i*3+0] = ((candles[i].close       - lo) / range) * 2 - 1;
-    positions[i*3+1] = ((candles[i+tau].close   - lo) / range) * 2 - 1;
-    positions[i*3+2] = ((candles[i+2*tau].close - lo) / range) * 2 - 1;
-    const t = i / Math.max(1, n - 1);
-    colors[i*3+0] = 0.2 + t * 0.7;
-    colors[i*3+1] = 0.55 - t * 0.15;
-    colors[i*3+2] = 0.85 - t * 0.55;
-  }
-  return { positions, colors, sizes, drawMode: "lines", pointSize: 2.0 };
-}
-
-function computeAlpha3dHeightmap(candles) {
-  const W = 96, H = 64;
-  let lo = Infinity, hi = -Infinity;
-  for (const c of candles) { if (c.close < lo) lo = c.close; if (c.close > hi) hi = c.close; }
-  const range = hi - lo || 1;
-  const t0 = candles[0].time;
-  const tN = candles[candles.length - 1].time;
-  const tRange = Math.max(1, tN - t0);
-  const grid = new Float32Array(W * H);
-  for (const c of candles) {
-    const tx = Math.min(W-1, Math.max(0, Math.floor((c.time - t0) / tRange * W)));
-    const py = Math.min(H-1, Math.max(0, Math.floor((c.close - lo) / range * H)));
-    grid[py * W + tx] += 1;
-  }
-  let maxCount = 1;
-  for (let i = 0; i < grid.length; i++) if (grid[i] > maxCount) maxCount = grid[i];
-  const positions = [];
-  const colors = [];
-  for (let py = 0; py < H; py++) {
-    for (let tx = 0; tx < W; tx++) {
-      const v = grid[py * W + tx];
-      if (v < 1) continue;
-      const intensity = v / maxCount;
-      positions.push(
-        tx / (W - 1) * 2 - 1,
-        intensity * 1.6 - 0.4,
-        py / (H - 1) * 2 - 1
-      );
-      colors.push(
-        0.25 + intensity * 0.7,
-        0.45 + intensity * 0.45,
-        0.85 - intensity * 0.55
-      );
-    }
-  }
-  const positionsTA = new Float32Array(positions);
-  const colorsTA    = new Float32Array(colors);
-  const sizes = new Float32Array(positionsTA.length / 3).fill(1.0);
-  return {
-    positions: positionsTA,
-    colors:    colorsTA,
-    sizes,
-    drawMode: "points",
-    pointSize: 6.5,
-  };
-}
-
-function computeAlpha3dManifold(candles) {
-  const n = candles.length;
-  if (n < 30) return { positions: new Float32Array(0), colors: new Float32Array(0) };
-  const start = 20;
-  const count = n - start;
-  const f0 = new Float32Array(count); // short return
-  const f1 = new Float32Array(count); // long return
-  const f2 = new Float32Array(count); // realized vol
-  for (let i = start; i < n; i++) {
-    const idx = i - start;
-    f0[idx] = (candles[i].close - candles[i-5].close)  / candles[i-5].close;
-    f1[idx] = (candles[i].close - candles[i-20].close) / candles[i-20].close;
-    let vol = 0;
-    for (let j = i - 19; j <= i; j++) vol += (candles[j].high - candles[j].low) / candles[j].close;
-    f2[idx] = vol / 20;
-  }
-  const norm = (arr) => {
-    let lo = Infinity, hi = -Infinity;
-    for (let i = 0; i < arr.length; i++) { if (arr[i] < lo) lo = arr[i]; if (arr[i] > hi) hi = arr[i]; }
-    const r = hi - lo || 1;
-    for (let i = 0; i < arr.length; i++) arr[i] = (arr[i] - lo) / r * 2 - 1;
-  };
-  norm(f0); norm(f1); norm(f2);
-  const positions = new Float32Array(count * 3);
-  const colors    = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    positions[i*3+0] = f0[i];
-    positions[i*3+1] = f2[i];
-    positions[i*3+2] = f1[i];
-    const realIdx = i + start;
-    let futureRet = 0;
-    if (realIdx + 5 < n) {
-      futureRet = (candles[realIdx+5].close - candles[realIdx].close) / candles[realIdx].close;
-    }
-    const t = Math.max(0, Math.min(1, 0.5 + futureRet * 60));
-    colors[i*3+0] = t < 0.5 ? 0.92 : 0.30;
-    colors[i*3+1] = t < 0.5 ? 0.32 : 0.85;
-    colors[i*3+2] = 0.42;
-  }
-  const sizes = new Float32Array(count).fill(1.0);
-  return { positions, colors, sizes, drawMode: "points", pointSize: 4.5 };
-}
-
-function computeAlpha3dLattice(candles) {
-  const start = 5;
-  const count = candles.length - start;
-  if (count < 10) return { positions: new Float32Array(0), colors: new Float32Array(0) };
-  let lo = Infinity, hi = -Infinity;
-  for (const c of candles) { if (c.close < lo) lo = c.close; if (c.close > hi) hi = c.close; }
-  const range = hi - lo || 1;
-  const mix = (h) => {
-    h = ((h ^ (h >>> 16)) * 0x85ebca6b) >>> 0;
-    h = ((h ^ (h >>> 13)) * 0xc2b2ae35) >>> 0;
-    return (h ^ (h >>> 16)) >>> 0;
-  };
-  const buckets = new Map();
-  const sigs = new Uint32Array(count);
-  for (let i = start; i < candles.length; i++) {
-    const idx = i - start;
-    const p = ((candles[i].close - lo) / range * 31) | 0;
-    const r = (((candles[i].close - candles[i-5].close) / candles[i-5].close + 0.05) * 100) | 0;
-    const v = (((candles[i].high - candles[i].low) / candles[i].close) * 1000) | 0;
-    const sig = ((p * 31 + r * 17 + v) >>> 0);
-    sigs[idx] = sig;
-    buckets.set(sig, (buckets.get(sig) || 0) + 1);
-  }
-  const positions = new Float32Array(count * 3);
-  const colors    = new Float32Array(count * 3);
-  const sizes     = new Float32Array(count);
-  for (let i = 0; i < count; i++) {
-    const h = mix(sigs[i]);
-    positions[i*3+0] = ((h        & 0xff) / 127.5 - 1);
-    positions[i*3+1] = (((h >> 8) & 0xff) / 127.5 - 1);
-    positions[i*3+2] = (((h >> 16)& 0xff) / 127.5 - 1);
-    const collisions = buckets.get(sigs[i]) || 1;
-    const intensity = Math.min(1, collisions / 10);
-    colors[i*3+0] = 0.30 + intensity * 0.70;
-    colors[i*3+1] = 0.78 - intensity * 0.45;
-    colors[i*3+2] = 0.30;
-    sizes[i] = 1.0 + Math.min(4.0, Math.sqrt(collisions) * 0.8);
-  }
-  return { positions, colors, sizes, drawMode: "points", pointSize: 4.0 };
-}
-
-function attachAlpha3dMetadata(mode, candles, payload) {
-  const pointCount = Math.floor((payload.positions?.length || 0) / 3);
-  if (Array.isArray(payload.metadata) && payload.metadata.length === pointCount) {
-    return payload;
-  }
-  const metadata = new Array(pointCount);
-  if (!pointCount) {
-    payload.metadata = metadata;
-    return payload;
-  }
-  if (mode === "candles3d") {
-    for (let i = 0; i < pointCount; i++) {
-      const barIndex = Math.floor(i / 2);
-      const c = candles[barIndex] || {};
-      metadata[i] = {
-        bar_index: barIndex,
-        role: i % 2 === 0 ? "low" : "high",
-        time: c.time || null,
-        value: i % 2 === 0 ? c.low : c.high,
-      };
-    }
-  } else if (mode === "phase") {
-    const tau = Math.max(1, Math.floor(candles.length / 600));
-    for (let i = 0; i < pointCount; i++) {
-      metadata[i] = { bar_index: i, role: `lag τ=${tau}`, time: candles[i]?.time || null, value: candles[i]?.close ?? null };
-    }
-  } else if (mode === "heightmap") {
-    const W = 96, H = 64;
-    for (let i = 0; i < pointCount; i++) {
-      const x = payload.positions[i * 3 + 0];
-      const y = payload.positions[i * 3 + 1];
-      const z = payload.positions[i * 3 + 2];
-      const tx = Math.max(0, Math.min(W - 1, Math.round((x + 1) * 0.5 * (W - 1))));
-      const py = Math.max(0, Math.min(H - 1, Math.round((z + 1) * 0.5 * (H - 1))));
-      metadata[i] = { cell: `${tx},${py}`, role: "density", value: y };
-    }
-  } else if (mode === "manifold") {
-    for (let i = 0; i < pointCount; i++) {
-      const barIndex = i + 20;
-      metadata[i] = { bar_index: barIndex, role: "feature vector", time: candles[barIndex]?.time || null, value: candles[barIndex]?.close ?? null };
-    }
-  } else if (mode === "lattice") {
-    for (let i = 0; i < pointCount; i++) {
-      const barIndex = i + 5;
-      metadata[i] = { bar_index: barIndex, role: "quantized signature", time: candles[barIndex]?.time || null, value: candles[barIndex]?.close ?? null };
-    }
-  }
-  payload.metadata = metadata;
-  return payload;
-}
-
 function computeAlpha3dPayloadForMode(mode, candles) {
-  if (isTradingPanelActive() && alpha3dState.pressureData?.points?.length) {
-    return computeAlpha3dPressurePayload(alpha3dState.pressureData);
-  }
-  const payload = computeAlpha3dCandles(candles);
-  return attachAlpha3dMetadata("candles3d", candles, payload);
+  return computeAlpha3dPayload(mode, candles, {
+    isPressureActive: isTradingPanelActive(),
+    pressureData: alpha3dState.pressureData,
+    activeIndicators: alphaTradingIndicatorState.active,
+    overlaySeries: alphaTradingOverlaySeries,
+  });
 }
-
-function alpha3dLegendPayload(mode) {
-  const cfg = ALPHA_3D_LEGEND.candles3d;
-  return {
-    title: cfg.title,
-    description: cfg.desc,
-    axes: {
-      x: cfg.x?.text || "",
-      y: cfg.y?.text || "",
-      z: cfg.z?.text || "",
-    },
-    colors: cfg.colors || [],
-    meta: cfg.meta || "",
-  };
-}
-
 async function exportAlpha3dArtifactsForSelectedJob() {
   const jobId = selectedForgeJobId || selectedForgeJobManifest?.job_id || selectedForgeJobManifest?.jobId || "";
   const candles = alphaDocState?.candles || [];
-  if (!jobId || candles.length < 10 || !window.__TAURI__?.core?.invoke) return;
+  if (!jobId || candles.length < 10 || !forgeCanInvoke()) return;
   const existing = selectedForgeJobManifest?.visualization_3d;
   const existingMapping = selectedForgeJobManifest?.visual_mapping;
   if (
@@ -28920,7 +26372,7 @@ async function exportAlpha3dArtifactsForSelectedJob() {
     .filter(Boolean);
   if (!modes.length) return;
   try {
-    await window.__TAURI__.core.invoke("export_forge_3d_artifacts", {
+    await forgeInvoke("export_forge_3d_artifacts", {
       request: {
         jobId,
         title: currentForgeJob() ? forgeJobLabel(currentForgeJob()) : (alphaDocState.fileName || selectedForgeJobManifest?.title || "Forge 3D mapping"),
@@ -28929,7 +26381,7 @@ async function exportAlpha3dArtifactsForSelectedJob() {
         bars: candles.length,
         modes,
       },
-    });
+    }, { section: "alpha-3d", timeoutMs: 30000 });
     selectedForgeJobManifest = null;
     selectedForgeJobManifestId = "";
     await refreshSelectedForgeJobManifest();
@@ -28970,60 +26422,12 @@ function rebuildAlpha3dPoints() {
   if (alpha3dState.selection && alpha3dState.selection.vertexIndex >= alpha3dState.pointCount) {
     clearAlpha3dSelection();
   }
-  gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.buffers.position);
-  gl.bufferData(gl.ARRAY_BUFFER, pts.positions, gl.STATIC_DRAW);
-  gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.buffers.color);
-  gl.bufferData(gl.ARRAY_BUFFER, pts.colors, gl.STATIC_DRAW);
-  gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.buffers.size);
-  gl.bufferData(gl.ARRAY_BUFFER, pts.sizes || new Float32Array(alpha3dState.pointCount).fill(1.0), gl.STATIC_DRAW);
-  gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.lineBuffers.position);
-  gl.bufferData(gl.ARRAY_BUFFER, pts.linePositions || new Float32Array(0), gl.STATIC_DRAW);
-  gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.lineBuffers.color);
-  gl.bufferData(gl.ARRAY_BUFFER, pts.lineColors || new Float32Array(0), gl.STATIC_DRAW);
-  gl.bindBuffer(gl.ARRAY_BUFFER, alpha3dState.lineBuffers.size);
-  gl.bufferData(gl.ARRAY_BUFFER, pts.lineSizes || new Float32Array(alpha3dState.linePointCount).fill(1.0), gl.STATIC_DRAW);
+  uploadAlpha3dPayload(alpha3dState, pts);
   updateAlpha3dResultOverlay();
   updateAlpha3dSignalPanel();
 }
 
-// ── Camera matrices ──────────────────────────────────────────────
-
-function alpha3dPerspective(fov, aspect, near, far) {
-  const f = 1 / Math.tan(fov / 2);
-  const nf = 1 / (near - far);
-  return new Float32Array([
-    f / aspect, 0, 0, 0,
-    0, f, 0, 0,
-    0, 0, (far + near) * nf, -1,
-    0, 0, 2 * far * near * nf, 0,
-  ]);
-}
-
-function alpha3dLookAt(eye, center, up) {
-  const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
-  const norm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/l, v[1]/l, v[2]/l]; };
-  const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
-  const dot = (a, b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
-  const f = norm(sub(center, eye));
-  const s = norm(cross(f, up));
-  const u = cross(s, f);
-  return new Float32Array([
-    s[0], u[0], -f[0], 0,
-    s[1], u[1], -f[1], 0,
-    s[2], u[2], -f[2], 0,
-    -dot(s, eye), -dot(u, eye), dot(f, eye), 1,
-  ]);
-}
-
-function alpha3dMulMat4Vec4(m, v) {
-  const x = v[0], y = v[1], z = v[2], w = v[3];
-  return [
-    m[0] * x + m[4] * y + m[8]  * z + m[12] * w,
-    m[1] * x + m[5] * y + m[9]  * z + m[13] * w,
-    m[2] * x + m[6] * y + m[10] * z + m[14] * w,
-    m[3] * x + m[7] * y + m[11] * z + m[15] * w,
-  ];
-}
+// â”€â”€ Camera matrices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function alpha3dCameraMatrices() {
   const { yaw, pitch, dist } = alpha3dState.camera;
@@ -29347,32 +26751,14 @@ function renderAlpha3d() {
   const gl = alpha3dState.gl;
   if (!gl || !alpha3dState.open) return;
   resizeAlpha3dCanvas();
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   if (alpha3dState.pointCount === 0) {
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     updateAlpha3dVeilOverlay();
     updateAlpha3dScaleGuide();
     return;
   }
   alpha3dState.matrices = alpha3dCameraMatrices();
-  gl.useProgram(alpha3dState.program);
-  gl.uniformMatrix4fv(alpha3dState.uniforms.proj, false, alpha3dState.matrices.proj);
-  gl.uniformMatrix4fv(alpha3dState.uniforms.view, false, alpha3dState.matrices.view);
-  const dpr = window.devicePixelRatio || 1;
-  gl.uniform1f(alpha3dState.uniforms.pointSizeBase, (alpha3dState.pointSize || 4.0) * dpr);
-  gl.bindVertexArray(alpha3dState.vao);
-  let drawType = gl.POINTS;
-  if (alpha3dState.drawMode === "lines") drawType = gl.LINE_STRIP;
-  if (alpha3dState.drawMode === "linepairs") drawType = gl.LINES;
-  if (alpha3dState.drawMode === "triangles") drawType = gl.TRIANGLES;
-  gl.drawArrays(drawType, 0, alpha3dState.pointCount);
-  if (alpha3dState.linePointCount > 0 && alpha3dState.lineVao) {
-    gl.bindVertexArray(alpha3dState.lineVao);
-    gl.lineWidth(1);
-    let lineType = gl.LINES;
-    if (alpha3dState.lineDrawMode === "lines") lineType = gl.LINE_STRIP;
-    gl.drawArrays(lineType, 0, alpha3dState.linePointCount);
-  }
-  gl.bindVertexArray(null);
+  renderAlpha3dWebglFrame(alpha3dState, alpha3dState.matrices, window.devicePixelRatio || 1);
   updateAlpha3dGizmo();
   updateAlpha3dVeilOverlay();
   updateAlpha3dScaleGuide();
@@ -29382,3 +26768,6 @@ function renderAlpha3d() {
 // Initial state on load
 updateAlpha3dButtonState();
 forgeSections?.markReady?.();
+forgeShellRuntime?.dispatch?.({ type: "BOOT_READY" });
+
+

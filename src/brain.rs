@@ -58,9 +58,68 @@ pub struct BrainMemory {
     pub reasons: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrainProofProjection {
+    pub projection_hash: String,
+    pub action: &'static str,
+    pub accepted: bool,
+    pub from: String,
+    pub to: Option<String>,
+    pub memory_hash: Option<String>,
+    pub nodes_before: usize,
+    pub nodes_after: usize,
+    pub node_delta: isize,
+    pub candidate_count: usize,
+    pub samples: usize,
+    pub frame_before: String,
+    pub frame_after: String,
+    pub reasons: Vec<String>,
+}
+
 impl BrainMemory {
     pub fn accepted(&self) -> bool {
         self.action == BrainAction::AcceptedSubstitution
+    }
+
+    pub fn proof_projection(&self) -> BrainProofProjection {
+        let action = self.action.as_str();
+        let from = self.from.as_hex();
+        let to = self.to.map(|hash| hash.as_hex());
+        let memory_hash = self.memory_hash.map(|hash| hash.as_hex());
+        let frame_before = hex_bytes(&self.frame_before);
+        let frame_after = hex_bytes(&self.frame_after);
+        let node_delta = self.nodes_after as isize - self.nodes_before as isize;
+        let canonical = format!(
+            "forge-brain-proof-projection-v1\naction={action}\naccepted={}\nfrom={from}\nto={}\nmemory_hash={}\nnodes_before={}\nnodes_after={}\nnode_delta={node_delta}\ncandidate_count={}\nsamples={}\nframe_before={frame_before}\nframe_after={frame_after}\nreasons={}\n",
+            self.accepted(),
+            to.as_deref().unwrap_or(""),
+            memory_hash.as_deref().unwrap_or(""),
+            self.nodes_before,
+            self.nodes_after,
+            self.candidate_count,
+            self.samples,
+            self.reasons
+                .iter()
+                .map(|reason| sanitize_line(reason))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
+        BrainProofProjection {
+            projection_hash: Hash::for_blob(canonical.as_bytes()).as_hex(),
+            action,
+            accepted: self.accepted(),
+            from,
+            to,
+            memory_hash,
+            nodes_before: self.nodes_before,
+            nodes_after: self.nodes_after,
+            node_delta,
+            candidate_count: self.candidate_count,
+            samples: self.samples,
+            frame_before,
+            frame_after,
+            reasons: self.reasons.clone(),
+        }
     }
 }
 
@@ -902,6 +961,16 @@ mod tests {
         assert!(memory_text.contains("nodes_before=4"));
         assert!(memory_text.contains("nodes_after=2"));
         assert!(memory_text.contains("samples=64"));
+
+        let projection = memory.proof_projection();
+        assert_eq!(projection.action, "accepted_substitution");
+        assert!(projection.accepted);
+        assert_eq!(projection.from, from.as_hex());
+        assert_eq!(projection.to, Some(to.as_hex()));
+        assert_eq!(projection.memory_hash, Some(memory_hash.as_hex()));
+        assert_eq!(projection.node_delta, -2);
+        assert_eq!(projection.projection_hash.len(), 40);
+        assert_eq!(projection, memory.proof_projection());
     }
 
     #[test]

@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
+use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -93,6 +94,7 @@ struct Config {
     focus: Focus,
     seed: u64,
     plan_only: bool,
+    seeds_path: Option<String>,
 }
 
 impl Default for Config {
@@ -105,8 +107,25 @@ impl Default for Config {
             focus: Focus::ScenarioDag,
             seed: 0xF0_46_E5_7A_7E_1A_00_01,
             plan_only: false,
+            seeds_path: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct MetricSeedRecord {
+    seed_hash: String,
+    pack_proof_hash: String,
+    pack_theme: String,
+    priority_score: f64,
+    source_density_score: f64,
+    evidence_quality_score: f64,
+    graph_density_score: f64,
+    market_signal_score: f64,
+    local_signal_score: f64,
+    economic_signal_score: f64,
+    data_gap_penalty: f64,
+    actionability_score: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -420,12 +439,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let properties = synthetic_properties(config.properties, config.seed);
+    let properties = if let Some(path) = config.seeds_path.as_deref() {
+        seed_backed_properties(path, config.properties, config.seed)?
+    } else {
+        synthetic_properties(config.properties, config.seed)
+    };
     if properties.is_empty() {
         return Err("no real-estate rows available for immo lab".into());
     }
 
     let dataset_hash = property_dataset_hash(&properties);
+    let source_mode = if config.seeds_path.is_some() {
+        "kasm_metric_seeds"
+    } else {
+        "synthetic_benchmark"
+    };
     let dag_key = cache_key(
         "immo_dag_template:v1",
         &[
@@ -442,8 +470,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     println!(
-        "[immo-lab] doctrine=kasm-content-addressed dataset_hash={} properties={} metrics={} scenarios={} horizons={} repeat={} candidate_limit={} dag={}",
+        "[immo-lab] doctrine=kasm-content-addressed dataset_hash={} source_mode={} properties={} metrics={} scenarios={} horizons={} repeat={} candidate_limit={} dag={}",
         compact_key(&dataset_hash),
+        source_mode,
         properties.len(),
         METRIC_NAMES.len(),
         config.scenarios,
@@ -1447,6 +1476,154 @@ fn traffic_noise_delta(value: f64) -> f64 {
     (value * 0.41 + 0.13).sin().abs()
 }
 
+fn seed_backed_properties(path: &str, count: usize, seed: u64) -> Result<Vec<PropertyRecord>, Box<dyn Error>> {
+    let seeds = read_metric_seed_records(path)?;
+    if seeds.is_empty() {
+        return Err(format!("no KASM metric seeds found in {path}").into());
+    }
+    let mut rows = Vec::with_capacity(count);
+    for idx in 0..count {
+        let seed_record = &seeds[idx % seeds.len()];
+        let wave = (idx / seeds.len().max(1)) as u64;
+        let mut rng = SplitMix64::new(seed ^ stable_u64(&seed_record.seed_hash) ^ wave.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        rows.push(property_from_metric_seed(seed_record, idx, wave, &mut rng));
+    }
+    Ok(rows)
+}
+
+fn read_metric_seed_records(path: &str) -> Result<Vec<MetricSeedRecord>, Box<dyn Error>> {
+    let text = fs::read_to_string(path)?;
+    let mut out = Vec::new();
+    for (line_idx, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        out.push(MetricSeedRecord {
+            seed_hash: json_string(line, "seedHash")
+                .unwrap_or_else(|| cache_key("immo_seed_line:v1", &[path, &line_idx.to_string()])),
+            pack_proof_hash: json_string(line, "packProofHash").unwrap_or_default(),
+            pack_theme: json_string(line, "packTheme").unwrap_or_else(|| "unknown".to_string()),
+            priority_score: json_number(line, "priorityScore").unwrap_or(0.0).clamp(0.0, 1.0),
+            source_density_score: json_number(line, "source_density_score").unwrap_or(0.0).clamp(0.0, 1.0),
+            evidence_quality_score: json_number(line, "evidence_quality_score").unwrap_or(0.0).clamp(0.0, 1.0),
+            graph_density_score: json_number(line, "graph_density_score").unwrap_or(0.0).clamp(0.0, 1.0),
+            market_signal_score: json_number(line, "market_signal_score").unwrap_or(0.0).clamp(0.0, 1.0),
+            local_signal_score: json_number(line, "local_signal_score").unwrap_or(0.0).clamp(0.0, 1.0),
+            economic_signal_score: json_number(line, "economic_signal_score").unwrap_or(0.0).clamp(0.0, 1.0),
+            data_gap_penalty: json_number(line, "data_gap_penalty").unwrap_or(0.0).clamp(0.0, 1.0),
+            actionability_score: json_number(line, "actionability_score").unwrap_or(0.0).clamp(0.0, 1.0),
+        });
+    }
+    Ok(out)
+}
+
+fn property_from_metric_seed(seed: &MetricSeedRecord, idx: usize, wave: u64, rng: &mut SplitMix64) -> PropertyRecord {
+    let jitter = |rng: &mut SplitMix64, width: f64| lerp(-width, width, rng.next_unit());
+    let p = seed.priority_score;
+    let source = seed.source_density_score;
+    let evidence = seed.evidence_quality_score;
+    let graph = seed.graph_density_score;
+    let market = seed.market_signal_score;
+    let local = seed.local_signal_score;
+    let economic = seed.economic_signal_score;
+    let gap = seed.data_gap_penalty;
+    let action = seed.actionability_score;
+    let theme_bias = stable_unit(&seed.pack_theme);
+    let proof_bias = stable_unit(&seed.pack_proof_hash);
+    let zone = ((stable_u64(&seed.pack_proof_hash) as usize + idx) % 288) as u16;
+    let base_price = 1_900.0 + market * 2_400.0 + local * 650.0 + economic * 780.0 + evidence * 380.0 + jitter(rng, 160.0);
+    let surface = (36.0 + action * 96.0 + source * 44.0 + jitter(rng, 18.0)).clamp(18.0, 220.0).round();
+    let dpe = (2.0 + gap * 3.8 + (1.0 - evidence) * 1.4 + jitter(rng, 0.8)).clamp(1.0, 7.0);
+    let liquidity = (0.25 + market * 0.86 + source * 0.42 + jitter(rng, 0.18)).clamp(0.0, 1.8);
+    let buyer_demand = (0.20 + market * 0.95 + economic * 0.36 + action * 0.38 + jitter(rng, 0.22)).clamp(0.0, 2.1);
+    let local_strength = (local * 1.2 + graph * 0.34 + theme_bias * 0.24).clamp(0.0, 2.0);
+    let risk = (gap * 1.15 + (1.0 - evidence) * 0.52 + proof_bias * 0.30).clamp(0.0, 2.2);
+    let stale_days = (18.0 + gap * 150.0 + (1.0 - action) * 70.0 + jitter(rng, 34.0)).clamp(0.0, 280.0);
+    let price_anchor = (gap * 18.0 + market * 4.5 - evidence * 5.0 + jitter(rng, 5.5)).clamp(-12.0, 28.0);
+    PropertyRecord {
+        id: 7_000_000 + idx as u64,
+        zone_id: zone,
+        lat: 43.0 + (zone as f64 % 37.0) * 0.018 + theme_bias * 0.012,
+        lon: 1.0 + (zone as f64 / 37.0).floor() * 0.021 + proof_bias * 0.012,
+        surface_m2: surface,
+        rooms: (surface / 24.0 + jitter(rng, 0.7)).clamp(1.0, 8.0).round(),
+        age_years: (8.0 + gap * 92.0 + (1.0 - source) * 28.0 + jitter(rng, 16.0)).clamp(1.0, 140.0),
+        floor: lerp(0.0, 8.0, rng.next_unit()).round(),
+        dvf_price_m2: base_price,
+        asking_price_m2: base_price * (1.0 + price_anchor / 100.0),
+        dpe_score: dpe,
+        energy_cost_index: (gap * 1.5 + dpe / 7.0 + jitter(rng, 0.12)).clamp(0.0, 2.8),
+        clay_risk: (risk * 0.58 + jitter(rng, 0.16)).clamp(0.0, 2.4),
+        flood_risk: (risk * 0.42 + proof_bias * 0.50 + jitter(rng, 0.14)).clamp(0.0, 2.3),
+        permit_activity: (graph * 1.35 + local * 0.35 + jitter(rng, 0.18)).clamp(0.0, 2.5),
+        urbanism_upside: (graph * 1.25 + market * 0.30 + jitter(rng, 0.20)).clamp(0.0, 2.4),
+        transit_momentum: (local * 0.85 + economic * 0.26 + jitter(rng, 0.18)).clamp(0.0, 2.0),
+        school_momentum: (local * 0.72 + source * 0.28 + jitter(rng, 0.15)).clamp(0.0, 1.9),
+        business_churn: (economic * 1.15 + gap * 0.20 + jitter(rng, 0.20)).clamp(0.0, 2.2),
+        traffic_noise_delta: (gap * 0.55 + local * 0.18 + jitter(rng, 0.24)).clamp(-0.3, 2.2),
+        pollution_delta: (risk * 0.44 + gap * 0.32 + jitter(rng, 0.18)).clamp(0.0, 2.2),
+        weather_heat_stress: (risk * 0.36 + gap * 0.70 + jitter(rng, 0.16)).clamp(0.0, 2.3),
+        mobility_inflow: (local * 0.72 + economic * 0.44 + market * 0.30 + jitter(rng, 0.18)).clamp(0.0, 2.2),
+        local_news_intensity: (local_strength + graph * 0.22 + jitter(rng, 0.20)).clamp(0.0, 2.5),
+        competitor_pressure: (market * 0.82 + economic * 0.22 + gap * 0.18 + jitter(rng, 0.20)).clamp(0.0, 2.3),
+        buyer_demand_match: buyer_demand,
+        credit_rate_sensitivity: (economic * 0.76 + market * 0.32 + jitter(rng, 0.16)).clamp(0.0, 2.4),
+        insurance_risk: (risk * 0.72 + gap * 0.36 + jitter(rng, 0.16)).clamp(0.0, 2.5),
+        tax_pressure_proxy: (economic * 0.42 + market * 0.26 + gap * 0.30 + jitter(rng, 0.12)).clamp(0.0, 2.0),
+        crm_inactivity_days: (gap * 210.0 + (1.0 - action) * 80.0 + jitter(rng, 28.0)).clamp(0.0, 380.0),
+        visit_intent: (action * 1.25 + market * 0.34 + jitter(rng, 0.16)).clamp(0.0, 2.2),
+        owner_lifecycle_pressure: (p * 1.35 + action * 0.34 + gap * 0.24 + jitter(rng, 0.18)).clamp(0.0, 2.5),
+        rental_yield_gap: (market * 0.70 + economic * 0.48 + local * 0.22 - gap * 0.12 + jitter(rng, 0.18)).clamp(-0.5, 2.5),
+        work_cost_roi: (action * 0.72 + gap * 0.54 + graph * 0.26 + jitter(rng, 0.18)).clamp(0.0, 2.7),
+        neighborhood_liquidity: liquidity,
+        price_anchor_error: price_anchor,
+        days_on_market_shadow: stale_days + (wave % 11) as f64,
+        notary_delay_index: (gap * 0.62 + risk * 0.22 + jitter(rng, 0.12)).clamp(0.0, 2.0),
+        seasonality_fit: (action * 0.60 + market * 0.22 + jitter(rng, 0.18)).clamp(0.0, 2.0),
+        agency_reputation_fit: (evidence * 0.92 + source * 0.26 + jitter(rng, 0.12)).clamp(0.0, 2.0),
+    }
+}
+
+fn json_number(line: &str, key: &str) -> Option<f64> {
+    let marker = format!("\"{key}\"");
+    let start = line.find(&marker)?;
+    let tail = &line[start + marker.len()..];
+    let colon = tail.find(':')?;
+    let mut value = tail[colon + 1..].trim_start();
+    if let Some(stripped) = value.strip_prefix('"') {
+        value = stripped;
+    }
+    let end = value
+        .find(|ch: char| !(ch.is_ascii_digit() || matches!(ch, '.' | '-' | '+' | 'e' | 'E')))
+        .unwrap_or(value.len());
+    value[..end].parse::<f64>().ok()
+}
+
+fn json_string(line: &str, key: &str) -> Option<String> {
+    let marker = format!("\"{key}\"");
+    let start = line.find(&marker)?;
+    let tail = &line[start + marker.len()..];
+    let colon = tail.find(':')?;
+    let value = tail[colon + 1..].trim_start();
+    let value = value.strip_prefix('"')?;
+    let end = value.find('"')?;
+    Some(value[..end].to_string())
+}
+
+fn stable_u64(value: &str) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    u64::from_le_bytes(bytes)
+}
+
+fn stable_unit(value: &str) -> f64 {
+    (stable_u64(value) as f64 / u64::MAX as f64).clamp(0.0, 1.0)
+}
+
 fn synthetic_metric(row: &PropertyRecord, salt: u64) -> f64 {
     let mut value = row
         .id
@@ -1631,6 +1808,14 @@ fn parse_config() -> Result<Config, Box<dyn Error>> {
                 idx += 1;
                 config.seed = parse_value::<u64>(&args, idx, "--seed")?;
             }
+            "--seeds" | "--metric-seeds" => {
+                idx += 1;
+                config.seeds_path = Some(
+                    args.get(idx)
+                        .ok_or("--seeds needs a JSONL path")?
+                        .to_string(),
+                );
+            }
             "--focus" => {
                 idx += 1;
                 let focus = args.get(idx).ok_or("--focus needs a value")?;
@@ -1674,6 +1859,7 @@ fn print_usage() {
     println!("usage: cargo run --example lab_runner_immo -- [--properties N] [--scenarios N] [--repeat N]");
     println!("       cargo run --example lab_runner_immo -- --focus metric-matrix");
     println!("       cargo run --example lab_runner_immo -- --focus candidate-scan");
+    println!("       cargo run --example lab_runner_immo -- --seeds path/to/kasm_metric_seeds.jsonl --properties N --scenarios N");
     println!("       cargo run --example lab_runner_immo -- --plan-only --properties N --scenarios N");
 }
 
@@ -1790,6 +1976,30 @@ mod tests {
         assert_eq!(matrix.rows, 256);
         assert_eq!(matrix.cols, METRIC_NAMES.len());
         assert_eq!(matrix.data.len(), 256 * METRIC_NAMES.len());
+    }
+
+    #[test]
+    fn metric_seed_expands_to_property_signal_space() {
+        let seed = MetricSeedRecord {
+            seed_hash: "seed-a".to_string(),
+            pack_proof_hash: "pack-a".to_string(),
+            pack_theme: "market_signal".to_string(),
+            priority_score: 0.72,
+            source_density_score: 0.63,
+            evidence_quality_score: 0.81,
+            graph_density_score: 0.58,
+            market_signal_score: 0.91,
+            local_signal_score: 0.46,
+            economic_signal_score: 0.67,
+            data_gap_penalty: 0.18,
+            actionability_score: 0.76,
+        };
+        let mut rng = SplitMix64::new(7);
+        let property = property_from_metric_seed(&seed, 12, 0, &mut rng);
+        assert!(property.asking_price_m2 > property.dvf_price_m2);
+        assert!(property.buyer_demand_match > 0.8);
+        assert!(property.visit_intent > 0.8);
+        assert!(property.agency_reputation_fit > 0.6);
     }
 
     #[test]

@@ -6,6 +6,8 @@
 
 #[path = "../real_estate_harvester.rs"]
 mod real_estate_harvester;
+#[path = "../forge_job_runtime.rs"]
+mod forge_job_runtime;
 
 use serde_json::{json, Value};
 use std::fs;

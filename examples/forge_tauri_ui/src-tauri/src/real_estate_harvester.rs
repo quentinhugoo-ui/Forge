@@ -1,3 +1,4 @@
+use crate::forge_job_runtime::{append_job_ledger_event, ForgeJobCost, ForgeJobProof, ForgeJobRetry, ForgeUnifiedJob};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -27,6 +28,10 @@ const STATUS_FILE: &str = "status.json";
 const SUPERVISOR_STATE_FILE: &str = "supervisor_state.json";
 const JOB_QUEUE_FILE: &str = "job_queue.json";
 const JOB_EVENTS_FILE: &str = "job_events.jsonl";
+#[allow(dead_code)]
+const ONBOARDING_PROFILE_FILE: &str = "agency_onboarding_profile.json";
+#[allow(dead_code)]
+const ONBOARDING_EVENTS_FILE: &str = "agency_onboarding_events.jsonl";
 const LATEST_INTEL_FILE: &str = "latest.json";
 const LATEST_LLM_INTEL_CACHE_FILE: &str = "latest.json";
 const REAL_ESTATE_KASM_SCORE_CONTRACT_FILE: &str = "real_estate_score_core.json";
@@ -534,7 +539,63 @@ pub struct HarvesterSnapshot {
     pub supervisor: RealEstateSupervisorSnapshot,
     pub job_queue: RealEstateJobQueueSnapshot,
     pub job_journal: RealEstateJobJournalSnapshot,
+    pub unified_jobs: Vec<ForgeUnifiedJob>,
     pub local_store: RealEstateLocalStoreSummary,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RealEstateOnboardingQuestion {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    pub why: String,
+    pub examples: Vec<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RealEstateOnboardingProfile {
+    pub schema_version: u8,
+    pub status: String,
+    pub started_at_ms: u64,
+    pub updated_at_ms: u64,
+    pub completed_at_ms: u64,
+    pub answers: HashMap<String, String>,
+    pub derived_traits: HashMap<String, String>,
+    pub enrichment_runs: Vec<String>,
+    pub profile_hash: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RealEstateOnboardingState {
+    pub required: bool,
+    pub status: String,
+    pub current_index: usize,
+    pub total: usize,
+    pub question: Option<RealEstateOnboardingQuestion>,
+    pub answered: Vec<String>,
+    pub derived_traits: HashMap<String, String>,
+    pub profile_hash: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RealEstateOnboardingAnswerReport {
+    pub status: String,
+    pub answered_question_id: String,
+    pub next_question: Option<RealEstateOnboardingQuestion>,
+    pub state: RealEstateOnboardingState,
+    pub suggested_answers: Vec<String>,
+    pub triggered_collectors: Vec<HarvestRunReport>,
+    pub enrichment_queries: Vec<String>,
+    pub profile_hash: String,
+    pub event_hash: String,
 }
 
 struct HarvesterDaemon {
@@ -628,6 +689,11 @@ pub fn snapshot(store_path: &Path) -> Result<HarvesterSnapshot, String> {
     let registry = default_registry();
     let job_queue = load_or_init_job_queue(&base, &registry)?;
     let job_journal = read_job_journal(&base, &job_queue)?;
+    let unified_jobs = job_queue
+        .jobs
+        .iter()
+        .map(unified_job_from_real_estate)
+        .collect::<Vec<_>>();
     Ok(HarvesterSnapshot {
         daemon: daemon_status(&base),
         registry: registry.clone(),
@@ -637,7 +703,127 @@ pub fn snapshot(store_path: &Path) -> Result<HarvesterSnapshot, String> {
         supervisor: load_or_init_supervisor(&base, &registry)?,
         job_queue,
         job_journal,
+        unified_jobs,
         local_store: local_store_summary(&base).unwrap_or_default(),
+    })
+}
+
+#[allow(dead_code)]
+pub fn onboarding_state(store_path: &Path) -> Result<RealEstateOnboardingState, String> {
+    let base = ensure_harvester_dirs(store_path)?;
+    let profile = read_onboarding_profile(&base)?;
+    Ok(onboarding_state_from_profile(&profile))
+}
+
+#[allow(dead_code)]
+pub fn record_onboarding_answer(
+    store_path: &Path,
+    question_id: &str,
+    answer: &str,
+) -> Result<RealEstateOnboardingAnswerReport, String> {
+    let base = ensure_harvester_dirs(store_path)?;
+    let registry = default_registry();
+    let questions = onboarding_questions();
+    let question_id = normalize_id(question_id);
+    if !questions.iter().any(|question| question.id == question_id) {
+        return Err(format!("unknown real estate onboarding question: {question_id}"));
+    }
+    let answer = answer.trim();
+    if answer.is_empty() {
+        return Err("La réponse onboarding ne peut pas être vide.".to_string());
+    }
+
+    let mut profile = read_onboarding_profile(&base)?;
+    let now = now_ms();
+    if profile.started_at_ms == 0 {
+        profile.started_at_ms = now;
+    }
+    profile.updated_at_ms = now;
+    profile.answers.insert(question_id.clone(), answer.to_string());
+    profile.derived_traits = derive_onboarding_traits(&profile.answers);
+    let completed = questions
+        .iter()
+        .all(|question| profile.answers.get(&question.id).map(|value| !value.trim().is_empty()).unwrap_or(false));
+    profile.status = if completed { "completed" } else { "in_progress" }.to_string();
+    if completed && profile.completed_at_ms == 0 {
+        profile.completed_at_ms = now;
+    }
+
+    let tool_ids = onboarding_trigger_tools(&question_id, &profile);
+    let mut triggered_collectors = Vec::new();
+    for tool_id in tool_ids {
+        if let Some(collector) = registry
+            .collectors
+            .iter()
+            .find(|collector| collector.tools.iter().any(|tool| tool == &tool_id))
+        {
+            match run_collector(store_path, &tool_id, collector, "onboarding_answer") {
+                Ok(report) => {
+                    profile.enrichment_runs.push(report.job_id.clone());
+                    triggered_collectors.push(report);
+                }
+                Err(err) => {
+                    let _ = append_json_line(
+                        &data_path(&base, ONBOARDING_EVENTS_FILE),
+                        &json!({
+                            "type": "onboarding_enrichment_error",
+                            "questionId": question_id,
+                            "toolId": tool_id,
+                            "error": err,
+                            "tsMs": now_ms()
+                        }),
+                    );
+                }
+            }
+        }
+    }
+
+    profile.profile_hash = onboarding_profile_hash(&profile);
+    write_onboarding_profile(&base, &profile)?;
+    let state = onboarding_state_from_profile(&profile);
+    let suggested_answers = state
+        .question
+        .as_ref()
+        .map(|question| onboarding_suggestions_for_question(question, &profile))
+        .unwrap_or_default();
+    let enrichment_queries = onboarding_enrichment_queries(&question_id, &profile);
+    let event_hash = hash_parts(
+        "real_estate_onboarding_answer:v1",
+        &[
+            &question_id,
+            answer,
+            &profile.profile_hash,
+            &triggered_collectors
+                .iter()
+                .map(|report| report.proof_hash.as_str())
+                .collect::<Vec<_>>()
+                .join("|"),
+        ],
+    );
+    append_json_line(
+        &data_path(&base, ONBOARDING_EVENTS_FILE),
+        &json!({
+            "type": "onboarding_answer",
+            "questionId": question_id,
+            "answerHash": short_hash(answer),
+            "profileHash": profile.profile_hash,
+            "eventHash": event_hash,
+            "triggeredCollectors": triggered_collectors.iter().map(|report| report.collector_id.clone()).collect::<Vec<_>>(),
+            "enrichmentQueries": enrichment_queries,
+            "tsMs": now
+        }),
+    )?;
+
+    Ok(RealEstateOnboardingAnswerReport {
+        status: profile.status.clone(),
+        answered_question_id: question_id,
+        next_question: state.question.clone(),
+        state,
+        suggested_answers,
+        triggered_collectors,
+        enrichment_queries,
+        profile_hash: profile.profile_hash,
+        event_hash,
     })
 }
 
@@ -1258,6 +1444,50 @@ fn job_from_pipeline(
     }
 }
 
+fn unified_job_from_real_estate(job: &RealEstateJobQueueEntry) -> ForgeUnifiedJob {
+    ForgeUnifiedJob::new(
+        job.job_id.clone(),
+        job.job_kind.clone(),
+        json!({
+            "domain": "real-estate",
+            "collectorId": job.collector_id.clone(),
+            "toolId": job.tool_id.clone(),
+            "trigger": job.trigger.clone(),
+            "dependsOn": job.depends_on.clone(),
+            "priority": job.priority,
+            "scheduledAtMs": job.scheduled_at_ms,
+            "createdAtMs": job.created_at_ms,
+            "updatedAtMs": job.updated_at_ms,
+            "lastError": job.last_error.clone(),
+        }),
+        job.status.clone(),
+        ForgeJobCost {
+            estimate_units: job.estimated_cost as u64,
+            actual_units: 0,
+            token_estimate: 0,
+            budget_class: if job.estimated_cost >= 18 {
+                "heavy".to_string()
+            } else if job.estimated_cost >= 8 {
+                "medium".to_string()
+            } else {
+                "light".to_string()
+            },
+        },
+        ForgeJobRetry {
+            attempt: job.attempts,
+            max_attempts: job.max_attempts,
+            not_before_ms: job.not_before_ms,
+            leased_until_ms: job.leased_until_ms,
+            next_retry_ms: job.not_before_ms,
+        },
+        ForgeJobProof {
+            hash: job.last_proof_hash.clone(),
+            artifact_path: job.artifact_path.clone(),
+            source_hash: format!("{}:{}", job.collector_id, job.tool_id),
+        },
+    )
+}
+
 fn lease_next_job(
     daemon: &HarvesterDaemon,
     registry: &HarvesterRegistry,
@@ -1576,7 +1806,48 @@ fn append_current_job_event(
 }
 
 fn append_job_event(base: &Path, event: RealEstateJobTimelineEvent) -> Result<(), String> {
-    append_json_line(&data_path(base, JOB_EVENTS_FILE), &event)
+    append_json_line(&data_path(base, JOB_EVENTS_FILE), &event)?;
+    if let Some(store_path) = base.parent() {
+        let job = ForgeUnifiedJob::new(
+            event.job_id.clone(),
+            event.job_kind.clone(),
+            json!({
+                "domain": "real-estate",
+                "collectorId": event.collector_id.clone(),
+                "toolId": event.tool_id.clone(),
+                "stage": event.stage.clone(),
+                "message": event.message.clone(),
+                "blockedBy": event.blocked_by.clone(),
+            }),
+            event.status.clone(),
+            ForgeJobCost {
+                estimate_units: event.estimated_cost as u64,
+                actual_units: 0,
+                token_estimate: 0,
+                budget_class: if event.estimated_cost >= 18 {
+                    "heavy".to_string()
+                } else if event.estimated_cost >= 8 {
+                    "medium".to_string()
+                } else {
+                    "light".to_string()
+                },
+            },
+            ForgeJobRetry {
+                attempt: event.attempt,
+                max_attempts: 0,
+                not_before_ms: event.next_retry_ms,
+                leased_until_ms: 0,
+                next_retry_ms: event.next_retry_ms,
+            },
+            ForgeJobProof {
+                hash: event.proof_hash.clone(),
+                artifact_path: event.artifact_path.clone(),
+                source_hash: format!("{}:{}", event.collector_id, event.tool_id),
+            },
+        );
+        let _ = append_job_ledger_event(store_path, &event.stage, event.at_ms, &job);
+    }
+    Ok(())
 }
 
 fn job_timeline_event(
@@ -2018,6 +2289,357 @@ fn collector(
         adapters: adapters.iter().map(|adapter| adapter.to_string()).collect(),
         source_ids: source_ids.iter().map(|source| source.to_string()).collect(),
         output_contract: "evidence_hashes + entity_events + kasm_features + llm_intel_cache_seed".to_string(),
+    }
+}
+
+#[allow(dead_code)]
+fn onboarding_questions() -> Vec<RealEstateOnboardingQuestion> {
+    vec![
+        onboarding_question(
+            "agency_identity",
+            "Identité de l'agence",
+            "Comment s'appelle l'agence, dans quelle ville êtes-vous basés, et qu'est-ce qui vous distingue en quelques mots ?",
+            "Forge s'en sert pour retrouver les traces publiques, la réputation, les concurrents proches et le marché local pertinent.",
+            &["Agence Martin Immobilier, Lille, spécialiste maisons familiales premium."],
+        ),
+        onboarding_question(
+            "agency_website",
+            "Présence web",
+            "Quel est le site internet de l'agence et les liens publics importants à surveiller ?",
+            "Le site devient une source owned data pour auditer annonces, SEO, formulaires, conversion et réputation.",
+            &["https://agence-exemple.fr, Google Business Profile, Instagram, LinkedIn."],
+        ),
+        onboarding_question(
+            "agency_people",
+            "Équipe",
+            "Qui travaille dans l'agence, avec quels rôles et quelles zones ?",
+            "Forge peut préparer la mémoire équipe, le coaching, les priorités de relance et le recrutement.",
+            &["Quentin directeur, Sophie transaction Lille centre, Marc location et investisseurs."],
+        ),
+        onboarding_question(
+            "agency_zones",
+            "Zones de marché",
+            "Quelles villes, quartiers, rues ou micro-zones devez-vous surveiller en priorité ?",
+            "Ces zones déclenchent DVF, cadastre, DPE, risques, urbanisme, concurrence et veille locale ciblée.",
+            &["Lille, Croix, Marcq-en-Baroeul, Lambersart, Vieux-Lille, Vauban."],
+        ),
+        onboarding_question(
+            "agency_stack",
+            "Données et outils",
+            "Quels CRM, portails, boîtes mail, Drive, agendas, fichiers ou exports utilisez-vous déjà ?",
+            "Forge sait quelles sources internes brancher ensuite, avec consentement, sans envoyer de fichiers bruts aux LLM.",
+            &["Hektor, SeLoger, Bien'ici, Gmail, Drive mandats, agenda visites, exports CSV mensuels."],
+        ),
+        onboarding_question(
+            "agency_priorities",
+            "Objectifs",
+            "Quels sont les objectifs prioritaires sur les 90 prochains jours ?",
+            "Le moteur peut classer les scrapers, simulations KASM et alertes selon ce qui crée vraiment du chiffre.",
+            &["Plus de mandats exclusifs, meilleur pricing, relance vendeurs froids, recrutement d'un négociateur."],
+        ),
+    ]
+}
+
+#[allow(dead_code)]
+fn onboarding_question(
+    id: &str,
+    title: &str,
+    prompt: &str,
+    why: &str,
+    examples: &[&str],
+) -> RealEstateOnboardingQuestion {
+    RealEstateOnboardingQuestion {
+        id: id.to_string(),
+        title: title.to_string(),
+        prompt: prompt.to_string(),
+        why: why.to_string(),
+        examples: examples.iter().map(|example| example.to_string()).collect(),
+    }
+}
+
+#[allow(dead_code)]
+fn empty_onboarding_profile(now: u64) -> RealEstateOnboardingProfile {
+    RealEstateOnboardingProfile {
+        schema_version: 1,
+        status: "not_started".to_string(),
+        started_at_ms: now,
+        updated_at_ms: now,
+        completed_at_ms: 0,
+        answers: HashMap::new(),
+        derived_traits: HashMap::new(),
+        enrichment_runs: Vec::new(),
+        profile_hash: String::new(),
+    }
+}
+
+#[allow(dead_code)]
+fn read_onboarding_profile(base: &Path) -> Result<RealEstateOnboardingProfile, String> {
+    let path = data_path(base, ONBOARDING_PROFILE_FILE);
+    if !path.exists() {
+        let mut profile = empty_onboarding_profile(now_ms());
+        profile.profile_hash = onboarding_profile_hash(&profile);
+        write_onboarding_profile(base, &profile)?;
+        return Ok(profile);
+    }
+    let bytes = fs::read(&path).map_err(|e| format!("read agency onboarding profile: {e}"))?;
+    let mut profile: RealEstateOnboardingProfile = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("parse agency onboarding profile: {e}"))?;
+    if profile.schema_version == 0 {
+        profile.schema_version = 1;
+    }
+    if profile.started_at_ms == 0 {
+        profile.started_at_ms = profile.updated_at_ms.max(now_ms());
+    }
+    if profile.profile_hash.is_empty() {
+        profile.profile_hash = onboarding_profile_hash(&profile);
+    }
+    Ok(profile)
+}
+
+#[allow(dead_code)]
+fn write_onboarding_profile(base: &Path, profile: &RealEstateOnboardingProfile) -> Result<(), String> {
+    write_json_pretty(&data_path(base, ONBOARDING_PROFILE_FILE), profile, "agency onboarding profile")
+}
+
+#[allow(dead_code)]
+fn onboarding_state_from_profile(profile: &RealEstateOnboardingProfile) -> RealEstateOnboardingState {
+    let questions = onboarding_questions();
+    let question = questions
+        .iter()
+        .find(|question| {
+            profile
+                .answers
+                .get(&question.id)
+                .map(|answer| answer.trim().is_empty())
+                .unwrap_or(true)
+        })
+        .cloned();
+    let current_index = question
+        .as_ref()
+        .and_then(|current| questions.iter().position(|question| question.id == current.id))
+        .unwrap_or(questions.len());
+    let answered = questions
+        .iter()
+        .filter(|question| {
+            profile
+                .answers
+                .get(&question.id)
+                .map(|answer| !answer.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .map(|question| question.id.clone())
+        .collect::<Vec<_>>();
+    let completed = question.is_none();
+    RealEstateOnboardingState {
+        required: !completed,
+        status: if completed { "completed" } else { profile.status.as_str() }.to_string(),
+        current_index,
+        total: questions.len(),
+        question,
+        answered,
+        derived_traits: profile.derived_traits.clone(),
+        profile_hash: profile.profile_hash.clone(),
+    }
+}
+
+#[allow(dead_code)]
+fn derive_onboarding_traits(answers: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut traits = HashMap::new();
+    if let Some(identity) = answers.get("agency_identity").map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        traits.insert("agency_search_name".to_string(), first_clause(identity));
+        traits.insert("agency_identity_brief".to_string(), truncate_for_trait(identity, 220));
+    }
+    if let Some(website) = answers.get("agency_website").map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        traits.insert("owned_web_surface".to_string(), truncate_for_trait(website, 260));
+        if let Some(domain) = extract_domain_hint(website) {
+            traits.insert("agency_domain".to_string(), domain);
+        }
+    }
+    if let Some(people) = answers.get("agency_people").map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        traits.insert("team_people_hint".to_string(), truncate_for_trait(people, 260));
+        traits.insert("team_size_hint".to_string(), split_hint_count(people).to_string());
+    }
+    if let Some(zones) = answers.get("agency_zones").map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        traits.insert("priority_zones".to_string(), truncate_for_trait(zones, 320));
+        traits.insert("priority_zone_count".to_string(), split_hint_count(zones).to_string());
+    }
+    if let Some(stack) = answers.get("agency_stack").map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        traits.insert("data_stack".to_string(), truncate_for_trait(stack, 320));
+    }
+    if let Some(priorities) = answers.get("agency_priorities").map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        traits.insert("ninety_day_priorities".to_string(), truncate_for_trait(priorities, 360));
+    }
+    traits
+}
+
+#[allow(dead_code)]
+fn onboarding_trigger_tools(question_id: &str, profile: &RealEstateOnboardingProfile) -> Vec<String> {
+    let raw = match question_id {
+        "agency_identity" => vec!["reputation", "recrutement", "dvf"],
+        "agency_website" => vec!["site-agence", "audit-annonces", "performance-diffusion"],
+        "agency_people" => vec!["recrutement", "coaching-equipe", "performance-commerciaux"],
+        "agency_zones" => vec!["dvf", "cadastre", "dpe-ademe", "georisques", "urbanisme", "veille-locale"],
+        "agency_stack" => vec!["mandats", "matching-acheteurs", "conformite"],
+        "agency_priorities" => vec!["estimation", "rapport-vendeur", "pipeline", "kpi-agence"],
+        _ => Vec::new(),
+    };
+    let mut ids = raw.into_iter().map(normalize_id).collect::<Vec<_>>();
+    if profile.derived_traits.contains_key("agency_domain") && !ids.iter().any(|id| id == "site-agence") {
+        ids.push("site-agence".to_string());
+    }
+    ids.sort();
+    ids.dedup();
+    ids.truncate(4);
+    ids
+}
+
+#[allow(dead_code)]
+fn onboarding_suggestions_for_question(
+    question: &RealEstateOnboardingQuestion,
+    profile: &RealEstateOnboardingProfile,
+) -> Vec<String> {
+    let traits = &profile.derived_traits;
+    match question.id.as_str() {
+        "agency_website" => traits
+            .get("agency_search_name")
+            .map(|name| vec![format!("Site officiel et Google Business Profile de {name}.")])
+            .unwrap_or_else(|| question.examples.clone()),
+        "agency_people" => traits
+            .get("agency_search_name")
+            .map(|name| vec![format!("Équipe publique connue de {name}, à compléter avec les rôles internes.")])
+            .unwrap_or_else(|| question.examples.clone()),
+        "agency_zones" => traits
+            .get("agency_identity_brief")
+            .map(|brief| vec![format!("Zones citées ou déduites depuis: {brief}")])
+            .unwrap_or_else(|| question.examples.clone()),
+        "agency_stack" => vec![
+            "CRM, portails, Google Workspace, exports CSV, téléphonie, chatbot, dossiers mandats.".to_string(),
+        ],
+        "agency_priorities" => vec![
+            "Mandats exclusifs, estimation plus juste, relance vendeurs, matching acquéreurs, veille concurrence, recrutement.".to_string(),
+        ],
+        _ => question.examples.clone(),
+    }
+}
+
+#[allow(dead_code)]
+fn onboarding_enrichment_queries(
+    question_id: &str,
+    profile: &RealEstateOnboardingProfile,
+) -> Vec<String> {
+    let name = profile
+        .derived_traits
+        .get("agency_search_name")
+        .cloned()
+        .unwrap_or_else(|| "agence immobilière".to_string());
+    let zones = profile
+        .derived_traits
+        .get("priority_zones")
+        .cloned()
+        .unwrap_or_else(|| "zone agence".to_string());
+    match question_id {
+        "agency_identity" => vec![
+            format!("{name} avis Google immobilier"),
+            format!("{name} annonces immobilières"),
+            format!("{name} recrutement immobilier"),
+        ],
+        "agency_website" => vec![
+            format!("{name} site officiel"),
+            format!("{name} Google Business Profile"),
+            format!("site:{name} immobilier annonces"),
+        ],
+        "agency_people" => vec![
+            format!("{name} équipe immobilier"),
+            format!("{name} LinkedIn négociateur immobilier"),
+        ],
+        "agency_zones" => vec![
+            format!("DVF immobilier {zones}"),
+            format!("urbanisme permis construire {zones}"),
+            format!("actualité locale immobilier {zones}"),
+        ],
+        "agency_stack" => vec![
+            format!("{name} portails SeLoger Bien'ici Leboncoin"),
+            format!("{name} formulaires estimation"),
+        ],
+        "agency_priorities" => vec![
+            format!("concurrents immobilier {zones}"),
+            format!("marché immobilier {zones} 90 jours"),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+#[allow(dead_code)]
+fn onboarding_profile_hash(profile: &RealEstateOnboardingProfile) -> String {
+    let mut refs = vec![
+        profile.schema_version.to_string(),
+        profile.status.clone(),
+        profile.started_at_ms.to_string(),
+        profile.updated_at_ms.to_string(),
+        profile.completed_at_ms.to_string(),
+    ];
+    let mut answers = profile.answers.iter().collect::<Vec<_>>();
+    answers.sort_by(|a, b| a.0.cmp(b.0));
+    refs.extend(answers.into_iter().map(|(key, value)| format!("{key}={value}")));
+    let mut traits = profile.derived_traits.iter().collect::<Vec<_>>();
+    traits.sort_by(|a, b| a.0.cmp(b.0));
+    refs.extend(traits.into_iter().map(|(key, value)| format!("{key}={value}")));
+    let ref_slices = refs.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    hash_parts("real_estate_agency_onboarding_profile:v1", &ref_slices)
+}
+
+#[allow(dead_code)]
+fn first_clause(value: &str) -> String {
+    value
+        .split(|ch| matches!(ch, ',' | ';' | '\n' | '\r'))
+        .next()
+        .unwrap_or(value)
+        .trim()
+        .chars()
+        .take(96)
+        .collect()
+}
+
+#[allow(dead_code)]
+fn truncate_for_trait(value: &str, max_chars: usize) -> String {
+    let clean = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.chars().count() <= max_chars {
+        return clean;
+    }
+    let mut out = clean.chars().take(max_chars.saturating_sub(3)).collect::<String>();
+    out.push_str("...");
+    out
+}
+
+#[allow(dead_code)]
+fn split_hint_count(value: &str) -> usize {
+    value
+        .split(|ch| matches!(ch, ',' | ';' | '\n' | '\r' | '/'))
+        .filter(|part| !part.trim().is_empty())
+        .count()
+        .max(1)
+}
+
+#[allow(dead_code)]
+fn extract_domain_hint(value: &str) -> Option<String> {
+    let token = value
+        .split_whitespace()
+        .find(|part| part.contains('.') || part.starts_with("http://") || part.starts_with("https://"))?
+        .trim_matches(|ch: char| matches!(ch, ',' | ';' | ')' | '(' | '"' | '\''));
+    let without_scheme = token
+        .strip_prefix("https://")
+        .or_else(|| token.strip_prefix("http://"))
+        .unwrap_or(token);
+    let domain = without_scheme
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches("www.");
+    if domain.contains('.') {
+        Some(domain.to_ascii_lowercase())
+    } else {
+        None
     }
 }
 

@@ -4,7 +4,7 @@
 //!
 //! Architecture (zéro middleman) :
 //!
-//!   JS app.js — invoke('start_computation', { bytes, kind })
+//!   UI TypeScript surface — invoke('start_computation', { bytes, kind })
 //!       │
 //!       ▼  Tauri IPC
 //!   #[tauri::command] start_computation(bytes, kind, state, app)
@@ -34,6 +34,12 @@ mod banger;
 mod trading;
 mod trading_pressure;
 mod real_estate_harvester;
+mod forge_kernel;
+mod forge_fbc_host;
+mod forge_job_runtime;
+mod forge_job_io;
+mod forge_kasm_ledger;
+mod forge_program_cache;
 
 /// Format compact "YYYY-MM-DD" depuis epoch ms — utilisé par les
 /// reverse_synth log lines pour situer la période parsée. Pas de
@@ -54,7 +60,7 @@ fn ms_to_iso(ms: i64) -> String {
     format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -69,12 +75,26 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+use scan::fbc::{
+    execute_app_registry_batch, parse_app_section_registry_v0, tool_cell_output_artifact_json,
+    ForgeVmConfig,
+};
 use scan::kasm::{Node, Op, Program, Target, Ty};
 use scan::{
     gpu_capability_report, register_cuda_dll_path, take_last_cuda_status, BatchCall, BatchInput,
     BulkEvaluator, Hash, MemoryGovernor, MonsterEvolutionConfig, MonsterNode, MonsterSource, Store,
     SynthProgress, SynthProgressFn,
 };
+use forge_job_io::{
+    forge_job_mirror_dirs, read_forge_job_log_from_dirs, read_forge_job_log_tail_from_dirs,
+    read_forge_job_manifest_from_dirs, write_forge_job_log_to_dirs,
+    write_forge_job_manifest_to_dirs,
+};
+use forge_kasm_ledger::{
+    forge_kasm_hash_bytes, forge_kasm_hash_json, forge_kasm_record, forge_unix_ms,
+    ForgeKasmLedgerRecordRequest,
+};
+use forge_program_cache::forge_program_run_cached_with;
 
 // ─── Référence Rust pour la self-test correctness ────────────────────
 //
@@ -1030,6 +1050,30 @@ fn real_estate_harvester_run_tool(
     real_estate_harvester::run_tool(&store_path, &tool_id)
 }
 
+#[tauri::command]
+fn real_estate_onboarding_state(
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<real_estate_harvester::RealEstateOnboardingState, String> {
+    let store_path = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.store_path.clone()
+    };
+    real_estate_harvester::onboarding_state(&store_path)
+}
+
+#[tauri::command]
+fn real_estate_onboarding_answer(
+    question_id: String,
+    answer: String,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<real_estate_harvester::RealEstateOnboardingAnswerReport, String> {
+    let store_path = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.store_path.clone()
+    };
+    real_estate_harvester::record_onboarding_answer(&store_path, &question_id, &answer)
+}
+
 fn normalize_real_estate_tool_command(command: &str) -> Result<String, String> {
     let token = command
         .trim()
@@ -1051,6 +1095,144 @@ fn normalize_real_estate_tool_command(command: &str) -> Result<String, String> {
     Ok(format!("/{body}_"))
 }
 
+fn real_estate_json_path_string(value: &JsonValue, path: &[&str]) -> Option<String> {
+    let mut node = value;
+    for key in path {
+        node = node.get(*key)?;
+    }
+    node.as_str().map(|text| text.trim().to_string()).filter(|text| !text.is_empty())
+}
+
+fn real_estate_json_path_array_contains(value: &JsonValue, path: &[&str], needle: &str) -> bool {
+    let mut node = value;
+    for key in path {
+        let Some(next) = node.get(*key) else {
+            return false;
+        };
+        node = next;
+    }
+    node.as_array()
+        .map(|items| items.iter().any(|item| item.as_str() == Some(needle)))
+        .unwrap_or(false)
+}
+
+fn real_estate_truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out = text.chars().take(max_chars.saturating_sub(3)).collect::<String>();
+    out.push_str("...");
+    out
+}
+
+fn real_estate_memory_commit_score(commit: &JsonValue, command: &str, program_name: &str) -> i32 {
+    let tool_id = program_name.replace('_', "-");
+    let mut score = 0;
+    if real_estate_json_path_array_contains(commit, &["toolRouting", "primaryCommands"], command) {
+        score += 100;
+    }
+    if real_estate_json_path_string(commit, &["actionId"])
+        .map(|text| text.contains(program_name) || text.contains(&tool_id))
+        .unwrap_or(false)
+    {
+        score += 24;
+    }
+    if real_estate_json_path_string(commit, &["scenario"])
+        .map(|text| text.contains(program_name) || text.contains(&tool_id))
+        .unwrap_or(false)
+    {
+        score += 20;
+    }
+    if real_estate_json_path_string(commit, &["noteText"])
+        .map(|text| text.contains(command) || text.contains(program_name) || text.contains(&tool_id))
+        .unwrap_or(false)
+    {
+        score += 16;
+    }
+    if real_estate_json_path_string(commit, &["brainCommitRequest", "text"])
+        .map(|text| text.contains(command) || text.contains(program_name) || text.contains(&tool_id))
+        .unwrap_or(false)
+    {
+        score += 16;
+    }
+    if real_estate_json_path_string(commit, &["decision"])
+        .map(|text| text == "run_now" || text == "ready")
+        .unwrap_or(false)
+    {
+        score += 4;
+    }
+    score
+}
+
+fn read_real_estate_memory_commits(
+    store_path: &Path,
+    command: &str,
+    program_name: &str,
+    limit: usize,
+) -> JsonValue {
+    let path = store_path
+        .join("real-estate-harvester")
+        .join("data")
+        .join("real_estate_memory_commits.jsonl");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return json!({
+            "status": "missing",
+            "path": path.to_string_lossy(),
+            "selected": [],
+            "selection": {
+                "read": 0,
+                "selected": 0,
+                "matched": 0
+            }
+        });
+    };
+    let mut scored: Vec<(i32, usize, JsonValue)> = raw
+        .lines()
+        .enumerate()
+        .filter_map(|(idx, line)| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            serde_json::from_str::<JsonValue>(trimmed)
+                .ok()
+                .map(|commit| (real_estate_memory_commit_score(&commit, command, program_name), idx, commit))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    let read_count = scored.len();
+    let matched_count = scored.iter().filter(|(score, _, _)| *score > 0).count();
+    let selected = scored
+        .into_iter()
+        .take(limit.max(1).min(8))
+        .map(|(score, _, commit)| {
+            json!({
+                "score": score,
+                "actionId": real_estate_json_path_string(&commit, &["actionId"]),
+                "scenario": real_estate_json_path_string(&commit, &["scenario"]),
+                "decision": real_estate_json_path_string(&commit, &["decision"]),
+                "confidence": commit.get("confidence").cloned(),
+                "noteText": real_estate_json_path_string(&commit, &["noteText"])
+                    .map(|text| real_estate_truncate_chars(&text, 1400)),
+                "brainCommitRequest": commit.get("brainCommitRequest").cloned(),
+                "toolRouting": commit.get("toolRouting").cloned(),
+                "evidence": commit.get("evidence").cloned()
+            })
+        })
+        .collect::<Vec<_>>();
+    let selected_count = selected.len();
+    json!({
+        "status": "ready",
+        "path": path.to_string_lossy(),
+        "selected": selected,
+        "selection": {
+            "read": read_count,
+            "selected": selected_count,
+            "matched": matched_count
+        }
+    })
+}
+
 #[tauri::command]
 fn real_estate_tool_command_context(
     command: String,
@@ -1067,6 +1249,7 @@ fn real_estate_tool_command_context(
         state.store_path.clone()
     };
     let snapshot = real_estate_harvester::snapshot(&store_path).ok();
+    let memory_commits = read_real_estate_memory_commits(&store_path, &command, &program_name, 4);
     let brain = forge_agent_tools::call_internal_tool(
         &store_path,
         "forge_brain_recall",
@@ -1089,9 +1272,11 @@ fn real_estate_tool_command_context(
             "program_to_run": true,
             "brain_first": "brain_recall",
             "memory_scope": "agence_immo",
-            "data_sync": "real_estate_harvester_snapshot"
+            "data_sync": "real_estate_harvester_snapshot",
+            "memory_commits": "real_estate_memory_commits.jsonl"
         },
         "harvester_snapshot": snapshot,
+        "memory_commits": memory_commits,
         "brain": brain
     }))
 }
@@ -1145,8 +1330,6 @@ const GOOGLE_OAUTH_KEYRING_ACCOUNT: &str = "default";
 const GOOGLE_OAUTH_CALLBACK_TIMEOUT_SECS: u64 = 600;
 const GOOGLE_OAUTH_CALLBACK_PREFERRED_PORT: u16 = 53682;
 const GOOGLE_OAUTH_LEDGER_SCHEMA: &str = "forge.google.oauth.ledger.v1";
-const FORGE_KASM_LEDGER_SCHEMA: &str = "forge.kasm.ledger.v1";
-const FORGE_KASM_LEDGER_PAYLOAD_MAX_BYTES: usize = 256 * 1024;
 const GOOGLE_OAUTH_IDENTITY_SCOPES: &[&str] = &["openid", "profile", "email"];
 const GOOGLE_OAUTH_CORE_API_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/gmail.modify",
@@ -1348,285 +1531,6 @@ struct GoogleOAuthIdTokenClaims {
 
 fn google_oauth_pending_lock() -> &'static Mutex<Option<GoogleOAuthPending>> {
     GOOGLE_OAUTH_PENDING.get_or_init(|| Mutex::new(None))
-}
-
-fn forge_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ForgeKasmLedgerRecordRequest {
-    namespace: Option<String>,
-    kind: String,
-    payload: Option<JsonValue>,
-    summary: Option<JsonValue>,
-    cache_key: Option<String>,
-    append_on_hit: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ForgeKasmLedgerRecordResult {
-    namespace: String,
-    kind: String,
-    entry_hash: String,
-    prev_hash: Option<String>,
-    payload_hash: String,
-    cache_key_hash: String,
-    cache_hit: bool,
-    timestamp_ms: u64,
-    ledger_path: String,
-    latest_path: String,
-}
-
-fn forge_kasm_hash_bytes(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let hex = digest
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("kasm://sha256/{hex}")
-}
-
-fn forge_kasm_canonical_json(value: JsonValue) -> JsonValue {
-    match value {
-        JsonValue::Array(items) => JsonValue::Array(
-            items
-                .into_iter()
-                .map(forge_kasm_canonical_json)
-                .collect::<Vec<_>>(),
-        ),
-        JsonValue::Object(map) => {
-            let mut sorted = BTreeMap::new();
-            for (key, value) in map {
-                sorted.insert(key, forge_kasm_canonical_json(value));
-            }
-            let mut canonical = serde_json::Map::new();
-            for (key, value) in sorted {
-                canonical.insert(key, value);
-            }
-            JsonValue::Object(canonical)
-        }
-        other => other,
-    }
-}
-
-fn forge_kasm_hash_json(value: &JsonValue) -> String {
-    let canonical = forge_kasm_canonical_json(value.clone());
-    let bytes = serde_json::to_vec(&canonical).unwrap_or_else(|_| b"null".to_vec());
-    forge_kasm_hash_bytes(&bytes)
-}
-
-fn forge_kasm_safe_namespace(raw: Option<&str>) -> String {
-    let candidate = raw
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("app");
-    let safe = candidate
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    safe.trim_matches('_')
-        .chars()
-        .take(80)
-        .collect::<String>()
-        .if_empty_then("app")
-}
-
-trait ForgeNonEmptyString {
-    fn if_empty_then(self, fallback: &str) -> String;
-}
-
-impl ForgeNonEmptyString for String {
-    fn if_empty_then(self, fallback: &str) -> String {
-        if self.is_empty() {
-            fallback.to_string()
-        } else {
-            self
-        }
-    }
-}
-
-fn forge_kasm_ledger_dir(namespace: &str) -> PathBuf {
-    forge_store_dir()
-        .join("kasm-ledger")
-        .join(forge_kasm_safe_namespace(Some(namespace)))
-}
-
-fn forge_kasm_ledger_index_path(namespace: &str) -> PathBuf {
-    forge_kasm_ledger_dir(namespace).join("index.json")
-}
-
-fn forge_kasm_ledger_latest_path(namespace: &str) -> PathBuf {
-    forge_kasm_ledger_dir(namespace).join("latest.json")
-}
-
-fn forge_kasm_ledger_jsonl_path(namespace: &str) -> PathBuf {
-    forge_kasm_ledger_dir(namespace).join("ledger.jsonl")
-}
-
-fn forge_kasm_read_json_object(path: &Path) -> serde_json::Map<String, JsonValue> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<JsonValue>(&raw).ok())
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default()
-}
-
-fn forge_kasm_ledger_prev_hash(namespace: &str) -> Option<String> {
-    forge_kasm_read_json_object(&forge_kasm_ledger_latest_path(namespace))
-        .get("entryHash")
-        .and_then(JsonValue::as_str)
-        .map(str::to_string)
-}
-
-fn forge_kasm_ledger_cache_hit(namespace: &str, cache_key_hash: &str) -> Option<ForgeKasmLedgerRecordResult> {
-    let index = forge_kasm_read_json_object(&forge_kasm_ledger_index_path(namespace));
-    let hit = index.get(cache_key_hash)?.as_object()?;
-    Some(ForgeKasmLedgerRecordResult {
-        namespace: namespace.to_string(),
-        kind: hit
-            .get("kind")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("action")
-            .to_string(),
-        entry_hash: hit
-            .get("entryHash")
-            .and_then(JsonValue::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        prev_hash: hit
-            .get("prevHash")
-            .and_then(JsonValue::as_str)
-            .map(str::to_string),
-        payload_hash: hit
-            .get("payloadHash")
-            .and_then(JsonValue::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        cache_key_hash: cache_key_hash.to_string(),
-        cache_hit: true,
-        timestamp_ms: hit
-            .get("timestampMs")
-            .and_then(JsonValue::as_u64)
-            .unwrap_or(0),
-        ledger_path: forge_kasm_ledger_jsonl_path(namespace).display().to_string(),
-        latest_path: forge_kasm_ledger_latest_path(namespace).display().to_string(),
-    })
-}
-
-#[tauri::command]
-fn forge_kasm_record(request: ForgeKasmLedgerRecordRequest) -> Result<ForgeKasmLedgerRecordResult, String> {
-    let namespace = forge_kasm_safe_namespace(request.namespace.as_deref());
-    let kind = request.kind.trim().chars().take(120).collect::<String>();
-    let kind = if kind.is_empty() { "action".to_string() } else { kind };
-    let payload = forge_kasm_canonical_json(request.payload.unwrap_or(JsonValue::Null));
-    let payload_bytes = serde_json::to_vec(&payload).map_err(|err| format!("kasm payload encode: {err}"))?;
-    if payload_bytes.len() > FORGE_KASM_LEDGER_PAYLOAD_MAX_BYTES {
-        return Err(format!(
-            "kasm payload too large for UI ledger: {} bytes > {} bytes",
-            payload_bytes.len(),
-            FORGE_KASM_LEDGER_PAYLOAD_MAX_BYTES
-        ));
-    }
-    let payload_hash = forge_kasm_hash_bytes(&payload_bytes);
-    let cache_material = request.cache_key.unwrap_or_else(|| {
-        serde_json::to_string(&json!({
-            "schema": FORGE_KASM_LEDGER_SCHEMA,
-            "namespace": &namespace,
-            "kind": &kind,
-            "payloadHash": &payload_hash,
-        }))
-        .unwrap_or_default()
-    });
-    let cache_key_hash = forge_kasm_hash_bytes(cache_material.as_bytes());
-    if request.append_on_hit != Some(true) {
-        if let Some(hit) = forge_kasm_ledger_cache_hit(&namespace, &cache_key_hash) {
-            return Ok(hit);
-        }
-    }
-
-    let dir = forge_kasm_ledger_dir(&namespace);
-    std::fs::create_dir_all(&dir).map_err(|err| format!("kasm ledger mkdir: {err}"))?;
-    let prev_hash = forge_kasm_ledger_prev_hash(&namespace);
-    let timestamp_ms = forge_unix_ms();
-    let summary = forge_kasm_canonical_json(request.summary.unwrap_or(JsonValue::Null));
-    let preimage = json!({
-        "schema": FORGE_KASM_LEDGER_SCHEMA,
-        "namespace": &namespace,
-        "kind": &kind,
-        "timestampMs": timestamp_ms,
-        "prevHash": &prev_hash,
-        "payloadHash": &payload_hash,
-        "cacheKeyHash": &cache_key_hash,
-        "summary": summary,
-    });
-    let entry_hash = forge_kasm_hash_json(&preimage);
-    let entry = json!({
-        "schema": FORGE_KASM_LEDGER_SCHEMA,
-        "namespace": &namespace,
-        "kind": &kind,
-        "timestampMs": timestamp_ms,
-        "prevHash": preimage.get("prevHash").cloned().unwrap_or(JsonValue::Null),
-        "entryHash": &entry_hash,
-        "payloadHash": &payload_hash,
-        "cacheKeyHash": &cache_key_hash,
-        "summary": preimage.get("summary").cloned().unwrap_or(JsonValue::Null),
-    });
-    let ledger_path = forge_kasm_ledger_jsonl_path(&namespace);
-    let latest_path = forge_kasm_ledger_latest_path(&namespace);
-    let mut ledger = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&ledger_path)
-        .map_err(|err| format!("kasm ledger open: {err}"))?;
-    let entry_line = serde_json::to_vec(&entry).map_err(|err| format!("kasm ledger encode: {err}"))?;
-    ledger
-        .write_all(&entry_line)
-        .and_then(|_| ledger.write_all(b"\n"))
-        .map_err(|err| format!("kasm ledger append: {err}"))?;
-    let pretty = serde_json::to_vec_pretty(&entry).map_err(|err| format!("kasm latest encode: {err}"))?;
-    std::fs::write(&latest_path, pretty).map_err(|err| format!("kasm latest write: {err}"))?;
-
-    let mut index = forge_kasm_read_json_object(&forge_kasm_ledger_index_path(&namespace));
-    index.insert(
-        cache_key_hash.clone(),
-        json!({
-            "kind": &kind,
-            "entryHash": &entry_hash,
-            "prevHash": &prev_hash,
-            "payloadHash": &payload_hash,
-            "timestampMs": timestamp_ms,
-        }),
-    );
-    let index_value = JsonValue::Object(index);
-    let index_bytes = serde_json::to_vec_pretty(&index_value)
-        .map_err(|err| format!("kasm index encode: {err}"))?;
-    std::fs::write(forge_kasm_ledger_index_path(&namespace), index_bytes)
-        .map_err(|err| format!("kasm index write: {err}"))?;
-
-    Ok(ForgeKasmLedgerRecordResult {
-        namespace,
-        kind,
-        entry_hash,
-        prev_hash,
-        payload_hash,
-        cache_key_hash,
-        cache_hit: false,
-        timestamp_ms,
-        ledger_path: ledger_path.display().to_string(),
-        latest_path: latest_path.display().to_string(),
-    })
 }
 
 fn google_oauth_scope_catalog() -> Vec<GoogleApiScopeDefinition> {
@@ -8567,6 +8471,7 @@ struct ForgeJobEntry {
     context_accounting: Option<JsonValue>,
     performance: Option<JsonValue>,
     last_modified_ms: u64,
+    job: forge_job_runtime::ForgeUnifiedJob,
 }
 
 fn json_number_as_f64(value: Option<&JsonValue>) -> Option<f64> {
@@ -10702,14 +10607,24 @@ fn named_window(app: &tauri::AppHandle, label: Option<&str>) -> Result<WebviewWi
 }
 
 #[tauri::command]
-fn minimize_main_window(app: tauri::AppHandle, label: Option<String>) -> Result<(), String> {
+fn minimize_main_window(
+    app: tauri::AppHandle,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+    label: Option<String>,
+) -> Result<(), String> {
+    forge_kernel::record_window_control(&kernel, "minimize_main_window", label.as_deref());
     named_window(&app, label.as_deref())?
         .minimize()
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn toggle_maximize_main_window(app: tauri::AppHandle, label: Option<String>) -> Result<(), String> {
+fn toggle_maximize_main_window(
+    app: tauri::AppHandle,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+    label: Option<String>,
+) -> Result<(), String> {
+    forge_kernel::record_window_control(&kernel, "toggle_maximize_main_window", label.as_deref());
     let window = named_window(&app, label.as_deref())?;
     if window.is_maximized().map_err(|e| e.to_string())? {
         window.unmaximize().map_err(|e| e.to_string())
@@ -10722,9 +10637,11 @@ fn toggle_maximize_main_window(app: tauri::AppHandle, label: Option<String>) -> 
 fn close_main_window(
     app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<ForgeAppState>>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
     label: Option<String>,
 ) -> Result<(), String> {
     let target = label.as_deref().unwrap_or("main");
+    forge_kernel::record_window_control(&kernel, "close_main_window", Some(target));
     if target == "main" {
         shutdown_forge_runtime(&state);
         app.exit(0);
@@ -10750,7 +10667,12 @@ fn shutdown_forge_runtime(state: &Mutex<ForgeAppState>) {
 }
 
 #[tauri::command]
-fn drag_main_window(app: tauri::AppHandle, label: Option<String>) -> Result<(), String> {
+fn drag_main_window(
+    app: tauri::AppHandle,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+    label: Option<String>,
+) -> Result<(), String> {
+    forge_kernel::record_window_control(&kernel, "drag_main_window", label.as_deref());
     named_window(&app, label.as_deref())?
         .start_dragging()
         .map_err(|e| e.to_string())
@@ -15921,8 +15843,16 @@ async fn webexplorer_native_present<R: Runtime>(
     app: tauri::AppHandle<R>,
     bounds: WebExplorerMemoryBounds,
     force_reload: Option<bool>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
 ) -> Result<(), String> {
     let reload = force_reload.unwrap_or(false);
+    let store_path = forge_store_path_from_app(&app);
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        store_path.as_deref(),
+        "webexplorer_native_present",
+        json!({ "bounds": &bounds, "forceReload": reload }),
+    )?;
     let generation = WEB_EXPLORER_PRESENT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     tauri::async_runtime::spawn_blocking(move || {
         if WEB_EXPLORER_PRESENT_GENERATION.load(Ordering::SeqCst) != generation {
@@ -15940,7 +15870,17 @@ async fn webexplorer_native_present<R: Runtime>(
 }
 
 #[tauri::command]
-fn webexplorer_native_hide<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+fn webexplorer_native_hide<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+) -> Result<(), String> {
+    let store_path = forge_store_path_from_app(&app);
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        store_path.as_deref(),
+        "webexplorer_native_hide",
+        json!({ "target": WEB_EXPLORER_CHILD_LABEL }),
+    )?;
     WEB_EXPLORER_PRESENT_GENERATION.fetch_add(1, Ordering::SeqCst);
     if let Some(webview) = app.get_webview(WEB_EXPLORER_CHILD_LABEL) {
         alpha_trace(&app, "webexplorer.native", "hide.begin");
@@ -16793,8 +16733,16 @@ async fn bloomberg_live_native_present<R: Runtime>(
     app: tauri::AppHandle<R>,
     bounds: WebExplorerMemoryBounds,
     force_reload: Option<bool>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
 ) -> Result<(), String> {
     let reload = force_reload.unwrap_or(false);
+    let store_path = forge_store_path_from_app(&app);
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        store_path.as_deref(),
+        "bloomberg_live_native_present",
+        json!({ "bounds": &bounds, "forceReload": reload }),
+    )?;
     let generation = BLOOMBERG_PRESENT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     tauri::async_runtime::spawn_blocking(move || {
         if BLOOMBERG_PRESENT_GENERATION.load(Ordering::SeqCst) != generation {
@@ -16822,7 +16770,17 @@ async fn bloomberg_live_native_prewarm<R: Runtime>(app: tauri::AppHandle<R>) -> 
 }
 
 #[tauri::command]
-fn bloomberg_live_native_hide<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+fn bloomberg_live_native_hide<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+) -> Result<(), String> {
+    let store_path = forge_store_path_from_app(&app);
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        store_path.as_deref(),
+        "bloomberg_live_native_hide",
+        json!({ "target": BLOOMBERG_CHILD_LABEL }),
+    )?;
     BLOOMBERG_PRESENT_GENERATION.fetch_add(1, Ordering::SeqCst);
     if let Some(webview) = app.get_webview(BLOOMBERG_CHILD_LABEL) {
         alpha_trace(&app, "trading.bloomberg.native", "hide.park.begin");
@@ -17145,143 +17103,26 @@ fn webexplorer_save_content_block_to_atlas(
     save_webexplorer_block_to_atlas(&store_path, &snapshot, &request)
 }
 
-fn forge_mcp_jobs_dir_candidate() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("FORGE_JOBS_DIR") {
-        let path = PathBuf::from(path);
-        if !path.as_os_str().is_empty() {
-            return Some(path);
-        }
-    }
-    if let Some(path) = std::env::var_os("FORGE_STORE_DIR") {
-        let store = PathBuf::from(path);
-        if !store.as_os_str().is_empty() {
-            return Some(store.join("jobs"));
-        }
-    }
-    None
-}
-
-fn forge_job_mirror_dirs(primary_jobs_dir: &Path) -> Vec<PathBuf> {
-    let mut dirs = vec![primary_jobs_dir.to_path_buf()];
-    if let Some(mirror) = forge_mcp_jobs_dir_candidate() {
-        if mirror != primary_jobs_dir {
-            dirs.push(mirror);
-        }
-    }
-    dirs
-}
-
-fn write_forge_job_manifest_to_dirs(job_id: &str, manifest_bytes: &[u8], job_dirs: &[PathBuf]) -> Result<(), String> {
-    for jobs_dir in job_dirs {
-        std::fs::create_dir_all(jobs_dir)
-            .map_err(|e| format!("create Forge jobs dir '{}': {e}", jobs_dir.display()))?;
-        let manifest_path = jobs_dir.join(format!("{job_id}.json"));
-        let manifest_tmp = manifest_path.with_extension("json.tmp");
-        std::fs::write(&manifest_tmp, manifest_bytes)
-            .map_err(|e| format!("write Forge job manifest tmp '{}': {e}", manifest_tmp.display()))?;
-        std::fs::rename(&manifest_tmp, &manifest_path)
-            .map_err(|e| format!("commit Forge job manifest '{}': {e}", manifest_path.display()))?;
-    }
-    Ok(())
-}
-
-fn write_forge_job_log_to_dirs(job_id: &str, log_text: &str, job_dirs: &[PathBuf]) -> Result<(), String> {
-    for jobs_dir in job_dirs {
-        std::fs::create_dir_all(jobs_dir)
-            .map_err(|e| format!("create Forge jobs dir '{}': {e}", jobs_dir.display()))?;
-        let log_path = jobs_dir.join(format!("{job_id}.log"));
-        std::fs::write(&log_path, log_text)
-            .map_err(|e| format!("write Forge job log '{}': {e}", log_path.display()))?;
-    }
-    Ok(())
-}
-
-fn read_forge_job_manifest_from_dirs(job_id: &str, job_dirs: &[PathBuf]) -> Result<(PathBuf, Vec<u8>), String> {
-    let mut last_err = None;
-    for jobs_dir in job_dirs {
-        let manifest_path = jobs_dir.join(format!("{job_id}.json"));
-        match std::fs::read(&manifest_path) {
-            Ok(bytes) => return Ok((manifest_path, bytes)),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => last_err = Some(format!("read Forge job manifest '{}': {err}", manifest_path.display())),
-        }
-    }
-    Err(last_err.unwrap_or_else(|| format!("Forge job manifest '{job_id}' was not found in any protected jobs directory")))
-}
-
-fn read_forge_job_log_from_dirs(job_id: &str, job_dirs: &[PathBuf]) -> Result<String, String> {
-    let mut last_err = None;
-    for jobs_dir in job_dirs {
-        let log_path = jobs_dir.join(format!("{job_id}.log"));
-        match std::fs::read_to_string(&log_path) {
-            Ok(text) => return Ok(text),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => last_err = Some(format!("read Forge job log '{}': {err}", log_path.display())),
-        }
-    }
-    if let Some(err) = last_err {
-        Err(err)
-    } else {
-        Ok(String::new())
-    }
-}
-
-fn read_forge_job_log_tail_from_dirs(
-    job_id: &str,
-    job_dirs: &[PathBuf],
-    cursor: u64,
-    max_bytes: u64,
-) -> Result<JsonValue, String> {
-    let mut last_err = None;
-    let bounded_max = max_bytes.clamp(1, 262_144) as usize;
-    for jobs_dir in job_dirs {
-        let log_path = jobs_dir.join(format!("{job_id}.log"));
-        let metadata = match std::fs::metadata(&log_path) {
-            Ok(metadata) => metadata,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(err) => {
-                last_err = Some(format!("stat Forge job log '{}': {err}", log_path.display()));
-                continue;
-            }
-        };
-        let size = metadata.len();
-        let start = if cursor <= size { cursor } else { 0 };
-        let mut file = std::fs::File::open(&log_path)
-            .map_err(|err| format!("open Forge job log '{}': {err}", log_path.display()))?;
-        file.seek(SeekFrom::Start(start))
-            .map_err(|err| format!("seek Forge job log '{}': {err}", log_path.display()))?;
-        let remaining = size.saturating_sub(start).min(bounded_max as u64) as usize;
-        let mut bytes = vec![0_u8; remaining];
-        let read = file
-            .read(&mut bytes)
-            .map_err(|err| format!("read Forge job log '{}': {err}", log_path.display()))?;
-        bytes.truncate(read);
-        let text = String::from_utf8_lossy(&bytes).to_string();
-        return Ok(json!({
-            "text": text,
-            "cursor": start + read as u64,
-            "size": size,
-            "reset": start == 0 && cursor > size,
-        }));
-    }
-    if let Some(err) = last_err {
-        Err(err)
-    } else {
-        Ok(json!({
-            "text": "",
-            "cursor": 0_u64,
-            "size": 0_u64,
-            "reset": cursor > 0,
-        }))
-    }
-}
-
 fn forge_jobs_dir_from_state(state: &tauri::State<'_, Mutex<ForgeAppState>>) -> Result<PathBuf, String> {
     let app_state = state.lock().map_err(|e| e.to_string())?;
     Ok(app_state.store_path.join("jobs"))
 }
 
-fn forge_programs_dir_from_state(state: &tauri::State<'_, Mutex<ForgeAppState>>) -> Result<PathBuf, String> {
+fn forge_store_path_from_state(
+    state: &tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<PathBuf, String> {
+    let app_state = state.lock().map_err(|e| e.to_string())?;
+    Ok(app_state.store_path.clone())
+}
+
+fn forge_store_path_from_app<R: Runtime>(app: &tauri::AppHandle<R>) -> Option<PathBuf> {
+    app.try_state::<Mutex<ForgeAppState>>()
+        .and_then(|state| state.lock().ok().map(|guard| guard.store_path.clone()))
+}
+
+fn forge_programs_dir_from_state(
+    state: &tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<PathBuf, String> {
     let app_state = state.lock().map_err(|e| e.to_string())?;
     Ok(app_state.store_path.join("programs"))
 }
@@ -17478,10 +17319,11 @@ async fn create_forge_pending_job(
             }
         })
     };
+    let manifest_kind = kind.clone();
     let manifest = json!({
         "job_id": job_id,
         "title": title.clone(),
-        "kind": kind,
+        "kind": manifest_kind,
         "status": "pending",
         "source": "ui_upload",
         "file_path": primary_file_path,
@@ -17543,7 +17385,17 @@ async fn create_forge_pending_job(
     };
     write_forge_job_log_to_dirs(&job_id, &pending_log, &all_job_dirs)?;
 
+    let unified_job = forge_job_runtime::ForgeUnifiedJob::from_manifest(
+        &job_id,
+        &kind,
+        "pending",
+        &manifest,
+        modified_ms,
+    );
+    let _ = forge_job_runtime::append_job_ledger_event(&store_path, "created", modified_ms, &unified_job);
+
     Ok(ForgeJobEntry {
+        job: unified_job,
         job_id,
         title: Some(title),
         status: "pending".to_string(),
@@ -17574,8 +17426,16 @@ async fn create_forge_pending_job(
 async fn list_forge_jobs(
     limit: Option<usize>,
     state: tauri::State<'_, Mutex<ForgeAppState>>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
 ) -> Result<Vec<ForgeJobEntry>, String> {
-    let jobs_dir = forge_jobs_dir_from_state(&state)?;
+    let store_path = forge_store_path_from_state(&state)?;
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        Some(&store_path),
+        "list_forge_jobs",
+        json!({ "limit": limit, "projectionOnly": true }),
+    )?;
+    let jobs_dir = store_path.join("jobs");
     let all_job_dirs = forge_job_mirror_dirs(&jobs_dir);
     let mut paths_by_job = std::collections::HashMap::<String, (SystemTime, PathBuf)>::new();
     let mut unreadable_dirs = Vec::new();
@@ -17698,7 +17558,15 @@ async fn list_forge_jobs(
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
+        let unified_job = forge_job_runtime::ForgeUnifiedJob::from_manifest(
+            &job_id,
+            &kind,
+            &status,
+            &value,
+            last_modified_ms,
+        );
         out.push(ForgeJobEntry {
+            job: unified_job,
             job_id,
             title,
             status,
@@ -17722,6 +17590,187 @@ async fn list_forge_jobs(
     });
     out.truncate(max_items);
     Ok(out)
+}
+
+#[tauri::command]
+async fn forge_job_runtime_snapshot(
+    limit: Option<usize>,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<forge_job_runtime::ForgeJobLedgerSnapshot, String> {
+    let store_path = {
+        let app_state = state.lock().map_err(|e| e.to_string())?;
+        app_state.store_path.clone()
+    };
+    forge_job_runtime::recover_job_ledger(&store_path, limit.unwrap_or(80).clamp(1, 500))
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgeFbcRuntimeSnapshotRequest {
+    backend: Option<String>,
+    write_artifacts: Option<bool>,
+    record_kernel: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgeFbcRuntimeSnapshot {
+    kind: String,
+    registry_hash: String,
+    graph_hash: String,
+    section_count: usize,
+    sensitive_command_count: usize,
+    cell_count: usize,
+    ok_count: usize,
+    denied_count: usize,
+    ledger_root_hash: String,
+    manifest_path: String,
+    output_dir: String,
+    job_id: String,
+    job_event_id: String,
+    projection: JsonValue,
+}
+
+#[tauri::command]
+fn forge_fbc_runtime_snapshot(
+    request: Option<ForgeFbcRuntimeSnapshotRequest>,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+) -> Result<ForgeFbcRuntimeSnapshot, String> {
+    let request = request.unwrap_or_default();
+    let store_path = {
+        let app_state = state.lock().map_err(|e| e.to_string())?;
+        app_state.store_path.clone()
+    };
+    let ownership_path = forge_workspace_dir()
+        .join("examples")
+        .join("forge_tauri_ui")
+        .join("ui")
+        .join("SECTION_OWNERSHIP.json");
+    let ownership_json = std::fs::read_to_string(&ownership_path)
+        .map_err(|e| format!("read SECTION_OWNERSHIP '{}': {e}", ownership_path.display()))?;
+    let registry = parse_app_section_registry_v0(&ownership_json)
+        .map_err(|e| format!("parse app FBC registry: {e:?}"))?;
+    let mut config = ForgeVmConfig::default();
+    if let Some(backend) = request.backend.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        config.backend = backend.to_string();
+    } else {
+        config.backend = "auto".to_string();
+    }
+    let batch = execute_app_registry_batch(&ownership_json, &config)
+        .map_err(|e| format!("execute app FBC registry: {e:?}"))?;
+    let output_dir = store_path.join("fbc").join("app");
+    let manifest_path = output_dir.join("app_fbc_registry_batch.json");
+    if request.write_artifacts.unwrap_or(true) {
+        std::fs::create_dir_all(&output_dir)
+            .map_err(|e| format!("create FBC app output dir '{}': {e}", output_dir.display()))?;
+        for record in &batch.records {
+            let safe_name = safe_fbc_artifact_name(&record.command);
+            let artifact = tool_cell_output_artifact_json(
+                record,
+                &batch.graph_hash,
+                &registry.registry_hash,
+                &batch.ledger_root_hash,
+            );
+            let path = output_dir.join(format!("{safe_name}.json"));
+            std::fs::write(&path, format!("{artifact}\n"))
+                .map_err(|e| format!("write FBC artifact '{}': {e}", path.display()))?;
+        }
+        std::fs::write(&manifest_path, format!("{}\n", batch.projection_json))
+            .map_err(|e| format!("write FBC manifest '{}': {e}", manifest_path.display()))?;
+    }
+    let projection = serde_json::from_str::<JsonValue>(&batch.projection_json)
+        .unwrap_or_else(|_| json!({ "kind": "forge_fbc_projection_parse_error", "raw": batch.projection_json }));
+    let now_ms = now_epoch_ms() as u64;
+    let job_id = format!("fbc-app-{now_ms}");
+    let job = forge_job_runtime::ForgeUnifiedJob::new(
+        job_id.clone(),
+        "forge_fbc_app_runtime",
+        json!({
+            "registryHash": registry.registry_hash,
+            "graphHash": batch.graph_hash,
+            "sectionCount": registry.section_count,
+            "sensitiveCommandCount": registry.sensitive_command_count,
+            "cellCount": batch.tool_count,
+            "okCount": batch.ok_count,
+            "deniedCount": batch.denied_count,
+            "ledgerRootHash": batch.ledger_root_hash,
+            "manifestPath": manifest_path.display().to_string(),
+            "rawInputReturned": false,
+            "capabilityOnly": true,
+        }),
+        if batch.denied_count == 0 { "completed" } else { "denied" },
+        forge_job_runtime::ForgeJobCost {
+            estimate_units: batch.tool_count as u64,
+            actual_units: batch.records.len() as u64,
+            token_estimate: 0,
+            budget_class: "light".to_string(),
+        },
+        forge_job_runtime::ForgeJobRetry::default(),
+        forge_job_runtime::ForgeJobProof {
+            hash: batch.ledger_root_hash.clone(),
+            artifact_path: manifest_path.display().to_string(),
+            source_hash: registry.registry_hash.clone(),
+        },
+    );
+    let event = forge_job_runtime::append_job_ledger_event(
+        &store_path,
+        "fbc.app.runtime.snapshot",
+        now_ms,
+        &job,
+    )?;
+    let snapshot = ForgeFbcRuntimeSnapshot {
+        kind: "forge_fbc_app_runtime_snapshot_v0".to_string(),
+        registry_hash: registry.registry_hash,
+        graph_hash: batch.graph_hash,
+        section_count: registry.section_count,
+        sensitive_command_count: registry.sensitive_command_count,
+        cell_count: batch.tool_count,
+        ok_count: batch.ok_count,
+        denied_count: batch.denied_count,
+        ledger_root_hash: batch.ledger_root_hash,
+        manifest_path: manifest_path.display().to_string(),
+        output_dir: output_dir.display().to_string(),
+        job_id,
+        job_event_id: event.event_id,
+        projection,
+    };
+    if request.record_kernel.unwrap_or(true) {
+        let value = serde_json::to_value(&snapshot)
+            .map_err(|e| format!("encode FBC runtime snapshot for kernel: {e}"))?;
+        forge_kernel::record_fbc_runtime_snapshot(&kernel, value);
+    }
+    Ok(snapshot)
+}
+
+fn safe_fbc_artifact_name(command: &str) -> String {
+    let mut out = command
+        .trim_matches('/')
+        .trim_end_matches('_')
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '_' })
+        .collect::<String>();
+    if out.is_empty() {
+        out = "fbc_artifact".to_string();
+    }
+    out
+}
+
+fn forge_fbc_guard_sensitive_action(
+    kernel: &Mutex<forge_kernel::ForgeKernel>,
+    store_path: Option<&Path>,
+    action: &str,
+    payload: JsonValue,
+) -> Result<JsonValue, String> {
+    let response = forge_fbc_host::execute_sensitive_guard(store_path, action, &payload)?;
+    let mut proof = response.proof;
+    if let Some(ledger_hash) = response.ledger_hash {
+        if let Some(object) = proof.as_object_mut() {
+            object.insert("ledgerHash".to_string(), json!(ledger_hash));
+        }
+    }
+    forge_kernel::record_preverified_fbc_guard(kernel, proof.clone());
+    Ok(proof)
 }
 
 fn summarize_forge_program_manifest(value: &JsonValue, path: &Path, modified: SystemTime) -> JsonValue {
@@ -18009,276 +18058,8 @@ fn call_forge_mcp_tool(store_path: PathBuf, tool: &str, args: JsonValue) -> Resu
     Ok(result)
 }
 
-fn forge_program_run_cache_dir(store_path: &Path) -> PathBuf {
-    store_path
-        .join("kasm-ledger")
-        .join("program-run")
-        .join("results")
-}
-
-fn forge_program_cache_hash_hex(hash: &str) -> String {
-    hash.rsplit('/')
-        .next()
-        .unwrap_or(hash)
-        .chars()
-        .filter(|ch| ch.is_ascii_hexdigit())
-        .take(80)
-        .collect::<String>()
-        .if_empty_then("unknown")
-}
-
-fn forge_program_run_cache_path(store_path: &Path, cache_key_hash: &str) -> PathBuf {
-    forge_program_run_cache_dir(store_path).join(format!(
-        "{}.json",
-        forge_program_cache_hash_hex(cache_key_hash)
-    ))
-}
-
-fn forge_program_file_fingerprint(path: &str, role: &str) -> Result<JsonValue, String> {
-    let path_hash = forge_kasm_hash_bytes(path.as_bytes());
-    let file_path = PathBuf::from(path);
-    let metadata = std::fs::metadata(&file_path)
-        .map_err(|err| format!("read input metadata '{}': {err}", file_path.display()))?;
-    if !metadata.is_file() {
-        return Err(format!("program input is not a file: {}", file_path.display()));
-    }
-    let modified_ms = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
-    let mut file = std::fs::File::open(&file_path)
-        .map_err(|err| format!("open input '{}': {err}", file_path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 1024 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|err| format!("hash input '{}': {err}", file_path.display()))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    let file_hash = format!(
-        "kasm://sha256/{}",
-        hasher
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    );
-    Ok(json!({
-        "role": role,
-        "pathHash": path_hash,
-        "fileHash": file_hash,
-        "bytes": metadata.len(),
-        "modifiedMs": modified_ms,
-    }))
-}
-
-fn forge_program_run_cache_material(args: &JsonValue) -> Result<(String, JsonValue), String> {
-    let inputs = args
-        .get("inputs")
-        .and_then(JsonValue::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let mut input_fingerprints = Vec::new();
-    for input in inputs {
-        let role = input
-            .get("role")
-            .and_then(JsonValue::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("data");
-        if let Some(path) = input
-            .get("path")
-            .and_then(JsonValue::as_str)
-            .filter(|value| !value.trim().is_empty())
-        {
-            input_fingerprints.push(forge_program_file_fingerprint(path, role)?);
-        } else {
-            input_fingerprints.push(json!({
-                "role": role,
-                "inlineInputHash": forge_kasm_hash_json(&input),
-            }));
-        }
-    }
-    let program_inline_hash = args
-        .get("program")
-        .and_then(JsonValue::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| forge_kasm_hash_bytes(value.as_bytes()));
-    let title_hash = args
-        .get("title")
-        .and_then(JsonValue::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| forge_kasm_hash_bytes(value.as_bytes()));
-    let material = forge_kasm_canonical_json(json!({
-        "schema": "forge.program.run.cache.v1",
-        "programHash": args.get("program_hash").and_then(JsonValue::as_str).unwrap_or(""),
-        "programInlineHash": program_inline_hash,
-        "titleHash": title_hash,
-        "dryRun": args.get("dry_run").and_then(JsonValue::as_bool).unwrap_or(false),
-        "planOnly": args.get("plan_only").and_then(JsonValue::as_bool).unwrap_or(false),
-        "inputs": input_fingerprints,
-    }));
-    let cache_key_hash = forge_kasm_hash_json(&material);
-    Ok((cache_key_hash, material))
-}
-
-fn forge_program_run_cache_summary(cache_material: &JsonValue, cache_key_hash: &str) -> JsonValue {
-    let inputs = cache_material
-        .get("inputs")
-        .and_then(JsonValue::as_array)
-        .cloned()
-        .unwrap_or_default();
-    json!({
-        "cacheKeyHash": cache_key_hash,
-        "programHash": cache_material.get("programHash").cloned().unwrap_or(JsonValue::Null),
-        "programInlineHash": cache_material.get("programInlineHash").cloned().unwrap_or(JsonValue::Null),
-        "inputCount": inputs.len(),
-        "inputHashes": inputs
-            .iter()
-            .filter_map(|input| input.get("fileHash").or_else(|| input.get("inlineInputHash")).cloned())
-            .collect::<Vec<_>>(),
-        "dryRun": cache_material.get("dryRun").cloned().unwrap_or_else(|| json!(false)),
-        "planOnly": cache_material.get("planOnly").cloned().unwrap_or_else(|| json!(false)),
-        "rawInputsStored": false,
-    })
-}
-
-fn forge_program_run_cache_meta(
-    cache_hit: bool,
-    cache_key_hash: &str,
-    result_hash: &str,
-    ledger_hash: Option<&str>,
-    result_path: &Path,
-) -> JsonValue {
-    json!({
-        "namespace": "program-run",
-        "cacheHit": cache_hit,
-        "cacheKeyHash": cache_key_hash,
-        "resultHash": result_hash,
-        "ledgerHash": ledger_hash.unwrap_or(""),
-        "resultPath": result_path.display().to_string(),
-        "contentAddressed": true,
-        "rawInputsStored": false,
-    })
-}
-
-fn forge_program_annotate_cache(mut response: JsonValue, meta: JsonValue) -> JsonValue {
-    if let Some(obj) = response.as_object_mut() {
-        obj.insert("kasmCache".to_string(), meta.clone());
-        if let Some(summary) = obj.get_mut("summary").and_then(JsonValue::as_object_mut) {
-            summary.insert("kasmCache".to_string(), meta);
-        }
-        response
-    } else {
-        json!({
-            "result": response,
-            "kasmCache": meta,
-        })
-    }
-}
-
-fn forge_program_read_cached_response(
-    store_path: &Path,
-    cache_key_hash: &str,
-) -> Option<(JsonValue, String, PathBuf)> {
-    let path = forge_program_run_cache_path(store_path, cache_key_hash);
-    let raw = std::fs::read_to_string(&path).ok()?;
-    let value = serde_json::from_str::<JsonValue>(&raw).ok()?;
-    if value.get("cacheKeyHash").and_then(JsonValue::as_str) != Some(cache_key_hash) {
-        return None;
-    }
-    let response = value.get("response")?.clone();
-    let result_hash = value
-        .get("resultHash")
-        .and_then(JsonValue::as_str)
-        .unwrap_or("")
-        .to_string();
-    Some((response, result_hash, path))
-}
-
-fn forge_program_write_cached_response(
-    store_path: &Path,
-    cache_key_hash: &str,
-    cache_material: &JsonValue,
-    response: &JsonValue,
-    result_hash: &str,
-    ledger_hash: Option<&str>,
-) -> Result<PathBuf, String> {
-    let dir = forge_program_run_cache_dir(store_path);
-    std::fs::create_dir_all(&dir).map_err(|err| format!("program cache mkdir: {err}"))?;
-    let path = forge_program_run_cache_path(store_path, cache_key_hash);
-    let payload = json!({
-        "schema": "forge.program.run.cache.v1",
-        "cacheKeyHash": cache_key_hash,
-        "resultHash": result_hash,
-        "ledgerHash": ledger_hash.unwrap_or(""),
-        "storedAtMs": forge_unix_ms(),
-        "cacheMaterial": cache_material,
-        "response": response,
-    });
-    let bytes = serde_json::to_vec_pretty(&payload)
-        .map_err(|err| format!("program cache encode: {err}"))?;
-    std::fs::write(&path, bytes).map_err(|err| format!("program cache write: {err}"))?;
-    Ok(path)
-}
-
 fn forge_program_run_cached(store_path: PathBuf, args: JsonValue) -> Result<JsonValue, String> {
-    let (cache_key_hash, cache_material) = forge_program_run_cache_material(&args)?;
-    if let Some((cached, result_hash, result_path)) =
-        forge_program_read_cached_response(&store_path, &cache_key_hash)
-    {
-        let ledger = forge_kasm_record(ForgeKasmLedgerRecordRequest {
-            namespace: Some("program-run".to_string()),
-            kind: "program.run.hit".to_string(),
-            payload: Some(forge_program_run_cache_summary(&cache_material, &cache_key_hash)),
-            summary: Some(json!({
-                "cache": "hit",
-                "resultHash": result_hash,
-                "rawInputsStored": false,
-            })),
-            cache_key: Some(cache_key_hash.clone()),
-            append_on_hit: Some(false),
-        })
-        .ok();
-        let ledger_hash = ledger.as_ref().map(|item| item.entry_hash.as_str());
-        let meta = forge_program_run_cache_meta(true, &cache_key_hash, &result_hash, ledger_hash, &result_path);
-        return Ok(forge_program_annotate_cache(cached, meta));
-    }
-
-    let response = call_forge_mcp_tool(store_path.clone(), "run", args)?;
-    let result_hash = forge_kasm_hash_json(&response);
-    let ledger = forge_kasm_record(ForgeKasmLedgerRecordRequest {
-        namespace: Some("program-run".to_string()),
-        kind: "program.run.store".to_string(),
-        payload: Some(json!({
-            "request": forge_program_run_cache_summary(&cache_material, &cache_key_hash),
-            "resultHash": result_hash,
-        })),
-        summary: Some(json!({
-            "cache": "miss",
-            "resultHash": result_hash,
-            "rawInputsStored": false,
-        })),
-        cache_key: Some(cache_key_hash.clone()),
-        append_on_hit: Some(false),
-    })
-    .ok();
-    let ledger_hash = ledger.as_ref().map(|item| item.entry_hash.as_str());
-    let result_path = forge_program_write_cached_response(
-        &store_path,
-        &cache_key_hash,
-        &cache_material,
-        &response,
-        &result_hash,
-        ledger_hash,
-    )?;
-    let meta = forge_program_run_cache_meta(false, &cache_key_hash, &result_hash, ledger_hash, &result_path);
-    Ok(forge_program_annotate_cache(response, meta))
+    forge_program_run_cached_with(store_path, args, call_forge_mcp_tool)
 }
 
 #[tauri::command]
@@ -21482,8 +21263,16 @@ fn forge_real_estate_privacy_applies(message: &str) -> bool {
     let lower = message.to_lowercase();
     message.contains("FORGE_REAL_ESTATE_PRIVACY:")
         || message.contains("FORGE_REAL_ESTATE_PROGRAM_COMMAND:")
+        || message.contains("FORGE_REAL_ESTATE_ONBOARDING:")
         || lower.contains("scope=agence_immo")
         || lower.contains("agence immo")
+}
+
+fn forge_canvas_message_forces_runtime_context(message: &str) -> bool {
+    message.contains("FORGE_REAL_ESTATE_ONBOARDING:")
+        || message.contains("FORGE_REAL_ESTATE_PROGRAM_COMMAND:")
+        || message.contains("FORGE_REAL_ESTATE_MEMORY_CONTEXT:")
+        || message.contains("FORGE_REAL_ESTATE_LLM_INTEL_CACHE:")
 }
 
 fn forge_privacy_hash(text: &str) -> String {
@@ -23437,7 +23226,8 @@ async fn forge_canvas_assistant_turn(
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
     let request_job_id_for_response = request.job_id.clone();
-    let tools_enabled = canvas_message_needs_forge_tools(
+    let force_runtime_context = forge_canvas_message_forces_runtime_context(user_message);
+    let tools_enabled = force_runtime_context || canvas_message_needs_forge_tools(
         if user_message.contains("CURRENT_TURN_DECISION_POINT:") {
             user_message
         } else {
@@ -23446,7 +23236,7 @@ async fn forge_canvas_assistant_turn(
         has_active_job,
     );
     let context_loaded = tools_enabled;
-    if !tools_enabled {
+    if !tools_enabled && !force_runtime_context {
         if let Some(reply) = local_canvas_micro_reply(current_user_message) {
             return Ok(ForgeCanvasAssistantResponse {
                 assistant_message: reply,
@@ -27649,7 +27439,17 @@ fn backend_hint_for_gpu_name(name: &str) -> String {
 /// backend is still initialising. Recomputes a fresh GpuNodeRuntime each call
 /// (cheap — adapter enumeration only).
 #[tauri::command]
-async fn get_hardware_info() -> Result<HardwareInfo, String> {
+async fn get_hardware_info(
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+) -> Result<HardwareInfo, String> {
+    let store_path = forge_store_path_from_state(&state)?;
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        Some(&store_path),
+        "get_hardware_info",
+        json!({ "projectionOnly": true }),
+    )?;
     let full_probe = std::env::var("FORGE_HARDWARE_GPU_PROBE")
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "debug" | "full"))
         .unwrap_or(false);
@@ -27692,12 +27492,23 @@ async fn get_hardware_info() -> Result<HardwareInfo, String> {
         }
         (gpus, bs.cuda_enabled, bs.nvrtc_available)
     } else {
-        (wgpu_gpu_name_fallback(), false, false)
+        let mut gpus = wgpu_gpu_name_fallback();
+        if gpus.is_empty() {
+            gpus = windows_gpu_name_fallback()
+                .into_iter()
+                .map(|name| HardwareGpu {
+                    vendor: "Other".to_string(),
+                    name: name.clone(),
+                    backend: backend_hint_for_gpu_name(&name),
+                })
+                .collect();
+        }
+        (gpus, false, false)
     };
     let threads = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(0);
-    Ok(HardwareInfo {
+    let info = HardwareInfo {
         cpu_brand: detect_cpu_brand(),
         cpu_threads: threads,
         os: std::env::consts::OS.to_string(),
@@ -27705,7 +27516,11 @@ async fn get_hardware_info() -> Result<HardwareInfo, String> {
         gpus,
         cuda_enabled,
         nvrtc_available,
-    })
+    };
+    if let Ok(value) = serde_json::to_value(&info) {
+        forge_kernel::record_hardware(&kernel, value);
+    }
+    Ok(info)
 }
 
 #[derive(Serialize)]
@@ -30222,17 +30037,21 @@ fn main() {
             } else {
                 eprintln!("[forge-startup] Real estate harvester scheduler started");
             }
+            app.manage(Mutex::new(forge_kernel::ForgeKernel::new(store_path.clone())));
             app.manage(Mutex::new(ForgeAppState::new(store_path)));
             app.manage(banger::BangerEngine::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            forge_kernel::forge_kernel,
             minimize_main_window,
             toggle_maximize_main_window,
             close_main_window,
             drag_main_window,
             real_estate_harvester_snapshot,
             real_estate_harvester_run_tool,
+            real_estate_onboarding_state,
+            real_estate_onboarding_answer,
             real_estate_tool_command_context,
             open_webexplorer_window,
             webexplorer_native_present,
@@ -30265,6 +30084,8 @@ fn main() {
             alpha_debug_log,
             create_forge_pending_job,
             list_forge_jobs,
+            forge_job_runtime_snapshot,
+            forge_fbc_runtime_snapshot,
             list_forge_programs,
             get_forge_atlas_overview,
             upsert_forge_geonode,
