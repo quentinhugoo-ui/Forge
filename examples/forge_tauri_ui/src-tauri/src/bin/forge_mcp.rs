@@ -2,10 +2,14 @@
 //!
 //! This binary is intentionally separate from Tauri. The UI can become a log
 //! viewer, while agents call Forge as a compute tool over MCP/stdin-stdout.
+#![allow(dead_code)]
 
-#[path = "../synth_strategy.rs"]
+#[path = "../trading_alpha.rs"]
 #[allow(dead_code)]
-mod synth_strategy;
+mod trading_alpha;
+#[path = "../trading_core.rs"]
+#[allow(dead_code)]
+mod trading_core;
 #[path = "../kasm_indicators.rs"]
 #[allow(dead_code)]
 mod kasm_indicators;
@@ -22,8 +26,8 @@ mod forge_fbc_host;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use scan::fbc::{
-    execute_app_registry_batch, parse_app_section_registry_v0, tool_cell_output_artifact_json,
-    ForgeVmConfig,
+    execute_tool_cell_batch_groups, parse_app_section_registry_v0, parse_tool_cell_registry_v0,
+    tool_cell_output_artifact_json, ForgeVmConfig,
 };
 use scan::{Hash, MemoryGovernor, MonsterEvolutionConfig, MonsterNode, Store, SynthProgress, SynthProgressFn};
 use std::cell::RefCell;
@@ -37,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-type McpRawCache = Vec<[Option<i64>; synth_strategy::BASE_FEATURE_COUNT]>;
+type McpRawCache = Vec<[Option<i64>; trading_alpha::BASE_FEATURE_COUNT]>;
 const MCP_LIST_LIMIT_DEFAULT: usize = 20;
 const MCP_LIST_LIMIT_MAX: usize = 50;
 const MCP_LOG_TAIL_DEFAULT_BYTES: usize = 16 * 1024;
@@ -390,7 +394,7 @@ struct Rule {
 #[derive(Debug, Clone)]
 struct ScoredRule {
     rule: Rule,
-    eval: synth_strategy::StrategyEval,
+    eval: trading_alpha::StrategyEval,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -429,7 +433,7 @@ struct ForgeDetector {
     feature_name: String,
     program_hash: Hash,
     outcome: scan::MonsterEvolutionOutcome,
-    train_eval: synth_strategy::StrategyEval,
+    train_eval: trading_alpha::StrategyEval,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -533,7 +537,7 @@ struct ProgramMetricSpec {
     weight: Option<f64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProgramDefineArgs {
     title: String,
     #[serde(default)]
@@ -571,7 +575,7 @@ struct ProgramInputRef {
     job_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProgramExecuteArgs {
     #[serde(default)]
     program_hash: Option<String>,
@@ -746,7 +750,7 @@ fn tools_list() -> Vec<Value> {
         return compact_tools_list();
     }
     let mut tools = vec![
-        mcp_tool("about", None, "Forge — local compute and visual-program engine for AI agents. FIRST CALL for large files, expensive/repetitive calculations, scientific/data/code/document analysis, programmable 2D/3D views, custom compute_program/visual_program specs, hashes, proofs or compact artifacts. Use Forge before Read/shell above 256 KB or 1,000 rows to avoid spending massive LLM tokens reading/calculating. Fast path: run { intent, inputs, plan_only:true } or run {} for one pending upload.", json!({}), &[]),
+        mcp_tool("about", None, "Forge â€” local compute and visual-program engine for AI agents. FIRST CALL for large files, expensive/repetitive calculations, scientific/data/code/document analysis, programmable 2D/3D views, custom compute_program/visual_program specs, hashes, proofs or compact artifacts. Use Forge before Read/shell above 256 KB or 1,000 rows to avoid spending massive LLM tokens reading/calculating. Fast path: run { intent, inputs, plan_only:true } or run {} for one pending upload.", json!({}), &[]),
         mcp_tool("fbc_runtime", Some("/fbc_"), "/fbc_ - Experimental Forge Native Bytecode runtime snapshot for the whole app. Compiles SECTION_OWNERSHIP sections and sensitive native commands into FBC/KASM2 v0 ToolCells, runs the verifier/interpreter, writes compact proof artifacts, and returns only hashes/projections; no raw filesystem/network/secrets are exposed.", json!({
             "backend": { "type": "string", "description": "Optional backend selector: auto, fbc_interpreter, kasm_native, gpu, microvm_fallback." },
             "write_artifacts": { "type": "boolean", "description": "Default true. Writes compact FBC projection/artifact JSON under the Forge store." }
@@ -759,14 +763,14 @@ fn tools_list() -> Vec<Value> {
             "detailed": { "type": "boolean", "description": "Set true to include detailed matching operators." }
         }), &[]),
         mcp_tool("create", Some("/create_"), "/create_ - Create a reusable Forge program for any domain. Check atlas first when reuse is possible. Use compute_program for local calculations/simulations/metrics, or visual_program for programmable 2D/3D views over session files. Specs use compact Metric/Visual DSL tags with open-ended domain metrics; Forge compiles the metric graph, validates routes/dependencies/math contracts, stores the program and every metric tag in My Atlas by content hash and never needs raw file content in the LLM.", json!({
-            "title": { "type": "string", "maxLength": 24, "description": "Very short instrument/lens title — 24 characters max. Use a concise label like 'VWAP detune', 'RSI long', 'K-mer scan'. Longer titles are rejected." },
+            "title": { "type": "string", "maxLength": 24, "description": "Very short instrument/lens title â€” 24 characters max. Use a concise label like 'VWAP detune', 'RSI long', 'K-mer scan'. Longer titles are rejected." },
             "domain": { "type": "string", "description": "Free-form domain: finance, biology, chemistry, code, math, engineering, aerospace, medicine, geospatial, audio, images, networks, manufacturing, custom, etc." },
             "intent": { "type": "string", "description": "Natural-language reason for this program, e.g. invent a metric, model a 3D map, detect anomalies, simulate a system or measure k-mer hash quality." },
             "goal": { "type": "string", "description": "What the program should measure, discover or optimize." },
             "program_kind": { "type": "string", "description": "Optional: compute_program (default) or visual_program for programs that define 2D/3D file views." },
             "kind": { "type": "string", "description": "Alias for program_kind." },
             "template": { "type": "string", "description": "Optional existing template family, e.g. csv_timeseries, kmer_sequence, source_code_metrics." },
-            "metrics": { "type": "array", "description": "Open Metric DSL tags. Each item can include tag/name, op, inputs, params, unit, goal, description, formula, algorithm, weight; agents may define domain-specific metrics instead of choosing from a closed catalog. For custom/invented metrics, formula and algorithm should describe the exact math shown in live compute cards. IMPORTANT: 'tag' is hard-capped at 16 characters (e.g. 'rsi_14', 'vwap', 'ema_delta'); 'name' at 18 characters (e.g. 'RSI 14', 'VWAP'). Longer values are truncated/rejected — keep node labels minimalist." },
+            "metrics": { "type": "array", "description": "Open Metric DSL tags. Each item can include tag/name, op, inputs, params, unit, goal, description, formula, algorithm, weight; agents may define domain-specific metrics instead of choosing from a closed catalog. For custom/invented metrics, formula and algorithm should describe the exact math shown in live compute cards. IMPORTANT: 'tag' is hard-capped at 16 characters (e.g. 'rsi_14', 'vwap', 'ema_delta'); 'name' at 18 characters (e.g. 'RSI 14', 'VWAP'). Longer values are truncated/rejected â€” keep node labels minimalist." },
             "views": { "type": "array", "description": "Visual program views. Each item can define type=2d or type=3d, axes x/y/z, color, size, overlays, labels, transforms and local viewer params." },
             "spec_text": { "type": "string", "description": "Optional Forge Metric/Visual DSL v1 spec containing <metric .../> and, for visual_program, <view id=\"...\" type=\"3d\" x=\"time_index\" y=\"momentum_24\" z=\"volatility_48\" color=\"forward_return_6\" /> balises." },
             "source_schema": { "type": "object", "description": "Optional schema/columns expected by the program. No source content." },
@@ -1051,57 +1055,140 @@ fn internal_mcp_tool_route(canonical: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod mcp_surface_tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.previous {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
+    fn mcp_surface_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn with_mcp_surface_env<T>(key: &'static str, value: &str, f: impl FnOnce() -> T) -> T {
+        let _guard = mcp_surface_env_lock();
+        let _surface = EnvVarGuard::unset("FORGE_MCP_SURFACE");
+        let _legacy = EnvVarGuard::unset("FORGE_MCP_LEGACY_SURFACE");
+        let _broad = EnvVarGuard::unset("FORGE_MCP_BROAD_SURFACE");
+        let _requested = EnvVarGuard::set(key, value);
+        f()
+    }
+
+    fn with_default_mcp_surface_env<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = mcp_surface_env_lock();
+        let _surface = EnvVarGuard::unset("FORGE_MCP_SURFACE");
+        let _legacy = EnvVarGuard::unset("FORGE_MCP_LEGACY_SURFACE");
+        let _broad = EnvVarGuard::unset("FORGE_MCP_BROAD_SURFACE");
+        f()
+    }
 
     #[test]
     fn compact_facade_is_default_visible_surface_and_aliases_still_route() {
-        assert_eq!(canonical_mcp_tool_name("forge.search"), Some("forge_intent_search"));
-        assert_eq!(canonical_mcp_tool_name("forge.execute"), Some("forge_intent_execute"));
-        assert_eq!(canonical_mcp_tool_name("forge.read_projection"), Some("read"));
-        assert_eq!(canonical_mcp_tool_name("forge.cancel"), Some("cancel"));
+        with_default_mcp_surface_env(|| {
+            assert_eq!(canonical_mcp_tool_name("forge.search"), Some("forge_intent_search"));
+            assert_eq!(canonical_mcp_tool_name("forge.execute"), Some("forge_intent_execute"));
+            assert_eq!(canonical_mcp_tool_name("forge.read_projection"), Some("read"));
+            assert_eq!(canonical_mcp_tool_name("forge.cancel"), Some("cancel"));
 
-        let visible_names = visible_tool_names();
-        assert_eq!(
-            visible_names,
-            vec![
-                "forge.search".to_string(),
-                "forge.execute".to_string(),
-                "forge.read_projection".to_string(),
-                "forge.cancel".to_string(),
-            ]
-        );
-        assert!(!visible_names.iter().any(|name| name == "forge_intent_search"));
-        assert!(!visible_names.iter().any(|name| name == "forge_intent_execute"));
+            let visible_names = visible_tool_names();
+            assert_eq!(
+                visible_names,
+                vec![
+                    "forge.search".to_string(),
+                    "forge.execute".to_string(),
+                    "forge.read_projection".to_string(),
+                    "forge.cancel".to_string(),
+                ]
+            );
+            assert!(!visible_names.iter().any(|name| name == "forge_intent_search"));
+            assert!(!visible_names.iter().any(|name| name == "forge_intent_execute"));
+        });
     }
 
     #[test]
     fn compact_surface_exposes_exact_frontier_tools() {
-        let visible_names = visible_tool_names_from(compact_tools_list());
-        assert_eq!(
-            visible_names,
-            vec![
-                "forge.search".to_string(),
-                "forge.execute".to_string(),
-                "forge.read_projection".to_string(),
-                "forge.cancel".to_string(),
-            ]
-        );
-        assert_eq!(visible_names.len(), 4);
+        with_default_mcp_surface_env(|| {
+            let visible_names = visible_tool_names_from(compact_tools_list());
+            assert_eq!(
+                visible_names,
+                vec![
+                    "forge.search".to_string(),
+                    "forge.execute".to_string(),
+                    "forge.read_projection".to_string(),
+                    "forge.cancel".to_string(),
+                ]
+            );
+            assert_eq!(visible_names.len(), 4);
+        });
     }
 
     #[test]
     fn compact_cutover_readiness_is_current_default() {
-        let readiness = compact_cutover_readiness();
-        assert_eq!(readiness["kind"].as_str(), Some("forge_compact_cutover_readiness_v0"));
-        assert_eq!(readiness["compact_surface_exact"].as_bool(), Some(true));
-        assert_eq!(readiness["intent_routes_live"].as_bool(), Some(true));
-        assert_eq!(
-            readiness["approved_side_effect_gate_live"].as_bool(),
-            Some(true)
-        );
-        assert_eq!(readiness["exact_intent_cache_live"].as_bool(), Some(true));
-        assert_eq!(readiness["projection_replay_live"].as_bool(), Some(true));
-        assert_eq!(readiness["broad_catalog_hidden"].as_bool(), Some(true));
-        assert_eq!(readiness["status"].as_str(), Some("ready_as_current_default"));
+        with_default_mcp_surface_env(|| {
+            let readiness = compact_cutover_readiness();
+            assert_eq!(readiness["kind"].as_str(), Some("forge_compact_cutover_readiness_v0"));
+            assert_eq!(readiness["compact_surface_exact"].as_bool(), Some(true));
+            assert_eq!(readiness["intent_routes_live"].as_bool(), Some(true));
+            assert_eq!(
+                readiness["approved_side_effect_gate_live"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(readiness["exact_intent_cache_live"].as_bool(), Some(true));
+            assert_eq!(readiness["projection_replay_live"].as_bool(), Some(true));
+            assert_eq!(readiness["broad_catalog_hidden"].as_bool(), Some(true));
+            assert_eq!(readiness["status"].as_str(), Some("ready_as_current_default"));
+        });
+    }
+
+    #[test]
+    fn broad_catalog_is_visible_only_through_legacy_escape_hatches() {
+        with_mcp_surface_env("FORGE_MCP_SURFACE", "broad", || {
+            let visible = visible_tool_names();
+            assert!(visible.len() > 4);
+            assert!(visible.iter().any(|name| name == "create"));
+            assert!(visible.iter().any(|name| name == "run"));
+        });
+        with_mcp_surface_env("FORGE_MCP_LEGACY_SURFACE", "1", || {
+            let visible = visible_tool_names();
+            assert!(visible.len() > 4);
+            assert!(visible.iter().any(|name| name == "create"));
+            assert!(visible.iter().any(|name| name == "run"));
+        });
     }
 
     #[test]
@@ -1161,20 +1248,22 @@ mod mcp_surface_tests {
 
     #[test]
     fn policy_visible_tool_list_is_derived_from_tools_list() {
-        let policy = forge_tool_selection_policy();
-        let policy_tools: Vec<String> = policy["visible_tools"]
-            .as_array()
-            .expect("visible_tools array")
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_string)
-            .collect();
+        with_default_mcp_surface_env(|| {
+            let policy = forge_tool_selection_policy();
+            let policy_tools: Vec<String> = policy["visible_tools"]
+                .as_array()
+                .expect("visible_tools array")
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
 
-        assert_eq!(policy_tools, visible_tool_names());
-        assert_eq!(
-            policy["current_visible_tool_budget"].as_u64(),
-            Some(policy_tools.len() as u64)
-        );
+            assert_eq!(policy_tools, visible_tool_names());
+            assert_eq!(
+                policy["current_visible_tool_budget"].as_u64(),
+                Some(policy_tools.len() as u64)
+            );
+        });
     }
 
     #[test]
@@ -1246,6 +1335,131 @@ mod mcp_surface_tests {
     }
 
     #[test]
+    fn create_route_uses_shared_runtime_rich_program_path() {
+        let _guard = mcp_surface_env_lock();
+        let store = std::env::temp_dir().join(format!(
+            "forge-mcp-create-shared-runtime-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let store_text = store.display().to_string();
+        let _store = EnvVarGuard::set("FORGE_STORE_DIR", &store_text);
+        let _programs = EnvVarGuard::unset("FORGE_PROGRAMS_DIR");
+
+        let result = define_program(
+            ProgramDefineArgs {
+                title: "Shared runtime create".to_string(),
+                domain: Some("finance".to_string()),
+                intent: Some("route one bounded metric".to_string()),
+                goal: "prove create is runtime-owned".to_string(),
+                kind: None,
+                program_kind: Some("compute_program".to_string()),
+                template: None,
+                metrics: vec![metric_spec(
+                    "price_mean",
+                    "rolling_mean",
+                    &["close"],
+                    json!({ "window": 20 }),
+                )],
+                views: Vec::new(),
+                spec_text: None,
+                source_schema: json!({}),
+                constraints: json!({}),
+                output_contract: json!({}),
+            },
+            &test_client(),
+        )
+        .expect("runtime-backed create");
+
+        assert_eq!(result["atlas"]["saved_to_my_atlas"].as_bool(), Some(true));
+        assert_eq!(
+            result["program"]["canonical"]["source"].as_str(),
+            Some("forge_agent_direct_rich_create_v0")
+        );
+        assert_eq!(
+            result["program"]["created_by_agent"]["runtime"].as_str(),
+            Some(forge_agent_runtime::FORGE_AGENT_RUNTIME_V0)
+        );
+    }
+
+    #[test]
+    fn execute_program_uses_shared_runtime_rich_runner() {
+        let _guard = mcp_surface_env_lock();
+        let store = std::env::temp_dir().join(format!(
+            "forge-mcp-run-shared-runtime-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let store_text = store.display().to_string();
+        let _store = EnvVarGuard::set("FORGE_STORE_DIR", &store_text);
+        let csv_path = store.join("input.csv");
+        fs::create_dir_all(&store).expect("store dir");
+        fs::write(&csv_path, "close,volume\n10,100\n12,120\n14,130\n")
+            .expect("csv fixture");
+
+        let created = define_program(
+            ProgramDefineArgs {
+                title: "Shared runtime execute".to_string(),
+                domain: Some("finance".to_string()),
+                intent: Some("run one bounded metric".to_string()),
+                goal: "compute a compact rolling mean".to_string(),
+                kind: None,
+                program_kind: Some("compute_program".to_string()),
+                template: None,
+                metrics: vec![metric_spec(
+                    "close_mean",
+                    "rolling_mean",
+                    &["close"],
+                    json!({ "window": 2 }),
+                )],
+                views: Vec::new(),
+                spec_text: None,
+                source_schema: json!({}),
+                constraints: json!({}),
+                output_contract: json!({}),
+            },
+            &test_client(),
+        )
+        .expect("program created");
+
+        let result = execute_program(
+            ProgramExecuteArgs {
+                program_hash: created["program"]["program_hash"].as_str().map(str::to_string),
+                program_id: None,
+                program: None,
+                program_title: None,
+                program_query: None,
+                title: None,
+                inputs: vec![ProgramInputRef {
+                    role: Some("data".to_string()),
+                    path: Some(csv_path.display().to_string()),
+                    job_id: None,
+                }],
+                params: json!({}),
+                dry_run: Some(false),
+                intent: Some("run one bounded metric".to_string()),
+                capability: None,
+                parent_session_id: None,
+            },
+            &test_client(),
+        )
+        .expect("runtime-backed execute");
+
+        assert_eq!(
+            result["kind"].as_str(),
+            Some("forge_agent_direct_rich_run_v0")
+        );
+        assert_eq!(
+            result["job"]["execution"]["stage"].as_str(),
+            Some("metric_toolbox_executed")
+        );
+        assert_eq!(
+            result["job"]["program"]["program_hash"],
+            created["program"]["program_hash"]
+        );
+    }
+
+    #[test]
     fn intent_facade_response_omits_broad_policy_envelope() {
         let session = McpSession {
             client: McpClientInfo {
@@ -1288,13 +1502,13 @@ mod mcp_surface_tests {
             std::process::id(),
             now_ms()
         ));
-        let persisted = persist_forge_intent_projection_to_store(&store, &mut projection)
+        let persisted = forge_agent_runtime::persist_direct_projection(&store, &mut projection)
             .expect("persist projection");
         let execution_hash = persisted["execution_hash"]
             .as_str()
             .expect("execution hash")
             .to_string();
-        let read = read_forge_intent_projection_from_store(
+        let read = forge_agent_runtime::direct_read_projection(
             &store,
             &json!({ "execution_hash": execution_hash }),
         )
@@ -1305,6 +1519,10 @@ mod mcp_surface_tests {
             persisted["execution_hash"]
         );
         assert_eq!(read["raw_data_returned"].as_bool(), Some(false));
+        assert_eq!(
+            read["kind"].as_str(),
+            Some("forge_agent_direct_projection_read_v0")
+        );
         assert_eq!(read["executed_steps"][0]["result_summary"]["plan_only"].as_bool(), Some(true));
     }
 
@@ -1320,12 +1538,12 @@ mod mcp_surface_tests {
             std::process::id(),
             now_ms()
         ));
-        let persisted = persist_forge_intent_projection_to_store(&store, &mut projection)
+        let persisted = forge_agent_runtime::persist_direct_projection(&store, &mut projection)
             .expect("persist projection");
         let execution_hash = persisted["execution_hash"].as_str().expect("execution hash");
-        let listed = read_forge_intent_projection_from_store(&store, &json!({ "limit": 4 }))
+        let listed = forge_agent_runtime::direct_read_projection(&store, &json!({ "limit": 4 }))
             .expect("list projections");
-        assert_eq!(listed["kind"].as_str(), Some("forge_intent_projection_list_v0"));
+        assert_eq!(listed["kind"].as_str(), Some("forge_agent_direct_projection_list_v0"));
         assert_eq!(listed["entries"][0]["execution_hash"].as_str(), Some(execution_hash));
 
         let search = forge_intent_search_with_store("profile market projection", 8, Some(&store));
@@ -1374,7 +1592,8 @@ mod mcp_surface_tests {
             std::process::id(),
             now_ms()
         ));
-        persist_forge_intent_projection_to_store(&store, &mut projection).expect("persist projection");
+        forge_agent_runtime::persist_direct_projection(&store, &mut projection)
+            .expect("persist projection");
 
         let hit = forge_agent_runtime::lookup_cached_direct_projection(&store, Some(&intent_hash), "execute_safe", 1024)
             .expect("cache lookup")
@@ -1734,6 +1953,18 @@ fn call_internal_tool_value(tool: &str, args: &Value) -> Result<Value, String> {
     forge_agent_tools::call_internal_tool(&store_path, tool, args, active_job.as_deref())
 }
 
+fn call_state_kernel_read_value(route: &str, args: &Value) -> Result<Value, String> {
+    let store_path = forge_agent_tools::resolve_store_path()?;
+    let normalized = forge_agent_runtime::direct_state_kernel_route_args(route, args);
+    forge_agent_runtime::direct_state_kernel_read(&store_path, &normalized)
+}
+
+fn call_state_kernel_apply_value(route: &str, args: &Value) -> Result<Value, String> {
+    let store_path = forge_agent_tools::resolve_store_path()?;
+    let normalized = forge_agent_runtime::direct_state_kernel_route_args(route, args);
+    forge_agent_runtime::direct_state_kernel_apply(&store_path, &normalized)
+}
+
 fn forge_intent_execute_projection(source: &str, max_bytes: usize) -> Result<Value, String> {
     forge_agent_runtime::direct_plan_projection(source, max_bytes)
 }
@@ -1751,7 +1982,7 @@ fn forge_intent_execute_projection_persisted_v0(source: &str, max_bytes: usize, 
             return Ok(cached);
         }
     }
-    persist_forge_intent_projection_to_store(&store_path, &mut projection)?;
+    forge_agent_runtime::persist_direct_projection(&store_path, &mut projection)?;
     Ok(projection)
 }
 
@@ -1776,7 +2007,7 @@ fn forge_intent_execute_safe_persisted_v0(source: &str, max_bytes: usize, cache_
     }
     let mut projection = forge_intent_execute_safe_v0(source, max_bytes)?;
     let store_path = forge_store_dir()?;
-    persist_forge_intent_projection_to_store(&store_path, &mut projection)?;
+    forge_agent_runtime::persist_direct_projection(&store_path, &mut projection)?;
     Ok(projection)
 }
 
@@ -1799,7 +2030,7 @@ fn forge_intent_execute_approved_persisted_v0(
         client,
     )?;
     let store_path = forge_store_dir()?;
-    persist_forge_intent_projection_to_store(&store_path, &mut projection)?;
+    forge_agent_runtime::persist_direct_projection(&store_path, &mut projection)?;
     Ok(projection)
 }
 
@@ -1831,147 +2062,6 @@ fn forge_intent_execute_approved_v0(
     )
 }
 
-fn intent_projection_store_dir(store_path: &Path) -> PathBuf {
-    store_path.join("intent-projections")
-}
-
-fn intent_projection_index_path(store_path: &Path) -> PathBuf {
-    intent_projection_store_dir(store_path).join("index.json")
-}
-
-fn persist_forge_intent_projection_to_store(store_path: &Path, projection: &mut Value) -> Result<Value, String> {
-    let execution_hash = projection
-        .get("execution_report")
-        .and_then(|report| report.get("execution_hash"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let trace_hash = projection
-        .get("trace_card")
-        .and_then(|trace| trace.get("trace_hash"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let intent_hash = projection
-        .get("intent_hash")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let projection_hash = execution_hash
-        .clone()
-        .or_else(|| trace_hash.clone())
-        .or_else(|| intent_hash.clone())
-        .ok_or_else(|| "intent projection missing execution, trace and intent hashes".to_string())?;
-    validate_content_hash(&projection_hash, "projection_hash")?;
-    let dir = intent_projection_store_dir(store_path);
-    fs::create_dir_all(&dir).map_err(|e| format!("create intent projection dir '{}': {e}", dir.display()))?;
-    let projection_ref = format!("refs/intent/projection/{projection_hash}");
-    let persisted = json!({
-        "kind": "forge_intent_projection_ref_v0",
-        "projection_hash": projection_hash,
-        "projection_ref": projection_ref,
-        "execution_hash": execution_hash,
-        "trace_hash": trace_hash,
-        "intent_hash": intent_hash,
-        "stored_ms": now_ms(),
-        "raw_data_returned": false
-    });
-    if let Value::Object(obj) = projection {
-        obj.insert("persisted_projection".to_string(), persisted.clone());
-    }
-    let path = dir.join(format!("{projection_hash}.json"));
-    persist_json_pretty(&path, projection)?;
-    update_intent_projection_index(store_path, projection, &persisted)?;
-    Ok(persisted)
-}
-
-fn empty_intent_projection_index(now: u128) -> Value {
-    json!({
-        "kind": "forge_intent_projection_index_v0",
-        "created_ms": now,
-        "updated_ms": now,
-        "raw_data_returned": false,
-        "entries": []
-    })
-}
-
-fn read_intent_projection_index(store_path: &Path) -> Result<Value, String> {
-    let path = intent_projection_index_path(store_path);
-    if path.exists() {
-        read_json_value(&path)
-    } else {
-        Ok(empty_intent_projection_index(now_ms()))
-    }
-}
-
-fn persist_intent_projection_index(store_path: &Path, index: &Value) -> Result<(), String> {
-    let dir = intent_projection_store_dir(store_path);
-    fs::create_dir_all(&dir).map_err(|e| format!("create intent projection dir '{}': {e}", dir.display()))?;
-    persist_json_pretty(&intent_projection_index_path(store_path), index)
-}
-
-fn update_intent_projection_index(store_path: &Path, projection: &Value, persisted: &Value) -> Result<(), String> {
-    let mut index = read_intent_projection_index(store_path)?;
-    let now = now_ms();
-    let projection_hash = persisted
-        .get("projection_hash")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "persisted projection missing projection_hash".to_string())?;
-    let entry = compact_projection_index_entry(projection, persisted, now);
-    let entries = index
-        .as_object_mut()
-        .ok_or_else(|| "intent projection index root is not an object".to_string())?
-        .entry("entries".to_string())
-        .or_insert_with(|| json!([]));
-    let entries = entries
-        .as_array_mut()
-        .ok_or_else(|| "intent projection index entries is not an array".to_string())?;
-    entries.retain(|item| {
-        item.get("projection_hash")
-            .and_then(Value::as_str)
-            != Some(projection_hash)
-    });
-    entries.insert(0, entry);
-    entries.truncate(128);
-    if let Value::Object(ref mut obj) = index {
-        obj.insert("updated_ms".to_string(), json!(now));
-        obj.insert("raw_data_returned".to_string(), json!(false));
-    }
-    persist_intent_projection_index(store_path, &index)
-}
-
-fn compact_projection_index_entry(projection: &Value, persisted: &Value, now: u128) -> Value {
-    json!({
-        "kind": "forge_intent_projection_index_entry_v0",
-        "projection_hash": persisted.get("projection_hash").cloned().unwrap_or(Value::Null),
-        "projection_ref": persisted.get("projection_ref").cloned().unwrap_or(Value::Null),
-        "execution_hash": persisted.get("execution_hash").cloned().unwrap_or(Value::Null),
-        "trace_hash": persisted.get("trace_hash").cloned().unwrap_or(Value::Null),
-        "intent_hash": persisted.get("intent_hash").cloned().unwrap_or(Value::Null),
-        "stored_ms": persisted.get("stored_ms").cloned().unwrap_or_else(|| json!(now)),
-        "mode": projection.get("mode").cloned().unwrap_or(Value::Null),
-        "surface": projection.get("surface").cloned().unwrap_or(Value::Null),
-        "ok": projection.get("ok").cloned().unwrap_or(Value::Null),
-        "bounded_preview_bytes": projection.pointer("/forge_projection/bounded_preview_bytes").cloned().unwrap_or(Value::Null),
-        "source_preview": projection
-            .get("source")
-            .and_then(Value::as_str)
-            .map(|source| source.chars().take(240).collect::<String>())
-            .unwrap_or_default(),
-        "route_count": projection.pointer("/trace_card/route_count").cloned().unwrap_or(Value::Null),
-        "side_effect_count": projection.pointer("/trace_card/side_effect_count").cloned().unwrap_or(Value::Null),
-        "execution": {
-            "step_count": projection.pointer("/execution_report/step_count").cloned().unwrap_or(Value::Null),
-            "executed_step_count": projection.pointer("/execution_report/executed_step_count").cloned().unwrap_or(Value::Null),
-            "error_count": projection.pointer("/execution_report/error_count").cloned().unwrap_or(Value::Null)
-        },
-        "promotion": {
-            "distillation_target": projection.pointer("/distillation_analysis/target").cloned().unwrap_or(Value::Null),
-            "program_status": projection.pointer("/promotion_manifest/status").cloned().unwrap_or(Value::Null),
-            "skill_status": projection.pointer("/skill_promotion_manifest/status").cloned().unwrap_or(Value::Null),
-            "router_status": projection.pointer("/router_promotion_manifest/status").cloned().unwrap_or(Value::Null)
-        },
-        "raw_data_returned": false
-    })
-}
-
 fn forge_read_projection_compact_v0(args: &Value) -> Result<Value, String> {
     let store_path = forge_store_dir()?;
     if projection_request_is_fbc(args) {
@@ -1980,7 +2070,7 @@ fn forge_read_projection_compact_v0(args: &Value) -> Result<Value, String> {
     if args.get("job_id").and_then(Value::as_str).is_some() {
         return read_forge_job_projection_via_fbc(&store_path, args);
     }
-    read_forge_intent_projection_from_store(&store_path, args)
+    forge_agent_runtime::direct_read_projection(&store_path, args)
 }
 
 fn projection_request_is_fbc(args: &Value) -> bool {
@@ -2063,141 +2153,6 @@ fn read_forge_job_projection_via_fbc(store_path: &Path, args: &Value) -> Result<
     }))
 }
 
-fn read_forge_intent_projection_from_store(store_path: &Path, args: &Value) -> Result<Value, String> {
-    let query_hash = intent_projection_query_hash(args);
-    let dir = intent_projection_store_dir(store_path);
-    if !dir.exists() {
-        return Ok(json!({
-            "kind": "forge_intent_projection_read_v0",
-            "found": false,
-            "query_hash": query_hash,
-            "raw_data_returned": false,
-            "reason": "intent projection store is empty"
-        }));
-    }
-    if query_hash.is_none() {
-        return list_intent_projections_from_index(store_path, args);
-    }
-    if let Some(hash) = query_hash.as_deref() {
-        validate_content_hash(hash, "projection query hash")?;
-        let direct = dir.join(format!("{hash}.json"));
-        if direct.exists() {
-            return compact_read_projection_value(read_forge_intent_projection_file(store_path, hash)?, query_hash);
-        }
-    }
-    let mut scanned = 0usize;
-    for entry in fs::read_dir(&dir).map_err(|e| format!("read intent projection dir '{}': {e}", dir.display()))? {
-        let entry = entry.map_err(|e| format!("read intent projection entry: {e}"))?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        scanned += 1;
-        if scanned > 256 {
-            break;
-        }
-        let value = read_json_value(&path)?;
-        if intent_projection_matches(&value, args) {
-            return compact_read_projection_value(value, query_hash);
-        }
-    }
-    Ok(json!({
-        "kind": "forge_intent_projection_read_v0",
-        "found": false,
-        "query_hash": query_hash,
-        "scanned": scanned,
-        "raw_data_returned": false
-    }))
-}
-
-fn read_forge_intent_projection_file(store_path: &Path, projection_hash: &str) -> Result<Value, String> {
-    validate_content_hash(projection_hash, "projection_hash")?;
-    let path = intent_projection_store_dir(store_path).join(format!("{projection_hash}.json"));
-    read_json_value(&path)
-}
-
-fn list_intent_projections_from_index(store_path: &Path, args: &Value) -> Result<Value, String> {
-    let limit = bounded_limit(args.get("limit"), 8, 32);
-    let index = read_intent_projection_index(store_path)?;
-    let entries: Vec<Value> = index
-        .get("entries")
-        .and_then(Value::as_array)
-        .map(|entries| entries.iter().take(limit).cloned().collect())
-        .unwrap_or_default();
-    Ok(json!({
-        "kind": "forge_intent_projection_list_v0",
-        "found": !entries.is_empty(),
-        "result_count": entries.len(),
-        "limit": limit,
-        "raw_data_returned": false,
-        "entries": entries
-    }))
-}
-
-fn intent_projection_query_hash(args: &Value) -> Option<String> {
-    let direct = args
-        .get("projection_hash")
-        .or_else(|| args.get("execution_hash"))
-        .or_else(|| args.get("trace_hash"))
-        .or_else(|| args.get("intent_hash"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    if direct.is_some() {
-        return direct;
-    }
-    args.get("ref")
-        .or_else(|| args.get("projection_ref"))
-        .and_then(Value::as_str)
-        .and_then(|value| value.rsplit('/').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn intent_projection_matches(value: &Value, args: &Value) -> bool {
-    let Some(query) = intent_projection_query_hash(args) else {
-        return false;
-    };
-    [
-        "/persisted_projection/projection_hash",
-        "/persisted_projection/execution_hash",
-        "/persisted_projection/trace_hash",
-        "/persisted_projection/intent_hash",
-        "/execution_report/execution_hash",
-        "/trace_card/trace_hash",
-        "/intent_hash",
-    ]
-    .iter()
-    .any(|pointer| value.pointer(pointer).and_then(Value::as_str) == Some(query.as_str()))
-}
-
-fn compact_read_projection_value(value: Value, query_hash: Option<String>) -> Result<Value, String> {
-    Ok(json!({
-        "kind": "forge_intent_projection_read_v0",
-        "found": true,
-        "query_hash": query_hash,
-        "raw_data_returned": false,
-        "persisted_projection": value.get("persisted_projection").cloned().unwrap_or(Value::Null),
-        "mode": value.get("mode").cloned().unwrap_or(Value::Null),
-        "surface": value.get("surface").cloned().unwrap_or(Value::Null),
-        "ok": value.get("ok").cloned().unwrap_or(Value::Null),
-        "intent_hash": value.get("intent_hash").cloned().unwrap_or(Value::Null),
-        "policy_hash": value.pointer("/policy_report/policy_hash").cloned().unwrap_or(Value::Null),
-        "trace_hash": value.pointer("/trace_card/trace_hash").cloned().unwrap_or(Value::Null),
-        "execution_report": value.get("execution_report").cloned().unwrap_or(Value::Null),
-        "forge_projection": value.get("forge_projection").cloned().unwrap_or(Value::Null),
-        "executed_steps": value.get("executed_steps").cloned().unwrap_or_else(|| json!([])),
-        "promotion": {
-            "distillation": value.get("distillation_analysis").cloned().unwrap_or(Value::Null),
-            "program": value.get("promotion_manifest").cloned().unwrap_or(Value::Null),
-            "skill": value.get("skill_promotion_manifest").cloned().unwrap_or(Value::Null),
-            "router": value.get("router_promotion_manifest").cloned().unwrap_or(Value::Null)
-        }
-    }))
-}
-
 fn execute_compiled_intent_step_safe_v0(index: usize, step: &Value, result_budget_bytes: usize) -> Value {
     let route = step.get("route").and_then(Value::as_str).unwrap_or("");
     let command_hash = step.get("command_hash").and_then(Value::as_str).unwrap_or("");
@@ -2224,8 +2179,8 @@ fn execute_compiled_intent_step_safe_v0(index: usize, step: &Value, result_budge
             }
         }
         "read" => read_dispatch(&args),
-        "brain_recall" => call_internal_tool_value("forge_brain_recall", &args),
-        "brain_explain" => call_internal_tool_value("forge_brain_explain", &args),
+        "brain_recall" => call_state_kernel_read_value("brain_recall", &args),
+        "brain_explain" => call_state_kernel_read_value("brain_explain", &args),
         other => Ok(json!({
             "status": "skipped_unsupported_safe_route",
             "reason": "route is not in the execute_safe allowlist",
@@ -2270,7 +2225,7 @@ fn execute_compiled_intent_step_approved_v0(
         "create" => serde_json::from_value::<ProgramDefineArgs>(args.clone())
             .map_err(|err| format!("bad create intent arguments: {err}"))
             .and_then(|args| define_program(args, client)),
-        "brain_commit" => call_internal_tool_value("forge_brain_commit", &args),
+        "brain_commit" => call_state_kernel_apply_value("brain_commit", &args),
         "run" => {
             if allow_run_side_effects {
                 run_dispatch(args, client)
@@ -2682,17 +2637,16 @@ fn read_dispatch(args: &Value) -> Result<Value, String> {
         return list_programs(args);
     }
     if kind == "docs" || kind == "documents" {
-        let store_path = forge_agent_tools::resolve_store_path()?;
-        return forge_agent_tools::call_internal_tool(
-            &store_path,
-            "forge_list_documents",
-            args,
-            None,
-        );
+        return call_state_kernel_read_value("documents", args);
     }
     if kind == "sessions" || kind == "history" {
-        let store_path = forge_agent_tools::resolve_store_path()?;
-        return forge_agent_tools::call_internal_tool(&store_path, "forge_list_sessions", args, None);
+        return call_state_kernel_read_value("sessions", args);
+    }
+    if kind == "skill_candidates" || kind == "skills" {
+        return call_state_kernel_read_value("skill_candidates", args);
+    }
+    if kind == "verified_program_candidates" || kind == "program_candidates" || kind == "verified_programs" {
+        return call_state_kernel_read_value("verified_program_candidates", args);
     }
     if kind == "mapping" || kind == "visual_mapping" || kind == "visualization_3d" {
         let store_path = forge_agent_tools::resolve_store_path()?;
@@ -2731,17 +2685,10 @@ fn read_dispatch(args: &Value) -> Result<Value, String> {
         );
     }
     if kind == "profile" || kind == "settings" {
-        let store_path = forge_agent_tools::resolve_store_path()?;
-        return forge_agent_tools::call_internal_tool(
-            &store_path,
-            "forge_profile_settings",
-            args,
-            None,
-        );
+        return call_state_kernel_read_value("profile", args);
     }
     if kind == "atlas" {
-        let store_path = forge_agent_tools::resolve_store_path()?;
-        return forge_agent_tools::call_internal_tool(&store_path, "forge_atlas_overview", args, None);
+        return call_state_kernel_read_value("atlas", args);
     }
     let job_id = args
         .get("job_id")
@@ -3127,50 +3074,50 @@ fn metric_math_formula(metric: &Value) -> String {
         .or_else(|| metric.pointer("/params/period").and_then(Value::as_u64));
     match op_lc.as_str() {
         "vwap" | "volume_weighted_average_price" => {
-            "VWAP_t = Σ(typical_price_i × volume_i) / Σ(volume_i)".to_string()
+            "VWAP_t = Î£(typical_price_i Ã— volume_i) / Î£(volume_i)".to_string()
         }
         "ema" | "exponential_moving_average" => {
             let n = window.unwrap_or(0);
             if n > 0 {
-                format!("EMA_t = α·{first}_t + (1-α)·EMA_(t-1), α=2/({n}+1)")
+                format!("EMA_t = Î±Â·{first}_t + (1-Î±)Â·EMA_(t-1), Î±=2/({n}+1)")
             } else {
-                format!("EMA_t = α·{first}_t + (1-α)·EMA_(t-1)")
+                format!("EMA_t = Î±Â·{first}_t + (1-Î±)Â·EMA_(t-1)")
             }
         }
         "sma" | "rolling_mean" | "moving_average" => {
             let n = window.map(|v| v.to_string()).unwrap_or_else(|| "window".to_string());
-            format!("mean_{n}({first}) = Σ({first}) / {n}")
+            format!("mean_{n}({first}) = Î£({first}) / {n}")
         }
         "rolling_std" | "std" | "standard_deviation" | "volatility" => {
             let n = window.map(|v| v.to_string()).unwrap_or_else(|| "window".to_string());
-            format!("σ_{n}({first}) = sqrt(Σ({first}-μ)^2 / {n})")
+            format!("Ïƒ_{n}({first}) = sqrt(Î£({first}-Î¼)^2 / {n})")
         }
         "zscore" | "z_score" => {
             let n = window.map(|v| v.to_string()).unwrap_or_else(|| "window".to_string());
-            format!("z_t = ({first}_t - μ_{n}({first})) / σ_{n}({first})")
+            format!("z_t = ({first}_t - Î¼_{n}({first})) / Ïƒ_{n}({first})")
         }
         "rsi" | "rsi14" => "RSI = 100 - 100 / (1 + avg_gain / avg_loss)".to_string(),
         "atr" => {
             "ATR = EMA(max(high-low, |high-prevClose|, |low-prevClose|))".to_string()
         }
-        "adx" => "ADX = EMA(|+DI - -DI| / (+DI + -DI) × 100)".to_string(),
+        "adx" => "ADX = EMA(|+DI - -DI| / (+DI + -DI) Ã— 100)".to_string(),
         "stochastic" | "stoch" => {
             "Stoch = (close - lowestLow_n) / (highestHigh_n - lowestLow_n)".to_string()
         }
         "bollinger" | "bollinger_bands" => {
             let n = window.map(|v| v.to_string()).unwrap_or_else(|| "n".to_string());
-            format!("middle=mean_{n}({first}); upper/lower=middle ± k·σ_{n}({first})")
+            format!("middle=mean_{n}({first}); upper/lower=middle Â± kÂ·Ïƒ_{n}({first})")
         }
         "macd" => "MACD = EMA_fast(close) - EMA_slow(close); signal = EMA(MACD)".to_string(),
         "heikin_ashi" | "haikin_ashi" => {
             "HA_close=(open+high+low+close)/4; HA_open=(prev_HA_open+prev_HA_close)/2".to_string()
         }
         "correlation" | "correlation_delta" => {
-            format!("corr({first},{second}) = cov({first},{second}) / (σ_{first}·σ_{second})")
+            format!("corr({first},{second}) = cov({first},{second}) / (Ïƒ_{first}Â·Ïƒ_{second})")
         }
         "weighted_score" => {
             let list = if inputs.is_empty() { "metrics".to_string() } else { inputs.join(", ") };
-            format!("score = Σ(weight_i × normalized(metric_i)) over [{list}]")
+            format!("score = Î£(weight_i Ã— normalized(metric_i)) over [{list}]")
         }
         "top_k" => format!("select top-k rows by {first}"),
         _ => {
@@ -4885,227 +4832,15 @@ fn compile_program_metric_routes(
 }
 
 fn define_program(args: ProgramDefineArgs, client: &McpClientInfo) -> Result<Value, String> {
-    let title = bounded_clean_program_title(&args.title)?;
-    let goal = bounded_clean_text(&args.goal, "goal", 4 * 1024)?;
-    let domain = args
-        .domain
-        .as_deref()
-        .map(|v| bounded_clean_text(v, "domain", 120))
-        .transpose()?;
-    let intent = args
-        .intent
-        .as_deref()
-        .map(|v| bounded_clean_text(v, "intent", 4 * 1024))
-        .transpose()?;
-    let template = args
-        .template
-        .as_deref()
-        .map(|v| bounded_clean_text(v, "template", 120))
-        .transpose()?;
-    let explicit_program_kind = args
-        .program_kind
-        .as_deref()
-        .or(args.kind.as_deref())
-        .map(|v| normalize_program_kind(v))
-        .transpose()?;
-    let spec_text = args
-        .spec_text
-        .as_deref()
-        .map(|v| bounded_clean_text(v, "spec_text", MCP_PROGRAM_SPEC_TEXT_MAX_BYTES))
-        .transpose()?;
-    let visual_views = normalize_visual_program_views(args.views, spec_text.as_deref())?;
-    let program_kind = infer_program_kind(
-        explicit_program_kind.as_deref(),
-        template.as_deref(),
-        spec_text.as_deref(),
-        &visual_views,
-    );
-
-    let mut compile_errors = Vec::<String>::new();
-    let mut metrics = args.metrics;
-    if let Some(text) = &spec_text {
-        match extract_metric_tags(text) {
-            Ok(tags) => metrics.extend(tags),
-            Err(err) => compile_errors.push(format!("spec_text metric tags: {err}")),
-        }
-    }
-    if metrics.is_empty() && !(program_kind == "visual_program" && !visual_views.is_empty()) {
-        compile_errors.push(
-            "define requires at least one metric tag in metrics[] or spec_text".to_string(),
+    let store_path = forge_store_dir()?;
+    let mut value = serde_json::to_value(args).map_err(|e| format!("encode create args: {e}"))?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "created_by_agent".to_string(),
+            serde_json::to_value(client).map_err(|e| format!("encode client info: {e}"))?,
         );
-        metrics.push(metric_spec(
-            "draft_metric",
-            "pending_metric",
-            &[],
-            json!({
-                "repair_hint": "Replace this placeholder with real metric tags, formulas, algorithms and inputs before running."
-            }),
-        ));
     }
-    if metrics.len() > MCP_PROGRAM_METRICS_MAX {
-        return Err(format!(
-            "too many metric tags: {} > {}",
-            metrics.len(),
-            MCP_PROGRAM_METRICS_MAX
-        ));
-    }
-    let mut normalized_metrics = Vec::new();
-    for (idx, metric) in metrics.into_iter().enumerate() {
-        match normalize_program_metric(metric, idx, domain.as_deref()) {
-            Ok(metric) => normalized_metrics.push(metric),
-            Err(err) => compile_errors.push(format!("metric {}: {err}", idx + 1)),
-        }
-    }
-    let metric_graph = match validate_metric_dsl_graph(&normalized_metrics) {
-        Ok(graph) => graph,
-        Err(err) => {
-            compile_errors.push(err.clone());
-            json!({
-                "node_count": normalized_metrics.len(),
-                "edge_count": 0,
-                "is_dag": false,
-                "errors": [err]
-            })
-        }
-    };
-    let spec_text_bytes = spec_text.as_ref().map(|v| v.as_bytes().len()).unwrap_or(0);
-    let spec_text_hash = spec_text
-        .as_ref()
-        .map(|v| format!("{:016x}", quick_file_hash(v.as_bytes())));
-    let spec_text_preview = spec_text.as_ref().map(|v| {
-        if v.len() > 512 {
-            format!("{}...", &v[..512])
-        } else {
-            v.clone()
-        }
-    });
-    let metric_contract = metric_math_contract(&normalized_metrics);
-    let mut program_compiler = compile_program_metric_routes(
-        &normalized_metrics,
-        &program_kind,
-        domain.as_deref(),
-        &goal,
-        &metric_graph,
-    );
-    if !compile_errors.is_empty() {
-        if let Some(obj) = program_compiler.as_object_mut() {
-            obj.insert("status".to_string(), json!("needs_repair"));
-            obj.insert("repair_required".to_string(), json!(true));
-            obj.insert("can_run".to_string(), json!(false));
-            let entry = obj.entry("errors".to_string()).or_insert_with(|| json!([]));
-            if let Some(errors) = entry.as_array_mut() {
-                for err in &compile_errors {
-                    errors.push(json!(err));
-                }
-            }
-            obj.insert(
-                "agent_next_step".to_string(),
-                json!("Repair this draft program: fix metric tags, dependencies, formulas, algorithms and routing issues, then create a corrected version before running."),
-            );
-        }
-    }
-
-    let canonical = json!({
-        "title": title,
-        "domain": domain,
-        "intent": intent,
-        "goal": goal,
-        "program_kind": program_kind,
-        "template": template,
-        "metric_dsl": metric_dsl_contract(),
-        "visual_program": if program_kind == "visual_program" {
-            visual_program_contract(&visual_views, &normalized_metrics)
-        } else {
-            Value::Null
-        },
-        "metrics": normalized_metrics.clone(),
-        "metric_contract": metric_contract,
-        "metric_graph": metric_graph,
-        "program_compiler": program_compiler.clone(),
-        "source_schema": args.source_schema,
-        "constraints": args.constraints,
-        "output_contract": args.output_contract,
-        "spec_text_hash": spec_text_hash,
-        "spec_text_bytes": spec_text_bytes
-    });
-    let canonical_bytes =
-        serde_json::to_vec(&canonical).map_err(|e| format!("encode canonical program: {e}"))?;
-    let program_hash = format!("{:016x}", quick_file_hash(&canonical_bytes));
-    let execution_readiness = program_execution_readiness(&normalized_metrics, Some(&program_hash));
-    let compiler_status = program_compiler
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or("compiled_runnable")
-        .to_string();
-    let needs_repair = compiler_status == "needs_repair" || compiler_status == "compile_failed";
-    let manifest_kind = if program_kind == "visual_program" {
-        "forge_visual_program"
-    } else {
-        "forge_compute_program"
-    };
-    let execution_mode = if program_kind == "visual_program" {
-        "declarative_visual_program"
-    } else {
-        "declarative_metric_program"
-    };
-    let execution_stage = if needs_repair {
-        "program draft stored; repair required before run"
-    } else if program_kind == "visual_program" {
-        "visual program stored; executor can materialize 2D/3D view artifacts from compact metric/view recipes"
-    } else {
-        "program spec stored; executor can map metric tags to CPU/GPU kernels or templates"
-    };
-    let dir = programs_dir()?;
-    fs::create_dir_all(&dir).map_err(|e| format!("create programs dir '{}': {e}", dir.display()))?;
-    let path = program_manifest_path(&program_hash)?;
-    let already_existed = path.exists();
-    let now = now_ms();
-    let manifest = json!({
-        "program_id": format!("program-{program_hash}"),
-        "program_hash": program_hash,
-        "kind": manifest_kind,
-        "program_kind": program_kind,
-        "status": if needs_repair { "needs_repair" } else { "ready" },
-        "created_ms": now,
-        "updated_ms": now,
-        "created_by_agent": client,
-        "canonical_hash_basis": "fnv1a64(normalized title/domain/intent/goal/program_kind/template/metrics/views/schema/constraints/output_contract/spec_text_hash)",
-        "content_addressed": true,
-        "duplicate_program_reused": already_existed,
-        "spec_text_included": false,
-        "spec_text_preview": spec_text_preview,
-        "execution_readiness": execution_readiness,
-        "canonical": canonical,
-        "execution": {
-            "mode": execution_mode,
-            "current_stage": execution_stage,
-            "repair_required": needs_repair,
-            "source_content_policy": "inputs are referenced and hashed at execution time; full source content is not returned to the LLM"
-        }
-    });
-    if !already_existed {
-        persist_json_pretty(&path, &manifest)?;
-    }
-    upsert_my_atlas_program(&manifest)?;
-
-    let next_step = if needs_repair {
-        "Do not run this draft yet. Explain the compiler issue briefly, repair the metric tags/formulas/algorithms/routes, then create a corrected runnable program."
-    } else {
-        "This program and its metric tags are now saved in My Atlas. Use run { program_hash, inputs:[{path:\"...\"}] }; after the first successful run, the same content-addressed run is returned instantly from Atlas."
-    };
-
-    Ok(json!({
-        "program": sanitize_program_value(manifest),
-        "program_path": path.display().to_string(),
-        "already_existed": already_existed,
-        "atlas": {
-            "saved_to_my_atlas": true,
-            "program_hash": program_hash,
-            "metric_tags_reusable": true
-        },
-        "execution_readiness": execution_readiness,
-        "next_step": next_step
-    }))
+    forge_agent_runtime::direct_create_rich_program(&store_path, &value, &client.name)
 }
 
 fn list_programs(args: &Value) -> Result<Value, String> {
@@ -5356,538 +5091,15 @@ fn program_compile_validate_route(args: &Value) -> Result<Value, String> {
 }
 
 fn execute_program(args: ProgramExecuteArgs, client: &McpClientInfo) -> Result<Value, String> {
-    let program_hash_owned = if let Some(hash) = args
-        .program_hash
-        .as_deref()
-        .or(args.program_id.as_deref())
-    {
-        hash.to_string()
-    } else if args.program.as_deref().or(args.program_title.as_deref()).or(args.program_query.as_deref()).is_some() {
-        resolve_program_library_selector(&json!({
-            "program": args.program,
-            "program_title": args.program_title,
-            "program_query": args.program_query
-        }))?
-    } else {
-        return Err("execute/run requires program_hash or a program library selector".to_string());
-    };
-    let program_hash = program_hash_owned.as_str();
-    validate_content_hash(program_hash, "program_hash")?;
-    let program = read_json_value(&program_manifest_path(program_hash)?)?;
-    let compiler_status = program
-        .pointer("/canonical/program_compiler/status")
-        .and_then(Value::as_str)
-        .or_else(|| program.get("status").and_then(Value::as_str))
-        .unwrap_or("compiled_runnable");
-    let repair_required = program
-        .pointer("/canonical/program_compiler/repair_required")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        || program
-            .pointer("/execution/repair_required")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        || matches!(compiler_status, "needs_repair" | "compile_failed");
-    if repair_required {
-        return Ok(json!({
-            "ran": false,
-            "status": "needs_repair",
-            "repair_required": true,
-            "program_hash": program_hash,
-            "program": sanitize_program_value(program),
-            "next_step": "Do not run this draft. Briefly explain what is broken, repair the metric tags/formulas/algorithms/routes, then create and run a corrected compiled program."
-        }));
-    }
-    let program_kind = program_kind_from_manifest(&program);
-    let is_visual_program = program_kind == "visual_program";
-    let title = args
-        .title
-        .as_deref()
-        .map(|v| bounded_clean_text(v, "title", 160))
-        .transpose()?
-        .or_else(|| {
-            program
-                .pointer("/canonical/title")
-                .and_then(Value::as_str)
-                .map(|v| format!("{v} run"))
-        })
-        .unwrap_or_else(|| "Forge custom program run".to_string());
-
-    let mut input_refs = Vec::new();
-    let mut resolved_inputs = Vec::new();
-    let mut source_paths_for_manifest = Vec::<String>::new();
-    let mut input_bytes = 0usize;
-    let parent_session_id = args
-        .parent_session_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(|v| {
-            validate_job_id(v)?;
-            Ok::<String, String>(v.to_string())
-        })
-        .transpose()?;
-    for (idx, input) in args.inputs.iter().enumerate() {
-        let role = input
-            .role
-            .as_deref()
-            .map(|v| bounded_clean_text(v, "input role", 80))
-            .transpose()?
-            .unwrap_or_else(|| format!("input_{}", idx + 1));
-        if let Some(path_text) = input.path.as_deref() {
-            let path = resolve_path(path_text)?;
-            let meta = fs::metadata(&path)
-                .map_err(|e| format!("read input metadata '{}': {e}", path.display()))?;
-            if meta.len() > MCP_PROGRAM_EXEC_MAX_INPUT_BYTES {
-                return Err(format!(
-                    "input '{}' is too large for the builtin executor: {} > {} bytes",
-                    path.display(),
-                    meta.len(),
-                    MCP_PROGRAM_EXEC_MAX_INPUT_BYTES
-                ));
-            }
-            let bytes = meta.len() as usize;
-            input_bytes = input_bytes.saturating_add(bytes);
-            let hash = quick_file_hash_path(&path)?;
-            let content_hash = format!("{hash:016x}");
-            let file_bytes = if is_visual_program {
-                Vec::new()
-            } else {
-                fs::read(&path).map_err(|e| format!("read input '{}': {e}", path.display()))?
-            };
-            source_paths_for_manifest.push(path.display().to_string());
-            input_refs.push(json!({
-                "role": role,
-                "kind": "path",
-                "path": path.display().to_string(),
-                "bytes": bytes,
-                "content_hash": content_hash,
-                "content_included": false
-            }));
-            resolved_inputs.push(ResolvedProgramInput {
-                role,
-                path,
-                bytes: file_bytes,
-                content_hash,
-            });
-        } else if let Some(job_id) = input.job_id.as_deref() {
-            validate_job_id(job_id)?;
-            let job_raw = read_job_value(job_id)?;
-            let source_paths = source_file_paths(&job_raw);
-            for path in &source_paths {
-                source_paths_for_manifest.push(path.display().to_string());
-                if !is_visual_program {
-                    let meta = fs::metadata(path)
-                        .map_err(|e| format!("read input metadata '{}': {e}", path.display()))?;
-                    if meta.len() > MCP_PROGRAM_EXEC_MAX_INPUT_BYTES {
-                        return Err(format!(
-                            "input '{}' is too large for the builtin executor: {} > {} bytes",
-                            path.display(),
-                            meta.len(),
-                            MCP_PROGRAM_EXEC_MAX_INPUT_BYTES
-                        ));
-                    }
-                    let bytes = meta.len() as usize;
-                    input_bytes = input_bytes.saturating_add(bytes);
-                    let hash = quick_file_hash_path(path)?;
-                    let content_hash = format!("{hash:016x}");
-                    let file_bytes =
-                        fs::read(path).map_err(|e| format!("read input '{}': {e}", path.display()))?;
-                    resolved_inputs.push(ResolvedProgramInput {
-                        role: role.clone(),
-                        path: path.clone(),
-                        bytes: file_bytes,
-                        content_hash,
-                    });
-                }
-            }
-            let job = sanitize_job_value(job_raw);
-            input_refs.push(json!({
-                "role": role,
-                "kind": "job",
-                "job_id": job_id,
-                "job": job,
-                "content_included": false
-            }));
-        } else {
-            return Err(format!("input {} requires path or job_id", idx + 1));
-        }
-    }
-
-    let dry_run = args.dry_run.unwrap_or(false);
-    let run_basis = json!({
-        "program_hash": program_hash,
-        "inputs": input_refs,
-        "parent_session_id": parent_session_id.clone(),
-        "params": args.params,
-        "dry_run": dry_run,
-        "intent": args.intent,
-        "capability": args.capability
-    });
-    let run_basis_bytes =
-        serde_json::to_vec(&run_basis).map_err(|e| format!("encode run basis: {e}"))?;
-    let run_hash = format!("{:016x}", quick_file_hash(&run_basis_bytes));
-    if !dry_run {
-        if let Some(hit) = my_atlas_run_hit(&run_hash)? {
-            return Ok(json!({
-                "job": sanitize_job_value(hit),
-                "atlas_hit": true,
-                "instant_replay": true,
-                "program_hash": program_hash,
-                "run_hash": run_hash,
-                "saved_compute": true,
-                "next_step": "Atlas hit: this program/input/params result was already computed. Use the returned job_id/artifact refs immediately; do not rerun the program."
-            }));
-        }
-    }
-    let created_ms = now_ms();
-    let job_id = format!("custom-{created_ms}-{run_hash}");
-    let dir = jobs_dir()?;
-    fs::create_dir_all(&dir).map_err(|e| format!("create jobs dir '{}': {e}", dir.display()))?;
-    let log_path = dir.join(format!("{job_id}.log"));
-    let mut log = Vec::new();
-    let agent_name = friendly_agent_name(client);
-    let program_title = program
-        .pointer("/canonical/title")
-        .and_then(Value::as_str)
-        .unwrap_or("Forge compute program");
-    let program_goal = args
-        .intent
-        .as_deref()
-        .or_else(|| program.pointer("/canonical/goal").and_then(Value::as_str))
-        .unwrap_or("run the selected metrics and return compact artifacts");
-    let metric_labels = program
-        .pointer("/canonical/metrics")
-        .and_then(Value::as_array)
-        .map(|metrics| {
-            metrics
-                .iter()
-                .filter_map(|metric| metric.get("tag").and_then(Value::as_str))
-                .take(6)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let metrics_text = if metric_labels.is_empty() {
-        "the program metrics".to_string()
-    } else {
-        metric_labels.join(", ")
-    };
-    push_job_log(
-        &log_path,
-        &mut log,
-        format!(
-            "{agent_name}: I'm going to run \"{program_title}\" in this Forge session. Objective: {program_goal}. Metrics: {metrics_text}. Inputs: {} file reference{}; raw content stays on disk.",
-            input_refs.len(),
-            if input_refs.len() == 1 { "" } else { "s" }
-        ),
-    )?;
-    push_job_log(&log_path, &mut log, "Selecting a Forge program for this session...".to_string())?;
-    push_job_log(
-        &log_path,
-        &mut log,
-        format!("Program selected: \"{program_title}\" ({program_hash})."),
-    )?;
-    push_job_log(
-        &log_path,
-        &mut log,
-        format!(
-            "Using {} input reference{} from disk ({} bytes kept outside the LLM context).",
-            input_refs.len(),
-            if input_refs.len() == 1 { "" } else { "s" },
-            input_bytes
-        ),
-    )?;
-    let (execution_result, status) = if dry_run {
-        push_job_log(
-            &log_path,
-            &mut log,
-            if is_visual_program {
-                "Planning only: Forge is not materializing visual views yet.".to_string()
-            } else {
-                "Planning only: Forge is not executing metrics yet.".to_string()
-            },
-        )?;
-        (
-            json!({
-                "stage": "program_run_manifest_created",
-                "dry_run": true,
-                "builtin_executor": false,
-                "program_kind": program_kind,
-                "note": if is_visual_program {
-                    "No visual views were materialized because dry_run=true."
-                } else {
-                    "No metrics were executed because dry_run=true."
-                }
-            }),
-            "planned",
-        )
-    } else if is_visual_program {
-        let preliminary_manifest = json!({
-            "job_id": job_id,
-            "title": title,
-            "kind": "visual_program_run",
-            "status": "running",
-            "created_ms": created_ms,
-            "parent_session_id": parent_session_id.clone(),
-            "history_hidden": parent_session_id.is_some(),
-            "current_session_attachment": parent_session_id.is_some(),
-            "program_hash": program_hash,
-            "run_hash": run_hash,
-            "program": summarize_program_value(program.clone()),
-            "inputs": input_refs,
-            "file_paths": source_paths_for_manifest,
-            "params": run_basis.get("params").cloned().unwrap_or(Value::Null),
-            "intent": run_basis.get("intent").cloned().unwrap_or(Value::Null),
-            "capability": run_basis.get("capability").cloned().unwrap_or(Value::Null),
-            "log_path": log_path.display().to_string(),
-            "agents": [client],
-            "content_addressed": true,
-            "source_content_included": false
-        });
-        persist_job_value(&dir, &job_id, preliminary_manifest)?;
-        let store_path = forge_agent_tools::resolve_store_path()?;
-        let visual_args = json!({
-            "job_id": job_id,
-            "program_hash": program_hash,
-            "program_title": program_title,
-            "program_goal": program_goal,
-            "metrics": program.pointer("/canonical/metrics").cloned().unwrap_or_else(|| json!([])),
-            "views": program.pointer("/canonical/visual_program/views").cloned().unwrap_or_else(|| json!([])),
-            "params": run_basis.get("params").cloned().unwrap_or(Value::Null)
-        });
-        let result = forge_agent_tools::call_internal_tool(
-            &store_path,
-            "forge_run_visual_program",
-            &visual_args,
-            Some(&job_id),
-        )?;
-        let failed = result
-            .get("failed_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let status = if failed > 0 {
-            "completed_with_visual_view_errors"
-        } else {
-            "completed"
-        };
-        (result, status)
-    } else {
-        let result = execute_metric_toolbox(
-            &program,
-            &resolved_inputs,
-            &dir,
-            &job_id,
-            &run_hash,
-            &log_path,
-            &mut log,
-        )?;
-        let unresolved = result
-            .get("unresolved_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let failed = result
-            .get("failed_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let status = if failed > 0 {
-            "completed_with_metric_errors"
-        } else if unresolved > 0 {
-            "completed_with_unresolved_ops"
-        } else {
-            "completed"
-        };
-        (result, status)
-    };
-
-    let metrics_path_ref = execution_result
-        .pointer("/metrics_artifact/path")
-        .and_then(Value::as_str)
-        .map(|v| v.to_string());
-    let proof_path_ref = execution_result
-        .pointer("/proof_artifact/path")
-        .and_then(Value::as_str)
-        .map(|v| v.to_string());
-    let refreshed_visual_job = if is_visual_program && !dry_run {
-        find_job_manifest_path(&job_id)
-            .ok()
-            .and_then(|path| read_json_value(&path).ok())
-    } else {
-        None
-    };
-    let visual_mapping_path_ref = execution_result
-        .pointer("/visual_mapping_artifact/path")
-        .and_then(Value::as_str)
-        .map(|v| v.to_string())
-        .or_else(|| {
-            refreshed_visual_job
-                .as_ref()
-                .and_then(|job| job.get("visual_mapping_path").and_then(Value::as_str))
-                .map(str::to_string)
-        });
-    let visual_mapping = execution_result
-        .get("visual_mapping")
-        .cloned()
-        .or_else(|| {
-            refreshed_visual_job
-                .as_ref()
-                .and_then(|job| job.get("visual_mapping").cloned())
-        })
-        .unwrap_or(Value::Null);
-    let views_2d = execution_result
-        .get("views_2d")
-        .cloned()
-        .or_else(|| {
-            refreshed_visual_job
-                .as_ref()
-                .and_then(|job| job.get("views_2d").cloned())
-        })
-        .unwrap_or_else(|| json!([]));
-    let views_3d = execution_result
-        .get("views_3d")
-        .cloned()
-        .or_else(|| {
-            refreshed_visual_job
-                .as_ref()
-                .and_then(|job| job.get("views_3d").cloned())
-        })
-        .unwrap_or_else(|| json!([]));
-    let artifacts_2d = execution_result
-        .get("artifacts_2d")
-        .cloned()
-        .or_else(|| {
-            refreshed_visual_job
-                .as_ref()
-                .and_then(|job| job.get("artifacts_2d").cloned())
-        })
-        .unwrap_or_else(|| json!([]));
-    let artifacts_3d = execution_result
-        .get("artifacts_3d")
-        .cloned()
-        .or_else(|| {
-            refreshed_visual_job
-                .as_ref()
-                .and_then(|job| job.get("artifacts_3d").cloned())
-        })
-        .unwrap_or_else(|| json!([]));
-    let artifact_bytes = artifact_bytes_from_execution_result(&execution_result).saturating_add(
-        execution_result
-            .get("artifact_bytes")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
-    );
-    let compute_avoided = if dry_run {
-        json!({
-            "mode": "plan_only",
-            "program_kind": if is_visual_program { "visual_program_run" } else { "custom_compute_program_run" },
-            "metric_count": program
-                .pointer("/canonical/metrics")
-                .and_then(Value::as_array)
-                .map(|metrics| metrics.len())
-                .unwrap_or(0),
-            "view_count": program
-                .pointer("/canonical/visual_program/views")
-                .and_then(Value::as_array)
-                .map(|views| views.len())
-                .unwrap_or(0),
-            "operations_unit": "metric_invocations",
-            "note": "No metrics were executed yet; this is a plan-only estimate of the program shape."
-        })
-    } else if let Some(value) = execution_result.get("compute_avoided") {
-        value.clone()
-    } else {
-        program_compute_avoided(&execution_result)
-    };
-    let run_kind = if is_visual_program {
-        "visual_program_run"
-    } else {
-        "custom_compute_program_run"
-    };
-
-    let manifest = json!({
-        "job_id": job_id,
-        "title": title,
-        "kind": run_kind,
-        "status": status,
-        "created_ms": created_ms,
-        "parent_session_id": parent_session_id.clone(),
-        "history_hidden": parent_session_id.is_some(),
-        "current_session_attachment": parent_session_id.is_some(),
-        "program_hash": program_hash,
-        "run_hash": run_hash,
-        "program_kind": program_kind,
-        "program": summarize_program_value(program.clone()),
-        "inputs": input_refs,
-        "params": run_basis.get("params").cloned().unwrap_or(Value::Null),
-        "intent": run_basis.get("intent").cloned().unwrap_or(Value::Null),
-        "capability": run_basis.get("capability").cloned().unwrap_or(Value::Null),
-        "log_path": log_path.display().to_string(),
-        "metrics_path": metrics_path_ref,
-        "proof_path": proof_path_ref,
-        "visual_mapping_path": visual_mapping_path_ref,
-        "visual_mapping": visual_mapping,
-        "visual_program": if is_visual_program { program.pointer("/canonical/visual_program").cloned().unwrap_or(Value::Null) } else { Value::Null },
-        "views_2d": views_2d,
-        "views_3d": views_3d,
-        "artifacts_2d": artifacts_2d,
-        "artifacts_3d": artifacts_3d,
-        "agents": [client],
-        "content_addressed": true,
-        "source_content_included": false,
-        "compute_avoided": compute_avoided.clone(),
-        "execution": {
-            "dry_run": dry_run,
-            "stage": execution_result.get("stage").cloned().unwrap_or_else(|| {
-                if is_visual_program {
-                    json!("visual_program_materialized")
-                } else {
-                    json!("metric_toolbox_executed")
-                }
-            }),
-            "toolbox": execution_result,
-            "program_readiness": program.get("execution_readiness").cloned().unwrap_or(Value::Null),
-            "note": if is_visual_program {
-                "Visual views are materialized by local Forge tools from compact recipes; raw source rows, series and point clouds stay on disk."
-            } else {
-                "Builtin universal operators execute immediately; unknown domain-specific ops remain content-addressed custom extensions until a matching executor is added."
-            }
-        },
-        "context_accounting": agent_context_accounting_with_artifacts(
-            client,
-            input_bytes,
-            fs::metadata(&log_path).map(|m| m.len() as usize).unwrap_or(0),
-            artifact_bytes,
-            compute_avoided
-        )
-    });
-    persist_job_value(&dir, &job_id, manifest.clone())?;
-    let _ = bump_my_atlas_after_run(&program, &manifest);
-    if let Some(parent_job_id) = parent_session_id.as_deref() {
-        let _ = attach_program_run_to_parent_session(
-            parent_job_id,
-            json!({
-                "job_id": job_id,
-                "title": title,
-                "kind": run_kind,
-                "status": status,
-                "program_hash": program_hash,
-                "run_hash": run_hash,
-                "created_ms": created_ms,
-                "source_content_included": false
-            }),
+    let store_path = forge_store_dir()?;
+    let mut value = serde_json::to_value(args).map_err(|e| format!("encode run args: {e}"))?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "created_by_agent".to_string(),
+            serde_json::to_value(client).map_err(|e| format!("encode client info: {e}"))?,
         );
     }
-
-    Ok(json!({
-        "job": sanitize_job_value(manifest),
-        "atlas": {
-            "saved_to_my_atlas": true,
-            "instant_after_first_run": !dry_run,
-            "program_hash": program_hash,
-            "run_hash": run_hash
-        },
-        "next_step": "Use logs/read/artifacts with this job_id. This run is now indexed in My Atlas; the same program/input/params can be reused instantly without recompute."
-    }))
+    forge_agent_runtime::direct_run_rich_program(&store_path, &value, &client.name)
 }
 
 fn attach_program_run_to_parent_session(parent_job_id: &str, run_ref: Value) -> Result<(), String> {
@@ -7711,7 +6923,7 @@ fn bounded_clean_text(value: &str, field: &str, max_bytes: usize) -> Result<Stri
 }
 
 /// Hard cap on instrument/lens display titles. LLMs receive an explicit
-/// error if they exceed it — forces concise labels like "VWAP detune"
+/// error if they exceed it â€” forces concise labels like "VWAP detune"
 /// or "K-mer scan" instead of paragraphs. Counts UTF-8 chars, not bytes.
 const PROGRAM_TITLE_MAX_CHARS: usize = 24;
 
@@ -7749,7 +6961,7 @@ fn bounded_clean_metric_name(value: &str) -> Result<String, String> {
 
 /// Hard cap on metric/node tags. Forces minimalist labels like `rsi_14`,
 /// `vwap`, `ema_delta` instead of long descriptive sentences. The atlas
-/// UI shows these as small cubes — long tags blow up the layout.
+/// UI shows these as small cubes â€” long tags blow up the layout.
 const METRIC_TAG_MAX_CHARS: usize = 16;
 
 fn sanitize_metric_tag(value: &str, idx: usize) -> String {
@@ -7900,6 +7112,25 @@ fn forge_fbc_runtime_snapshot_mcp(args: &Value) -> Result<Value, String> {
         .map_err(|e| format!("read SECTION_OWNERSHIP '{}': {e}", ownership_path.display()))?;
     let registry = parse_app_section_registry_v0(&ownership_json)
         .map_err(|e| format!("parse app FBC registry: {e:?}"))?;
+    let tool_registry_path = forge_workspace_dir_mcp()
+        .join("examples")
+        .join("forge_tauri_ui")
+        .join("source-registry")
+        .join("real-estate-tool-cells.json");
+    let tool_registry_json = fs::read_to_string(&tool_registry_path)
+        .map_err(|e| format!("read real-estate tool cells '{}': {e}", tool_registry_path.display()))?;
+    let tool_registry = parse_tool_cell_registry_v0(&tool_registry_json)
+        .map_err(|e| format!("parse real-estate tool cell registry: {e:?}"))?;
+    let tool_graph_path = store_path
+        .join("real-estate-harvester")
+        .join("data")
+        .join("living_dataflow_graph.jsonl");
+    let tool_graph_jsonl = if tool_graph_path.exists() {
+        fs::read(&tool_graph_path)
+            .map_err(|e| format!("read real-estate living graph '{}': {e}", tool_graph_path.display()))?
+    } else {
+        Vec::new()
+    };
     let mut config = ForgeVmConfig::default();
     config.backend = args
         .get("backend")
@@ -7908,8 +7139,13 @@ fn forge_fbc_runtime_snapshot_mcp(args: &Value) -> Result<Value, String> {
         .filter(|v| !v.is_empty())
         .unwrap_or("auto")
         .to_string();
-    let batch = execute_app_registry_batch(&ownership_json, &config)
-        .map_err(|e| format!("execute app FBC registry: {e:?}"))?;
+    let batch = execute_tool_cell_batch_groups(
+        &[
+            (&registry.cells, &registry.graph_jsonl),
+            (&tool_registry.cells, &tool_graph_jsonl),
+        ],
+        &config,
+    );
     let output_dir = store_path.join("fbc").join("app");
     let manifest_path = output_dir.join("app_fbc_registry_batch.json");
     if args
@@ -7940,9 +7176,11 @@ fn forge_fbc_runtime_snapshot_mcp(args: &Value) -> Result<Value, String> {
         "source": "forge_mcp_fbc_runtime",
         "job_id": format!("fbc-app-{}", now_ms()),
         "registry_hash": registry.registry_hash,
+        "tool_registry_hash": tool_registry.registry_hash,
         "graph_hash": batch.graph_hash,
         "section_count": registry.section_count,
         "sensitive_command_count": registry.sensitive_command_count,
+        "tool_cell_registry_count": tool_registry.cells.len(),
         "cell_count": batch.tool_count,
         "ok_count": batch.ok_count,
         "denied_count": batch.denied_count,
@@ -7999,301 +7237,6 @@ fn forge_store_dir() -> Result<PathBuf, String> {
     std::env::current_dir()
         .map(|cwd| cwd.join(".forge-store"))
         .map_err(|e| format!("resolve Forge store dir: {e}"))
-}
-
-fn my_atlas_dir() -> Result<PathBuf, String> {
-    Ok(forge_store_dir()?.join("atlas"))
-}
-
-fn my_atlas_index_path() -> Result<PathBuf, String> {
-    Ok(my_atlas_dir()?.join("my_atlas.json"))
-}
-
-fn empty_my_atlas_index(now: u128) -> Value {
-    json!({
-        "schema": "forge_my_atlas_v1",
-        "created_ms": now,
-        "updated_ms": now,
-        "programs": [],
-        "metric_tags": [],
-        "runs": [],
-        "doctrine": {
-            "content_addressed": true,
-            "after_first_run": "same program_hash + same input hashes + same params returns an Atlas hit instead of recomputing",
-            "agents_should": "reuse metric_tags and programs from My Atlas before creating new ones"
-        }
-    })
-}
-
-fn read_my_atlas_index() -> Result<Value, String> {
-    ensure_builtin_mars_geonodes()?;
-    let path = my_atlas_index_path()?;
-    if !path.exists() {
-        return Ok(empty_my_atlas_index(now_ms()));
-    }
-    read_json_value(&path)
-}
-
-fn ensure_builtin_mars_geonodes() -> Result<(), String> {
-    let store_path = forge_store_dir()?;
-    forge_agent_tools::ensure_builtin_mars_geonodes(&store_path)
-}
-
-fn persist_my_atlas_index(value: &Value) -> Result<(), String> {
-    let dir = my_atlas_dir()?;
-    fs::create_dir_all(&dir).map_err(|e| format!("create atlas dir '{}': {e}", dir.display()))?;
-    persist_json_pretty(&my_atlas_index_path()?, value)
-}
-
-fn json_hash(value: &Value) -> String {
-    let bytes = serde_json::to_vec(value).unwrap_or_default();
-    format!("{:016x}", quick_file_hash(&bytes))
-}
-
-fn json_string_at(value: &Value, pointers: &[&str]) -> Option<String> {
-    pointers.iter().find_map(|pointer| {
-        value
-            .pointer(pointer)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map(str::to_string)
-    })
-}
-
-fn atlas_array_mut<'a>(root: &'a mut Value, key: &str) -> Result<&'a mut Vec<Value>, String> {
-    let obj = root
-        .as_object_mut()
-        .ok_or_else(|| "atlas index root is not an object".to_string())?;
-    let entry = obj.entry(key.to_string()).or_insert_with(|| json!([]));
-    if !entry.is_array() {
-        *entry = json!([]);
-    }
-    entry
-        .as_array_mut()
-        .ok_or_else(|| format!("atlas index '{key}' is not an array"))
-}
-
-fn upsert_atlas_array_item(array: &mut Vec<Value>, match_key: &str, match_value: &str, mut item: Value) {
-    if let Some(existing) = array
-        .iter_mut()
-        .find(|entry| entry.get(match_key).and_then(Value::as_str) == Some(match_value))
-    {
-        if let (Some(existing_obj), Some(item_obj)) = (existing.as_object_mut(), item.as_object_mut()) {
-            if !item_obj.contains_key("created_ms") {
-                if let Some(created) = existing_obj.get("created_ms").cloned() {
-                    item_obj.insert("created_ms".to_string(), created);
-                }
-            }
-            for preserve in [
-                "run_count",
-                "last_run_job_id",
-                "last_result_ref",
-                "last_run_ms",
-                "instant_after_first_run",
-            ] {
-                if !item_obj.contains_key(preserve) {
-                    if let Some(value) = existing_obj.get(preserve).cloned() {
-                        item_obj.insert(preserve.to_string(), value);
-                    }
-                }
-            }
-            *existing = item;
-        }
-    } else {
-        array.push(item);
-    }
-}
-
-fn atlas_metric_tag_value(metric: &Value, program: &Value, program_hash: &str, now: u128) -> Value {
-    let tag = json_string_at(metric, &["/tag", "/id", "/name", "/output"])
-        .unwrap_or_else(|| "metric".to_string());
-    let formula = json_string_at(metric, &["/formula", "/params/formula", "/algorithm", "/op"])
-        .unwrap_or_else(|| "custom metric".to_string());
-    json!({
-        "kind": "metric_tag",
-        "tag_hash": json_hash(metric),
-        "tag": tag,
-        "formula": formula,
-        "op": metric.get("op").cloned().unwrap_or(Value::Null),
-        "inputs": metric.get("inputs").cloned().unwrap_or_else(|| json!([])),
-        "output": metric.get("output").cloned().unwrap_or(Value::Null),
-        "domain": program.pointer("/canonical/domain").cloned().unwrap_or(Value::Null),
-        "program_hash": program_hash,
-        "program_title": program.pointer("/canonical/title").cloned().unwrap_or(Value::Null),
-        "created_ms": now,
-        "updated_ms": now,
-        "run_count": 0,
-        "reusable": true,
-        "content_addressed": true,
-        "source_content_included": false
-    })
-}
-
-fn upsert_my_atlas_program(program: &Value) -> Result<(), String> {
-    let program_hash = program
-        .get("program_hash")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "program manifest missing program_hash".to_string())?;
-    let now = now_ms();
-    let mut atlas = read_my_atlas_index()?;
-    if let Some(obj) = atlas.as_object_mut() {
-        obj.insert("updated_ms".to_string(), json!(now));
-    }
-    let metrics = program
-        .pointer("/canonical/metrics")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let program_item = json!({
-        "kind": "program",
-        "program_hash": program_hash,
-        "program_id": program.get("program_id").cloned().unwrap_or(Value::Null),
-        "title": program.pointer("/canonical/title").cloned().unwrap_or(Value::Null),
-        "domain": program.pointer("/canonical/domain").cloned().unwrap_or(Value::Null),
-        "goal": program.pointer("/canonical/goal").cloned().unwrap_or(Value::Null),
-        "program_kind": program.get("program_kind").cloned().unwrap_or(Value::Null),
-        "status": program.get("status").cloned().unwrap_or(Value::Null),
-        "metric_count": metrics.len(),
-        "metric_tags": metrics
-            .iter()
-            .map(|metric| metric_tag(metric))
-            .take(64)
-            .collect::<Vec<_>>(),
-        "created_ms": program.get("created_ms").cloned().unwrap_or_else(|| json!(now)),
-        "updated_ms": now,
-        "run_count": 0,
-        "instant_after_first_run": false,
-        "reusable": true,
-        "content_addressed": true,
-        "source_content_included": false
-    });
-    upsert_atlas_array_item(
-        atlas_array_mut(&mut atlas, "programs")?,
-        "program_hash",
-        program_hash,
-        program_item,
-    );
-    {
-        let tags = atlas_array_mut(&mut atlas, "metric_tags")?;
-        for metric in metrics {
-            let tag_item = atlas_metric_tag_value(&metric, program, program_hash, now);
-            let tag_hash = tag_item
-                .get("tag_hash")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            if !tag_hash.is_empty() {
-                upsert_atlas_array_item(tags, "tag_hash", &tag_hash, tag_item);
-            }
-        }
-    }
-    persist_my_atlas_index(&atlas)
-}
-
-fn atlas_job_result_ref(job: &Value) -> Value {
-    json!({
-        "job_id": job.get("job_id").cloned().unwrap_or(Value::Null),
-        "run_hash": job.get("run_hash").cloned().unwrap_or(Value::Null),
-        "status": job.get("status").cloned().unwrap_or(Value::Null),
-        "metrics_path": job.get("metrics_path").cloned().unwrap_or(Value::Null),
-        "proof_path": job.get("proof_path").cloned().unwrap_or(Value::Null),
-        "visual_mapping_path": job.get("visual_mapping_path").cloned().unwrap_or(Value::Null),
-        "content_included": false
-    })
-}
-
-fn bump_my_atlas_after_run(program: &Value, job: &Value) -> Result<(), String> {
-    let program_hash = program
-        .get("program_hash")
-        .and_then(Value::as_str)
-        .or_else(|| job.get("program_hash").and_then(Value::as_str))
-        .ok_or_else(|| "program manifest missing program_hash".to_string())?;
-    upsert_my_atlas_program(program)?;
-    let now = now_ms();
-    let mut atlas = read_my_atlas_index()?;
-    if let Some(obj) = atlas.as_object_mut() {
-        obj.insert("updated_ms".to_string(), json!(now));
-    }
-    let result_ref = atlas_job_result_ref(job);
-    if let Some(programs) = atlas.get_mut("programs").and_then(Value::as_array_mut) {
-        for entry in programs.iter_mut() {
-            if entry.get("program_hash").and_then(Value::as_str) == Some(program_hash) {
-                if let Some(obj) = entry.as_object_mut() {
-                    let count = obj.get("run_count").and_then(Value::as_u64).unwrap_or(0) + 1;
-                    obj.insert("run_count".to_string(), json!(count));
-                    obj.insert("last_run_ms".to_string(), json!(now));
-                    obj.insert(
-                        "last_run_job_id".to_string(),
-                        job.get("job_id").cloned().unwrap_or(Value::Null),
-                    );
-                    obj.insert("last_result_ref".to_string(), result_ref.clone());
-                    obj.insert("instant_after_first_run".to_string(), json!(true));
-                }
-            }
-        }
-    }
-    if let Some(tags) = atlas.get_mut("metric_tags").and_then(Value::as_array_mut) {
-        for entry in tags.iter_mut() {
-            if entry.get("program_hash").and_then(Value::as_str) == Some(program_hash) {
-                if let Some(obj) = entry.as_object_mut() {
-                    let count = obj.get("run_count").and_then(Value::as_u64).unwrap_or(0) + 1;
-                    obj.insert("run_count".to_string(), json!(count));
-                    obj.insert("last_run_ms".to_string(), json!(now));
-                    obj.insert(
-                        "last_run_job_id".to_string(),
-                        job.get("job_id").cloned().unwrap_or(Value::Null),
-                    );
-                    obj.insert("last_result_ref".to_string(), result_ref.clone());
-                }
-            }
-        }
-    }
-    if let Some(run_hash) = job.get("run_hash").and_then(Value::as_str) {
-        let run_item = json!({
-            "kind": "run",
-            "run_hash": run_hash,
-            "program_hash": program_hash,
-            "program_title": program.pointer("/canonical/title").cloned().unwrap_or(Value::Null),
-            "job_id": job.get("job_id").cloned().unwrap_or(Value::Null),
-            "status": job.get("status").cloned().unwrap_or(Value::Null),
-            "created_ms": job.get("created_ms").cloned().unwrap_or_else(|| json!(now)),
-            "updated_ms": now,
-            "inputs": job.get("inputs").cloned().unwrap_or_else(|| json!([])),
-            "params": job.get("params").cloned().unwrap_or(Value::Null),
-            "result_ref": result_ref,
-            "reusable": true,
-            "content_addressed": true,
-            "source_content_included": false
-        });
-        upsert_atlas_array_item(atlas_array_mut(&mut atlas, "runs")?, "run_hash", run_hash, run_item);
-    }
-    persist_my_atlas_index(&atlas)
-}
-
-fn my_atlas_run_hit(run_hash: &str) -> Result<Option<Value>, String> {
-    let atlas = read_my_atlas_index()?;
-    let Some(runs) = atlas.get("runs").and_then(Value::as_array) else {
-        return Ok(None);
-    };
-    for run in runs {
-        if run.get("run_hash").and_then(Value::as_str) != Some(run_hash) {
-            continue;
-        }
-        let Some(job_id) = run.get("job_id").and_then(Value::as_str) else {
-            continue;
-        };
-        if let Ok(job) = read_job_value(job_id) {
-            let status = job.get("status").and_then(Value::as_str).unwrap_or("");
-            if matches!(
-                status,
-                "completed" | "completed_with_metric_errors" | "completed_with_unresolved_ops" | "completed_with_visual_view_errors" | "planned"
-            ) {
-                return Ok(Some(job));
-            }
-        }
-    }
-    Ok(None)
 }
 
 fn mcp_tool_response(value: Value) -> Result<Value, String> {
@@ -8849,7 +7792,10 @@ fn forge_intent_search_route_plan(results: &[Value], query: &str) -> Value {
 }
 
 fn forge_intent_projection_search_entries(store_path: &Path) -> Vec<Value> {
-    let Ok(index) = read_intent_projection_index(store_path) else {
+    let Ok(index) = forge_agent_runtime::direct_read_projection(
+        store_path,
+        &json!({ "list": true, "limit": 32 }),
+    ) else {
         return Vec::new();
     };
     index
@@ -9232,7 +8178,7 @@ fn run_alpha_strategy(args: AlphaStrategyArgs, client: &McpClientInfo) -> Result
     )?;
 
     let point_size = args.point_size.unwrap_or(0.01).abs().max(1e-12);
-    let mut cfg = synth_strategy::SynthConfig::default();
+    let mut cfg = trading_alpha::SynthConfig::default();
     cfg.sl_points = args
         .sl_display_points
         .map(|v| v.abs() * point_size)
@@ -9258,7 +8204,7 @@ fn run_alpha_strategy(args: AlphaStrategyArgs, client: &McpClientInfo) -> Result
     let top_n = args.top_rules_per_side.unwrap_or(18).clamp(4, 64);
 
     push_job_log(&log_path, &mut log, "Reading the candles and preparing the backtest.".to_string())?;
-    let bars = synth_strategy::parse_csv(&csv_bytes).map_err(|e| format!("CSV parse error: {e}"))?;
+    let bars = trading_alpha::parse_csv(&csv_bytes).map_err(|e| format!("CSV parse error: {e}"))?;
     if bars.len() < 250 {
         return Err(format!("need at least 250 OHLC bars, got {}", bars.len()));
     }
@@ -9337,12 +8283,12 @@ fn run_alpha_strategy(args: AlphaStrategyArgs, client: &McpClientInfo) -> Result
     ));
     push_job_log(&log_path, &mut log, format!("loaded {} OHLC bars for feature extraction", bars.len()))?;
 
-    let train_end = synth_strategy::train_holdout_split(bars.len(), cfg);
+    let train_end = trading_alpha::train_holdout_split(bars.len(), cfg);
     internal_job_log(&job_id, format!("split train=[200,{train_end}) holdout=[{train_end},{})", bars.len()));
     push_job_log(&log_path, &mut log, "calculating VWAP / anchored VWAP / RSI / ATR / ADX / Stochastic feature matrix".to_string())?;
-    let raw_cache = build_mcp_raw_feature_cache(&bars, synth_strategy::MIN_HISTORY..bars.len());
+    let raw_cache = build_mcp_raw_feature_cache(&bars, trading_alpha::MIN_HISTORY..bars.len());
     push_job_log(&log_path, &mut log, "feature matrix ready: VWAP, stochastic, volatility and session features".to_string())?;
-    let decision_rows = count_decision_rows(&bars, &raw_cache, synth_strategy::MIN_HISTORY..train_end);
+    let decision_rows = count_decision_rows(&bars, &raw_cache, trading_alpha::MIN_HISTORY..train_end);
     internal_job_log(
         &job_id,
         format!(
@@ -9352,7 +8298,7 @@ fn run_alpha_strategy(args: AlphaStrategyArgs, client: &McpClientInfo) -> Result
     );
 
     push_job_log(&log_path, &mut log, "enumerating LONG/SHORT threshold rules over Alpha features".to_string())?;
-    let rules = enumerate_rules(&bars, &raw_cache, synth_strategy::MIN_HISTORY..train_end, cfg);
+    let rules = enumerate_rules(&bars, &raw_cache, trading_alpha::MIN_HISTORY..train_end, cfg);
     push_job_log(&log_path, &mut log, format!("{} candidate LONG/SHORT rules generated", rules.len()))?;
     if rules.is_empty() {
         mark_job_failed(
@@ -9499,17 +8445,17 @@ fn run_alpha_strategy(args: AlphaStrategyArgs, client: &McpClientInfo) -> Result
 }
 
 fn enumerate_rules(
-    bars: &[synth_strategy::Bar],
+    bars: &[trading_alpha::Bar],
     raw_cache: &McpRawCache,
     range: std::ops::Range<usize>,
-    cfg: synth_strategy::SynthConfig,
+    cfg: trading_alpha::SynthConfig,
 ) -> Vec<Rule> {
     let mut out = Vec::new();
     let end = range.end.min(bars.len().saturating_sub(cfg.max_horizon_bars));
-    for fi in 0..synth_strategy::BASE_FEATURE_COUNT {
+    for fi in 0..trading_alpha::BASE_FEATURE_COUNT {
         let mut values = Vec::new();
-        for i in range.start.max(synth_strategy::MIN_HISTORY)..end {
-            if !synth_strategy::is_decision_hour(&bars[i]) {
+        for i in range.start.max(trading_alpha::MIN_HISTORY)..end {
+            if !trading_alpha::is_decision_hour(&bars[i]) {
                 continue;
             }
             if let Some(value) = raw_cache.get(i).and_then(|row| row[fi]) {
@@ -9524,7 +8470,7 @@ fn enumerate_rules(
         for pct in [10usize, 20, 30, 40, 50, 60, 70, 80, 90] {
             let idx = (values.len() - 1) * pct / 100;
             let threshold = values[idx];
-            let feature_name = synth_strategy::FEATURE_NAMES
+            let feature_name = trading_alpha::FEATURE_NAMES
                 .get(fi)
                 .copied()
                 .unwrap_or("feature")
@@ -9549,14 +8495,14 @@ fn enumerate_rules(
 #[allow(clippy::too_many_arguments)]
 fn run_forge_alpha_job(
     args: AlphaStrategyArgs,
-    mut cfg: synth_strategy::SynthConfig,
+    mut cfg: trading_alpha::SynthConfig,
     csv_path: PathBuf,
     file_hash: u64,
     job_id: String,
     jobs_dir: PathBuf,
     log_path: PathBuf,
     mut log: Vec<String>,
-    bars: Vec<synth_strategy::Bar>,
+    bars: Vec<trading_alpha::Bar>,
     client: &McpClientInfo,
 ) -> Result<StrategyJob, String> {
     let job_t0 = std::time::Instant::now();
@@ -9590,12 +8536,12 @@ fn run_forge_alpha_job(
         format!("Forge backend acquired in {:.2}s", backend_t0.elapsed().as_secs_f64()),
     );
 
-    let train_end = synth_strategy::train_holdout_split(bars.len(), cfg);
+    let train_end = trading_alpha::train_holdout_split(bars.len(), cfg);
     internal_job_log(&job_id, format!("split train=[200,{train_end}) holdout=[{train_end},{})", bars.len()));
     let straddle_grid_t0 = std::time::Instant::now();
-    if let Some(selection) = synth_strategy::select_best_straddle_grid_config(
+    if let Some(selection) = trading_alpha::select_best_straddle_grid_config(
         &bars,
-        synth_strategy::MIN_HISTORY..train_end,
+        trading_alpha::MIN_HISTORY..train_end,
         cfg,
     ) {
         cfg = selection.cfg;
@@ -9650,12 +8596,12 @@ fn run_forge_alpha_job(
     push_job_log(
         &log_path,
         &mut log,
-        "indicator math: VWAP=Σ(typical*volume)/Σ(volume); RSI=100-100/(1+avg_gain/avg_loss); ATR=EMA(true_range); ADX=EMA(|+DI--DI|/(+DI+-DI)*100)".to_string(),
+        "indicator math: VWAP=Î£(typical*volume)/Î£(volume); RSI=100-100/(1+avg_gain/avg_loss); ATR=EMA(true_range); ADX=EMA(|+DI--DI|/(+DI+-DI)*100)".to_string(),
     )?;
     let raw_t0 = std::time::Instant::now();
     let (mut raw_feature_cache, mut raw_stats) = build_mcp_raw_feature_matrix_cache_with_atlas(
         &bars,
-        synth_strategy::MIN_HISTORY..bars.len(),
+        trading_alpha::MIN_HISTORY..bars.len(),
         node.store(),
         &atlas,
         file_hash,
@@ -9669,7 +8615,7 @@ fn run_forge_alpha_job(
         let (fallback_cache, fallback_stats, fallback_missing_scalars) =
             build_mcp_partial_raw_feature_cache_with_atlas(
                 &bars,
-                synth_strategy::MIN_HISTORY..bars.len(),
+                trading_alpha::MIN_HISTORY..bars.len(),
                 &atlas,
                 file_hash,
             );
@@ -9726,9 +8672,9 @@ fn run_forge_alpha_job(
         "label math: y_continue=1 when next-side target is touched before stop; y_reversal=1 when opposite-side target wins first; ambiguous rows are kept as hard negatives".to_string(),
     )?;
     let label_t0 = std::time::Instant::now();
-    let (label_cache, label_stats) = synth_strategy::build_binary_label_cache_with_stats(
+    let (label_cache, label_stats) = trading_alpha::build_binary_label_cache_with_stats(
         &bars,
-        synth_strategy::MIN_HISTORY..bars.len(),
+        trading_alpha::MIN_HISTORY..bars.len(),
         cfg,
         &atlas,
         file_hash,
@@ -9788,9 +8734,9 @@ fn run_forge_alpha_job(
     )?;
 
     let feature_examples_t0 = std::time::Instant::now();
-    let per_feature = synth_strategy::build_binary_feature_examples_with_caches(
+    let per_feature = trading_alpha::build_binary_feature_examples_with_caches(
         &bars,
-        synth_strategy::MIN_HISTORY..train_end,
+        trading_alpha::MIN_HISTORY..train_end,
         &raw_feature_cache,
         &label_cache,
     );
@@ -9894,7 +8840,7 @@ fn run_forge_alpha_job(
                 &bars,
                 &raw_feature_cache,
                 cfg,
-                synth_strategy::MIN_HISTORY..train_end,
+                trading_alpha::MIN_HISTORY..train_end,
                 generations,
                 max_nodes,
                 beam_width,
@@ -9916,7 +8862,7 @@ fn run_forge_alpha_job(
                 &bars,
                 &raw_feature_cache,
                 cfg,
-                synth_strategy::MIN_HISTORY..train_end,
+                trading_alpha::MIN_HISTORY..train_end,
                 generations,
                 max_nodes,
                 beam_width,
@@ -9992,7 +8938,7 @@ fn run_forge_alpha_job(
         ),
     )?;
     let pairing_t0 = std::time::Instant::now();
-    let mut best_pair: Option<(usize, usize, synth_strategy::StrategyEval)> = None;
+    let mut best_pair: Option<(usize, usize, trading_alpha::StrategyEval)> = None;
     for (li, long) in long_detectors.iter().enumerate() {
         for (si, short) in short_detectors.iter().enumerate() {
             let eval = eval_program_pair(
@@ -10000,7 +8946,7 @@ fn run_forge_alpha_job(
                 &bars,
                 &raw_feature_cache,
                 cfg,
-                synth_strategy::MIN_HISTORY..train_end,
+                trading_alpha::MIN_HISTORY..train_end,
                 long,
                 short,
             );
@@ -10179,9 +9125,9 @@ fn run_forge_alpha_job(
 #[allow(clippy::too_many_arguments)]
 fn complete_one_sided_forge_job(
     node: &MonsterNode,
-    bars: &[synth_strategy::Bar],
-    raw_feature_cache: &[Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>],
-    cfg: synth_strategy::SynthConfig,
+    bars: &[trading_alpha::Bar],
+    raw_feature_cache: &[Option<[i64; trading_alpha::BASE_FEATURE_COUNT]>],
+    cfg: trading_alpha::SynthConfig,
     train_end: usize,
     csv_path: &Path,
     file_hash: u64,
@@ -10210,7 +9156,7 @@ fn complete_one_sided_forge_job(
         bars,
         raw_feature_cache,
         cfg,
-        synth_strategy::MIN_HISTORY..train_end,
+        trading_alpha::MIN_HISTORY..train_end,
         detector.feature_idx,
         &detector.program_hash,
         long_side,
@@ -10266,7 +9212,7 @@ fn complete_one_sided_forge_job(
         let compute_avoided = alpha_compute_avoided(
             "forge_one_sided",
             bars.len(),
-            train_end.saturating_sub(synth_strategy::MIN_HISTORY),
+            train_end.saturating_sub(trading_alpha::MIN_HISTORY),
             total_candidates,
             detector.outcome.combinations_tried,
             detector.outcome.atlas_score_hits,
@@ -10338,28 +9284,28 @@ fn complete_one_sided_forge_job(
 }
 
 fn build_mcp_partial_raw_feature_cache_with_atlas(
-    bars: &[synth_strategy::Bar],
+    bars: &[trading_alpha::Bar],
     range: std::ops::Range<usize>,
     atlas: &scan::atlas::Atlas,
     file_hash: u64,
 ) -> (
-    Vec<Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>>,
-    synth_strategy::AtlasCacheStats,
+    Vec<Option<[i64; trading_alpha::BASE_FEATURE_COUNT]>>,
+    trading_alpha::AtlasCacheStats,
     usize,
 ) {
-    let start = range.start.max(synth_strategy::MIN_HISTORY);
+    let start = range.start.max(trading_alpha::MIN_HISTORY);
     let end = range.end.min(bars.len().saturating_sub(1));
-    let feature_cache = synth_strategy::FeatureCache::build(bars);
+    let feature_cache = trading_alpha::FeatureCache::build(bars);
     let mut rows = vec![None; bars.len()];
-    let mut stats = synth_strategy::AtlasCacheStats::default();
+    let mut stats = trading_alpha::AtlasCacheStats::default();
     let mut missing_scalars = 0usize;
 
     for i in start..end {
-        if !synth_strategy::is_decision_hour(&bars[i]) {
+        if !trading_alpha::is_decision_hour(&bars[i]) {
             continue;
         }
 
-        let mut row = [0i64; synth_strategy::BASE_FEATURE_COUNT];
+        let mut row = [0i64; trading_alpha::BASE_FEATURE_COUNT];
         let mut any_feature = false;
         for (fi, slot) in row.iter_mut().enumerate() {
             let key = scan::atlas::Atlas::feature_key(file_hash, fi as u8, i as u32);
@@ -10369,7 +9315,7 @@ fn build_mcp_partial_raw_feature_cache_with_atlas(
                 continue;
             }
 
-            match synth_strategy::extract_raw_feature(bars, i, fi, &feature_cache) {
+            match trading_alpha::extract_raw_feature(bars, i, fi, &feature_cache) {
                 Some(value) => {
                     *slot = value;
                     any_feature = true;
@@ -10398,44 +9344,44 @@ const RAW_FEATURE_MATRIX_SCHEMA_VERSION: u8 = 1;
 const RAW_FEATURE_MATRIX_MAGIC: &[u8; 8] = b"FRAWMAT1";
 
 fn build_mcp_raw_feature_matrix_cache_with_atlas(
-    bars: &[synth_strategy::Bar],
+    bars: &[trading_alpha::Bar],
     range: std::ops::Range<usize>,
     store: &Store,
     atlas: &scan::atlas::Atlas,
     file_hash: u64,
 ) -> (
-    Vec<Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>>,
-    synth_strategy::AtlasCacheStats,
+    Vec<Option<[i64; trading_alpha::BASE_FEATURE_COUNT]>>,
+    trading_alpha::AtlasCacheStats,
 ) {
-    let start = range.start.max(synth_strategy::MIN_HISTORY);
+    let start = range.start.max(trading_alpha::MIN_HISTORY);
     let end = range.end.min(bars.len().saturating_sub(1));
     let key = scan::atlas::Atlas::alpha_raw_feature_matrix_key(
         file_hash,
         start as u32,
         end as u32,
         bars.len() as u32,
-        synth_strategy::BASE_FEATURE_COUNT as u8,
+        trading_alpha::BASE_FEATURE_COUNT as u8,
         RAW_FEATURE_MATRIX_SCHEMA_VERSION,
     );
 
     if let Some(blob_hash) = atlas.lookup_result(&key) {
         if let Some(bytes) = store.load(&Hash::from_bytes(blob_hash)) {
             if let Some(rows) = decode_raw_feature_matrix_blob(&bytes, bars.len(), start, end) {
-                let mut stats = synth_strategy::AtlasCacheStats::default();
+                let mut stats = trading_alpha::AtlasCacheStats::default();
                 stats.atlas_hits = rows.iter().filter(|row| row.is_some()).count();
                 return (rows, stats);
             }
         }
     }
 
-    let feature_cache = synth_strategy::FeatureCache::build(bars);
+    let feature_cache = trading_alpha::FeatureCache::build(bars);
     let mut rows = vec![None; bars.len()];
-    let mut stats = synth_strategy::AtlasCacheStats::default();
+    let mut stats = trading_alpha::AtlasCacheStats::default();
     for i in start..end {
-        if !synth_strategy::is_decision_hour(&bars[i]) {
+        if !trading_alpha::is_decision_hour(&bars[i]) {
             continue;
         }
-        let Some(row) = synth_strategy::extract_raw_feature_vector(bars, i, &feature_cache) else {
+        let Some(row) = trading_alpha::extract_raw_feature_vector(bars, i, &feature_cache) else {
             continue;
         };
         rows[i] = Some(row);
@@ -10453,19 +9399,19 @@ fn build_mcp_raw_feature_matrix_cache_with_atlas(
 }
 
 fn encode_raw_feature_matrix_blob(
-    rows: &[Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>],
+    rows: &[Option<[i64; trading_alpha::BASE_FEATURE_COUNT]>],
     start: usize,
     end: usize,
 ) -> Vec<u8> {
     let mut out = Vec::with_capacity(
-        32 + rows.len() * (1 + synth_strategy::BASE_FEATURE_COUNT * std::mem::size_of::<i64>()),
+        32 + rows.len() * (1 + trading_alpha::BASE_FEATURE_COUNT * std::mem::size_of::<i64>()),
     );
     out.extend_from_slice(RAW_FEATURE_MATRIX_MAGIC);
     out.push(RAW_FEATURE_MATRIX_SCHEMA_VERSION);
     out.extend_from_slice(&(rows.len() as u32).to_le_bytes());
     out.extend_from_slice(&(start as u32).to_le_bytes());
     out.extend_from_slice(&(end as u32).to_le_bytes());
-    out.push(synth_strategy::BASE_FEATURE_COUNT as u8);
+    out.push(trading_alpha::BASE_FEATURE_COUNT as u8);
     for row in rows {
         match row {
             Some(values) => {
@@ -10485,7 +9431,7 @@ fn decode_raw_feature_matrix_blob(
     expected_rows: usize,
     expected_start: usize,
     expected_end: usize,
-) -> Option<Vec<Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>>> {
+) -> Option<Vec<Option<[i64; trading_alpha::BASE_FEATURE_COUNT]>>> {
     let header_len = RAW_FEATURE_MATRIX_MAGIC.len() + 1 + 4 + 4 + 4 + 1;
     if bytes.len() < header_len || &bytes[..8] != RAW_FEATURE_MATRIX_MAGIC {
         return None;
@@ -10501,7 +9447,7 @@ fn decode_raw_feature_matrix_blob(
     if rows_len != expected_rows
         || start != expected_start
         || end != expected_end
-        || feature_count != synth_strategy::BASE_FEATURE_COUNT
+        || feature_count != trading_alpha::BASE_FEATURE_COUNT
     {
         return None;
     }
@@ -10518,7 +9464,7 @@ fn decode_raw_feature_matrix_blob(
         if flag != 1 {
             return None;
         }
-        let mut values = [0i64; synth_strategy::BASE_FEATURE_COUNT];
+        let mut values = [0i64; trading_alpha::BASE_FEATURE_COUNT];
         for slot in &mut values {
             let next = offset + std::mem::size_of::<i64>();
             *slot = i64::from_le_bytes(bytes.get(offset..next)?.try_into().ok()?);
@@ -10542,9 +9488,9 @@ fn evolve_detector(
     feature_idx: usize,
     examples: &[(i64, i64)],
     long_side: bool,
-    bars: &[synth_strategy::Bar],
-    raw_feature_cache: &[Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>],
-    cfg: synth_strategy::SynthConfig,
+    bars: &[trading_alpha::Bar],
+    raw_feature_cache: &[Option<[i64; trading_alpha::BASE_FEATURE_COUNT]>],
+    cfg: trading_alpha::SynthConfig,
     eval_range: std::ops::Range<usize>,
     generations: usize,
     max_nodes: usize,
@@ -10708,9 +9654,9 @@ fn evolve_detector(
 }
 
 fn score_side_rules(
-    bars: &[synth_strategy::Bar],
+    bars: &[trading_alpha::Bar],
     raw_cache: &McpRawCache,
-    cfg: synth_strategy::SynthConfig,
+    cfg: trading_alpha::SynthConfig,
     rules: &[Rule],
     long_side: bool,
     train_end: usize,
@@ -10728,7 +9674,7 @@ fn score_side_rules(
             bars,
             raw_cache,
             cfg,
-            synth_strategy::MIN_HISTORY..train_end,
+            trading_alpha::MIN_HISTORY..train_end,
             rule,
             long_side,
         );
@@ -10745,21 +9691,21 @@ fn score_side_rules(
 }
 
 fn best_dual_rule_pair(
-    bars: &[synth_strategy::Bar],
+    bars: &[trading_alpha::Bar],
     raw_cache: &McpRawCache,
-    cfg: synth_strategy::SynthConfig,
+    cfg: trading_alpha::SynthConfig,
     long_rules: &[ScoredRule],
     short_rules: &[ScoredRule],
     train_end: usize,
-) -> Result<(Rule, Rule, synth_strategy::StrategyEval), String> {
-    let mut best: Option<(Rule, Rule, synth_strategy::StrategyEval)> = None;
+) -> Result<(Rule, Rule, trading_alpha::StrategyEval), String> {
+    let mut best: Option<(Rule, Rule, trading_alpha::StrategyEval)> = None;
     for long in long_rules {
         for short in short_rules {
             let eval = eval_pair(
                 bars,
                 raw_cache,
                 cfg,
-                synth_strategy::MIN_HISTORY..train_end,
+                trading_alpha::MIN_HISTORY..train_end,
                 &long.rule,
                 &short.rule,
             );
@@ -10779,18 +9725,18 @@ fn best_dual_rule_pair(
 }
 
 fn eval_pair(
-    bars: &[synth_strategy::Bar],
+    bars: &[trading_alpha::Bar],
     raw_cache: &McpRawCache,
-    cfg: synth_strategy::SynthConfig,
+    cfg: trading_alpha::SynthConfig,
     range: std::ops::Range<usize>,
     long_rule: &Rule,
     short_rule: &Rule,
-) -> synth_strategy::StrategyEval {
-    let mut eval = synth_strategy::StrategyEval::default();
+) -> trading_alpha::StrategyEval {
+    let mut eval = trading_alpha::StrategyEval::default();
     let mut current_day_ms: i64 = -1;
     let mut current_day_pnl = 0.0;
     let mut current_day_had_trade = false;
-    let start = range.start.max(synth_strategy::MIN_HISTORY);
+    let start = range.start.max(trading_alpha::MIN_HISTORY);
     let end = range.end.min(bars.len().saturating_sub(cfg.max_horizon_bars));
 
     for i in start..end {
@@ -10802,7 +9748,7 @@ fn eval_pair(
             current_day_pnl = 0.0;
             current_day_had_trade = false;
         }
-        if !synth_strategy::is_decision_hour(&bar) {
+        if !trading_alpha::is_decision_hour(&bar) {
             continue;
         }
         let Some(long_value) = raw_cache.get(i).and_then(|row| row[long_rule.feature_idx]) else {
@@ -10816,7 +9762,7 @@ fn eval_pair(
         if long_pred == 0 || short_pred == 0 {
             continue;
         }
-        let straddle = synth_strategy::simulate_straddle(
+        let straddle = trading_alpha::simulate_straddle(
             bars,
             i,
             cfg.sl_points,
@@ -10824,8 +9770,8 @@ fn eval_pair(
             cfg.spread_points,
             cfg.max_horizon_bars,
         );
-        if straddle.long.exit_reason == synth_strategy::ExitReason::NotPossible
-            || straddle.short.exit_reason == synth_strategy::ExitReason::NotPossible
+        if straddle.long.exit_reason == trading_alpha::ExitReason::NotPossible
+            || straddle.short.exit_reason == trading_alpha::ExitReason::NotPossible
         {
             continue;
         }
@@ -10839,18 +9785,18 @@ fn eval_pair(
 
 fn eval_program_pair(
     node: &MonsterNode,
-    bars: &[synth_strategy::Bar],
-    raw_cache: &[Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>],
-    cfg: synth_strategy::SynthConfig,
+    bars: &[trading_alpha::Bar],
+    raw_cache: &[Option<[i64; trading_alpha::BASE_FEATURE_COUNT]>],
+    cfg: trading_alpha::SynthConfig,
     range: std::ops::Range<usize>,
     long: &ForgeDetector,
     short: &ForgeDetector,
-) -> synth_strategy::StrategyEval {
-    let mut eval = synth_strategy::StrategyEval::default();
+) -> trading_alpha::StrategyEval {
+    let mut eval = trading_alpha::StrategyEval::default();
     let mut current_day_ms: i64 = -1;
     let mut current_day_pnl = 0.0;
     let mut current_day_had_trade = false;
-    let start = range.start.max(synth_strategy::MIN_HISTORY);
+    let start = range.start.max(trading_alpha::MIN_HISTORY);
     let end = range.end.min(bars.len().saturating_sub(cfg.max_horizon_bars));
 
     for i in start..end {
@@ -10862,7 +9808,7 @@ fn eval_program_pair(
             current_day_pnl = 0.0;
             current_day_had_trade = false;
         }
-        if !synth_strategy::is_decision_hour(&bar) {
+        if !trading_alpha::is_decision_hour(&bar) {
             continue;
         }
         let Some(row) = raw_cache.get(i).copied().flatten() else {
@@ -10877,7 +9823,7 @@ fn eval_program_pair(
         if long_pred == 0 || short_pred == 0 {
             continue;
         }
-        let straddle = synth_strategy::simulate_straddle(
+        let straddle = trading_alpha::simulate_straddle(
             bars,
             i,
             cfg.sl_points,
@@ -10885,8 +9831,8 @@ fn eval_program_pair(
             cfg.spread_points,
             cfg.max_horizon_bars,
         );
-        if straddle.long.exit_reason == synth_strategy::ExitReason::NotPossible
-            || straddle.short.exit_reason == synth_strategy::ExitReason::NotPossible
+        if straddle.long.exit_reason == trading_alpha::ExitReason::NotPossible
+            || straddle.short.exit_reason == trading_alpha::ExitReason::NotPossible
         {
             continue;
         }
@@ -10900,19 +9846,19 @@ fn eval_program_pair(
 
 fn eval_program_side(
     node: &MonsterNode,
-    bars: &[synth_strategy::Bar],
-    raw_cache: &[Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>],
-    cfg: synth_strategy::SynthConfig,
+    bars: &[trading_alpha::Bar],
+    raw_cache: &[Option<[i64; trading_alpha::BASE_FEATURE_COUNT]>],
+    cfg: trading_alpha::SynthConfig,
     range: std::ops::Range<usize>,
     feature_idx: usize,
     program_hash: &Hash,
     long_side: bool,
-) -> synth_strategy::StrategyEval {
-    let mut eval = synth_strategy::StrategyEval::default();
+) -> trading_alpha::StrategyEval {
+    let mut eval = trading_alpha::StrategyEval::default();
     let mut current_day_ms: i64 = -1;
     let mut current_day_pnl = 0.0;
     let mut current_day_had_trade = false;
-    let start = range.start.max(synth_strategy::MIN_HISTORY);
+    let start = range.start.max(trading_alpha::MIN_HISTORY);
     let end = range.end.min(bars.len().saturating_sub(cfg.max_horizon_bars));
 
     for i in start..end {
@@ -10924,7 +9870,7 @@ fn eval_program_side(
             current_day_pnl = 0.0;
             current_day_had_trade = false;
         }
-        if !synth_strategy::is_decision_hour(&bar) {
+        if !trading_alpha::is_decision_hour(&bar) {
             continue;
         }
         let Some(row) = raw_cache.get(i).copied().flatten() else {
@@ -10938,11 +9884,11 @@ fn eval_program_side(
             continue;
         }
         let direction = if long_side {
-            synth_strategy::Direction::Long
+            trading_alpha::Direction::Long
         } else {
-            synth_strategy::Direction::Short
+            trading_alpha::Direction::Short
         };
-        let trade = synth_strategy::simulate_trade(
+        let trade = trading_alpha::simulate_trade(
             bars,
             i,
             direction,
@@ -10951,7 +9897,7 @@ fn eval_program_side(
             cfg.spread_points,
             cfg.max_horizon_bars,
         );
-        if trade.exit_reason == synth_strategy::ExitReason::NotPossible {
+        if trade.exit_reason == trading_alpha::ExitReason::NotPossible {
             continue;
         }
         record_trade(&mut eval, direction, trade.pnl_points);
@@ -10963,18 +9909,18 @@ fn eval_program_side(
 }
 
 fn eval_side_rule(
-    bars: &[synth_strategy::Bar],
+    bars: &[trading_alpha::Bar],
     raw_cache: &McpRawCache,
-    cfg: synth_strategy::SynthConfig,
+    cfg: trading_alpha::SynthConfig,
     range: std::ops::Range<usize>,
     rule: &Rule,
     long_side: bool,
-) -> synth_strategy::StrategyEval {
-    let mut eval = synth_strategy::StrategyEval::default();
+) -> trading_alpha::StrategyEval {
+    let mut eval = trading_alpha::StrategyEval::default();
     let mut current_day_ms: i64 = -1;
     let mut current_day_pnl = 0.0;
     let mut current_day_had_trade = false;
-    let start = range.start.max(synth_strategy::MIN_HISTORY);
+    let start = range.start.max(trading_alpha::MIN_HISTORY);
     let end = range.end.min(bars.len().saturating_sub(cfg.max_horizon_bars));
 
     for i in start..end {
@@ -10986,7 +9932,7 @@ fn eval_side_rule(
             current_day_pnl = 0.0;
             current_day_had_trade = false;
         }
-        if !synth_strategy::is_decision_hour(&bar) {
+        if !trading_alpha::is_decision_hour(&bar) {
             continue;
         }
         let Some(value) = raw_cache.get(i).and_then(|row| row[rule.feature_idx]) else {
@@ -10996,11 +9942,11 @@ fn eval_side_rule(
             continue;
         }
         let direction = if long_side {
-            synth_strategy::Direction::Long
+            trading_alpha::Direction::Long
         } else {
-            synth_strategy::Direction::Short
+            trading_alpha::Direction::Short
         };
-        let trade = synth_strategy::simulate_trade(
+        let trade = trading_alpha::simulate_trade(
             bars,
             i,
             direction,
@@ -11009,7 +9955,7 @@ fn eval_side_rule(
             cfg.spread_points,
             cfg.max_horizon_bars,
         );
-        if trade.exit_reason == synth_strategy::ExitReason::NotPossible {
+        if trade.exit_reason == trading_alpha::ExitReason::NotPossible {
             continue;
         }
         record_trade(&mut eval, direction, trade.pnl_points);
@@ -11021,30 +9967,30 @@ fn eval_side_rule(
 }
 
 fn build_mcp_raw_feature_cache(
-    bars: &[synth_strategy::Bar],
+    bars: &[trading_alpha::Bar],
     range: std::ops::Range<usize>,
 ) -> McpRawCache {
-    let feature_cache = synth_strategy::FeatureCache::build(bars);
-    let mut rows = vec![[None; synth_strategy::BASE_FEATURE_COUNT]; bars.len()];
-    let start = range.start.max(synth_strategy::MIN_HISTORY);
+    let feature_cache = trading_alpha::FeatureCache::build(bars);
+    let mut rows = vec![[None; trading_alpha::BASE_FEATURE_COUNT]; bars.len()];
+    let start = range.start.max(trading_alpha::MIN_HISTORY);
     let end = range.end.min(bars.len().saturating_sub(1));
     for i in start..end {
-        for fi in 0..synth_strategy::BASE_FEATURE_COUNT {
-            rows[i][fi] = synth_strategy::extract_raw_feature(bars, i, fi, &feature_cache);
+        for fi in 0..trading_alpha::BASE_FEATURE_COUNT {
+            rows[i][fi] = trading_alpha::extract_raw_feature(bars, i, fi, &feature_cache);
         }
     }
     rows
 }
 
 fn count_decision_rows(
-    bars: &[synth_strategy::Bar],
+    bars: &[trading_alpha::Bar],
     raw_cache: &McpRawCache,
     range: std::ops::Range<usize>,
 ) -> usize {
     let end = range.end.min(bars.len());
     let mut count = 0;
-    for i in range.start.max(synth_strategy::MIN_HISTORY)..end {
-        if !synth_strategy::is_decision_hour(&bars[i]) {
+    for i in range.start.max(trading_alpha::MIN_HISTORY)..end {
+        if !trading_alpha::is_decision_hour(&bars[i]) {
             continue;
         }
         if raw_cache
@@ -11059,11 +10005,11 @@ fn count_decision_rows(
 }
 
 fn flush_day(
-    eval: &mut synth_strategy::StrategyEval,
+    eval: &mut trading_alpha::StrategyEval,
     current_day_ms: i64,
     current_day_had_trade: bool,
     current_day_pnl: f64,
-    cfg: synth_strategy::SynthConfig,
+    cfg: trading_alpha::SynthConfig,
 ) {
     if current_day_ms < 0 || !current_day_had_trade {
         return;
@@ -11079,14 +10025,14 @@ fn flush_day(
 }
 
 fn record_trade(
-    eval: &mut synth_strategy::StrategyEval,
-    direction: synth_strategy::Direction,
+    eval: &mut trading_alpha::StrategyEval,
+    direction: trading_alpha::Direction,
     pnl_points: f64,
 ) {
     eval.total_trades += 1;
     match direction {
-        synth_strategy::Direction::Long => eval.long_trades += 1,
-        synth_strategy::Direction::Short => eval.short_trades += 1,
+        trading_alpha::Direction::Long => eval.long_trades += 1,
+        trading_alpha::Direction::Short => eval.short_trades += 1,
     }
     if pnl_points > 0.0 {
         eval.winning_trades += 1;
@@ -11096,9 +10042,9 @@ fn record_trade(
     eval.total_pnl_points += pnl_points;
 }
 
-fn record_straddle(eval: &mut synth_strategy::StrategyEval, straddle: &synth_strategy::StraddleResult) {
-    record_trade(eval, synth_strategy::Direction::Long, straddle.long.pnl_points);
-    record_trade(eval, synth_strategy::Direction::Short, straddle.short.pnl_points);
+fn record_straddle(eval: &mut trading_alpha::StrategyEval, straddle: &trading_alpha::StraddleResult) {
+    record_trade(eval, trading_alpha::Direction::Long, straddle.long.pnl_points);
+    record_trade(eval, trading_alpha::Direction::Short, straddle.short.pnl_points);
 }
 
 fn predict_rule(rule: &Rule, value: i64) -> i64 {
@@ -11108,13 +10054,13 @@ fn predict_rule(rule: &Rule, value: i64) -> i64 {
     }
 }
 
-fn compare_eval(a: &synth_strategy::StrategyEval, b: &synth_strategy::StrategyEval) -> Ordering {
+fn compare_eval(a: &trading_alpha::StrategyEval, b: &trading_alpha::StrategyEval) -> Ordering {
     score_eval(a)
         .partial_cmp(&score_eval(b))
         .unwrap_or(Ordering::Equal)
 }
 
-fn score_eval(eval: &synth_strategy::StrategyEval) -> f64 {
+fn score_eval(eval: &trading_alpha::StrategyEval) -> f64 {
     let pf = eval.profit_factor();
     let pf = if pf.is_finite() { pf.min(10.0) } else { 10.0 };
     eval.pct_days_target_hit() * 1_000_000.0
@@ -11124,7 +10070,7 @@ fn score_eval(eval: &synth_strategy::StrategyEval) -> f64 {
         + eval.total_trades as f64
 }
 
-fn summarize_eval(eval: &synth_strategy::StrategyEval) -> EvalSummary {
+fn summarize_eval(eval: &trading_alpha::StrategyEval) -> EvalSummary {
     EvalSummary {
         days: eval.days_evaluated,
         trades: eval.total_trades,
@@ -12326,3 +11272,4 @@ fn write_mcp_message<W: Write>(
     }
     writer.flush().map_err(|e| format!("flush MCP response: {e}"))
 }
+

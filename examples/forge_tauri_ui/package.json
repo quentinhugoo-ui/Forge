@@ -6,6 +6,10 @@
     "build": "npm run typecheck && npm run build:runtime",
     "build:runtime": "node scripts/build-ui-runtime.mjs",
     "check:ui": "node scripts/forge-ui-smoke.mjs",
+    "validate:direct-templates": "node scripts/forge-direct-template-catalog-validate.mjs",
+    "bench:state-kernel": "node scripts/canvas-codex-state-kernel-bench.mjs",
+    "metrics:structure": "node scripts/forge-structure-metrics.mjs",
+    "smoke:doc-code-map": "node scripts/forge-doc-code-map-smoke.mjs",
     "audit:cutover": "node scripts/forge-cutover-audit.mjs",
     "audit:js-debt": "node scripts/forge-cutover-audit.mjs --strict",
     "audit:tauri-bus": "node scripts/forge-tauri-bus-audit.mjs",
@@ -16,6 +20,6 @@
     "typescript": "^5.9.0"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.0"
+    "@tauri-apps/api": "2.10.3"
   }
 }

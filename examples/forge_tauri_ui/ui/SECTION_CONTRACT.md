@@ -9,7 +9,7 @@ UI sections must register through the shared registry/bridge instead of creating
 - `ui/src/shell/intent-surface.ts` owns the intent/trace/distillation UI contract and is bundled through `dist/forge-shell-runtime.js`.
 - `ui/src/shell/click-router.ts` owns shared shell click/shortcut routing.
 - `ui/src/shell/boot.ts` owns startup wiring and emits `dist/forge-boot.js`.
-- `ui/src/shell/surface.ts`, `ui/src/sections/trading/surface.ts` and `ui/src/sections/banger/surface.ts` are transitional TS surfaces being drained.
+- `ui/src/shell/surface.ts`, `ui/src/sections/trading/surface.ts` and `ui/src/sections/banger/surface.ts` are the large remaining TS surfaces; only shrink them when ownership really moves.
 - `ui/src/sections/real-estate/*runtime.ts` owns real-estate context, onboarding, language, mode lifecycle and floating panels.
 - `SECTION_OWNERSHIP.json` names section owners and boundaries.
 

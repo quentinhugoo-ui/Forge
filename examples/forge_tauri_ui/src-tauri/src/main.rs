@@ -1,39 +1,46 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! Forge UI — single-actor Tauri backend.
+//! Forge UI ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â single-actor Tauri backend.
 //!
-//! Architecture (zéro middleman) :
+//! Architecture (zÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ro middleman) :
 //!
-//!   UI TypeScript surface — invoke('start_computation', { bytes, kind })
-//!       │
-//!       ▼  Tauri IPC
+//!   UI TypeScript surface ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â invoke('start_computation', { bytes, kind })
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¼  Tauri IPC
 //!   #[tauri::command] start_computation(bytes, kind, state, app)
-//!       │
-//!       ▼  state.lock()
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¼  state.lock()
 //!   ForgeBackend { node: MonsterNode, programs: HashMap<&str, Hash> }
-//!       │
-//!       ├─▶ encode_kmers(bytes) — fenêtre 32 bases + extrait classes
-//!       │
-//!       ├─▶ for chunk : node.dispatch_batch(calls, evaluator)
-//!       │      └─ app.emit("forge-log", progress technique)
-//!       │
-//!       ├─▶ collect : freq map (top-N) + per-class counts + sources
-//!       │
-//!       └─▶ app.emit("forge-result", bio insights pour scientifique)
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¶ encode_kmers(bytes) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â fenÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªtre 32 bases + extrait classes
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¶ for chunk : node.dispatch_batch(calls, evaluator)
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡      ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ app.emit("forge-log", progress technique)
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¶ collect : freq map (top-N) + per-class counts + sources
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡
+//!       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¶ app.emit("forge-result", bio insights pour scientifique)
 //!           app.emit("forge-log", ProcessReport pour dev)
 //!
-//! Deux canaux IPC nommés (built-in Tauri, pas un middleman) :
-//!   - "forge-log"    → onglet "Forge logs" (chunk progress, sources, perf)
-//!   - "forge-result" → onglet "Résultats" (top k-mers, per-class, distinct)
+//! Deux canaux IPC nommÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s (built-in Tauri, pas un middleman) :
+//!   - "forge-log"    ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ onglet "Forge logs" (chunk progress, sources, perf)
+//!   - "forge-result" ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ onglet "RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©sultats" (top k-mers, per-class, distinct)
 
-mod synth_strategy;
+mod trading_core;
 #[allow(dead_code)]
 mod kasm_indicators;
+#[allow(dead_code)]
+mod forge_intent;
+#[allow(dead_code)]
+mod forge_agent_runtime;
+#[allow(dead_code)]
 mod forge_agent_tools;
 mod banger;
 mod trading;
+mod trading_manifest;
 mod trading_pressure;
 mod real_estate_harvester;
+mod collection_os;
 mod forge_kernel;
 mod forge_fbc_host;
 mod forge_job_runtime;
@@ -41,11 +48,11 @@ mod forge_job_io;
 mod forge_kasm_ledger;
 mod forge_program_cache;
 
-/// Format compact "YYYY-MM-DD" depuis epoch ms — utilisé par les
-/// reverse_synth log lines pour situer la période parsée. Pas de
-/// dépendance chrono (interdite par doctrine).
+/// Format compact "YYYY-MM-DD" depuis epoch ms ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â utilisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© par les
+/// reverse_synth log lines pour situer la pÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©riode parsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e. Pas de
+/// dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pendance chrono (interdite par doctrine).
 fn ms_to_iso(ms: i64) -> String {
-    // days_from_civil inverse — cf. Howard Hinnant.
+    // days_from_civil inverse ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â cf. Howard Hinnant.
     let days = ms.div_euclid(86_400_000);
     let z = days + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
@@ -60,15 +67,15 @@ fn ms_to_iso(ms: i64) -> String {
     format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::net::{TcpListener, TcpStream};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -76,8 +83,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::os::windows::process::CommandExt;
 
 use scan::fbc::{
-    execute_app_registry_batch, parse_app_section_registry_v0, tool_cell_output_artifact_json,
-    ForgeVmConfig,
+    execute_tool_cell_batch_groups, parse_app_section_registry_v0, parse_tool_cell_registry_v0,
+    tool_cell_output_artifact_json, ForgeVmConfig,
 };
 use scan::kasm::{Node, Op, Program, Target, Ty};
 use scan::{
@@ -96,45 +103,48 @@ use forge_kasm_ledger::{
 };
 use forge_program_cache::forge_program_run_cached_with;
 
-// ─── Référence Rust pour la self-test correctness ────────────────────
+#[cfg(windows)]
+use webview2_com::{wait_with_pump, CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR};
+
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rence Rust pour la self-test correctness ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
 //
-// Doit être bit-pour-bit identique à `crate::kasm::hash_i64` côté Forge
-// (SplitMix64 / Stafford Mix13). Si Forge dévie, le self-test alerte le
-// scientifique en tête de chaque run.
+// Doit ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªtre bit-pour-bit identique ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  `crate::kasm::hash_i64` cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© Forge
+// (SplitMix64 / Stafford Mix13). Si Forge dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©vie, le self-test alerte le
+// scientifique en tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªte de chaque run.
 //
-// ╔════════════════════════════════════════════════════════════════════╗
-// ║  ⚠ RÈGLE IMPÉRATIVE — TOUT NOUVEAU PROGRAMME KASM AJOUTÉ           ║
-// ║                                                                    ║
-// ║  Quand tu ajoutes une `programs.insert("nom_X", ...)` dans         ║
-// ║  `ForgeBackend::new`, tu DOIS ajouter sa branche correspondante    ║
-// ║  dans `expected_for_program("nom_X", x)` ci-dessous.               ║
-// ║                                                                    ║
-// ║  Sans ça : la self-test au début de chaque `start_computation`     ║
-// ║  échoue avec "aucune référence pour le programme nom_X" et REFUSE  ║
-// ║  de traiter le fichier. C'est par design (fail-loud) — un          ║
-// ║  programme sans référence est un programme dont on ne peut pas     ║
-// ║  prouver la justesse, donc on ne le lance pas.                     ║
-// ║                                                                    ║
-// ║  Limites connues de la self-test (à se rappeler) :                 ║
-// ║                                                                    ║
-// ║    1. 10 inputs déterministes = couverture légère. Un bug pour un  ║
-// ║       sous-ensemble très spécifique d'inputs (ex : multiples d'une ║
-// ║       constante magique) pourrait passer à travers. Pour les       ║
-// ║       datasets de millions de calculs, ajouter un sample-check     ║
-// ║       pendant le run (1 sur 100k) si protection accrue nécessaire.║
-// ║                                                                    ║
-// ║    2. Ne couvre PAS les performances — juste la justesse           ║
-// ║       mathématique. Un programme correct mais lent passera la      ║
-// ║       self-test sans alarme.                                       ║
-// ║                                                                    ║
-// ║    3. La référence Rust doit être bit-pour-bit identique au        ║
-// ║       comportement KASM attendu. Attention au signed vs unsigned   ║
-// ║       shift (KASM `ShrI64` est zero-fill / logique, pas            ║
-// ║       arithmétique). Constantes hash : copier de                   ║
-// ║       `src/kasm/program.rs::hash_i64`.                             ║
-// ║                                                                    ║
-// ║  Voir aussi : AGENTS.md et Git history.                            ║
-// ╚════════════════════════════════════════════════════════════════════╝
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â  RÃƒÆ’Ã†â€™Ãƒâ€¹Ã¢â‚¬Â GLE IMPÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°RATIVE ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â TOUT NOUVEAU PROGRAMME KASM AJOUTÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°           ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“                                                                    ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  Quand tu ajoutes une `programs.insert("nom_X", ...)` dans         ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  `ForgeBackend::new`, tu DOIS ajouter sa branche correspondante    ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  dans `expected_for_program("nom_X", x)` ci-dessous.               ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“                                                                    ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  Sans ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§a : la self-test au dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©but de chaque `start_computation`     ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©choue avec "aucune rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rence pour le programme nom_X" et REFUSE  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  de traiter le fichier. C'est par design (fail-loud) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â un          ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  programme sans rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rence est un programme dont on ne peut pas     ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  prouver la justesse, donc on ne le lance pas.                     ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“                                                                    ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  Limites connues de la self-test (ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  se rappeler) :                 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“                                                                    ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“    1. 10 inputs dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©terministes = couverture lÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©gÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨re. Un bug pour un  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“       sous-ensemble trÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s spÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©cifique d'inputs (ex : multiples d'une ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“       constante magique) pourrait passer ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  travers. Pour les       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“       datasets de millions de calculs, ajouter un sample-check     ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“       pendant le run (1 sur 100k) si protection accrue nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©cessaire.ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“                                                                    ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“    2. Ne couvre PAS les performances ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â juste la justesse           ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“       mathÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©matique. Un programme correct mais lent passera la      ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“       self-test sans alarme.                                       ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“                                                                    ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“    3. La rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rence Rust doit ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªtre bit-pour-bit identique au        ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“       comportement KASM attendu. Attention au signed vs unsigned   ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“       shift (KASM `ShrI64` est zero-fill / logique, pas            ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“       arithmÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tique). Constantes hash : copier de                   ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“       `src/kasm/program.rs::hash_i64`.                             ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“                                                                    ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“  Voir aussi : AGENTS.md et Git history.                            ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚Â
 
 /// SplitMix64 mixer reference (constants from kasm/program.rs:413).
 fn ref_splitmix64(value: i64) -> i64 {
@@ -145,17 +155,17 @@ fn ref_splitmix64(value: i64) -> i64 {
     (x ^ (x >> 31)) as i64
 }
 
-/// Référence pour chaque programme KASM installé. Exécute la sémantique
+/// RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rence pour chaque programme KASM installÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©. ExÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©cute la sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©mantique
 /// attendue en pur Rust et retourne le i64 de sortie. Si Forge produit
-/// autre chose, le self-test échoue.
+/// autre chose, le self-test ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©choue.
 fn expected_for_program(kind: &str, x: i64) -> Option<i64> {
     match kind {
         "kmer_hash" => Some(ref_splitmix64(x)),
         "kmer_complement" => Some(ref_splitmix64(!x)),
         "kmer_double_mix" => Some(ref_splitmix64(ref_splitmix64(x))),
         "kmer_strobemer" => {
-            // KASM : shl(x, 32), shr(_, 32) → low 32 bits zero-extended
-            //        shr(x, 32)              → high 32 bits
+            // KASM : shl(x, 32), shr(_, 32) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ low 32 bits zero-extended
+            //        shr(x, 32)              ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ high 32 bits
             //        hash64 chacun, XOR
             let low_32 = (((x as u64).wrapping_shl(32)) >> 32) as i64;
             let high_32 = ((x as u64) >> 32) as i64;
@@ -171,7 +181,7 @@ fn expected_for_program(kind: &str, x: i64) -> Option<i64> {
         }
         "kmer_spaced_seed" => {
             // 4 sous-motifs (positions 0/8/16/24 = bits 0..8/16..24/32..40/48..56),
-            // XOR-mixés, puis hashés.
+            // XOR-mixÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s, puis hashÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s.
             let u = x as u64;
             let s0 = u & 0xFF;
             let s8 = (u >> 16) & 0xFF;
@@ -181,7 +191,7 @@ fn expected_for_program(kind: &str, x: i64) -> Option<i64> {
             Some(ref_splitmix64(mixed as i64))
         }
         "kmer_heavy_hash_64" => {
-            // 64 SplitMix64 successifs — démontre compute > plumbing.
+            // 64 SplitMix64 successifs ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©montre compute > plumbing.
             let mut v = x;
             for _ in 0..64 {
                 v = ref_splitmix64(v);
@@ -189,9 +199,9 @@ fn expected_for_program(kind: &str, x: i64) -> Option<i64> {
             Some(v)
         }
         "kmer_branched_hash" => {
-            // KASM v1.0 Op::Cond demo : branche selon la parité du LSB.
-            // Path even (parité 0) : hash(input)
-            // Path odd  (parité 1) : hash(byteswap(input))
+            // KASM v1.0 Op::Cond demo : branche selon la paritÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© du LSB.
+            // Path even (paritÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© 0) : hash(input)
+            // Path odd  (paritÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© 1) : hash(byteswap(input))
             let parity_even = (x & 1) == 0;
             if parity_even {
                 Some(ref_splitmix64(x))
@@ -211,7 +221,7 @@ use base64::{
 use portable_pty::{native_pty_system, CommandBuilder as PtyCommandBuilder, MasterPty, PtySize};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{json, Map, Value as JsonValue};
 use sha2::{Digest, Sha256};
 use tauri::{
     Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Runtime, Size, Webview,
@@ -239,14 +249,14 @@ fn dispatch_chunk_size() -> usize {
         .clamp(10_000, 5_000_000)
 }
 
-// ─── ComputationPlan ────────────────────────────────────────────────────────
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ ComputationPlan ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
 //
 // Single source of truth for "what calculations will Forge perform on this
-// input?". One struct, one constructor — fuses three concerns:
+// input?". One struct, one constructor ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â fuses three concerns:
 //
-//   1. Input dedup        — FNV-1a on (func || args), keeps only unique calls
-//   2. Program CSE class  — load each func, run cse(), group by semantic_fingerprint
-//   3. Atlas pre-check    — peek RAM cache for each unique call, before any compute
+//   1. Input dedup        ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â FNV-1a on (func || args), keeps only unique calls
+//   2. Program CSE class  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â load each func, run cse(), group by semantic_fingerprint
+//   3. Atlas pre-check    ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â peek RAM cache for each unique call, before any compute
 //
 // Used both BEFORE Start (preview command) and DURING Start (dispatch path).
 // No middleman: the dispatch loop iterates `plan.calls` directly.
@@ -263,7 +273,7 @@ struct ComputationPlan {
     /// Per-call atlas RESULT presence: `true` if `forge.atlas` already
     /// holds a stored result for `(func || args)` from a prior session.
     /// MonsterNode dispatch will short-circuit these calls without ever
-    /// invoking the bulk evaluator — the answer is already known.
+    /// invoking the bulk evaluator ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the answer is already known.
     atlas_result_known: Vec<bool>,
 }
 
@@ -272,7 +282,7 @@ impl ComputationPlan {
         node: &MonsterNode,
         raw_calls: impl IntoIterator<Item = (Hash, Vec<u8>)>,
     ) -> Self {
-        // Pass 1 — FNV-1a (func || args) dedup
+        // Pass 1 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â FNV-1a (func || args) dedup
         let mut by_key: HashMap<u64, usize> = HashMap::new();
         let mut calls: Vec<BatchCall> = Vec::new();
         let mut total_planned = 0usize;
@@ -290,7 +300,7 @@ impl ComputationPlan {
             });
         }
 
-        // Pass 2 — count distinct CSE classes via semantic_fingerprint.
+        // Pass 2 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â count distinct CSE classes via semantic_fingerprint.
         let mut prog_to_fp: HashMap<Hash, [u8; 32]> = HashMap::new();
         let mut fp_seen: std::collections::HashSet<[u8; 32]> = Default::default();
         for call in &calls {
@@ -310,14 +320,14 @@ impl ComputationPlan {
         }
         let n_cse_classes = fp_seen.len();
 
-        // Pass 3 — atlas peek: did MonsterNode already cache this call?
+        // Pass 3 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â atlas peek: did MonsterNode already cache this call?
         // Uses peek_call which does a cache lookup without computing on miss.
         let atlas_known: Vec<bool> = calls
             .iter()
             .map(|c| node.peek_call(&c.func, &c.args).unwrap_or(false))
             .collect();
 
-        // Pass 4 — atlas RESULT lookup: does `forge.atlas` already hold
+        // Pass 4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â atlas RESULT lookup: does `forge.atlas` already hold
         // a persisted result for this exact `(func, args)` from a prior
         // session? If yes, MonsterNode dispatch will short-circuit
         // without recomputing. We surface this BEFORE Start.
@@ -376,12 +386,12 @@ impl ComputationPlan {
     }
 }
 
-// ─── Synth candidate enumeration (depth-2 + depth-3) ────────────────────────
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Synth candidate enumeration (depth-2 + depth-3) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
 //
 // Meta-fractal preview: BEFORE Start, enumerate the depth-2 and depth-3 KASM
 // programs that the synth beam will explore at its earliest stages, group
 // them by CSE+semantic_fingerprint. The class-count vs raw-count ratio is a
-// real measurement of how much redundancy CSE collapses — extrapolates to
+// real measurement of how much redundancy CSE collapses ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â extrapolates to
 // deeper stages where direct enumeration is intractable.
 //
 // Depth-2 patterns (cf. enumerate_synth_candidates_d2):
@@ -456,7 +466,7 @@ fn enumerate_synth_candidates_d2(examples: &[(i64, i64)]) -> Vec<Program> {
             ) {
                 programs.push(p);
             }
-            // (Const, Input, op) — same as above for commutative ops after CSE
+            // (Const, Input, op) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â same as above for commutative ops after CSE
             if let Ok(p) = Program::new(
                 Target::Cpu,
                 1,
@@ -473,7 +483,7 @@ fn enumerate_synth_candidates_d2(examples: &[(i64, i64)]) -> Vec<Program> {
             }
         }
     }
-    // (Input, Input, op) — Add(x,x)≡2x, Sub(x,x)≡0, Mul(x,x)≡x², etc.
+    // (Input, Input, op) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Add(x,x)ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¡2x, Sub(x,x)ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¡0, Mul(x,x)ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¡xÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â², etc.
     for op in &bin_ops {
         if let Ok(p) = Program::new(
             Target::Cpu,
@@ -489,11 +499,11 @@ fn enumerate_synth_candidates_d2(examples: &[(i64, i64)]) -> Vec<Program> {
     programs
 }
 
-/// Depth-3 candidate enumeration. Returns `~op_count³ × |constants|²` programs
+/// Depth-3 candidate enumeration. Returns `~op_countÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â |constants|ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²` programs
 /// across 3 structural patterns. Bounded to keep the count under ~2 500.
 fn enumerate_synth_candidates_d3(examples: &[(i64, i64)]) -> Vec<Program> {
     // Reduced constant set: small range + target-derived values. The full
-    // (-16..=16) range × 2 nested constants would explode to 6k+ programs
+    // (-16..=16) range ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 2 nested constants would explode to 6k+ programs
     // per pattern; (-8..=8) gives ~17 values for ~1.5k programs total.
     let mut constants: Vec<i16> = (-8..=8).collect();
     for (_, t) in examples {
@@ -582,14 +592,14 @@ fn enumerate_synth_candidates_d3(examples: &[(i64, i64)]) -> Vec<Program> {
 /// Group enumerated synth candidates by CSE+semantic_fingerprint and keep
 /// one representative program per class. Also counts how many CSE classes
 /// reduce to a *provably constant* form via `static_output()` (cheaper +
-/// stricter than the sample-based tautology detection — these are
+/// stricter than the sample-based tautology detection ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â these are
 /// programs synth would discard before any scoring pass).
 struct CseStats {
     raw: usize,
     n_classes: usize,
     redundancy_pct: f64,
     static_count: usize,
-    /// Non-constant CSE representatives — the only ones trace/peek/scoring need.
+    /// Non-constant CSE representatives ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the only ones trace/peek/scoring need.
     live_reps: Vec<Program>,
     /// Canonical fingerprints, one per CSE class (for atlas recording).
     fingerprints: Vec<[u8; 32]>,
@@ -628,17 +638,17 @@ fn cse_classify_candidates_with_reps(candidates: &[Program]) -> CseStats {
 }
 
 
-// ─── Sub-window redundancy analyzer ─────────────────────────────────────────
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Sub-window redundancy analyzer ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
 //
 // Below the candidate-program level lies feature extraction: each bar
 // computes SMA(20), SMA(50), SMA(200), RSI(14), ATR(14), VWAP(6), ADX(14)
-// — every one a windowed aggregate. Naïvely, bar `i+1` re-sums the entire
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â every one a windowed aggregate. NaÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯vely, bar `i+1` re-sums the entire
 // K-element window even though K-1 elements are shared with bar `i`.
 // Sliding-window updates make each O(1) per bar after one O(K) init.
 //
-// This analyzer reports the static op count: naïve vs sliding for the
+// This analyzer reports the static op count: naÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ve vs sliding for the
 // dataset bar count, plus per-feature breakdown. Numbers are derived
-// from the actual extract_features_masked code in synth_strategy.rs.
+// from the actual extract_features_masked code in trading_alpha.rs.
 
 struct SubwindowFeature {
     name: &'static str,
@@ -672,9 +682,9 @@ fn analyze_subwindow_redundancy(bar_count: usize) -> SubwindowStats {
     let mut total_sliding = 0u64;
     let mut per_feature = Vec::with_capacity(SUBWINDOW_FEATURES.len());
     for f in SUBWINDOW_FEATURES {
-        // Naïve: bar i recomputes the full window K × per-bar inputs.
+        // NaÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ve: bar i recomputes the full window K ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â per-bar inputs.
         let naive = (bar_count as u64) * (f.window as u64) * (f.inputs_per_bar as u64);
-        // Sliding: K × inputs to fill the initial window, then `inputs`
+        // Sliding: K ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â inputs to fill the initial window, then `inputs`
         // ops per subsequent bar (one subtract of the leaving element +
         // one add of the entering element, accounted as `inputs`).
         let init = (f.window as u64) * (f.inputs_per_bar as u64);
@@ -789,7 +799,7 @@ fn analyze_subtree_redundancy(candidates: &[Program]) -> SubtreeStats {
     }
 }
 
-/// Trace-equivalence classifier. Strictly more aggressive than CSE — groups
+/// Trace-equivalence classifier. Strictly more aggressive than CSE ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â groups
 /// candidates that produce IDENTICAL outputs on the user's actual sample
 /// inputs, even when their AST/canonical form differs. Catches data-dependent
 /// equivalences that semantic_fingerprint misses (e.g. `Mul(x,16)` vs
@@ -880,7 +890,7 @@ fn trace_classify_reps(
 /// the node and peek against a sample of unique feature inputs. A peek is
 /// `true` when any of the brain's cheap layers (RAM cache, structural rule,
 /// learned oracle, disk memo) resolves the call without invoking the
-/// slow-lane interpreter — i.e. the call would not need real compute.
+/// slow-lane interpreter ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â i.e. the call would not need real compute.
 /// Returns (total_peeks, hits, hit_pct).
 fn synth_atlas_warm_estimate(
     node: &MonsterNode,
@@ -927,20 +937,20 @@ fn synth_atlas_warm_estimate(
     (total, hits, pct)
 }
 
-/// State container — owns the `MonsterNode` and the registry of
+/// State container ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â owns the `MonsterNode` and the registry of
 /// installed KASM programs, keyed by user-facing dropdown value.
 struct ForgeBackend {
     node: MonsterNode,
-    /// Unified redundancy atlas — same Arc handed to MonsterNode via
+    /// Unified redundancy atlas ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â same Arc handed to MonsterNode via
     /// `attach_atlas`. Both layers see the same persisted hashes.
     atlas: std::sync::Arc<scan::atlas::Atlas>,
     programs: HashMap<&'static str, Hash>,
-    /// Run-level cache keyed by (kind, mode, file_hash). Hit → instant replay.
+    /// Run-level cache keyed by (kind, mode, file_hash). Hit ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ instant replay.
     run_cache: HashMap<(String, String, u64), CachedRun>,
-    /// inspect_program_map cache : (kind, file_hash) → ComputationPlanReport.
+    /// inspect_program_map cache : (kind, file_hash) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ ComputationPlanReport.
     /// Re-uploading the same file with the same program returns instantly
     /// (the report is deterministic given those two inputs). The cache is
-    /// in-process only — atlas itself persists the underlying hashes
+    /// in-process only ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â atlas itself persists the underlying hashes
     /// across sessions, the cache here just avoids the analysis re-run
     /// within a single Forge process.
     inspect_cache: HashMap<(String, u64), ComputationPlanReport>,
@@ -950,7 +960,6 @@ struct ForgeAppState {
     store_path: PathBuf,
     backend: Option<ForgeBackend>,
     backend_opening: bool,
-    codex_app_server: Option<Arc<CodexAppServerClient>>,
     semantic_cache: Vec<SemanticCacheEntry>,
     gemini_threads: HashMap<String, CodexThreadState>,
     claude_threads: HashMap<String, CodexThreadState>,
@@ -966,7 +975,6 @@ impl ForgeAppState {
             store_path,
             backend: None,
             backend_opening: false,
-            codex_app_server: None,
             semantic_cache: Vec::new(),
             gemini_threads: HashMap::new(),
             claude_threads: HashMap::new(),
@@ -1051,27 +1059,229 @@ fn real_estate_harvester_run_tool(
 }
 
 #[tauri::command]
-fn real_estate_onboarding_state(
-    state: tauri::State<'_, Mutex<ForgeAppState>>,
-) -> Result<real_estate_harvester::RealEstateOnboardingState, String> {
-    let store_path = {
-        let state = state.lock().map_err(|e| e.to_string())?;
-        state.store_path.clone()
-    };
-    real_estate_harvester::onboarding_state(&store_path)
+fn real_estate_backend_warmup() -> Result<bool, String> {
+    real_estate_harvester::warm_remote_agency_resolver()
 }
 
-#[tauri::command]
-fn real_estate_onboarding_answer(
-    question_id: String,
-    answer: String,
-    state: tauri::State<'_, Mutex<ForgeAppState>>,
-) -> Result<real_estate_harvester::RealEstateOnboardingAnswerReport, String> {
-    let store_path = {
-        let state = state.lock().map_err(|e| e.to_string())?;
-        state.store_path.clone()
-    };
-    real_estate_harvester::record_onboarding_answer(&store_path, &question_id, &answer)
+fn onboarding_native_hidden_bounds() -> WebExplorerMemoryBounds {
+    WebExplorerMemoryBounds {
+        x: 3200.0,
+        y: 80.0,
+        width: 1520.0,
+        height: 2200.0,
+    }
+}
+
+fn agency_earth_native_runtime_script() -> &'static str {
+    r#"
+(() => {
+  const STYLE_ID = "forge-agency-earth-clean";
+  const DISMISS_LABELS = ["fermer", "close", "ok", "got it", "plus tard"];
+  const THREE_D_LABELS = ["3d", "activer la 3d", "enable 3d"];
+  const CHROME_HINTS = [
+    "toolbar", "search", "drawer", "panel", "widget", "controls", "button",
+    "card", "sheet", "bottom", "overlay", "floating", "popover", "place",
+    "poi", "minimap", "pegman", "dialog", "modal", "header", "footer", "nav"
+  ];
+
+  const normalize = (value) => String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const applyBase = () => {
+    try {
+      document.documentElement.style.setProperty("background", "transparent", "important");
+      document.documentElement.style.setProperty("background-color", "transparent", "important");
+      document.documentElement.style.setProperty("margin", "0", "important");
+      document.documentElement.style.setProperty("overflow", "hidden", "important");
+      if (document.body) {
+        document.body.style.setProperty("background", "transparent", "important");
+        document.body.style.setProperty("background-color", "transparent", "important");
+        document.body.style.setProperty("margin", "0", "important");
+        document.body.style.setProperty("overflow", "hidden", "important");
+      }
+    } catch (_) {}
+  };
+
+  const ensureStyle = () => {
+    let style = document.getElementById(STYLE_ID);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = STYLE_ID;
+        style.textContent = `
+        html, body {
+          background: transparent !important;
+          background-color: transparent !important;
+          overflow: hidden !important;
+        }
+        html[data-forge-earth-scene="0"], html[data-forge-earth-scene="0"] body {
+          opacity: 0 !important;
+        }
+        html[data-forge-earth-scene="1"], html[data-forge-earth-scene="1"] body {
+          opacity: 1 !important;
+          transition: opacity 220ms ease-out !important;
+        }
+        ::-webkit-scrollbar {
+          display: none !important;
+        }
+        [data-forge-earth-hidden="1"] {
+          position: fixed !important;
+          left: -300vw !important;
+          top: -300vh !important;
+          transform: translate3d(0,0,0) !important;
+          width: 1px !important;
+          height: 1px !important;
+          opacity: 0 !important;
+          visibility: hidden !important;
+          pointer-events: none !important;
+          z-index: -2147483647 !important;
+          overflow: hidden !important;
+        }
+        [data-forge-earth-prune="1"] {
+          position: fixed !important;
+          left: -320vw !important;
+          top: -320vh !important;
+          opacity: 0 !important;
+          visibility: hidden !important;
+          pointer-events: none !important;
+          z-index: -2147483647 !important;
+        }
+      `;
+      document.documentElement.appendChild(style);
+    }
+  };
+
+  const interactiveNodes = () => Array.from(
+    document.querySelectorAll(
+      'button, [role="button"], input, header, footer, nav, aside, dialog, [aria-modal="true"], [aria-haspopup="dialog"], [aria-label], [data-tooltip], [class*="toolbar"], [class*="Toolbar"], [class*="search"], [class*="Search"], [class*="drawer"], [class*="Drawer"], [class*="panel"], [class*="Panel"], [class*="widget"], [class*="Widget"], [class*="controls"], [class*="Controls"]'
+    )
+  );
+
+  const isVisible = (node) => {
+    if (!(node instanceof Element)) return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+
+  const labelFor = (node) => normalize(
+    node?.getAttribute?.("aria-label")
+      || node?.getAttribute?.("title")
+      || node?.getAttribute?.("data-tooltip")
+      || node?.textContent
+      || ""
+  );
+
+  const classSignature = (node) => normalize(
+    node?.className?.baseVal
+      || node?.className
+      || ""
+  );
+
+  const preserveMapNode = (node) => {
+    if (!(node instanceof Element)) return false;
+    if (node.tagName === "CANVAS" || node.tagName === "VIDEO") return true;
+    return !!node.querySelector?.("canvas, video");
+  };
+
+  const shouldHideNode = (node) => {
+    if (!(node instanceof HTMLElement)) return false;
+    if (!isVisible(node)) return false;
+    if (preserveMapNode(node)) return false;
+    const label = labelFor(node);
+    const signature = `${node.tagName.toLowerCase()} ${classSignature(node)} ${label}`;
+    if (CHROME_HINTS.some((hint) => signature.includes(hint))) return true;
+    const style = window.getComputedStyle(node);
+    const positioned = style.position === "fixed" || style.position === "sticky" || style.position === "absolute";
+    const decorative = node.childElementCount > 0 || label.length > 0 || ["INPUT", "BUTTON", "IMG", "SVG"].includes(node.tagName);
+    return positioned && decorative;
+  };
+
+  const clickMatching = (labels) => {
+    for (const node of interactiveNodes()) {
+      if (!isVisible(node)) continue;
+      const label = labelFor(node);
+      if (!label) continue;
+      if (labels.some((entry) => label === entry || label.includes(entry))) {
+        try {
+          node.click();
+          return true;
+        } catch (_) {}
+      }
+    }
+    return false;
+  };
+
+  const hideChrome = () => {
+    const candidates = document.querySelectorAll(
+      'button, [role="button"], input, header, footer, nav, aside, dialog, [aria-modal="true"], [aria-haspopup="dialog"], [aria-label], [data-tooltip], [class], [id], img, picture, svg'
+    );
+    for (const node of candidates) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (shouldHideNode(node)) {
+        node.dataset.forgeEarthHidden = "1";
+      }
+    }
+    const wrappers = document.querySelectorAll("div, section, article");
+    for (const node of wrappers) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (!isVisible(node) || preserveMapNode(node)) continue;
+      const signature = `${classSignature(node)} ${labelFor(node)}`;
+      if (CHROME_HINTS.some((hint) => signature.includes(hint))) {
+        node.dataset.forgeEarthPrune = "1";
+      }
+    }
+  };
+
+  const maybeEnable3d = () => {
+    const now = Date.now();
+    if ((window.__forgeEarth3DClickedAt || 0) + 2500 > now) return;
+    if (clickMatching(THREE_D_LABELS)) {
+      window.__forgeEarth3DClickedAt = now;
+    }
+  };
+
+  const updateSceneVisibility = () => {
+    const now = Date.now();
+    if (!window.__forgeEarthBootAt) window.__forgeEarthBootAt = now;
+    const clicked3d = !!window.__forgeEarth3DClickedAt;
+    const readyByTimeout = now - window.__forgeEarthBootAt > 3600;
+    document.documentElement.dataset.forgeEarthScene = clicked3d || readyByTimeout ? "1" : "0";
+  };
+
+  const tick = () => {
+    applyBase();
+    ensureStyle();
+    clickMatching(DISMISS_LABELS);
+    maybeEnable3d();
+    hideChrome();
+    updateSceneVisibility();
+  };
+
+  const observer = new MutationObserver(() => {
+    window.requestAnimationFrame(tick);
+  });
+
+  applyBase();
+  ensureStyle();
+  tick();
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    characterData: false,
+  });
+  window.addEventListener("DOMContentLoaded", tick, { once: true });
+  window.addEventListener("load", () => {
+    tick();
+    window.setTimeout(tick, 600);
+    window.setTimeout(tick, 1800);
+  }, { once: true });
+  window.setInterval(tick, 2500);
+})();
+"#
 }
 
 fn normalize_real_estate_tool_command(command: &str) -> Result<String, String> {
@@ -1250,16 +1460,17 @@ fn real_estate_tool_command_context(
     };
     let snapshot = real_estate_harvester::snapshot(&store_path).ok();
     let memory_commits = read_real_estate_memory_commits(&store_path, &command, &program_name, 4);
-    let brain = forge_agent_tools::call_internal_tool(
+    let brain_state = forge_agent_runtime::direct_state_kernel_read(
         &store_path,
-        "forge_brain_recall",
         &json!({
+            "state": "brain",
+            "op": "recall",
             "scope": "agence_immo",
             "memory_layer": "semantic",
             "limit": 8
         }),
-        None,
     )?;
+    let brain = brain_state.get("result").cloned().unwrap_or(JsonValue::Null);
     Ok(json!({
         "kind": "real_estate_tool_command_context",
         "command": command,
@@ -1277,8 +1488,976 @@ fn real_estate_tool_command_context(
         },
         "harvester_snapshot": snapshot,
         "memory_commits": memory_commits,
-        "brain": brain
+        "brain": brain,
+        "brain_state_kernel": brain_state
     }))
+}
+
+#[tauri::command]
+fn collection_os_webexplorer_observe_v2(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<collection_os::CollectionObserveInputV2, String> {
+    let snapshot = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.active_web_explorer().memory_snapshot()
+    };
+    Ok(collection_observe_v2_from_active_webexplorer(&app, &snapshot))
+}
+
+#[tauri::command]
+fn collection_os_webexplorer_expert_routes(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<Vec<collection_os::CollectionExpertRoute>, String> {
+    let snapshot = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.active_web_explorer().memory_snapshot()
+    };
+    let observe_v2 = collection_observe_v2_from_active_webexplorer(&app, &snapshot);
+    Ok(collection_os::derive_expert_routes_v2(&observe_v2))
+}
+
+#[tauri::command]
+fn collection_os_webexplorer_extract_typed(
+    contract_id: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<collection_os::CollectionTypedExtraction, String> {
+    let snapshot = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.active_web_explorer().memory_snapshot()
+    };
+    let observe_v2 = collection_observe_v2_from_active_webexplorer(&app, &snapshot);
+    collection_os::extract_typed_entities_v2(&observe_v2, contract_id.trim())
+}
+
+#[tauri::command]
+fn collection_os_webexplorer_hypotheses(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<Vec<collection_os::CollectionHypothesisSet>, String> {
+    let snapshot = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.active_web_explorer().memory_snapshot()
+    };
+    let observe_v2 = collection_observe_v2_from_active_webexplorer(&app, &snapshot);
+    Ok(collection_os::derive_hypothesis_sets_v2(&observe_v2))
+}
+
+#[tauri::command]
+fn collection_os_webexplorer_command_map(
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<collection_os::CollectionCommandMap, String> {
+    let snapshot = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.active_web_explorer().memory_snapshot()
+    };
+    Ok(collection_command_map_from_webexplorer_snapshot(&snapshot))
+}
+
+#[tauri::command]
+fn collection_os_webexplorer_action_cache(
+    instruction: String,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<collection_os::CollectionActionCacheResult, String> {
+    let (store_path, snapshot) = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        (
+            state.store_path.clone(),
+            state.active_web_explorer().memory_snapshot(),
+        )
+    };
+    let command_map = collection_command_map_from_webexplorer_snapshot(&snapshot);
+    collection_os::select_or_record_action_cache(&store_path, &instruction, &command_map)
+}
+
+#[tauri::command]
+fn collection_os_webexplorer_replay_action(
+    instruction: String,
+    dry_run: Option<bool>,
+    value: Option<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<collection_os::CollectionActionReplayResult, String> {
+    let dry_run = dry_run.unwrap_or(true);
+    let (store_path, snapshot) = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        (
+            state.store_path.clone(),
+            state.active_web_explorer().memory_snapshot(),
+        )
+    };
+    let command_map = collection_command_map_from_webexplorer_snapshot(&snapshot);
+    let cache = collection_os::select_or_record_action_cache(&store_path, &instruction, &command_map)?;
+    let (validated, _) = collection_os::action_replay_validation_reason(&cache, &command_map);
+    if !validated || dry_run {
+        return Ok(collection_os::build_action_replay_result(
+            cache,
+            &command_map,
+            dry_run,
+            false,
+            None,
+        ));
+    }
+
+    let execution_error = execute_collection_webexplorer_action(&app, &state, &cache.entry.command, value)
+        .err();
+    let executed = execution_error.is_none();
+    Ok(collection_os::build_action_replay_result(
+        cache,
+        &command_map,
+        dry_run,
+        executed,
+        execution_error,
+    ))
+}
+
+#[tauri::command]
+fn collection_os_classify_block(
+    input: collection_os::CollectionBlockSignalInput,
+) -> Result<collection_os::CollectionBlockProof, String> {
+    Ok(collection_os::classify_block_signal(input))
+}
+
+fn collection_bounds_from_webexplorer(
+    bounds: Option<&WebExplorerMemoryBounds>,
+) -> Option<collection_os::CollectionBounds> {
+    bounds.map(|bounds| collection_os::CollectionBounds {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+    })
+}
+
+fn parse_compact_f64(value: &str) -> Option<f64> {
+    value.trim().parse::<f64>().ok().filter(|value| value.is_finite())
+}
+
+fn parse_compact_i64(value: &str) -> Option<i64> {
+    value.trim().parse::<i64>().ok()
+}
+
+fn collection_style_hint_from_webexplorer(
+    style: &WebExplorerMemoryStyle,
+) -> Option<collection_os::CollectionObservedStyleHint> {
+    let hint = collection_os::CollectionObservedStyleHint {
+        display: style.display.clone(),
+        visibility: style.visibility.clone(),
+        opacity: parse_compact_f64(&style.opacity),
+        z_index: parse_compact_i64(&style.z_index),
+        background_color: style.background_color.clone(),
+        background_image: style.background_image.clone(),
+        color: style.color.clone(),
+        font_size: style.font_size.clone(),
+        font_weight: style.font_weight.clone(),
+    };
+    let has_signal = !hint.display.trim().is_empty()
+        || !hint.visibility.trim().is_empty()
+        || hint.opacity.is_some()
+        || hint.z_index.is_some()
+        || !hint.background_color.trim().is_empty()
+        || !hint.background_image.trim().is_empty()
+        || !hint.color.trim().is_empty()
+        || !hint.font_size.trim().is_empty()
+        || !hint.font_weight.trim().is_empty();
+    has_signal.then_some(hint)
+}
+
+fn collection_observe_v2_from_webexplorer_snapshot(
+    snapshot: &WebExplorerMemorySnapshot,
+) -> collection_os::CollectionObserveInputV2 {
+    let nodes = snapshot
+        .nodes
+        .iter()
+        .map(|node| {
+            let label = webexplorer_node_text(node);
+            let evidence_hash = forge_kasm_hash_json(&json!({
+                "schema": "forge.collection.webexplorer.observe_v2.node.v1",
+                "treeHash": snapshot.tree_hash,
+                "nodeId": node.id,
+                "selectorHint": node.selector_hint,
+                "source": node.source,
+                "role": node.role,
+                "tagName": node.tag_name,
+                "text": label,
+                "href": node.href,
+                "src": node.src,
+            }));
+            let mut resources = Vec::new();
+            if !node.href.trim().is_empty() {
+                resources.push(collection_os::CollectionObservedResource {
+                    kind: "href".to_string(),
+                    url: node.href.clone(),
+                    mime_type: String::new(),
+                    fetch_mode: "navigate".to_string(),
+                    evidence_hash: forge_kasm_hash_json(&json!({
+                        "schema": "forge.collection.webexplorer.resource.v1",
+                        "treeHash": snapshot.tree_hash,
+                        "nodeId": node.id,
+                        "kind": "href",
+                        "url": node.href,
+                    })),
+                });
+            }
+            if !node.src.trim().is_empty() {
+                resources.push(collection_os::CollectionObservedResource {
+                    kind: "src".to_string(),
+                    url: node.src.clone(),
+                    mime_type: String::new(),
+                    fetch_mode: "embed".to_string(),
+                    evidence_hash: forge_kasm_hash_json(&json!({
+                        "schema": "forge.collection.webexplorer.resource.v1",
+                        "treeHash": snapshot.tree_hash,
+                        "nodeId": node.id,
+                        "kind": "src",
+                        "url": node.src,
+                    })),
+                });
+            }
+            collection_os::CollectionObservedNodeV2 {
+                id: node.id.clone(),
+                parent_id: node.parent_id.clone(),
+                role: node.role.clone(),
+                tag_name: node.tag_name.clone(),
+                selector_hint: node.selector_hint.clone(),
+                label: label.clone(),
+                href: node.href.clone(),
+                value: node.value.clone(),
+                visible: node.visible,
+                enabled: node.enabled,
+                checked: node.checked,
+                bounds: collection_bounds_from_webexplorer(node.bounds.as_ref()),
+                child_count: node.child_ids.len(),
+                source: node.source.clone(),
+                frame_path: node.frame_path.clone(),
+                shadow_path: node.shadow_path.clone(),
+                text: node.text.clone(),
+                name: node.name.clone(),
+                src: node.src.clone(),
+                alt: if node.tag_name.eq_ignore_ascii_case("img") {
+                    node.name.clone()
+                } else {
+                    String::new()
+                },
+                title_attr: node.title_attr.clone(),
+                class_name: node.class_name.clone(),
+                input_type: node.input_type.clone(),
+                placeholder: node.placeholder.clone(),
+                aria_role: if !node.aria_role.trim().is_empty() {
+                    node.aria_role.clone()
+                } else {
+                    node.role.clone()
+                },
+                aria_name: if !node.aria_name.trim().is_empty() {
+                    node.aria_name.clone()
+                } else {
+                    node.name.clone()
+                },
+                ax: Some(collection_os::CollectionObservedAxNode {
+                    role: if !node.aria_role.trim().is_empty() {
+                        node.aria_role.clone()
+                    } else {
+                        node.role.clone()
+                    },
+                    name: if !node.aria_name.trim().is_empty() {
+                        node.aria_name.clone()
+                    } else {
+                        node.name.clone()
+                    },
+                    description: String::new(),
+                    value: node.value.clone(),
+                    properties: vec![
+                        collection_os::CollectionObservedAttribute {
+                            name: "expanded".to_string(),
+                            value: node.expanded.to_string(),
+                        },
+                        collection_os::CollectionObservedAttribute {
+                            name: "source".to_string(),
+                            value: node.source.clone(),
+                        },
+                        collection_os::CollectionObservedAttribute {
+                            name: "titleAttr".to_string(),
+                            value: node.title_attr.clone(),
+                        },
+                        collection_os::CollectionObservedAttribute {
+                            name: "placeholder".to_string(),
+                            value: node.placeholder.clone(),
+                        },
+                        collection_os::CollectionObservedAttribute {
+                            name: "inputType".to_string(),
+                            value: node.input_type.clone(),
+                        },
+                    ],
+                }),
+                style: collection_style_hint_from_webexplorer(&node.style),
+                resources,
+                evidence: vec![collection_os::CollectionObservedEvidence {
+                    source_kind: "webexplorer_snapshot".to_string(),
+                    extractor: "collection_observe_v2_from_webexplorer_snapshot".to_string(),
+                    snippet: label,
+                    evidence_hash,
+                }],
+            }
+        })
+        .collect::<Vec<_>>();
+    collection_os::finalize_collection_observe_v2(collection_os::CollectionObserveInputV2 {
+        source_url: snapshot.current_url.clone(),
+        title: snapshot.title.clone(),
+        tree_hash: snapshot.tree_hash.clone(),
+        captured_at_ms: snapshot.captured_at_ms,
+        viewport: snapshot.viewport.as_ref().map(|bounds| collection_os::CollectionObserveViewport {
+            width: bounds.width,
+            height: bounds.height,
+            scroll_x: bounds.x,
+            scroll_y: bounds.y,
+        }),
+        nodes,
+        scene_blocks: Vec::new(),
+        proof_hash: String::new(),
+    })
+}
+
+fn collection_observe_v2_from_active_webexplorer<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    snapshot: &WebExplorerMemorySnapshot,
+) -> collection_os::CollectionObserveInputV2 {
+    let base = collection_observe_v2_from_webexplorer_snapshot(snapshot);
+    let native_nodes = match webexplorer_native_collection_nodes(app) {
+        Ok(nodes) => nodes,
+        Err(err) => {
+            alpha_trace(app, "webexplorer.native.observe", format!("fallback {err}"));
+            Vec::new()
+        }
+    };
+    if native_nodes.is_empty() {
+        return base;
+    }
+    let mut merged = base;
+    merged.nodes.extend(native_nodes);
+    merged.scene_blocks.clear();
+    collection_os::finalize_collection_observe_v2(merged)
+}
+
+#[cfg(windows)]
+const WEBEXPLORER_NATIVE_CDP_STYLE_WHITELIST: &[&str] = &[
+    "display",
+    "visibility",
+    "opacity",
+    "z-index",
+    "background-color",
+    "background-image",
+    "color",
+    "font-size",
+    "font-weight",
+];
+
+#[cfg(windows)]
+fn webexplorer_native_collection_nodes<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<Vec<collection_os::CollectionObservedNodeV2>, String> {
+    let _ = webexplorer_call_devtools_json(
+        app,
+        "Accessibility.enable",
+        &json!({}),
+    );
+    let dom = webexplorer_call_devtools_json(
+        app,
+        "DOMSnapshot.captureSnapshot",
+        &json!({
+            "computedStyles": WEBEXPLORER_NATIVE_CDP_STYLE_WHITELIST,
+            "includePaintOrder": true,
+            "includeDOMRects": true,
+        }),
+    )?;
+    let ax = webexplorer_call_devtools_json(
+        app,
+        "Accessibility.getFullAXTree",
+        &json!({}),
+    )?;
+    Ok(webexplorer_native_collection_nodes_from_cdp(&dom, &ax))
+}
+
+#[cfg(not(windows))]
+fn webexplorer_native_collection_nodes<R: Runtime>(
+    _app: &tauri::AppHandle<R>,
+) -> Result<Vec<collection_os::CollectionObservedNodeV2>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg(windows)]
+fn webexplorer_call_devtools_json<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    method: &str,
+    params: &JsonValue,
+) -> Result<JsonValue, String> {
+    let Some(webview) = app.get_webview(WEB_EXPLORER_CHILD_LABEL) else {
+        return Err("webexplorer native webview is not active".to_string());
+    };
+    let method_name = method.to_string();
+    let params_json = serde_json::to_string(params)
+        .map_err(|err| format!("serialize devtools params '{method}': {err}"))?;
+    let (tx, rx) = mpsc::channel();
+    let _ = webview.with_webview(move |platform| {
+        #[cfg(windows)]
+        unsafe {
+            let outcome = (|| -> Result<JsonValue, String> {
+                let controller = platform.controller();
+                let core = controller
+                    .CoreWebView2()
+                    .map_err(|err| format!("core-webview2 '{method_name}': {err:?}"))?;
+                let method_w = CoTaskMemPWSTR::from(method_name.as_str());
+                let params_w = CoTaskMemPWSTR::from(params_json.as_str());
+                let (tx, rx) = mpsc::channel();
+                let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+                    move |status, payload| {
+                        let _ = tx.send((status.map_err(|err| format!("{err:?}")), payload));
+                        Ok(())
+                    },
+                ));
+                core.CallDevToolsProtocolMethod(
+                    *method_w.as_ref().as_pcwstr(),
+                    *params_w.as_ref().as_pcwstr(),
+                    &handler,
+                )
+                .map_err(|err| format!("cdp dispatch '{method_name}': {err:?}"))?;
+                let (status, payload) = wait_with_pump(rx)
+                    .map_err(|err| format!("cdp wait '{method_name}': {err:?}"))?;
+                status?;
+                let trimmed = payload.trim();
+                if trimmed.is_empty() {
+                    Ok(json!({}))
+                } else {
+                    serde_json::from_str::<JsonValue>(trimmed)
+                        .map_err(|err| format!("cdp decode '{method_name}': {err}"))
+                }
+            })();
+            let _ = tx.send(outcome);
+        }
+    });
+    rx.recv()
+        .map_err(|err| format!("cdp result channel '{method}': {err}"))?
+}
+
+fn webexplorer_native_collection_nodes_from_cdp(
+    dom: &JsonValue,
+    ax: &JsonValue,
+) -> Vec<collection_os::CollectionObservedNodeV2> {
+    let Some(strings) = dom.get("strings").and_then(JsonValue::as_array) else {
+        return Vec::new();
+    };
+    let Some(document) = dom
+        .get("documents")
+        .and_then(JsonValue::as_array)
+        .and_then(|documents| documents.first())
+    else {
+        return Vec::new();
+    };
+    let Some(nodes) = document.get("nodes").and_then(JsonValue::as_object) else {
+        return Vec::new();
+    };
+    let parent_indexes = nodes
+        .get("parentIndex")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let backend_ids = nodes
+        .get("backendNodeId")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let node_names = nodes
+        .get("nodeName")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let node_values = nodes
+        .get("nodeValue")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let attributes = nodes
+        .get("attributes")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let layout = document.get("layout").and_then(JsonValue::as_object);
+    let layout_indexes = layout
+        .and_then(|layout| layout.get("nodeIndex"))
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let layout_bounds = layout
+        .and_then(|layout| layout.get("bounds"))
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let layout_text = layout
+        .and_then(|layout| layout.get("text"))
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let layout_styles = layout
+        .and_then(|layout| layout.get("styles"))
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut bounds_by_index: HashMap<usize, collection_os::CollectionBounds> = HashMap::new();
+    let mut text_by_index: HashMap<usize, String> = HashMap::new();
+    let mut style_by_index: HashMap<usize, collection_os::CollectionObservedStyleHint> = HashMap::new();
+    for (position, node_index_value) in layout_indexes.iter().enumerate() {
+        let Some(node_index) = node_index_value.as_u64().map(|value| value as usize) else {
+            continue;
+        };
+        if let Some(bounds) = layout_bounds
+            .get(position)
+            .and_then(JsonValue::as_array)
+            .filter(|bounds| bounds.len() >= 4)
+        {
+            bounds_by_index.insert(
+                node_index,
+                collection_os::CollectionBounds {
+                    x: bounds.first().and_then(JsonValue::as_f64).unwrap_or(0.0),
+                    y: bounds.get(1).and_then(JsonValue::as_f64).unwrap_or(0.0),
+                    width: bounds.get(2).and_then(JsonValue::as_f64).unwrap_or(0.0),
+                    height: bounds.get(3).and_then(JsonValue::as_f64).unwrap_or(0.0),
+                },
+            );
+        }
+        if let Some(text_index) = layout_text
+            .get(position)
+            .and_then(JsonValue::as_u64)
+            .map(|value| value as usize)
+        {
+            let text = webexplorer_cdp_string(strings, text_index);
+            if !text.is_empty() {
+                text_by_index.insert(node_index, text);
+            }
+        }
+        if let Some(style_value) = layout_styles.get(position) {
+            if let Some(style) = webexplorer_cdp_style_hint(strings, style_value) {
+                style_by_index.insert(node_index, style);
+            }
+        }
+    }
+    let ax_by_backend = webexplorer_cdp_ax_map(ax);
+    let mut native_nodes = Vec::new();
+    for node_index in 0..node_names.len() {
+        let backend_id = backend_ids
+            .get(node_index)
+            .and_then(JsonValue::as_u64)
+            .map(|value| value as i64)
+            .unwrap_or(0);
+        let tag_name = webexplorer_cdp_string(
+            strings,
+            node_names
+                .get(node_index)
+                .and_then(JsonValue::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or(0),
+        )
+        .to_ascii_lowercase();
+        let attr_map = attributes
+            .get(node_index)
+            .map(|value| webexplorer_cdp_attributes(strings, value))
+            .unwrap_or_default();
+        let ax_node = (backend_id > 0).then(|| ax_by_backend.get(&backend_id)).flatten();
+        let parent_id = parent_indexes
+            .get(node_index)
+            .and_then(JsonValue::as_i64)
+            .filter(|value| *value >= 0)
+            .map(|value| value as usize)
+            .map(|parent_index| {
+                let parent_backend = backend_ids
+                    .get(parent_index)
+                    .and_then(JsonValue::as_u64)
+                    .map(|value| value as i64)
+                    .unwrap_or(0);
+                webexplorer_cdp_native_node_id(parent_index, parent_backend)
+            });
+        let aria_role = ax_node
+            .map(|item| item.role.clone())
+            .filter(|value| !value.is_empty())
+            .or_else(|| attr_map.get("role").cloned())
+            .unwrap_or_default();
+        let aria_name = ax_node
+            .map(|item| item.name.clone())
+            .filter(|value| !value.is_empty())
+            .or_else(|| attr_map.get("aria-label").cloned())
+            .or_else(|| attr_map.get("title").cloned())
+            .or_else(|| attr_map.get("alt").cloned())
+            .unwrap_or_default();
+        let text = text_by_index
+            .get(&node_index)
+            .cloned()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                let node_value = webexplorer_cdp_string(
+                    strings,
+                    node_values
+                        .get(node_index)
+                        .and_then(JsonValue::as_u64)
+                        .map(|value| value as usize)
+                        .unwrap_or(0),
+                );
+                (!node_value.is_empty()).then_some(node_value)
+            })
+            .or_else(|| ax_node.map(|item| item.name.clone()).filter(|value| !value.is_empty()))
+            .unwrap_or_default();
+        let value = ax_node
+            .map(|item| item.value.clone())
+            .filter(|value| !value.is_empty())
+            .or_else(|| attr_map.get("value").cloned())
+            .unwrap_or_default();
+        let href = attr_map.get("href").cloned().unwrap_or_default();
+        let src = attr_map.get("src").cloned().unwrap_or_default();
+        let visible = bounds_by_index.contains_key(&node_index)
+            || ax_node.map(|item| !item.ignored).unwrap_or(false)
+            || !href.is_empty()
+            || !src.is_empty()
+            || !aria_name.is_empty();
+        let enabled = ax_node.map(|item| !item.disabled).unwrap_or(true);
+        let checked = ax_node.map(|item| item.checked).unwrap_or(false);
+        if !visible
+            && text.is_empty()
+            && href.is_empty()
+            && src.is_empty()
+            && aria_role.is_empty()
+            && aria_name.is_empty()
+        {
+            continue;
+        }
+        let evidence_hash = forge_kasm_hash_json(&json!({
+            "schema": "forge.collection.webexplorer.native.observe.node.v1",
+            "backendNodeId": backend_id,
+            "tagName": tag_name,
+            "ariaRole": aria_role,
+            "ariaName": aria_name,
+            "text": text,
+            "href": href,
+            "src": src,
+            "bounds": bounds_by_index.get(&node_index),
+        }));
+        native_nodes.push(collection_os::CollectionObservedNodeV2 {
+            id: webexplorer_cdp_native_node_id(node_index, backend_id),
+            parent_id,
+            role: if !aria_role.is_empty() { aria_role.clone() } else { tag_name.clone() },
+            tag_name: tag_name.clone(),
+            selector_hint: String::new(),
+            label: if !aria_name.is_empty() { aria_name.clone() } else { text.clone() },
+            href: href.clone(),
+            value,
+            visible,
+            enabled,
+            checked,
+            bounds: bounds_by_index.get(&node_index).cloned(),
+            child_count: 0,
+            source: "native_cdp".to_string(),
+            frame_path: Vec::new(),
+            shadow_path: Vec::new(),
+            text,
+            name: attr_map
+                .get("name")
+                .cloned()
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| aria_name.clone()),
+            src,
+            alt: attr_map.get("alt").cloned().unwrap_or_default(),
+            title_attr: attr_map.get("title").cloned().unwrap_or_default(),
+            class_name: attr_map.get("class").cloned().unwrap_or_default(),
+            input_type: attr_map.get("type").cloned().unwrap_or_default(),
+            placeholder: attr_map.get("placeholder").cloned().unwrap_or_default(),
+            aria_role,
+            aria_name,
+            style: style_by_index.get(&node_index).cloned(),
+            ax: ax_node.map(|item| collection_os::CollectionObservedAxNode {
+                role: item.role.clone(),
+                name: item.name.clone(),
+                description: String::new(),
+                value: item.value.clone(),
+                properties: item
+                    .properties
+                    .iter()
+                    .map(|(name, value)| collection_os::CollectionObservedAttribute {
+                        name: name.clone(),
+                        value: webexplorer_cdp_json_scalar(value),
+                    })
+                    .collect(),
+            }),
+            resources: Vec::new(),
+            evidence: vec![collection_os::CollectionObservedEvidence {
+                source_kind: "native_cdp".to_string(),
+                extractor: "webview2_cdp".to_string(),
+                snippet: format!("backendNodeId={backend_id}"),
+                evidence_hash,
+            }],
+        });
+    }
+    let mut child_counts: HashMap<String, usize> = HashMap::new();
+    for node in &native_nodes {
+        if let Some(parent_id) = node.parent_id.as_ref() {
+            *child_counts.entry(parent_id.clone()).or_default() += 1;
+        }
+    }
+    for node in &mut native_nodes {
+        node.child_count = child_counts.get(&node.id).copied().unwrap_or(0);
+    }
+    native_nodes.sort_by(|a, b| a.id.cmp(&b.id));
+    native_nodes
+}
+
+#[derive(Clone, Default)]
+struct WebExplorerNativeAxNode {
+    role: String,
+    name: String,
+    value: String,
+    disabled: bool,
+    checked: bool,
+    ignored: bool,
+    properties: Map<String, JsonValue>,
+}
+
+fn webexplorer_cdp_ax_map(ax: &JsonValue) -> HashMap<i64, WebExplorerNativeAxNode> {
+    let mut map = HashMap::new();
+    let Some(nodes) = ax.get("nodes").and_then(JsonValue::as_array) else {
+        return map;
+    };
+    for node in nodes {
+        let Some(backend_id) = node.get("backendDOMNodeId").and_then(JsonValue::as_u64) else {
+            continue;
+        };
+        let properties = node
+            .get("properties")
+            .and_then(JsonValue::as_array)
+            .map(|properties| {
+                let mut out = Map::new();
+                for property in properties {
+                    let Some(name) = property.get("name").and_then(JsonValue::as_str) else {
+                        continue;
+                    };
+                    if let Some(value) = property
+                        .get("value")
+                        .and_then(|value| value.get("value"))
+                    {
+                        out.insert(name.to_string(), value.clone());
+                    }
+                }
+                out
+            })
+            .unwrap_or_default();
+        let checked = properties
+            .get("checked")
+            .and_then(JsonValue::as_str)
+            .map(|value: &str| value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("mixed"))
+            .or_else(|| properties.get("checked").and_then(JsonValue::as_bool))
+            .unwrap_or(false);
+        map.insert(
+            backend_id as i64,
+            WebExplorerNativeAxNode {
+                role: webexplorer_cdp_ax_value_string(node.get("role")).to_ascii_lowercase(),
+                name: webexplorer_cdp_ax_value_string(node.get("name")),
+                value: webexplorer_cdp_ax_value_string(node.get("value")),
+                disabled: properties
+                    .get("disabled")
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(false),
+                checked,
+                ignored: node.get("ignored").and_then(JsonValue::as_bool).unwrap_or(false),
+                properties,
+            },
+        );
+    }
+    map
+}
+
+fn webexplorer_cdp_ax_value_string(value: Option<&JsonValue>) -> String {
+    value
+        .and_then(|value| value.get("value"))
+        .map(webexplorer_cdp_json_scalar)
+        .unwrap_or_default()
+}
+
+fn webexplorer_cdp_json_scalar(value: &JsonValue) -> String {
+    match value {
+        JsonValue::String(text) => text.clone(),
+        JsonValue::Bool(value) => value.to_string(),
+        JsonValue::Number(value) => value.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn webexplorer_cdp_native_node_id(node_index: usize, backend_id: i64) -> String {
+    if backend_id > 0 {
+        format!("native-backend-{backend_id}")
+    } else {
+        format!("native-node-{node_index}")
+    }
+}
+
+fn webexplorer_cdp_string(strings: &[JsonValue], index: usize) -> String {
+    strings
+        .get(index)
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn webexplorer_cdp_attributes(
+    strings: &[JsonValue],
+    value: &JsonValue,
+) -> HashMap<String, String> {
+    let Some(items) = value.as_array() else {
+        return HashMap::new();
+    };
+    let mut map = HashMap::new();
+    let mut index = 0usize;
+    while index + 1 < items.len() {
+        let Some(name_index) = items.get(index).and_then(JsonValue::as_u64).map(|value| value as usize) else {
+            index += 2;
+            continue;
+        };
+        let Some(value_index) = items.get(index + 1).and_then(JsonValue::as_u64).map(|value| value as usize) else {
+            index += 2;
+            continue;
+        };
+        let name = webexplorer_cdp_string(strings, name_index);
+        let attr_value = webexplorer_cdp_string(strings, value_index);
+        if !name.is_empty() {
+            map.insert(name, attr_value);
+        }
+        index += 2;
+    }
+    map
+}
+
+fn webexplorer_cdp_style_hint(
+    strings: &[JsonValue],
+    value: &JsonValue,
+) -> Option<collection_os::CollectionObservedStyleHint> {
+    let items = value.as_array()?;
+    let mut hint = collection_os::CollectionObservedStyleHint::default();
+    for (index, style_name) in WEBEXPLORER_NATIVE_CDP_STYLE_WHITELIST.iter().enumerate() {
+        let Some(string_index) = items.get(index).and_then(JsonValue::as_u64).map(|value| value as usize) else {
+            continue;
+        };
+        let string_value = webexplorer_cdp_string(strings, string_index);
+        match *style_name {
+            "display" => hint.display = string_value,
+            "visibility" => hint.visibility = string_value,
+            "opacity" => hint.opacity = parse_compact_f64(&string_value),
+            "z-index" => hint.z_index = parse_compact_i64(&string_value),
+            "background-color" => hint.background_color = string_value,
+            "background-image" => hint.background_image = string_value,
+            "color" => hint.color = string_value,
+            "font-size" => hint.font_size = string_value,
+            "font-weight" => hint.font_weight = string_value,
+            _ => {}
+        }
+    }
+    let has_signal = !hint.display.is_empty()
+        || !hint.visibility.is_empty()
+        || hint.opacity.is_some()
+        || hint.z_index.is_some()
+        || !hint.background_color.is_empty()
+        || !hint.background_image.is_empty()
+        || !hint.color.is_empty()
+        || !hint.font_size.is_empty()
+        || !hint.font_weight.is_empty();
+    has_signal.then_some(hint)
+}
+
+fn collection_command_map_from_webexplorer_snapshot(
+    snapshot: &WebExplorerMemorySnapshot,
+) -> collection_os::CollectionCommandMap {
+    let observe_v2 = collection_observe_v2_from_webexplorer_snapshot(snapshot);
+    let observe_v1 = collection_os::collection_observe_v1_from_v2(&observe_v2);
+    collection_os::build_command_map(observe_v1)
+}
+
+fn execute_collection_webexplorer_action(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, Mutex<ForgeAppState>>,
+    command: &collection_os::CollectionMappedCommand,
+    value: Option<String>,
+) -> Result<(), String> {
+    match command.command_kind.as_str() {
+        "open" => {
+            let href = command.href.trim();
+            if !(href.starts_with("https://") || href.starts_with("http://")) {
+                return Err("replay open action requires HTTP href".to_string());
+            }
+            let snapshot = {
+                let mut state = state.lock().map_err(|e| e.to_string())?;
+                state.active_web_explorer_mut().commit(href)?
+            };
+            kick_webexplorer_google_fetch_fallback(app.clone(), snapshot.current_url);
+            Ok(())
+        }
+        "click" | "next_page" => {
+            let selector = command.selector_hint.trim();
+            if selector.is_empty() {
+                return Err("replay click action requires selector".to_string());
+            }
+            let script = format!(
+                r#"
+(() => {{
+  const selector = {};
+  const node = document.querySelector(selector);
+  if (!node) {{
+    document.title = "FORGE_COLLECTION_REPLAY_MISS";
+    return;
+  }}
+  node.dispatchEvent(new MouseEvent("mouseover", {{ bubbles: true, cancelable: true, view: window }}));
+  node.dispatchEvent(new MouseEvent("mousedown", {{ bubbles: true, cancelable: true, view: window }}));
+  node.dispatchEvent(new MouseEvent("mouseup", {{ bubbles: true, cancelable: true, view: window }}));
+  node.click();
+}})();
+"#,
+                js_string_literal(selector)
+            );
+            eval_collection_webexplorer_script(app, &script)
+        }
+        "fill" => {
+            let selector = command.selector_hint.trim();
+            if selector.is_empty() {
+                return Err("replay fill action requires selector".to_string());
+            }
+            let value = value.unwrap_or_default();
+            let script = format!(
+                r#"
+(() => {{
+  const selector = {};
+  const value = {};
+  const node = document.querySelector(selector);
+  if (!node) {{
+    document.title = "FORGE_COLLECTION_REPLAY_MISS";
+    return;
+  }}
+  node.focus?.();
+  node.value = value;
+  node.dispatchEvent(new InputEvent("input", {{ bubbles: true, inputType: "insertText", data: value }}));
+  node.dispatchEvent(new Event("change", {{ bubbles: true }}));
+}})();
+"#,
+                js_string_literal(selector),
+                js_string_literal(&value)
+            );
+            eval_collection_webexplorer_script(app, &script)
+        }
+        other => Err(format!("unsupported replay action kind: {other}")),
+    }
+}
+
+fn eval_collection_webexplorer_script(app: &tauri::AppHandle, script: &str) -> Result<(), String> {
+    let Some(webview) = app.get_webview(WEB_EXPLORER_CHILD_LABEL) else {
+        return Err("webexplorer native webview is not active".to_string());
+    };
+    webview.eval(script).map_err(|err| err.to_string())
+}
+
+fn js_string_literal(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
 }
 
 const WEB_EXPLORER_SCOPE_DEFAULT: &str = "default";
@@ -1309,6 +2488,16 @@ struct OpenAiSubscriptionStatus {
     last_refresh: Option<String>,
     model_ref: String,
     message: String,
+}
+
+#[derive(Clone, Debug)]
+struct OpenAiChatGptLocalAuth {
+    access_token: String,
+    refresh_token: Option<String>,
+    account_id: String,
+    plan_type: Option<String>,
+    auth_mode: Option<String>,
+    last_refresh: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -3393,46 +4582,19 @@ struct ForgeCanvasCancelRequest {
 }
 
 #[derive(Clone, Default)]
-struct CodexDynamicToolContext {
-    store_path: Option<PathBuf>,
-    active_job_id: Option<String>,
-    canvas_turn_id: Option<String>,
-    app: Option<tauri::AppHandle>,
-    max_log_lines: usize,
-}
-
-#[derive(Default)]
-struct CodexAppServerShared {
-    responses: HashMap<String, JsonValue>,
-    notifications: Vec<JsonValue>,
-    exited: Option<String>,
-}
-
-#[derive(Clone, Default)]
 struct CodexThreadState {
-    thread_id: String,
     turns: u32,
     generation: u32,
     memory: Vec<String>,
 }
 
-struct CodexAppServerClient {
-    child: Mutex<Child>,
-    stdin: Arc<Mutex<ChildStdin>>,
-    shared: Arc<(Mutex<CodexAppServerShared>, Condvar)>,
-    next_id: AtomicU64,
-    threads: Mutex<HashMap<String, CodexThreadState>>,
-    runtime_path: PathBuf,
-    tool_context: Arc<Mutex<CodexDynamicToolContext>>,
-}
-
 const CODEX_CANVAS_THREAD_MAX_TURNS: u32 = 12;
 const CODEX_CANVAS_THREAD_RECENT_ITEMS: usize = 12;
 const CODEX_CANVAS_THREAD_COMPACT_TRIGGER_ITEMS: usize = 28;
-const CODEX_CANVAS_COMPACT_MEMORY_MAX_CHARS: usize = 3600;
-const CODEX_CANVAS_SESSION_SUMMARY_MAX_CHARS: usize = 2400;
-const CODEX_CANVAS_MEMORY_USER_MAX_CHARS: usize = 520;
-const CODEX_CANVAS_MEMORY_ASSISTANT_MAX_CHARS: usize = 700;
+const CODEX_CANVAS_COMPACT_MEMORY_MAX_CHARS: usize = 1200;
+const CODEX_CANVAS_SESSION_SUMMARY_MAX_CHARS: usize = 720;
+const CODEX_CANVAS_MEMORY_USER_MAX_CHARS: usize = 220;
+const CODEX_CANVAS_MEMORY_ASSISTANT_MAX_CHARS: usize = 320;
 const CODEX_CANVAS_SEMANTIC_CACHE_MAX_ENTRIES: usize = 96;
 const CODEX_CANVAS_SEMANTIC_CACHE_MAX_AGE_MS: u128 = 6 * 60 * 60 * 1000;
 const CODEX_CANVAS_SEMANTIC_CACHE_MIN_SCORE: f64 = 0.86;
@@ -3800,1103 +4962,62 @@ fn clear_canvas_turn_cancelled_global(turn_id: &str) {
     }
 }
 
-impl Drop for CodexAppServerClient {
-    fn drop(&mut self) {
-        if let Ok(mut child) = self.child.lock() {
-            let _ = kill_process_tree(child.id());
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-fn codex_request_id_key(id: &JsonValue) -> String {
-    id.as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| id.to_string())
-}
-
-fn codex_rpc_error_message(value: &JsonValue) -> String {
-    let message = value
-        .get("message")
-        .and_then(JsonValue::as_str)
-        .unwrap_or("unknown app-server error");
-    let code = value.get("code").and_then(JsonValue::as_i64).unwrap_or(0);
-    format!("{message} ({code})")
-}
-
-fn write_codex_rpc_message(stdin: &Arc<Mutex<ChildStdin>>, value: &JsonValue) {
-    let Ok(mut guard) = stdin.lock() else {
-        return;
-    };
-    let _ = writeln!(&mut *guard, "{value}");
-    let _ = guard.flush();
-}
-
-fn codex_chatgpt_auth_tokens_for_app_server() -> Option<JsonValue> {
+fn read_openai_chatgpt_local_auth() -> Option<OpenAiChatGptLocalAuth> {
     let path = forge_home_dir()?.join(".codex").join("auth.json");
     let text = std::fs::read_to_string(path).ok()?;
     let value: JsonValue = serde_json::from_str(&text).ok()?;
     let tokens = value.get("tokens")?;
-    let access = tokens
+    let access_token = tokens
         .get("access_token")
         .and_then(JsonValue::as_str)
-        .filter(|s| !s.trim().is_empty())?;
-    let account = tokens
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let refresh_token = tokens
+        .get("refresh_token")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let account_id = tokens
         .get("account_id")
         .or_else(|| tokens.get("chatgpt_account_id"))
         .or_else(|| value.get("chatgpt_account_id"))
         .and_then(JsonValue::as_str)
-        .filter(|s| !s.trim().is_empty())?;
-    let plan = tokens
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if access_token.is_empty() && refresh_token.is_none() {
+        return None;
+    }
+    let plan_type = tokens
         .get("plan_type")
         .or_else(|| tokens.get("chatgpt_plan_type"))
         .or_else(|| value.get("chatgpt_plan_type"))
-        .and_then(JsonValue::as_str);
-    Some(json!({
-        "accessToken": access,
-        "chatgptAccountId": account,
-        "chatgptPlanType": plan,
-    }))
-}
-
-fn forge_dynamic_tool_text_response(id: JsonValue, success: bool, value: JsonValue) -> JsonValue {
-    let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
-    json!({
-        "id": id,
-        "result": {
-            "success": success,
-            "contentItems": [{
-                "type": "inputText",
-                "text": text
-            }]
-        }
-    })
-}
-
-fn forge_dynamic_tool_error_response(id: JsonValue, message: impl Into<String>) -> JsonValue {
-    forge_dynamic_tool_text_response(
-        id,
-        false,
-        json!({
-            "error": message.into(),
-            "transport": "forge_dynamic_tool",
-        }),
-    )
-}
-
-fn forge_json_string_at(value: &JsonValue, pointers: &[&str]) -> Option<String> {
-    for pointer in pointers {
-        if let Some(text) = value
-            .pointer(pointer)
-            .and_then(JsonValue::as_str)
-            .filter(|text| !text.trim().is_empty())
-        {
-            return Some(text.to_string());
-        }
-    }
-    None
-}
-
-fn forge_canonical_dynamic_tool_name(tool: &str) -> &str {
-    match tool.trim() {
-        "/create_" | "create_" => "forge_create_program",
-        "/indicator" | "indicator" | "/indicator_" | "indicator_" => "forge_create_program",
-        "/alert_" | "alert_" => "forge_create_program",
-        "/program_" | "program_" => "forge_run_program",
-        "/strategy_" | "strategy_" => "forge_run_program",
-        "/metric" | "metric" => "forge_compile_validate_route",
-        "/visualprogram_" | "visualprogram_" | "/visualprogram" | "visualprogram" => "forge_run_visual_program",
-        "/geo" | "geo" | "/geo_" | "geo_" | "/minigeo" | "minigeo" | "/minigeo_" | "minigeo_" => "forge_upsert_geonode",
-        other => other,
-    }
-}
-
-fn forge_public_command_for_tool(tool: &str) -> &'static str {
-    match forge_canonical_dynamic_tool_name(tool) {
-        "forge_create_program" => "/create_",
-        "forge_run_program" => "/program_",
-        "forge_compile_validate_route" | "forge_list_capabilities" | "forge_3d_metric_catalog" => "/metric",
-        "forge_run_visual_program" | "forge_model_3d_mapping" | "forge_analyze_3d_mapping" | "forge_interpret_visual_mapping" => "/visualprogram_",
-        "forge_upsert_geonode" => "/geo",
-        "trading_transcript" => "/transcript_",
-        "forge_atlas_overview" => "/atlas",
-        _ => "",
-    }
-}
-
-fn forge_public_tool_label(tool: &str) -> String {
-    let public = forge_public_command_for_tool(tool);
-    if public.is_empty() {
-        tool.to_string()
-    } else {
-        public.to_string()
-    }
-}
-
-fn forge_normalized_public_command(requested_tool: &str, canonical_tool: &str) -> String {
-    match requested_tool.trim() {
-        "/indicator_" | "indicator_" => "/indicator".to_string(),
-        "/geo_" | "geo_" => "/geo".to_string(),
-        "/minigeo_" | "minigeo_" => "/minigeo".to_string(),
-        "/visualprogram" | "visualprogram" => "/visualprogram_".to_string(),
-        "/strategy_" | "strategy_" => "/strategy_".to_string(),
-        "/alert_" | "alert_" => "/alert_".to_string(),
-        "/transcript_" | "transcript_" => "/transcript_".to_string(),
-        "/indicator" | "indicator" => "/indicator".to_string(),
-        "/geo" | "geo" => "/geo".to_string(),
-        "/minigeo" | "minigeo" => "/minigeo".to_string(),
-        other if other.starts_with('/') => other.to_string(),
-        _ => forge_public_tool_label(canonical_tool),
-    }
-}
-
-fn forge_dynamic_tool_result_summary(tool: &str, result: &JsonValue) -> JsonValue {
-    let job_id = forge_json_string_at(
-        result,
-        &[
-            "/data/job/job_id",
-            "/data/job/jobId",
-            "/data/job_id",
-            "/data/jobId",
-            "/data/manifest/job_id",
-            "/data/manifest/jobId",
-            "/job/job_id",
-            "/job/jobId",
-            "/job_id",
-            "/jobId",
-            "/manifest/job_id",
-            "/manifest/jobId",
-        ],
-    );
-    let program_hash = forge_json_string_at(
-        result,
-        &[
-            "/data/program/program_hash",
-            "/data/program/programHash",
-            "/data/program_hash",
-            "/data/programHash",
-            "/program/program_hash",
-            "/program/programHash",
-            "/program_hash",
-            "/programHash",
-        ],
-    );
-    let program_title = forge_json_string_at(
-        result,
-        &[
-            "/data/program/title",
-            "/data/title",
-            "/program/title",
-            "/title",
-        ],
-    );
-    let public_command = forge_public_command_for_tool(tool);
-    json!({
-        "tool": tool,
-        "publicCommand": if public_command.is_empty() { JsonValue::Null } else { json!(public_command) },
-        "jobId": job_id,
-        "programHash": program_hash,
-        "programTitle": program_title,
-        "status": result
-            .pointer("/data/status")
-            .or_else(|| result.pointer("/status"))
-            .cloned()
-            .unwrap_or(JsonValue::Null),
-        "result": result,
-    })
-}
-
-fn emit_forge_dynamic_tool_event(
-    context: &CodexDynamicToolContext,
-    stage: &str,
-    message: impl Into<String>,
-    data: JsonValue,
-) {
-    let Some(app) = context.app.as_ref() else {
-        return;
-    };
-    let Some(turn_id) = context.canvas_turn_id.as_deref() else {
-        return;
-    };
-    emit_canvas_assistant_event(Some(app), turn_id, stage, message, data);
-}
-
-fn forge_program_build_metric_label(metric: &JsonValue) -> Option<String> {
-    forge_json_string_at(
-        metric,
-        &[
-            "/tag",
-            "/id",
-            "/name",
-            "/output",
-            "/formula/name",
-            "/metadata/name",
-        ],
-    )
-}
-
-fn forge_program_build_metric_formula(metric: &JsonValue) -> Option<String> {
-    forge_json_string_at(
-        metric,
-        &[
-            "/formula",
-            "/algorithm",
-            "/op",
-            "/formula/name",
-            "/operation",
-        ],
-    )
-}
-
-fn forge_program_build_emit_step(
-    context: &CodexDynamicToolContext,
-    kind: &str,
-    message: impl Into<String>,
-    data: JsonValue,
-) {
-    let message = message.into();
-    let class = match kind {
-        "math" => "math",
-        "tool" => "tool",
-        "edit" => "edit",
-        "compiled" => "compiled",
-        "repair" => "repair",
-        _ => "step",
-    };
-    emit_forge_dynamic_tool_event(
-        context,
-        "forge_program_build_step",
-        message,
-        json!({
-            "runtime": "Forge program builder",
-            "kind": class,
-            "data": data,
-        }),
-    );
-}
-
-fn forge_program_build_emit_metric_steps(context: &CodexDynamicToolContext, metrics: &[JsonValue]) {
-    for metric in metrics.iter().take(16) {
-        let label = forge_program_build_metric_label(metric)
-            .unwrap_or_else(|| "metric".to_string());
-        let formula = forge_program_build_metric_formula(metric)
-            .unwrap_or_else(|| "custom formula".to_string());
-        forge_program_build_emit_step(
-            context,
-            "math",
-            format!("Balise creee : {label} - {formula}"),
-            json!({
-                "metric": label,
-                "formula": formula,
-            }),
-        );
-    }
-}
-
-fn forge_program_build_emit_create_steps(
-    context: &CodexDynamicToolContext,
-    arguments: &JsonValue,
-    result: &JsonValue,
-) {
-    let title = forge_json_string_at(
-        result,
-        &[
-            "/data/program/canonical/title",
-            "/program/canonical/title",
-            "/data/program/title",
-            "/program/title",
-        ],
-    )
-    .or_else(|| forge_json_string_at(arguments, &["/title"]))
-    .unwrap_or_else(|| "Forge program".to_string());
-    forge_program_build_emit_step(
-        context,
-        "edit",
-        format!("Programme prepare : {title}"),
-        json!({ "title": title }),
-    );
-
-    let mut metrics = Vec::new();
-    if let Some(items) = arguments.get("metrics").and_then(JsonValue::as_array) {
-        metrics.extend(items.iter().cloned());
-    }
-    if metrics.is_empty() {
-        if let Some(items) = result
-            .pointer("/data/program/canonical/metrics")
-            .or_else(|| result.pointer("/program/canonical/metrics"))
-            .and_then(JsonValue::as_array)
-        {
-            metrics.extend(items.iter().cloned());
-        }
-    }
-    forge_program_build_emit_metric_steps(context, &metrics);
-
-    let compiler = result
-        .pointer("/data/program/canonical/program_compiler")
-        .or_else(|| result.pointer("/program/canonical/program_compiler"));
-    let status = compiler
-        .and_then(|value| value.get("status"))
         .and_then(JsonValue::as_str)
-        .unwrap_or("compiled_runnable");
-    if matches!(status, "needs_repair" | "compile_failed") {
-        forge_program_build_emit_step(
-            context,
-            "repair",
-            "Programme modifie : correction requise avant execution",
-            compiler.cloned().unwrap_or_else(|| json!({ "status": status })),
-        );
-    } else {
-        forge_program_build_emit_step(
-            context,
-            "compiled",
-            "Programme compile : route des metriques validee",
-            compiler.cloned().unwrap_or_else(|| json!({ "status": status })),
-        );
-    }
-}
-
-fn forge_dynamic_tool_specs_compact() -> Vec<JsonValue> {
-    vec![
-        json!({
-            "name": "forge_session_context",
-            "description": "Compact current Forge session context. No raw files.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "max_log_lines": { "type": "integer", "minimum": 0, "maximum": 80 }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_list_programs",
-            "description": "List local reusable Forge programs.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_interpret_visual_mapping",
-            "description": "Interpret programmable 2D/3D visual_program artifacts by refs, axes, metrics and legends. No raw points/rows.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "mode": { "type": "string" },
-                    "vertex_index": { "type": "integer", "minimum": 0 }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_3d_metric_catalog",
-            "displayName": "/metric",
-            "publicCommand": "/metric",
-            "description": "/metric - Extensible metric/recipe schema for 2D/3D visual programs over the active file. No source rows. Refer to this capability as /metric in chat/UI.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_model_3d_mapping",
-            "description": "Materialize or reshape a local 3D map from agent-defined axes, metrics, color/size and transforms. No raw rows/points.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "recipe": { "type": "object" },
-                    "max_points": { "type": "integer", "minimum": 64, "maximum": 1000000 }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_run_visual_program",
-            "displayName": "/visualprogram_",
-            "publicCommand": "/visualprogram_",
-            "description": "/visualprogram_ - Run visual_program views locally: 2D/3D axes, overlays, color/size, transforms. Compact refs only. Refer to this capability as /visualprogram_ in chat/UI.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["views"],
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "metrics": { "type": "array" },
-                    "views": { "type": "array" },
-                    "max_points": { "type": "integer", "minimum": 64, "maximum": 1000000 }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_analyze_3d_mapping",
-            "description": "Local whole-map 3D analysis: PCA, voxels, clusters, outliers, trajectory. Compact stats only.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "mode": { "type": "string" },
-                    "voxel_resolution": { "type": "integer", "minimum": 12, "maximum": 96 }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_profile_settings",
-            "description": "Get/update redacted profile/provider settings.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "action": { "type": "string" },
-                    "provider": { "type": "string" },
-                    "model_ref": { "type": "string" },
-                    "reasoning_effort": { "type": "string" },
-                    "gemini_api_key": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_list_sessions",
-            "description": "List compact session history.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 80 },
-                    "query": { "type": "string" },
-                    "status": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_list_documents",
-            "description": "List saved document refs.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 80 },
-                    "query": { "type": "string" },
-                    "type": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_atlas_overview",
-            "description": "Compact My Atlas overview: reusable programs, metric tags and instant prior run refs.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "max_entries": { "type": "integer", "minimum": 1, "maximum": 80 },
-                    "query": { "type": "string" },
-                    "kind": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_update_session",
-            "description": "Update safe session metadata.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["job_id"],
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "title": { "type": "string" },
-                    "status": { "type": "string" },
-                    "pinned": { "type": "boolean" },
-                    "protected": { "type": "boolean" },
-                    "archived": { "type": "boolean" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_list_capabilities",
-            "displayName": "/metric",
-            "publicCommand": "/metric",
-            "description": "/metric - List Forge examples plus universal creation routes: Instruments (compute_program), Lenses (visual_program), open Metric/Visual DSL Nodes, 2D/3D views. Refer to this capability as /metric in chat/UI.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "domain": { "type": "string" },
-                    "detailed": { "type": "boolean" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_create_program",
-            "displayName": "/create_",
-            "publicCommand": "/create_",
-            "description": "/create_ - Create reusable Instruments (compute_program) or Lenses (visual_program) for any domain with open Metric/Visual DSL Nodes only after the design is explicit. Check My Atlas when reuse is possible. Keep the exact Node count, roles, formulas/algorithms/coding logic, routing, inputs/outputs and validation plan internally; do not print the full inventory unless the user asks. If the user is exploring, vague, or has not clearly settled objective/features/validation target, do not call /create_; ask adaptive domain questions or propose concise candidate directions first. If CURRENT_TURN_DECISION_POINT is present, interpret the user's answer naturally: acceptance or delegation means choose robust defaults and create; refusal or new constraints means revise and do not create. Created Instruments/Lenses and Nodes are saved to My Atlas. If the compiler returns needs_repair, do not run; explain and repair with a corrected version.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["title", "goal"],
-                "properties": {
-                    "title": { "type": "string" },
-                    "domain": { "type": "string" },
-                    "goal": { "type": "string" },
-                    "program_kind": { "type": "string" },
-                    "views": { "type": "array" },
-                    "spec_text": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "forge_compile_validate_route",
-            "displayName": "/metric",
-            "publicCommand": "/metric",
-            "description": "/metric - Validate a draft or Atlas program: metric contracts, objective coverage, dependencies, units, validation and executor routing. Refer to this capability as /metric in chat/UI.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "program_hash": { "type": "string" },
-                    "title": { "type": "string" },
-                    "goal": { "type": "string" },
-                    "metrics": { "type": "array" },
-                    "spec_text": { "type": "string" }
-                },
-                "additionalProperties": true
-            }
-        }),
-        json!({
-            "name": "forge_run_program",
-            "displayName": "/program_",
-            "publicCommand": "/program_",
-            "description": "/program_ - Run/plan Instruments or Lenses locally on active session files only after explicit user approval of a concrete design; return compact results/artifacts. After first run, the same program hash/input hashes/params is an instant My Atlas hit. Do not run on exploratory indicator/design turns, vague requests, or critique/revision-only turns; wait for explicit launch confirmation. Refer to this capability as /program_ in chat/UI.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "job_id": { "type": "string" },
-                    "program_hash": { "type": "string" },
-                    "title": { "type": "string" },
-                    "dry_run": { "type": "boolean" },
-                    "plan_only": { "type": "boolean" }
-                },
-                "additionalProperties": false
-            }
-        }),
-    ]
-}
-
-fn respond_to_codex_server_request(
-    stdin: &Arc<Mutex<ChildStdin>>,
-    tool_context: &Arc<Mutex<CodexDynamicToolContext>>,
-    value: &JsonValue,
-) {
-    let Some(id) = value.get("id").cloned() else {
-        return;
-    };
-    let method = value
-        .get("method")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let auth_mode = value
+        .get("auth_mode")
         .and_then(JsonValue::as_str)
-        .unwrap_or("");
-    let response = match method {
-        "account/chatgptAuthTokens/refresh" => {
-            if let Some(result) = codex_chatgpt_auth_tokens_for_app_server() {
-                json!({ "id": id, "result": result })
-            } else {
-                json!({
-                    "id": id,
-                    "error": {
-                        "code": -32001,
-                        "message": "OpenAI subscription auth is not available in ~/.codex/auth.json"
-                    }
-                })
-            }
-        }
-        "item/commandExecution/requestApproval" => {
-            json!({ "id": id, "result": { "decision": "decline" } })
-        }
-        "item/fileChange/requestApproval" => {
-            json!({ "id": id, "result": { "decision": "decline" } })
-        }
-        "item/permissions/requestApproval" => {
-            json!({
-                "id": id,
-                "result": {
-                    "permissions": { "fileSystem": null, "network": null },
-                    "scope": "turn"
-                }
-            })
-        }
-        "item/tool/requestUserInput" => {
-            json!({ "id": id, "result": { "answers": {} } })
-        }
-        "mcpServer/elicitation/request" => {
-            json!({ "id": id, "result": { "action": "decline", "content": null } })
-        }
-        "item/tool/call" => {
-            let requested_tool = value
-                .get("params")
-                .and_then(|params| params.get("tool"))
-                .and_then(JsonValue::as_str)
-                .unwrap_or("");
-            let tool = forge_canonical_dynamic_tool_name(requested_tool);
-            let public_tool = forge_normalized_public_command(requested_tool, tool);
-            let arguments = value
-                .get("params")
-                .and_then(|params| params.get("arguments"))
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            let context = tool_context
-                .lock()
-                .map(|guard| guard.clone())
-                .unwrap_or_default();
-            emit_forge_dynamic_tool_event(
-                &context,
-                "forge_tool_call",
-                format!("Codex runs {public_tool}."),
-                json!({
-                    "runtime": "Forge dynamic tools",
-                    "tool": tool,
-                    "requestedTool": requested_tool,
-                    "publicCommand": public_tool.as_str(),
-                    "arguments": arguments.clone(),
-                    "activeJobId": context.active_job_id.clone(),
-                }),
-            );
-            if tool == "forge_create_program" {
-                let title = forge_json_string_at(&arguments, &["/title"])
-                    .unwrap_or_else(|| "Forge program".to_string());
-                forge_program_build_emit_step(
-                    &context,
-                    "tool",
-                    format!("Command launched: {public_tool}"),
-                    json!({
-                        "tool": tool,
-                        "requestedTool": requested_tool,
-                        "publicCommand": public_tool.as_str(),
-                        "title": title,
-                    }),
-                );
-            }
-            match call_forge_dynamic_tool(tool, arguments, context.clone()) {
-                Ok(result) => {
-                    let mut summary = forge_dynamic_tool_result_summary(tool, &result);
-                    if tool == "forge_run_program"
-                        && summary.get("jobId").map(JsonValue::is_null).unwrap_or(true)
-                    {
-                        if let JsonValue::Object(ref mut obj) = summary {
-                            obj.insert("jobId".to_string(), json!(context.active_job_id.clone()));
-                        }
-                    }
-                    if tool == "forge_create_program" {
-                        forge_program_build_emit_create_steps(
-                            &context,
-                            summary.get("result").unwrap_or(&JsonValue::Null),
-                            &result,
-                        );
-                    }
-                    emit_forge_dynamic_tool_event(
-                        &context,
-                        "forge_tool_result",
-                        match tool {
-                            "forge_create_program" => "Forge completed /create_.".to_string(),
-                            "forge_run_program" => "Forge launched /program_ on the current session.".to_string(),
-                            "forge_list_programs" => "Forge returned the available programs.".to_string(),
-                            "forge_interpret_visual_mapping" => "Forge interpreted the compact 3D mapping.".to_string(),
-                            "forge_3d_metric_catalog" => "Forge returned the compact catalog of available 3D metrics.".to_string(),
-                            "forge_model_3d_mapping" => "Forge modeled a new 3D mapping locally without returning raw data.".to_string(),
-                            "forge_run_visual_program" => "Forge materialized the 2D/3D views of the visual program without returning raw data.".to_string(),
-                            "forge_analyze_3d_mapping" => "Forge analyzed the 3D mapping locally without returning raw points.".to_string(),
-                            "forge_compile_validate_route" => "Forge completed /metric validation for the program graph.".to_string(),
-                            "forge_profile_settings" => "Forge returned the profile/provider settings.".to_string(),
-                            "forge_list_sessions" => "Forge returned the compact session history.".to_string(),
-                            "forge_list_documents" => "Forge returned the documents library.".to_string(),
-                            "forge_atlas_overview" => "Forge returned the Atlas/store overview.".to_string(),
-                            "forge_update_session" => "Forge updated the session.".to_string(),
-                            "forge_list_capabilities" => "Forge returned the compute capabilities.".to_string(),
-                            "forge_session_context" => "Forge returned the compact session context.".to_string(),
-                            _ => format!("Forge finished {public_tool}."),
-                        },
-                        json!({
-                            "runtime": "Forge dynamic tools",
-                            "success": true,
-                            "tool": tool,
-                            "requestedTool": requested_tool,
-                            "publicCommand": public_tool.as_str(),
-                            "summary": summary,
-                        }),
-                    );
-                    forge_dynamic_tool_text_response(id, true, result)
-                }
-                Err(err) => {
-                    let err_text = err.clone();
-                    emit_forge_dynamic_tool_event(
-                        &context,
-                        "forge_tool_result",
-                        format!("Forge could not finish {public_tool}: {err_text}"),
-                        json!({
-                            "runtime": "Forge dynamic tools",
-                            "tool": tool,
-                            "requestedTool": requested_tool,
-                            "publicCommand": public_tool.as_str(),
-                            "success": false,
-                            "error": err_text,
-                        }),
-                    );
-                    forge_dynamic_tool_error_response(id, err)
-                }
-            }
-        }
-        "applyPatchApproval" | "execCommandApproval" => {
-            json!({ "id": id, "result": { "decision": "denied" } })
-        }
-        _ => json!({
-            "id": id,
-            "error": {
-                "code": -32601,
-                "message": format!("Forge does not handle Codex server request `{method}` yet")
-            }
-        }),
-    };
-    write_codex_rpc_message(stdin, &response);
-}
-
-impl CodexAppServerClient {
-    fn normalize_thread_key(session_key: &str) -> String {
-        if session_key.trim().is_empty() {
-            "forge-default".to_string()
-        } else {
-            session_key.trim().to_string()
-        }
-    }
-
-    fn compact_thread_memory(state: &CodexThreadState) -> Option<String> {
-        if state.memory.is_empty() {
-            None
-        } else {
-            let body = state.memory.join("\n");
-            let compact = format!(
-                "thread_generation_precedente={}\nresume_session_complete_compacte:\n{}",
-                state.generation, body
-            );
-            Some(compact_thread_memory_preserve_tail(
-                &compact,
-                CODEX_CANVAS_COMPACT_MEMORY_MAX_CHARS,
-            ))
-        }
-    }
-
-    fn record_thread_turn(&self, session_key: &str, user_message: &str, assistant_message: &str) {
-        let key = Self::normalize_thread_key(session_key);
-        let Ok(mut guard) = self.threads.lock() else {
-            return;
-        };
-        let Some(state) = guard.get_mut(&key) else {
-            return;
-        };
-        state.turns = state.turns.saturating_add(1);
-        let user = truncate_for_thread_memory(user_message, CODEX_CANVAS_MEMORY_USER_MAX_CHARS);
-        let assistant =
-            truncate_for_thread_memory(assistant_message, CODEX_CANVAS_MEMORY_ASSISTANT_MAX_CHARS);
-        if !user.is_empty() || !assistant.is_empty() {
-            state.memory.push(format!("U: {user}\nC: {assistant}"));
-        }
-        compact_canvas_thread_state_memory(state, false);
-    }
-
-    fn start() -> Result<Self, String> {
-        let mut errors = Vec::new();
-        for candidate in codex_command_candidates() {
-            if candidate.is_absolute() && !candidate.exists() {
-                continue;
-            }
-            let mut command = Command::new(&candidate);
-            configure_forge_llm_cli_command(&mut command);
-            command
-                .current_dir(forge_workspace_dir())
-                .arg("app-server")
-                .arg("--listen")
-                .arg("stdio://")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null());
-            let mut child = match command.spawn() {
-                Ok(child) => child,
-                Err(err) => {
-                    errors.push(format!("{}: {err}", candidate.display()));
-                    continue;
-                }
-            };
-            let Some(child_stdin) = child.stdin.take() else {
-                let _ = child.kill();
-                errors.push(format!("{}: missing app-server stdin", candidate.display()));
-                continue;
-            };
-            let Some(child_stdout) = child.stdout.take() else {
-                let _ = child.kill();
-                errors.push(format!("{}: missing app-server stdout", candidate.display()));
-                continue;
-            };
-            let stdin = Arc::new(Mutex::new(child_stdin));
-            let shared = Arc::new((Mutex::new(CodexAppServerShared::default()), Condvar::new()));
-            let tool_context = Arc::new(Mutex::new(CodexDynamicToolContext::default()));
-            Self::spawn_reader(
-                child_stdout,
-                Arc::clone(&shared),
-                Arc::clone(&stdin),
-                Arc::clone(&tool_context),
-            );
-            let client = Self {
-                child: Mutex::new(child),
-                stdin,
-                shared,
-                next_id: AtomicU64::new(1),
-                threads: Mutex::new(HashMap::new()),
-                runtime_path: candidate.clone(),
-                tool_context,
-            };
-            match client.initialize() {
-                Ok(_) => return Ok(client),
-                Err(err) => errors.push(format!("{} initialize: {err}", candidate.display())),
-            }
-        }
-        Err(if errors.is_empty() {
-            "No Codex app-server runtime candidate was found.".to_string()
-        } else {
-            errors.join(" | ")
-        })
-    }
-
-    fn spawn_reader(
-        stdout: std::process::ChildStdout,
-        shared: Arc<(Mutex<CodexAppServerShared>, Condvar)>,
-        stdin: Arc<Mutex<ChildStdin>>,
-        tool_context: Arc<Mutex<CodexDynamicToolContext>>,
-    ) {
-        thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                let line = match line {
-                    Ok(line) => line,
-                    Err(err) => {
-                        let (lock, cvar) = &*shared;
-                        if let Ok(mut guard) = lock.lock() {
-                            guard.exited = Some(format!("Codex app-server stdout failed: {err}"));
-                            cvar.notify_all();
-                        }
-                        return;
-                    }
-                };
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let value: JsonValue = match serde_json::from_str(&line) {
-                    Ok(value) => value,
-                    Err(_) => continue,
-                };
-                if value.get("id").is_some()
-                    && (value.get("result").is_some() || value.get("error").is_some())
-                {
-                    let id_key = codex_request_id_key(value.get("id").unwrap());
-                    let (lock, cvar) = &*shared;
-                    if let Ok(mut guard) = lock.lock() {
-                        guard.responses.insert(id_key, value);
-                        cvar.notify_all();
-                    }
-                } else if value.get("id").is_some() && value.get("method").is_some() {
-                    respond_to_codex_server_request(&stdin, &tool_context, &value);
-                    let (lock, cvar) = &*shared;
-                    if let Ok(mut guard) = lock.lock() {
-                        guard.notifications.push(json!({
-                            "method": "server/request",
-                            "params": value,
-                        }));
-                        cvar.notify_all();
-                    }
-                } else if value.get("method").is_some() {
-                    let (lock, cvar) = &*shared;
-                    if let Ok(mut guard) = lock.lock() {
-                        guard.notifications.push(value);
-                        cvar.notify_all();
-                    }
-                }
-            }
-            let (lock, cvar) = &*shared;
-            if let Ok(mut guard) = lock.lock() {
-                guard.exited = Some("Codex app-server stopped.".to_string());
-                cvar.notify_all();
-            }
-        });
-    }
-
-    fn initialize(&self) -> Result<JsonValue, String> {
-        self.request(
-            "initialize",
-            json!({
-                "clientInfo": {
-                    "name": "forge",
-                    "title": "Forge",
-                    "version": env!("CARGO_PKG_VERSION"),
-                },
-                "capabilities": {
-                    "experimentalApi": true,
-                    "optOutNotificationMethods": null,
-                }
-            }),
-            Duration::from_secs(15),
-        )
-    }
-
-    fn request(
-        &self,
-        method: &str,
-        params: JsonValue,
-        timeout: Duration,
-    ) -> Result<JsonValue, String> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let id_key = id.to_string();
-        write_codex_rpc_message(
-            &self.stdin,
-            &json!({
-                "id": id,
-                "method": method,
-                "params": params,
-            }),
-        );
-        let started = Instant::now();
-        let (lock, cvar) = &*self.shared;
-        let mut guard = lock.lock().map_err(|e| e.to_string())?;
-        loop {
-            if let Some(response) = guard.responses.remove(&id_key) {
-                if let Some(error) = response.get("error") {
-                    return Err(codex_rpc_error_message(error));
-                }
-                return Ok(response.get("result").cloned().unwrap_or(JsonValue::Null));
-            }
-            if let Some(ref exited) = guard.exited {
-                return Err(exited.clone());
-            }
-            let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
-                return Err(format!("Codex app-server request `{method}` timed out"));
-            };
-            let (next_guard, wait) = cvar
-                .wait_timeout(guard, remaining)
-                .map_err(|e| e.to_string())?;
-            guard = next_guard;
-            if wait.timed_out() {
-                return Err(format!("Codex app-server request `{method}` timed out"));
-            }
-        }
-    }
-
-    fn drain_notifications(&self) -> Vec<JsonValue> {
-        let (lock, _) = &*self.shared;
-        lock.lock()
-            .map(|mut guard| std::mem::take(&mut guard.notifications))
-            .unwrap_or_default()
-    }
-
-    fn update_tool_context(&self, context: CodexDynamicToolContext) -> Result<(), String> {
-        let mut guard = self.tool_context.lock().map_err(|e| e.to_string())?;
-        *guard = context;
-        Ok(())
-    }
-
-    fn force_kill(&self) -> bool {
-        self.child
-            .lock()
-            .map(|mut child| child.kill().is_ok())
-            .unwrap_or(false)
-    }
-
-    fn wait_for_notifications(&self, timeout: Duration) -> Result<Vec<JsonValue>, String> {
-        let (lock, cvar) = &*self.shared;
-        let mut guard = lock.lock().map_err(|e| e.to_string())?;
-        if guard.notifications.is_empty() && guard.exited.is_none() {
-            let (next_guard, _) = cvar
-                .wait_timeout(guard, timeout)
-                .map_err(|e| e.to_string())?;
-            guard = next_guard;
-        }
-        if let Some(ref exited) = guard.exited {
-            return Err(exited.clone());
-        }
-        Ok(std::mem::take(&mut guard.notifications))
-    }
-
-    fn ensure_thread(
-        &self,
-        session_key: &str,
-        model_ref: Option<&str>,
-        dynamic_tools: Vec<JsonValue>,
-    ) -> Result<(String, Option<String>, u32), String> {
-        let key = Self::normalize_thread_key(session_key);
-        let mut carried_memory: Option<String> = None;
-        let mut generation = 0;
-        {
-            let guard = self.threads.lock().map_err(|e| e.to_string())?;
-            if let Some(existing) = guard.get(&key) {
-                if existing.turns < CODEX_CANVAS_THREAD_MAX_TURNS {
-                    return Ok((existing.thread_id.clone(), None, existing.generation));
-                }
-                carried_memory = Self::compact_thread_memory(existing);
-                generation = existing.generation.saturating_add(1);
-            }
-        }
-        let model = codex_bridge_model_arg(model_ref);
-        let result = self.request(
-            "thread/start",
-            json!({
-                "model": model,
-                "modelProvider": null,
-                "serviceTier": null,
-                "cwd": forge_workspace_dir().display().to_string(),
-                "approvalPolicy": "never",
-                "approvalsReviewer": "user",
-                "sandbox": "read-only",
-                "config": {},
-                "serviceName": "Forge canvas",
-                "baseInstructions": null,
-                "developerInstructions": null,
-                "personality": null,
-                "ephemeral": true,
-                "dynamicTools": dynamic_tools,
-                "experimentalRawEvents": false,
-                "persistExtendedHistory": true,
-            }),
-            Duration::from_secs(30),
-        )?;
-        let thread_id = result
-            .get("thread")
-            .and_then(|thread| thread.get("id"))
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| "Codex app-server did not return a thread id".to_string())?
-            .to_string();
-        let mut memory = Vec::new();
-        if let Some(ref compact) = carried_memory {
-            if !compact.trim().is_empty() {
-                memory.push(format!("Memoire compacte precedente:\n{compact}"));
-            }
-        }
-        self.threads
-            .lock()
-            .map_err(|e| e.to_string())?
-            .insert(
-                key,
-                CodexThreadState {
-                    thread_id: thread_id.clone(),
-                    turns: 0,
-                    generation,
-                    memory,
-                },
-            );
-        Ok((thread_id, carried_memory, generation))
-    }
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let last_refresh = value
+        .get("last_refresh")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    Some(OpenAiChatGptLocalAuth {
+        access_token,
+        refresh_token,
+        account_id,
+        plan_type,
+        auth_mode,
+        last_refresh,
+    })
 }
 
 #[derive(Clone)]
@@ -4943,46 +5064,29 @@ fn compact_account_label(raw: &str) -> String {
 }
 
 fn codex_oauth_status() -> Option<OpenAiSubscriptionStatus> {
-    let path = forge_home_dir()?.join(".codex").join("auth.json");
-    let text = std::fs::read_to_string(path).ok()?;
-    let value: JsonValue = serde_json::from_str(&text).ok()?;
-    let tokens = value.get("tokens")?;
-    let access = tokens
-        .get("access_token")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim();
-    let refresh = tokens
-        .get("refresh_token")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim();
+    let auth = read_openai_chatgpt_local_auth()?;
+    let access = auth.access_token.trim();
+    let refresh = auth
+        .refresh_token
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
     if access.is_empty() && refresh.is_empty() {
         return None;
     }
-    let account_label = tokens
-        .get("account_id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(compact_account_label);
-    let last_refresh = value
-        .get("last_refresh")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_string());
     Some(OpenAiSubscriptionStatus {
         connected: true,
         installed: true,
         auth_source: "OpenAI subscription".to_string(),
-        account_label,
-        last_refresh,
+        account_label: Some(compact_account_label(&auth.account_id)),
+        last_refresh: auth.last_refresh,
         model_ref: "gpt-5.3-codex".to_string(),
         message: "OpenAI subscription auth is available locally.".to_string(),
     })
 }
 
 #[tauri::command]
-async fn openai_subscription_status() -> Result<OpenAiSubscriptionStatus, String> {
+async fn openai_oauth_status() -> Result<OpenAiSubscriptionStatus, String> {
     Ok(codex_oauth_status().unwrap_or(OpenAiSubscriptionStatus {
             connected: false,
             installed: false,
@@ -5007,6 +5111,809 @@ fn codex_canvas_status(model_ref: Option<&str>) -> OpenAiSubscriptionStatus {
             .unwrap_or_else(|| "gpt-5.3-codex".to_string()),
         message: "No local OpenAI subscription auth found.".to_string(),
     })
+}
+
+fn codex_provider_status_value(model_ref: Option<&str>) -> OpenAiSubscriptionStatus {
+    let resolved_model = model_ref
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "gpt-5.3-codex".to_string());
+    if let Some(mut status) = codex_oauth_status() {
+        status.installed = true;
+        if status.auth_source.trim().is_empty() {
+            status.auth_source = "OpenAI OAuth".to_string();
+        }
+        status.model_ref = resolved_model;
+        status.message = "OpenAI OAuth is ready for Codex direct in Forge.".to_string();
+        return status;
+    }
+    OpenAiSubscriptionStatus {
+        connected: false,
+        installed: true,
+        auth_source: "OpenAI OAuth".to_string(),
+        account_label: None,
+        last_refresh: None,
+        model_ref: resolved_model,
+        message: "Open OpenAI OAuth in Forge to connect your ChatGPT subscription.".to_string(),
+    }
+}
+
+fn codex_canvas_direct_oauth_enabled() -> bool {
+    !matches!(
+        std::env::var("FORGE_CANVAS_CODEX_DIRECT_OAUTH")
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase()),
+        Some(value) if matches!(value.as_str(), "0" | "false" | "off" | "no")
+    )
+}
+
+fn build_codex_canvas_direct_oauth_instructions(reasoning_effort: &str) -> String {
+    [
+        format!(
+            "@forge:direct:v1 p=Codex lang=fr tools=0 effort={}",
+            reasoning_effort
+        ),
+        "style=fr concis; answer directly.".to_string(),
+    ]
+    .join("\n")
+}
+
+fn forge_direct_template_catalog_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("config")
+        .join("forge-direct-template-catalog.json")
+}
+
+fn load_forge_direct_template_catalog() -> Result<JsonValue, String> {
+    let path = forge_direct_template_catalog_path();
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read direct template catalog {}: {e}", path.display()))?;
+    let value: JsonValue =
+        serde_json::from_str(&text).map_err(|e| format!("parse direct template catalog: {e}"))?;
+    if value.get("schema").and_then(JsonValue::as_str)
+        != Some("forge.direct_template_catalog.v1")
+    {
+        return Err("unexpected direct template catalog schema".to_string());
+    }
+    if !value
+        .get("templates")
+        .and_then(JsonValue::as_array)
+        .map(|items| !items.is_empty())
+        .unwrap_or(false)
+    {
+        return Err("direct template catalog has no templates".to_string());
+    }
+    Ok(value)
+}
+
+fn render_forge_direct_template_catalog_for_prompt(catalog: &JsonValue) -> String {
+    let mut lines = Vec::new();
+    if let Some(templates) = catalog.get("templates").and_then(JsonValue::as_array) {
+        for entry in templates {
+            let id = entry.get("id").and_then(JsonValue::as_str).unwrap_or("");
+            let code = entry.get("code").and_then(JsonValue::as_str).unwrap_or("");
+            let description = entry
+                .get("description")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("");
+            let slots = entry
+                .get("slots")
+                .and_then(JsonValue::as_object)
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|(key, spec)| {
+                            let kind = spec.get("kind").and_then(JsonValue::as_str).unwrap_or("string");
+                            let slot_code = spec.get("code").and_then(JsonValue::as_str).unwrap_or("");
+                            if slot_code.is_empty() {
+                                format!("{key}:{kind}")
+                            } else {
+                                format!("{slot_code}={key}:{kind}")
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "none".to_string());
+            if code.is_empty() {
+                lines.push(format!("- {id}: {description}; slots={slots}"));
+            } else {
+                lines.push(format!("- {code} ({id}): {description}; slots={slots}"));
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+fn build_codex_canvas_template_selector_instructions(
+    catalog: &JsonValue,
+    reasoning_effort: &str,
+) -> String {
+    [
+        format!(
+            "@forge:template_loop:v1 p=Codex lang=fr tools=0 effort={}",
+            reasoning_effort
+        ),
+        "Tu es un routeur Forge ultra-concis.".to_string(),
+        "Tu n'ecris jamais de code libre et tu n'inventes jamais un nouvel outil.".to_string(),
+        "Tu dois choisir strictement un template predefini ou answer_only.".to_string(),
+        "Tu retournes UNIQUEMENT un objet JSON valide sans markdown ni texte autour.".to_string(),
+        "Prefere la forme compacte: t=template code, s=slots compactes, a=answer, r=reason, c=confidence."
+            .to_string(),
+        "Si l'intention est ambigue ou hors Forge, utilise answer_only avec une reponse breve."
+            .to_string(),
+        "Si tu choisis un template, remplis seulement les slots necessaires avec des valeurs compactes."
+            .to_string(),
+        "Les tokens doivent etre courts: job_id/projection_ref/scope en bare tokens; max_bytes en nombre; intent en phrase courte."
+            .to_string(),
+        "Catalogue:".to_string(),
+        render_forge_direct_template_catalog_for_prompt(catalog),
+        r#"Schema JSON prefere: {"m":"template|answer_only","t":"A0|B1|P1...","s":{"sc":"real_estate","n":4},"a":"","r":"","c":0.0}"#.to_string(),
+        r#"Compatibilite acceptee: {"mode":"template|answer_only","template_id":"...","slots":{},"answer":"...","reason":"...","confidence":0.0}"#.to_string(),
+    ]
+    .join("\n")
+}
+
+fn direct_template_compact_token(raw: &str) -> Option<String> {
+    let trimmed = raw
+        .trim_matches(|ch: char| {
+            ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | '.' | ';' | ':' | '!' | '?' | ')' | '(')
+        })
+        .trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized = trimmed.to_string();
+    if normalized
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | ':'))
+    {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+fn direct_template_first_compact_token_after(message: &str, keyword: &str) -> Option<String> {
+    let mut words = message.split_whitespace().peekable();
+    while let Some(word) = words.next() {
+        let clean = word
+            .trim_matches(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | '.' | ';' | ':' | '!' | '?'))
+            .to_lowercase();
+        if clean == keyword {
+            if let Some(next) = words.peek() {
+                return direct_template_compact_token(next);
+            }
+        }
+    }
+    None
+}
+
+fn direct_template_any_compact_token_after(message: &str, keywords: &[&str]) -> Option<String> {
+    keywords
+        .iter()
+        .find_map(|keyword| direct_template_first_compact_token_after(message, keyword))
+}
+
+fn direct_template_brain_ref_hint(message: &str) -> Option<String> {
+    message
+        .split_whitespace()
+        .find_map(|word| {
+            let candidate = word
+                .trim_matches(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | '.' | ';' | ':' | '!' | '?'))
+                .trim();
+            if candidate.starts_with("refs/brain/") {
+                Some(candidate.to_string())
+            } else {
+                None
+            }
+        })
+}
+
+fn direct_template_trimmed_message(message: &str) -> String {
+    message.trim().trim_end_matches(['.', '!', '?', ';', ':']).trim().to_string()
+}
+
+fn direct_template_projection_ref_hint(message: &str) -> Option<String> {
+    direct_template_any_compact_token_after(message, &["projection", "proj", "projection_ref"])
+}
+
+fn direct_template_job_id_hint(message: &str) -> Option<String> {
+    direct_template_any_compact_token_after(message, &["job", "run", "session"])
+}
+
+fn direct_template_plan_intent_hint(message: &str) -> Option<String> {
+    let trimmed = direct_template_trimmed_message(message);
+    if trimmed.is_empty() {
+        return None;
+    }
+    let compact = trimmed.to_lowercase();
+    let prefixes = [
+        "planifie ",
+        "planifier ",
+        "fais un plan pour ",
+        "fais un plan sur ",
+        "prepare un plan pour ",
+        "prépare un plan pour ",
+        "prepare un plan sur ",
+        "prépare un plan sur ",
+    ];
+    for prefix in prefixes {
+        if compact.starts_with(prefix) {
+            let slice = trimmed[prefix.len()..].trim();
+            if !slice.is_empty() {
+                return Some(slice.to_string());
+            }
+        }
+    }
+    Some(trimmed)
+}
+
+fn direct_template_wants_projection(message_lower: &str) -> bool {
+    message_lower.contains("projection")
+        || message_lower.contains("projette")
+        || message_lower.contains("montre moi")
+        || message_lower.contains("montre-moi")
+}
+
+fn direct_template_scope_hint(message_lower: &str) -> Option<&'static str> {
+    for (needle, scope) in [
+        ("real_estate", "real_estate"),
+        ("agence_immo", "agence_immo"),
+        ("immobilier", "agence_immo"),
+        ("immo", "agence_immo"),
+        ("trading", "trading"),
+        ("banger", "banger"),
+        ("forge_direct_cli", "forge_direct_cli"),
+        ("basique", "basique"),
+        ("global", "global"),
+    ] {
+        if message_lower.contains(needle) {
+            return Some(scope);
+        }
+    }
+    None
+}
+
+fn direct_template_memory_layer_hint(message_lower: &str) -> &'static str {
+    if message_lower.contains("procedur") {
+        "procedural"
+    } else if message_lower.contains("episod") {
+        "episodic"
+    } else {
+        "semantic"
+    }
+}
+
+fn direct_template_limit_hint(message: &str, default_limit: i64) -> i64 {
+    message
+        .split(|ch: char| !ch.is_ascii_digit())
+        .find_map(|part| {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                trimmed.parse::<i64>().ok()
+            }
+        })
+        .map(|value| value.clamp(1, 16))
+        .unwrap_or(default_limit)
+}
+
+fn direct_template_max_bytes_hint(message: &str, default_bytes: i64) -> i64 {
+    let numbers = message
+        .split(|ch: char| !ch.is_ascii_digit())
+        .filter_map(|part| {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                trimmed.parse::<i64>().ok()
+            }
+        })
+        .collect::<Vec<_>>();
+    numbers
+        .iter()
+        .copied()
+        .find(|value| *value >= 256)
+        .or_else(|| numbers.into_iter().max())
+        .map(|value| value.clamp(256, 65_536))
+        .unwrap_or(default_bytes)
+}
+
+fn finalize_codex_direct_template_selection(
+    catalog: &JsonValue,
+    selection: JsonValue,
+) -> Result<JsonValue, String> {
+    let (template_id, forge_slash, answer, reason, confidence) =
+        validate_codex_direct_template_selection(catalog, &selection)?;
+    let template_code = codex_direct_template_catalog_entry(catalog, &template_id)
+        .and_then(|entry| entry.get("code").and_then(JsonValue::as_str))
+        .unwrap_or("");
+    Ok(json!({
+        "selection": selection,
+        "templateId": template_id,
+        "templateCode": template_code,
+        "forgeSlash": forge_slash,
+        "answer": answer,
+        "reason": reason,
+        "confidence": confidence,
+        "catalogSchema": catalog.get("schema").cloned().unwrap_or(JsonValue::Null),
+        "catalogVersion": catalog.get("version").cloned().unwrap_or(JsonValue::Null),
+    }))
+}
+
+fn try_local_codex_canvas_template_selection(
+    catalog: &JsonValue,
+    user_message: &str,
+) -> Result<Option<JsonValue>, String> {
+    let message_lower = user_message.to_lowercase();
+    if let Some(brain_ref) = direct_template_brain_ref_hint(user_message) {
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "brain_explain_ref",
+                "slots": {
+                    "brain_ref": brain_ref
+                },
+                "answer": "",
+                "reason": "local_brain_ref_shortcut",
+                "confidence": 0.99
+            }),
+        )
+        .map(Some);
+    }
+    if (message_lower.contains("memoire")
+        || message_lower.contains("mémoire")
+        || message_lower.contains("rappelle")
+        || message_lower.contains("relis")
+        || message_lower.contains("recall"))
+        && direct_template_scope_hint(&message_lower).is_some()
+    {
+        let scope = direct_template_scope_hint(&message_lower).unwrap_or("global");
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "brain_recall_layer",
+                "slots": {
+                    "scope": scope,
+                    "memory_layer": direct_template_memory_layer_hint(&message_lower),
+                    "limit": direct_template_limit_hint(user_message, 4)
+                },
+                "answer": "",
+                "reason": "local_brain_recall_shortcut",
+                "confidence": 0.97
+            }),
+        )
+        .map(Some);
+    }
+    if (message_lower.contains("skill candidate")
+        || message_lower.contains("skill candidates")
+        || (message_lower.contains("skill") && message_lower.contains("candidate")))
+        && !message_lower.contains("programme")
+        && !message_lower.contains("program")
+    {
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "skill_candidates",
+                "slots": {
+                    "limit": direct_template_limit_hint(user_message, 5)
+                },
+                "answer": "",
+                "reason": "local_skill_candidates_shortcut",
+                "confidence": 0.96
+            }),
+        )
+        .map(Some);
+    }
+    if message_lower.contains("verified program candidate")
+        || message_lower.contains("verified program candidates")
+        || message_lower.contains("programme verifie candidat")
+        || message_lower.contains("programme verifié candidat")
+        || message_lower.contains("program candidate")
+        || message_lower.contains("program candidates")
+    {
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "verified_program_candidates",
+                "slots": {
+                    "limit": direct_template_limit_hint(user_message, 5)
+                },
+                "answer": "",
+                "reason": "local_verified_program_candidates_shortcut",
+                "confidence": 0.96
+            }),
+        )
+        .map(Some);
+    }
+    if message_lower.contains("session") || message_lower.contains("sessions") {
+        if let Some(job_id) = direct_template_first_compact_token_after(user_message, "job") {
+            return finalize_codex_direct_template_selection(
+                catalog,
+                json!({
+                    "mode": "template",
+                    "template_id": "atlas_sessions",
+                    "slots": {
+                        "query": job_id,
+                        "limit": 5
+                    },
+                    "answer": "",
+                    "reason": "local_atlas_sessions_shortcut",
+                    "confidence": 0.94
+                }),
+            )
+            .map(Some);
+        }
+    }
+    if message_lower.contains("document") || message_lower.contains("documents") {
+        if let Some(job_id) = direct_template_any_compact_token_after(
+            user_message,
+            &["job", "document", "documents"],
+        ) {
+            return finalize_codex_direct_template_selection(
+                catalog,
+                json!({
+                    "mode": "template",
+                    "template_id": "atlas_documents",
+                    "slots": {
+                        "query": job_id,
+                        "limit": 5
+                    },
+                    "answer": "",
+                    "reason": "local_atlas_documents_shortcut",
+                    "confidence": 0.94
+                }),
+            )
+            .map(Some);
+        }
+    }
+    if message_lower.contains("session") || message_lower.contains("sessions") {
+        if let Some(query) = direct_template_any_compact_token_after(
+            user_message,
+            &["session", "sessions"],
+        ) {
+            return finalize_codex_direct_template_selection(
+                catalog,
+                json!({
+                    "mode": "template",
+                    "template_id": "atlas_sessions",
+                    "slots": {
+                        "query": query,
+                        "limit": direct_template_limit_hint(user_message, 5)
+                    },
+                    "answer": "",
+                    "reason": "local_atlas_sessions_query_shortcut",
+                    "confidence": 0.94
+                }),
+            )
+            .map(Some);
+        }
+    }
+    if (message_lower.contains("document") || message_lower.contains("documents"))
+        && direct_template_any_compact_token_after(user_message, &["document", "documents"]).is_some()
+    {
+        let query = direct_template_any_compact_token_after(user_message, &["document", "documents"])
+            .unwrap_or_default();
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "atlas_documents",
+                "slots": {
+                    "query": query,
+                    "limit": direct_template_limit_hint(user_message, 5)
+                },
+                "answer": "",
+                "reason": "local_atlas_documents_query_shortcut",
+                "confidence": 0.94
+            }),
+        )
+        .map(Some);
+    }
+    if (message_lower.contains("rejoue") || message_lower.contains("replay"))
+        && direct_template_projection_ref_hint(user_message).is_some()
+    {
+        let projection_ref = direct_template_projection_ref_hint(user_message).unwrap_or_default();
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "replay_projection",
+                "slots": {
+                    "projection_ref": projection_ref
+                },
+                "answer": "",
+                "reason": "local_replay_projection_shortcut",
+                "confidence": 0.97
+            }),
+        )
+        .map(Some);
+    }
+    if message_lower.contains("explique")
+        && direct_template_projection_ref_hint(user_message).is_some()
+        && !user_message.contains("refs/brain/")
+    {
+        let projection_ref = direct_template_projection_ref_hint(user_message).unwrap_or_default();
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "explain_projection",
+                "slots": {
+                    "projection_ref": projection_ref
+                },
+                "answer": "",
+                "reason": "local_explain_projection_shortcut",
+                "confidence": 0.97
+            }),
+        )
+        .map(Some);
+    }
+    if direct_template_wants_projection(&message_lower)
+        && direct_template_job_id_hint(user_message).is_some()
+        && !message_lower.contains("candidate")
+    {
+        let job_id = direct_template_job_id_hint(user_message).unwrap_or_default();
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "project_job",
+                "slots": {
+                    "job_id": job_id,
+                    "max_bytes": direct_template_max_bytes_hint(user_message, 4096)
+                },
+                "answer": "",
+                "reason": "local_project_job_shortcut",
+                "confidence": 0.95
+            }),
+        )
+        .map(Some);
+    }
+    if (message_lower.contains("dernier upload")
+        || message_lower.contains("latest upload")
+        || message_lower.contains("@latest"))
+        && (message_lower.contains("plan") || message_lower.contains("analyse") || message_lower.contains("analy"))
+    {
+        let intent = direct_template_plan_intent_hint(user_message)
+            .unwrap_or_else(|| "analyser le dernier upload".to_string());
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "run_latest_plan",
+                "slots": {
+                    "intent": intent
+                },
+                "answer": "",
+                "reason": "local_run_latest_plan_shortcut",
+                "confidence": 0.96
+            }),
+        )
+        .map(Some);
+    }
+    if direct_template_job_id_hint(user_message).is_some()
+        && (message_lower.contains("plan") || message_lower.contains("analyse") || message_lower.contains("profiler"))
+        && !direct_template_wants_projection(&message_lower)
+    {
+        let job_id = direct_template_job_id_hint(user_message).unwrap_or_default();
+        let intent = direct_template_plan_intent_hint(user_message)
+            .unwrap_or_else(|| format!("analyser le job {}", job_id));
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "run_job_plan",
+                "slots": {
+                    "job_id": job_id,
+                    "intent": intent
+                },
+                "answer": "",
+                "reason": "local_run_job_plan_shortcut",
+                "confidence": 0.95
+            }),
+        )
+        .map(Some);
+    }
+    Ok(None)
+}
+
+fn codex_direct_template_value_to_string(value: &JsonValue) -> Option<String> {
+    match value {
+        JsonValue::String(text) => Some(text.trim().to_string()),
+        JsonValue::Number(number) => Some(number.to_string()),
+        JsonValue::Bool(flag) => Some(if *flag { "true" } else { "false" }.to_string()),
+        _ => None,
+    }
+}
+
+fn codex_direct_template_slot_valid(kind: &str, value: &str) -> bool {
+    match kind {
+        "token" => !value.is_empty()
+            && value
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, ':' | '_' | '-')),
+        "number" => value.parse::<i64>().is_ok(),
+        _ => !value.trim().is_empty(),
+    }
+}
+
+fn codex_direct_template_number_bounds(spec: &JsonValue) -> (i64, i64) {
+    let min = spec
+        .get("min")
+        .and_then(JsonValue::as_i64)
+        .unwrap_or(64);
+    let max = spec
+        .get("max")
+        .and_then(JsonValue::as_i64)
+        .unwrap_or(65_536);
+    if min <= max {
+        (min, max)
+    } else {
+        (max, min)
+    }
+}
+
+fn render_direct_template_string(template: &str, slots: &Map<String, JsonValue>) -> Result<String, String> {
+    let mut rendered = String::new();
+    let bytes = template.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        if idx + 1 < bytes.len() && bytes[idx] == b'{' && bytes[idx + 1] == b'{' {
+            let start = idx + 2;
+            let tail = &template[start..];
+            let end_rel = tail
+                .find("}}")
+                .ok_or_else(|| format!("unterminated placeholder in template `{template}`"))?;
+            let raw = template[start..start + end_rel].trim();
+            let (key, json_mode) = if let Some((name, mode)) = raw.split_once('|') {
+                (name.trim(), mode.trim() == "json")
+            } else {
+                (raw, false)
+            };
+            let value = slots
+                .get(key)
+                .and_then(codex_direct_template_value_to_string)
+                .ok_or_else(|| format!("missing slot `{key}`"))?;
+            if json_mode {
+                rendered.push_str(
+                    &serde_json::to_string(&value)
+                        .map_err(|e| format!("encode slot `{key}` as json: {e}"))?,
+                );
+            } else {
+                rendered.push_str(&value);
+            }
+            idx = start + end_rel + 2;
+            continue;
+        }
+        rendered.push(bytes[idx] as char);
+        idx += 1;
+    }
+    Ok(rendered)
+}
+
+fn codex_direct_template_catalog_entry<'a>(
+    catalog: &'a JsonValue,
+    template_id_or_code: &str,
+) -> Option<&'a JsonValue> {
+    catalog
+        .get("templates")
+        .and_then(JsonValue::as_array)
+        .and_then(|items| {
+            items.iter().find(|entry| {
+                entry.get("id").and_then(JsonValue::as_str) == Some(template_id_or_code)
+                    || entry.get("code").and_then(JsonValue::as_str) == Some(template_id_or_code)
+            })
+        })
+}
+
+fn codex_direct_template_slot_value<'a>(
+    raw_slots: &'a Map<String, JsonValue>,
+    slot_name: &str,
+    spec: &JsonValue,
+) -> Option<&'a JsonValue> {
+    raw_slots.get(slot_name).or_else(|| {
+        spec.get("code")
+            .and_then(JsonValue::as_str)
+            .and_then(|code| raw_slots.get(code))
+    })
+}
+
+fn validate_codex_direct_template_selection(
+    catalog: &JsonValue,
+    selection: &JsonValue,
+) -> Result<(String, Option<String>, String, String, f64), String> {
+    let mode = selection
+        .get("mode")
+        .or_else(|| selection.get("m"))
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if mode != "template" && mode != "answer_only" {
+        return Err("template selection mode must be `template` or `answer_only`".to_string());
+    }
+    let template_token = selection
+        .get("template_id")
+        .or_else(|| selection.get("template_code"))
+        .or_else(|| selection.get("t"))
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "template selection is missing template id/code".to_string())?
+        .to_string();
+    let answer = selection
+        .get("answer")
+        .or_else(|| selection.get("a"))
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    let reason = selection
+        .get("reason")
+        .or_else(|| selection.get("r"))
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    let confidence = selection
+        .get("confidence")
+        .or_else(|| selection.get("c"))
+        .and_then(JsonValue::as_f64)
+        .unwrap_or(0.0);
+    let entry = codex_direct_template_catalog_entry(catalog, &template_token)
+        .ok_or_else(|| format!("unknown direct template `{template_token}`"))?;
+    let template_id = entry
+        .get("id")
+        .and_then(JsonValue::as_str)
+        .unwrap_or(&template_token)
+        .to_string();
+    if mode == "answer_only" {
+        return Ok((template_id, None, answer, reason, confidence));
+    }
+    let slots_spec = entry
+        .get("slots")
+        .and_then(JsonValue::as_object)
+        .ok_or_else(|| format!("template `{template_id}` is missing slots spec"))?;
+    let raw_slots = selection
+        .get("slots")
+        .or_else(|| selection.get("s"))
+        .and_then(JsonValue::as_object)
+        .ok_or_else(|| format!("template `{template_id}` selection is missing slots"))?;
+    let mut normalized_slots = Map::<String, JsonValue>::new();
+    for (key, spec) in slots_spec {
+        let kind = spec.get("kind").and_then(JsonValue::as_str).unwrap_or("string");
+        let value = codex_direct_template_slot_value(raw_slots, key, spec)
+            .and_then(codex_direct_template_value_to_string)
+            .ok_or_else(|| format!("template `{template_id}` is missing slot `{key}`"))?;
+        if !codex_direct_template_slot_valid(kind, &value) {
+            return Err(format!(
+                "template `{template_id}` slot `{key}` is invalid for kind `{kind}`"
+            ));
+        }
+        if kind == "number" {
+            let (min, max) = codex_direct_template_number_bounds(spec);
+            let numeric = value
+                .parse::<i64>()
+                .map_err(|_| format!("template `{template_id}` slot `{key}` must be numeric"))?;
+            normalized_slots.insert(key.to_string(), json!(numeric.clamp(min, max)));
+        } else {
+            normalized_slots.insert(key.to_string(), json!(value));
+        }
+    }
+    let forge_slash_template = entry
+        .get("forgeSlashTemplate")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| format!("template `{template_id}` is missing forgeSlashTemplate"))?;
+    let forge_slash = render_direct_template_string(forge_slash_template, &normalized_slots)?;
+    Ok((template_id, Some(forge_slash), answer, reason, confidence))
 }
 
 fn canvas_runtime_attemptable(runtime: &str, status: &OpenAiSubscriptionStatus) -> bool {
@@ -5054,56 +5961,6 @@ fn select_canvas_runtime(
     (requested.to_string(), requested_status.clone(), false)
 }
 
-fn codex_cli_status(model_ref: Option<&str>) -> OpenAiSubscriptionStatus {
-    let candidate = codex_command_candidates()
-        .into_iter()
-        .find(|path| codex_cli_probe(path));
-    let installed = candidate.is_some();
-    let candidate_exists_but_unusable = !installed && codex_cli_any_candidate_exists();
-    let oauth = codex_oauth_status();
-    let connected = installed && oauth.is_some();
-    let model_ref = model_ref
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "gpt-5.3-codex".to_string());
-    let auth_source = if connected {
-        oauth
-            .as_ref()
-            .map(|value| value.auth_source.clone())
-            .unwrap_or_else(|| "OpenAI subscription".to_string())
-    } else if candidate_exists_but_unusable {
-        "Codex CLI found but not executable".to_string()
-    } else if installed {
-        "Codex CLI".to_string()
-    } else {
-        "none".to_string()
-    };
-    let account_label = oauth.as_ref().and_then(|value| value.account_label.clone());
-    let last_refresh = oauth.as_ref().and_then(|value| value.last_refresh.clone());
-    let message = if connected {
-        "Codex CLI is ready through your local OpenAI subscription sign-in.".to_string()
-    } else if candidate_exists_but_unusable {
-        "Codex CLI was found on disk, but Forge could not execute it. Reinstall Codex CLI or fix its permissions, then refresh.".to_string()
-    } else if installed {
-        "Codex CLI is installed, but OpenAI subscription auth is not ready yet.".to_string()
-    } else {
-        "Codex CLI was not found on this machine.".to_string()
-    };
-    let status = OpenAiSubscriptionStatus {
-        connected,
-        installed,
-        auth_source,
-        account_label,
-        last_refresh,
-        model_ref,
-        message,
-    };
-    if status.installed || status.connected {
-        remember_provider_cli_health("codex", &status);
-    }
-    sticky_provider_cli_status("codex", status, candidate_exists_but_unusable)
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WebExplorerIntent {
     Search = 1,
@@ -5148,6 +6005,16 @@ struct WebExplorerMemoryNode {
     class_name: String,
     selector_hint: String,
     name: String,
+    #[serde(default)]
+    title_attr: String,
+    #[serde(default)]
+    placeholder: String,
+    #[serde(default)]
+    input_type: String,
+    #[serde(default)]
+    aria_role: String,
+    #[serde(default)]
+    aria_name: String,
     text: String,
     value: String,
     href: String,
@@ -5160,6 +6027,10 @@ struct WebExplorerMemoryNode {
     bounds: Option<WebExplorerMemoryBounds>,
     #[serde(default)]
     style: WebExplorerMemoryStyle,
+    #[serde(default)]
+    frame_path: Vec<String>,
+    #[serde(default)]
+    shadow_path: Vec<String>,
     child_ids: Vec<String>,
 }
 
@@ -5891,6 +6762,11 @@ impl WebExplorerSession {
                 class_name: "forge-fetch-card".to_string(),
                 selector_hint: "forge-fetch-card".to_string(),
                 name: card.title.clone(),
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "group".to_string(),
+                aria_name: card.title.clone(),
                 text: format!("{} {}", card.title, card.summary).trim().to_string(),
                 value: String::new(),
                 href: card.href.clone(),
@@ -5921,6 +6797,8 @@ impl WebExplorerSession {
                     box_shadow: "none".to_string(),
                     ..WebExplorerMemoryStyle::default()
                 },
+                frame_path: vec![current_url.to_string()],
+                shadow_path: Vec::new(),
                 child_ids,
             });
             nodes.push(WebExplorerMemoryNode {
@@ -5931,6 +6809,11 @@ impl WebExplorerSession {
                 class_name: "forge-fetch-title".to_string(),
                 selector_hint: "forge-fetch-title".to_string(),
                 name: card.title.clone(),
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "heading".to_string(),
+                aria_name: card.title.clone(),
                 text: card.title.clone(),
                 value: String::new(),
                 href: card.href.clone(),
@@ -5961,6 +6844,8 @@ impl WebExplorerSession {
                     box_shadow: "none".to_string(),
                     ..WebExplorerMemoryStyle::default()
                 },
+                frame_path: vec![current_url.to_string()],
+                shadow_path: Vec::new(),
                 child_ids: Vec::new(),
             });
             if let Some(summary_id) = summary_id {
@@ -5972,6 +6857,11 @@ impl WebExplorerSession {
                     class_name: "forge-fetch-summary".to_string(),
                     selector_hint: "forge-fetch-summary".to_string(),
                     name: card.source_label.clone(),
+                    title_attr: String::new(),
+                    placeholder: String::new(),
+                    input_type: String::new(),
+                    aria_role: "paragraph".to_string(),
+                    aria_name: card.source_label.clone(),
                     text: card.summary.clone(),
                     value: String::new(),
                     href: String::new(),
@@ -6002,6 +6892,8 @@ impl WebExplorerSession {
                         box_shadow: "none".to_string(),
                         ..WebExplorerMemoryStyle::default()
                     },
+                    frame_path: vec![current_url.to_string()],
+                    shadow_path: Vec::new(),
                     child_ids: Vec::new(),
                 });
             }
@@ -6014,6 +6906,11 @@ impl WebExplorerSession {
             class_name: "forge-fetch-root".to_string(),
             selector_hint: "forge-fetch-root".to_string(),
             name: title.to_string(),
+            title_attr: String::new(),
+            placeholder: String::new(),
+            input_type: String::new(),
+            aria_role: "document".to_string(),
+            aria_name: title.to_string(),
             text: title.to_string(),
             value: current_url.to_string(),
             href: current_url.to_string(),
@@ -6039,6 +6936,8 @@ impl WebExplorerSession {
                 box_shadow: "none".to_string(),
                 ..WebExplorerMemoryStyle::default()
             },
+            frame_path: vec![current_url.to_string()],
+            shadow_path: Vec::new(),
             child_ids: root_children,
         });
         self.page_title = title.to_string();
@@ -6300,6 +7199,11 @@ impl WebExplorerSession {
                 class_name: String::new(),
                 selector_hint: "#forge-browser-root".to_string(),
                 name: "Forge Web Explorer".to_string(),
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "application".to_string(),
+                aria_name: "Forge Web Explorer".to_string(),
                 text: self.last_message.clone(),
                 value: self.current_url().to_string(),
                 href: String::new(),
@@ -6311,6 +7215,8 @@ impl WebExplorerSession {
                 source: "shell".to_string(),
                 bounds: None,
                 style: WebExplorerMemoryStyle::default(),
+                frame_path: vec![self.current_url().to_string()],
+                shadow_path: Vec::new(),
                 child_ids: vec![surface_id.clone(), session_id.clone()],
             },
             WebExplorerMemoryNode {
@@ -6321,6 +7227,11 @@ impl WebExplorerSession {
                 class_name: String::new(),
                 selector_hint: "#forge-browser-surface".to_string(),
                 name: "Native browser canvas".to_string(),
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "browser-surface".to_string(),
+                aria_name: "Native browser canvas".to_string(),
                 text: self.page_title.clone(),
                 value: self.current_url().to_string(),
                 href: String::new(),
@@ -6332,6 +7243,8 @@ impl WebExplorerSession {
                 source: "shell".to_string(),
                 bounds: self.memory.viewport.clone(),
                 style: WebExplorerMemoryStyle::default(),
+                frame_path: vec![self.current_url().to_string()],
+                shadow_path: Vec::new(),
                 child_ids: vec![viewport_id.clone(), document_id.clone()],
             },
             WebExplorerMemoryNode {
@@ -6342,6 +7255,11 @@ impl WebExplorerSession {
                 class_name: String::new(),
                 selector_hint: "#forge-browser-viewport".to_string(),
                 name: "Browser viewport".to_string(),
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "viewport".to_string(),
+                aria_name: "Browser viewport".to_string(),
                 text: format!(
                     "{:.0}x{:.0}",
                     self.memory
@@ -6365,6 +7283,8 @@ impl WebExplorerSession {
                 source: "shell".to_string(),
                 bounds: self.memory.viewport.clone(),
                 style: WebExplorerMemoryStyle::default(),
+                frame_path: vec![self.current_url().to_string()],
+                shadow_path: Vec::new(),
                 child_ids: Vec::new(),
             },
             WebExplorerMemoryNode {
@@ -6375,6 +7295,15 @@ impl WebExplorerSession {
                 class_name: String::new(),
                 selector_hint: "#forge-browser-document".to_string(),
                 name: if self.page_title.trim().is_empty() {
+                    self.current_url().to_string()
+                } else {
+                    self.page_title.clone()
+                },
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "document".to_string(),
+                aria_name: if self.page_title.trim().is_empty() {
                     self.current_url().to_string()
                 } else {
                     self.page_title.clone()
@@ -6395,6 +7324,8 @@ impl WebExplorerSession {
                     .unwrap_or_else(|| "shell".to_string()),
                 bounds: self.memory.viewport.clone(),
                 style: WebExplorerMemoryStyle::default(),
+                frame_path: vec![self.current_url().to_string()],
+                shadow_path: Vec::new(),
                 child_ids: document_children,
             },
             WebExplorerMemoryNode {
@@ -6405,6 +7336,11 @@ impl WebExplorerSession {
                 class_name: String::new(),
                 selector_hint: "#forge-browser-session".to_string(),
                 name: "Session state".to_string(),
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "group".to_string(),
+                aria_name: "Session state".to_string(),
                 text: self.last_message.clone(),
                 value: self.last_input.clone(),
                 href: String::new(),
@@ -6416,6 +7352,8 @@ impl WebExplorerSession {
                 source: "shell".to_string(),
                 bounds: None,
                 style: WebExplorerMemoryStyle::default(),
+                frame_path: vec![self.current_url().to_string()],
+                shadow_path: Vec::new(),
                 child_ids: vec![
                     status_id.clone(),
                     intent_id.clone(),
@@ -6431,6 +7369,11 @@ impl WebExplorerSession {
                 class_name: String::new(),
                 selector_hint: "#forge-browser-status".to_string(),
                 name: "Last message".to_string(),
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "status".to_string(),
+                aria_name: "Last message".to_string(),
                 text: self.last_message.clone(),
                 value: self.last_input.clone(),
                 href: String::new(),
@@ -6442,6 +7385,8 @@ impl WebExplorerSession {
                 source: "shell".to_string(),
                 bounds: None,
                 style: WebExplorerMemoryStyle::default(),
+                frame_path: vec![self.current_url().to_string()],
+                shadow_path: Vec::new(),
                 child_ids: Vec::new(),
             },
             WebExplorerMemoryNode {
@@ -6452,6 +7397,11 @@ impl WebExplorerSession {
                 class_name: String::new(),
                 selector_hint: "#forge-browser-intent".to_string(),
                 name: "KASM intent".to_string(),
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "intent".to_string(),
+                aria_name: "KASM intent".to_string(),
                 text: self.last_intent.as_str().to_string(),
                 value: self.last_input.clone(),
                 href: String::new(),
@@ -6463,6 +7413,8 @@ impl WebExplorerSession {
                 source: "shell".to_string(),
                 bounds: None,
                 style: WebExplorerMemoryStyle::default(),
+                frame_path: vec![self.current_url().to_string()],
+                shadow_path: Vec::new(),
                 child_ids: Vec::new(),
             },
             WebExplorerMemoryNode {
@@ -6473,6 +7425,11 @@ impl WebExplorerSession {
                 class_name: String::new(),
                 selector_hint: "#forge-browser-back".to_string(),
                 name: "Back".to_string(),
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "button".to_string(),
+                aria_name: "Back".to_string(),
                 text: "Back".to_string(),
                 value: String::new(),
                 href: String::new(),
@@ -6484,6 +7441,8 @@ impl WebExplorerSession {
                 source: "shell".to_string(),
                 bounds: None,
                 style: WebExplorerMemoryStyle::default(),
+                frame_path: vec![self.current_url().to_string()],
+                shadow_path: Vec::new(),
                 child_ids: Vec::new(),
             },
             WebExplorerMemoryNode {
@@ -6494,6 +7453,11 @@ impl WebExplorerSession {
                 class_name: String::new(),
                 selector_hint: "#forge-browser-forward".to_string(),
                 name: "Forward".to_string(),
+                title_attr: String::new(),
+                placeholder: String::new(),
+                input_type: String::new(),
+                aria_role: "button".to_string(),
+                aria_name: "Forward".to_string(),
                 text: "Forward".to_string(),
                 value: String::new(),
                 href: String::new(),
@@ -6505,6 +7469,8 @@ impl WebExplorerSession {
                 source: "shell".to_string(),
                 bounds: None,
                 style: WebExplorerMemoryStyle::default(),
+                frame_path: vec![self.current_url().to_string()],
+                shadow_path: Vec::new(),
                 child_ids: Vec::new(),
             },
         ];
@@ -6699,9 +7665,13 @@ macro_rules! provider_status_command {
     };
 }
 
-provider_status_command!(codex_provider_status, codex_cli_status);
 provider_status_command!(gemini_provider_status, gemini_cli_status);
 provider_status_command!(claude_provider_status, claude_cli_status);
+
+#[tauri::command]
+async fn codex_provider_status() -> Result<OpenAiSubscriptionStatus, String> {
+    Ok(codex_provider_status_value(None))
+}
 
 #[derive(Serialize, Clone)]
 struct CanvasRuntimeModel {
@@ -6712,15 +7682,15 @@ struct CanvasRuntimeModel {
 
 fn canvas_runtime_catalog(runtime: &str) -> Vec<CanvasRuntimeModel> {
     let (available, models): (bool, &[(&str, &str)]) = match runtime {
-        "codex" => (codex_cli_status(None).connected, &[("gpt-5.5", "GPT 5.5"), ("gpt-5.4", "GPT 5.4"), ("gpt-5.3-codex", "GPT 5.3")]),
-        "claude" => (claude_cli_status(None).connected, &[("claude-code-default", "Default"), ("opus", "Opus 4.7"), ("sonnet", "Sonnet 4.6"), ("haiku", "Haiku 4.5")]),
-        "gemini" => (gemini_cli_status(None).connected, &[("gemini-3-pro", "Gemini 3 Pro"), ("gemini-2.5-pro", "Gemini 2.5 Pro"), ("gemini-2.5-flash", "Gemini 2.5 Flash"), ("gemini-2.0-flash", "Gemini 2.0 Flash")]),
+        "codex" => (codex_canvas_status(None).connected, &[("gpt-5.5", "GPT 5.5"), ("gpt-5.4", "GPT 5.4"), ("gpt-5.3-codex", "GPT 5.3")]),
+        "claude" => (claude_cli_status(None).connected, &[("claude-sonnet-4.6", "Sonnet 4.6"), ("claude-opus-4.6", "Opus 4.6")]),
+        "gemini" => (gemini_cli_status(None).connected, &[("gemini-3-pro", "Gemini 3 Pro")]),
         _ => return Vec::new(),
     };
     models.iter().map(|(id, label)| CanvasRuntimeModel { id: (*id).into(), label: (*label).into(), available }).collect()
 }
 
-/// Returns the model catalog the runtime CLI can drive — id, display
+/// Returns the model catalog the runtime CLI can drive ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â id, display
 /// label (e.g. "Opus 4.7", "GPT 5.3"), and CLI presence flag. The UI
 /// uses this to render version-accurate names in the chat chip.
 #[tauri::command]
@@ -6763,90 +7733,185 @@ macro_rules! provider_terminal_commands {
     };
 }
 
+fn codex_oauth_browser_url() -> &'static str {
+    "https://chatgpt.com/"
+}
+
+fn codex_provider_terminal_banner(status: &OpenAiSubscriptionStatus) -> String {
+    let account_label = status
+        .account_label
+        .clone()
+        .unwrap_or_else(|| "Not connected".to_string());
+    let auth_line = if status.connected {
+        "[forge] OAuth is already available on this machine."
+    } else {
+        "[forge] Type open to launch ChatGPT sign-in in your browser, then refresh here."
+    };
+    format!(
+        "\n[forge] Codex direct OAuth console\n[forge] Commands: help, open, refresh, status, clear\n[forge] Model: {}\n[forge] Account: {}\n{}\n",
+        status.model_ref, account_label, auth_line
+    )
+}
+
+fn codex_provider_terminal_status_block(status: &OpenAiSubscriptionStatus) -> String {
+    let account_label = status
+        .account_label
+        .clone()
+        .unwrap_or_else(|| "Not connected".to_string());
+    format!(
+        "\n[forge] OAuth status: {}\n[forge] Account: {}\n[forge] Model: {}\n[forge] {}\n",
+        if status.connected { "connected" } else { "waiting" },
+        account_label,
+        status.model_ref,
+        status.message
+    )
+}
+
+fn codex_provider_terminal_reset_output(
+    app: Option<&tauri::AppHandle>,
+    session: &ProviderTerminalSession,
+    status: &OpenAiSubscriptionStatus,
+) {
+    if let Ok(mut guard) = session.output.lock() {
+        *guard = "Ready.".to_string();
+    }
+    emit_provider_terminal_snapshot(app, session, None);
+    append_provider_terminal_output(app, session, &codex_provider_terminal_banner(status));
+}
+
+fn codex_provider_terminal_open_browser(
+    app: Option<&tauri::AppHandle>,
+    session: &ProviderTerminalSession,
+) {
+    match open_system_browser_url(codex_oauth_browser_url(), codex_oauth_browser_url()) {
+        Ok(()) => append_provider_terminal_output(
+            app,
+            session,
+            "\n[forge] Browser opened for OpenAI OAuth. Finish sign-in, then type refresh.\n",
+        ),
+        Err(err) => append_provider_terminal_output(
+            app,
+            session,
+            &format!("\n[forge] Browser launch failed: {err}\n"),
+        ),
+    }
+}
+
 fn spawn_codex_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<ProviderTerminalSession>, String> {
     provider_terminal_start_session("codex", app, |app_bg, session_bg| {
-        let workspace = forge_workspace_dir();
-        let runtime_candidate = codex_command_candidates()
-            .into_iter()
-            .find(|path| path.is_file());
         update_provider_terminal_status(
             Some(&app_bg),
             &session_bg,
             "preparing",
-            "Preparing Codex CLI",
+            "Preparing OpenAI OAuth",
             true,
             false,
         );
-        let Some(runtime_candidate) = runtime_candidate else {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "missing",
-                "Codex CLI is not installed",
-                false,
-                false,
-            );
-            append_provider_terminal_output(
-                Some(&app_bg),
-                &session_bg,
-                "\nCodex CLI was not found on this machine.\nInstall Codex CLI or make it visible via FORGE_CODEX_BIN, then reopen Forge.\n",
-            );
-            return;
-        };
-        let connected = codex_oauth_status().is_some();
-        let mut command = if cfg!(windows) && is_windows_batch_candidate(&runtime_candidate) {
-            let mut shell = PtyCommandBuilder::new("cmd");
-            shell.arg("/C");
-            shell.arg(&runtime_candidate);
-            shell
-        } else {
-            PtyCommandBuilder::new(&runtime_candidate)
-        };
-        command.cwd(&workspace);
-        configure_provider_terminal_ansi(&mut command);
-        if connected {
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "launching",
-                "Opening Codex in Forge",
-                true,
-                false,
-            );
-        } else {
-            command.arg("login");
-            update_provider_terminal_status(
-                Some(&app_bg),
-                &session_bg,
-                "auth",
-                "Starting OpenAI sign-in",
-                true,
-                false,
-            );
+        let status = codex_provider_status_value(None);
+        codex_provider_terminal_reset_output(Some(&app_bg), &session_bg, &status);
+        if !status.connected {
+            codex_provider_terminal_open_browser(Some(&app_bg), &session_bg);
         }
-        launch_provider_terminal_command(
-            &app_bg,
+        update_provider_terminal_status(
+            Some(&app_bg),
             &session_bg,
-            command,
-            "codex",
-            "Codex launch failed",
-            "Codex CLI",
-            if connected { "Codex is live in Forge" } else { "Codex login is live in Forge" },
-            || codex_cli_status(None),
+            if status.connected { "ready" } else { "auth" },
+            if status.connected {
+                "OpenAI OAuth is ready in Forge"
+            } else {
+                "OpenAI OAuth console is ready"
+            },
+            true,
+            true,
         );
     })
 }
 
-provider_terminal_commands!(
-    codex_terminal_snapshot,
-    codex_terminal_start,
-    codex_terminal_send_input,
-    codex_terminal_resize,
-    codex_terminal_stop,
-    codex_terminal_clear,
-    "codex",
-    spawn_codex_provider_terminal_session
-);
+#[tauri::command]
+async fn openai_oauth_terminal_snapshot() -> Result<ProviderTerminalSnapshot, String> {
+    provider_terminal_snapshot("codex")
+}
+
+#[tauri::command]
+async fn openai_oauth_terminal_start(app: tauri::AppHandle) -> Result<ProviderTerminalSnapshot, String> {
+    let session = spawn_codex_provider_terminal_session(app)?;
+    Ok(session.snapshot())
+}
+
+#[tauri::command]
+async fn openai_oauth_terminal_send_input(input: String) -> Result<ProviderTerminalSnapshot, String> {
+    let session = provider_terminal_session("codex", "running")?;
+    let command = input
+        .replace(['\r', '\n'], " ")
+        .trim()
+        .to_ascii_lowercase();
+    if command.is_empty() {
+        return Ok(session.snapshot());
+    }
+    match command.as_str() {
+        "help" => append_provider_terminal_output(
+            None,
+            &session,
+            "\n[forge] Commands: help, open, refresh, status, clear\n",
+        ),
+        "open" | "browser" | "login" | "signin" | "sign-in" | "connect" => {
+            codex_provider_terminal_open_browser(None, &session);
+        }
+        "refresh" | "status" => {
+            let status = codex_provider_status_value(None);
+            append_provider_terminal_output(
+                None,
+                &session,
+                &codex_provider_terminal_status_block(&status),
+            );
+            update_provider_terminal_status(
+                None,
+                &session,
+                if status.connected { "ready" } else { "auth" },
+                if status.connected {
+                    "OpenAI OAuth is ready in Forge"
+                } else {
+                    "OpenAI OAuth console is ready"
+                },
+                true,
+                true,
+            );
+        }
+        "clear" => {
+            let status = codex_provider_status_value(None);
+            codex_provider_terminal_reset_output(None, &session, &status);
+        }
+        "stop" | "exit" => append_provider_terminal_output(
+            None,
+            &session,
+            "\n[forge] Use the Stop control to close this OAuth console.\n",
+        ),
+        _ => append_provider_terminal_output(
+            None,
+            &session,
+            "\n[forge] Unknown command. Type help, open, refresh, status, or clear.\n",
+        ),
+    }
+    Ok(session.snapshot())
+}
+
+#[tauri::command]
+async fn openai_oauth_terminal_resize(_cols: u16, _rows: u16) -> Result<ProviderTerminalSnapshot, String> {
+    provider_terminal_snapshot("codex")
+}
+
+#[tauri::command]
+async fn openai_oauth_terminal_stop() -> Result<ProviderTerminalSnapshot, String> {
+    provider_terminal_stop("codex")
+}
+
+#[tauri::command]
+async fn openai_oauth_terminal_clear() -> Result<ProviderTerminalSnapshot, String> {
+    let session = provider_terminal_session("codex", "available")?;
+    let status = codex_provider_status_value(None);
+    codex_provider_terminal_reset_output(None, &session, &status);
+    Ok(session.snapshot())
+}
 
 fn spawn_gemini_provider_terminal_session(app: tauri::AppHandle) -> Result<Arc<ProviderTerminalSession>, String> {
     provider_terminal_start_session("gemini", app, |app_bg, session_bg| {
@@ -7277,38 +8342,15 @@ async fn gemini_subscription_login() -> Result<OpenAiSubscriptionLoginResult, St
 }
 
 #[tauri::command]
-async fn openai_subscription_login() -> Result<OpenAiSubscriptionLoginResult, String> {
-    let command = "codex login".to_string();
-    #[cfg(windows)]
-    {
-        let script = "$ErrorActionPreference='Continue'; \
-            $localCodex = Join-Path $env:USERPROFILE '.codex\\.sandbox-bin\\codex.exe'; \
-            if (Test-Path -LiteralPath $localCodex) { \
-                Write-Host 'Forge is starting Codex OAuth for your OpenAI subscription.'; \
-                & $localCodex login; \
-            } elseif (Get-Command codex -ErrorAction SilentlyContinue) { \
-                Write-Host 'Forge is starting Codex OAuth for your OpenAI subscription.'; \
-                codex login; \
-            } else { \
-                Write-Host 'Codex CLI was not found in PATH.'; \
-            }; \
-            Write-Host ''; \
-            Write-Host 'Forge detects Codex OAuth at ~/.codex/auth.json.'";
-        spawn_powershell_terminal(script, "OpenAI sign-in")?;
-        return Ok(OpenAiSubscriptionLoginResult {
-            started: true,
-            command,
-            message: "Codex OAuth sign-in opened in a terminal for your OpenAI subscription.".to_string(),
-        });
-    }
-    #[cfg(not(windows))]
-    {
-        Ok(OpenAiSubscriptionLoginResult {
-            started: false,
-            command,
-            message: "Open a terminal and run `codex login`, then refresh Forge provider status.".to_string(),
-        })
-    }
+async fn openai_oauth_login() -> Result<OpenAiSubscriptionLoginResult, String> {
+    open_system_browser_url(codex_oauth_browser_url(), codex_oauth_browser_url())?;
+    Ok(OpenAiSubscriptionLoginResult {
+        started: true,
+        command: "open https://chatgpt.com/".to_string(),
+        message:
+            "OpenAI OAuth opened in your browser. Finish ChatGPT sign-in, then return to Forge and refresh."
+                .to_string(),
+    })
 }
 
 impl ForgeBackend {
@@ -7548,7 +8590,7 @@ fn build_webexplorer_classifier() -> Program {
     push(&mut nodes, Node::output(final_choice, Ty::I64));
 
     Program::new(Target::Cpu, 5, 1, nodes.len() as u32, nodes)
-        .expect("web explorer classifier KASM bien formé")
+        .expect("web explorer classifier KASM bien formÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©")
 }
 
 fn webexplorer_feature_flags(input: &str) -> (i64, i64, i64, i64) {
@@ -7612,7 +8654,7 @@ fn build_kmer_hash() -> Program {
         3,
         vec![Node::input(0), Node::hash64(0), Node::output(1, Ty::I64)],
     )
-    .expect("kmer_hash KASM bien formé")
+    .expect("kmer_hash KASM bien formÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©")
 }
 
 fn build_kmer_complement_hash() -> Program {
@@ -7628,7 +8670,7 @@ fn build_kmer_complement_hash() -> Program {
             Node::output(2, Ty::I64),
         ],
     )
-    .expect("kmer_complement KASM bien formé")
+    .expect("kmer_complement KASM bien formÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©")
 }
 
 fn build_kmer_double_mix() -> Program {
@@ -7644,16 +8686,16 @@ fn build_kmer_double_mix() -> Program {
             Node::output(2, Ty::I64),
         ],
     )
-    .expect("kmer_double_mix KASM bien formé")
+    .expect("kmer_double_mix KASM bien formÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©")
 }
 
-/// Programme 4 — Strobemer-style : hash low-16 bases + hash high-16
-/// bases + XOR combine (9 nœuds). Inspiration : Sahlin 2021,
+/// Programme 4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Strobemer-style : hash low-16 bases + hash high-16
+/// bases + XOR combine (9 nÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œuds). Inspiration : Sahlin 2021,
 /// "Effective sequence similarity detection with strobemers and
-/// multi-context seeds" (Genome Research). Utilisé en production dans
+/// multi-context seeds" (Genome Research). UtilisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© en production dans
 /// strobealign et le fork minimap2-strobemer pour aligner des reads
-/// long ADN. Structurellement décomposable (2× `Hash64`, 2× `Shr`) →
-/// candidat type pour Phase 12 cache multi-échelle.
+/// long ADN. Structurellement dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©composable (2ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â `Hash64`, 2ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â `Shr`) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢
+/// candidat type pour Phase 12 cache multi-ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©chelle.
 fn build_kmer_strobemer() -> Program {
     Program::new(
         Target::Cpu,
@@ -7662,7 +8704,7 @@ fn build_kmer_strobemer() -> Program {
         9,
         vec![
             Node::input(0),                // 0 : packed 32-mer
-            Node::const_i64(32),           // 1 : décalage 32 bits = 16 bases × 2 bits
+            Node::const_i64(32),           // 1 : dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©calage 32 bits = 16 bases ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 2 bits
             Node::shl(0, 1),               // 2 : clear high half
             Node::shr(2, 1),               // 3 : low 16 bases zero-extended
             Node::hash64(3),               // 4 : hash low half
@@ -7672,13 +8714,13 @@ fn build_kmer_strobemer() -> Program {
             Node::output(7, Ty::I64),
         ],
     )
-    .expect("kmer_strobemer KASM bien formé")
+    .expect("kmer_strobemer KASM bien formÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©")
 }
 
-/// Programme 5 — MinHash signature : chaîne de 10 hash SplitMix64
-/// successifs sur le même k-mer. Utilisé en métagénomique (Mash, sourmash)
-/// pour construire des sketches comparables entre échantillons. Plus
-/// lourd que kmer_hash (×10 ops) — démontre la transition entre "bypass
+/// Programme 5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â MinHash signature : chaÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â®ne de 10 hash SplitMix64
+/// successifs sur le mÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªme k-mer. UtilisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© en mÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tagÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©nomique (Mash, sourmash)
+/// pour construire des sketches comparables entre ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©chantillons. Plus
+/// lourd que kmer_hash (ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â10 ops) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©montre la transition entre "bypass
 /// Rust gagne" et "brain cache vaut sa plomberie".
 fn build_kmer_minhash_10() -> Program {
     let mut nodes: Vec<Node> = Vec::with_capacity(12);
@@ -7688,15 +8730,15 @@ fn build_kmer_minhash_10() -> Program {
     }
     nodes.push(Node::output(10, Ty::I64));
     Program::new(Target::Cpu, 1, 1, nodes.len() as u32, nodes)
-        .expect("kmer_minhash_10 KASM bien formé")
+        .expect("kmer_minhash_10 KASM bien formÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©")
 }
 
-/// Programme 6 — Spaced seed : extrait 4 sous-motifs de 8 bp à des
-/// positions espacées (0, 8, 16, 24 = positions de bp dans le k-mer
-/// 32 bp), les XOR-mixe, puis hash le résultat. Pattern utilisé par
-/// les outils d'alignement type PatternHunter, où les "spaced seeds"
-/// donnent une meilleure sensibilité que les contiguous k-mers pour
-/// détecter des homologies distantes (séquences évolutivement séparées).
+/// Programme 6 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Spaced seed : extrait 4 sous-motifs de 8 bp ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  des
+/// positions espacÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©es (0, 8, 16, 24 = positions de bp dans le k-mer
+/// 32 bp), les XOR-mixe, puis hash le rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©sultat. Pattern utilisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© par
+/// les outils d'alignement type PatternHunter, oÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¹ les "spaced seeds"
+/// donnent une meilleure sensibilitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© que les contiguous k-mers pour
+/// dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tecter des homologies distantes (sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©quences ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©volutivement sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©parÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©es).
 ///
 /// Structure : 4 const + 4 shifts/masks + 3 XORs + 1 hash + I/O = 16 nodes.
 fn build_kmer_spaced_seed() -> Program {
@@ -7714,50 +8756,50 @@ fn build_kmer_spaced_seed() -> Program {
         Node::shr(0, 4),                // 10: k >> 48
         Node::bit_xor(5, 7),            // 11: seed_0 ^ seed_8
         Node::bit_xor(11, 9),           // 12: + seed_16
-        Node::bit_xor(12, 10),          // 13: + seed_24 → final mix
+        Node::bit_xor(12, 10),          // 13: + seed_24 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ final mix
         Node::hash64(13),               // 14: hash mixed
         Node::output(14, Ty::I64),      // 15: output
     ];
     Program::new(Target::Cpu, 1, 1, nodes.len() as u32, nodes)
-        .expect("kmer_spaced_seed KASM bien formé")
+        .expect("kmer_spaced_seed KASM bien formÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©")
 }
 
-/// Programme 7-bis — Branched hash (KASM v1.0 mutation, utilise Op::Cond).
-/// Démontre l'adoption du nouveau opcode `Op::Cond` (JAX `lax.cond`) dans
-/// un programme réellement exécuté en production : selon la parité du
-/// dernier bit du k-mer (last base = A=00 / C=01 / G=10 / T=11 → parité
+/// Programme 7-bis ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Branched hash (KASM v1.0 mutation, utilise Op::Cond).
+/// DÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©montre l'adoption du nouveau opcode `Op::Cond` (JAX `lax.cond`) dans
+/// un programme rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ellement exÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©cutÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© en production : selon la paritÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© du
+/// dernier bit du k-mer (last base = A=00 / C=01 / G=10 / T=11 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ paritÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©
 /// du LSB), on hash l'original (path "even") ou l'inverse-bytes (path
-/// "odd"). C'est un cas d'usage légitime en bioinformatique : les
-/// "balanced k-mers" pour réduire la corrélation des sketches.
+/// "odd"). C'est un cas d'usage lÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©gitime en bioinformatique : les
+/// "balanced k-mers" pour rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©duire la corrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©lation des sketches.
 ///
-/// Structure : 10 nodes. Le `Op::Cond` apparaît au node 8.
+/// Structure : 10 nodes. Le `Op::Cond` apparaÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â®t au node 8.
 fn build_kmer_branched_hash() -> Program {
     let nodes = vec![
         Node::input(0),                  // 0 : packed 32-mer
         Node::const_i64(1),              // 1 : mask LSB
         Node::const_i64(0),              // 2 : zero (pour Eq)
         Node::bit_and(0, 1),             // 3 : parity bit
-        Node::eq(3, 2),                  // 4 : Bool (parity == 0) → even
+        Node::eq(3, 2),                  // 4 : Bool (parity == 0) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ even
         Node::hash64(0),                 // 5 : hash(input)
         Node::byteswap(0),               // 6 : byteswap(input)
         Node::hash64(6),                 // 7 : hash(byteswap)
-        Node::cond(4, 5, 7),             // 8 : if even then 5 else 7  ← v1.0 Op::Cond !
+        Node::cond(4, 5, 7),             // 8 : if even then 5 else 7  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ãƒâ€šÃ‚Â v1.0 Op::Cond !
         Node::output(8, Ty::I64),        // 9 : output
     ];
     Program::new(Target::Cpu, 1, 1, nodes.len() as u32, nodes)
-        .expect("kmer_branched_hash KASM bien formé")
+        .expect("kmer_branched_hash KASM bien formÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©")
 }
 
-/// Programme 7 — Heavy hash : chaîne de 64 SplitMix64 successifs.
-/// Démonstration "compute > plumbing" : à 64 ops de hash par k-mer,
-/// le bypass Rust pur prend le temps de faire 64×5ns = 320 ns par call,
-/// et le brain cache amortit sa plomberie (~9 µs/call) sur les
+/// Programme 7 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Heavy hash : chaÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â®ne de 64 SplitMix64 successifs.
+/// DÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©monstration "compute > plumbing" : ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  64 ops de hash par k-mer,
+/// le bypass Rust pur prend le temps de faire 64ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â5ns = 320 ns par call,
+/// et le brain cache amortit sa plomberie (~9 ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âµs/call) sur les
 /// 1.47M k-mers distincts seulement (les 3.93M dupes hit RamMemo).
-/// Le GPU dominer enfin parce que 64 ops × 5.4M k-mers = ~350M ops
+/// Le GPU dominer enfin parce que 64 ops ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 5.4M k-mers = ~350M ops
 /// se massivent en quelques ms sur les ~1800 cores du RTX 3050.
 ///
 /// Cas d'usage scientifique : "iterated hashing" pour proof-of-work
-/// génomique, ou hash chains anti-tampering pour archiver des reads.
+/// gÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©nomique, ou hash chains anti-tampering pour archiver des reads.
 fn build_kmer_heavy_hash_64() -> Program {
     let rounds = 64usize;
     let mut nodes: Vec<Node> = Vec::with_capacity(rounds + 2);
@@ -7767,7 +8809,7 @@ fn build_kmer_heavy_hash_64() -> Program {
     }
     nodes.push(Node::output(rounds as u16, Ty::I64));
     Program::new(Target::Cpu, 1, 1, nodes.len() as u32, nodes)
-        .expect("kmer_heavy_hash_64 KASM bien formé")
+        .expect("kmer_heavy_hash_64 KASM bien formÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©")
 }
 
 /// Slide a k-base window across each DNA sequence + extract class label
@@ -8252,8 +9294,8 @@ fn resize_provider_terminal_session(
         .map_err(|e| format!("resize provider terminal: {e}"))
 }
 
-// Φ.ν.7g — Channels dédiés à la section α Alpha pour ne pas polluer
-// les logs/results de la section Î¨ DNA. Le frontend Alpha listen sur
+// ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¦.ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½.7g ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Channels dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©diÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  la section ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â± Alpha pour ne pas polluer
+// les logs/results de la section ÃƒÆ’Ã†â€™Ãƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ DNA. Le frontend Alpha listen sur
 // `alpha-log` (Forge logs tab) et `alpha-signal` (markers chart).
 fn emit_alpha_log(app: &tauri::AppHandle, msg: String) {
     let _ = app.emit("alpha-log", msg);
@@ -8698,6 +9740,7 @@ fn safe_upload_file_name(raw: &str) -> String {
 
 const WEB_EXPLORER_WINDOW_LABEL: &str = "webexplorer";
 const WEB_EXPLORER_CHILD_LABEL: &str = "webexplorer-native";
+const AGENCY_EARTH_CHILD_LABEL: &str = "agency-earth-native";
 const BLOOMBERG_LIVE_URL: &str =
     "https://www.youtube.com/embed/iEpJwprxDdk?autoplay=1&mute=0&playsinline=1&controls=0&disablekb=1&fs=0&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=1&cc_lang_pref=en&enablejsapi=1";
 const BLOOMBERG_YOUTUBE_VIDEO_ID: &str = "iEpJwprxDdk";
@@ -8726,9 +9769,11 @@ struct NativeWebviewRuntimeState {
 }
 
 static WEB_EXPLORER_NATIVE_RUNTIME: OnceLock<Mutex<NativeWebviewRuntimeState>> = OnceLock::new();
+static AGENCY_EARTH_NATIVE_RUNTIME: OnceLock<Mutex<NativeWebviewRuntimeState>> = OnceLock::new();
 static BLOOMBERG_NATIVE_RUNTIME: OnceLock<Mutex<NativeWebviewRuntimeState>> = OnceLock::new();
 static BLOOMBERG_NATIVE_SHOULD_START: AtomicBool = AtomicBool::new(false);
 static WEB_EXPLORER_PRESENT_GENERATION: AtomicU64 = AtomicU64::new(0);
+static AGENCY_EARTH_PRESENT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static BLOOMBERG_PRESENT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static BLOOMBERG_TRANSCRIPT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static BLOOMBERG_TRANSCRIPT_RECORDING: AtomicBool = AtomicBool::new(false);
@@ -8809,6 +9854,10 @@ fn set_native_webview_bounds<R: Runtime>(
 
 fn webexplorer_native_runtime() -> &'static Mutex<NativeWebviewRuntimeState> {
     WEB_EXPLORER_NATIVE_RUNTIME.get_or_init(|| Mutex::new(NativeWebviewRuntimeState::default()))
+}
+
+fn agency_earth_native_runtime() -> &'static Mutex<NativeWebviewRuntimeState> {
+    AGENCY_EARTH_NATIVE_RUNTIME.get_or_init(|| Mutex::new(NativeWebviewRuntimeState::default()))
 }
 
 fn bloomberg_native_runtime() -> &'static Mutex<NativeWebviewRuntimeState> {
@@ -10657,9 +11706,6 @@ fn shutdown_forge_runtime(state: &Mutex<ForgeAppState>) {
     let _ = kill_gemini_active_process();
     let _ = kill_claude_active_process();
     if let Ok(mut app_state) = state.lock() {
-        if let Some(client) = app_state.codex_app_server.take() {
-            let _ = client.force_kill();
-        }
         app_state.backend = None;
         app_state.backend_opening = false;
         app_state.cancelled_canvas_turns.clear();
@@ -10691,7 +11737,7 @@ fn open_webexplorer_window(app: tauri::AppHandle) -> Result<(), String> {
         WEB_EXPLORER_WINDOW_LABEL,
         WebviewUrl::App("index.html?surface=webexplorer&window=webexplorer".into()),
     )
-    .title("Forge · Web Explorer")
+    .title("Forge ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· Web Explorer")
     .inner_size(1240.0, 760.0)
     .min_inner_size(1000.0, 620.0)
     .resizable(true)
@@ -10815,16 +11861,16 @@ fn webexplorer_dom_capture_script(bridge_port: u16) -> String {
     const GOOGLE_HEADBAR_REDIRECT_BOUND_ATTR = "data-forge-google-headbar-redirect-bound";
     const GOOGLE_HEADBAR_LABELS = [
       "mode ia", "ai mode", "tous", "all", "shopping", "images",
-      "actualites", "actualités", "news", "videos courtes", "vidéos courtes",
-      "short videos", "videos", "vidéos", "plus", "more", "outils", "tools"
+      "actualites", "actualitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s", "news", "videos courtes", "vidÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©os courtes",
+      "short videos", "videos", "vidÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©os", "plus", "more", "outils", "tools"
     ];
     let lastForgeBaseBackground = "";
     let lastForgeGoogleRedirect = "";
     let lastForgeGoogleHeadbarRedirect = "";
 
     const AD_NETWORK_RE = /(doubleclick|googlesyndication|googleadservices|adservice|adnxs|taboola|outbrain|criteo|rubiconproject|pubmatic|openx|scorecardresearch|adform|smartadserver|adsystem|advertising)/i;
-    const AD_TOKEN_RE = /(^|[-_\s./:])(ad|ads|advert|advertisement|adslot|ad-slot|ad_container|ad-container|adsense|adsbygoogle|sponsored|sponsorise|sponsorisé|publicite|publicité|promo)([-_\s./:]|$)/i;
-    const AD_LABEL_RE = /^(ad|ads|advertisement|publicite|publicité|sponsored|sponsorisé|sponsorise|annonce|annonces?)$/i;
+    const AD_TOKEN_RE = /(^|[-_\s./:])(ad|ads|advert|advertisement|adslot|ad-slot|ad_container|ad-container|adsense|adsbygoogle|sponsored|sponsorise|sponsorisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©|publicite|publicitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©|promo)([-_\s./:]|$)/i;
+    const AD_LABEL_RE = /^(ad|ads|advertisement|publicite|publicitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©|sponsored|sponsorisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©|sponsorise|annonce|annonces?)$/i;
 
     const FOOTER_TOKEN_RE = /(^|[-_\s./:])(footer|sitefooter|site-footer|page-footer|app-footer|globalfooter|colophon|contentinfo|pieddepage|pied-de-page|basdepage|bottom-bar|bottomnav|bottom-nav|sticky-footer)([-_\s./:]|$)/i;
     const FOOTER_LABEL_RE = /(privacy policy|terms of service|all rights reserved|copyright|cookie settings|mentions legales|conditions generales|plan du site)/i;
@@ -11060,7 +12106,7 @@ html.forge-webexplorer-ad-filter :where(
   [data-ad-client],
   [data-google-query-id],
   [aria-label="Advertisement"],
-  [aria-label="Publicité"],
+  [aria-label="PublicitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"],
   [aria-label="Sponsored"],
   [class*="adsbygoogle"],
   [class*="ad-slot"],
@@ -11728,7 +12774,7 @@ html.forge-google-webexplorer :where(a, button, [role="link"], [role="button"], 
       if (!(node instanceof HTMLElement)) continue;
       const label = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
       if (!label) continue;
-      if (!["tous", "images", "actualités", "actualites", "videos", "vidéos", "web", "news"].some((entry) => label.includes(entry))) continue;
+      if (!["tous", "images", "actualitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s", "actualites", "videos", "vidÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©os", "web", "news"].some((entry) => label.includes(entry))) continue;
       hideGoogleAncestorChrome(node);
     }
   };
@@ -11920,6 +12966,23 @@ html.forge-google-webexplorer :where(a, button, [role="link"], [role="button"], 
     return classes ? `${tag}.${classes}` : tag;
   };
 
+  const framePathFor = () => {
+    const href = clip(window.location.href || "", 300);
+    return href ? [href] : [];
+  };
+
+  const shadowPathFor = (element) => {
+    const path = [];
+    let root = element?.getRootNode?.() || null;
+    let guard = 0;
+    while (root instanceof ShadowRoot && root.host && guard < 8) {
+      path.push(clip(selectorHintFor(root.host), 200));
+      root = root.host.getRootNode?.() || null;
+      guard += 1;
+    }
+    return path.reverse();
+  };
+
   const elementVisible = (element, rect) => {
     if (!(element instanceof Element)) return false;
     const style = window.getComputedStyle(element);
@@ -11983,6 +13046,11 @@ html.forge-google-webexplorer :where(a, button, [role="link"], [role="button"], 
       className: clip(node?.className || "", 200),
       selectorHint: clip(node?.selectorHint || "", 200),
       name: clip(node?.name || "", 200),
+      titleAttr: clip(node?.titleAttr || "", 200),
+      placeholder: clip(node?.placeholder || "", 200),
+      inputType: clip(node?.inputType || "", 80),
+      ariaRole: clip(node?.ariaRole || node?.role || "", 80),
+      ariaName: clip(node?.ariaName || node?.name || node?.text || "", 220),
       text: clip(node?.text || "", 320),
       value: clip(node?.value || "", 200),
       href: clip(node?.href || "", 300),
@@ -11994,6 +13062,8 @@ html.forge-google-webexplorer :where(a, button, [role="link"], [role="button"], 
       source: "dom",
       bounds: node?.bounds || { x: 0, y: 0, width: 0, height: 0 },
       style: styleSnapshot({ display: "block", ...(node?.style || {}) }),
+      framePath: Array.isArray(node?.framePath) ? node.framePath.slice(0, 8).map((value) => clip(value, 300)) : framePathFor(),
+      shadowPath: Array.isArray(node?.shadowPath) ? node.shadowPath.slice(0, 8).map((value) => clip(value, 200)) : [],
       childIds: Array.isArray(node?.childIds) ? node.childIds.slice() : [],
     });
   };
@@ -12204,6 +13274,7 @@ html.forge-google-webexplorer :where(a, button, [role="link"], [role="button"], 
       if (!rect || rect.width <= 0 || rect.height <= 0) return "";
       count += 1;
       const id = `dom-text-${count}`;
+      const parentElement = textNode.parentElement || null;
       snapshot.push({
         id,
         parentId,
@@ -12212,6 +13283,11 @@ html.forge-google-webexplorer :where(a, button, [role="link"], [role="button"], 
         className: "",
         selectorHint: '#text',
         name: "",
+        titleAttr: "",
+        placeholder: "",
+        inputType: "",
+        ariaRole: "text",
+        ariaName: text,
         text,
         value: "",
         href: clip(href || "", 300),
@@ -12228,6 +13304,8 @@ html.forge-google-webexplorer :where(a, button, [role="link"], [role="button"], 
           height: Number(rect.height || 0),
         },
         style: styleSnapshot(style),
+        framePath: framePathFor(),
+        shadowPath: shadowPathFor(parentElement),
         childIds: [],
       });
       return id;
@@ -12264,6 +13342,20 @@ html.forge-google-webexplorer :where(a, button, [role="link"], [role="button"], 
           || element.getAttribute("name")
           || element.id
       ),
+      titleAttr: clip(element.getAttribute("title") || "", 200),
+      placeholder: clip(element.getAttribute("placeholder") || "", 200),
+      inputType: clip(element.getAttribute("type") || "", 80),
+      ariaRole: clip(element.getAttribute("role") || roleFor(element), 80),
+      ariaName: clip(
+        element.getAttribute("aria-label")
+          || element.getAttribute("aria-labelledby")
+          || element.getAttribute("title")
+          || element.getAttribute("alt")
+          || element.getAttribute("placeholder")
+          || element.getAttribute("name")
+          || element.id,
+        220
+      ),
       text: textForElement(element, visible),
       value: clip(element.value || "", 200),
       href: clip(closestHref, 300),
@@ -12280,6 +13372,8 @@ html.forge-google-webexplorer :where(a, button, [role="link"], [role="button"], 
         height: Number(rect.height || 0),
       },
       style: styleSnapshot(computedStyle),
+      framePath: framePathFor(),
+      shadowPath: shadowPathFor(element),
       childIds: [],
     };
     snapshot.push(node);
@@ -13218,9 +14312,9 @@ fn webexplorer_is_ad_node(node: &WebExplorerMemoryNode) -> bool {
             "advertisement",
             "sponsored",
             "sponsorise",
-            "sponsorisé",
+            "sponsorisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
             "publicite",
-            "publicité",
+            "publicitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
         ],
     ) {
         score += 80;
@@ -13242,9 +14336,9 @@ fn webexplorer_is_ad_node(node: &WebExplorerMemoryNode) -> bool {
             "ads",
             "advertisement",
             "publicite",
-            "publicité",
+            "publicitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
             "sponsored",
-            "sponsorisé",
+            "sponsorisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
             "sponsorise",
             "annonce",
             "annonces",
@@ -14263,7 +15357,7 @@ fn webexplorer_split_title_summary(text: &str) -> (String, String) {
     }
     let mut split_at = collapsed
         .char_indices()
-        .find(|(idx, ch)| *idx >= 72 && matches!(ch, '.' | ':' | '|' | '·'))
+        .find(|(idx, ch)| *idx >= 72 && matches!(ch, '.' | ':' | '|' | '\u{00B7}'))
         .map(|(idx, _)| idx + 1)
         .unwrap_or_else(|| {
             collapsed
@@ -14275,7 +15369,10 @@ fn webexplorer_split_title_summary(text: &str) -> (String, String) {
     if split_at > collapsed.len() {
         split_at = collapsed.len();
     }
-    let title = collapsed[..split_at].trim().trim_matches(['.', ':', '|', '·']).to_string();
+    let title = collapsed[..split_at]
+        .trim()
+        .trim_matches(['.', ':', '|', '\u{00B7}'])
+        .to_string();
     let summary = collapsed[split_at..].trim().to_string();
     (title, summary)
 }
@@ -14848,7 +15945,7 @@ fn webexplorer_extract_google_cards_from_html(current_url: &str, html: &str) -> 
             continue;
         }
         if [
-            "gmail", "images", "videos", "actualités", "news", "web", "connexion", "sign in",
+            "gmail", "images", "videos", "actualitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s", "news", "web", "connexion", "sign in",
             "settings", "privacy", "terms", "google",
         ]
         .iter()
@@ -15231,27 +16328,6 @@ fn save_webexplorer_block_to_atlas(
         .cloned()
         .ok_or_else(|| "web explorer block not found".to_string())?;
 
-    let atlas_dir = store_path.join("atlas");
-    std::fs::create_dir_all(&atlas_dir).map_err(|e| format!("create Forge atlas dir: {e}"))?;
-    let path = atlas_dir.join("my_atlas.json");
-    let mut atlas = load_existing_my_atlas_json(store_path)?;
-    if !atlas.is_object() {
-        atlas = default_my_atlas_json();
-    }
-    let obj = atlas.as_object_mut().expect("atlas object");
-    obj.entry("schema".to_string())
-        .or_insert_with(|| json!("forge_my_atlas_v1"));
-    obj.entry("programs".to_string()).or_insert_with(|| json!([]));
-    obj.entry("metric_tags".to_string())
-        .or_insert_with(|| json!([]));
-    obj.entry("runs".to_string()).or_insert_with(|| json!([]));
-    let web_blocks_value = obj
-        .entry("web_blocks".to_string())
-        .or_insert_with(|| json!([]));
-    if !web_blocks_value.is_array() {
-        *web_blocks_value = json!([]);
-    }
-    let web_blocks = web_blocks_value.as_array_mut().expect("web_blocks array");
     let created_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -15283,21 +16359,7 @@ fn save_webexplorer_block_to_atlas(
         .and_then(JsonValue::as_str)
         .unwrap_or_default()
         .to_string();
-    if let Some(existing) = web_blocks.iter_mut().find(|item| {
-        item.get("block_hash")
-            .and_then(JsonValue::as_str)
-            .map(|value| value == block_hash)
-            .unwrap_or(false)
-    }) {
-        *existing = payload;
-    } else {
-        web_blocks.insert(0, payload);
-        if web_blocks.len() > 120 {
-            web_blocks.truncate(120);
-        }
-    }
-    let bytes = serde_json::to_vec_pretty(&atlas).map_err(|e| format!("encode My Atlas: {e}"))?;
-    std::fs::write(&path, bytes).map_err(|e| format!("write My Atlas: {e}"))?;
+    forge_agent_tools::upsert_web_block(store_path, &payload, 120)?;
     Ok(WebExplorerContentAtlasSaveResult {
         saved: true,
         block_hash,
@@ -15914,6 +16976,199 @@ fn webexplorer_native_hide<R: Runtime>(
             state.bounds = None;
         }
         alpha_trace(&app, "webexplorer.native", "hide.ok");
+    }
+    Ok(())
+}
+
+fn sync_agency_earth_native<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    bounds: WebExplorerMemoryBounds,
+    url: String,
+    force_reload: bool,
+    generation: u64,
+) -> Result<(), String> {
+    if AGENCY_EARTH_PRESENT_GENERATION.load(Ordering::SeqCst) != generation {
+        alpha_trace(
+            app,
+            "agency.earth.native",
+            format!("present.coalesced.stale generation={generation} phase=before-state"),
+        );
+        return Ok(());
+    }
+    let target_url = Url::parse(url.trim()).map_err(|e| format!("invalid earth url: {e}"))?;
+    let visible_bounds = guarded_native_visible_bounds(WebExplorerMemoryBounds {
+        x: bounds.x.round(),
+        y: bounds.y.round(),
+        width: bounds.width.round().max(2.0),
+        height: bounds.height.round().max(2.0),
+    });
+    let position = LogicalPosition::new(visible_bounds.x, visible_bounds.y);
+    let size = LogicalSize::new(visible_bounds.width, visible_bounds.height);
+    alpha_trace(
+        app,
+        "agency.earth.native",
+        format!(
+            "backend.begin url={} x={} y={} w={} h={} force_reload={}",
+            target_url,
+            position.x,
+            position.y,
+            size.width,
+            size.height,
+            force_reload
+        ),
+    );
+    if let Some(webview) = app.get_webview(AGENCY_EARTH_CHILD_LABEL) {
+        if AGENCY_EARTH_PRESENT_GENERATION.load(Ordering::SeqCst) != generation {
+            alpha_trace(
+                app,
+                "agency.earth.native",
+                format!("present.coalesced.stale generation={generation} phase=existing"),
+            );
+            return Ok(());
+        }
+        let current = webview.url().ok();
+        let should_recreate =
+            force_reload || current.as_ref().map(Url::as_str) != Some(target_url.as_str());
+        let already_applied = agency_earth_native_runtime()
+            .lock()
+            .ok()
+            .is_some_and(|state| {
+                state.visible
+                    && !state.parked
+                    && state.url_key == target_url.as_str()
+                    && state
+                        .bounds
+                        .as_ref()
+                        .is_some_and(|last| native_bounds_equal(last, &visible_bounds))
+            });
+        if should_recreate {
+            webview.close().map_err(|e| e.to_string())?;
+            if let Ok(mut state) = agency_earth_native_runtime().lock() {
+                *state = NativeWebviewRuntimeState::default();
+            }
+        } else if already_applied {
+            alpha_trace(app, "agency.earth.native", "present.update.noop");
+            return Ok(());
+        } else {
+            set_native_webview_bounds(&webview, &visible_bounds)?;
+            let _ = webview.set_auto_resize(false);
+            let _ = webview.show();
+            if let Ok(mut state) = agency_earth_native_runtime().lock() {
+                state.visible = true;
+                state.parked = false;
+                state.url_key = target_url.to_string();
+                state.bounds = Some(visible_bounds.clone());
+            }
+            alpha_trace(app, "agency.earth.native", "present.update.ok");
+            return Ok(());
+        }
+    }
+
+    let load_app = app.clone();
+    let builder = tune_native_webview_builder(
+        WebviewBuilder::new(
+            AGENCY_EARTH_CHILD_LABEL,
+            WebviewUrl::External(target_url.clone()),
+        ),
+        false,
+    )
+    .focused(false)
+    .background_color(Color(0, 0, 0, 0))
+    .initialization_script(agency_earth_native_runtime_script())
+    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+    .on_page_load(move |_webview, payload| {
+        alpha_trace(
+            &load_app,
+            "agency.earth.native",
+            format!("page_load event={:?} url={}", payload.event(), payload.url()),
+        );
+    });
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.transparent(true);
+
+    let main = app
+        .get_window("main")
+        .ok_or_else(|| "window 'main' not found".to_string())?;
+    if AGENCY_EARTH_PRESENT_GENERATION.load(Ordering::SeqCst) != generation {
+        alpha_trace(
+            app,
+            "agency.earth.native",
+            format!("present.coalesced.stale generation={generation} phase=create"),
+        );
+        return Ok(());
+    }
+    let webview = main
+        .add_child(builder, position, size)
+        .map_err(|e| e.to_string())?;
+    let _ = webview.set_auto_resize(false);
+    let _ = webview.show();
+    tune_native_platform_webview(app, AGENCY_EARTH_CHILD_LABEL, "agency-earth");
+    if let Ok(mut state) = agency_earth_native_runtime().lock() {
+        state.visible = true;
+        state.parked = false;
+        state.url_key = target_url.to_string();
+        state.bounds = Some(visible_bounds);
+    }
+    alpha_trace(app, "agency.earth.native", "present.create.ok");
+    Ok(())
+}
+
+#[tauri::command]
+async fn agency_earth_native_present<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    bounds: WebExplorerMemoryBounds,
+    url: String,
+    force_reload: Option<bool>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+) -> Result<(), String> {
+    let reload = force_reload.unwrap_or(false);
+    let store_path = forge_store_path_from_app(&app);
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        store_path.as_deref(),
+        "agency_earth_native_present",
+        json!({ "bounds": &bounds, "url": &url, "forceReload": reload }),
+    )?;
+    let generation = AGENCY_EARTH_PRESENT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn_blocking(move || {
+        if AGENCY_EARTH_PRESENT_GENERATION.load(Ordering::SeqCst) != generation {
+            alpha_trace(
+                &app,
+                "agency.earth.native",
+                format!("present.coalesced.stale generation={generation} phase=queued"),
+            );
+            return Ok(());
+        }
+        sync_agency_earth_native(&app, bounds, url, reload, generation)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn agency_earth_native_hide<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+) -> Result<(), String> {
+    let store_path = forge_store_path_from_app(&app);
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        store_path.as_deref(),
+        "agency_earth_native_hide",
+        json!({ "target": AGENCY_EARTH_CHILD_LABEL }),
+    )?;
+    AGENCY_EARTH_PRESENT_GENERATION.fetch_add(1, Ordering::SeqCst);
+    if let Some(webview) = app.get_webview(AGENCY_EARTH_CHILD_LABEL) {
+        let hidden_bounds = onboarding_native_hidden_bounds();
+        let _ = set_native_webview_bounds(&webview, &hidden_bounds);
+        let _ = webview.set_auto_resize(false);
+        let _ = webview.hide();
+        if let Ok(mut state) = agency_earth_native_runtime().lock() {
+            state.visible = false;
+            state.parked = true;
+            state.bounds = None;
+        }
+        alpha_trace(&app, "agency.earth.native", "hide.ok");
     }
     Ok(())
 }
@@ -17617,9 +18872,11 @@ struct ForgeFbcRuntimeSnapshotRequest {
 struct ForgeFbcRuntimeSnapshot {
     kind: String,
     registry_hash: String,
+    tool_registry_hash: String,
     graph_hash: String,
     section_count: usize,
     sensitive_command_count: usize,
+    tool_cell_registry_count: usize,
     cell_count: usize,
     ok_count: usize,
     denied_count: usize,
@@ -17651,14 +18908,38 @@ fn forge_fbc_runtime_snapshot(
         .map_err(|e| format!("read SECTION_OWNERSHIP '{}': {e}", ownership_path.display()))?;
     let registry = parse_app_section_registry_v0(&ownership_json)
         .map_err(|e| format!("parse app FBC registry: {e:?}"))?;
+    let tool_registry_path = forge_workspace_dir()
+        .join("examples")
+        .join("forge_tauri_ui")
+        .join("source-registry")
+        .join("real-estate-tool-cells.json");
+    let tool_registry_json = std::fs::read_to_string(&tool_registry_path)
+        .map_err(|e| format!("read real-estate tool cells '{}': {e}", tool_registry_path.display()))?;
+    let tool_registry = parse_tool_cell_registry_v0(&tool_registry_json)
+        .map_err(|e| format!("parse real-estate tool cell registry: {e:?}"))?;
+    let tool_graph_path = store_path
+        .join("real-estate-harvester")
+        .join("data")
+        .join("living_dataflow_graph.jsonl");
+    let tool_graph_jsonl = if tool_graph_path.exists() {
+        std::fs::read(&tool_graph_path)
+            .map_err(|e| format!("read real-estate living graph '{}': {e}", tool_graph_path.display()))?
+    } else {
+        Vec::new()
+    };
     let mut config = ForgeVmConfig::default();
     if let Some(backend) = request.backend.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
         config.backend = backend.to_string();
     } else {
         config.backend = "auto".to_string();
     }
-    let batch = execute_app_registry_batch(&ownership_json, &config)
-        .map_err(|e| format!("execute app FBC registry: {e:?}"))?;
+    let batch = execute_tool_cell_batch_groups(
+        &[
+            (&registry.cells, &registry.graph_jsonl),
+            (&tool_registry.cells, &tool_graph_jsonl),
+        ],
+        &config,
+    );
     let output_dir = store_path.join("fbc").join("app");
     let manifest_path = output_dir.join("app_fbc_registry_batch.json");
     if request.write_artifacts.unwrap_or(true) {
@@ -17688,9 +18969,11 @@ fn forge_fbc_runtime_snapshot(
         "forge_fbc_app_runtime",
         json!({
             "registryHash": registry.registry_hash,
+            "toolRegistryHash": tool_registry.registry_hash,
             "graphHash": batch.graph_hash,
             "sectionCount": registry.section_count,
             "sensitiveCommandCount": registry.sensitive_command_count,
+            "toolCellRegistryCount": tool_registry.cells.len(),
             "cellCount": batch.tool_count,
             "okCount": batch.ok_count,
             "deniedCount": batch.denied_count,
@@ -17710,7 +18993,7 @@ fn forge_fbc_runtime_snapshot(
         forge_job_runtime::ForgeJobProof {
             hash: batch.ledger_root_hash.clone(),
             artifact_path: manifest_path.display().to_string(),
-            source_hash: registry.registry_hash.clone(),
+            source_hash: format!("{}:{}", registry.registry_hash, tool_registry.registry_hash),
         },
     );
     let event = forge_job_runtime::append_job_ledger_event(
@@ -17722,9 +19005,11 @@ fn forge_fbc_runtime_snapshot(
     let snapshot = ForgeFbcRuntimeSnapshot {
         kind: "forge_fbc_app_runtime_snapshot_v0".to_string(),
         registry_hash: registry.registry_hash,
+        tool_registry_hash: tool_registry.registry_hash,
         graph_hash: batch.graph_hash,
         section_count: registry.section_count,
         sensitive_command_count: registry.sensitive_command_count,
+        tool_cell_registry_count: tool_registry.cells.len(),
         cell_count: batch.tool_count,
         ok_count: batch.ok_count,
         denied_count: batch.denied_count,
@@ -17756,19 +19041,142 @@ fn safe_fbc_artifact_name(command: &str) -> String {
     out
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SensitiveTauriCommandGuardMetadata {
+    command: &'static str,
+    owner: &'static str,
+    surface: &'static str,
+    requires_fbc_guard: bool,
+    allow_raw_fallback: bool,
+    boot_safe: bool,
+}
+
+#[cfg(test)]
+fn sensitive_tauri_command_guard_metadata() -> &'static [SensitiveTauriCommandGuardMetadata] {
+    &[
+        SensitiveTauriCommandGuardMetadata {
+            command: "webexplorer_native_present",
+            owner: "webexplorer",
+            surface: "native_present",
+            requires_fbc_guard: true,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "webexplorer_native_hide",
+            owner: "webexplorer",
+            surface: "native_hide",
+            requires_fbc_guard: true,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "agency_earth_native_present",
+            owner: "real-estate",
+            surface: "native_present",
+            requires_fbc_guard: true,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "agency_earth_native_hide",
+            owner: "real-estate",
+            surface: "native_hide",
+            requires_fbc_guard: true,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "bloomberg_live_native_present",
+            owner: "trading",
+            surface: "native_present",
+            requires_fbc_guard: true,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "bloomberg_live_native_hide",
+            owner: "trading",
+            surface: "native_hide",
+            requires_fbc_guard: true,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "list_forge_jobs",
+            owner: "shell",
+            surface: "jobs_projection",
+            requires_fbc_guard: true,
+            allow_raw_fallback: true,
+            boot_safe: true,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "read_forge_job_file",
+            owner: "shell",
+            surface: "artifact_read",
+            requires_fbc_guard: false,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "read_forge_job_artifact_text",
+            owner: "shell",
+            surface: "artifact_read",
+            requires_fbc_guard: false,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "publish_forge_job_to_mcp",
+            owner: "shell",
+            surface: "artifact_publish",
+            requires_fbc_guard: false,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "get_hardware_info",
+            owner: "shell",
+            surface: "hardware_probe",
+            requires_fbc_guard: true,
+            allow_raw_fallback: true,
+            boot_safe: true,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "open_url",
+            owner: "shell",
+            surface: "network_source",
+            requires_fbc_guard: false,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "gmail_webview_action_surface",
+            owner: "shell",
+            surface: "network_source",
+            requires_fbc_guard: false,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "google_oauth_start",
+            owner: "shell",
+            surface: "network_source",
+            requires_fbc_guard: false,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+    ]
+}
+
 fn forge_fbc_guard_sensitive_action(
     kernel: &Mutex<forge_kernel::ForgeKernel>,
     store_path: Option<&Path>,
     action: &str,
     payload: JsonValue,
 ) -> Result<JsonValue, String> {
-    let response = forge_fbc_host::execute_sensitive_guard(store_path, action, &payload)?;
-    let mut proof = response.proof;
-    if let Some(ledger_hash) = response.ledger_hash {
-        if let Some(object) = proof.as_object_mut() {
-            object.insert("ledgerHash".to_string(), json!(ledger_hash));
-        }
-    }
+    let proof = forge_fbc_host::execute_sensitive_guard(store_path, action, &payload)?.proof;
     forge_kernel::record_preverified_fbc_guard(kernel, proof.clone());
     Ok(proof)
 }
@@ -17844,65 +19252,6 @@ fn remove_legacy_mars_lens_program(store_path: &Path) {
         .unwrap_or(false);
     if is_legacy_builtin {
         let _ = std::fs::remove_file(manifest_path);
-    }
-}
-
-fn default_my_atlas_json() -> JsonValue {
-    json!({
-        "schema": "forge_my_atlas_v1",
-        "programs": [],
-        "metric_tags": [],
-        "runs": [],
-        "web_blocks": []
-    })
-}
-
-fn load_existing_my_atlas_json(store_path: &Path) -> Result<JsonValue, String> {
-    let atlas_dir = store_path.join("atlas");
-    let path = atlas_dir.join("my_atlas.json");
-    if !path.exists() {
-        return Ok(default_my_atlas_json());
-    }
-    let bytes = std::fs::read(&path)
-        .map_err(|e| format!("read My Atlas: {e}"))?;
-    if bytes.is_empty() {
-        let backup = atlas_dir.join(format!("my_atlas.empty-backup-{}.json", now_epoch_ms()));
-        let _ = std::fs::rename(&path, &backup);
-        return Ok(default_my_atlas_json());
-    }
-    match serde_json::from_slice::<JsonValue>(&bytes) {
-        Ok(value) if value.is_object() => Ok(value),
-        Ok(_) => Ok(default_my_atlas_json()),
-        Err(primary_err) => {
-            let candidates = collect_forge_store_candidates(store_path, None);
-            for candidate in candidates {
-                let candidate_path = candidate.join("atlas").join("my_atlas.json");
-                if candidate_path == path || !candidate_path.exists() {
-                    continue;
-                }
-                let candidate_bytes = match std::fs::read(&candidate_path) {
-                    Ok(bytes) if !bytes.is_empty() => bytes,
-                    _ => continue,
-                };
-                if let Ok(value) = serde_json::from_slice::<JsonValue>(&candidate_bytes) {
-                    if value.is_object() {
-                        let backup = atlas_dir.join(format!("my_atlas.corrupt-backup-{}.json", now_epoch_ms()));
-                        let _ = std::fs::rename(&path, &backup);
-                        let _ = std::fs::create_dir_all(&atlas_dir);
-                        if let Ok(pretty) = serde_json::to_vec_pretty(&value) {
-                            let _ = std::fs::write(&path, pretty);
-                        }
-                        return Ok(value);
-                    }
-                }
-            }
-            let backup = atlas_dir.join(format!("my_atlas.corrupt-backup-{}.json", now_epoch_ms()));
-            let _ = std::fs::rename(&path, &backup);
-            let fallback = default_my_atlas_json();
-            let _ = std::fs::write(&path, serde_json::to_vec_pretty(&fallback).unwrap_or_default());
-            eprintln!("[forge-atlas] repaired invalid my_atlas.json after decode failure: {primary_err}");
-            Ok(fallback)
-        }
     }
 }
 
@@ -18270,12 +19619,11 @@ async fn get_forge_atlas_overview(
     ensure_builtin_mars_geonodes(&store_path)?;
     let max_entries = limit.unwrap_or(40).clamp(1, 120);
     tauri::async_runtime::spawn_blocking(move || {
-        forge_agent_tools::call_internal_tool(
+        forge_agent_runtime::direct_state_kernel_read(
             &store_path,
-            "forge_atlas_overview",
-            &json!({ "max_entries": max_entries }),
-            None,
+            &json!({ "state": "atlas", "kind": "atlas", "max_entries": max_entries }),
         )
+        .map(|value| value.get("result").cloned().unwrap_or(JsonValue::Null))
     })
     .await
     .map_err(|e| format!("join Forge Atlas overview: {e}"))?
@@ -18448,91 +19796,6 @@ fn list_forge_programs_from_store(store_path: &Path, limit: usize) -> Result<Vec
     Ok(out)
 }
 
-fn list_forge_capability_templates_from_store(
-    store_path: &Path,
-    domain: Option<&str>,
-    detailed: bool,
-) -> Result<JsonValue, String> {
-    if let Some(domain) = domain.map(str::trim).filter(|v| !v.is_empty()) {
-        return call_forge_mcp_tool(
-            store_path.to_path_buf(),
-            "capabilities",
-            json!({ "domain": domain, "detailed": detailed }),
-        );
-    }
-    let domains = [
-        "finance",
-        "timeseries",
-        "documents",
-        "biology",
-        "code",
-        "security",
-        "chemistry",
-        "medicine",
-        "engineering",
-        "aerospace",
-        "simulation",
-        "math",
-        "energy",
-        "manufacturing",
-        "geospatial",
-        "audio",
-        "images",
-        "networks",
-        "generic",
-    ];
-    let mut seen = HashSet::new();
-    let mut templates = universal_forge_capability_templates();
-    for template in &templates {
-        if let Some(key) = template.get("template").and_then(JsonValue::as_str) {
-            seen.insert(key.to_string());
-        }
-    }
-    for domain in domains {
-        let response = call_forge_mcp_tool(
-            store_path.to_path_buf(),
-            "capabilities",
-            json!({ "domain": domain, "detailed": detailed }),
-        )?;
-        let items = response
-            .pointer("/data/template_registry/templates")
-            .or_else(|| response.pointer("/template_registry/templates"))
-            .and_then(JsonValue::as_array)
-            .cloned()
-            .unwrap_or_default();
-        for template in items {
-            let key = template
-                .get("template")
-                .and_then(JsonValue::as_str)
-                .unwrap_or("")
-                .to_string();
-            if key.is_empty() || !seen.insert(key) {
-                continue;
-            }
-            templates.push(template);
-        }
-    }
-    Ok(json!({
-        "templates": templates,
-        "universal_creation_model": {
-            "not_limited_to_examples": true,
-            "program_kinds": ["compute_program", "visual_program"],
-            "visual_program": "Agents can create 2D/3D/Planet views over any session file with axes, color, size, overlays, GeoNodes and compact artifacts.",
-            "planet_tool": {
-                "id": "planet_sphere",
-                "ui_label": "Planet",
-                "scope": "visual_program_only",
-                "bodies": ["mars", "moon", "earth", "jupiter", "custom"],
-                "geonodes": ["geo_node", "mini_geo_node", "geo_anchor", "geo_path", "geo_region", "geo_heatmap"],
-                "metric_binding": "Normal metric Nodes attach to GeoNodes or MiniGeoNodes with geo_ref, geo_refs, geonode or geonode_tag."
-            },
-            "compute_program": "Agents can create domain-specific compute specs with open Metric DSL tags, then run them locally with hashes/proofs.",
-            "token_safety": "Raw files stay on disk; Forge returns compact refs, previews, diagnostics, artifacts and hashes."
-        },
-        "source_content_included": false,
-    }))
-}
-
 fn universal_forge_capability_templates() -> Vec<JsonValue> {
     vec![
         json!({
@@ -18650,13 +19913,11 @@ fn forge_canvas_context_from_store(
     }
 
     context["programs"] = json!(list_forge_programs_from_store(store_path, 12)?);
-    if let Ok(atlas) = forge_agent_tools::call_internal_tool(
+    if let Ok(atlas) = forge_agent_runtime::direct_state_kernel_read(
         store_path,
-        "forge_atlas_overview",
-        &json!({ "max_entries": 12 }),
-        job_id.as_deref(),
+        &json!({ "state": "atlas", "kind": "atlas", "max_entries": 12 }),
     ) {
-        if let Some(my_atlas) = atlas.get("my_atlas") {
+        if let Some(my_atlas) = atlas.pointer("/result/my_atlas") {
             context["my_atlas"] = my_atlas.clone();
         }
     }
@@ -18673,226 +19934,6 @@ fn forge_canvas_context_value(
         app_state.store_path.clone()
     };
     forge_canvas_context_from_store(&store_path, job_id, max_log_lines)
-}
-
-fn forge_manifest_inputs_for_job(store_path: &Path, job_id: &str) -> Result<Vec<JsonValue>, String> {
-    if !safe_forge_job_id(job_id) {
-        return Err("invalid Forge job id".to_string());
-    }
-    let jobs_dir = store_path.join("jobs");
-    let all_job_dirs = forge_job_mirror_dirs(&jobs_dir);
-    let (_manifest_path, manifest_bytes) = read_forge_job_manifest_from_dirs(job_id, &all_job_dirs)?;
-    let manifest: JsonValue = serde_json::from_slice(&manifest_bytes)
-        .map_err(|e| format!("decode Forge job manifest: {e}"))?;
-    let mut paths: Vec<String> = manifest
-        .get("file_paths")
-        .or_else(|| manifest.get("filePaths"))
-        .and_then(JsonValue::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(JsonValue::as_str)
-                .filter(|path| !path.trim().is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    if paths.is_empty() {
-        if let Some(path) = manifest
-            .get("file_path")
-            .or_else(|| manifest.get("filePath"))
-            .and_then(JsonValue::as_str)
-            .filter(|path| !path.trim().is_empty())
-        {
-            paths.push(path.to_string());
-        }
-    }
-    let kind = manifest
-        .get("kind")
-        .and_then(JsonValue::as_str)
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let role = if kind.contains("alpha") || kind.contains("market") || kind.contains("csv") {
-        "market_data"
-    } else {
-        "data"
-    };
-    Ok(paths
-        .into_iter()
-        .map(|path| json!({ "path": path, "role": role }))
-        .collect())
-}
-
-fn call_forge_dynamic_tool(
-    tool: &str,
-    arguments: JsonValue,
-    context: CodexDynamicToolContext,
-) -> Result<JsonValue, String> {
-    let tool = forge_canonical_dynamic_tool_name(tool);
-    let public_tool = forge_public_tool_label(tool);
-    let store_path = context
-        .store_path
-        .ok_or_else(|| "Forge store path is not available for dynamic tools".to_string())?;
-    let args = arguments.as_object().cloned().unwrap_or_default();
-    match tool {
-        "forge_session_context" => {
-            let job_id = args
-                .get("job_id")
-                .and_then(JsonValue::as_str)
-                .map(str::to_string)
-                .or(context.active_job_id);
-            let max_log_lines = args
-                .get("max_log_lines")
-                .and_then(JsonValue::as_u64)
-                .map(|v| v as usize)
-                .unwrap_or(context.max_log_lines)
-                .clamp(0, 120);
-            forge_canvas_context_from_store(&store_path, job_id, max_log_lines)
-        }
-        "forge_list_programs" => {
-            let limit = args
-                .get("limit")
-                .and_then(JsonValue::as_u64)
-                .map(|v| v as usize)
-                .unwrap_or(50)
-                .clamp(1, 100);
-            Ok(json!({
-                "programs": list_forge_programs_from_store(&store_path, limit)?,
-                "source_content_included": false,
-            }))
-        }
-        "forge_list_capabilities" => {
-            let domain = args.get("domain").and_then(JsonValue::as_str);
-            let detailed = args
-                .get("detailed")
-                .and_then(JsonValue::as_bool)
-                .unwrap_or(true);
-            list_forge_capability_templates_from_store(&store_path, domain, detailed)
-        }
-        "forge_compile_validate_route" => {
-            call_forge_mcp_tool(store_path, "program_compile_validate_route", JsonValue::Object(args))
-        }
-        "forge_interpret_visual_mapping"
-        | "forge_3d_metric_catalog"
-        | "forge_model_3d_mapping"
-        | "forge_run_visual_program"
-        | "forge_analyze_3d_mapping"
-        | "forge_profile_settings"
-        | "forge_list_sessions"
-        | "forge_list_documents"
-        | "forge_atlas_overview"
-        | "forge_upsert_geonode"
-        | "forge_update_session" => forge_agent_tools::call_internal_tool(
-            &store_path,
-            tool,
-            &JsonValue::Object(args),
-            context.active_job_id.as_deref(),
-        ),
-        "forge_create_program" => {
-            let title = args
-                .get("title")
-                .and_then(JsonValue::as_str)
-                .filter(|v| !v.trim().is_empty())
-                .ok_or_else(|| format!("{public_tool} requires title"))?;
-            let goal = args
-                .get("goal")
-                .and_then(JsonValue::as_str)
-                .filter(|v| !v.trim().is_empty())
-                .ok_or_else(|| format!("{public_tool} requires goal"))?;
-            let spec_text = args
-                .get("spec_text")
-                .and_then(JsonValue::as_str)
-                .filter(|v| !v.trim().is_empty());
-            let has_views = args
-                .get("views")
-                .and_then(JsonValue::as_array)
-                .map(|views| !views.is_empty())
-                .unwrap_or(false);
-            if spec_text.is_none() && !has_views {
-                return Err(format!("{public_tool} requires spec_text or views[]"));
-            }
-            let is_visual_program = args
-                .get("program_kind")
-                .or_else(|| args.get("kind"))
-                .and_then(JsonValue::as_str)
-                .map(|value| value.eq_ignore_ascii_case("visual_program") || value.eq_ignore_ascii_case("visual"))
-                .unwrap_or(false)
-                || has_views
-                || spec_text
-                    .map(|text| text.to_ascii_lowercase().contains("<view"))
-                    .unwrap_or(false);
-            let mut mcp_args = json!({
-                "title": title,
-                "goal": goal,
-                "metrics": args.get("metrics").cloned().unwrap_or_else(|| json!([])),
-                "source_schema": {
-                    "source_content_included": false
-                },
-                "constraints": {
-                    "created_from": "forge_codex_canvas",
-                    "source_content_policy": "hash inputs; do not return raw content"
-                },
-                "output_contract": {
-                    "returns": if is_visual_program {
-                        json!(["views_2d", "views_3d", "visual_mapping", "artifacts_2d", "artifacts_3d", "hashes", "bounded logs"])
-                    } else {
-                        json!(["metrics.json", "proof.json", "job manifest", "hashes", "bounded logs"])
-                    }
-                }
-            });
-            if let JsonValue::Object(ref mut obj) = mcp_args {
-                if let Some(value) = spec_text {
-                    obj.insert("spec_text".to_string(), json!(value));
-                }
-                if let Some(views) = args.get("views") {
-                    obj.insert("views".to_string(), views.clone());
-                }
-                for key in ["domain", "intent", "template", "program_kind", "kind"] {
-                    if let Some(value) = args
-                        .get(key)
-                        .and_then(JsonValue::as_str)
-                        .filter(|v| !v.trim().is_empty())
-                    {
-                        obj.insert(key.to_string(), json!(value));
-                    }
-                }
-            }
-            call_forge_mcp_tool(store_path, "create", mcp_args)
-        }
-        "forge_run_program" => {
-            let mut mcp_args = JsonValue::Object(args);
-            let active_job_id = mcp_args
-                .get("job_id")
-                .and_then(JsonValue::as_str)
-                .map(str::to_string)
-                .or(context.active_job_id);
-            if let Some(ref job_id) = active_job_id {
-                if !safe_forge_job_id(job_id) {
-                    return Err("invalid Forge job id".to_string());
-                }
-            }
-            let needs_inputs = mcp_args
-                .get("inputs")
-                .and_then(JsonValue::as_array)
-                .map(|items| items.is_empty())
-                .unwrap_or(true);
-            if let JsonValue::Object(ref mut obj) = mcp_args {
-                if !obj.contains_key("job_id") {
-                    if let Some(ref job_id) = active_job_id {
-                        obj.insert("job_id".to_string(), json!(job_id));
-                    }
-                }
-                if needs_inputs {
-                    if let Some(ref job_id) = active_job_id {
-                        let inputs = forge_manifest_inputs_for_job(&store_path, job_id)?;
-                        obj.insert("inputs".to_string(), json!(inputs));
-                    }
-                }
-            }
-            forge_program_run_cached(store_path, mcp_args)
-        }
-        _ => Err(format!("Unknown Forge dynamic tool `{tool}`")),
-    }
 }
 
 fn codex_bridge_model_arg(model_ref: Option<&str>) -> Option<String> {
@@ -18914,79 +19955,6 @@ fn codex_bridge_model_arg(model_ref: Option<&str>) -> Option<String> {
         return None;
     }
     Some(model.to_string())
-}
-
-fn codex_command_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut seen = HashSet::<PathBuf>::new();
-    let mut push = |path: PathBuf| {
-        if seen.insert(path.clone()) {
-            out.push(path);
-        }
-    };
-    if let Some(path) = std::env::var_os("FORGE_CODEX_BIN") {
-        push(PathBuf::from(path));
-    }
-    if let Some(home) = forge_home_dir() {
-        let sandbox_bin = home.join(".codex").join(".sandbox-bin");
-        push(sandbox_bin.join("codex.exe"));
-        push(sandbox_bin.join("codex"));
-    }
-    if let Some(paths) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            push(dir.join("codex.exe"));
-            push(dir.join("codex"));
-        }
-    }
-    if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
-        let windows_apps = PathBuf::from(local_appdata).join("Microsoft").join("WindowsApps");
-        push(windows_apps.join("codex.exe"));
-        push(windows_apps.join("codex"));
-    }
-    if let Some(program_files) = std::env::var_os("ProgramFiles") {
-        let windows_apps = PathBuf::from(program_files).join("WindowsApps");
-        if let Ok(entries) = std::fs::read_dir(windows_apps) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if !name.starts_with("OpenAI.Codex_") {
-                    continue;
-                }
-                let resources = entry.path().join("app").join("resources");
-                push(resources.join("codex.exe"));
-                push(resources.join("codex"));
-            }
-        }
-    }
-    push(PathBuf::from("codex"));
-    out
-}
-
-fn command_from_cli_candidate(candidate: &Path) -> Command {
-    if cfg!(windows) && is_windows_batch_candidate(candidate) {
-        let mut command = Command::new("cmd");
-        command.arg("/C");
-        command.arg(candidate);
-        command
-    } else {
-        Command::new(candidate)
-    }
-}
-
-fn codex_cli_probe(candidate: &Path) -> bool {
-    if !candidate.exists() && candidate.is_absolute() {
-        return false;
-    }
-    let mut command = command_from_cli_candidate(candidate);
-    command.arg("--version");
-    run_command_capture_timeout(command, Duration::from_secs(3))
-        .map(|(ok, _, _)| ok)
-        .unwrap_or(false)
-}
-
-fn codex_cli_any_candidate_exists() -> bool {
-    codex_command_candidates()
-        .into_iter()
-        .any(|path| path.is_absolute() && path.exists())
 }
 
 fn gemini_env_path() -> Result<PathBuf, String> {
@@ -20004,7 +20972,7 @@ fn gemini_cli_status(model_ref: Option<&str>) -> OpenAiSubscriptionStatus {
         }),
         last_refresh: None,
         model_ref: gemini_bridge_model_arg(model_ref)
-            .unwrap_or_else(|| "gemini-2.5-pro".to_string()),
+            .unwrap_or_else(|| "gemini-3-pro".to_string()),
         message,
     };
     if status.installed || status.connected {
@@ -20023,15 +20991,30 @@ fn gemini_bridge_model_arg(model_ref: Option<&str>) -> Option<String> {
         .or_else(|| raw.strip_prefix("google/"))
         .unwrap_or(raw)
         .trim();
+    let model = match model.to_ascii_lowercase().as_str() {
+        "3" | "gemini-3" => "gemini-3-pro",
+        _ => model,
+    };
     if model.is_empty()
         || model.len() > 90
         || !model
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | '/'))
+        || !gemini_model_allowed(model)
     {
         return None;
     }
     Some(model.to_string())
+}
+
+fn gemini_model_allowed(model: &str) -> bool {
+    model
+        .to_ascii_lowercase()
+        .strip_prefix("gemini-")
+        .and_then(|rest| rest.split(|ch: char| !ch.is_ascii_digit()).next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .map(|major| major >= 3)
+        .unwrap_or(false)
 }
 
 fn claude_command_candidates() -> Vec<PathBuf> {
@@ -20204,11 +21187,7 @@ fn claude_auth_status_from_cli(candidate: &Path) -> Option<(bool, String, String
 
 fn claude_bridge_model_arg(model_ref: Option<&str>) -> Option<String> {
     let raw = model_ref.unwrap_or("").trim();
-    if raw.is_empty()
-        || raw.eq_ignore_ascii_case("default")
-        || raw.eq_ignore_ascii_case("claude-default")
-        || raw.eq_ignore_ascii_case("claude-code-default")
-    {
+    if raw.is_empty() {
         return None;
     }
     let model = raw
@@ -20216,15 +21195,39 @@ fn claude_bridge_model_arg(model_ref: Option<&str>) -> Option<String> {
         .or_else(|| raw.strip_prefix("claude/"))
         .unwrap_or(raw)
         .trim();
+    let model = match model.to_ascii_lowercase().as_str() {
+        "default" | "claude-default" | "claude-code-default" | "sonnet" | "claude-sonnet" => {
+            "claude-sonnet-4.6"
+        }
+        "opus" | "claude-opus" => "claude-opus-4.6",
+        _ => model,
+    };
     if model.is_empty()
         || model.len() > 90
         || !model
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | '/'))
+        || !claude_model_allowed(model)
     {
         return None;
     }
     Some(model.to_string())
+}
+
+fn claude_model_allowed(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    claude_version_at_least(&lower, "claude-sonnet-", 4, 6)
+        || claude_version_at_least(&lower, "claude-opus-", 4, 6)
+}
+
+fn claude_version_at_least(value: &str, prefix: &str, min_major: u32, min_minor: u32) -> bool {
+    let Some(rest) = value.strip_prefix(prefix) else {
+        return false;
+    };
+    let mut parts = rest.split(|ch: char| !ch.is_ascii_digit());
+    let major = parts.next().and_then(|part| part.parse::<u32>().ok()).unwrap_or(0);
+    let minor = parts.next().and_then(|part| part.parse::<u32>().ok()).unwrap_or(0);
+    major > min_major || major == min_major && minor >= min_minor
 }
 
 fn claude_cli_status(model_ref: Option<&str>) -> OpenAiSubscriptionStatus {
@@ -20302,7 +21305,7 @@ fn claude_cli_status(model_ref: Option<&str>) -> OpenAiSubscriptionStatus {
         }),
         last_refresh: None,
         model_ref: claude_bridge_model_arg(model_ref)
-            .unwrap_or_else(|| "claude-code-default".to_string()),
+            .unwrap_or_else(|| "claude-sonnet-4.6".to_string()),
         message,
     };
     if status.installed || status.connected {
@@ -20395,12 +21398,13 @@ fn ensure_claude_forge_mcp_config(
     Ok(config_path)
 }
 
+#[allow(unreachable_code)]
 fn canvas_message_needs_forge_tools(user_message: &str, has_active_job: bool) -> bool {
     let lower = user_message.to_lowercase();
     if user_message.contains("CURRENT_TURN_DECISION_POINT:") {
         return true;
     }
-    if lower.contains("[attached") || lower.contains("attached --") || lower.contains("attached —") {
+    if lower.contains("[attached") || lower.contains("attached --") || lower.contains("attached ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â") {
         return true;
     }
     let normalized = normalized_canvas_micro_text(user_message);
@@ -20457,12 +21461,129 @@ fn canvas_message_needs_forge_tools(user_message: &str, has_active_job: bool) ->
     {
         return true;
     }
+    let explicit_forge_phrases = [
+        "outil forge",
+        "outils forge",
+        "forge tool",
+        "forge tools",
+        "programme forge",
+        "program forge",
+        "instrument forge",
+        "lens forge",
+        "atlas forge",
+        "atlas",
+        "kasm",
+    ];
+    if explicit_forge_phrases
+        .iter()
+        .any(|keyword| normalized.contains(keyword))
+    {
+        return true;
+    }
+    let execution_words = [
+        "run",
+        "lance",
+        "lancer",
+        "execute",
+        "executer",
+        "calcul",
+        "calculer",
+        "compute",
+        "backtest",
+        "optimise",
+        "optimiser",
+        "optimize",
+        "cree",
+        "creer",
+        "genere",
+        "generer",
+        "build",
+        "sauve",
+        "enregistre",
+    ];
+    let forge_object_words = [
+        "program",
+        "programme",
+        "tool",
+        "outil",
+        "indicator",
+        "indicateur",
+        "strategy",
+        "strategie",
+        "metric",
+        "metrique",
+        "proof",
+        "preuve",
+        "hash",
+        "instrument",
+        "lens",
+        "workflow",
+        "atlas",
+        "kasm",
+    ];
+    if text_has_word(&normalized, &execution_words) && text_has_word(&normalized, &forge_object_words)
+    {
+        return true;
+    }
+    if !has_active_job {
+        return false;
+    }
+    let session_action_words = [
+        "show",
+        "montre",
+        "affiche",
+        "list",
+        "liste",
+        "read",
+        "lis",
+        "open",
+        "ouvre",
+        "inspect",
+        "inspecte",
+        "resume",
+        "resumer",
+        "summarize",
+        "summarise",
+        "status",
+        "statut",
+        "analyse",
+        "analyser",
+        "analyze",
+    ];
+    let session_context_words = [
+        "context",
+        "contexte",
+        "session",
+        "fichier",
+        "fichiers",
+        "file",
+        "files",
+        "csv",
+        "json",
+        "pdf",
+        "txt",
+        "log",
+        "logs",
+        "journal",
+        "result",
+        "resultat",
+        "resultats",
+        "graph",
+        "graphe",
+        "chart",
+        "program",
+        "programme",
+        "programs",
+        "programmes",
+    ];
+    return text_has_word(&normalized, &session_action_words)
+        && text_has_word(&normalized, &session_context_words);
     let compute_keywords = [
         "run",
         "lance",
         "lancer",
         "execute",
-        "exécute",
+        "exÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©cute",
         "calcul",
         "calculer",
         "compute",
@@ -20478,10 +21599,10 @@ fn canvas_message_needs_forge_tools(user_message: &str, has_active_job: bool) ->
         "indicateur",
         "strategy",
         "strategie",
-        "stratégie",
+        "stratÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©gie",
         "metric",
         "metrique",
-        "métrique",
+        "mÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©trique",
         "compare",
         "comparer",
         "optimize",
@@ -20489,12 +21610,12 @@ fn canvas_message_needs_forge_tools(user_message: &str, has_active_job: bool) ->
         "optimiser",
         "create",
         "cree",
-        "crée",
-        "créer",
+        "crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e",
+        "crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©er",
         "select",
         "selection",
-        "sélection",
-        "sélectionne",
+        "sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©lection",
+        "sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©lectionne",
         "proof",
         "preuve",
         "hash",
@@ -20523,7 +21644,7 @@ fn canvas_message_needs_forge_tools(user_message: &str, has_active_job: bool) ->
         "log",
         "result",
         "resultat",
-        "résultat",
+        "rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©sultat",
         "graph",
         "graphe",
         "chart",
@@ -20598,20 +21719,19 @@ fn forge_capability_prompt_instruction(user_message: &str) -> &'static str {
     }
     "Question capacites Forge: reponds naturellement. Resume Forge comme un moteur local qui garde gros fichiers/calculs sur disque, renvoie des resultats compacts, hashes/preuves et vues, et peut creer des Instruments (calcul) ou Lenses (2D/3D) composes de Nodes adaptes au domaine. Donne 2-4 exemples pertinents maximum."
 }
-
 fn normalized_canvas_micro_text(text: &str) -> String {
     let mut cleaned = String::with_capacity(text.len());
     for ch in text.trim().to_lowercase().chars() {
         let mapped = match ch {
-            'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' => 'a',
-            'ç' => 'c',
-            'è' | 'é' | 'ê' | 'ë' => 'e',
-            'ì' | 'í' | 'î' | 'ï' => 'i',
-            'ñ' => 'n',
-            'ò' | 'ó' | 'ô' | 'ö' | 'õ' => 'o',
-            'ù' | 'ú' | 'û' | 'ü' => 'u',
-            'ý' | 'ÿ' => 'y',
-            '’' | '\'' => ' ',
+            '\u{00E0}' | '\u{00E1}' | '\u{00E2}' | '\u{00E4}' | '\u{00E3}' | '\u{00E5}' => 'a',
+            '\u{00E7}' => 'c',
+            '\u{00E8}' | '\u{00E9}' | '\u{00EA}' | '\u{00EB}' => 'e',
+            '\u{00EC}' | '\u{00ED}' | '\u{00EE}' | '\u{00EF}' => 'i',
+            '\u{00F1}' => 'n',
+            '\u{00F2}' | '\u{00F3}' | '\u{00F4}' | '\u{00F6}' | '\u{00F5}' => 'o',
+            '\u{00F9}' | '\u{00FA}' | '\u{00FB}' | '\u{00FC}' => 'u',
+            '\u{00FD}' | '\u{00FF}' => 'y',
+            '\u{2019}' | '\'' => ' ',
             ch if ch.is_alphanumeric() => ch,
             _ => ' ',
         };
@@ -20718,7 +21838,7 @@ fn local_canvas_forge_help_reply(normalized: &str) -> Option<String> {
             "fonctionnalites de forge",
         ],
     ) {
-        return Some("Avec Forge, je peux t’aider à organiser une session, ajouter des fichiers, choisir ou créer un programme de calcul, lancer des analyses backend, suivre les logs, lire les résultats, produire des preuves/hashes, et comparer Codex, Gemini ou Claude sans envoyer les gros fichiers au LLM.".to_string());
+        return Some("Avec Forge, je peux tÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢aider ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  organiser une session, ajouter des fichiers, choisir ou crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©er un programme de calcul, lancer des analyses backend, suivre les logs, lire les rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©sultats, produire des preuves/hashes, et comparer Codex, Gemini ou Claude sans envoyer les gros fichiers au LLM.".to_string());
     }
     if micro_contains_any(
         normalized,
@@ -20740,7 +21860,7 @@ fn local_canvas_forge_help_reply(normalized: &str) -> Option<String> {
             "pourquoi utiliser forge",
         ],
     ) {
-        return Some("Forge sert à garder les gros fichiers, calculs et preuves côté backend. Tu parles dans le canvas, l’agent lit seulement un contexte compact, lance les programmes Forge quand il faut, et évite d’envoyer les données brutes au LLM.".to_string());
+        return Some("Forge sert ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  garder les gros fichiers, calculs et preuves cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© backend. Tu parles dans le canvas, lÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢agent lit seulement un contexte compact, lance les programmes Forge quand il faut, et ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©vite dÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢envoyer les donnÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©es brutes au LLM.".to_string());
     }
     if micro_contains_any(
         normalized,
@@ -20755,7 +21875,7 @@ fn local_canvas_forge_help_reply(normalized: &str) -> Option<String> {
             "fichier dans la session",
         ],
     ) {
-        return Some("Pour une session ouverte, utilise le + dans la barre de chat ou sous la card fichier: le fichier est ajouté à la session actuelle. New session sert à repartir dans une autre session, avec ou sans fichier.".to_string());
+        return Some("Pour une session ouverte, utilise le + dans la barre de chat ou sous la card fichier: le fichier est ajoutÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  la session actuelle. New session sert ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  repartir dans une autre session, avec ou sans fichier.".to_string());
     }
     if micro_contains_any(
         normalized,
@@ -20770,7 +21890,7 @@ fn local_canvas_forge_help_reply(normalized: &str) -> Option<String> {
             "cout de tokens",
         ],
     ) {
-        return Some("Forge économise les tokens en gardant les fichiers et calculs sur disque. Le LLM reçoit des résumés, références, hashes, logs courts et résultats. Pour les petits messages, Forge répond localement sans appeler Codex, Gemini ou Claude.".to_string());
+        return Some("Forge ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©conomise les tokens en gardant les fichiers et calculs sur disque. Le LLM reÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§oit des rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©sumÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s, rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rences, hashes, logs courts et rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©sultats. Pour les petits messages, Forge rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pond localement sans appeler Codex, Gemini ou Claude.".to_string());
     }
     if micro_contains_any(
         normalized,
@@ -20786,7 +21906,7 @@ fn local_canvas_forge_help_reply(normalized: &str) -> Option<String> {
             "raisonnement eleve",
         ],
     ) {
-        return Some("Dans la barre de chat, tu choisis Codex, Gemini, Claude ou All. Le modèle et l’effort de raisonnement se règlent dans le sélecteur à droite. All sert surtout à comparer ou répartir une tâche, pas aux petits messages.".to_string());
+        return Some("Dans la barre de chat, tu choisis Codex, Gemini, Claude ou All. Le modÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨le et lÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢effort de raisonnement se rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨glent dans le sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©lecteur ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  droite. All sert surtout ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  comparer ou rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©partir une tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢che, pas aux petits messages.".to_string());
     }
     if micro_contains_any(
         normalized,
@@ -20813,34 +21933,36 @@ fn local_canvas_forge_help_reply(normalized: &str) -> Option<String> {
         return Some("Forge saves tokens by keeping raw files and heavy computation on disk. The LLM gets compact summaries, references, hashes, short logs and results. Simple messages are answered locally.".to_string());
     }
     if micro_contains_any(normalized, &["que es forge", "como funciona forge", "no entiendo forge", "para que sirve forge"]) {
-        return Some("Forge guarda archivos grandes, cálculos y pruebas en el backend. El agente recibe contexto compacto, ejecuta programas Forge cuando hace falta y evita enviar datos brutos al LLM.".to_string());
+        return Some("Forge guarda archivos grandes, cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡lculos y pruebas en el backend. El agente recibe contexto compacto, ejecuta programas Forge cuando hace falta y evita enviar datos brutos al LLM.".to_string());
     }
     if micro_contains_any(normalized, &["was ist forge", "wie funktioniert forge", "ich verstehe forge nicht", "wofur ist forge"]) {
-        return Some("Forge hält große Dateien, Berechnungen und Nachweise im Backend. Der Agent bekommt kompakten Kontext, startet Forge-Programme bei Bedarf und sendet keine Rohdaten an das LLM.".to_string());
+        return Some("Forge hÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤lt groÃƒÆ’Ã†â€™Ãƒâ€¦Ã‚Â¸e Dateien, Berechnungen und Nachweise im Backend. Der Agent bekommt kompakten Kontext, startet Forge-Programme bei Bedarf und sendet keine Rohdaten an das LLM.".to_string());
     }
     if micro_contains_any(normalized, &["cos e forge", "come funziona forge", "non capisco forge", "a cosa serve forge"]) {
-        return Some("Forge tiene file grandi, calcoli e prove nel backend. L’agente riceve contesto compatto, avvia programmi Forge quando serve e non invia dati grezzi al LLM.".to_string());
+        return Some("Forge tiene file grandi, calcoli e prove nel backend. LÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢agente riceve contesto compatto, avvia programmi Forge quando serve e non invia dati grezzi al LLM.".to_string());
     }
     if micro_contains_any(normalized, &["o que e forge", "como funciona forge", "nao entendo forge", "para que serve forge"]) {
-        return Some("Forge mantém arquivos grandes, cálculos e provas no backend. O agente recebe contexto compacto, executa programas Forge quando necessário e evita enviar dados brutos ao LLM.".to_string());
+        return Some("Forge mantÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©m arquivos grandes, cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡lculos e provas no backend. O agente recebe contexto compacto, executa programas Forge quando necessÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡rio e evita enviar dados brutos ao LLM.".to_string());
     }
-    if micro_contains_any(normalized, &["что такое forge", "как работает forge", "не понимаю forge"]) {
-        return Some("Forge хранит большие файлы, вычисления и доказательства в backend. Агент получает компактный контекст, запускает программы Forge при необходимости и не отправляет сырые данные в LLM.".to_string());
+    if micro_contains_any(normalized, &["ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ forge", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ forge", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½ forge"]) {
+        return Some("Forge ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹, ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â² backend. ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡, ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ Forge ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â² LLM.".to_string());
     }
-    if micro_contains_any(normalized, &["什么是forge", "forge怎么用", "forge如何工作"]) {
-        return Some("Forge 把大文件、计算和证明保留在后端。智能体只接收紧凑上下文，需要时运行 Forge 程序，避免把原始数据发送给 LLM。".to_string());
+    if micro_contains_any(normalized, &["ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¹Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â¦Ãƒâ€¹Ã…â€œÃƒâ€šÃ‚Â¯forge", "forgeÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â½ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¹Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â§ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â¨", "forgeÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â½ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â·Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â½Ãƒâ€¦Ã¢â‚¬Å“"]) {
+        return Some("Forge ÃƒÆ’Ã‚Â¦Ãƒâ€¦Ã‚Â Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â®Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â®ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¯Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¦Ãƒâ€¹Ã…â€œÃƒâ€¦Ã‚Â½ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â§ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â¥Ãƒâ€¦Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚ÂÃƒâ€¦Ã‚Â½ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â«Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢Ãƒâ€šÃ‚ÂºÃƒÆ’Ã‚Â¨Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â½ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â½ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â¦Ãƒâ€¦Ã‚Â½Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â¶ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¼Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â©Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¦Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚Â¶ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¡Ãƒâ€¦Ã¢â‚¬â„¢ Forge ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â¨ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¼Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â©Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¦Ãƒâ€¦Ã‚Â Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‚Â¥Ãƒâ€¦Ã‚Â½Ãƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â§ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚Â°ÃƒÆ’Ã‚Â¦Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â©ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ LLMÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡".to_string());
     }
-    if micro_contains_any(normalized, &["forgeとは", "forgeの使い方", "forgeがわからない"]) {
-        return Some("Forge は大きなファイル、計算、証明をバックエンド側に置きます。エージェントは短い文脈だけを受け取り、必要な時に Forge プログラムを実行します。".to_string());
+    if micro_contains_any(normalized, &["forgeÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¯", "forgeÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â½Ãƒâ€šÃ‚Â¿ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¹", "forgeÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾"]) {
+        return Some("Forge ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â«ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¨Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â®ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¨Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã‚Â¦Ãƒâ€¹Ã…â€œÃƒâ€¦Ã‚Â½ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â«ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â½Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â§Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚Â¨ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¿ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¦Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â« Forge ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â®Ãƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¡Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡".to_string());
     }
-    if micro_contains_any(normalized, &["ما هو forge", "كيف يعمل forge", "لا افهم forge"]) {
-        return Some("Forge يحتفظ بالملفات الكبيرة والحسابات والإثباتات في الخلفية. يحصل الوكيل على سياق مختصر ويشغل برامج Forge عند الحاجة بدون إرسال البيانات الخام إلى LLM.".to_string());
+    if micro_contains_any(normalized, &["ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¹Ã¢â‚¬Â  forge", "ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ forge", "ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ forge"]) {
+        return Some("Forge ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚ÂªÃƒÆ’Ã¢â€žÂ¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¸ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Âª ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â© ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Âª ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â«ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Âª ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â  ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â©. ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚ÂµÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â° ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â³ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â± ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â´ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚ÂºÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¬ Forge ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¯ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â© ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â  ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Âª ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â° LLM.".to_string());
     }
     None
 }
 
-fn local_canvas_micro_reply(text: &str) -> Option<String> {
-    let normalized = normalized_canvas_micro_text(text);
+#[allow(unreachable_code)]
+fn local_canvas_micro_reply(_text: &str) -> Option<String> {
+    return None;
+    let normalized = normalized_canvas_micro_text(_text);
     if normalized.is_empty() {
         return None;
     }
@@ -20851,16 +21973,16 @@ fn local_canvas_micro_reply(text: &str) -> Option<String> {
         return None;
     }
     if micro_phrase_is(&normalized, &["hello", "hi", "hey", "yo", "good morning", "good evening"]) {
-        return Some("Hello, I’m here.".to_string());
+        return Some("Hello, IÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢m here.".to_string());
     }
     if micro_phrase_is(&normalized, &["how are you", "how are you doing", "how s it going", "you good"]) {
-        return Some("I’m good. I’m ready in the session.".to_string());
+        return Some("IÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢m good. IÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢m ready in the session.".to_string());
     }
     if micro_phrase_is(&normalized, &["are you there", "can you hear me", "can you see me", "does this work"]) {
-        return Some("Yes, I’m here.".to_string());
+        return Some("Yes, IÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢m here.".to_string());
     }
     if micro_phrase_is(&normalized, &["thanks", "thank you", "thx"]) {
-        return Some("You’re welcome.".to_string());
+        return Some("YouÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢re welcome.".to_string());
     }
     if micro_phrase_is(&normalized, &["perfect", "great", "nice", "awesome", "excellent"]) {
         return Some("Great.".to_string());
@@ -20873,13 +21995,13 @@ fn local_canvas_micro_reply(text: &str) -> Option<String> {
     }
 
     if micro_phrase_is(&normalized, &["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches"]) {
-        return Some("Hola, estoy aquí.".to_string());
+        return Some("Hola, estoy aquÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â­.".to_string());
     }
     if micro_phrase_is(&normalized, &["que tal", "como estas", "como va", "todo bien"]) {
-        return Some("Todo bien. Estoy listo en la sesión.".to_string());
+        return Some("Todo bien. Estoy listo en la sesiÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³n.".to_string());
     }
     if micro_phrase_is(&normalized, &["estas ahi", "me escuchas", "me ves", "funciona"]) {
-        return Some("Sí, estoy aquí.".to_string());
+        return Some("SÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â­, estoy aquÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â­.".to_string());
     }
     if micro_phrase_is(&normalized, &["gracias", "muchas gracias"]) {
         return Some("Con gusto.".to_string());
@@ -20904,7 +22026,7 @@ fn local_canvas_micro_reply(text: &str) -> Option<String> {
         return Some("Gern.".to_string());
     }
     if micro_phrase_is(&normalized, &["tschuss", "auf wiedersehen", "bis spater"]) {
-        return Some("Bis später.".to_string());
+        return Some("Bis spÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ter.".to_string());
     }
 
     if micro_phrase_is(&normalized, &["ciao", "buongiorno", "buonasera", "salve"]) {
@@ -20914,7 +22036,7 @@ fn local_canvas_micro_reply(text: &str) -> Option<String> {
         return Some("Tutto bene. Sono pronto nella sessione.".to_string());
     }
     if micro_phrase_is(&normalized, &["ci sei", "mi senti", "mi vedi"]) {
-        return Some("Sì, sono qui.".to_string());
+        return Some("SÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¬, sono qui.".to_string());
     }
     if micro_phrase_is(&normalized, &["grazie", "grazie mille"]) {
         return Some("Prego.".to_string());
@@ -20923,11 +22045,11 @@ fn local_canvas_micro_reply(text: &str) -> Option<String> {
         return Some("A presto.".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["ola", "olá", "oi", "bom dia", "boa tarde", "boa noite"]) {
-        return Some("Olá, estou aqui.".to_string());
+    if micro_phrase_is(&normalized, &["ola", "olÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡", "oi", "bom dia", "boa tarde", "boa noite"]) {
+        return Some("OlÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡, estou aqui.".to_string());
     }
     if micro_phrase_is(&normalized, &["tudo bem", "como vai", "como estas", "como voce esta"]) {
-        return Some("Tudo bem. Estou pronto na sessão.".to_string());
+        return Some("Tudo bem. Estou pronto na sessÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o.".to_string());
     }
     if micro_phrase_is(&normalized, &["estas ai", "voce esta ai", "me ouve"]) {
         return Some("Sim, estou aqui.".to_string());
@@ -20936,7 +22058,7 @@ fn local_canvas_micro_reply(text: &str) -> Option<String> {
         return Some("De nada.".to_string());
     }
     if micro_phrase_is(&normalized, &["tchau", "ate logo", "ate mais"]) {
-        return Some("Até logo.".to_string());
+        return Some("AtÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© logo.".to_string());
     }
 
     if micro_phrase_is(&normalized, &["hallo", "hoi", "goedemorgen", "goedenavond"]) {
@@ -20952,120 +22074,120 @@ fn local_canvas_micro_reply(text: &str) -> Option<String> {
         return Some("Graag gedaan.".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["привет", "здравствуйте", "добрый день", "доброе утро", "добрый вечер"]) {
-        return Some("Привет, я здесь.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬"]) {
+        return Some("ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡, ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢.".to_string());
     }
-    if micro_phrase_is(&normalized, &["как дела", "как ты", "все хорошо"]) {
-        return Some("Все хорошо. Я готов в этой сессии.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾"]) {
+        return Some("ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾. ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¯ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â² ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â² ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸.".to_string());
     }
-    if micro_phrase_is(&normalized, &["ты здесь", "ты меня слышишь", "работает"]) {
-        return Some("Да, я здесь.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢", "ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢", "ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡"]) {
+        return Some("ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°, ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢.".to_string());
     }
-    if micro_phrase_is(&normalized, &["спасибо", "большое спасибо"]) {
-        return Some("Пожалуйста.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾"]) {
+        return Some("ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¶ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°.".to_string());
     }
-    if micro_phrase_is(&normalized, &["пока", "до свидания", "до встречи"]) {
-        return Some("До встречи.".to_string());
-    }
-
-    if micro_phrase_is(&normalized, &["привіт", "добрий день", "доброго ранку", "добрий вечір"]) {
-        return Some("Привіт, я тут.".to_string());
-    }
-    if micro_phrase_is(&normalized, &["як справи", "як ти", "все добре"]) {
-        return Some("Все добре. Я готовий у цій сесії.".to_string());
-    }
-    if micro_phrase_is(&normalized, &["дякую", "дуже дякую"]) {
-        return Some("Будь ласка.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸"]) {
+        return Some("ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸.".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["czesc", "cześć", "dzien dobry", "dzień dobry", "dobry wieczor"]) {
-        return Some("Cześć, jestem tutaj.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬"]) {
+        return Some("ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡, ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡.".to_string());
+    }
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸", "ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ"]) {
+        return Some("ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ. ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¯ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â.".to_string());
+    }
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¶ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½"]) {
+        return Some("ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°.".to_string());
+    }
+
+    if micro_phrase_is(&normalized, &["czesc", "czeÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡", "dzien dobry", "dzieÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ dobry", "dobry wieczor"]) {
+        return Some("CzeÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡, jestem tutaj.".to_string());
     }
     if micro_phrase_is(&normalized, &["jak sie masz", "jak leci", "wszystko dobrze"]) {
         return Some("Wszystko dobrze. Jestem gotowy w sesji.".to_string());
     }
-    if micro_phrase_is(&normalized, &["dzieki", "dzięki", "dziekuje", "dziękuję"]) {
-        return Some("Proszę.".to_string());
+    if micro_phrase_is(&normalized, &["dzieki", "dziÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ki", "dziekuje", "dziÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢kujÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢"]) {
+        return Some("ProszÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢.".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["hej", "god morgon", "god kväll", "hei", "god morgen", "god kveld", "moi", "terve"]) {
-        return Some("Hej, jag är här.".to_string());
+    if micro_phrase_is(&normalized, &["hej", "god morgon", "god kvÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ll", "hei", "god morgen", "god kveld", "moi", "terve"]) {
+        return Some("Hej, jag ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤r hÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤r.".to_string());
     }
     if micro_phrase_is(&normalized, &["hur mar du", "hvordan gar det", "hvordan har du det", "miten menee", "kaikki hyvin"]) {
-        return Some("Allt är bra. Jag är redo i sessionen.".to_string());
+        return Some("Allt ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤r bra. Jag ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤r redo i sessionen.".to_string());
     }
     if micro_phrase_is(&normalized, &["tack", "tusen takk", "kiitos"]) {
-        return Some("Varsågod.".to_string());
+        return Some("VarsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥god.".to_string());
     }
 
     if micro_phrase_is(&normalized, &["merhaba", "selam", "gunaydin", "iyi aksamlar"]) {
-        return Some("Merhaba, buradayım.".to_string());
+        return Some("Merhaba, buradayÃƒÆ’Ã¢â‚¬Å¾Ãƒâ€šÃ‚Â±m.".to_string());
     }
     if micro_phrase_is(&normalized, &["nasilsin", "nasil gidiyor", "iyi misin"]) {
-        return Some("İyiyim. Bu oturumda hazırım.".to_string());
+        return Some("ÃƒÆ’Ã¢â‚¬Å¾Ãƒâ€šÃ‚Â°yiyim. Bu oturumda hazÃƒÆ’Ã¢â‚¬Å¾Ãƒâ€šÃ‚Â±rÃƒÆ’Ã¢â‚¬Å¾Ãƒâ€šÃ‚Â±m.".to_string());
     }
     if micro_phrase_is(&normalized, &["tesekkurler", "tesekkur ederim", "sagol"]) {
         return Some("Rica ederim.".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["مرحبا", "أهلا", "اهلا", "السلام عليكم", "سلام"]) {
-        return Some("مرحبًا، أنا هنا.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§", "ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â£ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§", "ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§", "ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â³ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦", "ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â³ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦"]) {
+        return Some("ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‹Å“Ãƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â£ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§.".to_string());
     }
-    if micro_phrase_is(&normalized, &["كيف حالك", "كيفك", "كل شيء بخير"]) {
-        return Some("أنا بخير. أنا جاهز في الجلسة.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€šÃ‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢", "ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢", "ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â´ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¡ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±"]) {
+        return Some("ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â£ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±. ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â£ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â² ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â  ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â©.".to_string());
     }
-    if micro_phrase_is(&normalized, &["شكرا", "شكرا جزيلا"]) {
-        return Some("على الرحب.".to_string());
-    }
-
-    if micro_phrase_is(&normalized, &["שלום", "היי", "בוקר טוב", "ערב טוב"]) {
-        return Some("שלום, אני כאן.".to_string());
-    }
-    if micro_phrase_is(&normalized, &["מה נשמע", "איך הולך", "הכל בסדר"]) {
-        return Some("הכל טוב. אני מוכן בסשן.".to_string());
-    }
-    if micro_phrase_is(&normalized, &["תודה", "תודה רבה"]) {
-        return Some("בשמחה.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â´ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§", "ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â´ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â²ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¦Ã‚Â ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§"]) {
+        return Some("ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â° ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¨.".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["你好", "您好", "嗨", "早上好", "晚上好"]) {
-        return Some("你好，我在。".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â", "ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢", "ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â¨ ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¹Ã…â€œÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“", "ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¹Ã…â€œÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“"]) {
+        return Some("ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â, ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã‚Â¸.".to_string());
     }
-    if micro_phrase_is(&normalized, &["你好吗", "怎么样", "还好吗"]) {
-        return Some("我很好，已准备好在这个会话中工作。".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â¢", "ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã‚Â¡ ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã‚Â¡", "ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã¢â‚¬Å“ ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â¨"]) {
+        return Some("ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã¢â‚¬Å“ ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¹Ã…â€œÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“. ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã‚Â¸ ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã‚Â¸.".to_string());
     }
-    if micro_phrase_is(&normalized, &["谢谢", "多谢"]) {
-        return Some("不客气。".to_string());
-    }
-
-    if micro_phrase_is(&normalized, &["こんにちは", "こんばんは", "おはよう", "もしもし"]) {
-        return Some("こんにちは。ここにいます。".to_string());
-    }
-    if micro_phrase_is(&normalized, &["元気ですか", "調子はどう", "大丈夫ですか"]) {
-        return Some("元気です。このセッションで準備できています。".to_string());
-    }
-    if micro_phrase_is(&normalized, &["ありがとう", "ありがとうございます"]) {
-        return Some("どういたしまして。".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚ÂªÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â", "ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚ÂªÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"]) {
+        return Some("ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã¢â‚¬â€Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬â€Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬â€ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â.".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["안녕하세요", "안녕", "여보세요"]) {
-        return Some("안녕하세요, 여기 있어요.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â½Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â½", "ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â½", "ÃƒÆ’Ã‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚Â¨", "ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â½", "ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â½"]) {
+        return Some("ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â½Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â½ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¼Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¦Ãƒâ€¹Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¥Ãƒâ€¦Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡".to_string());
     }
-    if micro_phrase_is(&normalized, &["잘 지내", "어때", "괜찮아"]) {
-        return Some("좋아요. 이 세션에서 준비됐어요.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â½Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â½ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â", "ÃƒÆ’Ã‚Â¦ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â½ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¹Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â¦Ãƒâ€šÃ‚Â Ãƒâ€šÃ‚Â·", "ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¿Ãƒâ€¹Ã…â€œÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â½ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"]) {
+        return Some("ÃƒÆ’Ã‚Â¦Ãƒâ€¹Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¾Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â½ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¼Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â·Ãƒâ€šÃ‚Â²ÃƒÆ’Ã‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â½ÃƒÆ’Ã‚Â¥Ãƒâ€¦Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¿ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¼Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¯Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â·Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â½Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡".to_string());
     }
-    if micro_phrase_is(&normalized, &["고마워", "감사합니다"]) {
-        return Some("천만에요.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â°Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â°Ãƒâ€šÃ‚Â¢", "ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¤Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â°Ãƒâ€šÃ‚Â¢"]) {
+        return Some("ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â®Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¦Ãƒâ€šÃ‚Â°ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["namaste", "नमस्ते", "नमस्कार"]) {
-        return Some("नमस्ते, मैं यहाँ हूँ।".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â«ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¯", "ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¯", "ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€¦Ã‚Â ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ", "ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"]) {
+        return Some("ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â«ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â«ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡".to_string());
     }
-    if micro_phrase_is(&normalized, &["kaise ho", "आप कैसे हैं", "सब ठीक"]) {
-        return Some("मैं ठीक हूँ। मैं इस सेशन में तैयार हूँ।".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¦Ãƒâ€šÃ‚Â°ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹", "ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚ÂªÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â­Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ", "ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â«ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹"]) {
+        return Some("ÃƒÆ’Ã‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¦Ãƒâ€šÃ‚Â°ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â·ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â£Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¦Ãƒâ€šÃ‚ÂºÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡".to_string());
     }
-    if micro_phrase_is(&normalized, &["dhanyavaad", "धन्यवाद", "शुक्रिया"]) {
-        return Some("स्वागत है।".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ", "ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢"]) {
+        return Some("ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â£Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡".to_string());
+    }
+
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â«ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã‚Â­ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€¹Ã…â€œÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â", "ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â«ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢", "ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â«Ãƒâ€šÃ‚Â³Ãƒâ€šÃ‚Â´ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"]) {
+        return Some("ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â«ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã‚Â­ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€¹Ã…â€œÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â, ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚Â¬ÃƒÆ’Ã‚ÂªÃƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â° ÃƒÆ’Ã‚Â¬Ãƒâ€¦Ã‚Â¾Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â´ÃƒÆ’Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â.".to_string());
+    }
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â¬Ãƒâ€¦Ã‚Â¾Ãƒâ€¹Ã…â€œ ÃƒÆ’Ã‚Â¬Ãƒâ€šÃ‚Â§ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â«ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â´", "ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â´ÃƒÆ’Ã‚Â«ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€¦Ã¢â‚¬â„¢", "ÃƒÆ’Ã‚ÂªÃƒâ€šÃ‚Â´Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¬Ãƒâ€šÃ‚Â°Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾"]) {
+        return Some("ÃƒÆ’Ã‚Â¬Ãƒâ€šÃ‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â. ÃƒÆ’Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â´ ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦Ãƒâ€¹Ã…â€œÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€¦Ã¢â‚¬Å“ ÃƒÆ’Ã‚Â¬Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â«Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â«Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“Ãƒâ€šÃ‚Â´ÃƒÆ’Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â.".to_string());
+    }
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚ÂªÃƒâ€šÃ‚Â³Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â«Ãƒâ€šÃ‚Â§Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒâ€¦Ã¢â‚¬â„¢", "ÃƒÆ’Ã‚ÂªÃƒâ€šÃ‚Â°Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â­ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â«ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â«ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹Ãƒâ€šÃ‚Â¤"]) {
+        return Some("ÃƒÆ’Ã‚Â¬Ãƒâ€šÃ‚Â²Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â«Ãƒâ€šÃ‚Â§Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â.".to_string());
+    }
+
+    if micro_phrase_is(&normalized, &["namaste", "ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡", "ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â°"]) {
+        return Some("ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡, ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â¤".to_string());
+    }
+    if micro_phrase_is(&normalized, &["kaise ho", "ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Âª ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡", "ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¬ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢"]) {
+        return Some("ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â¤ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¨ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â° ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â¤".to_string());
+    }
+    if micro_phrase_is(&normalized, &["dhanyavaad", "ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¦", "ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â°ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¿ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¾"]) {
+        return Some("ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¤ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¤Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¥Ãƒâ€šÃ‚Â¤".to_string());
     }
 
     if micro_phrase_is(&normalized, &["halo", "hai", "selamat pagi", "selamat malam", "xin chao", "chao ban"]) {
@@ -21078,48 +22200,48 @@ fn local_canvas_micro_reply(text: &str) -> Option<String> {
         return Some("Sama-sama.".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["สวัสดี", "หวัดดี"]) {
-        return Some("สวัสดี ฉันอยู่ตรงนี้".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Âµ", "ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â«ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Âµ"]) {
+        return Some("ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Âµ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°".to_string());
     }
-    if micro_phrase_is(&normalized, &["สบายดีไหม", "เป็นไงบ้าง"]) {
-        return Some("สบายดี พร้อมในเซสชันนี้แล้ว".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â²ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â«ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¡", "ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â²ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡"]) {
+        return Some("ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â²ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Âµ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â±ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â§".to_string());
     }
-    if micro_phrase_is(&normalized, &["ขอบคุณ", "ขอบคุณมาก"]) {
-        return Some("ยินดี".to_string());
-    }
-
-    if micro_phrase_is(&normalized, &["γεια", "καλημερα", "καλησπερα"]) {
-        return Some("Γεια, είμαι εδώ.".to_string());
-    }
-    if micro_phrase_is(&normalized, &["τι κανεις", "πως παει", "ολα καλα"]) {
-        return Some("Είμαι καλά. Είμαι έτοιμος στη συνεδρία.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ", "ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â²ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â"]) {
+        return Some("ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â´ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Âµ".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["buna", "bună", "szia", "jo napot", "jó napot", "ahoj", "dobry den"]) {
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â³ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂµÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±", "ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂºÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â»ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â·ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±", "ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂºÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â»ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±"]) {
+        return Some("ÃƒÆ’Ã…Â½ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂµÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±, ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂµÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¹ ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂµÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â½.".to_string());
+    }
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¹ ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂºÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂµÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂµÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¹", "ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¿ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â»ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â± ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂºÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â»ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±"]) {
+        return Some("ÃƒÆ’Ã…Â½ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¹ ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂºÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â»ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¬. ÃƒÆ’Ã…Â½ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¹ ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¿ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â· ÃƒÆ’Ã‚ÂÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚ÂµÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â±.".to_string());
+    }
+
+    if micro_phrase_is(&normalized, &["buna", "bunÃƒÆ’Ã¢â‚¬Å¾Ãƒâ€ Ã¢â‚¬â„¢", "szia", "jo napot", "jÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³ napot", "ahoj", "dobry den"]) {
         return Some("Salut, sunt aici.".to_string());
     }
-    if micro_phrase_is(&normalized, &["multumesc", "mulțumesc", "koszi", "köszi", "dekuji", "děkuji"]) {
-        return Some("Cu plăcere.".to_string());
+    if micro_phrase_is(&normalized, &["multumesc", "mulÃƒÆ’Ã‹â€ ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºumesc", "koszi", "kÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¶szi", "dekuji", "dÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºkuji"]) {
+        return Some("Cu plÃƒÆ’Ã¢â‚¬Å¾Ãƒâ€ Ã¢â‚¬â„¢cere.".to_string());
     }
 
-    if micro_phrase_is(&normalized, &["درود", "ہیلو", "habari", "jambo"]) {
-        return Some("سلام، من اینجا هستم.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¯", "ÃƒÆ’Ã¢â‚¬ÂºÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ÂºÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¹Ã¢â‚¬Â ", "habari", "jambo"]) {
+        return Some("ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â³ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‹Å“Ãƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â  ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â‚¬ÂºÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚ÂªÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦.".to_string());
     }
-    if micro_phrase_is(&normalized, &["ممنون", "متشکرم", "شکریہ", "asante"]) {
-        return Some("خواهش می‌کنم.".to_string());
+    if micro_phrase_is(&normalized, &["ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ", "ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â´ÃƒÆ’Ã…Â¡Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦", "ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â´ÃƒÆ’Ã…Â¡Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ÂºÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂºÃƒâ€šÃ‚Â", "asante"]) {
+        return Some("ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â€žÂ¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‹Å“Ãƒâ€šÃ‚Â´ ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬ÂºÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã…Â¡Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â€žÂ¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦.".to_string());
     }
     let reply = match normalized.as_str() {
-        "hello" | "hi" | "hey" | "yo" => "Hello, je suis là.",
-        "salut" => "Salut, je suis là.",
-        "coucou" => "Coucou, je suis là.",
-        "bonjour" => "Bonjour, je suis là.",
-        "bonsoir" => "Bonsoir, je suis là.",
+        "hello" | "hi" | "hey" | "yo" => "Hello, je suis lÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â .",
+        "salut" => "Salut, je suis lÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â .",
+        "coucou" => "Coucou, je suis lÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â .",
+        "bonjour" => "Bonjour, je suis lÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â .",
+        "bonsoir" => "Bonsoir, je suis lÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â .",
         "ca va" | "ca va bien" | "tu vas bien" | "comment ca va" | "ca roule" | "tout va bien" => {
-            "Oui, ça va. Je suis prêt à travailler dans cette session."
+            "Oui, ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§a va. Je suis prÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªt ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  travailler dans cette session."
         }
         "tu es la" | "t es la" | "vous etes la" | "tu m entends" | "tu me vois"
-        | "ca fonctionne" | "ca marche encore" => "Oui, je suis là.",
-        "test" | "ping" | "check" | "allo" => "Je réponds.",
+        | "ca fonctionne" | "ca marche encore" => "Oui, je suis lÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â .",
+        "test" | "ping" | "check" | "allo" => "Je rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ponds.",
         "merci" | "merci beaucoup" | "thanks" | "thank you" | "thx" => "Avec plaisir.",
         "parfait" | "super" | "top" | "nickel" | "excellent" | "bravo" | "gg" => "Parfait.",
         "ok" | "okay" | "d accord" | "ca marche" | "c est bon" | "go" | "vas y" => "OK.",
@@ -21127,7 +22249,7 @@ fn local_canvas_micro_reply(text: &str) -> Option<String> {
         "yes" => "Yes.",
         "non" | "no" | "pas maintenant" | "laisse tomber" => "Compris.",
         "bye" | "au revoir" | "a plus" | "a bientot" | "bonne journee" | "bonne soiree" => {
-            "À bientôt."
+            "ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ bientÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´t."
         }
         _ => return None,
     };
@@ -21138,7 +22260,7 @@ fn semantic_cache_signature(text: &str) -> (String, Vec<String>) {
     const STOP_WORDS: &[&str] = &[
         "a", "ai", "au", "aux", "avec", "ce", "ces", "cest", "c'est", "dans", "de", "des",
         "du", "elle", "en", "est", "et", "il", "je", "j", "la", "le", "les", "me", "moi",
-        "mon", "ma", "mes", "ne", "on", "ou", "où", "pas", "peux", "peut", "pour", "que",
+        "mon", "ma", "mes", "ne", "on", "ou", "oÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¹", "pas", "peux", "peut", "pour", "que",
         "qui", "quoi", "se", "sur", "ta", "te", "tes", "toi", "ton", "tu", "un", "une",
         "vous", "the", "a", "an", "and", "are", "can", "for", "how", "i", "in", "is",
         "it", "me", "of", "on", "or", "that", "to", "what", "you",
@@ -21521,10 +22643,127 @@ fn append_real_estate_privacy_audit(store_path: &Path, event: &JsonValue) -> Res
     writeln!(file, "{line}").map_err(|err| format!("write privacy audit: {err}"))
 }
 
-fn with_real_estate_privacy_tool_event(
+fn real_estate_intro_marker_path(store_path: &Path) -> PathBuf {
+    store_path
+        .join("real-estate-harvester")
+        .join("data")
+        .join("agency_onboarding_intro_v1.json")
+}
+
+fn real_estate_intro_already_sent(store_path: &Path) -> bool {
+    real_estate_intro_marker_path(store_path).exists()
+}
+
+fn mark_real_estate_intro_sent(store_path: &Path, turn_id: &str) -> Result<(), String> {
+    let path = real_estate_intro_marker_path(store_path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("create real estate onboarding marker dir: {err}"))?;
+    }
+    let payload = json!({
+        "schema": "forge.real_estate.onboarding_intro.v1",
+        "status": "sent",
+        "turnId": turn_id,
+        "sentAtMs": now_epoch_ms()
+    });
+    let bytes = serde_json::to_vec_pretty(&payload)
+        .map_err(|err| format!("serialize real estate onboarding marker: {err}"))?;
+    std::fs::write(&path, bytes)
+        .map_err(|err| format!("write real estate onboarding marker: {err}"))
+}
+
+fn real_estate_first_contact_onboarding_directive(
+    store_path: &Path,
+    turn_id: &str,
+) -> Option<String> {
+    if real_estate_intro_already_sent(store_path) {
+        return None;
+    }
+    let state = real_estate_harvester::onboarding_state(store_path).ok()?;
+    let question_id = state
+        .question
+        .as_ref()
+        .map(|question| question.id.as_str())
+        .unwrap_or("");
+    if !state.required || question_id != "agency_identity" {
+        return None;
+    }
+    if mark_real_estate_intro_sent(store_path, turn_id).is_err() {
+        return None;
+    }
+    Some([
+        "@re:onb v=1 mode=intro q=agency_identity".to_string(),
+        "role=assistant IA pour agence immobiliere; ton=chaleureux,enthousiaste,pro".to_string(),
+        "chat=libre: reponds aux questions/observations d'abord; onboarding progresse doucement.".to_string(),
+        "ask=nom de l'agence + ville de l'agence".to_string(),
+        "next=si agence+ville dans phrase naturelle: extrais-les et call forge_real_estate_resolve_agency{agency_name,city,original_user_text}; puis demande confirmation des infos trouvees.".to_string(),
+    ]
+    .join("\n"))
+}
+
+fn real_estate_pending_identity_act_directive(store_path: &Path) -> Option<String> {
+    let state = real_estate_harvester::onboarding_state(store_path).ok()?;
+    let question_id = state
+        .question
+        .as_ref()
+        .map(|question| question.id.as_str())
+        .unwrap_or("");
+    if !state.required || question_id != "agency_identity" {
+        return None;
+    }
+    Some([
+        "@re:onb v=1 mode=identity_act q=agency_identity".to_string(),
+        "chat=libre: reponds aux questions/observations avant action.".to_string(),
+        "if agence+ville present: LLM extrait, puis call forge_real_estate_resolve_agency{agency_name,city,original_user_text}; Forge execute.".to_string(),
+        "after_tool=montre adresse/tel/site et demande si exact. if_missing=redemande seulement le manque, si naturel.".to_string(),
+    ]
+    .join("\n"))
+}
+
+fn real_estate_pending_contact_confirmation_directive(store_path: &Path) -> Option<String> {
+    let state = real_estate_harvester::onboarding_state(store_path).ok()?;
+    let traits = &state.derived_traits;
+    if traits
+        .get("agency_identity_confirmed")
+        .map(|value| value == "true")
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let has_name = traits
+        .get("agency_display_name")
+        .or_else(|| traits.get("agency_search_name"))
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let has_contact = ["agency_address", "agency_phone", "agency_website", "agency_google_maps_uri"]
+        .iter()
+        .any(|key| {
+            traits
+                .get(*key)
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+        });
+    if !has_name || !has_contact {
+        return None;
+    }
+    Some([
+        "@re:onb v=1 mode=confirm_agency q=agency_identity".to_string(),
+        "chat=libre: reponds aux questions/observations.".to_string(),
+        "if user valide infos: call forge_real_estate_confirm_agency{confirmed:true}; puis remercie chaleureusement et dis que tu travailles maintenant pour cette agence.".to_string(),
+        "if correction: call forge_real_estate_confirm_agency{confirmed:false,correction}; demande la correction exacte ou rerun resolve si agence+ville corriges.".to_string(),
+        "after_tool=Forge met a jour header/profil et ouvre Google Earth; ne decris pas les commandes techniques.".to_string(),
+    ]
+    .join("\n"))
+}
+
+fn with_real_estate_tool_events(
     privacy_event: &Option<JsonValue>,
+    onboarding_event: &Option<JsonValue>,
     mut events: Vec<JsonValue>,
 ) -> Vec<JsonValue> {
+    if let Some(event) = onboarding_event {
+        events.insert(0, event.clone());
+    }
     if let Some(event) = privacy_event {
         events.insert(0, event.clone());
     }
@@ -21594,7 +22833,7 @@ fn direct_backend_is_blocked_action(lower: &str) -> bool {
             "lance",
             "lancer",
             "execute",
-            "exécute",
+            "exÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©cute",
             "calcul",
             "calculer",
             "backtest",
@@ -21603,10 +22842,10 @@ fn direct_backend_is_blocked_action(lower: &str) -> bool {
             "analyze",
             "create",
             "cree",
-            "crée",
-            "créer",
+            "crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e",
+            "crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©er",
             "select",
-            "sélection",
+            "sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©lection",
             "optimise",
             "optimiser",
             "optimize",
@@ -21685,7 +22924,7 @@ fn program_label(program: &JsonValue) -> String {
     if !hash.is_empty() {
         parts.push(format!("hash {hash}"));
     }
-    parts.join(" · ")
+    parts.join(" ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· ")
 }
 
 fn forge_canvas_direct_backend_reply(
@@ -21719,13 +22958,13 @@ fn forge_canvas_direct_backend_reply(
     let wants_files = text_has_word(&lower, &["file", "files", "fichier", "fichiers", "csv", "json", "pdf", "txt"]);
     let wants_tools = text_has_word(
         &lower,
-        &["outil", "outils", "tool", "tools", "capability", "capabilities", "capacite", "capacité"],
+        &["outil", "outils", "tool", "tools", "capability", "capabilities", "capacite", "capacitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"],
     );
     let wants_status = text_has_word(&lower, &["status", "statut", "session"]);
 
     if wants_logs && direct_backend_read_intent(&lower) {
         let message = if logs.is_empty() {
-            "Aucun log Forge récent n'est disponible pour cette session.".to_string()
+            "Aucun log Forge rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©cent n'est disponible pour cette session.".to_string()
         } else {
             let mut lines = vec![format!("Derniers logs Forge ({} ligne(s)):", logs.len())];
             lines.extend(logs.iter().rev().take(12).collect::<Vec<_>>().into_iter().rev().cloned());
@@ -21740,9 +22979,9 @@ fn forge_canvas_direct_backend_reply(
 
     if wants_programs && direct_backend_read_intent(&lower) {
         let message = if programs.is_empty() {
-            "Aucun programme Forge local n'est enregistré pour l'instant.".to_string()
+            "Aucun programme Forge local n'est enregistrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© pour l'instant.".to_string()
         } else {
-            let mut lines = vec![format!("Programmes Forge disponibles ({} affiché(s)):", programs.len())];
+            let mut lines = vec![format!("Programmes Forge disponibles ({} affichÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©(s)):", programs.len())];
             for (idx, program) in programs.iter().take(12).enumerate() {
                 lines.push(format!("{}. {}", idx + 1, program_label(program)));
             }
@@ -21759,11 +22998,11 @@ fn forge_canvas_direct_backend_reply(
         let files = session_file_labels(session);
         let file_count = json_u64_at(session, &["file_count", "fileCount"]).unwrap_or(files.len() as u64);
         let message = if file_count == 0 {
-            "Aucun fichier n'est attaché à la session Forge actuelle.".to_string()
+            "Aucun fichier n'est attachÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  la session Forge actuelle.".to_string()
         } else {
             let mut lines = vec![format!("La session Forge contient {file_count} fichier(s):")];
             if files.is_empty() {
-                lines.push("Les chemins exacts ne sont pas exposés dans le contexte compact.".to_string());
+                lines.push("Les chemins exacts ne sont pas exposÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s dans le contexte compact.".to_string());
             } else {
                 for (idx, file) in files.iter().take(16).enumerate() {
                     lines.push(format!("{}. {}", idx + 1, file));
@@ -21812,7 +23051,7 @@ fn forge_canvas_direct_backend_reply(
             format!("{title}: {status}"),
             format!("Fichiers: {file_count}"),
             format!("Programmes disponibles: {}", programs.len()),
-            format!("Logs chargés: {}", logs.len()),
+            format!("Logs chargÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s: {}", logs.len()),
         ];
         if !job_id.trim().is_empty() {
             lines.push(format!("Job: {job_id}"));
@@ -21928,6 +23167,7 @@ fn normalize_canvas_reasoning_effort(raw: Option<&str>) -> String {
         .replace('-', " ");
     let key = key.split_whitespace().collect::<Vec<_>>().join(" ");
     match key.as_str() {
+        "low" | "faible" | "rapide" | "quick" => "low".to_string(),
         "high" | "eleve" | "elevated" => "high".to_string(),
         "xhigh" | "extra high" | "very high" | "tres eleve" | "tres approfondi"
         | "approfondi" => "xhigh".to_string(),
@@ -21935,54 +23175,50 @@ fn normalize_canvas_reasoning_effort(raw: Option<&str>) -> String {
     }
 }
 
-fn canvas_reasoning_instruction(effort: &str) -> &'static str {
-    match effort {
-        "high" => {
-            "Raisonnement: eleve. Verifie davantage les hypotheses et les effets de bord avant de conclure, tout en restant compact."
-        }
-        "xhigh" => {
-            "Raisonnement: tres approfondi. Prends le temps de decomposer le probleme, verifier les choix et signaler les incertitudes utiles."
-        }
-        _ => {
-            "Raisonnement: moyen. Reponds directement, avec assez de verification pour eviter les erreurs evidentes."
-        }
-    }
+fn direct_canvas_chat_mode(
+    tools_enabled: bool,
+    has_active_job: bool,
+    force_runtime_context: bool,
+    real_estate_scope_active: bool,
+) -> bool {
+    !tools_enabled && !has_active_job && !force_runtime_context && !real_estate_scope_active
 }
 
-fn build_codex_canvas_prompt_light(
+fn build_canvas_protocol_prompt(
+    provider_name: &str,
     user_message: &str,
     tools_enabled: bool,
     compact_memory: Option<&str>,
     reasoning_effort: &str,
+    direct_chat_mode: bool,
 ) -> String {
-    let bridge = if tools_enabled {
-        "Forge tools available. Use them only when useful. For Instrument/Lens creation, first settle objective, Nodes, formulas/routes and validation; ask/propose if vague, create after a clear decision. Run only after explicit launch approval."
-    } else {
-        ""
-    };
-    let memory = compact_memory
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("\nMEMOIRE_COMPACTE:\n{s}\n"))
-        .unwrap_or_default();
-    let reasoning = if tools_enabled {
-        canvas_reasoning_instruction(reasoning_effort)
-    } else {
-        ""
-    };
-    let capability_instruction = if tools_enabled {
-        forge_capability_prompt_instruction(user_message)
-    } else {
-        ""
-    };
-    format!(
-        "Tu es Codex dans Forge. Reponds en francais naturel et concis.\n\
-        {reasoning}\n\
-        {bridge}\n\
-        {capability_instruction}\n\
-        {memory}\n\
-        MESSAGE_UTILISATEUR:\n{user_message}\n"
-    )
+    if direct_chat_mode {
+        return [
+            format!(
+                "@forge:direct:v1 p={} lang=fr tools=0 effort={}",
+                provider_name, reasoning_effort
+            ),
+            "style=fr concis; answer directly.".to_string(),
+            format!("user={user_message}"),
+        ]
+        .join("\n");
+    }
+    let mut lines = Vec::with_capacity(6);
+    lines.push(format!(
+        "@forge:v1 p={} lang=fr tools={} effort={} auth=llm_proposes_forge_executes",
+        provider_name,
+        if tools_enabled { 1 } else { 0 },
+        reasoning_effort
+    ));
+    lines.push("style=fr concis; no_raw_artifacts; use tools only when useful/approved.".to_string());
+    if tools_enabled {
+        lines.push(format!("hint={}", forge_capability_prompt_instruction(user_message)));
+    }
+    if let Some(memory) = compact_memory.map(str::trim).filter(|s| !s.is_empty()) {
+        lines.push(format!("mem={memory}"));
+    }
+    lines.push(format!("user={user_message}"));
+    lines.join("\n")
 }
 
 fn build_gemini_canvas_prompt_light(
@@ -21990,34 +23226,15 @@ fn build_gemini_canvas_prompt_light(
     tools_enabled: bool,
     compact_memory: Option<&str>,
     reasoning_effort: &str,
+    direct_chat_mode: bool,
 ) -> String {
-    let bridge = if tools_enabled {
-        "Forge tools available. Use them only when useful. For Instrument/Lens creation, first settle objective, Nodes, formulas/routes and validation; ask/propose if vague, create after a clear decision. Run only after explicit launch approval."
-    } else {
-        ""
-    };
-    let memory = compact_memory
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("\nMEMOIRE_COMPACTE:\n{s}\n"))
-        .unwrap_or_default();
-    let reasoning = if tools_enabled {
-        canvas_reasoning_instruction(reasoning_effort)
-    } else {
-        ""
-    };
-    let capability_instruction = if tools_enabled {
-        forge_capability_prompt_instruction(user_message)
-    } else {
-        ""
-    };
-    format!(
-        "Tu es Gemini dans Forge. Reponds en francais naturel et concis.\n\
-        {reasoning}\n\
-        {bridge}\n\
-        {capability_instruction}\n\
-        {memory}\n\
-        MESSAGE_UTILISATEUR:\n{user_message}\n"
+    build_canvas_protocol_prompt(
+        "Gemini",
+        user_message,
+        tools_enabled,
+        compact_memory,
+        reasoning_effort,
+        direct_chat_mode,
     )
 }
 
@@ -22026,34 +23243,15 @@ fn build_claude_canvas_prompt_light(
     tools_enabled: bool,
     compact_memory: Option<&str>,
     reasoning_effort: &str,
+    direct_chat_mode: bool,
 ) -> String {
-    let bridge = if tools_enabled {
-        "Forge tools available. Use them only when useful. For Instrument/Lens creation, first settle objective, Nodes, formulas/routes and validation; ask/propose if vague, create after a clear decision. Run only after explicit launch approval."
-    } else {
-        ""
-    };
-    let memory = compact_memory
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("\nMEMOIRE_COMPACTE:\n{s}\n"))
-        .unwrap_or_default();
-    let reasoning = if tools_enabled {
-        canvas_reasoning_instruction(reasoning_effort)
-    } else {
-        ""
-    };
-    let capability_instruction = if tools_enabled {
-        forge_capability_prompt_instruction(user_message)
-    } else {
-        ""
-    };
-    format!(
-        "Tu es Claude dans Forge. Reponds en francais naturel et concis.\n\
-        {reasoning}\n\
-        {bridge}\n\
-        {capability_instruction}\n\
-        {memory}\n\
-        MESSAGE_UTILISATEUR:\n{user_message}\n"
+    build_canvas_protocol_prompt(
+        "Claude",
+        user_message,
+        tools_enabled,
+        compact_memory,
+        reasoning_effort,
+        direct_chat_mode,
     )
 }
 
@@ -22090,7 +23288,6 @@ fn prepare_gemini_thread_memory(
         .gemini_threads
         .entry(key.clone())
         .or_insert_with(|| CodexThreadState {
-            thread_id: format!("gemini:{key}"),
             turns: 0,
             generation: 0,
             memory: Vec::new(),
@@ -22117,7 +23314,6 @@ fn record_gemini_thread_turn(
         .gemini_threads
         .entry(key.clone())
         .or_insert_with(|| CodexThreadState {
-            thread_id: format!("gemini:{key}"),
             turns: 0,
             generation: 0,
             memory: Vec::new(),
@@ -22142,7 +23338,6 @@ fn prepare_claude_thread_memory(
         .claude_threads
         .entry(key.clone())
         .or_insert_with(|| CodexThreadState {
-            thread_id: format!("claude:{key}"),
             turns: 0,
             generation: 0,
             memory: Vec::new(),
@@ -22169,7 +23364,6 @@ fn record_claude_thread_turn(
         .claude_threads
         .entry(key.clone())
         .or_insert_with(|| CodexThreadState {
-            thread_id: format!("claude:{key}"),
             turns: 0,
             generation: 0,
             memory: Vec::new(),
@@ -22365,6 +23559,7 @@ fn run_claude_canvas_cli(
     tools_enabled: bool,
     compact_memory: Option<String>,
     thread_generation: u32,
+    direct_chat_mode: bool,
     model_ref: Option<String>,
     reasoning_effort: String,
     store_path: PathBuf,
@@ -22379,7 +23574,7 @@ fn run_claude_canvas_cli(
     let model = claude_bridge_model_arg(model_ref.as_deref());
     let model_label = model
         .clone()
-        .unwrap_or_else(|| "claude-code-default".to_string());
+        .unwrap_or_else(|| "claude-sonnet-4.6".to_string());
     emit_canvas_assistant_event(
         app.as_ref(),
         &turn_id,
@@ -22392,6 +23587,7 @@ fn run_claude_canvas_cli(
             "reasoningEffort": reasoning_effort.as_str(),
             "mcpConfig": config_path.display().to_string(),
             "toolsEnabled": tools_enabled,
+            "directChatMode": direct_chat_mode,
             "threadGeneration": thread_generation,
             "compacted": compact_memory.is_some(),
             "compactMemoryChars": compact_memory
@@ -22401,7 +23597,13 @@ fn run_claude_canvas_cli(
         }),
     );
     let prompt =
-        build_claude_canvas_prompt_light(&user_message, tools_enabled, compact_memory.as_deref(), &reasoning_effort);
+        build_claude_canvas_prompt_light(
+            &user_message,
+            tools_enabled,
+            compact_memory.as_deref(),
+            &reasoning_effort,
+            direct_chat_mode,
+        );
     let mut command = claude_cli_command(&candidate);
     configure_forge_llm_cli_command(&mut command);
     command
@@ -22546,6 +23748,7 @@ fn run_claude_canvas_cli(
             "reasoningEffort": reasoning_effort,
             "mcpConfig": config_path.display().to_string(),
             "toolsEnabled": tools_enabled,
+            "directChatMode": direct_chat_mode,
             "threadGeneration": thread_generation,
             "compacted": compact_memory.is_some(),
             "compactMemoryChars": compact_memory
@@ -22563,6 +23766,7 @@ fn run_gemini_canvas_cli(
     tools_enabled: bool,
     compact_memory: Option<String>,
     thread_generation: u32,
+    direct_chat_mode: bool,
     model_ref: Option<String>,
     reasoning_effort: String,
     store_path: PathBuf,
@@ -22574,7 +23778,7 @@ fn run_gemini_canvas_cli(
     let candidate = gemini_cli_binary_path()
         .ok_or_else(|| "Gemini CLI was not found. Install @google/gemini-cli with npm.".to_string())?;
     let model = gemini_bridge_model_arg(model_ref.as_deref())
-        .unwrap_or_else(|| "gemini-2.5-pro".to_string());
+        .unwrap_or_else(|| "gemini-3-pro".to_string());
     emit_canvas_assistant_event(
         app.as_ref(),
         &turn_id,
@@ -22587,6 +23791,7 @@ fn run_gemini_canvas_cli(
             "reasoningEffort": reasoning_effort.as_str(),
             "settings": settings_path.display().to_string(),
             "toolsEnabled": tools_enabled,
+            "directChatMode": direct_chat_mode,
             "threadGeneration": thread_generation,
             "compacted": compact_memory.is_some(),
             "compactMemoryChars": compact_memory
@@ -22596,7 +23801,13 @@ fn run_gemini_canvas_cli(
         }),
     );
     let prompt =
-        build_gemini_canvas_prompt_light(&user_message, tools_enabled, compact_memory.as_deref(), &reasoning_effort);
+        build_gemini_canvas_prompt_light(
+            &user_message,
+            tools_enabled,
+            compact_memory.as_deref(),
+            &reasoning_effort,
+            direct_chat_mode,
+        );
     let mut command = gemini_cli_command(&candidate);
     configure_forge_llm_cli_command(&mut command);
     command
@@ -22736,6 +23947,7 @@ fn run_gemini_canvas_cli(
             "reasoningEffort": reasoning_effort,
             "settings": settings_path.display().to_string(),
             "toolsEnabled": tools_enabled,
+            "directChatMode": direct_chat_mode,
             "threadGeneration": thread_generation,
             "compacted": compact_memory.is_some(),
             "compactMemoryChars": compact_memory
@@ -22768,338 +23980,920 @@ fn emit_canvas_assistant_event(
     }
 }
 
-fn codex_notification_thread_id(value: &JsonValue) -> Option<&str> {
-    value
-        .get("params")
-        .and_then(|params| params.get("threadId"))
-        .and_then(JsonValue::as_str)
-}
-
-fn codex_notification_turn_id(value: &JsonValue) -> Option<&str> {
-    let params = value.get("params")?;
-    params
-        .get("turnId")
-        .and_then(JsonValue::as_str)
-        .or_else(|| {
-            params
-                .get("turn")
-                .and_then(|turn| turn.get("id"))
-                .and_then(JsonValue::as_str)
-        })
-}
-
-fn codex_notification_matches_turn(
-    value: &JsonValue,
-    thread_id: &str,
-    codex_turn_id: &str,
-) -> bool {
-    if let Some(value_thread_id) = codex_notification_thread_id(value) {
-        if value_thread_id != thread_id {
-            return false;
-        }
-    }
-    if let Some(value_turn_id) = codex_notification_turn_id(value) {
-        if value_turn_id != codex_turn_id {
-            return false;
-        }
-    }
-    true
-}
-
-fn codex_token_usage_summary(params: &JsonValue) -> Option<(u64, u64)> {
-    let usage = params.get("tokenUsage")?;
-    let last = usage.get("last").unwrap_or(usage);
-    let input = last
-        .get("inputTokens")
-        .or_else(|| last.get("input_tokens"))
+fn codex_direct_usage_summary(usage: &JsonValue) -> JsonValue {
+    let input_tokens = usage
+        .get("input_tokens")
+        .or_else(|| usage.get("inputTokens"))
         .and_then(JsonValue::as_u64)
         .unwrap_or(0);
-    let output = last
-        .get("outputTokens")
-        .or_else(|| last.get("output_tokens"))
+    let cached_input_tokens = usage
+        .pointer("/input_tokens_details/cached_tokens")
+        .or_else(|| usage.get("cached_input_tokens"))
+        .or_else(|| usage.get("cachedInputTokens"))
         .and_then(JsonValue::as_u64)
         .unwrap_or(0);
-    Some((input, output))
+    let output_tokens = usage
+        .get("output_tokens")
+        .or_else(|| usage.get("outputTokens"))
+        .and_then(JsonValue::as_u64)
+        .unwrap_or(0);
+    json!({
+        "total": {
+            "inputTokens": input_tokens,
+            "cachedInputTokens": cached_input_tokens,
+            "outputTokens": output_tokens,
+        }
+    })
 }
 
-fn summarize_codex_app_server_notification(value: &JsonValue) -> Option<String> {
-    let method = value.get("method").and_then(JsonValue::as_str).unwrap_or("");
-    let params = value.get("params").unwrap_or(&JsonValue::Null);
-    match method {
-        "turn/started" => Some("Codex commence ce tour dans la session Forge.".to_string()),
-        "turn/completed" => Some("Codex a termine ce tour dans le runtime persistant.".to_string()),
-        "thread/tokenUsage/updated" => codex_token_usage_summary(params).map(|(input, output)| {
-            format!(
-                "Codex a traite le contexte: entree={input} tokens, sortie={output} tokens (usage abonnement, pas API)."
-            )
+fn codex_direct_response_output_text(value: &JsonValue) -> String {
+    let output = value
+        .get("output")
+        .or_else(|| value.pointer("/response/output"))
+        .and_then(JsonValue::as_array);
+    let Some(items) = output else {
+        return String::new();
+    };
+    let mut text = String::new();
+    for item in items {
+        let Some(contents) = item.get("content").and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for content in contents {
+            if content.get("type").and_then(JsonValue::as_str) == Some("output_text") {
+                if let Some(chunk) = content.get("text").and_then(JsonValue::as_str) {
+                    text.push_str(chunk);
+                }
+            }
+        }
+    }
+    text
+}
+
+fn codex_direct_drain_sse_events(buffer: &mut String) -> Vec<JsonValue> {
+    let mut events = Vec::new();
+    loop {
+        let Some(boundary) = buffer.find("\n\n") else {
+            break;
+        };
+        let chunk = buffer[..boundary].replace("\r\n", "\n");
+        buffer.drain(..boundary + 2);
+        let mut data_lines = Vec::new();
+        for line in chunk.lines() {
+            if let Some(rest) = line.strip_prefix("data:") {
+                data_lines.push(rest.trim_start());
+            }
+        }
+        if data_lines.is_empty() {
+            continue;
+        }
+        let data = data_lines.join("\n");
+        let trimmed = data.trim();
+        if trimmed.is_empty() || trimmed == "[DONE]" {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<JsonValue>(trimmed) {
+            events.push(value);
+        }
+    }
+    events
+}
+
+fn direct_canvas_projection_read_step(
+    store_path: &Path,
+    index: usize,
+    route: &str,
+    command_hash: &str,
+    args: &JsonValue,
+    result_budget_bytes: usize,
+) -> JsonValue {
+    match forge_agent_runtime::direct_state_kernel_read(store_path, args) {
+        Ok(value) => forge_agent_runtime::compact_step_result(
+            index,
+            route,
+            command_hash,
+            "executed_safe",
+            value,
+            result_budget_bytes,
+        ),
+        Err(err) => json!({
+            "index": index,
+            "route": route,
+            "command_hash": command_hash,
+            "status": "error",
+            "raw_data_returned": false,
+            "error": err
         }),
-        "item/started" | "item/completed" => {
-            let item_type = params
-                .get("item")
-                .and_then(|item| item.get("type"))
-                .and_then(JsonValue::as_str)
-                .unwrap_or("");
-            match item_type {
-                "reasoning" => Some("Codex travaille avec le contexte compact de Forge.".to_string()),
-                "commandExecution" => Some(
-                    "Codex a demande une commande locale; Forge garde ce premier pont en lecture seule."
-                        .to_string(),
-                ),
-                "fileChange" => Some(
-                    "Codex a prepare un changement de fichier; Forge ne l'applique pas dans ce mode lecture seule."
-                        .to_string(),
-                ),
-                "mcpToolCall" => params
-                    .get("item")
-                    .and_then(|item| item.get("tool"))
-                    .and_then(JsonValue::as_str)
-                    .map(|tool| format!("Codex appelle l'outil MCP {tool}."))
-                    .or_else(|| Some("Codex appelle un outil MCP.".to_string())),
-                "dynamicToolCall" => None,
-                "webSearch" => Some("Codex consulte le web.".to_string()),
-                _ => None,
-            }
-        }
-        "server/request" => {
-            let request_method = params
-                .get("method")
-                .and_then(JsonValue::as_str)
-                .unwrap_or("");
-            if request_method.contains("Approval") || request_method.contains("permissions") {
-                Some(
-                    "Codex a demande une autorisation; Forge reste en lecture seule pour ce tour."
-                        .to_string(),
-                )
-            } else {
-                None
-            }
-        }
-        "error" => params
-            .get("error")
-            .and_then(|error| error.get("message"))
-            .and_then(JsonValue::as_str)
-            .map(|message| format!("Erreur Codex: {message}")),
-        _ => None,
     }
 }
 
-fn run_codex_canvas_app_server(
-    client: Arc<CodexAppServerClient>,
+fn direct_canvas_safe_step(
+    store_path: &Path,
+    index: usize,
+    step: &JsonValue,
+    result_budget_bytes: usize,
+) -> JsonValue {
+    let route = step.get("route").and_then(JsonValue::as_str).unwrap_or("");
+    let command_hash = step
+        .get("command_hash")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("");
+    let args = step.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let side_effect = step
+        .get("side_effect")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(true);
+    if side_effect {
+        return json!({
+            "index": index,
+            "route": route,
+            "command_hash": command_hash,
+            "status": "skipped_side_effect",
+            "reason": "forge_canvas direct safe runs only read-only and plan_only intent steps"
+        });
+    }
+    match route {
+        "run" if args.get("plan_only").and_then(JsonValue::as_bool).unwrap_or(false) => {
+            forge_agent_runtime::compact_step_result(
+                index,
+                route,
+                command_hash,
+                "executed_safe",
+                json!({
+                    "kind": "forge_canvas_direct_plan",
+                    "state": "planned",
+                    "plan_only": true,
+                    "arguments": args,
+                    "raw_data_returned": false
+                }),
+                result_budget_bytes,
+            )
+        }
+        "brain_recall" => direct_canvas_projection_read_step(
+            store_path,
+            index,
+            route,
+            command_hash,
+            &forge_agent_runtime::direct_state_kernel_route_args(route, &args),
+            result_budget_bytes,
+        ),
+        "brain_explain" => direct_canvas_projection_read_step(
+            store_path,
+            index,
+            route,
+            command_hash,
+            &forge_agent_runtime::direct_state_kernel_route_args(route, &args),
+            result_budget_bytes,
+        ),
+        "read" => direct_canvas_projection_read_step(
+            store_path,
+            index,
+            route,
+            command_hash,
+            &args,
+            result_budget_bytes,
+        ),
+        other => forge_agent_runtime::compact_step_result(
+            index,
+            route,
+            command_hash,
+            "skipped_direct_hostcall_not_wired",
+            json!({
+                "kind": "forge_canvas_direct_skip",
+                "route": other,
+                "reason": "direct canvas hostcall is not wired yet",
+                "raw_data_returned": false
+            }),
+            result_budget_bytes,
+        ),
+    }
+}
+
+fn execute_canvas_forgeslash_safe(
+    store_path: &Path,
+    source: &str,
+    max_bytes: usize,
+) -> Result<JsonValue, String> {
+    forge_agent_runtime::direct_safe_execution_with(source, max_bytes, |index, step, budget| {
+        direct_canvas_safe_step(store_path, index, step, budget)
+    })
+}
+
+fn compact_canvas_template_projection(projection: &JsonValue) -> JsonValue {
+    let executed_steps = projection
+        .get("executed_steps")
+        .and_then(JsonValue::as_array)
+        .map(|steps| {
+            steps
+                .iter()
+                .map(|step| {
+                    let mut item = Map::<String, JsonValue>::new();
+                    for key in ["index", "route", "status", "result_hash", "result_bytes", "result_summary"] {
+                        if let Some(value) = step.get(key) {
+                            item.insert(key.to_string(), value.clone());
+                        }
+                    }
+                    if let Some(value) = step.get("result") {
+                        item.insert("result".to_string(), value.clone());
+                    } else if let Some(value) = step.get("result_preview") {
+                        item.insert("result_preview".to_string(), value.clone());
+                    }
+                    if let Some(value) = step.get("result_truncated") {
+                        item.insert("result_truncated".to_string(), value.clone());
+                    }
+                    JsonValue::Object(item)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "kind": projection.get("kind").cloned().unwrap_or(JsonValue::Null),
+        "runtime": projection.get("runtime").cloned().unwrap_or(JsonValue::Null),
+        "mode": projection.get("mode").cloned().unwrap_or(JsonValue::Null),
+        "intentHash": projection.get("intent_hash").cloned().unwrap_or(JsonValue::Null),
+        "nextEngine": projection.get("next_engine").cloned().unwrap_or(JsonValue::Null),
+        "policy": {
+            "ok": projection.pointer("/policy_report/ok").cloned().unwrap_or(JsonValue::Null),
+            "policyHash": projection.pointer("/policy_report/policy_hash").cloned().unwrap_or(JsonValue::Null),
+            "sideEffectCount": projection.pointer("/policy_report/side_effect_count").cloned().unwrap_or(JsonValue::Null),
+        },
+        "trace": {
+            "traceHash": projection.pointer("/trace_card/trace_hash").cloned().unwrap_or(JsonValue::Null),
+            "proofHash": projection.pointer("/trace_card/proof_hash").cloned().unwrap_or(JsonValue::Null),
+        },
+        "forgeProjection": projection.get("forge_projection").cloned().unwrap_or(JsonValue::Null),
+        "executionContract": projection.get("execution_contract").cloned().unwrap_or(JsonValue::Null),
+        "executionReport": projection.get("execution_report").cloned().unwrap_or(JsonValue::Null),
+        "executedSteps": executed_steps,
+        "rawDataReturned": false
+    })
+}
+
+fn compact_synthesis_key_name(key: &str) -> &str {
+    match key {
+        "kind" => "k",
+        "runtime" => "rt",
+        "mode" => "md",
+        "intentHash" => "ih",
+        "nextEngine" => "ne",
+        "policy" => "pl",
+        "trace" => "tr",
+        "policyHash" => "pH",
+        "traceHash" => "tH",
+        "proofHash" => "pfH",
+        "sideEffectCount" => "se",
+        "stateKernel" => "sk",
+        "state" => "st",
+        "operation" => "op",
+        "result" => "res",
+        "updated_ms" => "um",
+        "total_entries" => "te",
+        "entries" => "e",
+        "candidate_hash" => "cH",
+        "skill_key" => "sK",
+        "scope" => "sc",
+        "memory_layer" => "mL",
+        "status" => "ss",
+        "verification_status" => "vS",
+        "ready" => "ok",
+        "hit_count" => "hc",
+        "trace_hash" => "tH",
+        "proof_hash" => "pfH",
+        "evidence_hash" => "eH",
+        "evidence_source" => "eS",
+        "example_count" => "xc",
+        "total_observations" => "obs",
+        "first_success_ms" => "t0",
+        "last_success_ms" => "t1",
+        "rollback_to_llm" => "rb",
+        "program_hash" => "gH",
+        "program_ref" => "gR",
+        "program_kind" => "gK",
+        "output_hash" => "oH",
+        "semantic_fingerprint" => "sf",
+        "test_vector_hash" => "tvH",
+        "contract_hash" => "cH2",
+        "missing_evidence" => "me",
+        "observed_routes" => "or",
+        "rawDataReturned" => "rd",
+        other => other,
+    }
+}
+
+fn compact_synthesis_state_code(value: &str) -> &str {
+    match value {
+        "brain" => "br",
+        "atlas" => "at",
+        "execution" => "ex",
+        other => other,
+    }
+}
+
+fn compact_synthesis_operation_code(value: &str) -> &str {
+    match value {
+        "recall" => "rec",
+        "explain" => "exp",
+        "commit" => "com",
+        "compare" => "cmp",
+        "sleep" => "slp",
+        "sessions" => "ses",
+        "documents" => "doc",
+        "profile" => "prf",
+        "overview" => "ovw",
+        "skill_candidates" => "skc",
+        "verified_program_candidates" => "vpc",
+        "read" => "red",
+        other => other,
+    }
+}
+
+fn compact_synthesis_kind_code(value: &str) -> &str {
+    match value {
+        "forge_canvas_state_kernel_synthesis_v0" => "css",
+        "forge_agent_direct_state_kernel_read_v0" => "skr",
+        "forge_agent_direct_state_kernel_apply_v0" => "ska",
+        "forge_state_kernel_skill_candidates_v0" => "skc",
+        "forge_state_kernel_verified_program_candidates_v0" => "vpc",
+        other => other,
+    }
+}
+
+fn compact_synthesis_memory_layer_code(value: &str) -> &str {
+    match value {
+        "semantic" => "sem",
+        "episodic" => "epi",
+        "procedural" => "pro",
+        other => other,
+    }
+}
+
+fn compact_canvas_template_synthesis_value(key_hint: Option<&str>, value: &JsonValue) -> JsonValue {
+    match value {
+        JsonValue::Object(map) => {
+            let mut out = Map::<String, JsonValue>::new();
+            for (key, child) in map {
+                let compact_key = compact_synthesis_key_name(key).to_string();
+                out.insert(
+                    compact_key,
+                    compact_canvas_template_synthesis_value(Some(key.as_str()), child),
+                );
+            }
+            JsonValue::Object(out)
+        }
+        JsonValue::Array(items) => JsonValue::Array(
+            items.iter()
+                .map(|item| compact_canvas_template_synthesis_value(None, item))
+                .collect::<Vec<_>>(),
+        ),
+        JsonValue::String(text) => {
+            let compact = match key_hint.unwrap_or("") {
+                "state" => compact_synthesis_state_code(text),
+                "operation" => compact_synthesis_operation_code(text),
+                "kind" => compact_synthesis_kind_code(text),
+                "memory_layer" => compact_synthesis_memory_layer_code(text),
+                _ => text,
+            };
+            JsonValue::String(compact.to_string())
+        }
+        _ => value.clone(),
+    }
+}
+
+fn should_symbolize_synthesis_string(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.starts_with("refs/") {
+        return trimmed.len() >= 16;
+    }
+    trimmed.len() >= 24
+        && trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | ':' | '/'))
+}
+
+fn synthesis_symbol_forced_prefix(key_hint: Option<&str>, value: &str) -> Option<&'static str> {
+    let key = key_hint.unwrap_or("");
+    let trimmed = value.trim();
+    if matches!(
+        key,
+        "job_id" | "jobId"
+    ) && trimmed.len() >= 6
+    {
+        return Some("j");
+    }
+    if matches!(
+        key,
+        "program_ref" | "projection_ref" | "ref" | "brain_ref" | "run_ref" | "artifact_ref"
+    ) && trimmed.len() >= 10
+    {
+        return Some("r");
+    }
+    if matches!(
+        key,
+        "program_hash"
+            | "candidate_hash"
+            | "intentHash"
+            | "policyHash"
+            | "traceHash"
+            | "proofHash"
+            | "output_hash"
+            | "semantic_fingerprint"
+            | "test_vector_hash"
+            | "contract_hash"
+            | "evidence_hash"
+            | "projection_hash"
+            | "execution_hash"
+            | "trace_hash"
+            | "proof_hash"
+            | "memory_hash"
+    ) && trimmed.len() >= 12
+    {
+        return Some("h");
+    }
+    None
+}
+
+fn synthesis_symbol_default_prefix(value: &str) -> Option<&'static str> {
+    if value.starts_with("refs/") {
+        return Some("r");
+    }
+    if should_symbolize_synthesis_string(value) {
+        return Some("h");
+    }
+    None
+}
+
+fn collect_synthesis_symbol_counts(
+    key_hint: Option<&str>,
+    value: &JsonValue,
+    counts: &mut BTreeMap<String, usize>,
+    forced_prefixes: &mut BTreeMap<String, String>,
+) {
+    match value {
+        JsonValue::Object(map) => {
+            for (key, child) in map {
+                collect_synthesis_symbol_counts(
+                    Some(key.as_str()),
+                    child,
+                    counts,
+                    forced_prefixes,
+                );
+            }
+        }
+        JsonValue::Array(items) => {
+            for item in items {
+                collect_synthesis_symbol_counts(key_hint, item, counts, forced_prefixes);
+            }
+        }
+        JsonValue::String(text) => {
+            let forced_prefix = synthesis_symbol_forced_prefix(key_hint, text);
+            if should_symbolize_synthesis_string(text) {
+                *counts.entry(text.clone()).or_insert(0) += 1;
+            }
+            if let Some(prefix) = forced_prefix {
+                *counts.entry(text.clone()).or_insert(0) += 1;
+                forced_prefixes
+                    .entry(text.clone())
+                    .or_insert_with(|| prefix.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn build_synthesis_symbol_table(value: &JsonValue) -> BTreeMap<String, String> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut forced_prefixes = BTreeMap::<String, String>::new();
+    collect_synthesis_symbol_counts(None, value, &mut counts, &mut forced_prefixes);
+    let mut refs_index = 0usize;
+    let mut hash_index = 0usize;
+    let mut job_index = 0usize;
+    let mut table = BTreeMap::<String, String>::new();
+    for (raw, count) in counts {
+        let prefix = forced_prefixes
+            .get(&raw)
+            .map(String::as_str)
+            .or_else(|| if count >= 2 { synthesis_symbol_default_prefix(&raw) } else { None });
+        let Some(prefix) = prefix else {
+            continue;
+        };
+        let alias = match prefix {
+            "r" => {
+                refs_index += 1;
+                format!("r{refs_index}")
+            }
+            "j" => {
+                job_index += 1;
+                format!("j{job_index}")
+            }
+            _ => {
+                hash_index += 1;
+                format!("h{hash_index}")
+            }
+        };
+        table.insert(raw, alias);
+    }
+    table
+}
+
+fn apply_synthesis_symbol_table(value: &JsonValue, table: &BTreeMap<String, String>) -> JsonValue {
+    match value {
+        JsonValue::Object(map) => {
+            let mut out = Map::<String, JsonValue>::new();
+            for (key, child) in map {
+                out.insert(key.clone(), apply_synthesis_symbol_table(child, table));
+            }
+            JsonValue::Object(out)
+        }
+        JsonValue::Array(items) => JsonValue::Array(
+            items.iter()
+                .map(|item| apply_synthesis_symbol_table(item, table))
+                .collect::<Vec<_>>(),
+        ),
+        JsonValue::String(text) => table
+            .get(text)
+            .map(|alias| JsonValue::String(format!("@{alias}")))
+            .unwrap_or_else(|| value.clone()),
+        _ => value.clone(),
+    }
+}
+
+fn compact_canvas_template_symbolize_payload(value: JsonValue) -> JsonValue {
+    let table = build_synthesis_symbol_table(&value);
+    if table.is_empty() {
+        return value;
+    }
+    let symbolized = apply_synthesis_symbol_table(&value, &table);
+    let mut root = match symbolized {
+        JsonValue::Object(obj) => obj,
+        other => return other,
+    };
+    let mut symbols = Map::<String, JsonValue>::new();
+    for (raw, alias) in table {
+        symbols.insert(alias, JsonValue::String(raw));
+    }
+    root.insert("sy".to_string(), JsonValue::Object(symbols));
+    JsonValue::Object(root)
+}
+
+fn build_canvas_state_kernel_synthesis_payload(compact_projection: &JsonValue) -> Option<JsonValue> {
+    let first_result = compact_projection.pointer("/executedSteps/0/result");
+    let state_kernel_kind = first_result
+        .and_then(|value| value.get("kind"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("");
+    if !matches!(
+        state_kernel_kind,
+        "forge_agent_direct_state_kernel_read_v0" | "forge_agent_direct_state_kernel_apply_v0"
+    ) {
+        return None;
+    }
+    Some(json!({
+        "kind": "forge_canvas_state_kernel_synthesis_v0",
+        "runtime": compact_projection.get("runtime").cloned().unwrap_or(JsonValue::Null),
+        "mode": compact_projection.get("mode").cloned().unwrap_or(JsonValue::Null),
+        "intentHash": compact_projection.get("intentHash").cloned().unwrap_or(JsonValue::Null),
+        "policy": compact_projection.get("policy").cloned().unwrap_or(JsonValue::Null),
+        "trace": compact_projection.get("trace").cloned().unwrap_or(JsonValue::Null),
+        "stateKernel": {
+            "kind": first_result.and_then(|value| value.get("kind")).cloned().unwrap_or(JsonValue::Null),
+            "state": first_result.and_then(|value| value.get("state")).cloned().unwrap_or(JsonValue::Null),
+            "operation": first_result.and_then(|value| value.get("operation")).cloned().unwrap_or(JsonValue::Null),
+            "result": first_result.and_then(|value| value.get("result")).cloned().unwrap_or(JsonValue::Null),
+        },
+        "rawDataReturned": false
+    }))
+}
+
+fn synthesis_json_size_bytes(value: &JsonValue) -> usize {
+    serde_json::to_vec(value).map(|bytes| bytes.len()).unwrap_or(0)
+}
+
+fn compact_canvas_template_synthesis_payload(compact_projection: &JsonValue) -> JsonValue {
+    if let Some(raw_payload) = build_canvas_state_kernel_synthesis_payload(compact_projection) {
+        return compact_canvas_template_symbolize_payload(
+            compact_canvas_template_synthesis_value(None, &raw_payload),
+        );
+    }
+    compact_projection.clone()
+}
+
+async fn run_codex_canvas_oauth_direct_template_selector(
+    user_message: &str,
+    reasoning_effort: &str,
+    model_ref: Option<&str>,
+) -> Result<JsonValue, String> {
+    let catalog = load_forge_direct_template_catalog()?;
+    if let Some(mut selection) = try_local_codex_canvas_template_selection(&catalog, user_message)? {
+        if let JsonValue::Object(ref mut obj) = selection {
+            obj.insert(
+                "selectionSource".to_string(),
+                JsonValue::String("local_router".to_string()),
+            );
+        }
+        return Ok(selection);
+    }
+    let auth = read_openai_chatgpt_local_auth()
+        .ok_or_else(|| "No local ChatGPT OAuth credentials found for Codex.".to_string())?;
+    if auth.access_token.trim().is_empty() || auth.account_id.trim().is_empty() {
+        return Err("ChatGPT OAuth credentials are incomplete for direct template routing.".to_string());
+    }
+    let model =
+        codex_bridge_model_arg(model_ref).unwrap_or_else(|| "gpt-5.5".to_string());
+    let payload = json!({
+        "model": model,
+        "store": false,
+        "stream": true,
+        "instructions": build_codex_canvas_template_selector_instructions(&catalog, reasoning_effort),
+        "input": [{
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": user_message,
+            }],
+        }],
+        "text": {
+            "verbosity": "low",
+        },
+        "reasoning": {
+            "effort": reasoning_effort,
+            "summary": "auto",
+        },
+        "include": ["reasoning.encrypted_content"],
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+    });
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("build Codex direct template selector client: {e}"))?;
+    let mut response = client
+        .post("https://chatgpt.com/backend-api/codex/responses")
+        .header("Authorization", format!("Bearer {}", auth.access_token))
+        .header("ChatGPT-Account-ID", auth.account_id)
+        .header("OpenAI-Beta", "responses=experimental")
+        .header("Origin", "https://chatgpt.com")
+        .header("Referer", "https://chatgpt.com/")
+        .header("User-Agent", "codex_cli_rs/0.0.0 (Forge direct template selector)")
+        .header("originator", "codex_cli_rs")
+        .header("Accept-Language", "fr-FR,fr;q=0.9,en;q=0.8")
+        .header("Accept", "text/event-stream")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("request Codex direct template selector: {e}"))?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let text = response.text().await.unwrap_or_else(|_| String::new());
+        return Err(format!(
+            "Codex direct template selector HTTP {}: {}",
+            status,
+            text.trim()
+        ));
+    }
+    let mut output_text = String::new();
+    let mut remainder = String::new();
+    let mut completed_response = JsonValue::Null;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("stream Codex direct template selector: {e}"))?
+    {
+        remainder.push_str(&String::from_utf8_lossy(&chunk));
+        for event in codex_direct_drain_sse_events(&mut remainder) {
+            let event_type = event.get("type").and_then(JsonValue::as_str).unwrap_or("");
+            if event_type.contains("output_text.delta") {
+                if let Some(delta) = event.get("delta").and_then(JsonValue::as_str) {
+                    output_text.push_str(delta);
+                }
+            } else if event_type == "response.completed" {
+                completed_response = event.get("response").cloned().unwrap_or(event.clone());
+            }
+        }
+    }
+    if output_text.trim().is_empty() {
+        output_text = codex_direct_response_output_text(&completed_response);
+    }
+    let parsed: JsonValue = serde_json::from_str(output_text.trim())
+        .map_err(|e| format!("parse Codex direct template selection json: {e}"))?;
+    let mut selection = finalize_codex_direct_template_selection(&catalog, parsed)?;
+    if let JsonValue::Object(ref mut obj) = selection {
+        obj.insert(
+            "selectionSource".to_string(),
+            JsonValue::String("oauth_selector".to_string()),
+        );
+    }
+    Ok(selection)
+}
+
+async fn run_codex_canvas_oauth_direct(
     user_message: String,
-    session_key: String,
-    tools_enabled: bool,
     model_ref: Option<String>,
     reasoning_effort: String,
     app: Option<tauri::AppHandle>,
     turn_id: String,
 ) -> Result<(String, JsonValue), String> {
-    let model = codex_bridge_model_arg(model_ref.as_deref());
-    emit_canvas_assistant_event(
-        app.as_ref(),
-        &turn_id,
-        "codex_bridge",
-        "J'accroche ce message au runtime Codex persistant de Forge.",
-        json!({
-            "runtime": "Codex app-server",
-            "mode": "persistent_stdio",
-            "path": client.runtime_path.display().to_string(),
-            "reasoningEffort": reasoning_effort.as_str(),
-        }),
-    );
-    let dynamic_tools = if tools_enabled {
-        forge_dynamic_tool_specs_compact()
-    } else {
-        Vec::new()
-    };
-    let (thread_id, compact_memory, thread_generation) =
-        client.ensure_thread(&session_key, model_ref.as_deref(), dynamic_tools)?;
-    let compact_memory_chars = compact_memory
-        .as_ref()
-        .map(|s| s.chars().count())
-        .unwrap_or(0);
-    let prompt =
-        build_codex_canvas_prompt_light(&user_message, tools_enabled, compact_memory.as_deref(), &reasoning_effort);
-    let _ = client.drain_notifications();
-    let turn_result = client.request(
-        "turn/start",
-        json!({
-            "threadId": thread_id,
-            "input": [{
-                "type": "text",
-                "text": prompt,
-                "text_elements": [],
+    let auth = read_openai_chatgpt_local_auth()
+        .ok_or_else(|| "No local ChatGPT OAuth credentials found for Codex.".to_string())?;
+    if auth.access_token.trim().is_empty() {
+        return Err("No ChatGPT access token available for Codex direct mode.".to_string());
+    }
+    if auth.account_id.trim().is_empty() {
+        return Err("No ChatGPT account id available for Codex direct mode.".to_string());
+    }
+    let model =
+        codex_bridge_model_arg(model_ref.as_deref()).unwrap_or_else(|| "gpt-5.5".to_string());
+    let payload = json!({
+        "model": model.clone(),
+        "store": false,
+        "stream": true,
+        "instructions": build_codex_canvas_direct_oauth_instructions(&reasoning_effort),
+        "input": [{
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": user_message,
             }],
-            "cwd": null,
-            "approvalPolicy": null,
-            "approvalsReviewer": null,
-            "sandboxPolicy": null,
-            "model": model.clone(),
-            "serviceTier": null,
-            "effort": reasoning_effort.as_str(),
-            "summary": null,
-            "personality": null,
-            "outputSchema": null,
-            "collaborationMode": null,
-        }),
-        Duration::from_secs(30),
-    )?;
-    let codex_turn_id = turn_result
-        .get("turn")
-        .and_then(|turn| turn.get("id"))
-        .and_then(JsonValue::as_str)
-        .ok_or_else(|| "Codex app-server did not return a turn id".to_string())?
-        .to_string();
+        }],
+        "text": {
+            "verbosity": "medium",
+        },
+        "reasoning": {
+            "effort": reasoning_effort.clone(),
+            "summary": "auto",
+        },
+        "include": ["reasoning.encrypted_content"],
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+    });
     emit_canvas_assistant_event(
         app.as_ref(),
         &turn_id,
         "codex_bridge",
-        "Codex a ouvert un tour dans la session persistante.",
+        "Forge ouvre un tour Codex OAuth direct pour le chat simple.",
         json!({
-            "runtime": "Codex app-server",
-            "threadId": thread_id,
-            "turnId": codex_turn_id,
-            "reasoningEffort": reasoning_effort.as_str(),
+            "runtime": "Codex OAuth direct",
+            "mode": "chatgpt_oauth_sse",
+            "model": model.clone(),
+            "reasoningEffort": reasoning_effort.clone(),
+            "subscriptionPlanType": auth.plan_type.clone(),
+            "authMode": auth.auth_mode.clone(),
         }),
     );
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+        .map_err(|e| format!("build Codex OAuth direct client: {e}"))?;
+    let mut response = client
+        .post("https://chatgpt.com/backend-api/codex/responses")
+        .header("Authorization", format!("Bearer {}", auth.access_token))
+        .header("ChatGPT-Account-ID", auth.account_id.clone())
+        .header("OpenAI-Beta", "responses=experimental")
+        .header("Origin", "https://chatgpt.com")
+        .header("Referer", "https://chatgpt.com/")
+        .header("User-Agent", "codex_cli_rs/0.0.0 (Forge direct)")
+        .header("originator", "codex_cli_rs")
+        .header("Accept-Language", "fr-FR,fr;q=0.9,en;q=0.8")
+        .header("Accept", "text/event-stream")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("request Codex OAuth direct: {e}"))?;
+    let status = response.status();
+    let request_id = response
+        .headers()
+        .get("x-oai-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let plan_type = response
+        .headers()
+        .get("x-codex-plan-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .or(auth.plan_type.clone());
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_else(|_| String::new());
+        return Err(format!(
+            "Codex OAuth direct HTTP {}: {}",
+            status.as_u16(),
+            text.trim()
+        ));
+    }
 
-    let started = Instant::now();
     let mut final_message = String::new();
     let mut usage = JsonValue::Null;
-    let mut completed = false;
-    let mut failed: Option<String> = None;
-    while !completed {
-        if started.elapsed() > Duration::from_secs(180) {
-            return Err("Codex app-server turn timed out after 180s".to_string());
-        }
-        let notifications = client.wait_for_notifications(Duration::from_millis(500))?;
-        for notification in notifications {
-            if !codex_notification_matches_turn(&notification, &thread_id, &codex_turn_id) {
-                continue;
-            }
-            let method = notification
-                .get("method")
-                .and_then(JsonValue::as_str)
-                .unwrap_or("");
-            match method {
-                "item/agentMessage/delta" => {
-                    if let Some(delta) = notification
-                        .get("params")
-                        .and_then(|params| params.get("delta"))
-                        .and_then(JsonValue::as_str)
-                    {
+    let mut response_id: Option<String> = None;
+    let mut event_types = Vec::<String>::new();
+    let mut remainder = String::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("stream Codex OAuth direct: {e}"))?
+    {
+        remainder.push_str(&String::from_utf8_lossy(&chunk));
+        for event in codex_direct_drain_sse_events(&mut remainder) {
+            if let Some(event_type) = event.get("type").and_then(JsonValue::as_str) {
+                let event_type = event_type.to_string();
+                if !event_types.iter().any(|value| value == &event_type) {
+                    event_types.push(event_type.clone());
+                }
+                if event_type.contains("output_text.delta") {
+                    if let Some(delta) = event.get("delta").and_then(JsonValue::as_str) {
                         final_message.push_str(delta);
-                    }
-                }
-                "thread/tokenUsage/updated" => {
-                    if let Some(token_usage) = notification
-                        .get("params")
-                        .and_then(|params| params.get("tokenUsage"))
-                    {
-                        usage = token_usage.clone();
-                    }
-                    if let Some(summary) = summarize_codex_app_server_notification(&notification)
-                    {
                         emit_canvas_assistant_event(
                             app.as_ref(),
                             &turn_id,
-                            "codex_event",
-                            summary,
-                            notification.clone(),
+                            "assistant_stream_delta",
+                            delta,
+                            json!({
+                                "runtime": "codex",
+                                "delta": delta,
+                                "content": final_message.clone(),
+                                "mode": "chatgpt_oauth_sse",
+                            }),
                         );
+                    }
+                } else if event_type == "response.completed" {
+                    if let Some(response_value) = event.get("response") {
+                        if let Some(id) = response_value.get("id").and_then(JsonValue::as_str) {
+                            response_id = Some(id.to_string());
+                        }
+                        if let Some(stream_usage) = response_value.get("usage") {
+                            usage = stream_usage.clone();
+                        }
+                        if final_message.trim().is_empty() {
+                            final_message = codex_direct_response_output_text(response_value);
+                        }
                     }
                 }
-                "turn/completed" => {
-                    if let Some(error) = notification
-                        .get("params")
-                        .and_then(|params| params.get("turn"))
-                        .and_then(|turn| turn.get("error"))
-                        .filter(|error| !error.is_null())
-                    {
-                        failed = Some(error.to_string());
-                    }
-                    completed = true;
-                    if let Some(summary) = summarize_codex_app_server_notification(&notification)
-                    {
-                        emit_canvas_assistant_event(
-                            app.as_ref(),
-                            &turn_id,
-                            "codex_event",
-                            summary,
-                            notification.clone(),
-                        );
+            }
+            if usage.is_null() {
+                if let Some(stream_usage) = event.pointer("/response/usage") {
+                    usage = stream_usage.clone();
+                }
+            }
+            if response_id.is_none() {
+                response_id = event
+                    .pointer("/response/id")
+                    .and_then(JsonValue::as_str)
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        event.get("response_id")
+                            .and_then(JsonValue::as_str)
+                            .map(|s| s.to_string())
+                    });
+            }
+        }
+    }
+    if !remainder.trim().is_empty() {
+        remainder.push_str("\n\n");
+        for event in codex_direct_drain_sse_events(&mut remainder) {
+            if let Some(response_value) = event.get("response") {
+                if usage.is_null() {
+                    if let Some(stream_usage) = response_value.get("usage") {
+                        usage = stream_usage.clone();
                     }
                 }
-                "error" => {
-                    failed = notification
-                        .get("params")
-                        .and_then(|params| params.get("error"))
-                        .and_then(|error| error.get("message"))
-                        .and_then(JsonValue::as_str)
-                        .map(|message| message.to_string())
-                        .or_else(|| Some(notification.to_string()));
-                    completed = true;
-                    if let Some(summary) = summarize_codex_app_server_notification(&notification)
-                    {
-                        emit_canvas_assistant_event(
-                            app.as_ref(),
-                            &turn_id,
-                            "codex_event",
-                            summary,
-                            notification.clone(),
-                        );
-                    }
-                }
-                _ => {
-                    if let Some(summary) = summarize_codex_app_server_notification(&notification)
-                    {
-                        emit_canvas_assistant_event(
-                            app.as_ref(),
-                            &turn_id,
-                            "codex_event",
-                            summary,
-                            notification.clone(),
-                        );
-                    }
+                if final_message.trim().is_empty() {
+                    final_message = codex_direct_response_output_text(response_value);
                 }
             }
         }
     }
-    if let Some(error) = failed {
-        return Err(format!("Codex app-server turn failed: {error}"));
+    let assistant_message = sanitize_canvas_assistant_message(&final_message);
+    if assistant_message.trim().is_empty() {
+        return Err("Codex OAuth direct returned an empty assistant message".to_string());
     }
-    if final_message.trim().is_empty() {
-        return Err("Codex app-server returned an empty assistant message".to_string());
-    }
-    client.record_thread_turn(&session_key, &user_message, final_message.trim());
     emit_canvas_assistant_event(
         app.as_ref(),
         &turn_id,
         "codex_bridge",
-        "Codex a renvoye la reponse finale depuis le runtime persistant.",
+        "Codex a renvoye la reponse finale via OAuth direct.",
         json!({
-            "runtime": "Codex app-server",
+            "runtime": "Codex OAuth direct",
             "status": "ok",
-            "threadId": thread_id,
-            "turnId": codex_turn_id,
+            "mode": "chatgpt_oauth_sse",
+            "model": model.clone(),
+            "requestId": request_id.clone(),
+            "responseId": response_id.clone(),
+            "subscriptionPlanType": plan_type.clone(),
         }),
     );
     Ok((
-        final_message.trim().to_string(),
+        assistant_message,
         json!({
             "status": "ok",
-            "runtime": "Codex app-server",
-            "path": client.runtime_path.display().to_string(),
-            "mode": "persistent_stdio",
-            "sandbox": "read-only",
+            "runtime": "Codex OAuth direct",
+            "mode": "chatgpt_oauth_sse",
             "model": model,
             "reasoningEffort": reasoning_effort,
-            "toolsEnabled": tools_enabled,
-            "threadGeneration": thread_generation,
-            "compacted": compact_memory.is_some(),
-            "compactMemoryChars": compact_memory_chars,
-            "threadId": thread_id,
-            "turnId": codex_turn_id,
-            "usage": usage,
+            "toolsEnabled": false,
+            "directChatMode": true,
+            "requestId": request_id,
+            "responseId": response_id,
+            "subscriptionPlanType": plan_type,
+            "authMode": auth.auth_mode.clone(),
+            "usage": codex_direct_usage_summary(&usage),
+            "eventTypes": event_types,
         }),
     ))
 }
@@ -23177,9 +24971,9 @@ async fn forge_canvas_assistant_turn(
         .as_deref()
         .map(str::trim)
         .unwrap_or_default();
-    let privacy_tool_event = if request_privacy_scope == "agence_immo"
-        || forge_real_estate_privacy_applies(&request.message)
-    {
+    let real_estate_scope_active =
+        request_privacy_scope == "agence_immo" || forge_real_estate_privacy_applies(&request.message);
+    let privacy_tool_event = if real_estate_scope_active {
         let original_message = request.message.clone();
         let original_hash = forge_privacy_hash(&original_message);
         let (sanitized_message, redaction_counts) =
@@ -23216,6 +25010,54 @@ async fn forge_canvas_assistant_turn(
     } else {
         None
     };
+    let real_estate_intro_tool_event = if real_estate_scope_active {
+        let first_contact_directive =
+            real_estate_first_contact_onboarding_directive(&store_path_for_codex_tools, &turn_id);
+        let followup_directive = if first_contact_directive.is_none() {
+            real_estate_pending_identity_act_directive(&store_path_for_codex_tools)
+        } else {
+            None
+        };
+        let confirmation_directive =
+            if first_contact_directive.is_none() && followup_directive.is_none() {
+                real_estate_pending_contact_confirmation_directive(&store_path_for_codex_tools)
+            } else {
+                None
+            };
+        if let Some(directive) = first_contact_directive
+            .or(followup_directive)
+            .or(confirmation_directive)
+        {
+            request.message = format!("{directive}\n\n{}", request.message);
+            let mode = if directive.contains("mode=intro") {
+                "intro"
+            } else if directive.contains("mode=confirm_agency") {
+                "agency_confirm"
+            } else {
+                "agency_identity_act"
+            };
+            let event = json!({
+                "tool": "real_estate_onboarding",
+                "transport": "backend",
+                "scope": "agence_immo",
+                "mode": mode,
+                "questionId": "agency_identity",
+                "turnId": turn_id
+            });
+            emit_canvas_assistant_event(
+                Some(&app),
+                &turn_id,
+                "real_estate_onboarding",
+                "Onboarding agence: accueil premier contact injecte.",
+                event.clone(),
+            );
+            Some(event)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let use_gemini = runtime == "gemini";
     let use_claude = runtime == "claude";
     let user_message = request.message.trim();
@@ -23235,18 +25077,37 @@ async fn forge_canvas_assistant_turn(
         },
         has_active_job,
     );
+    let direct_chat_mode = direct_canvas_chat_mode(
+        tools_enabled,
+        has_active_job,
+        force_runtime_context,
+        real_estate_scope_active,
+    );
+    let reasoning_effort = if direct_chat_mode
+        && request
+            .reasoning_effort
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+    {
+        "low".to_string()
+    } else {
+        reasoning_effort
+    };
     let context_loaded = tools_enabled;
-    if !tools_enabled && !force_runtime_context {
+    if false && !tools_enabled && !force_runtime_context {
         if let Some(reply) = local_canvas_micro_reply(current_user_message) {
             return Ok(ForgeCanvasAssistantResponse {
                 assistant_message: reply,
                 provider,
                 context: forge_canvas_on_demand_context(request.job_id.clone(), has_active_job),
-                tool_events: with_real_estate_privacy_tool_event(
+                tool_events: with_real_estate_tool_events(
                     &privacy_tool_event,
+                    &real_estate_intro_tool_event,
                     vec![json!({
                     "tool": "token_usage",
-                    "label": "0 fresh · local"
+                    "label": "0 fresh ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· local"
                     })],
                 ),
                 codex_bridge: json!({
@@ -23313,7 +25174,7 @@ async fn forge_canvas_assistant_turn(
                     assistant_message,
                     provider,
                     context: forge_canvas_on_demand_context(request.job_id.clone(), has_active_job),
-                    tool_events: with_real_estate_privacy_tool_event(&privacy_tool_event, vec![
+                    tool_events: with_real_estate_tool_events(&privacy_tool_event, &real_estate_intro_tool_event, vec![
                         json!({
                             "tool": "semantic_cache",
                             "transport": "local",
@@ -23322,7 +25183,7 @@ async fn forge_canvas_assistant_turn(
                         }),
                         json!({
                             "tool": "token_usage",
-                            "label": "0 fresh · local cache"
+                            "label": "0 fresh ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· local cache"
                         })
                     ]),
                     codex_bridge: json!({
@@ -23372,7 +25233,7 @@ async fn forge_canvas_assistant_turn(
                 assistant_message: reply.message,
                 provider,
                 context,
-                tool_events: with_real_estate_privacy_tool_event(&privacy_tool_event, vec![
+                tool_events: with_real_estate_tool_events(&privacy_tool_event, &real_estate_intro_tool_event, vec![
                     json!({
                         "tool": "backend_direct",
                         "transport": "local",
@@ -23381,7 +25242,7 @@ async fn forge_canvas_assistant_turn(
                     }),
                     json!({
                         "tool": "token_usage",
-                        "label": "0 fresh · backend"
+                        "label": "0 fresh ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· backend"
                     }),
                 ]),
                 codex_bridge: json!({
@@ -23411,45 +25272,17 @@ async fn forge_canvas_assistant_turn(
         use_gemini && (provider.connected || provider.installed || provider_terminal_running("gemini"));
     let claude_canvas_available =
         use_claude && (provider.connected || provider.installed || provider_terminal_running("claude"));
-    let mut codex_client: Option<Arc<CodexAppServerClient>> = None;
-    let mut codex_start_error: Option<String> = None;
-    if provider.connected && !use_gemini && !use_claude {
-        codex_client = {
-            let app_state = state.lock().map_err(|e| e.to_string())?;
-            app_state.codex_app_server.clone()
-        };
-        if codex_client.is_none() {
-            emit_canvas_assistant_event(
-                Some(&app),
-                &turn_id,
-                "codex_bridge",
-                "Je demarre le runtime Codex persistant pour Forge.",
-                json!({
-                    "runtime": "Codex app-server",
-                    "mode": "persistent_stdio",
-                }),
-            );
-            match tauri::async_runtime::spawn_blocking(CodexAppServerClient::start)
-                .await
-                .map_err(|e| format!("join Codex app-server start: {e}"))?
-            {
-                Ok(client) => {
-                    let new_client = Arc::new(client);
-                    let mut app_state = state.lock().map_err(|e| e.to_string())?;
-                    let client = if let Some(existing) = app_state.codex_app_server.as_ref() {
-                        existing.clone()
-                    } else {
-                        app_state.codex_app_server = Some(new_client.clone());
-                        new_client
-                    };
-                    codex_client = Some(client);
-                }
-                Err(err) => {
-                    codex_start_error = Some(err);
-                }
-            }
-        }
-    }
+    let codex_direct_oauth_ready = provider.connected
+        && !use_gemini
+        && !use_claude
+        && codex_canvas_direct_oauth_enabled()
+        && read_openai_chatgpt_local_auth()
+            .map(|auth| {
+                !auth.access_token.trim().is_empty() && !auth.account_id.trim().is_empty()
+            })
+            .unwrap_or(false);
+    let codex_direct_oauth_fast_lane = codex_direct_oauth_ready && direct_chat_mode;
+    let codex_direct_oauth_template_lane = codex_direct_oauth_ready && !direct_chat_mode;
     let codex_attempt_message = if gemini_canvas_available {
         let gemini_message = request.message.clone();
         let gemini_model = effective_model_ref.clone();
@@ -23466,16 +25299,26 @@ async fn forge_canvas_assistant_turn(
         let gemini_session_key = format!(
             "{}:{}",
             gemini_session_key,
-            if tools_enabled { "tools" } else { "chat" }
+            if direct_chat_mode {
+                "direct"
+            } else if tools_enabled {
+                "tools"
+            } else {
+                "chat"
+            }
         );
-        let (gemini_compact_memory, gemini_generation) =
-            prepare_gemini_thread_memory(&state, &gemini_session_key)?;
+        let (gemini_compact_memory, gemini_generation) = if direct_chat_mode {
+            (None, 0)
+        } else {
+            prepare_gemini_thread_memory(&state, &gemini_session_key)?
+        };
         match tauri::async_runtime::spawn_blocking(move || {
             run_gemini_canvas_cli(
                 gemini_message,
                 tools_enabled,
                 gemini_compact_memory,
                 gemini_generation,
+                direct_chat_mode,
                 gemini_model,
                 gemini_reasoning_effort,
                 gemini_store_path,
@@ -23488,12 +25331,14 @@ async fn forge_canvas_assistant_turn(
         .map_err(|e| format!("join Gemini CLI bridge: {e}"))?
         {
             Ok((message, bridge)) => {
-                record_gemini_thread_turn(
-                    &state,
-                    &gemini_session_key,
-                    &request.message,
-                    &message,
-                );
+                if !direct_chat_mode {
+                    record_gemini_thread_turn(
+                        &state,
+                        &gemini_session_key,
+                        &request.message,
+                        &message,
+                    );
+                }
                 codex_bridge = bridge;
                 Some(message)
             }
@@ -23523,16 +25368,26 @@ async fn forge_canvas_assistant_turn(
         let claude_session_key = format!(
             "{}:{}",
             claude_session_key,
-            if tools_enabled { "tools" } else { "chat" }
+            if direct_chat_mode {
+                "direct"
+            } else if tools_enabled {
+                "tools"
+            } else {
+                "chat"
+            }
         );
-        let (claude_compact_memory, claude_generation) =
-            prepare_claude_thread_memory(&state, &claude_session_key)?;
+        let (claude_compact_memory, claude_generation) = if direct_chat_mode {
+            (None, 0)
+        } else {
+            prepare_claude_thread_memory(&state, &claude_session_key)?
+        };
         match tauri::async_runtime::spawn_blocking(move || {
             run_claude_canvas_cli(
                 claude_message,
                 tools_enabled,
                 claude_compact_memory,
                 claude_generation,
+                direct_chat_mode,
                 claude_model,
                 claude_reasoning_effort,
                 claude_store_path,
@@ -23545,12 +25400,14 @@ async fn forge_canvas_assistant_turn(
         .map_err(|e| format!("join Claude Code CLI bridge: {e}"))?
         {
             Ok((message, bridge)) => {
-                record_claude_thread_turn(
-                    &state,
-                    &claude_session_key,
-                    &request.message,
-                    &message,
-                );
+                if !direct_chat_mode {
+                    record_claude_thread_turn(
+                        &state,
+                        &claude_session_key,
+                        &request.message,
+                        &message,
+                    );
+                }
                 codex_bridge = bridge;
                 Some(message)
             }
@@ -23565,74 +25422,201 @@ async fn forge_canvas_assistant_turn(
             }
         }
     } else if provider.connected {
-        if let Some(client) = codex_client {
-            client.update_tool_context(CodexDynamicToolContext {
-                store_path: Some(store_path_for_codex_tools.clone()),
-                active_job_id: request.job_id.clone(),
-                canvas_turn_id: Some(turn_id.clone()),
-                app: Some(app.clone()),
-                max_log_lines,
-            })?;
-            let codex_session_key = request
-                .job_id
-                .clone()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "forge-default".to_string());
-            let codex_session_key = format!(
-                "{}:{}",
-                codex_session_key,
-                if tools_enabled { "tools" } else { "chat" }
-            );
-            let codex_message = request.message.clone();
-            let codex_model = effective_model_ref.clone();
-            let codex_reasoning_effort = reasoning_effort.clone();
-            let app_for_codex = app.clone();
-            let turn_for_codex = turn_id.clone();
-            let tools_for_codex = tools_enabled;
-            match tauri::async_runtime::spawn_blocking(move || {
-                run_codex_canvas_app_server(
-                    client,
-                    codex_message,
-                    codex_session_key,
-                    tools_for_codex,
-                    codex_model,
-                    codex_reasoning_effort,
-                    Some(app_for_codex),
-                    turn_for_codex,
-                )
-            })
+        if codex_direct_oauth_fast_lane {
+            match run_codex_canvas_oauth_direct(
+                request.message.clone(),
+                effective_model_ref.clone(),
+                reasoning_effort.clone(),
+                Some(app.clone()),
+                turn_id.clone(),
+            )
             .await
-            .map_err(|e| format!("join Codex app-server bridge: {e}"))?
             {
                 Ok((message, bridge)) => {
                     codex_bridge = bridge;
                     Some(message)
                 }
                 Err(err) => {
-                    if let Ok(mut app_state) = state.lock() {
-                        app_state.codex_app_server = None;
-                    }
                     codex_bridge = json!({
                         "status": "unavailable",
-                        "mode": "codex app-server",
+                        "mode": "codex direct oauth",
                         "error": err,
                     });
                     None
                 }
             }
-        } else if let Some(err) = codex_start_error {
+        } else if codex_direct_oauth_template_lane {
+            let codex_message = request.message.clone();
+            let codex_model = effective_model_ref.clone();
+            let codex_reasoning_effort = reasoning_effort.clone();
+            let app_for_codex = app.clone();
+            let turn_for_codex = turn_id.clone();
+            let store_path_for_template_exec = store_path_for_codex_tools.clone();
+            let direct_template_attempt = async {
+                let selection = run_codex_canvas_oauth_direct_template_selector(
+                    &codex_message,
+                    &codex_reasoning_effort,
+                    codex_model.as_deref(),
+                )
+                .await?;
+                emit_canvas_assistant_event(
+                    Some(&app),
+                    &turn_id,
+                    "codex_bridge",
+                    "Codex a choisi un template direct Forge.",
+                    selection.clone(),
+                );
+                let forge_slash = selection
+                    .get("forgeSlash")
+                    .and_then(JsonValue::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "template selection did not return forgeSlash".to_string())?
+                    .to_string();
+                emit_canvas_assistant_event(
+                    Some(&app),
+                    &turn_id,
+                    "codex_bridge",
+                    "Forge execute localement le template direct en mode safe.",
+                    json!({
+                        "forgeSlash": forge_slash,
+                        "templateId": selection.get("templateId").cloned().unwrap_or(JsonValue::Null),
+                    }),
+                );
+                let forge_slash_for_exec = forge_slash.clone();
+                let projection = tauri::async_runtime::spawn_blocking(move || {
+                    execute_canvas_forgeslash_safe(&store_path_for_template_exec, &forge_slash_for_exec, 4096)
+                })
+                .await
+                .map_err(|e| format!("join direct ForgeSlash safe execution: {e}"))??;
+                let compact_projection = compact_canvas_template_projection(&projection);
+                let raw_synthesis_projection =
+                    build_canvas_state_kernel_synthesis_payload(&compact_projection);
+                let synthesis_projection =
+                    compact_canvas_template_synthesis_payload(&compact_projection);
+                let synthesis_payload_bytes_before = raw_synthesis_projection
+                    .as_ref()
+                    .map(synthesis_json_size_bytes)
+                    .unwrap_or_else(|| synthesis_json_size_bytes(&compact_projection));
+                let synthesis_payload_bytes_after =
+                    synthesis_json_size_bytes(&synthesis_projection);
+                let projection_text = serde_json::to_string_pretty(&synthesis_projection)
+                    .unwrap_or_else(|_| synthesis_projection.to_string());
+                let synthesis_prompt = format!(
+                    "Question utilisateur:\n{}\n\nTemplate Forge choisi:\n{}\n\nProjection Forge compacte verifiee (JSON, sans donnees brutes):\n{}\n\nReponds en francais de facon concise. Si le resultat est un plan_only, explique clairement ce que Forge a prepare ou lu sans inventer d'execution side-effect.",
+                    codex_message,
+                    forge_slash,
+                    projection_text
+                );
+                let (message, mut bridge) = run_codex_canvas_oauth_direct(
+                    synthesis_prompt,
+                    codex_model,
+                    codex_reasoning_effort,
+                    Some(app_for_codex),
+                    turn_for_codex,
+                )
+                .await?;
+                if let JsonValue::Object(ref mut obj) = bridge {
+                    obj.insert(
+                        "templateSelectionSource".to_string(),
+                        selection
+                            .get("selectionSource")
+                            .cloned()
+                            .unwrap_or(JsonValue::Null),
+                    );
+                    obj.insert(
+                        "templateId".to_string(),
+                        selection
+                            .get("templateId")
+                            .cloned()
+                            .unwrap_or(JsonValue::Null),
+                    );
+                    obj.insert(
+                        "templateCode".to_string(),
+                        selection
+                            .get("templateCode")
+                            .cloned()
+                            .unwrap_or(JsonValue::Null),
+                    );
+                    obj.insert("templateSelection".to_string(), selection);
+                    obj.insert("forgeProjection".to_string(), compact_projection);
+                    obj.insert(
+                        "synthesisPayloadBytesBefore".to_string(),
+                        json!(synthesis_payload_bytes_before),
+                    );
+                    obj.insert(
+                        "synthesisPayloadBytesAfter".to_string(),
+                        json!(synthesis_payload_bytes_after),
+                    );
+                    obj.insert(
+                        "synthesisPayloadBytesSaved".to_string(),
+                        json!(synthesis_payload_bytes_before.saturating_sub(synthesis_payload_bytes_after)),
+                    );
+                    obj.insert(
+                        "mode".to_string(),
+                        JsonValue::String("chatgpt_oauth_template_loop".to_string()),
+                    );
+                }
+                Ok::<(String, JsonValue), String>((message, bridge))
+            }
+            .await;
+            match direct_template_attempt {
+                Ok((message, bridge)) => {
+                    codex_bridge = bridge;
+                    Some(message)
+                }
+                Err(err) => {
+                    emit_canvas_assistant_event(
+                        Some(&app),
+                        &turn_id,
+                        "codex_bridge",
+                        "La boucle template directe a echoue; Forge repasse sur le direct OAuth libre.",
+                        json!({
+                            "runtime": "Codex OAuth direct",
+                            "status": "template_fallback_freeform",
+                            "error": err,
+                        }),
+                    );
+                    match run_codex_canvas_oauth_direct(
+                        request.message.clone(),
+                        effective_model_ref.clone(),
+                        reasoning_effort.clone(),
+                        Some(app.clone()),
+                        turn_id.clone(),
+                    )
+                    .await
+                    {
+                        Ok((message, mut bridge)) => {
+                            if let JsonValue::Object(ref mut obj) = bridge {
+                                obj.insert("templateLoopError".to_string(), JsonValue::String(err));
+                                obj.insert(
+                                    "mode".to_string(),
+                                    JsonValue::String("chatgpt_oauth_freeform_fallback".to_string()),
+                                );
+                            }
+                            codex_bridge = bridge;
+                            Some(message)
+                        }
+                        Err(fallback_err) => {
+                            codex_bridge = json!({
+                                "status": "unavailable",
+                                "mode": "codex direct oauth",
+                                "error": fallback_err,
+                                "templateLoopError": err,
+                            });
+                            None
+                        }
+                    }
+                }
+            }
+        } else if provider.connected && !use_gemini && !use_claude {
             codex_bridge = json!({
                 "status": "unavailable",
-                "mode": "codex app-server",
-                "error": err,
+                "mode": "codex direct oauth",
+                "error": "Codex direct OAuth is required for this Forge path, but the direct lane was not available.",
             });
             None
         } else {
-            codex_bridge = json!({
-                "status": "unavailable",
-                "mode": "codex app-server",
-                "error": "Codex app-server client was not available.",
-            });
             None
         }
     } else {
@@ -23670,27 +25654,27 @@ async fn forge_canvas_assistant_turn(
         message
     } else if provider.connected {
         if use_gemini {
-            "Gemini n'a pas pu répondre cette fois. Forge va réessayer automatiquement.".to_string()
+            "Gemini n'a pas pu rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pondre cette fois. Forge va rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essayer automatiquement.".to_string()
         } else if use_claude {
-            "Claude n'a pas pu répondre cette fois. Forge va réessayer automatiquement.".to_string()
+            "Claude n'a pas pu rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pondre cette fois. Forge va rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essayer automatiquement.".to_string()
         } else {
-            "Codex n'a pas pu répondre cette fois. Forge va réessayer automatiquement.".to_string()
+            "Codex n'a pas pu rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pondre cette fois. Forge va rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essayer automatiquement.".to_string()
         }
     } else {
         if use_gemini {
             if provider.installed || provider_terminal_running("gemini") {
-                "Gemini est en cours de reconnexion. Réessaie dans un instant.".to_string()
+                "Gemini est en cours de reconnexion. RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essaie dans un instant.".to_string()
             } else {
-                "Gemini se prépare encore. Forge va terminer la connexion automatiquement.".to_string()
+                "Gemini se prÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pare encore. Forge va terminer la connexion automatiquement.".to_string()
             }
         } else if use_claude {
             if provider.installed || provider_terminal_running("claude") {
-                "Claude est en cours de reconnexion. Réessaie dans un instant.".to_string()
+                "Claude est en cours de reconnexion. RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essaie dans un instant.".to_string()
             } else {
-                "Claude se prépare encore. Forge va terminer la connexion automatiquement.".to_string()
+                "Claude se prÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pare encore. Forge va terminer la connexion automatiquement.".to_string()
             }
         } else {
-            "Codex est en cours de reconnexion. Réessaie dans un instant.".to_string()
+            "Codex est en cours de reconnexion. RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essaie dans un instant.".to_string()
         }
     };
     if assistant_message.trim().is_empty() {
@@ -23763,7 +25747,8 @@ async fn forge_canvas_assistant_turn(
     } else {
         Vec::new()
     };
-    let tool_events = with_real_estate_privacy_tool_event(&privacy_tool_event, tool_events);
+    let tool_events =
+        with_real_estate_tool_events(&privacy_tool_event, &real_estate_intro_tool_event, tool_events);
     Ok(ForgeCanvasAssistantResponse {
         assistant_message,
         provider,
@@ -23802,19 +25787,14 @@ async fn cancel_forge_canvas_activity(
             return Err("invalid Forge job id".to_string());
         }
     }
-    let (store_path, codex_client) = {
+    let store_path = {
         let mut app_state = state.lock().map_err(|e| e.to_string())?;
         if let Some(ref turn_id) = turn_id {
             app_state.cancelled_canvas_turns.insert(turn_id.clone());
             mark_canvas_turn_cancelled_global(turn_id);
         }
-        let codex_client = app_state.codex_app_server.take();
-        (app_state.store_path.clone(), codex_client)
+        app_state.store_path.clone()
     };
-    let codex_runtime_stopped = codex_client
-        .as_ref()
-        .map(|client| client.force_kill())
-        .unwrap_or(false);
     let gemini_runtime_stopped = kill_gemini_active_process();
     let claude_runtime_stopped = kill_claude_active_process();
     let job_cancel = if let Some(job_id) = job_id.clone() {
@@ -23844,7 +25824,7 @@ async fn cancel_forge_canvas_activity(
     Ok(json!({
         "turnId": turn_id,
         "jobId": job_id,
-        "codexRuntimeStopped": codex_runtime_stopped,
+        "codexRuntimeStopped": false,
         "geminiRuntimeStopped": gemini_runtime_stopped,
         "claudeRuntimeStopped": claude_runtime_stopped,
         "jobCancel": job_cancel,
@@ -24416,7 +26396,7 @@ async fn persist_forge_canvas_session_state(
     Ok(())
 }
 
-/// Fast non-cryptographic fingerprint of file bytes — used as run-cache key.
+/// Fast non-cryptographic fingerprint of file bytes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â used as run-cache key.
 /// Good enough for "same file?" identity; not for security.
 #[tauri::command]
 async fn publish_forge_job_to_mcp(
@@ -24496,17 +26476,17 @@ async fn start_computation(
     state: tauri::State<'_, Mutex<ForgeAppState>>,
     app: tauri::AppHandle,
 ) -> Result<ProcessReport, String> {
-    // Session 2026-05-03 : la dropdown MODE A/B/C/D/E/F a été supprimée
+    // Session 2026-05-03 : la dropdown MODE A/B/C/D/E/F a ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© supprimÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e
     // de l'UI car le backend Forge fait maintenant l'auto-routing :
-    //   - CPU auto-router v0/v1/v2 (75-243 ns sur Léger workloads)
+    //   - CPU auto-router v0/v1/v2 (75-243 ns sur LÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ger workloads)
     //   - dispatch_batch entry-level CPU-fast bypass
-    //   - Multi-GPU split CUDA + WGPU parallèle quand 2 vendors différents
-    //   - is_cpu_auto_routable filtre Léger CPU vs Lourd GPU
+    //   - Multi-GPU split CUDA + WGPU parallÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨le quand 2 vendors diffÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rents
+    //   - is_cpu_auto_routable filtre LÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ger CPU vs Lourd GPU
     //
-    // Le paramètre `mode` est ignoré et forcé à "dispatch" — le path
-    // unique qui invoque toute la chaîne d'auto-routing. Les branches
+    // Le paramÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨tre `mode` est ignorÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© et forcÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  "dispatch" ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â le path
+    // unique qui invoque toute la chaÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â®ne d'auto-routing. Les branches
     // bypass/dedup/force-gpu/kasm-bypass/raw-mem ci-dessous sont
-    // conservées comme code de référence pour benchmarking comparatif
+    // conservÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©es comme code de rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rence pour benchmarking comparatif
     // mais ne sont plus accessibles depuis l'UI.
     let _user_mode = mode;
     let mode = "dispatch".to_string();
@@ -24522,11 +26502,11 @@ async fn start_computation(
     let mut app_state = state.lock().map_err(|e| e.to_string())?;
     let backend = app_state.backend_mut()?;
 
-    // ─── Run-level cache — best compute is no compute ─────────────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Run-level cache ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â best compute is no compute ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     if let Some(cached) = backend.run_cache.get(&cache_key) {
         emit_log(
             &app,
-            format!("[{kind}] ⚡ CACHE HIT — same file+program, replaying instantly"),
+            format!("[{kind}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â¡ CACHE HIT ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â same file+program, replaying instantly"),
         );
         emit_log(
             &app,
@@ -24561,18 +26541,18 @@ async fn start_computation(
         }};
     }
 
-    // ─── Φ.ν.7g — Reverse Synthesis early dispatch ──────────────────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¦.ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½.7g ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Reverse Synthesis early dispatch ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     //
     // Les kinds `reverse_synth_*` ne sont PAS des programmes KASM
-    // pré-stockés (puisque c'est Forge qui doit les TROUVER). On
-    // détourne ici avant le lookup `programs.get` qui échouerait.
+    // prÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©-stockÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s (puisque c'est Forge qui doit les TROUVER). On
+    // dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tourne ici avant le lookup `programs.get` qui ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©chouerait.
     //
     // Le bypass de la self-test classique est volontaire : il n'y a
-    // pas de référence Rust pour un programme que Forge doit
-    // synthétiser à la volée. La correction est garantie par le
-    // déterminisme bit-pour-bit du KASM (cf. doctrine §0) + le
-    // self-test post-synthèse qui re-exécute les 10 premiers examples
-    // sur le programme produit pour vérifier la stabilité.
+    // pas de rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rence Rust pour un programme que Forge doit
+    // synthÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tiser ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  la volÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e. La correction est garantie par le
+    // dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©terminisme bit-pour-bit du KASM (cf. doctrine ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§0) + le
+    // self-test post-synthÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨se qui re-exÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©cute les 10 premiers examples
+    // sur le programme produit pour vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rifier la stabilitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©.
     log!(
         "[{}] compute_core={} surface=home/start_computation route=dispatch",
         kind,
@@ -24581,24 +26561,24 @@ async fn start_computation(
 
     if kind.starts_with("reverse_synth_") {
         let t_start = Instant::now();
-        log!("[{}] ⚙ reverse synthesis dispatch — parsing CSV...", kind);
-        let bars = match synth_strategy::parse_csv(&bytes) {
+        log!("[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ reverse synthesis dispatch ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â parsing CSV...", kind);
+        let bars = match trading::parse_csv(&bytes) {
             Ok(b) => b,
             Err(e) => {
                 let msg = format!("CSV parse error: {e}");
-                log!("✗ {msg}");
+                log!("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {msg}");
                 return Err(msg);
             }
         };
         log!(
-            "[{}] ✓ parsed {} bars (range: {} → {})",
+            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ parsed {} bars (range: {} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {})",
             kind,
             bars.len(),
             ms_to_iso(bars.first().map(|b| b.time_ms).unwrap_or(0)),
             ms_to_iso(bars.last().map(|b| b.time_ms).unwrap_or(0)),
         );
 
-        let cfg = synth_strategy::SynthConfig::default();
+        let cfg = trading::SynthConfig::default();
         log!(
             "[{}] config : SL={}pt, target_pnl/day={}pt, horizon={}bars, train_split={:.0}%",
             kind,
@@ -24608,14 +26588,14 @@ async fn start_computation(
             cfg.train_split * 100.0,
         );
 
-        // ─── Split temporel train / holdout ─────────────────────────
+        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Split temporel train / holdout ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
         // CRITIQUE : Forge ne doit voir QUE le train. Le holdout sert
-        // exclusivement à mesurer la généralisation out-of-sample.
-        let train_end_bar = synth_strategy::train_holdout_split(bars.len(), cfg);
+        // exclusivement ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  mesurer la gÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ralisation out-of-sample.
+        let train_end_bar = trading::train_holdout_split(bars.len(), cfg);
         log!(
             "[{}] split temporel : train [{}, {}) | holdout [{}, {})",
             kind,
-            synth_strategy::MIN_HISTORY,
+            trading::MIN_HISTORY,
             train_end_bar,
             train_end_bar,
             bars.len(),
@@ -24623,11 +26603,11 @@ async fn start_computation(
 
         log!("[{}] building train examples (atlas-backed) ...", kind);
         let synth_file_hash = quick_file_hash(&bytes);
-        let train_examples = synth_strategy::build_examples_in_range_masked_with_atlas(
+        let train_examples = trading::build_examples_in_range_masked_with_atlas(
             &bars,
-            synth_strategy::MIN_HISTORY..train_end_bar,
+            trading::MIN_HISTORY..train_end_bar,
             cfg,
-            &synth_strategy::FeatureMask::all(),
+            &trading::FeatureMask::all(),
             &backend.atlas,
             synth_file_hash,
         );
@@ -24635,7 +26615,7 @@ async fn start_computation(
         let n_short = train_examples.iter().filter(|(_, l)| *l == -1).count();
         let n_flat = train_examples.iter().filter(|(_, l)| *l == 0).count();
         log!(
-            "[{}] ✓ {} train examples : LONG={} ({:.1}%) SHORT={} ({:.1}%) FLAT={} ({:.1}%)",
+            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ {} train examples : LONG={} ({:.1}%) SHORT={} ({:.1}%) FLAT={} ({:.1}%)",
             kind,
             train_examples.len(),
             n_long, 100.0 * n_long as f64 / train_examples.len().max(1) as f64,
@@ -24643,20 +26623,20 @@ async fn start_computation(
             n_flat, 100.0 * n_flat as f64 / train_examples.len().max(1) as f64,
         );
 
-        // ─── Forge synthesis : progressive deepening ────────────────
-        // Plutôt qu'un seul gros call evolve_i64_program(generations=5,
+        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Forge synthesis : progressive deepening ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
+        // PlutÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´t qu'un seul gros call evolve_i64_program(generations=5,
         // max_nodes=25), on fait 4 stages avec max_nodes croissant :
         //
-        //   stage 1 : max_nodes=10 (~1-3s)  — programmes simples
-        //   stage 2 : max_nodes=15 (~3-8s)  — programmes moyens
-        //   stage 3 : max_nodes=20 (~8-20s) — programmes complexes
-        //   stage 4 : max_nodes=25 (~20-60s)— search complète
+        //   stage 1 : max_nodes=10 (~1-3s)  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â programmes simples
+        //   stage 2 : max_nodes=15 (~3-8s)  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â programmes moyens
+        //   stage 3 : max_nodes=20 (~8-20s) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â programmes complexes
+        //   stage 4 : max_nodes=25 (~20-60s)ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â search complÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨te
         //
         // Avantages :
-        //   - **Live progress** : 4 milestones loggés au user pendant
+        //   - **Live progress** : 4 milestones loggÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s au user pendant
         //     la search au lieu d'un seul gros bloc silencieux
-        //   - **Strats simples trouvées vite** : si stage 1 trouve déjà
-        //     un programme à exact_train, on peut early-exit
+        //   - **Strats simples trouvÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©es vite** : si stage 1 trouve dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©jÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â 
+        //     un programme ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  exact_train, on peut early-exit
         //   - **Best-of cumulatif** : on garde le programme avec le
         //     meilleur train_loss across stages
         let stages: [(usize, usize); 4] = [
@@ -24666,7 +26646,7 @@ async fn start_computation(
             (25, 5),
         ];
         log!(
-            "[{}] ⚙ Forge synthesis (progressive deepening, 4 stages, examples={}) ──",
+            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Forge synthesis (progressive deepening, 4 stages, examples={}) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬",
             kind,
             train_examples.len(),
         );
@@ -24690,11 +26670,11 @@ async fn start_computation(
                 progress: None,
                 skip_prepass: false,
             };
-            // Φ.ν.7g — Heartbeat thread : émet un log toutes les 10s
+            // ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¦.ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½.7g ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Heartbeat thread : ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©met un log toutes les 10s
             // pendant que evolve_i64_program tourne (sinon UI muet
-            // pendant 30s à 5min selon la complexité du stage). Le
-            // thread se kill quand stop=true (synth terminée). Polling
-            // 200ms pour réagir vite au stop sans busy loop.
+            // pendant 30s ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  5min selon la complexitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© du stage). Le
+            // thread se kill quand stop=true (synth terminÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e). Polling
+            // 200ms pour rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©agir vite au stop sans busy loop.
             let stop = Arc::new(AtomicBool::new(false));
             let heartbeat = {
                 let stop = Arc::clone(&stop);
@@ -24708,7 +26688,7 @@ async fn start_computation(
                         thread::sleep(Duration::from_millis(200));
                         if last_emit.elapsed() >= Duration::from_secs(10) {
                             emit_log(&app_clone, format!(
-                                "[{}]   ⏱  stage {}/4 still running... ({}s elapsed, max_nodes={})",
+                                "[{}]   ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â±  stage {}/4 still running... ({}s elapsed, max_nodes={})",
                                 kind_clone, stage_num,
                                 hb_start.elapsed().as_secs(),
                                 max_nodes,
@@ -24726,7 +26706,7 @@ async fn start_computation(
                     let stage_elapsed = stage_t0.elapsed();
                     total_candidates = total_candidates.saturating_add(outcome.candidates_evaluated);
                     log!(
-                        "[{}]   stage {}/4 ✓ {:.2}s : source={} tried={} kept={} nodes={} train_loss={} exact_train={} exact_holdout={} atlas_score={:.0}%",
+                        "[{}]   stage {}/4 ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ {:.2}s : source={} tried={} kept={} nodes={} train_loss={} exact_train={} exact_holdout={} atlas_score={:.0}%",
                         kind,
                         stage_idx + 1,
                         stage_elapsed.as_secs_f64(),
@@ -24749,10 +26729,10 @@ async fn start_computation(
                     if is_better {
                         best_outcome = Some(outcome.clone());
                     }
-                    // Early exit si on a déjà un programme exact sur train+holdout interne
+                    // Early exit si on a dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©jÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  un programme exact sur train+holdout interne
                     if outcome.exact_train && outcome.exact_holdout {
                         log!(
-                            "[{}]   early exit : stage {} a trouvé exact_train + exact_holdout, stages suivants skipés",
+                            "[{}]   early exit : stage {} a trouvÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© exact_train + exact_holdout, stages suivants skipÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s",
                             kind,
                             stage_idx + 1,
                         );
@@ -24761,7 +26741,7 @@ async fn start_computation(
                 }
                 Err(e) => {
                     log!(
-                        "[{}]   stage {}/4 ✗ {} (continuing with next stage)",
+                        "[{}]   stage {}/4 ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {} (continuing with next stage)",
                         kind,
                         stage_idx + 1,
                         e,
@@ -24774,7 +26754,7 @@ async fn start_computation(
             "Forge synth failed: aucun stage n'a produit de programme valide".to_string()
         })?;
         log!(
-            "[{}] ✓ synth done in {:.2}s total ({} candidates across all stages)",
+            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ synth done in {:.2}s total ({} candidates across all stages)",
             kind,
             synth_elapsed.as_secs_f64(),
             total_candidates,
@@ -24790,11 +26770,11 @@ async fn start_computation(
         );
         log!("[{}] strategy hash: {}", kind, outcome.program_hash);
 
-        // ─── Évaluation par-jour sur train et holdout ───────────────
-        // On lance le programme synthétisé via call_one_i64 (bénéficie
+        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°valuation par-jour sur train et holdout ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
+        // On lance le programme synthÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© via call_one_i64 (bÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ficie
         // automatiquement de l'auto-router CPU + du RAM cache pour les
-        // features qui se répètent). Le predict_label callback fait
-        // la conversion i64 sortie KASM → ±1 / 0 via signum().
+        // features qui se rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨tent). Le predict_label callback fait
+        // la conversion i64 sortie KASM ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±1 / 0 via signum().
         let prog_hash = outcome.program_hash;
         let predict = |features: i64| -> i64 {
             backend
@@ -24804,13 +26784,13 @@ async fn start_computation(
                 .unwrap_or(0)
         };
         let eval_t0 = Instant::now();
-        log!("[{}] ⚙ evaluating strategy on TRAIN ({} bars) ...", kind, train_end_bar - synth_strategy::MIN_HISTORY);
+        log!("[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ evaluating strategy on TRAIN ({} bars) ...", kind, train_end_bar - trading::MIN_HISTORY);
         let eval_train = {
             let app_clone = app.clone();
             let kind_clone = kind.clone();
-            synth_strategy::eval_strategy_with_progress(
+            trading::eval_strategy_with_progress(
                 &bars,
-                synth_strategy::MIN_HISTORY..train_end_bar,
+                trading::MIN_HISTORY..train_end_bar,
                 cfg,
                 predict,
                 move |done, total| {
@@ -24822,11 +26802,11 @@ async fn start_computation(
                 },
             )
         };
-        log!("[{}] ⚙ evaluating strategy on HOLDOUT ({} bars) ...", kind, bars.len() - train_end_bar);
+        log!("[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ evaluating strategy on HOLDOUT ({} bars) ...", kind, bars.len() - train_end_bar);
         let eval_holdout = {
             let app_clone = app.clone();
             let kind_clone = kind.clone();
-            synth_strategy::eval_strategy_with_progress(
+            trading::eval_strategy_with_progress(
                 &bars,
                 train_end_bar..bars.len(),
                 cfg,
@@ -24842,14 +26822,14 @@ async fn start_computation(
         };
         let eval_elapsed = eval_t0.elapsed();
         log!(
-            "[{}] ✓ eval done in {:.2}s ({} train + {} holdout decisions)",
+            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ eval done in {:.2}s ({} train + {} holdout decisions)",
             kind,
             eval_elapsed.as_secs_f64(),
             eval_train.total_trades,
             eval_holdout.total_trades,
         );
 
-        res!("══ Reverse Synthesis — Forge real synth ══");
+        res!("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚Â Reverse Synthesis ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Forge real synth ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚Â");
         res!("Strategy hash : {}", outcome.program_hash);
         res!("Source: {}  | KASM nodes: {}  | Synth time: {:.2}s | tried={} kept={} atlas_score={:.0}%",
              outcome.source, outcome.program.nodes().len(),
@@ -24857,36 +26837,36 @@ async fn start_computation(
              outcome.combinations_tried, outcome.candidates_evaluated,
              if outcome.combinations_tried > 0 { 100.0 * outcome.atlas_score_hits as f64 / outcome.combinations_tried as f64 } else { 0.0 });
         res!("");
-        res!("─── TRAIN (in-sample) ───");
-        res!("  {} jours évalués, {} trades ({} long, {} short)",
+        res!("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ TRAIN (in-sample) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬");
+        res!("  {} jours ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©valuÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s, {} trades ({} long, {} short)",
              eval_train.days_evaluated, eval_train.total_trades,
              eval_train.long_trades, eval_train.short_trades);
         res!("  WR par-trade : {:.1}%  | avg P&L/trade : {:.4}p  | total P&L : {:.3}p",
              eval_train.pct_winning_trades(),
              eval_train.avg_pnl_per_trade(),
              eval_train.total_pnl_points);
-        res!("  ★ {:.1}% jours profitables (cumul ≥ +{}p)  [cible : ≥ 85%]",
+        res!("  ÃƒÆ’Ã‚Â¢Ãƒâ€¹Ã…â€œÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ {:.1}% jours profitables (cumul ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ +{}p)  [cible : ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 85%]",
              eval_train.pct_days_target_hit(), cfg.target_pnl_per_day);
         res!("");
-        res!("─── HOLDOUT (out-of-sample, bougies non vues par Forge) ───");
-        res!("  {} jours évalués, {} trades ({} long, {} short)",
+        res!("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ HOLDOUT (out-of-sample, bougies non vues par Forge) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬");
+        res!("  {} jours ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©valuÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s, {} trades ({} long, {} short)",
              eval_holdout.days_evaluated, eval_holdout.total_trades,
              eval_holdout.long_trades, eval_holdout.short_trades);
         res!("  WR par-trade : {:.1}%  | avg P&L/trade : {:.4}p  | total P&L : {:.3}p",
              eval_holdout.pct_winning_trades(),
              eval_holdout.avg_pnl_per_trade(),
              eval_holdout.total_pnl_points);
-        res!("  ★ {:.1}% jours profitables (cumul ≥ +{}p)  [cible : ≥ 85%]",
+        res!("  ÃƒÆ’Ã‚Â¢Ãƒâ€¹Ã…â€œÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ {:.1}% jours profitables (cumul ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ +{}p)  [cible : ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 85%]",
              eval_holdout.pct_days_target_hit(), cfg.target_pnl_per_day);
         res!("");
         let success = eval_holdout.pct_days_target_hit() >= 85.0
             && eval_holdout.total_trades >= 500;
         if success {
-            res!("✓ STRATÉGIE TROUVÉE : holdout atteint la cible 85% jours profitables avec ≥500 trades");
+            res!("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ STRATÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°GIE TROUVÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°E : holdout atteint la cible 85% jours profitables avec ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥500 trades");
         } else {
-            res!("✗ Cible non atteinte sur holdout : {:.1}% jours profitables / {} trades (besoin ≥85% / ≥500)",
+            res!("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Cible non atteinte sur holdout : {:.1}% jours profitables / {} trades (besoin ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥85% / ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥500)",
                  eval_holdout.pct_days_target_hit(), eval_holdout.total_trades);
-            res!("  → Étape B (genetic search avec fitness aligné par-jour) reste à activer");
+            res!("  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°tape B (genetic search avec fitness alignÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© par-jour) reste ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  activer");
         }
 
         let elapsed = t_start.elapsed();
@@ -24902,7 +26882,7 @@ async fn start_computation(
             },
         };
         log!(
-            "[{}] ✓ end-to-end {:.2}s ({} train ex, synth {:.2}s, eval {:.2}s)",
+            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ end-to-end {:.2}s ({} train ex, synth {:.2}s, eval {:.2}s)",
             kind,
             report.elapsed_ms / 1000.0,
             report.total_kmers,
@@ -24922,7 +26902,7 @@ async fn start_computation(
         .copied()
         .ok_or_else(|| format!("unknown program: {kind}"))?;
 
-    // ─── Correctness self-test (10 inputs déterministes) ────────────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Correctness self-test (10 inputs dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©terministes) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     let test_inputs: [i64; 10] = [
         0,
         1,
@@ -24951,9 +26931,9 @@ async fn start_computation(
         let expected_hash = Hash::for_blob(&expected.to_le_bytes());
         let actual_hash = test_results[i].call().result;
         if expected_hash != actual_hash {
-            // On reload le résultat depuis le cache pour pouvoir loguer
+            // On reload le rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©sultat depuis le cache pour pouvoir loguer
             // la valeur i64 obtenue (pas juste son hash).
-            // Dans tous les cas le hash mismatch suffit à invalider.
+            // Dans tous les cas le hash mismatch suffit ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  invalider.
             mismatches.push((*x, expected, 0));
         }
     }
@@ -24965,7 +26945,7 @@ async fn start_computation(
         emit_log(
             &app,
             format!(
-                "✗ SELF-TEST {kind} FAILED: {} mismatch(es) - {}",
+                "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â SELF-TEST {kind} FAILED: {} mismatch(es) - {}",
                 mismatches.len(),
                 summary.join(" | ")
             ),
@@ -24982,7 +26962,7 @@ async fn start_computation(
         test_inputs.len()
     );
 
-    // Phase 12.0 — analyse structurale du programme
+    // Phase 12.0 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â analyse structurale du programme
     let structure = backend
         .node
         .analyze_program(&program_hash)
@@ -24993,7 +26973,7 @@ async fn start_computation(
         structure
             .recurring_ops
             .iter()
-            .map(|(op, c)| format!("{op}×{c}"))
+            .map(|(op, c)| format!("{op}ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â{c}"))
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -25031,7 +27011,7 @@ async fn start_computation(
     match mode.as_str() {
         "bypass" => {
             // Pure-Rust path: ref_splitmix64 (or its kind-equivalent) per
-            // k-mer. Forge dispatch_batch is never called for the bulk —
+            // k-mer. Forge dispatch_batch is never called for the bulk ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â
             // self-test alone proved Forge produces identical bytes.
             let mut sink: u64 = 0;
             for &k in &kmers {
@@ -25135,7 +27115,7 @@ async fn start_computation(
             );
         }
         "raw-mem" => {
-            // Zero Forge plumbing — pure local HashMap<i64,i64> in main.rs.
+            // Zero Forge plumbing ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â pure local HashMap<i64,i64> in main.rs.
             // No BatchCall, no Arc, no RwLock, no IdentityHasher, no
             // MonsterSource accounting. Cache miss falls back to Rust
             // reference (since this mode is "what if we just memoize raw").
@@ -25184,8 +27164,8 @@ async fn start_computation(
                 bs.nvrtc_available
             );
             if let Some(warn) = bs.cuda_toolkit_warning() {
-                log!("⚠ {}", warn);
-                res!("⚠ CUDA Toolkit missing — see Forge logs for details");
+                log!("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â  {}", warn);
+                res!("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â  CUDA Toolkit missing ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â see Forge logs for details");
             }
             log!(
                 "force-gpu : delegating to gpunode_runtime.eval_batch on {} calls (brain bypassed)",
@@ -25220,7 +27200,7 @@ async fn start_computation(
             // Surface what gpunode actually did (CUDA ran / panicked / fell back)
             // straight into the UI so the user doesn't have to check stderr.
             if let Some(status) = take_last_cuda_status() {
-                log!("force-gpu : muscle status — {}", status);
+                log!("force-gpu : muscle status ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â {}", status);
             }
 
             log!(
@@ -25232,11 +27212,11 @@ async fn start_computation(
             // Throughput-based heuristic to tell user which path was taken.
             let ns_per_call = muscle_start.elapsed().as_nanos() as f64 / total as f64;
             if ns_per_call < 200.0 {
-                log!("force-gpu : ~{:.0} ns/call → CUDA kernel ran on GPU (sub-microsecond)", ns_per_call);
+                log!("force-gpu : ~{:.0} ns/call ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ CUDA kernel ran on GPU (sub-microsecond)", ns_per_call);
             } else if ns_per_call < 2000.0 {
-                log!("force-gpu : ~{:.0} ns/call → likely CUDA kernel + PCIe transfer", ns_per_call);
+                log!("force-gpu : ~{:.0} ns/call ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ likely CUDA kernel + PCIe transfer", ns_per_call);
             } else {
-                log!("force-gpu : ~{:.0} ns/call → likely fell back to eval_serial CPU (CUDA path refused or unavailable)", ns_per_call);
+                log!("force-gpu : ~{:.0} ns/call ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ likely fell back to eval_serial CPU (CUDA path refused or unavailable)", ns_per_call);
             }
         }
         _ /* "dispatch" */ => {
@@ -25254,7 +27234,7 @@ async fn start_computation(
                 .map(|(_, c)| c.clone())
                 .collect();
             log!(
-                "[{kind}] ComputationPlan: {} inputs → {} unique ({:.1}% FNV dedup) | {} CSE classes | atlas skip {} | novel {}",
+                "[{kind}] ComputationPlan: {} inputs ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {} unique ({:.1}% FNV dedup) | {} CSE classes | atlas skip {} | novel {}",
                 plan.total_planned,
                 plan.calls.len(),
                 plan.input_dedup_pct(),
@@ -25264,7 +27244,7 @@ async fn start_computation(
             );
 
             if novel.is_empty() {
-                log!("[{kind}] all calls atlas-known — zero compute");
+                log!("[{kind}] all calls atlas-known ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â zero compute");
             } else {
                 let program_bytes = backend
                     .node
@@ -25279,7 +27259,7 @@ async fn start_computation(
 
                 if cpu_fast {
                     log!(
-                        "[{kind}] CPU-direct : {} calls × {} nodes — kasm::try_execute_i64_inline (no dispatch)",
+                        "[{kind}] CPU-direct : {} calls ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {} nodes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â kasm::try_execute_i64_inline (no dispatch)",
                         novel.len(),
                         program.nodes().len()
                     );
@@ -25302,7 +27282,7 @@ async fn start_computation(
                     }
                 } else {
                     log!(
-                        "[{kind}] GPU/heavy path : {} calls × {} nodes — dispatch_batch",
+                        "[{kind}] GPU/heavy path : {} calls ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {} nodes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â dispatch_batch",
                         novel.len(),
                         program.nodes().len()
                     );
@@ -25334,7 +27314,7 @@ async fn start_computation(
     }
     let elapsed = start.elapsed();
 
-    // ─── Calculs biologiques (free, post-dispatch) ──────────────────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Calculs biologiques (free, post-dispatch) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     let mut freq: HashMap<i64, u32> = HashMap::with_capacity(total / 2);
     let mut per_class_total: HashMap<u8, u64> = HashMap::new();
     for (km, cl) in kmers.iter().zip(classes.iter()) {
@@ -25350,7 +27330,7 @@ async fn start_computation(
     let mut classes_sorted: Vec<(u8, u64)> = per_class_total.into_iter().collect();
     classes_sorted.sort_by_key(|(c, _)| *c);
 
-    // ─── forge-result : pour le scientifique (onglet Résultats) ─────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ forge-result : pour le scientifique (onglet RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©sultats) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     res!("=== Forge - analysis {kind} ===");
     res!("File: {} bytes", bytes.len());
     res!("KASM program: {kind}");
@@ -25400,7 +27380,7 @@ async fn start_computation(
         );
     }
 
-    // ─── forge-log : pour le dev (onglet Forge) ─────────────────────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ forge-log : pour le dev (onglet Forge) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     log!("");
     log!("=== report {kind} mode={mode} ===");
     log!(
@@ -25504,7 +27484,7 @@ async fn start_computation(
         }
     }
 
-    // Phase 12.1 — sub-scale (op-level Hash64 memoization)
+    // Phase 12.1 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â sub-scale (op-level Hash64 memoization)
     let stats = backend.node.stats();
     let op_total = stats.op_memo_hits + stats.op_memo_misses;
     if op_total > 0 {
@@ -25575,8 +27555,8 @@ async fn open_url(url: String) -> Result<(), String> {
 
 #[derive(Serialize)]
 struct WgpuSwitchResult {
-    /// "available" — wgpu compiled in, runtime switch performed
-    /// "needs-rebuild" — wgpu not in this build, user must rebuild
+    /// "available" ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â wgpu compiled in, runtime switch performed
+    /// "needs-rebuild" ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â wgpu not in this build, user must rebuild
     status: String,
     message: String,
     rebuild_command: Option<String>,
@@ -25814,6 +27794,10 @@ fn migrate_legacy_forge_store_data(primary_store_path: &Path, app_data_store: Op
             &legacy_store.join("jobs"),
             &primary_store_path.join("jobs"),
         )?;
+        copy_dir_recursive_missing_or_newer(
+            &legacy_store.join("trading"),
+            &primary_store_path.join("trading"),
+        )?;
         let legacy_jobs_dir = legacy_store.join("jobs");
         if legacy_jobs_dir.exists() {
             let entries = std::fs::read_dir(&legacy_jobs_dir)
@@ -25938,8 +27922,8 @@ async fn try_switch_to_wgpu() -> Result<WgpuSwitchResult, String> {
     if cfg!(feature = "wgpu") {
         // Both backends compiled in: would need a runtime config flag here
         // to actually re-route eval_batch through the WGPU code path. For
-        // now we report success — the cascade in gpunode.rs already prefers
-        // CUDA → WGPU → CPU, so disabling CUDA at runtime would suffice.
+        // now we report success ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the cascade in gpunode.rs already prefers
+        // CUDA ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ WGPU ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ CPU, so disabling CUDA at runtime would suffice.
         Ok(WgpuSwitchResult {
             status: "available".to_string(),
             message: "WGPU is compiled in. Set FORGE_CUDA=0 in your environment and restart Forge \
@@ -26001,11 +27985,11 @@ async fn prepare_alpha_backend(
     Ok(report)
 }
 
-// ─── inspect_program_map ────────────────────────────────────────────────────
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ inspect_program_map ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
 //
 // Unified preview command. Called by the frontend when the user has selected
 // a program (and optionally uploaded a file). Returns the same metrics that
-// `start_computation` would compute — built from a real ComputationPlan when
+// `start_computation` would compute ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â built from a real ComputationPlan when
 // `bytes` is provided, structural analysis only otherwise. No estimates,
 // no hardcoded constants : every number is measured.
 
@@ -26043,18 +28027,18 @@ struct PlanMetrics {
     atlas_hits: usize,
     atlas_hit_pct: f64,
     /// Calls whose result is already persisted in `forge.atlas` from a
-    /// prior session — MonsterNode dispatch will short-circuit them.
+    /// prior session ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â MonsterNode dispatch will short-circuit them.
     atlas_result_hits: usize,
     atlas_result_pct: f64,
-    /// Calls that need real computation = unique − (brain ∪ atlas RESULT).
+    /// Calls that need real computation = unique ÃƒÆ’Ã‚Â¢Ãƒâ€¹Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ (brain ÃƒÆ’Ã‚Â¢Ãƒâ€¹Ã¢â‚¬Â Ãƒâ€šÃ‚Âª atlas RESULT).
     truly_novel: usize,
 }
 
 #[derive(Clone)]
 struct AlphaPrestartCache {
     manifest: AlphaPrestartManifest,
-    bars: std::sync::Arc<Vec<synth_strategy::Bar>>,
-    raw_feature_cache: std::sync::Arc<Vec<Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>>>,
+    bars: std::sync::Arc<Vec<trading::Bar>>,
+    raw_feature_cache: std::sync::Arc<Vec<Option<[i64; trading::BASE_FEATURE_COUNT]>>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -26109,21 +28093,21 @@ fn read_string(bytes: &[u8], cursor: &mut usize) -> Result<String, String> {
 
 fn build_alpha_prestart_manifest(
     file_hash: u64,
-    bars: &[synth_strategy::Bar],
-    raw_feature_cache: &[Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>],
+    bars: &[trading::Bar],
+    raw_feature_cache: &[Option<[i64; trading::BASE_FEATURE_COUNT]>],
 ) -> AlphaPrestartManifest {
-    let expected_start = synth_strategy::MIN_HISTORY.min(raw_feature_cache.len());
+    let expected_start = trading::MIN_HISTORY.min(raw_feature_cache.len());
     let expected_end = bars.len().saturating_sub(1);
     let raw_feature_rows_ready = raw_feature_cache[expected_start..expected_end]
         .iter()
         .filter(|row| row.is_some())
         .count();
     let raw_feature_rows_missing = 0usize;
-    let raw_feature_scalars_expected = raw_feature_rows_ready * synth_strategy::BASE_FEATURE_COUNT;
+    let raw_feature_scalars_expected = raw_feature_rows_ready * trading::BASE_FEATURE_COUNT;
     AlphaPrestartManifest {
         file_hash,
         bars_total: bars.len(),
-        min_history_bar: synth_strategy::MIN_HISTORY,
+        min_history_bar: trading::MIN_HISTORY,
         raw_feature_rows_ready,
         raw_feature_rows_missing,
         raw_feature_scalars_expected,
@@ -26143,7 +28127,7 @@ fn build_alpha_prestart_manifest(
             "alpha_prestart[file_hash]".to_string(),
             format!(
                 "feature[file_hash,feature_id:0..{},bar:min_history..last]",
-                synth_strategy::BASE_FEATURE_COUNT.saturating_sub(1)
+                trading::BASE_FEATURE_COUNT.saturating_sub(1)
             ),
             "label[file_hash,bar,sl,tp,spread,horizon]".to_string(),
             "prediction[file_hash,program_hash,bar]".to_string(),
@@ -26199,7 +28183,7 @@ fn build_alpha_start_execution_plan(
             parsed_bars_from_prestart: false,
             raw_cache_source: "atlas-first/full-scan-on-miss",
             raw_rows_ready: 0,
-            raw_rows_missing: total_bars.saturating_sub(synth_strategy::MIN_HISTORY),
+            raw_rows_missing: total_bars.saturating_sub(trading::MIN_HISTORY),
             refresh_prestart_after_raw_fill: true,
             labels_source: "atlas-first/misses-only",
             stage1_predictions_source: "atlas-first/misses-only",
@@ -26242,11 +28226,11 @@ fn avoided_pct(avoided: usize, recomputed: usize) -> f64 {
 
 fn build_alpha_prestart_artifact(
     file_hash: u64,
-    bars: &[synth_strategy::Bar],
-    raw_feature_cache: &[Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>],
+    bars: &[trading::Bar],
+    raw_feature_cache: &[Option<[i64; trading::BASE_FEATURE_COUNT]>],
 ) -> Vec<u8> {
     let manifest = build_alpha_prestart_manifest(file_hash, bars, raw_feature_cache);
-    let mut out = Vec::with_capacity(16 + bars.len() * (48 + 1 + 8 * synth_strategy::BASE_FEATURE_COUNT));
+    let mut out = Vec::with_capacity(16 + bars.len() * (48 + 1 + 8 * trading::BASE_FEATURE_COUNT));
     out.extend_from_slice(b"ALPHAPRE2");
     out.extend_from_slice(&file_hash.to_le_bytes());
     out.extend_from_slice(&(bars.len() as u32).to_le_bytes());
@@ -26347,7 +28331,7 @@ fn decode_alpha_prestart_artifact(bytes: &[u8]) -> Result<AlphaPrestartCache, St
     }
     let mut bars = Vec::with_capacity(n_bars);
     for _ in 0..n_bars {
-        bars.push(synth_strategy::Bar {
+        bars.push(trading::Bar {
             time_ms: read_i64(bytes, &mut cursor)?,
             open: read_f64(bytes, &mut cursor)?,
             high: read_f64(bytes, &mut cursor)?,
@@ -26360,7 +28344,7 @@ fn decode_alpha_prestart_artifact(bytes: &[u8]) -> Result<AlphaPrestartCache, St
     for _ in 0..n_bars {
         let present = read_exact(bytes, &mut cursor, 1)?[0] != 0;
         if present {
-            let mut row = [0i64; synth_strategy::BASE_FEATURE_COUNT];
+            let mut row = [0i64; trading::BASE_FEATURE_COUNT];
             for value in &mut row {
                 *value = read_i64(bytes, &mut cursor)?;
             }
@@ -26373,7 +28357,7 @@ fn decode_alpha_prestart_artifact(bytes: &[u8]) -> Result<AlphaPrestartCache, St
         manifest: AlphaPrestartManifest {
             file_hash,
             bars_total: n_bars,
-            min_history_bar: synth_strategy::MIN_HISTORY,
+            min_history_bar: trading::MIN_HISTORY,
             raw_feature_rows_ready,
             raw_feature_rows_missing,
             raw_feature_scalars_expected,
@@ -26413,13 +28397,13 @@ fn ensure_alpha_prestart_from_bytes(
         return Ok(Some(prestart));
     }
     let bars = std::sync::Arc::new(
-        synth_strategy::parse_csv(bytes)
+        trading::parse_csv(bytes)
             .map_err(|e| format!("parse alpha pre-start CSV: {e}"))?,
     );
     let raw_feature_cache = std::sync::Arc::new(
-        synth_strategy::build_raw_feature_cache_with_atlas(
+        trading::build_raw_feature_cache_with_atlas(
             bars.as_slice(),
-            synth_strategy::MIN_HISTORY..bars.len(),
+            trading::MIN_HISTORY..bars.len(),
             &backend.atlas,
             file_hash,
         )
@@ -26442,8 +28426,8 @@ fn ensure_alpha_prestart_from_bytes(
 fn persist_alpha_prestart_to_store(
     backend: &ForgeBackend,
     file_hash: u64,
-    bars: &[synth_strategy::Bar],
-    raw_feature_cache: &[Option<[i64; synth_strategy::BASE_FEATURE_COUNT]>],
+    bars: &[trading::Bar],
+    raw_feature_cache: &[Option<[i64; trading::BASE_FEATURE_COUNT]>],
 ) -> Result<bool, String> {
     let artifact = build_alpha_prestart_artifact(file_hash, bars, raw_feature_cache);
     let blob_hash = backend
@@ -26614,7 +28598,7 @@ async fn inspect_program_map(
     }
     // Fast-path : if the same (kind, file_hash) was inspected earlier in
     // this process, return the cached report. The analysis is deterministic
-    // given those two inputs — recomputing is pure waste.
+    // given those two inputs ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â recomputing is pure waste.
     if let Some(fh) = file_hash {
         if let Some(cached) = backend.inspect_cache.get(&(kind.clone(), fh)) {
             alpha_trace(
@@ -26661,7 +28645,7 @@ async fn inspect_program_map(
         }
     }
 
-    // ── Branch A : reverse_synth — no stored program yet ──
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Branch A : reverse_synth ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â no stored program yet ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     // With bytes we measure (1) feature-vector dedup and (2) the depth-2
     // candidate space CSE-collapse ratio. Without bytes, just declare the
     // opcode space the beam will explore.
@@ -26686,15 +28670,15 @@ async fn inspect_program_map(
             let parsed_bars = if alpha_prestart.is_some() {
                 None
             } else {
-                Some(synth_strategy::parse_csv(b).ok()?)
+                Some(trading::parse_csv(b).ok()?)
             };
             let bars = parsed_bars
                 .as_deref()
                 .unwrap_or_else(|| alpha_prestart.as_ref().unwrap().bars.as_slice());
-            let cfg = synth_strategy::SynthConfig::default();
-            let examples = synth_strategy::build_examples_in_range(
+            let cfg = trading::SynthConfig::default();
+            let examples = trading::build_examples_in_range(
                 bars,
-                synth_strategy::MIN_HISTORY..bars.len(),
+                trading::MIN_HISTORY..bars.len(),
                 cfg,
             );
             if examples.is_empty() {
@@ -26748,7 +28732,7 @@ async fn inspect_program_map(
             recurring_ops.push("runtime atlas filter at Start: full pair bundles + per-opcode memo are applied again before GPU dispatch (only true misses become GPU jobs)".to_string());
             recurring_ops.push("alpha pre-start persists raw VWAP feature scalars into Atlas so Start can rehydrate the mapping cross-session".to_string());
             // Sub-tree mining: skip heavy mining when atlas already has a
-            // substantial subtree count from prior sessions — the metric
+            // substantial subtree count from prior sessions ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â the metric
             // is dominated by the atlas count anyway, re-mining it costs
             // ~2 s for ~3 k unique fingerprints we already know about.
             const SUBTREE_WARM_THRESHOLD: usize = 1000;
@@ -26778,8 +28762,8 @@ async fn inspect_program_map(
             }
 
             // Sub-window mining: feature extraction itself is the lowest
-            // level we can mine without touching synth_strategy.rs internals.
-            // 7 windowed features per bar × bars naïve vs sliding-window O(1).
+            // level we can mine without touching trading_alpha.rs internals.
+            // 7 windowed features per bar ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â bars naÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ve vs sliding-window O(1).
             let win = analyze_subwindow_redundancy(bars.len());
             recurring_ops.push(format!(
                 "sub-window mining (feature extraction over {} bars): {} naive ops -> {} sliding-window ({:.1}% redundancy)",
@@ -26812,7 +28796,7 @@ async fn inspect_program_map(
 
             // Trace-equivalence: stricter than CSE, runs each LIVE rep on
             // the user's real sample inputs and groups by output trace hash.
-            // We deliberately skip the static-output reps — they all collapse
+            // We deliberately skip the static-output reps ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â they all collapse
             // to the same constant trace and would inflate the redundancy
             // numbers without telling us anything we don't already know.
             let trace = trace_classify_reps(&cse.live_reps, &unique_inputs, 32);
@@ -26878,7 +28862,7 @@ async fn inspect_program_map(
                 (t, h, p)
             };
 
-            // Atlas summary line — total persisted hashes across all
+            // Atlas summary line ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â total persisted hashes across all
             // sessions for this Forge install. Crosses CSE/trace/subtree/peek.
             recurring_ops.push(format!(
                 "atlas total : {} hashes persisted ({} CSE + {} trace + {} subtree + {} peek) -> {}",
@@ -26891,7 +28875,7 @@ async fn inspect_program_map(
             ));
 
             // RESULT persistence: actual computed values memoized across sessions.
-            // Distinct from structural hashes — these are real output values written
+            // Distinct from structural hashes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â these are real output values written
             // during previous Start runs (train scores, opmemo, dispatch results).
             let result_persisted = backend.atlas.count_kind(scan::atlas::kind::RESULT);
             recurring_ops.push(format!(
@@ -26899,9 +28883,9 @@ async fn inspect_program_map(
                 result_persisted
             ));
 
-            // Routing preview: inspect candidates (d2/d3) are ≤12 nodes but
+            // Routing preview: inspect candidates (d2/d3) are ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¤12 nodes but
             // the beam search scoring path uses gpu_synth::score_batch_gpu
-            // which splits across CUDA + WGPU when pairs ≥ 32 and n_examples ≥ 1000.
+            // which splits across CUDA + WGPU when pairs ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 32 and n_examples ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 1000.
             let gpu_mode = if cfg!(all(feature = "cuda", feature = "wgpu")) {
                 "DUAL-GPU (CUDA + WGPU split)"
             } else if cfg!(feature = "cuda") {
@@ -26916,7 +28900,7 @@ async fn inspect_program_map(
                 gpu_mode, cse_prior, classes
             ));
 
-            // Total redundancy chain: raw → CSE → trace → truly novel.
+            // Total redundancy chain: raw ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ CSE ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ trace ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ truly novel.
             // Use trace_classes as the most aggressive denominator.
             let truly_distinct = trace.n_trace_classes.max(1);
             Some(PlanMetrics {
@@ -26942,7 +28926,7 @@ async fn inspect_program_map(
             node_count: 0,
             opcodes,
             recurring_ops,
-            cse_canonical_hash: "N/A — synthesized at runtime".to_string(),
+            cse_canonical_hash: "N/A ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â synthesized at runtime".to_string(),
             cse_node_delta: 0,
             plan,
             alpha_manifest: alpha_prestart.as_ref().map(|p| p.manifest.clone()),
@@ -26991,7 +28975,7 @@ async fn inspect_program_map(
         return Ok(report);
     }
 
-    // ── Branch B : stored program (DNA k-mer programs) ──
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Branch B : stored program (DNA k-mer programs) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     let func = backend
         .programs
         .get(kind.as_str())
@@ -27020,7 +29004,7 @@ async fn inspect_program_map(
     let mut recurring_ops: Vec<String> = op_counts
         .iter()
         .filter(|(_, &c)| c >= 2)
-        .map(|(n, c)| format!("{n}×{c}"))
+        .map(|(n, c)| format!("{n}ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â{c}"))
         .collect();
     recurring_ops.sort();
 
@@ -27105,7 +29089,7 @@ async fn inspect_program_map(
     Ok(report)
 }
 
-/// Returns Forge's GPU capability report — what acceleration paths are
+/// Returns Forge's GPU capability report ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â what acceleration paths are
 /// available on this machine and what the user can do to unlock more.
 /// Called once at UI startup so the user sees the picture immediately
 /// rather than discovering missing components mid-test.
@@ -27354,8 +29338,8 @@ fn cleanup_cpu_brand(raw: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Reads the CPU brand string via the x86 cpuid leaves 0x80000002–0x80000004.
-/// Pure std — no extra crate. Returns a generic label on non-x86 hosts.
+/// Reads the CPU brand string via the x86 cpuid leaves 0x80000002ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ0x80000004.
+/// Pure std ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â no extra crate. Returns a generic label on non-x86 hosts.
 fn detect_cpu_brand() -> String {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
@@ -27437,7 +29421,7 @@ fn backend_hint_for_gpu_name(name: &str) -> String {
 /// Returns CPU + per-GPU hardware info for display in the panel footer.
 /// Does NOT touch ForgeAppState/Mutex so it's safe to call at boot while the
 /// backend is still initialising. Recomputes a fresh GpuNodeRuntime each call
-/// (cheap — adapter enumeration only).
+/// (cheap ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â adapter enumeration only).
 #[tauri::command]
 async fn get_hardware_info(
     state: tauri::State<'_, Mutex<ForgeAppState>>,
@@ -27549,18 +29533,18 @@ async fn gpu_startup_alert(
         return Ok(Some(GpuStartupAlert {
             severity: "missing-toolkit".to_string(),
             title: format!(
-                "CUDA Toolkit missing — {} NVIDIA GPU{} sitting idle",
+                "CUDA Toolkit missing ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â {} NVIDIA GPU{} sitting idle",
                 bs.detected_gpu_count,
                 if bs.detected_gpu_count > 1 { "s" } else { "" }
             ),
             body: "Forge detected your NVIDIA GPU(s) and the CUDA driver, but the CUDA Toolkit is not installed. \
-                   Without it, Forge cannot compile GPU kernels at runtime — all computations fall back to CPU.\n\n\
+                   Without it, Forge cannot compile GPU kernels at runtime ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â all computations fall back to CPU.\n\n\
                    To unlock full GPU acceleration:\n\
-                   • Option A — Install the CUDA Toolkit (~3 GB), the proper NVIDIA path.\n\
-                   • Option B — Rebuild Forge with `--features wgpu` instead of `--features cuda`. \
+                   ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ Option A ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Install the CUDA Toolkit (~3 GB), the proper NVIDIA path.\n\
+                   ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ Option B ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Rebuild Forge with `--features wgpu` instead of `--features cuda`. \
                    No download (uses your existing GPU driver via Vulkan/DX12), works on any vendor.\n\n\
                    If you JUST installed the Toolkit: close all terminals + Forge, open a fresh terminal, then relaunch. \
-                   Process PATH is frozen at start — running processes don't see new install paths.\n\n\
+                   Process PATH is frozen at start ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â running processes don't see new install paths.\n\n\
                    You can continue with CPU-only for now if you want."
                 .to_string(),
             download_url: Some("https://developer.nvidia.com/cuda-downloads".to_string()),
@@ -27582,32 +29566,32 @@ async fn gpu_startup_alert(
     Ok(None)
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// Φ.ν.7g — Section α Alpha : Tauri command paramétrée
-// ═══════════════════════════════════════════════════════════════════
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚Â
+// ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¦.ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½.7g ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Section ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â± Alpha : Tauri command paramÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©trÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e
+// ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚Â
 //
 // Reuse de tout le moteur reverse_synth (parser CSV + features +
 // simulator + builder + Forge synth + eval) mais avec config
-// dynamique reçue depuis le panel UI Alpha au lieu d'être hardcodée
+// dynamique reÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ue depuis le panel UI Alpha au lieu d'ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªtre hardcodÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e
 // sur NATGAS H4.
 //
-// Channels IPC dédiés (alpha-log, alpha-signal) pour ne pas polluer
-// les events de la section Î¨ DNA. Le frontend Alpha listen ces deux
+// Channels IPC dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©diÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s (alpha-log, alpha-signal) pour ne pas polluer
+// les events de la section ÃƒÆ’Ã†â€™Ãƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ DNA. Le frontend Alpha listen ces deux
 // channels exclusivement.
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AlphaSynthParams {
-    /// "win_rate" | "sharpe" | "max_pnl" — actuellement seul win_rate
-    /// est implémenté côté scoring (cible "% jours profitables").
+    /// "win_rate" | "sharpe" | "max_pnl" ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â actuellement seul win_rate
+    /// est implÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©mentÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© scoring (cible "% jours profitables").
     pub target: String,
     /// Stop loss en points de prix de l'actif. Convention : valeur
     /// POSITIVE attendue (ex: 0.09 pour NATGAS = 9 cents). L'UI envoie
-    /// -9 que l'on convertit en abs() côté backend.
+    /// -9 que l'on convertit en abs() cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© backend.
     pub sl_points: f64,
     /// Take profit en points (positif). Convention idem SL.
     pub tp_points: f64,
     /// Plafond max_nodes pour le beam search per-feature.
-    /// Cappé à 24 dans le backend (programmes simples pour 1 feature).
+    /// CappÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  24 dans le backend (programmes simples pour 1 feature).
     pub max_nodes: u32,
 }
 
@@ -27638,11 +29622,11 @@ pub struct AlphaReport {
     pub holdout_long_trades: usize,
     pub holdout_short_trades: usize,
     pub success: bool,
-    // Φ.ν.7g — Métriques pro pour vendabilité hedge fund (annualisées
-    // sur 252 jours ouvrés). Chaque métrique calculée sur le HOLDOUT
-    // uniquement (le train est forcément overfit). Une stratégie
-    // vendable doit afficher : Sharpe ≥ 1.5, Sortino ≥ 2, Calmar ≥ 1,
-    // Profit Factor ≥ 1.5.
+    // ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¦.ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½.7g ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â MÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©triques pro pour vendabilitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© hedge fund (annualisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©es
+    // sur 252 jours ouvrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s). Chaque mÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©trique calculÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e sur le HOLDOUT
+    // uniquement (le train est forcÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ment overfit). Une stratÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©gie
+    // vendable doit afficher : Sharpe ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 1.5, Sortino ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 2, Calmar ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 1,
+    // Profit Factor ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 1.5.
     pub holdout_sharpe: f64,
     pub holdout_sortino: f64,
     pub holdout_calmar: f64,
@@ -27670,7 +29654,7 @@ struct AlphaWalkforwardSummary {
     total_oos_trades: usize,
 }
 
-fn alpha_request_fingerprint(params: &AlphaSynthParams, cfg: synth_strategy::SynthConfig) -> u64 {
+fn alpha_request_fingerprint(params: &AlphaSynthParams, cfg: trading::SynthConfig) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut fp = FNV_OFFSET;
@@ -27740,25 +29724,25 @@ fn build_alpha_selection_artifact(
     out.into_bytes()
 }
 
-/// M5 — Λ.0 `apply()` exposé en Tauri command publique. Front-end
+/// M5 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã…Â½ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âº.0 `apply()` exposÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© en Tauri command publique. Front-end
 /// passe (program bytes, input bytes), backend route via la singular
 /// operation `scan::apply::apply` qui :
-///  1. Hash l'input via `Hash::for_blob` (Î›.1 content-addressed).
+///  1. Hash l'input via `Hash::for_blob` (ÃƒÆ’Ã†â€™Ãƒâ€¦Ã‚Â½ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Âº.1 content-addressed).
 ///  2. Lookup atlas RESULT keyed par `(func_hash, input_hash)`.
 ///  3. Sur miss : kasm::execute, store output, atlas.record_result.
 ///
-/// Cette command UNIFIE le pipeline d'évaluation côté UI : DNA k-mer
-/// programs, alpha-synth candidates, scoring kernels, future Î 
-/// predictor — tout passe par UN seul point d'entrée Tauri qui
-/// bénéficie automatiquement de la mémoïsation cross-session via
+/// Cette command UNIFIE le pipeline d'ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©valuation cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© UI : DNA k-mer
+/// programs, alpha-synth candidates, scoring kernels, future ÃƒÆ’Ã†â€™Ãƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â 
+/// predictor ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â tout passe par UN seul point d'entrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e Tauri qui
+/// bÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ficie automatiquement de la mÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©moÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯sation cross-session via
 /// `forge.atlas`.
 ///
-/// Étape vers M5+ fusion sections : à terme, `start_computation` et
-/// `start_alpha_synthesis` se résolvent à des appels imbriqués
+/// ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°tape vers M5+ fusion sections : ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  terme, `start_computation` et
+/// `start_alpha_synthesis` se rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©solvent ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  des appels imbriquÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s
 /// `apply_program` sur des programmes KASM domain-specific (synth
 /// alpha = un programme KASM qui prend (csv_bytes, params) et
 /// retourne strategy bytes). Pour l'instant, M5 ajoute juste le
-/// point d'entrée ; la migration des sections est M5+.
+/// point d'entrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e ; la migration des sections est M5+.
 #[tauri::command]
 async fn apply_program(
     program_bytes: Vec<u8>,
@@ -27910,7 +29894,7 @@ async fn start_alpha_synthesis(
         .as_mut()
         .ok_or_else(|| "backend not initialized after ensure_backend_ready".to_string())?;
 
-    // ── Helpers locaux pour le canal alpha-* ────────────────────────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Helpers locaux pour le canal alpha-* ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     macro_rules! alog {
         ($($arg:tt)*) => {{ emit_alpha_log(&app, format!($($arg)*)); }};
     }
@@ -27918,7 +29902,7 @@ async fn start_alpha_synthesis(
     let emit_synth_depth = |app_cb: &tauri::AppHandle, p: &SynthProgress, tag: &str| {
         if p.phase == "start" {
             emit_alpha_log(app_cb, format!(
-                "  ¶ d{}/{} | {} pairs | beam {} | best: {} {}",
+                "  ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ d{}/{} | {} pairs | beam {} | best: {} {}",
                 p.depth, p.max_depth, p.pairs, p.beam_size, p.best_expr, tag
             ));
         } else if p.phase == "done" {
@@ -27931,7 +29915,7 @@ async fn start_alpha_synthesis(
                 0.0
             };
             emit_alpha_log(app_cb, format!(
-                "  ✓ d{}/{} | {} | {}ms | {} M-ops/s | loss={} | atlas pair/op={}/{} | jobs {}/{} skipped ({:.1}%) | {} {}",
+                "  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ d{}/{} | {} | {}ms | {} M-ops/s | loss={} | atlas pair/op={}/{} | jobs {}/{} skipped ({:.1}%) | {} {}",
                 p.depth,
                 p.max_depth,
                 p.gpu_backend,
@@ -28020,13 +30004,13 @@ async fn start_alpha_synthesis(
         );
     }
     alog!("  config : target={}, SL=fixed 7p, TP=+/-{}p, spread~0.8p, min/day=7p, max_nodes={}, features={} (auto-scanned)",
-          params.target, params.tp_points.abs(), params.max_nodes, synth_strategy::BASE_FEATURE_COUNT);
+          params.target, params.tp_points.abs(), params.max_nodes, trading::BASE_FEATURE_COUNT);
 
     let parse_or_reuse_t0 = Instant::now();
     let parsed_bars = if alpha_prestart.is_some() {
         None
     } else {
-        Some(synth_strategy::parse_csv(
+        Some(trading::parse_csv(
             csv_bytes
                 .as_ref()
                 .ok_or_else(|| "alpha prestart artifact missing and no csv_bytes provided".to_string())?,
@@ -28069,15 +30053,15 @@ async fn start_alpha_synthesis(
           ms_to_iso(bars.first().map(|b| b.time_ms).unwrap_or(0)),
           ms_to_iso(bars.last().map(|b| b.time_ms).unwrap_or(0)));
 
-    // Φ.ν.7g — Conversion d'unité critique : le panel envoie "9 points"
+    // ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¦.ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½.7g ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Conversion d'unitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© critique : le panel envoie "9 points"
     // (convention trader = 9 cents pour NATGAS), le backend convertit
-    // en prix réel (×0.01) pour le simulateur. Sans cette conversion,
-    // un SL de 9$ sur NATGAS à 3$ ne se déclenche JAMAIS et le
-    // cost_threshold = 4.5$ est inatteignable sur 6 bougies H4 →
-    // 100% des labels = FLAT → Forge trouve trivialement `y=0`.
+    // en prix rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©el (ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â0.01) pour le simulateur. Sans cette conversion,
+    // un SL de 9$ sur NATGAS ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  3$ ne se dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©clenche JAMAIS et le
+    // cost_threshold = 4.5$ est inatteignable sur 6 bougies H4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢
+    // 100% des labels = FLAT ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Forge trouve trivialement `y=0`.
     //
-    // POINT_SIZE = 0.01 est hardcodé pour NATGAS (1 point = 1 cent).
-    // À futurifier : exposer dans le panel UI comme dropdown
+    // POINT_SIZE = 0.01 est hardcodÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© pour NATGAS (1 point = 1 cent).
+    // ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ futurifier : exposer dans le panel UI comme dropdown
     // "Asset tick size" (forex EUR_USD = 0.0001, gold = 0.10, etc.)
     const POINT_SIZE: f64 = 0.01;
     const FIXED_SL_POINTS: f64 = 7.0;
@@ -28090,7 +30074,7 @@ async fn start_alpha_synthesis(
           FIXED_SL_POINTS, sl_price_units,
           params.tp_points.abs(), tp_price_units,
           OANDA_SPREAD_POINTS, spread_price_units, POINT_SIZE);
-    let cfg = synth_strategy::SynthConfig {
+    let cfg = trading::SynthConfig {
         sl_points: sl_price_units,
         tp_points: tp_price_units,
         spread_points: spread_price_units,
@@ -28098,7 +30082,7 @@ async fn start_alpha_synthesis(
         target_pnl_per_day: MIN_DAILY_TARGET_POINTS * POINT_SIZE,
         train_split: 0.7,
     };
-    let tp_grid_points = synth_strategy::tp_grid_points(cfg);
+    let tp_grid_points = trading::tp_grid_points(cfg);
     let tp_grid_display = tp_grid_points
         .iter()
         .map(|tp| format!("{:.2}", tp / POINT_SIZE))
@@ -28109,9 +30093,9 @@ async fn start_alpha_synthesis(
         tp_grid_display
     );
 
-    let train_end_bar = synth_strategy::train_holdout_split(bars.len(), cfg);
+    let train_end_bar = trading::train_holdout_split(bars.len(), cfg);
     alog!("split temporel : train [{}, {}) | holdout [{}, {})",
-          synth_strategy::MIN_HISTORY, train_end_bar, train_end_bar, bars.len());
+          trading::MIN_HISTORY, train_end_bar, train_end_bar, bars.len());
 
     alog!("materializing raw VWAP feature cache in RAM ...");
     alpha_trace(&app, "backend", "start.raw_features.begin");
@@ -28120,18 +30104,18 @@ async fn start_alpha_synthesis(
         if prestart.manifest.raw_feature_rows_missing == 0 {
             (std::sync::Arc::clone(&prestart.raw_feature_cache), None)
         } else {
-            let (cache, stats) = synth_strategy::build_raw_feature_cache_with_atlas(
+            let (cache, stats) = trading::build_raw_feature_cache_with_atlas(
                 bars,
-                synth_strategy::MIN_HISTORY..bars.len(),
+                trading::MIN_HISTORY..bars.len(),
                 &backend.atlas,
                 alpha_file_hash,
             );
             (std::sync::Arc::new(cache), Some(stats))
         }
     } else {
-        let (cache, stats) = synth_strategy::build_raw_feature_cache_with_atlas(
+        let (cache, stats) = trading::build_raw_feature_cache_with_atlas(
             bars,
-            synth_strategy::MIN_HISTORY..bars.len(),
+            trading::MIN_HISTORY..bars.len(),
             &backend.atlas,
             alpha_file_hash,
         );
@@ -28183,9 +30167,9 @@ async fn start_alpha_synthesis(
     );
     let label_cache_t0 = Instant::now();
     alpha_trace(&app, "backend", "start.labels.begin");
-    let (label_cache, label_cache_stats) = synth_strategy::build_binary_label_cache_with_stats(
+    let (label_cache, label_cache_stats) = trading::build_binary_label_cache_with_stats(
         bars,
-        synth_strategy::MIN_HISTORY..bars.len(),
+        trading::MIN_HISTORY..bars.len(),
         cfg,
         &backend.atlas,
         alpha_file_hash,
@@ -28210,9 +30194,9 @@ async fn start_alpha_synthesis(
         avoided_pct(label_cache_stats.atlas_hits, label_cache_stats.computed_rows)
     );
 
-    let per_feature = synth_strategy::build_binary_feature_examples_with_caches(
+    let per_feature = trading::build_binary_feature_examples_with_caches(
         bars,
-        synth_strategy::MIN_HISTORY..train_end_bar,
+        trading::MIN_HISTORY..train_end_bar,
         &raw_feature_cache,
         &label_cache,
     );
@@ -28251,11 +30235,11 @@ async fn start_alpha_synthesis(
         alog!("  feature {:>12} : range [{}, {}], mean={}", name, min, max, mean);
     }
 
-    // ── Dual-classifier synthesis : LONG + SHORT detectors per feature ──
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Dual-classifier synthesis : LONG + SHORT detectors per feature ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     //
-    // Core fix: ternary labels {-1, 0, 1} → two binary classifiers {0, 1}.
+    // Core fix: ternary labels {-1, 0, 1} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ two binary classifiers {0, 1}.
     // CmpGt/CmpLt ops produce {0, 1} natively, so the beam search can now
-    // find meaningful signals like `CmpGt(vwap_sigma, 150)` = 1 → LONG.
+    // find meaningful signals like `CmpGt(vwap_sigma, 150)` = 1 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ LONG.
     // LONG and SHORT detectors are independent and can be on DIFFERENT
     // features (e.g. LONG from vwap_sigma, SHORT from avwap_hi).
     let max_nodes = (params.max_nodes as usize).max(8).min(24);
@@ -28458,7 +30442,7 @@ async fn start_alpha_synthesis(
         }
     }
 
-    // Best LONG / SHORT detectors — tracked independently
+    // Best LONG / SHORT detectors ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â tracked independently
     fn example_column_signature(long_ex: &[(i64, i64)], short_ex: &[(i64, i64)]) -> Vec<i64> {
         let mut sig = Vec::with_capacity((long_ex.len() + short_ex.len()) * 2 + 1);
         for &(x, label) in long_ex {
@@ -28515,7 +30499,7 @@ async fn start_alpha_synthesis(
                 duplicate_count + 1
             );
         }
-        // ── LONG detector ──────────────────────────────────────────
+        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ LONG detector ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
         let n_pos_long = long_ex.iter().filter(|(_, l)| *l == 1).count();
         if n_pos_long > 0 {
             let n_ex = long_ex.len();
@@ -28555,7 +30539,7 @@ async fn start_alpha_synthesis(
             }
         }
 
-        // ── SHORT detector ─────────────────────────────────────────
+        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ SHORT detector ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
         let n_pos_short = short_ex.iter().filter(|(_, l)| *l == 1).count();
         if n_pos_short > 0 {
             let n_ex = short_ex.len();
@@ -28648,7 +30632,7 @@ async fn start_alpha_synthesis(
     alog!("  ram cache: {} value hits", ram_hits);
     alog!("  executions: {}", executions);
 
-    // ── Stage 1 evaluation: best single-feature LONG/SHORT detectors ──
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Stage 1 evaluation: best single-feature LONG/SHORT detectors ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     let long_hash = long_out.program_hash;
     let short_hash = short_out.program_hash;
     alog!(
@@ -28659,8 +30643,8 @@ async fn start_alpha_synthesis(
     let base_prediction_t0 = Instant::now();
     let (base_long_predictions, base_short_predictions) = {
         let prediction_range =
-            synth_strategy::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars);
-        let (long_preds, long_stats, long_distinct) = synth_strategy::build_prediction_cache_with_atlas(
+            trading::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars);
+        let (long_preds, long_stats, long_distinct) = trading::build_prediction_cache_with_atlas(
             bars,
             prediction_range.clone(),
             &backend.atlas,
@@ -28675,7 +30659,7 @@ async fn start_alpha_synthesis(
             },
             |feat| backend.node.call_one_i64(&long_hash, feat).unwrap_or(0),
         );
-        let (short_preds, short_stats, short_distinct) = synth_strategy::build_prediction_cache_with_atlas(
+        let (short_preds, short_stats, short_distinct) = trading::build_prediction_cache_with_atlas(
             bars,
             prediction_range,
             &backend.atlas,
@@ -28714,9 +30698,9 @@ async fn start_alpha_synthesis(
     };
     let base_decision_fp = detector_pair_fingerprint(&long_hash, &short_hash);
     let base_decision_t0 = Instant::now();
-    let (base_decisions, base_decision_stats) = synth_strategy::build_decision_cache_with_atlas(
+    let (base_decisions, base_decision_stats) = trading::build_decision_cache_with_atlas(
         bars,
-        synth_strategy::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars),
+        trading::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars),
         &backend.atlas,
         alpha_file_hash,
         base_decision_fp,
@@ -28755,17 +30739,17 @@ async fn start_alpha_synthesis(
     alpha_trace(&app, "backend", "start.eval.stage1.begin");
     alog!("[info] stage 1 eval: LONG on '{}', SHORT on '{}' ...",
           long_fname, short_fname);
-    alog!("  TRAIN ({} bars) ...", train_end_bar - synth_strategy::MIN_HISTORY);
-    let base_eval_train = synth_strategy::eval_strategy_decision_cache(
+    alog!("  TRAIN ({} bars) ...", train_end_bar - trading::MIN_HISTORY);
+    let base_eval_train = trading::eval_strategy_decision_cache(
         bars,
-        synth_strategy::MIN_HISTORY..train_end_bar,
+        trading::MIN_HISTORY..train_end_bar,
         cfg,
         &base_decisions,
         |_, _, _| {},
     );
 
     alog!("  HOLDOUT ({} bars) ...", bars.len() - train_end_bar);
-    let base_eval_holdout = synth_strategy::eval_strategy_decision_cache(
+    let base_eval_holdout = trading::eval_strategy_decision_cache(
         bars,
         train_end_bar..bars.len(),
         cfg,
@@ -28790,7 +30774,7 @@ async fn start_alpha_synthesis(
           base_eval_holdout.long_trades, base_eval_holdout.short_trades, base_eval_holdout.total_trades);
 
     let mut total_eval_elapsed = eval_elapsed + base_prediction_elapsed;
-    let rank_eval = |e: &synth_strategy::StrategyEval| -> (i64, i64, i64, i64, i64, i64, i64) {
+    let rank_eval = |e: &trading::StrategyEval| -> (i64, i64, i64, i64, i64, i64, i64) {
         let pf = e.profit_factor();
         let avg_daily_pnl = if e.days_evaluated > 0 {
             e.total_pnl_points / e.days_evaluated as f64
@@ -28808,7 +30792,7 @@ async fn start_alpha_synthesis(
             (e.total_pnl_points * 1_000.0).round() as i64,
         )
     };
-    let window_passes_target = |e: &synth_strategy::StrategyEval| -> bool {
+    let window_passes_target = |e: &trading::StrategyEval| -> bool {
         if e.days_evaluated == 0 || e.total_trades < 20 {
             return false;
         }
@@ -28825,7 +30809,7 @@ async fn start_alpha_synthesis(
             wf.total_oos_trades.min(i64::MAX as usize) as i64,
         )
     };
-    let rank_model = |wf: &AlphaWalkforwardSummary, e: &synth_strategy::StrategyEval|
+    let rank_model = |wf: &AlphaWalkforwardSummary, e: &trading::StrategyEval|
         -> ((i64, i64, i64, i64, i64, i64), (i64, i64, i64, i64, i64, i64, i64))
     {
         let wf_rank = rank_walkforward(wf);
@@ -28863,11 +30847,11 @@ async fn start_alpha_synthesis(
         fp
     };
 
-    // ── Stage 2 synthesis: confluence across the base detectors ─────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Stage 2 synthesis: confluence across the base detectors ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     let mut meta_long_bundle: Option<(scan::MonsterEvolutionOutcome, usize, &str)> = None;
     let mut meta_short_bundle: Option<(scan::MonsterEvolutionOutcome, usize, &str)> = None;
-    let mut meta_eval_train_opt: Option<synth_strategy::StrategyEval> = None;
-    let mut meta_eval_holdout_opt: Option<synth_strategy::StrategyEval> = None;
+    let mut meta_eval_train_opt: Option<trading::StrategyEval> = None;
+    let mut meta_eval_holdout_opt: Option<trading::StrategyEval> = None;
     let mut meta_decisions_opt: Option<Vec<i8>> = None;
 
     alog!("");
@@ -28879,7 +30863,7 @@ async fn start_alpha_synthesis(
     let confluence_cache_t0 = Instant::now();
     let confluence_cache = {
         let vote_cache_range =
-            synth_strategy::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars);
+            trading::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars);
         let mut stage1_long_vote_caches: Vec<Option<Vec<i8>>> = vec![None; n_feat];
         let mut stage1_short_vote_caches: Vec<Option<Vec<i8>>> = vec![None; n_feat];
         let mut detector_caches_built = 0usize;
@@ -28890,7 +30874,7 @@ async fn start_alpha_synthesis(
 
         for fi in 0..n_feat {
             if let Some(model) = &long_models[fi] {
-                let (preds, stats, distinct_inputs) = synth_strategy::build_prediction_cache_with_atlas(
+                let (preds, stats, distinct_inputs) = trading::build_prediction_cache_with_atlas(
                     bars,
                     vote_cache_range.clone(),
                     &backend.atlas,
@@ -28909,7 +30893,7 @@ async fn start_alpha_synthesis(
                 detector_input_distinct += distinct_inputs;
                 alog!(
                     "  stage 1 LONG vote cache {:>16}: atlas={} recomputed={} persisted={} / {} distinct inputs",
-                    synth_strategy::FEATURE_NAMES[fi],
+                    trading::FEATURE_NAMES[fi],
                     stats.atlas_hits,
                     stats.computed_rows,
                     stats.persisted_values,
@@ -28918,7 +30902,7 @@ async fn start_alpha_synthesis(
                 stage1_long_vote_caches[fi] = Some(preds);
             }
             if let Some(model) = &short_models[fi] {
-                let (preds, stats, distinct_inputs) = synth_strategy::build_prediction_cache_with_atlas(
+                let (preds, stats, distinct_inputs) = trading::build_prediction_cache_with_atlas(
                     bars,
                     vote_cache_range.clone(),
                     &backend.atlas,
@@ -28937,7 +30921,7 @@ async fn start_alpha_synthesis(
                 detector_input_distinct += distinct_inputs;
                 alog!(
                     "  stage 1 SHORT vote cache {:>15}: atlas={} recomputed={} persisted={} / {} distinct inputs",
-                    synth_strategy::FEATURE_NAMES[fi],
+                    trading::FEATURE_NAMES[fi],
                     stats.atlas_hits,
                     stats.computed_rows,
                     stats.persisted_values,
@@ -28948,17 +30932,17 @@ async fn start_alpha_synthesis(
         }
 
         let mut ready = 0usize;
-        let mut rows: Vec<Option<[i64; synth_strategy::CONFLUENCE_FEATURE_COUNT]>> =
+        let mut rows: Vec<Option<[i64; trading::CONFLUENCE_FEATURE_COUNT]>> =
             vec![None; bars.len()];
-        let start = synth_strategy::MIN_HISTORY;
+        let start = trading::MIN_HISTORY;
         let end = bars.len().saturating_sub(cfg.max_horizon_bars);
         for i in start..end {
             if raw_feature_cache.get(i).copied().flatten().is_none() {
                 continue;
             }
-            let mut atlas_row = [0i64; synth_strategy::CONFLUENCE_FEATURE_COUNT];
+            let mut atlas_row = [0i64; trading::CONFLUENCE_FEATURE_COUNT];
             let mut atlas_complete = true;
-            for cfi in 0..synth_strategy::CONFLUENCE_FEATURE_COUNT {
+            for cfi in 0..trading::CONFLUENCE_FEATURE_COUNT {
                 let key = scan::atlas::Atlas::confluence_feature_key(
                     alpha_file_hash,
                     stage1_modelset_fp,
@@ -28978,8 +30962,8 @@ async fn start_alpha_synthesis(
                 atlas_row_hits += 1;
                 continue;
             }
-            let mut long_preds = [0i64; synth_strategy::BASE_FEATURE_COUNT];
-            let mut short_preds = [0i64; synth_strategy::BASE_FEATURE_COUNT];
+            let mut long_preds = [0i64; trading::BASE_FEATURE_COUNT];
+            let mut short_preds = [0i64; trading::BASE_FEATURE_COUNT];
             for fi in 0..n_feat {
                 if let Some(cache) = &stage1_long_vote_caches[fi] {
                     long_preds[fi] = cache.get(i).copied().unwrap_or(0) as i64;
@@ -28988,8 +30972,8 @@ async fn start_alpha_synthesis(
                     short_preds[fi] = cache.get(i).copied().unwrap_or(0) as i64;
                 }
             }
-            let confluence = synth_strategy::derive_confluence_features(&long_preds, &short_preds);
-            for cfi in 0..synth_strategy::CONFLUENCE_FEATURE_COUNT {
+            let confluence = trading::derive_confluence_features(&long_preds, &short_preds);
+            for cfi in 0..trading::CONFLUENCE_FEATURE_COUNT {
                 let key = scan::atlas::Atlas::confluence_feature_key(
                     alpha_file_hash,
                     stage1_modelset_fp,
@@ -29024,9 +31008,9 @@ async fn start_alpha_synthesis(
     total_synth_elapsed += confluence_cache_t0.elapsed();
 
     alog!("[info] building confluence examples from cached stage 1 detectors ...");
-    let confluence_examples = synth_strategy::build_confluence_feature_examples_from_labels(
+    let confluence_examples = trading::build_confluence_feature_examples_from_labels(
         bars,
-        synth_strategy::MIN_HISTORY..train_end_bar,
+        trading::MIN_HISTORY..train_end_bar,
         &label_cache,
         |i| confluence_cache.get(i).copied().flatten(),
     );
@@ -29298,9 +31282,9 @@ async fn start_alpha_synthesis(
             let meta_prediction_t0 = Instant::now();
             let (meta_long_predictions, meta_short_predictions) = {
                 let prediction_range =
-                    synth_strategy::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars);
+                    trading::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars);
                 let (long_preds, long_stats, long_distinct) =
-                    synth_strategy::build_prediction_cache_with_atlas(
+                    trading::build_prediction_cache_with_atlas(
                         bars,
                         prediction_range.clone(),
                         &backend.atlas,
@@ -29316,7 +31300,7 @@ async fn start_alpha_synthesis(
                         |feat| backend.node.call_one_i64(&meta_long_hash, feat).unwrap_or(0),
                     );
                 let (short_preds, short_stats, short_distinct) =
-                    synth_strategy::build_prediction_cache_with_atlas(
+                    trading::build_prediction_cache_with_atlas(
                         bars,
                         prediction_range,
                         &backend.atlas,
@@ -29355,9 +31339,9 @@ async fn start_alpha_synthesis(
             };
             let meta_decision_fp = detector_pair_fingerprint(&meta_long_hash, &meta_short_hash);
             let meta_decision_t0 = Instant::now();
-            let (meta_decisions, meta_decision_stats) = synth_strategy::build_decision_cache_with_atlas(
+            let (meta_decisions, meta_decision_stats) = trading::build_decision_cache_with_atlas(
                 bars,
-                synth_strategy::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars),
+                trading::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars),
                 &backend.atlas,
                 alpha_file_hash,
                 meta_decision_fp,
@@ -29377,14 +31361,14 @@ async fn start_alpha_synthesis(
             );
             alog!("[info] stage 2 eval: LONG on confluence '{}', SHORT on '{}' ...",
                   meta_long_name, meta_short_name);
-            let meta_eval_train = synth_strategy::eval_strategy_decision_cache(
+            let meta_eval_train = trading::eval_strategy_decision_cache(
                 bars,
-                synth_strategy::MIN_HISTORY..train_end_bar,
+                trading::MIN_HISTORY..train_end_bar,
                 cfg,
                 &meta_decisions,
                 |_, _, _| {},
             );
-            let meta_eval_holdout = synth_strategy::eval_strategy_decision_cache(
+            let meta_eval_holdout = trading::eval_strategy_decision_cache(
                 bars,
                 train_end_bar..bars.len(),
                 cfg,
@@ -29423,7 +31407,7 @@ async fn start_alpha_synthesis(
 
     let usable_walkforward_bars = bars
         .len()
-        .saturating_sub(synth_strategy::MIN_HISTORY)
+        .saturating_sub(trading::MIN_HISTORY)
         .saturating_sub(cfg.max_horizon_bars);
     let walkforward_cfg = if usable_walkforward_bars >= 4_096 {
         let n_windows = if usable_walkforward_bars >= 24_000 {
@@ -29449,7 +31433,7 @@ async fn start_alpha_synthesis(
         match scan::walkforward_windows(wf_cfg, usable_walkforward_bars) {
             Ok(wins) => Some((wf_cfg, wins)),
             Err(e) => {
-                alog!("⚠ walk-forward skipped: {}", e);
+                alog!("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â  walk-forward skipped: {}", e);
                 None
             }
         }
@@ -29460,7 +31444,7 @@ async fn start_alpha_synthesis(
 
     if let Some((wf_cfg, wf_windows)) = &walkforward_windows {
         alog!("");
-        alog!("• walk-forward stability scan (same H4 file, rolling OOS windows) ...");
+        alog!("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ walk-forward stability scan (same H4 file, rolling OOS windows) ...");
         alog!(
             "  config: {} windows | in-sample={} bars | out-of-sample={} bars",
             wf_cfg.n_windows,
@@ -29475,9 +31459,9 @@ async fn start_alpha_synthesis(
         let mut base_total_trades = 0usize;
         let mut base_passing = 0usize;
         for (wi, win) in wf_windows.iter().enumerate() {
-            let abs_range = (synth_strategy::MIN_HISTORY + win.out_of_sample.start)
-                ..(synth_strategy::MIN_HISTORY + win.out_of_sample.end);
-            let eval = synth_strategy::eval_strategy_decision_cache(
+            let abs_range = (trading::MIN_HISTORY + win.out_of_sample.start)
+                ..(trading::MIN_HISTORY + win.out_of_sample.end);
+            let eval = trading::eval_strategy_decision_cache(
                 bars,
                 abs_range.clone(),
                 cfg,
@@ -29507,7 +31491,7 @@ async fn start_alpha_synthesis(
                 .map(|b| ms_to_iso(b.time_ms))
                 .unwrap_or_else(|| "n/a".to_string());
             alog!(
-                "  BASE WF {}/{} {} → {} | {:.1}% days>=7p | avg/day {:.2}p | trades {}",
+                "  BASE WF {}/{} {} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {} | {:.1}% days>=7p | avg/day {:.2}p | trades {}",
                 wi + 1,
                 wf_windows.len(),
                 from,
@@ -29569,9 +31553,9 @@ async fn start_alpha_synthesis(
             let mut meta_total_trades = 0usize;
             let mut meta_passing = 0usize;
             for (wi, win) in wf_windows.iter().enumerate() {
-                let abs_range = (synth_strategy::MIN_HISTORY + win.out_of_sample.start)
-                    ..(synth_strategy::MIN_HISTORY + win.out_of_sample.end);
-                let eval = synth_strategy::eval_strategy_decision_cache(
+                let abs_range = (trading::MIN_HISTORY + win.out_of_sample.start)
+                    ..(trading::MIN_HISTORY + win.out_of_sample.end);
+                let eval = trading::eval_strategy_decision_cache(
                     bars,
                     abs_range.clone(),
                     cfg,
@@ -29601,7 +31585,7 @@ async fn start_alpha_synthesis(
                     .map(|b| ms_to_iso(b.time_ms))
                     .unwrap_or_else(|| "n/a".to_string());
                 alog!(
-                    "  CONF WF {}/{} {} → {} | {:.1}% days>=7p | avg/day {:.2}p | trades {}",
+                    "  CONF WF {}/{} {} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {} | {:.1}% days>=7p | avg/day {:.2}p | trades {}",
                     wi + 1,
                     wf_windows.len(),
                     from,
@@ -29648,7 +31632,7 @@ async fn start_alpha_synthesis(
             meta_walkforward_opt = Some(meta_walkforward);
         }
     } else {
-        alog!("• walk-forward stability scan skipped: insufficient H4 history after warmup/horizon");
+        alog!("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ walk-forward stability scan skipped: insufficient H4 history after warmup/horizon");
     }
 
     let use_confluence = meta_eval_holdout_opt.as_ref()
@@ -29726,7 +31710,7 @@ async fn start_alpha_synthesis(
     emit_alpha_signal_reset(&app);
     let final_chart_signal_t0 = Instant::now();
     let final_chart_eval = if use_confluence {
-        synth_strategy::eval_strategy_decision_cache(
+        trading::eval_strategy_decision_cache(
             bars,
             train_end_bar..bars.len(),
             cfg,
@@ -29734,7 +31718,7 @@ async fn start_alpha_synthesis(
             |bar_idx, dir, price| emit_signal(bar_idx, dir, price),
         )
     } else {
-        synth_strategy::eval_strategy_decision_cache(
+        trading::eval_strategy_decision_cache(
             bars,
             train_end_bar..bars.len(),
             cfg,
@@ -29781,7 +31765,7 @@ async fn start_alpha_synthesis(
         alog!("NON-VENDABLE");
     }
 
-    // ── Decompile selected programs ─────────────────────────────────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Decompile selected programs ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     alog!("");
     if use_confluence {
         let (meta_long_out, _, meta_long_name) = meta_long_bundle.as_ref().unwrap();
@@ -29815,7 +31799,7 @@ async fn start_alpha_synthesis(
         }
     }
 
-    // ── Monthly PnL breakdown (holdout) ─────────────────────────────────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Monthly PnL breakdown (holdout) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     // We use the bars timestamps to compute month boundaries
     alog!("");
     alog!("MONTHLY PNL BREAKDOWN (holdout period)");
@@ -29857,7 +31841,7 @@ async fn start_alpha_synthesis(
               if total_months > 0 { 100.0 * profitable_months as f64 / total_months as f64 } else { 0.0 });
     }
 
-    // ── Trade distribution stats ────────────────────────────────────────
+    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Trade distribution stats ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
     alog!("");
     alog!("PNL DISTRIBUTION (holdout, per-day)");
     {
@@ -29903,10 +31887,10 @@ async fn start_alpha_synthesis(
         holdout_long_trades: final_holdout.long_trades,
         holdout_short_trades: final_holdout.short_trades,
         success,
-        // Φ.ν.7g — JSON ne sérialise pas Infinity / NaN. Clamp à un
+        // ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¦.ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½.7g ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â JSON ne sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rialise pas Infinity / NaN. Clamp ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  un
         // sentinel grand mais fini (1e9) pour rester transmissible
-        // au frontend. Le frontend peut détecter ce sentinel pour
-        // afficher "∞" symboliquement.
+        // au frontend. Le frontend peut dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tecter ce sentinel pour
+        // afficher "ÃƒÆ’Ã‚Â¢Ãƒâ€¹Ã¢â‚¬Â Ãƒâ€¦Ã‚Â¾" symboliquement.
         holdout_sharpe: if sharpe.is_finite() { sharpe } else { 1.0e9 },
         holdout_sortino: if sortino.is_finite() { sortino } else { 1.0e9 },
         holdout_calmar: if calmar.is_finite() { calmar } else { 1.0e9 },
@@ -30050,12 +32034,23 @@ fn main() {
             drag_main_window,
             real_estate_harvester_snapshot,
             real_estate_harvester_run_tool,
-            real_estate_onboarding_state,
-            real_estate_onboarding_answer,
+            real_estate_backend_warmup,
             real_estate_tool_command_context,
+            collection_os::collection_os_snapshot,
+            collection_os::collection_os_plan,
+            collection_os_webexplorer_observe_v2,
+            collection_os_webexplorer_expert_routes,
+            collection_os_webexplorer_extract_typed,
+            collection_os_webexplorer_hypotheses,
+            collection_os_webexplorer_command_map,
+            collection_os_webexplorer_action_cache,
+            collection_os_webexplorer_replay_action,
+            collection_os_classify_block,
             open_webexplorer_window,
             webexplorer_native_present,
             webexplorer_native_hide,
+            agency_earth_native_present,
+            agency_earth_native_hide,
             bloomberg_live_native_present,
             bloomberg_live_native_prewarm,
             bloomberg_live_native_hide,
@@ -30101,17 +32096,17 @@ fn main() {
             update_forge_job,
             persist_forge_canvas_session_state,
             publish_forge_job_to_mcp,
-            openai_subscription_status,
+            openai_oauth_status,
             codex_provider_status,
             gemini_provider_status,
             claude_provider_status,
             forge_canvas_list_runtime_models,
-            codex_terminal_snapshot,
-            codex_terminal_start,
-            codex_terminal_send_input,
-            codex_terminal_resize,
-            codex_terminal_stop,
-            codex_terminal_clear,
+            openai_oauth_terminal_snapshot,
+            openai_oauth_terminal_start,
+            openai_oauth_terminal_send_input,
+            openai_oauth_terminal_resize,
+            openai_oauth_terminal_stop,
+            openai_oauth_terminal_clear,
             gemini_terminal_snapshot,
             gemini_terminal_start,
             gemini_terminal_send_input,
@@ -30139,7 +32134,7 @@ fn main() {
             google_oauth_status,
             google_oauth_start,
             google_oauth_disconnect,
-            openai_subscription_login,
+            openai_oauth_login,
             gemini_subscription_login,
             claude_subscription_login,
             forge_canvas_assistant_turn,
@@ -30192,8 +32187,475 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value as JsonValue;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn sample_alpha_bars(n: usize) -> Vec<synth_strategy::Bar> {
+    fn unique_test_dir(label: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("forge-ui-{label}-{}-{stamp}", std::process::id()))
+    }
+
+    fn workspace_file(path: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path)
+    }
+
+    fn main_rs_source() -> String {
+        fs::read_to_string(workspace_file("src/main.rs")).expect("read main.rs source")
+    }
+
+    #[test]
+    fn local_codex_template_shortcut_prefers_brain_recall() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let value = try_local_codex_canvas_template_selection(
+            &catalog,
+            "rappelle la memoire real_estate",
+        )
+        .expect("local shortcut result")
+        .expect("local shortcut selected");
+
+        assert_eq!(value["templateId"].as_str(), Some("brain_recall_layer"));
+        assert_eq!(value["forgeSlash"].as_str(), Some("/forge project state=brain op=recall scope=real_estate memory_layer=semantic limit=4 include_expired=false"));
+    }
+
+    #[test]
+    fn local_codex_template_shortcut_prefers_brain_ref_explain() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let value = try_local_codex_canvas_template_selection(
+            &catalog,
+            "explique refs/brain/llm/real_estate/latest",
+        )
+        .expect("local shortcut result")
+        .expect("local shortcut selected");
+
+        assert_eq!(value["templateId"].as_str(), Some("brain_explain_ref"));
+        assert_eq!(value["forgeSlash"].as_str(), Some("/forge project state=brain op=explain ref=\"refs/brain/llm/real_estate/latest\""));
+    }
+
+    #[test]
+    fn local_codex_template_shortcut_prefers_skill_candidates() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let value = try_local_codex_canvas_template_selection(
+            &catalog,
+            "montre les 5 skill candidates forge",
+        )
+        .expect("local shortcut result")
+        .expect("local shortcut selected");
+
+        assert_eq!(value["templateId"].as_str(), Some("skill_candidates"));
+        assert_eq!(
+            value["forgeSlash"].as_str(),
+            Some("/forge project state=execution kind=skill_candidates limit=5")
+        );
+    }
+
+    #[test]
+    fn local_codex_template_shortcut_prefers_verified_program_candidates() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let value = try_local_codex_canvas_template_selection(
+            &catalog,
+            "montre les 5 verified program candidates",
+        )
+        .expect("local shortcut result")
+        .expect("local shortcut selected");
+
+        assert_eq!(
+            value["templateId"].as_str(),
+            Some("verified_program_candidates")
+        );
+        assert_eq!(
+            value["forgeSlash"].as_str(),
+            Some("/forge project state=execution kind=verified_program_candidates limit=5")
+        );
+    }
+
+    #[test]
+    fn local_codex_template_shortcut_prefers_run_latest_plan() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let value = try_local_codex_canvas_template_selection(
+            &catalog,
+            "analyse le dernier upload avec un plan safe",
+        )
+        .expect("local shortcut result")
+        .expect("local shortcut selected");
+
+        assert_eq!(value["templateId"].as_str(), Some("run_latest_plan"));
+        assert_eq!(
+            value["forgeSlash"].as_str(),
+            Some("/forge run input=@latest intent=\"analyse le dernier upload avec un plan safe\" plan_only=true")
+        );
+    }
+
+    #[test]
+    fn local_codex_template_shortcut_prefers_project_job() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let value = try_local_codex_canvas_template_selection(
+            &catalog,
+            "montre moi la projection du job abc123 en 4096 octets",
+        )
+        .expect("local shortcut result")
+        .expect("local shortcut selected");
+
+        assert_eq!(value["templateId"].as_str(), Some("project_job"));
+        assert_eq!(
+            value["forgeSlash"].as_str(),
+            Some("/forge project job_id=abc123 max_bytes=4096")
+        );
+    }
+
+    #[test]
+    fn local_codex_template_shortcut_prefers_replay_projection() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let value = try_local_codex_canvas_template_selection(&catalog, "rejoue la projection feedface")
+            .expect("local shortcut result")
+            .expect("local shortcut selected");
+
+        assert_eq!(value["templateId"].as_str(), Some("replay_projection"));
+        assert_eq!(
+            value["forgeSlash"].as_str(),
+            Some("/forge replay projection_ref=@projection:feedface")
+        );
+    }
+
+    #[test]
+    fn local_codex_template_shortcut_prefers_run_job_plan() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let value = try_local_codex_canvas_template_selection(
+            &catalog,
+            "planifie un run safe sur le job abc123 pour profiler les logs",
+        )
+        .expect("local shortcut result")
+        .expect("local shortcut selected");
+
+        assert_eq!(value["templateId"].as_str(), Some("run_job_plan"));
+        assert!(value["forgeSlash"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("/forge run job_id=abc123 intent=\""));
+    }
+
+    #[test]
+    fn compact_template_code_selection_normalizes_to_full_template() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let value = finalize_codex_direct_template_selection(
+            &catalog,
+            json!({
+                "m": "template",
+                "t": "P1",
+                "s": {
+                    "j": "abc123",
+                    "mb": 4096
+                },
+                "a": "",
+                "r": "compact_projection",
+                "c": 0.98
+            }),
+        )
+        .expect("compact template selection");
+
+        assert_eq!(value["templateId"].as_str(), Some("project_job"));
+        assert_eq!(value["templateCode"].as_str(), Some("P1"));
+        assert_eq!(
+            value["forgeSlash"].as_str(),
+            Some("/forge project job_id=abc123 max_bytes=4096")
+        );
+    }
+
+    #[test]
+    fn compact_answer_only_code_selection_is_accepted() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let value = finalize_codex_direct_template_selection(
+            &catalog,
+            json!({
+                "m": "answer_only",
+                "t": "A0",
+                "a": "bonjour",
+                "r": "smalltalk",
+                "c": 0.75
+            }),
+        )
+        .expect("compact answer_only selection");
+
+        assert_eq!(value["templateId"].as_str(), Some("answer_only"));
+        assert_eq!(value["templateCode"].as_str(), Some("A0"));
+        assert_eq!(value["answer"].as_str(), Some("bonjour"));
+    }
+
+    #[test]
+    fn state_kernel_synthesis_payload_compacts_codes() {
+        let payload = compact_canvas_template_synthesis_payload(&json!({
+            "runtime": "codex_oauth_direct",
+            "mode": "chatgpt_oauth_template_loop",
+            "intentHash": "ih_123",
+            "policy": { "policyHash": "ph_123", "sideEffectCount": 0 },
+            "trace": { "traceHash": "th_123", "proofHash": "pf_123" },
+            "executedSteps": [{
+                "result": {
+                    "kind": "forge_agent_direct_state_kernel_read_v0",
+                    "state": "brain",
+                    "operation": "recall",
+                    "result": {
+                        "kind": "forge_state_kernel_skill_candidates_v0",
+                        "entries": [{
+                            "candidate_hash": "cand_1",
+                            "scope": "real_estate",
+                            "memory_layer": "procedural",
+                            "proof_hash": "pf_1"
+                        }]
+                    }
+                }
+            }]
+        }));
+
+        assert_eq!(payload["k"].as_str(), Some("css"));
+        assert_eq!(payload["sk"]["k"].as_str(), Some("skr"));
+        assert_eq!(payload["sk"]["st"].as_str(), Some("br"));
+        assert_eq!(payload["sk"]["op"].as_str(), Some("rec"));
+        assert_eq!(payload["sk"]["res"]["k"].as_str(), Some("skc"));
+        assert_eq!(payload["sk"]["res"]["e"][0]["mL"].as_str(), Some("pro"));
+        assert_eq!(payload["sk"]["res"]["e"][0]["pfH"].as_str(), Some("pf_1"));
+    }
+
+    #[test]
+    fn state_kernel_synthesis_payload_symbolizes_repeated_refs_and_hashes() {
+        let repeated_ref = "refs/brain/llm/real_estate/latest";
+        let repeated_hash = "0123456789abcdef0123456789abcdef";
+        let payload = compact_canvas_template_synthesis_payload(&json!({
+            "runtime": "codex_oauth_direct",
+            "mode": "chatgpt_oauth_template_loop",
+            "intentHash": repeated_hash,
+            "policy": { "policyHash": repeated_hash, "sideEffectCount": 0 },
+            "trace": { "traceHash": repeated_hash, "proofHash": "pf_unique" },
+            "executedSteps": [{
+                "result": {
+                    "kind": "forge_agent_direct_state_kernel_read_v0",
+                    "state": "brain",
+                    "operation": "explain",
+                    "result": {
+                        "kind": "forge_state_kernel_skill_candidates_v0",
+                        "entries": [{
+                            "candidate_hash": repeated_hash,
+                            "proof_hash": "pf_unique",
+                            "evidence_source": repeated_ref
+                        }, {
+                            "candidate_hash": "cand_other",
+                            "evidence_source": repeated_ref
+                        }]
+                    }
+                }
+            }]
+        }));
+
+        assert_eq!(payload["ih"].as_str(), Some("@h1"));
+        assert_eq!(payload["pl"]["pH"].as_str(), Some("@h1"));
+        assert_eq!(payload["sk"]["res"]["e"][0]["eS"].as_str(), Some("@r1"));
+        assert_eq!(payload["sk"]["res"]["e"][1]["eS"].as_str(), Some("@r1"));
+        assert_eq!(payload["sy"]["h1"].as_str(), Some(repeated_hash));
+        assert_eq!(payload["sy"]["r1"].as_str(), Some(repeated_ref));
+    }
+
+    #[test]
+    fn synthesis_symbolizer_forces_aliases_for_singleton_object_refs() {
+        let payload = compact_canvas_template_symbolize_payload(json!({
+            "job_id": "abc123xyz",
+            "program_ref": "refs/program/0123456789abcdef0123456789abcdef",
+            "program_hash": "0123456789abcdef0123456789abcdef",
+            "note": "court"
+        }));
+
+        assert_eq!(payload["job_id"].as_str(), Some("@j1"));
+        assert_eq!(payload["program_ref"].as_str(), Some("@r1"));
+        assert_eq!(payload["program_hash"].as_str(), Some("@h1"));
+        assert_eq!(payload["sy"]["j1"].as_str(), Some("abc123xyz"));
+        assert_eq!(
+            payload["sy"]["r1"].as_str(),
+            Some("refs/program/0123456789abcdef0123456789abcdef")
+        );
+        assert_eq!(
+            payload["sy"]["h1"].as_str(),
+            Some("0123456789abcdef0123456789abcdef")
+        );
+    }
+
+    #[test]
+    fn state_kernel_synthesis_payload_is_smaller_after_compaction() {
+        let compact_projection = json!({
+            "runtime": "codex_oauth_direct",
+            "mode": "chatgpt_oauth_template_loop",
+            "intentHash": "0123456789abcdef0123456789abcdef",
+            "policy": { "policyHash": "0123456789abcdef0123456789abcdef", "sideEffectCount": 0 },
+            "trace": { "traceHash": "0123456789abcdef0123456789abcdef", "proofHash": "pf_1234567890abcdef" },
+            "executedSteps": [{
+                "result": {
+                    "kind": "forge_agent_direct_state_kernel_read_v0",
+                    "state": "brain",
+                    "operation": "explain",
+                    "result": {
+                        "kind": "forge_state_kernel_skill_candidates_v0",
+                        "entries": [{
+                            "candidate_hash": "0123456789abcdef0123456789abcdef",
+                            "skill_key": "skill:real_estate:0123456789ab",
+                            "scope": "real_estate",
+                            "memory_layer": "procedural",
+                            "proof_hash": "pf_1234567890abcdef",
+                            "evidence_source": "refs/brain/llm/real_estate/latest"
+                        }, {
+                            "candidate_hash": "cand_other_hash_1234567890abcdef",
+                            "skill_key": "skill:real_estate:fedcba987654",
+                            "scope": "real_estate",
+                            "memory_layer": "procedural",
+                            "proof_hash": "pf_1234567890abcdef",
+                            "evidence_source": "refs/brain/llm/real_estate/latest"
+                        }]
+                    }
+                }
+            }]
+        });
+        let raw = build_canvas_state_kernel_synthesis_payload(&compact_projection)
+            .expect("raw state kernel synthesis payload");
+        let compacted = compact_canvas_template_synthesis_payload(&compact_projection);
+        let before = synthesis_json_size_bytes(&raw);
+        let after = synthesis_json_size_bytes(&compacted);
+
+        assert!(before > after, "expected compaction to shrink payload: before={before} after={after}");
+    }
+
+
+    fn invoke_handler_block(source: &str) -> &str {
+        let start = source
+            .find(".invoke_handler(tauri::generate_handler![")
+            .expect("invoke handler start");
+        let rest = &source[start..];
+        let end = rest.find("])").expect("invoke handler end");
+        &rest[..end]
+    }
+
+    fn tauri_command_function_snippet<'a>(source: &'a str, command: &str) -> &'a str {
+        let sync_marker = format!("fn {command}");
+        let async_marker = format!("async fn {command}");
+        let command_attr = ["\n#[tauri", "::command]"].concat();
+        let start = source
+            .find(&async_marker)
+            .or_else(|| source.find(&sync_marker))
+            .unwrap_or_else(|| panic!("missing tauri command function for {command}"));
+        let rest = &source[start..];
+        let next = rest.find(&command_attr).unwrap_or(rest.len());
+        &rest[..next]
+    }
+
+    #[test]
+    fn sensitive_tauri_commands_have_guard_metadata_and_registered_handlers() {
+        let source = main_rs_source();
+        let invoke_block = invoke_handler_block(&source);
+        let ownership_path = workspace_file("../ui/SECTION_OWNERSHIP.json");
+        let ownership_json = fs::read_to_string(&ownership_path).expect("read SECTION_OWNERSHIP");
+        let ownership_value: JsonValue = serde_json::from_str(&ownership_json).expect("parse SECTION_OWNERSHIP");
+        let ownership_sensitive = ownership_value
+            .get("sensitiveCommands")
+            .and_then(JsonValue::as_array)
+            .expect("sensitiveCommands array");
+        let metadata = sensitive_tauri_command_guard_metadata();
+
+        let mut by_command = std::collections::BTreeMap::new();
+        for item in metadata {
+            assert!(
+                by_command.insert(item.command, item).is_none(),
+                "duplicate sensitive metadata for {}",
+                item.command
+            );
+            assert!(
+                invoke_block.contains(&format!("{},", item.command)),
+                "sensitive command {} missing from tauri invoke handler",
+                item.command
+            );
+        }
+
+        let expected_sensitive = [
+            "webexplorer_native_present",
+            "webexplorer_native_hide",
+            "agency_earth_native_present",
+            "agency_earth_native_hide",
+            "bloomberg_live_native_present",
+            "bloomberg_live_native_hide",
+            "list_forge_jobs",
+            "read_forge_job_file",
+            "read_forge_job_artifact_text",
+            "publish_forge_job_to_mcp",
+            "get_hardware_info",
+            "open_url",
+            "gmail_webview_action_surface",
+            "google_oauth_start",
+        ];
+        for command in expected_sensitive {
+            assert!(
+                by_command.contains_key(command),
+                "sensitive command {} lacks guard metadata",
+                command
+            );
+        }
+
+        for entry in ownership_sensitive {
+            let command = entry
+                .get("command")
+                .and_then(JsonValue::as_str)
+                .expect("ownership sensitive command");
+            let owner = entry.get("owner").and_then(JsonValue::as_str).unwrap_or("");
+            let requires_bridge = entry
+                .get("requiresBridge")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false);
+            let allow_raw_fallback = entry
+                .get("allowRawFallback")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false);
+            let boot_safe = entry
+                .get("bootSafe")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false);
+            let meta = by_command
+                .get(command)
+                .unwrap_or_else(|| panic!("SECTION_OWNERSHIP sensitive command {} missing backend metadata", command));
+            assert_eq!(meta.owner, owner, "owner drift for {}", command);
+            assert_eq!(meta.allow_raw_fallback, allow_raw_fallback, "allowRawFallback drift for {}", command);
+            assert_eq!(meta.boot_safe, boot_safe, "bootSafe drift for {}", command);
+            if requires_bridge {
+                assert!(
+                    matches!(
+                        meta.surface,
+                        "native_present"
+                            | "native_hide"
+                            | "jobs_projection"
+                            | "artifact_read"
+                            | "artifact_publish"
+                            | "hardware_probe"
+                            | "network_source"
+                    ),
+                    "bridge-sensitive command {} should use a bridge-aware metadata surface",
+                    command
+                );
+            }
+        }
+
+        for item in metadata.iter().filter(|item| item.requires_fbc_guard) {
+            let snippet = tauri_command_function_snippet(&source, item.command);
+            assert!(
+                snippet.contains("forge_fbc_guard_sensitive_action("),
+                "sensitive command {} requires FBC guard metadata but is not guarded in backend",
+                item.command
+            );
+            assert!(
+                snippet.contains(&format!("\"{}\"", item.command)),
+                "sensitive command {} must bind its exact guard action name in backend",
+                item.command
+            );
+        }
+    }
+
+    fn sample_alpha_bars(n: usize) -> Vec<trading::Bar> {
         let mut bars = Vec::with_capacity(n);
         let start_ms = 3 * 3_600_000_i64;
         for i in 0..n {
@@ -30206,7 +32668,7 @@ mod tests {
             let high = open.max(close) + 0.03 + 0.005 * phase.cos().abs();
             let low = open.min(close) - 0.03 - 0.005 * phase.sin().abs();
             let volume = 500.0 + (i % 17) as f64 * 23.0;
-            bars.push(synth_strategy::Bar {
+            bars.push(trading::Bar {
                 time_ms: t,
                 open,
                 high,
@@ -30375,9 +32837,51 @@ mod tests {
             "expected >90% sub-window redundancy on 25k bars, got {:.1}%",
             stats.redundancy_pct
         );
-        // SMA(200) specifically: 25,381 × 200 = 5.07M naïve, ~25k sliding.
+        // SMA(200) specifically: 25,381 ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 200 = 5.07M naÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ve, ~25k sliding.
         let sma200 = stats.per_feature.iter().find(|(n, _, _, _)| *n == "SMA(200)").expect("SMA(200) present");
         assert!(sma200.3 > 99.0, "SMA(200) should be >99% redundant, got {:.1}%", sma200.3);
+    }
+
+    #[test]
+    fn legacy_store_migration_copies_trading_history() {
+        let root = unique_test_dir("migrate-trading");
+        let workspace = root.join("workspace");
+        let primary = root.join("active-store");
+        let legacy_history = workspace
+            .join(".forge-store")
+            .join("trading")
+            .join("oanda")
+            .join("NATGAS_USD");
+        fs::create_dir_all(&legacy_history).expect("create legacy trading history");
+        fs::write(
+            legacy_history.join("H1.csv"),
+            "time,open,high,low,close,volume\n2026-05-15T21:00:00.000000000Z,3.100,3.120,3.090,3.110,42\n",
+        )
+        .expect("write legacy H1 history");
+
+        let previous_workspace_override = {
+            let mut guard = workspace_override_lock().lock().expect("workspace override lock");
+            let previous = guard.clone();
+            *guard = Some(workspace.clone());
+            previous
+        };
+
+        let migration_result = migrate_legacy_forge_store_data(&primary, None);
+
+        {
+            let mut guard = workspace_override_lock().lock().expect("workspace override lock");
+            *guard = previous_workspace_override;
+        }
+
+        migration_result.expect("legacy migration succeeds");
+        let migrated = primary
+            .join("trading")
+            .join("oanda")
+            .join("NATGAS_USD")
+            .join("H1.csv");
+        assert!(migrated.exists(), "expected migrated trading history at {}", migrated.display());
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -30423,12 +32927,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
 
         let backend = ForgeBackend::new(path.clone()).expect("backend");
-        let bars = sample_alpha_bars(synth_strategy::MIN_HISTORY + 96);
+        let bars = sample_alpha_bars(trading::MIN_HISTORY + 96);
         let file_hash = 0xA17A_1234_u64;
 
-        let (raw_feature_cache, cold_stats) = synth_strategy::build_raw_feature_cache_with_atlas(
+        let (raw_feature_cache, cold_stats) = trading::build_raw_feature_cache_with_atlas(
             &bars,
-            synth_strategy::MIN_HISTORY..bars.len(),
+            trading::MIN_HISTORY..bars.len(),
             &backend.atlas,
             file_hash,
         );
@@ -30456,9 +32960,9 @@ mod tests {
         assert_eq!(start_plan.raw_cache_source, "manifest-ready");
         assert!(!start_plan.refresh_prestart_after_raw_fill);
 
-        let (_warm_cache, warm_stats) = synth_strategy::build_raw_feature_cache_with_atlas(
+        let (_warm_cache, warm_stats) = trading::build_raw_feature_cache_with_atlas(
             loaded.bars.as_slice(),
-            synth_strategy::MIN_HISTORY..loaded.bars.len(),
+            trading::MIN_HISTORY..loaded.bars.len(),
             &backend.atlas,
             file_hash,
         );
@@ -30482,5 +32986,245 @@ mod tests {
         assert_eq!(avoided_pct(0, 0), 0.0);
         assert!((avoided_pct(9, 3) - 75.0).abs() < 1e-9);
     }
+
+    #[test]
+    fn native_cdp_parser_emits_accessible_nodes_with_bounds() {
+        let dom = json!({
+            "documents": [{
+                "nodes": {
+                    "parentIndex": [-1, 0],
+                    "backendNodeId": [101, 102],
+                    "nodeName": [0, 1],
+                    "nodeValue": [0, 2],
+                    "attributes": [
+                        [],
+                        [3, 4, 5, 6, 7, 8]
+                    ]
+                },
+                "layout": {
+                    "nodeIndex": [1],
+                    "bounds": [[10.0, 20.0, 120.0, 40.0]],
+                    "text": [2],
+                    "styles": [[9, 10, 11, 11, 12, 13, 14, 15, 16]]
+                }
+            }],
+            "strings": [
+                "HTML",
+                "A",
+                "Click me",
+                "href",
+                "https://example.test/offers/1",
+                "class",
+                "cta-primary",
+                "aria-label",
+                "Contact agency",
+                "block",
+                "visible",
+                "1",
+                "rgba(0,0,0,0)",
+                "none",
+                "rgb(1,2,3)",
+                "16px",
+                "600"
+            ]
+        });
+        let ax = json!({
+            "nodes": [{
+                "backendDOMNodeId": 102,
+                "ignored": false,
+                "role": { "value": "link" },
+                "name": { "value": "Contact agency" },
+                "value": { "value": "" },
+                "properties": [
+                    { "name": "disabled", "value": { "value": false } }
+                ]
+            }]
+        });
+        let nodes = webexplorer_native_collection_nodes_from_cdp(&dom, &ax);
+        let link = nodes
+            .iter()
+            .find(|node| node.id == "native-backend-102")
+            .expect("native link node");
+        assert_eq!(link.aria_role, "link");
+        assert_eq!(link.aria_name, "Contact agency");
+        assert_eq!(link.href, "https://example.test/offers/1");
+        assert!(link.bounds.is_some());
+        assert_eq!(link.source, "native_cdp");
+        assert!(link.ax.is_some());
+    }
+
+    #[test]
+    fn native_cdp_parser_is_stable_for_identical_payloads() {
+        let dom = json!({
+            "documents": [{
+                "nodes": {
+                    "parentIndex": [-1, 0],
+                    "backendNodeId": [201, 202],
+                    "nodeName": [0, 1],
+                    "nodeValue": [0, 2],
+                    "attributes": [
+                        [],
+                        [3, 4]
+                    ]
+                },
+                "layout": {
+                    "nodeIndex": [1],
+                    "bounds": [[1.0, 2.0, 300.0, 32.0]],
+                    "text": [2],
+                    "styles": [[5, 6, 7, 7, 8, 9, 10, 11, 12]]
+                }
+            }],
+            "strings": [
+                "HTML",
+                "BUTTON",
+                "Search",
+                "role",
+                "button",
+                "inline-block",
+                "visible",
+                "1",
+                "rgba(0,0,0,0)",
+                "none",
+                "rgb(40,40,40)",
+                "14px",
+                "500"
+            ]
+        });
+        let ax = json!({
+            "nodes": [{
+                "backendDOMNodeId": 202,
+                "ignored": false,
+                "role": { "value": "button" },
+                "name": { "value": "Search" },
+                "value": { "value": "" },
+                "properties": []
+            }]
+        });
+        let first = webexplorer_native_collection_nodes_from_cdp(&dom, &ax);
+        let second = webexplorer_native_collection_nodes_from_cdp(&dom, &ax);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn native_cdp_observe_v2_smoke_preserves_ax_fields_and_proof_hash_over_replay() {
+        let dom = json!({
+            "documents": [{
+                "nodes": {
+                    "parentIndex": [-1, 0, 1],
+                    "backendNodeId": [301, 302, 303],
+                    "nodeName": [0, 1, 2],
+                    "nodeValue": [0, 0, 3],
+                    "attributes": [
+                        [],
+                        [4, 5],
+                        [6, 7, 8, 9]
+                    ]
+                },
+                "layout": {
+                    "nodeIndex": [1, 2],
+                    "bounds": [
+                        [0.0, 0.0, 1280.0, 80.0],
+                        [24.0, 16.0, 240.0, 32.0]
+                    ],
+                    "text": [0, 3],
+                    "styles": [
+                        [10, 11, 12, 12, 13, 14, 15, 16, 17],
+                        [18, 11, 12, 12, 13, 19, 20, 21, 22]
+                    ]
+                }
+            }],
+            "strings": [
+                "HTML",
+                "DIV",
+                "A",
+                "Explore listings",
+                "class",
+                "hero-shell",
+                "href",
+                "https://example.test/listings",
+                "aria-label",
+                "Explore listings",
+                "block",
+                "visible",
+                "1",
+                "rgba(0,0,0,0)",
+                "none",
+                "rgb(15,20,30)",
+                "18px",
+                "700",
+                "inline-block",
+                "rgb(0,87,184)",
+                "16px",
+                "600",
+                "underline"
+            ]
+        });
+        let ax = json!({
+            "nodes": [{
+                "backendDOMNodeId": 303,
+                "ignored": false,
+                "role": { "value": "link" },
+                "name": { "value": "Explore listings" },
+                "value": { "value": "" },
+                "properties": [
+                    { "name": "focusable", "value": { "value": true } }
+                ]
+            }]
+        });
+        let native_nodes = webexplorer_native_collection_nodes_from_cdp(&dom, &ax);
+        assert!(
+            native_nodes.iter().any(|node| node.ax.is_some()),
+            "native CDP nodes should carry AX evidence"
+        );
+        assert!(
+            native_nodes
+                .iter()
+                .any(|node| !node.aria_name.trim().is_empty() && !node.aria_role.trim().is_empty()),
+            "native CDP nodes should expose non-empty AX role/name fields"
+        );
+
+        let first = collection_os::finalize_collection_observe_v2(collection_os::CollectionObserveInputV2 {
+            source_url: "https://example.test/listings".to_string(),
+            title: "Native CDP smoke".to_string(),
+            tree_hash: "native-tree-301".to_string(),
+            captured_at_ms: 1_717_171_717,
+            viewport: Some(collection_os::CollectionObserveViewport {
+                width: 1280.0,
+                height: 720.0,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+            }),
+            nodes: native_nodes.clone(),
+            scene_blocks: Vec::new(),
+            proof_hash: String::new(),
+        });
+        let second = collection_os::finalize_collection_observe_v2(collection_os::CollectionObserveInputV2 {
+            source_url: "https://example.test/listings".to_string(),
+            title: "Native CDP smoke".to_string(),
+            tree_hash: "native-tree-301".to_string(),
+            captured_at_ms: 1_717_171_717,
+            viewport: Some(collection_os::CollectionObserveViewport {
+                width: 1280.0,
+                height: 720.0,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+            }),
+            nodes: native_nodes,
+            scene_blocks: Vec::new(),
+            proof_hash: String::new(),
+        });
+
+        assert!(first.proof_hash.starts_with("kasm://sha256/"));
+        assert_eq!(first.proof_hash, second.proof_hash);
+        assert!(
+            first.nodes.iter().any(|node| {
+                node.ax
+                    .as_ref()
+                    .is_some_and(|ax| ax.role == "link" && ax.name == "Explore listings")
+            }),
+            "observe_v2 replay should preserve native AX semantics"
+        );
+    }
 }
+
 

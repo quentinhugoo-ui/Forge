@@ -4,6 +4,7 @@
 //! preflight verifier, capability handles, and a compact proof envelope. It is
 //! not a replacement for KASM v0 yet; it is the narrow bridge for KASM2 trials.
 
+use crate::kasm::KasmInteropProofEnvelope;
 use sha2::{Digest, Sha256};
 
 pub const FBC_VERSION: u16 = 0;
@@ -377,6 +378,63 @@ impl ForgeCapability {
         }
     }
 
+    pub fn artifact_handle(
+        scope: impl AsRef<str>,
+        content: Option<&[u8]>,
+        limit_bytes: u64,
+    ) -> Result<Self, String> {
+        let scope = bounded_capability_scope(ForgeCapabilityKind::ArtifactHash, scope.as_ref())?;
+        Ok(Self::sealed(
+            ForgeCapabilityKind::ArtifactHash,
+            scope,
+            content,
+            limit_bytes,
+        ))
+    }
+
+    pub fn memory_scope_handle(
+        scope: impl AsRef<str>,
+        content: Option<&[u8]>,
+        limit_bytes: u64,
+    ) -> Result<Self, String> {
+        let scope = bounded_capability_scope(ForgeCapabilityKind::MemoryScope, scope.as_ref())?;
+        Ok(Self::sealed(
+            ForgeCapabilityKind::MemoryScope,
+            scope,
+            content,
+            limit_bytes,
+        ))
+    }
+
+    pub fn ui_projection_handle(
+        scope: impl AsRef<str>,
+        content: Option<&[u8]>,
+        limit_bytes: u64,
+    ) -> Result<Self, String> {
+        let scope = bounded_capability_scope(ForgeCapabilityKind::UiProjection, scope.as_ref())?;
+        Ok(Self::sealed(
+            ForgeCapabilityKind::UiProjection,
+            scope,
+            content,
+            limit_bytes,
+        ))
+    }
+
+    pub fn model_provider_scope_handle(
+        scope: impl AsRef<str>,
+        content: Option<&[u8]>,
+        limit_bytes: u64,
+    ) -> Result<Self, String> {
+        let scope =
+            bounded_capability_scope(ForgeCapabilityKind::ModelProviderScope, scope.as_ref())?;
+        Ok(Self::sealed(
+            ForgeCapabilityKind::ModelProviderScope,
+            scope,
+            content,
+            limit_bytes,
+        ))
+    }
+
     pub fn summary(&self) -> String {
         format!(
             "cap:{}:{}:{}:{}",
@@ -386,6 +444,62 @@ impl ForgeCapability {
             self.limit_bytes
         )
     }
+}
+
+fn bounded_capability_scope(kind: ForgeCapabilityKind, scope: &str) -> Result<String, String> {
+    let trimmed = scope.trim();
+    if trimmed.is_empty() {
+        return Err("capability scope must not be empty".to_string());
+    }
+    if trimmed.contains('\\')
+        || trimmed.starts_with('/')
+        || trimmed.contains("../")
+        || trimmed.contains("..\\")
+        || trimmed.contains(":/")
+        || trimmed.contains(":\\")
+    {
+        return Err(format!(
+            "{} handle must not contain raw path syntax: {}",
+            cap_kind_name(kind),
+            scope
+        ));
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("http://")
+        || lower.contains("https://")
+        || lower.contains("ws://")
+        || lower.contains("wss://")
+    {
+        return Err(format!(
+            "{} handle must not contain a raw URL: {}",
+            cap_kind_name(kind),
+            scope
+        ));
+    }
+    if lower.contains("token")
+        || lower.contains("bearer ")
+        || lower.contains("api_key")
+        || lower.contains("apikey")
+        || lower.contains("secret")
+        || trimmed.starts_with("sk-")
+    {
+        return Err(format!(
+            "{} handle must not embed a token or secret: {}",
+            cap_kind_name(kind),
+            scope
+        ));
+    }
+    if !trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, ':' | '_' | '-' | '.'))
+    {
+        return Err(format!(
+            "{} handle contains unsupported characters: {}",
+            cap_kind_name(kind),
+            scope
+        ));
+    }
+    Ok(trimmed.to_string())
 }
 
 pub fn hash_bytes_program(name: &str, bytes: &[u8]) -> ForgeBytecodeProgram {
@@ -430,12 +544,10 @@ pub fn ui_intent_transition_program(name: &str, from: &str, intent: &str) -> For
         ],
     );
     program.expected_output_schema = "ui_projection_v0".to_string();
-    program.capabilities.push(ForgeCapability::sealed(
-        ForgeCapabilityKind::UiProjection,
-        "ui:projection:bounded",
-        Some(b"ui_projection_v0"),
-        4096,
-    ));
+    program.capabilities.push(
+        ForgeCapability::ui_projection_handle("ui:projection:bounded", Some(b"ui_projection_v0"), 4096)
+            .expect("static ui projection capability"),
+    );
     program
 }
 
@@ -451,12 +563,14 @@ pub fn kernel_project_program(name: &str, op: &str, payload_json: &str) -> Forge
         ],
     );
     program.expected_output_schema = "kernel_projection_v0".to_string();
-    program.capabilities.push(ForgeCapability::sealed(
-        ForgeCapabilityKind::UiProjection,
-        "kernel:projection:bounded",
-        Some(b"kernel_projection_v0"),
-        8192,
-    ));
+    program.capabilities.push(
+        ForgeCapability::ui_projection_handle(
+            "kernel:projection:bounded",
+            Some(b"kernel_projection_v0"),
+            8192,
+        )
+        .expect("static kernel projection capability"),
+    );
     program
 }
 
@@ -472,12 +586,10 @@ pub fn job_read_projection_program(name: &str, job_id: &str, max_records: u16) -
         ],
     );
     program.expected_output_schema = "job_projection_v0".to_string();
-    program.capabilities.push(ForgeCapability::sealed(
-        ForgeCapabilityKind::ArtifactHash,
-        "job:projection:bounded",
-        Some(b"job_projection_v0"),
-        8192,
-    ));
+    program.capabilities.push(
+        ForgeCapability::artifact_handle("job:projection:bounded", Some(b"job_projection_v0"), 8192)
+            .expect("static job projection capability"),
+    );
     program
 }
 
@@ -1342,6 +1454,19 @@ pub fn proof_projection_json(
     )
 }
 
+pub fn kasm_interop_proof_projection_json(envelope: &KasmInteropProofEnvelope) -> String {
+    format!(
+        "{{\"kind\":\"forge_fbc_kasm_interop_proof_projection_v0\",\"interopKind\":\"{}\",\"contractHash\":\"{}\",\"kasmProgramHash\":\"{}\",\"verifierHash\":\"{}\",\"proofHash\":\"{}\",\"semanticFingerprint\":\"{}\",\"canonicalMlirHash\":\"{}\"}}",
+        escape_json(&envelope.interop_kind),
+        envelope.contract_hash,
+        envelope.kasm_program_hash,
+        envelope.verifier_hash,
+        envelope.proof_hash,
+        envelope.semantic_fingerprint,
+        envelope.canonical_mlir_hash
+    )
+}
+
 pub fn proof_ledger_entry(
     sequence: u64,
     status: &str,
@@ -1516,6 +1641,28 @@ pub fn execute_tool_cell_batch(
     }
 }
 
+pub fn execute_tool_cell_batch_groups(
+    groups: &[(&[ForgeToolCellSpec], &[u8])],
+    config: &ForgeVmConfig,
+) -> ForgeToolCellBatchOutput {
+    let total_cells = groups.iter().map(|(cells, _)| cells.len()).sum();
+    let mut merged_cells = Vec::with_capacity(total_cells);
+    let mut merged_graph = Vec::new();
+    for (cells, graph_jsonl) in groups {
+        merged_cells.extend(cells.iter().cloned());
+        if !graph_jsonl.is_empty() {
+            if !merged_graph.is_empty() && !merged_graph.ends_with(b"\n") {
+                merged_graph.push(b'\n');
+            }
+            merged_graph.extend_from_slice(graph_jsonl);
+            if !merged_graph.ends_with(b"\n") {
+                merged_graph.push(b'\n');
+            }
+        }
+    }
+    execute_tool_cell_batch(&merged_cells, &merged_graph, config)
+}
+
 pub fn parse_tool_cell_registry_v0(json: &str) -> Result<ForgeToolCellRegistry, ForgeVmError> {
     let schema_version = json_number_field(json, "schemaVersion")
         .and_then(|value| value.parse::<u16>().ok())
@@ -1561,15 +1708,6 @@ pub fn parse_tool_cell_registry_v0(json: &str) -> Result<ForgeToolCellRegistry, 
         denied,
         cells,
     })
-}
-
-pub fn execute_tool_cell_registry_batch(
-    registry_json: &str,
-    graph_jsonl: &[u8],
-    config: &ForgeVmConfig,
-) -> Result<ForgeToolCellBatchOutput, ForgeVmError> {
-    let registry = parse_tool_cell_registry_v0(registry_json)?;
-    Ok(execute_tool_cell_batch(&registry.cells, graph_jsonl, config))
 }
 
 pub fn parse_app_section_registry_v0(json: &str) -> Result<ForgeAppRegistry, ForgeVmError> {
@@ -1678,14 +1816,6 @@ pub fn parse_app_section_registry_v0(json: &str) -> Result<ForgeAppRegistry, For
         cells,
         graph_jsonl: graph_lines.join("\n").into_bytes(),
     })
-}
-
-pub fn execute_app_registry_batch(
-    section_ownership_json: &str,
-    config: &ForgeVmConfig,
-) -> Result<ForgeToolCellBatchOutput, ForgeVmError> {
-    let registry = parse_app_section_registry_v0(section_ownership_json)?;
-    Ok(execute_tool_cell_batch(&registry.cells, &registry.graph_jsonl, config))
 }
 
 pub fn encode_program(program: &ForgeBytecodeProgram) -> Vec<u8> {
@@ -2658,6 +2788,30 @@ mod tests {
     }
 
     #[test]
+    fn bounded_capability_handles_accept_compact_scopes() {
+        let artifact = ForgeCapability::artifact_handle("artifact:job_projection:bounded", None, 4096)
+            .expect("artifact handle");
+        assert_eq!(artifact.kind, ForgeCapabilityKind::ArtifactHash);
+        let memory = ForgeCapability::memory_scope_handle("memory:real_estate:latest", None, 4096)
+            .expect("memory handle");
+        assert_eq!(memory.kind, ForgeCapabilityKind::MemoryScope);
+        let projection = ForgeCapability::ui_projection_handle("ui:projection:bounded", None, 4096)
+            .expect("ui projection handle");
+        assert_eq!(projection.kind, ForgeCapabilityKind::UiProjection);
+        let provider = ForgeCapability::model_provider_scope_handle("model:openai:gpt_5_5", None, 4096)
+            .expect("provider handle");
+        assert_eq!(provider.kind, ForgeCapabilityKind::ModelProviderScope);
+    }
+
+    #[test]
+    fn bounded_capability_handles_reject_raw_path_url_and_token_inputs() {
+        assert!(ForgeCapability::artifact_handle("C:\\secrets\\artifact.json", None, 4096).is_err());
+        assert!(ForgeCapability::memory_scope_handle("../memory/cache", None, 4096).is_err());
+        assert!(ForgeCapability::ui_projection_handle("https://example.com/ui", None, 4096).is_err());
+        assert!(ForgeCapability::model_provider_scope_handle("Bearer sk-secret-token", None, 4096).is_err());
+    }
+
+    #[test]
     fn fbc_hostcall_abi_v0_is_compact_and_named() {
         let abi = hostcall_abi_v0();
         assert_eq!(abi.len(), 8);
@@ -2880,6 +3034,36 @@ mod tests {
     }
 
     #[test]
+    fn fbc_kasm_interop_projection_keeps_contract_program_verifier_and_proof_chain_stable() {
+        let wit = r#"
+            package forge:interop;
+
+            world plugin {
+              export add: func(lhs: s64, rhs: s64) -> s64;
+            }
+        "#;
+
+        let first = crate::kasm::wit_export_proof_envelope(wit, "plugin", "add").expect("proof");
+        let second = crate::kasm::wit_export_proof_envelope(wit, "plugin", "add").expect("proof");
+        let first_projection = kasm_interop_proof_projection_json(&first);
+        let second_projection = kasm_interop_proof_projection_json(&second);
+
+        assert_eq!(first, second);
+        assert_eq!(first_projection, second_projection);
+        assert!(first_projection.contains("forge_fbc_kasm_interop_proof_projection_v0"));
+        assert!(first_projection.contains(&format!("\"contractHash\":\"{}\"", first.contract_hash)));
+        assert!(first_projection.contains(&format!(
+            "\"kasmProgramHash\":\"{}\"",
+            first.kasm_program_hash
+        )));
+        assert!(first_projection.contains(&format!(
+            "\"verifierHash\":\"{}\"",
+            first.verifier_hash
+        )));
+        assert!(first_projection.contains(&format!("\"proofHash\":\"{}\"", first.proof_hash)));
+    }
+
+    #[test]
     fn fbc_tool_cell_graph_capability_tamper_is_denied() {
         let config = ForgeVmConfig::default();
         let cell = ForgeToolCellSpec {
@@ -2996,7 +3180,8 @@ mod tests {
         let graph = br#"{"kind":"dataflow_node","id":"score-1","type":"score","label":"Pipeline","recordHash":"hash-score","confidence":0.91}
 {"kind":"dataflow_node","id":"action-1","type":"action","label":"Call seller","recordHash":"hash-action","confidence":0.88}
 "#;
-        let batch = execute_tool_cell_registry_batch(registry_json, graph, &config).unwrap();
+        let registry = parse_tool_cell_registry_v0(registry_json).unwrap();
+        let batch = execute_tool_cell_batch(&registry.cells, graph, &config);
 
         assert_eq!(batch.tool_count, 2);
         assert_eq!(batch.ok_count, 2);
@@ -3005,9 +3190,7 @@ mod tests {
         assert_eq!(batch.records[1].selected_evidence_count, 1);
         assert_eq!(
             batch.ledger_root_hash,
-            execute_tool_cell_registry_batch(registry_json, graph, &config)
-                .unwrap()
-                .ledger_root_hash
+            execute_tool_cell_batch(&registry.cells, graph, &config).ledger_root_hash
         );
     }
 
@@ -3073,7 +3256,8 @@ mod tests {
             { "command": "get_hardware_info", "owner": "shell", "requiresBridge": true }
           ]
         }"#;
-        let batch = execute_app_registry_batch(ownership, &config).unwrap();
+        let registry = parse_app_section_registry_v0(ownership).unwrap();
+        let batch = execute_tool_cell_batch(&registry.cells, &registry.graph_jsonl, &config);
 
         assert_eq!(batch.tool_count, 3);
         assert_eq!(batch.ok_count, 3);
@@ -3083,9 +3267,60 @@ mod tests {
         assert!(batch.records.iter().all(|record| record.selected_evidence_count > 0));
         assert_eq!(
             batch.ledger_root_hash,
-            execute_app_registry_batch(ownership, &config)
-                .unwrap()
-                .ledger_root_hash
+            execute_tool_cell_batch(&registry.cells, &registry.graph_jsonl, &config).ledger_root_hash
+        );
+    }
+
+    #[test]
+    fn fbc_combined_batch_unifies_real_estate_tool_cells_with_app_sections() {
+        let mut config = ForgeVmConfig::default();
+        config.backend = "auto".to_string();
+        let ownership = r#"{
+          "version": 1,
+          "sections": [
+            { "id": "shell", "owner": "Forge shell", "files": ["ui/src/shell/surface.ts"], "lifecycle": "always-active" },
+            { "id": "trading", "owner": "Trading workspace", "files": ["ui/src/sections/trading/surface.ts"], "lifecycle": "open-close" }
+          ],
+          "sensitiveCommands": [
+            { "command": "get_hardware_info", "owner": "shell", "requiresBridge": true }
+          ]
+        }"#;
+        let real_estate_registry_json =
+            include_str!("../examples/forge_tauri_ui/source-registry/real-estate-tool-cells.json");
+        let app_registry = parse_app_section_registry_v0(ownership).unwrap();
+        let real_estate_registry = parse_tool_cell_registry_v0(real_estate_registry_json).unwrap();
+        let graph = br#"{"kind":"dataflow_node","id":"score-1","type":"score","label":"Pipeline","recordHash":"hash-score","confidence":0.91}
+{"kind":"dataflow_node","id":"action-1","type":"action","label":"Call seller","recordHash":"hash-action","confidence":0.88}
+{"kind":"dataflow_node","id":"entity-1","type":"entity","label":"Property","recordHash":"hash-entity","confidence":0.90}
+{"kind":"dataflow_node","id":"signal-1","type":"signal","label":"Momentum","recordHash":"hash-signal","confidence":0.84}
+{"kind":"dataflow_node","id":"intel-1","type":"intelPack","label":"Intel Pack","recordHash":"hash-intel","confidence":0.87}
+{"kind":"dataflow_node","id":"memory-1","type":"memoryFact","label":"Memory","recordHash":"hash-memory","confidence":0.79}
+"#;
+        let batch = execute_tool_cell_batch_groups(
+            &[
+                (&app_registry.cells, &app_registry.graph_jsonl),
+                (&real_estate_registry.cells, graph),
+            ],
+            &config,
+        );
+
+        assert_eq!(
+            batch.tool_count,
+            app_registry.cells.len() + real_estate_registry.cells.len()
+        );
+        assert!(batch.records.iter().any(|record| record.tool_id == "app-section-shell"));
+        assert!(batch.records.iter().any(|record| record.tool_id == "pilotage-agence"));
+        assert!(!batch.ledger_root_hash.is_empty());
+        assert_eq!(
+            batch.ledger_root_hash,
+            execute_tool_cell_batch_groups(
+                &[
+                    (&app_registry.cells, &app_registry.graph_jsonl),
+                    (&real_estate_registry.cells, graph),
+                ],
+                &config,
+            )
+            .ledger_root_hash
         );
     }
 

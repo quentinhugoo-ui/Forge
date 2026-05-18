@@ -1,10 +1,11 @@
+use crate::collection_os::{plan_collection, CollectionPlanRequest};
 use crate::forge_job_runtime::{append_job_ledger_event, ForgeJobCost, ForgeJobProof, ForgeJobRetry, ForgeUnifiedJob};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use scan::kasm::{Node, Program, Target, Ty};
 use scan::{publish_semantic_attractor, Hash, MemoryGovernor, MonsterNode, Store};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -32,6 +33,7 @@ const JOB_EVENTS_FILE: &str = "job_events.jsonl";
 const ONBOARDING_PROFILE_FILE: &str = "agency_onboarding_profile.json";
 #[allow(dead_code)]
 const ONBOARDING_EVENTS_FILE: &str = "agency_onboarding_events.jsonl";
+const ONBOARDING_WEB_FINDINGS_FILE: &str = "agency_onboarding_web_findings.json";
 const LATEST_INTEL_FILE: &str = "latest.json";
 const LATEST_LLM_INTEL_CACHE_FILE: &str = "latest.json";
 const REAL_ESTATE_KASM_SCORE_CONTRACT_FILE: &str = "real_estate_score_core.json";
@@ -449,6 +451,15 @@ struct LocalFeatureBuild {
     kasm_contract: RealEstateKasmContract,
 }
 
+#[derive(Clone, Debug, Default)]
+struct CollectionArtifactSummary {
+    route_count: usize,
+    hypothesis_count: usize,
+    entity_count: usize,
+    proof_hash: String,
+    artifact_path: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RealEstateIntelOpportunity {
@@ -514,7 +525,9 @@ pub struct RealEstateLlmIntelCache {
     pub generated_at_ms: u64,
     pub source_pack_id: String,
     pub source_pack_path: String,
+    pub projection_hash: String,
     pub evidence_hash: String,
+    pub memory_evidence_hash: String,
     pub metric_manifest_hash: String,
     pub kasm_contract_hash: String,
     pub kasm_semantic_fingerprint: String,
@@ -594,8 +607,24 @@ pub struct RealEstateOnboardingAnswerReport {
     pub suggested_answers: Vec<String>,
     pub triggered_collectors: Vec<HarvestRunReport>,
     pub enrichment_queries: Vec<String>,
+    pub web_findings: Vec<RealEstateOnboardingWebPageFinding>,
     pub profile_hash: String,
     pub event_hash: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RealEstateOnboardingWebPageFinding {
+    pub query: String,
+    pub url: String,
+    pub source_domain: String,
+    pub title: String,
+    pub snippet: String,
+    pub listing_signals: Vec<String>,
+    pub emails: Vec<String>,
+    pub phones: Vec<String>,
+    pub fetched_at_ms: u64,
+    pub evidence_hash: String,
 }
 
 struct HarvesterDaemon {
@@ -610,6 +639,13 @@ struct HarvesterDaemon {
     last_run_by_collector: Mutex<HashMap<String, u64>>,
     supervisor: Mutex<RealEstateSupervisorSnapshot>,
     job_queue: Mutex<RealEstateJobQueueSnapshot>,
+}
+
+struct HttpTextFetch {
+    url: String,
+    status: u16,
+    body: String,
+    elapsed_ms: u64,
 }
 
 static HARVESTER_DAEMON: OnceLock<Arc<HarvesterDaemon>> = OnceLock::new();
@@ -722,9 +758,8 @@ pub fn record_onboarding_answer(
     answer: &str,
 ) -> Result<RealEstateOnboardingAnswerReport, String> {
     let base = ensure_harvester_dirs(store_path)?;
-    let registry = default_registry();
     let questions = onboarding_questions();
-    let question_id = normalize_id(question_id);
+    let question_id = normalize_onboarding_question_id(question_id);
     if !questions.iter().any(|question| question.id == question_id) {
         return Err(format!("unknown real estate onboarding question: {question_id}"));
     }
@@ -741,6 +776,34 @@ pub fn record_onboarding_answer(
     profile.updated_at_ms = now;
     profile.answers.insert(question_id.clone(), answer.to_string());
     profile.derived_traits = derive_onboarding_traits(&profile.answers);
+    let collection_plan = real_estate_onboarding_collection_plan(&question_id, &profile);
+    if let Ok(plan) = &collection_plan {
+        profile
+            .derived_traits
+            .insert("collection_os_plan_hash".to_string(), plan.proof_hash.clone());
+        profile
+            .derived_traits
+            .insert("collection_os_sector_pack".to_string(), plan.sector_pack_id.clone());
+        profile.derived_traits.insert(
+            "collection_os_route".to_string(),
+            plan.steps
+                .iter()
+                .map(|step| step.surface_id.as_str())
+                .collect::<Vec<_>>()
+                .join(">"),
+        );
+    }
+    let should_refresh_google_places = should_refresh_google_places_traits(&profile.derived_traits);
+    if question_id == "agency_identity" || !should_refresh_google_places {
+        let profile_snapshot = profile.clone();
+        enrich_onboarding_traits_with_fallback_resolution(
+            &base,
+            &question_id,
+            &profile_snapshot,
+            &mut profile.derived_traits,
+        );
+    }
+    let web_findings: Vec<RealEstateOnboardingWebPageFinding> = Vec::new();
     let completed = questions
         .iter()
         .all(|question| profile.answers.get(&question.id).map(|value| !value.trim().is_empty()).unwrap_or(false));
@@ -749,34 +812,7 @@ pub fn record_onboarding_answer(
         profile.completed_at_ms = now;
     }
 
-    let tool_ids = onboarding_trigger_tools(&question_id, &profile);
-    let mut triggered_collectors = Vec::new();
-    for tool_id in tool_ids {
-        if let Some(collector) = registry
-            .collectors
-            .iter()
-            .find(|collector| collector.tools.iter().any(|tool| tool == &tool_id))
-        {
-            match run_collector(store_path, &tool_id, collector, "onboarding_answer") {
-                Ok(report) => {
-                    profile.enrichment_runs.push(report.job_id.clone());
-                    triggered_collectors.push(report);
-                }
-                Err(err) => {
-                    let _ = append_json_line(
-                        &data_path(&base, ONBOARDING_EVENTS_FILE),
-                        &json!({
-                            "type": "onboarding_enrichment_error",
-                            "questionId": question_id,
-                            "toolId": tool_id,
-                            "error": err,
-                            "tsMs": now_ms()
-                        }),
-                    );
-                }
-            }
-        }
-    }
+    let triggered_collectors: Vec<HarvestRunReport> = Vec::new();
 
     profile.profile_hash = onboarding_profile_hash(&profile);
     write_onboarding_profile(&base, &profile)?;
@@ -793,11 +829,7 @@ pub fn record_onboarding_answer(
             &question_id,
             answer,
             &profile.profile_hash,
-            &triggered_collectors
-                .iter()
-                .map(|report| report.proof_hash.as_str())
-                .collect::<Vec<_>>()
-                .join("|"),
+            "",
         ],
     );
     append_json_line(
@@ -810,9 +842,20 @@ pub fn record_onboarding_answer(
             "eventHash": event_hash,
             "triggeredCollectors": triggered_collectors.iter().map(|report| report.collector_id.clone()).collect::<Vec<_>>(),
             "enrichmentQueries": enrichment_queries,
+            "webFindings": web_findings.iter().map(|finding| &finding.url).collect::<Vec<_>>(),
+            "collectionPlan": collection_plan.as_ref().ok().map(|plan| json!({
+                "proofHash": plan.proof_hash,
+                "sectorPackId": plan.sector_pack_id,
+                "route": plan.steps.iter().map(|step| step.surface_id.clone()).collect::<Vec<_>>(),
+                "latencyBudgetMs": plan.latency_budget_ms
+            })),
             "tsMs": now
         }),
     )?;
+
+    if should_refresh_google_places && question_id != "agency_identity" {
+        spawn_onboarding_google_places_refresh(base.clone());
+    }
 
     Ok(RealEstateOnboardingAnswerReport {
         status: profile.status.clone(),
@@ -822,9 +865,405 @@ pub fn record_onboarding_answer(
         suggested_answers,
         triggered_collectors,
         enrichment_queries,
+        web_findings,
         profile_hash: profile.profile_hash,
         event_hash,
     })
+}
+
+#[allow(dead_code)]
+pub fn resolve_onboarding_agency_identity(
+    store_path: &Path,
+    agency_name: &str,
+    city: &str,
+    original_user_text: &str,
+) -> Result<serde_json::Value, String> {
+    let agency_name = agency_name.trim();
+    let city = city.trim();
+    if agency_name.is_empty() {
+        return Err("agency_name is required".to_string());
+    }
+    if city.is_empty() {
+        return Err("city is required".to_string());
+    }
+
+    let base = ensure_harvester_dirs(store_path)?;
+    let mut profile = read_onboarding_profile(&base)?;
+    let now = now_ms();
+    if profile.started_at_ms == 0 {
+        profile.started_at_ms = now;
+    }
+    profile.updated_at_ms = now;
+    let answer = format!("{agency_name} a {city}");
+    profile
+        .answers
+        .insert("agency_identity".to_string(), answer.clone());
+    profile.derived_traits = derive_onboarding_traits(&profile.answers);
+    profile
+        .derived_traits
+        .insert("agency_display_name".to_string(), truncate_for_trait(agency_name, 180));
+    profile
+        .derived_traits
+        .insert("agency_search_name".to_string(), truncate_for_trait(agency_name, 180));
+    profile
+        .derived_traits
+        .insert("agency_city".to_string(), truncate_for_trait(city, 120));
+    profile
+        .derived_traits
+        .insert("harvester_zone_seed".to_string(), truncate_for_trait(city, 120));
+    profile
+        .derived_traits
+        .insert("priority_zones".to_string(), truncate_for_trait(city, 180));
+    profile
+        .derived_traits
+        .insert("priority_zone_count".to_string(), "1".to_string());
+    if !original_user_text.trim().is_empty() {
+        profile.derived_traits.insert(
+            "agency_identity_user_text".to_string(),
+            truncate_for_trait(original_user_text.trim(), 320),
+        );
+    }
+
+    let snapshot = profile.clone();
+    enrich_onboarding_traits_with_fallback_resolution(
+        &base,
+        "agency_identity",
+        &snapshot,
+        &mut profile.derived_traits,
+    );
+
+    let questions = onboarding_questions();
+    let completed = questions
+        .iter()
+        .all(|question| profile.answers.get(&question.id).map(|value| !value.trim().is_empty()).unwrap_or(false));
+    profile.status = if completed { "completed" } else { "in_progress" }.to_string();
+    if completed && profile.completed_at_ms == 0 {
+        profile.completed_at_ms = now;
+    }
+    profile.profile_hash = onboarding_profile_hash(&profile);
+    write_onboarding_profile(&base, &profile)?;
+    let state = onboarding_state_from_profile(&profile);
+    let traits = &profile.derived_traits;
+    let contact = json!({
+        "agencyName": traits.get("agency_display_name").or_else(|| traits.get("agency_search_name")).cloned().unwrap_or_else(|| agency_name.to_string()),
+        "city": traits.get("agency_city").cloned().unwrap_or_else(|| city.to_string()),
+        "address": traits.get("agency_address").cloned().unwrap_or_default(),
+        "phone": traits.get("agency_phone").cloned().unwrap_or_default(),
+        "website": traits.get("agency_website").cloned().unwrap_or_default(),
+        "googleMapsUri": traits.get("agency_google_maps_uri").cloned().unwrap_or_default(),
+        "source": traits.get("agency_resolution_source").or_else(|| traits.get("contact_source")).cloned().unwrap_or_default(),
+        "status": traits.get("agency_resolution_status").or_else(|| traits.get("google_places_status")).cloned().unwrap_or_default()
+    });
+    let event_hash = hash_parts(
+        "real_estate_agency_identity_resolve:v1",
+        &[
+            agency_name,
+            city,
+            contact.get("address").and_then(serde_json::Value::as_str).unwrap_or(""),
+            &profile.profile_hash,
+        ],
+    );
+    append_json_line(
+        &data_path(&base, ONBOARDING_EVENTS_FILE),
+        &json!({
+            "type": "agency_identity_resolve",
+            "agencyName": agency_name,
+            "city": city,
+            "profileHash": profile.profile_hash,
+            "eventHash": event_hash,
+            "contact": contact,
+            "tsMs": now
+        }),
+    )?;
+    Ok(json!({
+        "kind": "real_estate_agency_identity_resolution",
+        "status": "resolved",
+        "questionId": "agency_identity",
+        "eventHash": event_hash,
+        "profileHash": profile.profile_hash,
+        "contact": contact,
+        "state": state,
+        "confirmationPrompt": "Demande a l'utilisateur si ces informations sont exactes avant de continuer l'onboarding.",
+        "rawDataReturned": false
+    }))
+}
+
+#[allow(dead_code)]
+pub fn confirm_onboarding_agency_identity(
+    store_path: &Path,
+    confirmed: bool,
+    correction: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let base = ensure_harvester_dirs(store_path)?;
+    let mut profile = read_onboarding_profile(&base)?;
+    let now = now_ms();
+    profile.updated_at_ms = now;
+    if confirmed {
+        profile
+            .derived_traits
+            .insert("agency_identity_confirmed".to_string(), "true".to_string());
+        profile
+            .derived_traits
+            .insert("agency_identity_confirmed_at_ms".to_string(), now.to_string());
+    } else {
+        profile
+            .derived_traits
+            .insert("agency_identity_confirmed".to_string(), "false".to_string());
+        if let Some(correction) = correction.map(str::trim).filter(|value| !value.is_empty()) {
+            profile.derived_traits.insert(
+                "agency_identity_correction".to_string(),
+                truncate_for_trait(correction, 360),
+            );
+        }
+    }
+    profile.profile_hash = onboarding_profile_hash(&profile);
+    write_onboarding_profile(&base, &profile)?;
+    let state = onboarding_state_from_profile(&profile);
+    let traits = &profile.derived_traits;
+    let contact = json!({
+        "agencyName": traits.get("agency_display_name").or_else(|| traits.get("agency_search_name")).cloned().unwrap_or_default(),
+        "city": traits.get("agency_city").cloned().unwrap_or_default(),
+        "address": traits.get("agency_address").cloned().unwrap_or_default(),
+        "phone": traits.get("agency_phone").cloned().unwrap_or_default(),
+        "email": traits.get("agency_email").cloned().unwrap_or_default(),
+        "website": traits.get("agency_website").cloned().unwrap_or_default(),
+        "googleMapsUri": traits.get("agency_google_maps_uri").cloned().unwrap_or_default(),
+        "lat": traits.get("agency_lat").and_then(|value| value.parse::<f64>().ok()),
+        "lng": traits.get("agency_lng").and_then(|value| value.parse::<f64>().ok()),
+        "source": traits.get("agency_resolution_source").or_else(|| traits.get("contact_source")).cloned().unwrap_or_default(),
+        "confirmed": confirmed
+    });
+    let event_hash = hash_parts(
+        "real_estate_agency_identity_confirm:v1",
+        &[
+            contact.get("agencyName").and_then(serde_json::Value::as_str).unwrap_or(""),
+            contact.get("city").and_then(serde_json::Value::as_str).unwrap_or(""),
+            if confirmed { "confirmed" } else { "rejected" },
+            &profile.profile_hash,
+        ],
+    );
+    append_json_line(
+        &data_path(&base, ONBOARDING_EVENTS_FILE),
+        &json!({
+            "type": "agency_identity_confirm",
+            "confirmed": confirmed,
+            "profileHash": profile.profile_hash,
+            "eventHash": event_hash,
+            "contact": contact.clone(),
+            "tsMs": now
+        }),
+    )?;
+    let ui_actions = if confirmed {
+        json!([
+            { "kind": "set_app_header", "agencyName": contact.get("agencyName").cloned().unwrap_or_default() },
+            { "kind": "set_profile_agency", "contact": contact.clone() },
+            { "kind": "open_google_earth", "query": contact.get("agencyName").cloned().unwrap_or_default(), "contact": contact.clone() }
+        ])
+    } else {
+        json!([])
+    };
+    Ok(json!({
+        "kind": "real_estate_agency_identity_confirmation",
+        "status": if confirmed { "confirmed" } else { "needs_correction" },
+        "questionId": "agency_identity",
+        "eventHash": event_hash,
+        "profileHash": profile.profile_hash,
+        "contact": contact,
+        "state": state,
+        "uiActions": ui_actions,
+        "assistantNext": if confirmed {
+            "Remercie chaleureusement, prends acte que tu travailles maintenant pour cette agence, puis indique que Forge met a jour le profil et ouvre Google Earth."
+        } else {
+            "Demande la correction exacte a l'utilisateur avant de continuer."
+        },
+        "rawDataReturned": false
+    }))
+}
+
+fn should_refresh_google_places_traits(traits: &HashMap<String, String>) -> bool {
+    let name = traits
+        .get("agency_search_name")
+        .map(String::as_str)
+        .or_else(|| traits.get("agency_display_name").map(String::as_str))
+        .unwrap_or("")
+        .trim();
+    if name.is_empty() {
+        return false;
+    }
+    let status = traits
+        .get("google_places_status")
+        .map(|value| value.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    let has_address = traits
+        .get("agency_address")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let has_phone = traits
+        .get("agency_phone")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let has_website = traits
+        .get("agency_website")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let has_coords = traits
+        .get("agency_lat")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+        && traits
+            .get("agency_lng")
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+    let has_required_contact = has_address && has_phone && has_website;
+    status != "ok" || !has_required_contact || !has_coords
+}
+
+fn spawn_onboarding_google_places_refresh(base: PathBuf) {
+    thread::spawn(move || {
+        let _ = refresh_onboarding_google_places_traits(&base);
+    });
+}
+
+fn refresh_onboarding_google_places_traits(base: &Path) -> Result<(), String> {
+    let mut profile = read_onboarding_profile(base)?;
+    if !should_refresh_google_places_traits(&profile.derived_traits) {
+        return Ok(());
+    }
+    let before = profile.derived_traits.clone();
+    let profile_snapshot = profile.clone();
+    enrich_onboarding_traits_with_fallback_resolution(
+        base,
+        "agency_identity",
+        &profile_snapshot,
+        &mut profile.derived_traits,
+    );
+    if profile.derived_traits == before {
+        return Ok(());
+    }
+    profile.updated_at_ms = now_ms();
+    profile.profile_hash = onboarding_profile_hash(&profile);
+    write_onboarding_profile(base, &profile)?;
+    Ok(())
+}
+
+fn enrich_onboarding_traits_with_fallback_resolution(
+    base: &Path,
+    question_id: &str,
+    profile: &RealEstateOnboardingProfile,
+    traits: &mut HashMap<String, String>,
+) {
+    enrich_onboarding_traits_with_google_places(traits);
+    let google_ok = traits
+        .get("google_places_status")
+        .map(|value| value.trim().eq_ignore_ascii_case("ok"))
+        .unwrap_or(false);
+    if google_ok {
+        return;
+    }
+    let fallback_profile = RealEstateOnboardingProfile {
+        derived_traits: traits.clone(),
+        ..profile.clone()
+    };
+    match run_onboarding_web_research(base, question_id, &fallback_profile, traits) {
+        Ok(findings) => {
+            if findings.is_empty() {
+                traits
+                    .entry("agency_resolution_status".to_string())
+                    .or_insert_with(|| "web_fallback_no_match".to_string());
+                traits
+                    .entry("google_places_status".to_string())
+                    .or_insert_with(|| "web_fallback_no_match".to_string());
+                return;
+            }
+            traits.insert(
+                "agency_resolution_status".to_string(),
+                "web_fallback_partial".to_string(),
+            );
+            if traits
+                .get("google_places_status")
+                .map(|value| value.trim().is_empty() || value.trim() == "missing_api_key")
+                .unwrap_or(true)
+            {
+                traits.insert(
+                    "google_places_status".to_string(),
+                    "web_fallback_partial".to_string(),
+                );
+            }
+        }
+        Err(err) => {
+            traits.insert(
+                "agency_resolution_status".to_string(),
+                format!("web_fallback_error:{}", truncate_for_trait(&err, 120)),
+            );
+            if traits
+                .get("google_places_status")
+                .map(|value| value.trim().is_empty())
+                .unwrap_or(true)
+            {
+                traits.insert(
+                    "google_places_status".to_string(),
+                    "web_fallback_error".to_string(),
+                );
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub fn persist_onboarding_native_web_findings(
+    store_path: &Path,
+    findings: &[RealEstateOnboardingWebPageFinding],
+    trait_updates: &HashMap<String, String>,
+) -> Result<(), String> {
+    if findings.is_empty() && trait_updates.is_empty() {
+        return Ok(());
+    }
+    let base = ensure_harvester_dirs(store_path)?;
+    let findings_path = data_path(&base, ONBOARDING_WEB_FINDINGS_FILE);
+    let mut existing = if findings_path.exists() {
+        let bytes = fs::read(&findings_path)
+            .map_err(|e| format!("read agency onboarding web findings: {e}"))?;
+        serde_json::from_slice::<Vec<RealEstateOnboardingWebPageFinding>>(&bytes)
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    for finding in findings {
+        if let Some(slot) = existing.iter_mut().find(|item| item.url == finding.url) {
+            *slot = finding.clone();
+        } else {
+            existing.push(finding.clone());
+        }
+    }
+    write_json_pretty(
+        &findings_path,
+        &existing,
+        "agency onboarding web findings",
+    )?;
+
+    if !trait_updates.is_empty() {
+        let mut profile = read_onboarding_profile(&base)?;
+        for (key, value) in trait_updates {
+            let value = value.trim();
+            if value.is_empty() {
+                continue;
+            }
+            if matches!(key.as_str(), "agency_email" | "agency_phone" | "agency_website") {
+                profile
+                    .derived_traits
+                    .entry(key.to_string())
+                    .or_insert_with(|| value.to_string());
+            } else {
+                profile
+                    .derived_traits
+                    .insert(key.to_string(), value.to_string());
+            }
+        }
+        profile.updated_at_ms = now_ms();
+        profile.profile_hash = onboarding_profile_hash(&profile);
+        write_onboarding_profile(&base, &profile)?;
+    }
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -2200,6 +2639,22 @@ fn run_collector(
         format!("kasm_contract:{}", store_update.kasm_contract_hash),
         format!("data_hash:{}", store_update.data_hash),
     ]);
+    if let Ok(collection_summary) =
+        export_collection_os_artifact(&base, collector, &report.job_id, started, &store_update.data_hash)
+    {
+        if !collection_summary.proof_hash.is_empty() {
+            normalized_outputs.extend([
+                format!("collection_routes:{}", collection_summary.route_count),
+                format!("collection_hypotheses:{}", collection_summary.hypothesis_count),
+                format!("collection_entities:{}", collection_summary.entity_count),
+                format!("collection_proof:{}", collection_summary.proof_hash),
+                format!("collection_artifact:{}", collection_summary.artifact_path),
+            ]);
+            report
+                .compliance_notes
+                .push("Collection OS typed extraction artifact attached with local evidence.".to_string());
+        }
+    }
     report.normalized_outputs = normalized_outputs;
     report.finished_at_ms = now_ms();
     report.proof_hash = proof_hash(&report)?;
@@ -2445,14 +2900,43 @@ fn onboarding_state_from_profile(profile: &RealEstateOnboardingProfile) -> RealE
 #[allow(dead_code)]
 fn derive_onboarding_traits(answers: &HashMap<String, String>) -> HashMap<String, String> {
     let mut traits = HashMap::new();
+    let all_answers = answers
+        .values()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join(" | ");
     if let Some(identity) = answers.get("agency_identity").map(|value| value.trim()).filter(|value| !value.is_empty()) {
-        traits.insert("agency_search_name".to_string(), first_clause(identity));
+        let (agency_name, city_hint) = extract_agency_identity_parts(identity);
+        traits.insert("agency_search_name".to_string(), agency_name);
         traits.insert("agency_identity_brief".to_string(), truncate_for_trait(identity, 220));
+        if let Some(city) = city_hint.or_else(|| extract_city_hint(identity)) {
+            let region = infer_region_from_city(&city);
+            traits.insert("agency_city".to_string(), city.clone());
+            traits.insert("harvester_region".to_string(), region);
+            traits.insert("harvester_zone_seed".to_string(), city.clone());
+            traits.insert(
+                "agency_address".to_string(),
+                format!("{city} (adresse precise a confirmer)"),
+            );
+            traits
+                .entry("priority_zones".to_string())
+                .or_insert(city);
+            traits
+                .entry("priority_zone_count".to_string())
+                .or_insert("1".to_string());
+        }
     }
     if let Some(website) = answers.get("agency_website").map(|value| value.trim()).filter(|value| !value.is_empty()) {
         traits.insert("owned_web_surface".to_string(), truncate_for_trait(website, 260));
+        if let Some(url) = extract_url_hint(website) {
+            traits.insert("agency_website".to_string(), url);
+        }
         if let Some(domain) = extract_domain_hint(website) {
-            traits.insert("agency_domain".to_string(), domain);
+            traits.insert("agency_domain".to_string(), domain.clone());
+            traits
+                .entry("agency_website".to_string())
+                .or_insert(format!("https://{domain}"));
         }
     }
     if let Some(people) = answers.get("agency_people").map(|value| value.trim()).filter(|value| !value.is_empty()) {
@@ -2469,27 +2953,54 @@ fn derive_onboarding_traits(answers: &HashMap<String, String>) -> HashMap<String
     if let Some(priorities) = answers.get("agency_priorities").map(|value| value.trim()).filter(|value| !value.is_empty()) {
         traits.insert("ninety_day_priorities".to_string(), truncate_for_trait(priorities, 360));
     }
+    if let Some(email) = extract_email_hint(&all_answers) {
+        traits.insert("agency_email".to_string(), email);
+    }
+    if let Some(phone) = extract_phone_hint(&all_answers) {
+        traits.insert("agency_phone".to_string(), phone);
+    }
+    traits.insert(
+        "inventory_scope".to_string(),
+        "a_vendre,a_louer,vendu,loue".to_string(),
+    );
+    traits.insert(
+        "inventory_harvest".to_string(),
+        "active_via_site_and_portals".to_string(),
+    );
+    traits.insert(
+        "contact_source".to_string(),
+        "onboarding_plus_google_enrichment_queries".to_string(),
+    );
     traits
 }
 
 #[allow(dead_code)]
 fn onboarding_trigger_tools(question_id: &str, profile: &RealEstateOnboardingProfile) -> Vec<String> {
     let raw = match question_id {
-        "agency_identity" => vec!["reputation", "recrutement", "dvf"],
-        "agency_website" => vec!["site-agence", "audit-annonces", "performance-diffusion"],
-        "agency_people" => vec!["recrutement", "coaching-equipe", "performance-commerciaux"],
-        "agency_zones" => vec!["dvf", "cadastre", "dpe-ademe", "georisques", "urbanisme", "veille-locale"],
-        "agency_stack" => vec!["mandats", "matching-acheteurs", "conformite"],
-        "agency_priorities" => vec!["estimation", "rapport-vendeur", "pipeline", "kpi-agence"],
+        "agency_identity" => vec!["reputation", "dvf", "site-agence", "seloger", "leboncoin", "bienici"],
+        "agency_website" => vec!["site-agence", "seloger", "leboncoin", "bienici", "annonces"],
+        "agency_people" => vec!["recrutement", "matching-acheteurs", "mandats"],
+        "agency_zones" => vec!["dvf", "cadastre", "dpe-ademe", "georisques", "urbanisme", "seloger"],
+        "agency_stack" => vec!["mandats", "matching-acheteurs", "conformite", "drive", "gmail"],
+        "agency_priorities" => vec!["estimation", "rapport-vendeur", "pilotage", "annonces", "mandats"],
         _ => Vec::new(),
     };
-    let mut ids = raw.into_iter().map(normalize_id).collect::<Vec<_>>();
-    if profile.derived_traits.contains_key("agency_domain") && !ids.iter().any(|id| id == "site-agence") {
-        ids.push("site-agence".to_string());
+    let known_tools = default_registry()
+        .collectors
+        .iter()
+        .flat_map(|collector| collector.tools.iter().cloned())
+        .collect::<HashSet<_>>();
+    let mut ids = Vec::new();
+    for item in raw {
+        let normalized = normalize_id(item);
+        if known_tools.contains(&normalized) && !ids.iter().any(|id| id == &normalized) {
+            ids.push(normalized);
+        }
     }
-    ids.sort();
-    ids.dedup();
-    ids.truncate(4);
+    if profile.derived_traits.contains_key("agency_domain") && known_tools.contains("site-agence") && !ids.iter().any(|id| id == "site-agence") {
+        ids.insert(0, "site-agence".to_string());
+    }
+    ids.truncate(6);
     ids
 }
 
@@ -2500,10 +3011,19 @@ fn onboarding_suggestions_for_question(
 ) -> Vec<String> {
     let traits = &profile.derived_traits;
     match question.id.as_str() {
-        "agency_website" => traits
-            .get("agency_search_name")
-            .map(|name| vec![format!("Site officiel et Google Business Profile de {name}.")])
-            .unwrap_or_else(|| question.examples.clone()),
+        "agency_website" => {
+            let mut suggestions = traits
+                .get("agency_search_name")
+                .map(|name| vec![format!("Site officiel et Google Business Profile de {name}.")])
+                .unwrap_or_else(|| question.examples.clone());
+            if let Some(scope) = harvester_scope_hint(traits) {
+                suggestions.push(scope);
+            }
+            if let Some(summary) = agency_profile_hint(traits) {
+                suggestions.push(summary);
+            }
+            suggestions
+        }
         "agency_people" => traits
             .get("agency_search_name")
             .map(|name| vec![format!("Équipe publique connue de {name}, à compléter avec les rôles internes.")])
@@ -2537,16 +3057,38 @@ fn onboarding_enrichment_queries(
         .get("priority_zones")
         .cloned()
         .unwrap_or_else(|| "zone agence".to_string());
+    let website = profile
+        .derived_traits
+        .get("agency_website")
+        .cloned()
+        .or_else(|| profile.derived_traits.get("agency_domain").map(|domain| format!("https://{domain}")))
+        .unwrap_or_default();
+    let website_host = profile
+        .derived_traits
+        .get("agency_domain")
+        .cloned()
+        .unwrap_or_else(|| website.clone());
     match question_id {
         "agency_identity" => vec![
             format!("{name} avis Google immobilier"),
             format!("{name} annonces immobilières"),
             format!("{name} recrutement immobilier"),
+            format!("{name} {zones} immobilier a vendre"),
+            format!("{name} {zones} immobilier a louer"),
+            format!("{name} {zones} vendu loue"),
         ],
         "agency_website" => vec![
             format!("{name} site officiel"),
             format!("{name} Google Business Profile"),
             format!("site:{name} immobilier annonces"),
+            format!("site:seloger.com \"{name}\""),
+            format!("site:leboncoin.fr \"{name}\" immobilier"),
+            format!("site:bienici.com \"{name}\""),
+            if website.is_empty() {
+                format!("{name} annonces agence immobiliere")
+            } else {
+                format!("site:{website_host} biens a vendre")
+            },
         ],
         "agency_people" => vec![
             format!("{name} équipe immobilier"),
@@ -2569,6 +3111,36 @@ fn onboarding_enrichment_queries(
     }
 }
 
+fn real_estate_onboarding_collection_plan(
+    question_id: &str,
+    profile: &RealEstateOnboardingProfile,
+) -> Result<crate::collection_os::CollectionPlan, String> {
+    let name = profile
+        .derived_traits
+        .get("agency_search_name")
+        .or_else(|| profile.derived_traits.get("agency_display_name"))
+        .cloned()
+        .unwrap_or_default();
+    let city = profile
+        .derived_traits
+        .get("agency_city")
+        .or_else(|| profile.derived_traits.get("harvester_zone_seed"))
+        .cloned()
+        .unwrap_or_default();
+    let objective = match question_id {
+        "agency_identity" => format!("collect real estate agency profile for {name} {city}"),
+        "agency_website" => format!("collect real estate agency website and public listings for {name}"),
+        "agency_zones" => format!("collect real estate local market sources for {city}"),
+        _ => format!("collect real estate onboarding evidence for {name} {city}"),
+    };
+    plan_collection(CollectionPlanRequest {
+        objective,
+        sector_hint: Some("real_estate".to_string()),
+        max_latency_ms: Some(8_000),
+        allow_paid_provider: Some(false),
+    })
+}
+
 #[allow(dead_code)]
 fn onboarding_profile_hash(profile: &RealEstateOnboardingProfile) -> String {
     let mut refs = vec![
@@ -2586,6 +3158,582 @@ fn onboarding_profile_hash(profile: &RealEstateOnboardingProfile) -> String {
     refs.extend(traits.into_iter().map(|(key, value)| format!("{key}={value}")));
     let ref_slices = refs.iter().map(|value| value.as_str()).collect::<Vec<_>>();
     hash_parts("real_estate_agency_onboarding_profile:v1", &ref_slices)
+}
+
+fn run_onboarding_web_research(
+    base: &Path,
+    question_id: &str,
+    profile: &RealEstateOnboardingProfile,
+    traits: &mut HashMap<String, String>,
+) -> Result<Vec<RealEstateOnboardingWebPageFinding>, String> {
+    if !onboarding_web_scan_enabled() || !onboarding_web_scan_question(question_id) {
+        return Ok(Vec::new());
+    }
+    let search_name = traits
+        .get("agency_search_name")
+        .cloned()
+        .unwrap_or_default();
+    if search_name.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut queries = onboarding_enrichment_queries(question_id, profile);
+    let city = traits
+        .get("agency_city")
+        .cloned()
+        .or_else(|| traits.get("harvester_zone_seed").cloned())
+        .unwrap_or_default();
+    if !city.trim().is_empty() {
+        queries.push(format!("{search_name} {city} immobilier"));
+        queries.push(format!("{search_name} {city} avis"));
+    }
+    queries.push(format!("site:seloger.com \"{search_name}\""));
+    queries.push(format!("site:bienici.com \"{search_name}\""));
+    queries.push(format!("site:leboncoin.fr \"{search_name}\" immobilier"));
+    let mut dedup_queries = Vec::new();
+    for query in queries {
+        let normalized = query.trim().to_string();
+        if normalized.is_empty() || dedup_queries.iter().any(|entry: &String| entry == &normalized) {
+            continue;
+        }
+        dedup_queries.push(normalized);
+        if dedup_queries.len() >= 5 {
+            break;
+        }
+    }
+
+    let mut query_links: Vec<(String, String)> = Vec::new();
+    for query in &dedup_queries {
+        match google_search_links(query) {
+            Ok(urls) => {
+                for url in urls.into_iter().take(8) {
+                    query_links.push((query.clone(), url));
+                }
+            }
+            Err(err) => {
+                record_onboarding_block_or_error(base, question_id, Some(query), None, &err);
+                let _ = append_json_line(
+                    &data_path(base, ONBOARDING_EVENTS_FILE),
+                    &json!({
+                        "type": "onboarding_web_search_error",
+                        "questionId": question_id,
+                        "query": query,
+                        "error": truncate_for_trait(&err, 160),
+                        "tsMs": now_ms()
+                    }),
+                );
+            }
+        }
+    }
+
+    let mut seen_urls = HashSet::new();
+    let mut findings = Vec::new();
+    for (query, url) in query_links {
+        if !seen_urls.insert(url.clone()) {
+            continue;
+        }
+        if findings.len() >= 10 {
+            break;
+        }
+        match fetch_web_page_finding(&query, &url) {
+            Ok(finding) => findings.push(finding),
+            Err(err) => record_onboarding_block_or_error(base, question_id, Some(&query), Some(&url), &err),
+        }
+    }
+    if findings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut domains = Vec::new();
+    let mut emails = Vec::new();
+    let mut phones = Vec::new();
+    let mut listing_signal_hits = 0usize;
+    for finding in &findings {
+        if !domains.iter().any(|domain| domain == &finding.source_domain) {
+            domains.push(finding.source_domain.clone());
+        }
+        for email in &finding.emails {
+            if !emails.iter().any(|item| item == email) {
+                emails.push(email.clone());
+            }
+        }
+        for phone in &finding.phones {
+            if !phones.iter().any(|item| item == phone) {
+                phones.push(phone.clone());
+            }
+        }
+        listing_signal_hits = listing_signal_hits.saturating_add(finding.listing_signals.len());
+    }
+    if !domains.is_empty() {
+        traits.insert("agency_web_domains".to_string(), domains.join(","));
+    }
+    traits.insert(
+        "agency_web_pages_scanned".to_string(),
+        findings.len().to_string(),
+    );
+    traits.insert(
+        "agency_listing_signal_hits".to_string(),
+        listing_signal_hits.to_string(),
+    );
+    if let Some(email) = emails.first() {
+        traits
+            .entry("agency_email".to_string())
+            .or_insert_with(|| email.clone());
+    }
+    if let Some(phone) = phones.first() {
+        traits
+            .entry("agency_phone".to_string())
+            .or_insert_with(|| phone.clone());
+    }
+    if traits.get("agency_website").map(|it| it.trim().is_empty()).unwrap_or(true) {
+        if let Some(site) = findings
+            .iter()
+            .find(|finding| !finding.url.contains("seloger") && !finding.url.contains("leboncoin") && !finding.url.contains("bienici"))
+            .map(|finding| finding.url.clone())
+        {
+            traits.insert("agency_website".to_string(), site.clone());
+            if let Some(domain) = extract_domain_hint(&site) {
+                traits.insert("agency_domain".to_string(), domain);
+            }
+        }
+    }
+    write_json_pretty(
+        &data_path(base, ONBOARDING_WEB_FINDINGS_FILE),
+        &findings,
+        "agency onboarding web findings",
+    )?;
+    Ok(findings)
+}
+
+fn onboarding_web_scan_enabled() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    std::env::var("FORGE_ONBOARDING_WEB_SCAN")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .map(|value| !matches!(value.as_str(), "0" | "false" | "off"))
+        .unwrap_or(true)
+}
+
+fn onboarding_web_scan_question(question_id: &str) -> bool {
+    matches!(
+        question_id,
+        "agency_identity" | "agency_website" | "agency_zones" | "agency_priorities"
+    )
+}
+
+fn google_search_links(query: &str) -> Result<Vec<String>, String> {
+    let encoded = percent_encode_query(query);
+    let url = format!("https://www.google.com/search?hl=fr&num=10&q={encoded}");
+    let fetch = http_get_text(&url, 280_000)?;
+    ensure_fetch_not_blocked(&fetch)?;
+    Ok(extract_google_search_links(&fetch.body))
+}
+
+fn fetch_web_page_finding(
+    query: &str,
+    url: &str,
+) -> Result<RealEstateOnboardingWebPageFinding, String> {
+    let fetch = http_get_text(url, 420_000)?;
+    ensure_fetch_not_blocked(&fetch)?;
+    let html = fetch.body;
+    let title = extract_html_title(&html);
+    let snippet = extract_meta_description(&html)
+        .or_else(|| extract_html_text_excerpt(&html))
+        .unwrap_or_default();
+    let lower = html.to_ascii_lowercase();
+    let mut listing_signals = Vec::new();
+    for signal in ["a vendre", "a louer", "vendu", "loué", "loue", "mandat", "estimation"] {
+        if lower.contains(signal) && !listing_signals.iter().any(|entry: &String| entry == signal) {
+            listing_signals.push(signal.to_string());
+        }
+    }
+    let emails = extract_emails(&html).into_iter().take(6).collect::<Vec<_>>();
+    let phones = extract_phone_numbers(&html)
+        .into_iter()
+        .take(6)
+        .collect::<Vec<_>>();
+    let source_domain = extract_host(url).unwrap_or_else(|| "unknown".to_string());
+    let fetched_at_ms = now_ms();
+    let evidence_hash = hash_parts(
+        "real_estate_onboarding_web_page:v1",
+        &[
+            query,
+            url,
+            &title,
+            &snippet,
+            &listing_signals.join(","),
+            &emails.join(","),
+            &phones.join(","),
+            &fetched_at_ms.to_string(),
+        ],
+    );
+    Ok(RealEstateOnboardingWebPageFinding {
+        query: query.to_string(),
+        url: url.to_string(),
+        source_domain,
+        title: truncate_for_trait(&title, 180),
+        snippet: truncate_for_trait(&snippet, 260),
+        listing_signals,
+        emails,
+        phones,
+        fetched_at_ms,
+        evidence_hash,
+    })
+}
+
+fn http_get_text(url: &str, max_bytes: usize) -> Result<HttpTextFetch, String> {
+    tauri::async_runtime::block_on(async move {
+        let started = std::time::Instant::now();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ForgeHarvester/1.0")
+            .build()
+            .map_err(|err| format!("build web client: {err}"))?;
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|err| format!("web request failed: {err}"))?;
+        let status = response.status().as_u16();
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|err| format!("read web body: {err}"))?;
+        let limited = if bytes.len() > max_bytes {
+            &bytes[..max_bytes]
+        } else {
+            bytes.as_ref()
+        };
+        Ok(HttpTextFetch {
+            url: url.to_string(),
+            status,
+            body: String::from_utf8_lossy(limited).to_string(),
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
+    })
+}
+
+fn ensure_fetch_not_blocked(fetch: &HttpTextFetch) -> Result<(), String> {
+    let proof = crate::collection_os::classify_block_signal(crate::collection_os::CollectionBlockSignalInput {
+        source_url: fetch.url.clone(),
+        http_status: Some(fetch.status),
+        title: extract_html_title(&fetch.body).into(),
+        body_preview: Some(truncate_for_trait(&clean_html_text(&fetch.body), 600)),
+        node_count: None,
+        elapsed_ms: Some(fetch.elapsed_ms),
+    });
+    if proof.status != "clear" {
+        return Err(format!(
+            "collection_block:{}:{}:{}",
+            proof.status, proof.severity, proof.proof_hash
+        ));
+    }
+    if !(200..=299).contains(&fetch.status) {
+        return Err(format!("web request status {}", fetch.status));
+    }
+    Ok(())
+}
+
+fn record_onboarding_block_or_error(
+    base: &Path,
+    question_id: &str,
+    query: Option<&str>,
+    url: Option<&str>,
+    err: &str,
+) {
+    if let Some((status, severity, proof_hash)) = parse_collection_block_error(err) {
+        let _ = append_json_line(
+            &data_path(base, ONBOARDING_EVENTS_FILE),
+            &json!({
+                "type": "onboarding_web_blocked",
+                "questionId": question_id,
+                "query": query,
+                "url": url,
+                "status": status,
+                "severity": severity,
+                "proofHash": proof_hash,
+                "tsMs": now_ms()
+            }),
+        );
+    }
+}
+
+fn parse_collection_block_error(err: &str) -> Option<(&str, &str, &str)> {
+    let rest = err.strip_prefix("collection_block:")?;
+    let mut parts = rest.splitn(3, ':');
+    let status = parts.next()?;
+    let severity = parts.next()?;
+    let proof_hash = parts.next()?;
+    Some((status, severity, proof_hash))
+}
+
+fn extract_google_search_links(html: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut index = 0usize;
+    while let Some(offset) = html[index..].find("href=\"/url?q=") {
+        let start = index + offset + "href=\"/url?q=".len();
+        let rest = &html[start..];
+        let Some(end) = rest.find('"') else {
+            break;
+        };
+        let raw = &rest[..end];
+        let candidate = raw.split('&').next().unwrap_or_default();
+        let decoded = percent_decode(candidate).replace("&amp;", "&");
+        if is_usable_web_url(&decoded) && !urls.iter().any(|url| url == &decoded) {
+            urls.push(decoded);
+        }
+        index = start + end;
+        if urls.len() >= 24 {
+            break;
+        }
+    }
+    if urls.is_empty() {
+        let mut cursor = 0usize;
+        while let Some(offset) = html[cursor..].find("href=\"https://") {
+            let start = cursor + offset + "href=\"".len();
+            let rest = &html[start..];
+            let Some(end) = rest.find('"') else {
+                break;
+            };
+            let candidate = &rest[..end];
+            if is_usable_web_url(candidate) && !urls.iter().any(|url| url == candidate) {
+                urls.push(candidate.to_string());
+            }
+            cursor = start + end;
+            if urls.len() >= 24 {
+                break;
+            }
+        }
+    }
+    urls
+}
+
+fn is_usable_web_url(url: &str) -> bool {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return false;
+    }
+    let Some(host) = extract_host(url) else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    if host.contains("google.") || host.contains("gstatic.com") || host.contains("googleusercontent.com") {
+        return false;
+    }
+    true
+}
+
+fn extract_host(url: &str) -> Option<String> {
+    let without_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let host = without_scheme.split('/').next()?.trim();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
+fn percent_encode_query(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.as_bytes() {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(*byte as char),
+            b' ' => out.push('+'),
+            other => {
+                out.push('%');
+                out.push_str(&format!("{other:02X}"));
+            }
+        }
+    }
+    out
+}
+
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let hi = (bytes[index + 1] as char).to_digit(16);
+                let lo = (bytes[index + 2] as char).to_digit(16);
+                if let (Some(hi), Some(lo)) = (hi, lo) {
+                    out.push(((hi << 4) as u8) | lo as u8);
+                    index += 3;
+                } else {
+                    out.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn extract_html_title(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let Some(title_start) = lower.find("<title") else {
+        return String::new();
+    };
+    let Some(gt_offset) = lower[title_start..].find('>') else {
+        return String::new();
+    };
+    let content_start = title_start + gt_offset + 1;
+    let Some(end_offset) = lower[content_start..].find("</title>") else {
+        return String::new();
+    };
+    clean_html_text(&html[content_start..content_start + end_offset])
+}
+
+fn extract_meta_description(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let mut index = 0usize;
+    while let Some(offset) = lower[index..].find("<meta") {
+        let start = index + offset;
+        let Some(end_offset) = lower[start..].find('>') else {
+            break;
+        };
+        let tag = &html[start..start + end_offset + 1];
+        let tag_lower = tag.to_ascii_lowercase();
+        if tag_lower.contains("name=\"description\"") || tag_lower.contains("property=\"og:description\"") {
+            if let Some(content) = extract_meta_content_attr(tag) {
+                return Some(content);
+            }
+        }
+        index = start + end_offset + 1;
+    }
+    None
+}
+
+fn extract_meta_content_attr(tag: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let needle = "content=\"";
+    let start = lower.find(needle)? + needle.len();
+    let tail = &tag[start..];
+    let end = tail.find('"')?;
+    let raw = &tail[..end];
+    let cleaned = clean_html_text(raw);
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+fn extract_html_text_excerpt(html: &str) -> Option<String> {
+    let mut text = String::new();
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                text.push(' ');
+            }
+            _ if !in_tag => text.push(ch),
+            _ => {}
+        }
+        if text.len() >= 2400 {
+            break;
+        }
+    }
+    let cleaned = clean_html_text(&text);
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+fn clean_html_text(value: &str) -> String {
+    let normalized = value
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'");
+    normalized
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
+}
+
+fn extract_emails(text: &str) -> Vec<String> {
+    let mut emails = Vec::new();
+    for token in text.split_whitespace() {
+        let candidate = token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '@' && ch != '.' && ch != '-' && ch != '_');
+        if candidate.len() < 6 || !candidate.contains('@') {
+            continue;
+        }
+        let mut parts = candidate.split('@');
+        let Some(local) = parts.next() else { continue };
+        let Some(domain) = parts.next() else { continue };
+        if local.is_empty() || domain.is_empty() || !domain.contains('.') {
+            continue;
+        }
+        let lowered = candidate.to_ascii_lowercase();
+        if !emails.iter().any(|item| item == &lowered) {
+            emails.push(lowered);
+        }
+    }
+    emails
+}
+
+fn extract_phone_numbers(text: &str) -> Vec<String> {
+    let mut phones = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_digit() {
+            current.push(ch);
+            continue;
+        }
+        if ch == '+' && current.is_empty() {
+            current.push(ch);
+            continue;
+        }
+        if matches!(ch, ' ' | '.' | '-' | '(' | ')' | '\u{a0}') && !current.is_empty() {
+            current.push(ch);
+            continue;
+        }
+        if !current.is_empty() {
+            if let Some(normalized) = normalize_phone_candidate(&current) {
+                if !phones.iter().any(|item| item == &normalized) {
+                    phones.push(normalized);
+                }
+            }
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        if let Some(normalized) = normalize_phone_candidate(&current) {
+            if !phones.iter().any(|item| item == &normalized) {
+                phones.push(normalized);
+            }
+        }
+    }
+    phones
+}
+
+fn normalize_phone_candidate(candidate: &str) -> Option<String> {
+    let digits = candidate
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.len() < 10 || digits.len() > 15 {
+        return None;
+    }
+    Some(digits)
 }
 
 #[allow(dead_code)]
@@ -2638,6 +3786,869 @@ fn extract_domain_hint(value: &str) -> Option<String> {
         .trim_start_matches("www.");
     if domain.contains('.') {
         Some(domain.to_ascii_lowercase())
+    } else {
+        None
+    }
+}
+
+fn extract_city_hint(value: &str) -> Option<String> {
+    let parts = value
+        .split(|ch| matches!(ch, ',' | ';' | '\n' | '\r'))
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return None;
+    }
+    Some(
+        parts[1]
+            .chars()
+            .take(80)
+            .collect::<String>()
+            .trim()
+            .to_string(),
+    )
+}
+
+fn extract_agency_identity_parts(value: &str) -> (String, Option<String>) {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lowered = compact.to_lowercase();
+    for separator in [" a ", " based in ", " based at ", " located in ", " situe a ", " base a "] {
+        if let Some(byte_index) = lowered.find(separator) {
+            let agency = compact[..byte_index].trim();
+            let city = compact[byte_index + separator.len()..].trim();
+            let agency_name = agency.trim().trim_matches(|ch: char| matches!(ch, ',' | ';' | '.' | ':')).to_string();
+            let city_name = city.trim().trim_matches(|ch: char| matches!(ch, ',' | ';' | '.' | ':')).to_string();
+            if !agency_name.is_empty() && !city_name.is_empty() {
+                return (agency_name, Some(city_name));
+            }
+        }
+    }
+    (first_clause(&compact), None)
+}
+
+fn extract_city_from_formatted_address(value: &str) -> Option<String> {
+    let city_segment = value
+        .split(',')
+        .map(str::trim)
+        .find(|part| {
+            part.split_whitespace().any(|token| token.len() == 5 && token.chars().all(|ch| ch.is_ascii_digit()))
+                && part.chars().any(|ch| ch.is_alphabetic())
+        })?;
+    let clean = city_segment
+        .split_whitespace()
+        .skip_while(|part| part.chars().all(|ch| ch.is_ascii_digit()))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
+    if clean.is_empty() {
+        None
+    } else {
+        Some(clean)
+    }
+}
+
+fn extract_postal_code_from_formatted_address(value: &str) -> Option<String> {
+    value
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | ';'))
+        .find(|part| part.len() == 5 && part.chars().all(|ch| ch.is_ascii_digit()))
+        .map(|part| part.to_string())
+}
+
+fn infer_region_from_city(city: &str) -> String {
+    match normalize_city_key(city).as_str() {
+        "paris" | "boulogne billancourt" | "saint denis" | "versailles" => "Ile-de-France".to_string(),
+        "lyon" | "villeurbanne" | "grenoble" | "annecy" | "saint etienne" => "Auvergne-Rhone-Alpes".to_string(),
+        "lille" | "roubaix" | "tourcoing" | "dunkerque" | "amiens" | "marcq en baroeul" => "Hauts-de-France".to_string(),
+        "marseille" | "nice" | "toulon" | "avignon" | "aix en provence" => "Provence-Alpes-Cote d'Azur".to_string(),
+        "toulouse" | "montpellier" | "nimes" | "perpignan" => "Occitanie".to_string(),
+        "bordeaux" | "limoges" | "poitiers" | "pau" | "la rochelle" => "Nouvelle-Aquitaine".to_string(),
+        "nantes" | "angers" | "le mans" | "saint nazaire" => "Pays de la Loire".to_string(),
+        "strasbourg" | "reims" | "metz" | "nancy" | "mulhouse" => "Grand Est".to_string(),
+        "rennes" | "brest" | "quimper" | "lorient" => "Bretagne".to_string(),
+        "caen" | "rouen" | "le havre" | "cherbourg en cotentin" => "Normandie".to_string(),
+        _ => "region_non_precisee".to_string(),
+    }
+}
+
+fn harvester_scope_hint(traits: &HashMap<String, String>) -> Option<String> {
+    let city = traits.get("agency_city")?;
+    let region = traits
+        .get("harvester_region")
+        .map(String::as_str)
+        .unwrap_or("region_non_precisee");
+    Some(format!(
+        "Scope harvester provisoire: region {region}, zone prioritaire {city}."
+    ))
+}
+
+fn agency_profile_hint(traits: &HashMap<String, String>) -> Option<String> {
+    let name = traits.get("agency_search_name").cloned().unwrap_or_default();
+    let city = traits.get("agency_city").cloned().unwrap_or_default();
+    let website = traits
+        .get("agency_website")
+        .cloned()
+        .or_else(|| traits.get("agency_domain").map(|domain| format!("https://{domain}")))
+        .unwrap_or_default();
+    let phone = traits.get("agency_phone").cloned().unwrap_or_else(|| "a confirmer".to_string());
+    let email = traits.get("agency_email").cloned().unwrap_or_else(|| "a confirmer".to_string());
+    if name.is_empty() {
+        return None;
+    }
+    let mut parts = vec![format!("Profil agence: {name}")];
+    if !city.is_empty() {
+        parts.push(format!("ville {city}"));
+    }
+    if !website.is_empty() {
+        parts.push(format!("site {website}"));
+    }
+    parts.push(format!("tel {phone}"));
+    parts.push(format!("email {email}"));
+    Some(parts.join(" | "))
+}
+
+fn enrich_onboarding_traits_with_google_places(traits: &mut HashMap<String, String>) {
+    let name = traits
+        .get("agency_search_name")
+        .cloned()
+        .or_else(|| traits.get("agency_display_name").cloned())
+        .unwrap_or_default();
+    if name.trim().is_empty() {
+        traits
+            .entry("google_places_status".to_string())
+            .or_insert("skipped_missing_agency_name".to_string());
+        return;
+    }
+    let city = traits
+        .get("agency_city")
+        .cloned()
+        .or_else(|| traits.get("harvester_zone_seed").cloned())
+        .unwrap_or_default();
+    let query = if city.trim().is_empty() {
+        format!("{name} agence immobiliere")
+    } else {
+        format!("{name} {city} agence immobiliere")
+    };
+    if let Some(endpoint) = remote_agency_resolver_url() {
+        match remote_agency_resolve_contact_with_retry(&endpoint, remote_agency_resolver_token(), &name, &city, &query) {
+            Ok(Some(contact)) => {
+                apply_resolved_agency_contact_traits(
+                    traits,
+                    contact,
+                    "forge_backend_resolver",
+                    "ok",
+                );
+                return;
+            }
+            Ok(None) => {
+                traits.insert(
+                    "agency_resolution_status".to_string(),
+                    "remote_no_match".to_string(),
+                );
+            }
+            Err(err) => {
+                traits.insert(
+                    "agency_resolution_status".to_string(),
+                    format!("remote_error:{}", truncate_for_trait(&err, 120)),
+                );
+            }
+        }
+    }
+
+    let Some(api_key) = google_places_api_key() else {
+        traits.insert(
+            "google_places_status".to_string(),
+            traits
+                .get("agency_resolution_status")
+                .cloned()
+                .unwrap_or_else(|| "missing_api_key".to_string()),
+        );
+        return;
+    };
+    match google_places_text_search_contact(&api_key, &query) {
+        Ok(Some(contact)) => {
+            apply_resolved_agency_contact_traits(
+                traits,
+                contact,
+                "google_places_text_search",
+                "ok",
+            );
+        }
+        Ok(None) => {
+            traits.insert("google_places_status".to_string(), "no_match".to_string());
+            traits.insert("agency_resolution_status".to_string(), "no_match".to_string());
+        }
+        Err(err) => {
+            traits.insert(
+                "google_places_status".to_string(),
+                format!("error:{}", truncate_for_trait(&err, 120)),
+            );
+            traits.insert(
+                "agency_resolution_status".to_string(),
+                format!("error:{}", truncate_for_trait(&err, 120)),
+            );
+        }
+    }
+}
+
+fn remote_agency_resolve_contact_with_retry(
+    endpoint: &str,
+    token: Option<String>,
+    agency_name: &str,
+    city: &str,
+    query: &str,
+) -> Result<Option<GooglePlaceContact>, String> {
+    match remote_agency_resolve_contact(endpoint, token.clone(), agency_name, city, query) {
+        Ok(contact) => Ok(contact),
+        Err(first_err) => {
+            let should_retry = first_err.contains("timed out")
+                || first_err.contains("deadline")
+                || first_err.contains("operation timed out")
+                || first_err.contains("ConnectError")
+                || first_err.contains("connection")
+                || first_err.contains("502")
+                || first_err.contains("503")
+                || first_err.contains("504");
+            if !should_retry {
+                return Err(first_err);
+            }
+            let _ = warm_remote_agency_resolver();
+            thread::sleep(Duration::from_millis(1400));
+            remote_agency_resolve_contact(endpoint, token, agency_name, city, query).map_err(|second_err| {
+                format!("{first_err}; retry={second_err}")
+            })
+        }
+    }
+}
+
+fn apply_resolved_agency_contact_traits(
+    traits: &mut HashMap<String, String>,
+    contact: GooglePlaceContact,
+    source: &str,
+    _status: &str,
+) {
+    let contact_complete = contact.formatted_address.as_ref().map(|it| !it.trim().is_empty()).unwrap_or(false)
+        && contact.national_phone.as_ref().map(|it| !it.trim().is_empty()).unwrap_or(false)
+        && contact.website_uri.as_ref().map(|it| !it.trim().is_empty()).unwrap_or(false);
+    if let Some(address) = contact.formatted_address.filter(|it| !it.trim().is_empty()) {
+        let city_from_address = extract_city_from_formatted_address(&address);
+        let postal_code = extract_postal_code_from_formatted_address(&address);
+        traits.insert("agency_address".to_string(), address);
+        if let Some(city) = city_from_address {
+            let region = infer_region_from_city(&city);
+            traits.insert("agency_city".to_string(), city.clone());
+            traits.insert("harvester_region".to_string(), region);
+            traits.insert("harvester_zone_seed".to_string(), city.clone());
+            traits.insert("priority_zones".to_string(), city);
+            traits.insert("priority_zone_count".to_string(), "1".to_string());
+        }
+        if let Some(postal_code) = postal_code {
+            traits.insert("agency_postal_code".to_string(), postal_code);
+        }
+    }
+    if let Some(phone) = contact.national_phone.filter(|it| !it.trim().is_empty()) {
+        traits.insert("agency_phone".to_string(), phone);
+    }
+    if let Some(website) = contact.website_uri.filter(|it| !it.trim().is_empty()) {
+        traits.insert("agency_website".to_string(), website.clone());
+        if let Some(domain) = extract_domain_hint(&website) {
+            traits
+                .entry("agency_domain".to_string())
+                .or_insert(domain);
+        }
+    }
+    if let Some(label) = contact.display_name.filter(|it| !it.trim().is_empty()) {
+        traits
+            .entry("agency_display_name".to_string())
+            .or_insert(label);
+    }
+    if let Some(maps_uri) = contact.google_maps_uri.filter(|it| !it.trim().is_empty()) {
+        traits.insert("agency_google_maps_uri".to_string(), maps_uri);
+    }
+    if let Some(lat) = contact.lat {
+        traits.insert("agency_lat".to_string(), lat.to_string());
+    }
+    if let Some(lng) = contact.lng {
+        traits.insert("agency_lng".to_string(), lng.to_string());
+    }
+    traits.insert("contact_source".to_string(), source.to_string());
+    traits.insert("agency_resolution_source".to_string(), source.to_string());
+    let status = if contact_complete { "ok" } else { "partial_missing_contact" };
+    traits.insert("agency_resolution_status".to_string(), status.to_string());
+    traits.insert("google_places_status".to_string(), status.to_string());
+}
+
+fn remote_agency_resolver_url() -> Option<String> {
+    std::env::var("FORGE_REAL_ESTATE_RESOLVER_URL")
+        .ok()
+        .or_else(|| {
+            std::env::var("FORGE_REAL_ESTATE_BACKEND_URL")
+                .ok()
+                .map(|base| {
+                    format!(
+                        "{}/api/agency/resolve",
+                        base.trim().trim_end_matches('/')
+                    )
+                })
+        })
+        .or_else(|| {
+            let path = real_estate_backend_env_path()?;
+            read_dotenv_value(&path, "FORGE_REAL_ESTATE_RESOLVER_URL").or_else(|| {
+                read_dotenv_value(&path, "FORGE_REAL_ESTATE_BACKEND_URL").map(|base| {
+                    format!(
+                        "{}/api/agency/resolve",
+                        base.trim().trim_end_matches('/')
+                    )
+                })
+            })
+        })
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn remote_agency_resolver_health_url() -> Option<String> {
+    std::env::var("FORGE_REAL_ESTATE_BACKEND_URL")
+        .ok()
+        .or_else(|| {
+            let path = real_estate_backend_env_path()?;
+            read_dotenv_value(&path, "FORGE_REAL_ESTATE_BACKEND_URL")
+        })
+        .map(|base| format!("{}/health", base.trim().trim_end_matches('/')))
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            let resolver = remote_agency_resolver_url()?;
+            if let Some((base, _)) = resolver.split_once("/api/agency/resolve") {
+                let health = format!("{}/health", base.trim().trim_end_matches('/'));
+                if !health.trim().is_empty() {
+                    return Some(health);
+                }
+            }
+            None
+        })
+}
+
+fn remote_agency_resolver_token() -> Option<String> {
+    ["FORGE_REAL_ESTATE_RESOLVER_TOKEN", "FORGE_REAL_ESTATE_BACKEND_TOKEN"]
+        .iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            let path = real_estate_backend_env_path()?;
+            read_dotenv_value(&path, "FORGE_REAL_ESTATE_RESOLVER_TOKEN")
+                .or_else(|| read_dotenv_value(&path, "FORGE_REAL_ESTATE_BACKEND_TOKEN"))
+        })
+}
+
+#[allow(dead_code)]
+pub fn warm_remote_agency_resolver() -> Result<bool, String> {
+    let Some(health_url) = remote_agency_resolver_health_url() else {
+        return Ok(false);
+    };
+    tauri::async_runtime::block_on(async move {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(6))
+            .build()
+            .map_err(|err| format!("remote agency resolver warm client: {err}"))?;
+        let response = client
+            .get(&health_url)
+            .header("X-Forge-Client", "forge-ui/real-estate-warmup")
+            .send()
+            .await
+            .map_err(|err| format!("remote agency resolver warm request: {err}"))?;
+        Ok(response.status().is_success())
+    })
+}
+
+fn real_estate_backend_env_path() -> Option<PathBuf> {
+    preferred_user_env_path(&[".forge", "real-estate.env"])
+}
+
+fn remote_agency_resolve_contact(
+    endpoint: &str,
+    token: Option<String>,
+    agency_name: &str,
+    city: &str,
+    query: &str,
+) -> Result<Option<GooglePlaceContact>, String> {
+    if endpoint.trim().is_empty() || agency_name.trim().is_empty() {
+        return Ok(None);
+    }
+    tauri::async_runtime::block_on(async move {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(8))
+            .build()
+            .map_err(|err| format!("remote agency resolver client: {err}"))?;
+        let mut request = client
+            .post(endpoint)
+            .header("Content-Type", "application/json")
+            .header("X-Forge-Client", "forge-ui/real-estate-onboarding")
+            .json(&json!({
+                "agencyName": agency_name,
+                "city": city,
+                "query": query,
+                "countryCode": "FR",
+                "surface": "forge-ui",
+                "scope": "real-estate-onboarding"
+            }));
+        if let Some(token) = token.as_deref().filter(|it| !it.trim().is_empty()) {
+            request = request.bearer_auth(token);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|err| format!("remote agency resolver request: {err}"))?;
+        if !response.status().is_success() {
+            let code = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "remote agency resolver status {code}: {}",
+                truncate_for_trait(&body, 160)
+            ));
+        }
+        let payload: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|err| format!("remote agency resolver parse: {err}"))?;
+        let candidate = payload
+            .get("agency")
+            .cloned()
+            .unwrap_or_else(|| payload.clone());
+        parse_remote_agency_contact(&candidate)
+    })
+}
+
+fn parse_remote_agency_contact(payload: &serde_json::Value) -> Result<Option<GooglePlaceContact>, String> {
+    if payload.is_null() {
+        return Ok(None);
+    }
+    let display_name = payload
+        .get("displayName")
+        .or_else(|| payload.get("display_name"))
+        .and_then(|item| item.as_str())
+        .map(|value| value.to_string());
+    let formatted_address = payload
+        .get("formattedAddress")
+        .or_else(|| payload.get("formatted_address"))
+        .and_then(|item| item.as_str())
+        .map(|value| value.to_string());
+    let national_phone = payload
+        .get("nationalPhoneNumber")
+        .or_else(|| payload.get("national_phone"))
+        .or_else(|| payload.get("phone"))
+        .and_then(|item| item.as_str())
+        .map(|value| value.to_string());
+    let website_uri = payload
+        .get("websiteUri")
+        .or_else(|| payload.get("website_uri"))
+        .or_else(|| payload.get("website"))
+        .and_then(|item| item.as_str())
+        .map(|value| value.to_string());
+    let google_maps_uri = payload
+        .get("googleMapsUri")
+        .or_else(|| payload.get("google_maps_uri"))
+        .or_else(|| payload.get("mapsUri"))
+        .and_then(|item| item.as_str())
+        .map(|value| value.to_string());
+    let lat = payload
+        .get("lat")
+        .or_else(|| payload.get("latitude"))
+        .and_then(|item| item.as_f64())
+        .or_else(|| {
+            payload
+                .get("location")
+                .and_then(|item| item.get("lat").or_else(|| item.get("latitude")))
+                .and_then(|item| item.as_f64())
+        });
+    let lng = payload
+        .get("lng")
+        .or_else(|| payload.get("longitude"))
+        .and_then(|item| item.as_f64())
+        .or_else(|| {
+            payload
+                .get("location")
+                .and_then(|item| item.get("lng").or_else(|| item.get("longitude")))
+                .and_then(|item| item.as_f64())
+        });
+    let contact = GooglePlaceContact {
+        display_name,
+        formatted_address,
+        national_phone,
+        website_uri,
+        google_maps_uri,
+        lat,
+        lng,
+    };
+    let has_signal = contact.display_name.is_some()
+        || contact.formatted_address.is_some()
+        || contact.website_uri.is_some()
+        || contact.google_maps_uri.is_some()
+        || contact.lat.is_some()
+        || contact.lng.is_some();
+    if !has_signal {
+        return Ok(None);
+    }
+    Ok(Some(contact))
+}
+
+fn google_places_api_key() -> Option<String> {
+    [
+        "FORGE_GOOGLE_PLACES_API_KEY",
+        "GOOGLE_PLACES_API_KEY",
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+    ]
+    .iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+    .or_else(google_places_saved_api_key)
+}
+
+fn google_places_saved_api_key() -> Option<String> {
+    let path = google_gemini_env_path()?;
+    read_dotenv_value(&path, "GEMINI_API_KEY")
+        .or_else(|| read_dotenv_value(&path, "GOOGLE_API_KEY"))
+}
+
+fn google_gemini_env_path() -> Option<PathBuf> {
+    preferred_user_env_path(&[".gemini", ".env"])
+}
+
+fn preferred_user_env_path(parts: &[&str]) -> Option<PathBuf> {
+    let candidates = preferred_user_home_candidates(
+        std::env::var_os("USERPROFILE"),
+        std::env::var_os("HOMEDRIVE"),
+        std::env::var_os("HOMEPATH"),
+        std::env::var_os("HOME"),
+    );
+    let mut fallback = None;
+    for home in candidates {
+        let mut candidate = home;
+        for part in parts {
+            candidate = candidate.join(part);
+        }
+        if fallback.is_none() {
+            fallback = Some(candidate.clone());
+        }
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    fallback
+}
+
+fn preferred_user_home_candidates(
+    userprofile: Option<std::ffi::OsString>,
+    homedrive: Option<std::ffi::OsString>,
+    homepath: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let mut push_unique = |path: PathBuf| {
+        if !candidates.iter().any(|existing| existing == &path) {
+            candidates.push(path);
+        }
+    };
+    if cfg!(windows) {
+        if let Some(path) = userprofile.map(PathBuf::from) {
+            push_unique(path);
+        }
+        if let (Some(drive), Some(path)) = (homedrive, homepath) {
+            let mut combined = PathBuf::from(drive);
+            combined.push(path);
+            push_unique(combined);
+        }
+        if let Some(path) = home.map(PathBuf::from) {
+            push_unique(path);
+        }
+    } else {
+        if let Some(path) = home.map(PathBuf::from) {
+            push_unique(path);
+        }
+        if let Some(path) = userprofile.map(PathBuf::from) {
+            push_unique(path);
+        }
+    }
+    candidates
+}
+
+fn read_dotenv_value(path: &Path, key: &str) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .find_map(|line| {
+            let (name, value) = line.split_once('=')?;
+            if name.trim() != key {
+                return None;
+            }
+            let value = value.trim().trim_matches('"').trim_matches('\'').trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        })
+}
+
+#[derive(Default, Clone)]
+struct GooglePlaceContact {
+    display_name: Option<String>,
+    formatted_address: Option<String>,
+    national_phone: Option<String>,
+    website_uri: Option<String>,
+    google_maps_uri: Option<String>,
+    lat: Option<f64>,
+    lng: Option<f64>,
+}
+
+fn parse_google_place_contact_value(place: &serde_json::Value) -> GooglePlaceContact {
+    let display_name = place
+        .get("displayName")
+        .and_then(|item| item.get("text"))
+        .and_then(|item| item.as_str())
+        .map(|value| value.to_string());
+    let formatted_address = place
+        .get("formattedAddress")
+        .and_then(|item| item.as_str())
+        .map(|value| value.to_string());
+    let national_phone = place
+        .get("nationalPhoneNumber")
+        .or_else(|| place.get("internationalPhoneNumber"))
+        .and_then(|item| item.as_str())
+        .map(|value| value.to_string());
+    let website_uri = place
+        .get("websiteUri")
+        .and_then(|item| item.as_str())
+        .map(|value| value.to_string());
+    let google_maps_uri = place
+        .get("googleMapsUri")
+        .and_then(|item| item.as_str())
+        .map(|value| value.to_string());
+    let lat = place
+        .get("location")
+        .and_then(|item| item.get("latitude"))
+        .and_then(|item| item.as_f64());
+    let lng = place
+        .get("location")
+        .and_then(|item| item.get("longitude"))
+        .and_then(|item| item.as_f64());
+    GooglePlaceContact {
+        display_name,
+        formatted_address,
+        national_phone,
+        website_uri,
+        google_maps_uri,
+        lat,
+        lng,
+    }
+}
+
+fn google_place_contact_completeness(contact: &GooglePlaceContact) -> usize {
+    let mut score = 0usize;
+    if contact
+        .formatted_address
+        .as_ref()
+        .map(|it| !it.trim().is_empty())
+        .unwrap_or(false)
+    {
+        score += 1;
+    }
+    if contact
+        .national_phone
+        .as_ref()
+        .map(|it| !it.trim().is_empty())
+        .unwrap_or(false)
+    {
+        score += 1;
+    }
+    if contact
+        .website_uri
+        .as_ref()
+        .map(|it| !it.trim().is_empty())
+        .unwrap_or(false)
+    {
+        score += 1;
+    }
+    if contact.lat.is_some() && contact.lng.is_some() {
+        score += 1;
+    }
+    score
+}
+
+fn merge_google_place_contacts(base: GooglePlaceContact, details: GooglePlaceContact) -> GooglePlaceContact {
+    GooglePlaceContact {
+        display_name: details.display_name.or(base.display_name),
+        formatted_address: details.formatted_address.or(base.formatted_address),
+        national_phone: details.national_phone.or(base.national_phone),
+        website_uri: details.website_uri.or(base.website_uri),
+        google_maps_uri: details.google_maps_uri.or(base.google_maps_uri),
+        lat: details.lat.or(base.lat),
+        lng: details.lng.or(base.lng),
+    }
+}
+
+fn google_places_text_search_contact(
+    api_key: &str,
+    text_query: &str,
+) -> Result<Option<GooglePlaceContact>, String> {
+    if api_key.trim().is_empty() || text_query.trim().is_empty() {
+        return Ok(None);
+    }
+    tauri::async_runtime::block_on(async move {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(8))
+            .build()
+            .map_err(|err| format!("google places client: {err}"))?;
+        let response = client
+            .post("https://places.googleapis.com/v1/places:searchText")
+            .header("Content-Type", "application/json")
+            .header("X-Goog-Api-Key", api_key)
+            .header(
+                "X-Goog-FieldMask",
+                "places.name,places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.internationalPhoneNumber,places.websiteUri,places.googleMapsUri,places.location",
+            )
+            .json(&json!({
+                "textQuery": text_query,
+                "languageCode": "fr",
+                "pageSize": 5
+            }))
+            .send()
+            .await
+            .map_err(|err| format!("google places request: {err}"))?;
+        if !response.status().is_success() {
+            let code = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "google places status {code}: {}",
+                truncate_for_trait(&body, 160)
+            ));
+        }
+        let payload: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|err| format!("google places parse: {err}"))?;
+        let Some(places) = payload
+            .get("places")
+            .and_then(|places| places.as_array())
+        else {
+            return Ok(None);
+        };
+        if places.is_empty() {
+            return Ok(None);
+        }
+
+        let details_mask = "displayName,formattedAddress,nationalPhoneNumber,internationalPhoneNumber,websiteUri,googleMapsUri,location";
+        let mut best_contact: Option<GooglePlaceContact> = None;
+        let mut best_score = 0usize;
+
+        for place in places.iter().take(5) {
+            let mut contact = parse_google_place_contact_value(place);
+            if google_place_contact_completeness(&contact) < 3 {
+                if let Some(resource_name) = place.get("name").and_then(|item| item.as_str()) {
+                    let details_url = format!("https://places.googleapis.com/v1/{resource_name}");
+                    if let Ok(details_resp) = client
+                        .get(&details_url)
+                        .header("X-Goog-Api-Key", api_key)
+                        .header("X-Goog-FieldMask", details_mask)
+                        .send()
+                        .await
+                    {
+                        if details_resp.status().is_success() {
+                            if let Ok(details_payload) = details_resp.json::<serde_json::Value>().await {
+                                let details_contact = parse_google_place_contact_value(&details_payload);
+                                contact = merge_google_place_contacts(contact, details_contact);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let score = google_place_contact_completeness(&contact);
+            if best_contact.is_none() || score > best_score {
+                best_score = score;
+                best_contact = Some(contact);
+            }
+        }
+
+        Ok(best_contact)
+    })
+}
+
+fn normalize_city_key(city: &str) -> String {
+    fold_ascii(city)
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', '_', '\''], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn fold_ascii(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' => 'a',
+            'ç' | 'Ç' => 'c',
+            'è' | 'é' | 'ê' | 'ë' | 'È' | 'É' | 'Ê' | 'Ë' => 'e',
+            'ì' | 'í' | 'î' | 'ï' | 'Ì' | 'Í' | 'Î' | 'Ï' => 'i',
+            'ñ' | 'Ñ' => 'n',
+            'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' => 'o',
+            'ù' | 'ú' | 'û' | 'ü' | 'Ù' | 'Ú' | 'Û' | 'Ü' => 'u',
+            'ý' | 'ÿ' | 'Ý' => 'y',
+            'œ' | 'Œ' => 'o',
+            'æ' | 'Æ' => 'a',
+            _ => ch,
+        })
+        .collect()
+}
+
+fn extract_url_hint(value: &str) -> Option<String> {
+    let token = value
+        .split_whitespace()
+        .find(|part| part.contains('.') || part.starts_with("http://") || part.starts_with("https://"))?
+        .trim_matches(|ch: char| matches!(ch, ',' | ';' | ')' | '(' | '"' | '\''));
+    if token.starts_with("http://") || token.starts_with("https://") {
+        return Some(token.to_string());
+    }
+    Some(format!("https://{token}"))
+}
+
+fn extract_email_hint(value: &str) -> Option<String> {
+    for token in value.split_whitespace() {
+        let clean = token.trim_matches(|ch: char| matches!(ch, ',' | ';' | ')' | '(' | '"' | '\''));
+        if clean.contains('@') && clean.contains('.') && clean.len() >= 6 {
+            return Some(clean.to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+fn extract_phone_hint(value: &str) -> Option<String> {
+    let mut digits = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_digit() || (ch == '+' && digits.is_empty()) {
+            digits.push(ch);
+            continue;
+        }
+        if digits.len() >= 10 {
+            break;
+        }
+        if !digits.is_empty() && !ch.is_ascii_whitespace() && ch != '.' && ch != '-' {
+            digits.clear();
+        }
+    }
+    if digits.len() >= 10 {
+        Some(digits)
     } else {
         None
     }
@@ -2863,6 +4874,256 @@ fn update_local_store_from_collector(
         metric_snapshots: features.snapshots.len(),
         kasm_contract_hash: features.kasm_contract.program_hash,
         data_hash,
+    })
+}
+
+fn export_collection_os_artifact(
+    base: &Path,
+    collector: &CollectorDefinition,
+    job_id: &str,
+    observed_at_ms: u64,
+    data_hash: &str,
+) -> Result<CollectionArtifactSummary, String> {
+    let properties = read_properties(base)?;
+    let zones = read_zones(base)?;
+    if properties.is_empty() && zones.is_empty() {
+        return Ok(CollectionArtifactSummary::default());
+    }
+    let observe = build_collection_observe_from_real_estate_store(
+        collector,
+        &properties,
+        &zones,
+        observed_at_ms,
+        data_hash,
+    );
+    let expert_routes = crate::collection_os::derive_expert_routes_v2(&observe);
+    let hypotheses = crate::collection_os::derive_hypothesis_sets_v2(&observe);
+    let contract_ids = ["offer_listing", "document_record", "company_profile", "image_asset"];
+    let extractions = contract_ids
+        .iter()
+        .filter_map(|contract_id| {
+            crate::collection_os::extract_typed_entities_v2(&observe, contract_id)
+                .ok()
+                .filter(|extraction| !extraction.entities.is_empty())
+        })
+        .collect::<Vec<_>>();
+    let entity_count = extractions
+        .iter()
+        .map(|extraction| extraction.entities.len())
+        .sum::<usize>();
+    let proof_hash = hash_parts(
+        "real_estate_collection_os_artifact:v1",
+        &[
+            job_id,
+            &collector.id,
+            &observe.proof_hash,
+            data_hash,
+            &entity_count.to_string(),
+        ],
+    );
+    let artifact_dir = base.join(DATA_DIR).join("collection_os");
+    fs::create_dir_all(&artifact_dir)
+        .map_err(|e| format!("create collection os artifact dir: {e}"))?;
+    let artifact_path = artifact_dir.join(format!("{}.json", sanitize_filename(job_id)));
+    let payload = json!({
+        "kind": "real_estate_collection_os_artifact",
+        "jobId": job_id,
+        "collectorId": collector.id,
+        "collectorLabel": collector.label,
+        "observedAtMs": observed_at_ms,
+        "dataHash": data_hash,
+        "observeV2": {
+            "sourceUrl": observe.source_url,
+            "title": observe.title,
+            "treeHash": observe.tree_hash,
+            "proofHash": observe.proof_hash,
+            "nodeCount": observe.nodes.len(),
+            "sceneBlocks": observe.scene_blocks.iter().map(|block| json!({
+                "id": block.id,
+                "blockType": block.block_type,
+                "summary": block.summary,
+                "nodeIds": block.node_ids,
+                "evidenceHash": block.evidence_hash,
+            })).collect::<Vec<_>>(),
+        },
+        "expertRoutes": expert_routes,
+        "hypotheses": hypotheses,
+        "typedExtractions": extractions,
+        "proofHash": proof_hash,
+    });
+    write_json_pretty(&artifact_path, &payload, "real estate collection os artifact")?;
+    Ok(CollectionArtifactSummary {
+        route_count: payload
+            .get("expertRoutes")
+            .and_then(|value| value.as_array())
+            .map(|items| items.len())
+            .unwrap_or(0),
+        hypothesis_count: payload
+            .get("hypotheses")
+            .and_then(|value| value.as_array())
+            .map(|items| items.len())
+            .unwrap_or(0),
+        entity_count,
+        proof_hash,
+        artifact_path: artifact_path.to_string_lossy().to_string(),
+    })
+}
+
+fn build_collection_observe_from_real_estate_store(
+    collector: &CollectorDefinition,
+    properties: &[RealEstatePropertyEntity],
+    zones: &[RealEstateZoneEntity],
+    observed_at_ms: u64,
+    data_hash: &str,
+) -> crate::collection_os::CollectionObserveInputV2 {
+    let mut nodes = Vec::new();
+    let mut root_children = Vec::new();
+    let source_url = format!("https://forge.local/real-estate/{}/{}", collector.id, short_hash(data_hash));
+    let root_id = format!("reh-root-{}", sanitize_filename(&collector.id));
+    for (index, property) in properties.iter().take(48).enumerate() {
+        let card_id = format!("reh-property-{}", sanitize_filename(&property.property_id));
+        let text = format!(
+            "{} {} {} {:.0} m2 {:.0} EUR {:.0} rooms",
+            property.property_type,
+            property.city,
+            property.address_label,
+            property.surface_m2,
+            property.price_eur,
+            property.rooms
+        );
+        nodes.push(crate::collection_os::CollectionObservedNodeV2 {
+            id: card_id.clone(),
+            parent_id: Some(root_id.clone()),
+            role: "group".to_string(),
+            tag_name: "article".to_string(),
+            selector_hint: format!(".listing-card[data-property-id='{}']", property.property_id),
+            label: property.address_label.clone(),
+            href: format!("https://forge.local/property/{}", property.property_id),
+            visible: true,
+            enabled: true,
+            bounds: Some(crate::collection_os::CollectionBounds {
+                x: 40.0,
+                y: 120.0 + (index as f64 * 126.0),
+                width: 920.0,
+                height: 110.0,
+            }),
+            child_count: 0,
+            source: property.source.clone(),
+            frame_path: vec![source_url.clone()],
+            shadow_path: Vec::new(),
+            text: text.clone(),
+            name: property.address_label.clone(),
+            class_name: "listing-card property-card".to_string(),
+            aria_role: "article".to_string(),
+            aria_name: property.address_label.clone(),
+            evidence: vec![crate::collection_os::CollectionObservedEvidence {
+                source_kind: "real_estate_property".to_string(),
+                extractor: "build_collection_observe_from_real_estate_store".to_string(),
+                snippet: text,
+                evidence_hash: property.evidence_hash.clone(),
+            }],
+            ..crate::collection_os::CollectionObservedNodeV2::default()
+        });
+        root_children.push(card_id);
+    }
+    for (index, zone) in zones.iter().take(24).enumerate() {
+        let zone_id = format!("reh-zone-{}", sanitize_filename(&zone.zone_id));
+        let text = format!(
+            "{} {} {:.0} EUR/m2 {} biens liquidite {:.2}",
+            zone.label, zone.city, zone.avg_price_m2, zone.property_count, zone.liquidity_score
+        );
+        nodes.push(crate::collection_os::CollectionObservedNodeV2 {
+            id: zone_id.clone(),
+            parent_id: Some(root_id.clone()),
+            role: "article".to_string(),
+            tag_name: "article".to_string(),
+            selector_hint: format!(".zone-summary[data-zone-id='{}']", zone.zone_id),
+            label: zone.label.clone(),
+            visible: true,
+            enabled: true,
+            bounds: Some(crate::collection_os::CollectionBounds {
+                x: 1010.0,
+                y: 120.0 + (index as f64 * 84.0),
+                width: 360.0,
+                height: 72.0,
+            }),
+            child_count: 0,
+            source: "zone_summary".to_string(),
+            frame_path: vec![source_url.clone()],
+            shadow_path: Vec::new(),
+            text: text.clone(),
+            name: zone.label.clone(),
+            class_name: "zone-article market-summary".to_string(),
+            aria_role: "article".to_string(),
+            aria_name: zone.label.clone(),
+            evidence: vec![crate::collection_os::CollectionObservedEvidence {
+                source_kind: "real_estate_zone".to_string(),
+                extractor: "build_collection_observe_from_real_estate_store".to_string(),
+                snippet: text,
+                evidence_hash: zone.evidence_hash.clone(),
+            }],
+            ..crate::collection_os::CollectionObservedNodeV2::default()
+        });
+        root_children.push(zone_id);
+    }
+    nodes.insert(
+        0,
+        crate::collection_os::CollectionObservedNodeV2 {
+            id: root_id.clone(),
+            role: "document".to_string(),
+            tag_name: "section".to_string(),
+            selector_hint: format!("#{}", root_id),
+            label: collector.label.clone(),
+            href: source_url.clone(),
+            visible: true,
+            enabled: true,
+            bounds: Some(crate::collection_os::CollectionBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 1440.0,
+                height: 2200.0,
+            }),
+            child_count: root_children.len(),
+            source: "real_estate_harvester".to_string(),
+            frame_path: vec![source_url.clone()],
+            shadow_path: Vec::new(),
+            text: format!(
+                "{} immobilier local properties={} zones={} data_hash={}",
+                collector.label,
+                properties.len(),
+                zones.len(),
+                short_hash(data_hash)
+            ),
+            name: collector.label.clone(),
+            class_name: "real-estate-harvester-root".to_string(),
+            aria_role: "document".to_string(),
+            aria_name: collector.label.clone(),
+            evidence: vec![crate::collection_os::CollectionObservedEvidence {
+                source_kind: "real_estate_harvester".to_string(),
+                extractor: "build_collection_observe_from_real_estate_store".to_string(),
+                snippet: collector.label.clone(),
+                evidence_hash: hash_parts("real_estate_collection_root:v1", &[&collector.id, data_hash]),
+            }],
+            ..crate::collection_os::CollectionObservedNodeV2::default()
+        },
+    );
+    crate::collection_os::finalize_collection_observe_v2(crate::collection_os::CollectionObserveInputV2 {
+        source_url,
+        title: format!("{} Collection OS", collector.label),
+        tree_hash: hash_parts(
+            "real_estate_collection_tree:v1",
+            &[&collector.id, data_hash, &properties.len().to_string(), &zones.len().to_string()],
+        ),
+        captured_at_ms: observed_at_ms,
+        viewport: Some(crate::collection_os::CollectionObserveViewport {
+            width: 1440.0,
+            height: 2200.0,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+        }),
+        nodes,
+        scene_blocks: Vec::new(),
+        proof_hash: String::new(),
     })
 }
 
@@ -4058,13 +6319,19 @@ fn write_llm_intel_cache(
         pack.work_items,
         kasm_contract.program_hash
     );
+    let projection_hash =
+        real_estate_llm_cache_projection_hash(pack, kasm_contract, store_summary, &top_opportunities);
+    let memory_evidence_hash =
+        real_estate_llm_cache_memory_evidence_hash(pack, &top_opportunities);
     let cache = RealEstateLlmIntelCache {
         cache_id,
         status: "ready".to_string(),
         generated_at_ms: now_ms(),
         source_pack_id: pack.pack_id.clone(),
         source_pack_path: pack.artifact_path.clone(),
+        projection_hash,
         evidence_hash: pack.evidence_hash.clone(),
+        memory_evidence_hash,
         metric_manifest_hash: kasm_contract.metric_manifest_hash.clone(),
         kasm_contract_hash: kasm_contract.program_hash.clone(),
         kasm_semantic_fingerprint: kasm_contract.semantic_fingerprint.clone(),
@@ -4133,6 +6400,49 @@ fn llm_cache_opportunity(
     }
 }
 
+fn real_estate_llm_cache_projection_hash(
+    pack: &RealEstateIntelPack,
+    kasm_contract: &RealEstateKasmContract,
+    store_summary: &RealEstateLocalStoreSummary,
+    top_opportunities: &[RealEstateLlmIntelOpportunity],
+) -> String {
+    let opportunity_refs = top_opportunities
+        .iter()
+        .map(|item| format!("{}:{}:{}:{}", item.rank, item.property_id, item.zone_id, item.proof_hash))
+        .collect::<Vec<_>>();
+    hash_parts(
+        "real_estate_llm_cache_projection:v1",
+        &[
+            &pack.pack_id,
+            &pack.evidence_hash,
+            &kasm_contract.program_hash,
+            &kasm_contract.semantic_fingerprint,
+            &store_summary.properties.to_string(),
+            &store_summary.zones.to_string(),
+            &store_summary.metric_snapshots.to_string(),
+            &pack.work_items.to_string(),
+            &opportunity_refs.join("|"),
+        ],
+    )
+}
+
+fn real_estate_llm_cache_memory_evidence_hash(
+    pack: &RealEstateIntelPack,
+    top_opportunities: &[RealEstateLlmIntelOpportunity],
+) -> String {
+    let opportunity_refs = top_opportunities
+        .iter()
+        .map(|item| item.proof_hash.as_str())
+        .collect::<Vec<_>>();
+    let mut parts = vec![
+        pack.evidence_hash.as_str(),
+        pack.brain_note_hash.as_deref().unwrap_or(""),
+        pack.brain_ref.as_deref().unwrap_or(""),
+    ];
+    parts.extend(opportunity_refs);
+    hash_parts("real_estate_llm_cache_memory_evidence:v1", &parts)
+}
+
 fn read_latest_llm_intel_cache(base: &Path) -> Result<Option<RealEstateLlmIntelCache>, String> {
     let path = base
         .join(DATA_DIR)
@@ -4185,7 +6495,9 @@ fn append_llm_cache_ledger(base: &Path, cache: &RealEstateLlmIntelCache) -> Resu
         "cacheId": cache.cache_id,
         "status": cache.status,
         "sourcePackId": cache.source_pack_id,
+        "projectionHash": cache.projection_hash,
         "evidenceHash": cache.evidence_hash,
+        "memoryEvidenceHash": cache.memory_evidence_hash,
         "kasmContractHash": cache.kasm_contract_hash,
         "brainNoteHash": cache.brain_note_hash,
         "brainRef": cache.brain_ref,
@@ -4270,6 +6582,28 @@ fn normalize_id(value: &str) -> String {
         .join("-")
 }
 
+fn normalize_onboarding_question_id(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch
+            } else if ch == '_' || ch == '-' {
+                '_'
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+        .replace('-', "_")
+}
+
 fn sanitize_filename(value: &str) -> String {
     value
         .chars()
@@ -4287,6 +6621,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn registry_has_business_collectors() {
@@ -4300,5 +6635,355 @@ mod tests {
     fn normalizes_ui_tool_ids() {
         assert_eq!(normalize_id("DPE / ADEME"), "dpe-ademe");
         assert_eq!(normalize_id("Rapport vendeur"), "rapport-vendeur");
+    }
+
+    #[test]
+    fn onboarding_starts_with_identity_question() {
+        let store = test_store_dir("onboarding-initial");
+        let state = onboarding_state(&store).expect("onboarding state should initialize");
+        assert!(state.required);
+        assert_eq!(state.current_index, 0);
+        let question = state.question.expect("first question should exist");
+        assert_eq!(question.id, "agency_identity");
+        assert!(question.prompt.contains("ville"));
+        let _ = cleanup_test_store(&store);
+    }
+
+    #[test]
+    fn onboarding_identity_answer_triggers_collectors_and_next_step() {
+        let store = test_store_dir("onboarding-identity");
+        let report = record_onboarding_answer(
+            &store,
+            "agency_identity",
+            "Agence Horizon Immobilier, Lyon, positionnement premium familial.",
+        )
+        .expect("identity answer should be recorded");
+        assert_eq!(report.answered_question_id, "agency_identity");
+        assert!(!report.triggered_collectors.is_empty());
+        assert!(
+            report
+                .enrichment_queries
+                .iter()
+                .any(|query| query.to_ascii_lowercase().contains("google"))
+        );
+        let next = report.next_question.expect("next question should exist");
+        assert_eq!(next.id, "agency_website");
+        assert!(
+            report
+                .state
+                .derived_traits
+                .contains_key("agency_search_name")
+        );
+        assert_eq!(
+            report.state.derived_traits.get("agency_city").map(String::as_str),
+            Some("Lyon")
+        );
+        assert_eq!(
+            report
+                .state
+                .derived_traits
+                .get("harvester_region")
+                .map(String::as_str),
+            Some("Auvergne-Rhone-Alpes")
+        );
+        assert_eq!(
+            report
+                .state
+                .derived_traits
+                .get("collection_os_sector_pack")
+                .map(String::as_str),
+            Some("real_estate")
+        );
+        assert!(
+            report
+                .state
+                .derived_traits
+                .get("collection_os_plan_hash")
+                .map(|hash| hash.starts_with("kasm://sha256/"))
+                .unwrap_or(false)
+        );
+        assert!(
+            report
+                .state
+                .derived_traits
+                .get("collection_os_route")
+                .map(|route| route.contains("official_api") && route.contains("extractor_program"))
+                .unwrap_or(false)
+        );
+        let _ = cleanup_test_store(&store);
+    }
+
+    #[test]
+    fn onboarding_identity_marcq_en_baroeul_sets_region_and_portal_harvest() {
+        let store = test_store_dir("onboarding-marcq");
+        let report = record_onboarding_answer(
+            &store,
+            "agency_identity",
+            "Agence Valerie Duparque, Marcq en Baroeul",
+        )
+        .expect("identity answer should be recorded");
+        assert_eq!(
+            report
+                .state
+                .derived_traits
+                .get("harvester_region")
+                .map(String::as_str),
+            Some("Hauts-de-France")
+        );
+        assert!(
+            report
+                .triggered_collectors
+                .iter()
+                .any(|collector| collector.collector_id == "portails")
+        );
+        let _ = cleanup_test_store(&store);
+    }
+
+    #[test]
+    fn parses_remote_agency_contact_payload() {
+        let payload = json!({
+            "agency": {
+                "displayName": "Agence Horizon",
+                "formattedAddress": "12 rue des Fleurs, 69000 Lyon, France",
+                "websiteUri": "https://horizon.example",
+                "googleMapsUri": "https://maps.google.com/?q=45.764,4.8357",
+                "location": {
+                    "lat": 45.764,
+                    "lng": 4.8357
+                }
+            }
+        });
+        let contact = parse_remote_agency_contact(payload.get("agency").unwrap())
+            .expect("payload should parse")
+            .expect("contact should exist");
+        assert_eq!(contact.display_name.as_deref(), Some("Agence Horizon"));
+        assert_eq!(contact.formatted_address.as_deref(), Some("12 rue des Fleurs, 69000 Lyon, France"));
+        assert_eq!(contact.website_uri.as_deref(), Some("https://horizon.example"));
+        assert_eq!(contact.google_maps_uri.as_deref(), Some("https://maps.google.com/?q=45.764,4.8357"));
+        assert_eq!(contact.lat, Some(45.764));
+        assert_eq!(contact.lng, Some(4.8357));
+    }
+
+    #[test]
+    fn resolved_google_address_updates_harvester_scope_traits() {
+        let mut traits = HashMap::new();
+        apply_resolved_agency_contact_traits(
+            &mut traits,
+            GooglePlaceContact {
+                display_name: Some("Valerie Duparque Immobilier".to_string()),
+                formatted_address: Some("20 Rue Albert Bailly, 59700 Marcq-en-Baroeul, France".to_string()),
+                national_phone: Some("03 20 89 39 00".to_string()),
+                website_uri: Some("http://www.valerie-duparque-immobilier.com/".to_string()),
+                google_maps_uri: Some("https://maps.google.com/?cid=1703054339125386130".to_string()),
+                lat: Some(50.6774748),
+                lng: Some(3.0922027),
+            },
+            "google_places",
+            "ok",
+        );
+        assert_eq!(
+            traits.get("agency_city").map(String::as_str),
+            Some("Marcq-en-Baroeul")
+        );
+        assert_eq!(
+            traits.get("harvester_region").map(String::as_str),
+            Some("Hauts-de-France")
+        );
+        assert_eq!(
+            traits.get("harvester_zone_seed").map(String::as_str),
+            Some("Marcq-en-Baroeul")
+        );
+        assert_eq!(
+            traits.get("agency_postal_code").map(String::as_str),
+            Some("59700")
+        );
+    }
+
+    #[test]
+    fn windows_home_candidates_prefer_userprofile_before_home() {
+        let candidates = preferred_user_home_candidates(
+            Some("C:\\Users\\quent".into()),
+            Some("C:".into()),
+            Some("\\Users\\quent".into()),
+            Some("C:\\Users\\CodexSandboxOffline".into()),
+        );
+        assert_eq!(
+            candidates.first().map(|path| path.to_string_lossy().to_string()),
+            Some("C:\\Users\\quent".to_string())
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.to_string_lossy() == "C:\\Users\\CodexSandboxOffline")
+        );
+    }
+
+    #[test]
+    fn onboarding_fetch_classifies_rate_limit_as_block() {
+        let fetch = HttpTextFetch {
+            url: "https://example.test/search".to_string(),
+            status: 429,
+            body: "Too Many Requests".to_string(),
+            elapsed_ms: 50,
+        };
+        let err = ensure_fetch_not_blocked(&fetch).expect_err("429 should block");
+        assert!(err.starts_with("collection_block:backoff:soft_block:"));
+        assert!(parse_collection_block_error(&err).is_some());
+    }
+
+    #[test]
+    fn onboarding_fetch_classifies_captcha_as_hard_block() {
+        let fetch = HttpTextFetch {
+            url: "https://example.test/protected".to_string(),
+            status: 403,
+            body: "<html><title>Captcha</title><body>reCAPTCHA required</body></html>".to_string(),
+            elapsed_ms: 120,
+        };
+        let err = ensure_fetch_not_blocked(&fetch).expect_err("captcha should block");
+        assert!(err.starts_with("collection_block:blocked:hard_block:"));
+    }
+
+    #[test]
+    fn estimation_run_persists_collection_os_artifact_outputs() {
+        let store = test_store_dir("collection-os-artifact");
+        let report = run_tool(&store, "estimation").expect("estimation run should succeed");
+        let collection_artifact = report
+            .normalized_outputs
+            .iter()
+            .find(|entry| entry.starts_with("collection_artifact:"))
+            .cloned()
+            .expect("collection artifact output should exist");
+        let artifact_path = collection_artifact
+            .split_once(':')
+            .map(|(_, value)| value.to_string())
+            .expect("artifact path should be present");
+        assert!(Path::new(&artifact_path).exists());
+        let artifact = fs::read_to_string(&artifact_path).expect("artifact should be readable");
+        let payload: serde_json::Value = serde_json::from_str(&artifact).expect("artifact should parse");
+        assert_eq!(
+            payload.get("kind").and_then(|value| value.as_str()),
+            Some("real_estate_collection_os_artifact")
+        );
+        assert!(
+            payload
+                .get("expertRoutes")
+                .and_then(|value| value.as_array())
+                .map(|items| !items.is_empty())
+                .unwrap_or(false)
+        );
+        assert!(
+            payload
+                .get("typedExtractions")
+                .and_then(|value| value.as_array())
+                .map(|items| !items.is_empty())
+                .unwrap_or(false)
+        );
+        let _ = cleanup_test_store(&store);
+    }
+
+    #[test]
+    fn llm_cache_ledger_carries_projection_and_memory_evidence_hashes() {
+        let store = test_store_dir("llm-cache-ledger");
+        let cache_dir = store.join(DATA_DIR).join(LLM_INTEL_CACHE_DIR);
+        fs::create_dir_all(&cache_dir).expect("llm cache dir should exist");
+        let pack = RealEstateIntelPack {
+            pack_id: "pack-123".to_string(),
+            status: "ready".to_string(),
+            generated_at_ms: 1,
+            trigger: "unit_test".to_string(),
+            input_runs: 2,
+            metric_count: 4,
+            candidate_count: 2,
+            scenario_count: 1,
+            horizon_count: 1,
+            work_items: 3,
+            metric_manifest: vec!["dvf_price_gap".to_string(), "listing_staleness".to_string()],
+            kasm_contract_hash: "kasm-contract-123".to_string(),
+            kasm_semantic_fingerprint: "semantic-123".to_string(),
+            brain_note_hash: Some("note-123".to_string()),
+            brain_ref: Some("refs/brain/real-estate/intel/latest".to_string()),
+            top_opportunities: vec![
+                RealEstateIntelOpportunity {
+                    property_id: "property-1".to_string(),
+                    zone_id: "zone-a".to_string(),
+                    score: 0.91,
+                    seller_probability: 0.82,
+                    expected_fee_eur: 12_500.0,
+                    horizon_days: 30,
+                    strongest_signal: "price_gap".to_string(),
+                    proof_hash: "proof-alpha".to_string(),
+                },
+                RealEstateIntelOpportunity {
+                    property_id: "property-2".to_string(),
+                    zone_id: "zone-b".to_string(),
+                    score: 0.73,
+                    seller_probability: 0.64,
+                    expected_fee_eur: 9_800.0,
+                    horizon_days: 45,
+                    strongest_signal: "staleness".to_string(),
+                    proof_hash: "proof-beta".to_string(),
+                },
+            ],
+            evidence_hash: "evidence-123".to_string(),
+            artifact_path: store.join("pack.json").to_string_lossy().to_string(),
+            llm_summary: "synthetic intel pack".to_string(),
+        };
+        let store_summary = RealEstateLocalStoreSummary {
+            data_dir: store.join(DATA_DIR).to_string_lossy().to_string(),
+            properties: 8,
+            zones: 3,
+            source_events: 6,
+            metric_snapshots: 10,
+            latest_updated_at_ms: 42,
+            data_hash: "data-hash-123".to_string(),
+        };
+        let kasm_contract = RealEstateKasmContract {
+            contract_id: "re-score".to_string(),
+            program_hash: "program-hash-123".to_string(),
+            semantic_fingerprint: "semantic-fingerprint-123".to_string(),
+            canonical_hash: "canonical-hash-123".to_string(),
+            metric_manifest_hash: "metric-manifest-123".to_string(),
+            input_metrics: vec!["dvf_price_gap".to_string(), "listing_staleness".to_string()],
+            output_contract: "score + probability + fee + signal".to_string(),
+            nodes: 4,
+            byte_len: 128,
+            fuel: 64,
+            cache_key: "cache-key-123".to_string(),
+            artifact_path: store.join("contract.json").to_string_lossy().to_string(),
+        };
+        let cache =
+            write_llm_intel_cache(&store, &pack, &store_summary, &kasm_contract).expect("cache write should succeed");
+        assert!(!cache.projection_hash.is_empty());
+        assert!(!cache.memory_evidence_hash.is_empty());
+        append_llm_cache_ledger(&store, &cache).expect("ledger append should succeed");
+        let ledger_path = store.join(LEDGER_FILE);
+        let ledger = fs::read_to_string(&ledger_path).expect("ledger should be readable");
+        let entry = ledger
+            .lines()
+            .last()
+            .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .expect("ledger entry should parse");
+        assert_eq!(
+            entry.get("projectionHash").and_then(|value| value.as_str()),
+            Some(cache.projection_hash.as_str())
+        );
+        assert_eq!(
+            entry.get("memoryEvidenceHash").and_then(|value| value.as_str()),
+            Some(cache.memory_evidence_hash.as_str())
+        );
+        let _ = cleanup_test_store(&store);
+    }
+
+    fn test_store_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("forge-real-estate-harvester-tests-{label}-{}", now_ms()));
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    fn cleanup_test_store(path: &Path) -> Result<(), String> {
+        if path.exists() {
+            fs::remove_dir_all(path).map_err(|err| format!("cleanup test store: {err}"))?;
+        }
+        Ok(())
     }
 }

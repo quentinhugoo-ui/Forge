@@ -114,6 +114,24 @@ if (pretty || !args.has("--quiet")) console.log(JSON.stringify(latest, null, pre
 function pushFact(input) {
   const observedAt = startedAt;
   const stableKey = `${input.scope}:${normalizeClaim(input.claim)}`;
+  const evidence = input.evidence ?? {};
+  const noteText = String(input.claim || "").trim();
+  const noteHash = sha256(stableJson({
+    kind: "real_estate_memory_note_v1",
+    scope: input.scope,
+    noteText,
+    sourceKind: input.sourceKind,
+    sourceHash: input.sourceHash || "",
+    proofHash: input.proofHash || "",
+  }));
+  const evidenceHash = sha256(stableJson({
+    kind: "real_estate_memory_evidence_v1",
+    scope: input.scope,
+    sourceKind: input.sourceKind,
+    sourceHash: input.sourceHash || "",
+    proofHash: input.proofHash || "",
+    evidence,
+  }));
   facts.push({
     kind: "evidence_fact",
     schemaVersion: 1,
@@ -124,11 +142,24 @@ function pushFact(input) {
     sourceKind: input.sourceKind,
     sourceHash: input.sourceHash || "",
     proofHash: input.proofHash || "",
+    noteText,
+    noteHash,
+    evidenceHash,
     confidence: clamp(Number(input.confidence ?? 0.5), 0.01, 0.99),
     observedAt,
     supersedes: [],
     contradicts: [],
-    evidence: input.evidence ?? {},
+    evidence,
+    memoryNote: {
+      kind: "anchored_memory_note",
+      scope: input.scope,
+      noteText,
+      noteHash,
+      evidenceHash,
+      sourceHash: input.sourceHash || "",
+      proofHash: input.proofHash || "",
+      observedAt,
+    },
   });
 }
 
@@ -168,6 +199,8 @@ function finalizeFacts(inputFacts) {
       factId: out.factId,
       scope: out.scope,
       claim: out.claim,
+      noteHash: out.noteHash,
+      evidenceHash: out.evidenceHash,
       sourceHash: out.sourceHash,
       proofHash: out.proofHash,
       confidence: out.confidence,
@@ -199,9 +232,11 @@ function buildLatest(facts) {
     bySourceKind,
     byScope,
     proofHash,
+    noteHashCount: facts.filter((fact) => fact.noteHash).length,
+    evidenceHashCount: facts.filter((fact) => fact.evidenceHash).length,
     llmContract: {
-      rule: "Use EvidenceFact records instead of raw context. Cite factId/proofHash/sourceHash. Treat contradictions as unresolved until a newer higher-confidence fact supersedes them.",
-      requiredFields: ["factId", "scope", "claim", "sourceHash", "proofHash", "confidence", "observedAt", "supersedes", "contradicts"],
+      rule: "Use anchored memory notes instead of raw context. Cite factId/noteHash/evidenceHash/sourceHash/proofHash. Treat contradictions as unresolved until a newer higher-confidence fact supersedes them.",
+      requiredFields: ["factId", "scope", "claim", "noteHash", "evidenceHash", "sourceHash", "proofHash", "confidence", "observedAt", "supersedes", "contradicts"],
       rawDataPolicy: "Do not read raw client files from memory; follow source/proof hashes only when explicitly requested.",
     },
   };
@@ -299,6 +334,20 @@ function clamp(value, min, max) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function stableJson(value) {
+  return JSON.stringify(stableValue(value));
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value).sort()) out[key] = stableValue(value[key]);
+    return out;
+  }
+  return value;
 }
 
 function argValue(name) {

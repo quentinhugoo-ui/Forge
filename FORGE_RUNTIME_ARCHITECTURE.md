@@ -19,6 +19,39 @@ user intent
 
 Do not create a second path for memory, browser actions, trading metrics or file analysis if this route can carry it.
 
+## Canonical State Kernel
+
+There is one state kernel. Do not let Atlas, brain notes, projection cache and promotion ledgers drift into rival stores.
+
+```text
+Atlas objects
+-> Brain meaning
+-> Godel verification
+-> persisted projection evidence
+```
+
+Canonical ownership:
+
+| Layer | Canonical store | Stores | Must not store |
+| --- | --- | --- | --- |
+| Objects | Atlas | programs, runs, geonodes, mini-geonodes, metrics, projections, artifacts | freeform semantic notes, duplicated user facts |
+| Memory | Brain | semantic, episodic, procedural notes and promoted skills | raw heavy objects, duplicate Atlas payloads |
+| Verification | Godel/policy | proof hashes, verification state, promotion readiness, rollback contracts | user-facing memory text |
+| Execution evidence | intent projections | trace cards, policy reports, execution reports, compact replays | second semantic memory |
+
+Bridge rules:
+
+- Atlas object -> Brain note only through verified compare/propose/commit flow.
+- Projection -> skill/program/router candidate only through persisted execution evidence.
+- LLMs may propose state changes through bounded ForgeSlash/templates, but Forge commits locally after verification.
+
+Anti-goals:
+
+- no second semantic memory beside Brain,
+- no second object world beside Atlas,
+- no direct LLM writes into `refs/brain/*`,
+- no raw file payloads promoted into LLM context.
+
 ## Direct Agent OS Contract
 
 Forge's primary agent interface is direct command execution, not MCP. The internal loop is:
@@ -33,7 +66,7 @@ forge_agent plan|run|approve
 
 The first direct entrypoint is `examples/forge_tauri_ui/src-tauri/src/bin/forge_agent.rs`. It supports `about`, `plan`, `safe` and `approve`, producing compact projections with `mcp_in_primary_path=false`. It persists non-`about` projections by default unless `--no-persist` is passed.
 
-The shared engine is `examples/forge_tauri_ui/src-tauri/src/forge_agent_runtime.rs`. Projection compilation, safe execution orchestration, execution reports, compact step proofs, approved side-effect hash gates, compact projection persistence/read/list, exact cache lookup, direct content-addressed program creation, direct manifest runs and compact program/run read-list routes live there. `forge_mcp.rs` is now an adapter around that runtime for these paths. `forge_agent plan` and `forge_agent safe` check exact local cache hits by `intent_hash + mode + budget` before recompute. `forge_agent safe` can execute plan-only run planning, brain recall/explain, projection reads and direct program/run inspection; `forge_agent approve` can execute approved brain commits, direct program creation and direct manifest runs. The remaining hostcall to drain from the MCP adapter is the rich Metric DSL/visual-program executor for advanced legacy programs.
+The shared engine is `examples/forge_tauri_ui/src-tauri/src/forge_agent_runtime.rs`. It owns projection compilation, safe execution orchestration, exact cache lookup, direct content-addressed program creation, direct manifest runs, compact read/list routes and approved side-effect hash gates. `forge_mcp.rs` is only an adapter at the transport edge.
 
 MCP must not become the internal action language. If a workflow can be expressed as ForgeSlash and executed by direct Forge routes, it belongs behind `forge_agent` first.
 
@@ -56,7 +89,7 @@ Slash commands are the user/agent-facing language and the source syntax for the 
 
 - Direct Forge agent commands, which enter through `forge_agent` and should become the default runtime path.
 - MCP slash commands, which are compatibility wrappers in `examples/forge_tauri_ui/src-tauri/src/bin/forge_mcp.rs`.
-- UI-local slash intents, which exist inside WebExplorer, trading and real-estate toolbars, then converge back to MCP/brain/native bridge routes when work must persist or touch local compute.
+- UI-local slash intents, which exist inside WebExplorer, trading and real-estate toolbars, then converge back to ForgeSlash/direct runtime, brain or native bridge routes when work must persist or touch local compute.
 
 MCP commands:
 
@@ -68,8 +101,6 @@ MCP commands:
 | `/visualprogram_` | `visual_program`, `mapping_model`, `mapping_analysis` | Build or inspect 2D/3D visual programs without sending raw rows to the LLM. |
 | `/geo`, `/minigeo` | `geonode` | Create/update Atlas GeoNode or MiniGeoNode anchors. |
 | brain commands | `brain_recall`, `brain_commit`, `brain_compare`, `brain_sleep`, `brain_explain` | Use the Forge brain instead of inventing another memory store. |
-
-Current broad MCP tools are transitional compatibility routes, not the future default surface. `about`, `jobs`, `sessions`, `documents`, `mapping`, `profile`, `atlas`, `update_session`, `read`, `logs`, `cancel` and the domain-specific helpers should be lowered behind the compact intent facade as parity is proven.
 
 ForgeSlash v0 source contract:
 
@@ -88,9 +119,7 @@ Allowed verbs are `recall`, `plan`, `create`, `run`, `project`, `commit` and `ex
 
 The v0 compiler lowers verbs to existing routes only: `recall -> brain_recall`, `plan -> run` with `plan_only=true`, `create -> create`, `run -> run`, `project -> read`, `commit -> brain_commit`, and `explain -> brain_explain`. This is a route plan, not a second executor.
 
-The compact facade names are visible only to outside MCP clients, while the old route names stay callable as legacy/internal aliases: `forge.search -> forge_intent_search`, `forge.execute -> forge_intent_execute`, `forge.read_projection -> read`, and `forge.cancel -> cancel`.
-
-`tools/list` now defaults to the final four-tool facade. `FORGE_MCP_SURFACE=broad`, `FORGE_MCP_LEGACY_SURFACE=1` or `FORGE_MCP_BROAD_SURFACE=1` restores the transitional broad catalog for compatibility debugging. `forge.execute` defaults to `mode=plan`; `mode=execute_safe` or `execute_safe=true` may execute only read-only and `plan_only` lowered routes (`run` planning, `read`, `brain_recall`, `brain_explain`). Side-effect routes such as `create`, real `run` and `brain_commit` are skipped with explicit step proofs unless the caller uses the approved execution gate.
+`tools/list` defaults to the four-tool facade. `FORGE_MCP_SURFACE=broad`, `FORGE_MCP_LEGACY_SURFACE=1` or `FORGE_MCP_BROAD_SURFACE=1` are debugging escape hatches, not product paths. `forge.execute` defaults to `mode=plan`; `mode=execute_safe` may execute only read-only and `plan_only` lowered routes. Side effects require the approved execution gate.
 
 `mode=execute_approved` is the side-effect gate. It requires `approve_side_effects=true`, `approved_intent_hash` and `approved_policy_hash` matching a previously projected intent. Non-plan `run` has a second lock, `allow_run_side_effects=true`, so program creation or memory commits cannot accidentally claim/run pending user jobs. Rejected approval returns `mode=approval_required`; accepted approval returns `forge_intent_execution_report_v0` with `mode=execute_approved`.
 
@@ -100,7 +129,7 @@ The server exposes `compact_cutover_readiness` in `about` and policy payloads. S
 
 Safe execution emits `forge_intent_execution_report_v0`: step counts, skipped/error counts, `executed_steps_hash` and a domain-separated SHA-256 `execution_hash`. Individual safe steps carry `result_hash`, a compact `result_summary` and only a budgeted result or preview. These hashes are evidence for replay/cache/router decisions; they are not sufficient to promote side-effect behavior, which still needs output/proof hashes from the real executor.
 
-Intent projections are persisted under the Forge store as `intent-projections/<projection_hash>.json`, where the projection hash is the `execution_hash` when present, otherwise the trace or intent hash. Persist also updates `intent-projections/index.json`, a bounded compact index of recent projections. `forge.read_projection` can list recent projections or read them back by `execution_hash`, `trace_hash`, `intent_hash`, `projection_hash` or `projection_ref`; `forge.search` reads the same index so successful intents become discoverable replay candidates. Both routes return the compact intent facade envelope instead of the broad legacy MCP policy payload.
+Intent projections are persisted under the Forge store as `intent-projections/<projection_hash>.json`, with a bounded `intent-projections/index.json` for replay and discovery. `forge.read_projection` and `forge.search` both consume that compact index.
 
 `forge.execute` and the direct `forge_agent plan|safe` commands check that same index before recompute. An exact cache hit requires the same `intent_hash`, same execution mode and a stored preview budget greater than or equal to the requested `max_bytes`; the returned projection is marked with `cache_hit=true` and `cache_reason=exact_intent_mode_and_budget`.
 
@@ -116,6 +145,8 @@ Procedural skill promotion needs a separate `SkillPromotionManifest`. It only ap
 
 Router/model promotion is stricter still. A `RouterPromotionManifest` may only create local router examples after holdout traces, shadow evaluation and rollback-to-LLM evidence. Model training is blocked by default and requires explicit provider/license review before any future promotion path can enable it.
 
+Integrated frontier LLM providers must meet the code-sandbox floor before they author direct runtime programs: Claude Sonnet 4.6 or Opus 4.6 minimum, GPT 5.3 Codex minimum, and Gemini 3 minimum. Older or cheaper models may be used later for replay, routing or cached procedural work, but not for authoring Forge runtime code or sandbox action programs.
+
 The common return shape is `ForgeProjection`: intent hash, policy hash, trace hash, command/proof/output hashes, route counts, promotion statuses and bounded preview budget. It must set `raw_data_returned=false`; raw files, logs and artifacts remain in Forge/CAS and are referenced by hash or bounded refs.
 
 UI-local slash examples:
@@ -123,7 +154,36 @@ UI-local slash examples:
 - Trading: `/vwap`, `/ema`, `/sma`, `/bollinger`, `/supertrend`, `/indicator`, `/alert_`, `/order`, `/strategy_`, `/backtest_`, `/dataset_`, `/map_`, `/lens_`.
 - WebExplorer/real estate: `/connexion`, `/gmail_agence`, `/extraire_agence`, `/prix_marche`, `/preuves`, `/crawler_zone`, `/prioriser_actions`, `/comparer_zones`, `/plan_action`, `/validation_humaine`, `/programme`, `/metrique`, `/carte_visuelle`, `/geo`, `/micro_geo`.
 
-These UI-local commands are not a reason to add a new backend. They should either stay local and reversible, call an existing native command through the section bridge, or become a compact Forge MCP/brain operation.
+These UI-local commands are not a reason to add a new backend. They should either stay local and reversible, call an existing native command through the section bridge, or become a compact ForgeSlash/direct runtime or brain operation. MCP remains the external compatibility transport.
+
+## Collection OS And Harvesters
+
+Forge Collection OS is the general collection kernel. It decides which surface should collect evidence, compiles observed pages into bounded commands and returns compact proof hashes instead of raw browsing noise.
+
+```text
+sector pack + request
+-> collection_os_plan
+-> official_api/search_api/http_fetch/native_webview/headless_browser/extractor_program
+-> command map + action cache + BlockProof
+-> typed extraction contract
+-> proof/artifact/projection
+```
+
+Naming is strict:
+
+- Collection OS is the general routing, observation, extraction and proof layer.
+- Forge Harvester is the general job executor that will run Collection OS plans.
+- Real Estate Harvester is only the first vertical pack/adapter for agencies, listings and property evidence.
+
+Preferred route order is API-first when a real official API is available, then search/API indexes, HTTP fetch, extractor programs and native WebView observation. Native WebView is a first-class collection surface, but not the default hammer. It is used when rendered UI state, logged-in state, interaction, pagination or visual evidence matters.
+
+Anti-bot behavior must stay proof-driven and bounded. Forge classifies rate limits, CAPTCHA, login walls, access-denied pages and empty renders into `BlockProof`, then backs off, stops, asks for review or routes to an official/alternative source. Do not add bypass logic as a normal extraction feature.
+
+Current implementation anchors:
+
+- `examples/forge_tauri_ui/src-tauri/src/collection_os.rs`: kernel, sector packs, command maps, action cache and block classification.
+- `examples/forge_tauri_ui/src-tauri/src/real_estate_harvester.rs`: real-estate onboarding adapter consuming Collection OS plans.
+- `examples/forge_tauri_ui/src-tauri/src/main.rs`: WebExplorer command-map/cache/replay bridge.
 
 ## Direct Command Discipline
 
@@ -215,7 +275,7 @@ Real-estate mode logic is no longer a left-panel one-off inside the shell. It is
 
 ## Native Bytecode Direction
 
-Long-term, Forge should not depend on WASM, MLIR, gVisor or microVMs as its core plugin layer. Those systems are inspiration, not the center. The target is a proprietary Forge Native Bytecode (`FBC` / `KASM2`) that applies across UI, trading, banger, WebExplorer, real estate, scrapers, automations, agents, memory, files, compute and plugins:
+Long-term, Forge should not depend on WASM, MLIR, gVisor or microVMs as its core plugin layer. Those systems are inspiration, not the center. The target is a proprietary Forge Native Bytecode (`FBC` / `KASM2`) that applies across UI, trading, banger, WebExplorer, real estate, collection jobs, automations, agents, memory, files, compute and plugins:
 
 ```text
 Forge Intent
