@@ -3972,6 +3972,40 @@ body.forge-job-dragging * {
   text-overflow: ellipsis;
 }
 
+.profile-menu-agency {
+  display: grid;
+  gap: 3px;
+  margin: 4px 6px 6px;
+  padding: 7px 8px;
+  border: 1px solid rgba(238,238,232,0.1);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.02);
+}
+
+.profile-menu-agency[hidden] {
+  display: none;
+}
+
+.profile-menu-agency-section {
+  color: var(--forge-voice-accent, #31c8b2);
+  font: 700 0.62rem "Geist Mono", ui-monospace, Consolas, monospace;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.profile-menu-agency-name {
+  color: rgba(245,245,238,0.94);
+  font: 600 0.76rem Geist, "Segoe UI", -apple-system, sans-serif;
+}
+
+.profile-menu-agency-line {
+  color: rgba(205,205,198,0.8);
+  font: 0.66rem "Geist Mono", ui-monospace, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .profile-menu-account.is-google-connected {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
@@ -8326,7 +8360,7 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
 .canvas-model-anchor-below {
   position: absolute;
   bottom: 28px;
-  right: max(24px, calc(50% - min(390px, calc(50vw - 24px))));
+  right: calc(max(24px, calc(50% - min(390px, calc(50vw - 24px)))) + 12px);
   z-index: 32;            /* above the chat bar (28) so clicks reach the button */
   pointer-events: auto;
 }
@@ -8444,7 +8478,7 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   color: rgba(238,238,232,0.62);
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 8px;
   padding: 0 4px;
   font: 0.72rem/1 Geist, "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
@@ -8917,6 +8951,29 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   min-width: 0;
 }
 
+.canvas-chat-message.conversation-oriented {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  margin: -10px 0;
+  color: rgba(232, 236, 242, 0.46);
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: lowercase;
+}
+
+.canvas-chat-message.conversation-oriented::before,
+.canvas-chat-message.conversation-oriented::after {
+  content: "";
+  height: 1px;
+  background: rgba(232, 236, 242, 0.16);
+}
+
+.canvas-conversation-oriented-label {
+  white-space: nowrap;
+}
+
 .canvas-chat-message.has-visual-card {
   display: grid;
   grid-template-columns: minmax(240px, 500px) minmax(440px, min(48vw, 760px));
@@ -9007,6 +9064,97 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   max-width: min(650px, calc(46% - 18px));
   padding-left: 38px;
   padding-right: 0;
+}
+
+.canvas-wrap.has-chat.has-agency-earth-surface .canvas-chat-thread {
+  max-width: min(720px, calc(50% - 28px));
+  padding-left: 38px;
+  padding-right: 0;
+}
+
+.agency-earth-native-surface {
+  position: absolute;
+  z-index: 8;
+  pointer-events: none;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  overflow: visible;
+  isolation: isolate;
+}
+
+.agency-earth-native-surface::before {
+  display: none;
+}
+
+.agency-earth-native-surface::after {
+  display: none;
+}
+
+.agency-earth-atlas-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  overflow: hidden;
+  contain: layout paint;
+}
+
+.agency-earth-atlas-box {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border: 1px solid rgba(255, 148, 42, 0.72);
+  background: rgba(255, 148, 42, 0.035);
+  box-shadow:
+    0 0 0 1px rgba(12, 12, 12, 0.55),
+    0 0 10px rgba(255, 148, 42, 0.22);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.agency-earth-atlas-box.is-actionable {
+  border-color: rgba(255, 177, 64, 0.98);
+  background: rgba(255, 148, 42, 0.075);
+  box-shadow:
+    0 0 0 1px rgba(12, 12, 12, 0.7),
+    0 0 14px rgba(255, 148, 42, 0.48);
+}
+
+.agency-earth-atlas-box.is-missing-act-code {
+  border-style: dashed;
+  border-color: rgba(255, 102, 42, 0.9);
+  background: rgba(255, 82, 32, 0.055);
+}
+
+.agency-earth-atlas-box.is-media {
+  border-style: dashed;
+}
+
+.agency-earth-atlas-box.is-text {
+  border-color: rgba(255, 172, 74, 0.48);
+  background: rgba(255, 148, 42, 0.02);
+}
+
+.agency-earth-atlas-label {
+  position: absolute;
+  left: 2px;
+  top: -1px;
+  max-width: min(220px, 100%);
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(14, 10, 4, 0.78);
+  color: rgba(255, 197, 119, 0.95);
+  font-size: 9px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agency-earth-atlas-label.is-missing {
+  color: rgba(255, 145, 96, 0.98);
 }
 
 .canvas-message-visual-card.has-multiple {
@@ -9418,6 +9566,11 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   background: currentColor;
 }
 
+.canvas-chat-message.agent-tool-event .canvas-chat-name::before {
+  display: none;
+  content: none;
+}
+
 /* User messages had their name hidden earlier — keep that. */
 
 .canvas-chat-message.user .canvas-chat-name {
@@ -9430,6 +9583,34 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
 
 .canvas-chat-message.tool .canvas-chat-name {
   color: rgba(238,238,232,0.34);
+}
+
+.canvas-chat-message.agent-narration,
+.canvas-chat-message.agent-tool-event {
+  margin-top: -18px;
+}
+
+.canvas-chat-message.agent-narration + .canvas-chat-message.agent-tool-event,
+.canvas-chat-message.agent-tool-event + .canvas-chat-message.agent-narration,
+.canvas-chat-message.agent-tool-event + .canvas-chat-message.assistant {
+  margin-top: -26px;
+}
+
+.canvas-chat-message.loop-streaming {
+  margin-top: -22px;
+}
+
+.canvas-chat-message.monologue-continuation {
+  margin-top: -30px;
+}
+
+.canvas-chat-message.monologue-continuation .canvas-chat-text {
+  padding-left: 0;
+}
+
+.canvas-chat-message.agent-narration .canvas-chat-text,
+.canvas-chat-message.agent-tool-event .canvas-chat-text {
+  max-width: min(760px, 100%);
 }
 
 .canvas-chat-text {
@@ -9493,6 +9674,32 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
 .canvas-chat-text strong {
   color: rgba(246,246,242,0.98);
   font-weight: 700;
+}
+
+.canvas-entity-pill {
+  appearance: none;
+  display: inline;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: var(--forge-voice-accent, #31c8b2);
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.canvas-entity-pill:hover {
+  color: #7fe1d5;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.canvas-entity-pill:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--forge-voice-accent, #31c8b2) 72%, transparent);
+  outline-offset: 2px;
 }
 
 .canvas-strategy-trace {
@@ -9798,21 +10005,97 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   margin-left: 2px;
   background: currentColor;
   vertical-align: -2px;
-  animation: canvasThinkingCaretBlink 880ms steps(1, end) infinite;
+  box-shadow: 0 0 7px rgba(42, 221, 198, 0.22);
+  animation: canvasThinkingCaretGlow 1450ms ease-in-out infinite;
 }
 
-@keyframes canvasThinkingCaretBlink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+@keyframes canvasThinkingCaretGlow {
+  0%, 100% {
+    opacity: 0.42;
+    box-shadow: 0 0 2px rgba(42, 221, 198, 0.10);
+  }
+  50% {
+    opacity: 0.96;
+    box-shadow: 0 0 9px rgba(42, 221, 198, 0.32);
+  }
 }
 
 .canvas-chat-message.thinking .canvas-chat-name {
   animation: canvasThinkingPulse 1600ms ease-in-out infinite;
 }
 
+.canvas-thinking-events {
+  margin-left: 19px;
+  color: rgba(238,238,232,0.52);
+  font: 400 0.74rem/1.45 Geist, "Segoe UI", -apple-system, sans-serif;
+  letter-spacing: 0;
+  perspective: 900px;
+}
+
+.canvas-thinking-event-viewport {
+  position: relative;
+  height: 1.45em;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.9) 18%, rgba(0,0,0,0.9) 82%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.9) 18%, rgba(0,0,0,0.9) 82%, transparent 100%);
+}
+
+.canvas-thinking-event {
+  min-height: 1.45em;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform-origin: 50% 50%;
+  backface-visibility: hidden;
+  perspective: 200px;
+}
+
+.canvas-thinking-event::before {
+  content: "•";
+  display: inline-block;
+  margin-right: 8px;
+  color: rgba(238,238,232,0.34);
+}
+
+.canvas-thinking-event.flip-anim {
+  animation: canvasThinkingEventFlip 340ms cubic-bezier(0.4, 1.1, 0.45, 1) both;
+}
+
+.canvas-thinking-events .canvas-thinking-event::before {
+  content: "";
+  display: none;
+}
+
+@keyframes canvasThinkingEventFlip {
+  0% {
+    transform: translateY(0) rotateX(0deg) scaleY(1);
+    opacity: 1;
+  }
+  49% {
+    transform: translateY(-10%) rotateX(88deg) scaleY(0.92);
+    opacity: 0.38;
+  }
+  50% {
+    transform: translateY(10%) rotateX(-88deg) scaleY(0.92);
+    opacity: 0.22;
+  }
+  100% {
+    transform: translateY(0) rotateX(0deg) scaleY(1);
+    opacity: 1;
+  }
+}
+
 @keyframes canvasThinkingPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
+  0%, 100% {
+    opacity: 0.92;
+    text-shadow: 0 0 0 rgba(42, 221, 198, 0);
+  }
+  50% {
+    opacity: 1;
+    text-shadow: 0 0 10px rgba(42, 221, 198, 0.18);
+  }
 }
 
 .canvas-thinking-dots {
@@ -10078,8 +10361,61 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   stroke: currentColor;
 }
 
+.canvas-chat-selection-toolbar {
+  position: absolute;
+  z-index: 140;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(238,238,232,0.10);
+  background: rgba(18,18,18,0.94);
+  box-shadow: 0 18px 42px rgba(0,0,0,0.38);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.canvas-chat-selection-button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px 7px 10px;
+  background: rgba(238,238,232,0.06);
+  color: rgba(246,246,242,0.95);
+  cursor: pointer;
+  font: 600 0.78rem/1.1 Geist, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.canvas-chat-selection-button:hover,
+.canvas-chat-selection-button:focus-visible {
+  background: rgba(238,238,232,0.11);
+  color: rgba(255,255,255,0.98);
+  transform: translateY(-1px);
+}
+
+.canvas-chat-selection-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: 0 0 14px;
+}
+
 /* Pinned message: tiny accent on the left margin so the user spots which
    ones are bookmarked when scrolling without opening the chapter strip. */
+.canvas-chat-message {
+  position: relative;
+}
+
 .canvas-chat-message.pinned {
   position: relative;
 }
@@ -10176,6 +10512,16 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   padding: 2px 7px;
   color: rgba(238,238,232,0.48);
   font: 0.66rem "Geist Mono", ui-monospace, Consolas, monospace;
+}
+
+.canvas-chat-message.assistant .canvas-chat-tools.is-action-proof {
+  display: flex;
+}
+
+.canvas-chat-tools.is-action-proof .canvas-chat-tool {
+  border-color: rgba(58, 211, 190, 0.34);
+  background: linear-gradient(135deg, rgba(26, 114, 154, 0.18), rgba(42, 202, 172, 0.14));
+  color: rgba(104, 234, 217, 0.92);
 }
 
 .log-layer::selection,
@@ -10911,6 +11257,190 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agency-web-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  color: rgba(238, 238, 232, 0.78);
+}
+
+.agency-web-section {
+  padding: 15px 0 16px;
+  border-top: 1px solid rgba(238, 238, 232, 0.07);
+}
+
+.agency-web-section:first-child {
+  border-top: 0;
+}
+
+.agency-web-section h3 {
+  margin: 0 0 10px;
+  color: rgba(238, 238, 232, 0.42);
+  font: 300 0.64rem/1.2 Geist Mono, ui-monospace, Consolas, monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.agency-web-empty {
+  margin: 0;
+  color: rgba(238, 238, 232, 0.46);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.agency-web-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.agency-web-meta-row {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.agency-web-meta-row span,
+.agency-web-slot-foot span,
+.agency-web-page-meta {
+  color: rgba(238, 238, 232, 0.38);
+  font: 300 0.62rem/1.25 Geist Mono, ui-monospace, Consolas, monospace;
+}
+
+.agency-web-meta-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(117, 245, 234, 0.86);
+  font: 500 0.72rem/1.25 Geist Mono, ui-monospace, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agency-web-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.agency-web-photo-slot,
+.agency-web-listing-text,
+.agency-web-page-url,
+.agency-web-paragraph-slot {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agency-web-photo-slot {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 1 / 0.74;
+  padding: 0;
+  background: rgba(238, 238, 232, 0.045);
+}
+
+.agency-web-photo-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0.9;
+  transition: opacity 160ms ease, transform 180ms ease;
+}
+
+.agency-web-photo-slot span {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 5px;
+  overflow: hidden;
+  color: rgba(246, 246, 242, 0.88);
+  font-size: 0.62rem;
+  line-height: 1.15;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agency-web-photo-slot:hover img {
+  opacity: 1;
+  transform: scale(1.015);
+}
+
+.agency-web-listing-stack,
+.agency-web-page-stack,
+.agency-web-paragraph-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agency-web-listing-slot,
+.agency-web-page-slot {
+  min-width: 0;
+  padding: 0 0 9px;
+  border-bottom: 1px solid rgba(238, 238, 232, 0.055);
+}
+
+.agency-web-listing-text,
+.agency-web-page-slot p,
+.agency-web-paragraph-slot {
+  margin: 0;
+  color: rgba(238, 238, 232, 0.72);
+  font-size: 0.72rem;
+  font-weight: 300;
+  line-height: 1.42;
+}
+
+.agency-web-listing-text:hover,
+.agency-web-page-url:hover,
+.agency-web-paragraph-slot:hover {
+  color: rgba(117, 245, 234, 0.9);
+}
+
+.agency-web-slot-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin-top: 7px;
+}
+
+.agency-web-slot-foot code {
+  overflow: hidden;
+  color: rgba(117, 245, 234, 0.66);
+  font: 300 0.61rem/1.2 Geist Mono, ui-monospace, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agency-web-page-url {
+  overflow: hidden;
+  margin-bottom: 4px;
+  color: rgba(117, 245, 234, 0.82);
+  font: 500 0.68rem/1.25 Geist Mono, ui-monospace, Consolas, monospace;
+  text-overflow: ellipsis;
+}
+
+.agency-web-page-meta {
+  margin-bottom: 5px;
+}
+
+.agency-web-paragraph-stack {
+  margin-top: 10px;
+}
+
+.agency-web-paragraph-slot {
+  padding: 8px 0 0;
+  border-top: 1px solid rgba(238, 238, 232, 0.045);
 }
 
 .trading-bloomberg-panel {
@@ -13593,6 +14123,73 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   color: #42d6bd;
   background: rgba(66,214,189,0.10);
   border-color: rgba(66,214,189,0.20);
+}
+
+.actcode-pane {
+  background: var(--bg, #1b1b1a);
+}
+
+.actcode-filters {
+  padding-bottom: 6px;
+}
+
+.actcode-list {
+  gap: 0;
+  padding-top: 4px;
+}
+
+.actcode-row {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 32px;
+  align-items: start;
+  gap: 16px;
+  padding: 10px 18px;
+  border: 0;
+  border-bottom: 1px solid rgba(238,238,232,0.05);
+  border-radius: 0;
+}
+
+.actcode-row:hover {
+  background: rgba(238,238,232,0.02);
+  border-color: rgba(238,238,232,0.05);
+}
+
+.actcode-row.is-template {
+  opacity: 0.86;
+}
+
+.actcode-command-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  overflow: visible;
+}
+
+.actcode-command {
+  font: 700 0.78rem/1.35 "Geist Mono", ui-monospace, Consolas, monospace;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.actcode-alias {
+  font-size: 0.61rem;
+  letter-spacing: 0.02em;
+  color: #64645f;
+}
+
+.actcode-desc {
+  font-size: 0.72rem;
+  line-height: 1.42;
+  color: #8c8c86;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.actcode-copy {
+  align-self: center;
+  margin-left: auto;
 }
 
 .program-actions {
