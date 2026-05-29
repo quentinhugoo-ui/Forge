@@ -5972,6 +5972,17 @@ import * as worlds from "./worlds.js";
   }
 
   function flushBoomSidebar() {
+    // §banger cleanup : the mesh-modifier sidebar (Scene Collection,
+    // Inspector, Selected Hash, Selection, Transform) is dead since the
+    // pipeline migrated to SDF. Empty the container and hide it so it
+    // takes no layout space. All the HTML generation below is now
+    // unreachable — will be deleted in a follow-up Via Negativa pass.
+    if (boomSidebarRoot) {
+      boomSidebarRoot.innerHTML = "";
+      boomSidebarRoot.style.display = "none";
+    }
+    return false;
+    // eslint-disable-next-line no-unreachable
     if (!boomSidebarRoot) return false;
     const active = activeBoomItem();
     const activeTransform = activeBoomTransform();
@@ -6796,6 +6807,16 @@ import * as worlds from "./worlds.js";
   }
 
   function flushBoomViewportHud() {
+    // §banger cleanup : the mesh-modifier viewport HUD (Volume / Clear /
+    // mode bar, selection chips, modifier counts) is dead since the SDF
+    // migration. Empty and hide the container. Unreachable code below
+    // stays in place pour cleanup futur.
+    if (boomViewportHud) {
+      boomViewportHud.innerHTML = "";
+      boomViewportHud.style.display = "none";
+    }
+    return false;
+    // eslint-disable-next-line no-unreachable
     if (!boomViewportHud) return false;
     const active = activeBoomItem();
     const activeMesh = activeBoomMeshItem();
