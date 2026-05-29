@@ -227,8 +227,28 @@ export const FS_SDF = `#version 300 es
     return length(max(q, vec3(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
   }
 
-  // Smooth union via log-sum-exp softmin — INGEN §20.1, mirrors
-  // src/sdf.rs::SmoothUnion (numerically stable form).
+  // Z-axis aligned torus : R = ring radius, r = tube radius.
+  float sd_torus(vec3 p, float R, float r) {
+    vec2 q = vec2(length(p.xy) - R, p.z);
+    return length(q) - r;
+  }
+
+  // Capsule between endpoints a and b, radius r.
+  float sd_capsule(vec3 p, vec3 a, vec3 b, float r) {
+    vec3 pa = p - a;
+    vec3 ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+    return length(pa - ba * h) - r;
+  }
+
+  // Box of half-extents b minus a sphere of radius r per Inigo Quilez.
+  float sd_rounded_box(vec3 p, vec3 b, float r) {
+    vec3 q = abs(p) - b + vec3(r);
+    return length(max(q, vec3(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
+  }
+
+  // Smooth union via log-sum-exp softmin — INGEN §20.1 (numerically
+  // stable form, factored by min for finite-precision robustness).
   float smin(float a, float b, float k) {
     float m = min(a, b);
     return m - log(exp(-k * (a - m)) + exp(-k * (b - m))) / k;
@@ -248,6 +268,15 @@ export const FS_SDF = `#version 300 es
         sp += 1;
       } else if (op == 1) {                                // BOX
         stack[sp] = sd_box(p - a.yzw, b.xyz);
+        sp += 1;
+      } else if (op == 2) {                                // TORUS
+        stack[sp] = sd_torus(p - a.yzw, b.x, b.y);
+        sp += 1;
+      } else if (op == 3) {                                // CAPSULE
+        stack[sp] = sd_capsule(p, a.yzw, b.xyz, b.w);
+        sp += 1;
+      } else if (op == 4) {                                // ROUNDED_BOX
+        stack[sp] = sd_rounded_box(p - a.yzw, b.xyz, b.w);
         sp += 1;
       } else if (op == 10) {                               // UNION
         sp -= 1;

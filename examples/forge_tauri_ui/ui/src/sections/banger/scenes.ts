@@ -13,12 +13,15 @@
 // Postfix order. Binary ops consume the top two stack values; primitives
 // push one. The final stack[0] is the signed distance.
 
-export const OP_SPHERE    = 0;
-export const OP_BOX       = 1;
-export const OP_UNION     = 10;
-export const OP_INTERSECT = 11;
-export const OP_DIFF      = 12;
-export const OP_SMIN      = 13;
+export const OP_SPHERE       = 0;
+export const OP_BOX          = 1;
+export const OP_TORUS        = 2;
+export const OP_CAPSULE      = 3;
+export const OP_ROUNDED_BOX  = 4;
+export const OP_UNION        = 10;
+export const OP_INTERSECT    = 11;
+export const OP_DIFF         = 12;
+export const OP_SMIN         = 13;
 
 export const SDF_MAX_OPS = 64;
 export const SDF_FLOATS_PER_OP = 8;
@@ -26,20 +29,26 @@ export const SDF_FLOATS_PER_OP = 8;
 export type Vec3 = readonly [number, number, number];
 
 export type SdfOp =
-  | { op: "sphere";    center: Vec3; radius: number }
-  | { op: "box";       center: Vec3; halfExtents: Vec3 }
+  | { op: "sphere";       center: Vec3; radius: number }
+  | { op: "box";          center: Vec3; halfExtents: Vec3 }
+  | { op: "torus";        center: Vec3; majorRadius: number; minorRadius: number }
+  | { op: "capsule";      a: Vec3; b: Vec3; radius: number }
+  | { op: "roundedBox";   center: Vec3; halfExtents: Vec3; cornerRadius: number }
   | { op: "union" }
   | { op: "intersect" }
   | { op: "diff" }
-  | { op: "smin";      k: number };
+  | { op: "smin";         k: number };
 
 const OP_CODE: Record<SdfOp["op"], number> = {
-  sphere:    OP_SPHERE,
-  box:       OP_BOX,
-  union:     OP_UNION,
-  intersect: OP_INTERSECT,
-  diff:      OP_DIFF,
-  smin:      OP_SMIN,
+  sphere:     OP_SPHERE,
+  box:        OP_BOX,
+  torus:      OP_TORUS,
+  capsule:    OP_CAPSULE,
+  roundedBox: OP_ROUNDED_BOX,
+  union:      OP_UNION,
+  intersect:  OP_INTERSECT,
+  diff:       OP_DIFF,
+  smin:       OP_SMIN,
 };
 
 export interface SerializedScene {
@@ -70,6 +79,31 @@ export function serializeScene(ops: readonly SdfOp[]): SerializedScene {
       buf[base + 4] = o.halfExtents[0];
       buf[base + 5] = o.halfExtents[1];
       buf[base + 6] = o.halfExtents[2];
+    } else if (o.op === "torus") {
+      // Z-axis aligned : center + major radius (ring) + minor radius (tube).
+      buf[base + 1] = o.center[0];
+      buf[base + 2] = o.center[1];
+      buf[base + 3] = o.center[2];
+      buf[base + 4] = o.majorRadius;
+      buf[base + 5] = o.minorRadius;
+    } else if (o.op === "capsule") {
+      // Two endpoints + radius. Endpoint A in slot[0].yzw, B in slot[1].xyz.
+      buf[base + 1] = o.a[0];
+      buf[base + 2] = o.a[1];
+      buf[base + 3] = o.a[2];
+      buf[base + 4] = o.b[0];
+      buf[base + 5] = o.b[1];
+      buf[base + 6] = o.b[2];
+      buf[base + 7] = o.radius;
+    } else if (o.op === "roundedBox") {
+      // Box minus a sphere of radius `cornerRadius` per Inigo Quilez.
+      buf[base + 1] = o.center[0];
+      buf[base + 2] = o.center[1];
+      buf[base + 3] = o.center[2];
+      buf[base + 4] = o.halfExtents[0];
+      buf[base + 5] = o.halfExtents[1];
+      buf[base + 6] = o.halfExtents[2];
+      buf[base + 7] = o.cornerRadius;
     } else if (o.op === "smin") {
       buf[base + 4] = o.k;
     }
