@@ -222,6 +222,10 @@ export const FS_SDF = `#version 300 es
   // (green where |grad d| ≈ 1, red where it drifts — smin / domain ops
   // are expected violators, a proper sphere SDF stays solid green).
   uniform int   uDebugMode;
+  // INGEN §19.5 compact splatting : exponential halo on raymarch misses
+  // that come close to the surface. Acts as a proxy gaussien attached
+  // to the SDF without a second render pass.
+  uniform int   uGlow;
   out vec4 fragColor;
 
   float sd_sphere(vec3 p, float r) { return length(p) - r; }
@@ -319,14 +323,27 @@ export const FS_SDF = `#version 300 es
 
     float t = 0.0;
     bool hit = false;
+    float minDist = 1e9;
     for (int i = 0; i < 96; i++) {
       vec3 p = ro + rd * t;
       float d = scene(p);
+      if (d < minDist) minDist = d;
       if (d < 0.0015) { hit = true; break; }
       if (t > 60.0) { break; }
       t += d;
     }
-    if (!hit) discard;
+    if (!hit) {
+      // §19.5 — pixel rate la surface mais l'a frôlée : halo gaussien
+      // additif ancré sur la distance d'approche minimale. Glow pushed
+      // to the far plane so it never occludes the grid / gizmo.
+      if (uGlow == 1 && minDist > 0.0 && minDist < 1.0) {
+        float halo = exp(-minDist * 5.0) * 0.6;
+        fragColor = vec4(vec3(0.35, 0.55, 0.85) * halo, halo);
+        gl_FragDepth = 0.99999;
+        return;
+      }
+      discard;
+    }
 
     vec3 p = ro + rd * t;
     vec3 col;

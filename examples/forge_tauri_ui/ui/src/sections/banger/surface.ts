@@ -75,13 +75,15 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
   let cubeCount = 0, gridCount = 0;
   let uMeshModel, uMeshProj, uMeshView, uMeshColor, uMeshClipOffset;
   let uLineProj, uLineView, uLineFadeNear, uLineFadeFar, uLineClipOffset;
-  let uSdfResolution, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj, uSdfOps, uSdfOpCount, uSdfDebugMode;
+  let uSdfResolution, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj, uSdfOps, uSdfOpCount, uSdfDebugMode, uSdfGlow;
   // INGEN §19.3 : the scene is data, not source. The DEFAULT_SCENE here
   // reproduces the previous hardcoded smin of two spheres ; future scenes
   // can be swapped via window.__forgeBangerSetScene without recompile.
   let sdfScene = serializeScene(DEFAULT_SCENE);
   // INGEN §13 : 0 = lit render, 1 = Lipschitz heatmap.
   let sdfDebugMode = 0;
+  // INGEN §19.5 : 1 = proxy-gaussian halo on raymarch misses (on by default).
+  let sdfGlow = 1;
 
   // Camera state survives suspend/resume — it's pure JS, no GPU resources.
   let camera = {
@@ -7229,6 +7231,7 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
     uSdfOps         = gl.getUniformLocation(sdfProg, "uOps");
     uSdfOpCount     = gl.getUniformLocation(sdfProg, "uOpCount");
     uSdfDebugMode   = gl.getUniformLocation(sdfProg, "uDebugMode");
+    uSdfGlow        = gl.getUniformLocation(sdfProg, "uGlow");
 
     // cube VAO
     const cube = makeCube();
@@ -7982,6 +7985,7 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
       gl.uniform4fv(uSdfOps, sdfScene.buffer);
       gl.uniform1i(uSdfOpCount, sdfScene.count);
       gl.uniform1i(uSdfDebugMode, sdfDebugMode);
+      gl.uniform1i(uSdfGlow, sdfGlow);
       gl.bindVertexArray(null);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
@@ -8471,6 +8475,12 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
       sdfDebugMode = Number(mode) | 0;
       requestBoomRender("sdf-debug-toggle", 200);
       return { ok: true, mode: sdfDebugMode };
+    };
+    // INGEN §19.5 proxy-gaussian halo toggle (1 = on, 0 = off).
+    window.__forgeBangerSetGlow = (on) => {
+      sdfGlow = on ? 1 : 0;
+      requestBoomRender("sdf-glow-toggle", 200);
+      return { ok: true, glow: sdfGlow };
     };
     exposeBoomAuditState();
   }
