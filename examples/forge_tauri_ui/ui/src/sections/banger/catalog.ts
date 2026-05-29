@@ -203,7 +203,6 @@ export const VS_SDF = `#version 300 es
 export const FS_SDF = `#version 300 es
   precision highp float;
   uniform vec2  uResolution;
-  uniform float uTime;
   uniform vec3  uCameraPos;
   uniform vec3  uCameraFwd;
   uniform vec3  uCameraRight;
@@ -222,13 +221,12 @@ export const FS_SDF = `#version 300 es
   }
 
   float scene(vec3 p) {
-    // Banger viewport is Z-up (Blender convention), grid sits on z=0.
-    // Float two animated spheres above the grid so the smin blob is
-    // legible from any camera elevation.
-    float t = uTime;
-    float drift = 0.45 * sin(t);
-    float s1 = sd_sphere(p - vec3(-0.7,         0.05 * cos(t * 1.4), 0.9), 0.7);
-    float s2 = sd_sphere(p - vec3(0.7 + drift, -0.05 * cos(t * 1.1), 0.9), 0.7);
+    // Default scene : two spheres centered at XY=0 with the same Z
+    // height so the smin blob's centroid sits on the viewport origin.
+    // Static (no uTime) — the render loop re-fires only when the
+    // camera moves (requestBoomRender from the pointer handlers).
+    float s1 = sd_sphere(p - vec3(-0.7, 0.0, 0.0), 0.7);
+    float s2 = sd_sphere(p - vec3( 0.7, 0.0, 0.0), 0.7);
     return smin(s1, s2, 5.0);
   }
 

@@ -806,7 +806,7 @@ import "./controller.js";
   let cubeCount = 0, gridCount = 0;
   let uMeshModel, uMeshProj, uMeshView, uMeshColor, uMeshClipOffset;
   let uLineProj, uLineView, uLineFadeNear, uLineFadeFar, uLineClipOffset;
-  let uSdfResolution, uSdfTime, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj;
+  let uSdfResolution, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj;
 
   // Camera state survives suspend/resume — it's pure JS, no GPU resources.
   let camera = {
@@ -8088,7 +8088,6 @@ import "./controller.js";
     uLineFadeFar  = gl.getUniformLocation(lineProg, "uFadeFar");
     uLineClipOffset = gl.getUniformLocation(lineProg, "uClipOffset");
     uSdfResolution  = gl.getUniformLocation(sdfProg, "uResolution");
-    uSdfTime        = gl.getUniformLocation(sdfProg, "uTime");
     uSdfCameraPos   = gl.getUniformLocation(sdfProg, "uCameraPos");
     uSdfCameraFwd   = gl.getUniformLocation(sdfProg, "uCameraFwd");
     uSdfCameraRight = gl.getUniformLocation(sdfProg, "uCameraRight");
@@ -8839,7 +8838,6 @@ import "./controller.js";
       const viewProj = M4.multiply(proj, view);
       gl.useProgram(sdfProg);
       gl.uniform2f(uSdfResolution, w, h);
-      gl.uniform1f(uSdfTime, ts / 1000);
       gl.uniform3fv(uSdfCameraPos, new Float32Array(eye));
       gl.uniform3fv(uSdfCameraFwd, new Float32Array(fwd));
       gl.uniform3fv(uSdfCameraRight, new Float32Array(right));
@@ -8848,8 +8846,6 @@ import "./controller.js";
       gl.uniformMatrix4fv(uSdfViewProj, false, viewProj);
       gl.bindVertexArray(null);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
-      // Keep the loop alive — SDF scene is animated by uTime.
-      requestBoomRender("sdf-anim", 200);
     }
 
     // Grid (lines)

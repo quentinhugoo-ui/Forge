@@ -47,6 +47,7 @@ mod forge_job_runtime;
 mod forge_job_io;
 mod forge_kasm_ledger;
 mod forge_program_cache;
+mod forge_ui_atlas_runtime;
 
 /// Format compact "YYYY-MM-DD" depuis epoch ms ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â utilisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© par les
 /// reverse_synth log lines pour situer la pÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©riode parsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e. Pas de
@@ -960,6 +961,8 @@ struct ForgeAppState {
     store_path: PathBuf,
     backend: Option<ForgeBackend>,
     backend_opening: bool,
+    jobs_cache: Option<ForgeJobsCache>,
+    real_estate_memory_cache: Option<RealEstateActiveMemoryCache>,
     semantic_cache: Vec<SemanticCacheEntry>,
     gemini_threads: HashMap<String, CodexThreadState>,
     claude_threads: HashMap<String, CodexThreadState>,
@@ -975,6 +978,8 @@ impl ForgeAppState {
             store_path,
             backend: None,
             backend_opening: false,
+            jobs_cache: None,
+            real_estate_memory_cache: None,
             semantic_cache: Vec::new(),
             gemini_threads: HashMap::new(),
             claude_threads: HashMap::new(),
@@ -1058,6 +1063,47 @@ fn real_estate_harvester_run_tool(
     real_estate_harvester::run_tool(&store_path, &tool_id)
 }
 
+#[derive(Clone)]
+struct ForgeJobsCache {
+    signature: String,
+    entries: Vec<ForgeJobEntry>,
+}
+
+#[tauri::command]
+fn real_estate_onboarding_state(
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<real_estate_harvester::RealEstateOnboardingState, String> {
+    let store_path = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.store_path.clone()
+    };
+    real_estate_harvester::onboarding_state(&store_path)
+}
+
+#[tauri::command]
+fn real_estate_onboarding_answer(
+    question_id: String,
+    answer: String,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<real_estate_harvester::RealEstateOnboardingAnswerReport, String> {
+    let store_path = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.store_path.clone()
+    };
+    real_estate_harvester::record_onboarding_answer(&store_path, &question_id, &answer)
+}
+
+#[tauri::command]
+fn real_estate_onboarding_debug_reset(
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+) -> Result<real_estate_harvester::RealEstateOnboardingState, String> {
+    let store_path = {
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.store_path.clone()
+    };
+    real_estate_harvester::debug_reset_onboarding(&store_path)
+}
+
 #[tauri::command]
 fn real_estate_backend_warmup() -> Result<bool, String> {
     real_estate_harvester::warm_remote_agency_resolver()
@@ -1083,6 +1129,18 @@ fn agency_earth_native_runtime_script() -> &'static str {
     "card", "sheet", "bottom", "overlay", "floating", "popover", "place",
     "poi", "minimap", "pegman", "dialog", "modal", "header", "footer", "nav"
   ];
+  const requestedSearch = (() => {
+    try {
+      const marker = "/web/search/";
+      const href = String(location.href || "");
+      const index = href.indexOf(marker);
+      if (index < 0) return "";
+      const raw = href.slice(index + marker.length).split(/[?#]/)[0] || "";
+      return decodeURIComponent(raw.replace(/\+/g, " ")).trim();
+    } catch (_) {
+      return "";
+    }
+  })();
 
   const normalize = (value) => String(value || "")
     .toLowerCase()
@@ -1117,9 +1175,7 @@ fn agency_earth_native_runtime_script() -> &'static str {
           background-color: transparent !important;
           overflow: hidden !important;
         }
-        html[data-forge-earth-scene="0"], html[data-forge-earth-scene="0"] body {
-          opacity: 0 !important;
-        }
+        html[data-forge-earth-scene="0"], html[data-forge-earth-scene="0"] body,
         html[data-forge-earth-scene="1"], html[data-forge-earth-scene="1"] body {
           opacity: 1 !important;
           transition: opacity 220ms ease-out !important;
@@ -1149,15 +1205,42 @@ fn agency_earth_native_runtime_script() -> &'static str {
           pointer-events: none !important;
           z-index: -2147483647 !important;
         }
+        [data-forge-earth-bg-clear="1"] {
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          border-color: transparent !important;
+          outline-color: transparent !important;
+        }
       `;
       document.documentElement.appendChild(style);
     }
   };
 
-  const interactiveNodes = () => Array.from(
-    document.querySelectorAll(
-      'button, [role="button"], input, header, footer, nav, aside, dialog, [aria-modal="true"], [aria-haspopup="dialog"], [aria-label], [data-tooltip], [class*="toolbar"], [class*="Toolbar"], [class*="search"], [class*="Search"], [class*="drawer"], [class*="Drawer"], [class*="panel"], [class*="Panel"], [class*="widget"], [class*="Widget"], [class*="controls"], [class*="Controls"]'
-    )
+  const allRoots = () => {
+    const roots = [document];
+    for (let i = 0; i < roots.length; i += 1) {
+      const root = roots[i];
+      const nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
+      for (const node of nodes) {
+        if (node.shadowRoot) roots.push(node.shadowRoot);
+      }
+    }
+    return roots;
+  };
+
+  const queryEverywhere = (selector) => {
+    const nodes = [];
+    for (const root of allRoots()) {
+      try {
+        nodes.push(...root.querySelectorAll(selector));
+      } catch (_) {}
+    }
+    return nodes;
+  };
+
+  const interactiveNodes = () => queryEverywhere(
+    'button, [role="button"], input, textarea, header, footer, nav, aside, dialog, [aria-modal="true"], [aria-haspopup="dialog"], [aria-label], [data-tooltip], [class*="toolbar"], [class*="Toolbar"], [class*="search"], [class*="Search"], [class*="drawer"], [class*="Drawer"], [class*="panel"], [class*="Panel"], [class*="widget"], [class*="Widget"], [class*="controls"], [class*="Controls"]'
   );
 
   const isVisible = (node) => {
@@ -1215,7 +1298,7 @@ fn agency_earth_native_runtime_script() -> &'static str {
   };
 
   const hideChrome = () => {
-    const candidates = document.querySelectorAll(
+    const candidates = queryEverywhere(
       'button, [role="button"], input, header, footer, nav, aside, dialog, [aria-modal="true"], [aria-haspopup="dialog"], [aria-label], [data-tooltip], [class], [id], img, picture, svg'
     );
     for (const node of candidates) {
@@ -1224,15 +1307,53 @@ fn agency_earth_native_runtime_script() -> &'static str {
         node.dataset.forgeEarthHidden = "1";
       }
     }
-    const wrappers = document.querySelectorAll("div, section, article");
+    const wrappers = queryEverywhere("div, section, article, main, earth-app, earth-ui, earth-search, earth-drawer");
     for (const node of wrappers) {
       if (!(node instanceof HTMLElement)) continue;
       if (!isVisible(node) || preserveMapNode(node)) continue;
+      node.dataset.forgeEarthBgClear = "1";
       const signature = `${classSignature(node)} ${labelFor(node)}`;
       if (CHROME_HINTS.some((hint) => signature.includes(hint))) {
         node.dataset.forgeEarthPrune = "1";
       }
     }
+  };
+
+  const dispatchText = (node, value) => {
+    try {
+      const proto = node instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (setter) setter.call(node, value);
+      else node.value = value;
+      node.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      node.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const injectSearch = () => {
+    if (!requestedSearch) return false;
+    if (window.__forgeEarthSearchInjected === requestedSearch) return true;
+    const candidates = queryEverywhere('input[type="search"], input[aria-label*="Search"], input[aria-label*="search"], input[placeholder*="Search"], input[placeholder*="search"], input, textarea')
+      .filter((node) => node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement);
+    for (const input of candidates) {
+      if (!isVisible(input)) continue;
+      const label = labelFor(input);
+      const placeholder = normalize(input.getAttribute("placeholder") || "");
+      const likely = input.type === "search" || label.includes("search") || label.includes("rechercher") || placeholder.includes("search") || placeholder.includes("rechercher");
+      if (!likely) continue;
+      try {
+        input.focus();
+        if (!dispatchText(input, requestedSearch)) continue;
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, composed: true }));
+        input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true, composed: true }));
+        window.__forgeEarthSearchInjected = requestedSearch;
+        return true;
+      } catch (_) {}
+    }
+    return false;
   };
 
   const maybeEnable3d = () => {
@@ -1244,17 +1365,14 @@ fn agency_earth_native_runtime_script() -> &'static str {
   };
 
   const updateSceneVisibility = () => {
-    const now = Date.now();
-    if (!window.__forgeEarthBootAt) window.__forgeEarthBootAt = now;
-    const clicked3d = !!window.__forgeEarth3DClickedAt;
-    const readyByTimeout = now - window.__forgeEarthBootAt > 3600;
-    document.documentElement.dataset.forgeEarthScene = clicked3d || readyByTimeout ? "1" : "0";
+    document.documentElement.dataset.forgeEarthScene = "1";
   };
 
   const tick = () => {
     applyBase();
     ensureStyle();
     clickMatching(DISMISS_LABELS);
+    injectSearch();
     maybeEnable3d();
     hideChrome();
     updateSceneVisibility();
@@ -1879,8 +1997,41 @@ fn webexplorer_native_collection_nodes<R: Runtime>(
     Ok(webexplorer_native_collection_nodes_from_cdp(&dom, &ax))
 }
 
+#[cfg(windows)]
+fn agency_earth_native_collection_nodes<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<Vec<collection_os::CollectionObservedNodeV2>, String> {
+    let _ = agency_earth_call_devtools_json(
+        app,
+        "Accessibility.enable",
+        &json!({}),
+    );
+    let dom = agency_earth_call_devtools_json(
+        app,
+        "DOMSnapshot.captureSnapshot",
+        &json!({
+            "computedStyles": WEBEXPLORER_NATIVE_CDP_STYLE_WHITELIST,
+            "includePaintOrder": true,
+            "includeDOMRects": true,
+        }),
+    )?;
+    let ax = agency_earth_call_devtools_json(
+        app,
+        "Accessibility.getFullAXTree",
+        &json!({}),
+    )?;
+    Ok(webexplorer_native_collection_nodes_from_cdp(&dom, &ax))
+}
+
 #[cfg(not(windows))]
 fn webexplorer_native_collection_nodes<R: Runtime>(
+    _app: &tauri::AppHandle<R>,
+) -> Result<Vec<collection_os::CollectionObservedNodeV2>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg(not(windows))]
+fn agency_earth_native_collection_nodes<R: Runtime>(
     _app: &tauri::AppHandle<R>,
 ) -> Result<Vec<collection_os::CollectionObservedNodeV2>, String> {
     Ok(Vec::new())
@@ -1892,8 +2043,37 @@ fn webexplorer_call_devtools_json<R: Runtime>(
     method: &str,
     params: &JsonValue,
 ) -> Result<JsonValue, String> {
-    let Some(webview) = app.get_webview(WEB_EXPLORER_CHILD_LABEL) else {
-        return Err("webexplorer native webview is not active".to_string());
+    native_call_devtools_json(app, WEB_EXPLORER_CHILD_LABEL, "webexplorer", method, params)
+}
+
+#[cfg(windows)]
+fn agency_earth_call_devtools_json<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    method: &str,
+    params: &JsonValue,
+) -> Result<JsonValue, String> {
+    native_call_devtools_json(app, AGENCY_EARTH_CHILD_LABEL, "agency earth", method, params)
+}
+
+#[cfg(windows)]
+fn agency_web_research_call_devtools_json<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    method: &str,
+    params: &JsonValue,
+) -> Result<JsonValue, String> {
+    native_call_devtools_json(app, AGENCY_WEB_RESEARCH_CHILD_LABEL, "agency web research", method, params)
+}
+
+#[cfg(windows)]
+fn native_call_devtools_json<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    webview_label: &str,
+    surface_label: &str,
+    method: &str,
+    params: &JsonValue,
+) -> Result<JsonValue, String> {
+    let Some(webview) = app.get_webview(webview_label) else {
+        return Err(format!("{surface_label} native webview is not active"));
     };
     let method_name = method.to_string();
     let params_json = serde_json::to_string(params)
@@ -2119,6 +2299,39 @@ fn webexplorer_native_collection_nodes_from_cdp(
             || !aria_name.is_empty();
         let enabled = ax_node.map(|item| !item.disabled).unwrap_or(true);
         let checked = ax_node.map(|item| item.checked).unwrap_or(false);
+        let ax_clickable = ax_node
+            .and_then(|item| item.properties.get("clickable"))
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false);
+        let focusable = ax_node
+            .and_then(|item| item.properties.get("focusable"))
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false);
+        let editable = ax_node
+            .and_then(|item| item.properties.get("editable"))
+            .map(|value| {
+                value.as_bool().unwrap_or(false)
+                    || value.as_str().map(|raw| !raw.trim().is_empty()).unwrap_or(false)
+            })
+            .unwrap_or(false);
+        let is_actionable_tag = matches!(
+            tag_name.as_str(),
+            "button" | "a" | "input" | "textarea" | "select" | "option" | "summary"
+        );
+        let role_lower = aria_role.to_ascii_lowercase();
+        let role_actionable = [
+            "button", "link", "tab", "menuitem", "textbox", "searchbox", "combobox",
+            "slider", "checkbox", "radio", "switch", "listbox", "option"
+        ]
+        .iter()
+        .any(|role| role_lower.contains(role));
+        let actionable = enabled
+            && (ax_clickable || focusable || editable || is_actionable_tag || role_actionable || !href.is_empty());
+        let aria_name_for_label = if aria_name.is_empty() && actionable {
+            format!("{} {}", aria_role, tag_name).trim().to_string()
+        } else {
+            aria_name.clone()
+        };
         if !visible
             && text.is_empty()
             && href.is_empty()
@@ -2133,11 +2346,12 @@ fn webexplorer_native_collection_nodes_from_cdp(
             "backendNodeId": backend_id,
             "tagName": tag_name,
             "ariaRole": aria_role,
-            "ariaName": aria_name,
+            "ariaName": aria_name_for_label,
             "text": text,
             "href": href,
             "src": src,
             "bounds": bounds_by_index.get(&node_index),
+            "actionable": actionable,
         }));
         native_nodes.push(collection_os::CollectionObservedNodeV2 {
             id: webexplorer_cdp_native_node_id(node_index, backend_id),
@@ -2145,7 +2359,7 @@ fn webexplorer_native_collection_nodes_from_cdp(
             role: if !aria_role.is_empty() { aria_role.clone() } else { tag_name.clone() },
             tag_name: tag_name.clone(),
             selector_hint: String::new(),
-            label: if !aria_name.is_empty() { aria_name.clone() } else { text.clone() },
+            label: if !aria_name_for_label.is_empty() { aria_name_for_label.clone() } else { text.clone() },
             href: href.clone(),
             value,
             visible,
@@ -2169,7 +2383,7 @@ fn webexplorer_native_collection_nodes_from_cdp(
             input_type: attr_map.get("type").cloned().unwrap_or_default(),
             placeholder: attr_map.get("placeholder").cloned().unwrap_or_default(),
             aria_role,
-            aria_name,
+            aria_name: aria_name_for_label,
             style: style_by_index.get(&node_index).cloned(),
             ax: ax_node.map(|item| collection_os::CollectionObservedAxNode {
                 role: item.role.clone(),
@@ -2373,6 +2587,1364 @@ fn collection_command_map_from_webexplorer_snapshot(
     let observe_v2 = collection_observe_v2_from_webexplorer_snapshot(snapshot);
     let observe_v1 = collection_os::collection_observe_v1_from_v2(&observe_v2);
     collection_os::build_command_map(observe_v1)
+}
+
+fn collection_command_map_from_observe_v2(
+    observe_v2: &collection_os::CollectionObserveInputV2,
+) -> collection_os::CollectionCommandMap {
+    let observe_v1 = collection_os::collection_observe_v1_from_v2(observe_v2);
+    collection_os::build_command_map(observe_v1)
+}
+
+fn forge_ui_atlas_node_content_hash(
+    node: &collection_os::CollectionObservedNodeV2,
+) -> String {
+    forge_kasm_hash_json(&json!({
+        "schema": "forge.ui_atlas.node.v1",
+        "id": node.id,
+        "parentId": node.parent_id,
+        "role": node.role,
+        "tagName": node.tag_name,
+        "label": node.label,
+        "text": node.text,
+        "name": node.name,
+        "ariaRole": node.aria_role,
+        "ariaName": node.aria_name,
+        "href": node.href,
+        "value": node.value,
+        "visible": node.visible,
+        "enabled": node.enabled,
+        "bounds": node.bounds,
+        "style": node.style,
+    }))
+}
+
+fn forge_ui_atlas_tree_hash(
+    source_url: &str,
+    nodes: &[collection_os::CollectionObservedNodeV2],
+) -> String {
+    let node_hashes = nodes
+        .iter()
+        .map(forge_ui_atlas_node_content_hash)
+        .collect::<Vec<_>>();
+    forge_kasm_hash_json(&json!({
+        "schema": "forge.ui_atlas.tree.v1",
+        "sourceUrl": source_url,
+        "nodeHashes": node_hashes,
+    }))
+}
+
+fn agency_earth_command_tag(command: &collection_os::CollectionMappedCommand) -> JsonValue {
+    json!({
+        "schema": "forge.ui_atlas.actionable_tag.v1",
+        "surface": "agency_earth",
+        "actCode": format!("earth.{}::{}", command.command_kind, command.id),
+        "commandId": command.id,
+        "commandKind": command.command_kind,
+        "nodeId": command.node_id,
+        "semanticTargetKey": command.semantic_target_key,
+        "label": command.label,
+        "confidence": command.confidence,
+        "evidenceHash": command.evidence_hash,
+    })
+}
+
+fn agency_earth_expected_control_key(label: &str, kind: &str) -> Option<&'static str> {
+    let haystack = format!("{label} {kind}").to_ascii_lowercase();
+    if haystack.contains("search") || haystack.contains("rechercher") {
+        Some("search")
+    } else if haystack.contains("menu") || haystack.contains("fichier") || haystack.contains("modifier") || haystack.contains("affichage") || haystack.contains("ajouter") || haystack.contains("outils") || haystack.contains("aide") {
+        Some("menu")
+    } else if haystack.contains("undo") || haystack.contains("annuler") || haystack.contains("redo") || haystack.contains("retablir") {
+        Some("history")
+    } else if haystack.contains("3d") || haystack.contains("2d") {
+        Some("2d3d")
+    } else if haystack.contains("zoom") || haystack.contains("plus") || haystack.contains("minus") || haystack.contains("moins") {
+        Some("zoom")
+    } else if haystack.contains("compass") || haystack.contains("boussole") || haystack.contains("north") {
+        Some("compass")
+    } else if haystack.contains("layer") || haystack.contains("calque") || haystack.contains("map style") {
+        Some("layers")
+    } else if haystack.contains("project") || haystack.contains("projet") || haystack.contains("save") || haystack.contains("enregistrer") {
+        Some("project")
+    } else if haystack.contains("close") || haystack.contains("fermer") {
+        Some("close")
+    } else if haystack.contains("settings") || haystack.contains("param") {
+        Some("settings")
+    } else if haystack.contains("account") || haystack.contains("profile") || haystack.contains("standard") {
+        Some("account")
+    } else {
+        None
+    }
+}
+
+fn agency_earth_control_coverage(
+    commands: &[collection_os::CollectionMappedCommand],
+) -> JsonValue {
+    let expected = [
+        "search", "menu", "history", "2d3d", "zoom", "compass",
+        "layers", "project", "close", "settings", "account",
+    ];
+    let mut found: HashMap<&'static str, usize> = HashMap::new();
+    for command in commands {
+        if let Some(key) = agency_earth_expected_control_key(&command.label, &command.command_kind) {
+            *found.entry(key).or_default() += 1;
+        }
+    }
+    let missing = expected
+        .iter()
+        .filter(|key| !found.contains_key(**key))
+        .copied()
+        .collect::<Vec<_>>();
+    json!({
+        "expected": expected,
+        "found": found,
+        "missing": missing,
+        "coverage": if expected.is_empty() { 1.0 } else { ((expected.len() - missing.len()) as f64) / (expected.len() as f64) },
+    })
+}
+
+fn native_backend_id_from_node_id(node_id: &str) -> Option<i64> {
+    node_id
+        .strip_prefix("native-backend-")
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+}
+
+#[cfg(windows)]
+fn tag_agency_earth_actionable_nodes<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    commands: &[collection_os::CollectionMappedCommand],
+) -> Result<usize, String> {
+    let _ = agency_earth_call_devtools_json(app, "DOM.enable", &json!({}));
+    let mut tagged = 0usize;
+    for command in commands.iter().take(96) {
+        let Some(backend_id) = native_backend_id_from_node_id(&command.node_id) else {
+            continue;
+        };
+        let resolved = match agency_earth_call_devtools_json(
+            app,
+            "DOM.resolveNode",
+            &json!({ "backendNodeId": backend_id }),
+        ) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let Some(object_id) = resolved
+            .get("object")
+            .and_then(|object| object.get("objectId"))
+            .and_then(JsonValue::as_str)
+        else {
+            continue;
+        };
+        let tag = agency_earth_command_tag(command);
+        let result = agency_earth_call_devtools_json(
+            app,
+            "Runtime.callFunctionOn",
+            &json!({
+                "objectId": object_id,
+                "functionDeclaration": "function(tag){try{this.setAttribute('data-forge-act-code', tag.actCode);this.setAttribute('data-forge-node-hash', tag.evidenceHash);this.setAttribute('data-forge-command-id', tag.commandId);this.setAttribute('data-forge-command-kind', tag.commandKind);this.setAttribute('data-forge-semantic-target', tag.semanticTargetKey);return true;}catch(e){return false;}}",
+                "arguments": [{ "value": tag }],
+                "returnByValue": true,
+            }),
+        );
+        if result
+            .ok()
+            .and_then(|value| value.pointer("/result/value").and_then(JsonValue::as_bool))
+            .unwrap_or(false)
+        {
+            tagged = tagged.saturating_add(1);
+        }
+    }
+    Ok(tagged)
+}
+
+#[cfg(not(windows))]
+fn tag_agency_earth_actionable_nodes<R: Runtime>(
+    _app: &tauri::AppHandle<R>,
+    _commands: &[collection_os::CollectionMappedCommand],
+) -> Result<usize, String> {
+    Ok(0)
+}
+
+fn agency_earth_overlay_nodes(
+    observe: &collection_os::CollectionObserveInputV2,
+    commands: &[collection_os::CollectionMappedCommand],
+) -> Vec<JsonValue> {
+    let mut commands_by_node: HashMap<&str, Vec<&collection_os::CollectionMappedCommand>> =
+        HashMap::new();
+    for command in commands {
+        commands_by_node
+            .entry(command.node_id.as_str())
+            .or_default()
+            .push(command);
+    }
+    let viewport_width = observe.viewport.as_ref().map(|viewport| viewport.width).unwrap_or(0.0);
+    let viewport_height = observe.viewport.as_ref().map(|viewport| viewport.height).unwrap_or(0.0);
+    observe
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            let bounds = node.bounds.as_ref()?;
+            if !node.visible || bounds.width < 2.0 || bounds.height < 2.0 {
+                return None;
+            }
+            if viewport_width > 0.0
+                && viewport_height > 0.0
+                && (bounds.x > viewport_width
+                    || bounds.y > viewport_height
+                    || bounds.x + bounds.width < 0.0
+                    || bounds.y + bounds.height < 0.0)
+            {
+                return None;
+            }
+            let tag = node.tag_name.to_ascii_lowercase();
+            let role = node.role.to_ascii_lowercase();
+            let text_signal = !node.text.trim().is_empty() || !node.label.trim().is_empty();
+            let media = matches!(
+                tag.as_str(),
+                "img" | "video" | "canvas" | "picture" | "svg" | "iframe"
+            );
+            let form = matches!(tag.as_str(), "input" | "textarea" | "select" | "button");
+            let likely_actionable = form
+                || role.contains("button")
+                || role.contains("link")
+                || role.contains("tab")
+                || role.contains("menuitem")
+                || role.contains("checkbox")
+                || role.contains("radio")
+                || role.contains("switch")
+                || role.contains("slider")
+                || role.contains("textbox")
+                || role.contains("searchbox")
+                || role.contains("combobox")
+                || !node.href.trim().is_empty();
+            let node_commands = commands_by_node.get(node.id.as_str()).cloned().unwrap_or_default();
+            let actionable = !node_commands.is_empty();
+            let primary_command = node_commands.first().copied();
+            let kind = if likely_actionable {
+                "actionable"
+            } else if media {
+                "media"
+            } else if text_signal {
+                "text"
+            } else {
+                "block"
+            };
+            let label = first_non_empty_string([
+                node.label.as_str(),
+                node.aria_name.as_str(),
+                node.name.as_str(),
+                node.text.as_str(),
+                node.role.as_str(),
+                node.tag_name.as_str(),
+            ]);
+            Some(json!({
+                "id": node.id,
+                "kind": kind,
+                "actionable": actionable,
+                "likelyActionable": likely_actionable,
+                "missingActCode": likely_actionable && !actionable,
+                "actCode": primary_command.map(|command| format!("earth.{}::{}", command.command_kind, command.id)).unwrap_or_default(),
+                "commandId": primary_command.map(|command| command.id.clone()).unwrap_or_default(),
+                "commandKind": primary_command.map(|command| command.command_kind.clone()).unwrap_or_default(),
+                "semanticTargetKey": primary_command.map(|command| command.semantic_target_key.clone()).unwrap_or_default(),
+                "evidenceHash": primary_command.map(|command| command.evidence_hash.clone()).unwrap_or_default(),
+                "commandCount": node_commands.len(),
+                "tagName": node.tag_name,
+                "role": node.role,
+                "label": compact_real_estate_snapshot_text(&label, 96),
+                "bounds": bounds,
+            }))
+        })
+        .take(1200)
+        .collect()
+}
+
+fn agency_earth_overlay_stats(overlay_nodes: &[JsonValue]) -> JsonValue {
+    let mut actionables = 0usize;
+    let mut tagged = 0usize;
+    let mut missing_act_code = 0usize;
+    let mut text = 0usize;
+    let mut media = 0usize;
+    let mut block = 0usize;
+    for node in overlay_nodes {
+        let kind = node.get("kind").and_then(JsonValue::as_str).unwrap_or("");
+        match kind {
+            "actionable" => actionables = actionables.saturating_add(1),
+            "text" => text = text.saturating_add(1),
+            "media" => media = media.saturating_add(1),
+            _ => block = block.saturating_add(1),
+        }
+        if node.get("actCode").and_then(JsonValue::as_str).map(|value| !value.is_empty()).unwrap_or(false) {
+            tagged = tagged.saturating_add(1);
+        }
+        if node.get("missingActCode").and_then(JsonValue::as_bool).unwrap_or(false) {
+            missing_act_code = missing_act_code.saturating_add(1);
+        }
+    }
+    json!({
+        "total": overlay_nodes.len(),
+        "actionable": actionables,
+        "tagged": tagged,
+        "missingActCode": missing_act_code,
+        "text": text,
+        "media": media,
+        "block": block,
+        "tagCoverage": if actionables == 0 { 1.0 } else { tagged as f64 / actionables as f64 },
+    })
+}
+
+fn first_non_empty_string<const N: usize>(items: [&str; N]) -> String {
+    items
+        .into_iter()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn build_agency_earth_ui_atlas<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<JsonValue, String> {
+    let Some(webview) = app.get_webview(AGENCY_EARTH_CHILD_LABEL) else {
+        return Err("agency earth native webview is not active".to_string());
+    };
+    let source_url = webview
+        .url()
+        .map(|url| url.to_string())
+        .unwrap_or_else(|_| "about:blank".to_string());
+    let nodes = agency_earth_native_collection_nodes(app)?;
+    let tree_hash = forge_ui_atlas_tree_hash(&source_url, &nodes);
+    let cache_key = forge_kasm_hash_json(&json!({
+        "schema": "forge.ui_atlas.cache_key.v1",
+        "surface": "agency_earth",
+        "treeHash": tree_hash,
+    }));
+    if let Some(mut cached) = forge_ui_atlas_cache()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&cache_key).cloned())
+    {
+        if let Some(obj) = cached.as_object_mut() {
+            obj.insert("cacheHit".to_string(), JsonValue::Bool(true));
+        }
+        if let Ok(mut latest) = latest_agency_earth_ui_atlas().lock() {
+            *latest = Some(cached.clone());
+        }
+        return Ok(cached);
+    }
+    let cache_hit = false;
+    let captured_at_ms = now_epoch_ms() as u64;
+    let viewport = agency_earth_native_runtime()
+        .lock()
+        .ok()
+        .and_then(|state| state.bounds.clone())
+        .map(|bounds| collection_os::CollectionObserveViewport {
+            width: bounds.width,
+            height: bounds.height,
+            scroll_x: bounds.x,
+            scroll_y: bounds.y,
+        });
+    let observe_input = collection_os::CollectionObserveInputV2 {
+            source_url: source_url.clone(),
+            title: "Google Earth".to_string(),
+            tree_hash: tree_hash.clone(),
+            captured_at_ms,
+            viewport,
+            nodes,
+            scene_blocks: Vec::new(),
+            proof_hash: String::new(),
+    };
+    let (observe_input, kernel_run) =
+        forge_ui_atlas_runtime::normalize_observe_v2(observe_input);
+    let webgpu_kernel_run =
+        forge_ui_atlas_runtime::webgpu_visual_bounds_micro_kernel(&observe_input.tree_hash);
+    let observe = collection_os::finalize_collection_observe_v2(observe_input);
+    let command_map = collection_command_map_from_observe_v2(&observe);
+    let tagged_count = tag_agency_earth_actionable_nodes(app, &command_map.commands)
+        .unwrap_or(0);
+    let overlay_nodes = agency_earth_overlay_nodes(&observe, &command_map.commands);
+    let overlay_stats = agency_earth_overlay_stats(&overlay_nodes);
+    let commands = command_map
+        .commands
+        .iter()
+        .take(48)
+        .map(|command| {
+            json!({
+                "id": command.id,
+                "actCode": format!("earth.{}::{}", command.command_kind, command.id),
+                "kind": command.command_kind,
+                "label": command.label,
+                "nodeId": command.node_id,
+                "semanticTargetKey": command.semantic_target_key,
+                "confidence": command.confidence,
+                "evidenceHash": command.evidence_hash,
+                "bounds": observe.nodes.iter().find(|node| node.id == command.node_id).and_then(|node| node.bounds.clone()),
+            })
+        })
+        .collect::<Vec<_>>();
+    let coverage = agency_earth_control_coverage(&command_map.commands);
+    let proof_hash = forge_kasm_hash_json(&json!({
+        "schema": "forge.ui_atlas.agency_earth.report.v1",
+        "treeHash": tree_hash,
+        "observeProofHash": observe.proof_hash,
+        "commandMapProofHash": command_map.proof_hash,
+        "taggedCount": tagged_count,
+        "coverage": coverage,
+        "runtime": forge_ui_atlas_runtime::runtime_manifest(),
+        "kernelRun": kernel_run,
+        "webgpuKernelRun": webgpu_kernel_run,
+        "overlayNodes": overlay_nodes.clone(),
+        "overlayStats": overlay_stats,
+        "commands": commands,
+    }));
+    let report = json!({
+        "schema": "forge.ui_atlas.report.v1",
+        "surface": "agency_earth",
+        "sourceUrl": source_url,
+        "treeHash": tree_hash,
+        "cacheKey": cache_key,
+        "cacheHit": cache_hit,
+        "nodeCount": observe.nodes.len(),
+        "sceneBlockCount": observe.scene_blocks.len(),
+        "actionableCount": command_map.command_count,
+        "taggedCount": tagged_count,
+        "coverage": coverage,
+        "observeProofHash": observe.proof_hash,
+        "commandMapProofHash": command_map.proof_hash,
+        "runtime": forge_ui_atlas_runtime::runtime_manifest(),
+        "kernelRun": kernel_run,
+        "webgpuKernelRun": webgpu_kernel_run,
+        "overlayNodes": overlay_nodes,
+        "overlayStats": overlay_stats,
+        "proofHash": proof_hash,
+        "commands": commands,
+        "note": "KASM content-addressed UI atlas prototype: CDP DOMSnapshot + AX tree -> Collection OS -> Act Code tags",
+    });
+    if let Ok(mut cache) = forge_ui_atlas_cache().lock() {
+        cache.insert(cache_key, report.clone());
+        if cache.len() > 64 {
+            if let Some(first_key) = cache.keys().next().cloned() {
+                cache.remove(&first_key);
+            }
+        }
+    }
+    if let Ok(mut latest) = latest_agency_earth_ui_atlas().lock() {
+        *latest = Some(report.clone());
+    }
+    Ok(report)
+}
+
+#[tauri::command]
+fn agency_earth_ui_atlas<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+) -> Result<JsonValue, String> {
+    let store_path = forge_store_path_from_app(&app);
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        store_path.as_deref(),
+        "agency_earth_ui_atlas",
+        json!({ "surface": "agency_earth", "mode": "content_addressed_ui_tree" }),
+    )?;
+    let report = build_agency_earth_ui_atlas(&app)?;
+    alpha_trace(
+        &app,
+        "agency.earth.ui_atlas",
+        format!(
+            "ok nodes={} actionable={} tagged={} tree={}",
+            report.get("nodeCount").and_then(JsonValue::as_u64).unwrap_or(0),
+            report.get("actionableCount").and_then(JsonValue::as_u64).unwrap_or(0),
+            report.get("taggedCount").and_then(JsonValue::as_u64).unwrap_or(0),
+            report.get("treeHash").and_then(JsonValue::as_str).unwrap_or("")
+        ),
+    );
+    Ok(report)
+}
+
+#[tauri::command]
+fn forge_ui_atlas_runtime_snapshot() -> JsonValue {
+    forge_ui_atlas_runtime::runtime_manifest()
+}
+
+#[tauri::command]
+fn agency_earth_act_code<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+    act_code: String,
+    value: Option<String>,
+    dry_run: Option<bool>,
+) -> Result<JsonValue, String> {
+    let act_code = act_code.trim().to_string();
+    if act_code.is_empty() || !act_code.starts_with("earth.") {
+        return Err("agency earth Act Code must start with earth.".to_string());
+    }
+    let store_path = forge_store_path_from_app(&app);
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        store_path.as_deref(),
+        "agency_earth_act_code",
+        json!({
+            "surface": "agency_earth",
+            "actCode": act_code,
+            "dryRun": dry_run.unwrap_or(true),
+        }),
+    )?;
+    execute_agency_earth_act_code(&app, &act_code, value, dry_run.unwrap_or(true))
+}
+
+#[cfg(windows)]
+fn execute_agency_earth_act_code<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    act_code: &str,
+    value: Option<String>,
+    dry_run: bool,
+) -> Result<JsonValue, String> {
+    let expression = format!(
+        r#"
+(() => {{
+  const actCode = {};
+  const value = {};
+  const dryRun = {};
+  const roots = [document];
+  for (let i = 0; i < roots.length; i += 1) {{
+    const root = roots[i];
+    const nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
+    for (const node of nodes) {{
+      if (node.shadowRoot) roots.push(node.shadowRoot);
+    }}
+  }}
+  const candidates = [];
+  for (const root of roots) {{
+    try {{
+      candidates.push(...root.querySelectorAll("[data-forge-act-code], [data-forge-command-id]"));
+    }} catch (_) {{}}
+  }}
+  const commandId = String(actCode).split("::").pop();
+  const node = candidates.find((item) => item.getAttribute("data-forge-act-code") === actCode)
+    || candidates.find((item) => item.getAttribute("data-forge-command-id") === commandId);
+  if (!node) {{
+    return {{ ok: false, actCode, error: "not_found" }};
+  }}
+  const rect = node.getBoundingClientRect();
+  const label = node.getAttribute("aria-label") || node.getAttribute("title") || node.textContent || "";
+  const target = {{
+    tag: node.tagName || "",
+    role: node.getAttribute("role") || "",
+    label: String(label).replace(/\s+/g, " ").trim().slice(0, 160),
+    bounds: {{ x: rect.x, y: rect.y, width: rect.width, height: rect.height }},
+    nodeHash: node.getAttribute("data-forge-node-hash") || "",
+    commandId: node.getAttribute("data-forge-command-id") || commandId,
+    semanticTargetKey: node.getAttribute("data-forge-semantic-target") || "",
+  }};
+  if (dryRun) {{
+    return {{ ok: true, dryRun: true, actCode, target }};
+  }}
+  const setText = (el, text) => {{
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(el, text);
+    else el.value = text;
+    el.dispatchEvent(new Event("input", {{ bubbles: true, composed: true }}));
+    el.dispatchEvent(new Event("change", {{ bubbles: true, composed: true }}));
+  }};
+  try {{
+    node.scrollIntoView?.({{ block: "center", inline: "center" }});
+    node.focus?.();
+    if (value !== null && value !== undefined && (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement)) {{
+      setText(node, String(value));
+      return {{ ok: true, dryRun: false, actCode, action: "fill", target }};
+    }}
+    for (const type of ["pointerover", "mouseover", "pointerdown", "mousedown", "pointerup", "mouseup"]) {{
+      node.dispatchEvent(new MouseEvent(type, {{ bubbles: true, cancelable: true, view: window }}));
+    }}
+    node.click?.();
+    return {{ ok: true, dryRun: false, actCode, action: "click", target }};
+  }} catch (error) {{
+    return {{ ok: false, dryRun: false, actCode, target, error: String(error && error.message || error) }};
+  }}
+}})()
+"#,
+        js_string_literal(act_code),
+        value
+            .as_deref()
+            .map(js_string_literal)
+            .unwrap_or_else(|| "null".to_string()),
+        if dry_run { "true" } else { "false" }
+    );
+    let result = agency_earth_call_devtools_json(
+        app,
+        "Runtime.evaluate",
+        &json!({
+            "expression": expression,
+            "returnByValue": true,
+            "awaitPromise": true,
+        }),
+    )?;
+    result
+        .pointer("/result/value")
+        .cloned()
+        .ok_or_else(|| "agency earth Act Code returned no value".to_string())
+}
+
+fn agency_web_research_text_field(contact: &JsonValue, key: &str) -> String {
+    contact
+        .get(key)
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn agency_web_research_search_url(contact: &JsonValue) -> Result<Url, String> {
+    let name = agency_web_research_text_field(contact, "agencyName");
+    let city = agency_web_research_text_field(contact, "city");
+    let website = agency_web_research_text_field(contact, "website");
+    let query = [name.as_str(), city.as_str(), website.as_str()]
+        .into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Url::parse_with_params(
+        "https://www.google.com/search",
+        &[("q", query.trim()), ("hl", "fr")],
+    )
+    .map_err(|err| format!("build agency web search url: {err}"))
+}
+
+fn agency_web_research_seed_urls(contact: &JsonValue) -> Vec<String> {
+    let mut seeds = Vec::new();
+    if let Ok(search) = agency_web_research_search_url(contact) {
+        seeds.push(search.to_string());
+    }
+    let website = agency_web_research_text_field(contact, "website");
+    if let Ok(url) = Url::parse(website.trim()) {
+        seeds.push(url.to_string());
+    }
+    seeds.sort();
+    seeds.dedup();
+    seeds
+}
+
+fn agency_web_research_normalize_url(base: &Url, raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || trimmed.starts_with("mailto:")
+        || trimmed.starts_with("tel:")
+        || trimmed.starts_with("javascript:")
+    {
+        return None;
+    }
+    let mut url = base.join(trimmed).ok()?;
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return None;
+    }
+    if url
+        .host_str()
+        .map(|host| host.contains("google."))
+        .unwrap_or(false)
+        && url.path() == "/url"
+    {
+        if let Some((_, target)) = url.query_pairs().find(|(key, _)| key == "q" || key == "url") {
+            if let Ok(target_url) = Url::parse(target.as_ref()) {
+                url = target_url;
+            }
+        }
+    }
+    url.set_fragment(None);
+    Some(url.to_string())
+}
+
+fn agency_web_ascii_lower(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_uppercase() {
+                (byte + 32) as char
+            } else {
+                byte as char
+            }
+        })
+        .collect()
+}
+
+fn agency_web_research_decode_entities(value: &str) -> String {
+    value
+        .replace("&nbsp;", " ")
+        .replace("&#160;", " ")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#34;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+}
+
+fn agency_web_research_clean_text(html: &str) -> String {
+    let mut plain = String::with_capacity(html.len().min(4096));
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => {
+                in_tag = true;
+                plain.push(' ');
+            }
+            '>' => {
+                in_tag = false;
+                plain.push(' ');
+            }
+            _ if !in_tag => plain.push(ch),
+            _ => {}
+        }
+    }
+    agency_web_research_decode_entities(&plain)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
+}
+
+fn agency_web_research_attr_value(raw_tag: &str, attr: &str) -> Option<String> {
+    let lower = agency_web_ascii_lower(raw_tag);
+    let needle = agency_web_ascii_lower(attr);
+    let mut offset = 0usize;
+    while let Some(found) = lower[offset..].find(&needle) {
+        let start = offset + found;
+        let before_ok = start == 0
+            || lower.as_bytes()[start.saturating_sub(1)].is_ascii_whitespace()
+            || lower.as_bytes()[start.saturating_sub(1)] == b'<';
+        let after = start + needle.len();
+        if !before_ok || after >= lower.len() {
+            offset = after;
+            continue;
+        }
+        let mut cursor = after;
+        while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if cursor >= lower.len() || lower.as_bytes()[cursor] != b'=' {
+            offset = after;
+            continue;
+        }
+        cursor += 1;
+        while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if cursor >= raw_tag.len() {
+            return None;
+        }
+        let quote = raw_tag.as_bytes()[cursor];
+        let value_start;
+        let value_end;
+        if quote == b'"' || quote == b'\'' {
+            value_start = cursor + 1;
+            let rest = &raw_tag[value_start..];
+            value_end = value_start + rest.find(quote as char).unwrap_or(rest.len());
+        } else {
+            value_start = cursor;
+            let rest = &raw_tag[value_start..];
+            value_end = value_start
+                + rest
+                    .find(|ch: char| ch.is_whitespace() || ch == '>')
+                    .unwrap_or(rest.len());
+        }
+        let value = agency_web_research_decode_entities(raw_tag[value_start..value_end].trim());
+        if !value.is_empty() {
+            return Some(value);
+        }
+        offset = after;
+    }
+    None
+}
+
+fn agency_web_research_extract_tag_texts(html: &str, tag: &str, limit: usize) -> Vec<String> {
+    let lower = agency_web_ascii_lower(html);
+    let open = format!("<{}", tag);
+    let close = format!("</{}>", tag);
+    let mut offset = 0usize;
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    while out.len() < limit {
+        let Some(found) = lower[offset..].find(&open) else {
+            break;
+        };
+        let tag_start = offset + found;
+        let Some(open_end_rel) = lower[tag_start..].find('>') else {
+            break;
+        };
+        let content_start = tag_start + open_end_rel + 1;
+        let Some(close_rel) = lower[content_start..].find(&close) else {
+            offset = content_start;
+            continue;
+        };
+        let content_end = content_start + close_rel;
+        let text = agency_web_research_clean_text(&html[content_start..content_end]);
+        if text.len() >= 24 && text.len() <= 1200 {
+            let key = normalized_canvas_micro_text(&text);
+            if seen.insert(key) {
+                out.push(text);
+            }
+        }
+        offset = content_end + close.len();
+    }
+    out
+}
+
+fn agency_web_research_short_hash(hash: &str) -> String {
+    hash.chars().take(16).collect::<String>()
+}
+
+fn agency_web_research_image_entries(base_url: &str, html: &str, limit: usize) -> Vec<JsonValue> {
+    let Ok(base) = Url::parse(base_url) else {
+        return Vec::new();
+    };
+    let lower = agency_web_ascii_lower(html);
+    let mut offset = 0usize;
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    while out.len() < limit {
+        let Some(found) = lower[offset..].find("<img") else {
+            break;
+        };
+        let start = offset + found;
+        let Some(end_rel) = lower[start..].find('>') else {
+            break;
+        };
+        let end = start + end_rel + 1;
+        let tag = &html[start..end];
+        let raw_src = agency_web_research_attr_value(tag, "src")
+            .or_else(|| agency_web_research_attr_value(tag, "data-src"))
+            .or_else(|| agency_web_research_attr_value(tag, "data-lazy-src"))
+            .or_else(|| agency_web_research_attr_value(tag, "srcset").and_then(|srcset| {
+                srcset
+                    .split(',')
+                    .next()
+                    .and_then(|part| part.split_whitespace().next())
+                    .map(str::to_string)
+            }));
+        if let Some(src) = raw_src {
+            if let Some(url) = agency_web_research_normalize_url(&base, &src) {
+                let normalized = normalized_canvas_micro_text(&url);
+                let lower_url = normalized.as_str();
+                let skip = lower_url.ends_with(".svg")
+                    || lower_url.contains("logo")
+                    || lower_url.contains("sprite")
+                    || lower_url.contains("favicon")
+                    || lower_url.contains("pixel");
+                if !skip && seen.insert(url.clone()) {
+                    let alt = agency_web_research_attr_value(tag, "alt")
+                        .or_else(|| agency_web_research_attr_value(tag, "title"))
+                        .unwrap_or_default();
+                    let hash = forge_kasm_hash_json(&json!({
+                        "schema": "forge.agency_web_research.photo.v1",
+                        "page": base_url,
+                        "url": url,
+                        "alt": alt,
+                    }));
+                    out.push(json!({
+                        "url": url,
+                        "alt": alt,
+                        "photoHash": hash,
+                        "actCode": format!("web.photo::{}", agency_web_research_short_hash(&hash)),
+                    }));
+                }
+            }
+        }
+        offset = end;
+    }
+    out
+}
+
+fn agency_web_research_listing_score(text: &str, agency_name: &str) -> i64 {
+    let lower = normalized_canvas_micro_text(text);
+    let mut score = 0;
+    for token in [
+        "annonce", "bien", "vente", "location", "appartement", "maison", "terrain",
+        "pieces", "piece", "chambre", "surface", "m2", "m²", "prix", "eur", "€",
+        "honoraires", "exclusivite", "reference", "ref",
+    ] {
+        if lower.contains(token) {
+            score += 8;
+        }
+    }
+    let agency = normalized_canvas_micro_text(agency_name);
+    if !agency.is_empty() && lower.contains(&agency) {
+        score += 5;
+    }
+    if text.len() > 80 {
+        score += 6;
+    }
+    if text.len() > 500 {
+        score -= 8;
+    }
+    score
+}
+
+fn agency_web_research_page_artifacts(url: &str, html: &str, agency_name: &str) -> JsonValue {
+    let mut text_units = Vec::new();
+    let mut seen_text = HashSet::new();
+    for tag in ["h1", "h2", "h3", "p", "li", "article", "section"] {
+        for text in agency_web_research_extract_tag_texts(html, tag, 80) {
+            let key = normalized_canvas_micro_text(&text);
+            if seen_text.insert(key) {
+                text_units.push(text);
+            }
+        }
+        if text_units.len() >= 120 {
+            break;
+        }
+    }
+
+    let mut paragraphs = Vec::new();
+    let mut listings = Vec::new();
+    for text in text_units.into_iter().take(120) {
+        let text_hash = forge_kasm_hash_json(&json!({
+            "schema": "forge.agency_web_research.text.v1",
+            "url": url,
+            "text": text,
+        }));
+        let paragraph = json!({
+            "text": text,
+            "textHash": text_hash,
+            "actCode": format!("web.text::{}", agency_web_research_short_hash(&text_hash)),
+        });
+        let score = agency_web_research_listing_score(
+            paragraph.get("text").and_then(JsonValue::as_str).unwrap_or_default(),
+            agency_name,
+        );
+        if score >= 22 && listings.len() < 36 {
+            let listing_hash = forge_kasm_hash_json(&json!({
+                "schema": "forge.agency_web_research.listing.v1",
+                "url": url,
+                "textHash": text_hash,
+            }));
+            listings.push(json!({
+                "description": paragraph.get("text").cloned().unwrap_or(JsonValue::String(String::new())),
+                "descriptionHash": listing_hash,
+                "sourceTextHash": text_hash,
+                "sourceUrl": url,
+                "score": score,
+                "actCode": format!("web.listing::{}", agency_web_research_short_hash(&listing_hash)),
+            }));
+        }
+        if paragraphs.len() < 80 {
+            paragraphs.push(paragraph);
+        }
+    }
+    let photos = agency_web_research_image_entries(url, html, 60);
+    json!({
+        "schema": "forge.agency_web_research.artifacts.v1",
+        "paragraphCount": paragraphs.len(),
+        "listingCount": listings.len(),
+        "photoCount": photos.len(),
+        "paragraphs": paragraphs,
+        "listings": listings,
+        "photos": photos,
+    })
+}
+
+fn agency_web_research_extract_links(base_url: &str, html: &str, limit: usize) -> Vec<String> {
+    let Ok(base) = Url::parse(base_url) else {
+        return Vec::new();
+    };
+    let mut links = Vec::new();
+    let mut rest = html;
+    while let Some(idx) = rest.find("href") {
+        rest = &rest[idx + 4..];
+        let Some(eq_idx) = rest.find('=') else {
+            break;
+        };
+        rest = rest[eq_idx + 1..].trim_start();
+        let Some(quote) = rest.chars().next().filter(|ch| *ch == '"' || *ch == '\'') else {
+            continue;
+        };
+        rest = &rest[quote.len_utf8()..];
+        let Some(end) = rest.find(quote) else {
+            break;
+        };
+        let raw = &rest[..end];
+        if let Some(url) = agency_web_research_normalize_url(&base, raw) {
+            if !links.iter().any(|existing| existing == &url) {
+                links.push(url);
+            }
+        }
+        rest = &rest[end + quote.len_utf8()..];
+        if links.len() >= limit {
+            break;
+        }
+    }
+    links
+}
+
+fn agency_web_research_score_url(url: &str, agency_name: &str) -> (i64, &'static str) {
+    let lower = normalized_canvas_micro_text(url);
+    let agency_hit = !agency_name.trim().is_empty()
+        && lower.contains(&normalized_canvas_micro_text(agency_name));
+    let useful = [
+        "annonce", "vente", "location", "acheter", "louer", "bien", "biens", "maison",
+        "appartement", "equipe", "agence", "avis", "estimation", "quartier", "programme",
+    ];
+    let low_value = [
+        "mentions-legales", "mention-legale", "privacy", "confidentialite", "cookies",
+        "rgpd", "cgu", "legal", "sitemap", "plan-du-site",
+    ];
+    let mut score = if agency_hit { 30 } else { 0 };
+    for token in useful {
+        if lower.contains(token) {
+            score += 12;
+        }
+    }
+    for token in low_value {
+        if lower.contains(token) {
+            score -= 35;
+        }
+    }
+    let bucket = if score < 0 {
+        "skip_low_value"
+    } else if score >= 24 {
+        "deep_dive"
+    } else {
+        "scan"
+    };
+    (score, bucket)
+}
+
+async fn agency_web_research_fetch_page(
+    client: reqwest::Client,
+    url: String,
+    agency_name: String,
+) -> JsonValue {
+    let started = Instant::now();
+    let cache_key = forge_kasm_hash_json(&json!({
+        "schema": "forge.agency_web_research.page.cache_key.v1",
+        "url": url,
+    }));
+    if let Some(mut cached) = agency_web_research_cache()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&cache_key).cloned())
+    {
+        if let Some(obj) = cached.as_object_mut() {
+            obj.insert("cacheHit".to_string(), JsonValue::Bool(true));
+        }
+        return cached;
+    }
+    let response = client.get(url.clone()).send().await;
+    let (status, content_type, body, error) = match response {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let content_type = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            match resp.text().await {
+                Ok(text) => (status, content_type, text, String::new()),
+                Err(err) => (status, content_type, String::new(), err.to_string()),
+            }
+        }
+        Err(err) => (0, String::new(), String::new(), err.to_string()),
+    };
+    let body_preview = body.chars().take(1600).collect::<String>();
+    let links = agency_web_research_extract_links(&url, &body, 80);
+    let artifacts = agency_web_research_page_artifacts(&url, &body, &agency_name);
+    let (score, relevance) = agency_web_research_score_url(&url, &agency_name);
+    let page_hash = forge_kasm_hash_json(&json!({
+        "schema": "forge.agency_web_research.page_hash.v1",
+        "url": url,
+        "status": status,
+        "contentType": content_type,
+        "preview": body_preview,
+        "links": links,
+        "artifacts": artifacts,
+    }));
+    let report = json!({
+        "schema": "forge.agency_web_research.page.v1",
+        "url": url,
+        "status": status,
+        "contentType": content_type,
+        "ok": status >= 200 && status < 400 && error.is_empty(),
+        "error": error,
+        "pageHash": page_hash,
+        "cacheKey": cache_key,
+        "cacheHit": false,
+        "elapsedMs": started.elapsed().as_millis() as u64,
+        "relevanceScore": score,
+        "relevanceBucket": relevance,
+        "actCode": format!("web.inspect::{}", page_hash.chars().rev().take(12).collect::<String>()),
+        "links": links,
+        "artifacts": artifacts,
+        "preview": body_preview,
+    });
+    if let Ok(mut cache) = agency_web_research_cache().lock() {
+        cache.insert(cache_key, report.clone());
+        if cache.len() > 256 {
+            if let Some(first_key) = cache.keys().next().cloned() {
+                cache.remove(&first_key);
+            }
+        }
+    }
+    report
+}
+
+async fn agency_web_research_crawl(contact: JsonValue) -> JsonValue {
+    let started = Instant::now();
+    let agency_name = agency_web_research_text_field(&contact, "agencyName");
+    let seeds = agency_web_research_seed_urls(&contact);
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .user_agent("ForgeAgencyResearch/0.1")
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => {
+            return json!({
+                "schema": "forge.agency_web_research.report.v1",
+                "status": "error",
+                "error": format!("build web research client: {err}"),
+            });
+        }
+    };
+    let mut pages = Vec::new();
+    let mut handles = Vec::new();
+    for url in seeds.iter().filter(|url| url.starts_with("http")).take(4) {
+        handles.push(tauri::async_runtime::spawn(agency_web_research_fetch_page(
+            client.clone(),
+            url.clone(),
+            agency_name.clone(),
+        )));
+    }
+    for handle in handles {
+        if let Ok(page) = handle.await {
+            pages.push(page);
+        }
+    }
+    let mut next_urls = Vec::new();
+    for page in &pages {
+        if let Some(links) = page.get("links").and_then(JsonValue::as_array) {
+            for link in links {
+                let Some(url) = link.as_str() else {
+                    continue;
+                };
+                let (score, bucket) = agency_web_research_score_url(url, &agency_name);
+                if bucket == "skip_low_value" {
+                    continue;
+                }
+                next_urls.push((score, url.to_string()));
+            }
+        }
+    }
+    next_urls.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    next_urls.dedup_by(|left, right| left.1 == right.1);
+    let mut deep_handles = Vec::new();
+    for (_, url) in next_urls.iter().take(12) {
+        deep_handles.push(tauri::async_runtime::spawn(agency_web_research_fetch_page(
+            client.clone(),
+            url.clone(),
+            agency_name.clone(),
+        )));
+    }
+    for handle in deep_handles {
+        if let Ok(page) = handle.await {
+            pages.push(page);
+        }
+    }
+    pages.sort_by(|left, right| {
+        let l = left.get("relevanceScore").and_then(JsonValue::as_i64).unwrap_or(0);
+        let r = right.get("relevanceScore").and_then(JsonValue::as_i64).unwrap_or(0);
+        r.cmp(&l)
+    });
+    let mut listings = Vec::new();
+    let mut photos = Vec::new();
+    let mut paragraphs = Vec::new();
+    let mut listing_seen = HashSet::new();
+    let mut photo_seen = HashSet::new();
+    let mut paragraph_seen = HashSet::new();
+    for page in &pages {
+        let source_url = page.get("url").and_then(JsonValue::as_str).unwrap_or_default();
+        let artifacts = page.get("artifacts").unwrap_or(&JsonValue::Null);
+        if let Some(items) = artifacts.get("listings").and_then(JsonValue::as_array) {
+            for item in items {
+                let key = item
+                    .get("descriptionHash")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if listings.len() >= 48 {
+                    break;
+                }
+                if !key.is_empty() && listing_seen.insert(key) {
+                    let mut enriched = item.clone();
+                    if let Some(obj) = enriched.as_object_mut() {
+                        obj.entry("sourceUrl".to_string())
+                            .or_insert_with(|| JsonValue::String(source_url.to_string()));
+                    }
+                    listings.push(enriched);
+                }
+            }
+        }
+        if let Some(items) = artifacts.get("photos").and_then(JsonValue::as_array) {
+            for item in items {
+                let key = item
+                    .get("url")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if photos.len() >= 96 {
+                    break;
+                }
+                if !key.is_empty() && photo_seen.insert(key.clone()) {
+                    let mut enriched = item.clone();
+                    if let Some(obj) = enriched.as_object_mut() {
+                        obj.insert("sourceUrl".to_string(), JsonValue::String(source_url.to_string()));
+                    }
+                    photos.push(enriched);
+                }
+            }
+        }
+        if let Some(items) = artifacts.get("paragraphs").and_then(JsonValue::as_array) {
+            for item in items {
+                let key = item
+                    .get("textHash")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if paragraphs.len() >= 120 {
+                    break;
+                }
+                if !key.is_empty() && paragraph_seen.insert(key) {
+                    let mut enriched = item.clone();
+                    if let Some(obj) = enriched.as_object_mut() {
+                        obj.insert("sourceUrl".to_string(), JsonValue::String(source_url.to_string()));
+                    }
+                    paragraphs.push(enriched);
+                }
+            }
+        }
+    }
+    let atlas_hash = forge_kasm_hash_json(&json!({
+        "schema": "forge.agency_web_research.atlas_hash.v1",
+        "contact": contact,
+        "pages": pages,
+        "listings": listings,
+        "photos": photos,
+        "paragraphs": paragraphs,
+    }));
+    let webgpu = forge_ui_atlas_runtime::webgpu_visual_bounds_micro_kernel(&atlas_hash);
+    json!({
+        "schema": "forge.agency_web_research.report.v1",
+        "status": "ok",
+        "mode": "background_webview_plus_parallel_http_atlas",
+        "contact": contact,
+        "seedUrls": seeds,
+        "pageCount": pages.len(),
+        "listingCount": listings.len(),
+        "photoCount": photos.len(),
+        "paragraphCount": paragraphs.len(),
+        "listings": listings.into_iter().take(48).collect::<Vec<_>>(),
+        "photos": photos.into_iter().take(96).collect::<Vec<_>>(),
+        "paragraphs": paragraphs.into_iter().take(120).collect::<Vec<_>>(),
+        "pages": pages.into_iter().take(16).collect::<Vec<_>>(),
+        "atlasHash": atlas_hash,
+        "webgpuKernelRun": webgpu,
+        "elapsedMs": started.elapsed().as_millis() as u64,
+        "doctrine": "content_addressed_skip_repeated_pages",
+    })
+}
+
+fn agency_web_research_native_present<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    url: &str,
+) -> Result<(), String> {
+    let target_url = Url::parse(url.trim()).map_err(|e| format!("invalid web research url: {e}"))?;
+    if let Some(webview) = app.get_webview(AGENCY_WEB_RESEARCH_CHILD_LABEL) {
+        let _ = webview.navigate(target_url.clone());
+        let hidden = onboarding_native_hidden_bounds();
+        let _ = set_native_webview_bounds(&webview, &hidden);
+        let _ = webview.show();
+        return Ok(());
+    }
+    let main = app
+        .get_window("main")
+        .ok_or_else(|| "window 'main' not found".to_string())?;
+    let load_app = app.clone();
+    let builder = tune_native_webview_builder(
+        WebviewBuilder::new(
+            AGENCY_WEB_RESEARCH_CHILD_LABEL,
+            WebviewUrl::External(target_url.clone()),
+        ),
+        false,
+    )
+    .focused(false)
+    .background_color(Color(0, 0, 0, 0))
+    .on_page_load(move |_webview, payload| {
+        if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+            #[cfg(windows)]
+            {
+                let dom = agency_web_research_call_devtools_json(
+                    &load_app,
+                    "DOMSnapshot.captureSnapshot",
+                    &json!({
+                        "computedStyles": WEBEXPLORER_NATIVE_CDP_STYLE_WHITELIST,
+                        "includePaintOrder": true,
+                        "includeDOMRects": true,
+                    }),
+                );
+                alpha_trace(
+                    &load_app,
+                    "agency.web_research.native",
+                    format!(
+                        "hidden.page.finished url={} dom_snapshot={}",
+                        payload.url(),
+                        if dom.is_ok() { "ok" } else { "error" }
+                    ),
+                );
+            }
+        }
+    });
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.transparent(true);
+    let hidden = onboarding_native_hidden_bounds();
+    let hidden_position = LogicalPosition::new(hidden.x, hidden.y);
+    let hidden_size = LogicalSize::new(hidden.width, hidden.height);
+    let webview = main
+        .add_child(builder, hidden_position, hidden_size)
+        .map_err(|e| e.to_string())?;
+    let _ = webview.set_auto_resize(false);
+    let _ = webview.show();
+    tune_native_platform_webview(app, AGENCY_WEB_RESEARCH_CHILD_LABEL, "agency-web-research");
+    Ok(())
+}
+
+#[tauri::command]
+async fn agency_web_research_start<R: Runtime>(
+    contact: JsonValue,
+    app: tauri::AppHandle<R>,
+) -> Result<JsonValue, String> {
+    let search_url = agency_web_research_search_url(&contact)?.to_string();
+    let _ = agency_web_research_native_present(&app, &search_url)
+        .map_err(|err| alpha_trace(&app, "agency.web_research.native", format!("present.error {err}")));
+    alpha_trace(
+        &app,
+        "agency.web_research",
+        format!("started search_url={search_url}"),
+    );
+    Ok(agency_web_research_crawl(contact).await)
+}
+
+#[cfg(not(windows))]
+fn execute_agency_earth_act_code<R: Runtime>(
+    _app: &tauri::AppHandle<R>,
+    _act_code: &str,
+    _value: Option<String>,
+    _dry_run: bool,
+) -> Result<JsonValue, String> {
+    Err("agency earth native Act Code is only available on Windows".to_string())
 }
 
 fn execute_collection_webexplorer_action(
@@ -5153,7 +6725,7 @@ fn build_codex_canvas_direct_oauth_instructions(reasoning_effort: &str) -> Strin
             "@forge:direct:v1 p=Codex lang=fr tools=0 effort={}",
             reasoning_effort
         ),
-        "style=fr concis; answer directly.".to_string(),
+        "style=français naturel, concis; réponds directement; conserve les accents français corrects (é, è, ê, à, ç, œ) dans le texte visible.".to_string(),
     ]
     .join("\n")
 }
@@ -5187,73 +6759,145 @@ fn load_forge_direct_template_catalog() -> Result<JsonValue, String> {
     Ok(value)
 }
 
-fn render_forge_direct_template_catalog_for_prompt(catalog: &JsonValue) -> String {
-    let mut lines = Vec::new();
-    if let Some(templates) = catalog.get("templates").and_then(JsonValue::as_array) {
-        for entry in templates {
-            let id = entry.get("id").and_then(JsonValue::as_str).unwrap_or("");
-            let code = entry.get("code").and_then(JsonValue::as_str).unwrap_or("");
-            let description = entry
-                .get("description")
-                .and_then(JsonValue::as_str)
-                .unwrap_or("");
-            let slots = entry
-                .get("slots")
-                .and_then(JsonValue::as_object)
-                .map(|items| {
-                    items
-                        .iter()
-                        .map(|(key, spec)| {
-                            let kind = spec.get("kind").and_then(JsonValue::as_str).unwrap_or("string");
-                            let slot_code = spec.get("code").and_then(JsonValue::as_str).unwrap_or("");
-                            if slot_code.is_empty() {
-                                format!("{key}:{kind}")
-                            } else {
-                                format!("{slot_code}={key}:{kind}")
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
+fn direct_template_catalog_domain_labels(catalog: &JsonValue, domain: &str) -> (String, String) {
+    let mut split = domain.split('.');
+    let category_id = split.next().unwrap_or("").trim();
+    let subcategory_id = split.next().unwrap_or("").trim();
+    let Some(categories) = catalog.get("categories").and_then(JsonValue::as_array) else {
+        return (category_id.to_string(), subcategory_id.to_string());
+    };
+    for category in categories {
+        if category.get("id").and_then(JsonValue::as_str) != Some(category_id) {
+            continue;
+        }
+        let category_label = category
+            .get("label")
+            .and_then(JsonValue::as_str)
+            .unwrap_or(category_id)
+            .to_string();
+        let subcategory_label = category
+            .get("subcategories")
+            .and_then(JsonValue::as_array)
+            .and_then(|items| {
+                items.iter().find(|item| {
+                    item.get("id").and_then(JsonValue::as_str) == Some(subcategory_id)
                 })
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "none".to_string());
-            if code.is_empty() {
-                lines.push(format!("- {id}: {description}; slots={slots}"));
-            } else {
-                lines.push(format!("- {code} ({id}): {description}; slots={slots}"));
+            })
+            .and_then(|item| item.get("label").and_then(JsonValue::as_str))
+            .unwrap_or(subcategory_id)
+            .to_string();
+        return (category_label, subcategory_label);
+    }
+    (category_id.to_string(), subcategory_id.to_string())
+}
+
+fn build_direct_template_route_scope(
+    catalog: &JsonValue,
+    user_message: &str,
+    privacy_scope: Option<&str>,
+) -> JsonValue {
+    let lower = user_message.to_lowercase();
+    let categories = catalog
+        .get("categories")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut best_domain = String::new();
+    let mut best_score = i64::MIN;
+    let mut best_tools = Vec::new();
+    for category in &categories {
+        let category_id = category.get("id").and_then(JsonValue::as_str).unwrap_or("");
+        let subcategories = category
+            .get("subcategories")
+            .and_then(JsonValue::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for subcategory in subcategories {
+            let subcategory_id = subcategory.get("id").and_then(JsonValue::as_str).unwrap_or("");
+            if category_id.is_empty() || subcategory_id.is_empty() {
+                continue;
+            }
+            let mut score = 0_i64;
+            if privacy_scope == Some("agence_immo") && category_id == "real_estate" {
+                score += 2;
+            }
+            if let Some(keywords) = subcategory.get("keywords").and_then(JsonValue::as_array) {
+                for keyword in keywords {
+                    let value = keyword.as_str().unwrap_or("").trim().to_lowercase();
+                    if !value.is_empty() && lower.contains(&value) {
+                        score += 6;
+                    }
+                }
+            }
+            let mut matched_tools = Vec::new();
+            if let Some(tool_ids) = subcategory.get("toolIds").and_then(JsonValue::as_array) {
+                for tool in tool_ids {
+                    let raw = tool.as_str().unwrap_or("").trim();
+                    if raw.is_empty() {
+                        continue;
+                    }
+                    let spaced = raw.replace('-', " ").to_lowercase();
+                    let dashed = raw.to_lowercase();
+                    if lower.contains(&spaced) || lower.contains(&dashed) {
+                        score += 8;
+                        matched_tools.push(raw.to_string());
+                    }
+                }
+            }
+            let domain = format!("{category_id}.{subcategory_id}");
+            if score > best_score {
+                best_score = score;
+                best_domain = domain;
+                best_tools = matched_tools;
             }
         }
     }
-    lines.join("\n")
-}
-
-fn build_codex_canvas_template_selector_instructions(
-    catalog: &JsonValue,
-    reasoning_effort: &str,
-) -> String {
-    [
-        format!(
-            "@forge:template_loop:v1 p=Codex lang=fr tools=0 effort={}",
-            reasoning_effort
-        ),
-        "Tu es un routeur Forge ultra-concis.".to_string(),
-        "Tu n'ecris jamais de code libre et tu n'inventes jamais un nouvel outil.".to_string(),
-        "Tu dois choisir strictement un template predefini ou answer_only.".to_string(),
-        "Tu retournes UNIQUEMENT un objet JSON valide sans markdown ni texte autour.".to_string(),
-        "Prefere la forme compacte: t=template code, s=slots compactes, a=answer, r=reason, c=confidence."
-            .to_string(),
-        "Si l'intention est ambigue ou hors Forge, utilise answer_only avec une reponse breve."
-            .to_string(),
-        "Si tu choisis un template, remplis seulement les slots necessaires avec des valeurs compactes."
-            .to_string(),
-        "Les tokens doivent etre courts: job_id/projection_ref/scope en bare tokens; max_bytes en nombre; intent en phrase courte."
-            .to_string(),
-        "Catalogue:".to_string(),
-        render_forge_direct_template_catalog_for_prompt(catalog),
-        r#"Schema JSON prefere: {"m":"template|answer_only","t":"A0|B1|P1...","s":{"sc":"real_estate","n":4},"a":"","r":"","c":0.0}"#.to_string(),
-        r#"Compatibilite acceptee: {"mode":"template|answer_only","template_id":"...","slots":{},"answer":"...","reason":"...","confidence":0.0}"#.to_string(),
-    ]
-    .join("\n")
+    if best_domain.is_empty() || best_score <= 0 {
+        best_domain = if privacy_scope == Some("agence_immo") {
+            "real_estate.production_immo".to_string()
+        } else if lower.contains("memoire")
+            || lower.contains("memory")
+            || lower.contains("brain")
+            || lower.contains("note")
+        {
+            "core.memory".to_string()
+        } else if lower.contains("atlas")
+            || lower.contains("document")
+            || lower.contains("session")
+            || lower.contains("dossier")
+        {
+            "core.atlas".to_string()
+        } else if lower.contains("job")
+            || lower.contains("projection")
+            || lower.contains("rejoue")
+            || lower.contains("replay")
+            || lower.contains("run")
+        {
+            "core.execution".to_string()
+        } else {
+            "core.chat".to_string()
+        };
+    }
+    let (category_label, subcategory_label) =
+        direct_template_catalog_domain_labels(catalog, &best_domain);
+    let mut visible_domains = vec![best_domain.clone(), "core.chat".to_string()];
+    if best_domain.starts_with("real_estate.") {
+        visible_domains.extend([
+            "core.memory".to_string(),
+            "core.atlas".to_string(),
+            "core.execution".to_string(),
+        ]);
+    }
+    visible_domains.sort();
+    visible_domains.dedup();
+    json!({
+        "activeDomain": best_domain,
+        "activeCategoryLabel": category_label,
+        "activeSubcategoryLabel": subcategory_label,
+        "visibleDomains": visible_domains,
+        "matchedTools": best_tools,
+        "privacyScope": privacy_scope.unwrap_or(""),
+    })
 }
 
 fn direct_template_compact_token(raw: &str) -> Option<String> {
@@ -5351,6 +6995,47 @@ fn direct_template_plan_intent_hint(message: &str) -> Option<String> {
     Some(trimmed)
 }
 
+fn direct_template_real_estate_brain_update_fact(message_lower: &str) -> Option<(&'static str, &'static str)> {
+    let mentions_identity = message_lower.contains("agency_identity")
+        || message_lower.contains("identite agence")
+        || message_lower.contains("identité agence")
+        || message_lower.contains("nom de l agence")
+        || message_lower.contains("adresse de l agence")
+        || message_lower.contains("telephone de l agence")
+        || message_lower.contains("téléphone de l agence")
+        || message_lower.contains("site de l agence");
+    let mentions_goals = message_lower.contains("agency_goals")
+        || message_lower.contains("objectif")
+        || message_lower.contains("objectifs")
+        || message_lower.contains("priorite")
+        || message_lower.contains("priorité")
+        || message_lower.contains("priorites")
+        || message_lower.contains("priorités");
+    let asks_update = message_lower.contains("change")
+        || message_lower.contains("changent")
+        || message_lower.contains("modifie")
+        || message_lower.contains("modifier")
+        || message_lower.contains("mets a jour")
+        || message_lower.contains("met a jour")
+        || message_lower.contains("mettre a jour")
+        || message_lower.contains("corrige")
+        || message_lower.contains("corriger")
+        || message_lower.contains("enregistre")
+        || message_lower.contains("memorise")
+        || message_lower.contains("mémorise")
+        || message_lower.contains("souviens");
+    if !asks_update {
+        return None;
+    }
+    if mentions_goals {
+        Some(("agency_goals", "goal_fact"))
+    } else if mentions_identity {
+        Some(("agency_identity", "agency_fact"))
+    } else {
+        None
+    }
+}
+
 fn direct_template_wants_projection(message_lower: &str) -> bool {
     message_lower.contains("projection")
         || message_lower.contains("projette")
@@ -5429,13 +7114,24 @@ fn finalize_codex_direct_template_selection(
 ) -> Result<JsonValue, String> {
     let (template_id, forge_slash, answer, reason, confidence) =
         validate_codex_direct_template_selection(catalog, &selection)?;
-    let template_code = codex_direct_template_catalog_entry(catalog, &template_id)
-        .and_then(|entry| entry.get("code").and_then(JsonValue::as_str))
+    let entry = codex_direct_template_catalog_entry(catalog, &template_id);
+    let template_code = entry
+        .and_then(|item| item.get("code").and_then(JsonValue::as_str))
         .unwrap_or("");
+    let tool_hints = entry
+        .and_then(|item| item.get("toolHints"))
+        .cloned()
+        .unwrap_or(JsonValue::Null);
+    let primary_domain = entry
+        .and_then(|item| item.get("primaryDomain"))
+        .cloned()
+        .unwrap_or(JsonValue::Null);
     Ok(json!({
         "selection": selection,
         "templateId": template_id,
         "templateCode": template_code,
+        "toolHints": tool_hints,
+        "primaryDomain": primary_domain,
         "forgeSlash": forge_slash,
         "answer": answer,
         "reason": reason,
@@ -5450,6 +7146,24 @@ fn try_local_codex_canvas_template_selection(
     user_message: &str,
 ) -> Result<Option<JsonValue>, String> {
     let message_lower = user_message.to_lowercase();
+    if let Some((fact_key, kind)) = direct_template_real_estate_brain_update_fact(&message_lower) {
+        return finalize_codex_direct_template_selection(
+            catalog,
+            json!({
+                "mode": "template",
+                "template_id": "real_estate_brain_update",
+                "slots": {
+                    "fact_key": fact_key,
+                    "kind": kind,
+                    "text": direct_template_trimmed_message(user_message)
+                },
+                "answer": "",
+                "reason": "local_real_estate_brain_update_shortcut",
+                "confidence": 0.97
+            }),
+        )
+        .map(Some);
+    }
     if let Some(brain_ref) = direct_template_brain_ref_hint(user_message) {
         return finalize_codex_direct_template_selection(
             catalog,
@@ -7684,7 +9398,7 @@ fn canvas_runtime_catalog(runtime: &str) -> Vec<CanvasRuntimeModel> {
     let (available, models): (bool, &[(&str, &str)]) = match runtime {
         "codex" => (codex_canvas_status(None).connected, &[("gpt-5.5", "GPT 5.5"), ("gpt-5.4", "GPT 5.4"), ("gpt-5.3-codex", "GPT 5.3")]),
         "claude" => (claude_cli_status(None).connected, &[("claude-sonnet-4.6", "Sonnet 4.6"), ("claude-opus-4.6", "Opus 4.6")]),
-        "gemini" => (gemini_cli_status(None).connected, &[("gemini-3-pro", "Gemini 3 Pro")]),
+        "gemini" => (gemini_cli_status(None).connected, &[("gemini-3-pro", "Gemini 3 Pro"), ("gemini-2.5-pro", "Gemini 2.5 Pro"), ("gemini-2.5-flash", "Gemini 2.5 Flash")]),
         _ => return Vec::new(),
     };
     models.iter().map(|(id, label)| CanvasRuntimeModel { id: (*id).into(), label: (*label).into(), available }).collect()
@@ -9497,7 +11211,7 @@ fn alpha_debug_log(
     Ok(())
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ForgeJobEntry {
     job_id: String,
@@ -9745,6 +11459,8 @@ const BLOOMBERG_LIVE_URL: &str =
     "https://www.youtube.com/embed/iEpJwprxDdk?autoplay=1&mute=0&playsinline=1&controls=0&disablekb=1&fs=0&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=1&cc_lang_pref=en&enablejsapi=1";
 const BLOOMBERG_YOUTUBE_VIDEO_ID: &str = "iEpJwprxDdk";
 const BLOOMBERG_CHILD_LABEL: &str = "bloomberg-live-native";
+const AGENCY_WEB_RESEARCH_CHILD_LABEL: &str = "agency-web-research-native";
+const AGENCY_WEB_ITEM_CHILD_LABEL: &str = "agency-web-item-native";
 const BLOOMBERG_NAVIGATING_TITLE_PREFIX: &str = "FORGE_BLOOMBERG_NAVIGATING:";
 const BLOOMBERG_VIEWER_PREPARED_TITLE_PREFIX: &str = "FORGE_BLOOMBERG_VIEWER_PREPARED:";
 const BLOOMBERG_MEDIA_READY_TITLE_PREFIX: &str = "FORGE_BLOOMBERG_MEDIA_READY:";
@@ -9770,10 +11486,15 @@ struct NativeWebviewRuntimeState {
 
 static WEB_EXPLORER_NATIVE_RUNTIME: OnceLock<Mutex<NativeWebviewRuntimeState>> = OnceLock::new();
 static AGENCY_EARTH_NATIVE_RUNTIME: OnceLock<Mutex<NativeWebviewRuntimeState>> = OnceLock::new();
+static AGENCY_WEB_ITEM_NATIVE_RUNTIME: OnceLock<Mutex<NativeWebviewRuntimeState>> = OnceLock::new();
 static BLOOMBERG_NATIVE_RUNTIME: OnceLock<Mutex<NativeWebviewRuntimeState>> = OnceLock::new();
+static FORGE_UI_ATLAS_CACHE: OnceLock<Mutex<HashMap<String, JsonValue>>> = OnceLock::new();
+static AGENCY_WEB_RESEARCH_CACHE: OnceLock<Mutex<HashMap<String, JsonValue>>> = OnceLock::new();
+static LATEST_AGENCY_EARTH_UI_ATLAS: OnceLock<Mutex<Option<JsonValue>>> = OnceLock::new();
 static BLOOMBERG_NATIVE_SHOULD_START: AtomicBool = AtomicBool::new(false);
 static WEB_EXPLORER_PRESENT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static AGENCY_EARTH_PRESENT_GENERATION: AtomicU64 = AtomicU64::new(0);
+static AGENCY_WEB_ITEM_PRESENT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static BLOOMBERG_PRESENT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static BLOOMBERG_TRANSCRIPT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static BLOOMBERG_TRANSCRIPT_RECORDING: AtomicBool = AtomicBool::new(false);
@@ -9860,8 +11581,24 @@ fn agency_earth_native_runtime() -> &'static Mutex<NativeWebviewRuntimeState> {
     AGENCY_EARTH_NATIVE_RUNTIME.get_or_init(|| Mutex::new(NativeWebviewRuntimeState::default()))
 }
 
+fn agency_web_item_native_runtime() -> &'static Mutex<NativeWebviewRuntimeState> {
+    AGENCY_WEB_ITEM_NATIVE_RUNTIME.get_or_init(|| Mutex::new(NativeWebviewRuntimeState::default()))
+}
+
 fn bloomberg_native_runtime() -> &'static Mutex<NativeWebviewRuntimeState> {
     BLOOMBERG_NATIVE_RUNTIME.get_or_init(|| Mutex::new(NativeWebviewRuntimeState::default()))
+}
+
+fn forge_ui_atlas_cache() -> &'static Mutex<HashMap<String, JsonValue>> {
+    FORGE_UI_ATLAS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn agency_web_research_cache() -> &'static Mutex<HashMap<String, JsonValue>> {
+    AGENCY_WEB_RESEARCH_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn latest_agency_earth_ui_atlas() -> &'static Mutex<Option<JsonValue>> {
+    LATEST_AGENCY_EARTH_UI_ATLAS.get_or_init(|| Mutex::new(None))
 }
 
 fn bloomberg_transcript_writer_state(
@@ -17065,6 +18802,8 @@ fn sync_agency_earth_native<R: Runtime>(
     }
 
     let load_app = app.clone();
+    let load_bounds = visible_bounds.clone();
+    let load_url_key = target_url.to_string();
     let builder = tune_native_webview_builder(
         WebviewBuilder::new(
             AGENCY_EARTH_CHILD_LABEL,
@@ -17076,12 +18815,34 @@ fn sync_agency_earth_native<R: Runtime>(
     .background_color(Color(0, 0, 0, 0))
     .initialization_script(agency_earth_native_runtime_script())
     .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-    .on_page_load(move |_webview, payload| {
+    .on_page_load(move |webview, payload| {
         alpha_trace(
             &load_app,
             "agency.earth.native",
             format!("page_load event={:?} url={}", payload.event(), payload.url()),
         );
+        if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+            let _ = webview.eval(agency_earth_native_runtime_script());
+            if AGENCY_EARTH_PRESENT_GENERATION.load(Ordering::SeqCst) == generation {
+                if let Err(err) = set_native_webview_bounds(&webview, &load_bounds) {
+                    alpha_trace(
+                        &load_app,
+                        "agency.earth.native",
+                        format!("ready.bounds.error {err}"),
+                    );
+                    return;
+                }
+                let _ = webview.set_auto_resize(false);
+                let _ = webview.show();
+                if let Ok(mut state) = agency_earth_native_runtime().lock() {
+                    state.visible = true;
+                    state.parked = false;
+                    state.url_key = load_url_key.clone();
+                    state.bounds = Some(load_bounds.clone());
+                }
+                alpha_trace(&load_app, "agency.earth.native", "ready.show.ok");
+            }
+        }
     });
     #[cfg(not(target_os = "macos"))]
     let builder = builder.transparent(true);
@@ -17097,19 +18858,22 @@ fn sync_agency_earth_native<R: Runtime>(
         );
         return Ok(());
     }
+    let hidden_bounds = onboarding_native_hidden_bounds();
+    let hidden_position = LogicalPosition::new(hidden_bounds.x, hidden_bounds.y);
+    let hidden_size = LogicalSize::new(hidden_bounds.width, hidden_bounds.height);
     let webview = main
-        .add_child(builder, position, size)
+        .add_child(builder, hidden_position, hidden_size)
         .map_err(|e| e.to_string())?;
     let _ = webview.set_auto_resize(false);
-    let _ = webview.show();
+    let _ = webview.hide();
     tune_native_platform_webview(app, AGENCY_EARTH_CHILD_LABEL, "agency-earth");
     if let Ok(mut state) = agency_earth_native_runtime().lock() {
-        state.visible = true;
-        state.parked = false;
+        state.visible = false;
+        state.parked = true;
         state.url_key = target_url.to_string();
-        state.bounds = Some(visible_bounds);
+        state.bounds = None;
     }
-    alpha_trace(app, "agency.earth.native", "present.create.ok");
+    alpha_trace(app, "agency.earth.native", "present.create.hidden_until_ready.ok");
     Ok(())
 }
 
@@ -17169,6 +18933,181 @@ fn agency_earth_native_hide<R: Runtime>(
             state.bounds = None;
         }
         alpha_trace(&app, "agency.earth.native", "hide.ok");
+    }
+    Ok(())
+}
+
+fn sync_agency_web_item_native<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    bounds: WebExplorerMemoryBounds,
+    url: String,
+    force_reload: bool,
+    generation: u64,
+) -> Result<(), String> {
+    if AGENCY_WEB_ITEM_PRESENT_GENERATION.load(Ordering::SeqCst) != generation {
+        alpha_trace(
+            app,
+            "agency.web_item.native",
+            format!("present.coalesced.stale generation={generation} phase=before-state"),
+        );
+        return Ok(());
+    }
+    let target_url = Url::parse(url.trim()).map_err(|e| format!("invalid agency web item url: {e}"))?;
+    if target_url.scheme() != "http" && target_url.scheme() != "https" {
+        return Err("agency web item requires http(s) url".to_string());
+    }
+    let visible_bounds = guarded_native_visible_bounds(WebExplorerMemoryBounds {
+        x: bounds.x.round(),
+        y: bounds.y.round(),
+        width: bounds.width.round().max(2.0),
+        height: bounds.height.round().max(2.0),
+    });
+    if let Some(webview) = app.get_webview(AGENCY_WEB_ITEM_CHILD_LABEL) {
+        if AGENCY_WEB_ITEM_PRESENT_GENERATION.load(Ordering::SeqCst) != generation {
+            return Ok(());
+        }
+        let current = webview.url().ok();
+        let should_reload = force_reload || current.as_ref().map(Url::as_str) != Some(target_url.as_str());
+        let already_applied = agency_web_item_native_runtime()
+            .lock()
+            .ok()
+            .is_some_and(|state| {
+                state.visible
+                    && !state.parked
+                    && state.url_key == target_url.as_str()
+                    && state
+                        .bounds
+                        .as_ref()
+                        .is_some_and(|last| native_bounds_equal(last, &visible_bounds))
+            });
+        if should_reload {
+            let _ = webview.navigate(target_url.clone());
+        }
+        if !already_applied || should_reload {
+            set_native_webview_bounds(&webview, &visible_bounds)?;
+            let _ = webview.set_auto_resize(false);
+            let _ = webview.show();
+            if let Ok(mut state) = agency_web_item_native_runtime().lock() {
+                state.visible = true;
+                state.parked = false;
+                state.url_key = target_url.to_string();
+                state.bounds = Some(visible_bounds.clone());
+            }
+        }
+        alpha_trace(app, "agency.web_item.native", "present.update.ok");
+        return Ok(());
+    }
+
+    let load_app = app.clone();
+    let load_bounds = visible_bounds.clone();
+    let load_url_key = target_url.to_string();
+    let builder = tune_native_webview_builder(
+        WebviewBuilder::new(
+            AGENCY_WEB_ITEM_CHILD_LABEL,
+            WebviewUrl::External(target_url.clone()),
+        ),
+        false,
+    )
+    .focused(false)
+    .background_color(Color(8, 8, 8, 255))
+    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+    .on_page_load(move |webview, payload| {
+        alpha_trace(
+            &load_app,
+            "agency.web_item.native",
+            format!("page_load event={:?} url={}", payload.event(), payload.url()),
+        );
+        if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            && AGENCY_WEB_ITEM_PRESENT_GENERATION.load(Ordering::SeqCst) == generation
+        {
+            if let Err(err) = set_native_webview_bounds(&webview, &load_bounds) {
+                alpha_trace(&load_app, "agency.web_item.native", format!("ready.bounds.error {err}"));
+                return;
+            }
+            let _ = webview.set_auto_resize(false);
+            let _ = webview.show();
+            if let Ok(mut state) = agency_web_item_native_runtime().lock() {
+                state.visible = true;
+                state.parked = false;
+                state.url_key = load_url_key.clone();
+                state.bounds = Some(load_bounds.clone());
+            }
+        }
+    });
+
+    let main = app
+        .get_window("main")
+        .ok_or_else(|| "window 'main' not found".to_string())?;
+    let hidden_bounds = onboarding_native_hidden_bounds();
+    let hidden_position = LogicalPosition::new(hidden_bounds.x, hidden_bounds.y);
+    let hidden_size = LogicalSize::new(hidden_bounds.width, hidden_bounds.height);
+    let webview = main
+        .add_child(builder, hidden_position, hidden_size)
+        .map_err(|e| e.to_string())?;
+    let _ = webview.set_auto_resize(false);
+    let _ = webview.hide();
+    tune_native_platform_webview(app, AGENCY_WEB_ITEM_CHILD_LABEL, "agency-web-item");
+    if let Ok(mut state) = agency_web_item_native_runtime().lock() {
+        state.visible = false;
+        state.parked = true;
+        state.url_key = target_url.to_string();
+        state.bounds = None;
+    }
+    alpha_trace(app, "agency.web_item.native", "present.create.hidden_until_ready.ok");
+    Ok(())
+}
+
+#[tauri::command]
+async fn agency_web_item_native_present<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    bounds: WebExplorerMemoryBounds,
+    url: String,
+    force_reload: Option<bool>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+) -> Result<(), String> {
+    let reload = force_reload.unwrap_or(false);
+    let store_path = forge_store_path_from_app(&app);
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        store_path.as_deref(),
+        "agency_web_item_native_present",
+        json!({ "bounds": &bounds, "url": &url, "forceReload": reload }),
+    )?;
+    let generation = AGENCY_WEB_ITEM_PRESENT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn_blocking(move || {
+        if AGENCY_WEB_ITEM_PRESENT_GENERATION.load(Ordering::SeqCst) != generation {
+            return Ok(());
+        }
+        sync_agency_web_item_native(&app, bounds, url, reload, generation)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn agency_web_item_native_hide<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+) -> Result<(), String> {
+    let store_path = forge_store_path_from_app(&app);
+    let _proof = forge_fbc_guard_sensitive_action(
+        &kernel,
+        store_path.as_deref(),
+        "agency_web_item_native_hide",
+        json!({ "target": AGENCY_WEB_ITEM_CHILD_LABEL }),
+    )?;
+    AGENCY_WEB_ITEM_PRESENT_GENERATION.fetch_add(1, Ordering::SeqCst);
+    if let Some(webview) = app.get_webview(AGENCY_WEB_ITEM_CHILD_LABEL) {
+        let hidden_bounds = onboarding_native_hidden_bounds();
+        let _ = set_native_webview_bounds(&webview, &hidden_bounds);
+        let _ = webview.set_auto_resize(false);
+        let _ = webview.hide();
+        if let Ok(mut state) = agency_web_item_native_runtime().lock() {
+            state.visible = false;
+            state.parked = true;
+            state.bounds = None;
+        }
+        alpha_trace(&app, "agency.web_item.native", "hide.ok");
     }
     Ok(())
 }
@@ -18681,18 +20620,12 @@ async fn create_forge_pending_job(
 async fn list_forge_jobs(
     limit: Option<usize>,
     state: tauri::State<'_, Mutex<ForgeAppState>>,
-    kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
+    _kernel: tauri::State<'_, Mutex<forge_kernel::ForgeKernel>>,
 ) -> Result<Vec<ForgeJobEntry>, String> {
     let store_path = forge_store_path_from_state(&state)?;
-    let _proof = forge_fbc_guard_sensitive_action(
-        &kernel,
-        Some(&store_path),
-        "list_forge_jobs",
-        json!({ "limit": limit, "projectionOnly": true }),
-    )?;
     let jobs_dir = store_path.join("jobs");
     let all_job_dirs = forge_job_mirror_dirs(&jobs_dir);
-    let mut paths_by_job = std::collections::HashMap::<String, (SystemTime, PathBuf)>::new();
+    let mut paths_by_job = std::collections::HashMap::<String, (SystemTime, u64, PathBuf)>::new();
     let mut unreadable_dirs = Vec::new();
     for dir in &all_job_dirs {
         let entries = match std::fs::read_dir(dir) {
@@ -18708,10 +20641,12 @@ async fn list_forge_jobs(
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
-            let modified = entry
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let metadata = match entry.metadata() {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+            let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            let len = metadata.len();
             let fallback_id = path
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -18721,9 +20656,9 @@ async fn list_forge_jobs(
                 continue;
             }
             match paths_by_job.get(&fallback_id) {
-                Some((known_modified, _)) if *known_modified >= modified => {}
+                Some((known_modified, _, _)) if *known_modified >= modified => {}
                 _ => {
-                    paths_by_job.insert(fallback_id, (modified, path));
+                    paths_by_job.insert(fallback_id, (modified, len, path));
                 }
             }
         }
@@ -18734,10 +20669,34 @@ async fn list_forge_jobs(
             unreadable_dirs.join("; ")
         ));
     }
-    let paths = paths_by_job.into_values().collect::<Vec<_>>();
     let max_items = limit.unwrap_or(30).clamp(1, 200);
+    let mut signature_parts = paths_by_job
+        .iter()
+        .map(|(job_id, (modified, len, path))| {
+            let modified_ms = modified
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            format!("{job_id}:{modified_ms}:{len}:{}", path.display())
+        })
+        .collect::<Vec<_>>();
+    signature_parts.sort();
+    let signature = signature_parts.join("|");
+    if let Some(entries) = {
+        let app_state = state.lock().map_err(|e| e.to_string())?;
+        app_state
+            .jobs_cache
+            .as_ref()
+            .filter(|cache| cache.signature == signature)
+            .map(|cache| cache.entries.clone())
+    } {
+        let mut cached = entries;
+        cached.truncate(max_items);
+        return Ok(cached);
+    }
+    let paths = paths_by_job.into_values().collect::<Vec<_>>();
     let mut out = Vec::new();
-    for (modified, path) in paths {
+    for (modified, _, path) in paths {
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(_) => continue,
@@ -18843,8 +20802,15 @@ async fn list_forge_jobs(
             .cmp(&a.pinned.unwrap_or(false))
             .then_with(|| b.last_modified_ms.cmp(&a.last_modified_ms))
     });
-    out.truncate(max_items);
-    Ok(out)
+    if let Ok(mut app_state) = state.lock() {
+        app_state.jobs_cache = Some(ForgeJobsCache {
+            signature,
+            entries: out.clone(),
+        });
+    }
+    let mut limited = out;
+    limited.truncate(max_items);
+    Ok(limited)
 }
 
 #[tauri::command]
@@ -19088,6 +21054,22 @@ fn sensitive_tauri_command_guard_metadata() -> &'static [SensitiveTauriCommandGu
             boot_safe: false,
         },
         SensitiveTauriCommandGuardMetadata {
+            command: "agency_web_item_native_present",
+            owner: "real-estate",
+            surface: "native_present",
+            requires_fbc_guard: true,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
+            command: "agency_web_item_native_hide",
+            owner: "real-estate",
+            surface: "native_hide",
+            requires_fbc_guard: true,
+            allow_raw_fallback: false,
+            boot_safe: false,
+        },
+        SensitiveTauriCommandGuardMetadata {
             command: "bloomberg_live_native_present",
             owner: "trading",
             surface: "native_present",
@@ -19107,7 +21089,7 @@ fn sensitive_tauri_command_guard_metadata() -> &'static [SensitiveTauriCommandGu
             command: "list_forge_jobs",
             owner: "shell",
             surface: "jobs_projection",
-            requires_fbc_guard: true,
+            requires_fbc_guard: false,
             allow_raw_fallback: true,
             boot_safe: true,
         },
@@ -20751,11 +22733,16 @@ fn gemini_cli_any_candidate_exists() -> bool {
         .any(|path| path.is_absolute() && path.exists())
 }
 
+static GEMINI_CLI_BINARY_CACHE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+
 fn gemini_cli_binary_path() -> Option<PathBuf> {
-    let candidates = gemini_command_candidates();
-    candidates
-        .into_iter()
-        .find(|path| gemini_cli_probe(path))
+    GEMINI_CLI_BINARY_CACHE
+        .get_or_init(|| {
+            gemini_command_candidates()
+                .into_iter()
+                .find(|path| gemini_cli_probe(path))
+        })
+        .clone()
 }
 
 fn is_windows_batch_candidate(path: &Path) -> bool {
@@ -21522,6 +23509,41 @@ fn canvas_message_needs_forge_tools(user_message: &str, has_active_job: bool) ->
         "kasm",
     ];
     if text_has_word(&normalized, &execution_words) && text_has_word(&normalized, &forge_object_words)
+    {
+        return true;
+    }
+    let real_estate_memory_update_words = [
+        "agency_identity",
+        "agency_goals",
+        "identite agence",
+        "identité agence",
+        "objectifs agence",
+        "objectif agence",
+        "mets a jour",
+        "mettre a jour",
+        "modifie",
+        "corrige",
+        "memorise",
+        "mémorise",
+    ];
+    let real_estate_memory_targets = [
+        "agency_identity",
+        "agency_goals",
+        "identite agence",
+        "identité agence",
+        "adresse de l agence",
+        "telephone de l agence",
+        "téléphone de l agence",
+        "site de l agence",
+        "objectif",
+        "objectifs",
+        "priorite",
+        "priorité",
+        "priorites",
+        "priorités",
+    ];
+    if text_has_any(&normalized, &real_estate_memory_update_words)
+        && text_has_any(&normalized, &real_estate_memory_targets)
     {
         return true;
     }
@@ -22618,6 +24640,8 @@ fn forge_real_estate_privacy_envelope(
         "FORGE_REAL_ESTATE_PRIVACY_BACKEND_GUARD:".to_string(),
         "mode=local_first_client_data_minimized".to_string(),
         "scope=agence_immo".to_string(),
+        "assistant_role=assistant IA qui bosse pour l'agence immobiliere active".to_string(),
+        "assistant_identity_rule=toujours parler et raisonner comme l'assistant IA de cette agence, meme pendant une reponse libre".to_string(),
         "raw_client_files=local_only".to_string(),
         "external_runtime_payload=redacted_before_dispatch".to_string(),
         format!("redactions={}", counts.summary()),
@@ -22628,6 +24652,439 @@ fn forge_real_estate_privacy_envelope(
         message.to_string(),
     ]
     .join("\n")
+}
+
+const REAL_ESTATE_ASSISTANT_ROLE_MEMORY_TEXT: &str = "Quand Forge est en mode agence immo, le LLM doit toujours se rappeler qu'il est l'assistant IA qui bosse pour l'agence immobiliere active. Il repond au nom de l'agence et dans son interet, y compris pendant les reponses libres et l'onboarding.";
+
+const REAL_ESTATE_CORE_BRAIN_MEMORIES: [(&str, &str, &str); 5] = [
+    (
+        "assistant_role",
+        "role_rule",
+        REAL_ESTATE_ASSISTANT_ROLE_MEMORY_TEXT,
+    ),
+    (
+        "agency_tone",
+        "style_rule",
+        "En mode agence immo, le LLM adopte un ton professionnel, chaleureux, direct et oriente action commerciale utile pour l'agence.",
+    ),
+    (
+        "agency_boundaries",
+        "behavior_rule",
+        "En mode agence immo, le LLM ne doit pas inventer de donnees agence, client, bien, prix, adresse ou performance; il demande confirmation quand une information est incertaine.",
+    ),
+    (
+        "data_policy",
+        "privacy_rule",
+        "En mode agence immo, les donnees clients et fichiers bruts restent locaux; le LLM privilegie les hashes, preuves, resumes compacts et refs memoire.",
+    ),
+    (
+        "tool_policy",
+        "tool_rule",
+        "En mode agence immo, le LLM consulte d'abord Brain, les preuves locales et les outils autorises comme Google Places avant d'improviser une fiche agence.",
+    ),
+];
+
+const REAL_ESTATE_ACTIVE_MEMORY_FACT_KEYS: [&str; 8] = [
+    "assistant_role",
+    "agency_identity",
+    "agency_goals",
+    "agency_tone",
+    "agency_boundaries",
+    "data_policy",
+    "tool_policy",
+    "onboarding_state",
+];
+
+#[derive(Clone)]
+struct RealEstateActiveMemorySnapshot {
+    prompt: String,
+    event: JsonValue,
+}
+
+#[derive(Clone)]
+struct RealEstateActiveMemoryCache {
+    signature: String,
+    snapshot: RealEstateActiveMemorySnapshot,
+}
+
+fn compact_real_estate_snapshot_text(text: &str, max_chars: usize) -> String {
+    let clean = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.chars().count() <= max_chars {
+        return clean;
+    }
+    let mut out = clean.chars().take(max_chars.saturating_sub(3)).collect::<String>();
+    out.push_str("...");
+    out
+}
+
+fn real_estate_snapshot_line_key(fact_key: &str) -> &'static str {
+    match fact_key {
+        "assistant_role" => "role",
+        "agency_identity" => "agency_identity",
+        "agency_goals" => "agency_goals",
+        "agency_tone" => "tone",
+        "agency_boundaries" => "boundaries",
+        "data_policy" => "data_policy",
+        "tool_policy" => "tool_policy",
+        "onboarding_state" => "onboarding",
+        _ => "memory",
+    }
+}
+
+fn real_estate_brain_note_preview_text(note: &JsonValue) -> &str {
+    note.pointer("/preview/text")
+        .or_else(|| note.get("preview"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("")
+}
+
+fn real_estate_active_memory_signature(store_path: &Path) -> String {
+    let cas = store_path.join("forge.cas");
+    let cas_meta = std::fs::metadata(&cas).ok();
+    let cas_len = cas_meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let cas_modified = cas_meta
+        .and_then(|m| m.modified().ok())
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("forge.cas:{cas_len}:{cas_modified}")
+}
+
+fn cached_real_estate_active_memory_snapshot(
+    state: &tauri::State<'_, Mutex<ForgeAppState>>,
+    store_path: &Path,
+) -> RealEstateActiveMemorySnapshot {
+    let signature = real_estate_active_memory_signature(store_path);
+    if let Some(snapshot) = state
+        .lock()
+        .ok()
+        .and_then(|app_state| {
+            app_state
+                .real_estate_memory_cache
+                .as_ref()
+                .filter(|cache| cache.signature == signature)
+                .map(|cache| cache.snapshot.clone())
+        })
+    {
+        let mut snapshot = snapshot;
+        if let JsonValue::Object(ref mut event) = snapshot.event {
+            event.insert("cacheHit".to_string(), JsonValue::Bool(true));
+            event.insert("cacheSignature".to_string(), JsonValue::String(signature));
+        }
+        return snapshot;
+    }
+    let snapshot = build_real_estate_active_memory_snapshot(store_path);
+    let mut snapshot = snapshot;
+    if let JsonValue::Object(ref mut event) = snapshot.event {
+        event.insert("cacheHit".to_string(), JsonValue::Bool(false));
+        event.insert("cacheSignature".to_string(), JsonValue::String(signature.clone()));
+    }
+    if let Ok(mut app_state) = state.lock() {
+        app_state.real_estate_memory_cache = Some(RealEstateActiveMemoryCache {
+            signature,
+            snapshot: snapshot.clone(),
+        });
+    }
+    snapshot
+}
+
+fn prewarm_real_estate_active_memory_snapshot(store_path: PathBuf, state: tauri::State<'_, Mutex<ForgeAppState>>) {
+    let signature = real_estate_active_memory_signature(&store_path);
+    let already_warm = state
+        .lock()
+        .ok()
+        .and_then(|app_state| {
+            app_state
+                .real_estate_memory_cache
+                .as_ref()
+                .map(|cache| cache.signature == signature)
+        })
+        .unwrap_or(false);
+    if already_warm {
+        return;
+    }
+    let snapshot = build_real_estate_active_memory_snapshot(&store_path);
+    if let Ok(mut app_state) = state.lock() {
+        app_state.real_estate_memory_cache = Some(RealEstateActiveMemoryCache {
+            signature,
+            snapshot,
+        });
+    }
+}
+
+fn build_real_estate_active_memory_snapshot(
+    store_path: &Path,
+) -> RealEstateActiveMemorySnapshot {
+    let recall = forge_agent_tools::brain_recall(
+        store_path,
+        &json!({
+            "scope": "agence_immo",
+            "memory_layer": "semantic",
+            "limit": 16,
+            "include_expired": false
+        }),
+    );
+    let mut facts: HashMap<String, JsonValue> = HashMap::new();
+    let mut status = "ok".to_string();
+    let mut error = String::new();
+    if let Ok(value) = recall.as_ref() {
+        let mut capture_note = |note: &JsonValue| {
+            let fact_key = note
+                .pointer("/metadata/fact_key")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("");
+            if !REAL_ESTATE_ACTIVE_MEMORY_FACT_KEYS.contains(&fact_key) {
+                return;
+            }
+            facts
+                .entry(fact_key.to_string())
+                .or_insert_with(|| note.clone());
+        };
+        if let Some(note) = value.get("latest_note") {
+            capture_note(note);
+        }
+        if let Some(notes) = value.get("recent_notes").and_then(JsonValue::as_array) {
+            for note in notes {
+                capture_note(note);
+            }
+        }
+    } else if let Err(err) = recall.as_ref() {
+        status = "fallback".to_string();
+        error = err.clone();
+    }
+
+    let mut lines = vec![
+        "FORGE_REAL_ESTATE_ACTIVE_MEMORY_SNAPSHOT:".to_string(),
+        "source=Brain canonical scope=agence_immo layer=semantic".to_string(),
+        "role=assistant IA qui bosse pour l'agence immobiliere active".to_string(),
+    ];
+    let mut included = Vec::new();
+    let mut emitted_fact_keys = HashSet::new();
+    for fact_key in REAL_ESTATE_ACTIVE_MEMORY_FACT_KEYS {
+        if fact_key == "assistant_role" {
+            continue;
+        }
+        let Some(note) = facts.get(fact_key) else {
+            continue;
+        };
+        let preview = real_estate_brain_note_preview_text(note);
+        if preview.trim().is_empty() {
+            continue;
+        }
+        let line_key = real_estate_snapshot_line_key(fact_key);
+        lines.push(format!(
+            "{line_key}={}",
+            compact_real_estate_snapshot_text(preview, 220)
+        ));
+        emitted_fact_keys.insert(fact_key);
+        included.push(json!({
+            "factKey": fact_key,
+            "hash": note.get("hash").and_then(JsonValue::as_str).unwrap_or(""),
+            "verificationStatus": note.pointer("/metadata/verification_status").and_then(JsonValue::as_str).unwrap_or(""),
+            "trust": note.pointer("/metadata/trust").and_then(JsonValue::as_str).unwrap_or(""),
+        }));
+    }
+    if !emitted_fact_keys.contains("agency_identity") {
+        lines.push("agency_identity=a confirmer".to_string());
+    }
+    if !emitted_fact_keys.contains("agency_goals") {
+        lines.push("agency_goals=a definir".to_string());
+    }
+    lines.push("act_code_templates=real_estate_brain_update; agency_earth_act_code({actCode,value?,dryRun?}) pour piloter Google Earth uniquement avec un actCode earth.* fourni par l'atlas UI.".to_string());
+    if let Some(atlas_line) = compact_agency_earth_atlas_memory_line() {
+        lines.push(atlas_line);
+    }
+    lines.push("instruction=Utilise ce snapshot comme memoire active courte; si agency_identity ou agency_goals changent, mets Brain a jour via le template Act Code real_estate_brain_update. Quand tu cites un nom propre, une adresse, un telephone ou un site web en mode agence, encadre la valeur avec b* au debut et *b a la fin.".to_string());
+    let prompt = lines.join("\n");
+    let snapshot_hash = Hash::for_blob(prompt.as_bytes()).as_hex();
+    RealEstateActiveMemorySnapshot {
+        prompt,
+        event: json!({
+            "tool": "brain_recall",
+            "transport": "backend",
+            "scope": "agence_immo",
+            "memoryLayer": "semantic",
+            "label": "snapshot memoire active",
+            "status": status,
+            "snapshotHash": snapshot_hash,
+            "factKeys": included,
+            "error": if error.is_empty() { JsonValue::Null } else { JsonValue::String(error) },
+        }),
+    }
+}
+
+fn compact_agency_earth_atlas_memory_line() -> Option<String> {
+    let atlas = latest_agency_earth_ui_atlas().lock().ok()?.clone()?;
+    let tree_hash = atlas
+        .get("treeHash")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("")
+        .chars()
+        .take(16)
+        .collect::<String>();
+    let proof_hash = atlas
+        .get("proofHash")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("")
+        .chars()
+        .take(16)
+        .collect::<String>();
+    let commands = atlas
+        .get("commands")
+        .and_then(JsonValue::as_array)?
+        .iter()
+        .filter_map(|command| {
+            let act_code = command.get("actCode").and_then(JsonValue::as_str)?.trim();
+            if act_code.is_empty() {
+                return None;
+            }
+            let label = command
+                .get("label")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("")
+                .split_whitespace()
+                .take(8)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let kind = command.get("kind").and_then(JsonValue::as_str).unwrap_or("");
+            Some(format!(
+                "{}:{}:{}",
+                act_code,
+                kind,
+                if label.is_empty() { "action" } else { label.as_str() }
+            ))
+        })
+        .take(12)
+        .collect::<Vec<_>>();
+    if commands.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "agency_earth_ui_atlas=tree:{tree_hash} proof:{proof_hash} commands:[{}]",
+        commands.join(" | ")
+    ))
+}
+
+fn prepend_real_estate_active_memory_snapshot(message: String, snapshot: Option<&str>) -> String {
+    let Some(snapshot) = snapshot else {
+        return message;
+    };
+    if message.contains("FORGE_REAL_ESTATE_ACTIVE_MEMORY_SNAPSHOT:") {
+        return message;
+    }
+    format!("{snapshot}\n\n{message}")
+}
+
+fn commit_real_estate_brain_memory(
+    store_path: &Path,
+    fact_key: &str,
+    kind: &str,
+    text: &str,
+    evidence_tag: &str,
+) -> Result<JsonValue, String> {
+    let evidence_hash = Hash::for_blob(
+        format!("forge-real-estate-brain-memory-v1\n{evidence_tag}\nfact_key={fact_key}\n{text}")
+            .as_bytes(),
+    )
+    .as_hex();
+    forge_agent_tools::brain_commit(
+        store_path,
+        &json!({
+            "scope": "agence_immo",
+            "memory_layer": "semantic",
+            "kind": kind,
+            "source": "user_instruction",
+            "fact_key": fact_key,
+            "verification_status": "anchored",
+            "trust": "explicit_user_instruction",
+            "confidence": 0.95,
+            "importance": 1.0,
+            "retention": "persistent",
+            "evidence_hash": evidence_hash,
+            "text": text,
+        }),
+    )
+}
+
+fn ensure_real_estate_core_memories(store_path: &Path) -> Result<JsonValue, String> {
+    let mut memories = Vec::new();
+    for (fact_key, kind, text) in REAL_ESTATE_CORE_BRAIN_MEMORIES {
+        let result = commit_real_estate_brain_memory(
+            store_path,
+            fact_key,
+            kind,
+            text,
+            "core_user_instruction",
+        )?;
+        memories.push(json!({
+            "factKey": fact_key,
+            "kind": kind,
+            "action": result.pointer("/note/action").and_then(JsonValue::as_str).unwrap_or("stored"),
+            "hash": result.pointer("/note/hash").and_then(JsonValue::as_str).unwrap_or(""),
+            "verificationStatus": result.pointer("/note/verification_status").and_then(JsonValue::as_str).unwrap_or(""),
+        }));
+    }
+    Ok(json!({
+        "status": "ok",
+        "scope": "agence_immo",
+        "memoryLayer": "semantic",
+        "memories": memories,
+    }))
+}
+
+fn commit_real_estate_onboarding_state_memory(
+    store_path: &Path,
+    status: &str,
+    detail: &JsonValue,
+) -> Result<JsonValue, String> {
+    let agency = detail
+        .pointer("/contact/agencyName")
+        .or_else(|| detail.pointer("/agencyName"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("");
+    let city = detail
+        .pointer("/contact/city")
+        .or_else(|| detail.pointer("/city"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("");
+    let text = format!(
+        "Etat onboarding agence immo: {status}. Agence candidate: {}. Ville candidate: {}.",
+        if agency.trim().is_empty() { "non renseignee" } else { agency.trim() },
+        if city.trim().is_empty() { "non renseignee" } else { city.trim() },
+    );
+    commit_real_estate_brain_memory(
+        store_path,
+        "onboarding_state",
+        "state_fact",
+        &text,
+        status,
+    )
+}
+
+fn commit_real_estate_agency_identity_memory(
+    store_path: &Path,
+    contact: &JsonValue,
+) -> Result<JsonValue, String> {
+    let agency = contact.get("agencyName").and_then(JsonValue::as_str).unwrap_or("").trim();
+    let city = contact.get("city").and_then(JsonValue::as_str).unwrap_or("").trim();
+    let address = contact.get("address").and_then(JsonValue::as_str).unwrap_or("").trim();
+    let phone = contact.get("phone").and_then(JsonValue::as_str).unwrap_or("").trim();
+    let website = contact.get("website").and_then(JsonValue::as_str).unwrap_or("").trim();
+    let text = format!(
+        "Identite confirmee de l'agence active: nom={}; ville={}; adresse={}; telephone={}; site={}.",
+        if agency.is_empty() { "a confirmer" } else { agency },
+        if city.is_empty() { "a confirmer" } else { city },
+        if address.is_empty() { "a confirmer" } else { address },
+        if phone.is_empty() { "a confirmer" } else { phone },
+        if website.is_empty() { "a confirmer" } else { website },
+    );
+    commit_real_estate_brain_memory(
+        store_path,
+        "agency_identity",
+        "agency_fact",
+        &text,
+        "confirmed_agency_identity",
+    )
 }
 
 fn append_real_estate_privacy_audit(store_path: &Path, event: &JsonValue) -> Result<(), String> {
@@ -22695,6 +25152,7 @@ fn real_estate_first_contact_onboarding_directive(
         "@re:onb v=1 mode=intro q=agency_identity".to_string(),
         "role=assistant IA pour agence immobiliere; ton=chaleureux,enthousiaste,pro".to_string(),
         "chat=libre: reponds aux questions/observations d'abord; onboarding progresse doucement.".to_string(),
+        "intro=interprete librement ton role d'assistant IA immobilier depuis Brain; pas de phrase automatique.".to_string(),
         "ask=nom de l'agence + ville de l'agence".to_string(),
         "next=si agence+ville dans phrase naturelle: extrais-les et call forge_real_estate_resolve_agency{agency_name,city,original_user_text}; puis demande confirmation des infos trouvees.".to_string(),
     ]
@@ -22754,6 +25212,934 @@ fn real_estate_pending_contact_confirmation_directive(store_path: &Path) -> Opti
         "after_tool=Forge met a jour header/profil et ouvre Google Earth; ne decris pas les commandes techniques.".to_string(),
     ]
     .join("\n"))
+}
+
+fn real_estate_onboarding_has_contact(traits: &HashMap<String, String>) -> bool {
+    ["agency_address", "agency_phone", "agency_website", "agency_google_maps_uri"]
+        .iter()
+        .any(|key| {
+            traits
+                .get(*key)
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+        })
+}
+
+fn real_estate_user_confirms_agency_identity(message: &str) -> bool {
+    let lower = normalized_canvas_micro_text(message);
+    let positive = [
+        "oui",
+        "yes",
+        "c est exact",
+        "cest exact",
+        "c est bon",
+        "cest bon",
+        "exact",
+        "correct",
+        "valide",
+        "confirm",
+        "confirme",
+        "ok",
+        "okay",
+        "parfait",
+    ];
+    let negative = [
+        "non",
+        "pas exact",
+        "incorrect",
+        "faux",
+        "wrong",
+        "ce n est pas",
+        "c est pas",
+        "not exact",
+        "corrige",
+        "correction",
+    ];
+    text_has_any(&lower, &positive) && !text_has_any(&lower, &negative)
+}
+
+fn real_estate_user_rejects_agency_identity(message: &str) -> bool {
+    let lower = normalized_canvas_micro_text(message);
+    text_has_any(
+        &lower,
+        &[
+            "non",
+            "pas exact",
+            "incorrect",
+            "faux",
+            "wrong",
+            "ce n est pas",
+            "c est pas",
+            "not exact",
+            "corrige",
+            "correction",
+        ],
+    )
+}
+
+fn real_estate_user_refers_to_identity_onboarding(message: &str) -> bool {
+    let lower = normalized_canvas_micro_text(message);
+    text_has_any(
+        &lower,
+        &[
+            "ces infos",
+            "ces informations",
+            "ces donnees",
+            "ces renseignements",
+            "tu vas faire quoi",
+            "vous allez faire quoi",
+            "pourquoi tu demandes",
+            "pourquoi vous demandez",
+            "a quoi ca sert",
+            "avec le nom",
+            "avec la ville",
+            "avec l agence",
+        ],
+    )
+}
+
+fn real_estate_message_should_skip_identity_extraction(message: &str) -> bool {
+    let lower = normalized_canvas_micro_text(message);
+    if lower.is_empty() || lower.chars().count() > 180 {
+        return false;
+    }
+    if text_has_any(
+        &lower,
+        &[
+            "agence",
+            "immobilier",
+            "immobiliere",
+            "immo",
+            "ville",
+            "adresse",
+            "telephone",
+            "site web",
+            "cabinet",
+            "reseau",
+            "nom",
+            "s appelle",
+            "situe",
+            "situee",
+            "basee",
+        ],
+    ) {
+        return false;
+    }
+    if lower.contains(" a ") || lower.contains(" chez ") || lower.contains(" pour ") {
+        return false;
+    }
+    text_has_any(
+        &lower,
+        &[
+            "hello",
+            "bonjour",
+            "salut",
+            "coucou",
+            "comment ca marche",
+            "comment ca fonctionne",
+            "comment fonctionne",
+            "ca va",
+            "tu vas faire quoi",
+            "vous allez faire quoi",
+            "pourquoi tu demandes",
+            "pourquoi vous demandez",
+            "a quoi ca sert",
+            "explique",
+        ],
+    )
+}
+
+fn build_real_estate_agency_resolution_synthesis_prompt(
+    user_message: &str,
+    resolution: &JsonValue,
+) -> String {
+    let contact = resolution.get("contact").cloned().unwrap_or(JsonValue::Null);
+    build_google_places_result_handoff_prompt(
+        user_message,
+        &contact,
+        "Reponds en francais naturel, chaleureux et professionnel.\nUtilise strictement les champs de googlePlacesResult; n'ecris pas \"a confirmer\" pour un champ qui est present et non vide dans le JSON.\nAffiche clairement le nom, l'adresse postale, le telephone et le site web si disponibles.\nN'affiche pas le lien Google Maps.\nSi un champ manque vraiment, dis simplement qu'il reste a confirmer.\nEncadre chaque valeur utile avec b* au debut et *b a la fin: nom propre d'agence, personne ou magasin, adresse, telephone, site web. Exemple: b*Agence Exemple*b.\nTermine en demandant explicitement a l'utilisateur si ces informations sont exactes avant de continuer.\nN'evoque ni plan_only, ni template, ni outil, ni commande, ni details techniques.",
+    )
+}
+
+fn build_google_places_result_handoff_prompt(
+    user_message: &str,
+    contact: &JsonValue,
+    response_contract: &str,
+) -> String {
+    let google_places_payload = google_places_llm_payload_from_contact(contact);
+    let google_places_text = serde_json::to_string_pretty(&google_places_payload)
+        .unwrap_or_else(|_| google_places_payload.to_string());
+    format!(
+        "Message utilisateur:\n{user_message}\n\nRESULTAT API GOOGLE PLACES A REPRENDRE OBLIGATOIREMENT:\n{google_places_text}\n\nTu viens de recevoir ce resultat d'outil Google Places apres le monologue de recherche. Ta reponse finale doit recuperer les champs utiles depuis ce JSON, pas depuis ta memoire ni depuis le texte de narration precedent. Tu n'as pas besoin de relire Brain pour cette etape.\n{response_contract}"
+    )
+}
+
+fn real_estate_contact_text_field(contact: &JsonValue, key: &str) -> String {
+    contact
+        .get(key)
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn real_estate_contact_address_is_placeholder(address: &str) -> bool {
+    let normalized = normalized_canvas_micro_text(address);
+    normalized.is_empty()
+        || normalized.contains("adresse precise a confirmer")
+        || normalized.contains("adresse a confirmer")
+}
+
+fn real_estate_contact_signal_flags(contact: &JsonValue) -> (bool, bool, bool) {
+    let address = real_estate_contact_text_field(contact, "address");
+    let phone = real_estate_contact_text_field(contact, "phone");
+    let website = real_estate_contact_text_field(contact, "website");
+    (
+        !real_estate_contact_address_is_placeholder(&address),
+        !phone.trim().is_empty(),
+        !website.trim().is_empty(),
+    )
+}
+
+fn google_places_llm_payload_from_contact(contact: &JsonValue) -> JsonValue {
+    let mut result = Map::new();
+    result.insert("tool".to_string(), JsonValue::String("google_places_search".to_string()));
+    result.insert("mustUse".to_string(), JsonValue::Bool(true));
+    for (source_key, target_key) in [
+        ("agencyName", "agencyName"),
+        ("city", "city"),
+        ("address", "address"),
+        ("phone", "phone"),
+        ("website", "website"),
+        ("source", "source"),
+        ("status", "status"),
+    ] {
+        let value = contact
+            .get(source_key)
+            .and_then(JsonValue::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        result.insert(target_key.to_string(), JsonValue::String(value.to_string()));
+    }
+    let (has_address, has_phone, has_website) = real_estate_contact_signal_flags(contact);
+    result.insert("hasAddress".to_string(), JsonValue::Bool(has_address));
+    result.insert("hasPhone".to_string(), JsonValue::Bool(has_phone));
+    result.insert("hasWebsite".to_string(), JsonValue::Bool(has_website));
+    result.insert(
+        "hasUsefulContact".to_string(),
+        JsonValue::Bool(has_address || has_phone || has_website),
+    );
+    result.insert(
+        "isCompleteContact".to_string(),
+        JsonValue::Bool(has_address && has_phone && has_website),
+    );
+    json!({ "googlePlacesResult": JsonValue::Object(result) })
+}
+
+fn real_estate_contact_marked_value(contact: &JsonValue, key: &str) -> Option<String> {
+    let value = real_estate_contact_text_field(contact, key);
+    if value.trim().is_empty() {
+        return None;
+    }
+    if key == "address" && real_estate_contact_address_is_placeholder(&value) {
+        return None;
+    }
+    Some(format!("b*{}*b", value.trim()))
+}
+
+fn build_real_estate_agency_resolution_direct_reply(contact: &JsonValue) -> String {
+    let name = real_estate_contact_marked_value(contact, "agencyName")
+        .unwrap_or_else(|| "reste a confirmer".to_string());
+    let city = real_estate_contact_marked_value(contact, "city");
+    let address = real_estate_contact_marked_value(contact, "address")
+        .unwrap_or_else(|| "reste a confirmer".to_string());
+    let phone = real_estate_contact_marked_value(contact, "phone")
+        .unwrap_or_else(|| "reste a confirmer".to_string());
+    let website = real_estate_contact_marked_value(contact, "website")
+        .unwrap_or_else(|| "reste a confirmer".to_string());
+    let title = if let Some(city) = city {
+        format!("Voici les informations trouvees pour {name} a {city} :")
+    } else {
+        format!("Voici les informations trouvees pour {name} :")
+    };
+    format!(
+        "{title}\n\n- Nom : {name}\n- Adresse : {address}\n- Telephone : {phone}\n- Site web : {website}\n\nPouvez-vous me confirmer que ces informations sont exactes avant que je continue ?"
+    )
+}
+
+fn build_real_estate_agency_confirmation_direct_reply(contact: &JsonValue) -> String {
+    let name = real_estate_contact_marked_value(contact, "agencyName")
+        .unwrap_or_else(|| "cette agence".to_string());
+    format!(
+        "Parfait, ok je bosse donc pour cette agence : {name}.\n\nJe vais maintenant etudier sa presence sur internet : d'abord situer l'adresse dans Google Earth, puis lancer une recherche web pour reperer les pages et contenus utiles autour de l'agence."
+    )
+}
+
+fn build_real_estate_agency_intro_synthesis_prompt(user_message: &str) -> String {
+    format!(
+        "Message utilisateur:\n{user_message}\n\nC'est le premier message d'onboarding agence: commence toujours par une salutation qui contient explicitement \"Bonjour\" et \"bienvenue\".\nReponds ensuite au fond du message, sans formule de validation vide comme \"oui, bien sur\" si ce n'est pas utile.\nTu sais via Brain que tu deviens l'assistant IA d'une agence immobiliere. Explique librement et brievement le fonctionnement general: tu peux accompagner l'agence sur un large ensemble d'activites, t'adapter a son contexte, organiser l'information et aider a preparer ou executer le travail quotidien.\nReste general: ne donne pas une liste d'exemples trop specifique, ne promets pas de connecteurs ou d'actions non confirmes, et ne sonne pas comme une plaquette marketing.\nSi tu cites un nom propre d'agence, personne ou magasin, une adresse, un telephone ou un site web, encadre la valeur avec b* au debut et *b a la fin.\nTermine obligatoirement par une question explicite, pas une phrase passive: \"Pour savoir pour qui je vais travailler, quel est le nom de l'agence immobiliere et dans quelle ville est-elle situee ?\"\nNe pose aucune autre question. N'evoque ni confidentialite renforcee, ni outil, ni commande, ni details techniques."
+    )
+}
+
+fn build_real_estate_agency_identity_followup_synthesis_prompt(user_message: &str) -> String {
+    format!(
+        "Message utilisateur:\n{user_message}\n\nL'onboarding agence est toujours en attente du nom de l'agence immobiliere et de la ville, mais ce n'est PAS le premier message d'accueil.\nReponds d'abord vraiment au fond du message utilisateur, avec souplesse, comme un assistant IA normal qui travaille deja dans le contexte agence immo.\nNe recommence pas par \"Bonjour et bienvenue\". Ne repete pas le script d'onboarding. Ne fais pas une liste rigide 1/2 sauf si l'utilisateur la demande.\nSi l'utilisateur demande ce que tu vas faire avec ces infos, explique simplement: identifier la bonne agence, recuperer les coordonnees publiques utiles, les faire confirmer, puis adapter le contexte de travail de l'assistant a cette agence.\nSi tu cites un nom propre d'agence, personne ou magasin, une adresse, un telephone ou un site web, encadre la valeur avec b* au debut et *b a la fin.\nTermine obligatoirement par une question explicite: \"Pour savoir pour qui je vais travailler, quel est le nom de l'agence immobiliere et dans quelle ville est-elle situee ?\"\nN'evoque ni template, ni outil, ni commande, ni details techniques."
+    )
+}
+
+fn build_real_estate_agency_confirmation_synthesis_prompt(
+    user_message: &str,
+    confirmation: &JsonValue,
+    confirmed: bool,
+) -> String {
+    let contact = confirmation.get("contact").cloned().unwrap_or(JsonValue::Null);
+    let contact_text =
+        serde_json::to_string_pretty(&contact).unwrap_or_else(|_| contact.to_string());
+    if confirmed {
+        let agency_name = contact
+            .get("agencyName")
+            .cloned()
+            .unwrap_or(JsonValue::String(String::new()));
+        let earth_query = contact
+            .get("address")
+            .and_then(JsonValue::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                contact
+                    .get("agencyName")
+                    .and_then(JsonValue::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+            .unwrap_or("");
+        let act_code_payload = json!({
+            "actions": [
+                {
+                    "kind": "set_app_header",
+                    "agencyName": agency_name,
+                    "contact": contact.clone()
+                },
+                {
+                    "kind": "set_profile_agency",
+                    "contact": contact.clone()
+                },
+                {
+                    "kind": "open_google_earth",
+                    "query": earth_query,
+                    "contact": contact.clone()
+                }
+            ]
+        });
+        let act_code_line = format!("FORGE_ACT_CODE:{act_code_payload}");
+        let act_code_contract = format!("Tu dois appeler les templates Act Code pour modifier le header, remplir le profil et ouvrir Google Earth. Pour cela, ajoute tout a la fin de ta reponse cette ligne cachee exacte: {act_code_line}. Cette ligne sera executee puis masquee par Forge; ne l'explique pas a l'utilisateur.");
+        format!(
+            "Message utilisateur:\n{user_message}\n\nForge a deja enregistre la confirmation de cette agence:\n{contact_text}\n\nReponds en francais naturel, chaleureux et professionnel.\nTu dois affirmer explicitement: \"ok je bosse donc pour cette agence\".\nDis simplement que tu ouvres Google Earth sur l'adresse confirmee. N'ecris jamais \"je m'occupe de tout de suite\", ni \"je m'occupe pour [adresse]\".\n{act_code_contract}\nSi tu cites un nom propre d'agence, personne ou magasin, une adresse, un telephone ou un site web, encadre la valeur avec b* au debut et *b a la fin.\nN'affiche pas le lien Google Maps.\nN'evoque ni plan_only, ni commande, ni details techniques."
+        )
+    } else {
+        format!(
+            "Message utilisateur:\n{user_message}\n\nForge a marque la fiche agence comme a corriger:\n{contact_text}\n\nReponds en francais naturel.\nDis que certaines informations ne semblent pas exactes et demande la correction precise du nom d'agence et/ou de la ville avant de relancer la recherche.\nSi tu cites un nom propre d'agence, personne ou magasin, une adresse, un telephone ou un site web, encadre la valeur avec b* au debut et *b a la fin.\nN'affiche pas le lien Google Maps.\nN'evoque ni plan_only, ni commande, ni details techniques."
+        )
+    }
+}
+
+fn codex_extract_json_value_from_text(text: &str) -> Option<JsonValue> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(value) = serde_json::from_str::<JsonValue>(trimmed) {
+        return Some(value);
+    }
+    let start = trimmed.find('{')?;
+    let end = trimmed.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    serde_json::from_str::<JsonValue>(&trimmed[start..=end]).ok()
+}
+
+fn collect_real_estate_act_code_ui_actions(value: &JsonValue, actions: &mut Vec<JsonValue>) {
+    let parsed_actions = value
+        .get("actions")
+        .or_else(|| value.get("uiActions"))
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .or_else(|| value.as_array().cloned())
+        .unwrap_or_else(|| {
+            if value.get("kind").is_some() {
+                vec![value.clone()]
+            } else {
+                Vec::new()
+            }
+        });
+    for action in parsed_actions {
+        let kind = action.get("kind").and_then(JsonValue::as_str).unwrap_or("");
+        if matches!(
+            kind,
+            "set_app_header"
+                | "set_profile_agency"
+                | "open_google_earth"
+                | "agency_earth_act_code"
+                | "start_agency_web_research"
+        ) {
+            actions.push(action);
+        }
+    }
+}
+
+fn find_real_estate_act_code_marker(text: &str, start: usize) -> Option<(usize, &'static str)> {
+    const MARKERS: [&str; 2] = ["FORGE_ACT_CODE:", "FORGE_REAL_ESTATE_UI_ACTIONS:"];
+    MARKERS
+        .iter()
+        .filter_map(|marker| text[start..].find(marker).map(|offset| (start + offset, *marker)))
+        .min_by_key(|(idx, _)| *idx)
+}
+
+fn find_json_value_span(text: &str, start: usize) -> Option<(usize, usize)> {
+    let mut json_start = None;
+    for (offset, ch) in text[start..].char_indices() {
+        if ch.is_whitespace() {
+            continue;
+        }
+        if ch == '{' || ch == '[' {
+            json_start = Some((start + offset, ch));
+        }
+        break;
+    }
+    let (json_start, opener) = json_start?;
+    let closer = if opener == '{' { '}' } else { ']' };
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in text[json_start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            value if value == opener => depth = depth.saturating_add(1),
+            value if value == closer => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some((json_start, json_start + offset + ch.len_utf8()));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn extract_real_estate_act_code_ui_actions(message: &str) -> (String, Vec<JsonValue>) {
+    let mut cleaned = String::with_capacity(message.len());
+    let mut actions = Vec::new();
+    let mut cursor = 0usize;
+    while let Some((marker_start, marker)) = find_real_estate_act_code_marker(message, cursor) {
+        cleaned.push_str(&message[cursor..marker_start]);
+        let payload_start = marker_start + marker.len();
+        if let Some((json_start, json_end)) = find_json_value_span(message, payload_start) {
+            if let Ok(value) = serde_json::from_str::<JsonValue>(&message[json_start..json_end]) {
+                collect_real_estate_act_code_ui_actions(&value, &mut actions);
+            }
+            cursor = json_end;
+        } else {
+            cursor = message[payload_start..]
+                .find('\n')
+                .map(|offset| payload_start + offset)
+                .unwrap_or(message.len());
+        }
+    }
+    cleaned.push_str(&message[cursor..]);
+    (cleaned.trim().to_string(), actions)
+}
+
+fn build_real_estate_identity_extractor_prompt(user_message: &str) -> String {
+    [
+        "@forge:real_estate_identity_extract:v1 lang=fr".to_string(),
+        "Tu remplis le template que Forge utilisera pour rechercher une agence immobiliere sur Google Places.".to_string(),
+        "C'est toi, le LLM, qui comprends la phrase utilisateur: ville avant agence, digressions, ponctuation libre, correction naturelle.".to_string(),
+        "Forge n'essaiera pas d'interpreter la phrase: si le template n'est pas fiable, la recherche ne sera pas lancee.".to_string(),
+        "Retourne UNIQUEMENT un objet JSON valide, sans markdown.".to_string(),
+        "Schema exact: {\"has_identity\":false,\"agency_name\":\"\",\"city\":\"\",\"confidence\":0.0}".to_string(),
+        "has_identity = true uniquement si agency_name et city sont tous les deux presents dans le message.".to_string(),
+        "agency_name = nom commercial de l'agence, sans la ville si elle est separable.".to_string(),
+        "city = ville ou commune cible, sans texte hors sujet.".to_string(),
+        "Si une des deux infos manque vraiment, has_identity=false, mets une chaine vide et confidence <= 0.4.".to_string(),
+        format!("Message utilisateur:\n{user_message}"),
+    ]
+    .join("\n")
+}
+
+async fn extract_real_estate_identity_candidate_template(
+    user_text: &str,
+    identity_runtime: &str,
+    store_path: &Path,
+    model_ref: Option<String>,
+    reasoning_effort: String,
+) -> Option<(String, String)> {
+    let prompt = build_real_estate_identity_extractor_prompt(user_text);
+    let extractor_turn_id = "real_estate_identity_extractor".to_string();
+    let message = match identity_runtime {
+        "gemini" => {
+            let prompt_for_runtime = prompt.clone();
+            let model_for_runtime = model_ref.clone();
+            let effort_for_runtime = reasoning_effort.clone();
+            let store_for_runtime = store_path.to_path_buf();
+            tauri::async_runtime::spawn_blocking(move || {
+                run_gemini_canvas_cli(
+                    prompt_for_runtime,
+                    false,
+                    None,
+                    0,
+                    true,
+                    model_for_runtime,
+                    effort_for_runtime,
+                    store_for_runtime,
+                    None,
+                    None,
+                    extractor_turn_id,
+                )
+            })
+            .await
+            .ok()?
+            .ok()?
+            .0
+        }
+        "claude" => {
+            let prompt_for_runtime = prompt.clone();
+            let model_for_runtime = model_ref.clone();
+            let effort_for_runtime = reasoning_effort.clone();
+            let store_for_runtime = store_path.to_path_buf();
+            tauri::async_runtime::spawn_blocking(move || {
+                run_claude_canvas_cli(
+                    prompt_for_runtime,
+                    false,
+                    None,
+                    0,
+                    true,
+                    model_for_runtime,
+                    effort_for_runtime,
+                    store_for_runtime,
+                    None,
+                    None,
+                    extractor_turn_id,
+                )
+            })
+            .await
+            .ok()?
+            .ok()?
+            .0
+        }
+        _ => {
+            let (message, _) = run_codex_canvas_oauth_direct(
+                prompt,
+                model_ref,
+                reasoning_effort,
+                None,
+                extractor_turn_id,
+            )
+            .await
+            .ok()?;
+            message
+        }
+    };
+    let parsed = codex_extract_json_value_from_text(&message)?;
+    let has_identity = parsed
+        .get("has_identity")
+        .or_else(|| parsed.get("hasIdentity"))
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+    let agency_name = parsed
+        .get("agency_name")
+        .or_else(|| parsed.get("agencyName"))
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    let city = parsed
+        .get("city")
+        .or_else(|| parsed.get("ville"))
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    let confidence = parsed
+        .get("confidence")
+        .and_then(JsonValue::as_f64)
+        .unwrap_or(0.0);
+    if !has_identity || agency_name.is_empty() || city.is_empty() || confidence < 0.45 {
+        return None;
+    }
+    Some((agency_name.to_string(), city.to_string()))
+}
+
+async fn try_real_estate_onboarding_direct_action(
+    store_path: &Path,
+    current_user_message: &str,
+    app: Option<&tauri::AppHandle>,
+    turn_id: &str,
+    identity_runtime: &str,
+    model_ref: Option<String>,
+    reasoning_effort: String,
+) -> Result<Option<(String, Vec<JsonValue>, JsonValue)>, String> {
+    let state = real_estate_harvester::onboarding_state(store_path)?;
+    let traits = &state.derived_traits;
+    let identity_confirmed = traits
+        .get("agency_identity_confirmed")
+        .map(|value| value == "true")
+        .unwrap_or(false);
+    if identity_confirmed {
+        return Ok(None);
+    }
+    let user_text = current_user_message.trim();
+    if user_text.is_empty() {
+        return Ok(None);
+    }
+    let mut identity_candidate: Option<(String, String)> = None;
+    let skip_identity_extraction =
+        real_estate_message_should_skip_identity_extraction(user_text);
+    if real_estate_onboarding_has_contact(traits) {
+        if real_estate_user_confirms_agency_identity(user_text) {
+            let mut confirmation =
+                real_estate_harvester::confirm_onboarding_agency_identity(store_path, true, None)?;
+            let contact = confirmation.get("contact").cloned().unwrap_or(JsonValue::Null);
+            let agency_name = contact
+                .get("agencyName")
+                .cloned()
+                .unwrap_or(JsonValue::String(String::new()));
+            let earth_query = contact
+                .get("address")
+                .and_then(JsonValue::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    contact
+                        .get("agencyName")
+                        .and_then(JsonValue::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                })
+                .unwrap_or("");
+            let selected_actions = vec![
+                json!({
+                    "kind": "set_app_header",
+                    "agencyName": agency_name,
+                    "contact": contact.clone()
+                }),
+                json!({
+                    "kind": "set_profile_agency",
+                    "contact": contact.clone()
+                }),
+                json!({
+                    "kind": "open_google_earth",
+                    "query": earth_query,
+                    "contact": contact.clone()
+                }),
+                json!({
+                    "kind": "start_agency_web_research",
+                    "query": contact.get("agencyName").and_then(JsonValue::as_str).unwrap_or(""),
+                    "contact": contact.clone()
+                }),
+            ];
+            if let JsonValue::Object(ref mut confirmation_obj) = confirmation {
+                confirmation_obj.insert(
+                    "uiActions".to_string(),
+                    JsonValue::Array(selected_actions.clone()),
+                );
+            }
+            let identity_memory =
+                commit_real_estate_agency_identity_memory(store_path, &contact).ok();
+            let onboarding_memory =
+                commit_real_estate_onboarding_state_memory(store_path, "confirmed", &confirmation)
+                    .ok();
+            let brain_memories = [identity_memory, onboarding_memory]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+            let events = vec![
+                json!({
+                    "tool": "real_estate_google_earth_opened",
+                    "label": "utilise Google Earth",
+                    "transport": "native_webview",
+                    "scope": "agence_immo",
+                    "contact": contact.clone(),
+                }),
+                json!({
+                    "tool": "real_estate_agency_web_research",
+                    "label": "fais des recherches web",
+                    "transport": "background_webview",
+                    "scope": "agence_immo",
+                    "status": "planned",
+                    "contact": contact.clone(),
+                }),
+            ];
+            let direct_assistant_message =
+                build_real_estate_agency_confirmation_direct_reply(&contact);
+            let bridge = json!({
+                "mode": "chatgpt_oauth_real_estate_onboarding",
+                "realEstateOnboardingTool": "confirm_agency",
+                "realEstateOnboardingStatus": "confirmed",
+                "realEstateOnboardingResult": confirmation,
+                "realEstateUiActions": selected_actions,
+                "realEstateUiActionSource": "confirmed_structured_result",
+                "realEstateDirectAssistantMessage": direct_assistant_message,
+                "realEstateDirectAssistantSource": "confirmed_structured_result",
+                "realEstateBrainMemories": brain_memories,
+            });
+            let prompt =
+                build_real_estate_agency_confirmation_synthesis_prompt(user_text, &bridge["realEstateOnboardingResult"], true);
+            return Ok(Some((prompt, events, bridge)));
+        }
+        if real_estate_user_rejects_agency_identity(user_text) {
+            let confirmation = real_estate_harvester::confirm_onboarding_agency_identity(
+                store_path,
+                false,
+                Some(user_text),
+            )?;
+            let event = json!({
+                "tool": "real_estate_confirm_agency",
+                "transport": "backend",
+                "scope": "agence_immo",
+                "status": "needs_correction",
+                "thinkingLabel": "Prépare la correction agence",
+                "contact": confirmation.get("contact").cloned().unwrap_or(JsonValue::Null),
+            });
+            emit_canvas_assistant_event(
+                app,
+                turn_id,
+                "codex_bridge",
+                "Forge enregistre une correction sur l'identite agence.",
+                event.clone(),
+            );
+            let brain_memories = commit_real_estate_onboarding_state_memory(
+                store_path,
+                "needs_correction",
+                &confirmation,
+            )
+            .ok()
+            .into_iter()
+            .collect::<Vec<_>>();
+            let bridge = json!({
+                "mode": "chatgpt_oauth_real_estate_onboarding",
+                "realEstateOnboardingTool": "confirm_agency",
+                "realEstateOnboardingStatus": "needs_correction",
+                "realEstateOnboardingResult": confirmation,
+                "realEstateBrainMemories": brain_memories,
+            });
+            let prompt =
+                build_real_estate_agency_confirmation_synthesis_prompt(user_text, &bridge["realEstateOnboardingResult"], false);
+            return Ok(Some((prompt, vec![event], bridge)));
+        }
+        if identity_candidate.is_none() && !skip_identity_extraction {
+            identity_candidate = extract_real_estate_identity_candidate_template(
+                user_text,
+                identity_runtime,
+                store_path,
+                model_ref.clone(),
+                reasoning_effort.clone(),
+            )
+            .await;
+        }
+        if identity_candidate.is_none() {
+            let contact = json!({
+                "agencyName": traits.get("agency_display_name").or_else(|| traits.get("agency_search_name")).cloned().unwrap_or_default(),
+                "city": traits.get("agency_city").cloned().unwrap_or_default(),
+                "address": traits.get("agency_address").cloned().unwrap_or_default(),
+                "phone": traits.get("agency_phone").cloned().unwrap_or_default(),
+                "website": traits.get("agency_website").cloned().unwrap_or_default(),
+                "googleMapsUri": traits.get("agency_google_maps_uri").cloned().unwrap_or_default(),
+                "source": traits.get("agency_resolution_source").or_else(|| traits.get("contact_source")).cloned().unwrap_or_default(),
+                "status": traits.get("agency_resolution_status").or_else(|| traits.get("google_places_status")).cloned().unwrap_or_default()
+            });
+            let google_places_handoff = google_places_llm_payload_from_contact(&contact);
+            let direct_assistant_message =
+                build_real_estate_agency_resolution_direct_reply(&contact);
+            let resolution = json!({
+                "kind": "real_estate_agency_identity_resolution",
+                "status": "awaiting_confirmation",
+                "questionId": "agency_identity",
+                "contact": contact,
+                "llmHandoff": google_places_handoff.clone(),
+                "state": state,
+                "rawDataReturned": false
+            });
+            let brain_memories = commit_real_estate_onboarding_state_memory(
+                store_path,
+                "awaiting_confirmation",
+                &resolution,
+            )
+            .ok()
+            .into_iter()
+            .collect::<Vec<_>>();
+            let bridge = json!({
+                "mode": "chatgpt_oauth_real_estate_onboarding",
+                "realEstateOnboardingTool": "resolve_agency",
+                "realEstateOnboardingStatus": "resolved",
+                "realEstateOnboardingResult": resolution,
+                "googlePlacesLlmHandoff": google_places_handoff,
+                "realEstateDirectAssistantMessage": direct_assistant_message,
+                "realEstateDirectAssistantSource": "google_places_structured_result",
+                "realEstateBrainMemories": brain_memories,
+            });
+            let prompt =
+                build_real_estate_agency_resolution_synthesis_prompt(user_text, &bridge["realEstateOnboardingResult"]);
+            return Ok(Some((prompt, vec![], bridge)));
+        }
+    }
+    if identity_candidate.is_none() && !skip_identity_extraction {
+        identity_candidate = extract_real_estate_identity_candidate_template(
+            user_text,
+            identity_runtime,
+            store_path,
+            model_ref.clone(),
+            reasoning_effort.clone(),
+        )
+        .await;
+    }
+    let Some((agency_name, city)) = identity_candidate else {
+        let intro_already_sent = real_estate_intro_already_sent(store_path);
+        let first_identity_prompt =
+            !intro_already_sent && !real_estate_user_refers_to_identity_onboarding(user_text);
+        if !intro_already_sent {
+            let _ = mark_real_estate_intro_sent(store_path, turn_id);
+        }
+        let brain_memories = commit_real_estate_onboarding_state_memory(
+            store_path,
+            "awaiting_identity",
+            &json!({}),
+        )
+        .ok()
+        .into_iter()
+        .collect::<Vec<_>>();
+        let bridge = json!({
+            "mode": "chatgpt_oauth_real_estate_onboarding",
+            "realEstateOnboardingTool": "intro_agency",
+            "realEstateOnboardingStatus": "awaiting_identity",
+            "realEstateBrainMemories": brain_memories,
+        });
+        let prompt = if first_identity_prompt {
+            build_real_estate_agency_intro_synthesis_prompt(user_text)
+        } else {
+            build_real_estate_agency_identity_followup_synthesis_prompt(user_text)
+        };
+        return Ok(Some((prompt, vec![], bridge)));
+    };
+    let search_event = json!({
+        "tool": "google_places_search",
+        "label": "recherches sur le web",
+        "transport": "backend",
+        "scope": "agence_immo",
+        "agencyName": agency_name,
+        "city": city,
+        "thinkingLabel": "recherches sur le web",
+    });
+    emit_canvas_agent_narration(
+        app,
+        turn_id,
+        "codex",
+        format!("Je lance la recherche web de {} a {} pour recuperer les coordonnees a confirmer.", agency_name, city),
+        "before_tool",
+    );
+    emit_canvas_agent_tool_event(
+        app,
+        turn_id,
+        "google_places_search",
+        "utilise l'outil recherches sur le web",
+        search_event.clone(),
+    );
+    emit_canvas_assistant_event(
+        app,
+        turn_id,
+        "codex_bridge",
+        "recherches sur le web",
+        search_event.clone(),
+    );
+    let resolve_store_path = store_path.to_path_buf();
+    let resolve_agency_name = agency_name.clone();
+    let resolve_city = city.clone();
+    let resolve_user_text = user_text.to_string();
+    let mut resolution = tauri::async_runtime::spawn_blocking(move || {
+        real_estate_harvester::resolve_onboarding_agency_identity(
+            &resolve_store_path,
+            &resolve_agency_name,
+            &resolve_city,
+            &resolve_user_text,
+        )
+    })
+    .await
+    .map_err(|err| format!("join google places agency resolution: {err}"))??;
+    let contact = resolution.get("contact").cloned().unwrap_or(JsonValue::Null);
+    let google_places_handoff = google_places_llm_payload_from_contact(&contact);
+    if let JsonValue::Object(ref mut resolution_obj) = resolution {
+        resolution_obj.insert("llmHandoff".to_string(), google_places_handoff.clone());
+    }
+    let result_event = json!({
+        "tool": "google_places_search",
+        "label": "recherches sur le web",
+        "transport": "backend",
+        "scope": "agence_immo",
+        "agencyName": agency_name,
+        "city": city,
+        "source": resolution.pointer("/contact/source").and_then(JsonValue::as_str).unwrap_or(""),
+        "status": resolution.pointer("/contact/status").and_then(JsonValue::as_str).unwrap_or(""),
+        "thinkingLabel": "recherches sur le web",
+        "contact": contact.clone(),
+        "llmHandoff": google_places_handoff.clone(),
+    });
+    let found_name = contact
+        .get("agencyName")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("")
+        .trim();
+    let found_city = contact
+        .get("city")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("")
+        .trim();
+    let (has_address, has_phone, has_website) = real_estate_contact_signal_flags(&contact);
+    let has_useful_contact = has_address || has_phone || has_website;
+    emit_canvas_agent_narration(
+        app,
+        turn_id,
+        "codex",
+        if !has_useful_contact {
+            "La recherche n'a pas encore renvoye d'adresse, de telephone ou de site web exploitable. Je vais te presenter clairement ce qui manque.".to_string()
+        } else if found_name.is_empty() {
+            "La recherche a renvoye un resultat exploitable. Je vais maintenant te le presenter clairement pour validation.".to_string()
+        } else if found_city.is_empty() {
+            format!("La recherche a renvoye une fiche pour {found_name}. Je vais te la presenter pour validation.")
+        } else {
+            format!("La recherche a renvoye une fiche pour {found_name} a {found_city}. Je vais te la presenter pour validation.")
+        },
+        "after_tool",
+    );
+    let prompt = build_real_estate_agency_resolution_synthesis_prompt(user_text, &resolution);
+    let direct_assistant_message = build_real_estate_agency_resolution_direct_reply(&contact);
+    let brain_memories = commit_real_estate_onboarding_state_memory(
+        store_path,
+        "awaiting_confirmation",
+        &resolution,
+    )
+    .ok()
+    .into_iter()
+    .collect::<Vec<_>>();
+    let bridge = json!({
+        "mode": "chatgpt_oauth_real_estate_onboarding",
+        "realEstateOnboardingTool": "resolve_agency",
+        "realEstateOnboardingStatus": "resolved",
+        "realEstateOnboardingResult": resolution,
+        "googlePlacesLlmHandoff": google_places_handoff,
+        "realEstateDirectAssistantMessage": direct_assistant_message,
+        "realEstateDirectAssistantSource": "google_places_structured_result",
+        "realEstateBrainMemories": brain_memories,
+    });
+    Ok(Some((prompt, vec![result_event], bridge)))
 }
 
 fn with_real_estate_tool_events(
@@ -23179,9 +26565,9 @@ fn direct_canvas_chat_mode(
     tools_enabled: bool,
     has_active_job: bool,
     force_runtime_context: bool,
-    real_estate_scope_active: bool,
+    _real_estate_scope_active: bool,
 ) -> bool {
-    !tools_enabled && !has_active_job && !force_runtime_context && !real_estate_scope_active
+    !tools_enabled && !has_active_job && !force_runtime_context
 }
 
 fn build_canvas_protocol_prompt(
@@ -23980,6 +27366,43 @@ fn emit_canvas_assistant_event(
     }
 }
 
+fn emit_canvas_agent_narration(
+    app: Option<&tauri::AppHandle>,
+    turn_id: &str,
+    runtime: &str,
+    message: impl Into<String>,
+    phase: &str,
+) {
+    let message = message.into();
+    emit_canvas_assistant_event(
+        app,
+        turn_id,
+        "agent_narration",
+        message.clone(),
+        json!({
+            "runtime": runtime,
+            "phase": phase,
+            "visible": true,
+            "kind": "action_intent",
+        }),
+    );
+}
+
+fn emit_canvas_agent_tool_event(
+    app: Option<&tauri::AppHandle>,
+    turn_id: &str,
+    tool: &str,
+    label: &str,
+    mut data: JsonValue,
+) {
+    if let JsonValue::Object(ref mut obj) = data {
+        obj.insert("tool".to_string(), JsonValue::String(tool.to_string()));
+        obj.insert("label".to_string(), JsonValue::String(label.to_string()));
+        obj.insert("visible".to_string(), JsonValue::Bool(true));
+    }
+    emit_canvas_assistant_event(app, turn_id, "agent_tool_event", label, data);
+}
+
 fn codex_direct_usage_summary(usage: &JsonValue) -> JsonValue {
     let input_tokens = usage
         .get("input_tokens")
@@ -24579,110 +28002,23 @@ fn compact_canvas_template_synthesis_payload(compact_projection: &JsonValue) -> 
 
 async fn run_codex_canvas_oauth_direct_template_selector(
     user_message: &str,
-    reasoning_effort: &str,
-    model_ref: Option<&str>,
+    _reasoning_effort: &str,
+    _model_ref: Option<&str>,
+    privacy_scope: Option<&str>,
 ) -> Result<JsonValue, String> {
     let catalog = load_forge_direct_template_catalog()?;
+    let route_scope = build_direct_template_route_scope(&catalog, user_message, privacy_scope);
     if let Some(mut selection) = try_local_codex_canvas_template_selection(&catalog, user_message)? {
         if let JsonValue::Object(ref mut obj) = selection {
             obj.insert(
                 "selectionSource".to_string(),
                 JsonValue::String("local_router".to_string()),
             );
+            obj.insert("routeScope".to_string(), route_scope.clone());
         }
         return Ok(selection);
     }
-    let auth = read_openai_chatgpt_local_auth()
-        .ok_or_else(|| "No local ChatGPT OAuth credentials found for Codex.".to_string())?;
-    if auth.access_token.trim().is_empty() || auth.account_id.trim().is_empty() {
-        return Err("ChatGPT OAuth credentials are incomplete for direct template routing.".to_string());
-    }
-    let model =
-        codex_bridge_model_arg(model_ref).unwrap_or_else(|| "gpt-5.5".to_string());
-    let payload = json!({
-        "model": model,
-        "store": false,
-        "stream": true,
-        "instructions": build_codex_canvas_template_selector_instructions(&catalog, reasoning_effort),
-        "input": [{
-            "role": "user",
-            "content": [{
-                "type": "input_text",
-                "text": user_message,
-            }],
-        }],
-        "text": {
-            "verbosity": "low",
-        },
-        "reasoning": {
-            "effort": reasoning_effort,
-            "summary": "auto",
-        },
-        "include": ["reasoning.encrypted_content"],
-        "tool_choice": "auto",
-        "parallel_tool_calls": true,
-    });
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .build()
-        .map_err(|e| format!("build Codex direct template selector client: {e}"))?;
-    let mut response = client
-        .post("https://chatgpt.com/backend-api/codex/responses")
-        .header("Authorization", format!("Bearer {}", auth.access_token))
-        .header("ChatGPT-Account-ID", auth.account_id)
-        .header("OpenAI-Beta", "responses=experimental")
-        .header("Origin", "https://chatgpt.com")
-        .header("Referer", "https://chatgpt.com/")
-        .header("User-Agent", "codex_cli_rs/0.0.0 (Forge direct template selector)")
-        .header("originator", "codex_cli_rs")
-        .header("Accept-Language", "fr-FR,fr;q=0.9,en;q=0.8")
-        .header("Accept", "text/event-stream")
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("request Codex direct template selector: {e}"))?;
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let text = response.text().await.unwrap_or_else(|_| String::new());
-        return Err(format!(
-            "Codex direct template selector HTTP {}: {}",
-            status,
-            text.trim()
-        ));
-    }
-    let mut output_text = String::new();
-    let mut remainder = String::new();
-    let mut completed_response = JsonValue::Null;
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| format!("stream Codex direct template selector: {e}"))?
-    {
-        remainder.push_str(&String::from_utf8_lossy(&chunk));
-        for event in codex_direct_drain_sse_events(&mut remainder) {
-            let event_type = event.get("type").and_then(JsonValue::as_str).unwrap_or("");
-            if event_type.contains("output_text.delta") {
-                if let Some(delta) = event.get("delta").and_then(JsonValue::as_str) {
-                    output_text.push_str(delta);
-                }
-            } else if event_type == "response.completed" {
-                completed_response = event.get("response").cloned().unwrap_or(event.clone());
-            }
-        }
-    }
-    if output_text.trim().is_empty() {
-        output_text = codex_direct_response_output_text(&completed_response);
-    }
-    let parsed: JsonValue = serde_json::from_str(output_text.trim())
-        .map_err(|e| format!("parse Codex direct template selection json: {e}"))?;
-    let mut selection = finalize_codex_direct_template_selection(&catalog, parsed)?;
-    if let JsonValue::Object(ref mut obj) = selection {
-        obj.insert(
-            "selectionSource".to_string(),
-            JsonValue::String("oauth_selector".to_string()),
-        );
-    }
-    Ok(selection)
+    Err("no deterministic local template route; use direct final LLM lane".to_string())
 }
 
 async fn run_codex_canvas_oauth_direct(
@@ -24692,6 +28028,7 @@ async fn run_codex_canvas_oauth_direct(
     app: Option<tauri::AppHandle>,
     turn_id: String,
 ) -> Result<(String, JsonValue), String> {
+    let bridge_t0 = Instant::now();
     let auth = read_openai_chatgpt_local_auth()
         .ok_or_else(|| "No local ChatGPT OAuth credentials found for Codex.".to_string())?;
     if auth.access_token.trim().is_empty() {
@@ -24702,6 +28039,7 @@ async fn run_codex_canvas_oauth_direct(
     }
     let model =
         codex_bridge_model_arg(model_ref.as_deref()).unwrap_or_else(|| "gpt-5.5".to_string());
+    let text_verbosity = if reasoning_effort == "low" { "low" } else { "medium" };
     let payload = json!({
         "model": model.clone(),
         "store": false,
@@ -24715,16 +28053,15 @@ async fn run_codex_canvas_oauth_direct(
             }],
         }],
         "text": {
-            "verbosity": "medium",
+            "verbosity": text_verbosity,
         },
         "reasoning": {
             "effort": reasoning_effort.clone(),
-            "summary": "auto",
         },
-        "include": ["reasoning.encrypted_content"],
-        "tool_choice": "auto",
-        "parallel_tool_calls": true,
+        "tool_choice": "none",
+        "parallel_tool_calls": false,
     });
+    let payload_ready_ms = bridge_t0.elapsed().as_millis() as u64;
     emit_canvas_assistant_event(
         app.as_ref(),
         &turn_id,
@@ -24735,6 +28072,8 @@ async fn run_codex_canvas_oauth_direct(
             "mode": "chatgpt_oauth_sse",
             "model": model.clone(),
             "reasoningEffort": reasoning_effort.clone(),
+            "textVerbosity": text_verbosity,
+            "payloadReadyMs": payload_ready_ms,
             "subscriptionPlanType": auth.plan_type.clone(),
             "authMode": auth.auth_mode.clone(),
         }),
@@ -24743,6 +28082,7 @@ async fn run_codex_canvas_oauth_direct(
         .timeout(Duration::from_secs(180))
         .build()
         .map_err(|e| format!("build Codex OAuth direct client: {e}"))?;
+    let request_send_t0 = Instant::now();
     let mut response = client
         .post("https://chatgpt.com/backend-api/codex/responses")
         .header("Authorization", format!("Bearer {}", auth.access_token))
@@ -24758,6 +28098,8 @@ async fn run_codex_canvas_oauth_direct(
         .send()
         .await
         .map_err(|e| format!("request Codex OAuth direct: {e}"))?;
+    let headers_ms = request_send_t0.elapsed().as_millis() as u64;
+    let bridge_headers_ms = bridge_t0.elapsed().as_millis() as u64;
     let status = response.status();
     let request_id = response
         .headers()
@@ -24784,6 +28126,7 @@ async fn run_codex_canvas_oauth_direct(
     let mut response_id: Option<String> = None;
     let mut event_types = Vec::<String>::new();
     let mut remainder = String::new();
+    let mut first_delta_ms: Option<u64> = None;
     while let Some(chunk) = response
         .chunk()
         .await
@@ -24798,6 +28141,24 @@ async fn run_codex_canvas_oauth_direct(
                 }
                 if event_type.contains("output_text.delta") {
                     if let Some(delta) = event.get("delta").and_then(JsonValue::as_str) {
+                        if first_delta_ms.is_none() {
+                            first_delta_ms = Some(bridge_t0.elapsed().as_millis() as u64);
+                            emit_canvas_assistant_event(
+                                app.as_ref(),
+                                &turn_id,
+                                "codex_bridge",
+                                "Codex OAuth direct a renvoye son premier token.",
+                                json!({
+                                    "runtime": "Codex OAuth direct",
+                                    "mode": "chatgpt_oauth_sse",
+                                    "model": model.clone(),
+                                    "payloadReadyMs": payload_ready_ms,
+                                    "headersMs": headers_ms,
+                                    "bridgeHeadersMs": bridge_headers_ms,
+                                    "firstDeltaMs": first_delta_ms,
+                                }),
+                            );
+                        }
                         final_message.push_str(delta);
                         emit_canvas_assistant_event(
                             app.as_ref(),
@@ -24863,6 +28224,7 @@ async fn run_codex_canvas_oauth_direct(
     if assistant_message.trim().is_empty() {
         return Err("Codex OAuth direct returned an empty assistant message".to_string());
     }
+    let total_ms = bridge_t0.elapsed().as_millis() as u64;
     emit_canvas_assistant_event(
         app.as_ref(),
         &turn_id,
@@ -24875,6 +28237,11 @@ async fn run_codex_canvas_oauth_direct(
             "model": model.clone(),
             "requestId": request_id.clone(),
             "responseId": response_id.clone(),
+            "payloadReadyMs": payload_ready_ms,
+            "headersMs": headers_ms,
+            "bridgeHeadersMs": bridge_headers_ms,
+            "firstDeltaMs": first_delta_ms,
+            "totalMs": total_ms,
             "subscriptionPlanType": plan_type.clone(),
         }),
     );
@@ -24886,10 +28253,16 @@ async fn run_codex_canvas_oauth_direct(
             "mode": "chatgpt_oauth_sse",
             "model": model,
             "reasoningEffort": reasoning_effort,
+            "textVerbosity": text_verbosity,
             "toolsEnabled": false,
             "directChatMode": true,
             "requestId": request_id,
             "responseId": response_id,
+            "payloadReadyMs": payload_ready_ms,
+            "headersMs": headers_ms,
+            "bridgeHeadersMs": bridge_headers_ms,
+            "firstDeltaMs": first_delta_ms,
+            "totalMs": total_ms,
             "subscriptionPlanType": plan_type,
             "authMode": auth.auth_mode.clone(),
             "usage": codex_direct_usage_summary(&usage),
@@ -24966,6 +28339,7 @@ async fn forge_canvas_assistant_turn(
         let app_state = state.lock().map_err(|e| e.to_string())?;
         app_state.store_path.clone()
     };
+    let original_request_message = request.message.clone();
     let request_privacy_scope = request
         .privacy_scope
         .as_deref()
@@ -24973,6 +28347,39 @@ async fn forge_canvas_assistant_turn(
         .unwrap_or_default();
     let real_estate_scope_active =
         request_privacy_scope == "agence_immo" || forge_real_estate_privacy_applies(&request.message);
+    let real_estate_role_memory_event = if real_estate_scope_active {
+        match ensure_real_estate_core_memories(&store_path_for_codex_tools) {
+            Ok(result) => Some(json!({
+                "tool": "brain_commit",
+                "transport": "backend",
+                "scope": "agence_immo",
+                "memoryLayer": "semantic",
+                "factKey": "core_real_estate_memories",
+                "status": result.get("status").and_then(JsonValue::as_str).unwrap_or("ok"),
+                "memories": result.get("memories").cloned().unwrap_or(JsonValue::Null),
+            })),
+            Err(err) => Some(json!({
+                "tool": "brain_commit",
+                "transport": "backend",
+                "scope": "agence_immo",
+                "memoryLayer": "semantic",
+                "factKey": "assistant_role",
+                "status": "error",
+                "error": err,
+            })),
+        }
+    } else {
+        None
+    };
+    let codex_direct_oauth_ready = provider.connected
+        && runtime != "gemini"
+        && runtime != "claude"
+        && codex_canvas_direct_oauth_enabled()
+        && read_openai_chatgpt_local_auth()
+            .map(|auth| {
+                !auth.access_token.trim().is_empty() && !auth.account_id.trim().is_empty()
+            })
+            .unwrap_or(false);
     let privacy_tool_event = if real_estate_scope_active {
         let original_message = request.message.clone();
         let original_hash = forge_privacy_hash(&original_message);
@@ -25010,7 +28417,33 @@ async fn forge_canvas_assistant_turn(
     } else {
         None
     };
-    let real_estate_intro_tool_event = if real_estate_scope_active {
+    let real_estate_identity_confirmed = if real_estate_scope_active {
+        real_estate_harvester::onboarding_state(&store_path_for_codex_tools)
+            .ok()
+            .and_then(|state| state.derived_traits.get("agency_identity_confirmed").cloned())
+            .map(|value| value == "true")
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    let real_estate_active_memory_snapshot = if real_estate_scope_active {
+        let snapshot =
+            cached_real_estate_active_memory_snapshot(&state, &store_path_for_codex_tools);
+        emit_canvas_assistant_event(
+            Some(&app),
+            &turn_id,
+            "memory_snapshot",
+            "Memoire active agence chargee depuis Brain.",
+            snapshot.event.clone(),
+        );
+        Some(snapshot)
+    } else {
+        None
+    };
+    let real_estate_active_memory_prompt = real_estate_active_memory_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.prompt.as_str());
+    let real_estate_intro_tool_event = if false && real_estate_scope_active && !codex_direct_oauth_ready {
         let first_contact_directive =
             real_estate_first_contact_onboarding_directive(&store_path_for_codex_tools, &turn_id);
         let followup_directive = if first_contact_directive.is_none() {
@@ -25060,18 +28493,19 @@ async fn forge_canvas_assistant_turn(
     };
     let use_gemini = runtime == "gemini";
     let use_claude = runtime == "claude";
+    let raw_user_message = original_request_message.trim();
+    let current_user_message = current_canvas_user_message(raw_user_message);
     let user_message = request.message.trim();
-    let current_user_message = current_canvas_user_message(user_message);
     let has_active_job = request
         .job_id
         .as_deref()
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
     let request_job_id_for_response = request.job_id.clone();
-    let force_runtime_context = forge_canvas_message_forces_runtime_context(user_message);
+    let force_runtime_context = forge_canvas_message_forces_runtime_context(raw_user_message);
     let tools_enabled = force_runtime_context || canvas_message_needs_forge_tools(
-        if user_message.contains("CURRENT_TURN_DECISION_POINT:") {
-            user_message
+        if raw_user_message.contains("CURRENT_TURN_DECISION_POINT:") {
+            raw_user_message
         } else {
             current_user_message
         },
@@ -25083,7 +28517,9 @@ async fn forge_canvas_assistant_turn(
         force_runtime_context,
         real_estate_scope_active,
     );
-    let reasoning_effort = if direct_chat_mode
+    let reasoning_effort = if real_estate_scope_active && !real_estate_identity_confirmed {
+        "low".to_string()
+    } else if direct_chat_mode
         && request
             .reasoning_effort
             .as_deref()
@@ -25258,6 +28694,10 @@ async fn forge_canvas_assistant_turn(
             });
         }
     }
+    let mut real_estate_runtime_tool_events = Vec::new();
+    if let Some(snapshot) = &real_estate_active_memory_snapshot {
+        real_estate_runtime_tool_events.push(snapshot.event.clone());
+    }
     let mut codex_bridge = json!({
         "status": "not_attempted",
         "reason": if use_gemini {
@@ -25272,19 +28712,66 @@ async fn forge_canvas_assistant_turn(
         use_gemini && (provider.connected || provider.installed || provider_terminal_running("gemini"));
     let claude_canvas_available =
         use_claude && (provider.connected || provider.installed || provider_terminal_running("claude"));
-    let codex_direct_oauth_ready = provider.connected
-        && !use_gemini
-        && !use_claude
-        && codex_canvas_direct_oauth_enabled()
-        && read_openai_chatgpt_local_auth()
-            .map(|auth| {
-                !auth.access_token.trim().is_empty() && !auth.account_id.trim().is_empty()
-            })
-            .unwrap_or(false);
+    let real_estate_direct_action =
+        if real_estate_scope_active {
+            let identity_runtime = if gemini_canvas_available {
+                "gemini"
+            } else if claude_canvas_available {
+                "claude"
+            } else {
+                "codex"
+            };
+            try_real_estate_onboarding_direct_action(
+                &store_path_for_codex_tools,
+                current_user_message,
+                Some(&app),
+                &turn_id,
+                identity_runtime,
+                effective_model_ref.clone(),
+                reasoning_effort.clone(),
+            )
+            .await?
+        } else {
+            None
+        };
+    if let Some((_, extra_tool_events, _)) = real_estate_direct_action.as_ref() {
+        real_estate_runtime_tool_events.extend(extra_tool_events.clone());
+    }
     let codex_direct_oauth_fast_lane = codex_direct_oauth_ready && direct_chat_mode;
     let codex_direct_oauth_template_lane = codex_direct_oauth_ready && !direct_chat_mode;
-    let codex_attempt_message = if gemini_canvas_available {
-        let gemini_message = request.message.clone();
+    let real_estate_direct_assistant_message = real_estate_direct_action
+        .as_ref()
+        .and_then(|(_, _, bridge_meta)| {
+            bridge_meta
+                .get("realEstateDirectAssistantMessage")
+                .and_then(JsonValue::as_str)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        });
+    let codex_attempt_message = if let Some(message) = real_estate_direct_assistant_message {
+        codex_bridge = json!({
+            "status": "ok",
+            "runtime": "local_real_estate_google_places",
+            "mode": "direct_google_places_structured_result",
+            "direct": true,
+            "toolsEnabled": false,
+            "contextLoaded": false,
+            "reasoningEffort": reasoning_effort,
+        });
+        Some(message)
+    } else if gemini_canvas_available {
+        let gemini_message = real_estate_direct_action
+            .as_ref()
+            .map(|(prompt, _, _)| prompt.clone())
+            .unwrap_or_else(|| request.message.clone());
+        let gemini_message = if real_estate_direct_action.is_some() {
+            gemini_message
+        } else {
+            prepend_real_estate_active_memory_snapshot(
+                gemini_message,
+                real_estate_active_memory_prompt,
+            )
+        };
         let gemini_model = effective_model_ref.clone();
         let gemini_reasoning_effort = reasoning_effort.clone();
         let gemini_store_path = store_path_for_codex_tools.clone();
@@ -25353,7 +28840,18 @@ async fn forge_canvas_assistant_turn(
             }
         }
     } else if claude_canvas_available {
-        let claude_message = request.message.clone();
+        let claude_message = real_estate_direct_action
+            .as_ref()
+            .map(|(prompt, _, _)| prompt.clone())
+            .unwrap_or_else(|| request.message.clone());
+        let claude_message = if real_estate_direct_action.is_some() {
+            claude_message
+        } else {
+            prepend_real_estate_active_memory_snapshot(
+                claude_message,
+                real_estate_active_memory_prompt,
+            )
+        };
         let claude_model = effective_model_ref.clone();
         let claude_reasoning_effort = reasoning_effort.clone();
         let claude_store_path = store_path_for_codex_tools.clone();
@@ -25422,9 +28920,42 @@ async fn forge_canvas_assistant_turn(
             }
         }
     } else if provider.connected {
-        if codex_direct_oauth_fast_lane {
+        if let Some((synthesis_prompt, _extra_tool_events, bridge_meta)) = real_estate_direct_action.as_ref() {
             match run_codex_canvas_oauth_direct(
-                request.message.clone(),
+                synthesis_prompt.clone(),
+                effective_model_ref.clone(),
+                reasoning_effort.clone(),
+                Some(app.clone()),
+                turn_id.clone(),
+            )
+            .await
+            {
+                Ok((message, mut bridge)) => {
+                    if let (JsonValue::Object(ref mut bridge_obj), JsonValue::Object(meta_obj)) =
+                        (&mut bridge, bridge_meta.clone())
+                    {
+                        for (key, value) in meta_obj {
+                            bridge_obj.insert(key, value);
+                        }
+                    }
+                    codex_bridge = bridge;
+                    Some(message)
+                }
+                Err(err) => {
+                    codex_bridge = json!({
+                        "status": "unavailable",
+                        "mode": "codex direct oauth real estate onboarding",
+                        "error": err,
+                    });
+                    None
+                }
+            }
+        } else if codex_direct_oauth_fast_lane {
+            match run_codex_canvas_oauth_direct(
+                prepend_real_estate_active_memory_snapshot(
+                    request.message.clone(),
+                    real_estate_active_memory_prompt,
+                ),
                 effective_model_ref.clone(),
                 reasoning_effort.clone(),
                 Some(app.clone()),
@@ -25457,6 +28988,7 @@ async fn forge_canvas_assistant_turn(
                     &codex_message,
                     &codex_reasoning_effort,
                     codex_model.as_deref(),
+                    request.privacy_scope.as_deref(),
                 )
                 .await?;
                 emit_canvas_assistant_event(
@@ -25473,6 +29005,18 @@ async fn forge_canvas_assistant_turn(
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| "template selection did not return forgeSlash".to_string())?
                     .to_string();
+                let template_label = selection
+                    .get("description")
+                    .or_else(|| selection.get("templateId"))
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or("un template Forge local");
+                emit_canvas_agent_narration(
+                    Some(&app),
+                    &turn_id,
+                    "codex",
+                    format!("Je vais utiliser {template_label} pour lire ou preparer l'action localement, puis je te ferai une synthese compacte."),
+                    "before_tool",
+                );
                 emit_canvas_assistant_event(
                     Some(&app),
                     &turn_id,
@@ -25481,6 +29025,21 @@ async fn forge_canvas_assistant_turn(
                     json!({
                         "forgeSlash": forge_slash,
                         "templateId": selection.get("templateId").cloned().unwrap_or(JsonValue::Null),
+                        "toolHints": selection.get("toolHints").cloned().unwrap_or(JsonValue::Null),
+                        "primaryDomain": selection.get("primaryDomain").cloned().unwrap_or(JsonValue::Null),
+                        "routeScope": selection.get("routeScope").cloned().unwrap_or(JsonValue::Null),
+                    }),
+                );
+                emit_canvas_agent_tool_event(
+                    Some(&app),
+                    &turn_id,
+                    "forge_direct_template",
+                    "utilise l'outil template Forge",
+                    json!({
+                        "forgeSlash": forge_slash,
+                        "templateId": selection.get("templateId").cloned().unwrap_or(JsonValue::Null),
+                        "templateCode": selection.get("templateCode").cloned().unwrap_or(JsonValue::Null),
+                        "transport": "backend",
                     }),
                 );
                 let forge_slash_for_exec = forge_slash.clone();
@@ -25490,6 +29049,13 @@ async fn forge_canvas_assistant_turn(
                 .await
                 .map_err(|e| format!("join direct ForgeSlash safe execution: {e}"))??;
                 let compact_projection = compact_canvas_template_projection(&projection);
+                emit_canvas_agent_narration(
+                    Some(&app),
+                    &turn_id,
+                    "codex",
+                    "Le resultat local est pret. Je le compacte avant de le redonner au modele pour eviter de renvoyer des donnees inutiles.",
+                    "after_tool",
+                );
                 let raw_synthesis_projection =
                     build_canvas_state_kernel_synthesis_payload(&compact_projection);
                 let synthesis_projection =
@@ -25507,6 +29073,10 @@ async fn forge_canvas_assistant_turn(
                     codex_message,
                     forge_slash,
                     projection_text
+                );
+                let synthesis_prompt = prepend_real_estate_active_memory_snapshot(
+                    synthesis_prompt,
+                    real_estate_active_memory_prompt,
                 );
                 let (message, mut bridge) = run_codex_canvas_oauth_direct(
                     synthesis_prompt,
@@ -25578,7 +29148,10 @@ async fn forge_canvas_assistant_turn(
                         }),
                     );
                     match run_codex_canvas_oauth_direct(
-                        request.message.clone(),
+                        prepend_real_estate_active_memory_snapshot(
+                            request.message.clone(),
+                            real_estate_active_memory_prompt,
+                        ),
                         effective_model_ref.clone(),
                         reasoning_effort.clone(),
                         Some(app.clone()),
@@ -25627,6 +29200,15 @@ async fn forge_canvas_assistant_turn(
     } else {
         "on_demand_not_loaded"
     };
+    if let Some((_, _, bridge_meta)) = real_estate_direct_action.as_ref() {
+        if let (JsonValue::Object(ref mut bridge_obj), JsonValue::Object(meta_obj)) =
+            (&mut codex_bridge, bridge_meta.clone())
+        {
+            for (key, value) in meta_obj {
+                bridge_obj.entry(key).or_insert(value);
+            }
+        }
+    }
     if let JsonValue::Object(ref mut bridge) = codex_bridge {
         bridge.insert(
             "requestedRuntime".to_string(),
@@ -25648,43 +29230,71 @@ async fn forge_canvas_assistant_turn(
             "reasoningEffort".to_string(),
             JsonValue::String(reasoning_effort.clone()),
         );
+        if let Some(event) = &real_estate_role_memory_event {
+            bridge.insert("realEstateRoleMemory".to_string(), event.clone());
+        }
+        if let Some(snapshot) = &real_estate_active_memory_snapshot {
+            bridge.insert(
+                "realEstateActiveMemorySnapshot".to_string(),
+                snapshot.event.clone(),
+            );
+        }
     }
     let codex_responded = codex_attempt_message.is_some();
     let mut assistant_message = if let Some(message) = codex_attempt_message {
         message
     } else if provider.connected {
         if use_gemini {
-            "Gemini n'a pas pu rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pondre cette fois. Forge va rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essayer automatiquement.".to_string()
+            "Gemini n'a pas pu répondre cette fois. Vérifiez la connexion internet et que le compte Gemini dispose encore d'un accès ou quota disponible.".to_string()
         } else if use_claude {
-            "Claude n'a pas pu rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pondre cette fois. Forge va rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essayer automatiquement.".to_string()
+            "Claude n'a pas pu répondre cette fois. Vérifiez la connexion internet et que le compte Claude dispose encore d'un accès ou quota disponible.".to_string()
         } else {
-            "Codex n'a pas pu rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pondre cette fois. Forge va rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essayer automatiquement.".to_string()
+            "Codex n'a pas pu répondre cette fois. Vérifiez la connexion internet et que le compte OpenAI dispose encore de forfait disponible.".to_string()
         }
     } else {
         if use_gemini {
             if provider.installed || provider_terminal_running("gemini") {
-                "Gemini est en cours de reconnexion. RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essaie dans un instant.".to_string()
+                "Gemini n'est pas joignable pour l'instant. Vérifiez la connexion internet et l'état du compte Gemini.".to_string()
             } else {
-                "Gemini se prÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pare encore. Forge va terminer la connexion automatiquement.".to_string()
+                "Gemini n'est pas encore connecté. Vérifiez la configuration du compte Gemini avant de réessayer.".to_string()
             }
         } else if use_claude {
             if provider.installed || provider_terminal_running("claude") {
-                "Claude est en cours de reconnexion. RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essaie dans un instant.".to_string()
+                "Claude n'est pas joignable pour l'instant. Vérifiez la connexion internet et l'état du compte Claude.".to_string()
             } else {
-                "Claude se prÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pare encore. Forge va terminer la connexion automatiquement.".to_string()
+                "Claude n'est pas encore connecté. Vérifiez la configuration du compte Claude avant de réessayer.".to_string()
             }
         } else {
-            "Codex est en cours de reconnexion. RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©essaie dans un instant.".to_string()
+            "Codex n'est pas joignable pour l'instant. Vérifiez la connexion internet et que le compte OpenAI dispose encore de forfait disponible.".to_string()
         }
     };
     if assistant_message.trim().is_empty() {
         assistant_message = if use_gemini {
-            "Gemini n'a pas renvoye de texte exploitable pour ce tour.".to_string()
+            "Gemini n'a pas renvoyé de texte exploitable pour ce tour. Vérifiez la connexion internet et le quota du compte.".to_string()
         } else if use_claude {
-            "Claude n'a pas renvoye de texte exploitable pour ce tour.".to_string()
+            "Claude n'a pas renvoyé de texte exploitable pour ce tour. Vérifiez la connexion internet et le quota du compte.".to_string()
         } else {
-            "Codex n'a pas renvoye de texte exploitable pour ce tour.".to_string()
+            "Codex n'a pas renvoyé de texte exploitable pour ce tour. Vérifiez la connexion internet et que le compte OpenAI dispose encore de forfait disponible.".to_string()
         };
+    }
+    if real_estate_scope_active {
+        let (cleaned_message, act_code_actions) =
+            extract_real_estate_act_code_ui_actions(&assistant_message);
+        if cleaned_message.trim() != assistant_message.trim() {
+            assistant_message = cleaned_message;
+        }
+        if !act_code_actions.is_empty() {
+            if let JsonValue::Object(ref mut bridge) = codex_bridge {
+                bridge.insert(
+                    "realEstateUiActions".to_string(),
+                    JsonValue::Array(act_code_actions),
+                );
+                bridge.insert(
+                    "realEstateUiActionSource".to_string(),
+                    JsonValue::String("llm_act_code_response".to_string()),
+                );
+            }
+        }
     }
     assistant_message = sanitize_canvas_assistant_message(&assistant_message);
     if !context_loaded
@@ -25747,6 +29357,8 @@ async fn forge_canvas_assistant_turn(
     } else {
         Vec::new()
     };
+    let mut tool_events = tool_events;
+    tool_events.extend(real_estate_runtime_tool_events);
     let tool_events =
         with_real_estate_tool_events(&privacy_tool_event, &real_estate_intro_tool_event, tool_events);
     Ok(ForgeCanvasAssistantResponse {
@@ -32021,8 +35633,19 @@ fn main() {
             } else {
                 eprintln!("[forge-startup] Real estate harvester scheduler started");
             }
+            if real_estate_harvester::start_remote_agency_resolver_keepalive() {
+                eprintln!("[forge-startup] Real estate resolver keepalive started");
+            } else {
+                eprintln!("[forge-startup] Real estate resolver keepalive already running");
+            }
             app.manage(Mutex::new(forge_kernel::ForgeKernel::new(store_path.clone())));
             app.manage(Mutex::new(ForgeAppState::new(store_path)));
+            let memory_prewarm_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let store_path = forge_store_dir();
+                let state = memory_prewarm_app.state::<Mutex<ForgeAppState>>();
+                prewarm_real_estate_active_memory_snapshot(store_path, state);
+            });
             app.manage(banger::BangerEngine::new());
             Ok(())
         })
@@ -32034,6 +35657,9 @@ fn main() {
             drag_main_window,
             real_estate_harvester_snapshot,
             real_estate_harvester_run_tool,
+            real_estate_onboarding_state,
+            real_estate_onboarding_answer,
+            real_estate_onboarding_debug_reset,
             real_estate_backend_warmup,
             real_estate_tool_command_context,
             collection_os::collection_os_snapshot,
@@ -32049,8 +35675,14 @@ fn main() {
             open_webexplorer_window,
             webexplorer_native_present,
             webexplorer_native_hide,
+            forge_ui_atlas_runtime_snapshot,
             agency_earth_native_present,
+            agency_earth_ui_atlas,
+            agency_earth_act_code,
             agency_earth_native_hide,
+            agency_web_research_start,
+            agency_web_item_native_present,
+            agency_web_item_native_hide,
             bloomberg_live_native_present,
             bloomberg_live_native_prewarm,
             bloomberg_live_native_hide,
@@ -32205,6 +35837,48 @@ mod tests {
 
     fn main_rs_source() -> String {
         fs::read_to_string(workspace_file("src/main.rs")).expect("read main.rs source")
+    }
+
+    #[test]
+    fn real_estate_active_memory_snapshot_reads_canonical_brain_facts() {
+        let dir = unique_test_dir("real-estate-active-memory");
+        ensure_real_estate_core_memories(&dir).expect("core memories");
+        commit_real_estate_agency_identity_memory(
+            &dir,
+            &json!({
+                "agencyName": "Agence Lumiere",
+                "city": "Lyon",
+                "address": "10 rue Test",
+                "phone": "0102030405",
+                "website": "https://example.test"
+            }),
+        )
+        .expect("agency identity memory");
+
+        let snapshot = build_real_estate_active_memory_snapshot(&dir);
+
+        assert!(snapshot
+            .prompt
+            .contains("FORGE_REAL_ESTATE_ACTIVE_MEMORY_SNAPSHOT:"));
+        assert!(snapshot.prompt.contains("role=assistant IA"));
+        assert!(snapshot.prompt.contains("agency_identity="));
+        assert!(snapshot.prompt.contains("Agence Lumiere"));
+        assert_eq!(snapshot.event["status"].as_str(), Some("ok"));
+        assert_eq!(snapshot.event["scope"].as_str(), Some("agence_immo"));
+    }
+
+    #[test]
+    fn real_estate_active_memory_snapshot_prefix_is_idempotent() {
+        let snapshot = "FORGE_REAL_ESTATE_ACTIVE_MEMORY_SNAPSHOT:\nrole=test";
+        let first = prepend_real_estate_active_memory_snapshot(
+            "message utilisateur".to_string(),
+            Some(snapshot),
+        );
+        let second = prepend_real_estate_active_memory_snapshot(first.clone(), Some(snapshot));
+
+        assert_eq!(first, second);
+        assert!(first.starts_with(snapshot));
+        assert!(first.ends_with("message utilisateur"));
     }
 
     #[test]
@@ -32382,6 +36056,31 @@ mod tests {
         assert_eq!(value["templateId"].as_str(), Some("answer_only"));
         assert_eq!(value["templateCode"].as_str(), Some("A0"));
         assert_eq!(value["answer"].as_str(), Some("bonjour"));
+    }
+
+    #[test]
+    fn direct_template_route_scope_prefers_real_estate_production_for_mandats() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let scope = build_direct_template_route_scope(
+            &catalog,
+            "je cherche de nouveaux mandats vendeurs a signer cette semaine",
+            Some("agence_immo"),
+        );
+        assert_eq!(
+            scope["activeDomain"].as_str(),
+            Some("real_estate.production_immo")
+        );
+    }
+
+    #[test]
+    fn direct_template_route_scope_prefers_contacts_for_buyers() {
+        let catalog = load_forge_direct_template_catalog().expect("load direct template catalog");
+        let scope = build_direct_template_route_scope(
+            &catalog,
+            "je veux relancer les acquereurs et faire du matching acheteurs",
+            Some("agence_immo"),
+        );
+        assert_eq!(scope["activeDomain"].as_str(), Some("real_estate.contacts"));
     }
 
     #[test]
@@ -32578,6 +36277,8 @@ mod tests {
             "webexplorer_native_hide",
             "agency_earth_native_present",
             "agency_earth_native_hide",
+            "agency_web_item_native_present",
+            "agency_web_item_native_hide",
             "bloomberg_live_native_present",
             "bloomberg_live_native_hide",
             "list_forge_jobs",
