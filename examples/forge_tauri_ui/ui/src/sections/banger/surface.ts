@@ -75,11 +75,13 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
   let cubeCount = 0, gridCount = 0;
   let uMeshModel, uMeshProj, uMeshView, uMeshColor, uMeshClipOffset;
   let uLineProj, uLineView, uLineFadeNear, uLineFadeFar, uLineClipOffset;
-  let uSdfResolution, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj, uSdfOps, uSdfOpCount;
+  let uSdfResolution, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj, uSdfOps, uSdfOpCount, uSdfDebugMode;
   // INGEN §19.3 : the scene is data, not source. The DEFAULT_SCENE here
   // reproduces the previous hardcoded smin of two spheres ; future scenes
   // can be swapped via window.__forgeBangerSetScene without recompile.
   let sdfScene = serializeScene(DEFAULT_SCENE);
+  // INGEN §13 : 0 = lit render, 1 = Lipschitz heatmap.
+  let sdfDebugMode = 0;
 
   // Camera state survives suspend/resume — it's pure JS, no GPU resources.
   let camera = {
@@ -7226,6 +7228,7 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
     uSdfViewProj    = gl.getUniformLocation(sdfProg, "uViewProj");
     uSdfOps         = gl.getUniformLocation(sdfProg, "uOps");
     uSdfOpCount     = gl.getUniformLocation(sdfProg, "uOpCount");
+    uSdfDebugMode   = gl.getUniformLocation(sdfProg, "uDebugMode");
 
     // cube VAO
     const cube = makeCube();
@@ -7978,6 +7981,7 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
       gl.uniformMatrix4fv(uSdfViewProj, false, viewProj);
       gl.uniform4fv(uSdfOps, sdfScene.buffer);
       gl.uniform1i(uSdfOpCount, sdfScene.count);
+      gl.uniform1i(uSdfDebugMode, sdfDebugMode);
       gl.bindVertexArray(null);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
@@ -8461,6 +8465,12 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
         console.warn("[banger] __forgeBangerSetScene rejected:", err);
         return { ok: false, error: String(err?.message || err) };
       }
+    };
+    // INGEN §13 verifier toggle. 0 = lit, 1 = |grad d| heatmap.
+    window.__forgeBangerSetDebugMode = (mode) => {
+      sdfDebugMode = Number(mode) | 0;
+      requestBoomRender("sdf-debug-toggle", 200);
+      return { ok: true, mode: sdfDebugMode };
     };
     exposeBoomAuditState();
   }

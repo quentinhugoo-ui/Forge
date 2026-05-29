@@ -218,6 +218,10 @@ export const FS_SDF = `#version 300 es
   uniform mat4  uViewProj;
   uniform vec4  uOps[128];
   uniform int   uOpCount;
+  // INGEN §13 verifier : 0 = normal render, 1 = Lipschitz heatmap
+  // (green where |grad d| ≈ 1, red where it drifts — smin / domain ops
+  // are expected violators, a proper sphere SDF stays solid green).
+  uniform int   uDebugMode;
   out vec4 fragColor;
 
   float sd_sphere(vec3 p, float r) { return length(p) - r; }
@@ -325,13 +329,27 @@ export const FS_SDF = `#version 300 es
     if (!hit) discard;
 
     vec3 p = ro + rd * t;
-    vec3 n = calc_normal(p);
-    vec3 l = normalize(vec3(0.55, 0.85, 0.40));
-    float lambert = max(dot(n, l), 0.0);
-    float rim = pow(1.0 - max(dot(n, -rd), 0.0), 2.0);
-    vec3 col = vec3(0.12, 0.14, 0.18)
-             + vec3(0.80, 0.74, 0.68) * lambert
-             + vec3(0.35, 0.50, 0.75) * rim * 0.20;
+    vec3 col;
+    if (uDebugMode == 1) {
+      // Raw gradient : |grad d| should stay ~ 1 for a Lipschitz-1 SDF.
+      // smin / round_box deliberately drift — the heatmap shows where.
+      vec2 e = vec2(0.0015, 0.0);
+      vec3 grad = vec3(
+        scene(p + e.xyy) - scene(p - e.xyy),
+        scene(p + e.yxy) - scene(p - e.yxy),
+        scene(p + e.yyx) - scene(p - e.yyx)
+      ) / (2.0 * e.x);
+      float dev = abs(length(grad) - 1.0);
+      col = mix(vec3(0.18, 0.78, 0.32), vec3(0.92, 0.18, 0.18), clamp(dev * 2.0, 0.0, 1.0));
+    } else {
+      vec3 n = calc_normal(p);
+      vec3 l = normalize(vec3(0.55, 0.85, 0.40));
+      float lambert = max(dot(n, l), 0.0);
+      float rim = pow(1.0 - max(dot(n, -rd), 0.0), 2.0);
+      col = vec3(0.12, 0.14, 0.18)
+          + vec3(0.80, 0.74, 0.68) * lambert
+          + vec3(0.35, 0.50, 0.75) * rim * 0.20;
+    }
     fragColor = vec4(col, 1.0);
 
     // Write depth so the SDF correctly occludes / is occluded by the
