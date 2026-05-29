@@ -418,9 +418,12 @@ export const FS_SDF = `#version 300 es
         if (negB > dStack[sp - 1]) dStack[sp - 1] = negB;
         // material follows A — the carved-out face is still A's surface.
       } else if (op == 13) {                               // SMIN — blend mats by softmin weight
+        // Decrement FIRST so dStack[sp] and dStack[sp - 1] are in
+        // range (B = old top, A = one below). Reading before pop
+        // would touch dStack[sp] out of the live stack range.
+        sp -= 1;
         float ad = dStack[sp - 1];
         float bd = dStack[sp];
-        sp -= 1;
         float k  = b.x;
         float m  = min(ad, bd);
         float ea = exp(-k * (ad - m));
