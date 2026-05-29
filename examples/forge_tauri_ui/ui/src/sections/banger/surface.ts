@@ -8098,10 +8098,12 @@ import * as worlds from "./worlds.js";
       raf = requestAnimationFrame(render);
     }
     } catch (err) {
-      console.error("[banger] render crashed, stopping loop to keep UI responsive:", err);
-      gpuState = "stopped";
-      try { setGpuStatus("GPU error — see console", "paused"); } catch (_) {}
-      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      // Skip the bad frame ; do NOT disable the loop or change gpuState.
+      // The original "freeze" issue we were protecting against came from
+      // the shader producing NaN, which is now NaN-guarded at the GLSL
+      // level (catalog.ts::scene). Permanent stop here would just
+      // replace the symptom with another black screen.
+      console.warn("[banger] render frame skipped:", err);
     }
   }
 
