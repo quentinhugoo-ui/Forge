@@ -7215,6 +7215,16 @@ import * as worlds from "./worlds.js";
       console.error("[banger] WebGL2 not available");
       return false;
     }
+    // Safety net : if the GPU driver loses the context (shader divergence,
+    // OOM, driver reset), stop the RAF loop right away so we don't spam
+    // failing GL calls every frame and freeze the UI.
+    els.canvas.addEventListener("webglcontextlost", (event) => {
+      event.preventDefault();
+      console.warn("[banger] WebGL context lost — stopping render loop.");
+      gpuState = "stopped";
+      try { setGpuStatus("GPU context lost", "paused"); } catch (_) {}
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    }, { once: true });
     const vsM = compile(gl, gl.VERTEX_SHADER, VS_MESH);
     const fsM = compile(gl, gl.FRAGMENT_SHADER, FS_MESH);
     const vsL = compile(gl, gl.VERTEX_SHADER, VS_LINE);
@@ -7941,6 +7951,12 @@ import * as worlds from "./worlds.js";
       boomRenderStats.idleSkips += 1;
       return;
     }
+    // Safety net : if the shader / GL state corrupts (e.g. context lost,
+    // out-of-range uniform), an exception in render() would keep firing
+    // every requestAnimationFrame, saturating the JS thread and freezing
+    // the whole UI. Catch once, stop the loop, leave the rest of the app
+    // clickable.
+    try {
     const frameReason = boomRenderReason || (continuous ? "continuous" : "dirty");
     boomRenderDirty = false;
     boomRenderReason = "";
@@ -8080,6 +8096,12 @@ import * as worlds from "./worlds.js";
     drawBoomSelectionOverlay();
     if (boomRenderContinuousActive() && !raf) {
       raf = requestAnimationFrame(render);
+    }
+    } catch (err) {
+      console.error("[banger] render crashed, stopping loop to keep UI responsive:", err);
+      gpuState = "stopped";
+      try { setGpuStatus("GPU error — see console", "paused"); } catch (_) {}
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
     }
   }
 

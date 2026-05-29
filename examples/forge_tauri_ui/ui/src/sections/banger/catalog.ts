@@ -450,7 +450,13 @@ export const FS_SDF = `#version 300 es
   }
 
   // Distance-only wrapper for the raymarch loop and the gradient probe.
-  float scene(vec3 p) { return sceneFull(p).d; }
+  // Safety : a NaN / Inf distance from a buggy opcode (or pathological
+  // scene) used to crash the WebGL2 context — clamping to a large
+  // positive value keeps the raymarch bounded and the UI responsive.
+  float scene(vec3 p) {
+    float d = sceneFull(p).d;
+    return (isnan(d) || isinf(d)) ? 1e9 : d;
+  }
 
   vec3 calc_normal(vec3 p) {
     vec2 e = vec2(0.0015, 0.0);
