@@ -76,6 +76,7 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
   let uMeshModel, uMeshProj, uMeshView, uMeshColor, uMeshClipOffset;
   let uLineProj, uLineView, uLineFadeNear, uLineFadeFar, uLineClipOffset;
   let uSdfResolution, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj, uSdfOps, uSdfOpCount, uSdfDebugMode, uSdfGlow;
+  let uSdfMeshTex, uSdfMeshMin, uSdfMeshMax, uSdfMeshLoaded;
   // INGEN §19.3 : the scene is data, not source. The DEFAULT_SCENE here
   // reproduces the previous hardcoded smin of two spheres ; future scenes
   // can be swapped via window.__forgeBangerSetScene without recompile.
@@ -84,6 +85,11 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
   let sdfDebugMode = 0;
   // INGEN §19.5 : 1 = proxy-gaussian halo on raymarch misses (on by default).
   let sdfGlow = 1;
+  // INGEN §11 mesh→SDF voxel texture state.
+  let meshSdfTex = null;
+  let meshSdfBoundsMin = new Float32Array([0, 0, 0]);
+  let meshSdfBoundsMax = new Float32Array([0, 0, 0]);
+  let meshSdfLoaded = 0;
 
   // Camera state survives suspend/resume — it's pure JS, no GPU resources.
   let camera = {
@@ -7232,6 +7238,10 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
     uSdfOpCount     = gl.getUniformLocation(sdfProg, "uOpCount");
     uSdfDebugMode   = gl.getUniformLocation(sdfProg, "uDebugMode");
     uSdfGlow        = gl.getUniformLocation(sdfProg, "uGlow");
+    uSdfMeshTex     = gl.getUniformLocation(sdfProg, "uMeshSdf");
+    uSdfMeshMin     = gl.getUniformLocation(sdfProg, "uMeshMin");
+    uSdfMeshMax     = gl.getUniformLocation(sdfProg, "uMeshMax");
+    uSdfMeshLoaded  = gl.getUniformLocation(sdfProg, "uMeshLoaded");
 
     // cube VAO
     const cube = makeCube();
@@ -7986,6 +7996,13 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
       gl.uniform1i(uSdfOpCount, sdfScene.count);
       gl.uniform1i(uSdfDebugMode, sdfDebugMode);
       gl.uniform1i(uSdfGlow, sdfGlow);
+      // Bind the mesh-SDF 3D texture (if any) to unit 0.
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_3D, meshSdfTex);
+      gl.uniform1i(uSdfMeshTex, 0);
+      gl.uniform3fv(uSdfMeshMin, meshSdfBoundsMin);
+      gl.uniform3fv(uSdfMeshMax, meshSdfBoundsMax);
+      gl.uniform1i(uSdfMeshLoaded, meshSdfLoaded);
       gl.bindVertexArray(null);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
@@ -8481,6 +8498,57 @@ import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
       sdfGlow = on ? 1 : 0;
       requestBoomRender("sdf-glow-toggle", 200);
       return { ok: true, glow: sdfGlow };
+    };
+    // INGEN §11 mesh→SDF : upload an STL byte buffer, voxelise in Rust
+    // (banger_voxelize_mesh), bind the result as a 3D texture so the
+    // OP_SAMPLED_SDF opcode can reach it. Returns timing + bounds.
+    window.__forgeBangerLoadMeshSdf = async (arrayBuffer, gridSize) => {
+      if (!gl) return { ok: false, error: "GL not initialised" };
+      if (!arrayBuffer || !arrayBuffer.byteLength) return { ok: false, error: "empty buffer" };
+      const bytes = new Uint8Array(arrayBuffer);
+      let bin = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      const bytesB64 = btoa(bin);
+      const grid = Math.max(16, Math.min(128, Number(gridSize) || 48));
+      let resp = null;
+      try {
+        resp = await backendInvoke("banger_voxelize_mesh", { request: { bytesB64, gridSize: grid } });
+      } catch (err) {
+        return { ok: false, error: `backend invoke failed: ${err}` };
+      }
+      if (!resp?.ok || !resp.voxelsB64) {
+        return { ok: false, error: resp?.error || "voxelize backend returned no data" };
+      }
+      // Decode base64 → Float32Array (grid³ signed distances).
+      const voxelBin = atob(resp.voxelsB64);
+      const voxelU8 = new Uint8Array(voxelBin.length);
+      for (let i = 0; i < voxelBin.length; i += 1) voxelU8[i] = voxelBin.charCodeAt(i);
+      const voxels = new Float32Array(voxelU8.buffer.slice(voxelU8.byteOffset, voxelU8.byteOffset + voxelU8.byteLength));
+      // (Re)create the 3D texture.
+      if (meshSdfTex) gl.deleteTexture(meshSdfTex);
+      meshSdfTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_3D, meshSdfTex);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.R32F, resp.gridSize, resp.gridSize, resp.gridSize, 0, gl.RED, gl.FLOAT, voxels);
+      meshSdfBoundsMin = new Float32Array(resp.boundsMin);
+      meshSdfBoundsMax = new Float32Array(resp.boundsMax);
+      meshSdfLoaded = 1;
+      requestBoomRender("sdf-mesh-load", 200);
+      return {
+        ok: true,
+        gridSize: resp.gridSize,
+        triangleCount: resp.triangleCount,
+        elapsedMs: resp.elapsedMs,
+        boundsMin: Array.from(meshSdfBoundsMin),
+        boundsMax: Array.from(meshSdfBoundsMax),
+      };
     };
     exposeBoomAuditState();
   }

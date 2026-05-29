@@ -226,6 +226,14 @@ export const FS_SDF = `#version 300 es
   // that come close to the surface. Acts as a proxy gaussien attached
   // to the SDF without a second render pass.
   uniform int   uGlow;
+  // INGEN §11 mesh→SDF : 3D texture of signed distances voxelised from
+  // an external mesh (banger_voxelize_mesh in Rust). Sampled via opcode
+  // 20 (OP_SAMPLED_SDF). When uMeshLoaded=0 the sample returns a large
+  // positive distance so it never affects the scene.
+  uniform sampler3D uMeshSdf;
+  uniform vec3      uMeshMin;
+  uniform vec3      uMeshMax;
+  uniform int       uMeshLoaded;
   out vec4 fragColor;
 
   float sd_sphere(vec3 p, float r) { return length(p) - r; }
@@ -253,6 +261,18 @@ export const FS_SDF = `#version 300 es
   float sd_rounded_box(vec3 p, vec3 b, float r) {
     vec3 q = abs(p) - b + vec3(r);
     return length(max(q, vec3(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
+  }
+
+  // Trilinear sample of the mesh-voxel 3D texture. Outside the voxel
+  // grid returns a large positive distance — the bound stays a hard
+  // shell, no spurious blends with the rest of the scene.
+  float sd_sampled(vec3 p) {
+    if (uMeshLoaded != 1) return 1e6;
+    vec3 uvw = (p - uMeshMin) / max(uMeshMax - uMeshMin, vec3(1e-6));
+    if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0)))) {
+      return 1e6;
+    }
+    return texture(uMeshSdf, uvw).r;
   }
 
   // Smooth union via log-sum-exp softmin — INGEN §20.1 (numerically
@@ -285,6 +305,9 @@ export const FS_SDF = `#version 300 es
         sp += 1;
       } else if (op == 4) {                                // ROUNDED_BOX
         stack[sp] = sd_rounded_box(p - a.yzw, b.xyz, b.w);
+        sp += 1;
+      } else if (op == 20) {                               // SAMPLED_SDF (mesh voxels)
+        stack[sp] = sd_sampled(p);
         sp += 1;
       } else if (op == 10) {                               // UNION
         sp -= 1;

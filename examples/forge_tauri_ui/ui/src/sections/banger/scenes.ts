@@ -22,6 +22,8 @@ export const OP_UNION        = 10;
 export const OP_INTERSECT    = 11;
 export const OP_DIFF         = 12;
 export const OP_SMIN         = 13;
+/** §11 mesh→SDF bridge : samples the bound 3D texture (uMeshSdf). */
+export const OP_SAMPLED_SDF  = 20;
 
 export const SDF_MAX_OPS = 64;
 export const SDF_FLOATS_PER_OP = 8;
@@ -34,6 +36,7 @@ export type SdfOp =
   | { op: "torus";        center: Vec3; majorRadius: number; minorRadius: number }
   | { op: "capsule";      a: Vec3; b: Vec3; radius: number }
   | { op: "roundedBox";   center: Vec3; halfExtents: Vec3; cornerRadius: number }
+  | { op: "sampledSdf" }
   | { op: "union" }
   | { op: "intersect" }
   | { op: "diff" }
@@ -45,6 +48,7 @@ const OP_CODE: Record<SdfOp["op"], number> = {
   torus:      OP_TORUS,
   capsule:    OP_CAPSULE,
   roundedBox: OP_ROUNDED_BOX,
+  sampledSdf: OP_SAMPLED_SDF,
   union:      OP_UNION,
   intersect:  OP_INTERSECT,
   diff:       OP_DIFF,

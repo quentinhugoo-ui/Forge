@@ -36,6 +36,7 @@ mod forge_agent_runtime;
 #[allow(dead_code)]
 mod forge_agent_tools;
 mod banger;
+mod banger_mesh;
 mod trading;
 mod trading_manifest;
 mod trading_pressure;
@@ -35808,6 +35809,7 @@ fn main() {
             banger::banger_engine_start,
             banger::banger_engine_stop,
             banger::banger_engine_status,
+            banger_mesh::banger_voxelize_mesh,
             banger::banger_detect_printers,
             banger::banger_run_rust_console,
         ])
