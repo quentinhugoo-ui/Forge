@@ -1,5 +1,6 @@
 // @ts-nocheck
 import "./controller.js";
+import { DEFAULT_SCENE, serializeScene } from "./scenes.js";
 
 // Banger — minimal Blender-style 3D viewport (WebGL2)
 // Self-contained; wires the BOOM titlebar button and the overlay shell.
@@ -74,7 +75,11 @@ import "./controller.js";
   let cubeCount = 0, gridCount = 0;
   let uMeshModel, uMeshProj, uMeshView, uMeshColor, uMeshClipOffset;
   let uLineProj, uLineView, uLineFadeNear, uLineFadeFar, uLineClipOffset;
-  let uSdfResolution, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj;
+  let uSdfResolution, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj, uSdfOps, uSdfOpCount;
+  // INGEN §19.3 : the scene is data, not source. The DEFAULT_SCENE here
+  // reproduces the previous hardcoded smin of two spheres ; future scenes
+  // can be swapped via window.__forgeBangerSetScene without recompile.
+  let sdfScene = serializeScene(DEFAULT_SCENE);
 
   // Camera state survives suspend/resume — it's pure JS, no GPU resources.
   let camera = {
@@ -7219,6 +7224,8 @@ import "./controller.js";
     uSdfCameraUp    = gl.getUniformLocation(sdfProg, "uCameraUp");
     uSdfTanHalfFovY = gl.getUniformLocation(sdfProg, "uTanHalfFovY");
     uSdfViewProj    = gl.getUniformLocation(sdfProg, "uViewProj");
+    uSdfOps         = gl.getUniformLocation(sdfProg, "uOps");
+    uSdfOpCount     = gl.getUniformLocation(sdfProg, "uOpCount");
 
     // cube VAO
     const cube = makeCube();
@@ -7969,6 +7976,8 @@ import "./controller.js";
       gl.uniform3fv(uSdfCameraUp, new Float32Array(up));
       gl.uniform1f(uSdfTanHalfFovY, Math.tan((46 * Math.PI / 180) * 0.5));
       gl.uniformMatrix4fv(uSdfViewProj, false, viewProj);
+      gl.uniform4fv(uSdfOps, sdfScene.buffer);
+      gl.uniform1i(uSdfOpCount, sdfScene.count);
       gl.bindVertexArray(null);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
@@ -8440,6 +8449,19 @@ import "./controller.js";
     window.__forgeBoomExecuteTool = () => ({ ok: false, tool: "boom.unavailable", detail: { error: "inactive" }, context: { active: false } });
     window.__forgeOpenBoom = () => (bangerController ? bangerController.open() : openOverlay());
     window.__forgeCloseBoom = () => (bangerController ? bangerController.close() : closeOverlay());
+    // INGEN §19.3 — agent / ForgeSlash entry point for swapping the SDF
+    // scene. Accepts the SdfOp[] type from scenes.ts ; rejects gracefully
+    // on bad input. Triggers a single re-render via requestBoomRender.
+    window.__forgeBangerSetScene = (ops) => {
+      try {
+        sdfScene = serializeScene(ops || []);
+        requestBoomRender("sdf-scene-update", 200);
+        return { ok: true, count: sdfScene.count };
+      } catch (err) {
+        console.warn("[banger] __forgeBangerSetScene rejected:", err);
+        return { ok: false, error: String(err?.message || err) };
+      }
+    };
     exposeBoomAuditState();
   }
 

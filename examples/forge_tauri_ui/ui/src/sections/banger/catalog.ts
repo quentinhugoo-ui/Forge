@@ -200,6 +200,13 @@ export const VS_SDF = `#version 300 es
   }
 `;
 
+// SDF scene as data (INGEN COMPUTE §19.3) :
+//   uOps[i*2]   = vec4(op_code, p0, p1, p2)
+//   uOps[i*2+1] = vec4(p3, p4, p5, k)
+// Op codes mirror scenes.ts (OP_SPHERE=0, BOX=1, UNION=10, INTERSECT=11,
+// DIFF=12, SMIN=13). The fragment walks `uOpCount` ops postfix-style
+// through a tiny stack machine, so swapping scenes is a single
+// uniform4fv upload — no shader recompile, no Rust round-trip.
 export const FS_SDF = `#version 300 es
   precision highp float;
   uniform vec2  uResolution;
@@ -209,9 +216,16 @@ export const FS_SDF = `#version 300 es
   uniform vec3  uCameraUp;
   uniform float uTanHalfFovY;
   uniform mat4  uViewProj;
+  uniform vec4  uOps[128];
+  uniform int   uOpCount;
   out vec4 fragColor;
 
   float sd_sphere(vec3 p, float r) { return length(p) - r; }
+
+  float sd_box(vec3 p, vec3 b) {
+    vec3 q = abs(p) - b;
+    return length(max(q, vec3(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+  }
 
   // Smooth union via log-sum-exp softmin — INGEN §20.1, mirrors
   // src/sdf.rs::SmoothUnion (numerically stable form).
@@ -221,13 +235,35 @@ export const FS_SDF = `#version 300 es
   }
 
   float scene(vec3 p) {
-    // Default scene : two spheres centered at XY=0 with the same Z
-    // height so the smin blob's centroid sits on the viewport origin.
-    // Static (no uTime) — the render loop re-fires only when the
-    // camera moves (requestBoomRender from the pointer handlers).
-    float s1 = sd_sphere(p - vec3(-0.7, 0.0, 0.0), 0.7);
-    float s2 = sd_sphere(p - vec3( 0.7, 0.0, 0.0), 0.7);
-    return smin(s1, s2, 5.0);
+    float stack[16];
+    int   sp = 0;
+    int   n  = uOpCount;
+    for (int i = 0; i < 64; i++) {
+      if (i >= n) break;
+      vec4 a = uOps[i * 2];
+      vec4 b = uOps[i * 2 + 1];
+      int op = int(a.x);
+      if (op == 0) {                                       // SPHERE
+        stack[sp] = sd_sphere(p - a.yzw, b.x);
+        sp += 1;
+      } else if (op == 1) {                                // BOX
+        stack[sp] = sd_box(p - a.yzw, b.xyz);
+        sp += 1;
+      } else if (op == 10) {                               // UNION
+        sp -= 1;
+        stack[sp - 1] = min(stack[sp - 1], stack[sp]);
+      } else if (op == 11) {                               // INTERSECT
+        sp -= 1;
+        stack[sp - 1] = max(stack[sp - 1], stack[sp]);
+      } else if (op == 12) {                               // DIFF (a - b)
+        sp -= 1;
+        stack[sp - 1] = max(stack[sp - 1], -stack[sp]);
+      } else if (op == 13) {                               // SMIN
+        sp -= 1;
+        stack[sp - 1] = smin(stack[sp - 1], stack[sp], b.x);
+      }
+    }
+    return sp > 0 ? stack[0] : 1e9;
   }
 
   vec3 calc_normal(vec3 p) {
