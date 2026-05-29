@@ -32177,7 +32177,6 @@ fn main() {
             banger::banger_engine_stop,
             banger::banger_engine_status,
             banger::banger_detect_printers,
-            banger::banger_normalize_import_files,
             banger::banger_run_rust_console,
         ])
         .run(tauri::generate_context!())
