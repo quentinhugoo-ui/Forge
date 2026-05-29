@@ -18,6 +18,7 @@ pub mod introspection;
 pub mod landauer;
 pub mod meta;
 mod monster;
+pub mod sdf;
 mod store;
 
 // `atlas::Atlas` is reached via the explicit `scan::atlas::Atlas` path.

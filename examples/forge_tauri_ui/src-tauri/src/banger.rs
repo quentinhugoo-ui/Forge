@@ -147,6 +147,132 @@ fn status_from(live: &Live, state: EngineState) -> EngineStatus {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpatialAnalysisRequest {
+    pub vertices: Vec<f32>,
+    pub grid_size: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpatialCluster {
+    pub id: usize,
+    pub vertex_count: usize,
+    pub center: [f32; 3],
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpatialSummary {
+    pub global_min: [f32; 3],
+    pub global_max: [f32; 3],
+    pub global_center: [f32; 3],
+    pub vertex_count: usize,
+    pub clusters: Vec<SpatialCluster>,
+    pub density_report: String,
+}
+
+#[tauri::command]
+pub fn banger_analyze_spatial_layout(request: SpatialAnalysisRequest) -> Result<SpatialSummary, String> {
+    let vertices = &request.vertices;
+    if vertices.len() % 3 != 0 {
+        return Err("Invalid vertex buffer length (must be multiple of 3)".to_string());
+    }
+
+    let vertex_count = vertices.len() / 3;
+    if vertex_count == 0 {
+        return Err("No vertices provided".to_string());
+    }
+
+    let mut global_min = [f32::INFINITY; 3];
+    let mut global_max = [f32::NEG_INFINITY; 3];
+
+    for chunk in vertices.chunks_exact(3) {
+        for i in 0..3 {
+            global_min[i] = global_min[i].min(chunk[i]);
+            global_max[i] = global_max[i].max(chunk[i]);
+        }
+    }
+
+    let global_center = [
+        (global_min[0] + global_max[0]) * 0.5,
+        (global_min[1] + global_max[1]) * 0.5,
+        (global_min[2] + global_max[2]) * 0.5,
+    ];
+
+    let grid_n = request.grid_size.unwrap_or(4).clamp(1, 8);
+    let mut clusters = Vec::new();
+
+    // Simple grid-based clustering
+    let span = [
+        (global_max[0] - global_min[0]).max(1e-6),
+        (global_max[1] - global_min[1]).max(1e-6),
+        (global_max[2] - global_min[2]).max(1e-6),
+    ];
+
+    let mut grid = vec![Vec::new(); grid_n * grid_n * grid_n];
+
+    for (idx, chunk) in vertices.chunks_exact(3).enumerate() {
+        let ix = (((chunk[0] - global_min[0]) / span[0] * (grid_n as f32)).floor() as usize).min(grid_n - 1);
+        let iy = (((chunk[1] - global_min[1]) / span[1] * (grid_n as f32)).floor() as usize).min(grid_n - 1);
+        let iz = (((chunk[2] - global_min[2]) / span[2] * (grid_n as f32)).floor() as usize).min(grid_n - 1);
+        let grid_idx = ix + iy * grid_n + iz * grid_n * grid_n;
+        grid[grid_idx].push(idx);
+    }
+
+    let mut density_bits = Vec::new();
+
+    for (i, v_indices) in grid.iter().enumerate() {
+        if v_indices.is_empty() {
+            continue;
+        }
+
+        let mut c_min = [f32::INFINITY; 3];
+        let mut c_max = [f32::NEG_INFINITY; 3];
+        let mut c_sum = [0.0f32; 3];
+
+        for &v_idx in v_indices {
+            let offset = v_idx * 3;
+            for j in 0..3 {
+                let v = vertices[offset + j];
+                c_min[j] = c_min[j].min(v);
+                c_max[j] = c_max[j].max(v);
+                c_sum[j] += v;
+            }
+        }
+
+        let v_count = v_indices.len();
+        let center = [c_sum[0] / v_count as f32, c_sum[1] / v_count as f32, c_sum[2] / v_count as f32];
+
+        clusters.push(SpatialCluster {
+            id: i,
+            vertex_count: v_count,
+            center,
+            min: c_min,
+            max: c_max,
+        });
+
+        let ix = i % grid_n;
+        let iy = (i / grid_n) % grid_n;
+        let iz = i / (grid_n * grid_n);
+        density_bits.push(format!("Cluster[{},{},{}]: {} verts, center: [{:.2}, {:.2}, {:.2}]", ix, iy, iz, v_count, center[0], center[1], center[2]));
+    }
+
+    let density_report = density_bits.join("\n");
+
+    Ok(SpatialSummary {
+        global_min,
+        global_max,
+        global_center,
+        vertex_count,
+        clusters,
+        density_report,
+    })
+}
+
 // ---------- Tauri command wrappers ----------
 
 #[tauri::command]
