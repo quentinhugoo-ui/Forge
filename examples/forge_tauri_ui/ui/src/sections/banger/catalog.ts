@@ -234,6 +234,15 @@ export const FS_SDF = `#version 300 es
   uniform vec3      uMeshMin;
   uniform vec3      uMeshMax;
   uniform int       uMeshLoaded;
+  // INGEN §19.5 real Gaussian Splatting. Each splat = 2 vec4 :
+  //   slot[0] = (pos.xyz, world-scale σ)
+  //   slot[1] = (color.rgb, opacity α)
+  // Sampled from the SDF surface in scenes.ts::bakeGaussiansOnSurface.
+  // Evaluated per-pixel inside this fragment : projection clip-space,
+  // 2D screen-space falloff exp(-r²/2σ²), additive blend — no second
+  // render pass, no rasterized billboards.
+  uniform vec4  uGaussians[128];
+  uniform int   uGaussianCount;
   out vec4 fragColor;
 
   float sd_sphere(vec3 p, float r) { return length(p) - r; }
@@ -355,17 +364,48 @@ export const FS_SDF = `#version 300 es
       if (t > 60.0) { break; }
       t += d;
     }
+    // §19.5 — Gaussian splats accumulate over both hit and miss
+    // pixels. Computed once and added to the chosen base colour below.
+    vec3 splatRgb = vec3(0.0);
+    float splatA = 0.0;
+    if (uGaussianCount > 0) {
+      for (int gi = 0; gi < 64; gi++) {
+        if (gi >= uGaussianCount) break;
+        vec4 g0 = uGaussians[gi * 2];
+        vec4 g1 = uGaussians[gi * 2 + 1];
+        vec4 gclip = uViewProj * vec4(g0.xyz, 1.0);
+        if (gclip.w < 0.001) continue;
+        vec2 ndc = gclip.xy / gclip.w;
+        vec2 gpx = (ndc * 0.5 + 0.5) * uResolution;
+        // World-scale σ projected to screen pixels (perspective-aware).
+        float scalePx = g0.w * (uResolution.y * 0.5) / max(gclip.w * uTanHalfFovY, 1e-3);
+        vec2 dpx = gl_FragCoord.xy - gpx;
+        float r2 = dot(dpx, dpx) / (scalePx * scalePx + 1.0);
+        float a = exp(-r2 * 0.5) * g1.w;
+        splatRgb += g1.rgb * a;
+        splatA += a;
+      }
+    }
+
     if (!hit) {
       // §19.5 — pixel rate la surface mais l'a frôlée : halo gaussien
       // additif ancré sur la distance d'approche minimale. Glow pushed
-      // to the far plane so it never occludes the grid / gizmo.
-      if (uGlow == 1 && minDist > 0.0 && minDist < 1.0) {
+      // to the far plane so it never occludes la grille / gizmo.
+      bool hasGlow = (uGlow == 1 && minDist > 0.0 && minDist < 1.0);
+      bool hasSplat = splatA > 0.01;
+      if (!hasGlow && !hasSplat) discard;
+      vec3 col = vec3(0.0);
+      float alpha = 0.0;
+      if (hasGlow) {
         float halo = exp(-minDist * 5.0) * 0.6;
-        fragColor = vec4(vec3(0.35, 0.55, 0.85) * halo, halo);
-        gl_FragDepth = 0.99999;
-        return;
+        col += vec3(0.35, 0.55, 0.85) * halo;
+        alpha = max(alpha, halo);
       }
-      discard;
+      col += splatRgb;
+      alpha = max(alpha, min(1.0, splatA));
+      fragColor = vec4(col, alpha);
+      gl_FragDepth = 0.99999;
+      return;
     }
 
     vec3 p = ro + rd * t;
@@ -390,6 +430,8 @@ export const FS_SDF = `#version 300 es
           + vec3(0.80, 0.74, 0.68) * lambert
           + vec3(0.35, 0.50, 0.75) * rim * 0.20;
     }
+    // Splats additionnent leur contribution sur la surface aussi.
+    col += splatRgb;
     fragColor = vec4(col, 1.0);
 
     // Write depth so the SDF correctly occludes / is occluded by the

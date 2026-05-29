@@ -123,3 +123,150 @@ export const DEFAULT_SCENE: SdfOp[] = [
   { op: "sphere", center: [ 0.7, 0.0, 0.0], radius: 0.7 },
   { op: "smin", k: 5.0 },
 ];
+
+// ---------- CPU SDF evaluator -------------------------------------------------
+//
+// Mirrors the GLSL stack machine in catalog.ts::FS_SDF byte-for-byte so that
+// scenes.ts stays the single source of truth for SDF semantics. Used by the
+// Gaussian sampler below (§19.5 splatting) ; future agents that need raycast
+// / picker / collision can reuse it without a GPU round-trip.
+//
+// OP_SAMPLED_SDF (20) is NOT evaluable on CPU (the 3D texture only lives on
+// GPU) ; it returns a large positive value so the sampler skips that region.
+
+const TS_STACK_MAX = 16;
+
+function sdSphere(p: Vec3, r: number): number {
+  return Math.hypot(p[0], p[1], p[2]) - r;
+}
+function sdBox(p: Vec3, b: Vec3): number {
+  const qx = Math.abs(p[0]) - b[0];
+  const qy = Math.abs(p[1]) - b[1];
+  const qz = Math.abs(p[2]) - b[2];
+  const outside = Math.hypot(Math.max(qx, 0), Math.max(qy, 0), Math.max(qz, 0));
+  const inside  = Math.min(Math.max(qx, Math.max(qy, qz)), 0);
+  return outside + inside;
+}
+function sdTorus(p: Vec3, R: number, r: number): number {
+  return Math.hypot(Math.hypot(p[0], p[1]) - R, p[2]) - r;
+}
+function sdCapsule(p: Vec3, a: Vec3, b: Vec3, r: number): number {
+  const pax = p[0] - a[0], pay = p[1] - a[1], paz = p[2] - a[2];
+  const bax = b[0] - a[0], bay = b[1] - a[1], baz = b[2] - a[2];
+  const baba = bax * bax + bay * bay + baz * baz;
+  const h = Math.max(0, Math.min(1, (pax * bax + pay * bay + paz * baz) / Math.max(baba, 1e-6)));
+  return Math.hypot(pax - bax * h, pay - bay * h, paz - baz * h) - r;
+}
+function sdRoundedBox(p: Vec3, b: Vec3, r: number): number {
+  return sdBox(p, [b[0] - r, b[1] - r, b[2] - r]) - r;
+}
+function smin(a: number, b: number, k: number): number {
+  const m = Math.min(a, b);
+  return m - Math.log(Math.exp(-k * (a - m)) + Math.exp(-k * (b - m))) / k;
+}
+
+/** Returns the signed distance of `point` to the SDF scene. */
+export function evaluateScene(scene: readonly SdfOp[], point: Vec3): number {
+  const stack = new Float64Array(TS_STACK_MAX);
+  let sp = 0;
+  for (const op of scene) {
+    if (sp >= TS_STACK_MAX) break;
+    if (op.op === "sphere") {
+      stack[sp++] = sdSphere([point[0] - op.center[0], point[1] - op.center[1], point[2] - op.center[2]], op.radius);
+    } else if (op.op === "box") {
+      stack[sp++] = sdBox([point[0] - op.center[0], point[1] - op.center[1], point[2] - op.center[2]], op.halfExtents);
+    } else if (op.op === "torus") {
+      stack[sp++] = sdTorus([point[0] - op.center[0], point[1] - op.center[1], point[2] - op.center[2]], op.majorRadius, op.minorRadius);
+    } else if (op.op === "capsule") {
+      stack[sp++] = sdCapsule(point, op.a, op.b, op.radius);
+    } else if (op.op === "roundedBox") {
+      stack[sp++] = sdRoundedBox([point[0] - op.center[0], point[1] - op.center[1], point[2] - op.center[2]], op.halfExtents, op.cornerRadius);
+    } else if (op.op === "sampledSdf") {
+      stack[sp++] = 1e6; // GPU-only ; skip
+    } else if (op.op === "union") {
+      sp -= 1; stack[sp - 1] = Math.min(stack[sp - 1], stack[sp]);
+    } else if (op.op === "intersect") {
+      sp -= 1; stack[sp - 1] = Math.max(stack[sp - 1], stack[sp]);
+    } else if (op.op === "diff") {
+      sp -= 1; stack[sp - 1] = Math.max(stack[sp - 1], -stack[sp]);
+    } else if (op.op === "smin") {
+      sp -= 1; stack[sp - 1] = smin(stack[sp - 1], stack[sp], op.k);
+    }
+  }
+  return sp > 0 ? stack[0] : 1e9;
+}
+
+// ---------- Gaussian splat baking (INGEN §19.5) ------------------------------
+//
+// Real Gaussian Splatting math (isotropic for V1 ; per-pixel projection +
+// exp(-r²/2σ²) accumulation lives inside FS_SDF). The Gaussians are sampled
+// FROM the SDF surface — they're a derived view, not an independent asset.
+
+export const SDF_MAX_GAUSSIANS = 64;
+
+export interface BakedGaussians {
+  /** Packed Float32Array, 8 floats per gaussian : (pos.xyz, scale, color.rgb, opacity). */
+  readonly buffer: Float32Array;
+  readonly count: number;
+}
+
+export interface BakeOptions {
+  /** Cube half-extent around origin where samples are drawn. Default 1.5. */
+  readonly searchRadius?: number;
+  /** Surface tolerance after one Newton step. Default 0.05. */
+  readonly tolerance?: number;
+  /** Per-gaussian screen scale (world units). Default 0.07. */
+  readonly scale?: number;
+}
+
+export function bakeGaussiansOnSurface(
+  scene: readonly SdfOp[],
+  count: number,
+  opts: BakeOptions = {},
+): BakedGaussians {
+  const n = Math.min(SDF_MAX_GAUSSIANS, Math.max(0, count | 0));
+  const buf = new Float32Array(SDF_MAX_GAUSSIANS * 8);
+  if (n === 0 || scene.length === 0) return { buffer: buf, count: 0 };
+
+  const R = Math.max(0.01, opts.searchRadius ?? 1.5);
+  const tol = Math.max(1e-4, opts.tolerance ?? 0.05);
+  const scl = Math.max(1e-3, opts.scale ?? 0.07);
+  const eps = 0.0015;
+
+  let written = 0;
+  let attempts = 0;
+  const maxAttempts = n * 200;
+  while (written < n && attempts < maxAttempts) {
+    attempts += 1;
+    const p: Vec3 = [
+      (Math.random() * 2 - 1) * R,
+      (Math.random() * 2 - 1) * R,
+      (Math.random() * 2 - 1) * R,
+    ];
+    const d = evaluateScene(scene, p);
+    if (!Number.isFinite(d) || Math.abs(d) > R) continue;
+    const dx = evaluateScene(scene, [p[0] + eps, p[1], p[2]]) - d;
+    const dy = evaluateScene(scene, [p[0], p[1] + eps, p[2]]) - d;
+    const dz = evaluateScene(scene, [p[0], p[1], p[2] + eps]) - d;
+    const glen = Math.hypot(dx, dy, dz);
+    if (glen < 1e-3) continue;
+    const nx = dx / glen, ny = dy / glen, nz = dz / glen;
+    // One Newton step along the gradient — snaps onto the iso-surface.
+    const sx = p[0] - nx * d;
+    const sy = p[1] - ny * d;
+    const sz = p[2] - nz * d;
+    if (Math.abs(evaluateScene(scene, [sx, sy, sz])) > tol) continue;
+    const base = written * 8;
+    buf[base + 0] = sx;
+    buf[base + 1] = sy;
+    buf[base + 2] = sz;
+    buf[base + 3] = scl;
+    // Colour from normal direction — gives a soft palette tied to surface geometry.
+    buf[base + 4] = 0.55 + nx * 0.35;
+    buf[base + 5] = 0.55 + ny * 0.35;
+    buf[base + 6] = 0.55 + nz * 0.35;
+    buf[base + 7] = 0.55; // opacity
+    written += 1;
+  }
+  return { buffer: buf, count: written };
+}
