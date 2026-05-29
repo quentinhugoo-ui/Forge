@@ -209,6 +209,7 @@ export const VS_SDF = `#version 300 es
 // uniform4fv upload — no shader recompile, no Rust round-trip.
 export const FS_SDF = `#version 300 es
   precision highp float;
+  precision highp sampler3D;
   uniform vec2  uResolution;
   uniform vec3  uCameraPos;
   uniform vec3  uCameraFwd;
