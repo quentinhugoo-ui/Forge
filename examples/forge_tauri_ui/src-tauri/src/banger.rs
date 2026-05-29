@@ -55,19 +55,23 @@ impl EngineStatus {
 struct Live {
     _instance: wgpu::Instance,
     _adapter: wgpu::Adapter,
-    _device: wgpu::Device,
-    _queue: wgpu::Queue,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
     info: wgpu::AdapterInfo,
 }
 
 /// Engine wrapper. `Mutex<Option<Live>>` so we can claim/release on demand.
 pub struct BangerEngine {
     live: Mutex<Option<Live>>,
+    sdf: crate::banger_sdf::BangerSdfRenderer,
 }
 
 impl BangerEngine {
     pub const fn new() -> Self {
-        Self { live: Mutex::new(None) }
+        Self {
+            live: Mutex::new(None),
+            sdf: crate::banger_sdf::BangerSdfRenderer::new(),
+        }
     }
 
     /// Idempotent: returns the current status whether already active or freshly started.
@@ -106,8 +110,8 @@ impl BangerEngine {
         let live = Live {
             _instance: instance,
             _adapter: adapter,
-            _device: device,
-            _queue: queue,
+            device,
+            queue,
             info,
         };
         let snapshot = status_from(&live, EngineState::Active);
@@ -115,10 +119,13 @@ impl BangerEngine {
         Ok(snapshot)
     }
 
-    /// Idempotent: drops Device/Queue if alive, otherwise no-op.
+    /// Idempotent: drops Device/Queue if alive, otherwise no-op. Also
+    /// clears the SDF renderer cache because its pipeline / texture
+    /// resources are tied to the dropped device.
     pub fn stop(&self) -> Result<EngineStatus, String> {
         let mut guard = self.live.lock().map_err(|e| format!("engine lock poisoned: {e}"))?;
-        guard.take(); // explicit drop while holding the lock
+        guard.take();
+        self.sdf.reset();
         Ok(EngineStatus::idle().with_state(EngineState::Stopped))
     }
 
@@ -128,6 +135,22 @@ impl BangerEngine {
             Some(live) => status_from(live, EngineState::Active),
             None => EngineStatus::idle(),
         })
+    }
+
+    /// Render a single SDF frame using the live Device/Queue. Errors out
+    /// if `start()` was never called — the UI is expected to drive the
+    /// engine lifecycle (open Banger -> engine_start -> sdf_frame loop).
+    pub fn render_sdf_frame(
+        &self,
+        width: u32,
+        height: u32,
+        time_seconds: f32,
+    ) -> Result<Vec<u8>, String> {
+        let guard = self.live.lock().map_err(|e| format!("engine lock poisoned: {e}"))?;
+        let live = guard
+            .as_ref()
+            .ok_or_else(|| "Banger engine is not started".to_string())?;
+        self.sdf.render_frame(&live.device, &live.queue, width, height, time_seconds)
     }
 }
 
@@ -160,6 +183,35 @@ pub fn banger_engine_stop(state: tauri::State<'_, BangerEngine>) -> Result<Engin
 #[tauri::command]
 pub fn banger_engine_status(state: tauri::State<'_, BangerEngine>) -> Result<EngineStatus, String> {
     state.status()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerSdfFrameRequest {
+    pub width: u32,
+    pub height: u32,
+    pub time_seconds: f32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerSdfFrameResponse {
+    pub width: u32,
+    pub height: u32,
+    pub pixels_b64: String,
+}
+
+#[tauri::command]
+pub fn banger_sdf_frame(
+    state: tauri::State<'_, BangerEngine>,
+    request: BangerSdfFrameRequest,
+) -> Result<BangerSdfFrameResponse, String> {
+    let width = request.width.clamp(1, 4096);
+    let height = request.height.clamp(1, 4096);
+    let pixels = state.render_sdf_frame(width, height, request.time_seconds)?;
+    use base64::Engine as _;
+    let pixels_b64 = base64::engine::general_purpose::STANDARD.encode(&pixels);
+    Ok(BangerSdfFrameResponse { width, height, pixels_b64 })
 }
 
 #[derive(Debug, Serialize)]
