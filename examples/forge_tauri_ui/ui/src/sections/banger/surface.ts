@@ -1,6 +1,7 @@
 // @ts-nocheck
 import "./controller.js";
 import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, serializeScene } from "./scenes.js";
+import * as worlds from "./worlds.js";
 
 // Banger — minimal Blender-style 3D viewport (WebGL2)
 // Self-contained; wires the BOOM titlebar button and the overlay shell.
@@ -78,6 +79,7 @@ import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, serializeScen
   let uSdfResolution, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj, uSdfOps, uSdfOpCount, uSdfDebugMode, uSdfGlow;
   let uSdfMeshTex, uSdfMeshMin, uSdfMeshMax, uSdfMeshLoaded;
   let uSdfGaussians, uSdfGaussianCount;
+  let uSdfSky, uSdfFog;
   // INGEN §19.3 : the scene is data, not source. The DEFAULT_SCENE here
   // reproduces the previous hardcoded smin of two spheres ; future scenes
   // can be swapped via window.__forgeBangerSetScene without recompile.
@@ -94,6 +96,10 @@ import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, serializeScen
   // INGEN §19.5 baked Gaussian splats — derived from the live SDF scene.
   let sdfGaussians = bakeGaussiansOnSurface(DEFAULT_SCENE, 0);
   const sdfDefaultGaussianCount = 32;
+  // §world-building atmosphere — off by default to preserve the
+  // existing transparent-canvas behaviour for non-world scenes.
+  let sdfSky = 0;
+  let sdfFog = 0;
 
   // Camera state survives suspend/resume — it's pure JS, no GPU resources.
   let camera = {
@@ -7248,6 +7254,8 @@ import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, serializeScen
     uSdfMeshLoaded  = gl.getUniformLocation(sdfProg, "uMeshLoaded");
     uSdfGaussians     = gl.getUniformLocation(sdfProg, "uGaussians");
     uSdfGaussianCount = gl.getUniformLocation(sdfProg, "uGaussianCount");
+    uSdfSky           = gl.getUniformLocation(sdfProg, "uSky");
+    uSdfFog           = gl.getUniformLocation(sdfProg, "uFog");
 
     // cube VAO
     const cube = makeCube();
@@ -8011,6 +8019,8 @@ import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, serializeScen
       gl.uniform1i(uSdfMeshLoaded, meshSdfLoaded);
       gl.uniform4fv(uSdfGaussians, sdfGaussians.buffer);
       gl.uniform1i(uSdfGaussianCount, sdfGaussians.count);
+      gl.uniform1i(uSdfSky, sdfSky);
+      gl.uniform1i(uSdfFog, sdfFog);
       gl.bindVertexArray(null);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
@@ -8500,6 +8510,23 @@ import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, serializeScen
         console.warn("[banger] __forgeBangerSetScene rejected:", err);
         return { ok: false, error: String(err?.message || err) };
       }
+    };
+    // §world-building atmosphere — sky background + distance fog.
+    // Pair them : skyOff+fogOn looks weird, skyOn+fogOff doesn't fade.
+    // Expose the world-building helper library so the agent / console
+    // can compose landscapes without re-implementing primitives :
+    //   __forgeBangerWorlds.tree([2,0,0])
+    //   __forgeBangerSetScene(__forgeBangerWorlds.defaultLandscape(42))
+    window.__forgeBangerWorlds = worlds;
+    window.__forgeBangerSetSky = (on) => {
+      sdfSky = on ? 1 : 0;
+      requestBoomRender("sdf-sky-toggle", 200);
+      return { ok: true, sky: sdfSky };
+    };
+    window.__forgeBangerSetFog = (on) => {
+      sdfFog = on ? 1 : 0;
+      requestBoomRender("sdf-fog-toggle", 200);
+      return { ok: true, fog: sdfFog };
     };
     // §19.5 explicit Gaussian splatting toggle / count override.
     // count = 0 disables splats. count > 0 re-bakes against the current

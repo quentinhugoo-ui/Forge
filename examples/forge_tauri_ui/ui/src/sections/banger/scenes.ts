@@ -18,12 +18,17 @@ export const OP_BOX          = 1;
 export const OP_TORUS        = 2;
 export const OP_CAPSULE      = 3;
 export const OP_ROUNDED_BOX  = 4;
+/** Heightmap terrain : FBM value-noise. dist = p.z - amp*fbm(p.xy*freq) - groundZ. */
+export const OP_TERRAIN      = 5;
 export const OP_UNION        = 10;
 export const OP_INTERSECT    = 11;
 export const OP_DIFF         = 12;
 export const OP_SMIN         = 13;
 /** §11 mesh→SDF bridge : samples the bound 3D texture (uMeshSdf). */
 export const OP_SAMPLED_SDF  = 20;
+/** Domain repetition : modulates `p` by period.xyz for all subsequent primitives.
+ *  period = [0,0,0] resets to no-repeat. 1 tree → forest, 1 brick → wall. */
+export const OP_REPEAT       = 30;
 
 export const SDF_MAX_OPS = 64;
 export const SDF_FLOATS_PER_OP = 8;
@@ -36,6 +41,8 @@ export type SdfOp =
   | { op: "torus";        center: Vec3; majorRadius: number; minorRadius: number }
   | { op: "capsule";      a: Vec3; b: Vec3; radius: number }
   | { op: "roundedBox";   center: Vec3; halfExtents: Vec3; cornerRadius: number }
+  | { op: "terrain";      amplitude: number; frequency: number; groundZ: number; octaves?: number }
+  | { op: "repeat";       period: Vec3 }
   | { op: "sampledSdf" }
   | { op: "union" }
   | { op: "intersect" }
@@ -48,6 +55,8 @@ const OP_CODE: Record<SdfOp["op"], number> = {
   torus:      OP_TORUS,
   capsule:    OP_CAPSULE,
   roundedBox: OP_ROUNDED_BOX,
+  terrain:    OP_TERRAIN,
+  repeat:     OP_REPEAT,
   sampledSdf: OP_SAMPLED_SDF,
   union:      OP_UNION,
   intersect:  OP_INTERSECT,
@@ -108,6 +117,15 @@ export function serializeScene(ops: readonly SdfOp[]): SerializedScene {
       buf[base + 5] = o.halfExtents[1];
       buf[base + 6] = o.halfExtents[2];
       buf[base + 7] = o.cornerRadius;
+    } else if (o.op === "terrain") {
+      buf[base + 1] = o.amplitude;
+      buf[base + 2] = o.frequency;
+      buf[base + 3] = o.groundZ;
+      buf[base + 4] = Math.max(1, Math.min(6, o.octaves ?? 4));
+    } else if (o.op === "repeat") {
+      buf[base + 1] = o.period[0];
+      buf[base + 2] = o.period[1];
+      buf[base + 3] = o.period[2];
     } else if (o.op === "smin") {
       buf[base + 4] = o.k;
     }
@@ -165,22 +183,69 @@ function smin(a: number, b: number, k: number): number {
   return m - Math.log(Math.exp(-k * (a - m)) + Math.exp(-k * (b - m))) / k;
 }
 
+// Value noise — mirror of the GLSL hash21/vnoise/fbm in catalog.ts.
+// Identical math byte-for-byte so the TS evaluator and the WGSL shader
+// agree on terrain heights (within f32 precision).
+function hash21(x: number, y: number): number {
+  let px = (x * 123.45) % 1;
+  let py = (y * 678.91) % 1;
+  if (px < 0) px += 1;
+  if (py < 0) py += 1;
+  const d = px * px + py * py + 45.32;
+  px += d; py += d;
+  return ((px * py) % 1 + 1) % 1;
+}
+function vnoise2(x: number, y: number): number {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = x - ix, fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const a = hash21(ix,     iy    );
+  const b = hash21(ix + 1, iy    );
+  const c = hash21(ix,     iy + 1);
+  const d = hash21(ix + 1, iy + 1);
+  return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
+}
+function fbm2(x: number, y: number, octaves: number): number {
+  let v = 0, a = 0.5;
+  for (let i = 0; i < octaves; i += 1) {
+    v += a * vnoise2(x, y);
+    x *= 2; y *= 2; a *= 0.5;
+  }
+  return v;
+}
+
+function applyRepeat(p: Vec3, period: Vec3): Vec3 {
+  // period = 0 on an axis means "no repeat on this axis".
+  return [
+    period[0] > 0 ? p[0] - period[0] * Math.round(p[0] / period[0]) : p[0],
+    period[1] > 0 ? p[1] - period[1] * Math.round(p[1] / period[1]) : p[1],
+    period[2] > 0 ? p[2] - period[2] * Math.round(p[2] / period[2]) : p[2],
+  ];
+}
+
 /** Returns the signed distance of `point` to the SDF scene. */
 export function evaluateScene(scene: readonly SdfOp[], point: Vec3): number {
   const stack = new Float64Array(TS_STACK_MAX);
   let sp = 0;
+  let cp: Vec3 = [point[0], point[1], point[2]];
   for (const op of scene) {
     if (sp >= TS_STACK_MAX) break;
     if (op.op === "sphere") {
-      stack[sp++] = sdSphere([point[0] - op.center[0], point[1] - op.center[1], point[2] - op.center[2]], op.radius);
+      stack[sp++] = sdSphere([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.radius);
     } else if (op.op === "box") {
-      stack[sp++] = sdBox([point[0] - op.center[0], point[1] - op.center[1], point[2] - op.center[2]], op.halfExtents);
+      stack[sp++] = sdBox([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.halfExtents);
     } else if (op.op === "torus") {
-      stack[sp++] = sdTorus([point[0] - op.center[0], point[1] - op.center[1], point[2] - op.center[2]], op.majorRadius, op.minorRadius);
+      stack[sp++] = sdTorus([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.majorRadius, op.minorRadius);
     } else if (op.op === "capsule") {
-      stack[sp++] = sdCapsule(point, op.a, op.b, op.radius);
+      stack[sp++] = sdCapsule(cp, op.a, op.b, op.radius);
     } else if (op.op === "roundedBox") {
-      stack[sp++] = sdRoundedBox([point[0] - op.center[0], point[1] - op.center[1], point[2] - op.center[2]], op.halfExtents, op.cornerRadius);
+      stack[sp++] = sdRoundedBox([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.halfExtents, op.cornerRadius);
+    } else if (op.op === "terrain") {
+      const h = fbm2(cp[0] * op.frequency, cp[1] * op.frequency, op.octaves ?? 4);
+      stack[sp++] = cp[2] - op.amplitude * h - op.groundZ;
+    } else if (op.op === "repeat") {
+      cp = applyRepeat([point[0], point[1], point[2]], op.period);
     } else if (op.op === "sampledSdf") {
       stack[sp++] = 1e6; // GPU-only ; skip
     } else if (op.op === "union") {

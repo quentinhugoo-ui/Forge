@@ -243,6 +243,11 @@ export const FS_SDF = `#version 300 es
   // render pass, no rasterized billboards.
   uniform vec4  uGaussians[128];
   uniform int   uGaussianCount;
+  // §world-building : sky background + distance fog (0 = old transparent
+  // mode, 1 = atmospheric horizon). Toggle from the agent via
+  // __forgeBangerSetSky / __forgeBangerSetFog.
+  uniform int   uSky;
+  uniform int   uFog;
   out vec4 fragColor;
 
   float sd_sphere(vec3 p, float r) { return length(p) - r; }
@@ -291,33 +296,79 @@ export const FS_SDF = `#version 300 es
     return m - log(exp(-k * (a - m)) + exp(-k * (b - m))) / k;
   }
 
+  // ---- World building : value noise + FBM (mirrors scenes.ts) ----
+  float hash21(vec2 p) {
+    p = fract(p * vec2(123.45, 678.91));
+    float d = p.x * p.x + p.y * p.y + 45.32;
+    p += vec2(d);
+    return fract(p.x * p.y);
+  }
+  float vnoise2(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 s = f * f * (3.0 - 2.0 * f);
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
+  }
+  float fbm2(vec2 p, int octaves) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 6; i++) {
+      if (i >= octaves) break;
+      v += a * vnoise2(p);
+      p *= 2.0;
+      a *= 0.5;
+    }
+    return v;
+  }
+
+  // Sky gradient : horizon-to-zenith (atmospheric, Z-up).
+  vec3 skyColor(vec3 rd) {
+    float t = clamp(rd.z * 0.5 + 0.5, 0.0, 1.0);
+    return mix(vec3(0.78, 0.72, 0.65), vec3(0.30, 0.48, 0.72), t);
+  }
+
   float scene(vec3 p) {
     float stack[16];
     int   sp = 0;
     int   n  = uOpCount;
+    // cp is the per-op "current p" — modulated by OP_REPEAT to fold
+    // an infinite-grid worth of instances into a single primitive eval.
+    vec3 cp = p;
     for (int i = 0; i < 64; i++) {
       if (i >= n) break;
       vec4 a = uOps[i * 2];
       vec4 b = uOps[i * 2 + 1];
       int op = int(a.x);
       if (op == 0) {                                       // SPHERE
-        stack[sp] = sd_sphere(p - a.yzw, b.x);
+        stack[sp] = sd_sphere(cp - a.yzw, b.x);
         sp += 1;
       } else if (op == 1) {                                // BOX
-        stack[sp] = sd_box(p - a.yzw, b.xyz);
+        stack[sp] = sd_box(cp - a.yzw, b.xyz);
         sp += 1;
       } else if (op == 2) {                                // TORUS
-        stack[sp] = sd_torus(p - a.yzw, b.x, b.y);
+        stack[sp] = sd_torus(cp - a.yzw, b.x, b.y);
         sp += 1;
       } else if (op == 3) {                                // CAPSULE
-        stack[sp] = sd_capsule(p, a.yzw, b.xyz, b.w);
+        stack[sp] = sd_capsule(cp, a.yzw, b.xyz, b.w);
         sp += 1;
       } else if (op == 4) {                                // ROUNDED_BOX
-        stack[sp] = sd_rounded_box(p - a.yzw, b.xyz, b.w);
+        stack[sp] = sd_rounded_box(cp - a.yzw, b.xyz, b.w);
+        sp += 1;
+      } else if (op == 5) {                                // TERRAIN (FBM heightmap)
+        float h = fbm2(cp.xy * a.z, int(b.x));
+        stack[sp] = cp.z - a.y * h - a.w;
         sp += 1;
       } else if (op == 20) {                               // SAMPLED_SDF (mesh voxels)
-        stack[sp] = sd_sampled(p);
+        stack[sp] = sd_sampled(cp);
         sp += 1;
+      } else if (op == 30) {                               // REPEAT (domain operator)
+        cp.x = a.y > 0.0 ? p.x - a.y * floor(p.x / a.y + 0.5) : p.x;
+        cp.y = a.z > 0.0 ? p.y - a.z * floor(p.y / a.z + 0.5) : p.y;
+        cp.z = a.w > 0.0 ? p.z - a.w * floor(p.z / a.w + 0.5) : p.z;
       } else if (op == 10) {                               // UNION
         sp -= 1;
         stack[sp - 1] = min(stack[sp - 1], stack[sp]);
@@ -356,12 +407,14 @@ export const FS_SDF = `#version 300 es
     float t = 0.0;
     bool hit = false;
     float minDist = 1e9;
-    for (int i = 0; i < 96; i++) {
+    // 160 steps + far plane 400 — terrains et villes répétées peuvent
+    // s'étendre loin de la caméra.
+    for (int i = 0; i < 160; i++) {
       vec3 p = ro + rd * t;
       float d = scene(p);
       if (d < minDist) minDist = d;
       if (d < 0.0015) { hit = true; break; }
-      if (t > 60.0) { break; }
+      if (t > 400.0) { break; }
       t += d;
     }
     // §19.5 — Gaussian splats accumulate over both hit and miss
@@ -388,14 +441,12 @@ export const FS_SDF = `#version 300 es
     }
 
     if (!hit) {
-      // §19.5 — pixel rate la surface mais l'a frôlée : halo gaussien
-      // additif ancré sur la distance d'approche minimale. Glow pushed
-      // to the far plane so it never occludes la grille / gizmo.
-      bool hasGlow = (uGlow == 1 && minDist > 0.0 && minDist < 1.0);
+      bool hasGlow  = (uGlow == 1 && minDist > 0.0 && minDist < 1.0);
       bool hasSplat = splatA > 0.01;
-      if (!hasGlow && !hasSplat) discard;
-      vec3 col = vec3(0.0);
-      float alpha = 0.0;
+      bool hasSky   = (uSky == 1);
+      if (!hasGlow && !hasSplat && !hasSky) discard;
+      vec3 col = hasSky ? skyColor(rd) : vec3(0.0);
+      float alpha = hasSky ? 1.0 : 0.0;
       if (hasGlow) {
         float halo = exp(-minDist * 5.0) * 0.6;
         col += vec3(0.35, 0.55, 0.85) * halo;
@@ -432,6 +483,14 @@ export const FS_SDF = `#version 300 es
     }
     // Splats additionnent leur contribution sur la surface aussi.
     col += splatRgb;
+    // Distance fog vers la couleur du ciel — fait fondre les
+    // primitives lointaines dans l'atmosphère (rend les mondes
+    // crédibles, masque le pop-in à la limite de raymarch).
+    if (uFog == 1) {
+      float fogA = 1.0 - exp(-t * 0.025);
+      vec3 atmosphere = uSky == 1 ? skyColor(rd) : vec3(0.05, 0.07, 0.10);
+      col = mix(col, atmosphere, clamp(fogA, 0.0, 1.0));
+    }
     fragColor = vec4(col, 1.0);
 
     // Write depth so the SDF correctly occludes / is occluded by the
