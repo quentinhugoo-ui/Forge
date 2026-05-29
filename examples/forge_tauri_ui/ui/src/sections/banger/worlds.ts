@@ -25,59 +25,87 @@ export function seededRandom(seed: number): () => number {
   };
 }
 
+// Shared material palette — tweak here and every helper picks it up.
+export const MATERIALS = {
+  grass:    { color: v3(0.26, 0.46, 0.20), roughness: 0.85, metallic: 0.0 },
+  bark:     { color: v3(0.36, 0.22, 0.13), roughness: 0.95, metallic: 0.0 },
+  foliage:  { color: v3(0.20, 0.55, 0.24), roughness: 0.65, metallic: 0.0 },
+  stone:    { color: v3(0.70, 0.68, 0.62), roughness: 0.80, metallic: 0.0 },
+  brick:    { color: v3(0.65, 0.30, 0.22), roughness: 0.88, metallic: 0.0 },
+  roof:     { color: v3(0.50, 0.18, 0.12), roughness: 0.70, metallic: 0.0 },
+  glass:    { color: v3(0.55, 0.70, 0.80), roughness: 0.10, metallic: 0.0 },
+  metal:    { color: v3(0.85, 0.85, 0.88), roughness: 0.30, metallic: 0.95 },
+  rubber:   { color: v3(0.08, 0.08, 0.09), roughness: 0.95, metallic: 0.0 },
+  chrome:   { color: v3(0.92, 0.93, 0.95), roughness: 0.05, metallic: 1.0 },
+  paint_red:{ color: v3(0.72, 0.12, 0.10), roughness: 0.35, metallic: 0.20 },
+} as const;
+
+function mat(spec: { color: Vec3; roughness: number; metallic: number }): SdfOp {
+  return { op: "material", color: spec.color, roughness: spec.roughness, metallic: spec.metallic };
+}
+
 /** Ground plane via FBM heightmap. amplitude in world units (peak
  *  height), frequency tunes the bumpiness (higher = noisier). */
 export function terrain(amplitude = 1.2, frequency = 0.08, groundZ = -1.0, octaves = 4): SdfOp[] {
-  return [{ op: "terrain", amplitude, frequency, groundZ, octaves }];
+  return [
+    mat(MATERIALS.grass),
+    { op: "terrain", amplitude, frequency, groundZ, octaves },
+  ];
 }
 
-/** Single tree : capsule trunk + sphere canopy, smin-blended. */
+/** Single tree : capsule trunk (bark) + sphere canopy (foliage),
+ *  smin-blended. The smin auto-lerps bark→foliage at the join. */
 export function tree(at: Vec3, height = 1.4, canopyRadius = 0.45): SdfOp[] {
   const trunkTop = v3(at[0], at[1], at[2] + height * 0.55);
   return [
+    mat(MATERIALS.bark),
     { op: "capsule", a: at, b: trunkTop, radius: 0.07 },
+    mat(MATERIALS.foliage),
     { op: "sphere", center: v3(at[0], at[1], at[2] + height), radius: canopyRadius },
     { op: "smin", k: 6.0 },
   ];
 }
 
-/** Box house with a sphere roof — placeholder until pyramid / cylinder
- *  primitives are added. Subtract a smaller box for a doorway. */
+/** Box house with a sphere roof — brick walls, red roof, doorway carved. */
 export function house(at: Vec3, size = 1.0): SdfOp[] {
   const half = size * 0.5;
   const wallZ = at[2] + half;
   return [
+    mat(MATERIALS.brick),
     { op: "roundedBox", center: v3(at[0], at[1], wallZ), halfExtents: v3(half, half, half), cornerRadius: 0.04 },
+    mat(MATERIALS.roof),
     { op: "sphere", center: v3(at[0], at[1], wallZ + half * 0.85), radius: half * 0.7 },
     { op: "union" },
-    // doorway carved out of the front face
+    // doorway carved out of the front face — diff keeps wall material
     { op: "box", center: v3(at[0], at[1] - half, wallZ - half * 0.35), halfExtents: v3(half * 0.18, half * 0.05, half * 0.3) },
     { op: "diff" },
   ];
 }
 
-/** Simple vehicle : rounded box body + 4 capsule wheels. Type tweaks
- *  the proportions (car = wide low, truck = tall, hover = no wheels). */
+/** Simple vehicle : painted body + chrome wheels. Type tweaks the
+ *  proportions (car = wide low, truck = tall, hover = floating no wheels). */
 export function vehicle(at: Vec3, kind: "car" | "truck" | "hover" = "car"): SdfOp[] {
   const cfg = kind === "truck"
-    ? { body: v3(0.55, 1.10, 0.35), wheelRadius: 0.18, wheelInset: 0.42 }
+    ? { body: v3(0.55, 1.10, 0.35), wheelRadius: 0.18, wheelInset: 0.42, paint: MATERIALS.metal }
     : kind === "hover"
-    ? { body: v3(0.50, 1.00, 0.22), wheelRadius: 0,    wheelInset: 0    }
-    : { body: v3(0.45, 0.95, 0.20), wheelRadius: 0.13, wheelInset: 0.34 };
+    ? { body: v3(0.50, 1.00, 0.22), wheelRadius: 0,    wheelInset: 0,    paint: MATERIALS.chrome }
+    : { body: v3(0.45, 0.95, 0.20), wheelRadius: 0.13, wheelInset: 0.34, paint: MATERIALS.paint_red };
   const bodyZ = at[2] + cfg.body[2] + cfg.wheelRadius;
   const ops: SdfOp[] = [
+    mat(cfg.paint),
     { op: "roundedBox", center: v3(at[0], at[1], bodyZ), halfExtents: cfg.body, cornerRadius: 0.06 },
   ];
   if (cfg.wheelRadius > 0) {
     const wx = cfg.body[0] * 0.9, wy = cfg.body[1] * 0.7;
     const wz = at[2] + cfg.wheelRadius;
-    const wheels: Vec3[][] = [
+    const wheelPoses: Vec3[][] = [
       [v3(at[0] - wx, at[1] - wy, wz - cfg.wheelInset), v3(at[0] - wx, at[1] - wy, wz + cfg.wheelInset)],
       [v3(at[0] + wx, at[1] - wy, wz - cfg.wheelInset), v3(at[0] + wx, at[1] - wy, wz + cfg.wheelInset)],
       [v3(at[0] - wx, at[1] + wy, wz - cfg.wheelInset), v3(at[0] - wx, at[1] + wy, wz + cfg.wheelInset)],
       [v3(at[0] + wx, at[1] + wy, wz - cfg.wheelInset), v3(at[0] + wx, at[1] + wy, wz + cfg.wheelInset)],
     ];
-    for (const [a, b] of wheels) {
+    ops.push(mat(MATERIALS.rubber));
+    for (const [a, b] of wheelPoses) {
       ops.push({ op: "capsule", a, b, radius: cfg.wheelRadius });
       ops.push({ op: "union" });
     }

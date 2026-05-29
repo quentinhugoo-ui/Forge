@@ -331,60 +331,123 @@ export const FS_SDF = `#version 300 es
     return mix(vec3(0.78, 0.72, 0.65), vec3(0.30, 0.48, 0.72), t);
   }
 
-  float scene(vec3 p) {
-    float stack[16];
+  // SceneHit carries everything the lit path needs : distance + material.
+  // Returned by sceneFull(p). Raymarch only reads .d ; the hit shader
+  // reads the rest. cf. evaluateSceneFull in scenes.ts (mirror).
+  struct SceneHit {
+    float d;
+    vec3  color;
+    float roughness;
+    float metallic;
+  };
+
+  SceneHit sceneFull(vec3 p) {
+    float dStack[16];
+    vec3  cStack[16];
+    vec2  mStack[16]; // (roughness, metallic)
     int   sp = 0;
     int   n  = uOpCount;
-    // cp is the per-op "current p" — modulated by OP_REPEAT to fold
-    // an infinite-grid worth of instances into a single primitive eval.
+    // cp = current p modulated by OP_REPEAT for infinite-grid instancing.
     vec3 cp = p;
+    // curMat = state set by OP_MATERIAL, tags every following primitive.
+    vec3  curColor = vec3(0.84, 0.85, 0.90);
+    float curRough = 0.55;
+    float curMetal = 0.0;
     for (int i = 0; i < 64; i++) {
       if (i >= n) break;
       vec4 a = uOps[i * 2];
       vec4 b = uOps[i * 2 + 1];
       int op = int(a.x);
+      // ---- primitives push (dist, color, roughness, metallic) ----
       if (op == 0) {                                       // SPHERE
-        stack[sp] = sd_sphere(cp - a.yzw, b.x);
+        dStack[sp] = sd_sphere(cp - a.yzw, b.x);
+        cStack[sp] = curColor; mStack[sp] = vec2(curRough, curMetal);
         sp += 1;
       } else if (op == 1) {                                // BOX
-        stack[sp] = sd_box(cp - a.yzw, b.xyz);
+        dStack[sp] = sd_box(cp - a.yzw, b.xyz);
+        cStack[sp] = curColor; mStack[sp] = vec2(curRough, curMetal);
         sp += 1;
       } else if (op == 2) {                                // TORUS
-        stack[sp] = sd_torus(cp - a.yzw, b.x, b.y);
+        dStack[sp] = sd_torus(cp - a.yzw, b.x, b.y);
+        cStack[sp] = curColor; mStack[sp] = vec2(curRough, curMetal);
         sp += 1;
       } else if (op == 3) {                                // CAPSULE
-        stack[sp] = sd_capsule(cp, a.yzw, b.xyz, b.w);
+        dStack[sp] = sd_capsule(cp, a.yzw, b.xyz, b.w);
+        cStack[sp] = curColor; mStack[sp] = vec2(curRough, curMetal);
         sp += 1;
       } else if (op == 4) {                                // ROUNDED_BOX
-        stack[sp] = sd_rounded_box(cp - a.yzw, b.xyz, b.w);
+        dStack[sp] = sd_rounded_box(cp - a.yzw, b.xyz, b.w);
+        cStack[sp] = curColor; mStack[sp] = vec2(curRough, curMetal);
         sp += 1;
-      } else if (op == 5) {                                // TERRAIN (FBM heightmap)
+      } else if (op == 5) {                                // TERRAIN (FBM)
         float h = fbm2(cp.xy * a.z, int(b.x));
-        stack[sp] = cp.z - a.y * h - a.w;
+        dStack[sp] = cp.z - a.y * h - a.w;
+        cStack[sp] = curColor; mStack[sp] = vec2(curRough, curMetal);
         sp += 1;
-      } else if (op == 20) {                               // SAMPLED_SDF (mesh voxels)
-        stack[sp] = sd_sampled(cp);
+      } else if (op == 20) {                               // SAMPLED_SDF
+        dStack[sp] = sd_sampled(cp);
+        cStack[sp] = curColor; mStack[sp] = vec2(curRough, curMetal);
         sp += 1;
-      } else if (op == 30) {                               // REPEAT (domain operator)
+      // ---- state ops (do not push) ----
+      } else if (op == 30) {                               // REPEAT
         cp.x = a.y > 0.0 ? p.x - a.y * floor(p.x / a.y + 0.5) : p.x;
         cp.y = a.z > 0.0 ? p.y - a.z * floor(p.y / a.z + 0.5) : p.y;
         cp.z = a.w > 0.0 ? p.z - a.w * floor(p.z / a.w + 0.5) : p.z;
+      } else if (op == 40) {                               // MATERIAL
+        curColor = a.yzw;
+        curRough = b.x;
+        curMetal = b.y;
+      // ---- combinators : propagate winning entry's material ----
       } else if (op == 10) {                               // UNION
         sp -= 1;
-        stack[sp - 1] = min(stack[sp - 1], stack[sp]);
+        if (dStack[sp] < dStack[sp - 1]) {
+          dStack[sp - 1] = dStack[sp];
+          cStack[sp - 1] = cStack[sp];
+          mStack[sp - 1] = mStack[sp];
+        }
       } else if (op == 11) {                               // INTERSECT
         sp -= 1;
-        stack[sp - 1] = max(stack[sp - 1], stack[sp]);
+        if (dStack[sp] > dStack[sp - 1]) {
+          dStack[sp - 1] = dStack[sp];
+          cStack[sp - 1] = cStack[sp];
+          mStack[sp - 1] = mStack[sp];
+        }
       } else if (op == 12) {                               // DIFF (a - b)
         sp -= 1;
-        stack[sp - 1] = max(stack[sp - 1], -stack[sp]);
-      } else if (op == 13) {                               // SMIN
+        float negB = -dStack[sp];
+        if (negB > dStack[sp - 1]) dStack[sp - 1] = negB;
+        // material follows A — the carved-out face is still A's surface.
+      } else if (op == 13) {                               // SMIN — blend mats by softmin weight
+        float ad = dStack[sp - 1];
+        float bd = dStack[sp];
         sp -= 1;
-        stack[sp - 1] = smin(stack[sp - 1], stack[sp], b.x);
+        float k  = b.x;
+        float m  = min(ad, bd);
+        float ea = exp(-k * (ad - m));
+        float eb = exp(-k * (bd - m));
+        float w  = ea / (ea + eb);
+        dStack[sp - 1] = m - log(ea + eb) / k;
+        cStack[sp - 1] = mix(cStack[sp], cStack[sp - 1], w);
+        mStack[sp - 1] = mix(mStack[sp], mStack[sp - 1], w);
       }
     }
-    return sp > 0 ? stack[0] : 1e9;
+    SceneHit hit;
+    if (sp > 0) {
+      hit.d = dStack[0];
+      hit.color = cStack[0];
+      hit.roughness = mStack[0].x;
+      hit.metallic  = mStack[0].y;
+    } else {
+      hit.d = 1e9;
+      hit.color = vec3(0.8);
+      hit.roughness = 0.5;
+      hit.metallic = 0.0;
+    }
+    return hit;
   }
+
+  // Distance-only wrapper for the raymarch loop and the gradient probe.
+  float scene(vec3 p) { return sceneFull(p).d; }
 
   vec3 calc_normal(vec3 p) {
     vec2 e = vec2(0.0015, 0.0);
@@ -460,6 +523,7 @@ export const FS_SDF = `#version 300 es
     }
 
     vec3 p = ro + rd * t;
+    SceneHit hitMat = sceneFull(p);
     vec3 col;
     if (uDebugMode == 1) {
       // Raw gradient : |grad d| should stay ~ 1 for a Lipschitz-1 SDF.
@@ -476,10 +540,17 @@ export const FS_SDF = `#version 300 es
       vec3 n = calc_normal(p);
       vec3 l = normalize(vec3(0.55, 0.85, 0.40));
       float lambert = max(dot(n, l), 0.0);
+      // Blinn-Phong specular tuned by roughness.
+      vec3  h = normalize(l - rd);
+      float specExp = mix(96.0, 4.0, hitMat.roughness);
+      float specPow = pow(max(dot(n, h), 0.0), specExp);
+      // Dielectric : white highlight. Metal : colored highlight (albedo-tinted).
+      vec3 specCol = mix(vec3(1.0), hitMat.color, hitMat.metallic);
+      vec3 ambient = vec3(0.14, 0.16, 0.20) * hitMat.color;
+      vec3 diffuse = hitMat.color * lambert * (1.0 - hitMat.metallic);
+      vec3 specular = specCol * specPow * (1.0 - hitMat.roughness * 0.5);
       float rim = pow(1.0 - max(dot(n, -rd), 0.0), 2.0);
-      col = vec3(0.12, 0.14, 0.18)
-          + vec3(0.80, 0.74, 0.68) * lambert
-          + vec3(0.35, 0.50, 0.75) * rim * 0.20;
+      col = ambient + diffuse + specular + hitMat.color * rim * 0.10;
     }
     // Splats additionnent leur contribution sur la surface aussi.
     col += splatRgb;

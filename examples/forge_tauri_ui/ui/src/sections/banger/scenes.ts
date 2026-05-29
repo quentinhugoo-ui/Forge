@@ -29,6 +29,11 @@ export const OP_SAMPLED_SDF  = 20;
 /** Domain repetition : modulates `p` by period.xyz for all subsequent primitives.
  *  period = [0,0,0] resets to no-repeat. 1 tree → forest, 1 brick → wall. */
 export const OP_REPEAT       = 30;
+/** Sets the current (color, roughness, metallic) — tags every primitive
+ *  that follows until the next OP_MATERIAL. Stack-aware : at union /
+ *  intersect / diff the winning side's material survives ; at SMIN the
+ *  materials lerp by softmin weight (organic blends, not just shapes). */
+export const OP_MATERIAL     = 40;
 
 export const SDF_MAX_OPS = 64;
 export const SDF_FLOATS_PER_OP = 8;
@@ -43,6 +48,7 @@ export type SdfOp =
   | { op: "roundedBox";   center: Vec3; halfExtents: Vec3; cornerRadius: number }
   | { op: "terrain";      amplitude: number; frequency: number; groundZ: number; octaves?: number }
   | { op: "repeat";       period: Vec3 }
+  | { op: "material";     color: Vec3; roughness?: number; metallic?: number }
   | { op: "sampledSdf" }
   | { op: "union" }
   | { op: "intersect" }
@@ -57,6 +63,7 @@ const OP_CODE: Record<SdfOp["op"], number> = {
   roundedBox: OP_ROUNDED_BOX,
   terrain:    OP_TERRAIN,
   repeat:     OP_REPEAT,
+  material:   OP_MATERIAL,
   sampledSdf: OP_SAMPLED_SDF,
   union:      OP_UNION,
   intersect:  OP_INTERSECT,
@@ -126,6 +133,12 @@ export function serializeScene(ops: readonly SdfOp[]): SerializedScene {
       buf[base + 1] = o.period[0];
       buf[base + 2] = o.period[1];
       buf[base + 3] = o.period[2];
+    } else if (o.op === "material") {
+      buf[base + 1] = o.color[0];
+      buf[base + 2] = o.color[1];
+      buf[base + 3] = o.color[2];
+      buf[base + 4] = Math.max(0.02, Math.min(1.0, o.roughness ?? 0.55));
+      buf[base + 5] = Math.max(0.0, Math.min(1.0, o.metallic ?? 0.0));
     } else if (o.op === "smin") {
       buf[base + 4] = o.k;
     }
@@ -224,41 +237,87 @@ function applyRepeat(p: Vec3, period: Vec3): Vec3 {
   ];
 }
 
-/** Returns the signed distance of `point` to the SDF scene. */
-export function evaluateScene(scene: readonly SdfOp[], point: Vec3): number {
-  const stack = new Float64Array(TS_STACK_MAX);
+interface SceneHit {
+  /** Signed distance to the closest surface. */
+  d: number;
+  /** Surface albedo at the winning stack entry. */
+  color: Vec3;
+  /** [roughness, metallic] of the winning entry. */
+  rm: [number, number];
+}
+
+const DEFAULT_COLOR: Vec3 = [0.84, 0.85, 0.90];
+const DEFAULT_RM: [number, number] = [0.55, 0.0];
+
+/** Full evaluator : returns distance + material at `point`. */
+export function evaluateSceneFull(scene: readonly SdfOp[], point: Vec3): SceneHit {
+  const dS = new Float64Array(TS_STACK_MAX);
+  const cS: Vec3[] = new Array(TS_STACK_MAX) as Vec3[];
+  const mS: [number, number][] = new Array(TS_STACK_MAX) as [number, number][];
   let sp = 0;
   let cp: Vec3 = [point[0], point[1], point[2]];
+  let curColor: Vec3 = DEFAULT_COLOR;
+  let curRM: [number, number] = DEFAULT_RM;
+  const push = (d: number) => {
+    dS[sp] = d; cS[sp] = curColor; mS[sp] = curRM; sp += 1;
+  };
   for (const op of scene) {
     if (sp >= TS_STACK_MAX) break;
     if (op.op === "sphere") {
-      stack[sp++] = sdSphere([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.radius);
+      push(sdSphere([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.radius));
     } else if (op.op === "box") {
-      stack[sp++] = sdBox([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.halfExtents);
+      push(sdBox([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.halfExtents));
     } else if (op.op === "torus") {
-      stack[sp++] = sdTorus([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.majorRadius, op.minorRadius);
+      push(sdTorus([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.majorRadius, op.minorRadius));
     } else if (op.op === "capsule") {
-      stack[sp++] = sdCapsule(cp, op.a, op.b, op.radius);
+      push(sdCapsule(cp, op.a, op.b, op.radius));
     } else if (op.op === "roundedBox") {
-      stack[sp++] = sdRoundedBox([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.halfExtents, op.cornerRadius);
+      push(sdRoundedBox([cp[0] - op.center[0], cp[1] - op.center[1], cp[2] - op.center[2]], op.halfExtents, op.cornerRadius));
     } else if (op.op === "terrain") {
       const h = fbm2(cp[0] * op.frequency, cp[1] * op.frequency, op.octaves ?? 4);
-      stack[sp++] = cp[2] - op.amplitude * h - op.groundZ;
+      push(cp[2] - op.amplitude * h - op.groundZ);
     } else if (op.op === "repeat") {
       cp = applyRepeat([point[0], point[1], point[2]], op.period);
+    } else if (op.op === "material") {
+      curColor = [op.color[0], op.color[1], op.color[2]];
+      curRM = [
+        Math.max(0.02, Math.min(1, op.roughness ?? DEFAULT_RM[0])),
+        Math.max(0,    Math.min(1, op.metallic  ?? DEFAULT_RM[1])),
+      ];
     } else if (op.op === "sampledSdf") {
-      stack[sp++] = 1e6; // GPU-only ; skip
+      push(1e6); // GPU-only ; skip
     } else if (op.op === "union") {
-      sp -= 1; stack[sp - 1] = Math.min(stack[sp - 1], stack[sp]);
+      sp -= 1;
+      if (dS[sp] < dS[sp - 1]) { dS[sp - 1] = dS[sp]; cS[sp - 1] = cS[sp]; mS[sp - 1] = mS[sp]; }
     } else if (op.op === "intersect") {
-      sp -= 1; stack[sp - 1] = Math.max(stack[sp - 1], stack[sp]);
+      sp -= 1;
+      if (dS[sp] > dS[sp - 1]) { dS[sp - 1] = dS[sp]; cS[sp - 1] = cS[sp]; mS[sp - 1] = mS[sp]; }
     } else if (op.op === "diff") {
-      sp -= 1; stack[sp - 1] = Math.max(stack[sp - 1], -stack[sp]);
+      sp -= 1;
+      const negB = -dS[sp];
+      if (negB > dS[sp - 1]) dS[sp - 1] = negB; // material follows A (carved-out face)
     } else if (op.op === "smin") {
-      sp -= 1; stack[sp - 1] = smin(stack[sp - 1], stack[sp], op.k);
+      sp -= 1;
+      const ad = dS[sp - 1], bd = dS[sp];
+      const k = op.k;
+      const m = Math.min(ad, bd);
+      const ea = Math.exp(-k * (ad - m));
+      const eb = Math.exp(-k * (bd - m));
+      const w = ea / (ea + eb); // weight of A
+      dS[sp - 1] = m - Math.log(ea + eb) / k;
+      const ca = cS[sp - 1], cb = cS[sp];
+      cS[sp - 1] = [ca[0] * w + cb[0] * (1 - w), ca[1] * w + cb[1] * (1 - w), ca[2] * w + cb[2] * (1 - w)];
+      const ma = mS[sp - 1], mb = mS[sp];
+      mS[sp - 1] = [ma[0] * w + mb[0] * (1 - w), ma[1] * w + mb[1] * (1 - w)];
     }
   }
-  return sp > 0 ? stack[0] : 1e9;
+  if (sp <= 0) return { d: 1e9, color: DEFAULT_COLOR, rm: DEFAULT_RM };
+  return { d: dS[0], color: cS[0] ?? DEFAULT_COLOR, rm: mS[0] ?? DEFAULT_RM };
+}
+
+/** Returns the signed distance of `point` to the SDF scene (back-compat wrapper). */
+export function evaluateScene(scene: readonly SdfOp[], point: Vec3): number {
+  return evaluateSceneFull(scene, point).d;
 }
 
 // ---------- Gaussian splat baking (INGEN §19.5) ------------------------------
@@ -320,16 +379,19 @@ export function bakeGaussiansOnSurface(
     const sx = p[0] - nx * d;
     const sy = p[1] - ny * d;
     const sz = p[2] - nz * d;
-    if (Math.abs(evaluateScene(scene, [sx, sy, sz])) > tol) continue;
+    const hit = evaluateSceneFull(scene, [sx, sy, sz]);
+    if (Math.abs(hit.d) > tol) continue;
     const base = written * 8;
     buf[base + 0] = sx;
     buf[base + 1] = sy;
     buf[base + 2] = sz;
     buf[base + 3] = scl;
-    // Colour from normal direction — gives a soft palette tied to surface geometry.
-    buf[base + 4] = 0.55 + nx * 0.35;
-    buf[base + 5] = 0.55 + ny * 0.35;
-    buf[base + 6] = 0.55 + nz * 0.35;
+    // Splat colour = surface material, lightly modulated by normal so
+    // the cloud still has gradient cues. Falls back to the default grey
+    // when no OP_MATERIAL was set in the scene.
+    buf[base + 4] = Math.max(0, Math.min(1, hit.color[0] * (0.7 + nx * 0.15)));
+    buf[base + 5] = Math.max(0, Math.min(1, hit.color[1] * (0.7 + ny * 0.15)));
+    buf[base + 6] = Math.max(0, Math.min(1, hit.color[2] * (0.7 + nz * 0.15)));
     buf[base + 7] = 0.55; // opacity
     written += 1;
   }
