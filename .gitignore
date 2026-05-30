@@ -55,3 +55,6 @@ examples/forge_tauri_ui/.tmp-source-discovery/
 examples/forge_tauri_ui/.tmp-source-review/
 examples/forge_tauri_ui/.tmp-source-review-live/
 examples/forge_tauri_ui/src-tauri/.codex-tmp/
+
+# Act-code KASM ledger (regenerable cache)
+examples/*.ledger.jsonl

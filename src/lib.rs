@@ -16,6 +16,7 @@ pub mod fbc;
 pub mod godel;
 pub mod introspection;
 pub mod landauer;
+pub mod act_codes;
 pub mod meta;
 mod monster;
 mod store;
