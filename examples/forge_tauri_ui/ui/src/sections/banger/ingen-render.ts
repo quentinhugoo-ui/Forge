@@ -7,7 +7,7 @@
 
 import {
   OP_SPHERE, OP_BOX, OP_TORUS, OP_CAPSULE, OP_ROUNDED_BOX,
-  OP_UNION, OP_INTERSECT, OP_DIFF, OP_SMIN, OP_SVDAG,
+  OP_UNION, OP_INTERSECT, OP_DIFF, OP_SMIN, OP_SVDAG, OP_NEURAL_SDF,
 } from "./scenes.js";
 
 // Layout-stable opcodes shipped to WGSL. Mirrors scenes.ts 1:1.
@@ -19,6 +19,27 @@ import {
 
 const MAX_OPS = 128;
 const OPS_BYTES = 16 /* count + pad */ + MAX_OPS * 32;
+
+// §18 Pillar B — Neural SDF compact (Instant-NGP-style, fixed shape so the
+// WGSL forward is fully unrolled). L=4 levels of multires hash grid, F=2
+// features per entry, T=4096 entries per level, HIDDEN=16 neurons, INPUTS
+// = L*F = 8. The buffer layout is :
+//   [0..4) header = [active, base_res, _pad, _pad]      (4 floats)
+//   [4..4 + L*T*F) hash table interleaved by level       (L*T*F floats)
+//   [end .. end+W1) W1 weights (HIDDEN * INPUTS)
+//   [.. .. +HIDDEN) b1 biases
+//   [.. .. +HIDDEN) W2 weights (1 * HIDDEN)
+//   [.. .. +1)      b2 bias
+export const NSDF_L = 4;
+export const NSDF_F = 2;
+export const NSDF_T = 4096;
+export const NSDF_HIDDEN = 16;
+export const NSDF_INPUTS = NSDF_L * NSDF_F; // 8
+export const NSDF_HEADER_FLOATS = 4;
+export const NSDF_TABLE_FLOATS = NSDF_L * NSDF_T * NSDF_F;
+export const NSDF_W1_FLOATS = NSDF_HIDDEN * NSDF_INPUTS;
+export const NSDF_MLP_FLOATS = NSDF_W1_FLOATS + NSDF_HIDDEN + NSDF_HIDDEN + 1;
+export const NSDF_TOTAL_FLOATS = NSDF_HEADER_FLOATS + NSDF_TABLE_FLOATS + NSDF_MLP_FLOATS;
 
 const WGSL = `
 struct Camera {
@@ -76,6 +97,12 @@ struct Splats {
 @group(0) @binding(3) var<storage, read>    svdag: Svdag;
 @group(0) @binding(4) var<storage, read>    splats: Splats;
 
+// §18 Pillar B — Neural SDF storage : flat f32 array with hand-rolled
+// offsets. Layout matches ingen-render.ts constants NSDF_* exactly.
+// Header[0] > 0.5 → network active ; else the eval returns +1e6 so the
+// op cannot affect the scene.
+@group(0) @binding(5) var<storage, read>    nsdf: array<f32>;
+
 fn sd_sphere(p: vec3<f32>, r: f32) -> f32 { return length(p) - r; }
 
 fn sd_box(p: vec3<f32>, b: vec3<f32>) -> f32 {
@@ -104,6 +131,89 @@ fn smin_k(a: f32, b: f32, k: f32) -> f32 {
   let kk = max(k, 1e-4);
   let h = clamp(0.5 + 0.5 * (b - a) / kk, 0.0, 1.0);
   return mix(b, a, h) - kk * h * (1.0 - h);
+}
+
+// §18 Pillar B — Neural SDF forward. Multires hash grid (L levels, F
+// features per entry, T entries per level) feeds a tiny 2-layer MLP with
+// ReLU. All shapes are compile-time constants so the whole forward pass
+// is fully unrolled by the WGSL compiler. Inactive net (nsdf[0] <= 0.5)
+// short-circuits to +1e6 so OP_NEURAL_SDF cannot affect the scene before
+// weights are uploaded.
+fn nsdf_hash3(x: i32, y: i32, z: i32) -> u32 {
+  // Müller spatial hash (Instant-NGP, eq. 4). Primes chosen to spread
+  // collisions uniformly across the hash table for any practical grid.
+  let p1: u32 = 1u;
+  let p2: u32 = 2654435761u;
+  let p3: u32 = 805459861u;
+  let ux = bitcast<u32>(x);
+  let uy = bitcast<u32>(y);
+  let uz = bitcast<u32>(z);
+  return ((ux * p1) ^ (uy * p2) ^ (uz * p3));
+}
+
+fn nsdf_lookup_level(uvw: vec3<f32>, lvl: u32, base_res: f32) -> vec2<f32> {
+  let res = base_res * pow(2.0, f32(lvl));
+  let pp = uvw * res;
+  let p0 = floor(pp);
+  let fr = pp - p0;
+  let ix = i32(p0.x);
+  let iy = i32(p0.y);
+  let iz = i32(p0.z);
+  var out = vec2<f32>(0.0);
+  // 8 corners trilinear. Bits of 'c' enumerate (dx, dy, dz) in (0, 1).
+  for (var c: u32 = 0u; c < 8u; c = c + 1u) {
+    let dx = i32(c & 1u);
+    let dy = i32((c >> 1u) & 1u);
+    let dz = i32((c >> 2u) & 1u);
+    let wx = select(1.0 - fr.x, fr.x, dx == 1);
+    let wy = select(1.0 - fr.y, fr.y, dy == 1);
+    let wz = select(1.0 - fr.z, fr.z, dz == 1);
+    let w = wx * wy * wz;
+    let key = nsdf_hash3(ix + dx, iy + dy, iz + dz) % ${NSDF_T}u;
+    let base = ${NSDF_HEADER_FLOATS}u + lvl * ${NSDF_T * NSDF_F}u + key * ${NSDF_F}u;
+    out = out + w * vec2<f32>(nsdf[base], nsdf[base + 1u]);
+  }
+  return out;
+}
+
+fn sd_neural(p_world: vec3<f32>, center: vec3<f32>, half_extent: f32) -> f32 {
+  if (nsdf[0] <= 0.5) { return 1.0e6; }
+  let he = max(half_extent, 1e-3);
+  // Map p_world to [0, 1]^3 cube ; clamp so corners stay in valid hash
+  // territory even just outside the bounding cube (raymarcher convergence).
+  let uvw = clamp((p_world - center) / (he * 2.0) + vec3<f32>(0.5), vec3<f32>(0.0), vec3<f32>(1.0));
+  let base_res = max(nsdf[1], 1.0);
+
+  // Encode : L * F features concatenated.
+  var feat: array<f32, ${NSDF_INPUTS}>;
+  for (var lvl: u32 = 0u; lvl < ${NSDF_L}u; lvl = lvl + 1u) {
+    let v = nsdf_lookup_level(uvw, lvl, base_res);
+    feat[lvl * 2u + 0u] = v.x;
+    feat[lvl * 2u + 1u] = v.y;
+  }
+
+  // MLP layer 1 : INPUTS -> HIDDEN, ReLU.
+  let w1_base: u32 = ${NSDF_HEADER_FLOATS + NSDF_TABLE_FLOATS}u;
+  let b1_base: u32 = w1_base + ${NSDF_W1_FLOATS}u;
+  let w2_base: u32 = b1_base + ${NSDF_HIDDEN}u;
+  let b2_base: u32 = w2_base + ${NSDF_HIDDEN}u;
+  var hidden: array<f32, ${NSDF_HIDDEN}>;
+  for (var i: u32 = 0u; i < ${NSDF_HIDDEN}u; i = i + 1u) {
+    var s = nsdf[b1_base + i];
+    for (var j: u32 = 0u; j < ${NSDF_INPUTS}u; j = j + 1u) {
+      s = s + nsdf[w1_base + i * ${NSDF_INPUTS}u + j] * feat[j];
+    }
+    hidden[i] = max(s, 0.0);
+  }
+
+  // MLP layer 2 : HIDDEN -> 1 (linear, no activation — distance is signed).
+  var d = nsdf[b2_base];
+  for (var j: u32 = 0u; j < ${NSDF_HIDDEN}u; j = j + 1u) {
+    d = d + nsdf[w2_base + j] * hidden[j];
+  }
+  // Scale by half_extent so the network output's natural unit matches
+  // world distance (the eikonal training target is in normalized coords).
+  return d * he;
 }
 
 // SVDAG traversal — sample a world-space point p, given the voxel grid
@@ -201,6 +311,11 @@ fn scene(p: vec3<f32>) -> f32 {
       // §18 Pillar A : a.yzw = world-space origin, b.x = side length
       // (world units), b.y = root override (0 = use svdag header root).
       stack[sp] = sd_svdag(p, a.yzw, b.x, u32(b.y + 0.5));
+      sp = sp + 1;
+    } else if (op == ${OP_NEURAL_SDF}u) {
+      // §18 Pillar B : a.yzw = center of the bounding cube, b.x =
+      // half-extent (cube side / 2). The op pushes the neural distance.
+      stack[sp] = sd_neural(p, a.yzw, b.x);
       sp = sp + 1;
     }
   }
@@ -362,6 +477,7 @@ export class IngenRender {
   private svdagCapacity = 0;
   private splatsBuffer: GPUBuffer | null = null;
   private splatsCapacity = 0;
+  private nsdfBuffer: GPUBuffer | null = null;
   private outTexture: GPUTexture | null = null;
   private outView: GPUTextureView | null = null;
   private bindGroup: GPUBindGroup | null = null;
@@ -463,6 +579,17 @@ export class IngenRender {
     });
     this.device.queue.writeBuffer(this.splatsBuffer, 0, new Uint32Array([0, 0, 0, 0]));
 
+    // Neural SDF buffer (§18 Pillar B). Fixed shape — never reallocates,
+    // so the bind group stays valid for the entire session. Initialised
+    // with header[0]=0 (inactive) ; the WGSL eval short-circuits until
+    // uploadNeuralSdf() flips the active flag.
+    this.nsdfBuffer = this.device.createBuffer({
+      size: NSDF_TOTAL_FLOATS * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      label: "ingen-nsdf",
+    });
+    this.device.queue.writeBuffer(this.nsdfBuffer, 0, new Float32Array([0, 16, 0, 0]));
+
     this.resize(this.canvas.width || 1, this.canvas.height || 1);
     return true;
   }
@@ -498,8 +625,30 @@ export class IngenRender {
         { binding: 2, resource: this.outView! },
         { binding: 3, resource: { buffer: this.svdagBuffer! } },
         { binding: 4, resource: { buffer: this.splatsBuffer! } },
+        { binding: 5, resource: { buffer: this.nsdfBuffer! } },
       ],
     });
+  }
+
+  /**
+   * Upload a Neural SDF weight buffer (§18 Pillar B). 'packed' must be a
+   * Float32Array of length NSDF_TOTAL_FLOATS — the layout matches the
+   * WGSL eval byte-for-byte :
+   *   [0]            = active flag (>0.5 → enabled)
+   *   [1]            = base_res (level-0 grid resolution, integer)
+   *   [2..4)         = padding
+   *   [4..4 + L*T*F) = hash table interleaved by level
+   *   then           = W1 (HIDDEN*INPUTS) | b1 (HIDDEN) | W2 (HIDDEN) | b2 (1)
+   * Reset the network by passing a buffer with active=0 in the first slot.
+   */
+  uploadNeuralSdf(packed: Float32Array): void {
+    if (!this.device || !this.nsdfBuffer) return;
+    if (packed.length !== NSDF_TOTAL_FLOATS) {
+      console.warn(`[ingen-render] uploadNeuralSdf : expected ${NSDF_TOTAL_FLOATS} floats, got ${packed.length}`);
+      return;
+    }
+    this.device.queue.writeBuffer(this.nsdfBuffer, 0, packed);
+    this.cacheValid = false; // weights changed → re-dispatch next frame
   }
 
   /**
@@ -523,7 +672,7 @@ export class IngenRender {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         label: "ingen-splats",
       });
-      if (this.pipeline && this.outView && this.camBuffer && this.opsBuffer && this.svdagBuffer) {
+      if (this.pipeline && this.outView && this.camBuffer && this.opsBuffer && this.svdagBuffer && this.nsdfBuffer) {
         this.bindGroup = this.device.createBindGroup({
           label: "ingen-bg",
           layout: this.pipeline.getBindGroupLayout(0),
@@ -533,6 +682,7 @@ export class IngenRender {
             { binding: 2, resource: this.outView },
             { binding: 3, resource: { buffer: this.svdagBuffer } },
             { binding: 4, resource: { buffer: this.splatsBuffer! } },
+            { binding: 5, resource: { buffer: this.nsdfBuffer } },
           ],
         });
       }
@@ -570,7 +720,7 @@ export class IngenRender {
         label: "ingen-svdag",
       });
       // Bind group references the old buffer — recreate it.
-      if (this.pipeline && this.outView && this.camBuffer && this.opsBuffer) {
+      if (this.pipeline && this.outView && this.camBuffer && this.opsBuffer && this.splatsBuffer && this.nsdfBuffer) {
         this.bindGroup = this.device.createBindGroup({
           label: "ingen-bg",
           layout: this.pipeline.getBindGroupLayout(0),
@@ -579,6 +729,8 @@ export class IngenRender {
             { binding: 1, resource: { buffer: this.opsBuffer } },
             { binding: 2, resource: this.outView },
             { binding: 3, resource: { buffer: this.svdagBuffer! } },
+            { binding: 4, resource: { buffer: this.splatsBuffer } },
+            { binding: 5, resource: { buffer: this.nsdfBuffer } },
           ],
         });
       }
@@ -691,6 +843,7 @@ export class IngenRender {
     this.opsBuffer?.destroy?.();
     this.svdagBuffer?.destroy?.();
     this.splatsBuffer?.destroy?.();
+    this.nsdfBuffer?.destroy?.();
     this.outTexture = null;
     this.outView = null;
     this.camBuffer = null;
@@ -699,6 +852,7 @@ export class IngenRender {
     this.svdagCapacity = 0;
     this.splatsBuffer = null;
     this.splatsCapacity = 0;
+    this.nsdfBuffer = null;
     this.pipeline = null;
     this.bindGroup = null;
     this.context = null;

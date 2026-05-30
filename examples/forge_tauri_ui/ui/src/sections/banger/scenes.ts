@@ -39,6 +39,12 @@ export const OP_MATERIAL     = 40;
  *  the SVDAG buffer itself is bound globally on the GPU (one SVDAG at a
  *  time in Phase 5 ; multi-SVDAG via `rootIndex` arrives in Phase 5b). */
 export const OP_SVDAG        = 50;
+/** §18 Pillar B : Neural SDF (Instant-NGP-style multires hash grid + tiny
+ *  MLP). The op slot encodes a world-space center + halfExtent ; the
+ *  network weights live in a separate GPU buffer uploaded via
+ *  __forgeBangerLoadNeuralSdf. When the network is inactive (header[0]=0)
+ *  the WGSL eval returns a large positive distance so the op is a no-op. */
+export const OP_NEURAL_SDF   = 60;
 
 export const SDF_MAX_OPS = 64;
 export const SDF_FLOATS_PER_OP = 8;
@@ -56,6 +62,7 @@ export type SdfOp =
   | { op: "material";     color: Vec3; roughness?: number; metallic?: number }
   | { op: "sampledSdf" }
   | { op: "svdag";        center: Vec3; voxelSpan: number; rootIndex?: number }
+  | { op: "neuralSdf";    center: Vec3; halfExtent: number }
   | { op: "union" }
   | { op: "intersect" }
   | { op: "diff" }
@@ -72,6 +79,7 @@ const OP_CODE: Record<SdfOp["op"], number> = {
   material:   OP_MATERIAL,
   sampledSdf: OP_SAMPLED_SDF,
   svdag:      OP_SVDAG,
+  neuralSdf:  OP_NEURAL_SDF,
   union:      OP_UNION,
   intersect:  OP_INTERSECT,
   diff:       OP_DIFF,
@@ -157,6 +165,13 @@ export function serializeScene(ops: readonly SdfOp[]): SerializedScene {
       buf[base + 3] = o.center[2];
       buf[base + 4] = o.voxelSpan;
       buf[base + 5] = o.rootIndex ?? 0;
+    } else if (o.op === "neuralSdf") {
+      // §18 Pillar B : world-space center (a.yzw), half-extent of the
+      // cube that maps to [0, 1]^3 in the network's input space (b.x).
+      buf[base + 1] = o.center[0];
+      buf[base + 2] = o.center[1];
+      buf[base + 3] = o.center[2];
+      buf[base + 4] = o.halfExtent;
     }
     // union/intersect/diff/sampledSdf carry no params.
   }

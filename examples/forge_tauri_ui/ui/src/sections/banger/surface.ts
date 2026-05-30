@@ -1,7 +1,7 @@
 // @ts-nocheck
 import "./controller.js";
 import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, recenterMeshXY, recenterSceneXY, serializeScene } from "./scenes.js";
-import { IngenRender } from "./ingen-render.js";
+import { IngenRender, NSDF_TOTAL_FLOATS } from "./ingen-render.js";
 import * as worlds from "./worlds.js";
 
 // Banger — viewport hybride : INGEN Render (WebGPU compute, SDF + grille
@@ -8526,6 +8526,38 @@ import * as worlds from "./worlds.js";
       ingenRender.uploadSplats(f32, safeCount);
       requestBoomRender("ingen-splats-load", 200);
       return { ok: true, splats: safeCount };
+    };
+
+    // §18 Pillar B — upload a Neural SDF weight blob (Instant-NGP-style :
+    // multires hash grid + tiny 2-layer MLP). Layout is the flat Float32Array
+    // detailed in ingen-render.ts NSDF_* constants. Passing a buffer with
+    // active=0 in slot 0 disables the network without freeing memory.
+    window.__forgeBangerLoadNeuralSdf = (packed) => {
+      if (!ingenRender) return { ok: false, error: "INGEN Render not initialised" };
+      const f32 = packed instanceof Float32Array
+        ? packed
+        : (packed?.buffer ? new Float32Array(packed.buffer, packed.byteOffset || 0, ((packed.byteLength || 0) / 4) | 0) : null);
+      if (!f32) return { ok: false, error: "expected Float32Array" };
+      if (f32.length !== NSDF_TOTAL_FLOATS) {
+        return { ok: false, error: `expected ${NSDF_TOTAL_FLOATS} floats, got ${f32.length}` };
+      }
+      ingenRender.uploadNeuralSdf(f32);
+      requestBoomRender("ingen-nsdf-load", 200);
+      return { ok: true, floats: f32.length, active: f32[0] > 0.5 };
+    };
+
+    // Smoke helper : load a zeroed Neural SDF (active=1, base_res=4) so
+    // the WGSL forward pass executes through all of its branches. Output
+    // is a constant 0 (the iso-surface is everywhere) — useful only to
+    // prove the pipeline compiles and runs. Real weights come from a
+    // gradient-descent fit (INGEN COMPUTE §19 Phase 10).
+    window.__forgeBangerLoadTestNeuralSdf = () => {
+      const buf = new Float32Array(NSDF_TOTAL_FLOATS);
+      buf[0] = 1.0; // active
+      buf[1] = 4.0; // base_res = 4 (so level 3 sees res = 32)
+      // Leave everything else zero : trilinear of zero features → zero
+      // input vector → MLP outputs b2 (zero) → constant 0 distance.
+      return (window as any).__forgeBangerLoadNeuralSdf(buf);
     };
 
     // Smoke helper : random pastel starfield of 32 splats around origin.
