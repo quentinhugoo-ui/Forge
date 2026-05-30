@@ -285,5 +285,125 @@ Chaque phase = **une suppression + un ajout**. Pas de phase qui ajoute sans supp
 
 Le verifier de chaque phase est exécutable localement (script `forge-banger-render-verify.mjs` à étendre par phase). Une phase ne ferme pas si son verifier ne passe pas.
 
+## 20. Atlas d'Act Codes — La Bibliothèque de Calcul d'Ingénierie
+
+Le rendu (sections 18-19) n'est qu'une moitié d'INGEN. L'autre moitié est le **calcul d'ingénierie computationnelle** : transformer un design SDF en artefacts physiques vérifiés, puis faire émerger la forme optimale depuis les résultats mathématiques. Cette section catalogue les Act Codes.
+
+### Le workflow en 3 étapes
+
+1. **LLM ↔ utilisateur (langage naturel).** Si l'utilisateur connaît des concepts d'ingénieur, le LLM les code directement en act code. Sinon, l'étape 2 le couvre via la bibliothèque.
+2. **Décomposition + batterie de calculs.** Le LLM éclate la demande en sous-parties. Chaque sous-partie passe par les act codes pertinents, content-addressed dans le ledger KASM : `hash(sub_sdf, act_id, params) → artifact`. Jamais deux fois le même calcul, à TOUS les niveaux de la computation.
+3. **Retour LLM → SDF.** Le moteur renvoie les artefacts ; le LLM utilise les nombres pour réécrire l'act code SDF de visualisation.
+
+### Statut d'implémentation
+
+- `src/act_codes/mod.rs` — trait `ActCode`, `Artifact`, `ActLedger` content-addressed, évaluateur SDF Rust (mirror exact de `scenes.ts`). **Livré.**
+- `src/act_codes/inertia.rs` — `inertia.mc.v1` (masse, COM, tenseur 3×3 par Monte-Carlo). **Livré.**
+- `src/act_codes/planner.rs` — décomposition en sous-parties indépendantes, recombinaison par théorème de Huygens. **Livré.**
+- `examples/forge_drone_pipeline.rs` — démo end-to-end sur le drone, dedup KASM prouvé (re-run = 0 recompute, mutation 1 composant = 1 recompute). **Livré.**
+
+### A. Calculs fondamentaux (forward analysis)
+
+Chaque ligne = un `ActCode` content-addressed. La colonne « dépend de » est le DAG d'exécution.
+
+| Act code | Calcul mathématique | Algorithme | Dépend de | Statut |
+|---|---|---|---|---|
+| `inertia.mc` | masse, COM, tenseur 3×3 | Monte-Carlo intérieur SDF | — | livré |
+| `volume_fraction` | volume / matière par matériau | MC ou marching cubes voxel | — | trivial |
+| `modal` | fréquences propres + modes | Lanczos sur Laplacien voxelisé | `inertia` | à faire |
+| `thermal_static` | carte température steady-state | Poisson FFT 3D | sources (RPi, moteurs) | à faire |
+| `thermal_transient` | montée en T° vs temps | Crank-Nicolson implicite | `thermal_static` | à faire |
+| `cfd_hover` | downwash, efficacité hover | Lattice-Boltzmann level-set | géométrie cage | lourd |
+| `cfd_forward` | drag latéral à V, cage-effect | LBM + frontière mobile | `cfd_hover` | lourd |
+| `stress_static` | champ de contrainte sous charge | FEM voxel ou MPM | `inertia` | à faire |
+| `stress_impact` | crash chute 2 m | MPM dynamique explicite | `stress_static`, `modal` | lourd |
+| `em_antenna` | diagramme rayonnement WiFi | FDTD Yee 2.4 GHz | géométrie antenne + RPi | moyen |
+| `acoustic` | signature sonore des hélices | FW-H sur le champ CFD | `cfd_hover` | lourd |
+| `printability` | overhangs, volume de support | analyse normales SDF + slicing | — | trivial |
+| `battery_endurance` | autonomie vol | bilan énergie hover×masse | `inertia`, `cfd_hover` | trivial |
+| `cg_envelope` | marge de stabilité statique | COM vs centre de poussée | `inertia`, `cfd_hover` | trivial |
+
+### B. Croisements multi-physiques
+
+Un drone viable n'est pas la somme de calculs isolés, c'est leur **intersection**.
+
+| Croisement | Risque si ignoré | Maths du couplage |
+|---|---|---|
+| **modal × hélices** | mode à 133 Hz (blade-pass 8000 RPM) = flutter mortel | éviter `freq_mode ∈ [f_blade ± 15%]` ∀ RPM |
+| **thermique × CFD** | downwash refroidit le RPi → hotspot dépend du débit | Poisson avec coefficient de convection h(v_air) du CFD |
+| **inertie × CFD** | COM décalé → moment parasite en hover | M = (COP − COM) × T, corrigeable par les hélices |
+| **stress × thermique** | dilatation différentielle ABS/laiton aux interfaces | σ = E·α·ΔT couplé au champ T° |
+| **EM × géométrie RPi** | PCB = ground-plane parasite → portée /10 | FDTD avec le RPi conducteur, distance antenne/PCB critique |
+| **acoustique × cage** | la cage résonne avec le bruit hélice (amplification) | géométrie spectrale : décaler les modes acoustiques |
+| **masse × poussée × autonomie** | triangle de fer : + batterie = + lourd = − autonomie | point fixe non-trivial à résoudre |
+
+### C. Variations à balayer (les millions d'itérations)
+
+| Type de balayage | Dimensions | Itérations | Cible |
+|---|---|---|---|
+| Grid sweep | 1-2 params | 10³–10⁴ | sensibilité locale, knee curves |
+| Latin Hypercube | 12 params | 10⁴–10⁵ | couverture uniforme |
+| Sobol quasi-MC | 12 params | 10⁵–10⁶ | convergence moyennes/variances |
+| Optimisation bayésienne | 12 params, fonction coûteuse | 10²–10³ runs lourds | minimum global, peu d'évals |
+| Évolution (CMA-ES / NSGA-II) | 12 params, multi-objectif | 10⁴–10⁶ | front de Pareto |
+| Indices de Sobol | variance attribution | 10⁶ | quels params dominent quel objectif |
+| Robustesse (Itô / MC) | params ± tolérances fab | 10⁶ / design | designs survivant aux défauts |
+
+**Levier KASM** : sur un Sobol 10⁶, la plupart des designs partagent des sous-parties identiques. Chaque sous-partie hashée → le ledger sert 95-99 % des sous-calculs. On balaye des millions de designs en calculant des milliers de sous-résultats réels.
+
+### D. Algorithmes GPU massivement itératifs
+
+| Algorithme | Itère sur | Échelle |
+|---|---|---|
+| Monte-Carlo intégration | points d'échantillonnage SDF | 10⁶–10⁸ pts/calcul |
+| Lattice-Boltzmann | cellules × pas de temps | 10⁹ cell-steps |
+| FDTD électromagnétique | mailles Yee × pas de temps | 10⁸–10⁹ |
+| MPM (impact) | particules × substeps | 10⁷ particules |
+| Lanczos / power iteration | produits matrice-vecteur creux | N×k |
+| Adjoint backprop | gradient ∂objectif/∂param | 1 passe = N forward |
+
+### E. Inverse Design — La Forme Émerge des Maths
+
+Le cœur de la doctrine : la géométrie n'est plus dessinée, elle **est la solution** d'un problème mathématique. Trois niveaux de puissance croissante.
+
+**Niveau 1 — Optimisation paramétrique (livré).**
+`forge_drone_design.rs` : 12 nombres, hill-climb sur un score scalaire. La forme est une fonction des params.
+
+**Niveau 2 — Optimisation topologique.**
+La forme entière devient une variable continue : un champ de densité ρ(x,y,z) ∈ [0,1]. On résout :
+
+```text
+minimize   compliance(ρ)              (souplesse sous charge)
+   ρ
+subject to volume(ρ) ≤ V_max          (budget matière)
+           stress(ρ) ≤ σ_yield        (pas de rupture)
+           modes(ρ) ∉ [blade-pass]    (pas de flutter)
+```
+
+SIMP + méthode adjointe calcule `∂compliance/∂ρ` en chaque point, la matière coule vers l'optimum. La forme finale (treillis organiques, nervures) **est** la solution mathématique.
+
+**Niveau 3 — SDF neuronal différentiable (frontière, Phase 10 du §19).**
+Le SDF est un réseau (`sd_neural`, Phase 7). Différentiable de bout en bout → on backprop à travers le rendu ET la physique :
+
+```text
+loss = w1·masse + w2·drag + w3·max(0, 133 - f_mode) + w4·max(0, σ - σ_yield)
+∂loss/∂(poids_réseau) via autograd WGSL → gradient descent
+```
+
+La forme n'est plus paramétrée : elle est le minimum d'une perte multi-physique.
+
+### F. Ordre de construction (ROI décroissant)
+
+1. `modal` — débloque le croisement flutter (le plus mortel).
+2. `thermal_static` — hotspot RPi, cheap (FFT ms).
+3. `cg_envelope` — réutilise `inertia`+`cfd`, trivial, haute valeur.
+4. `stress_static` — FEM voxel, débloque le crash.
+5. `cfd_hover` — lourd mais débloque drag/autonomie/acoustique.
+6. `pareto` (NSGA-II) — co-optimise sur tous les act codes ci-dessus. Le moment magique : appelle chaque act code par sous-partie, le dedup KASM balaye 10⁶ designs en re-calculant seulement ce qui change.
+7. `topo_opt` — Niveau 2 : la forme émerge des maths.
+8. `differentiable` — Niveau 3, aligné sur la Phase 10 du §19.
+
+Chaque act code suit le même contrat : `trait ActCode` + tests déterministes + clé ledger content-addressed. Un act code ne ferme pas si son test analytique (cas à solution fermée connue) ne passe pas.
+
 ---
 *Note : Banger ne cherche pas à imiter l'ingénierie humaine, il cherche à extraire les solutions que la physique autorise.*
