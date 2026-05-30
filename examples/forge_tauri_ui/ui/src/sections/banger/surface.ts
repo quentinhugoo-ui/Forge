@@ -7918,6 +7918,11 @@ import * as worlds from "./worlds.js";
         right[0] * fwd[1] - right[1] * fwd[0],
       ];
       ingenRender.uploadOps(sdfScene.buffer, sdfScene.count);
+      // §18 Pillar C — splats bake. The baker stays anchored to the SDF
+      // surface (Phase 0 doctrine), and the upload is cheap (count <= 256
+      // for proxy splats ; real 3DGS scenes will dominate the bandwidth
+      // but at edit-time, not per frame).
+      ingenRender.uploadSplats(sdfGaussians.buffer, sdfGaussians.count);
       ingenRender.render({
         pos: eye,
         fwd, right, up,
@@ -8502,6 +8507,46 @@ import * as worlds from "./worlds.js";
         /* node 2 */ 0xff, 1, 1, 1, 1, 1, 1, 1, 1,
       ]);
       return (window as any).__forgeBangerLoadSvdag(packed);
+    };
+
+    // §18 Pillar C — load an external splat set. 'packed' is a flat
+    // Float32Array, 8 floats per splat : (pos.xyz, sigma, color.rgb, alpha).
+    // Matches scenes.ts::BakedGaussians.buffer layout 1:1 — PLY / SPLAT
+    // file parsers should normalise into this shape before calling here.
+    // Replaces the legacy bake-on-surface state so an external set isn't
+    // overwritten by the next __forgeBangerSetScene call.
+    window.__forgeBangerLoadSplats = (packed, count) => {
+      if (!ingenRender) return { ok: false, error: "INGEN Render not initialised" };
+      const f32 = packed instanceof Float32Array
+        ? packed
+        : (packed?.buffer ? new Float32Array(packed.buffer, packed.byteOffset || 0, ((packed.byteLength || 0) / 4) | 0) : null);
+      if (!f32) return { ok: false, error: "expected Float32Array (8 floats per splat)" };
+      const safeCount = Math.max(0, Math.min(Math.floor(f32.length / 8), Number(count) | 0 || Math.floor(f32.length / 8)));
+      sdfGaussians = { buffer: f32, count: safeCount };
+      ingenRender.uploadSplats(f32, safeCount);
+      requestBoomRender("ingen-splats-load", 200);
+      return { ok: true, splats: safeCount };
+    };
+
+    // Smoke helper : random pastel starfield of 32 splats around origin.
+    // Proves the splat compute path lights up without needing a real .ply.
+    window.__forgeBangerLoadTestSplats = () => {
+      const n = 32;
+      const buf = new Float32Array(n * 8);
+      for (let i = 0; i < n; i += 1) {
+        const base = i * 8;
+        const theta = (i / n) * Math.PI * 2;
+        const r = 0.6 + 0.6 * Math.cos(i * 1.7);
+        buf[base + 0] = Math.cos(theta) * r;
+        buf[base + 1] = Math.sin(theta) * r;
+        buf[base + 2] = Math.sin(i * 0.9) * 0.4;
+        buf[base + 3] = 0.05 + 0.03 * Math.sin(i);     // sigma
+        buf[base + 4] = 0.6 + 0.4 * Math.sin(i * 1.3); // R
+        buf[base + 5] = 0.6 + 0.4 * Math.cos(i * 1.7); // G
+        buf[base + 6] = 0.6 + 0.4 * Math.sin(i * 2.1); // B
+        buf[base + 7] = 0.8;                            // alpha
+      }
+      return (window as any).__forgeBangerLoadSplats(buf, n);
     };
     exposeBoomAuditState();
   }

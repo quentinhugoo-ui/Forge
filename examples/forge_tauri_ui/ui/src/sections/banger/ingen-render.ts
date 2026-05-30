@@ -55,10 +55,26 @@ struct Svdag {
   nodes: array<u32>,
 };
 
+// INGEN COMPUTE §18 Pillar C : 3D Gaussian Splatting storage (Phase 6).
+// Each splat is 2 vec4 = 8 floats : (pos.xyz, sigma) + (color.rgb, alpha).
+// Header u32 'count' followed by aligned splat records — the compute
+// pass walks 'count' splats and additively accumulates their exponential
+// falloff on top of the SDF surface lighting. Front-to-back sort (proper
+// over-blend) is Phase 6b ; first cut uses additive blend which matches
+// the legacy WebGL2 'glow' path 1:1.
+struct Splats {
+  count: u32,
+  _p0:   u32,
+  _p1:   u32,
+  _p2:   u32,
+  data:  array<vec4<f32>>,
+};
+
 @group(0) @binding(0) var<uniform>          cam: Camera;
 @group(0) @binding(1) var<storage, read>    ops: Ops;
 @group(0) @binding(2) var                   outTex: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(3) var<storage, read>    svdag: Svdag;
+@group(0) @binding(4) var<storage, read>    splats: Splats;
 
 fn sd_sphere(p: vec3<f32>, r: f32) -> f32 { return length(p) - r; }
 
@@ -266,6 +282,39 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     col = vec3<f32>(0.78, 0.80, 0.84) * (0.18 + 0.82 * diff) + vec3<f32>(0.20) * rim;
   }
 
+  // §18 Pillar C — Gaussian splat accumulation. Each splat projects to
+  // screen space (perspective divide using the depth along cam.fwd) and
+  // contributes its color weighted by an isotropic exp(-r2/2) kernel.
+  // Additive blend (Phase 6 first cut) — matches the legacy WebGL2 'glow'
+  // path. Front-to-back over-blend + radix-sort by depth is Phase 6b.
+  let n_splats = splats.count;
+  if (n_splats > 0u) {
+    let tanY = cam.tanHalfFovY;
+    // 'uv' is in [-1, 1] across height ; multiply X by aspect to match.
+    let uv_x = uv.x * aspect;
+    let uv_y = uv.y;
+    var accum = vec3<f32>(0.0);
+    for (var i: u32 = 0u; i < n_splats; i = i + 1u) {
+      let s0 = splats.data[i * 2u];
+      let s1 = splats.data[i * 2u + 1u];
+      let to_splat = s0.xyz - cam.pos;
+      let depth = dot(to_splat, cam.fwd);
+      if (depth < 0.05) { continue; }
+      let sx = dot(to_splat, cam.right) / (depth * tanY);
+      let sy = dot(to_splat, cam.up)    / (depth * tanY);
+      let dx = uv_x - sx;
+      let dy = uv_y - sy;
+      let sig_world = max(s0.w, 1e-4);
+      // Screen-space sigma : world sigma over view-plane half-height.
+      let sig_screen = sig_world / (depth * tanY);
+      let r2 = (dx * dx + dy * dy) / max(sig_screen * sig_screen, 1e-6);
+      if (r2 > 9.0) { continue; }
+      let w = exp(-0.5 * r2) * s1.w;
+      accum = accum + s1.rgb * w;
+    }
+    col = col + accum;
+  }
+
   textureStore(outTex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(col, 1.0));
 }
 `;
@@ -311,6 +360,8 @@ export class IngenRender {
   private opsBuffer: GPUBuffer | null = null;
   private svdagBuffer: GPUBuffer | null = null;
   private svdagCapacity = 0;
+  private splatsBuffer: GPUBuffer | null = null;
+  private splatsCapacity = 0;
   private outTexture: GPUTexture | null = null;
   private outView: GPUTextureView | null = null;
   private bindGroup: GPUBindGroup | null = null;
@@ -398,6 +449,20 @@ export class IngenRender {
     });
     this.device.queue.writeBuffer(this.svdagBuffer, 0, new Uint32Array([0, 0, 0, 0]));
 
+    // Splats buffer (§18 Pillar C). Header (4 u32) + 8 floats per splat.
+    // Empty-by-default : count = 0 → WGSL skips the splat loop entirely.
+    // Grows on the first uploadSplats() call ; sized for ~256 default
+    // splats so the bake-on-surface helper fits without reallocation.
+    const splatsHeaderWords = 4;
+    const splatsBodyWords   = 256 * 8;
+    this.splatsCapacity = splatsHeaderWords + splatsBodyWords;
+    this.splatsBuffer = this.device.createBuffer({
+      size: this.splatsCapacity * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      label: "ingen-splats",
+    });
+    this.device.queue.writeBuffer(this.splatsBuffer, 0, new Uint32Array([0, 0, 0, 0]));
+
     this.resize(this.canvas.width || 1, this.canvas.height || 1);
     return true;
   }
@@ -432,8 +497,55 @@ export class IngenRender {
         { binding: 1, resource: { buffer: this.opsBuffer! } },
         { binding: 2, resource: this.outView! },
         { binding: 3, resource: { buffer: this.svdagBuffer! } },
+        { binding: 4, resource: { buffer: this.splatsBuffer! } },
       ],
     });
+  }
+
+  /**
+   * Upload Gaussian splats (§18 Pillar C). 'packed' is a Float32Array
+   * laid out as 8 floats per splat : (pos.xyz, sigma) + (color.rgb, alpha)
+   * — matches scenes.ts::BakedGaussians.buffer 1:1. 'count' is the number
+   * of ACTIVE splats (not floats). Passing count=0 disables splat
+   * rendering without freeing the GPU buffer.
+   */
+  uploadSplats(packed: Float32Array, count: number): void {
+    if (!this.device || !this.splatsBuffer) return;
+    const safeCount = Math.max(0, count | 0);
+    const requiredWords = 4 + safeCount * 8;
+    if (requiredWords > this.splatsCapacity) {
+      this.splatsBuffer.destroy?.();
+      let cap = Math.max(this.splatsCapacity, 16);
+      while (cap < requiredWords) cap *= 2;
+      this.splatsCapacity = cap;
+      this.splatsBuffer = this.device.createBuffer({
+        size: cap * 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        label: "ingen-splats",
+      });
+      if (this.pipeline && this.outView && this.camBuffer && this.opsBuffer && this.svdagBuffer) {
+        this.bindGroup = this.device.createBindGroup({
+          label: "ingen-bg",
+          layout: this.pipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.camBuffer } },
+            { binding: 1, resource: { buffer: this.opsBuffer } },
+            { binding: 2, resource: this.outView },
+            { binding: 3, resource: { buffer: this.svdagBuffer } },
+            { binding: 4, resource: { buffer: this.splatsBuffer! } },
+          ],
+        });
+      }
+    }
+    this.device.queue.writeBuffer(this.splatsBuffer!, 0, new Uint32Array([safeCount, 0, 0, 0]));
+    if (safeCount > 0) {
+      const floatsNeeded = safeCount * 8;
+      const view = packed.byteLength >= floatsNeeded * 4
+        ? new Float32Array(packed.buffer, packed.byteOffset, floatsNeeded)
+        : packed;
+      this.device.queue.writeBuffer(this.splatsBuffer!, 16, view);
+    }
+    this.cacheValid = false; // splats changed → re-dispatch next frame
   }
 
   /**
@@ -578,12 +690,15 @@ export class IngenRender {
     this.camBuffer?.destroy?.();
     this.opsBuffer?.destroy?.();
     this.svdagBuffer?.destroy?.();
+    this.splatsBuffer?.destroy?.();
     this.outTexture = null;
     this.outView = null;
     this.camBuffer = null;
     this.opsBuffer = null;
     this.svdagBuffer = null;
     this.svdagCapacity = 0;
+    this.splatsBuffer = null;
+    this.splatsCapacity = 0;
     this.pipeline = null;
     this.bindGroup = null;
     this.context = null;
