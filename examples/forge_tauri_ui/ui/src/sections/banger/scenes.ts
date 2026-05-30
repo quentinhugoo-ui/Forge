@@ -155,6 +155,95 @@ export const DEFAULT_SCENE: SdfOp[] = [
   { op: "smin", k: 5.0 },
 ];
 
+// ---------- Auto-recentrage XY (Z préservé) -------------------------------
+//
+// Doctrine Banger : tout nouvel objet (création SDF / import mesh / animation
+// importée) atterrit avec son centroïde XY à (0, 0). L'axe Z conserve la
+// hauteur d'origine. Un seul helper par représentation, appelé au chokepoint
+// d'entrée — pas de transform stockée sur la scène, pas de matrice supplémen-
+// taire à propager dans le shader : on bake directement dans la donnée.
+
+/** Returns ops whose positioned primitives have been shifted so the XY
+ *  centroid of their centers lands on (0, 0). Z is untouched. Non-positioned
+ *  ops (union/diff/smin/material/terrain/repeat/sampledSdf) pass through.
+ *  Capsule endpoints both shift by the same amount. Idempotent : applying
+ *  twice yields the same result. */
+export function recenterSceneXY(ops: readonly SdfOp[]): SdfOp[] {
+  let sumX = 0;
+  let sumY = 0;
+  let n = 0;
+  for (const o of ops) {
+    if (o.op === "sphere" || o.op === "box" || o.op === "torus" || o.op === "roundedBox") {
+      sumX += o.center[0]; sumY += o.center[1]; n += 1;
+    } else if (o.op === "capsule") {
+      sumX += 0.5 * (o.a[0] + o.b[0]);
+      sumY += 0.5 * (o.a[1] + o.b[1]);
+      n += 1;
+    }
+  }
+  if (n === 0) return ops.slice();
+  const dx = sumX / n;
+  const dy = sumY / n;
+  if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) return ops.slice();
+  return ops.map((o): SdfOp => {
+    if (o.op === "sphere") return { ...o, center: [o.center[0] - dx, o.center[1] - dy, o.center[2]] };
+    if (o.op === "box") return { ...o, center: [o.center[0] - dx, o.center[1] - dy, o.center[2]] };
+    if (o.op === "torus") return { ...o, center: [o.center[0] - dx, o.center[1] - dy, o.center[2]] };
+    if (o.op === "roundedBox") return { ...o, center: [o.center[0] - dx, o.center[1] - dy, o.center[2]] };
+    if (o.op === "capsule") return {
+      ...o,
+      a: [o.a[0] - dx, o.a[1] - dy, o.a[2]],
+      b: [o.b[0] - dx, o.b[1] - dy, o.b[2]],
+    };
+    return o;
+  });
+}
+
+/** Mesh equivalent : shifts every vertex's X/Y by -centroid, Z untouched.
+ *  Returns a new meshData with fresh `pos` (cloned), recomputed `bounds`
+ *  if present, plus an `appliedRecenterXY` tag so debug tools can see the
+ *  shift. `nrm` and `count` and `faceCount` are reused as-is. */
+export interface RecenterableMesh {
+  pos: Float32Array;
+  nrm?: Float32Array;
+  count?: number;
+  faceCount?: number;
+  bounds?: { min: [number, number, number]; max: [number, number, number] };
+  [extra: string]: unknown;
+}
+
+export function recenterMeshXY<T extends RecenterableMesh>(meshData: T): T & { appliedRecenterXY: [number, number] } {
+  const src = meshData.pos;
+  const len = src.length;
+  if (len === 0) return { ...meshData, appliedRecenterXY: [0, 0] };
+  let sumX = 0;
+  let sumY = 0;
+  const vCount = (len / 3) | 0;
+  for (let i = 0; i < len; i += 3) {
+    sumX += src[i] ?? 0;
+    sumY += src[i + 1] ?? 0;
+  }
+  const dx = sumX / Math.max(1, vCount);
+  const dy = sumY / Math.max(1, vCount);
+  if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) {
+    return { ...meshData, appliedRecenterXY: [0, 0] };
+  }
+  const pos = new Float32Array(len);
+  for (let i = 0; i < len; i += 3) {
+    pos[i]     = (src[i] ?? 0) - dx;
+    pos[i + 1] = (src[i + 1] ?? 0) - dy;
+    pos[i + 2] = src[i + 2] ?? 0;
+  }
+  const out: any = { ...meshData, pos, appliedRecenterXY: [dx, dy] };
+  if (meshData.bounds) {
+    out.bounds = {
+      min: [meshData.bounds.min[0] - dx, meshData.bounds.min[1] - dy, meshData.bounds.min[2]],
+      max: [meshData.bounds.max[0] - dx, meshData.bounds.max[1] - dy, meshData.bounds.max[2]],
+    };
+  }
+  return out as T & { appliedRecenterXY: [number, number] };
+}
+
 // ---------- CPU SDF evaluator -------------------------------------------------
 //
 // Mirrors the GLSL stack machine in catalog.ts::FS_SDF byte-for-byte so that

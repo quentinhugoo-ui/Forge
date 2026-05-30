@@ -1,6 +1,6 @@
 // @ts-nocheck
 import "./controller.js";
-import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, serializeScene } from "./scenes.js";
+import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, recenterMeshXY, recenterSceneXY, serializeScene } from "./scenes.js";
 import { IngenRender } from "./ingen-render.js";
 import * as worlds from "./worlds.js";
 
@@ -7118,6 +7118,12 @@ import * as worlds from "./worlds.js";
 
   function createSceneMesh(meshData, fileName) {
     if (!meshData?.pos?.length || !meshData?.nrm?.length) return false;
+    // Doctrine Banger : tout mesh importé est recentré sur XY=(0,0), Z
+    // préservé. La doctrine est appliquée au point d'entrée unique pour
+    // que pos / bounds / preview / display partagent la même origine ;
+    // les downstream (display mesh, slicer, KASM graph) consomment déjà
+    // pos depuis meshData et héritent du shift sans logique additionnelle.
+    meshData = recenterMeshXY(meshData);
     releaseSceneMesh();
     const item = syncImportedSceneItem(fileName);
     item.meta = {
@@ -8475,10 +8481,13 @@ import * as worlds from "./worlds.js";
     // on bad input. Triggers a single re-render via requestBoomRender.
     window.__forgeBangerSetScene = (ops) => {
       try {
-        const sceneOps = ops || [];
+        // Doctrine Banger : tout nouvel objet atterrit avec son centroïde
+        // XY à (0, 0). Z préservé. Bake direct dans la donnée — pas de
+        // transform fantôme à propager dans le shader.
+        const sceneOps = recenterSceneXY(ops || []);
         sdfScene = serializeScene(sceneOps);
-        // §19.5 — re-derive Gaussian splats from the new SDF so they
-        // stay anchored to the live surface (skipped if count = 0).
+        // §19.5 — re-derive Gaussian splats from the new (recentered) SDF
+        // so they stay anchored to the live surface (skipped if count = 0).
         if (sdfGaussians.count > 0) {
           sdfGaussians = bakeGaussiansOnSurface(sceneOps, sdfGaussians.count);
         }
