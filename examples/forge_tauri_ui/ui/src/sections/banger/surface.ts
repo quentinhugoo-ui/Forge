@@ -5972,18 +5972,10 @@ import * as worlds from "./worlds.js";
   }
 
   function flushBoomSidebar() {
-    // §banger cleanup : the mesh-modifier sidebar (Scene Collection,
-    // Inspector, Selected Hash, Selection, Transform) is dead since the
-    // pipeline migrated to SDF. Empty the container and hide it so it
-    // takes no layout space. All the HTML generation below is now
-    // unreachable — will be deleted in a follow-up Via Negativa pass.
-    if (boomSidebarRoot) {
-      boomSidebarRoot.innerHTML = "";
-      boomSidebarRoot.style.display = "none";
-    }
-    return false;
-    // eslint-disable-next-line no-unreachable
     if (!boomSidebarRoot) return false;
+    // Clear any prior display:none from the previous (over-aggressive)
+    // cleanup pass so the panel + its toggle button keep working.
+    if (boomSidebarRoot.style.display === "none") boomSidebarRoot.style.display = "";
     const active = activeBoomItem();
     const activeTransform = activeBoomTransform();
     const activeIsMesh = isBoomMeshItem(active);
@@ -6570,24 +6562,13 @@ import * as worlds from "./worlds.js";
           ${kasmGraphMarkup}
         </div>
       </div>
-      <div class="boom-properties">
-        <div class="boom-properties-main boom-inspector-shell">
-          <div class="boom-props-header boom-inspector-header">
-            <div class="boom-props-active-icon boom-outliner-type-${active?.type || "object"}">${boomIcon(active?.type || "object")}</div>
-            <div class="boom-props-active-copy">
-              <div class="boom-props-kicker">Inspector</div>
-              <div class="boom-props-title">${escapeBoomHtml(active?.name || "Selection")}</div>
-            </div>
-            <div class="boom-inspector-tabrow">
-              ${propertyTabs}
-            </div>
-          </div>
-          <div class="boom-props-body">
-            ${propertiesBody}
-          </div>
-        </div>
-      </div>
     `;
+    // §banger cleanup : the lower Inspector / Selected Hash / Selection
+    // / Transform block (mesh-modifier UI) is removed — the Scene
+    // Collection outliner at the top stays as it doubles as a Blender-
+    // style SDF scene navigator. The standard sessions list + bottom
+    // dropdown (like in other Forge sections) is rendered by the shell,
+    // not by Banger surface.ts.
     const htmlHash = kasmHashString(`ui-sidebar|${html}`);
     if (boomSidebarHtmlHash === htmlHash && boomSidebarRoot.dataset.boomHtmlHash === htmlHash) {
       boomUiRenderStats.sidebarSkips += 1;
