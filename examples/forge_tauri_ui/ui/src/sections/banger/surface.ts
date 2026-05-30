@@ -6559,10 +6559,16 @@ import * as worlds from "./worlds.js";
             </span>
           </div>
           ${objectRows || '<div class="boom-outliner-empty">No object matches the current filter.</div>'}
-          ${kasmGraphMarkup}
         </div>
       </div>
     `;
+    // §banger cleanup : the KASM-graph browser (World/Assets/Skills/
+    // Programs tabs + horizontal scrollbar + "SceneHash kasm-XXXX live"
+    // row) was the agent's debug view on the legacy KASM-mesh topology.
+    // SDF scenes don't have a KASM graph projection so it just rendered
+    // an empty shell with a single dangling SceneHash row. Removed from
+    // the template ; boomKasmGraphRowsMarkup() stays (unreachable) until
+    // the broader Via Negativa cleanup pass.
     // §banger cleanup : the lower Inspector / Selected Hash / Selection
     // / Transform block (mesh-modifier UI) is removed — the Scene
     // Collection outliner at the top stays as it doubles as a Blender-
