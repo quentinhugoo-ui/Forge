@@ -1,10 +1,12 @@
 // @ts-nocheck
 import "./controller.js";
 import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, serializeScene } from "./scenes.js";
+import { IngenRender } from "./ingen-render.js";
 import * as worlds from "./worlds.js";
 
-// Banger — minimal Blender-style 3D viewport (WebGL2)
-// Self-contained; wires the BOOM titlebar button and the overlay shell.
+// Banger — viewport hybride : INGEN Render (WebGPU compute, SDF + grille
+// analytique) sur le canvas GPU au fond, WebGL2 transitoire (mesh importé +
+// slicer preview) sur le canvas du dessus. INGEN COMPUTE §18-19.
 
 (function () {
   "use strict";
@@ -15,6 +17,7 @@ import * as worlds from "./worlds.js";
     boomBtn: $("bangerBoomBtn"),
     view:    $("bangerView"),
     canvas:  $("bangerCanvas"),
+    gpuCanvas: $("bangerCanvasGpu"),
     statVerts: $("bangerStatVerts"),
     statFaces: $("bangerStatFaces"),
     statFps: $("bangerStatFps"),
@@ -32,19 +35,18 @@ import * as worlds from "./worlds.js";
   els.stage = els.view.closest(".canvas-stage");
   let bangerController = null;
 
-  // ---------- shaders ----------
+  // ---------- shaders (WebGL2 transitionnel — phase 4 retire le reste) ----------
+  // INGEN COMPUTE §19 Phase 1 a supprimé : makeCube (dead code), makeGrid
+  // (remplacé par grille analytique compute), VS_SDF/FS_SDF (remplacés par
+  // INGEN Render WGSL).
   const {
     M4,
     AXIS_RGB,
     AXIS_HEX,
-    makeCube,
-    makeGrid,
     VS_MESH,
     FS_MESH,
     VS_LINE,
     FS_LINE,
-    VS_SDF,
-    FS_SDF,
   } = window.ForgeBangerCatalog || {};
   function compile(gl, type, src) {
     const sh = gl.createShader(type);
@@ -69,17 +71,16 @@ import * as worlds from "./worlds.js";
 
   // ---------- renderer state ----------
   let gl = null;
-  let meshProg = null, lineProg = null, sdfProg = null;
-  let cubeVAO = null, gridVAO = null;
-  let cubeBuffers = []; // collected buffers for release
-  let gridBuffers = [];
-  let cubeCount = 0, gridCount = 0;
+  let meshProg = null, lineProg = null;
   let uMeshModel, uMeshProj, uMeshView, uMeshColor, uMeshClipOffset;
   let uLineProj, uLineView, uLineFadeNear, uLineFadeFar, uLineClipOffset;
-  let uSdfResolution, uSdfCameraPos, uSdfCameraFwd, uSdfCameraRight, uSdfCameraUp, uSdfTanHalfFovY, uSdfViewProj, uSdfOps, uSdfOpCount, uSdfDebugMode, uSdfGlow;
-  let uSdfMeshTex, uSdfMeshMin, uSdfMeshMax, uSdfMeshLoaded;
-  let uSdfGaussians, uSdfGaussianCount;
-  let uSdfSky, uSdfFog;
+  // INGEN Render — WebGPU compute (SDF + grille analytique + axes).
+  // Async init : `ingenReady` reste false jusqu'à ce que l'adapter ait
+  // répondu, ce qui permet de rendre la frame sans crash si WebGPU n'est
+  // pas dispo. La doctrine §19 exige WebGPU à terme — Phase 4 supprimera
+  // tout WebGL2 ; le fallback transitoire ici n'est qu'un guard de boot.
+  let ingenRender = null;
+  let ingenReady = false;
   // INGEN §19.3 : the scene is data, not source. The DEFAULT_SCENE here
   // reproduces the previous hardcoded smin of two spheres ; future scenes
   // can be swapped via window.__forgeBangerSetScene without recompile.
@@ -7239,13 +7240,10 @@ import * as worlds from "./worlds.js";
     const fsM = compile(gl, gl.FRAGMENT_SHADER, FS_MESH);
     const vsL = compile(gl, gl.VERTEX_SHADER, VS_LINE);
     const fsL = compile(gl, gl.FRAGMENT_SHADER, FS_LINE);
-    const vsS = compile(gl, gl.VERTEX_SHADER, VS_SDF);
-    const fsS = compile(gl, gl.FRAGMENT_SHADER, FS_SDF);
-    if (!vsM || !fsM || !vsL || !fsL || !vsS || !fsS) return false;
+    if (!vsM || !fsM || !vsL || !fsL) return false;
     meshProg = link(gl, vsM, fsM);
     lineProg = link(gl, vsL, fsL);
-    sdfProg  = link(gl, vsS, fsS);
-    if (!meshProg || !lineProg || !sdfProg) return false;
+    if (!meshProg || !lineProg) return false;
 
     uMeshModel = gl.getUniformLocation(meshProg, "uModel");
     uMeshProj  = gl.getUniformLocation(meshProg, "uProj");
@@ -7257,65 +7255,21 @@ import * as worlds from "./worlds.js";
     uLineFadeNear = gl.getUniformLocation(lineProg, "uFadeNear");
     uLineFadeFar  = gl.getUniformLocation(lineProg, "uFadeFar");
     uLineClipOffset = gl.getUniformLocation(lineProg, "uClipOffset");
-    uSdfResolution  = gl.getUniformLocation(sdfProg, "uResolution");
-    uSdfCameraPos   = gl.getUniformLocation(sdfProg, "uCameraPos");
-    uSdfCameraFwd   = gl.getUniformLocation(sdfProg, "uCameraFwd");
-    uSdfCameraRight = gl.getUniformLocation(sdfProg, "uCameraRight");
-    uSdfCameraUp    = gl.getUniformLocation(sdfProg, "uCameraUp");
-    uSdfTanHalfFovY = gl.getUniformLocation(sdfProg, "uTanHalfFovY");
-    uSdfViewProj    = gl.getUniformLocation(sdfProg, "uViewProj");
-    uSdfOps         = gl.getUniformLocation(sdfProg, "uOps");
-    uSdfOpCount     = gl.getUniformLocation(sdfProg, "uOpCount");
-    uSdfDebugMode   = gl.getUniformLocation(sdfProg, "uDebugMode");
-    uSdfGlow        = gl.getUniformLocation(sdfProg, "uGlow");
-    uSdfMeshTex     = gl.getUniformLocation(sdfProg, "uMeshSdf");
-    uSdfMeshMin     = gl.getUniformLocation(sdfProg, "uMeshMin");
-    uSdfMeshMax     = gl.getUniformLocation(sdfProg, "uMeshMax");
-    uSdfMeshLoaded  = gl.getUniformLocation(sdfProg, "uMeshLoaded");
-    uSdfGaussians     = gl.getUniformLocation(sdfProg, "uGaussians");
-    uSdfGaussianCount = gl.getUniformLocation(sdfProg, "uGaussianCount");
-    uSdfSky           = gl.getUniformLocation(sdfProg, "uSky");
-    uSdfFog           = gl.getUniformLocation(sdfProg, "uFog");
 
-    // cube VAO
-    const cube = makeCube();
-    cubeCount = cube.count;
-    cubeVAO = gl.createVertexArray();
-    gl.bindVertexArray(cubeVAO);
-    const cubePosBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, cubePosBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, cube.pos, gl.STATIC_DRAW);
-    const aPosM = gl.getAttribLocation(meshProg, "aPos");
-    gl.enableVertexAttribArray(aPosM);
-    gl.vertexAttribPointer(aPosM, 3, gl.FLOAT, false, 0, 0);
-    const cubeNrmBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, cubeNrmBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, cube.nrm, gl.STATIC_DRAW);
-    const aNormalM = gl.getAttribLocation(meshProg, "aNormal");
-    gl.enableVertexAttribArray(aNormalM);
-    gl.vertexAttribPointer(aNormalM, 3, gl.FLOAT, false, 0, 0);
-    gl.bindVertexArray(null);
-    cubeBuffers = [cubePosBuf, cubeNrmBuf];
-
-    // grid VAO
-    const grid = makeGrid(320, 1);
-    gridCount = grid.count;
-    gridVAO = gl.createVertexArray();
-    gl.bindVertexArray(gridVAO);
-    const gridPosBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, gridPosBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, grid.pos, gl.STATIC_DRAW);
-    const aPosL = gl.getAttribLocation(lineProg, "aPos");
-    gl.enableVertexAttribArray(aPosL);
-    gl.vertexAttribPointer(aPosL, 3, gl.FLOAT, false, 0, 0);
-    const gridColBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, gridColBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, grid.col, gl.STATIC_DRAW);
-    const aColorL = gl.getAttribLocation(lineProg, "aColor");
-    gl.enableVertexAttribArray(aColorL);
-    gl.vertexAttribPointer(aColorL, 3, gl.FLOAT, false, 0, 0);
-    gl.bindVertexArray(null);
-    gridBuffers = [gridPosBuf, gridColBuf];
+    // INGEN Render (Phase 1) — instancié dès que le canvas GPU est dispo.
+    // L'init est async ; en attendant, render() saute le pass GPU.
+    if (els.gpuCanvas && IngenRender.supported()) {
+      ingenRender = new IngenRender(els.gpuCanvas);
+      ingenRender.init().then((ok) => {
+        ingenReady = !!ok;
+        if (ok) requestBoomRender("ingen-render-ready", 0);
+      }).catch((err) => {
+        console.warn("[banger] INGEN Render init failed:", err);
+        ingenRender = null;
+      });
+    } else if (!IngenRender.supported()) {
+      console.warn("[banger] WebGPU unavailable — INGEN Render disabled");
+    }
 
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
@@ -7354,19 +7308,15 @@ import * as worlds from "./worlds.js";
         sceneMesh.vao = null;
         sceneMesh.buffers = [];
       }
-      for (const b of cubeBuffers) gl.deleteBuffer(b);
-      for (const b of gridBuffers) gl.deleteBuffer(b);
-      if (cubeVAO) gl.deleteVertexArray(cubeVAO);
-      if (gridVAO) gl.deleteVertexArray(gridVAO);
       if (meshProg) gl.deleteProgram(meshProg);
       if (lineProg) gl.deleteProgram(lineProg);
     } catch (err) {
       console.warn("[banger] releaseGL error:", err);
     }
-    cubeBuffers = []; gridBuffers = [];
-    cubeVAO = null; gridVAO = null;
-    meshProg = null; lineProg = null; sdfProg = null;
-    cubeCount = 0; gridCount = 0;
+    meshProg = null; lineProg = null;
+    try { ingenRender?.destroy(); } catch (_) {}
+    ingenRender = null;
+    ingenReady = false;
     gl = null;
   }
 
@@ -7380,7 +7330,12 @@ import * as worlds from "./worlds.js";
       els.canvas.width = w;
       els.canvas.height = h;
     }
+    if (els.gpuCanvas && (els.gpuCanvas.width !== w || els.gpuCanvas.height !== h)) {
+      els.gpuCanvas.width = w;
+      els.gpuCanvas.height = h;
+    }
     gl.viewport(0, 0, w, h);
+    if (ingenReady && ingenRender) ingenRender.resize(w, h);
   }
 
   function cameraEye() {
@@ -8000,68 +7955,35 @@ import * as worlds from "./worlds.js";
     // up = +Z (Blender-style)
     const view = M4.lookAt(eye, camera.target, [0, 0, 1]);
 
-    // SDF raymarch (INGEN COMPUTE §19.4) — fullscreen triangle, depth
-    // write enabled, fragment discards on miss so the grid/gizmo/mesh
-    // stay visible. Sharing `eye`/`proj`/`view` with the other passes
-    // keeps the SDF surface registered with the existing camera, the
-    // selection picker and the slicer preview without any extra math.
-    if (sdfProg) {
+    // INGEN Render (Phase 1) — pass GPU unique : SDF + grille analytique +
+    // axes XYZ, le tout dans un compute shader WGSL. Pas de fullscreen
+    // triangle, pas de raster legacy, pas de programme partagé entre passes.
+    // La caméra est reconstruite ici à partir de `eye` / `target` Z-up pour
+    // matcher la convention Banger (right = fwd × worldUp, up = right × fwd).
+    if (ingenReady && ingenRender) {
       const fx = camera.target[0] - eye[0];
       const fy = camera.target[1] - eye[1];
       const fz = camera.target[2] - eye[2];
       const flen = Math.hypot(fx, fy, fz) || 1;
       const fwd = [fx / flen, fy / flen, fz / flen];
-      // worldUp = [0, 0, 1] (Z-up). right = fwd × worldUp.
-      const rx = fwd[1] * 1 - fwd[2] * 0;
-      const ry = fwd[2] * 0 - fwd[0] * 1;
-      const rz = fwd[0] * 0 - fwd[1] * 0;
+      const worldUp = [0, 0, 1];
+      const rx = fwd[1] * worldUp[2] - fwd[2] * worldUp[1];
+      const ry = fwd[2] * worldUp[0] - fwd[0] * worldUp[2];
+      const rz = fwd[0] * worldUp[1] - fwd[1] * worldUp[0];
       const rlen = Math.hypot(rx, ry, rz) || 1;
       const right = [rx / rlen, ry / rlen, rz / rlen];
-      // up = right × fwd (orthogonalised).
       const up = [
         right[1] * fwd[2] - right[2] * fwd[1],
         right[2] * fwd[0] - right[0] * fwd[2],
         right[0] * fwd[1] - right[1] * fwd[0],
       ];
-      const viewProj = M4.multiply(proj, view);
-      gl.useProgram(sdfProg);
-      gl.uniform2f(uSdfResolution, w, h);
-      gl.uniform3fv(uSdfCameraPos, new Float32Array(eye));
-      gl.uniform3fv(uSdfCameraFwd, new Float32Array(fwd));
-      gl.uniform3fv(uSdfCameraRight, new Float32Array(right));
-      gl.uniform3fv(uSdfCameraUp, new Float32Array(up));
-      gl.uniform1f(uSdfTanHalfFovY, Math.tan((46 * Math.PI / 180) * 0.5));
-      gl.uniformMatrix4fv(uSdfViewProj, false, viewProj);
-      gl.uniform4fv(uSdfOps, sdfScene.buffer);
-      gl.uniform1i(uSdfOpCount, sdfScene.count);
-      gl.uniform1i(uSdfDebugMode, sdfDebugMode);
-      gl.uniform1i(uSdfGlow, sdfGlow);
-      // Bind the mesh-SDF 3D texture (if any) to unit 0.
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_3D, meshSdfTex);
-      gl.uniform1i(uSdfMeshTex, 0);
-      gl.uniform3fv(uSdfMeshMin, meshSdfBoundsMin);
-      gl.uniform3fv(uSdfMeshMax, meshSdfBoundsMax);
-      gl.uniform1i(uSdfMeshLoaded, meshSdfLoaded);
-      gl.uniform4fv(uSdfGaussians, sdfGaussians.buffer);
-      gl.uniform1i(uSdfGaussianCount, sdfGaussians.count);
-      gl.uniform1i(uSdfSky, sdfSky);
-      gl.uniform1i(uSdfFog, sdfFog);
-      gl.bindVertexArray(null);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      ingenRender.uploadOps(sdfScene.buffer, sdfScene.count);
+      ingenRender.render({
+        pos: eye,
+        fwd, right, up,
+        tanHalfFovY: Math.tan((46 * Math.PI / 180) * 0.5),
+      });
     }
-
-    // Grid (lines)
-    gl.useProgram(lineProg);
-    gl.uniformMatrix4fv(uLineProj, false, proj);
-    gl.uniformMatrix4fv(uLineView, false, view);
-    gl.uniform2f(uLineClipOffset, clipOffsetX, clipOffsetY);
-    gl.uniform1f(uLineFadeNear, Math.max(34.0, camera.distance * 1.8));
-    gl.uniform1f(uLineFadeFar,  Math.max(220.0, camera.distance * 13.0));
-    gl.depthMask(false);
-    gl.bindVertexArray(gridVAO);
-    gl.drawArrays(gl.LINES, 0, gridCount);
-    gl.depthMask(true);
 
     const drawableMesh = sceneMesh?.display?.vao ? sceneMesh.display : sceneMesh;
     if (drawableMesh?.vao && sceneMesh.visible !== false) {
@@ -8329,8 +8251,34 @@ import * as worlds from "./worlds.js";
     setGpuStatus("GPU active", "active");
   }
 
+  function resetForgeDefaultPanel() {
+    // §banger : when activating Banger after Trading (or any section
+    // that overwrote the shell's Pinned/Recents DOM), force the panel
+    // back to the standard Forge default state. The user wants the
+    // Pinned / Recents / CPU/GPU / profile area below the Scene
+    // Collection to look IDENTICAL to the default Forge agent panel
+    // (same as Real Estate Agency section).
+    const pinDrop = document.getElementById("forgePinDrop");
+    if (pinDrop) {
+      pinDrop.classList.remove("has-pinned", "busy");
+      pinDrop.dataset.jobId = "";
+      pinDrop.style.pointerEvents = "";
+    }
+    const pinDropText = document.getElementById("forgePinDropText");
+    if (pinDropText) pinDropText.textContent = "Drag to pin";
+    const pinMenuBtn = document.getElementById("forgePinMenuBtn");
+    if (pinMenuBtn) pinMenuBtn.hidden = false;
+    const pinnedList = document.getElementById("forgePinnedJobList");
+    if (pinnedList) pinnedList.innerHTML = "";
+    const jobList = document.getElementById("forgeJobList");
+    if (jobList) jobList.innerHTML = '<li class="job-item muted">No compute job yet</li>';
+    const historyHeading = document.querySelector(".history-heading span");
+    if (historyHeading) historyHeading.textContent = "Recents";
+  }
+
   function activate() {
     if (gpuState === "active") return;
+    resetForgeDefaultPanel();
     if (!gl) {
       if (!initGL()) {
         console.error("[banger] GL init failed");
@@ -8495,15 +8443,11 @@ import * as worlds from "./worlds.js";
     e.preventDefault();
     stopRenderLoop();
     gl = null;
-    cubeBuffers = [];
-    gridBuffers = [];
-    cubeVAO = null;
-    gridVAO = null;
     meshProg = null;
     lineProg = null;
-    sdfProg = null;
-    cubeCount = 0;
-    gridCount = 0;
+    try { ingenRender?.destroy(); } catch (_) {}
+    ingenRender = null;
+    ingenReady = false;
     gpuState = isViewVisible() ? "suspended" : "idle";
     setGpuStatus("GPU paused", "paused");
   });

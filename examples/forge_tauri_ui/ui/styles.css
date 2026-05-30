@@ -15329,6 +15329,15 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   cursor: grab;
 }
 .banger-canvas:active { cursor: grabbing; }
+/* INGEN Render (WebGPU) sits behind the WebGL2 canvas. Pointer events stay
+   on the WebGL2 layer until the WebGL2 raster path is fully retired
+   (INGEN COMPUTE §19 Phase 4). */
+.banger-canvas-gpu {
+  pointer-events: none;
+  cursor: default;
+  z-index: 0;
+}
+.banger-canvas:not(.banger-canvas-gpu) { z-index: 1; }
 
 .banger-axis-gizmo {
   position: absolute;
@@ -15634,8 +15643,15 @@ body.banger-fullscreen-mode .topbar-proof-btn {
 }
 
 .content.is-banger-layout .boom-blender-panel {
-  display: grid;
-  grid-template-rows: auto auto;
+  /* Flex column so workflow tabs + Scene Collection stack naturally
+     ; flex-shrink: 0 so the parent flex-column left-panel doesn't
+     compress us when the shell's Pinned / Recents / Profile expand
+     below. Sized to content height — no more grid template that
+     was forcing an empty second row and causing the overlap with
+     the Pinned section. */
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
   height: auto;
   min-height: 0;
   background:
