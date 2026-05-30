@@ -99,3 +99,7 @@ path = "examples/forge_drone_design.rs"
 name = "forge_drone_pipeline"
 path = "examples/forge_drone_pipeline.rs"
 
+[[example]]
+name = "forge_pack_run"
+path = "examples/forge_pack_run.rs"
+

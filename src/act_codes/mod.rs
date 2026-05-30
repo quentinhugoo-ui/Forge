@@ -35,6 +35,7 @@ use sha2::{Digest, Sha256};
 pub mod derived;
 pub mod inertia;
 pub mod modal;
+pub mod pack;
 pub mod planner;
 pub mod thermal;
 pub mod voxel;
