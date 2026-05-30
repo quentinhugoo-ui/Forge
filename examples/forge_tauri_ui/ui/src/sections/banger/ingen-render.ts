@@ -76,13 +76,16 @@ struct Svdag {
   nodes: array<u32>,
 };
 
-// INGEN COMPUTE §18 Pillar C : 3D Gaussian Splatting storage (Phase 6).
-// Each splat is 2 vec4 = 8 floats : (pos.xyz, sigma) + (color.rgb, alpha).
-// Header u32 'count' followed by aligned splat records — the compute
-// pass walks 'count' splats and additively accumulates their exponential
-// falloff on top of the SDF surface lighting. Front-to-back sort (proper
-// over-blend) is Phase 6b ; first cut uses additive blend which matches
-// the legacy WebGL2 'glow' path 1:1.
+// INGEN COMPUTE §18 Pillar C : 3D Gaussian Splatting storage (Phase 6b).
+// Each splat is 4 vec4 = 16 floats — anisotropic format compatible with
+// the standard 3DGS .ply / .splat files :
+//   data[i*4 + 0] = (pos.xyz,   opacity)
+//   data[i*4 + 1] = (scale.xyz, _pad)
+//   data[i*4 + 2] = (qx, qy, qz, qw)         normalized quaternion
+//   data[i*4 + 3] = (color.rgb, _pad)
+// Header u32 'count' counts splats (not floats). Additive blend is kept
+// as the first-cut output to match the legacy WebGL2 'glow' visually ;
+// over-blend with depth sort is Phase 6c.
 struct Splats {
   count: u32,
   _p0:   u32,
@@ -397,35 +400,118 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     col = vec3<f32>(0.78, 0.80, 0.84) * (0.18 + 0.82 * diff) + vec3<f32>(0.20) * rim;
   }
 
-  // §18 Pillar C — Gaussian splat accumulation. Each splat projects to
-  // screen space (perspective divide using the depth along cam.fwd) and
-  // contributes its color weighted by an isotropic exp(-r2/2) kernel.
-  // Additive blend (Phase 6 first cut) — matches the legacy WebGL2 'glow'
-  // path. Front-to-back over-blend + radix-sort by depth is Phase 6b.
+  // §18 Pillar C — Anisotropic Gaussian splat accumulation (Phase 6b).
+  // Each splat is parameterised by a 3D Gaussian with scale (3 axes) and
+  // rotation (quaternion). We project the 3D covariance to a 2D screen-
+  // space covariance via Zwicker et al.'s perspective Jacobian, then
+  // evaluate the 2D Gaussian per pixel. Additive blend (commutative —
+  // no sort required for that one ; Phase 6c will add radix-sort + over).
   let n_splats = splats.count;
   if (n_splats > 0u) {
     let tanY = cam.tanHalfFovY;
-    // 'uv' is in [-1, 1] across height ; multiply X by aspect to match.
     let uv_x = uv.x * aspect;
     let uv_y = uv.y;
     var accum = vec3<f32>(0.0);
     for (var i: u32 = 0u; i < n_splats; i = i + 1u) {
-      let s0 = splats.data[i * 2u];
-      let s1 = splats.data[i * 2u + 1u];
+      let s0 = splats.data[i * 4u + 0u]; // (pos.xyz, opacity)
+      let s1 = splats.data[i * 4u + 1u]; // (scale.xyz, _)
+      let s2 = splats.data[i * 4u + 2u]; // (qx, qy, qz, qw)
+      let s3 = splats.data[i * 4u + 3u]; // (color.rgb, _)
+
       let to_splat = s0.xyz - cam.pos;
       let depth = dot(to_splat, cam.fwd);
       if (depth < 0.05) { continue; }
+
+      // Splat center in screen space (Y-up, X scaled by aspect for the
+      // unit square uv_x in [-aspect, aspect], uv_y in [-1, 1]).
       let sx = dot(to_splat, cam.right) / (depth * tanY);
       let sy = dot(to_splat, cam.up)    / (depth * tanY);
+
+      // 3D world covariance : Σ = R diag(scale²) R^T.
+      let qx = s2.x; let qy = s2.y; let qz = s2.z; let qw = s2.w;
+      let xx = qx*qx; let yy = qy*qy; let zz = qz*qz;
+      let r00 = 1.0 - 2.0*(yy + zz);
+      let r01 = 2.0*(qx*qy - qz*qw);
+      let r02 = 2.0*(qx*qz + qy*qw);
+      let r10 = 2.0*(qx*qy + qz*qw);
+      let r11 = 1.0 - 2.0*(xx + zz);
+      let r12 = 2.0*(qy*qz - qx*qw);
+      let r20 = 2.0*(qx*qz - qy*qw);
+      let r21 = 2.0*(qy*qz + qx*qw);
+      let r22 = 1.0 - 2.0*(xx + yy);
+      let sx2 = s1.x * s1.x;
+      let sy2 = s1.y * s1.y;
+      let sz2 = s1.z * s1.z;
+      // M = R * diag(s) → cov3D = M * M^T. Computed component-wise.
+      let m00 = r00 * s1.x; let m01 = r01 * s1.y; let m02 = r02 * s1.z;
+      let m10 = r10 * s1.x; let m11 = r11 * s1.y; let m12 = r12 * s1.z;
+      let m20 = r20 * s1.x; let m21 = r21 * s1.y; let m22 = r22 * s1.z;
+      let c00 = m00*m00 + m01*m01 + m02*m02;
+      let c01 = m00*m10 + m01*m11 + m02*m12;
+      let c02 = m00*m20 + m01*m21 + m02*m22;
+      let c11 = m10*m10 + m11*m11 + m12*m12;
+      let c12 = m10*m20 + m11*m21 + m12*m22;
+      let c22 = m20*m20 + m21*m21 + m22*m22;
+      // Transform to camera basis : V = [right; up; fwd] (rows are world).
+      let cov_w_r0 = vec3<f32>(c00, c01, c02);
+      let cov_w_r1 = vec3<f32>(c01, c11, c12);
+      let cov_w_r2 = vec3<f32>(c02, c12, c22);
+      // cov_cam = V * cov_w * V^T. Compute V*cov_w columns first.
+      let vc0 = vec3<f32>(dot(cam.right, cov_w_r0), dot(cam.up, cov_w_r0), dot(cam.fwd, cov_w_r0));
+      let vc1 = vec3<f32>(dot(cam.right, cov_w_r1), dot(cam.up, cov_w_r1), dot(cam.fwd, cov_w_r1));
+      let vc2 = vec3<f32>(dot(cam.right, cov_w_r2), dot(cam.up, cov_w_r2), dot(cam.fwd, cov_w_r2));
+      // cov_cam[r][c] = vc[c].r ; we need (right·, up·, fwd·) of vc rows.
+      // Equivalent : cov_cam[i][j] = (V cov_w V^T)[i][j].
+      // Reconstruct cov_cam directly as a 3x3 :
+      let cc00 = dot(cam.right, vec3<f32>(vc0.x, vc1.x, vc2.x));
+      let cc01 = dot(cam.right, vec3<f32>(vc0.y, vc1.y, vc2.y));
+      let cc02 = dot(cam.right, vec3<f32>(vc0.z, vc1.z, vc2.z));
+      let cc11 = dot(cam.up,    vec3<f32>(vc0.y, vc1.y, vc2.y));
+      let cc12 = dot(cam.up,    vec3<f32>(vc0.z, vc1.z, vc2.z));
+      let cc22 = dot(cam.fwd,   vec3<f32>(vc0.z, vc1.z, vc2.z));
+
+      // p in camera basis (right, up, fwd components).
+      let p_x = dot(to_splat, cam.right);
+      let p_y = dot(to_splat, cam.up);
+      // Jacobian of (sx, sy) wrt (px, py, pz). Same scaling as the screen
+      // mapping above : sx = px / (pz * tanY), sy = py / (pz * tanY).
+      let inv_d = 1.0 / depth;
+      let k = inv_d / tanY;
+      let jx_z = -k * p_x * inv_d;
+      let jy_z = -k * p_y * inv_d;
+      // T = J * cov_cam → 2x3. Then cov2D = T * J^T → 2x2.
+      // J = [k 0 jx_z ; 0 k jy_z]
+      // T row0 = k*cov_cam[*][0] + jx_z*cov_cam[*][2]
+      let t00 = k * cc00 + jx_z * cc02;
+      let t01 = k * cc01 + jx_z * cc12;
+      let t02 = k * cc02 + jx_z * cc22;
+      let t10 = k * cc01 + jy_z * cc02;
+      let t11 = k * cc11 + jy_z * cc12;
+      let t12 = k * cc12 + jy_z * cc22;
+      // cov2D[0][0] = T[0]·J[0] = k*t00 + jx_z*t02
+      let a = k * t00 + jx_z * t02;
+      let b = k * t01 + jy_z * t02;
+      let c = k * t11 + jy_z * t12;
+      // Low-pass filter (Zwicker), keeps Σ_2D positive-definite for
+      // far-distant splats that would otherwise collapse to a sub-pixel.
+      let lp = 0.0008;
+      let aa = a + lp;
+      let cc = c + lp;
+      let bb = b;
+      let det = aa * cc - bb * bb;
+      if (det <= 0.0) { continue; }
+      let inv_det = 1.0 / det;
+      // Σ^-1 = (1/det) [cc -bb ; -bb aa]
+      let inv_a =  cc * inv_det;
+      let inv_b = -bb * inv_det;
+      let inv_c =  aa * inv_det;
       let dx = uv_x - sx;
       let dy = uv_y - sy;
-      let sig_world = max(s0.w, 1e-4);
-      // Screen-space sigma : world sigma over view-plane half-height.
-      let sig_screen = sig_world / (depth * tanY);
-      let r2 = (dx * dx + dy * dy) / max(sig_screen * sig_screen, 1e-6);
-      if (r2 > 9.0) { continue; }
-      let w = exp(-0.5 * r2) * s1.w;
-      accum = accum + s1.rgb * w;
+      let power = -0.5 * (inv_a * dx * dx + 2.0 * inv_b * dx * dy + inv_c * dy * dy);
+      if (power > 0.0)  { continue; }
+      if (power < -9.0) { continue; } // 3-sigma cull
+      let alpha = s0.w * exp(power);
+      accum = accum + s3.rgb * alpha;
     }
     col = col + accum;
   }
@@ -652,16 +738,19 @@ export class IngenRender {
   }
 
   /**
-   * Upload Gaussian splats (§18 Pillar C). 'packed' is a Float32Array
-   * laid out as 8 floats per splat : (pos.xyz, sigma) + (color.rgb, alpha)
-   * — matches scenes.ts::BakedGaussians.buffer 1:1. 'count' is the number
-   * of ACTIVE splats (not floats). Passing count=0 disables splat
+   * Upload anisotropic 3DGS splats (§18 Pillar C, Phase 6b). 'packed' is
+   * a Float32Array laid out as 16 floats per splat (4 vec4s) :
+   *   [0..3]  = pos.xyz, opacity
+   *   [4..7]  = scale.xyz, _
+   *   [8..11] = qx, qy, qz, qw   (quaternion, must be normalised)
+   *   [12..15]= color.rgb, _
+   * 'count' is the number of ACTIVE splats. Passing 0 disables splat
    * rendering without freeing the GPU buffer.
    */
-  uploadSplats(packed: Float32Array, count: number): void {
+  uploadSplatsAnisotropic(packed: Float32Array, count: number): void {
     if (!this.device || !this.splatsBuffer) return;
     const safeCount = Math.max(0, count | 0);
-    const requiredWords = 4 + safeCount * 8;
+    const requiredWords = 4 + safeCount * 16;
     if (requiredWords > this.splatsCapacity) {
       this.splatsBuffer.destroy?.();
       let cap = Math.max(this.splatsCapacity, 16);
@@ -689,13 +778,49 @@ export class IngenRender {
     }
     this.device.queue.writeBuffer(this.splatsBuffer!, 0, new Uint32Array([safeCount, 0, 0, 0]));
     if (safeCount > 0) {
-      const floatsNeeded = safeCount * 8;
+      const floatsNeeded = safeCount * 16;
       const view = packed.byteLength >= floatsNeeded * 4
         ? new Float32Array(packed.buffer, packed.byteOffset, floatsNeeded)
         : packed;
       this.device.queue.writeBuffer(this.splatsBuffer!, 16, view);
     }
-    this.cacheValid = false; // splats changed → re-dispatch next frame
+    this.cacheValid = false;
+  }
+
+  /**
+   * Legacy isotropic adapter — accepts the 8-float layout produced by
+   * scenes.ts::bakeGaussiansOnSurface ((pos.xyz, sigma) + (color.rgb,
+   * opacity)) and converts to the 16-float anisotropic layout on the fly :
+   * identity quaternion, scale = (sigma, sigma, sigma). One-time JS
+   * allocation per upload — cheap for the < 256 baked splats produced
+   * by the SDF surface walker.
+   */
+  uploadSplats(packed: Float32Array, count: number): void {
+    const safeCount = Math.max(0, count | 0);
+    if (safeCount === 0) {
+      this.uploadSplatsAnisotropic(new Float32Array(0), 0);
+      return;
+    }
+    const ani = new Float32Array(safeCount * 16);
+    for (let i = 0; i < safeCount; i += 1) {
+      const src = i * 8;
+      const dst = i * 16;
+      const sigma = packed[src + 3] ?? 0.0;
+      ani[dst + 0]  = packed[src + 0] ?? 0; // pos.x
+      ani[dst + 1]  = packed[src + 1] ?? 0; // pos.y
+      ani[dst + 2]  = packed[src + 2] ?? 0; // pos.z
+      ani[dst + 3]  = packed[src + 7] ?? 0; // opacity (was alpha)
+      ani[dst + 4]  = sigma;                // scale.x
+      ani[dst + 5]  = sigma;                // scale.y
+      ani[dst + 6]  = sigma;                // scale.z
+      ani[dst + 7]  = 0;
+      ani[dst + 8]  = 0; ani[dst + 9] = 0; ani[dst + 10] = 0; ani[dst + 11] = 1; // identity quat
+      ani[dst + 12] = packed[src + 4] ?? 0; // color.r
+      ani[dst + 13] = packed[src + 5] ?? 0; // color.g
+      ani[dst + 14] = packed[src + 6] ?? 0; // color.b
+      ani[dst + 15] = 0;
+    }
+    this.uploadSplatsAnisotropic(ani, safeCount);
   }
 
   /**

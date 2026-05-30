@@ -2,6 +2,7 @@
 import "./controller.js";
 import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, recenterMeshXY, recenterSceneXY, serializeScene } from "./scenes.js";
 import { IngenRender, NSDF_TOTAL_FLOATS } from "./ingen-render.js";
+import { parseSplatFile } from "./splat-loader.js";
 import * as worlds from "./worlds.js";
 
 // Banger — viewport hybride : INGEN Render (WebGPU compute, SDF + grille
@@ -7758,11 +7759,10 @@ import * as worlds from "./worlds.js";
         right[0] * fwd[1] - right[1] * fwd[0],
       ];
       ingenRender.uploadOps(sdfScene.buffer, sdfScene.count);
-      // §18 Pillar C — splats bake. The baker stays anchored to the SDF
-      // surface (Phase 0 doctrine), and the upload is cheap (count <= 256
-      // for proxy splats ; real 3DGS scenes will dominate the bandwidth
-      // but at edit-time, not per frame).
-      ingenRender.uploadSplats(sdfGaussians.buffer, sdfGaussians.count);
+      // §18 Pillar C — splats sont uploadés sur changement (scene set /
+      // bake re-rolled / file loaded), pas par frame : un upload .ply
+      // immobilier réel pèse plusieurs Mo, le re-pousser à 60 Hz
+      // saturerait la bande passante PCIe pour rien.
       ingenRender.render({
         pos: eye,
         fwd, right, up,
@@ -8227,6 +8227,9 @@ import * as worlds from "./worlds.js";
         // so they stay anchored to the live surface (skipped if count = 0).
         if (sdfGaussians.count > 0) {
           sdfGaussians = bakeGaussiansOnSurface(sceneOps, sdfGaussians.count);
+          // Push the re-baked splats to GPU. Per-frame upload was removed
+          // in Phase 6b — splats migrent uniquement sur changement.
+          ingenRender?.uploadSplats(sdfGaussians.buffer, sdfGaussians.count);
         }
         requestBoomRender("sdf-scene-update", 200);
         return { ok: true, count: sdfScene.count, gaussians: sdfGaussians.count };
@@ -8260,6 +8263,7 @@ import * as worlds from "./worlds.js";
         const n = Math.max(0, Math.min(SDF_MAX_GAUSSIANS, Number(count) || 0));
         const sceneOps = Array.isArray(scene) && scene.length ? scene : DEFAULT_SCENE;
         sdfGaussians = bakeGaussiansOnSurface(sceneOps, n, opts || {});
+        ingenRender?.uploadSplats(sdfGaussians.buffer, sdfGaussians.count);
         requestBoomRender("sdf-gaussian-bake", 200);
         return { ok: true, count: sdfGaussians.count };
       } catch (err) {
@@ -8349,12 +8353,11 @@ import * as worlds from "./worlds.js";
       return (window as any).__forgeBangerLoadSvdag(packed);
     };
 
-    // §18 Pillar C — load an external splat set. 'packed' is a flat
-    // Float32Array, 8 floats per splat : (pos.xyz, sigma, color.rgb, alpha).
-    // Matches scenes.ts::BakedGaussians.buffer layout 1:1 — PLY / SPLAT
-    // file parsers should normalise into this shape before calling here.
-    // Replaces the legacy bake-on-surface state so an external set isn't
-    // overwritten by the next __forgeBangerSetScene call.
+    // §18 Pillar C — load an external isotropic splat set. 'packed' is a
+    // flat Float32Array, 8 floats per splat : (pos.xyz, sigma, color.rgb,
+    // alpha). Matches scenes.ts::BakedGaussians.buffer layout 1:1. The
+    // upload adapter converts to the 16-float anisotropic GPU layout
+    // (identity quat, isotropic scale) under the hood.
     window.__forgeBangerLoadSplats = (packed, count) => {
       if (!ingenRender) return { ok: false, error: "INGEN Render not initialised" };
       const f32 = packed instanceof Float32Array
@@ -8365,7 +8368,53 @@ import * as worlds from "./worlds.js";
       sdfGaussians = { buffer: f32, count: safeCount };
       ingenRender.uploadSplats(f32, safeCount);
       requestBoomRender("ingen-splats-load", 200);
-      return { ok: true, splats: safeCount };
+      return { ok: true, splats: safeCount, layout: "isotropic-8f" };
+    };
+
+    // §18 Pillar C Phase 6b — load a real 3DGS file (.ply or .splat).
+    // Auto-detects format via head bytes, parses to the 16-float
+    // anisotropic layout, uploads straight to GPU.
+    window.__forgeBangerLoadSplatFile = (arrayBuffer, fileName) => {
+      if (!ingenRender) return { ok: false, error: "INGEN Render not initialised" };
+      if (!arrayBuffer || !arrayBuffer.byteLength) return { ok: false, error: "empty buffer" };
+      let parsed = null;
+      try {
+        parsed = parseSplatFile(arrayBuffer);
+      } catch (err) {
+        return { ok: false, error: `parse failed: ${err?.message || err}` };
+      }
+      // Doctrine Banger : tout nouvel objet atterrit avec son centroïde
+      // XY à (0, 0). Z préservé. Appliqué en place sur le buffer 16f
+      // anisotropique (positions = floats [0..3] de chaque record de 16).
+      const buf = parsed.buffer;
+      const count = parsed.count;
+      if (count > 0) {
+        let sumX = 0, sumY = 0;
+        for (let i = 0; i < count; i += 1) {
+          sumX += buf[i * 16 + 0];
+          sumY += buf[i * 16 + 1];
+        }
+        const dx = sumX / count;
+        const dy = sumY / count;
+        if (Math.abs(dx) > 1e-6 || Math.abs(dy) > 1e-6) {
+          for (let i = 0; i < count; i += 1) {
+            buf[i * 16 + 0] -= dx;
+            buf[i * 16 + 1] -= dy;
+          }
+        }
+      }
+      ingenRender.uploadSplatsAnisotropic(buf, count);
+      // Sentinel : sdfGaussians.count = 0 empêche le bake-on-surface (qui
+      // n'a plus l'upload per-frame de toute façon) d'écraser notre set.
+      sdfGaussians = { buffer: buf, count: 0 };
+      requestBoomRender("ingen-splats-file", 200);
+      return {
+        ok: true,
+        splats: count,
+        layout: "anisotropic-16f",
+        source: parsed.source,
+        fileName: fileName || null,
+      };
     };
 
     // §18 Pillar B — upload a Neural SDF weight blob (Instant-NGP-style :
