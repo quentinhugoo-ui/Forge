@@ -15,6 +15,7 @@
 //!
 //! Run : cargo run --example forge_drone_pipeline --release
 
+use scan::act_codes::derived::{cg_envelope, PropMount};
 use scan::act_codes::modal::ModalActCode;
 use scan::act_codes::planner::{run_inertia_plan, PlanReport, SubPart};
 use scan::act_codes::thermal::{HeatSource, ThermalActCode};
@@ -120,19 +121,39 @@ fn drone_subparts(weight_r: f64) -> Vec<SubPart> {
 fn viability_flags(rep: &PlanReport) -> Vec<String> {
     let mut flags = Vec::new();
 
-    // Passive stability : the COM should sit BELOW the geometric centre
-    // (z=0) so the cage behaves like a pendulum and self-rights. Margin in
-    // millimetres.
-    let com_z_mm = rep.global_com[2] * 1000.0;
-    if rep.global_com[2] < -0.005 {
+    // Static stability — the real CG-envelope analysis (control authority of
+    // the 4 rotors against the gravity moment of the computed COM, plus the
+    // pendulum margin). Max thrust per prop from the design's 60%-throttle
+    // hover model scaled to 100%.
+    let area_cm2_s = std::f64::consts::PI * (PROP_RADIUS * 100.0).powi(2);
+    let hover_kg_100 = (4.0 * area_cm2_s * 18.0 / 1000.0) / 0.6;
+    let t_max_per_prop = (hover_kg_100 / 4.0) * 9.81;
+    let mut props = Vec::with_capacity(4);
+    for k in 0..4u32 {
+        let theta = (k as f64) * std::f64::consts::FRAC_PI_2;
+        props.push(PropMount {
+            pos: [PROP_RING_R * theta.cos(), PROP_RING_R * theta.sin(), PROP_RING_Z],
+            max_thrust_n: t_max_per_prop,
+        });
+    }
+    let stab = cg_envelope(rep.global_com, rep.total_mass, &props);
+    let pend_mm = stab.pendulum_margin * 1000.0;
+    if stab.controllable {
+        let auth = stab.roll_authority.min(stab.pitch_authority);
+        let auth_s = if auth.is_finite() { format!("authority x{:.1}", auth) } else { "laterally balanced".into() };
         flags.push(format!(
-            "PASS passive-stability : COM {:.1} mm below centre (pendulum self-rights)",
-            -com_z_mm
+            "PASS stability : COM {:.1} mm below rotor plane, {} ({:.3} N.m maneuver budget)",
+            pend_mm, auth_s, stab.maneuver_moment
+        ));
+    } else if stab.pendulum_margin < 0.0 {
+        flags.push(format!(
+            "FAIL stability : top-heavy, COM {:.1} mm ABOVE rotor plane — lower the weight",
+            -pend_mm
         ));
     } else {
         flags.push(format!(
-            "WARN passive-stability : COM only {:.1} mm below centre — add weight or lower it",
-            -com_z_mm
+            "FAIL stability : COM offset {:.1} mm exceeds rotor authority (roll x{:.2}, pitch x{:.2})",
+            stab.offset_xy * 1000.0, stab.roll_authority, stab.pitch_authority
         ));
     }
 
