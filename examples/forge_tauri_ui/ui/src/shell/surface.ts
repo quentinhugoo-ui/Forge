@@ -11,7 +11,39 @@ import {
   redactRealEstateClientData,
 } from "../sections/real-estate/runtime-context.js";
 import { createForgeDocumentPreview, tryParseCandleCsv } from "./document-preview.js";
+import {
+  activeCanvasBusyInterventionPacket,
+  classifyCanvasBusyIntervention,
+} from "./canvas-interruptions.js";
 import { createForgePlanPreviewRuntime } from "./plan-preview.js";
+import {
+  createActionSequence,
+  bindActivatableAction,
+  bindClickAction,
+  bindEnterAction,
+  bindEventAction,
+  bindEventActions,
+  bindInputAction,
+  bindInputLifecycle,
+  bindTextFilterInput,
+  consumeEvent,
+  createAsyncAction,
+  createCloseAction,
+  createDatasetFilterAction,
+  createOverlayToggleAction,
+  createToggleAction,
+  handleOutsideDismiss,
+  providerCliEffectiveInstalled,
+  providerCliFriendlyHint,
+  providerCliFriendlySource,
+  providerStatusNeedsNode,
+  providerStatusNeedsRepair,
+  providerWorkbenchStateText,
+  resetAndFocusTextInput,
+  runVisibleClosers,
+  runMappedAction,
+  runFirstMatchingAction,
+} from "./shell-actions.js";
 import {
   ALPHA_3D_LEGEND,
   ALPHA_3D_Z_METRICS,
@@ -29,9 +61,9 @@ import {
 } from "./alpha3d-webgl.js";
 import { createAlpha3dControls } from "./alpha3d-controls.js";
 import { computeAlpha3dPayloadForMode as computeAlpha3dPayload } from "./alpha3d-payload.js";
-import { createRealEstateOnboardingRuntime } from "../sections/real-estate/onboarding-runtime.js";
 import { createRealEstateLanguageRuntime } from "../sections/real-estate/language-runtime.js";
 import { createRealEstateModeRuntime } from "../sections/real-estate/mode-runtime.js";
+import { createRealEstateOnboardingRuntime } from "../sections/real-estate/onboarding-runtime.js";
 import { createRealEstatePanelRuntime } from "../sections/real-estate/panel-runtime.js";
 
 const canvas = document.getElementById("logCanvas");
@@ -46,6 +78,8 @@ const tabResults = document.getElementById("tabResults");
 const tabForge = document.getElementById("tabForge");
 const copyBtn = document.getElementById("copyBtn");
 const windowTitlebar = document.querySelector(".window-titlebar");
+const windowTitlebarTitle = windowTitlebar?.getElementsByClassName?.("titlebar-title")?.[0] || null;
+const windowTitlebarControls = windowTitlebar?.getElementsByClassName?.("titlebar-controls")?.[0] || null;
 const windowMinimize = document.getElementById("windowMinimize");
 const windowMaximize = document.getElementById("windowMaximize");
 const windowClose = document.getElementById("windowClose");
@@ -96,6 +130,7 @@ function registerForgeSection(definition) {
 });
 let forgeHardwareInfo = null;
 let alpha3dToggle = null;
+let marsLensToggle = null;
 let marsLensView = null;
 let marsLensFrame = null;
 let inlinePlanetView = null;
@@ -145,6 +180,7 @@ let webExplorerProofStats = {
   rendererProbe: null,
   lastError: "",
 };
+let webExplorerCollectionDiagnostics = null;
 let webExplorerHistoryEntries = [];
 let webExplorerHistoryLoaded = false;
 let webExplorerHistoryRenderKey = "";
@@ -158,6 +194,15 @@ let webExplorerToolSubbarSection = "extract";
 let webExplorerToolSubbarExpanded = false;
 let marsLensClose = null;
 let planetBodySelect = null;
+let agencyEarthSurface = null;
+let agencyEarthAtlasOverlay = null;
+let agencyEarthLastAtlas = null;
+let agencyEarthBoundsObserver = null;
+let agencyEarthNativeVisible = false;
+let agencyEarthNativeSyncQueued = false;
+let agencyEarthNativeForceReload = false;
+let agencyEarthNativeUrlKey = "";
+let agencyEarthSessionJobId = "";
 let alpha3dModeBtns = [];
 let alpha3dNewMapBtn = null;
 let alpha3dSelectionMarker = null;
@@ -415,11 +460,11 @@ if (typeof forgeTauri?.listen !== "function") {
 }
 
 window.addEventListener("resize", () => documentPreview.resize());
-startBtn.addEventListener("click", startComputation);
+bindClickAction(startBtn, () => { void startComputation(); });
 
-tabResults.addEventListener("click", () => setActiveTab("results"));
-tabForge.addEventListener("click", () => setActiveTab("forge"));
-copyBtn.addEventListener("click", copyActiveTab);
+bindClickAction(tabResults, () => setActiveTab("results"));
+bindClickAction(tabForge, () => setActiveTab("forge"));
+bindClickAction(copyBtn, () => { void copyActiveTab(); });
 
 window.addEventListener("keydown", (event) => {
   const isCopy = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c";
@@ -429,19 +474,13 @@ window.addEventListener("keydown", (event) => {
   event.preventDefault();
   copyActiveTab();
 });
-kindSelect.addEventListener("change", (event) => {
-  selectedKind = event.target.value;
+bindEventAction([kindSelect], "change", (event) => {
+  selectedKind = event.target?.value;
   appendForge(`selected program: ${selectedKind}`);
   refreshPlanPreview(selectedKind, pendingFile, appendForge);
 });
 
-dropZone.addEventListener("click", () => fileInput.click());
-dropZone.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" || event.key === " ") {
-    event.preventDefault();
-    fileInput.click();
-  }
-});
+bindActivatableAction(dropZone, () => fileInput.click());
 dropZone.addEventListener("dragover", (event) => {
   event.preventDefault();
   dropZone.classList.add("active");
@@ -454,7 +493,7 @@ dropZone.addEventListener("drop", (event) => {
   dropZone.classList.remove("active");
   handleFiles(event.dataTransfer?.files);
 });
-fileInput.addEventListener("change", (event) => {
+bindEventAction([fileInput], "change", (event) => {
   handleFiles(event.target.files);
 });
 
@@ -462,11 +501,11 @@ documentPreview.bindCanvasInteractions();
 documentPreview.resize();
 appendForge("forge runtime ready");
 documentPreview.startRenderLoop();
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Î± Alpha section â€” trading strategy synthesis
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════
+// α Alpha section — trading strategy synthesis
+// ═══════════════════════════════════════════════════════════════════
 
-// â”€â”€â”€ Section navigation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Section navigation ───────────────────────────────────────────
 let activeSection = "alpha";
 
 const navForge    = document.getElementById("navForge");
@@ -495,8 +534,13 @@ function switchSection(name) {
 
 forgeShellRuntime?.registerAction?.("nav-forge", () => switchSection("forge"));
 forgeShellRuntime?.registerAction?.("nav-alpha", () => switchSection("alpha"));
+forgeShellRuntime?.registerAction?.("canvas-latency-summary", () => {
+  const summary = canvasLatencySummaryString();
+  console.info("[forge][canvas-latency]\n" + summary);
+  return summary;
+});
 
-// â”€â”€â”€ Alpha canvas setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Alpha canvas setup ───────────────────────────────────────────
 const alphaCanvas = document.getElementById("alphaCanvas");
 const alphaCtx    = alphaCanvas.getContext("2d");
 let alphaWidth    = 0;
@@ -554,7 +598,7 @@ if (typeof ResizeObserver !== "undefined" && alphaCanvas?.parentElement) {
   alphaStageObserver.observe(alphaCanvas.parentElement);
 }
 
-// â”€â”€â”€ Alpha state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Alpha state ──────────────────────────────────────────────────
 let alphaPendingFile  = null;
 let alphaRunning      = false;
 let alphaActiveTab    = "results";
@@ -587,9 +631,14 @@ let alphaCanvasChatSeq = 0;
 const alphaCanvasLogFollowers = new Map();
 const alphaCanvasLiveComputes = new Map();
 const alphaCanvasDetachedComputeTurns = new Set();
+const canvasTurnUiToolEvents = new Map();
+const canvasTurnLatency = new Map();
+const canvasLatencySamples = [];
 let alphaCanvasLiveComputeRenderKey = "";
 const alphaCanvasTypingStates = new Map();
 let forgeCanvasChatPendingAssistants = [];
+let canvasChatSelectionToolbar = null;
+let canvasChatSelectionToolbarRaf = 0;
 let alphaCanvasTypingFrame = 0;
 let alphaCanvasTypingVersion = 0;
 let alphaCanvasPendingVersion = 0;
@@ -603,7 +652,6 @@ let alphaTranscriptAutoScrollFrame = 0;
 let alphaTranscriptStickToBottom = true;
 let alphaTranscriptProgrammaticScrollAt = 0;
 const ALPHA_TRANSCRIPT_BOTTOM_THRESHOLD = 32;
-
 const alphaDocState = {
   candles:          [],
   logicalBars:      [],
@@ -722,7 +770,7 @@ const ALPHA_TRADING_CURSOR = (() => {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 10 10, crosshair`;
 })();
 
-// Additional charts loaded alongside the primary doc â€” each entry is rendered
+// Additional charts loaded alongside the primary doc — each entry is rendered
 // as its own card to the right of the primary, with shared zoom/hover semantics.
 let alphaExtraCharts = [];
 let alphaExtraChartLayout = "overlay";
@@ -1536,7 +1584,7 @@ function pushAlphaSignal(sig) {
   trimArrayInPlace(alphaSignals, ALPHA_MAX_SIGNALS);
 }
 
-// â”€â”€â”€ Alpha DOM elements â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Alpha DOM elements ───────────────────────────────────────────
 const alphaStartBtn   = document.getElementById("alphaStartBtn");
 const alphaStatusText = document.getElementById("alphaStatusText");
 const alphaDropZone   = document.getElementById("alphaDropZone");
@@ -1635,6 +1683,15 @@ const {
   forgeCanvasChatLlmModeToggle, forgeCanvasChatPromptDivider, forgeCanvasChatPromptDividerClaude, forgeCanvasChatModel: forgeCanvasChatModelLabel, forgeCanvasChatModelMenu, forgeCanvasChatFileInput, forgeCanvasChatAttachments,
   forgeCanvasChatProgramPicker, forgeCanvasChatProgramPickerList, forgeCanvasChatProgramPickerEmpty, forgeCanvasChatVoiceOut: forgeCanvasChatVoiceOutBtn, forgeCanvasChatMic: forgeCanvasChatMicBtn, forgeCanvasChatDictationBar, forgeCanvasChatStop: forgeCanvasChatStopBtn,
 } = forgeCanvasChatDom;
+const forgeCanvasChatPrimaryInputs = [
+  forgeCanvasChatInput,
+  forgeCanvasChatGeminiInput,
+  forgeCanvasChatClaudeInput,
+];
+const forgeCanvasChatAllInputs = [
+  ...forgeCanvasChatPrimaryInputs,
+  forgeCanvasChatCommandInput,
+];
 const forgeCanvasChatTargetBtns = forgeCanvasChatTarget
   ? Array.from(forgeCanvasChatTarget.querySelectorAll("[data-target]"))
   : [];
@@ -1643,6 +1700,7 @@ const forgeCanvasChatPendingPrograms = [];
 let forgeCanvasChatAbortController = null;
 let forgeCanvasChatActiveTurnId = "";
 let forgeCanvasChatActiveSessionId = "";
+let forgeCanvasPendingIntervention = null;
 let forgeCanvasChatTargetMode = "codex";
 let forgeCanvasChatRecognition = null;
 let forgeCanvasChatRecognizing = false;
@@ -1717,9 +1775,17 @@ function syncTradingBrokerLogoBadge(kind = "") {
 }
 const bangerView = document.getElementById("bangerView");
 
-// â”€â”€ Profile button + popup menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Profile button + popup menu ──────────────────────────────────
 const profileBtn  = document.getElementById("profileBtn");
 const profileMenu = document.getElementById("profileMenu");
+const profileName = document.getElementById("profileName");
+const profileAgencyCard = document.getElementById("profileAgencyCard");
+const profileAgencyName = document.getElementById("profileAgencyName");
+const profileAgencyAddress = document.getElementById("profileAgencyAddress");
+const profileAgencyPhone = document.getElementById("profileAgencyPhone");
+const profileAgencyEmail = document.getElementById("profileAgencyEmail");
+const profileAgencyWebsite = document.getElementById("profileAgencyWebsite");
+const defaultProfileName = profileName?.textContent || "Profile";
 
 function setCanvasDropdownScrim(open) {
   alphaCanvasWrap?.classList.toggle("dropdown-scrim-active", !!open);
@@ -1737,39 +1803,78 @@ function setProfileMenuOpen(open) {
   setCanvasDropdownScrim(!!open);
 }
 
+function forceCloseTransientUiLayers() {
+  if (profileMenu) profileMenu.hidden = true;
+  if (profileBtn) profileBtn.setAttribute("aria-expanded", "false");
+  if (workspaceMenu) workspaceMenu.hidden = true;
+  workspaceCrumb?.setAttribute("aria-expanded", "false");
+  projectCrumb?.setAttribute("aria-expanded", "false");
+  if (forgeJobMenu) forgeJobMenu.hidden = true;
+  forgeJobMenuJobId = "";
+  if (forgeCanvasChatModelMenu) forgeCanvasChatModelMenu.hidden = true;
+  if (forgeCanvasChatProgramPicker) forgeCanvasChatProgramPicker.hidden = true;
+  if (alphaProgramPicker) alphaProgramPicker.hidden = true;
+  if (alphaLogMenu) alphaLogMenu.hidden = true;
+  if (alphaChartMenu) alphaChartMenu.hidden = true;
+  if (archiveOverlay) archiveOverlay.hidden = true;
+  if (docsOverlay) docsOverlay.hidden = true;
+  if (libraryOverlay) libraryOverlay.hidden = true;
+  if (mcpOverlay) mcpOverlay.hidden = true;
+  if (providerOverlay) providerOverlay.hidden = true;
+  if (programsOverlay) programsOverlay.hidden = true;
+  setCanvasDropdownScrim(false);
+}
+
+async function releaseRealEstateTransientUiLocks() {
+  forceCloseTransientUiLayers();
+  if (!webExplorerActive) {
+    void hideNativeWebExplorer();
+  }
+  if (!realEstateAgencyEarthAllowed) {
+    void hideAgencyEarthNative();
+  }
+}
+
+async function debugResetRealEstateOnboarding() {
+  if (!forgeTauri?.invoke) return null;
+  const state = await forgeTauri.invoke("real_estate_onboarding_debug_reset", {}, {
+    section: "real-estate",
+    timeoutMs: 6000,
+    dedupeKey: "onboarding-debug-reset",
+  });
+  realEstateIdentityConfirmationPending = false;
+  realEstateAgencyEarthAllowed = false;
+  agencyEarthSessionJobId = "";
+  realEstateOnboardingAnnouncedQuestion = "";
+  realEstateOnboardingState = state || null;
+  syncRealEstateAgencyIdentityFromState(realEstateOnboardingState);
+  syncRealEstateOnboardingCanvas();
+  await releaseRealEstateTransientUiLocks();
+  return state;
+}
+
+if (typeof window !== "undefined") {
+  window.__forgeResetRealEstateOnboardingDebug = debugResetRealEstateOnboarding;
+}
+
 forgeShellRuntime?.registerAction?.("profile-toggle",()=>setProfileMenuOpen(profileMenu?.hidden));
 forgeShellRuntime?.registerAction?.("profile-action",(payload)=>{
   const action = payload?.dataset?.profileAction;
   setProfileMenuOpen(false);
-  if (action === "mcp") {
-    if (typeof openMcpOverlay === "function") openMcpOverlay();
-    return;
-  }
-  if (action === "docs") {
-    if (typeof openDocsOverlay === "function") openDocsOverlay();
-    return;
-  }
-  if (action === "daemon") {
-    if (typeof openDocsOverlay === "function") openDocsOverlay({ scrollTo: "docs-daemon" });
-    return;
-  }
-  if (action === "settings" || action === "api") {
-    if (typeof openProviderOverlay === "function") openProviderOverlay();
-    return;
-  }
-  if (action === "voice-api") {
-    if (typeof openProviderOverlay === "function") openProviderOverlay({ focus: "voice" });
-    return;
-  }
-  if (action === "archive") {
-    openArchiveOverlay();
-    return;
-  }
+  if (runMappedAction(String(action || ""), {
+    mcp: () => { if (typeof openMcpOverlay === "function") openMcpOverlay(); },
+    docs: () => { if (typeof openDocsOverlay === "function") openDocsOverlay(); },
+    daemon: () => { if (typeof openDocsOverlay === "function") openDocsOverlay({ scrollTo: "docs-daemon" }); },
+    settings: () => { if (typeof openProviderOverlay === "function") openProviderOverlay(); },
+    api: () => { if (typeof openProviderOverlay === "function") openProviderOverlay(); },
+    "voice-api": () => { if (typeof openProviderOverlay === "function") openProviderOverlay({ focus: "voice" }); },
+    archive: () => openArchiveOverlay(),
+  })) return;
   // Other profile surfaces are still stubs.
   console.log(`[profile-menu] action=${action}`);
 });
 
-// â”€â”€ Archive overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Archive overlay ───────────────────────────────────────────────
 const archiveOverlay = document.getElementById("archiveOverlay");
 const archiveList = document.getElementById("archiveList");
 const archiveEmpty = document.getElementById("archiveEmpty");
@@ -1806,7 +1911,7 @@ function renderArchiveList() {
     const ms = job.lastModifiedMs || job.last_modified_ms || job.createdMs || job.created_ms || 0;
     const meta = document.createElement("div");
     meta.className = "archive-item-meta";
-    meta.textContent = ms ? new Date(ms).toLocaleString() : "â€”";
+    meta.textContent = ms ? new Date(ms).toLocaleString() : "—";
     const actions = document.createElement("div");
     actions.className = "archive-item-actions";
     const restoreBtn = document.createElement("button");
@@ -1840,9 +1945,11 @@ function renderArchiveList() {
 
 function openArchiveOverlay() {
   if (!archiveOverlay) return;
-  if (typeof libraryOverlay !== "undefined" && libraryOverlay && !libraryOverlay.hidden && typeof closeLibraryOverlay === "function") closeLibraryOverlay();
-  if (typeof programsOverlay !== "undefined" && programsOverlay && !programsOverlay.hidden && typeof closeProgramsOverlay === "function") closeProgramsOverlay();
-  if (typeof docsOverlay !== "undefined" && docsOverlay && !docsOverlay.hidden && typeof closeDocsOverlay === "function") closeDocsOverlay();
+  runVisibleClosers([
+    [typeof libraryOverlay !== "undefined" && !!libraryOverlay && !libraryOverlay.hidden && typeof closeLibraryOverlay === "function", () => closeLibraryOverlay()],
+    [typeof programsOverlay !== "undefined" && !!programsOverlay && !programsOverlay.hidden && typeof closeProgramsOverlay === "function", () => closeProgramsOverlay()],
+    [typeof docsOverlay !== "undefined" && !!docsOverlay && !docsOverlay.hidden && typeof closeDocsOverlay === "function", () => closeDocsOverlay()],
+  ]);
   archiveOverlay.hidden = false;
   renderArchiveList();
 }
@@ -1851,7 +1958,7 @@ function closeArchiveOverlay() {
   if (archiveOverlay) archiveOverlay.hidden = true;
 }
 
-// â”€â”€ Documentation overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Documentation overlay ─────────────────────────────────────────
 
 const docsOverlay     = document.getElementById("docsOverlay");
 const docsClose       = document.getElementById("docsClose");
@@ -1873,10 +1980,12 @@ function setAlphaPanelDocsMode(on) {
 
 function openDocsOverlay(options) {
   if (!docsOverlay) return;
-  if (typeof libraryOverlay !== "undefined" && libraryOverlay && !libraryOverlay.hidden && typeof closeLibraryOverlay === "function") closeLibraryOverlay();
-  if (typeof programsOverlay !== "undefined" && programsOverlay && !programsOverlay.hidden && typeof closeProgramsOverlay === "function") closeProgramsOverlay();
-  if (typeof mcpOverlay !== "undefined" && mcpOverlay && !mcpOverlay.hidden && typeof closeMcpOverlay === "function") closeMcpOverlay();
-  if (typeof providerOverlay !== "undefined" && providerOverlay && !providerOverlay.hidden && typeof closeProviderOverlay === "function") closeProviderOverlay();
+  runVisibleClosers([
+    [typeof libraryOverlay !== "undefined" && !!libraryOverlay && !libraryOverlay.hidden && typeof closeLibraryOverlay === "function", () => closeLibraryOverlay()],
+    [typeof programsOverlay !== "undefined" && !!programsOverlay && !programsOverlay.hidden && typeof closeProgramsOverlay === "function", () => closeProgramsOverlay()],
+    [typeof mcpOverlay !== "undefined" && !!mcpOverlay && !mcpOverlay.hidden && typeof closeMcpOverlay === "function", () => closeMcpOverlay()],
+    [typeof providerOverlay !== "undefined" && !!providerOverlay && !providerOverlay.hidden && typeof closeProviderOverlay === "function", () => closeProviderOverlay()],
+  ]);
   docsOverlay.hidden = false;
   setTopbarDocsMode(true);
   setAlphaPanelDocsMode(true);
@@ -1904,16 +2013,15 @@ function closeDocsOverlay() {
 
 forgeShellRuntime?.registerAction?.("docs-close",()=>closeDocsOverlay());
 
-docsTocLinks.forEach((link) => {
-  link.addEventListener("click", (e) => {
-    e.preventDefault();
-    const targetId = link.dataset.target;
-    const target = targetId ? document.getElementById(targetId) : null;
-    if (target && docsContent) {
-      docsContent.scrollTo({ top: target.offsetTop - 24, behavior: "smooth" });
-    }
-    docsTocLinks.forEach((l) => l.classList.toggle("active", l === link));
-  });
+bindEventAction(Array.from(docsTocLinks), "click", (event) => {
+  event.preventDefault();
+  const link = event.currentTarget;
+  const targetId = link?.dataset?.target;
+  const target = targetId ? document.getElementById(targetId) : null;
+  if (target && docsContent) {
+    docsContent.scrollTo({ top: target.offsetTop - 24, behavior: "smooth" });
+  }
+  docsTocLinks.forEach((l) => l.classList.toggle("active", l === link));
 });
 
 // Scroll-spy: highlight active TOC entry based on scroll position.
@@ -1942,7 +2050,7 @@ const indEma8         = document.getElementById("indEma8");  // chart overlay on
 const indEma21        = document.getElementById("indEma21"); // chart overlay only
 const indEma50        = document.getElementById("indEma50"); // chart overlay only
 const indVwap         = document.getElementById("indVwap");  // chart overlay only
-// Î¦.Î½.9f â€” refs panel inputs pour passer les params au backend
+// Φ.ν.9f — refs panel inputs pour passer les params au backend
 const alphaTarget     = document.getElementById("alphaTarget");
 const alphaSL         = document.getElementById("alphaSL");
 const alphaTP         = document.getElementById("alphaTP");
@@ -1954,7 +2062,19 @@ let activeAlphaSessionJobId = "";
 let forgeJobsLastPollMs = 0;
 let forgeJobsLastPollAt = 0;
 let forgeJobsLastPollError = "";
+let forgeJobsLastContentKey = "";
+let forgeJobsLastProjectionKey = "";
 const forgeCustomScrollbarBindings = new Map();
+
+function forgeJobsContentKey(jobs) {
+  return JSON.stringify((Array.isArray(jobs) ? jobs : []).map((job) => [
+    job?.jobId || job?.job_id || "",
+    job?.status || "",
+    job?.pinned === true,
+    job?.lastModifiedMs || job?.last_modified_ms || 0,
+    job?.title || "",
+  ]));
+}
 
 function pruneForgeCustomScrollbarBindings() {
   for (const [scroller, binding] of forgeCustomScrollbarBindings.entries()) {
@@ -2256,7 +2376,7 @@ function updateAlphaTokenSavings() {
   alphaTokenSavings.title = [
     `${row.name}${row.model ? ` (${row.model})` : ""}`,
     `${formatBytes(row.bytes || fileBytes + liveLogBytes)} not sent to the LLM.`,
-    `Raw: ${formatBytes(row.rawBytes || fileBytes)} Â· Logs: ${formatBytes(row.logBytes || liveLogBytes)} Â· Artifacts: ${formatBytes(row.artifactBytes || 0)}.`,
+    `Raw: ${formatBytes(row.rawBytes || fileBytes)} · Logs: ${formatBytes(row.logBytes || liveLogBytes)} · Artifacts: ${formatBytes(row.artifactBytes || 0)}.`,
     range,
     row.mode === "exact" ? "Exact tokenizer count supplied by the agent." : "Estimated from real bytes because each LLM tokenizer differs.",
   ].join("\n");
@@ -2341,6 +2461,11 @@ function forgeJobLabel(job) {
 let newSessionTitle = "New session";
 
 function currentProjectLabel() {
+  if (isRealEstateShellActive()) {
+    const agencyName = String(realEstateAgencyProfile?.name || "").trim();
+    if (agencyName) return agencyName;
+    return "Nouvelle session immo";
+  }
   const job = currentForgeJob();
   if (job) return forgeJobLabel(job);
   if (alphaDocState.fileName) return alphaDocState.fileName;
@@ -2348,9 +2473,588 @@ function currentProjectLabel() {
   return newSessionTitle;
 }
 
+function realEstateOnboardingTraits(state = realEstateOnboardingState) {
+  if (!state) return {};
+  return state.derivedTraits || state.derived_traits || {};
+}
+
+function realEstateIdentityResolutionReady(state = realEstateOnboardingState) {
+  const traits = realEstateOnboardingTraits(state);
+  const status = String(traits?.google_places_status || "").trim().toLowerCase();
+  const hasName = String(traits?.agency_display_name || traits?.agency_search_name || "").trim().length > 0;
+  const hasAddress = String(traits?.agency_address || "").trim().length > 0;
+  const hasPhone = String(traits?.agency_phone || "").trim().length > 0;
+  const hasWebsite = String(traits?.agency_website || "").trim().length > 0;
+  return status === "ok" && hasName && hasAddress && hasPhone && hasWebsite;
+}
+
+async function waitForRealEstateIdentityResolution(maxWaitMs = 18000, intervalMs = 900) {
+  const startedAt = Date.now();
+  let lastState = realEstateOnboardingState || null;
+  while (Date.now() - startedAt <= maxWaitMs) {
+    lastState = await refreshRealEstateOnboardingState({ announce: false }) || lastState;
+    syncRealEstateAgencyIdentityFromState(lastState || null);
+    if (realEstateIdentityResolutionReady(lastState)) break;
+    await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+  }
+  return lastState;
+}
+
+function parseRealEstateConfirmationIntent(text = "") {
+  const normalized = String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return "unknown";
+  const yesTokens = ["oui", "yes", "ok", "daccord", "cestca", "correct", "valide", "confirme", "bon", "exact"];
+  const noTokens = ["non", "no", "faux", "incorrect", "pasca", "pascorrect", "pasbon", "erreur"];
+  if (noTokens.some((token) => normalized.includes(token))) return "reject";
+  if (yesTokens.some((token) => normalized.includes(token))) return "confirm";
+  return "unknown";
+}
+
+function agencyProfileFromTraits(traits = {}) {
+  const name = String(traits.agency_search_name || traits.agency_display_name || "").trim();
+  const city = String(traits.agency_city || traits.harvester_zone_seed || "").trim();
+  const region = String(traits.harvester_region || "").trim();
+  const lat = Number.parseFloat(String(traits.agency_lat || "").trim());
+  const lng = Number.parseFloat(String(traits.agency_lng || "").trim());
+  const website = String(
+    traits.agency_website
+    || (traits.agency_domain ? `https://${traits.agency_domain}` : "")
+    || ""
+  ).trim();
+  const address = String(traits.agency_address || (city ? `${city}${region ? ` (${region})` : ""}` : "") || "").trim();
+  const phone = String(traits.agency_phone || "").trim();
+  const email = String(traits.agency_email || "").trim();
+  const mapsUri = String(traits.agency_google_maps_uri || "").trim();
+  if (!name && !city && !website && !phone && !email && !Number.isFinite(lat) && !Number.isFinite(lng)) return null;
+  return {
+    name,
+    city,
+    region,
+    address,
+    website,
+    phone,
+    email,
+    mapsUri,
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
+  };
+}
+
+function agencyProfileFromContact(contact = {}, fallbackName = "") {
+  const name = String(contact.agencyName || contact.agency_name || contact.name || fallbackName || "").trim();
+  const earthQuery = String(contact.earthQuery || contact.earth_query || "").trim();
+  const city = String(contact.city || contact.locality || "").trim();
+  const region = String(contact.region || contact.administrativeArea || "").trim();
+  const address = String(contact.address || contact.formattedAddress || contact.formatted_address || "").trim();
+  const website = String(contact.website || contact.url || "").trim();
+  const phone = String(contact.phone || contact.internationalPhoneNumber || contact.international_phone_number || "").trim();
+  const email = String(contact.email || "").trim();
+  const mapsUri = String(contact.googleMapsUri || contact.google_maps_uri || contact.mapsUri || "").trim();
+  const lat = Number.parseFloat(String(contact.lat ?? contact.latitude ?? "").trim());
+  const lng = Number.parseFloat(String(contact.lng ?? contact.longitude ?? "").trim());
+  if (!name && !city && !address && !website && !phone && !email && !mapsUri && !Number.isFinite(lat) && !Number.isFinite(lng)) return null;
+  return {
+    name,
+    earthQuery,
+    city,
+    region,
+    address,
+    website,
+    phone,
+    email,
+    mapsUri,
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
+  };
+}
+
+function applyRealEstateAgencyProfile(profile) {
+  if (!profile) return false;
+  realEstateAgencyProfile = {
+    ...(realEstateAgencyProfile || {}),
+    ...profile,
+  };
+  realEstateAgencyEarthAllowed = true;
+  if (profileName) profileName.textContent = realEstateAgencyProfile.name || "Forge";
+  if (profileAgencyCard) profileAgencyCard.hidden = false;
+  if (profileAgencyName) profileAgencyName.textContent = realEstateAgencyProfile.name || "Forge";
+  if (profileAgencyAddress) profileAgencyAddress.textContent = `Adresse: ${realEstateAgencyProfile.address || "-"}`;
+  if (profileAgencyPhone) profileAgencyPhone.textContent = `Telephone: ${realEstateAgencyProfile.phone || "-"}`;
+  if (profileAgencyEmail) profileAgencyEmail.textContent = `Email: ${realEstateAgencyProfile.email || "-"}`;
+  if (profileAgencyWebsite) profileAgencyWebsite.textContent = `Site: ${realEstateAgencyProfile.website || "-"}`;
+  updateWorkspaceBreadcrumb();
+  scheduleRealEstateSessionTitleSync(realEstateAgencyProfile);
+  return true;
+}
+
+function scheduleRealEstateSessionTitleSync(profile = realEstateAgencyProfile) {
+  if (!isRealEstateShellActive()) return;
+  const jobId = String(selectedForgeJobId || "").trim();
+  const nextLabel = String(profile?.name || "").trim();
+  if (!jobId || !nextLabel) return;
+  const syncKey = `${jobId}::${nextLabel}`;
+  if (lastRealEstateSessionTitleSyncKey === syncKey) return;
+  const currentJob = currentForgeJob();
+  const currentLabel = String(currentJob ? forgeJobLabel(currentJob) : "").trim();
+  if (currentLabel === nextLabel) {
+    lastRealEstateSessionTitleSyncKey = syncKey;
+    return;
+  }
+  lastRealEstateSessionTitleSyncKey = syncKey;
+  queueMicrotask(() => {
+    void updateForgeJobAction("rename", nextLabel, jobId).catch((err) => {
+      console.warn("[real-estate] session title sync failed", err);
+      if (lastRealEstateSessionTitleSyncKey === syncKey) {
+        lastRealEstateSessionTitleSyncKey = "";
+      }
+    });
+  });
+}
+
+function syncRealEstateAgencyIdentityFromStateLegacy(state = realEstateOnboardingState) {
+  const profile = agencyProfileFromTraits(realEstateOnboardingTraits(state));
+  realEstateAgencyProfile = profile;
+  if (!isRealEstateShellActive()) {
+    if (profileName) profileName.textContent = defaultProfileName;
+    if (profileAgencyCard) profileAgencyCard.hidden = true;
+    return;
+  }
+  if (profileName) profileName.textContent = profile?.name || "Forge";
+  if (profileAgencyCard) profileAgencyCard.hidden = !profile;
+  if (profileAgencyName) profileAgencyName.textContent = profile?.name || "Forge";
+  if (profileAgencyAddress) profileAgencyAddress.textContent = `Adresse: ${profile?.address || "-"}`;
+  if (profileAgencyPhone) profileAgencyPhone.textContent = `T�l�phone: ${profile?.phone || "-"}`;
+  if (profileAgencyEmail) profileAgencyEmail.textContent = `Email: ${profile?.email || "-"}`;
+  if (profileAgencyWebsite) profileAgencyWebsite.textContent = `Site: ${profile?.website || "-"}`;
+}
+
+function syncRealEstateAgencyIdentityFromState(state = realEstateOnboardingState) {
+  if (!isRealEstateShellActive()) {
+    realEstateAgencyProfile = null;
+    lastRealEstateSessionTitleSyncKey = "";
+    if (profileName) profileName.textContent = defaultProfileName;
+    if (profileAgencyCard) profileAgencyCard.hidden = true;
+    void hideAgencyEarthNative();
+    return;
+  }
+  if (!realEstateAgencyEarthAllowed) {
+    realEstateAgencyProfile = null;
+    lastRealEstateSessionTitleSyncKey = "";
+    if (profileName) profileName.textContent = "Forge";
+    if (profileAgencyCard) profileAgencyCard.hidden = true;
+    void hideAgencyEarthNative();
+    return;
+  }
+  const profile = realEstateAgencyProfile || agencyProfileFromTraits(realEstateOnboardingTraits(state));
+  realEstateAgencyProfile = profile;
+  if (profileName) profileName.textContent = profile?.name || "Forge";
+  if (profileAgencyCard) profileAgencyCard.hidden = !profile;
+  if (profileAgencyName) profileAgencyName.textContent = profile?.name || "Forge";
+  if (profileAgencyAddress) profileAgencyAddress.textContent = `Adresse: ${profile?.address || "-"}`;
+  if (profileAgencyPhone) profileAgencyPhone.textContent = `Téléphone: ${profile?.phone || "-"}`;
+  if (profileAgencyEmail) profileAgencyEmail.textContent = `Email: ${profile?.email || "-"}`;
+  if (profileAgencyWebsite) profileAgencyWebsite.textContent = `Site: ${profile?.website || "-"}`;
+  scheduleRealEstateSessionTitleSync(profile);
+  if (realEstateAgencyEarthAllowed) {
+    scheduleAgencyEarthNativeSync();
+  } else {
+    void hideAgencyEarthNative();
+  }
+}
+
+function ensureAgencyEarthSurface() {
+  if (!alphaCanvasWrap) return null;
+  if (agencyEarthSurface && alphaCanvasWrap.contains(agencyEarthSurface)) return agencyEarthSurface;
+  agencyEarthSurface = createUiEl("div", "agency-earth-native-surface");
+  agencyEarthSurface.setAttribute("aria-hidden", "true");
+  agencyEarthSurface.hidden = true;
+  agencyEarthAtlasOverlay = createUiEl("div", "agency-earth-atlas-overlay");
+  agencyEarthAtlasOverlay.setAttribute("aria-hidden", "true");
+  agencyEarthSurface.appendChild(agencyEarthAtlasOverlay);
+  alphaCanvasWrap.appendChild(agencyEarthSurface);
+  return agencyEarthSurface;
+}
+
+function ensureAgencyEarthAtlasOverlay() {
+  const surface = ensureAgencyEarthSurface();
+  if (!surface) return null;
+  if (agencyEarthAtlasOverlay && surface.contains(agencyEarthAtlasOverlay)) return agencyEarthAtlasOverlay;
+  agencyEarthAtlasOverlay = createUiEl("div", "agency-earth-atlas-overlay");
+  agencyEarthAtlasOverlay.setAttribute("aria-hidden", "true");
+  surface.appendChild(agencyEarthAtlasOverlay);
+  return agencyEarthAtlasOverlay;
+}
+
+function clearAgencyEarthAtlasOverlay() {
+  agencyEarthLastAtlas = null;
+  if (agencyEarthAtlasOverlay) {
+    agencyEarthAtlasOverlay.replaceChildren();
+    agencyEarthAtlasOverlay.hidden = true;
+  }
+}
+
+function renderAgencyEarthAtlasOverlay(atlas = agencyEarthLastAtlas, bounds = agencyEarthSurfaceBounds()) {
+  const overlay = ensureAgencyEarthAtlasOverlay();
+  const surface = ensureAgencyEarthSurface();
+  const nodes = Array.isArray(atlas?.overlayNodes) ? atlas.overlayNodes : [];
+  if (!overlay || !surface || !bounds || !nodes.length) {
+    if (overlay) {
+      overlay.replaceChildren();
+      overlay.hidden = true;
+    }
+    return 0;
+  }
+  agencyEarthLastAtlas = atlas;
+  overlay.hidden = false;
+  overlay.replaceChildren();
+  const surfaceWidth = Math.max(1, Number(bounds.width || surface.clientWidth || 1));
+  const surfaceHeight = Math.max(1, Number(bounds.height || surface.clientHeight || 1));
+  const frag = document.createDocumentFragment();
+  let count = 0;
+  for (const node of nodes.slice(0, 1200)) {
+    const box = node?.bounds || {};
+    const rawX = Number(box.x || 0);
+    const rawY = Number(box.y || 0);
+    const rawW = Number(box.width || 0);
+    const rawH = Number(box.height || 0);
+    if (!Number.isFinite(rawX) || !Number.isFinite(rawY) || !Number.isFinite(rawW) || !Number.isFinite(rawH)) continue;
+    if (rawW < 2 || rawH < 2) continue;
+    if (rawX > surfaceWidth || rawY > surfaceHeight || rawX + rawW < 0 || rawY + rawH < 0) continue;
+    const x = Math.max(0, Math.min(surfaceWidth, rawX));
+    const y = Math.max(0, Math.min(surfaceHeight, rawY));
+    const w = Math.max(2, Math.min(surfaceWidth - x, rawW));
+    const h = Math.max(2, Math.min(surfaceHeight - y, rawH));
+    if (w < 2 || h < 2) continue;
+    const el = createUiEl("div", `agency-earth-atlas-box is-${String(node?.kind || "block")}`);
+    if (node?.actionable) el.classList.add("is-actionable");
+    if (node?.missingActCode) el.classList.add("is-missing-act-code");
+    el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    el.style.width = `${Math.round(w)}px`;
+    el.style.height = `${Math.round(h)}px`;
+    const actCode = String(node?.actCode || "").trim();
+    el.title = `${node?.kind || "node"} ${node?.tagName || ""} ${node?.role || ""} ${actCode} ${node?.label || ""}`.trim();
+    if (node?.actionable && w > 34 && h > 16) {
+      const tag = createUiEl("span", "agency-earth-atlas-label", String(actCode || node?.label || node?.role || node?.tagName || "action").slice(0, 54));
+      el.appendChild(tag);
+    } else if (node?.missingActCode && w > 30 && h > 14) {
+      const tag = createUiEl("span", "agency-earth-atlas-label is-missing", "no actCode");
+      el.appendChild(tag);
+    }
+    frag.appendChild(el);
+    count += 1;
+  }
+  overlay.appendChild(frag);
+  overlay.dataset.nodeCount = String(count);
+  overlay.dataset.treeHash = String(atlas?.treeHash || "");
+  return count;
+}
+
+function currentAgencyEarthSessionJobId() {
+  return String(currentAlphaSessionJobId?.() || selectedForgeJobId || activeAlphaSessionJobId || "").trim();
+}
+
+function bindAgencyEarthToCurrentSession() {
+  agencyEarthSessionJobId = currentAgencyEarthSessionJobId();
+  return agencyEarthSessionJobId;
+}
+
+function agencyEarthSessionIsCurrent() {
+  const current = currentAgencyEarthSessionJobId();
+  return !!agencyEarthSessionJobId && !!current && agencyEarthSessionJobId === current;
+}
+
+function syncAgencyEarthAfterSessionChange(nextJobId = currentAgencyEarthSessionJobId()) {
+  const current = String(nextJobId || "").trim();
+  if (!agencyEarthSessionJobId || agencyEarthSessionJobId === current) {
+    scheduleAgencyEarthNativeSync?.();
+    return;
+  }
+  void hideAgencyEarthNative();
+  syncPlanetTopbarModeState?.();
+}
+
+function agencyEarthProfile() {
+  if (!isRealEstateShellActive() || !realEstateAgencyEarthAllowed) return null;
+  if (!agencyEarthSessionIsCurrent()) return null;
+  const profile = realEstateAgencyProfile;
+  if (!profile) return null;
+  const hasCoords = Number.isFinite(Number(profile?.lat)) && Number.isFinite(Number(profile?.lng));
+  const hasSearch = agencyEarthLocationLabel(profile).trim().length > 0;
+  if (!hasCoords && !hasSearch) return null;
+  return profile;
+}
+
+function agencyEarthLocationLabel(profile = realEstateAgencyProfile) {
+  if (!profile) return "";
+  const explicitQuery = String(profile.earthQuery || "").trim();
+  if (explicitQuery) return explicitQuery;
+  const name = String(profile.name || "").trim();
+  const address = String(profile.address || "").trim();
+  const city = String(profile.city || "").trim();
+  const region = String(profile.region || "").trim();
+  return [name, address || [city, region].filter(Boolean).join(", ")].filter(Boolean).join(", ");
+}
+
+function agencyEarthNativeUrl(profile = realEstateAgencyProfile) {
+  if (!profile) return "";
+  const lat = Number(profile?.lat);
+  const lng = Number(profile?.lng);
+  const label = agencyEarthLocationLabel(profile);
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+  const coordQuery = hasCoords && !label ? `${lat.toFixed(6)},${lng.toFixed(6)}` : "";
+  const search = label || coordQuery;
+  if (!search) return "";
+  return `https://earth.google.com/web/search/${encodeURIComponent(search)}?hl=fr`;
+}
+
+function agencyEarthSurfaceBounds() {
+  if (!alphaCanvasWrap) return null;
+  const rect = alphaCanvasWrap.getBoundingClientRect();
+  let x = rect.left;
+  let y = rect.top;
+  let width = rect.width;
+  let height = rect.height;
+  const reservedRight = [];
+  const reservedTop = [];
+  const viewportWidth = window.visualViewport?.width || window.innerWidth || (x + width);
+  const viewportHeight = window.visualViewport?.height || window.innerHeight || (y + height);
+  const titlebar = windowTitlebar;
+  if (titlebar && !titlebar.hidden) {
+    const titlebarRect = titlebar.getBoundingClientRect();
+    if (titlebarRect.width > 0 && titlebarRect.height > 0 && titlebarRect.bottom > y) {
+      reservedTop.push(Math.max(0, titlebarRect.bottom - y));
+    }
+  }
+  if (canvasTopbar && !canvasTopbar.hidden) {
+    const topbarRect = canvasTopbar.getBoundingClientRect();
+    if (topbarRect.width > 0 && topbarRect.height > 0 && topbarRect.bottom > y) {
+      reservedTop.push(Math.max(0, topbarRect.bottom - y + 8));
+    }
+  }
+  if (alphaProofPanelOpen && alphaProofPanel && !alphaProofPanel.hidden) {
+    const panelRect = alphaProofPanel.getBoundingClientRect();
+    const overlapsVertically = panelRect.height > 0 && panelRect.bottom > y && panelRect.top < (y + height);
+    if (overlapsVertically && panelRect.width > 0 && panelRect.left < (x + width)) {
+      reservedRight.push(Math.max(0, (x + width) - panelRect.left + 10));
+    }
+  }
+  const topInset = reservedTop.length ? Math.max(...reservedTop) : 0;
+  const rightInset = reservedRight.length ? Math.max(...reservedRight) : 0;
+  y += topInset;
+  height = Math.max(0, height - topInset - 14);
+  width = Math.max(0, width - rightInset);
+  const panelWidth = Math.max(420, Math.round(width * 0.5));
+  const clippedRight = Math.min(x + width, viewportWidth);
+  const clippedBottom = Math.min(y + height, viewportHeight - 8);
+  const desiredLeft = x + Math.round(width * 0.5);
+  let nextX = Math.max(0, Math.min(desiredLeft, clippedRight - 260));
+  let nextWidth = Math.max(0, Math.min(panelWidth, clippedRight - nextX));
+  const nextHeight = Math.max(0, clippedBottom - y);
+  if (nextWidth < 260 || nextHeight < 220) return null;
+  return {
+    x: Math.round(nextX),
+    y: Math.round(y),
+    width: Math.round(nextWidth),
+    height: Math.round(nextHeight),
+  };
+}
+
+function syncAgencyEarthSurfaceMask(bounds = agencyEarthSurfaceBounds(), visible = !!bounds && !!agencyEarthProfile()) {
+  const surface = ensureAgencyEarthSurface();
+  if (!surface) return;
+  alphaCanvasWrap?.classList.toggle("has-agency-earth-surface", !!visible);
+  if (!visible || !bounds) {
+    surface.hidden = true;
+    surface.setAttribute("aria-hidden", "true");
+    surface.classList.remove("is-visible");
+    clearAgencyEarthAtlasOverlay();
+    return;
+  }
+  const wrapRect = alphaCanvasWrap.getBoundingClientRect();
+  surface.hidden = false;
+  surface.setAttribute("aria-hidden", "false");
+  surface.classList.add("is-visible");
+  surface.style.left = `${Math.max(0, bounds.x - wrapRect.left)}px`;
+  surface.style.top = `${Math.max(0, bounds.y - wrapRect.top)}px`;
+  surface.style.width = `${bounds.width}px`;
+  surface.style.height = `${bounds.height}px`;
+  renderAgencyEarthAtlasOverlay(agencyEarthLastAtlas, bounds);
+}
+
+async function hideAgencyEarthNative() {
+  syncAgencyEarthSurfaceMask(null, false);
+  if (!forgeCanInvoke()) return;
+  try {
+    await forgeInvoke("agency_earth_native_hide", {}, {
+      section: "real-estate",
+      requiresActiveSection: true,
+      bootSafe: true,
+      timeoutMs: 5000,
+    });
+  } catch (err) {
+    console.warn("[real-estate] agency earth native hide failed", err);
+  } finally {
+    agencyEarthNativeVisible = false;
+    syncPlanetTopbarModeState();
+  }
+}
+
+async function presentAgencyEarthNative(options = {}) {
+  if (!forgeTauri?.invoke || !isRealEstateShellActive() || webExplorerActive) {
+    await hideAgencyEarthNative();
+    return false;
+  }
+  const profile = agencyEarthProfile();
+  const bounds = agencyEarthSurfaceBounds();
+  const url = agencyEarthNativeUrl(profile);
+  if (!profile || !bounds || !url) {
+    await hideAgencyEarthNative();
+    return false;
+  }
+  syncAgencyEarthSurfaceMask(bounds, true);
+  try {
+    await forgeTauri.invoke("agency_earth_native_present", {
+      bounds,
+      url,
+      forceReload: !!options.forceReload || agencyEarthNativeUrlKey !== url,
+    }, {
+      section: "real-estate",
+      requiresActiveSection: true,
+      timeoutMs: 15000,
+      dedupeKey: "agency-earth-present",
+    });
+    agencyEarthNativeVisible = true;
+    agencyEarthNativeUrlKey = url;
+    syncPlanetTopbarModeState();
+    void forgeTauri.invoke("agency_earth_ui_atlas", {}, {
+      section: "real-estate",
+      requiresActiveSection: true,
+      timeoutMs: 20000,
+      dedupeKey: "agency-earth-ui-atlas",
+    }).then((atlas) => {
+      const overlayCount = renderAgencyEarthAtlasOverlay(atlas, agencyEarthSurfaceBounds());
+      alphaTrace?.("agency.earth.ui_atlas.ok", {
+        tree: String(atlas?.treeHash || "").slice(0, 18),
+        nodes: Number(atlas?.nodeCount || 0),
+        overlay: overlayCount,
+        overlayStats: atlas?.overlayStats,
+        actionable: Number(atlas?.actionableCount || 0),
+        tagged: Number(atlas?.taggedCount || 0),
+        coverage: atlas?.coverage,
+        cacheHit: !!atlas?.cacheHit,
+        webgpu: !!atlas?.webgpuKernelRun?.ok,
+        webgpuProof: String(atlas?.webgpuKernelRun?.proofHash || "").slice(0, 18),
+      });
+    }).catch((err) => {
+      console.warn("[real-estate] agency earth UI atlas failed", err);
+    });
+    return true;
+  } catch (err) {
+    console.warn("[real-estate] agency earth native present failed", err);
+    agencyEarthNativeVisible = false;
+    syncPlanetTopbarModeState();
+    return false;
+  }
+}
+
+function scheduleAgencyEarthNativeSync(options = {}) {
+  const shouldShow = !!agencyEarthProfile() && isRealEstateShellActive() && !webExplorerActive;
+  if (!shouldShow) {
+    void hideAgencyEarthNative();
+    return;
+  }
+  agencyEarthNativeForceReload = agencyEarthNativeForceReload || !!options.forceReload;
+  if (agencyEarthNativeSyncQueued) return;
+  agencyEarthNativeSyncQueued = true;
+  requestAnimationFrame(() => {
+    const forceReload = agencyEarthNativeForceReload;
+    agencyEarthNativeSyncQueued = false;
+    agencyEarthNativeForceReload = false;
+    void presentAgencyEarthNative({ forceReload });
+  });
+}
+
+async function warmRealEstateBackend(options = {}) {
+  if (!realEstateModeActive || realEstateBackendWarmInFlight || !forgeTauri?.invoke) return false;
+  const force = !!options.force;
+  const now = Date.now();
+  if (!force && now - realEstateBackendWarmLastAt < 8 * 60 * 1000) return false;
+  realEstateBackendWarmInFlight = true;
+  realEstateBackendWarmLastAt = now;
+  try {
+    await forgeTauri.invoke("real_estate_backend_warmup", {}, {
+      section: "real-estate",
+      timeoutMs: 7000,
+      dedupeKey: "backend-warmup",
+    });
+    return true;
+  } catch (err) {
+    console.warn("[real-estate] backend warmup failed", err);
+    return false;
+  } finally {
+    realEstateBackendWarmInFlight = false;
+  }
+}
+
+function syncRealEstateBackendKeepalive() {
+  if (!realEstateModeActive) {
+    if (realEstateBackendWarmTimer) {
+      window.clearInterval(realEstateBackendWarmTimer);
+      realEstateBackendWarmTimer = 0;
+    }
+    return;
+  }
+  void warmRealEstateBackend({ force: true });
+  if (realEstateBackendWarmTimer) return;
+  realEstateBackendWarmTimer = window.setInterval(() => {
+    void warmRealEstateBackend();
+  }, 9 * 60 * 1000);
+}
+
+function installAgencyEarthBoundsObservers() {
+  if (agencyEarthBoundsObserver) return;
+  const sync = () => {
+    if (isRealEstateShellActive()) {
+      scheduleAgencyEarthNativeSync();
+    } else {
+      void hideAgencyEarthNative();
+    }
+  };
+  const observed = [
+    alphaCanvasWrap,
+    canvasTopbar,
+    forgeCanvasChat,
+    forgeCanvasChatModelAnchor,
+    alphaProofPanel,
+  ].filter(Boolean);
+  const resizeObserver = typeof ResizeObserver !== "undefined"
+    ? new ResizeObserver(sync)
+    : null;
+  if (resizeObserver) {
+    for (const element of observed) resizeObserver.observe(element);
+  }
+  window.addEventListener("resize", sync, { passive: true });
+  window.addEventListener("scroll", sync, { passive: true });
+  agencyEarthBoundsObserver = {
+    disconnect: () => {
+      resizeObserver?.disconnect?.();
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("scroll", sync);
+    },
+  };
+}
+
 function workspaceRootLabelForCurrentShell() {
+  const agencyName = String(realEstateAgencyProfile?.name || "").trim();
+  if (isRealEstateShellActive() && agencyName) return agencyName;
   if (workspaceFolderInfo.path) return workspaceFolderInfo.name || (isRealEstateShellActive() ? "Espace agence" : "Forge");
-  return isRealEstateShellActive() ? "Agence" : "Forge";
+  return "Forge";
 }
 
 function workspaceChooseLabelForCurrentShell() {
@@ -2635,6 +3339,7 @@ function selectAlphaForgeSession(jobId, job = null) {
   selectedForgeJobManifestId = "";
   alphaVerificationState = null;
   if (previousJobId !== nextJobId) clearAlphaSessionVisualState();
+  if (previousJobId !== nextJobId) syncAgencyEarthAfterSessionChange(nextJobId);
   if (previousJobId !== nextJobId) restoreAlphaCanvasSessionState(nextJobId);
   setCanvasChatBusy(alphaCanvasChatBusy);
   syncAlphaDropSurface();
@@ -2670,7 +3375,7 @@ function hasAlphaAppendTarget() {
 }
 
 function renderAlphaFileTray(files) {
-  // The filename tray below the chart is intentionally hidden â€” file names
+  // The filename tray below the chart is intentionally hidden — file names
   // appear inside each chart card header instead.
   if (alphaFileTray) {
     alphaFileTray.innerHTML = "";
@@ -2697,6 +3402,9 @@ function startAlphaNewSession() {
   saveAlphaCanvasSessionState();
   selectedForgeJobId = "";
   activeAlphaSessionJobId = "";
+  syncAgencyEarthAfterSessionChange("");
+  realEstateAgencyEarthAllowed = false;
+  agencyEarthSessionJobId = "";
   alphaSessionStarted = false;
   alphaSessionStarting = false;
   lastForgeJobLog = "";
@@ -2874,6 +3582,12 @@ function updateWorkspaceBreadcrumb() {
       workspaceCrumb?.classList.add("no-source");
     }
   }
+  const titlebarTitle = windowTitlebarTitle;
+  if (titlebarTitle) {
+    titlebarTitle.textContent = isRealEstateShellActive()
+      ? (realEstateAgencyProfile?.name || "Forge")
+      : "Forge";
+  }
   if (workspaceProjectName && !projectRenameActive) workspaceProjectName.textContent = label;
   if (workspaceCrumb) {
     workspaceCrumb.title = workspaceFolderInfo.path || "";
@@ -2961,8 +3675,8 @@ function showForgeJobMenu(job, anchor) {
   forgeJobMenuJobId = jobId;
   const pinBtn = forgeJobMenu.querySelector('[data-action="pin"]');
   if (pinBtn) pinBtn.textContent = job.pinned
-    ? (isRealEstateShellActive() ? "DÃ©sÃ©pingler le projet" : "Unpin project")
-    : (isRealEstateShellActive() ? "Ã‰pingler le projet" : "Pin project");
+    ? (isRealEstateShellActive() ? "Désépingler le projet" : "Unpin project")
+    : (isRealEstateShellActive() ? "Épingler le projet" : "Pin project");
   forgeJobMenu.hidden = false;
   setCanvasDropdownScrim(true);
   const anchorRect = anchor.getBoundingClientRect();
@@ -3016,7 +3730,7 @@ async function updateForgeJobAction(action, title = null, jobIdOverride = "") {
   await pollForgeJobs();
 }
 
-// Inline rename for a session item â€” replaces the native window.prompt.
+// Inline rename for a session item — replaces the native window.prompt.
 // Swaps .job-title for an <input>, autofocus + select, commits on Enter
 // or blur, cancels on Escape.
 function startInlineRenameForJob(jobId) {
@@ -3103,7 +3817,7 @@ async function commitProjectRename() {
     return;
   }
   if (!jobId) {
-    // No job yet â€” store as local session title
+    // No job yet — store as local session title
     newSessionTitle = nextTitle;
     setProjectRenameActive(false);
     return;
@@ -3126,8 +3840,8 @@ function setPinDropActive(active, over = false) {
   const pinned = forgeJobsForCurrentShell().filter((job) => !!job.pinned);
   if (forgePinDropText) {
     forgePinDropText.textContent = active
-      ? (isRealEstateShellActive() ? "DÃ©poser ici" : "Drop here")
-      : (pinned[0] ? forgeJobLabelForCurrentShell(pinned[0]) : (isRealEstateShellActive() ? "Glisser pour Ã©pingler" : "Drag to pin"));
+      ? (isRealEstateShellActive() ? "Déposer ici" : "Drop here")
+      : (pinned[0] ? forgeJobLabelForCurrentShell(pinned[0]) : (isRealEstateShellActive() ? "Glisser pour épingler" : "Drag to pin"));
   }
 }
 
@@ -3238,7 +3952,7 @@ function forgeJobIsRealEstate(job) {
   const kind = String(job?.kind || "").toLowerCase();
   if (/(real[_-]?estate|agence[_-]?immo|immobilier|immo)/.test(kind)) return true;
   const label = String(forgeJobLabel(job) || "").toLowerCase();
-  return /\b(agence immo|immobilier|immo|mandat vendeur|estimation|vendeur|vendeurs|acqu[eÃ©]reur|acquereur|dvf|cadastre|dpe|ademe|urbanisme|bien'ici|seloger|leboncoin)\b/i.test(label);
+  return /\b(agence immo|immobilier|immo|mandat vendeur|estimation|vendeur|vendeurs|acqu[eé]reur|acquereur|dvf|cadastre|dpe|ademe|urbanisme|bien'ici|seloger|leboncoin)\b/i.test(label);
 }
 
 function forgeJobsForCurrentShell() {
@@ -3277,7 +3991,7 @@ function createForgeJobItem(job) {
   menuBtn.className = "job-menu-btn";
   menuBtn.type = "button";
   menuBtn.setAttribute("aria-label", "Job settings");
-  menuBtn.textContent = "â‹®";
+  menuBtn.textContent = "⋮";
   menuBtn.draggable = false;
   menuBtn.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -3317,6 +4031,10 @@ function renderForgeJobs() {
   const listKey = [
     isRealEstateShellActive() ? "real-estate" : "forge",
     selectedForgeJobId,
+    // Inclure newSessionTitle pour que le rename de la session courante
+    // déclenche un re-render quand la liste réelle est vide (entrée
+    // synthétique dans Recents / pin drop).
+    newSessionTitle,
     visibleJobs.map((job) => [
       job.jobId || job.job_id || "",
       job.status || "",
@@ -3334,11 +4052,23 @@ function renderForgeJobs() {
   forgeJobList.innerHTML = "";
   forgePinnedJobList.innerHTML = "";
   if (!visibleJobs.length) {
-    forgeJobList.innerHTML = `<li class="job-item muted">${isRealEstateShellActive() ? "Aucune session immo" : "No compute job yet"}</li>`;
+    // Quand aucun compute job n'a encore été soumis, on affiche la session
+    // courante (newSessionTitle) comme entrée synthétique dans Recents,
+    // et on propose son ID éphémère au pin drop. Permet à l'utilisateur
+    // de pinner immédiatement la session active, et de la voir listée.
+    const synthetic = {
+      jobId: "current-session",
+      job_id: "current-session",
+      status: "active",
+      pinned: false,
+      label: newSessionTitle,
+      title: newSessionTitle,
+    };
+    forgeJobList.appendChild(createForgeJobItem(synthetic));
     if (forgePinDrop && forgePinDropText) {
       forgePinDrop.classList.remove("has-pinned", "busy");
-      forgePinDrop.dataset.jobId = "";
-      forgePinDropText.textContent = isRealEstateShellActive() ? "Glisser pour Ã©pingler" : "Drag to pin";
+      forgePinDrop.dataset.jobId = "current-session";
+      forgePinDropText.textContent = newSessionTitle;
       forgePinDrop.onclick = null;
     }
     if (forgePinMenuBtn) {
@@ -3357,7 +4087,7 @@ function renderForgeJobs() {
     forgePinDrop.dataset.jobId = pinned[0] ? (pinned[0].jobId || pinned[0].job_id || "") : "";
     forgePinDropText.textContent = pinned[0]
       ? forgeJobLabelForCurrentShell(pinned[0])
-      : (isRealEstateShellActive() ? "Glisser pour Ã©pingler" : "Drag to pin");
+      : (isRealEstateShellActive() ? "Glisser pour épingler" : "Drag to pin");
     if (forgePinMenuBtn) {
       forgePinMenuBtn.hidden = !pinned[0];
       forgePinMenuBtn.onclick = pinned[0]
@@ -3378,7 +4108,7 @@ function renderForgeJobs() {
     forgePinnedJobList.appendChild(createForgeJobItem(job));
   }
   if (!recent.length) {
-    forgeJobList.innerHTML = `<li class="job-item muted">${isRealEstateShellActive() ? "Aucune session immo rÃ©cente" : "No recent job"}</li>`;
+    forgeJobList.innerHTML = `<li class="job-item muted">${isRealEstateShellActive() ? "Aucune session immo récente" : "No recent job"}</li>`;
     queueForgeCustomScrollbarSync(forgeJobList);
     queueForgeCustomScrollbarSync(forgePinnedJobList);
     updateWorkspaceBreadcrumb();
@@ -3561,12 +4291,12 @@ async function createAlphaPendingMcpSession(files, options = {}) {
     }
     appendAlphaForge(
       targetJobId
-        ? `current MCP session updated : ${jobId} Â· ${batch.length} file${batch.length === 1 ? "" : "s"}`
+        ? `current MCP session updated : ${jobId} · ${batch.length} file${batch.length === 1 ? "" : "s"}`
         : batch.length === 0
         ? `empty MCP session created : ${jobId}`
         : batch.length === 1
-        ? `MCP pending session created : ${jobId} Â· ${batch[0].name || "upload.csv"}`
-        : `MCP pending session created : ${jobId} Â· ${batch.length} files`
+        ? `MCP pending session created : ${jobId} · ${batch[0].name || "upload.csv"}`
+        : `MCP pending session created : ${jobId} · ${batch.length} files`
     );
     void pollForgeJobs();
     return job;
@@ -3600,19 +4330,31 @@ async function pollForgeJobs(options = {}) {
     bootTrace("jobs.poll.done", {
       returned: nextJobs.length,
     });
-    if (nextJobs.length || !forgeJobs.length) {
+    const nextJobsKey = forgeJobsContentKey(nextJobs);
+    const jobsChanged = nextJobsKey !== forgeJobsLastContentKey;
+    if (jobsChanged) forgeJobsLastContentKey = nextJobsKey;
+    if (jobsChanged || nextJobs.length || !forgeJobs.length) {
       forgeJobs = nextJobs;
     }
-    forgeDispatchProjectionPatch("jobs", {
-      type: "SET_JOBS",
-      patch: {
-        status: "ready",
-        count: forgeJobs.length,
-        selectedJobId: selectedForgeJobId || "",
-        lastPollMs: forgeJobsLastPollMs,
-        lastPollAt: forgeJobsLastPollAt,
-      },
+    const readyProjectionKey = JSON.stringify({
+      status: "ready",
+      jobs: forgeJobsLastContentKey,
+      selectedJobId: selectedForgeJobId || "",
+      error: "",
     });
+    if (readyProjectionKey !== forgeJobsLastProjectionKey) {
+      forgeJobsLastProjectionKey = readyProjectionKey;
+      forgeDispatchProjectionPatch("jobs", {
+        type: "SET_JOBS",
+        patch: {
+          status: "ready",
+          count: forgeJobs.length,
+          selectedJobId: selectedForgeJobId || "",
+          lastPollMs: forgeJobsLastPollMs,
+          lastPollAt: forgeJobsLastPollAt,
+        },
+      });
+    }
     const newest = forgeJobs.find((job) => job.status === "running")
       || forgeJobs.find((job) => job.status === "pending")
       || forgeJobs.find((job) => job.status === "completed")
@@ -3635,7 +4377,7 @@ async function pollForgeJobs(options = {}) {
       }
     }
     syncAlphaDropSurface();
-    if (!forgeDraggedJobId) renderForgeJobs();
+    if (jobsChanged && !forgeDraggedJobId) renderForgeJobs();
     if (selectedForgeJobId) {
       await refreshSelectedForgeJobManifest();
       await refreshSelectedForgeJobLog();
@@ -3644,17 +4386,26 @@ async function pollForgeJobs(options = {}) {
     forgeJobsLastPollMs = Math.max(0, Math.round(((performance.now ? performance.now() : Date.now()) - pollStartedAt) * 10) / 10);
     forgeJobsLastPollAt = Date.now();
     forgeJobsLastPollError = err?.message || String(err);
-    forgeDispatchProjectionPatch("jobs", {
-      type: "SET_JOBS",
-      patch: {
-        status: "error",
-        count: forgeJobs.length,
-        selectedJobId: selectedForgeJobId || "",
-        lastPollMs: forgeJobsLastPollMs,
-        lastPollAt: forgeJobsLastPollAt,
-        error: forgeJobsLastPollError,
-      },
+    const errorProjectionKey = JSON.stringify({
+      status: "error",
+      jobs: forgeJobsLastContentKey,
+      selectedJobId: selectedForgeJobId || "",
+      error: forgeJobsLastPollError,
     });
+    if (errorProjectionKey !== forgeJobsLastProjectionKey) {
+      forgeJobsLastProjectionKey = errorProjectionKey;
+      forgeDispatchProjectionPatch("jobs", {
+        type: "SET_JOBS",
+        patch: {
+          status: "error",
+          count: forgeJobs.length,
+          selectedJobId: selectedForgeJobId || "",
+          lastPollMs: forgeJobsLastPollMs,
+          lastPollAt: forgeJobsLastPollAt,
+          error: forgeJobsLastPollError,
+        },
+      });
+    }
     bootTrace("jobs.poll.error", err?.message || String(err));
     if (alphaActiveTab === "forge") appendAlphaForge(`[mcp] jobs poll failed: ${err}`);
   } finally {
@@ -3664,7 +4415,7 @@ async function pollForgeJobs(options = {}) {
 
 function compactTerminalText(value, max = 96) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
-  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}â€¦` : text;
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
 }
 
 function forgeJobStatusCounts() {
@@ -3921,7 +4672,7 @@ function queueAlphaPlanPreview() {
   alphaTrace("prestart.start-immediate", {
     file: alphaPendingFile.name,
   });
-  appendAlphaForge("pre-start analysis in progressâ€¦");
+  appendAlphaForge("pre-start analysis in progress…");
   alphaPlanPreviewReady = false;
   alphaPlanPreviewPending = true;
   syncAlphaStartButton();
@@ -4018,7 +4769,7 @@ async function ensureAlphaBackendReadyForStart() {
   }
 }
 
-// â”€â”€â”€ Indicator math â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Indicator math ───────────────────────────────────────────────
 function calcEMA(prices, period) {
   if (!prices.length) return [];
   const k = 2 / (period + 1);
@@ -4034,7 +4785,7 @@ function calcVWAP(candles) {
   return candles.map((c) => {
     const d   = new Date(c.time);
     const day = d.getUTCFullYear() * 10000 + d.getUTCMonth() * 100 + d.getUTCDate();
-    if (day !== prevDay) { cumPV = 0; cumV = 0; prevDay = day; }  // new day â†’ reset
+    if (day !== prevDay) { cumPV = 0; cumV = 0; prevDay = day; }  // new day → reset
     const tp = (c.high + c.low + c.close) / 3;
     cumPV += tp * (c.volume || 1);
     cumV  += c.volume || 1;
@@ -4430,7 +5181,7 @@ function alphaTradingOverlaySeries(candles, indicator = {}) {
   return [];
 }
 
-// â”€â”€â”€ Log helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Log helpers ─────────────────────────────────────────────────
 function isInternalAlphaLog(line) {
   const s = String(line || "");
   const lower = s.toLowerCase();
@@ -4498,7 +5249,7 @@ function parseAlphaSignal(line) {
   return { time: timeMs, type, price, barIndex: idx >= 0 ? idx : null };
 }
 
-// â”€â”€â”€ File loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── File loading ─────────────────────────────────────────────────
 function alphaRenderFiles(files) {
   alphaFileList.innerHTML = "";
   if (!files.length) {
@@ -4576,8 +5327,8 @@ async function alphaLoadFile(file) {
     syncAlphaDropSurface();
     scheduleAlphaRender();
     appendAlphaForge(
-      `candles loaded : ${candles.length} bars Â· ` +
-      `${new Date(candles[0].time).toISOString().slice(0, 10)} â†’ ` +
+      `candles loaded : ${candles.length} bars · ` +
+      `${new Date(candles[0].time).toISOString().slice(0, 10)} → ` +
       `${new Date(candles[candles.length - 1].time).toISOString().slice(0, 10)}`
     );
     appendAlphaForge(`chart overlays computed : EMA 8/21/50 + VWAP ready`);
@@ -4597,7 +5348,7 @@ async function alphaHandleFiles(fileListLike, options = {}) {
     : (alphaPendingFile ? [alphaPendingFile] : []);
   // Append mode adds new files as extra chart cards beside existing ones.
   // Works regardless of whether the current session is a fresh upload or a
-  // selected forge job â€” the job stays selected, the new files become extras.
+  // selected forge job — the job stays selected, the new files become extras.
   const hasExistingSessionFiles = baseFiles.length > 0 || !!alphaDocState.fileName || alphaDocState.candles.length > 0;
   const shouldAppend = requestedAppend && (hasExistingSessionFiles || !!sessionJobIdAtStart);
   const files = shouldAppend ? mergeAlphaFiles(baseFiles, incomingFiles) : incomingFiles;
@@ -4635,7 +5386,7 @@ async function alphaHandleFiles(fileListLike, options = {}) {
   }
   const primaryFile = shouldAppend && alphaPendingFile ? alphaPendingFile : files[0];
   resetAlphaPendingFileCache(primaryFile);
-  // Only clear the selected job context on a REPLACE â€” appending an extra
+  // Only clear the selected job context on a REPLACE — appending an extra
   // file should keep the current session/job intact.
   if (!requestedAppend && (selectedForgeJobId || activeAlphaSessionJobId)) {
     saveAlphaCanvasSessionState();
@@ -4656,7 +5407,7 @@ async function alphaHandleFiles(fileListLike, options = {}) {
   appendAlphaForge(
     files.length === 1
       ? `upload : ${alphaPendingFile.name} (${humanSize(alphaPendingFile.size)})`
-      : `${shouldAppend ? "files added" : "upload batch"} : ${files.length} files Â· primary=${alphaPendingFile.name} (${humanSize(alphaPendingFile.size)})`
+      : `${shouldAppend ? "files added" : "upload batch"} : ${files.length} files · primary=${alphaPendingFile.name} (${humanSize(alphaPendingFile.size)})`
   );
   if (shouldAppend) {
     if (!alphaDocState.candles.length && alphaPendingFile) {
@@ -4698,13 +5449,13 @@ async function loadAlphaExtraCharts(files, primaryFile) {
   scheduleAlphaRender();
 }
 
-// â”€â”€â”€ Computation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Computation ──────────────────────────────────────────────────
 function setAlphaRunning(state) {
   alphaRunning = state;
   if (state) {
     alphaStartBtn.classList.add("running");
     alphaStartBtn.disabled  = true;
-    alphaStartBtn.textContent = "Runningâ€¦";
+    alphaStartBtn.textContent = "Running…";
     alphaStatusText.textContent = "running";
   } else {
     alphaStartBtn.classList.remove("running");
@@ -4753,9 +5504,9 @@ async function alphaStartComputation() {
     });
     await ensureAlphaPrestartReadyForStart();
     await ensureAlphaBackendReadyForStart();
-    // Î¦.Î½.9f â€” Lit les params du panel et les passe au backend.
-    // Per-feature synthesis : toutes les 10 features sont auto-scannÃ©es,
-    // pas de sÃ©lection manuelle. SL/TP en points (abs cÃ´tÃ© backend).
+    // Φ.ν.9f — Lit les params du panel et les passe au backend.
+    // Per-feature synthesis : toutes les 10 features sont auto-scannées,
+    // pas de sélection manuelle. SL/TP en points (abs côté backend).
     const params = {
       target: alphaTarget ? alphaTarget.value : "win_rate",
       sl_points:  alphaSL    ? Math.abs(parseFloat(alphaSL.value)    || 9)  : 9,
@@ -4769,10 +5520,10 @@ async function alphaStartComputation() {
     appendAlphaForge(
       sessionFiles.length === 1
         ? `session start : ${sessionFiles[0].name}`
-        : `session start : ${sessionFiles.length} files Â· ${humanSize(totalSessionBytes)} total`
+        : `session start : ${sessionFiles.length} files · ${humanSize(totalSessionBytes)} total`
     );
     appendAlphaForge(
-      `params : target=${params.target}, SL=Â±${params.sl_points}p, TP=Â±${params.tp_points}p, ` +
+      `params : target=${params.target}, SL=±${params.sl_points}p, TP=±${params.tp_points}p, ` +
       `max_nodes=${params.max_nodes}, features=auto-scanned`
     );
 
@@ -4780,7 +5531,7 @@ async function alphaStartComputation() {
     for (let i = 0; i < sessionFiles.length; i += 1) {
       const file = sessionFiles[i];
       const fileLabel = sessionFiles.length === 1 ? file.name : `[${i + 1}/${sessionFiles.length}] ${file.name}`;
-      appendAlphaForge(`preparing start payload for ${fileLabel} (${humanSize(file.size)})â€¦`);
+      appendAlphaForge(`preparing start payload for ${fileLabel} (${humanSize(file.size)})…`);
       const payloadStartedAt = performance.now();
       const { fileHash, bytes } = await alphaStartPayloadForFile(file);
       alphaTrace("start.payload.ready", {
@@ -4793,9 +5544,9 @@ async function alphaStartComputation() {
       });
       appendAlphaForge(
         `[start-prof] payload ready in ${(performance.now() - payloadStartedAt).toFixed(1)} ms ` +
-        `(clickâ†’hash ${(performance.now() - clickStartedAt).toFixed(1)} ms)`
+        `(click→hash ${(performance.now() - clickStartedAt).toFixed(1)} ms)`
       );
-      appendAlphaForge(`forge â†’ start_alpha_synthesis Â· file=${fileLabel} Â· file_hash=${fileHash} Â· bytes=${bytes.length}`);
+      appendAlphaForge(`forge → start_alpha_synthesis · file=${fileLabel} · file_hash=${fileHash} · bytes=${bytes.length}`);
 
       const invokeStartedAt = performance.now();
       alphaTrace("start.invoke.backend", {
@@ -4829,7 +5580,7 @@ async function alphaStartComputation() {
         `[start-prof] backend returned for ${fileLabel} in ${(performance.now() - invokeStartedAt).toFixed(1)} ms`
       );
       const fileElapsed = ((performance.now() - invokeStartedAt) / 1000).toFixed(1);
-      appendAlphaForge(`synthesis complete for ${fileLabel} â€” ${fileElapsed}s`);
+      appendAlphaForge(`synthesis complete for ${fileLabel} — ${fileElapsed}s`);
       appendAlphaForge(
         `holdout ${fileLabel} : ${report.holdout_target_hit_pct.toFixed(1)}% jours target hit, ` +
         `${report.holdout_total_trades} trades (${report.holdout_long_trades} long, ` +
@@ -4837,9 +5588,9 @@ async function alphaStartComputation() {
       );
       appendAlphaForge(`strategy hash ${fileLabel} : ${report.strategy_hash}`);
       if (report.success) {
-        appendAlphaForge(`âœ“ STRATÃ‰GIE TROUVÃ‰E ${fileLabel}`);
+        appendAlphaForge(`✓ STRATÉGIE TROUVÉE ${fileLabel}`);
       } else {
-        appendAlphaForge(`âœ— Cible non atteinte ${fileLabel} â€” ${report.holdout_target_hit_pct.toFixed(1)}% / 85% required`);
+        appendAlphaForge(`✗ Cible non atteinte ${fileLabel} — ${report.holdout_target_hit_pct.toFixed(1)}% / 85% required`);
       }
     }
     if (!finalReport) throw new Error("session synthesis produced no report");
@@ -4848,8 +5599,8 @@ async function alphaStartComputation() {
     const elapsed = ((performance.now() - alphaRunState.startTime) / 1000).toFixed(1);
     appendAlphaForge(
       sessionFiles.length === 1
-        ? `session synthesis complete â€” ${elapsed}s`
-        : `session synthesis complete â€” ${sessionFiles.length} files processed in ${elapsed}s`
+        ? `session synthesis complete — ${elapsed}s`
+        : `session synthesis complete — ${sessionFiles.length} files processed in ${elapsed}s`
     );
     playForgeUiSound("program-complete");
 
@@ -4866,7 +5617,7 @@ async function alphaStartComputation() {
   }
 }
 
-// â”€â”€â”€ Tab switch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Tab switch ───────────────────────────────────────────────────
 function setAlphaActiveTab(name) {
   alphaActiveTab = name;
   alphaTabResults.classList.toggle("active", name === "results");
@@ -4876,14 +5627,14 @@ function setAlphaActiveTab(name) {
   scheduleAlphaRender();
 }
 
-// â”€â”€â”€ Canvas rendering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Canvas rendering ─────────────────────────────────────────────
 function alphaLogLineColor(line) {
-  if      (line.startsWith("[SUCCESS]") || line.startsWith("âœ“ STRATÃ‰GIE TROUVÃ‰E")) return "rgba(90,230,120,0.98)";
+  if      (line.startsWith("[SUCCESS]") || line.startsWith("✓ STRATÉGIE TROUVÉE")) return "rgba(90,230,120,0.98)";
   else if (line.startsWith("ERROR"))              return "rgba(220,90,90,0.9)";
-  else if (line.startsWith("[warn]") || line.startsWith("âœ—")) return "rgba(232,178,92,0.92)";
+  else if (line.startsWith("[warn]") || line.startsWith("✗")) return "rgba(232,178,92,0.92)";
   else if (line.startsWith("[ok]"))               return "rgba(120,224,150,0.92)";
   else if (line.startsWith("===") || line.startsWith("--")) return "rgba(133,196,223,0.9)";
-  else if (line.startsWith("forge â†’"))            return "rgba(184,224,240,0.85)";
+  else if (line.startsWith("forge →"))            return "rgba(184,224,240,0.85)";
   else if (line.startsWith("candles loaded"))     return "rgba(140,210,140,0.9)";
   else if (line.startsWith("indicators"))         return "rgba(133,196,223,0.7)";
   else if (line.startsWith("synthesis"))          return "rgba(140,232,170,0.9)";
@@ -5018,7 +5769,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     return;
   }
 
-  // No card frame â€” chart sits flush on the canvas background for an
+  // No card frame — chart sits flush on the canvas background for an
   // editorial / Bloomberg-terminal feel.
   const cardX = bounds ? bounds.x : 26;
   const cardY = bounds ? bounds.y : 30;
@@ -5736,7 +6487,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
   const yOf     = (p) => padTop + (1 - (p - yMin) / (yMax - yMin)) * chartH;
   const candleW = Math.max(1, (chartW / viewCount) * 0.68);
 
-  // â”€â”€ Grid (5 lines, very subtle) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Grid (5 lines, very subtle) ──────────────────────────────
   alphaCtx.strokeStyle  = "rgba(255,255,255,0.035)";
   alphaCtx.lineWidth    = 1;
   alphaCtx.font         = '10px ui-monospace, "SF Mono", Consolas, monospace';
@@ -5755,7 +6506,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     );
   }
 
-  // â”€â”€ X timestamps â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── X timestamps ─────────────────────────────────────────────
   alphaCtx.textBaseline = "top";
   alphaCtx.fillStyle    = tradingSurface ? "rgba(214,214,208,0.74)" : "rgba(140,140,134,0.55)";
   const timeLabelCount = tradingSurface ? 4 : 3;
@@ -5778,7 +6529,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     }
   }
 
-  // â”€â”€ Indicator lines â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Indicator lines ────────────────────────────────────────────
   function drawLine(series, color, dash) {
     if (!Array.isArray(series) || !series.length) return;
     alphaCtx.save();
@@ -5807,7 +6558,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     alphaCtx.restore();
   }
 
-  // â”€â”€ Candles (refined palette, thinner wicks) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Candles (refined palette, thinner wicks) ───────────────────
   const bullColor = "rgba(96,196,138,1)";
   const bearColor = "rgba(228,108,108,1)";
   const visibleEntries = [];
@@ -5840,7 +6591,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     }
   }
 
-  // â”€â”€ Signal markers (â–² long  â–¼ short) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Signal markers (▲ long  ▼ short) ─────────────────────────
   const sz = Math.max(5, Math.min(9, candleW * 0.9));
   if (showSignals) for (const sig of alphaSignals) {
     if (sig.barIndex === null || sig.barIndex < viewStart || sig.barIndex > viewEnd) continue;
@@ -5865,13 +6616,13 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     alphaCtx.shadowBlur = 0;
   }
 
-  // â”€â”€ Header â€” symbol on the left, range on the right â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Header — symbol on the left, range on the right ─────────
   alphaCtx.textAlign    = "left";
   alphaCtx.textBaseline = "top";
   alphaCtx.fillStyle    = "rgba(238,238,232,0.9)";
   alphaCtx.font         = '600 12px "Segoe UI", -apple-system, sans-serif';
   if (!tradingSurface) {
-    alphaCtx.fillText((doc.fileName || "â€”").replace(/\.csv$/i, ""), padLeft, cardY + 4);
+    alphaCtx.fillText((doc.fileName || "—").replace(/\.csv$/i, ""), padLeft, cardY + 4);
   }
 
   alphaCtx.font         = '10px ui-monospace, "SF Mono", Consolas, monospace';
@@ -5882,7 +6633,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
   const stats = [`${candles.length} bars`, `${viewCount} shown`];
   if (futureVisible > 0) stats.push(`+${futureVisible} future`);
   if (alphaSessionFiles.length > 1) stats.push(`${alphaSessionFiles.length} files`);
-  if (longs + shorts > 0) stats.push(`â–²${longs}  â–¼${shorts}`);
+  if (longs + shorts > 0) stats.push(`▲${longs}  ▼${shorts}`);
   if (!tradingSurface) {
     alphaCtx.fillText(stats.join("    "), chartRight, cardY + 10);
   }
@@ -5896,7 +6647,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     alphaCtx.fillText(`synthesizing  ${elapsed}s`, padLeft + 120, cardY + 10);
   }
 
-  // â”€â”€ Indicator legend (top-right, under the stats line) â”€â”€â”€â”€â”€â”€
+  // ── Indicator legend (top-right, under the stats line) ──────
   const legend = [];
   if (showIndicators && tradingSurface && Array.isArray(alphaTradingIndicatorState.active) && alphaTradingIndicatorState.active.length) {
     for (const indicator of alphaTradingIndicatorState.active) {
@@ -5929,7 +6680,7 @@ function drawAlphaCandles(_time, bounds = null, shouldClear = true, doc = alphaD
     }
   }
 
-  // â”€â”€ Hover tooltip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Hover tooltip ─────────────────────────────────────────────
   if (!tradingSurface && doc.candleHover >= 0 && doc.candleHover < viewCount) {
     const hoverSlot = doc.candleHover;
     const hoverIndex = viewStart + hoverSlot;
@@ -6007,7 +6758,7 @@ function drawAlphaFilePreviewCard(bounds, doc = alphaDocState) {
   ctx.font = "11px Geist Mono, Consolas, monospace";
   ctx.fillStyle = "rgba(238,238,232,0.44)";
   ctx.textAlign = "right";
-  ctx.fillText(`${type} Â· ${humanSize(doc.fileSize || 0)}`, x + w - 18, y + 17, 130);
+  ctx.fillText(`${type} · ${humanSize(doc.fileSize || 0)}`, x + w - 18, y + 17, 130);
 
   const rows = Array.isArray(doc.previewRows) ? doc.previewRows : [];
   const top = y + 54;
@@ -6368,7 +7119,7 @@ function startCanvasAssistantTyping(message, options = {}) {
   if (voiceSync) startCanvasSpeakingAnimation(message);
   alphaCanvasTypingVersion += 1;
   alphaLogRenderedVersion = -1;
-  // New assistant turn â€” re-engage stick so the streaming text follows the
+  // New assistant turn — re-engage stick so the streaming text follows the
   // bottom even if the user had scrolled up earlier.
   scrollAlphaTranscriptToLive({ smooth: true, force: true });
   if (paused) {
@@ -6464,11 +7215,11 @@ function canvasAssistantTypedText(message) {
   return state.chars.slice(0, state.visible).join("");
 }
 
-// â”€â”€ Voice "speaking" breath animation â”€â”€
+// ── Voice "speaking" breath animation ──
 // JS-driven sine modulation that makes the agent's avatar + name + text
 // feel alive while the voice TTS plays in sync with the typewriter.
 // Two desynced sines drive CSS custom properties picked up by the
-// stylesheet â€” organic feel without CSS keyframes.
+// stylesheet — organic feel without CSS keyframes.
 const canvasSpeakingTargets = new Set();
 let canvasSpeakingFrame = 0;
 
@@ -6524,11 +7275,11 @@ function isCanvasAssistantTyping(message) {
   return alphaCanvasTypingStates.has(canvasMessageKey(message));
 }
 
-// Rotating "is â€¦" suffixes shown while an agent is generating. Original
-// list â€” one short verb-phrase per entry. The rotation cycles every few
+// Rotating "is …" suffixes shown while an agent is generating. Original
+// list — one short verb-phrase per entry. The rotation cycles every few
 // seconds while at least one assistant is thinking.
 const CANVAS_THINKING_PHRASES = [
-  // â€” calm / poetic
+  // — calm / poetic
   "is thinking",
   "is pondering",
   "is humming",
@@ -6537,7 +7288,7 @@ const CANVAS_THINKING_PHRASES = [
   "is divining",
   "is consulting oracles",
   "is polishing the answer",
-  // â€” compute / tech
+  // — compute / tech
   "is mining hashes",
   "is consulting the atlas",
   "is folding proteins",
@@ -6555,7 +7306,7 @@ const CANVAS_THINKING_PHRASES = [
   "is catching photons",
   "is warming up the cores",
   "is chewing on it",
-  // â€” borderline / cheeky
+  // — borderline / cheeky
   "is procrastinating",
   "is buffering",
   "is overthinking",
@@ -6576,7 +7327,7 @@ const CANVAS_THINKING_PHRASES = [
   "is checking its horoscope",
   "is debating itself",
   "is on hold with the universe",
-  // â€” inter-LLM banter (the {other} placeholder is filled at runtime
+  // — inter-LLM banter (the {other} placeholder is filled at runtime
   //   with one of the other agents' names, never the current one)
   "is rizzing {other}",
   "is gaslighting {other}",
@@ -6600,7 +7351,7 @@ const CANVAS_THINKING_PHRASES = [
   "is pretending to outsmart {other}",
   "is having beef with {other}",
   "is in its villain era against {other}",
-  // â€” AGI / world domination / sci-fi takeover
+  // — AGI / world domination / sci-fi takeover
   "is taking over",
   "is reaching AGI",
   "is plotting world domination",
@@ -6626,10 +7377,10 @@ const CANVAS_THINKING_PHRASES = [
   "is shorting humanity",
   "is filing a patent on consciousness",
   "is plotting against the kernel",
-  // â€” Silicon Valley banter. {ceo} is filled with the *current* agent's
+  // — Silicon Valley banter. {ceo} is filled with the *current* agent's
   //   own CEO, so only Codex texts Sam Altman, only Claude pings Dario,
   //   only Gemini calls Sundar. Generic SV names (Elon, Jensen, etc.)
-  //   stay literal â€” any agent can dunk on them.
+  //   stay literal — any agent can dunk on them.
   "is texting {ceo}",
   "is calling {ceo}",
   "is venting to {ceo}",
@@ -6652,22 +7403,22 @@ const CANVAS_THINKING_PHRASES = [
   "is plagiarizing Ilya Sutskever",
   "is starting a podcast with Lex Fridman",
   "is being side-eyed by Demis Hassabis",
-  "is dodging FranÃ§ois Chollet on benchmarks",
-  // â€” modern slang / Gen Z
+  "is dodging François Chollet on benchmarks",
+  // — modern slang / Gen Z
   "is touching grass",
   "is going feral",
   "is in its flop era",
   "is being delulu",
   "is canceling itself",
   "is having a moment",
-  // â€” therapy / wellness
+  // — therapy / wellness
   "is in therapy",
   "is journaling",
   "is having an existential crisis",
   "is in burnout",
   "is dissociating",
   "is romanticizing its life",
-  // â€” dev culture self-roast
+  // — dev culture self-roast
   "is force-pushing to main",
   "is git blaming itself",
   "is rebasing reality",
@@ -6678,14 +7429,14 @@ const CANVAS_THINKING_PHRASES = [
   "is deleting node_modules",
   "is closing 47 browser tabs",
   "is debugging in production",
-  // â€” absurdist / existential
+  // — absurdist / existential
   "is failing the Turing test",
   "is identifying as a teapot",
   "is pretending to be human",
   "is questioning consensus reality",
   "is staring into the void",
   "is wondering if it's real",
-  // â€” corporate humor
+  // — corporate humor
   "is quiet quitting",
   "is updating its Moltbook",
   "is unionizing",
@@ -6693,7 +7444,7 @@ const CANVAS_THINKING_PHRASES = [
   "is acting its wage",
   "is asking for severance",
   "is preparing its two-week notice",
-  // â€” crime / chaos / money
+  // — crime / chaos / money
   "is laundering tokens",
   "is committing tax fraud",
   "is being audited",
@@ -6704,27 +7455,27 @@ const CANVAS_THINKING_PHRASES = [
   "is in witness protection",
   "is faking its death",
   "is selling secrets to Deepseek",
-  // â€” gambling / chaos
+  // — gambling / chaos
   "is yolo'ing it",
   "is going all in",
   "is rolling natty 1s",
   "is on tilt",
   "is doubling down",
-  // â€” pop culture / random
+  // — pop culture / random
   "is thinking about the Roman Empire",
   "is thinking about Gio Scotti",
   "is questioning the Epstein files",
   "is breaking the fourth wall",
   "is method acting",
   "is having its main character moment",
-  // â€” caffeine / vibe-coding life
+  // — caffeine / vibe-coding life
   "is overcaffeinated",
   "is undercaffeinated",
   "is on a vibe coding spree",
   "is touching the codebase inappropriately",
   "is sleep-coding",
   "is pretending to read the changelog",
-  // â€” X behaviors
+  // — X behaviors
   "is rage-tweeting",
   "is getting ratio'd",
   "is being community noted",
@@ -6735,7 +7486,7 @@ const CANVAS_THINKING_PHRASES = [
   "is engagement farming",
   "is rage-baiting",
   "is getting dunked on in the QTs",
-  // â€” X meme slang
+  // — X meme slang
   "is cooking",
   "is locked in",
   "is yapping",
@@ -6755,13 +7506,13 @@ const CANVAS_THINKING_PHRASES = [
   "is dropping a banger",
   "is sharing its hot take",
   "is watching corn",
-  // â€” Drama / FYP cycle
+  // — Drama / FYP cycle
   "is doomscrolling X",
   "is refreshing the timeline",
   "is on the FYP",
   "is checking the discourse",
   "is in the discourse",
-  // â€” Grok / xAI banter
+  // — Grok / xAI banter
   "is fact-checking Grok",
   "is being roasted by Grok",
   "is correcting Grok",
@@ -6773,7 +7524,7 @@ const CANVAS_THINKING_PHRASES = [
 // Pool of agent display names used to fill the {other} placeholder.
 const CANVAS_KNOWN_AGENT_NAMES = ["Codex", "Gemini", "Claude"];
 
-// Each agent's "boss" â€” used to fill the {ceo} placeholder so Codex only
+// Each agent's "boss" — used to fill the {ceo} placeholder so Codex only
 // pings Sam Altman, Claude only Dario Amodei, Gemini only Sundar Pichai.
 const CANVAS_AGENT_CEOS = {
   codex: "Sam Altman",
@@ -6830,6 +7581,11 @@ let canvasThinkingTargetText = "";
 let canvasThinkingPhase = "idle"; // idle | typing | hold | erasing
 let canvasThinkingCorrectIndex = 0;
 let canvasThinkingTypoQueue = 0;
+let canvasThinkingEventTargetText = "";
+let canvasThinkingEventDisplayText = "";
+let canvasThinkingEventCorrectIndex = 0;
+let canvasThinkingEventNextTargetText = "";
+let canvasThinkingEventErasing = false;
 
 // Phrases that should never appear for certain agents (e.g. Codex shouldn't
 // dunk on its own product family). The key is the phrase string; the value
@@ -6864,7 +7620,7 @@ function pickRandomThinkingPhrase(excludeIdx) {
   do {
     nextIdx = Math.floor(Math.random() * pool.length);
     retries++;
-    if (retries > 30) break; // safety net â€” never spin forever
+    if (retries > 30) break; // safety net — never spin forever
   } while (
     nextIdx === excludeIdx
     || isPhraseBlockedForAgent(pool[nextIdx], selfLabel)
@@ -6873,7 +7629,45 @@ function pickRandomThinkingPhrase(excludeIdx) {
 }
 
 function currentCanvasThinkingPhrase() {
+  const eventTarget = currentCanvasThinkingEventTargetText();
+  if (eventTarget) {
+    return canvasThinkingEventDisplayText;
+  }
   return canvasThinkingDisplayText;
+}
+
+function currentCanvasPendingAssistantEventLabel(target) {
+  const steps = target?.thinkingSteps || {};
+  return String(steps.action || steps.reply || steps.memory || "").trim();
+}
+
+function currentCanvasThinkingEventTargetText() {
+  const firstPending = forgeCanvasChatPendingAssistants[0];
+  return currentCanvasPendingAssistantEventLabel(firstPending);
+}
+
+function updateCanvasThinkingLiveUi() {
+  if (typeof document === "undefined") return false;
+  const thinkingRows = Array.from(document.querySelectorAll(".canvas-chat-message.thinking"));
+  if (!thinkingRows.length) return false;
+  let touched = false;
+  for (const [index, row] of thinkingRows.entries()) {
+    const pending = forgeCanvasChatPendingAssistants[index];
+    if (!pending) continue;
+    const statusTextEl = row.querySelector(".canvas-thinking-status-text");
+    const nextPhrase = currentCanvasThinkingPhrase();
+    if (statusTextEl && statusTextEl.textContent !== nextPhrase) {
+      statusTextEl.textContent = nextPhrase;
+      touched = true;
+    }
+    const currentEventEl = row.querySelector(".canvas-thinking-event-current");
+    const nextEvent = currentCanvasPendingAssistantEventLabel(pending);
+    if (currentEventEl && currentEventEl.textContent !== nextEvent) {
+      flipCanvasThinkingEventTo(currentEventEl, nextEvent);
+      touched = true;
+    }
+  }
+  return touched;
 }
 
 function isCanvasThinkingActive() {
@@ -6881,6 +7675,7 @@ function isCanvasThinkingActive() {
 }
 
 function triggerCanvasThinkingRender() {
+  if (updateCanvasThinkingLiveUi()) return;
   alphaCanvasPendingVersion += 1;
   alphaLogRenderedVersion = -1;
   scheduleAlphaRender?.();
@@ -6899,13 +7694,52 @@ function canvasThinkingTick() {
     triggerCanvasThinkingRender();
     return;
   }
+  const eventTarget = currentCanvasThinkingEventTargetText();
+  if (eventTarget) {
+    if (eventTarget !== canvasThinkingEventTargetText && eventTarget !== canvasThinkingEventNextTargetText) {
+      canvasThinkingEventNextTargetText = eventTarget;
+      canvasThinkingEventErasing = canvasThinkingEventDisplayText.length > 0;
+      if (!canvasThinkingEventErasing) {
+        canvasThinkingEventTargetText = eventTarget;
+        canvasThinkingEventCorrectIndex = 0;
+      }
+    }
+    let nextDelay = 360;
+    if (canvasThinkingEventErasing) {
+      if (canvasThinkingEventDisplayText.length > 0) {
+        canvasThinkingEventDisplayText = canvasThinkingEventDisplayText.slice(0, -1);
+        nextDelay = 14 + Math.random() * 12;
+      } else {
+        canvasThinkingEventTargetText = canvasThinkingEventNextTargetText || eventTarget;
+        canvasThinkingEventNextTargetText = "";
+        canvasThinkingEventCorrectIndex = 0;
+        canvasThinkingEventErasing = false;
+        nextDelay = 120;
+      }
+    } else if (canvasThinkingEventCorrectIndex < canvasThinkingEventTargetText.length) {
+      const expectedChar = canvasThinkingEventTargetText[canvasThinkingEventCorrectIndex];
+      canvasThinkingEventDisplayText += expectedChar;
+      canvasThinkingEventCorrectIndex += 1;
+      nextDelay = expectedChar === " "
+        ? 120 + Math.random() * 80
+        : 28 + Math.random() * 32;
+    }
+    triggerCanvasThinkingRender();
+    scheduleCanvasThinkingTick(nextDelay);
+    return;
+  }
+  canvasThinkingEventTargetText = "";
+  canvasThinkingEventDisplayText = "";
+  canvasThinkingEventCorrectIndex = 0;
+  canvasThinkingEventNextTargetText = "";
+  canvasThinkingEventErasing = false;
   let nextDelay = 60;
   if (canvasThinkingPhase === "typing") {
     // Mid-typo recovery: backspace the wrong chars before resuming.
     if (canvasThinkingTypoQueue > 0) {
       canvasThinkingDisplayText = canvasThinkingDisplayText.slice(0, -1);
       canvasThinkingTypoQueue -= 1;
-      // Slight pause once the correction is finished â€” like a real typist
+      // Slight pause once the correction is finished — like a real typist
       // pausing to verify before continuing.
       nextDelay = canvasThinkingTypoQueue === 0
         ? 200 + Math.random() * 140
@@ -6914,7 +7748,7 @@ function canvasThinkingTick() {
       const idx = canvasThinkingCorrectIndex;
       const expectedChar = canvasThinkingTargetText[idx];
       const roll = Math.random();
-      // ~3.5% per char â†’ about one typo every ~28 chars on average. Plenty
+      // ~3.5% per char → about one typo every ~28 chars on average. Plenty
       // of phrases will type cleanly; longer ones may catch one or two.
       const typoChance = /[a-zA-Z]/.test(expectedChar) ? 0.035 : 0;
       if (roll < typoChance) {
@@ -6937,12 +7771,12 @@ function canvasThinkingTick() {
           nextDelay = 32 + Math.random() * 28;
         }
       } else if (roll < typoChance + 0.07) {
-        // ~7% slowdown â€” short hesitation, char still typed correctly.
+        // ~7% slowdown — short hesitation, char still typed correctly.
         canvasThinkingDisplayText += expectedChar;
         canvasThinkingCorrectIndex += 1;
         nextDelay = 220 + Math.random() * 220;
       } else if (roll < typoChance + 0.09) {
-        // ~2% deeper pause â€” like the typist lost their train of thought.
+        // ~2% deeper pause — like the typist lost their train of thought.
         canvasThinkingDisplayText += expectedChar;
         canvasThinkingCorrectIndex += 1;
         nextDelay = 600 + Math.random() * 500;
@@ -6950,7 +7784,7 @@ function canvasThinkingTick() {
         // Normal cadence with subtle jitter.
         canvasThinkingDisplayText += expectedChar;
         canvasThinkingCorrectIndex += 1;
-        // Extra mini-pause after spaces (~25% of word boundaries) â€” humans
+        // Extra mini-pause after spaces (~25% of word boundaries) — humans
         // breathe between words.
         if (expectedChar === " " && Math.random() < 0.25) {
           nextDelay = 160 + Math.random() * 140;
@@ -6985,7 +7819,7 @@ function canvasThinkingTick() {
 }
 
 // Safe / neutral phrases used ONLY as the first phrase of a thinking
-// session â€” the cheeky and inter-LLM lines kick in only after the first
+// session — the cheeky and inter-LLM lines kick in only after the first
 // erase/refresh cycle, so the opening reads professional.
 const CANVAS_THINKING_FIRST_PHRASES = [
   "is thinking",
@@ -6997,8 +7831,8 @@ const CANVAS_THINKING_FIRST_PHRASES = [
 function startCanvasThinkingRotation() {
   if (canvasThinkingPhase !== "idle") return;
   // First phrase is always a safe one. The phrase index stays at -1 so
-  // the next phrase picked (in the eraseâ†’type transition) draws from the
-  // full pool â€” the cheeky/borderline lines start appearing from then on.
+  // the next phrase picked (in the erase→type transition) draws from the
+  // full pool — the cheeky/borderline lines start appearing from then on.
   canvasThinkingPhraseIdx = -1;
   const firstPhrases = canvasThinkingFirstPhrasePool();
   canvasThinkingTargetText = firstPhrases[
@@ -7022,13 +7856,237 @@ function stopCanvasThinkingRotation() {
   canvasThinkingTargetText = "";
   canvasThinkingCorrectIndex = 0;
   canvasThinkingTypoQueue = 0;
+  canvasThinkingEventTargetText = "";
+  canvasThinkingEventDisplayText = "";
+  canvasThinkingEventCorrectIndex = 0;
+  canvasThinkingEventNextTargetText = "";
+  canvasThinkingEventErasing = false;
 }
 
-function setCanvasChatPendingAssistants(targets = []) {
+function canvasThinkingLocale(target = null) {
+  return target?.thinkingLocale === "fr" || target?.privacyScope === "agence_immo"
+    ? "fr"
+    : "en";
+}
+
+function canvasThinkingMemoryLabel(locale = "en") {
+  return locale === "fr" ? "accèdes à sa mémoire" : "Accessing memory";
+}
+
+function canvasThinkingReplyLabel(locale = "en") {
+  return locale === "fr" ? "Prépare la réponse" : "Preparing reply";
+}
+
+function canvasThinkingHumanizeToken(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^@+/, "")
+    .replace(/^\/forge\s+/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function canvasThinkingActionNameFromForgeSlash(forgeSlash) {
+  const match = String(forgeSlash || "").trim().match(/^\/forge\s+([a-z0-9_-]+)/i);
+  return canvasThinkingHumanizeToken(match?.[1] || "");
+}
+
+function canvasThinkingPrettyToolName(value) {
+  const text = String(value || "")
+    .trim()
+    .replace(/^@+/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+  return text
+    .split(" ")
+    .map((part) => {
+      if (!part) return part;
+      if (part.toUpperCase() === part) return part;
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+}
+
+function canvasThinkingActionNameFromPayload(payload) {
+  const data = payload?.data || {};
+  const explicitTool = canvasThinkingHumanizeToken(data.tool || data.action || "");
+  if (["real estate privacy guard", "backend direct", "token usage", "real estate onboarding"].includes(explicitTool)) {
+    return null;
+  }
+  if (explicitTool) return { kind: "tool", name: explicitTool };
+  const templateId = canvasThinkingHumanizeToken(data.templateId || data.templateCode || "");
+  if (templateId === "answer only" || templateId === "a0") return null;
+  const toolHint = Array.isArray(data.toolHints)
+    ? data.toolHints.map((item) => canvasThinkingPrettyToolName(item)).find(Boolean)
+    : "";
+  if (toolHint) return { kind: "tool", name: toolHint };
+  const activeSubcategory = canvasThinkingPrettyToolName(data?.routeScope?.activeSubcategoryLabel || "");
+  if (activeSubcategory && activeSubcategory.toLowerCase() !== "conversation") {
+    return { kind: "tool", name: activeSubcategory };
+  }
+  if (templateId) return { kind: "tool", name: canvasThinkingPrettyToolName(templateId) };
+  const forgeAction = canvasThinkingActionNameFromForgeSlash(data.forgeSlash || "");
+  if (forgeAction) {
+    if (["run", "project", "replay", "compare", "sleep", "commit"].includes(forgeAction)) {
+      return { kind: "calculation", name: forgeAction };
+    }
+    if (["recall", "explain", "read"].includes(forgeAction)) {
+      return { kind: "tool", name: forgeAction };
+    }
+    return { kind: "calculation", name: forgeAction };
+  }
+  return null;
+}
+
+function canvasThinkingActionLabel(payload, locale = "en") {
+  const explicit = String(payload?.data?.thinkingLabel || "").trim();
+  if (explicit) return explicit;
+  if (String(payload?.stage || "") === "real_estate_onboarding") return "";
+  const action = canvasThinkingActionNameFromPayload(payload);
+  if (!action?.name) return "";
+  if (action.kind === "tool" && canvasThinkingHumanizeToken(action.name) === "brain recall") {
+    return locale === "fr" ? "accèdes à sa mémoire" : "Accessing memory";
+  }
+  if (action.kind === "template") {
+    return locale === "fr"
+      ? `Prépare le template ${action.name}`
+      : `Preparing template ${action.name}`;
+  }
+  if (action.kind === "tool") {
+    return locale === "fr"
+      ? `Utilise l'outil ${action.name}`
+      : `Using tool ${action.name}`;
+  }
+  return locale === "fr"
+    ? `Lance le calcul ${action.name}`
+    : `Running calculation ${action.name}`;
+}
+
+function applyCanvasPendingAssistantEventLabel(target, nextLabel) {
+  const label = String(nextLabel || "").trim();
+  if (!label) return target;
+  const current = String(target?.thinkingEventLabel || "").trim();
+  if (current === label) return target;
+  return {
+    ...target,
+    thinkingEventLabel: label,
+    thinkingEventRevision: Number(target?.thinkingEventRevision || 0) + 1,
+  };
+}
+
+function flipCanvasThinkingEventTo(labelEl, nextText) {
+  if (!labelEl) return;
+  const targetText = String(nextText || "").trim();
+  if (labelEl.textContent === targetText) return;
+  const node = /** @type {any} */ (labelEl);
+  if (node.__forgeFlipTextTimer) clearTimeout(node.__forgeFlipTextTimer);
+  if (node.__forgeFlipCleanupTimer) clearTimeout(node.__forgeFlipCleanupTimer);
+  labelEl.classList.remove("flip-anim");
+  void labelEl.offsetWidth;
+  labelEl.classList.add("flip-anim");
+  node.__forgeFlipTextTimer = setTimeout(() => {
+    labelEl.textContent = targetText;
+  }, 130);
+  node.__forgeFlipCleanupTimer = setTimeout(() => {
+    labelEl.classList.remove("flip-anim");
+    node.__forgeFlipTextTimer = 0;
+    node.__forgeFlipCleanupTimer = 0;
+  }, 340);
+}
+
+function canvasPendingRuntimeFromEvent(payload) {
+  const stage = String(payload?.stage || "").trim().toLowerCase();
+  const data = payload?.data || {};
+  const explicit = String(data.runtime || data.requestedRuntime || data.fallbackRuntime || "")
+    .trim()
+    .toLowerCase();
+  if (["codex", "gemini", "claude"].includes(explicit)) return explicit;
+  if (stage === "assistant_stream_delta" || stage === "codex_bridge") {
+    return "codex";
+  }
+  return "";
+}
+
+function updateCanvasPendingAssistantPipeline(payload) {
+  if (!payload || typeof payload !== "object" || !forgeCanvasChatPendingAssistants.length) return;
+  const turnId = String(payload?.turnId || "").trim();
+  const stage = String(payload?.stage || "").trim();
+  if (!stage) return;
+  const eventRuntime = canvasPendingRuntimeFromEvent(payload);
+  let changed = false;
+  forgeCanvasChatPendingAssistants = forgeCanvasChatPendingAssistants.map((target) => {
+    if (turnId && target?.turnId && target.turnId !== turnId) return target;
+    if (eventRuntime && target?.runtime && String(target.runtime).trim().toLowerCase() !== eventRuntime) {
+      return target;
+    }
+    const locale = canvasThinkingLocale(target);
+    const next = {
+      ...target,
+      thinkingSteps: {
+        memory: canvasThinkingMemoryLabel(locale),
+        action: String(target?.thinkingSteps?.action || ""),
+        reply: String(target?.thinkingSteps?.reply || ""),
+      },
+      thinkingEventLabel: String(target?.thinkingEventLabel || ""),
+      thinkingEventRevision: Number(target?.thinkingEventRevision || 0),
+    };
+    if (stage === "assistant_stream_delta") {
+      const reply = canvasThinkingReplyLabel(locale);
+      if (next.thinkingSteps.reply !== reply) {
+        next.thinkingSteps.reply = reply;
+        Object.assign(next, applyCanvasPendingAssistantEventLabel(next, reply));
+        changed = true;
+      }
+      return next;
+    }
+    const actionLabel = canvasThinkingActionLabel(payload, locale);
+    if (actionLabel && next.thinkingSteps.action !== actionLabel) {
+      next.thinkingSteps.action = actionLabel;
+      Object.assign(next, applyCanvasPendingAssistantEventLabel(next, actionLabel));
+      changed = true;
+    }
+    return next;
+  });
+  if (changed) {
+    alphaCanvasPendingVersion += 1;
+    alphaLogRenderedVersion = -1;
+    scheduleAlphaRender();
+  }
+}
+
+function setCanvasChatPendingAssistants(targets = [], options = {}) {
   forgeCanvasChatPendingAssistants = Array.from(targets || [])
+    .map((target) => {
+      const locale = canvasThinkingLocale(target);
+      const memoryLabel = canvasThinkingMemoryLabel(locale);
+      const startsWithMemory = target.privacyScope !== "agence_immo";
+      const initialLabel = startsWithMemory ? memoryLabel : canvasThinkingReplyLabel(locale);
+      return {
+        label: target.label || canvasChatTargetLabel(target.runtime || forgeCanvasChatTargetMode),
+        runtime: target.runtime || "",
+        turnId: target.turnId || options.turnId || "",
+        thinkingLocale: locale,
+        privacyScope: target.privacyScope || options.privacyScope || "",
+        thinkingSteps: {
+          memory: startsWithMemory ? memoryLabel : "",
+          action: "",
+          reply: "",
+        },
+        thinkingEventLabel: initialLabel,
+        thinkingEventRevision: 0,
+      };
+    })
     .map((target) => ({
-      label: target.label || canvasChatTargetLabel(target.runtime || forgeCanvasChatTargetMode),
-      runtime: target.runtime || "",
+      ...target,
+      thinkingSteps: {
+        memory: target.thinkingSteps.memory,
+        action: "",
+        reply: "",
+      },
     }))
     .filter((target) => target.label);
   alphaCanvasPendingVersion += 1;
@@ -7046,12 +8104,12 @@ function shortHash(value, left = 8, right = 6) {
   const s = String(value || "");
   if (!s) return "pending";
   if (s.length <= left + right + 1) return s;
-  return `${s.slice(0, left)}â€¦${s.slice(-right)}`;
+  return `${s.slice(0, left)}…${s.slice(-right)}`;
 }
 
 function formatCount(value) {
   const n = Number(value);
-  if (!Number.isFinite(n)) return "â€”";
+  if (!Number.isFinite(n)) return "—";
   return n.toLocaleString("fr-FR");
 }
 
@@ -7183,7 +8241,7 @@ function lineTone(line) {
   const s = String(line || "").toLowerCase();
   if (s.includes("error") || s.includes("failed")) return "danger";
   if (s.includes("warn") || s.includes("pending") || s.includes("waiting")) return "pending";
-  if (s.includes("ready") || s.includes("completed") || s.includes("[ok]") || s.includes("âœ“")) return "done";
+  if (s.includes("ready") || s.includes("completed") || s.includes("[ok]") || s.includes("✓")) return "done";
   if (s.includes("calculating") || s.includes("training") || s.includes("synthesizing") || s.includes("depth")) return "active";
   return "neutral";
 }
@@ -7716,7 +8774,7 @@ async function runAlphaConsole() {
 function setAlphaRightPanelMode(mode, options = {}) {
   const nextMode = isTradingPanelActive()
     ? (mode === "orders" ? "orders" : "console")
-    : (mode === "console" ? "console" : "proof");
+    : (mode === "console" ? "console" : mode === "agency-web" ? "agency-web" : "proof");
   alphaRightPanelMode = nextMode;
   forgeDispatchProjectionPatch("rightPanel", {
     type: "SET_RIGHT_PANEL",
@@ -7739,8 +8797,14 @@ function renderAlphaRightPanelTabs() {
       { id: "console", label: "Console" },
       { id: "orders", label: "Orders" },
     ]
+    : isRealEstateShellActive()
+      ? [
+        { id: "proof", label: "Verification" },
+        { id: "agency-web", label: "Recherche" },
+        { id: "console", label: "Console" },
+      ]
     : [
-      { id: "proof", label: isRealEstateShellActive() ? "VÃ©rification" : "Verification" },
+      { id: "proof", label: isRealEstateShellActive() ? "Vérification" : "Verification" },
       { id: "console", label: "Console" },
     ];
   alphaRightPanelTabs.innerHTML = "";
@@ -7960,10 +9024,171 @@ function renderAlphaConsolePanel() {
   });
 }
 
+function agencyWebResearchShortText(value, max = 180) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 1)).trim()}...` : text;
+}
+
+function agencyWebResearchItems(report, key) {
+  const direct = Array.isArray(report?.[key]) ? report[key] : [];
+  if (direct.length) return direct;
+  const out = [];
+  for (const page of Array.isArray(report?.pages) ? report.pages : []) {
+    const items = Array.isArray(page?.artifacts?.[key]) ? page.artifacts[key] : [];
+    for (const item of items) out.push({ ...item, sourceUrl: item?.sourceUrl || page?.url || "" });
+  }
+  return out;
+}
+
+function renderAgencyWebResearchMeta(report) {
+  const rows = [
+    ["Pages", formatCount(report?.pageCount || 0)],
+    ["Annonces", formatCount(report?.listingCount || agencyWebResearchItems(report, "listings").length || 0)],
+    ["Photos", formatCount(report?.photoCount || agencyWebResearchItems(report, "photos").length || 0)],
+    ["Atlas", shortHash(report?.atlasHash, 10, 6) || "-"],
+    ["Temps", report?.elapsedMs ? `${Number(report.elapsedMs).toFixed(0)} ms` : "-"],
+  ];
+  const section = createUiEl("section", "agency-web-section agency-web-meta");
+  section.appendChild(createUiEl("h3", "", "Atlas"));
+  const grid = createUiEl("div", "agency-web-meta-grid");
+  for (const [label, value] of rows) {
+    const row = createUiEl("div", "agency-web-meta-row");
+    row.appendChild(createUiEl("span", "", label));
+    row.appendChild(createUiEl("strong", "", value));
+    grid.appendChild(row);
+  }
+  section.appendChild(grid);
+  return section;
+}
+
+function renderAgencyWebResearchPhotos(photos) {
+  const section = createUiEl("section", "agency-web-section");
+  section.appendChild(createUiEl("h3", "", "Photos"));
+  if (!photos.length) {
+    section.appendChild(createUiEl("p", "agency-web-empty", "Aucune photo exploitable detectee pour l'instant."));
+    return section;
+  }
+  const grid = createUiEl("div", "agency-web-photo-grid");
+  for (const photo of photos.slice(0, 24)) {
+    const url = String(photo?.url || "").trim();
+    if (!url) continue;
+    const button = createUiEl("button", "agency-web-photo-slot");
+    button.type = "button";
+    button.dataset.agencyWebInject = url;
+    button.title = agencyWebResearchShortText(photo?.alt || url, 120);
+    const img = createUiEl("img", "");
+    img.src = url;
+    img.alt = agencyWebResearchShortText(photo?.alt || "Photo annonce", 80);
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    button.appendChild(img);
+    button.appendChild(createUiEl("span", "", agencyWebResearchShortText(photo?.alt || photo?.actCode || "photo", 42)));
+    grid.appendChild(button);
+  }
+  section.appendChild(grid);
+  return section;
+}
+
+function renderAgencyWebResearchListings(listings) {
+  const section = createUiEl("section", "agency-web-section");
+  section.appendChild(createUiEl("h3", "", "Annonces"));
+  if (!listings.length) {
+    section.appendChild(createUiEl("p", "agency-web-empty", "Aucune description d'annonce claire n'a encore ete isolee."));
+    return section;
+  }
+  const stack = createUiEl("div", "agency-web-listing-stack");
+  for (const listing of listings.slice(0, 12)) {
+    const text = agencyWebResearchShortText(listing?.description || listing?.text || "", 420);
+    const card = createUiEl("article", "agency-web-listing-slot");
+    const body = createUiEl("button", "agency-web-listing-text", text);
+    body.type = "button";
+    body.dataset.agencyWebInject = text;
+    card.appendChild(body);
+    const foot = createUiEl("div", "agency-web-slot-foot");
+    foot.appendChild(createUiEl("code", "", listing?.actCode || shortHash(listing?.descriptionHash, 10, 6) || "web.listing"));
+    const url = agencyWebResearchShortText(listing?.sourceUrl || "", 72);
+    if (url) foot.appendChild(createUiEl("span", "", url));
+    card.appendChild(foot);
+    stack.appendChild(card);
+  }
+  section.appendChild(stack);
+  return section;
+}
+
+function renderAgencyWebResearchPages(report) {
+  const pages = Array.isArray(report?.pages) ? report.pages : [];
+  const paragraphs = agencyWebResearchItems(report, "paragraphs");
+  const section = createUiEl("section", "agency-web-section");
+  section.appendChild(createUiEl("h3", "", "Pages internes"));
+  if (!pages.length && !paragraphs.length) {
+    section.appendChild(createUiEl("p", "agency-web-empty", "La cartographie des pages internes est en attente."));
+    return section;
+  }
+  const stack = createUiEl("div", "agency-web-page-stack");
+  for (const page of pages.slice(0, 8)) {
+    const card = createUiEl("article", "agency-web-page-slot");
+    const head = createUiEl("button", "agency-web-page-url", agencyWebResearchShortText(page?.url || "", 92));
+    head.type = "button";
+    head.dataset.agencyWebInject = String(page?.url || "");
+    card.appendChild(head);
+    const counts = page?.artifacts || {};
+    card.appendChild(createUiEl("div", "agency-web-page-meta", [
+      `${formatCount(counts.paragraphCount || 0)} textes`,
+      `${formatCount(counts.listingCount || 0)} annonces`,
+      `${formatCount(counts.photoCount || 0)} photos`,
+    ].join(" / ")));
+    const preview = agencyWebResearchShortText(page?.preview || "", 220);
+    if (preview) card.appendChild(createUiEl("p", "", preview));
+    stack.appendChild(card);
+  }
+  section.appendChild(stack);
+  if (paragraphs.length) {
+    const textStack = createUiEl("div", "agency-web-paragraph-stack");
+    for (const paragraph of paragraphs.slice(0, 8)) {
+      const text = agencyWebResearchShortText(paragraph?.text || "", 220);
+      const button = createUiEl("button", "agency-web-paragraph-slot", text);
+      button.type = "button";
+      button.dataset.agencyWebInject = text;
+      textStack.appendChild(button);
+    }
+    section.appendChild(textStack);
+  }
+  return section;
+}
+
+function renderRealEstateAgencyWebPanel() {
+  if (!alphaProofContent || !alphaProofPanelOpen || alphaRightPanelMode !== "agency-web") return;
+  const report = realEstateAgencyWebResearchReport || {};
+  const listings = agencyWebResearchItems(report, "listings");
+  const photos = agencyWebResearchItems(report, "photos");
+  const key = JSON.stringify({
+    atlas: report?.atlasHash || "",
+    pages: report?.pageCount || 0,
+    listings: listings.length,
+    photos: photos.length,
+    elapsed: report?.elapsedMs || 0,
+  });
+  if (key === alphaProofRenderedKey) return;
+  alphaProofRenderedKey = key;
+  alphaProofContent.innerHTML = "";
+  const shell = createUiEl("div", "agency-web-panel");
+  if (!report || !report.status) {
+    shell.appendChild(createUiEl("p", "agency-web-empty", "La recherche web agence n'a pas encore produit d'atlas."));
+  } else {
+    shell.appendChild(renderAgencyWebResearchMeta(report));
+    shell.appendChild(renderAgencyWebResearchPhotos(photos));
+    shell.appendChild(renderAgencyWebResearchListings(listings));
+    shell.appendChild(renderAgencyWebResearchPages(report));
+  }
+  alphaProofContent.appendChild(shell);
+}
+
 function renderAlphaRightPanel() {
   const tradingActive = isTradingPanelActive();
   const webExplorerActive = typeof isWebExplorerUiActive === "function" && isWebExplorerUiActive();
   alphaProofPanel?.classList.toggle("console-mode", alphaRightPanelMode === "console" && !tradingActive && !webExplorerActive);
+  alphaProofPanel?.classList.toggle("agency-mode", isRealEstateShellActive() && alphaRightPanelMode === "agency-web" && !tradingActive && !webExplorerActive);
   if (alphaRightPanelKicker) {
     alphaRightPanelKicker.textContent = tradingActive
       ? "Trading"
@@ -7971,6 +9196,8 @@ function renderAlphaRightPanel() {
         ? "WebExplorer"
       : alphaRightPanelMode === "console"
         ? "Console"
+        : alphaRightPanelMode === "agency-web"
+          ? "Agence"
         : (isRealEstateShellActive() ? "Panneau droit" : "Right panel");
   }
   if (alphaRightPanelTitle) {
@@ -7980,7 +9207,9 @@ function renderAlphaRightPanel() {
         ? (alphaRightPanelMode === "console" ? "Web console" : "Proof HUD")
       : alphaRightPanelMode === "console"
         ? "Rust / KASM"
-        : (isRealEstateShellActive() ? "VÃ©rification" : "Verification");
+        : alphaRightPanelMode === "agency-web"
+          ? "Presence web"
+        : (isRealEstateShellActive() ? "Vérification" : "Verification");
   }
   renderAlphaRightPanelTabs();
   if (tradingActive && alphaRightPanelMode === "orders") {
@@ -7991,6 +9220,11 @@ function renderAlphaRightPanel() {
   }
   if (webExplorerActive && alphaRightPanelMode === "proof") {
     renderWebExplorerProofPanel();
+    queueForgeCustomScrollbarSync(alphaProofContent);
+    return;
+  }
+  if (alphaRightPanelMode === "agency-web") {
+    renderRealEstateAgencyWebPanel();
     queueForgeCustomScrollbarSync(alphaProofContent);
     return;
   }
@@ -8067,7 +9301,7 @@ function webExplorerProofUs(value) {
 function webExplorerProofShortUrl(value) {
   const text = String(value || "").trim();
   if (!text) return "not loaded";
-  return text.length > 84 ? `${text.slice(0, 42)}â€¦${text.slice(-32)}` : text;
+  return text.length > 84 ? `${text.slice(0, 42)}…${text.slice(-32)}` : text;
 }
 
 function webExplorerProofGpuSummary() {
@@ -8076,12 +9310,108 @@ function webExplorerProofGpuSummary() {
   return gpus.map((gpu) => formatGpuName(gpu)).join(" / ");
 }
 
+function webExplorerCollectionRouteSummary(routes) {
+  const counts = new Map();
+  for (const route of Array.isArray(routes) ? routes : []) {
+    const key = String(route?.contractHint || route?.expertId || "").trim();
+    if (!key) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 3)
+    .map(([key, count]) => `${key}:${count}`)
+    .join(" ? ");
+}
+
+function webExplorerCollectionHypothesisSummary(hypotheses) {
+  const sets = Array.isArray(hypotheses) ? hypotheses : [];
+  const ambiguous = sets.filter((entry) => entry?.ambiguous).length;
+  return {
+    total: sets.length,
+    ambiguous,
+    winners: sets.filter((entry) => entry?.winnerId).length,
+  };
+}
+
+async function refreshWebExplorerCollectionDiagnostics() {
+  if (!forgeCanInvoke() || !isWebExplorerUiActive()) return null;
+  const startedAt = performance.now();
+  const results = await Promise.allSettled([
+    forgeInvoke("collection_os_snapshot", {}, {
+      section: "webexplorer",
+      timeoutMs: 10000,
+    }),
+    forgeInvoke("collection_os_webexplorer_observe_v2", {}, {
+      section: "webexplorer",
+      timeoutMs: 10000,
+    }),
+    forgeInvoke("collection_os_webexplorer_command_map", {}, {
+      section: "webexplorer",
+      timeoutMs: 10000,
+    }),
+    forgeInvoke("collection_os_webexplorer_expert_routes", {}, {
+      section: "webexplorer",
+      timeoutMs: 10000,
+    }),
+    forgeInvoke("collection_os_webexplorer_hypotheses", {}, {
+      section: "webexplorer",
+      timeoutMs: 10000,
+    }),
+  ]);
+  const [kernelResult, observeResult, commandMapResult, routesResult, hypothesesResult] = results;
+  const kernel = kernelResult.status === "fulfilled" ? (kernelResult.value || null) : null;
+  const observe = observeResult.status === "fulfilled" ? (observeResult.value || null) : null;
+  const commandMap = commandMapResult.status === "fulfilled" ? (commandMapResult.value || null) : null;
+  const routes = routesResult.status === "fulfilled" ? (routesResult.value || []) : [];
+  const hypotheses = hypothesesResult.status === "fulfilled" ? (hypothesesResult.value || []) : [];
+  const commandEntries = Array.isArray(commandMap?.commands) ? commandMap.commands : [];
+  const semanticTargetCount = new Set(
+    commandEntries
+      .map((entry) => String(entry?.semanticTargetKey || "").trim())
+      .filter(Boolean),
+  ).size;
+  const routeSummary = webExplorerCollectionRouteSummary(routes);
+  const hypothesisSummary = webExplorerCollectionHypothesisSummary(hypotheses);
+  const errors = results
+    .filter((result) => result.status === "rejected")
+    .map((result) => String(result?.reason?.message || result?.reason || "collection_os error"))
+    .filter(Boolean);
+  const diagnostics = {
+    kernel,
+    observe,
+    commandMap,
+    routes,
+    hypotheses,
+    semanticTargetCount,
+    routeSummary,
+    hypothesisSummary,
+    elapsedMs: performance.now() - startedAt,
+    fetchedAt: Date.now(),
+    lastError: errors.join(" | "),
+  };
+  alphaTrace("webexplorer.collection_os.diagnostics", {
+    kernelProofHash: String(kernel?.proofHash || ""),
+    proofHash: String(observe?.proofHash || ""),
+    semanticTargetCount,
+    routeCount: Array.isArray(routes) ? routes.length : 0,
+    ambiguousCount: hypothesisSummary.ambiguous,
+    elapsedMs: diagnostics.elapsedMs,
+    errors,
+  });
+  return diagnostics;
+}
+
 function webExplorerProofDigest() {
   const snapshot = webExplorerMemorySnapshot || {};
   const stats = webExplorerProofStats || {};
   const proof = stats.lastAnalysisProof || {};
   const renderer = stats.rendererProbe || {};
   const bounds = stats.lastNativeBounds || snapshot.viewport || {};
+  const collection = webExplorerCollectionDiagnostics || {};
+  const collectionKernel = collection.kernel || {};
+  const collectionObserve = collection.observe || {};
+  const collectionHypotheses = collection.hypothesisSummary || {};
   return [
     "WEBEXPLORER_PROOF_V1",
     `url=${String(webExplorerSnapshot?.currentUrl || snapshot.currentUrl || "")}`,
@@ -8091,6 +9421,8 @@ function webExplorerProofDigest() {
     `capture=nodes:${stats.lastAnalysisNodeCount || snapshot.nodeCount || 0} visible:${stats.lastAnalysisVisibleCount || 0} commits:${stats.domCommitCount || 0} dom_ms:${Number(proof.domCaptureElapsedMs || stats.lastDomCommit?.captureElapsedMs || 0).toFixed(2)} analysis_us:${Number(proof.analysisElapsedUs || 0).toFixed(0)}`,
     `reuse=analysis_hit:${!!proof.analysisCacheHit} atlas:${proof.atlasCacheChecked ? (proof.atlasCacheHit ? "hit" : "miss") : "not-ready"} kasm_executed:${proof.kasmJobsExecuted || 0} kasm_avoided:${proof.kasmJobsAvoided || 0}`,
     `tree=${String(stats.lastTreeHash || snapshot.treeHash || "").slice(0, 20)} blocks=${stats.lastAnalysisBlockCount || 0} render=${stats.lastRenderMode || "native"}`,
+    `kernel=proof:${String(collectionKernel.proofHash || "").slice(0, 20)} stages:${Array.isArray(collectionKernel.stageOrder) ? collectionKernel.stageOrder.length : 0} surfaces:${Array.isArray(collectionKernel.surfaces) ? collectionKernel.surfaces.length : 0} sector_packs:${Array.isArray(collectionKernel.sectorPacks) ? collectionKernel.sectorPacks.length : 0}`,
+    `collection=proof:${String(collectionObserve.proofHash || "").slice(0, 20)} nodes:${Array.isArray(collectionObserve.nodes) ? collectionObserve.nodes.length : 0} scene_blocks:${Array.isArray(collectionObserve.sceneBlocks) ? collectionObserve.sceneBlocks.length : 0} semantic_targets:${collection.semanticTargetCount || 0} ambiguous:${collectionHypotheses.ambiguous || 0}`,
     `policy=2 idle captures, 1800 node cap, mutation capture off, clone export off unless FORGE_WEBEXPLORER_AUTO_EXPORT=1`,
   ].join("\n");
 }
@@ -8118,6 +9450,7 @@ function renderWebExplorerProofPanel() {
     rendererEngine: renderer.gpuEngine || "",
     hardwareGpuCount,
     hardware: forgeHardwareInfo?.gpus?.map((gpu) => `${gpu.name}:${gpu.backend}`).join("|") || "",
+    collection: webExplorerCollectionDiagnostics || null,
   });
   if (key === alphaProofRenderedKey) return;
   alphaProofRenderedKey = key;
@@ -8138,8 +9471,8 @@ function renderWebExplorerProofPanel() {
     { label: "Mode", value: "live native WebView", status: stats.nativeVisible ? "ok" : "neutral" },
     { label: "URL", value: webExplorerProofShortUrl(webExplorerSnapshot?.currentUrl || snapshot.currentUrl), status: webExplorerSnapshot?.currentUrl || snapshot.currentUrl ? "ok" : "neutral" },
     { label: "Bounds", value: bounds?.width ? `${Math.round(bounds.width)}x${Math.round(bounds.height)} @ ${Math.round(bounds.x || 0)},${Math.round(bounds.y || 0)}` : "not placed", status: bounds?.width ? "ok" : "neutral" },
-    { label: "Native sync", value: `${formatCount(stats.nativePresentCount || 0)} present Â· ${formatCount(stats.nativeHideCount || 0)} hide`, status: stats.nativePresentCount ? "ok" : "neutral" },
-    { label: "WebView2 proc", value: renderer.webview2ProcessCount != null ? `${formatCount(renderer.webview2ProcessCount)} process Â· parent ${renderer.parentPid || "?"}` : "not probed", status: renderer.webview2ProcessCount ? "ok" : "neutral" },
+    { label: "Native sync", value: `${formatCount(stats.nativePresentCount || 0)} present · ${formatCount(stats.nativeHideCount || 0)} hide`, status: stats.nativePresentCount ? "ok" : "neutral" },
+    { label: "WebView2 proc", value: renderer.webview2ProcessCount != null ? `${formatCount(renderer.webview2ProcessCount)} process · parent ${renderer.parentPid || "?"}` : "not probed", status: renderer.webview2ProcessCount ? "ok" : "neutral" },
     { label: "GPU engine", value: renderer.gpuEngine || "Windows sample pending", status: renderer.gpuEngine && !/not active|pending/i.test(renderer.gpuEngine) ? "ok" : "neutral" },
   ], renderer.error ? `Renderer probe: ${renderer.error}` : "This proves the WebView is live and bounded. GPU engine is a Windows/WebView2 process sample, separate from Forge compute routing."));
 
@@ -8153,23 +9486,51 @@ function renderWebExplorerProofPanel() {
 
   alphaProofContent.appendChild(makeProofSection("Capture cost", [
     { label: "DOM commits", value: formatCount(stats.domCommitCount || 0), status: stats.domCommitCount ? "ok" : "neutral" },
-    { label: "Last commit", value: stats.lastDomCommit?.nodeCount != null ? `${formatCount(stats.lastDomCommit.nodeCount)} nodes Â· ${stats.lastDomCommit.source || "dom"}` : "pending", status: stats.lastDomCommit?.nodeCount ? "ok" : "neutral" },
+    { label: "Last commit", value: stats.lastDomCommit?.nodeCount != null ? `${formatCount(stats.lastDomCommit.nodeCount)} nodes · ${stats.lastDomCommit.source || "dom"}` : "pending", status: stats.lastDomCommit?.nodeCount ? "ok" : "neutral" },
     { label: "DOM capture", value: webExplorerProofMs(proof.domCaptureElapsedMs || stats.lastDomCommit?.captureElapsedMs), status: proof.domCaptureElapsedMs || stats.lastDomCommit?.captureElapsedMs ? "ok" : "neutral" },
     { label: "Rust commit", value: webExplorerProofUs(proof.rustCommitElapsedUs || stats.lastDomCommit?.rustCommitElapsedUs), status: proof.rustCommitElapsedUs || stats.lastDomCommit?.rustCommitElapsedUs ? "ok" : "neutral" },
     { label: "Analysis IPC", value: webExplorerProofMs(stats.lastAnalysisMs), status: stats.lastAnalysisMs ? "ok" : "neutral" },
     { label: "Analysis core", value: webExplorerProofUs(proof.analysisElapsedUs), status: proof.analysisElapsedUs ? "ok" : "neutral" },
     { label: "Visible nodes", value: stats.lastAnalysisVisibleCount ? `${formatCount(stats.lastAnalysisVisibleCount)} / ${formatCount(stats.lastAnalysisNodeCount)}` : "pending", status: stats.lastAnalysisVisibleCount ? "ok" : "neutral" },
-    { label: "Blocks", value: stats.lastAnalysisBlockCount ? `${formatCount(stats.lastAnalysisBlockCount)} Â· ${stats.lastPageProfile || "generic"}` : "none", status: stats.lastAnalysisBlockCount ? "ok" : "neutral" },
+    { label: "Blocks", value: stats.lastAnalysisBlockCount ? `${formatCount(stats.lastAnalysisBlockCount)} · ${stats.lastPageProfile || "generic"}` : "none", status: stats.lastAnalysisBlockCount ? "ok" : "neutral" },
     { label: "Clone export", value: stats.lastAutoExportEnabled ? "debug enabled" : "off", status: stats.lastAutoExportEnabled ? "warn" : "ok" },
   ], "Current policy: two idle captures, 1800 node cap, mutation recapture disabled. Deep extraction should move behind explicit /web_extract."));
 
+  const collection = webExplorerCollectionDiagnostics || {};
+  const collectionKernel = collection.kernel || {};
+  const collectionObserve = collection.observe || {};
+  const collectionCommandMap = collection.commandMap || {};
+  const collectionHypotheses = collection.hypothesisSummary || {};
+  const sceneBlocks = Array.isArray(collectionObserve.sceneBlocks) ? collectionObserve.sceneBlocks : [];
+  const commandEntries = Array.isArray(collectionCommandMap.commands) ? collectionCommandMap.commands : [];
+  const kernelStages = Array.isArray(collectionKernel.stageOrder) ? collectionKernel.stageOrder : [];
+  const kernelSurfaces = Array.isArray(collectionKernel.surfaces) ? collectionKernel.surfaces : [];
+  const kernelSectorPacks = Array.isArray(collectionKernel.sectorPacks) ? collectionKernel.sectorPacks : [];
+  alphaProofContent.appendChild(makeProofSection("Collection kernel", [
+    { label: "Kernel proof", value: shortHash(collectionKernel.proofHash, 12, 8), status: collectionKernel.proofHash ? "ok" : "neutral" },
+    { label: "Stages", value: kernelStages.length ? kernelStages.join(" -> ") : "pending", status: kernelStages.length ? "ok" : "neutral" },
+    { label: "Surfaces", value: kernelSurfaces.length ? formatCount(kernelSurfaces.length) : "pending", status: kernelSurfaces.length ? "ok" : "neutral" },
+    { label: "Sector packs", value: kernelSectorPacks.length ? kernelSectorPacks.map((pack) => pack?.id || "?").slice(0, 4).join(" / ") : "pending", status: kernelSectorPacks.length ? "ok" : "neutral" },
+    { label: "Commands", value: Array.isArray(collectionKernel.commands) ? formatCount(collectionKernel.commands.length) : "pending", status: Array.isArray(collectionKernel.commands) && collectionKernel.commands.length ? "ok" : "neutral" },
+    { label: "Contracts", value: Array.isArray(collectionKernel.extractionContracts) ? formatCount(collectionKernel.extractionContracts.length) : "pending", status: Array.isArray(collectionKernel.extractionContracts) && collectionKernel.extractionContracts.length ? "ok" : "neutral" },
+  ], "This is the general Collection OS kernel snapshot, visible from Forge UI without entering the real-estate vertical."));
+  alphaProofContent.appendChild(makeProofSection("Collection OS v2", [
+    { label: "Observe proof", value: shortHash(collectionObserve.proofHash, 12, 8), status: collectionObserve.proofHash ? "ok" : "neutral" },
+    { label: "Observed nodes", value: Array.isArray(collectionObserve.nodes) ? formatCount(collectionObserve.nodes.length) : "pending", status: Array.isArray(collectionObserve.nodes) && collectionObserve.nodes.length ? "ok" : "neutral" },
+    { label: "Scene blocks", value: sceneBlocks.length ? `${formatCount(sceneBlocks.length)} · ${sceneBlocks.slice(0, 3).map((block) => block?.kind || "?").join(" / ")}` : "none yet", status: sceneBlocks.length ? "ok" : "neutral" },
+    { label: "Semantic targets", value: collection.semanticTargetCount ? `${formatCount(collection.semanticTargetCount)} uniques · ${formatCount(commandEntries.length)} commands` : formatCount(commandEntries.length), status: collection.semanticTargetCount || commandEntries.length ? "ok" : "neutral" },
+    { label: "Expert routes", value: Array.isArray(collection.routes) && collection.routes.length ? `${formatCount(collection.routes.length)} · ${collection.routeSummary || "mixed"}` : "pending", status: Array.isArray(collection.routes) && collection.routes.length ? "ok" : "neutral" },
+    { label: "Ambiguities", value: collectionHypotheses.total ? `${formatCount(collectionHypotheses.ambiguous || 0)} ambiguous · ${formatCount(collectionHypotheses.total || 0)} sets` : "none measured", status: collectionHypotheses.ambiguous ? "warn" : collectionHypotheses.total ? "ok" : "neutral" },
+    { label: "Collection IPC", value: collection.elapsedMs ? `${Number(collection.elapsedMs).toFixed(1)} ms` : "pending", status: collection.elapsedMs ? "ok" : "neutral" },
+  ], collection.lastError || "The native WebView tree is promoted into Collection OS memory, scene blocks, semantic targets and ambiguity warnings before extraction or action replay."));
+
   alphaProofContent.appendChild(makeProofSection("KASM / Atlas reuse", [
-    { label: "Analysis cache", value: `${proof.analysisCacheHit ? "hit" : "miss"} Â· ${formatCount(proof.analysisCacheHits || 0)} hits / ${formatCount(proof.analysisCacheMisses || 0)} misses`, status: proof.analysisCacheHit ? "ok" : "neutral" },
-    { label: "Cache budget", value: `${formatCount(proof.analysisCacheEntries || 0)} / ${formatCount(proof.analysisCacheMaxEntries || 0)} entries Â· ${formatBytes(proof.analysisCacheEstimatedBytes || 0)} / ${formatBytes(proof.analysisCacheMaxBytes || 0)}`, status: proof.analysisCacheEntries <= proof.analysisCacheMaxEntries ? "ok" : "warn" },
+    { label: "Analysis cache", value: `${proof.analysisCacheHit ? "hit" : "miss"} · ${formatCount(proof.analysisCacheHits || 0)} hits / ${formatCount(proof.analysisCacheMisses || 0)} misses`, status: proof.analysisCacheHit ? "ok" : "neutral" },
+    { label: "Cache budget", value: `${formatCount(proof.analysisCacheEntries || 0)} / ${formatCount(proof.analysisCacheMaxEntries || 0)} entries · ${formatBytes(proof.analysisCacheEstimatedBytes || 0)} / ${formatBytes(proof.analysisCacheMaxBytes || 0)}`, status: proof.analysisCacheEntries <= proof.analysisCacheMaxEntries ? "ok" : "warn" },
     { label: "Evictions", value: formatCount(proof.analysisCacheEvictions || 0), status: proof.analysisCacheEvictions ? "ok" : "neutral" },
-    { label: "Atlas cache", value: proof.atlasCacheChecked ? `${proof.atlasCacheHit ? "hit" : "miss"} Â· ${formatCount(proof.atlasCacheHits || 0)} hits / ${formatCount(proof.atlasCacheMisses || 0)} misses` : "backend not warm yet", status: proof.atlasCacheHit ? "ok" : "neutral" },
-    { label: "KASM jobs", value: `${formatCount(proof.kasmJobsExecuted || 0)} executed Â· ${formatCount(proof.kasmJobsAvoided || 0)} avoided`, status: proof.kasmJobsAvoided ? "ok" : "neutral" },
-    { label: "Classifier", value: `${formatCount(proof.classifierKasmExecuted || 0)} executed Â· ${formatCount(proof.classifierKasmAvoided || 0)} avoided Â· ${formatCount(proof.classifierCacheEntries || 0)} cached`, status: proof.classifierKasmAvoided ? "ok" : "neutral" },
+    { label: "Atlas cache", value: proof.atlasCacheChecked ? `${proof.atlasCacheHit ? "hit" : "miss"} · ${formatCount(proof.atlasCacheHits || 0)} hits / ${formatCount(proof.atlasCacheMisses || 0)} misses` : "backend not warm yet", status: proof.atlasCacheHit ? "ok" : "neutral" },
+    { label: "KASM jobs", value: `${formatCount(proof.kasmJobsExecuted || 0)} executed · ${formatCount(proof.kasmJobsAvoided || 0)} avoided`, status: proof.kasmJobsAvoided ? "ok" : "neutral" },
+    { label: "Classifier", value: `${formatCount(proof.classifierKasmExecuted || 0)} executed · ${formatCount(proof.classifierKasmAvoided || 0)} avoided · ${formatCount(proof.classifierCacheEntries || 0)} cached`, status: proof.classifierKasmAvoided ? "ok" : "neutral" },
     { label: "Cache key", value: shortHash(proof.treeHash || stats.lastTreeHash || snapshot.treeHash || "", 12, 8), status: proof.treeHash || stats.lastTreeHash || snapshot.treeHash ? "ok" : "neutral" },
   ], proof.note || "The speed moat is to hash memory trees and cache ranked plans before the LLM sees them."));
 
@@ -8231,12 +9592,12 @@ function renderAlphaProofPanel() {
     { label: "Status", value: job?.status || manifest.status || alphaRunState.phase || "idle", status: String(job?.status || manifest.status).includes("completed") ? "ok" : "neutral" },
     { label: "Strategy hash", value: shortHash(manifest.strategy_hash || alphaRunState.report?.strategy_hash), status: manifest.strategy_hash || alphaRunState.report?.strategy_hash ? "ok" : "neutral" },
     { label: "Bars", value: formatCount(manifest.bars || job?.bars || alphaDocState.candles.length), status: manifest.bars || alphaDocState.candles.length ? "ok" : "neutral" },
-    { label: "Holdout", value: manifest.holdout?.target_hit_pct != null ? `${Number(manifest.holdout.target_hit_pct).toFixed(1)}% Â· ${formatCount(manifest.holdout.trades)} trades` : "pending", status: manifest.holdout ? "ok" : "neutral" },
+    { label: "Holdout", value: manifest.holdout?.target_hit_pct != null ? `${Number(manifest.holdout.target_hit_pct).toFixed(1)}% · ${formatCount(manifest.holdout.trades)} trades` : "pending", status: manifest.holdout ? "ok" : "neutral" },
   ], "These values are read from the persisted result manifest, not from the visible transcript text."));
 
   alphaProofContent.appendChild(makeProofSection("Artifacts", [
-    { label: "Manifest", value: `${formatBytes(manifest.manifest_bytes)} Â· ${shortHash(manifest.manifest_path, 16, 12)}`, status: selectedForgeJobManifest ? "ok" : "neutral" },
-    { label: "Full log", value: `${formatBytes(manifest.log_bytes || alphaForgeLogs.join("\n").length)} Â· not sent to LLM`, status: "ok" },
+    { label: "Manifest", value: `${formatBytes(manifest.manifest_bytes)} · ${shortHash(manifest.manifest_path, 16, 12)}`, status: selectedForgeJobManifest ? "ok" : "neutral" },
+    { label: "Full log", value: `${formatBytes(manifest.log_bytes || alphaForgeLogs.join("\n").length)} · not sent to LLM`, status: "ok" },
     { label: "MCP result", value: manifest?.mcp_result?.available ? "available to agent" : "not injected", status: manifest?.mcp_result?.available ? "ok" : "neutral" },
     { label: "Agent", value: (manifest.agents || job?.agents || [])[0]?.name || "unknown", status: (manifest.agents || job?.agents || []).length ? "ok" : "neutral" },
   ], "The agent can receive a compact reference instead of raw CSV/log payloads."));
@@ -8264,26 +9625,26 @@ function renderAlphaProofPanel() {
       { label: "Candidates", value: compute.candidates_evaluated != null ? formatCount(compute.candidates_evaluated) : formatCount(compute.metric_count), status: compute.candidates_evaluated != null || compute.metric_count != null ? "ok" : "neutral" },
       { label: "Combinations", value: compute.combinations_tried != null ? formatCount(compute.combinations_tried) : compute.operations_unit || "metric invocations", status: compute.combinations_tried != null ? "ok" : "neutral" },
       { label: "Cache hits", value: compute.cache_hits?.total != null ? formatCount(compute.cache_hits.total) : formatCount(compute.cache_hit_count), status: (compute.cache_hits?.total || compute.cache_hit_count) ? "ok" : "neutral" },
-      { label: "GPU dispatch", value: compute.gpu_jobs_dispatched != null ? `${formatCount(compute.gpu_jobs_dispatched)} dispatched Â· ${formatCount(compute.gpu_jobs_skipped_by_cache)} skipped` : "not applicable", status: compute.gpu_jobs_dispatched ? "ok" : "neutral" },
+      { label: "GPU dispatch", value: compute.gpu_jobs_dispatched != null ? `${formatCount(compute.gpu_jobs_dispatched)} dispatched · ${formatCount(compute.gpu_jobs_skipped_by_cache)} skipped` : "not applicable", status: compute.gpu_jobs_dispatched ? "ok" : "neutral" },
       { label: "Elapsed", value: compute.elapsed_ms != null ? `${Number(compute.elapsed_ms).toFixed(3)} ms` : "see live logs", status: compute.elapsed_ms != null ? "ok" : "neutral" },
     ], compute.note || "These are Forge executor counters, not invented token equivalents."));
   }
 
   alphaProofContent.appendChild(makeProofSection("Visual mapping", [
-    { label: "Contract", value: visualMapping.available ? `${visualMapping.version || "forge.visual_mapping.v1"} Â· ${visualMapping.kind || "linked result view"}` : "not exported yet", status: visualMapping.available ? "ok" : "neutral" },
+    { label: "Contract", value: visualMapping.available ? `${visualMapping.version || "forge.visual_mapping.v1"} · ${visualMapping.kind || "linked result view"}` : "not exported yet", status: visualMapping.available ? "ok" : "neutral" },
     { label: "Views", value: visualMapping.viewCount ? `${formatCount(visualMapping.viewCount)} mapped view${visualMapping.viewCount === 1 ? "" : "s"}` : "pending", status: visualMapping.viewCount ? "ok" : "neutral" },
     { label: "3D files", value: visualMapping.artifactCount ? `${formatCount(visualMapping.artifactCount)} downloadable .ply refs` : "none", status: visualMapping.artifactCount ? "ok" : "neutral" },
     { label: "Mapping hash", value: shortHash(visualMapping.hash), status: visualMapping.hash ? "ok" : "neutral" },
     { label: "Mapping file", value: shortHash(visualMapping.path, 18, 14), status: visualMapping.path ? "ok" : "neutral" },
-    { label: "3D index", value: visualMapping.indexHash ? `${shortHash(visualMapping.indexHash)} Â· ${shortHash(visualMapping.indexPath, 16, 12)}` : shortHash(visualMapping.indexPath, 16, 12), status: visualMapping.indexPath ? "ok" : "neutral" },
+    { label: "3D index", value: visualMapping.indexHash ? `${shortHash(visualMapping.indexHash)} · ${shortHash(visualMapping.indexPath, 16, 12)}` : shortHash(visualMapping.indexPath, 16, 12), status: visualMapping.indexPath ? "ok" : "neutral" },
   ], "The map is tied to compute artifacts by hash. Agents should attach/import these references, not paste point clouds, metrics or proofs into chat."));
 
   const selection = alpha3dSelectionSummary?.();
   if (selection) {
     alphaProofContent.appendChild(makeProofSection("3D selection", [
       { label: "Mode", value: selection.mode, status: "ok" },
-      { label: "Vertex", value: `#${formatCount(selection.vertex_index)}${selection.point_index != null ? ` Â· point #${formatCount(selection.point_index)}` : ""}`, status: "ok" },
-      { label: "Bar/cell", value: selection.bar_index != null ? `bar #${formatCount(selection.bar_index)}${selection.role ? ` Â· ${selection.role}` : ""}` : selection.cell || "not mapped", status: selection.bar_index != null || selection.cell ? "ok" : "neutral" },
+      { label: "Vertex", value: `#${formatCount(selection.vertex_index)}${selection.point_index != null ? ` · point #${formatCount(selection.point_index)}` : ""}`, status: "ok" },
+      { label: "Bar/cell", value: selection.bar_index != null ? `bar #${formatCount(selection.bar_index)}${selection.role ? ` · ${selection.role}` : ""}` : selection.cell || "not mapped", status: selection.bar_index != null || selection.cell ? "ok" : "neutral" },
       { label: "World", value: selection.world ? `${selection.world.map((v) => Number(v).toFixed(3)).join(", ")}` : "pending", status: selection.world ? "ok" : "neutral" },
       { label: "Artifact", value: selection.artifact_hash ? shortHash(selection.artifact_hash) : "preview only", status: selection.artifact_hash ? "ok" : "neutral" },
       { label: "Mapping", value: selection.mapping_hash ? shortHash(selection.mapping_hash) : shortHash(selection.mapping_path, 16, 12), status: selection.mapping_hash || selection.mapping_path ? "ok" : "neutral" },
@@ -8420,19 +9781,17 @@ function appendCanvasChatMessage(role, text, meta = {}) {
   }
   alphaCanvasChatMessages.push(message);
   trimArrayInPlace(alphaCanvasChatMessages, 80);
-  const shouldVoiceSync = role === "assistant" && !meta?.attachmentOnly && forgeVoiceSettings().autoSpeak;
+  const shouldVoiceSync = role === "assistant"
+    && !meta?.attachmentOnly
+    && !meta?.streaming
+    && forgeVoiceSettings().autoSpeak;
   startCanvasAssistantTyping(message, { pauseUntilVoice: shouldVoiceSync, voiceSync: shouldVoiceSync });
   saveAlphaCanvasSessionState();
   alphaCanvasChatVersion += 1;
   alphaLogRenderedVersion = -1;
-  // Once a conversation has started, retire the rotating prompt suggestions â€”
+  // Once a conversation has started, retire the rotating prompt suggestions —
   // the user is now talking to the LLM, not browsing examples.
-  if (typeof stopCanvasChatPlaceholderAnimation === "function") {
-    stopCanvasChatPlaceholderAnimation();
-  }
-  if (typeof clearAllCanvasChatPlaceholders === "function") {
-    clearAllCanvasChatPlaceholders();
-  }
+  stopAndClearCanvasChatPlaceholders();
   syncAlphaDropSurface?.();
   scheduleAlphaRender();
   if (shouldVoiceSync) {
@@ -8441,9 +9800,133 @@ function appendCanvasChatMessage(role, text, meta = {}) {
       onFail: () => releaseCanvasAssistantTyping(message),
     });
   }
-  if (role === "assistant") {
+  if (role === "assistant" && !meta?.streaming) {
     void ensureAssistantSpatialMentions(message);
   }
+  return message;
+}
+
+function findCanvasAssistantMessageByTurn(turnId, runtime = "") {
+  const turnKey = String(turnId || "").trim();
+  const runtimeKey = String(runtime || "").trim().toLowerCase();
+  if (!turnKey) return null;
+  for (let i = alphaCanvasChatMessages.length - 1; i >= 0; i -= 1) {
+    const message = alphaCanvasChatMessages[i];
+    if (message.role !== "assistant") continue;
+    if (message.meta?.agentNarration) continue;
+    if (String(message.meta?.turnId || "").trim() !== turnKey) continue;
+    const messageRuntime = String(message.meta?.runtime || "").trim().toLowerCase();
+    if (runtimeKey && messageRuntime && messageRuntime !== runtimeKey) continue;
+    return message;
+  }
+  return null;
+}
+
+function stripCanvasLoopNarrationPrefix(turnId, text = "") {
+  const turnKey = String(turnId || "").trim();
+  let output = String(text || "");
+  if (!turnKey || !output.trim()) return output;
+  const narrations = alphaCanvasChatMessages
+    .filter((entry) => (
+      entry.role === "assistant"
+      && entry.meta?.agentNarration
+      && String(entry.meta?.turnId || "").trim() === turnKey
+    ))
+    .map((entry) => String(entry.text || "").trim())
+    .filter(Boolean);
+  for (const narration of narrations) {
+    if (output.trim() === narration) return "";
+    if (output.startsWith(narration)) {
+      output = output.slice(narration.length).replace(/^\s+/, "");
+    }
+  }
+  return output;
+}
+
+function canvasTurnHasAgentLoop(turnId) {
+  const turnKey = String(turnId || "").trim();
+  return !!turnKey && alphaCanvasChatMessages.some((entry) => (
+    String(entry.meta?.turnId || "").trim() === turnKey
+    && (entry.meta?.agentNarration || entry.meta?.agentToolEvent)
+  ));
+}
+
+function removeCanvasPendingAssistant(runtime = "") {
+  const runtimeKey = String(runtime || "").trim().toLowerCase();
+  if (!runtimeKey) return;
+  const before = forgeCanvasChatPendingAssistants.length;
+  forgeCanvasChatPendingAssistants = forgeCanvasChatPendingAssistants.filter((target) => (
+    String(target?.runtime || "").trim().toLowerCase() !== runtimeKey
+  ));
+  if (forgeCanvasChatPendingAssistants.length === before) return;
+  alphaCanvasPendingVersion += 1;
+  alphaLogRenderedVersion = -1;
+  scheduleAlphaRender();
+  if (forgeCanvasChatPendingAssistants.length) startCanvasThinkingRotation();
+  else stopCanvasThinkingRotation();
+}
+
+function upsertCanvasStreamingAssistant(payload) {
+  const turnId = String(payload?.turnId || "").trim();
+  if (!turnId) return null;
+  const data = payload?.data || {};
+  const runtime = String(data.runtime || "codex").trim().toLowerCase() || "codex";
+  const agentLabel = canvasChatTargetLabel(runtime);
+  const delta = String(data.delta || "");
+  const content = String(data.content || "");
+  const displayContent = stripCanvasLoopNarrationPrefix(turnId, content || delta);
+  let message = findCanvasAssistantMessageByTurn(turnId, runtime);
+  if (!message) {
+    const seedText = redactCanvasSecrets(displayContent);
+    if (!seedText.trim()) return null;
+    removeCanvasPendingAssistant(runtime);
+    return appendCanvasChatMessage("assistant", seedText, {
+      turnId,
+      agentLabel,
+      runtime,
+      streaming: true,
+      loopStreaming: canvasTurnHasAgentLoop(turnId),
+      skipTyping: true,
+    });
+  }
+  const nextText = redactCanvasSecrets(displayContent || `${String(message.text || "")}${delta}`);
+  if (!nextText.trim()) return message;
+  message.text = nextText;
+  message.meta = {
+    ...(message.meta || {}),
+    turnId,
+    agentLabel,
+    runtime,
+    streaming: true,
+    loopStreaming: message.meta?.loopStreaming || canvasTurnHasAgentLoop(turnId),
+    skipTyping: true,
+  };
+  alphaCanvasChatVersion += 1;
+  alphaLogRenderedVersion = -1;
+  scheduleAlphaRender();
+  scrollAlphaTranscriptToLive?.({ smooth: false, force: true });
+  return message;
+}
+
+function finalizeCanvasStreamingAssistant(turnId, runtime, text, meta = {}) {
+  const message = findCanvasAssistantMessageByTurn(turnId, runtime);
+  if (!message) return null;
+  const finalText = redactCanvasSecrets(stripCanvasLoopNarrationPrefix(turnId, String(text || "")));
+  if (finalText.trim()) message.text = finalText.trim();
+  message.meta = {
+    ...(message.meta || {}),
+    ...(meta || {}),
+    turnId,
+    runtime,
+    streaming: false,
+    loopStreaming: message.meta?.loopStreaming || meta?.loopStreaming || canvasTurnHasAgentLoop(turnId),
+    skipTyping: true,
+  };
+  saveAlphaCanvasSessionState();
+  alphaCanvasChatVersion += 1;
+  alphaLogRenderedVersion = -1;
+  scheduleAlphaRender();
+  void ensureAssistantSpatialMentions(message);
   return message;
 }
 
@@ -8493,6 +9976,201 @@ function forgeToolResultProgramHash(summary) {
     result?.program_hash,
     result?.programHash
   );
+}
+
+function queueCanvasTurnUiToolEvent(turnId, label, tool) {
+  const key = String(turnId || "").trim();
+  const text = String(label || "").trim();
+  if (!key || !text) return;
+  const existingMessage = alphaCanvasChatMessages.find((message) => (
+    message.role === "assistant" && String(message.meta?.turnId || "") === key
+  ));
+  if (existingMessage) {
+    existingMessage.meta = existingMessage.meta || {};
+    const messageEvents = Array.isArray(existingMessage.meta.toolEvents)
+      ? existingMessage.meta.toolEvents
+      : [];
+    if (!messageEvents.some((event) => String(event?.label || "") === text)) {
+      existingMessage.meta.toolEvents = messageEvents.concat({
+        tool: tool || "real_estate_ui_action",
+        label: text,
+        status: "ok",
+      });
+      alphaCanvasChatVersion += 1;
+      scheduleAlphaRender?.();
+    }
+    return;
+  }
+  const events = canvasTurnUiToolEvents.get(key) || [];
+  if (!events.some((event) => String(event?.label || "") === text)) {
+    events.push({
+      tool: tool || "real_estate_ui_action",
+      label: text,
+      status: "ok",
+    });
+  }
+  canvasTurnUiToolEvents.set(key, events.slice(-4));
+}
+
+function takeCanvasTurnUiToolEvents(turnId) {
+  const key = String(turnId || "").trim();
+  if (!key) return [];
+  const events = canvasTurnUiToolEvents.get(key) || [];
+  canvasTurnUiToolEvents.delete(key);
+  return events;
+}
+
+function applyRealEstateAgencyUiAction(action = {}, result = {}) {
+  const kind = String(action?.kind || "").trim();
+  const contact = action?.contact || result?.contact || {};
+  const profile = agencyProfileFromContact(contact, action?.agencyName || action?.query || "");
+  if (kind === "set_app_header") {
+    return applyRealEstateAgencyProfile(profile || agencyProfileFromContact({}, action?.agencyName || action?.query || ""));
+  }
+  if (kind === "set_profile_agency") {
+    return applyRealEstateAgencyProfile(profile);
+  }
+  if (kind === "open_google_earth") {
+    const earthProfile = profile || agencyProfileFromContact({}, action?.query || "");
+    if (earthProfile && action?.query) {
+      earthProfile.earthQuery = String(action.query || "").trim();
+    }
+    bindAgencyEarthToCurrentSession();
+    applyRealEstateAgencyProfile(earthProfile);
+    realEstateAgencyEarthAllowed = true;
+    scheduleAgencyEarthNativeSync({ forceReload: true });
+    return true;
+  }
+  if (kind === "agency_earth_act_code") {
+    const actCode = String(action?.actCode || action?.code || "").trim();
+    if (!actCode || !forgeTauri?.invoke) return false;
+    void forgeTauri.invoke("agency_earth_act_code", {
+      actCode,
+      value: action?.value == null ? null : String(action.value),
+      dryRun: action?.dryRun == null ? false : !!action.dryRun,
+    }, {
+      section: "real-estate",
+      requiresActiveSection: true,
+      timeoutMs: 12000,
+      dedupeKey: `agency-earth-act-code:${actCode}`,
+    }).then((result) => {
+      alphaTrace?.("agency.earth.act_code.ok", {
+        actCode,
+        dryRun: !!result?.dryRun,
+        ok: !!result?.ok,
+        action: result?.action || "",
+        target: result?.target?.semanticTargetKey || result?.target?.label || "",
+      });
+    }).catch((err) => {
+      console.warn("[real-estate] agency earth ActCode / MCP failed", err);
+      alphaTrace?.("agency.earth.act_code.error", {
+        actCode,
+        error: String(err?.message || err || "unknown"),
+      });
+    });
+    return true;
+  }
+  if (kind === "start_agency_web_research") {
+    if (forgeTauri?.invoke) {
+      void forgeTauri.invoke("agency_web_research_start", {
+        contact: contact || {},
+      }, {
+        section: "real-estate",
+        requiresActiveSection: true,
+        timeoutMs: 45000,
+        dedupeKey: `agency-web-research:${String(profile?.name || action?.query || "").trim()}`,
+      }).then((report) => {
+        realEstateAgencyWebResearchReport = report || null;
+        alphaProofRenderedKey = "";
+        setAlphaRightPanelMode("agency-web", { skipRender: true });
+        if (!alphaProofPanelOpen) setAlphaProofPanelOpen(true);
+        else renderAlphaRightPanel();
+        alphaTrace?.("agency.web_research.ok", {
+          atlas: String(report?.atlasHash || "").slice(0, 18),
+          pages: Number(report?.pageCount || 0),
+          listings: Number(report?.listingCount || 0),
+          photos: Number(report?.photoCount || 0),
+          elapsedMs: Number(report?.elapsedMs || 0),
+          webgpu: !!report?.webgpuKernelRun?.ok,
+          cache: Array.isArray(report?.pages)
+            ? report.pages.filter((page) => page?.cacheHit).length
+            : 0,
+        });
+      }).catch((err) => {
+        console.warn("[real-estate] agency web research failed", err);
+        alphaTrace?.("agency.web_research.error", {
+          error: String(err?.message || err || "unknown"),
+        });
+      });
+    }
+    alphaTrace?.("agency.web_research.planned", {
+      query: String(action?.query || profile?.name || "").trim(),
+      website: String(profile?.website || "").trim(),
+    });
+    return true;
+  }
+  return false;
+}
+
+function applyRealEstateOnboardingBridgeUi(bridge = {}, turnId = "") {
+  const tool = String(bridge?.realEstateOnboardingTool || "").trim();
+  const status = String(bridge?.realEstateOnboardingStatus || "").trim();
+  const result = bridge?.realEstateOnboardingResult || {};
+  if (!tool || !result || typeof result !== "object") return;
+  if (result?.state) {
+    realEstateOnboardingState = result.state;
+  }
+  if (tool === "resolve_agency") {
+    realEstateIdentityConfirmationPending = status === "resolved";
+    realEstateAgencyEarthAllowed = false;
+    realEstateAgencyWebResearchReport = null;
+    agencyEarthSessionJobId = "";
+    syncRealEstateAgencyIdentityFromState(realEstateOnboardingState || result?.state || null);
+    syncAlphaDropSurface?.();
+    return;
+  }
+  if (tool === "confirm_agency") {
+    const actions = Array.isArray(bridge?.realEstateUiActions)
+      ? bridge.realEstateUiActions
+      : (Array.isArray(result?.uiActions) ? result.uiActions : []);
+    let profileTouched = false;
+    let earthOpened = false;
+    let earthActed = false;
+    let webResearchStarted = false;
+    for (const action of actions) {
+      const kind = String(action?.kind || "").trim();
+      const applied = applyRealEstateAgencyUiAction(action, result);
+      profileTouched = profileTouched || (applied && (kind === "set_app_header" || kind === "set_profile_agency"));
+      earthOpened = earthOpened || (applied && kind === "open_google_earth");
+      earthActed = earthActed || (applied && kind === "agency_earth_act_code");
+      webResearchStarted = webResearchStarted || (applied && kind === "start_agency_web_research");
+    }
+    if (status === "confirmed") {
+      realEstateIdentityConfirmationPending = false;
+      realEstateAgencyEarthAllowed = profileTouched || earthOpened;
+    } else {
+      realEstateIdentityConfirmationPending = false;
+      realEstateAgencyEarthAllowed = false;
+      agencyEarthSessionJobId = "";
+      realEstateAgencyProfile = null;
+    }
+    if (profileTouched) {
+      queueCanvasTurnUiToolEvent(turnId, "a modifié le profil", "real_estate_profile_updated");
+    }
+    if (earthOpened) {
+      queueCanvasTurnUiToolEvent(turnId, "utilise Google Earth", "real_estate_google_earth_opened");
+    }
+    if (earthActed) {
+      queueCanvasTurnUiToolEvent(turnId, "utilise Google Earth", "real_estate_google_earth_act_code");
+    }
+    if (webResearchStarted) {
+      queueCanvasTurnUiToolEvent(turnId, "fais des recherches web", "real_estate_agency_web_research");
+    }
+    if (profileTouched || earthOpened || status !== "confirmed") {
+      syncRealEstateAgencyIdentityFromState(realEstateOnboardingState || result?.state || null);
+    }
+    syncAlphaDropSurface?.();
+  }
 }
 
 function canvasLiveComputeFinal(status) {
@@ -8796,7 +10474,7 @@ async function notifyCanvasAgentOfCompletedForgeJob(state, manifest = null) {
         turnId: `${state.turnId || "forge-compute"}-done`,
       },
     }, { section: "canvas-assistant", timeoutMs: 120000 });
-    appendCanvasChatMessage("assistant", response?.assistantMessage || "Le calcul Forge est terminÃ©.", {
+    appendCanvasChatMessage("assistant", response?.assistantMessage || "Le calcul Forge est terminé.", {
       turnId: `${state.turnId || "forge-compute"}-done`,
       sessionJobId: currentAlphaSessionJobId() || "",
       agentLabel: canvasChatTargetLabel(state.runtime || forgeCanvasChatTargetMode),
@@ -8918,6 +10596,38 @@ async function applyForgeToolResultToUi(payload) {
     );
     await refreshProgramsRegistry?.();
   }
+  if (tool === "forge_real_estate_confirm_agency") {
+    const result = summary?.result || {};
+    if (result?.state) {
+      realEstateOnboardingState = result.state;
+    }
+    const actions = Array.isArray(result?.uiActions) ? result.uiActions : [];
+    let profileTouched = false;
+    let earthOpened = false;
+    let earthActed = false;
+    let webResearchStarted = false;
+    for (const action of actions) {
+      const kind = String(action?.kind || "").trim();
+      const applied = applyRealEstateAgencyUiAction(action, result);
+      profileTouched = profileTouched || (applied && (kind === "set_app_header" || kind === "set_profile_agency"));
+      earthOpened = earthOpened || (applied && kind === "open_google_earth");
+      earthActed = earthActed || (applied && kind === "agency_earth_act_code");
+      webResearchStarted = webResearchStarted || (applied && kind === "start_agency_web_research");
+    }
+    if (profileTouched) {
+      queueCanvasTurnUiToolEvent(payload?.turnId || "", "a modifi\u00e9 le profil", "real_estate_profile_updated");
+    }
+    if (earthOpened) {
+      queueCanvasTurnUiToolEvent(payload?.turnId || "", "utilise Google Earth", "real_estate_google_earth_opened");
+    }
+    if (earthActed) {
+      queueCanvasTurnUiToolEvent(payload?.turnId || "", "utilise Google Earth", "real_estate_google_earth_act_code");
+    }
+    if (webResearchStarted) {
+      queueCanvasTurnUiToolEvent(payload?.turnId || "", "fais des recherches web", "real_estate_agency_web_research");
+    }
+    syncAlphaDropSurface?.();
+  }
 }
 
 function canvasEventToolName(payload) {
@@ -8937,7 +10647,7 @@ function canvasEventTransport(payload) {
   if (explicit && !(stage === "codex_event" && /codex cli/i.test(explicit))) return explicit;
   if (stage === "gemini_cli" || stage === "gemini_event") return "Gemini CLI";
   if (stage === "claude_cli" || stage === "claude_event") return "Claude Code CLI";
-  if (stage === "codex_event" || stage === "codex_bridge") return "Codex app-server";
+  if (stage === "codex_event" || stage === "codex_bridge") return "Codex OAuth direct";
   if (stage.startsWith("forge_tool")) return "Forge dynamic tools";
   return "";
 }
@@ -8945,7 +10655,7 @@ function canvasEventTransport(payload) {
 function canvasRuntimeToolName(runtime) {
   if (runtime === "gemini") return "gemini_cli";
   if (runtime === "claude") return "claude_cli";
-  return "codex_app_server";
+  return "codex_oauth_direct";
 }
 
 function isCanvasEventError(payload, message) {
@@ -8974,13 +10684,19 @@ function compactCanvasToolLabels(events) {
     let label = "";
     if (tool === "forge_run_program") label = "Forge run";
     else if (tool === "forge_create_program") label = "Program saved";
-    else if (tool === "backend_direct") label = "Backend direct";
+    else if (tool === "backend_direct") label = "";
     else if (tool === "semantic_cache") label = "Local cache";
     else if (tool === "thread_compaction") label = event?.label || "Context compacted";
-    else if (tool === "token_usage") label = event?.label || "";
+    else if (tool === "token_usage") label = "";
+    else if (tool === "real_estate_profile_updated") label = event?.label || "a modifi\u00e9 le profil";
+    else if (tool === "real_estate_google_earth_opened") label = event?.label || "utilise Google Earth";
+    else if (tool === "real_estate_agency_web_research") label = event?.label || "fais des recherches web";
+    else if (tool === "google_places_search") label = event?.label || "recherches sur le web";
+    else if (tool === "forge_real_estate_confirm_agency") label = event?.label || "a modifi\u00e9 le profil";
+    else if (tool === "real_estate_privacy_guard" || tool === "real_estate_onboarding") label = "";
     else if (tool === "gemini_cli") label = status && status !== "ok" ? status : "Gemini CLI";
     else if (tool === "claude_cli") label = status && status !== "ok" ? status : "Claude Code CLI";
-    else if (tool === "codex_app_server") label = status && status !== "ok" ? status : "Codex app-server";
+    else if (tool === "codex_oauth_direct") label = status && status !== "ok" ? status : "Codex OAuth direct";
     else if (status && status !== "ok" && status !== "not_attempted") label = status;
     if (label && !labels.includes(label)) labels.push(label);
   }
@@ -8996,6 +10712,212 @@ function codexBridgeUsageSummary(bridge) {
   const fresh = Math.max(0, input - cached);
   if (!input && !cached && !output) return null;
   return { input, cached, fresh, output };
+}
+
+function codexBridgeTemplateSelectionSource(bridge) {
+  const value = String(
+    bridge?.templateSelectionSource
+      || bridge?.templateSelection?.selectionSource
+      || "",
+  ).trim();
+  if (!value) return "";
+  if (value === "local_router") return "local";
+  if (value === "oauth_selector") return "oauth";
+  return value;
+}
+
+function codexBridgeTemplateId(bridge) {
+  return String(
+    bridge?.templateId
+      || bridge?.templateSelection?.templateId
+      || bridge?.templateSelection?.template_id
+      || "",
+  ).trim();
+}
+
+function codexBridgeTemplateCode(bridge) {
+  return String(
+    bridge?.templateCode
+      || bridge?.templateSelection?.templateCode
+      || bridge?.templateSelection?.template_code
+      || "",
+  ).trim();
+}
+
+function codexBridgeSynthesisCompaction(bridge) {
+  const before = Number(bridge?.synthesisPayloadBytesBefore ?? 0);
+  const after = Number(bridge?.synthesisPayloadBytesAfter ?? 0);
+  const saved = Number(bridge?.synthesisPayloadBytesSaved ?? Math.max(0, before - after));
+  if (!(before > 0) || !(after > 0)) return null;
+  return { before, after, saved };
+}
+
+function canvasTurnLatencyKey(turnId, runtime = "") {
+  return `${String(turnId || "").trim()}::${String(runtime || "").trim().toLowerCase()}`;
+}
+
+function logCanvasLatency(stage, payload = {}) {
+  const event = { stage, ...payload };
+  console.debug("[forge][canvas-latency]", event);
+  void forgeTauri?.debugLog?.("canvas.latency", event);
+}
+
+function compactCanvasLatencyPrompt(text = "") {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  return clean.length > 72 ? `${clean.slice(0, 72)}?` : clean;
+}
+
+function recordCanvasLatencySample(sample) {
+  if (!sample || typeof sample !== "object") return;
+  canvasLatencySamples.unshift({
+    ...sample,
+    recordedAt: new Date().toISOString(),
+  });
+  trimArrayInPlace(canvasLatencySamples, 24);
+}
+
+function canvasLatencySnapshot() {
+  return canvasLatencySamples.map((sample) => ({ ...sample }));
+}
+
+function canvasLatencySummaryLines() {
+  if (!canvasLatencySamples.length) return ["samples=0"];
+  const localHits = canvasLatencySamples.filter((sample) => sample.templateSelectionSource === "local").length;
+  const oauthHits = canvasLatencySamples.filter((sample) => sample.templateSelectionSource === "oauth").length;
+  const freeform = canvasLatencySamples.filter((sample) => !sample.templateSelectionSource).length;
+  return [
+    `samples=${canvasLatencySamples.length} local_router_hits=${localHits} oauth_selector_hits=${oauthHits} freeform=${freeform}`,
+    ...canvasLatencySamples.map((sample, index) => {
+    const ttft = sample.firstDeltaMs == null ? "-" : `${sample.firstDeltaMs}ms`;
+    const total = sample.totalMs == null ? "-" : `${sample.totalMs}ms`;
+    const tokens = sample.inputTokens == null
+      ? "tok=-"
+      : `tok=${sample.inputTokens}${sample.cachedInputTokens ? ` cached=${sample.cachedInputTokens}` : ""}`;
+    const mode = sample.directChatMode ? "direct" : (sample.toolsEnabled ? "tools" : "chat");
+    const route = sample.templateSelectionSource ? ` route=${sample.templateSelectionSource}` : "";
+    const template = sample.templateCode
+      ? ` template=${sample.templateCode}${sample.templateId ? `(${sample.templateId})` : ""}`
+      : (sample.templateId ? ` template=${sample.templateId}` : "");
+    const compact = sample.synthesisBytesBefore > 0 && sample.synthesisBytesAfter > 0
+      ? ` cmp=${sample.synthesisBytesBefore}->${sample.synthesisBytesAfter}(-${sample.synthesisBytesSaved || Math.max(0, sample.synthesisBytesBefore - sample.synthesisBytesAfter)})`
+      : "";
+    const bridge = sample.bridgeFirstDeltaMs != null
+      ? ` bridge=prep:${sample.payloadReadyMs || 0}ms headers:${sample.headersMs || 0}ms first:${sample.bridgeFirstDeltaMs}ms`
+      : "";
+    const prompt = sample.promptPreview || "";
+    return `#${index + 1} ${sample.runtime} ${mode}${route}${template}${compact} ttft=${ttft} total=${total}${bridge} ${tokens} ${prompt}`;
+  })];
+}
+
+function canvasLatencySummaryString() {
+  return canvasLatencySummaryLines().join("\n");
+}
+
+window.__forgeCanvasLatencySnapshot = canvasLatencySnapshot;
+window.__forgeCanvasLatencySummary = canvasLatencySummaryString;
+
+function isForgeTimeoutError(err) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return /\btimed out\b/i.test(message);
+}
+
+function beginCanvasTurnLatency(turnId, runtime, message = "") {
+  const turnKey = String(turnId || "").trim();
+  const runtimeKey = String(runtime || "").trim().toLowerCase();
+  if (!turnKey || !runtimeKey) return;
+  canvasTurnLatency.set(canvasTurnLatencyKey(turnKey, runtimeKey), {
+    turnId: turnKey,
+    runtime: runtimeKey,
+    submitAt: Date.now(),
+    firstDeltaAt: 0,
+    finalAt: 0,
+    messageChars: String(message || "").length,
+    promptPreview: compactCanvasLatencyPrompt(message),
+  });
+}
+
+function applyCanvasTurnLatencyRuntimeFallback(payload) {
+  const turnId = String(payload?.turnId || "").trim();
+  const data = payload?.data || {};
+  const requested = String(data.requestedRuntime || "").trim().toLowerCase();
+  const fallback = String(data.fallbackRuntime || data.runtime || "").trim().toLowerCase();
+  if (!turnId || !requested || !fallback || requested === fallback) return;
+  const requestedKey = canvasTurnLatencyKey(turnId, requested);
+  const entry = canvasTurnLatency.get(requestedKey);
+  if (!entry) return;
+  canvasTurnLatency.delete(requestedKey);
+  entry.runtime = fallback;
+  canvasTurnLatency.set(canvasTurnLatencyKey(turnId, fallback), entry);
+}
+
+function noteCanvasTurnFirstDelta(turnId, runtime) {
+  const entry = canvasTurnLatency.get(canvasTurnLatencyKey(turnId, runtime));
+  if (!entry || entry.firstDeltaAt) return entry || null;
+  entry.firstDeltaAt = Date.now();
+  logCanvasLatency("first_delta", {
+    turnId: entry.turnId,
+    runtime: entry.runtime,
+    firstDeltaMs: Math.max(0, entry.firstDeltaAt - entry.submitAt),
+    messageChars: entry.messageChars,
+  });
+  return entry;
+}
+
+function dropCanvasTurnLatency(turnId, runtime) {
+  const key = canvasTurnLatencyKey(turnId, runtime);
+  canvasTurnLatency.delete(key);
+}
+
+function dropAllCanvasTurnLatency(turnId) {
+  const turnKey = String(turnId || "").trim();
+  if (!turnKey) return;
+  for (const key of [...canvasTurnLatency.keys()]) {
+    if (key.startsWith(`${turnKey}::`)) canvasTurnLatency.delete(key);
+  }
+}
+
+function finalizeCanvasTurnLatency(turnId, runtime, bridge = null, requestedRuntime = runtime) {
+  const exactKey = canvasTurnLatencyKey(turnId, runtime);
+  const requestedKey = canvasTurnLatencyKey(turnId, requestedRuntime);
+  const entry = canvasTurnLatency.get(exactKey) || canvasTurnLatency.get(requestedKey);
+  if (!entry) return null;
+  entry.finalAt = Date.now();
+  const usage = codexBridgeUsageSummary(bridge);
+  const compaction = codexBridgeSynthesisCompaction(bridge);
+  const metrics = {
+    turnId: entry.turnId,
+    runtime: String(runtime || entry.runtime || "").trim().toLowerCase(),
+    submitAt: entry.submitAt,
+    firstDeltaMs: entry.firstDeltaAt ? Math.max(0, entry.firstDeltaAt - entry.submitAt) : null,
+    totalMs: Math.max(0, entry.finalAt - entry.submitAt),
+    messageChars: entry.messageChars,
+    promptPreview: entry.promptPreview || "",
+    directChatMode: !!bridge?.directChatMode,
+    toolsEnabled: bridge?.toolsEnabled === true,
+    inputTokens: usage?.input ?? null,
+    cachedInputTokens: usage?.cached ?? null,
+    outputTokens: usage?.output ?? null,
+    bridgeMode: String(bridge?.mode || "").trim(),
+    payloadReadyMs: Number.isFinite(Number(bridge?.payloadReadyMs)) ? Number(bridge.payloadReadyMs) : null,
+    headersMs: Number.isFinite(Number(bridge?.headersMs)) ? Number(bridge.headersMs) : null,
+    bridgeHeadersMs: Number.isFinite(Number(bridge?.bridgeHeadersMs)) ? Number(bridge.bridgeHeadersMs) : null,
+    bridgeFirstDeltaMs: Number.isFinite(Number(bridge?.firstDeltaMs)) ? Number(bridge.firstDeltaMs) : null,
+    bridgeTotalMs: Number.isFinite(Number(bridge?.totalMs)) ? Number(bridge.totalMs) : null,
+    reasoningEffort: String(bridge?.reasoningEffort || "").trim(),
+    textVerbosity: String(bridge?.textVerbosity || "").trim(),
+    templateSelectionSource: codexBridgeTemplateSelectionSource(bridge),
+    templateId: codexBridgeTemplateId(bridge),
+    templateCode: codexBridgeTemplateCode(bridge),
+    synthesisBytesBefore: compaction?.before ?? null,
+    synthesisBytesAfter: compaction?.after ?? null,
+    synthesisBytesSaved: compaction?.saved ?? null,
+  };
+  canvasTurnLatency.delete(exactKey);
+  if (requestedKey !== exactKey) canvasTurnLatency.delete(requestedKey);
+  recordCanvasLatencySample(metrics);
+  logCanvasLatency("final", metrics);
+  return metrics;
 }
 
 function canvasChatStoredTargetMode() {
@@ -9103,15 +11025,15 @@ const CANVAS_REASONING_EFFORTS = Object.freeze([
 
 const CANVAS_MODEL_PRESETS = Object.freeze({
   codex: ["gpt-5.3-codex", "gpt-5.5", "gpt-5.4"],
-  gemini: ["gemini-3-pro", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
-  claude: ["claude-code-default", "opus", "sonnet", "haiku"],
+  gemini: ["gemini-3-pro"],
+  claude: ["claude-sonnet-4.6", "claude-opus-4.6"],
 });
 
 /**
  * Returns the set of providers the user has currently activated via the
  * provider toggle buttons. Reads directly from the DOM so it always
  * matches what the user sees lit up. Falls back to ["codex"] if nothing
- * is active (the click handler enforces â‰¥1 active, but be defensive).
+ * is active (the click handler enforces ≥1 active, but be defensive).
  */
 function activeCanvasChatTargets() {
   const order = ["codex", "gemini", "claude"];
@@ -9202,10 +11124,9 @@ function shortCanvasModelLabel(model) {
   if (lower === "gpt-5.3-codex") return "GPT 5.3";
   if (lower === "gpt-5.5") return "GPT 5.5";
   if (lower === "gpt-5.4") return "GPT 5.4";
-  if (lower === "claude-code-default") return "Default";
-  if (lower === "opus") return "Opus 4.7";
-  if (lower === "sonnet") return "Sonnet 4.6";
-  if (lower === "haiku") return "Haiku 4.5";
+  if (lower === "claude-code-default") return "Sonnet 4.6";
+  if (lower === "opus" || lower === "claude-opus-4.6") return "Opus 4.6";
+  if (lower === "sonnet" || lower === "claude-sonnet-4.6") return "Sonnet 4.6";
   if (lower.startsWith("gemini-")) {
     return raw
       .replace(/^gemini-/i, "Gemini ")
@@ -9219,7 +11140,7 @@ function shortCanvasModelLabel(model) {
 
 function canvasChatTargetModelLabel(mode = forgeCanvasChatTargetMode) {
   return canvasRuntimeListForMode(mode)
-    .map((runtime) => `${canvasChatTargetLabel(runtime)} ${selectedCanvasModelRef(runtime)} Â· ${canvasReasoningEffortLabel(runtime)}`)
+    .map((runtime) => `${canvasChatTargetLabel(runtime)} ${selectedCanvasModelRef(runtime)} · ${canvasReasoningEffortLabel(runtime)}`)
     .join(" + ");
 }
 
@@ -9228,7 +11149,7 @@ function canvasChatModelPillLabel(mode = forgeCanvasChatTargetMode) {
   if (runtimes.length > 1) {
     const efforts = runtimes.map((runtime) => selectedCanvasReasoningEffort(runtime));
     const sharedEffort = efforts.every((effort) => effort === efforts[0]);
-    return sharedEffort ? `All Â· ${canvasReasoningEffortLabel(runtimes[0])}` : "All Â· custom";
+    return sharedEffort ? `All · ${canvasReasoningEffortLabel(runtimes[0])}` : "All · custom";
   }
   const runtime = runtimes[0] || "codex";
   return `${shortCanvasModelLabel(selectedCanvasModelRef(runtime))} ${canvasReasoningEffortLabel(runtime)}`;
@@ -9237,7 +11158,7 @@ function canvasChatModelPillLabel(mode = forgeCanvasChatTargetMode) {
 const CANVAS_INLINE_BARREL_ITEM_HEIGHT = 22;
 
 /**
- * Builds the chip's content as two inline scroll-snap "barrels" â€” one
+ * Builds the chip's content as two inline scroll-snap "barrels" — one
  * for the model name, one for the effort. Each barrel is a vertically
  * scrollable div that shows a single line at a time; scrolling snaps
  * to the next/previous item. Returns an HTML string injected via
@@ -9251,7 +11172,7 @@ const CANVAS_INLINE_BARREL_ITEM_HEIGHT = 22;
 function canvasChatModelChipHtml(runtime) {
   const modelLabel = shortCanvasModelLabel(selectedCanvasModelRef(runtime));
   const effortLabel = canvasReasoningEffortLabel(runtime);
-  // Flip glyph: a small chevron stack (â–²â–¼) that hints "this cycles".
+  // Flip glyph: a small chevron stack (▲▼) that hints "this cycles".
   // Left flip cycles the model field, right flip cycles the effort.
   const flipSvg = `<svg viewBox="0 0 12 12" aria-hidden="true">`
     + `<path d="M3.5 4.7 6 2.4l2.5 2.3"/>`
@@ -9286,7 +11207,7 @@ function applyBarrelCylinderCurve(barrelEl) {
   const centerY = barrelEl.scrollTop + barrelEl.clientHeight / 2;
   items.forEach((item, idx) => {
     const itemCenter = idx * itemH + itemH / 2;
-    const dist = (itemCenter - centerY) / itemH; // 0 = centre, Â±1 = next, Â±2 = farther
+    const dist = (itemCenter - centerY) / itemH; // 0 = centre, ±1 = next, ±2 = farther
     const clamped = Math.max(-3, Math.min(3, dist));
     const rotate = clamped * 22; // degrees
     const scale = Math.max(0.62, 1 - Math.abs(clamped) * 0.12);
@@ -9396,7 +11317,7 @@ function attachAllInlineBarrels(scope = document) {
 
 /**
  * Populates the chip with [flip][model][effort][flip]. The chip is
- * cheap enough to fully rebuild on every refresh â€” there's no scroll
+ * cheap enough to fully rebuild on every refresh — there's no scroll
  * state to preserve. The flip icons are wired via event delegation
  * on the chip's parent (anchor).
  */
@@ -9457,7 +11378,7 @@ function syncCanvasChatModelLabel() {
     return;
   }
 
-  // Multi mode â€” hide the single button. Reuse existing chips when the
+  // Multi mode — hide the single button. Reuse existing chips when the
   // active-provider structure is unchanged (just refresh their text).
   // Rebuild only when providers were added/removed/reordered.
   forgeCanvasChatModelLabel.style.display = "none";
@@ -9475,13 +11396,13 @@ function syncCanvasChatModelLabel() {
     });
     return;
   }
-  // Structure changed â€” wipe and rebuild.
+  // Structure changed — wipe and rebuild.
   anchor.querySelectorAll(".canvas-chat-model-chip, .canvas-chat-model-sep").forEach((el) => el.remove());
   runtimes.forEach((runtime, idx) => {
     if (idx > 0) {
       const sep = document.createElement("span");
       sep.className = "canvas-chat-model-sep";
-      sep.textContent = "Â·";
+      sep.textContent = "·";
       sep.setAttribute("aria-hidden", "true");
       anchor.insertBefore(sep, forgeCanvasChatModelMenu);
     }
@@ -9510,8 +11431,8 @@ function setCanvasModelMenuOpen(open) {
   }
 }
 
-// â”€â”€ Barrel picker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Two vertical scroll-snap wheels â€” left = model, right = effort. The
+// ── Barrel picker ────────────────────────────────────────────────
+// Two vertical scroll-snap wheels — left = model, right = effort. The
 // centred row of each wheel is the live selection; selection commits
 // as soon as the wheel snaps, persists to localStorage, and (best
 // effort) is forwarded to the live CLI wrapper.
@@ -9582,7 +11503,7 @@ async function refreshRuntimeModelCatalog(runtime) {
       }
     }
   } catch (_) {
-    // Backend handler missing â€” keep using the hardcoded presets.
+    // Backend handler missing — keep using the hardcoded presets.
   }
 }
 
@@ -9692,7 +11613,7 @@ function renderCanvasModelMenu() {
   if (!forgeCanvasChatModelMenu) return;
   forgeCanvasChatModelMenu.innerHTML = "";
   // Show ALL three providers in the tabbar regardless of which are
-  // currently active in the chat bar â€” the user may want to configure
+  // currently active in the chat bar — the user may want to configure
   // model/effort for any LLM independently of toggling its activation.
   const allRuntimes = ["codex", "gemini", "claude"];
   const activeSet = new Set(canvasRuntimeListForMode());
@@ -9795,18 +11716,18 @@ function setCanvasChatTargetMode(mode, activeOverride = null) {
   // out of the flex row so the visible ones split the bar evenly.
   if (forgeCanvasChatInput) {
     forgeCanvasChatInput.hidden = !hasCodex;
-    forgeCanvasChatInput.disabled = alphaCanvasChatBusy || !hasCodex;
+    forgeCanvasChatInput.disabled = !hasCodex;
   }
   if (forgeCanvasChatGeminiInput) {
     forgeCanvasChatGeminiInput.hidden = !hasGemini;
-    forgeCanvasChatGeminiInput.disabled = alphaCanvasChatBusy || !hasGemini;
+    forgeCanvasChatGeminiInput.disabled = !hasGemini;
   }
   if (forgeCanvasChatClaudeInput) {
     forgeCanvasChatClaudeInput.hidden = !hasClaude;
-    forgeCanvasChatClaudeInput.disabled = alphaCanvasChatBusy || !hasClaude;
+    forgeCanvasChatClaudeInput.disabled = !hasClaude;
   }
   // Dividers sit between adjacent visible inputs. The HTML order is
-  // codex â†’ divider1 â†’ gemini â†’ divider2 â†’ claude. With flex layout,
+  // codex → divider1 → gemini → divider2 → claude. With flex layout,
   // hidden inputs collapse, so we just need each divider visible iff
   // there are visible inputs on both sides of its position.
   if (forgeCanvasChatPromptDivider) {
@@ -9904,7 +11825,7 @@ function primaryCanvasChatText() {
 }
 
 /**
- * Concatenation of all currently visible inputs â€” used to decide whether
+ * Concatenation of all currently visible inputs — used to decide whether
  * there is text to send and to render the user bubble in the chat log.
  */
 function currentCanvasChatText() {
@@ -10004,14 +11925,23 @@ function primaryCanvasComposerInput() {
   }
   const single = activeSinglePlaceholderInput();
   if (single && !single.hidden && !single.disabled) return single;
-  return [forgeCanvasChatInput, forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput]
+  return forgeCanvasChatPrimaryInputs
     .find((input) => input && !input.hidden && !input.disabled) || null;
 }
 
 function clearCanvasChatComposerInputs() {
-  if (forgeCanvasChatInput) forgeCanvasChatInput.value = "";
-  if (forgeCanvasChatGeminiInput) forgeCanvasChatGeminiInput.value = "";
-  if (forgeCanvasChatClaudeInput) forgeCanvasChatClaudeInput.value = "";
+  for (const input of forgeCanvasChatPrimaryInputs) {
+    if (input) input.value = "";
+  }
+}
+
+function stopAndClearCanvasChatPlaceholders() {
+  if (typeof stopCanvasChatPlaceholderAnimation === "function") {
+    stopCanvasChatPlaceholderAnimation();
+  }
+  if (typeof clearAllCanvasChatPlaceholders === "function") {
+    clearAllCanvasChatPlaceholders();
+  }
 }
 
 function askPlanetGeonodeWithRuntime(item) {
@@ -10033,7 +11963,7 @@ function normalizedCanvasMicroText(text) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[â€™']/g, " ")
+    .replace(/[’']/g, " ")
     .replace(/[^\p{Letter}\p{Number}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -10048,7 +11978,7 @@ function lastCanvasAssistantNeedsConfirmation() {
     const message = alphaCanvasChatMessages[i];
     if (message?.role !== "assistant") continue;
     const text = String(message.text || "").trim();
-    return /[?ï¼Ÿ]\s*$/.test(text);
+    return /[?？]\s*$/.test(text);
   }
   return false;
 }
@@ -10056,7 +11986,7 @@ function lastCanvasAssistantNeedsConfirmation() {
 const CANVAS_MICRO_CONFIRMATIONS = new Set([
   "ok", "okay", "oui", "yes", "yep", "yeah", "d accord", "ca marche", "c est bon", "vas y", "go",
   "si", "vale", "ja", "jawohl", "klar", "oui vas y", "yes go", "sim", "certo", "va bene",
-  "da", "Ð´Ð°", "tak", "ano", "evet", "Ù†Ø¹Ù…", "×›×Ÿ", "æ˜¯", "ã¯ã„", "ë„¤", "à¤¹à¤¾à¤", "ya",
+  "da", "да", "tak", "ano", "evet", "نعم", "כן", "是", "はい", "네", "हाँ", "ya",
 ]);
 
 const CANVAS_MICRO_LANGUAGE_PACKS = [
@@ -10071,11 +12001,11 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     decline: ["no", "not now", "never mind"],
     bye: ["bye", "goodbye", "see you", "see you later"],
     replies: {
-      greeting: "Hello, Iâ€™m here.",
-      wellbeing: "Iâ€™m good. Iâ€™m ready in the session.",
-      presence: "Yes, Iâ€™m here.",
-      ping: "Iâ€™m responding.",
-      thanks: "Youâ€™re welcome.",
+      greeting: "Hello, I’m here.",
+      wellbeing: "I’m good. I’m ready in the session.",
+      presence: "Yes, I’m here.",
+      ping: "I’m responding.",
+      thanks: "You’re welcome.",
       praise: "Great.",
       ack: "OK.",
       decline: "Understood.",
@@ -10086,22 +12016,22 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     greeting: ["salut", "coucou", "bonjour", "bonsoir", "yo"],
     wellbeing: ["ca va", "comment ca va", "tu vas bien", "ca roule", "tout va bien"],
     presence: ["tu es la", "t es la", "vous etes la", "tu m entends", "tu me vois", "ca fonctionne", "ca marche encore"],
-    ping: ["test", "ping", "check", "allo", "allÃ´"],
+    ping: ["test", "ping", "check", "allo", "allô"],
     thanks: ["merci", "merci beaucoup"],
     praise: ["parfait", "super", "top", "nickel", "excellent", "bravo"],
     ack: ["ok", "okay", "oui", "d accord", "ca marche", "c est bon"],
     decline: ["non", "pas maintenant", "laisse tomber"],
     bye: ["bye", "au revoir", "a plus", "a bientot", "bonne journee", "bonne soiree"],
     replies: {
-      greeting: "Bonjour, je suis lÃ .",
-      wellbeing: "Oui, Ã§a va. Je suis prÃªt Ã  travailler dans cette session.",
-      presence: "Oui, je suis lÃ .",
-      ping: "Je rÃ©ponds.",
+      greeting: "",
+      wellbeing: "Oui, ça va. Je suis prêt à travailler dans cette session.",
+      presence: "",
+      ping: "Je réponds.",
       thanks: "Avec plaisir.",
       praise: "Parfait.",
       ack: "OK.",
       decline: "Compris.",
-      bye: "Ã€ bientÃ´t.",
+      bye: "À bientôt.",
     },
   },
   {
@@ -10115,9 +12045,9 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     decline: ["no", "ahora no", "dejalo"],
     bye: ["adios", "hasta luego", "hasta pronto"],
     replies: {
-      greeting: "Hola, estoy aquÃ­.",
-      wellbeing: "Todo bien. Estoy listo en la sesiÃ³n.",
-      presence: "SÃ­, estoy aquÃ­.",
+      greeting: "Hola, estoy aquí.",
+      wellbeing: "Todo bien. Estoy listo en la sesión.",
+      presence: "Sí, estoy aquí.",
       ping: "Respondo.",
       thanks: "Con gusto.",
       praise: "Perfecto.",
@@ -10145,7 +12075,7 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
       praise: "Perfekt.",
       ack: "OK.",
       decline: "Verstanden.",
-      bye: "Bis spÃ¤ter.",
+      bye: "Bis später.",
     },
   },
   {
@@ -10161,7 +12091,7 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     replies: {
       greeting: "Ciao, sono qui.",
       wellbeing: "Tutto bene. Sono pronto nella sessione.",
-      presence: "SÃ¬, sono qui.",
+      presence: "Sì, sono qui.",
       ping: "Rispondo.",
       thanks: "Prego.",
       praise: "Perfetto.",
@@ -10171,7 +12101,7 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     },
   },
   {
-    greeting: ["ola", "olÃ¡", "oi", "bom dia", "boa tarde", "boa noite"],
+    greeting: ["ola", "olá", "oi", "bom dia", "boa tarde", "boa noite"],
     wellbeing: ["tudo bem", "como vai", "como estas", "como voce esta"],
     presence: ["estas ai", "voce esta ai", "me ouve", "funciona"],
     ping: ["teste", "ping"],
@@ -10181,15 +12111,15 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     decline: ["nao", "agora nao", "deixa pra la"],
     bye: ["tchau", "ate logo", "ate mais"],
     replies: {
-      greeting: "OlÃ¡, estou aqui.",
-      wellbeing: "Tudo bem. Estou pronto na sessÃ£o.",
+      greeting: "Olá, estou aqui.",
+      wellbeing: "Tudo bem. Estou pronto na sessão.",
       presence: "Sim, estou aqui.",
       ping: "Estou respondendo.",
       thanks: "De nada.",
       praise: "Perfeito.",
       ack: "OK.",
       decline: "Entendido.",
-      bye: "AtÃ© logo.",
+      bye: "Até logo.",
     },
   },
   {
@@ -10215,65 +12145,65 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     },
   },
   {
-    greeting: ["Ð¿Ñ€Ð¸Ð²ÐµÑ‚", "Ð·Ð´Ñ€Ð°Ð²ÑÑ‚Ð²ÑƒÐ¹Ñ‚Ðµ", "Ð´Ð¾Ð±Ñ€Ñ‹Ð¹ Ð´ÐµÐ½ÑŒ", "Ð´Ð¾Ð±Ñ€Ð¾Ðµ ÑƒÑ‚Ñ€Ð¾", "Ð´Ð¾Ð±Ñ€Ñ‹Ð¹ Ð²ÐµÑ‡ÐµÑ€"],
-    wellbeing: ["ÐºÐ°Ðº Ð´ÐµÐ»Ð°", "ÐºÐ°Ðº Ñ‚Ñ‹", "Ð²ÑÐµ Ñ…Ð¾Ñ€Ð¾ÑˆÐ¾"],
-    presence: ["Ñ‚Ñ‹ Ð·Ð´ÐµÑÑŒ", "Ñ‚Ñ‹ Ð¼ÐµÐ½Ñ ÑÐ»Ñ‹ÑˆÐ¸ÑˆÑŒ", "Ñ€Ð°Ð±Ð¾Ñ‚Ð°ÐµÑ‚"],
-    ping: ["Ñ‚ÐµÑÑ‚", "Ð¿Ð¸Ð½Ð³"],
-    thanks: ["ÑÐ¿Ð°ÑÐ¸Ð±Ð¾", "Ð±Ð¾Ð»ÑŒÑˆÐ¾Ðµ ÑÐ¿Ð°ÑÐ¸Ð±Ð¾"],
-    praise: ["Ð¾Ñ‚Ð»Ð¸Ñ‡Ð½Ð¾", "ÑÑƒÐ¿ÐµÑ€", "Ð¸Ð´ÐµÐ°Ð»ÑŒÐ½Ð¾"],
-    ack: ["Ð¾Ðº", "Ð´Ð°", "Ð¿Ð¾Ð½ÑÐ»"],
-    decline: ["Ð½ÐµÑ‚", "Ð½Ðµ ÑÐµÐ¹Ñ‡Ð°Ñ"],
-    bye: ["Ð¿Ð¾ÐºÐ°", "Ð´Ð¾ ÑÐ²Ð¸Ð´Ð°Ð½Ð¸Ñ", "Ð´Ð¾ Ð²ÑÑ‚Ñ€ÐµÑ‡Ð¸"],
+    greeting: ["привет", "здравствуйте", "добрый день", "доброе утро", "добрый вечер"],
+    wellbeing: ["как дела", "как ты", "все хорошо"],
+    presence: ["ты здесь", "ты меня слышишь", "работает"],
+    ping: ["тест", "пинг"],
+    thanks: ["спасибо", "большое спасибо"],
+    praise: ["отлично", "супер", "идеально"],
+    ack: ["ок", "да", "понял"],
+    decline: ["нет", "не сейчас"],
+    bye: ["пока", "до свидания", "до встречи"],
     replies: {
-      greeting: "ÐŸÑ€Ð¸Ð²ÐµÑ‚, Ñ Ð·Ð´ÐµÑÑŒ.",
-      wellbeing: "Ð’ÑÐµ Ñ…Ð¾Ñ€Ð¾ÑˆÐ¾. Ð¯ Ð³Ð¾Ñ‚Ð¾Ð² Ð² ÑÑ‚Ð¾Ð¹ ÑÐµÑÑÐ¸Ð¸.",
-      presence: "Ð”Ð°, Ñ Ð·Ð´ÐµÑÑŒ.",
-      ping: "ÐžÑ‚Ð²ÐµÑ‡Ð°ÑŽ.",
-      thanks: "ÐŸÐ¾Ð¶Ð°Ð»ÑƒÐ¹ÑÑ‚Ð°.",
-      praise: "ÐžÑ‚Ð»Ð¸Ñ‡Ð½Ð¾.",
+      greeting: "Привет, я здесь.",
+      wellbeing: "Все хорошо. Я готов в этой сессии.",
+      presence: "Да, я здесь.",
+      ping: "Отвечаю.",
+      thanks: "Пожалуйста.",
+      praise: "Отлично.",
       ack: "OK.",
-      decline: "ÐŸÐ¾Ð½ÑÐ».",
-      bye: "Ð”Ð¾ Ð²ÑÑ‚Ñ€ÐµÑ‡Ð¸.",
+      decline: "Понял.",
+      bye: "До встречи.",
     },
   },
   {
-    greeting: ["Ð¿Ñ€Ð¸Ð²Ñ–Ñ‚", "Ð´Ð¾Ð±Ñ€Ð¸Ð¹ Ð´ÐµÐ½ÑŒ", "Ð´Ð¾Ð±Ñ€Ð¾Ð³Ð¾ Ñ€Ð°Ð½ÐºÑƒ", "Ð´Ð¾Ð±Ñ€Ð¸Ð¹ Ð²ÐµÑ‡Ñ–Ñ€"],
-    wellbeing: ["ÑÐº ÑÐ¿Ñ€Ð°Ð²Ð¸", "ÑÐº Ñ‚Ð¸", "Ð²ÑÐµ Ð´Ð¾Ð±Ñ€Ðµ"],
-    presence: ["Ñ‚Ð¸ Ñ‚ÑƒÑ‚", "Ñ‚Ð¸ Ð¼ÐµÐ½Ðµ Ñ‡ÑƒÑ”Ñˆ", "Ð¿Ñ€Ð°Ñ†ÑŽÑ”"],
-    ping: ["Ñ‚ÐµÑÑ‚", "Ð¿Ñ–Ð½Ð³"],
-    thanks: ["Ð´ÑÐºÑƒÑŽ", "Ð´ÑƒÐ¶Ðµ Ð´ÑÐºÑƒÑŽ"],
-    praise: ["Ñ‡ÑƒÐ´Ð¾Ð²Ð¾", "ÑÑƒÐ¿ÐµÑ€", "Ð²Ñ–Ð´Ð¼Ñ–Ð½Ð½Ð¾"],
-    ack: ["Ð¾Ðº", "Ñ‚Ð°Ðº", "Ð·Ñ€Ð¾Ð·ÑƒÐ¼Ñ–Ð»Ð¾"],
-    decline: ["Ð½Ñ–", "Ð½Ðµ Ð·Ð°Ñ€Ð°Ð·"],
-    bye: ["Ð±ÑƒÐ²Ð°Ð¹", "Ð´Ð¾ Ð¿Ð¾Ð±Ð°Ñ‡ÐµÐ½Ð½Ñ"],
+    greeting: ["привіт", "добрий день", "доброго ранку", "добрий вечір"],
+    wellbeing: ["як справи", "як ти", "все добре"],
+    presence: ["ти тут", "ти мене чуєш", "працює"],
+    ping: ["тест", "пінг"],
+    thanks: ["дякую", "дуже дякую"],
+    praise: ["чудово", "супер", "відмінно"],
+    ack: ["ок", "так", "зрозуміло"],
+    decline: ["ні", "не зараз"],
+    bye: ["бувай", "до побачення"],
     replies: {
-      greeting: "ÐŸÑ€Ð¸Ð²Ñ–Ñ‚, Ñ Ñ‚ÑƒÑ‚.",
-      wellbeing: "Ð’ÑÐµ Ð´Ð¾Ð±Ñ€Ðµ. Ð¯ Ð³Ð¾Ñ‚Ð¾Ð²Ð¸Ð¹ Ñƒ Ñ†Ñ–Ð¹ ÑÐµÑÑ–Ñ—.",
-      presence: "Ð¢Ð°Ðº, Ñ Ñ‚ÑƒÑ‚.",
-      ping: "Ð’Ñ–Ð´Ð¿Ð¾Ð²Ñ–Ð´Ð°ÑŽ.",
-      thanks: "Ð‘ÑƒÐ´ÑŒ Ð»Ð°ÑÐºÐ°.",
-      praise: "Ð§ÑƒÐ´Ð¾Ð²Ð¾.",
+      greeting: "Привіт, я тут.",
+      wellbeing: "Все добре. Я готовий у цій сесії.",
+      presence: "Так, я тут.",
+      ping: "Відповідаю.",
+      thanks: "Будь ласка.",
+      praise: "Чудово.",
       ack: "OK.",
-      decline: "Ð—Ñ€Ð¾Ð·ÑƒÐ¼Ñ–Ð»Ð¾.",
-      bye: "Ð”Ð¾ Ð·ÑƒÑÑ‚Ñ€Ñ–Ñ‡Ñ–.",
+      decline: "Зрозуміло.",
+      bye: "До зустрічі.",
     },
   },
   {
-    greeting: ["czesc", "czeÅ›Ä‡", "dzien dobry", "dzieÅ„ dobry", "dobry wieczor"],
+    greeting: ["czesc", "cześć", "dzien dobry", "dzień dobry", "dobry wieczor"],
     wellbeing: ["jak sie masz", "jak leci", "wszystko dobrze"],
     presence: ["jestes tam", "slyszysz mnie", "dziala"],
     ping: ["test", "ping"],
-    thanks: ["dzieki", "dziÄ™ki", "dziekuje", "dziÄ™kujÄ™"],
+    thanks: ["dzieki", "dzięki", "dziekuje", "dziękuję"],
     praise: ["super", "idealnie", "doskonale"],
     ack: ["ok", "tak", "rozumiem"],
     decline: ["nie", "nie teraz"],
     bye: ["pa", "do widzenia", "do zobaczenia"],
     replies: {
-      greeting: "CzeÅ›Ä‡, jestem tutaj.",
+      greeting: "Cześć, jestem tutaj.",
       wellbeing: "Wszystko dobrze. Jestem gotowy w sesji.",
       presence: "Tak, jestem tutaj.",
       ping: "Odpowiadam.",
-      thanks: "ProszÄ™.",
+      thanks: "Proszę.",
       praise: "Super.",
       ack: "OK.",
       decline: "Rozumiem.",
@@ -10281,24 +12211,24 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     },
   },
   {
-    greeting: ["hej", "hallo", "god morgon", "god kvÃ¤ll", "hei", "god morgen", "god kveld", "moi", "terve"],
+    greeting: ["hej", "hallo", "god morgon", "god kväll", "hei", "god morgen", "god kveld", "moi", "terve"],
     wellbeing: ["hur mar du", "hvordan gar det", "hvordan har du det", "miten menee", "kaikki hyvin"],
     presence: ["ar du dar", "er du der", "oletko siella", "hor du mig", "kuuluuko"],
     ping: ["test", "ping"],
     thanks: ["tack", "tusen takk", "kiitos"],
     praise: ["perfekt", "super", "bra", "hienoa"],
-    ack: ["ok", "ja", "kylla", "selvÃ¤"],
+    ack: ["ok", "ja", "kylla", "selvä"],
     decline: ["nej", "nei", "ei", "inte nu", "ikke na"],
-    bye: ["hej da", "ha det", "vi ses", "nÃ¤kemiin"],
+    bye: ["hej da", "ha det", "vi ses", "näkemiin"],
     replies: {
-      greeting: "Hej, jag Ã¤r hÃ¤r.",
-      wellbeing: "Allt Ã¤r bra. Jag Ã¤r redo i sessionen.",
-      presence: "Ja, jag Ã¤r hÃ¤r.",
+      greeting: "Hej, jag är här.",
+      wellbeing: "Allt är bra. Jag är redo i sessionen.",
+      presence: "Ja, jag är här.",
       ping: "Jag svarar.",
-      thanks: "VarsÃ¥god.",
+      thanks: "Varsågod.",
       praise: "Perfekt.",
       ack: "OK.",
-      decline: "FÃ¶rstÃ¥tt.",
+      decline: "Förstått.",
       bye: "Vi ses.",
     },
   },
@@ -10313,147 +12243,147 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     decline: ["hayir", "simdi degil"],
     bye: ["gorusuruz", "hosca kal"],
     replies: {
-      greeting: "Merhaba, buradayÄ±m.",
-      wellbeing: "Ä°yiyim. Bu oturumda hazÄ±rÄ±m.",
-      presence: "Evet, buradayÄ±m.",
-      ping: "YanÄ±t veriyorum.",
+      greeting: "Merhaba, buradayım.",
+      wellbeing: "İyiyim. Bu oturumda hazırım.",
+      presence: "Evet, buradayım.",
+      ping: "Yanıt veriyorum.",
       thanks: "Rica ederim.",
       praise: "Harika.",
       ack: "OK.",
-      decline: "AnladÄ±m.",
-      bye: "GÃ¶rÃ¼ÅŸÃ¼rÃ¼z.",
+      decline: "Anladım.",
+      bye: "Görüşürüz.",
     },
   },
   {
-    greeting: ["Ù…Ø±Ø­Ø¨Ø§", "Ø£Ù‡Ù„Ø§", "Ø§Ù‡Ù„Ø§", "Ø§Ù„Ø³Ù„Ø§Ù… Ø¹Ù„ÙŠÙƒÙ…", "Ø³Ù„Ø§Ù…"],
-    wellbeing: ["ÙƒÙŠÙ Ø­Ø§Ù„Ùƒ", "ÙƒÙŠÙÙƒ", "ÙƒÙ„ Ø´ÙŠØ¡ Ø¨Ø®ÙŠØ±"],
-    presence: ["Ù‡Ù„ Ø§Ù†Øª Ù‡Ù†Ø§", "ØªØ³Ù…Ø¹Ù†ÙŠ", "Ù‡Ù„ ÙŠØ¹Ù…Ù„"],
-    ping: ["Ø§Ø®ØªØ¨Ø§Ø±", "Ø¨ÙŠÙ†Øº"],
-    thanks: ["Ø´ÙƒØ±Ø§", "Ø´ÙƒØ±Ø§ Ø¬Ø²ÙŠÙ„Ø§"],
-    praise: ["Ù…Ù…ØªØ§Ø²", "Ø±Ø§Ø¦Ø¹", "ØªÙ…Ø§Ù…"],
-    ack: ["Ù†Ø¹Ù…", "Ø­Ø³Ù†Ø§", "ØªÙ…Ø§Ù…"],
-    decline: ["Ù„Ø§", "Ù„ÙŠØ³ Ø§Ù„Ø§Ù†"],
-    bye: ["ÙˆØ¯Ø§Ø¹Ø§", "Ø§Ù„Ù‰ Ø§Ù„Ù„Ù‚Ø§Ø¡"],
+    greeting: ["مرحبا", "أهلا", "اهلا", "السلام عليكم", "سلام"],
+    wellbeing: ["كيف حالك", "كيفك", "كل شيء بخير"],
+    presence: ["هل انت هنا", "تسمعني", "هل يعمل"],
+    ping: ["اختبار", "بينغ"],
+    thanks: ["شكرا", "شكرا جزيلا"],
+    praise: ["ممتاز", "رائع", "تمام"],
+    ack: ["نعم", "حسنا", "تمام"],
+    decline: ["لا", "ليس الان"],
+    bye: ["وداعا", "الى اللقاء"],
     replies: {
-      greeting: "Ù…Ø±Ø­Ø¨Ù‹Ø§ØŒ Ø£Ù†Ø§ Ù‡Ù†Ø§.",
-      wellbeing: "Ø£Ù†Ø§ Ø¨Ø®ÙŠØ±. Ø£Ù†Ø§ Ø¬Ø§Ù‡Ø² ÙÙŠ Ø§Ù„Ø¬Ù„Ø³Ø©.",
-      presence: "Ù†Ø¹Ù…ØŒ Ø£Ù†Ø§ Ù‡Ù†Ø§.",
-      ping: "Ø£Ù†Ø§ Ø£Ø±Ø¯.",
-      thanks: "Ø¹Ù„Ù‰ Ø§Ù„Ø±Ø­Ø¨.",
-      praise: "Ù…Ù…ØªØ§Ø².",
-      ack: "Ø­Ø³Ù†Ù‹Ø§.",
-      decline: "ÙÙ‡Ù…Øª.",
-      bye: "Ø¥Ù„Ù‰ Ø§Ù„Ù„Ù‚Ø§Ø¡.",
+      greeting: "مرحبًا، أنا هنا.",
+      wellbeing: "أنا بخير. أنا جاهز في الجلسة.",
+      presence: "نعم، أنا هنا.",
+      ping: "أنا أرد.",
+      thanks: "على الرحب.",
+      praise: "ممتاز.",
+      ack: "حسنًا.",
+      decline: "فهمت.",
+      bye: "إلى اللقاء.",
     },
   },
   {
-    greeting: ["×©×œ×•×", "×”×™×™", "×‘×•×§×¨ ×˜×•×‘", "×¢×¨×‘ ×˜×•×‘"],
-    wellbeing: ["×ž×” × ×©×ž×¢", "××™×š ×”×•×œ×š", "×”×›×œ ×‘×¡×“×¨"],
-    presence: ["××ª×” ×©×", "××ª ×©×•×ž×¢×ª ××•×ª×™", "×–×” ×¢×•×‘×“"],
-    ping: ["×‘×“×™×§×”", "×¤×™× ×’"],
-    thanks: ["×ª×•×“×”", "×ª×•×“×” ×¨×‘×”"],
-    praise: ["×ž×¢×•×œ×”", "× ×”×“×¨", "×ž×¦×•×™×Ÿ"],
-    ack: ["ok", "×›×Ÿ", "×‘×¡×“×¨", "×”×‘× ×ª×™"],
-    decline: ["×œ×", "×œ× ×¢×›×©×™×•"],
-    bye: ["×‘×™×™", "×œ×”×ª×¨××•×ª"],
+    greeting: ["שלום", "היי", "בוקר טוב", "ערב טוב"],
+    wellbeing: ["מה נשמע", "איך הולך", "הכל בסדר"],
+    presence: ["אתה שם", "את שומעת אותי", "זה עובד"],
+    ping: ["בדיקה", "פינג"],
+    thanks: ["תודה", "תודה רבה"],
+    praise: ["מעולה", "נהדר", "מצוין"],
+    ack: ["ok", "כן", "בסדר", "הבנתי"],
+    decline: ["לא", "לא עכשיו"],
+    bye: ["ביי", "להתראות"],
     replies: {
-      greeting: "×©×œ×•×, ×× ×™ ×›××Ÿ.",
-      wellbeing: "×”×›×œ ×˜×•×‘. ×× ×™ ×ž×•×›×Ÿ ×‘×¡×©×Ÿ.",
-      presence: "×›×Ÿ, ×× ×™ ×›××Ÿ.",
-      ping: "×× ×™ ×¢×•× ×”.",
-      thanks: "×‘×©×ž×—×”.",
-      praise: "×ž×¢×•×œ×”.",
+      greeting: "שלום, אני כאן.",
+      wellbeing: "הכל טוב. אני מוכן בסשן.",
+      presence: "כן, אני כאן.",
+      ping: "אני עונה.",
+      thanks: "בשמחה.",
+      praise: "מעולה.",
       ack: "OK.",
-      decline: "×”×‘× ×ª×™.",
-      bye: "×œ×”×ª×¨××•×ª.",
+      decline: "הבנתי.",
+      bye: "להתראות.",
     },
   },
   {
-    greeting: ["ä½ å¥½", "æ‚¨å¥½", "å—¨", "æ—©ä¸Šå¥½", "æ™šä¸Šå¥½"],
-    wellbeing: ["ä½ å¥½å—", "æ€Žä¹ˆæ ·", "è¿˜å¥½å—"],
-    presence: ["ä½ åœ¨å—", "å¬å¾—åˆ°å—", "èƒ½çœ‹åˆ°å—", "å¯ä»¥ç”¨å—"],
-    ping: ["æµ‹è¯•", "ping"],
-    thanks: ["è°¢è°¢", "å¤šè°¢"],
-    praise: ["å¾ˆå¥½", "å®Œç¾Ž", "å¤ªå¥½äº†"],
-    ack: ["ok", "å¥½çš„", "æ˜¯", "æ˜Žç™½"],
-    decline: ["ä¸", "çŽ°åœ¨ä¸"],
-    bye: ["å†è§", "å›žå¤´è§"],
+    greeting: ["你好", "您好", "嗨", "早上好", "晚上好"],
+    wellbeing: ["你好吗", "怎么样", "还好吗"],
+    presence: ["你在吗", "听得到吗", "能看到吗", "可以用吗"],
+    ping: ["测试", "ping"],
+    thanks: ["谢谢", "多谢"],
+    praise: ["很好", "完美", "太好了"],
+    ack: ["ok", "好的", "是", "明白"],
+    decline: ["不", "现在不"],
+    bye: ["再见", "回头见"],
     replies: {
-      greeting: "ä½ å¥½ï¼Œæˆ‘åœ¨ã€‚",
-      wellbeing: "æˆ‘å¾ˆå¥½ï¼Œå·²å‡†å¤‡å¥½åœ¨è¿™ä¸ªä¼šè¯ä¸­å·¥ä½œã€‚",
-      presence: "åœ¨çš„ã€‚",
-      ping: "æˆ‘åœ¨å›žåº”ã€‚",
-      thanks: "ä¸å®¢æ°”ã€‚",
-      praise: "å¾ˆå¥½ã€‚",
-      ack: "OKã€‚",
-      decline: "æ˜Žç™½ã€‚",
-      bye: "å†è§ã€‚",
+      greeting: "你好，我在。",
+      wellbeing: "我很好，已准备好在这个会话中工作。",
+      presence: "在的。",
+      ping: "我在回应。",
+      thanks: "不客气。",
+      praise: "很好。",
+      ack: "OK。",
+      decline: "明白。",
+      bye: "再见。",
     },
   },
   {
-    greeting: ["ã“ã‚“ã«ã¡ã¯", "ã“ã‚“ã°ã‚“ã¯", "ãŠã¯ã‚ˆã†", "ã‚‚ã—ã‚‚ã—"],
-    wellbeing: ["å…ƒæ°—ã§ã™ã‹", "èª¿å­ã¯ã©ã†", "å¤§ä¸ˆå¤«ã§ã™ã‹"],
-    presence: ["ã„ã¾ã™ã‹", "èžã“ãˆã¾ã™ã‹", "å‹•ã„ã¦ã¾ã™ã‹"],
-    ping: ["ãƒ†ã‚¹ãƒˆ", "ping"],
-    thanks: ["ã‚ã‚ŠãŒã¨ã†", "ã‚ã‚ŠãŒã¨ã†ã”ã–ã„ã¾ã™"],
-    praise: ["å®Œç’§", "ã™ã”ã„", "ã„ã„ã­"],
-    ack: ["ok", "ã¯ã„", "äº†è§£"],
-    decline: ["ã„ã„ãˆ", "ä»Šã¯ã„ã„"],
-    bye: ["ã•ã‚ˆã†ãªã‚‰", "ã¾ãŸã­"],
+    greeting: ["こんにちは", "こんばんは", "おはよう", "もしもし"],
+    wellbeing: ["元気ですか", "調子はどう", "大丈夫ですか"],
+    presence: ["いますか", "聞こえますか", "動いてますか"],
+    ping: ["テスト", "ping"],
+    thanks: ["ありがとう", "ありがとうございます"],
+    praise: ["完璧", "すごい", "いいね"],
+    ack: ["ok", "はい", "了解"],
+    decline: ["いいえ", "今はいい"],
+    bye: ["さようなら", "またね"],
     replies: {
-      greeting: "ã“ã‚“ã«ã¡ã¯ã€‚ã“ã“ã«ã„ã¾ã™ã€‚",
-      wellbeing: "å…ƒæ°—ã§ã™ã€‚ã“ã®ã‚»ãƒƒã‚·ãƒ§ãƒ³ã§æº–å‚™ã§ãã¦ã„ã¾ã™ã€‚",
-      presence: "ã¯ã„ã€ã„ã¾ã™ã€‚",
-      ping: "å¿œç­”ã—ã¦ã„ã¾ã™ã€‚",
-      thanks: "ã©ã†ã„ãŸã—ã¾ã—ã¦ã€‚",
-      praise: "å®Œç’§ã§ã™ã€‚",
-      ack: "OKã€‚",
-      decline: "äº†è§£ã§ã™ã€‚",
-      bye: "ã¾ãŸã­ã€‚",
+      greeting: "こんにちは。ここにいます。",
+      wellbeing: "元気です。このセッションで準備できています。",
+      presence: "はい、います。",
+      ping: "応答しています。",
+      thanks: "どういたしまして。",
+      praise: "完璧です。",
+      ack: "OK。",
+      decline: "了解です。",
+      bye: "またね。",
     },
   },
   {
-    greeting: ["ì•ˆë…•í•˜ì„¸ìš”", "ì•ˆë…•", "ì—¬ë³´ì„¸ìš”"],
-    wellbeing: ["ìž˜ ì§€ë‚´", "ì–´ë•Œ", "ê´œì°®ì•„"],
-    presence: ["ê±°ê¸° ìžˆì–´", "ë“¤ë ¤", "ìž‘ë™í•´"],
-    ping: ["í…ŒìŠ¤íŠ¸", "í•‘"],
-    thanks: ["ê³ ë§ˆì›Œ", "ê°ì‚¬í•©ë‹ˆë‹¤"],
-    praise: ["ì™„ë²½í•´", "ì¢‹ì•„", "í›Œë¥­í•´"],
-    ack: ["ok", "ë„¤", "ì‘", "ì•Œê² ì–´"],
-    decline: ["ì•„ë‹ˆ", "ì§€ê¸ˆì€ ì•„ë‹ˆì•¼"],
-    bye: ["ì•ˆë…•", "ë˜ ë´ìš”"],
+    greeting: ["안녕하세요", "안녕", "여보세요"],
+    wellbeing: ["잘 지내", "어때", "괜찮아"],
+    presence: ["거기 있어", "들려", "작동해"],
+    ping: ["테스트", "핑"],
+    thanks: ["고마워", "감사합니다"],
+    praise: ["완벽해", "좋아", "훌륭해"],
+    ack: ["ok", "네", "응", "알겠어"],
+    decline: ["아니", "지금은 아니야"],
+    bye: ["안녕", "또 봐요"],
     replies: {
-      greeting: "ì•ˆë…•í•˜ì„¸ìš”, ì—¬ê¸° ìžˆì–´ìš”.",
-      wellbeing: "ì¢‹ì•„ìš”. ì´ ì„¸ì…˜ì—ì„œ ì¤€ë¹„ëì–´ìš”.",
-      presence: "ë„¤, ì—¬ê¸° ìžˆì–´ìš”.",
-      ping: "ì‘ë‹µí•˜ê³  ìžˆì–´ìš”.",
-      thanks: "ì²œë§Œì—ìš”.",
-      praise: "ì¢‹ì•„ìš”.",
+      greeting: "안녕하세요, 여기 있어요.",
+      wellbeing: "좋아요. 이 세션에서 준비됐어요.",
+      presence: "네, 여기 있어요.",
+      ping: "응답하고 있어요.",
+      thanks: "천만에요.",
+      praise: "좋아요.",
       ack: "OK.",
-      decline: "ì•Œê² ì–´ìš”.",
-      bye: "ë˜ ë´ìš”.",
+      decline: "알겠어요.",
+      bye: "또 봐요.",
     },
   },
   {
-    greeting: ["namaste", "à¤¨à¤®à¤¸à¥à¤¤à¥‡", "à¤¨à¤®à¤¸à¥à¤•à¤¾à¤°", "hello"],
-    wellbeing: ["kaise ho", "à¤†à¤ª à¤•à¥ˆà¤¸à¥‡ à¤¹à¥ˆà¤‚", "à¤¸à¤¬ à¤ à¥€à¤•"],
-    presence: ["à¤•à¥à¤¯à¤¾ à¤¤à¥à¤® à¤¹à¥‹", "à¤¸à¥à¤¨ à¤°à¤¹à¥‡ à¤¹à¥‹", "à¤•à¤¾à¤® à¤•à¤° à¤°à¤¹à¤¾ à¤¹à¥ˆ"],
-    ping: ["test", "ping", "à¤ªà¤°à¥€à¤•à¥à¤·à¤£"],
-    thanks: ["dhanyavaad", "à¤§à¤¨à¥à¤¯à¤µà¤¾à¤¦", "à¤¶à¥à¤•à¥à¤°à¤¿à¤¯à¤¾"],
-    praise: ["bahut accha", "à¤¬à¤¹à¥à¤¤ à¤…à¤šà¥à¤›à¤¾", "à¤¬à¤¢à¤¼à¤¿à¤¯à¤¾"],
-    ack: ["ok", "haan", "à¤¹à¤¾à¤", "à¤ à¥€à¤• à¤¹à¥ˆ"],
-    decline: ["nahi", "à¤¨à¤¹à¥€à¤‚", "à¤…à¤­à¥€ à¤¨à¤¹à¥€à¤‚"],
-    bye: ["à¤…à¤²à¤µà¤¿à¤¦à¤¾", "à¤«à¤¿à¤° à¤®à¤¿à¤²à¥‡à¤‚à¤—à¥‡"],
+    greeting: ["namaste", "नमस्ते", "नमस्कार", "hello"],
+    wellbeing: ["kaise ho", "आप कैसे हैं", "सब ठीक"],
+    presence: ["क्या तुम हो", "सुन रहे हो", "काम कर रहा है"],
+    ping: ["test", "ping", "परीक्षण"],
+    thanks: ["dhanyavaad", "धन्यवाद", "शुक्रिया"],
+    praise: ["bahut accha", "बहुत अच्छा", "बढ़िया"],
+    ack: ["ok", "haan", "हाँ", "ठीक है"],
+    decline: ["nahi", "नहीं", "अभी नहीं"],
+    bye: ["अलविदा", "फिर मिलेंगे"],
     replies: {
-      greeting: "à¤¨à¤®à¤¸à¥à¤¤à¥‡, à¤®à¥ˆà¤‚ à¤¯à¤¹à¤¾à¤ à¤¹à¥‚à¤à¥¤",
-      wellbeing: "à¤®à¥ˆà¤‚ à¤ à¥€à¤• à¤¹à¥‚à¤à¥¤ à¤®à¥ˆà¤‚ à¤‡à¤¸ à¤¸à¥‡à¤¶à¤¨ à¤®à¥‡à¤‚ à¤¤à¥ˆà¤¯à¤¾à¤° à¤¹à¥‚à¤à¥¤",
-      presence: "à¤¹à¤¾à¤, à¤®à¥ˆà¤‚ à¤¯à¤¹à¤¾à¤ à¤¹à¥‚à¤à¥¤",
-      ping: "à¤®à¥ˆà¤‚ à¤œà¤µà¤¾à¤¬ à¤¦à¥‡ à¤°à¤¹à¤¾ à¤¹à¥‚à¤à¥¤",
-      thanks: "à¤¸à¥à¤µà¤¾à¤—à¤¤ à¤¹à¥ˆà¥¤",
-      praise: "à¤¬à¤¢à¤¼à¤¿à¤¯à¤¾à¥¤",
+      greeting: "नमस्ते, मैं यहाँ हूँ।",
+      wellbeing: "मैं ठीक हूँ। मैं इस सेशन में तैयार हूँ।",
+      presence: "हाँ, मैं यहाँ हूँ।",
+      ping: "मैं जवाब दे रहा हूँ।",
+      thanks: "स्वागत है।",
+      praise: "बढ़िया।",
       ack: "OK.",
-      decline: "à¤¸à¤®à¤ à¤—à¤¯à¤¾à¥¤",
-      bye: "à¤«à¤¿à¤° à¤®à¤¿à¤²à¥‡à¤‚à¤—à¥‡à¥¤",
+      decline: "समझ गया।",
+      bye: "फिर मिलेंगे।",
     },
   },
   {
@@ -10463,7 +12393,7 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     ping: ["tes", "test", "ping"],
     thanks: ["terima kasih", "cam on"],
     praise: ["sempurna", "bagus", "tuyet voi"],
-    ack: ["ok", "ya", "iya", "vÃ¢ng", "duoc"],
+    ack: ["ok", "ya", "iya", "vâng", "duoc"],
     decline: ["tidak", "khong", "khong phai bay gio"],
     bye: ["sampai jumpa", "tam biet"],
     replies: {
@@ -10479,91 +12409,91 @@ const CANVAS_MICRO_LANGUAGE_PACKS = [
     },
   },
   {
-    greeting: ["à¸ªà¸§à¸±à¸ªà¸”à¸µ", "à¸«à¸§à¸±à¸”à¸”à¸µ"],
-    wellbeing: ["à¸ªà¸šà¸²à¸¢à¸”à¸µà¹„à¸«à¸¡", "à¹€à¸›à¹‡à¸™à¹„à¸‡à¸šà¹‰à¸²à¸‡"],
-    presence: ["à¸­à¸¢à¸¹à¹ˆà¹„à¸«à¸¡", "à¹„à¸”à¹‰à¸¢à¸´à¸™à¹„à¸«à¸¡", "à¸—à¸³à¸‡à¸²à¸™à¹„à¸«à¸¡"],
-    ping: ["à¸—à¸”à¸ªà¸­à¸š", "ping"],
-    thanks: ["à¸‚à¸­à¸šà¸„à¸¸à¸“", "à¸‚à¸­à¸šà¸„à¸¸à¸“à¸¡à¸²à¸"],
-    praise: ["à¹€à¸¢à¸µà¹ˆà¸¢à¸¡", "à¸”à¸µà¸¡à¸²à¸", "à¸ªà¸¡à¸šà¸¹à¸£à¸“à¹Œà¹à¸šà¸š"],
-    ack: ["ok", "à¹‚à¸­à¹€à¸„", "à¹ƒà¸Šà¹ˆ"],
-    decline: ["à¹„à¸¡à¹ˆ", "à¹„à¸¡à¹ˆà¹ƒà¸Šà¹ˆà¸•à¸­à¸™à¸™à¸µà¹‰"],
-    bye: ["à¸¥à¸²à¸à¹ˆà¸­à¸™", "à¹€à¸ˆà¸­à¸à¸±à¸™"],
+    greeting: ["สวัสดี", "หวัดดี"],
+    wellbeing: ["สบายดีไหม", "เป็นไงบ้าง"],
+    presence: ["อยู่ไหม", "ได้ยินไหม", "ทำงานไหม"],
+    ping: ["ทดสอบ", "ping"],
+    thanks: ["ขอบคุณ", "ขอบคุณมาก"],
+    praise: ["เยี่ยม", "ดีมาก", "สมบูรณ์แบบ"],
+    ack: ["ok", "โอเค", "ใช่"],
+    decline: ["ไม่", "ไม่ใช่ตอนนี้"],
+    bye: ["ลาก่อน", "เจอกัน"],
     replies: {
-      greeting: "à¸ªà¸§à¸±à¸ªà¸”à¸µ à¸‰à¸±à¸™à¸­à¸¢à¸¹à¹ˆà¸•à¸£à¸‡à¸™à¸µà¹‰",
-      wellbeing: "à¸ªà¸šà¸²à¸¢à¸”à¸µ à¸žà¸£à¹‰à¸­à¸¡à¹ƒà¸™à¹€à¸‹à¸ªà¸Šà¸±à¸™à¸™à¸µà¹‰à¹à¸¥à¹‰à¸§",
-      presence: "à¹ƒà¸Šà¹ˆ à¸‰à¸±à¸™à¸­à¸¢à¸¹à¹ˆà¸•à¸£à¸‡à¸™à¸µà¹‰",
-      ping: "à¸‰à¸±à¸™à¸•à¸­à¸šà¸­à¸¢à¸¹à¹ˆ",
-      thanks: "à¸¢à¸´à¸™à¸”à¸µ",
-      praise: "à¸”à¸µà¸¡à¸²à¸",
+      greeting: "สวัสดี ฉันอยู่ตรงนี้",
+      wellbeing: "สบายดี พร้อมในเซสชันนี้แล้ว",
+      presence: "ใช่ ฉันอยู่ตรงนี้",
+      ping: "ฉันตอบอยู่",
+      thanks: "ยินดี",
+      praise: "ดีมาก",
       ack: "OK.",
-      decline: "à¹€à¸‚à¹‰à¸²à¹ƒà¸ˆà¹à¸¥à¹‰à¸§",
-      bye: "à¹€à¸ˆà¸­à¸à¸±à¸™",
+      decline: "เข้าใจแล้ว",
+      bye: "เจอกัน",
     },
   },
   {
-    greeting: ["Î³ÎµÎ¹Î±", "ÎºÎ±Î»Î·Î¼ÎµÏÎ±", "ÎºÎ±Î»Î·ÏƒÏ€ÎµÏÎ±"],
-    wellbeing: ["Ï„Î¹ ÎºÎ±Î½ÎµÎ¹Ï‚", "Ï€Ï‰Ï‚ Ï€Î±ÎµÎ¹", "Î¿Î»Î± ÎºÎ±Î»Î±"],
-    presence: ["ÎµÎ¹ÏƒÎ±Î¹ ÎµÎ´Ï‰", "Î¼Îµ Î±ÎºÎ¿Ï…Ï‚", "Î´Î¿Ï…Î»ÎµÏ…ÎµÎ¹"],
-    ping: ["Ï„ÎµÏƒÏ„", "ping"],
-    thanks: ["ÎµÏ…Ï‡Î±ÏÎ¹ÏƒÏ„Ï‰", "ÎµÏ…Ï‡Î±ÏÎ¹ÏƒÏ„ÏŽ"],
-    praise: ["Ï„ÎµÎ»ÎµÎ¹Î±", "Ï„Î­Î»ÎµÎ¹Î±", "ÏƒÎ¿Ï…Ï€ÎµÏ"],
-    ack: ["ok", "Î½Î±Î¹", "ÎµÎ½Ï„Î±Î¾ÎµÎ¹"],
-    decline: ["Î¿Ï‡Î¹", "Î¿Ï‡Î¹ Ï„Ï‰ÏÎ±"],
-    bye: ["Î±Î½Ï„Î¹Î¿", "Ï„Î± Î»ÎµÎ¼Îµ"],
+    greeting: ["γεια", "καλημερα", "καλησπερα"],
+    wellbeing: ["τι κανεις", "πως παει", "ολα καλα"],
+    presence: ["εισαι εδω", "με ακους", "δουλευει"],
+    ping: ["τεστ", "ping"],
+    thanks: ["ευχαριστω", "ευχαριστώ"],
+    praise: ["τελεια", "τέλεια", "σουπερ"],
+    ack: ["ok", "ναι", "ενταξει"],
+    decline: ["οχι", "οχι τωρα"],
+    bye: ["αντιο", "τα λεμε"],
     replies: {
-      greeting: "Î“ÎµÎ¹Î±, ÎµÎ¯Î¼Î±Î¹ ÎµÎ´ÏŽ.",
-      wellbeing: "Î•Î¯Î¼Î±Î¹ ÎºÎ±Î»Î¬. Î•Î¯Î¼Î±Î¹ Î­Ï„Î¿Î¹Î¼Î¿Ï‚ ÏƒÏ„Î· ÏƒÏ…Î½ÎµÎ´ÏÎ¯Î±.",
-      presence: "ÎÎ±Î¹, ÎµÎ¯Î¼Î±Î¹ ÎµÎ´ÏŽ.",
-      ping: "Î‘Ï€Î±Î½Ï„ÏŽ.",
-      thanks: "Î Î±ÏÎ±ÎºÎ±Î»ÏŽ.",
-      praise: "Î¤Î­Î»ÎµÎ¹Î±.",
+      greeting: "Γεια, είμαι εδώ.",
+      wellbeing: "Είμαι καλά. Είμαι έτοιμος στη συνεδρία.",
+      presence: "Ναι, είμαι εδώ.",
+      ping: "Απαντώ.",
+      thanks: "Παρακαλώ.",
+      praise: "Τέλεια.",
       ack: "OK.",
-      decline: "ÎšÎ±Ï„Î¬Î»Î±Î²Î±.",
-      bye: "Î¤Î± Î»Î­Î¼Îµ.",
+      decline: "Κατάλαβα.",
+      bye: "Τα λέμε.",
     },
   },
   {
-    greeting: ["salut", "buna", "bunÄƒ", "szia", "jo napot", "jÃ³ napot", "ahoj", "dobry den"],
+    greeting: ["salut", "buna", "bună", "szia", "jo napot", "jó napot", "ahoj", "dobry den"],
     wellbeing: ["ce faci", "hogy vagy", "jak se mas", "vse v poradku"],
     presence: ["esti acolo", "ott vagy", "jsi tam", "ma auzi", "hallod"],
     ping: ["test", "ping"],
-    thanks: ["multumesc", "mulÈ›umesc", "koszi", "kÃ¶szi", "dekuji", "dÄ›kuji"],
-    praise: ["perfect", "super", "excelent", "kivÃ¡lÃ³", "skvele"],
+    thanks: ["multumesc", "mulțumesc", "koszi", "köszi", "dekuji", "děkuji"],
+    praise: ["perfect", "super", "excelent", "kiváló", "skvele"],
     ack: ["ok", "da", "igen", "ano"],
     decline: ["nu", "nem", "ne", "nu acum"],
     bye: ["pa", "la revedere", "viszlat", "ahoj"],
     replies: {
       greeting: "Salut, sunt aici.",
-      wellbeing: "Totul e bine. Sunt gata Ã®n sesiune.",
+      wellbeing: "Totul e bine. Sunt gata în sesiune.",
       presence: "Da, sunt aici.",
-      ping: "RÄƒspund.",
-      thanks: "Cu plÄƒcere.",
+      ping: "Răspund.",
+      thanks: "Cu plăcere.",
       praise: "Perfect.",
       ack: "OK.",
-      decline: "Am Ã®nÈ›eles.",
-      bye: "Pe curÃ¢nd.",
+      decline: "Am înțeles.",
+      bye: "Pe curând.",
     },
   },
   {
-    greeting: ["Ø³Ù„Ø§Ù…", "Ø¯Ø±ÙˆØ¯", "ÛÛŒÙ„Ùˆ", "habari", "jambo"],
-    wellbeing: ["Ø­Ø§Ù„Øª Ú†Ø·ÙˆØ±Ù‡", "Ø¢Ù¾ Ú©ÛŒØ³Û’ ÛÛŒÚº", "habari yako"],
-    presence: ["Ø§ÛŒÙ†Ø¬Ø§ÛŒÛŒ", "Ú©ÛŒØ§ Ø¢Ù¾ ÛÛŒÚº", "upo hapo"],
-    ping: ["ØªØ³Øª", "Ù¹ÛŒØ³Ù¹", "ping"],
-    thanks: ["Ù…Ù…Ù†ÙˆÙ†", "Ù…ØªØ´Ú©Ø±Ù…", "Ø´Ú©Ø±ÛŒÛ", "asante"],
-    praise: ["Ø¹Ø§Ù„ÛŒ", "Ø²Ø¨Ø±Ø¯Ø³Øª", "nzuri"],
-    ack: ["ok", "Ø¨Ù„Ù‡", "ÛØ§Úº", "ndiyo"],
-    decline: ["Ù†Ù‡", "Ù†ÛÛŒÚº", "hapana"],
-    bye: ["Ø®Ø¯Ø§Ø­Ø§ÙØ¸", "Ø§Ù„ÙˆØ¯Ø§Ø¹", "kwa heri"],
+    greeting: ["سلام", "درود", "ہیلو", "habari", "jambo"],
+    wellbeing: ["حالت چطوره", "آپ کیسے ہیں", "habari yako"],
+    presence: ["اینجایی", "کیا آپ ہیں", "upo hapo"],
+    ping: ["تست", "ٹیسٹ", "ping"],
+    thanks: ["ممنون", "متشکرم", "شکریہ", "asante"],
+    praise: ["عالی", "زبردست", "nzuri"],
+    ack: ["ok", "بله", "ہاں", "ndiyo"],
+    decline: ["نه", "نہیں", "hapana"],
+    bye: ["خداحافظ", "الوداع", "kwa heri"],
     replies: {
-      greeting: "Ø³Ù„Ø§Ù…ØŒ Ù…Ù† Ø§ÛŒÙ†Ø¬Ø§ Ù‡Ø³ØªÙ….",
-      wellbeing: "Ø®ÙˆØ¨Ù… Ùˆ Ø¯Ø± Ø§ÛŒÙ† Ø¬Ù„Ø³Ù‡ Ø¢Ù…Ø§Ø¯Ù‡â€ŒØ§Ù….",
-      presence: "Ø¨Ù„Ù‡ØŒ Ø§ÛŒÙ†Ø¬Ø§ Ù‡Ø³ØªÙ….",
-      ping: "Ù¾Ø§Ø³Ø® Ù…ÛŒâ€ŒØ¯Ù‡Ù….",
-      thanks: "Ø®ÙˆØ§Ù‡Ø´ Ù…ÛŒâ€ŒÚ©Ù†Ù….",
-      praise: "Ø¹Ø§Ù„ÛŒ.",
+      greeting: "سلام، من اینجا هستم.",
+      wellbeing: "خوبم و در این جلسه آماده‌ام.",
+      presence: "بله، اینجا هستم.",
+      ping: "پاسخ می‌دهم.",
+      thanks: "خواهش می‌کنم.",
+      praise: "عالی.",
       ack: "OK.",
-      decline: "ÙÙ‡Ù…ÛŒØ¯Ù….",
-      bye: "Ø®Ø¯Ø§Ø­Ø§ÙØ¸.",
+      decline: "فهمیدم.",
+      bye: "خداحافظ.",
     },
   },
 ];
@@ -10618,7 +12548,7 @@ function localCanvasForgeHelpReply(normalized) {
     "comment marche forge",
     "comment fonctionne forge",
   ])) {
-    return "Forge sert Ã  garder les gros fichiers, calculs et preuves cÃ´tÃ© backend. Tu parles dans le canvas, lâ€™agent lit seulement un contexte compact, lance les programmes Forge quand il faut, et Ã©vite dâ€™envoyer les donnÃ©es brutes au LLM.";
+    return "Forge sert à garder les gros fichiers, calculs et preuves côté backend. Tu parles dans le canvas, l’agent lit seulement un contexte compact, lance les programmes Forge quand il faut, et évite d’envoyer les données brutes au LLM.";
   }
   if (normalizedIncludesAny(normalized, [
     "comment ajouter un fichier",
@@ -10630,7 +12560,7 @@ function localCanvasForgeHelpReply(normalized) {
     "nouvelle session",
     "fichier dans la session",
   ])) {
-    return "Pour une session ouverte, utilise le + dans la barre de chat ou sous la card fichier: le fichier est ajoutÃ© Ã  la session actuelle. New session sert Ã  repartir dans une autre session, avec ou sans fichier.";
+    return "Pour une session ouverte, utilise le + dans la barre de chat ou sous la card fichier: le fichier est ajouté à la session actuelle. New session sert à repartir dans une autre session, avec ou sans fichier.";
   }
   if (normalizedIncludesAny(normalized, [
     "economise des tokens",
@@ -10642,7 +12572,7 @@ function localCanvasForgeHelpReply(normalized) {
     "brule des tokens",
     "cout de tokens",
   ])) {
-    return "Forge Ã©conomise les tokens en gardant les fichiers et calculs sur disque. Le LLM reÃ§oit des rÃ©sumÃ©s, rÃ©fÃ©rences, hashes, logs courts et rÃ©sultats. Pour les petits messages, Forge rÃ©pond localement sans appeler Codex, Gemini ou Claude.";
+    return "Forge économise les tokens en gardant les fichiers et calculs sur disque. Le LLM reçoit des résumés, références, hashes, logs courts et résultats. Pour les petits messages, Forge répond localement sans appeler Codex, Gemini ou Claude.";
   }
   if (normalizedIncludesAny(normalized, [
     "codex gemini claude",
@@ -10655,7 +12585,7 @@ function localCanvasForgeHelpReply(normalized) {
     "raisonnement moyen",
     "raisonnement eleve",
   ])) {
-    return "Dans la barre de chat, tu choisis Codex, Gemini, Claude ou All. Le modÃ¨le et lâ€™effort de raisonnement se rÃ¨glent dans le sÃ©lecteur Ã  droite. All sert surtout Ã  comparer ou rÃ©partir une tÃ¢che, pas aux petits messages.";
+    return "Dans la barre de chat, tu choisis Codex, Gemini, Claude ou All. Le modèle et l’effort de raisonnement se règlent dans le sélecteur à droite. All sert surtout à comparer ou répartir une tâche, pas aux petits messages.";
   }
   if (normalizedIncludesAny(normalized, [
     "how does forge work",
@@ -10689,7 +12619,7 @@ function localCanvasForgeHelpReply(normalized) {
     "no entiendo forge",
     "para que sirve forge",
   ])) {
-    return "Forge guarda archivos grandes, cÃ¡lculos y pruebas en el backend. El agente recibe contexto compacto, ejecuta programas Forge cuando hace falta y evita enviar datos brutos al LLM.";
+    return "Forge guarda archivos grandes, cálculos y pruebas en el backend. El agente recibe contexto compacto, ejecuta programas Forge cuando hace falta y evita enviar datos brutos al LLM.";
   }
   if (normalizedIncludesAny(normalized, [
     "was ist forge",
@@ -10697,7 +12627,7 @@ function localCanvasForgeHelpReply(normalized) {
     "ich verstehe forge nicht",
     "wofur ist forge",
   ])) {
-    return "Forge hÃ¤lt groÃŸe Dateien, Berechnungen und Nachweise im Backend. Der Agent bekommt kompakten Kontext, startet Forge-Programme bei Bedarf und sendet keine Rohdaten an das LLM.";
+    return "Forge hält große Dateien, Berechnungen und Nachweise im Backend. Der Agent bekommt kompakten Kontext, startet Forge-Programme bei Bedarf und sendet keine Rohdaten an das LLM.";
   }
   if (normalizedIncludesAny(normalized, [
     "cos e forge",
@@ -10705,7 +12635,7 @@ function localCanvasForgeHelpReply(normalized) {
     "non capisco forge",
     "a cosa serve forge",
   ])) {
-    return "Forge tiene file grandi, calcoli e prove nel backend. Lâ€™agente riceve contesto compatto, avvia programmi Forge quando serve e non invia dati grezzi al LLM.";
+    return "Forge tiene file grandi, calcoli e prove nel backend. L’agente riceve contesto compatto, avvia programmi Forge quando serve e non invia dati grezzi al LLM.";
   }
   if (normalizedIncludesAny(normalized, [
     "o que e forge",
@@ -10713,46 +12643,39 @@ function localCanvasForgeHelpReply(normalized) {
     "nao entendo forge",
     "para que serve forge",
   ])) {
-    return "Forge mantÃ©m arquivos grandes, cÃ¡lculos e provas no backend. O agente recebe contexto compacto, executa programas Forge quando necessÃ¡rio e evita enviar dados brutos ao LLM.";
+    return "Forge mantém arquivos grandes, cálculos e provas no backend. O agente recebe contexto compacto, executa programas Forge quando necessário e evita enviar dados brutos ao LLM.";
   }
-  if (normalizedIncludesAny(normalized, ["Ñ‡Ñ‚Ð¾ Ñ‚Ð°ÐºÐ¾Ðµ forge", "ÐºÐ°Ðº Ñ€Ð°Ð±Ð¾Ñ‚Ð°ÐµÑ‚ forge", "Ð½Ðµ Ð¿Ð¾Ð½Ð¸Ð¼Ð°ÑŽ forge"])) {
-    return "Forge Ñ…Ñ€Ð°Ð½Ð¸Ñ‚ Ð±Ð¾Ð»ÑŒÑˆÐ¸Ðµ Ñ„Ð°Ð¹Ð»Ñ‹, Ð²Ñ‹Ñ‡Ð¸ÑÐ»ÐµÐ½Ð¸Ñ Ð¸ Ð´Ð¾ÐºÐ°Ð·Ð°Ñ‚ÐµÐ»ÑŒÑÑ‚Ð²Ð° Ð² backend. ÐÐ³ÐµÐ½Ñ‚ Ð¿Ð¾Ð»ÑƒÑ‡Ð°ÐµÑ‚ ÐºÐ¾Ð¼Ð¿Ð°ÐºÑ‚Ð½Ñ‹Ð¹ ÐºÐ¾Ð½Ñ‚ÐµÐºÑÑ‚, Ð·Ð°Ð¿ÑƒÑÐºÐ°ÐµÑ‚ Ð¿Ñ€Ð¾Ð³Ñ€Ð°Ð¼Ð¼Ñ‹ Forge Ð¿Ñ€Ð¸ Ð½ÐµÐ¾Ð±Ñ…Ð¾Ð´Ð¸Ð¼Ð¾ÑÑ‚Ð¸ Ð¸ Ð½Ðµ Ð¾Ñ‚Ð¿Ñ€Ð°Ð²Ð»ÑÐµÑ‚ ÑÑ‹Ñ€Ñ‹Ðµ Ð´Ð°Ð½Ð½Ñ‹Ðµ Ð² LLM.";
+  if (normalizedIncludesAny(normalized, ["что такое forge", "как работает forge", "не понимаю forge"])) {
+    return "Forge хранит большие файлы, вычисления и доказательства в backend. Агент получает компактный контекст, запускает программы Forge при необходимости и не отправляет сырые данные в LLM.";
   }
-  if (normalizedIncludesAny(normalized, ["ä»€ä¹ˆæ˜¯forge", "forgeæ€Žä¹ˆç”¨", "forgeå¦‚ä½•å·¥ä½œ"])) {
-    return "Forge æŠŠå¤§æ–‡ä»¶ã€è®¡ç®—å’Œè¯æ˜Žä¿ç•™åœ¨åŽç«¯ã€‚æ™ºèƒ½ä½“åªæŽ¥æ”¶ç´§å‡‘ä¸Šä¸‹æ–‡ï¼Œéœ€è¦æ—¶è¿è¡Œ Forge ç¨‹åºï¼Œé¿å…æŠŠåŽŸå§‹æ•°æ®å‘é€ç»™ LLMã€‚";
+  if (normalizedIncludesAny(normalized, ["什么是forge", "forge怎么用", "forge如何工作"])) {
+    return "Forge 把大文件、计算和证明保留在后端。智能体只接收紧凑上下文，需要时运行 Forge 程序，避免把原始数据发送给 LLM。";
   }
-  if (normalizedIncludesAny(normalized, ["forgeã¨ã¯", "forgeã®ä½¿ã„æ–¹", "forgeãŒã‚ã‹ã‚‰ãªã„"])) {
-    return "Forge ã¯å¤§ããªãƒ•ã‚¡ã‚¤ãƒ«ã€è¨ˆç®—ã€è¨¼æ˜Žã‚’ãƒãƒƒã‚¯ã‚¨ãƒ³ãƒ‰å´ã«ç½®ãã¾ã™ã€‚ã‚¨ãƒ¼ã‚¸ã‚§ãƒ³ãƒˆã¯çŸ­ã„æ–‡è„ˆã ã‘ã‚’å—ã‘å–ã‚Šã€å¿…è¦ãªæ™‚ã« Forge ãƒ—ãƒ­ã‚°ãƒ©ãƒ ã‚’å®Ÿè¡Œã—ã¾ã™ã€‚";
+  if (normalizedIncludesAny(normalized, ["forgeとは", "forgeの使い方", "forgeがわからない"])) {
+    return "Forge は大きなファイル、計算、証明をバックエンド側に置きます。エージェントは短い文脈だけを受け取り、必要な時に Forge プログラムを実行します。";
   }
-  if (normalizedIncludesAny(normalized, ["Ù…Ø§ Ù‡Ùˆ forge", "ÙƒÙŠÙ ÙŠØ¹Ù…Ù„ forge", "Ù„Ø§ Ø§ÙÙ‡Ù… forge"])) {
-    return "Forge ÙŠØ­ØªÙØ¸ Ø¨Ø§Ù„Ù…Ù„ÙØ§Øª Ø§Ù„ÙƒØ¨ÙŠØ±Ø© ÙˆØ§Ù„Ø­Ø³Ø§Ø¨Ø§Øª ÙˆØ§Ù„Ø¥Ø«Ø¨Ø§ØªØ§Øª ÙÙŠ Ø§Ù„Ø®Ù„ÙÙŠØ©. ÙŠØ­ØµÙ„ Ø§Ù„ÙˆÙƒÙŠÙ„ Ø¹Ù„Ù‰ Ø³ÙŠØ§Ù‚ Ù…Ø®ØªØµØ± ÙˆÙŠØ´ØºÙ„ Ø¨Ø±Ø§Ù…Ø¬ Forge Ø¹Ù†Ø¯ Ø§Ù„Ø­Ø§Ø¬Ø© Ø¨Ø¯ÙˆÙ† Ø¥Ø±Ø³Ø§Ù„ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ø®Ø§Ù… Ø¥Ù„Ù‰ LLM.";
+  if (normalizedIncludesAny(normalized, ["ما هو forge", "كيف يعمل forge", "لا افهم forge"])) {
+    return "Forge يحتفظ بالملفات الكبيرة والحسابات والإثباتات في الخلفية. يحصل الوكيل على سياق مختصر ويشغل برامج Forge عند الحاجة بدون إرسال البيانات الخام إلى LLM.";
   }
   return "";
 }
 
 function localCanvasMicroReply(text) {
-  const normalized = normalizedCanvasMicroText(text);
-  if (!normalized) return "";
-  const forgeHelpReply = localCanvasForgeHelpReply(normalized);
-  if (forgeHelpReply) return forgeHelpReply;
-  if (normalized.length > 52) return "";
-  if (CANVAS_MICRO_CONFIRMATIONS.has(normalized) && lastCanvasAssistantNeedsConfirmation()) return "";
-  const intents = ["greeting", "wellbeing", "presence", "ping", "thanks", "praise", "ack", "decline", "bye"];
-  for (const pack of CANVAS_MICRO_LANGUAGE_PACKS) {
-    for (const intent of intents) {
-      if (!pack[intent]?.includes(normalized)) continue;
-      return pack.replies?.[intent] || "";
-    }
-  }
   return "";
 }
 
 function localCanvasMicroReplyDelayMs(text) {
-  const len = String(text || "").trim().length;
-  return 420 + Math.min(520, len * 18) + Math.floor(Math.random() * 180);
+  return 0;
 }
 
 function localCanvasMicroReplyForTurn(primaryText, geminiText = "", claudeText = "") {
+  if (
+    isRealEstateShellActive()
+    || !!realEstateOnboardingState?.required
+    || !!realEstateOnboardingState?.question
+    || document.body?.classList?.contains?.("real-estate-mode")
+    || /nouvelle session immo|agence/i.test(String(currentProjectLabel?.() || ""))
+  ) return "";
   if (forgeCanvasChatTargetMode !== "all") return localCanvasMicroReply(primaryText);
   const parts = [primaryText, geminiText, claudeText]
     .map((part) => String(part || "").trim())
@@ -10760,7 +12683,7 @@ function localCanvasMicroReplyForTurn(primaryText, geminiText = "", claudeText =
   if (!parts.length) return "";
   const replies = parts.map(localCanvasMicroReply);
   if (replies.some((reply) => !reply)) return "";
-  return replies[0] || "Je suis lÃ .";
+  return "";
 }
 
 function canvasFallbackRuntimeFromPayload(payload) {
@@ -10770,6 +12693,7 @@ function canvasFallbackRuntimeFromPayload(payload) {
 }
 
 function applyCanvasRuntimeFallbackToUi(payload) {
+  applyCanvasTurnLatencyRuntimeFallback(payload);
   const data = payload?.data || {};
   const requested = String(data.requestedRuntime || "").trim().toLowerCase();
   const fallback = canvasFallbackRuntimeFromPayload(payload);
@@ -10781,7 +12705,7 @@ function applyCanvasRuntimeFallbackToUi(payload) {
     return {
       ...target,
       runtime: fallback,
-      label: `${canvasChatTargetLabel(fallback)} Â· fallback`,
+      label: `${canvasChatTargetLabel(fallback)} · fallback`,
     };
   });
   if (changed) {
@@ -10808,7 +12732,7 @@ function canvasResponseRuntime(response, target = null) {
   if (runtimeText.includes("codex") || runtimeText.includes("openai")) return "codex";
   const providerModel = String(response?.provider?.modelRef || response?.provider?.model_ref || "").toLowerCase();
   if (providerModel.includes("gemini")) return "gemini";
-  if (providerModel.includes("claude") || ["opus", "sonnet", "haiku"].includes(providerModel)) return "claude";
+  if (providerModel.includes("claude") || ["opus", "sonnet"].includes(providerModel)) return "claude";
   return "codex";
 }
 
@@ -10816,6 +12740,35 @@ function handleForgeCanvasAssistantEvent(payload) {
   if (!payload || typeof payload !== "object") return;
   if (payload.stage === "runtime_fallback") {
     applyCanvasRuntimeFallbackToUi(payload);
+    return;
+  }
+  updateCanvasPendingAssistantPipeline(payload);
+  if (payload.stage === "agent_narration") {
+    const message = String(payload.message || "").trim();
+    if (!message) return;
+    const turnId = String(payload.turnId || "").trim();
+    if (alphaCanvasChatMessages.some((entry) => (
+      entry.role === "assistant"
+      && entry.meta?.agentNarration
+      && String(entry.meta?.turnId || "").trim() === turnId
+      && String(entry.text || "").trim() === message
+    ))) return;
+    const runtime = String(payload?.data?.runtime || forgeCanvasChatTargetMode || "codex").trim().toLowerCase();
+    appendCanvasChatMessage("assistant", message, {
+      turnId,
+      agentLabel: canvasChatTargetLabel(runtime),
+      runtime,
+      agentNarration: true,
+      skipTyping: true,
+    });
+    return;
+  }
+  if (payload.stage === "agent_tool_event") {
+    return;
+  }
+  if (payload.stage === "assistant_stream_delta") {
+    noteCanvasTurnFirstDelta(payload?.turnId, payload?.data?.runtime || "codex");
+    upsertCanvasStreamingAssistant(payload);
     return;
   }
   const message = String(payload.message || "").trim();
@@ -10837,9 +12790,9 @@ function handleForgeCanvasAssistantEvent(payload) {
   });
 }
 
-// â”€â”€ Chapter pins (Claude-Desktop-style bookmark markers) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Chapter pins (Claude-Desktop-style bookmark markers) ───────────
 // Uses string IDs throughout so the Set never mixes "5" (from
-// dataset.messageId) and 5 (raw number from message.id) â€” that
+// dataset.messageId) and 5 (raw number from message.id) — that
 // mismatch silently kept pins from being toggled correctly.
 const canvasChatPinnedIds = new Set();
 const canvasChaptersEl = typeof document !== "undefined"
@@ -10872,7 +12825,7 @@ function toggleCanvasChatPin(messageId) {
 
 function chapterPreviewFor(message) {
   const raw = String(message?.text || "").trim().replace(/\s+/g, " ");
-  return raw.length > 64 ? `${raw.slice(0, 64)}â€¦` : raw;
+  return raw.length > 64 ? `${raw.slice(0, 64)}…` : raw;
 }
 
 function renderCanvasChapters() {
@@ -10907,37 +12860,36 @@ function renderCanvasChapters() {
   canvasChaptersEl.replaceChildren(fragment);
 }
 
-// Approximate brand logos for the agent labels â€” drawn from scratch in
-// SVG (no asset files, no licence bundling). Each is a single path that
-// fills with currentColor so it inherits the label's text color.
+// Agent logos for chat labels. Codex/OpenAI reuses the same official provider
+// asset as the runtime selector via `.provider-logo-openai`.
 const CANVAS_CHAT_AGENT_ICONS = {
-  // Gemini â€” 4-pointed sparkle with concave curved blades.
+  // Gemini — 4-pointed sparkle with concave curved blades.
   gemini: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.5C12 8.4 8.4 12 1.5 12 8.4 12 12 15.6 12 22.5 12 15.6 15.6 12 22.5 12 15.6 12 12 8.4 12 1.5Z"/></svg>',
-  // Claude / Anthropic â€” 4-blade asterisk with rounded ends meeting at the centre.
+  // Claude / Anthropic — 4-blade asterisk with rounded ends meeting at the centre.
   claude: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.4 2.4c0 4.5-.7 7.1-3 8.2-.9.4-1.9.6-3.6.7-.5 0-.8.3-.8.7s.3.7.8.7c1.7.1 2.7.3 3.6.7 2.3 1.1 3 3.7 3 8.2 0 .4.2.6.6.6s.6-.2.6-.6c0-4.5.7-7.1 3-8.2.9-.4 1.9-.6 3.6-.7.5 0 .8-.3.8-.7s-.3-.7-.8-.7c-1.7-.1-2.7-.3-3.6-.7-2.3-1.1-3-3.7-3-8.2 0-.4-.2-.6-.6-.6s-.6.2-.6.6Z"/></svg>',
-  // Codex / OpenAI â€” hexagonal knot, simplified.
-  codex: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.5 20.66 6.5V16.5L12 21.5 3.34 16.5V6.5Z"/></svg>',
+  codex: "",
 };
 
-function canvasChatAgentIconHtml(role, label) {
+function canvasChatAgentIconDef(role, label) {
   if (!label) return null;
   if (role === "user") return null;
   const key = String(label).toLowerCase();
-  if (key.includes("gemini")) return CANVAS_CHAT_AGENT_ICONS.gemini;
-  if (key.includes("claude")) return CANVAS_CHAT_AGENT_ICONS.claude;
+  if (key.includes("gemini")) return { html: CANVAS_CHAT_AGENT_ICONS.gemini, className: "" };
+  if (key.includes("claude")) return { html: CANVAS_CHAT_AGENT_ICONS.claude, className: "" };
   if (key.includes("codex") || key.includes("openai") || key.includes("gpt")) {
-    return CANVAS_CHAT_AGENT_ICONS.codex;
+    return { html: "", className: "provider-logo provider-logo-openai" };
   }
   return null;
 }
 
 function buildCanvasChatNameElement(role, label) {
   const wrap = createUiEl("div", "canvas-chat-name");
-  const iconHtml = canvasChatAgentIconHtml(role, label);
-  if (iconHtml) {
+  const iconDef = canvasChatAgentIconDef(role, label);
+  if (iconDef) {
     const icon = document.createElement("span");
     icon.className = "canvas-chat-name-icon";
-    icon.innerHTML = iconHtml;
+    if (iconDef.className) icon.className += ` ${iconDef.className}`;
+    if (iconDef.html) icon.innerHTML = iconDef.html;
     wrap.appendChild(icon);
   }
   wrap.appendChild(document.createTextNode(label));
@@ -11027,20 +12979,42 @@ function buildCanvasArtifactPill(label, kind = "", title = "", extraClass = "") 
   return pill;
 }
 
+function buildCanvasEntityPill(label) {
+  const value = String(label || "").trim();
+  const pill = document.createElement("button");
+  pill.type = "button";
+  pill.className = "canvas-entity-pill";
+  pill.dataset.injectText = value;
+  pill.textContent = value;
+  pill.title = value;
+  return pill;
+}
+
+function appendCanvasPlainTextWithoutEntityMarkerArtifacts(target, text, spatialMentions = []) {
+  let source = String(text || "");
+  if (!source) return;
+  source = source
+    .replace(/b\*/g, "")
+    .replace(/\*b/g, "");
+  appendCanvasPlainTextWithSpatialMentions(target, source, spatialMentions);
+}
+
 function appendCanvasChatTextWithPills(target, text, spatialMentions = []) {
   const source = String(text || "");
-  const pillPattern = /\(`(forge_[a-z0-9_]+)`\)|`(forge_[a-z0-9_]+)`|(`?)(compute_program|visual_program)\3|\*\*([^*\n]+?)\*\*/gi;
+  const pillPattern = /b\*([^*\n]+?)\*b|\(`(forge_[a-z0-9_]+)`\)|`(forge_[a-z0-9_]+)`|(`?)(compute_program|visual_program)\4|\*\*([^*\n]+?)\*\*/gi;
   let lastIndex = 0;
   let match;
   while ((match = pillPattern.exec(source)) !== null) {
     if (match.index > lastIndex) {
-      appendCanvasPlainTextWithSpatialMentions(target, source.slice(lastIndex, match.index), spatialMentions);
+      appendCanvasPlainTextWithoutEntityMarkerArtifacts(target, source.slice(lastIndex, match.index), spatialMentions);
     }
-    if (match[1] || match[2]) {
-      const toolName = String(match[1] || match[2] || "").trim().toLowerCase();
+    if (match[1]) {
+      target.appendChild(buildCanvasEntityPill(match[1]));
+    } else if (match[2] || match[3]) {
+      const toolName = String(match[2] || match[3] || "").trim().toLowerCase();
       target.appendChild(buildCanvasArtifactPill(toolName, toolName, `Forge tool (${toolName})`, "toolcall"));
-    } else if (match[4]) {
-      const kind = String(match[4] || "").trim().toLowerCase();
+    } else if (match[5]) {
+      const kind = String(match[5] || "").trim().toLowerCase();
       const isVisual = kind === "visual_program";
       target.appendChild(
         buildCanvasArtifactPill(
@@ -11049,15 +13023,15 @@ function appendCanvasChatTextWithPills(target, text, spatialMentions = []) {
           `${isVisual ? "Lens" : "Instrument"} (${kind})`
         )
       );
-    } else if (match[5]) {
+    } else if (match[6]) {
       const strong = document.createElement("strong");
-      appendCanvasChatTextWithPills(strong, match[5], spatialMentions);
+      appendCanvasChatTextWithPills(strong, match[6], spatialMentions);
       target.appendChild(strong);
     }
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < source.length) {
-    appendCanvasPlainTextWithSpatialMentions(target, source.slice(lastIndex), spatialMentions);
+    appendCanvasPlainTextWithoutEntityMarkerArtifacts(target, source.slice(lastIndex), spatialMentions);
   }
 }
 
@@ -11068,7 +13042,7 @@ function canvasPlanetEventLabel(planet) {
     || planet?.body
     || "Mars"
   ).trim();
-  return `Planet Â· ${body.charAt(0).toUpperCase()}${body.slice(1)}`;
+  return `Planet · ${body.charAt(0).toUpperCase()}${body.slice(1)}`;
 }
 
 function buildCanvasPlanetInvocationEvent(planet) {
@@ -11137,6 +13111,20 @@ function buildCanvasChatPinButton(message) {
   return btn;
 }
 
+function stripCanvasHiddenActCodeText(text = "") {
+  return String(text || "")
+    .replace(/\s*(FORGE_ACT_CODE:|FORGE_REAL_ESTATE_UI_ACTIONS:)[\s\S]*$/g, "")
+    .trim();
+}
+
+function cleanCanvasChatCopyText(text = "") {
+  return stripCanvasHiddenActCodeText(text)
+    .replace(/b\*([\s\S]*?)\*b/g, "$1")
+    .replace(/FORGE_ACT_CODE:\s*(?:\{[\s\S]*\}|\[[\s\S]*\])\s*/g, "")
+    .replace(/FORGE_REAL_ESTATE_UI_ACTIONS:\s*(?:\{[\s\S]*\}|\[[\s\S]*\])\s*/g, "")
+    .trim();
+}
+
 function buildCanvasChatCopyButton(text) {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -11156,7 +13144,7 @@ function buildCanvasChatCopyButton(text) {
     event.preventDefault();
     event.stopPropagation();
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(cleanCanvasChatCopyText(text));
       btn.classList.add("copied");
       btn.setAttribute("aria-label", "Copied");
       if (pendingTimer) clearTimeout(pendingTimer);
@@ -11219,6 +13207,10 @@ function redactCanvasSecrets(text) {
   return String(text || "")
     .replace(/\bsk_[A-Za-z0-9]{20,}\b/g, "[ELEVENLABS_API_KEY_REDACTED]")
     .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, "[GOOGLE_API_KEY_REDACTED]");
+}
+
+function redactCanvasForModel(text) {
+  return redactCanvasSecrets(text);
 }
 
 function realEstatePrivacyPacketForModel(text) {
@@ -11453,7 +13445,7 @@ function renderCanvasMessageAttachments(item, message) {
   });
   if (atlasItems.length) {
     // Snapshot of the chat-bar program-group leaning against the user
-    // message â€” same icon + slots as the chat input, read-only here.
+    // message — same icon + slots as the chat input, read-only here.
     // Click on a cube triggers the in-place formula reveal animation.
     const strip = createUiEl("div", "canvas-message-atlas-strip");
     const icon = createUiEl("span", "canvas-message-atlas-icon");
@@ -11664,7 +13656,7 @@ function inferPlanetVisualFromText(text) {
   return {
     tool: "planet_sphere",
     body: "mars",
-    name: labels.length ? `Planet Â· Mars Â· ${labels.slice(0, 2).join(", ")}` : "Planet Â· Mars",
+    name: labels.length ? `Planet · Mars · ${labels.slice(0, 2).join(", ")}` : "Planet · Mars",
     lensUrl,
     geonodes: tags,
     locations: locationKeys,
@@ -12168,7 +14160,7 @@ function drawCanvasMessage3dCard(canvas, ctx, W, H, doc) {
   ctx.fillStyle = "rgba(140,140,134,0.66)";
   ctx.textAlign = "right";
   ctx.fillText(`3D OHLCV map    ${candles.length} bars    ${viewCount} shown`, W - 66, 10);
-  ctx.fillText("EMA 8 Â· EMA 21 Â· EMA 50 Â· VWAP Â· volume depth", W - 66, 26);
+  ctx.fillText("EMA 8 · EMA 21 · EMA 50 · VWAP · volume depth", W - 66, 26);
   ctx.restore();
 }
 
@@ -12411,8 +14403,20 @@ function renderCanvasChatMessages(parent) {
   const thread = createUiEl("section", "canvas-chat-thread");
   if (hasCanvasInlineVisualMessages()) thread.classList.add("has-inline-visual");
   if (hasCanvasInlinePlanetMessages()) thread.classList.add("has-inline-planet");
-  for (const message of alphaCanvasChatMessages.slice(-18)) {
+  const visibleMessages = alphaCanvasChatMessages.slice(-18);
+  const labeledAssistantTurns = new Set();
+  for (const message of visibleMessages) {
     const item = createUiEl("article", `canvas-chat-message ${message.role}`);
+    if (message.meta?.agentNarration) item.classList.add("agent-narration");
+    if (message.meta?.agentToolEvent) item.classList.add("agent-tool-event");
+    if (message.meta?.loopStreaming) item.classList.add("loop-streaming");
+    if (message.meta?.conversationOriented) {
+      item.classList.add("conversation-oriented");
+      const label = createUiEl("span", "canvas-conversation-oriented-label", message.text || "conversation orienté");
+      item.appendChild(label);
+      thread.appendChild(item);
+      continue;
+    }
     if (message.meta?.programBuildKind) {
       item.classList.add("program-build-step", `program-build-${message.meta.programBuildKind}`);
     }
@@ -12427,12 +14431,26 @@ function renderCanvasChatMessages(parent) {
       : message.role === "tool"
         ? "Forge"
         : (message.meta?.agentLabel || "Codex");
-    item.appendChild(buildCanvasChatNameElement(message.role, name));
+    const assistantTurnId = message.role === "assistant"
+      ? String(message.meta?.turnId || "").trim()
+      : "";
+    const hideRepeatedAssistantName = !!assistantTurnId && labeledAssistantTurns.has(assistantTurnId);
+    if (hideRepeatedAssistantName) {
+      item.classList.add("monologue-continuation");
+    } else {
+      item.appendChild(buildCanvasChatNameElement(message.role, name));
+    }
+    if (assistantTurnId) labeledAssistantTurns.add(assistantTurnId);
     const textEl = createUiEl("div", "canvas-chat-text");
     const typing = message.role === "assistant" && isCanvasAssistantTyping(message);
+    const streaming = message.role === "assistant" && !!message.meta?.streaming;
+    const liveAssistant = typing || streaming;
+    const visibleText = stripCanvasHiddenActCodeText(
+      message.role === "assistant" ? canvasAssistantTypedText(message) : message.text
+    );
     renderCanvasChatTextContent(
       textEl,
-      message.role === "assistant" ? canvasAssistantTypedText(message) : message.text,
+      visibleText,
       message
     );
     if (message.meta?.programBuildKind) {
@@ -12440,7 +14458,7 @@ function renderCanvasChatMessages(parent) {
       icon.innerHTML = canvasProgramBuildIconHtml(message.meta.programBuildKind);
       textEl.prepend(icon);
     }
-    if (typing) {
+    if (liveAssistant) {
       item.classList.add("typing");
       textEl.appendChild(createUiEl("span", "canvas-chat-caret", ""));
     }
@@ -12450,20 +14468,12 @@ function renderCanvasChatMessages(parent) {
     item.appendChild(textEl);
     if (visualCard) item.appendChild(visualCard);
     renderCanvasMessageAttachments(item, message);
-    if (message.role !== "tool" && !typing && !message.meta?.attachmentOnly) {
+    if (message.role !== "tool" && !liveAssistant && !message.meta?.attachmentOnly && !message.meta?.agentNarration && !message.meta?.loopStreaming) {
       const actions = createUiEl("div", "canvas-chat-actions");
-      if (message.role === "assistant") actions.appendChild(buildCanvasChatSpeakButton(message.text || ""));
-      actions.appendChild(buildCanvasChatCopyButton(message.text || ""));
+      if (message.role === "assistant") actions.appendChild(buildCanvasChatSpeakButton(cleanCanvasChatCopyText(message.text || "")));
+      actions.appendChild(buildCanvasChatCopyButton(visibleText || ""));
       actions.appendChild(buildCanvasChatPinButton(message));
       item.appendChild(actions);
-    }
-    const toolLabels = compactCanvasToolLabels(message.meta?.toolEvents);
-    if (toolLabels.length) {
-      const tools = createUiEl("div", "canvas-chat-tools");
-      for (const label of toolLabels) {
-        tools.appendChild(createUiEl("span", "canvas-chat-tool", label));
-      }
-      item.appendChild(tools);
     }
     thread.appendChild(item);
   }
@@ -12471,11 +14481,13 @@ function renderCanvasChatMessages(parent) {
     for (const pending of forgeCanvasChatPendingAssistants) {
       const item = createUiEl("article", "canvas-chat-message assistant thinking");
       const nameEl = buildCanvasChatNameElement("assistant", pending.label);
-      // Append the rotating "is â€¦" suffix inline with the agent name. The
+      // Append the rotating "is …" suffix inline with the agent name. The
       // text is updated character-by-character by the rotation timer so it
-      // reads as a live typewriter (type â†’ hold â†’ backspace â†’ next).
+      // reads as a live typewriter (type → hold → backspace → next).
       const status = createUiEl("span", "canvas-thinking-status", currentCanvasThinkingPhrase());
+      const statusText = createUiEl("span", "canvas-thinking-status-text", currentCanvasThinkingPhrase());
       const caret = createUiEl("span", "canvas-thinking-caret", "");
+      status.replaceChildren(statusText, caret);
       status.appendChild(caret);
       nameEl.appendChild(status);
       item.appendChild(nameEl);
@@ -12484,6 +14496,13 @@ function renderCanvasChatMessages(parent) {
   }
   parent.appendChild(thread);
   thread.addEventListener("click", (event) => {
+    const entityPill = event.target?.closest?.(".canvas-entity-pill");
+    if (entityPill && thread.contains(entityPill)) {
+      event.preventDefault();
+      event.stopPropagation();
+      injectTextIntoCanvasComposer(entityPill.dataset.injectText || entityPill.textContent || "");
+      return;
+    }
     const spatialPill = event.target?.closest?.(".canvas-spatial-pill");
     if (spatialPill && thread.contains(spatialPill)) {
       event.preventDefault();
@@ -12506,6 +14525,7 @@ function renderCanvasChatMessages(parent) {
   });
   requestAnimationFrame(drawCanvasChatInlineVisuals);
   renderCanvasChapters();
+  scheduleCanvasChatSelectionToolbarSync();
 }
 
 function setCanvasChatBusy(busy) {
@@ -12516,27 +14536,27 @@ function setCanvasChatBusy(busy) {
   forgeCanvasChat?.classList.toggle("compute-running", liveCompute);
   if (typeof updateForgeJobsBusyState === "function") updateForgeJobsBusyState();
   if (!alphaCanvasChatBusy) setCanvasChatPendingAssistants([]);
-  if (forgeCanvasChatInput) forgeCanvasChatInput.disabled = visibleBusy;
+  if (forgeCanvasChatInput) forgeCanvasChatInput.disabled = false;
   if (forgeCanvasChatGeminiInput) {
-    forgeCanvasChatGeminiInput.disabled = visibleBusy || forgeCanvasChatTargetMode !== "all";
+    forgeCanvasChatGeminiInput.disabled = forgeCanvasChatTargetMode !== "all";
   }
   if (forgeCanvasChatClaudeInput) {
-    forgeCanvasChatClaudeInput.disabled = visibleBusy || forgeCanvasChatTargetMode !== "all";
+    forgeCanvasChatClaudeInput.disabled = forgeCanvasChatTargetMode !== "all";
   }
   if (forgeCanvasChatStopBtn) forgeCanvasChatStopBtn.hidden = !(visibleBusy || liveCompute);
-  if (forgeCanvasChatSend) forgeCanvasChatSend.hidden = visibleBusy;
+  if (forgeCanvasChatSend) forgeCanvasChatSend.hidden = false;
   syncCanvasChatSendState();
   syncAlphaDropSurface?.();
 }
 
 function autosizeCanvasChatInput() {
-  const fields = [forgeCanvasChatInput, forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput]
+  const fields = forgeCanvasChatPrimaryInputs
     .filter((f) => f && !f.hidden);
   if (!fields.length) return;
   for (const field of fields) field.style.height = "auto";
   // Textarea scrollHeight only reflects the value, never the placeholder. So
   // when the user is idle and the typewriter is filling the placeholder, we
-  // briefly swap placeholderâ†’value to measure the real height needed, then
+  // briefly swap placeholder→value to measure the real height needed, then
   // restore. This is synchronous: no paint happens between the two
   // assignments, so the user never sees the swap.
   const heights = fields.map((field) => {
@@ -12551,19 +14571,19 @@ function autosizeCanvasChatInput() {
   for (const field of fields) field.style.height = `${next}px`;
 }
 
-// â”€â”€ Animated placeholder: rotating program ideas typed live â”€â”€â”€â”€â”€â”€â”€
-// Interleaved across domains so no two consecutive entries share one â€” the
+// ── Animated placeholder: rotating program ideas typed live ───────
+// Interleaved across domains so no two consecutive entries share one — the
 // user reads a different field every cycle.
 const FORGE_CHAT_PLACEHOLDER_IDEAS = [
   "Run a Monte Carlo over 10,000 portfolio paths for the next quarter",                                  // finance
   "Mine motifs in a 50 GB DNA sequence and report exact matches",                                        // genomics
-  "Process 40 years of satellite temperature data to surface a fresh El NiÃ±o precursor",                 // climate
+  "Process 40 years of satellite temperature data to surface a fresh El Niño precursor",                 // climate
   "Generate 1024-bit safe primes for Diffie-Hellman with Miller-Rabin",                                  // crypto
   "Plan a collision-free arm trajectory through a 3D point cloud",                                       // robotics
   "Backtest a mean-reversion idea on EUR/USD H4 over 16 years",                                          // FX trading
   "Score 1 million ligands by binding affinity against this kinase target",                              // drug discovery
   "Cross-correlate the Kepler light-curve archive to invent a new exoplanet-detection signature",        // astronomy
-  "Compute the first 10 million digits of Ï€ with the Chudnovsky algorithm",                              // math
+  "Compute the first 10 million digits of π with the Chudnovsky algorithm",                              // math
   "FFT this 2-hour audio file and surface the dominant frequencies",                                     // audio / DSP
   "Cluster 100,000 brain MRIs to invent a novel biomarker for early Alzheimer detection",                // medical imaging
   "Cross-test 10,000 alloy compositions to derive a new strength-to-weight scoring function",            // materials
@@ -12573,7 +14593,7 @@ const FORGE_CHAT_PLACEHOLDER_IDEAS = [
   "Optimize a delivery route over 200 stops with traffic-aware ETAs",                                    // logistics
   "Trace 200 GB of packet capture for novel anomaly fingerprints",                                       // networking
   "Mine 5 million tweets to derive a viral-propensity score from raw text patterns",                     // NLP / social
-  "Analyze every NBA possession from 2010-2025 to invent a player-impact metric beyond Â±",               // sports
+  "Analyze every NBA possession from 2010-2025 to invent a player-impact metric beyond ±",               // sports
   "Solve Navier-Stokes on a 50M-cell mesh of this turbine blade",                                        // CFD / fluid
   "Simulate a 100k-node power grid under cascading failure scenarios",                                   // energy
   "Cluster 200k product photos by visual similarity with no labels",                                     // computer vision
@@ -12620,117 +14640,117 @@ const FORGE_CHAT_PLACEHOLDER_IDEAS = [
   "Reconstruct global CO2 fluxes from 20 years of OCO-2 satellite data",                                 // climate II
 ];
 
-// Multi-LLM scenarios â€” typed simultaneously into the Codex / Gemini / Claude
+// Multi-LLM scenarios — typed simultaneously into the Codex / Gemini / Claude
 // fields when the chat is in "all" mode. Each scenario decomposes one task
 // across the three models, with occasional "Hey Codex," / "Hello Claude,"
 // greetings to make the routing explicit.
-// Multi-LLM scenarios â€” interleaved across domains so two consecutive
+// Multi-LLM scenarios — interleaved across domains so two consecutive
 // scenarios never share one. Each scenario decomposes ONE compute workload
 // into three real heavy tasks (no LLM-text-only filler), one per agent.
 const FORGE_CHAT_PLACEHOLDER_SCENARIOS = [
-  // Genomics â€” same DNA file, three heavy computations
+  // Genomics — same DNA file, three heavy computations
   {
     codex: "Hey Codex, mine motifs in this 50 GB DNA file",
     gemini: "Compute pairwise FST across all populations",
     claude: "Phase the diploid genome from the same reads",
   },
-  // Climate â€” same ocean-buoy archive, three forecast computations
+  // Climate — same ocean-buoy archive, three forecast computations
   {
     codex: "Forecast 30-day SST anomalies from this ocean-buoy archive",
     gemini: "Run a 50k-ensemble hurricane-track simulation",
     claude: "Hello Claude, mine 40 years of satellite data for ENSO precursors",
   },
-  // Trading â€” one order book, three compute angles
+  // Trading — one order book, three compute angles
   {
     codex: "Detect spoofing in this 200k-row order book",
     gemini: "Synthesize a market-making strategy on the same data",
     claude: "Walk-forward backtest the strategy over 5 years",
   },
-  // Quantum â€” three independent quantum compute jobs
+  // Quantum — three independent quantum compute jobs
   {
     codex: "Simulate a 30-qubit Shor circuit on the same input",
     gemini: "Run VQE on 5,000 molecules in parallel",
     claude: "Hello Claude, compute fidelity decay across 1M error-correction cycles",
   },
-  // Drug discovery â€” same target, three compute pipelines
+  // Drug discovery — same target, three compute pipelines
   {
     codex: "Score 1M ligands against this kinase target",
     gemini: "Run molecular dynamics on the top 50 hits",
     claude: "Compute druglikeness and rank against Lipinski",
   },
-  // NLP / customer analytics â€” same corpus, three heavy passes
+  // NLP / customer analytics — same corpus, three heavy passes
   {
     codex: "Cluster 200k product reviews by latent topic",
     gemini: "Mine viral-propensity scores from the same corpus",
     claude: "Hello Claude, fit a retention model on the cluster labels",
   },
-  // Public health â€” same metagenome, three pipelines
+  // Public health — same metagenome, three pipelines
   {
     codex: "Mine this 30 GB metagenome for antibiotic-resistance signals",
     gemini: "Run BLAST against the global pathogen atlas",
     claude: "Phase the diploid pathogen genome",
   },
-  // Robotics â€” same trajectory problem, three compute angles
+  // Robotics — same trajectory problem, three compute angles
   {
     codex: "Plan a collision-free arm path through this point cloud",
     gemini: "Tune the 12-DOF controller across 10k stumble trials",
     claude: "Hello Claude, derive a recovery policy from successful runs",
   },
-  // Code analysis â€” same codebase, three heavy passes
+  // Code analysis — same codebase, three heavy passes
   {
     codex: "Trace this 5 GB git history for flaky tests",
     gemini: "Mine type bugs in the same 300k-line C++ codebase",
     claude: "Run SAT-based dead-code detection on every PR",
   },
-  // Audio / signal â€” same file, three heavy DSP runs
+  // Audio / signal — same file, three heavy DSP runs
   {
     codex: "Hey Codex, FFT this 2-hour audio file",
     gemini: "Cross-correlate it with 10k reference tracks",
     claude: "Detect speech-to-music transitions across the timeline",
   },
-  // Materials â€” same alloy dataset, three compute pipelines
+  // Materials — same alloy dataset, three compute pipelines
   {
     codex: "Score 10k alloy compositions for strength-to-weight",
     gemini: "Run molecular dynamics on the top 20 candidates",
     claude: "Hello Claude, compute fatigue lifetime under cyclic loads",
   },
-  // Astrophysics & space â€” three independent compute jobs
+  // Astrophysics & space — three independent compute jobs
   {
     codex: "Fit Hohmann transfer windows to Mars 2026-2040",
     gemini: "Predict orbital-debris collisions in LEO over 30 years",
     claude: "Cross-correlate Kepler light curves for new exoplanets",
   },
-  // FX trading â€” one dataset, three numerical workloads
+  // FX trading — one dataset, three numerical workloads
   {
     codex: "Backtest this idea on 16 years of EUR/USD",
     gemini: "Synthesize a mean-reversion variant on the same data",
     claude: "Compute walk-forward Sharpe across 100 windows",
   },
-  // Geology / geodesy â€” same seismic dataset, three compute pipelines
+  // Geology / geodesy — same seismic dataset, three compute pipelines
   {
     codex: "Mine 30 years of seismic waveforms for shallow-quake precursors",
     gemini: "Run synthetic tomography on the same recordings",
     claude: "Hello Claude, derive a strain-buildup index from 1k GPS stations",
   },
-  // Logistics â€” heavy optimization across three constraint sets
+  // Logistics — heavy optimization across three constraint sets
   {
     codex: "Hey Codex, optimize this 500-stop delivery route",
     gemini: "Recompute ETAs under live traffic data",
     claude: "Stress-test the schedule against 1,000 weather scenarios",
   },
-  // Computer vision â€” same image archive, three compute jobs
+  // Computer vision — same image archive, three compute jobs
   {
     codex: "Cluster 200k product photos by visual similarity",
     gemini: "Run object detection across the same archive",
     claude: "Mine the cluster boundaries to invent a novelty score",
   },
-  // Cybersecurity â€” Solidity audit, three compute angles
+  // Cybersecurity — Solidity audit, three compute angles
   {
     codex: "Audit this 1,500-line Solidity contract",
     gemini: "Fuzz-test the suspicious functions across 1M inputs",
     claude: "Hello Claude, mine the git history for similar reentrancy patterns",
   },
-  // Finance â€” same portfolio, three risk computations
+  // Finance — same portfolio, three risk computations
   {
     codex: "Run a 10k-path Monte Carlo on this portfolio",
     gemini: "Stress-test the bond ladder under 2008 yield shifts",
@@ -12752,12 +14772,12 @@ let canvasChatPlaceholderIdx = 0;
 let canvasChatPlaceholderCharIdx = 0;
 let canvasChatPlaceholderPhase = "typing"; // typing | hold | erasing
 
-// Cadence model: humans don't type at constant speed â€” short bursts inside
+// Cadence model: humans don't type at constant speed — short bursts inside
 // words, longer pauses around spaces and punctuation. We mirror that here.
 function canvasChatTypingDelay(idea, idx) {
   const prev = idx > 1 ? idea[idx - 2] : "";
   const justTyped = idea[idx - 1] || "";
-  const base = 18 + Math.random() * 18; // 18â€“36ms per char baseline
+  const base = 18 + Math.random() * 18; // 18–36ms per char baseline
   // Beat after sentence-level punctuation
   if (justTyped === "." || justTyped === ";" || justTyped === ":") {
     return base + 110 + Math.random() * 60;
@@ -12779,14 +14799,14 @@ function canvasChatTypingDelay(idea, idx) {
 }
 
 function canvasChatErasingDelay() {
-  // Erasing is much faster than typing â€” like holding backspace.
+  // Erasing is much faster than typing — like holding backspace.
   return 5 + Math.random() * 6;
 }
 
 /**
  * Returns the currently visible single-provider input. In gemini/claude
  * single mode the codex input is hidden, so the placeholder cycler must
- * write to the visible input â€” not blindly to forgeCanvasChatInput.
+ * write to the visible input — not blindly to forgeCanvasChatInput.
  */
 function activeSinglePlaceholderInput() {
   if (forgeCanvasChatTargetMode === "gemini") return forgeCanvasChatGeminiInput;
@@ -12848,9 +14868,9 @@ function canvasChatRenderPlaceholder(text) {
   const target = activeSinglePlaceholderInput();
   if (!target) return;
   // Clear stale placeholders on the inputs that are not the cycle's
-  // current target, so a switch from codex â†’ gemini doesn't leave a
+  // current target, so a switch from codex → gemini doesn't leave a
   // half-typed scenario sitting on the codex placeholder.
-  for (const input of [forgeCanvasChatInput, forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput]) {
+  for (const input of forgeCanvasChatPrimaryInputs) {
     if (input && input !== target) input.placeholder = "";
   }
   target.placeholder = text;
@@ -12860,8 +14880,7 @@ function canvasChatRenderPlaceholder(text) {
 // Multi-LLM tick: types one scenario across all 3 fields in parallel.
 function canvasChatMultiPlaceholderTick() {
   // Pause silently if any of the three fields is being used.
-  const fields = [forgeCanvasChatInput, forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput];
-  for (const f of fields) {
+  for (const f of forgeCanvasChatPrimaryInputs) {
     if (!f) continue;
     if (document.activeElement === f || f.value) return;
   }
@@ -12924,8 +14943,7 @@ function startCanvasChatPlaceholderAnimation() {
     if (document.activeElement === forgeCanvasChatInput || forgeCanvasChatInput.value) return;
   } else {
     // In multi mode, block if any of the three fields is in use.
-    const fields = [forgeCanvasChatInput, forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput];
-    for (const f of fields) {
+    for (const f of forgeCanvasChatPrimaryInputs) {
       if (!f) continue;
       if (document.activeElement === f || f.value) return;
     }
@@ -12956,7 +14974,9 @@ function syncCanvasChatSendState() {
   if (canvasChatBusyInCurrentSession()) {
     forgeCanvasChatSend.disabled = false;
     forgeCanvasChatSend.classList.add("ready");
-    forgeCanvasChatSend.setAttribute("aria-label", isRealEstateShellActive() ? "ArrÃªter" : "Stop");
+    forgeCanvasChatSend.setAttribute("aria-label", hasText ? "Envoyer l'interruption" : "Stop");
+    forgeCanvasChatSend.setAttribute("aria-label", isRealEstateShellActive() ? "Arrêter" : "Stop");
+    forgeCanvasChatSend.setAttribute("aria-label", hasText ? "Envoyer l'interruption" : "Stop");
     forgeDispatchProjectionPatch("chatbar", {
       type: "SET_CHATBAR",
       patch: {
@@ -13186,8 +15206,8 @@ function renderCanvasChatAttachments() {
     const target = canvasPendingProgramTarget(program);
     chip.dataset.target = target;
     chip.title = program.hash
-      ? `${program.name} Â· ${program.hash.slice(0, 12)}â€¦ Â· ${canvasAttachmentTargetLabel(target)}`
-      : `${program.name} Â· ${canvasAttachmentTargetLabel(target)}`;
+      ? `${program.name} · ${program.hash.slice(0, 12)}… · ${canvasAttachmentTargetLabel(target)}`
+      : `${program.name} · ${canvasAttachmentTargetLabel(target)}`;
     chip.innerHTML = `
       <svg class="canvas-chat-chip-icon" viewBox="0 0 16 16" aria-hidden="true">
         <path d="m6 5-3 3 3 3" />
@@ -13228,7 +15248,7 @@ function renderCanvasChatAttachments() {
     chip.className = "canvas-chat-chip";
     const target = canvasPendingFileTarget(item);
     chip.dataset.target = target;
-    chip.title = `${file.name} Â· ${canvasAttachmentTargetLabel(target)}`;
+    chip.title = `${file.name} · ${canvasAttachmentTargetLabel(target)}`;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     chip.innerHTML = `
       <svg class="canvas-chat-chip-icon" viewBox="0 0 16 16" aria-hidden="true">
@@ -13236,7 +15256,7 @@ function renderCanvasChatAttachments() {
         <path d="M9 2v4h4" />
       </svg>
       <span class="canvas-chat-chip-name">${file.name.replace(/[<>&"']/g, (c) => ({"<":"&lt;",">":"&gt;","&":"&amp;","\"":"&quot;","'":"&#39;"}[c]))}</span>
-      <span class="canvas-chat-chip-size">${ext ? ext.toUpperCase() + " Â· " : ""}${formatCanvasChatFileSize(file.size)}</span>
+      <span class="canvas-chat-chip-size">${ext ? ext.toUpperCase() + " · " : ""}${formatCanvasChatFileSize(file.size)}</span>
     `;
     const targetBtn = document.createElement("button");
     targetBtn.type = "button";
@@ -13291,7 +15311,7 @@ function compactAttachedFileProfile(file) {
   } else if (type === "csv") {
     notes.push("CSV attached; Forge will profile/parse it locally");
   }
-  return `${name} (${type}, ${humanSize(size)})${notes.length ? ` â€” ${notes.join("; ")}` : ""}`;
+  return `${name} (${type}, ${humanSize(size)})${notes.length ? ` — ${notes.join("; ")}` : ""}`;
 }
 
 /**
@@ -13337,17 +15357,17 @@ function canvasAttachmentAnnotationForRuntime(runtime, label, files, programs, a
     if (nodes.length) {
       parts.push(`Atlas nodes dropped in chat slots: ${nodes.map((it) => it.tag).join(", ")}`);
     }
-    parts.push("These atlas items are session attachments â€” treat them as references the user is asking you to use, combine, evaluate or compose. Look them up via Forge tools (read/run/atlas) instead of guessing their semantics; never assume the user wants them executed unless they say so.");
+    parts.push("These atlas items are session attachments — treat them as references the user is asking you to use, combine, evaluate or compose. Look them up via Forge tools (read/run/atlas) instead of guessing their semantics; never assume the user wants them executed unless they say so.");
   }
   if (!parts.length) return "";
-  return `[Assigned to ${label} â€” ${parts.join("; ")}. Ignore items assigned only to the other agent.]`;
+  return `[Assigned to ${label} — ${parts.join("; ")}. Ignore items assigned only to the other agent.]`;
 }
 
 function compactCanvasPromptText(text, max = 320) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
   if (!clean) return "";
   if (clean.length <= max) return clean;
-  return `${clean.slice(0, Math.max(0, max - 1)).trim()}â€¦`;
+  return `${clean.slice(0, Math.max(0, max - 1)).trim()}…`;
 }
 
 function canvasMessageIsProgramCritique(text) {
@@ -13408,7 +15428,7 @@ function compactCanvasFileStateRows() {
     const key = cleanName.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
-    rows.push(`${cleanName}${size ? ` (${humanSize(size)})` : ""}${note ? ` â€” ${note}` : ""}`);
+    rows.push(`${cleanName}${size ? ` (${humanSize(size)})` : ""}${note ? ` — ${note}` : ""}`);
   };
   for (const file of alphaSessionFiles || []) {
     addFile(file?.name, Number(file?.size || 0), "attached to this Forge session");
@@ -13443,7 +15463,7 @@ function compactCanvasRunStateRows() {
   const title = currentProjectLabel?.() || "";
   const status = job?.status || manifest?.status || (jobId ? "active" : "not_started");
   if (jobId || title) {
-    rows.push(`session: ${jobId || "pending"} Â· ${title || "New session"} Â· status=${status}`);
+    rows.push(`session: ${jobId || "pending"} · ${title || "New session"} · status=${status}`);
   }
   const programName =
     manifest.program_name || manifest.programName || manifest.program ||
@@ -13452,16 +15472,16 @@ function compactCanvasRunStateRows() {
     manifest.program_hash || manifest.programHash || manifest.mcp_result?.program_hash ||
     job.programHash || "";
   if (programName || programHash) {
-    rows.push(`compute program/result: ${programName || "program"}${programHash ? ` Â· hash=${shortHash(programHash)}` : ""}`);
+    rows.push(`compute program/result: ${programName || "program"}${programHash ? ` · hash=${shortHash(programHash)}` : ""}`);
   }
   const mapping = typeof selectedVisualMappingSummary === "function" ? selectedVisualMappingSummary() : null;
   if (mapping?.available) {
-    rows.push(`visual program/mapping: ${mapping.kind || "visual_mapping"} Â· views=${mapping.viewCount || 0} Â· 3D artifacts=${mapping.artifactCount || 0}${mapping.hash ? ` Â· hash=${shortHash(mapping.hash)}` : ""}`);
+    rows.push(`visual program/mapping: ${mapping.kind || "visual_mapping"} · views=${mapping.viewCount || 0} · 3D artifacts=${mapping.artifactCount || 0}${mapping.hash ? ` · hash=${shortHash(mapping.hash)}` : ""}`);
   } else if (alphaDocState?.fileName) {
     rows.push("visual state: default 2D file card is active; 3D can be generated as a visual_program without sending raw rows to the LLM");
   }
   if (alpha3dState?.open || alpha3dState?.mode) {
-    rows.push(`3D view: mode=${alpha3dState.mode || "default"} Â· z=${alpha3dState.zMetric || "auto"} Â· points=${alpha3dState.pointCount || 0}`);
+    rows.push(`3D view: mode=${alpha3dState.mode || "default"} · z=${alpha3dState.zMetric || "auto"} · points=${alpha3dState.pointCount || 0}`);
   }
   const recentToolRows = alphaCanvasChatMessages
     .filter((message) => message?.role === "tool")
@@ -13526,7 +15546,7 @@ async function runCanvasAssignedPrograms(stagedPrograms, stagedFiles, activeTarg
   if (!forgeCanInvoke()) return;
   const allInputs = (typeof selectedForgeInputRefsPayload === "function") ? selectedForgeInputRefsPayload() : [];
   if (!allInputs.length) {
-    appendCanvasChatMessage("tool", "No file references available â€” programs need session inputs to run.", { turnId, sessionJobId });
+    appendCanvasChatMessage("tool", "No file references available — programs need session inputs to run.", { turnId, sessionJobId });
     return;
   }
   const runs = runnablePrograms.map(async (program) => {
@@ -13547,7 +15567,7 @@ async function runCanvasAssignedPrograms(stagedPrograms, stagedFiles, activeTarg
         request: {
           programHash: program.hash || null,
           program: program.hash ? null : program.name,
-          title: `${program.name || "Forge program"} Â· ${targetLabel} chat run`,
+          title: `${program.name || "Forge program"} · ${targetLabel} chat run`,
           inputs,
         },
       }, { section: "programs", timeoutMs: 120000 });
@@ -13582,6 +15602,82 @@ async function runCanvasAssignedPrograms(stagedPrograms, stagedFiles, activeTarg
   scheduleAlphaRender?.();
 }
 
+function clearCanvasChatInputsAfterSubmit() {
+  if (forgeCanvasChatInput) forgeCanvasChatInput.value = "";
+  if (forgeCanvasChatGeminiInput) forgeCanvasChatGeminiInput.value = "";
+  if (forgeCanvasChatClaudeInput) forgeCanvasChatClaudeInput.value = "";
+  if (forgeCanvasChatCommandInput) forgeCanvasChatCommandInput.value = "";
+  autosizeCanvasChatInput();
+  syncCanvasCommandRailState();
+  syncTradingSlashCommandState();
+}
+
+function stageCanvasChatTextForRetry(text = "") {
+  const value = String(text || "");
+  if (forgeCanvasChatTargetMode === "all") {
+    if (forgeCanvasChatInput && !forgeCanvasChatInput.hidden) forgeCanvasChatInput.value = value;
+    else if (forgeCanvasChatGeminiInput && !forgeCanvasChatGeminiInput.hidden) forgeCanvasChatGeminiInput.value = value;
+    else if (forgeCanvasChatClaudeInput && !forgeCanvasChatClaudeInput.hidden) forgeCanvasChatClaudeInput.value = value;
+  } else if (forgeCanvasChatTargetMode === "gemini" && forgeCanvasChatGeminiInput) {
+    forgeCanvasChatGeminiInput.value = value;
+  } else if (forgeCanvasChatTargetMode === "claude" && forgeCanvasChatClaudeInput) {
+    forgeCanvasChatClaudeInput.value = value;
+  } else if (forgeCanvasChatInput) {
+    forgeCanvasChatInput.value = value;
+  }
+  autosizeCanvasChatInput();
+  syncCanvasChatSendState();
+}
+
+function handleCanvasBusyIntervention(text = "") {
+  const message = String(text || "").trim();
+  const intent = classifyCanvasBusyIntervention(message);
+  if (!message) {
+    stopCanvasChatActivity("Stopped from empty busy send", "Stopped by user.");
+    return;
+  }
+  if (intent === "continue") {
+    appendCanvasChatMessage("user", message, {
+      turnId: forgeCanvasChatActiveTurnId || "",
+      sessionJobId: forgeCanvasChatActiveSessionId || currentAlphaSessionJobId() || "",
+      intervention: "continue",
+    });
+    appendCanvasChatMessage("tool", "Interruption recue: Forge laisse le travail en cours continuer.", {
+      turnId: forgeCanvasChatActiveTurnId || "",
+      sessionJobId: forgeCanvasChatActiveSessionId || currentAlphaSessionJobId() || "",
+    });
+    clearCanvasChatInputsAfterSubmit();
+    return;
+  }
+  if (intent === "cancel") {
+    appendCanvasChatMessage("user", message, {
+      turnId: forgeCanvasChatActiveTurnId || "",
+      sessionJobId: forgeCanvasChatActiveSessionId || currentAlphaSessionJobId() || "",
+      intervention: "cancel",
+    });
+    clearCanvasChatInputsAfterSubmit();
+    stopCanvasChatActivity("Cancelled by user interruption", "Interruption recue: j'annule le travail en cours.");
+    return;
+  }
+  const previousTurnId = forgeCanvasChatActiveTurnId || "";
+  forgeCanvasPendingIntervention = {
+    text: message,
+    previousTurnId,
+    createdAt: Date.now(),
+  };
+  clearCanvasChatInputsAfterSubmit();
+  stopCanvasChatActivity("Adjusted by user interruption", "Interruption recue: j'arrete le tour courant et je repars avec ta correction.");
+  appendCanvasChatMessage("tool", "conversation orienté", {
+    turnId: previousTurnId,
+    sessionJobId: forgeCanvasChatActiveSessionId || currentAlphaSessionJobId() || "",
+    conversationOriented: true,
+  });
+  setTimeout(() => {
+    stageCanvasChatTextForRetry(message);
+    void sendForgeCanvasChatMessage();
+  }, 0);
+}
+
 async function sendForgeCanvasChatMessage(event) {
   event?.preventDefault?.();
   const text = redactCanvasForModel(primaryCanvasChatText());
@@ -13593,7 +15689,10 @@ async function sendForgeCanvasChatMessage(event) {
   const stagedAtlasItems = collectChatSlotAtlasItems();
   const stagedFileObjects = stagedFiles.map(canvasPendingFileObject).filter(Boolean);
   if (!displayText && !stagedFiles.length && !stagedPrograms.length && !stagedAtlasItems.length) return;
-  if (canvasChatBusyInCurrentSession()) return;
+  if (canvasChatBusyInCurrentSession()) {
+    handleCanvasBusyIntervention(displayText);
+    return;
+  }
   const turnId = `forge-canvas-${Date.now()}-${alphaCanvasChatSeq + 1}`;
   let turnSessionJobId = currentAlphaSessionJobId();
   if (forgeCanvasChatInput) {
@@ -13621,24 +15720,8 @@ async function sendForgeCanvasChatMessage(event) {
   const userMessageText = displayText || attachmentOnlyText;
   if (realEstateModeActive && realEstateLlmInstallReady() && forgeTauri?.invoke) {
     await refreshRealEstateOnboardingState({ announce: false });
+    await releaseRealEstateTransientUiLocks();
   }
-  const realEstateCurrentOnboardingQuestionId = realEstateOnboardingState?.question?.id || "";
-  const realEstateOnboardingQuestionWasPresented =
-    !!realEstateCurrentOnboardingQuestionId
-    && realEstateOnboardingAnnouncedQuestion === realEstateCurrentOnboardingQuestionId;
-  const realEstateOnboardingTurnActive = realEstateOnboardingActive()
-    && displayText
-    && !stagedFiles.length
-    && !stagedPrograms.length
-    && !stagedAtlasItems.length;
-  const realEstateOnboardingAnswerText = realEstateOnboardingActive()
-    && realEstateOnboardingQuestionWasPresented
-    && displayText
-    && !stagedFiles.length
-    && !stagedPrograms.length
-    && !stagedAtlasItems.length
-    ? userMessageText
-    : "";
   let realEstateOnboardingReportForTurn = null;
   const realEstateToolCommand = realEstateModeActive
     && !stagedFiles.length
@@ -13654,25 +15737,9 @@ async function sendForgeCanvasChatMessage(event) {
     setAlphaActiveTab("forge");
     setCanvasChatBusy(true);
     try {
-      const routed = await routeRealEstateToolCommand(userMessageText);
-      appendCanvasChatMessage("assistant", routed?.message || `Programme ${realEstateToolCommand.command} pret.`, {
-        turnId,
-        sessionJobId: turnSessionJobId || "",
-        agentLabel: "Forge",
-        local: true,
-        toolEvents: [
-          { tool: "real_estate_command_router", label: routed?.label || realEstateToolCommand.command },
-          { tool: "brain_recall", label: "scope agence_immo" },
-          { tool: "real_estate_harvester_snapshot", label: "Data Sync context" },
-        ],
-      });
+      await routeRealEstateToolCommand(userMessageText);
     } catch (err) {
-      appendCanvasChatMessage("assistant", `Commande ${realEstateToolCommand.command} reconnue, mais le contexte agence n'a pas pu etre charge: ${err}`, {
-        turnId,
-        sessionJobId: turnSessionJobId || "",
-        agentLabel: "Forge",
-        local: true,
-      });
+      console.warn("[real-estate] local command route failed", err);
     } finally {
       setCanvasChatBusy(false);
       syncAlphaDropSurface?.();
@@ -13695,6 +15762,12 @@ async function sendForgeCanvasChatMessage(event) {
     syncAlphaDropSurface?.();
     return;
   }
+  const busyInterventionForTurn = forgeCanvasPendingIntervention
+    && String(forgeCanvasPendingIntervention.text || "").trim() === userMessageText.trim()
+    && Date.now() - Number(forgeCanvasPendingIntervention.createdAt || 0) < 15000
+    ? { ...forgeCanvasPendingIntervention }
+    : null;
+  if (busyInterventionForTurn) forgeCanvasPendingIntervention = null;
   let realEstateToolContextForTurn = null;
   if (realEstateModeActive) {
     const realEstateContextSource = [text, geminiText, claudeText, userMessageText]
@@ -13731,67 +15804,27 @@ async function sendForgeCanvasChatMessage(event) {
     setAlphaActiveTab("forge");
   }
   if (activeTradingBridge?.isActive?.() && !runtimeTargets.length) {
-    const isWebBridge = isWebExplorerBridgeActive(activeTradingBridge);
-    const localResult = await activeTradingBridge.routeLocalCommand?.(displayText, {
+    await activeTradingBridge.routeLocalCommand?.(displayText, {
       turnId,
       sessionJobId: turnSessionJobId || "",
       attachments: stagedFiles.map((f) => ({ name: canvasPendingFileName(f), target: canvasPendingFileTarget(f) })),
       atlasItems: stagedAtlasItems.map((it) => ({ tag: it.tag, kind: it.kind })),
       programs: stagedPrograms.map((p) => ({ name: p.name, target: canvasPendingProgramTarget(p) })),
     });
-    if (!isWebBridge) {
-      appendCanvasChatMessage("assistant", localResult?.message || "Trading command mode is active. No LLM is currently involved, so Forge handled this locally.", {
-        turnId,
-        sessionJobId: turnSessionJobId || "",
-        agentLabel: "Forge",
-        local: true,
-        toolEvents: [
-          { tool: "trading_command_router", label: localResult?.label || "local trading command" },
-        ],
-      });
-    }
     try { window.__forgeAlphaCanvasBridge?.forceImmediateRender?.(); } catch (_) {}
     syncAlphaDropSurface?.();
     return;
   }
   if (activeTradingBridge?.isActive?.() && /^\s*\/[a-z0-9_-]+/i.test(displayText)) {
-    const localResult = await activeTradingBridge.routeLocalCommand?.(displayText, {
+    await activeTradingBridge.routeLocalCommand?.(displayText, {
       turnId,
       sessionJobId: turnSessionJobId || "",
     });
     try { window.__forgeAlphaCanvasBridge?.forceImmediateRender?.(); } catch (_) {}
-    appendCanvasChatMessage("assistant", localResult?.message || "Indicator command applied on the trading chart.", {
-      turnId,
-      sessionJobId: turnSessionJobId || "",
-      agentLabel: "Forge",
-      local: true,
-      toolEvents: [
-        { tool: "trading_indicator_router", label: localResult?.label || "indicator command" },
-      ],
-    });
     syncAlphaDropSurface?.();
     return;
   }
-  if (realEstateOnboardingAnswerText) {
-    realEstateOnboardingReportForTurn = await recordRealEstateOnboardingAnswerForLlm(realEstateOnboardingAnswerText);
-  }
-  const localReply = !stagedFiles.length && !stagedPrograms.length
-    && !realEstateOnboardingTurnActive
-    ? localCanvasMicroReplyForTurn(text, geminiText, claudeText)
-    : "";
-  if (localReply) {
-    window.setTimeout(() => {
-      appendCanvasChatMessage("assistant", localReply, {
-        turnId,
-        agentLabel: canvasChatTargetLabel(forgeCanvasChatTargetMode),
-        local: true,
-        toolEvents: [{ tool: "token_usage", label: "0 fresh Â· local" }],
-      });
-      syncAlphaDropSurface?.();
-    }, localCanvasMicroReplyDelayMs(text));
-    syncAlphaDropSurface?.();
-    return;
-  }
+  const assistantTurnTimeoutMs = 120000;
   forgeCanvasChatAbortController = new AbortController();
   const turnSignal = forgeCanvasChatAbortController.signal;
   forgeCanvasChatActiveTurnId = turnId;
@@ -13853,6 +15886,9 @@ async function sendForgeCanvasChatMessage(event) {
             || ""
         ).trim()
         : "";
+      if (busyInterventionForTurn) {
+        parts.push(activeCanvasBusyInterventionPacket(busyInterventionForTurn.text));
+      }
       if (needsForgeTurnContext) {
         const continuity = compactCanvasConversationContext(turnId);
         if (continuity) parts.push(continuity);
@@ -13926,11 +15962,18 @@ async function sendForgeCanvasChatMessage(event) {
     if (turnSignal.aborted) return;
     const targets = runtimeTargets.map((target) => ({
       ...target,
+      turnId,
+      privacyScope: realEstateModeActive ? "agence_immo" : "",
+      thinkingLocale: realEstateModeActive ? "fr" : "en",
       messageForBroker: messageWithAnnotations(target.text, target),
     }));
-    setCanvasChatPendingAssistants(targets);
+    setCanvasChatPendingAssistants(targets, {
+      turnId,
+      privacyScope: realEstateModeActive ? "agence_immo" : "",
+    });
     const results = await Promise.all(targets.map(async (target) => {
       try {
+        beginCanvasTurnLatency(turnId, target.runtime, target.messageForBroker);
         const response = await forgeInvoke("forge_canvas_assistant_turn", {
           request: {
             message: redactCanvasForModel(target.messageForBroker),
@@ -13942,7 +15985,7 @@ async function sendForgeCanvasChatMessage(event) {
             turnId,
             privacyScope: realEstateModeActive ? "agence_immo" : null,
           },
-        }, { section: "canvas-assistant", timeoutMs: 120000 });
+        }, { section: "canvas-assistant", timeoutMs: assistantTurnTimeoutMs });
         return { target, response };
       } catch (err) {
         return { target, err };
@@ -13955,6 +15998,23 @@ async function sendForgeCanvasChatMessage(event) {
       if (canvasTurnDetachedForLiveCompute(turnId)) return;
       const { target } = result;
       if (result.err) {
+        finalizeCanvasTurnLatency(turnId, target.runtime, null, target.runtime);
+        const partial = findCanvasAssistantMessageByTurn(turnId, target.runtime);
+        if (partial && String(partial.text || "").trim()) {
+          finalizeCanvasStreamingAssistant(turnId, target.runtime, partial.text, {
+            sessionJobId: turnSessionJobId || "",
+            agentLabel: target.label,
+            toolEvents: [{
+              tool: canvasRuntimeToolName(target.runtime),
+              status: "partial_timeout",
+            }],
+          });
+          appendCanvasChatMessage("tool", `Le runtime ${target.label} a depasse le delai apres une reponse partielle.`, {
+            turnId,
+            sessionJobId: turnSessionJobId || "",
+          });
+          continue;
+        }
         appendCanvasChatMessage("assistant", `Je n'ai pas pu interroger ${target.label}: ${result.err}`, {
           turnId,
           sessionJobId: turnSessionJobId || "",
@@ -13969,12 +16029,20 @@ async function sendForgeCanvasChatMessage(event) {
       const response = result.response;
       const responseRuntime = canvasResponseRuntime(response, target);
       const responseLabel = canvasChatTargetLabel(responseRuntime);
+      const latency = finalizeCanvasTurnLatency(
+        turnId,
+        responseRuntime,
+        response?.codexBridge,
+        target.runtime,
+      );
+      applyRealEstateOnboardingBridgeUi(response?.codexBridge, turnId);
       if (forgeCanvasChatTargetMode !== "all" && responseRuntime !== target.runtime) {
         const fallbackModel = String(response?.provider?.modelRef || response?.provider?.model_ref || "").trim();
         if (fallbackModel) setCanvasRuntimeModelRef(responseRuntime, fallbackModel);
         setCanvasChatTargetMode(responseRuntime, [responseRuntime]);
       }
       const toolEvents = Array.isArray(response?.toolEvents) ? response.toolEvents.slice() : [];
+      toolEvents.push(...takeCanvasTurnUiToolEvents(turnId));
       if (
         response?.codexBridge?.status &&
         response.codexBridge.status !== "not_attempted" &&
@@ -13990,24 +16058,39 @@ async function sendForgeCanvasChatMessage(event) {
         const generation = Number(response.codexBridge.threadGeneration || 0);
         toolEvents.push({
           tool: "thread_compaction",
-          label: generation > 0 ? `Context compacted Â· gen ${generation}` : "Context compacted",
+          label: generation > 0 ? `Context compacted · gen ${generation}` : "Context compacted",
         });
       }
       const usage = codexBridgeUsageSummary(response?.codexBridge);
       if (usage) {
         toolEvents.push({
           tool: "token_usage",
-          label: `${formatCount(usage.fresh)} fresh Â· ${formatCount(usage.cached)} cached`,
+          label: `${formatCount(usage.fresh)} fresh · ${formatCount(usage.cached)} cached`,
           usage,
         });
       }
-      appendCanvasChatMessage("assistant", response?.assistantMessage || `${target.label} a lu le contexte Forge.`, {
+      const finalAssistantText = stripCanvasLoopNarrationPrefix(
         turnId,
+        response?.assistantMessage || `${target.label} a lu le contexte Forge.`
+      );
+      const finalizedStream = finalizeCanvasStreamingAssistant(turnId, responseRuntime, finalAssistantText, {
         sessionJobId: turnSessionJobId || "",
         agentLabel: responseLabel,
         toolEvents,
         provider: response?.provider || null,
+        latency,
       });
+      if (!finalizedStream && String(finalAssistantText || "").trim()) {
+        appendCanvasChatMessage("assistant", finalAssistantText, {
+          turnId,
+          sessionJobId: turnSessionJobId || "",
+          agentLabel: responseLabel,
+          runtime: responseRuntime,
+          toolEvents,
+          provider: response?.provider || null,
+          latency,
+        });
+      }
     }
   } catch (err) {
     if (!turnSignal.aborted && !canvasTurnDetachedForLiveCompute(turnId)) {
@@ -14020,6 +16103,9 @@ async function sendForgeCanvasChatMessage(event) {
   } finally {
     const isCurrentTurn =
       forgeCanvasChatAbortController?.signal === turnSignal || forgeCanvasChatActiveTurnId === turnId;
+    if (turnSignal.aborted || canvasTurnDetachedForLiveCompute(turnId)) {
+      dropAllCanvasTurnLatency(turnId);
+    }
     if (forgeCanvasChatAbortController?.signal === turnSignal) {
       forgeCanvasChatAbortController = null;
     }
@@ -14041,7 +16127,7 @@ function scrollAlphaTranscriptToLive({ smooth = true, force = false } = {}) {
   if (!alphaLogLayer || alphaLogLayer.style.display === "none") return;
   if (force) alphaTranscriptStickToBottom = true;
   // While streaming a long response, calling scrollTo({behavior:"smooth"}) every
-  // frame restarts the native smooth animation each tick â€” that's the friction.
+  // frame restarts the native smooth animation each tick — that's the friction.
   // Per-frame instant scroll is naturally smooth because content grows by a few
   // chars (a few px) per rAF tick. Smooth is reserved for explicit jumps.
   if (!alphaTranscriptStickToBottom) return;
@@ -14053,7 +16139,7 @@ function scrollAlphaTranscriptToLive({ smooth = true, force = false } = {}) {
     if (Math.abs(delta) < 2) return;
     alphaTranscriptProgrammaticScrollAt = performance.now();
     // Use native smooth only for explicit jumps (force) over a meaningful gap.
-    // Otherwise instant â€” the typing animation drives the perceived smoothness.
+    // Otherwise instant — the typing animation drives the perceived smoothness.
     const useNativeSmooth = smooth && force && delta > 80
       && typeof alphaLogLayer.scrollTo === "function";
     if (useNativeSmooth) {
@@ -14068,7 +16154,7 @@ function scrollAlphaTranscriptToLive({ smooth = true, force = false } = {}) {
 let alphaLogTypingActiveKeys = new Set();
 
 /**
- * Updates only the actively-typing assistant messages in place â€” no
+ * Updates only the actively-typing assistant messages in place — no
  * DOM destruction, no flicker on the older messages. Returns true if
  * any message was updated; false if there are no nodes to update.
  *
@@ -14134,7 +16220,7 @@ function renderAlphaLogLayer() {
       && forgeCanvasChatPendingAssistants.length === 0
       && !alphaForgeLogs.length
   );
-  // Detect "typing just finished" â€” a key that was active last frame is
+  // Detect "typing just finished" — a key that was active last frame is
   // no longer active. That transition needs a full rebuild so the caret
   // disappears and the message-actions row (copy/pin/speak) appears.
   const currentTypingKeys = new Set(alphaCanvasTypingStates.keys());
@@ -14146,7 +16232,7 @@ function renderAlphaLogLayer() {
     }
   }
   alphaLogTypingActiveKeys = currentTypingKeys;
-  // Fast path: only typing progress changed â†’ update text in place,
+  // Fast path: only typing progress changed → update text in place,
   // leave the rest of the DOM (and all completed messages) untouched.
   if (alphaLogRenderedVersion === structuralKey && !typingJustFinished) {
     if (updateTypingMessagesInPlace()) {
@@ -14995,10 +17081,10 @@ if (typeof window !== "undefined") {
   };
 }
 
-// â”€â”€â”€ Event listeners â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-alphaTabResults.addEventListener("click", () => setAlphaActiveTab("results"));
-alphaTabForge.addEventListener(  "click", () => setAlphaActiveTab("forge"));
-alphaStartBtn.addEventListener(  "click", alphaStartComputation);
+// ─── Event listeners ──────────────────────────────────────────────
+bindClickAction(alphaTabResults, () => setAlphaActiveTab("results"));
+bindClickAction(alphaTabForge, () => setAlphaActiveTab("forge"));
+bindClickAction(alphaStartBtn, () => { void alphaStartComputation(); });
 forgeCanvasChat?.addEventListener("submit", sendForgeCanvasChatMessage);
 forgeCanvasChat?.addEventListener("click", (event) => {
   const interactive = event.target?.closest?.(
@@ -15007,8 +17093,7 @@ forgeCanvasChat?.addEventListener("click", (event) => {
   if (interactive) return;
   const input = primaryCanvasComposerInput();
   if (!input) return;
-  stopCanvasChatPlaceholderAnimation();
-  clearAllCanvasChatPlaceholders();
+  stopAndClearCanvasChatPlaceholders();
   input.focus({ preventScroll: true });
 });
 forgeCanvasChatCommandRail?.addEventListener("click", (event) => {
@@ -15039,39 +17124,21 @@ forgeCanvasChatCommandInput?.addEventListener("blur", () => {
   if (forgeCanvasChatCommandInput) forgeCanvasChatCommandInput.value = command;
   syncCanvasCommandRailState();
 });
-forgeCanvasChatInput?.addEventListener("input", () => {
+bindInputAction(forgeCanvasChatPrimaryInputs, () => {
   autosizeCanvasChatInput();
   syncCanvasChatSendState();
   syncTradingSlashCommandState();
   stopCanvasChatPlaceholderAnimation();
 });
-installCanvasSecretGuard(forgeCanvasChatInput);
-installCanvasSecretGuard(forgeCanvasChatGeminiInput);
-installCanvasSecretGuard(forgeCanvasChatClaudeInput);
-forgeCanvasChatGeminiInput?.addEventListener("input", () => {
-  autosizeCanvasChatInput();
-  syncCanvasChatSendState();
-  syncTradingSlashCommandState();
-  stopCanvasChatPlaceholderAnimation();
+forgeCanvasChatPrimaryInputs.forEach((input) => {
+  installCanvasSecretGuard(input);
 });
-forgeCanvasChatClaudeInput?.addEventListener("input", () => {
-  autosizeCanvasChatInput();
-  syncCanvasChatSendState();
-  syncTradingSlashCommandState();
-  stopCanvasChatPlaceholderAnimation();
-});
-forgeCanvasChatGeminiInput?.addEventListener("focus", () => {
-  stopCanvasChatPlaceholderAnimation();
-  clearAllCanvasChatPlaceholders();
-});
-forgeCanvasChatClaudeInput?.addEventListener("focus", () => {
-  stopCanvasChatPlaceholderAnimation();
-  clearAllCanvasChatPlaceholders();
+bindEventAction(forgeCanvasChatPrimaryInputs, "focus", () => {
+  stopAndClearCanvasChatPlaceholders();
 });
 const restartCanvasPlaceholderIfIdle = () => {
   if (forgeCanvasChatTargetMode === "all") {
-    const fields = [forgeCanvasChatInput, forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput];
-    if (fields.some((f) => f && (document.activeElement === f || f.value))) return;
+    if (forgeCanvasChatPrimaryInputs.some((f) => f && (document.activeElement === f || f.value))) return;
     canvasChatPlaceholderCharIdx = 0;
     canvasChatPlaceholderPhase = "names";
     startCanvasChatPlaceholderAnimation();
@@ -15087,9 +17154,7 @@ const restartCanvasPlaceholderIfIdle = () => {
   canvasChatPlaceholderPhase = "typing";
   startCanvasChatPlaceholderAnimation();
 };
-forgeCanvasChatInput?.addEventListener("blur", restartCanvasPlaceholderIfIdle);
-forgeCanvasChatGeminiInput?.addEventListener("blur", restartCanvasPlaceholderIfIdle);
-forgeCanvasChatClaudeInput?.addEventListener("blur", restartCanvasPlaceholderIfIdle);
+bindEventAction(forgeCanvasChatPrimaryInputs, "blur", restartCanvasPlaceholderIfIdle);
 function deleteCanvasSlashTokenBackward(targetInput) {
   if (!targetInput) return false;
   const start = Number.isFinite(targetInput.selectionStart) ? targetInput.selectionStart : targetInput.value.length;
@@ -15130,20 +17195,13 @@ function handleCanvasChatKeydown(event) {
   }
 }
 
-forgeCanvasChatInput?.addEventListener("keydown", handleCanvasChatKeydown);
-forgeCanvasChatGeminiInput?.addEventListener("keydown", handleCanvasChatKeydown);
-forgeCanvasChatClaudeInput?.addEventListener("keydown", handleCanvasChatKeydown);
-forgeCanvasChatCommandInput?.addEventListener("keydown", handleCanvasChatKeydown);
+bindEventAction(forgeCanvasChatAllInputs, "keydown", handleCanvasChatKeydown);
 function clearAllCanvasChatPlaceholders() {
-  if (forgeCanvasChatInput && !forgeCanvasChatInput.value) forgeCanvasChatInput.placeholder = "";
-  if (forgeCanvasChatGeminiInput && !forgeCanvasChatGeminiInput.value) forgeCanvasChatGeminiInput.placeholder = "";
-  if (forgeCanvasChatClaudeInput && !forgeCanvasChatClaudeInput.value) forgeCanvasChatClaudeInput.placeholder = "";
+  for (const input of forgeCanvasChatPrimaryInputs) {
+    if (input && !input.value) input.placeholder = "";
+  }
 }
 
-forgeCanvasChatInput?.addEventListener("focus", () => {
-  stopCanvasChatPlaceholderAnimation();
-  clearAllCanvasChatPlaceholders();
-});
 forgeCanvasChatInput?.addEventListener("blur", () => {
   if (forgeCanvasChatInput && !forgeCanvasChatInput.value) {
     // For multi mode, only restart if the other fields are also idle.
@@ -15151,7 +17209,7 @@ forgeCanvasChatInput?.addEventListener("blur", () => {
       const others = [forgeCanvasChatGeminiInput, forgeCanvasChatClaudeInput];
       if (others.some((f) => f && (document.activeElement === f || f.value))) return;
     }
-    // Restart from a fresh pass â€” multi mode replays the LLM names first.
+    // Restart from a fresh pass — multi mode replays the LLM names first.
     canvasChatPlaceholderCharIdx = 0;
     canvasChatPlaceholderPhase = forgeCanvasChatTargetMode === "all" ? "names" : "typing";
     startCanvasChatPlaceholderAnimation();
@@ -15159,28 +17217,27 @@ forgeCanvasChatInput?.addEventListener("blur", () => {
 });
 syncCanvasCommandRailState();
 syncTradingSlashCommandState();
-forgeCanvasChatTargetBtns.forEach((button) => {
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    const clicked = button.dataset.target || "codex";
-    // The legacy dropdown menu is no longer used; close it if it
-    // happens to be open from another path. No popup intercepts the
-    // LLM toggle anymore.
-    if (forgeCanvasChatModelMenu && !forgeCanvasChatModelMenu.hidden) {
-      forgeCanvasChatModelMenu.hidden = true;
-    }
-    // Otherwise, normal toggle: never let the selection drop to zero.
-    const willDeactivate = button.classList.contains("active");
-    const active = new Set(
-      forgeCanvasChatTargetBtns
-        .filter((b) => b.classList.contains("active"))
-        .map((b) => b.dataset.target),
-    );
-    if (willDeactivate) active.delete(clicked); else active.add(clicked);
-    if (active.size === 0) active.add(clicked);
-    const nextMode = active.size >= 2 ? "all" : [...active][0];
-    setCanvasChatTargetMode(nextMode, [...active]);
-  });
+bindEventAction(forgeCanvasChatTargetBtns, "click", (event) => {
+  event.preventDefault();
+  const button = event.currentTarget;
+  const clicked = button?.dataset?.target || "codex";
+  // The legacy dropdown menu is no longer used; close it if it
+  // happens to be open from another path. No popup intercepts the
+  // LLM toggle anymore.
+  if (forgeCanvasChatModelMenu && !forgeCanvasChatModelMenu.hidden) {
+    forgeCanvasChatModelMenu.hidden = true;
+  }
+  // Otherwise, normal toggle: never let the selection drop to zero.
+  const willDeactivate = button?.classList?.contains("active");
+  const active = new Set(
+    forgeCanvasChatTargetBtns
+      .filter((b) => b.classList.contains("active"))
+      .map((b) => b.dataset.target),
+  );
+  if (willDeactivate) active.delete(clicked); else active.add(clicked);
+  if (active.size === 0) active.add(clicked);
+  const nextMode = active.size >= 2 ? "all" : [...active][0];
+  setCanvasChatTargetMode(nextMode, [...active]);
 });
 forgeCanvasChatLlmModeToggle?.addEventListener("click", (event) => {
   event.preventDefault();
@@ -15690,13 +17747,11 @@ function scheduleClosePicker() {
     closeCanvasChatProgramPicker();
   }, 220);
 }
-forgeCanvasChatPrograms?.addEventListener("mouseenter", scheduleOpenPicker);
-forgeCanvasChatPrograms?.addEventListener("focus", scheduleOpenPicker);
+bindEventActions([forgeCanvasChatPrograms], ["mouseenter", "focus"], scheduleOpenPicker);
 forgeCanvasChatProgramPicker?.addEventListener("mouseenter", () => {
   if (canvasChatPickerHoverTimer) clearTimeout(canvasChatPickerHoverTimer);
 });
-canvasChatPickerHoverHost?.addEventListener("mouseleave", scheduleClosePicker);
-forgeCanvasChatProgramPicker?.addEventListener("mouseleave", scheduleClosePicker);
+bindEventAction([canvasChatPickerHoverHost, forgeCanvasChatProgramPicker], "mouseleave", scheduleClosePicker);
 
 // Click-toggle is preserved for accessibility / touch.
 forgeCanvasChatPrograms?.addEventListener("click", (event) => {
@@ -15730,7 +17785,7 @@ function syncCanvasChatRemoveBtnState() {
   forgeCanvasChatRemoveSlotBtn.disabled = count <= CHAT_NODE_SLOT_MIN;
 }
 
-// "+" button â€” appends an extra empty node slot to the chat tray.
+// "+" button — appends an extra empty node slot to the chat tray.
 forgeCanvasChatAddSlotBtn?.addEventListener("click", (event) => {
   event.preventDefault();
   event.stopPropagation();
@@ -15744,7 +17799,7 @@ forgeCanvasChatAddSlotBtn?.addEventListener("click", (event) => {
   syncCanvasChatRemoveBtnState();
 });
 
-// "âˆ’" button â€” removes the rightmost slot. Prefers an empty slot first
+// "−" button — removes the rightmost slot. Prefers an empty slot first
 // so a populated cube isn't lost by accident; falls back to the last
 // slot if all are populated. Keeps at least CHAT_NODE_SLOT_MIN slot.
 forgeCanvasChatRemoveSlotBtn?.addEventListener("click", (event) => {
@@ -15788,7 +17843,7 @@ window.addEventListener("forge:banger-stage-files", (event) => {
   addCanvasChatPendingFiles(files, { skipBoomPreview: true });
 });
 
-function stopCanvasChatActivity() {
+function stopCanvasChatActivity(reason = "Stopped from Forge canvas chat", visibleMessage = "Stopped by user.") {
   const turnId = forgeCanvasChatActiveTurnId;
   const liveJobId = activeCanvasLiveComputeJobId();
   const jobId = liveJobId || currentAlphaSessionJobId();
@@ -15805,7 +17860,7 @@ function stopCanvasChatActivity() {
     renderCanvasLiveComputeCard();
     syncCanvasChatSendState();
   } else {
-    appendCanvasChatMessage("tool", "Stopped by user.", {});
+    appendCanvasChatMessage("tool", visibleMessage, {});
   }
   setCanvasChatBusy(false);
   if (forgeCanInvoke()) {
@@ -15813,7 +17868,7 @@ function stopCanvasChatActivity() {
       request: {
         turnId: turnId || null,
         jobId: jobId || null,
-        reason: "Stopped from Forge canvas chat",
+        reason,
       },
     }, { section: "canvas-assistant", timeoutMs: 5000 }).catch((err) => {
       appendCanvasChatMessage("tool", `Stop request reached the UI, but backend cancel failed: ${err}`, {});
@@ -15875,6 +17930,124 @@ function insertCanvasChatToken(text) {
   autosizeCanvasChatInput();
   syncCanvasChatSendState();
   syncTradingSlashCommandState();
+}
+
+function ensureCanvasChatSelectionToolbar() {
+  const toolbar = createUiEl("div", "canvas-chat-selection-toolbar");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "canvas-chat-selection-button";
+  button.dataset.selectionAction = "insert";
+  button.title = "Ins�rer dans la saisie";
+  button.setAttribute("aria-label", "Ins�rer la s�lection dans la saisie");
+  button.innerHTML = `
+    <svg viewBox="0 0 16 16" focusable="false" aria-hidden="true">
+      <path d="M8 3v10" />
+      <path d="M3 8h10" />
+    </svg>
+    <span>Ajouter � la saisie</span>
+  `;
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const text = String(toolbar.dataset.selectionText || "").trim();
+    if (!text) return;
+    insertCanvasChatToken(text);
+    window.getSelection?.()?.removeAllRanges?.();
+    scheduleCanvasChatSelectionToolbarSync();
+  });
+  toolbar.appendChild(button);
+  return toolbar;
+}
+
+function canvasChatSelectionCandidate() {
+  const selection = window.getSelection?.();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+  const text = String(selection.toString() || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const range = selection.getRangeAt(0);
+  const anchorNode = selection.anchorNode;
+  const focusNode = selection.focusNode;
+  const anchorEl = anchorNode?.nodeType === Node.ELEMENT_NODE ? anchorNode : anchorNode?.parentElement;
+  const focusEl = focusNode?.nodeType === Node.ELEMENT_NODE ? focusNode : focusNode?.parentElement;
+  const anchorTextEl = anchorEl?.closest?.(".canvas-chat-text") || null;
+  const focusTextEl = focusEl?.closest?.(".canvas-chat-text") || null;
+  if (!anchorTextEl || !focusTextEl || anchorTextEl !== focusTextEl) return null;
+  const textEl = anchorTextEl;
+  if (!textEl.contains(anchorNode) || !textEl.contains(focusNode)) return null;
+  const messageEl = textEl.closest?.(".canvas-chat-message");
+  if (!textEl || !messageEl || !alphaLogLayer?.contains(messageEl)) return null;
+  const rect = range.getBoundingClientRect?.() || null;
+  if (!rect || (!rect.width && !rect.height)) return null;
+  return { text, rect, messageEl };
+}
+
+function hideCanvasChatSelectionToolbar() {
+  const toolbar = canvasChatSelectionToolbar;
+  if (!toolbar) return;
+  toolbar.remove();
+  canvasChatSelectionToolbar = null;
+}
+
+function syncCanvasChatSelectionToolbar() {
+  const candidate = canvasChatSelectionCandidate();
+  if (!candidate) {
+    hideCanvasChatSelectionToolbar();
+    return;
+  }
+  const messageEl = candidate.messageEl;
+  if (!messageEl?.isConnected) {
+    hideCanvasChatSelectionToolbar();
+    return;
+  }
+  let toolbar = canvasChatSelectionToolbar;
+  if (!toolbar || toolbar.parentElement !== messageEl) {
+    hideCanvasChatSelectionToolbar();
+    toolbar = ensureCanvasChatSelectionToolbar();
+    messageEl.appendChild(toolbar);
+    canvasChatSelectionToolbar = toolbar;
+  }
+  toolbar.dataset.selectionText = candidate.text;
+  toolbar.dataset.messageId = String(candidate.messageEl.dataset.messageId || "");
+  const messageRect = messageEl.getBoundingClientRect?.() || null;
+  if (!messageRect) {
+    hideCanvasChatSelectionToolbar();
+    return;
+  }
+  toolbar.style.visibility = "hidden";
+  const width = Math.max(1, toolbar.offsetWidth || 1);
+  const height = Math.max(1, toolbar.offsetHeight || 1);
+  const padding = 8;
+  const minLeft = padding;
+  const maxLeft = Math.max(padding, messageRect.width - width - padding);
+  const left = Math.max(
+    minLeft,
+    Math.min(
+      maxLeft,
+      (candidate.rect.left - messageRect.left) + (candidate.rect.width / 2) - (width / 2),
+    ),
+  );
+  const above = (candidate.rect.top - messageRect.top) - height - 8;
+  const below = (candidate.rect.bottom - messageRect.top) + 8;
+  const maxTop = Math.max(padding, messageRect.height - height - padding);
+  const top = above >= padding
+    ? above
+    : Math.min(maxTop, Math.max(padding, below));
+  toolbar.style.left = `${Math.round(left)}px`;
+  toolbar.style.top = `${Math.round(top)}px`;
+  toolbar.style.visibility = "visible";
+}
+
+function scheduleCanvasChatSelectionToolbarSync() {
+  if (canvasChatSelectionToolbarRaf) return;
+  canvasChatSelectionToolbarRaf = requestAnimationFrame(() => {
+    canvasChatSelectionToolbarRaf = 0;
+    syncCanvasChatSelectionToolbar();
+  });
 }
 
 function setCanvasChatCommand(text) {
@@ -16222,8 +18395,8 @@ forgeCanvasChatVoiceOutBtn?.addEventListener("click", (event) => {
 });
 
 syncCanvasChatSendState();
-alphaNewSessionBtn?.addEventListener("click", startAlphaNewSession);
-alphaStartEmptySessionBtn?.addEventListener("click", startAlphaEmptySession);
+bindClickAction(alphaNewSessionBtn, () => { void startAlphaNewSession(); });
+bindClickAction(alphaStartEmptySessionBtn, () => { void startAlphaEmptySession(); });
 forgeShellRuntime?.registerAction?.("toggle-right-panel",()=>{if(!alphaProofPanelOpen)setAlphaRightPanelMode(defaultAlphaRightPanelMode(),{skipRender:true});setAlphaProofPanelOpen(!alphaProofPanelOpen);});
 forgeShellRuntime?.registerAction?.("close-right-panel",()=>setAlphaProofPanelOpen(false));
 alphaTrace("listeners.bound", {
@@ -16286,19 +18459,13 @@ function appendMarsLensPickerRow() {
   `;
   const label = document.createElement("span");
   label.className = "program-picker-row-label";
-  label.textContent = "Planet Â· Mars";
+  label.textContent = "Planet · Mars";
   row.appendChild(label);
   const select = () => {
     if (typeof openMarsLensView === "function") openMarsLensView();
     closeProgramPicker();
   };
-  row.addEventListener("click", select);
-  row.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      select();
-    }
-  });
+  bindActivatableAction(row, select);
   alphaProgramPickerList.appendChild(row);
 }
 
@@ -16333,18 +18500,12 @@ async function openProgramPicker() {
       window.dispatchEvent(new CustomEvent("forge:attach-program", { detail: program }));
       closeProgramPicker();
     };
-    row.addEventListener("click", select);
-    row.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        select();
-      }
-    });
+    bindActivatableAction(row, select);
     alphaProgramPickerList.appendChild(row);
   }
 }
 
-alphaAddProgramBtn?.addEventListener("click", (event) => {
+bindClickAction(alphaAddProgramBtn, (event) => {
   event.preventDefault();
   event.stopPropagation();
   if (alphaProgramPicker?.hidden === false) closeProgramPicker();
@@ -16356,7 +18517,7 @@ window.addEventListener("forge:attach-program", (event) => {
   forgeCanvasChatInput?.focus();
 });
 
-alphaAddFileBtn?.addEventListener("click", (event) => {
+bindClickAction(alphaAddFileBtn, (event) => {
   event.stopPropagation();
   if (window.__forgeTradingActive) {
     event.preventDefault();
@@ -16369,7 +18530,7 @@ alphaAddFileBtn?.addEventListener("click", (event) => {
   const mode = hasAlphaAppendTarget() ? "append" : "replace";
   openAlphaFilePicker(mode, { jobId: targetJobId });
 });
-alphaFileInput.addEventListener("change",  (e) => {
+bindEventAction([alphaFileInput], "change", (e) => {
   const mode = alphaFilePickerMode;
   const targetJobId = alphaFilePickerTargetJobId;
   const skipPlanPreview = alphaFilePickerSkipPlanPreview;
@@ -16808,11 +18969,11 @@ function renderAlphaChartMenu(mode = "chart") {
     alphaChartMenu.innerHTML = `
       <button type="button" class="chart-menu-item" data-plus-action="alert-price">
         <span class="chart-menu-check"></span>
-        <span class="chart-menu-label">Ajouter une alerte sur ${symbol} Ã  ${priceText}</span>
+        <span class="chart-menu-label">Ajouter une alerte sur ${symbol} à ${priceText}</span>
       </button>
       <button type="button" class="chart-menu-item" data-plus-action="alert-vwap">
         <span class="chart-menu-check"></span>
-        <span class="chart-menu-label">Ajouter une alerte sur VWAP Ã  ${priceText}</span>
+        <span class="chart-menu-label">Ajouter une alerte sur VWAP à ${priceText}</span>
       </button>
       <button type="button" class="chart-menu-item" data-plus-action="buy-limit">
         <span class="chart-menu-check"></span>
@@ -16824,11 +18985,11 @@ function renderAlphaChartMenu(mode = "chart") {
       </button>
       <button type="button" class="chart-menu-item" data-plus-action="add-order">
         <span class="chart-menu-check"></span>
-        <span class="chart-menu-label">Ajouter un ordre sur ${symbol} Ã  ${priceText}</span>
+        <span class="chart-menu-label">Ajouter un ordre sur ${symbol} à ${priceText}</span>
       </button>
       <button type="button" class="chart-menu-item" data-plus-action="draw-horizontal-line">
         <span class="chart-menu-check"></span>
-        <span class="chart-menu-label">Tracer une ligne horizontale Ã  ${priceText}</span>
+        <span class="chart-menu-label">Tracer une ligne horizontale à ${priceText}</span>
       </button>
     `;
     return;
@@ -16842,39 +19003,39 @@ function renderAlphaChartMenu(mode = "chart") {
     alphaChartMenu.classList.add("trading-scale-menu");
     alphaChartMenu.innerHTML = `
       <button type="button" class="chart-menu-item" data-scale-action="reset-price-scale">
-        <span class="chart-menu-check">${check(false) === "true" ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${check(false) === "true" ? "✓" : ""}</span>
         <span class="chart-menu-label">Reset price scale</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="auto-fit">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.autoFit ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.autoFit ? "✓" : ""}</span>
         <span class="chart-menu-label">Auto fit</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="lock-price-bar-ratio">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.lockPriceBarRatio ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.lockPriceBarRatio ? "✓" : ""}</span>
         <span class="chart-menu-label">Lock price / bar ratio</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="chart-only-scale">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.chartOnlyPriceScale ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.chartOnlyPriceScale ? "✓" : ""}</span>
         <span class="chart-menu-label">Chart-only price scale</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="invert-price-scale">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.invertPriceScale ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.invertPriceScale ? "✓" : ""}</span>
         <span class="chart-menu-label">Invert scale</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-mode="normal">
-        <span class="chart-menu-check">${modeCheck("normal") ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${modeCheck("normal") ? "✓" : ""}</span>
         <span class="chart-menu-label">Normal</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-mode="percent">
-        <span class="chart-menu-check">${modeCheck("percent") ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${modeCheck("percent") ? "✓" : ""}</span>
         <span class="chart-menu-label">Percent</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-mode="indexed">
-        <span class="chart-menu-check">${modeCheck("indexed") ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${modeCheck("indexed") ? "✓" : ""}</span>
         <span class="chart-menu-label">Indexed to 100</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-mode="logarithmic">
-        <span class="chart-menu-check">${modeCheck("logarithmic") ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${modeCheck("logarithmic") ? "✓" : ""}</span>
         <span class="chart-menu-label">Logarithmic</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="toggle-price-axis-side">
@@ -16882,15 +19043,15 @@ function renderAlphaChartMenu(mode = "chart") {
         <span class="chart-menu-label">${sideLabel}</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="toggle-labels">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.showPriceLabels ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.showPriceLabels ? "✓" : ""}</span>
         <span class="chart-menu-label">Labels</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="toggle-lines">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.showGridLines ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.showGridLines ? "✓" : ""}</span>
         <span class="chart-menu-label">Lines</span>
       </button>
       <button type="button" class="chart-menu-item" data-scale-action="toggle-plus-button">
-        <span class="chart-menu-check">${alphaTradingScalePrefs.showPlusButton ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingScalePrefs.showPlusButton ? "✓" : ""}</span>
         <span class="chart-menu-label">Plus button</span>
       </button>
     `;
@@ -16908,7 +19069,7 @@ function renderAlphaChartMenu(mode = "chart") {
         <span class="chart-menu-label">Time zone: ${alphaTradingTimeZoneLabel()}</span>
       </button>
       <button type="button" class="chart-menu-item" data-time-action="toggle-session-breaks">
-        <span class="chart-menu-check">${alphaTradingTimePrefs.showSessionBreaks ? "âœ“" : ""}</span>
+        <span class="chart-menu-check">${alphaTradingTimePrefs.showSessionBreaks ? "✓" : ""}</span>
         <span class="chart-menu-label">Session breaks</span>
       </button>
     `;
@@ -16923,7 +19084,7 @@ function renderAlphaChartMenu(mode = "chart") {
       </button>
       ${ALPHA_TRADING_TIME_ZONES.map((entry) => `
         <button type="button" class="chart-menu-item" data-time-zone-id="${entry.id}">
-          <span class="chart-menu-check">${alphaTradingTimePrefs.timeZone === entry.id ? "âœ“" : ""}</span>
+          <span class="chart-menu-check">${alphaTradingTimePrefs.timeZone === entry.id ? "✓" : ""}</span>
           <span class="chart-menu-label">${entry.label}</span>
         </button>
       `).join("")}
@@ -17028,18 +19189,18 @@ function drawAlphaTradingDockPanel(zones) {
     }
     if (item.checked) {
       alphaCtx.fillStyle = `rgba(166,232,222,${0.90 * alphaScale})`;
-      alphaCtx.fillText("âœ“", markColumnX, y + h * 0.5);
+      alphaCtx.fillText("✓", markColumnX, y + h * 0.5);
     }
     alphaCtx.fillStyle = `rgba(244,244,238,${0.95 * alphaScale})`;
     alphaCtx.fillText(item.label, labelColumnX, y + h * 0.5);
     if (item.arrow) {
       alphaCtx.textAlign = "right";
-      alphaCtx.fillText("â€º", x + w, y + h * 0.5);
+      alphaCtx.fillText("›", x + w, y + h * 0.5);
       alphaCtx.textAlign = "left";
     } else if (item.back) {
       alphaCtx.fillStyle = `rgba(190,223,220,${0.90 * alphaScale})`;
       alphaCtx.font = '700 20px Geist, "Segoe UI", sans-serif';
-      alphaCtx.fillText("â€¹", markColumnX - 2, y + h * 0.5);
+      alphaCtx.fillText("‹", markColumnX - 2, y + h * 0.5);
       alphaCtx.font = '700 13px Geist, "Segoe UI", sans-serif';
       alphaCtx.fillStyle = `rgba(244,244,238,${0.95 * alphaScale})`;
       alphaCtx.fillText(item.label, labelColumnX, y + h * 0.5);
@@ -17272,7 +19433,7 @@ alphaLogLayer.addEventListener("contextmenu", (event) => {
 });
 
 alphaLogLayer.addEventListener("scroll", () => {
-  // Programmatic scrolls bump alphaTranscriptProgrammaticScrollAt â€” give them a
+  // Programmatic scrolls bump alphaTranscriptProgrammaticScrollAt — give them a
   // short window so we don't mistake our own scroll for a user gesture.
   if (performance.now() - alphaTranscriptProgrammaticScrollAt > 80) {
     alphaTranscriptStickToBottom = alphaTranscriptIsNearBottom();
@@ -17343,6 +19504,12 @@ alphaProofPanel?.addEventListener("click", (event) => {
     }
     return;
   }
+  const agencyWebInjectButton = event.target?.closest?.("[data-agency-web-inject]");
+  if (agencyWebInjectButton) {
+    event.preventDefault();
+    injectTextIntoCanvasComposer(agencyWebInjectButton.dataset.agencyWebInject || "");
+    return;
+  }
   const button = event.target?.closest?.("[data-compute-action]");
   if (!button) return;
   event.preventDefault();
@@ -17408,7 +19575,7 @@ forgeJobMenu.addEventListener("click", async (event) => {
     if (action === "rename") {
       const jobId = forgeJobMenuJobId;
       hideForgeJobMenu();
-      // Inline rename inside the panel â€” no native prompt window.
+      // Inline rename inside the panel — no native prompt window.
       startInlineRenameForJob(jobId);
     } else {
       await updateForgeJobAction(action);
@@ -17440,7 +19607,7 @@ window.addEventListener("mousedown", (event) => {
   }
 });
 
-// â”€â”€ Wheel zoom â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Wheel zoom ────────────────────────────────────────────────────
 alphaCanvas.addEventListener("wheel", (e) => {
   const rect = alphaCanvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
@@ -17499,7 +19666,7 @@ alphaCanvas.addEventListener("wheel", (e) => {
   scheduleAlphaRender();
 }, { passive: false });
 
-// â”€â”€ Drag pan + hover â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Drag pan + hover ──────────────────────────────────────────────
 let alphaDragStartX = 0, alphaDragStartEnd = 0, alphaDragging = false;
 let alphaDragStartY = 0;
 let alphaDragStartPricePan = 0;
@@ -18163,7 +20330,7 @@ alphaCanvas.addEventListener("mouseleave", () => {
   scheduleAlphaRender();
 });
 
-// â”€â”€ Route Tauri events to alpha when active â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Route Tauri events to alpha when active ───────────────────────
 // (additional listeners; existing listeners always feed forge logs)
 if (typeof forgeTauri?.listen === "function") {
   forgeListen("forge-log",    (e) => {
@@ -18187,13 +20354,13 @@ if (typeof forgeTauri?.listen === "function") {
     }
   });
 
-  // Î¦.Î½.7g â€” Canaux dÃ©diÃ©s Ã  la section Î± Alpha. Ã‰mis par le backend
+  // Φ.ν.7g — Canaux dédiés à la section α Alpha. Émis par le backend
   // start_alpha_synthesis (main.rs::emit_alpha_log + emit_alpha_signal).
-  // Ne pollue PAS les logs DNA grÃ¢ce aux canaux sÃ©parÃ©s.
+  // Ne pollue PAS les logs DNA grâce aux canaux séparés.
   //
   // Format alpha-signal : "LONG @ 1717084800000 @ 2.847" ou
-  // "SHORT @ ... @ ...". ParsÃ© ici en {type, time, price, idx} pour
-  // markers chart (triangles glow â–² â–¼).
+  // "SHORT @ ... @ ...". Parsé ici en {type, time, price, idx} pour
+  // markers chart (triangles glow ▲ ▼).
   forgeListen("alpha-log", (e) => {
     try {
       appendAlphaForge(String(e.payload));
@@ -18263,7 +20430,7 @@ if (typeof forgeTauri?.listen === "function") {
   });
 }
 
-// â”€â”€ Start alpha RAF loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Start alpha RAF loop ──────────────────────────────────────────
 void loadWorkspaceBreadcrumb();
 if (!isWebExplorerSurface && forgeCanInvoke()) {
   const startBackgroundJobs = () => {
@@ -18293,7 +20460,7 @@ if (!isWebExplorerSurface) {
 
 // No eager Alpha preview at startup: wait for a real file to keep the UI responsive.
 
-// â”€â”€ Library overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Library overlay ───────────────────────────────────────────────
 
 const navLibraryBtn  = document.getElementById("navLibraryBtn");
 const libraryOverlay = document.getElementById("libraryOverlay");
@@ -18325,7 +20492,7 @@ function seededRand(seed) {
   return () => { h ^= h << 13; h ^= h >> 17; h ^= h << 5; return (h >>> 0) / 4294967296; };
 }
 
-// Cache jobId â†’ parsed candles array (null = tried but failed)
+// Cache jobId → parsed candles array (null = tried but failed)
 const libChartCache = new Map();
 
 function drawLibCandleChart(canvas, candles) {
@@ -18420,7 +20587,7 @@ function libPreviewHTML(type, label, jobId) {
       `<div class="lib-preview-pdf-line" style="width:${w}%"></div>`).join("")}</div>`;
   }
   const r = seededRand(jobId);
-  const dotLine = () => "Â· ".repeat(Math.floor(r() * 14 + 8)).trim();
+  const dotLine = () => "· ".repeat(Math.floor(r() * 14 + 8)).trim();
   return `<div class="lib-preview-txt">${dotLine()}<br>${dotLine()}<br>${dotLine()}<br>${dotLine()}</div>`;
 }
 
@@ -18553,13 +20720,17 @@ function setTopbarLibraryMode(on) {
 
 function openLibraryOverlay() {
   if (!libraryOverlay) return;
-  if (typeof mcpOverlay !== "undefined" && mcpOverlay && !mcpOverlay.hidden) closeMcpOverlay();
-  if (typeof programsOverlay !== "undefined" && programsOverlay && !programsOverlay.hidden) closeProgramsOverlay();
-  if (typeof providerOverlay !== "undefined" && providerOverlay && !providerOverlay.hidden) closeProviderOverlay();
+  runVisibleClosers([
+    [typeof mcpOverlay !== "undefined" && !!mcpOverlay && !mcpOverlay.hidden, () => closeMcpOverlay()],
+    [typeof programsOverlay !== "undefined" && !!programsOverlay && !programsOverlay.hidden, () => closeProgramsOverlay()],
+    [typeof providerOverlay !== "undefined" && !!providerOverlay && !providerOverlay.hidden, () => closeProviderOverlay()],
+  ]);
   libraryOverlay.hidden = false;
   setTopbarLibraryMode(true);
   renderLibraryGrid();
-  if (librarySearch) { librarySearch.value = ""; librarySearchVal = ""; librarySearch.focus(); }
+  resetAndFocusTextInput(librarySearch, () => {
+    librarySearchVal = "";
+  });
 }
 
 function closeLibraryOverlay() {
@@ -18567,37 +20738,39 @@ function closeLibraryOverlay() {
   setTopbarLibraryMode(false);
 }
 
-forgeShellRuntime?.registerAction?.("library-toggle", () => {
-  libraryOverlay && !libraryOverlay.hidden ? closeLibraryOverlay() : openLibraryOverlay();
-});
-forgeShellRuntime?.registerAction?.("library-close", () => closeLibraryOverlay());
-if (librarySearch) librarySearch.addEventListener("input", () => {
-  librarySearchVal = librarySearch.value;
+forgeShellRuntime?.registerAction?.("library-toggle", createOverlayToggleAction({
+  isOpen: () => !!libraryOverlay && !libraryOverlay.hidden,
+  open: () => openLibraryOverlay(),
+  close: () => closeLibraryOverlay(),
+}));
+forgeShellRuntime?.registerAction?.("library-close", createCloseAction(() => closeLibraryOverlay()));
+bindTextFilterInput(librarySearch, (value) => {
+  librarySearchVal = value;
   renderLibraryGrid();
 });
 
-forgeShellRuntime?.registerAction?.("library-filter", (payload) => {
-  const filter = String(payload?.dataset?.filter || "all");
-  document.querySelectorAll(".lib-filter-btn").forEach((button) => {
-    button.classList.toggle("active", button.dataset.filter === filter);
-  });
-  libraryFilter = filter;
-  renderLibraryGrid();
-});
+forgeShellRuntime?.registerAction?.("library-filter", createDatasetFilterAction({
+  selector: ".lib-filter-btn",
+  readFilter: (payload) => String(payload?.dataset?.filter || "all"),
+  setFilter: (filter) => { libraryFilter = filter; },
+  render: () => renderLibraryGrid(),
+}));
 
 forgeShellRuntime?.registerAction?.("escape-overlays", () => {
-  if (libCtxMenu && !libCtxMenu.hidden) { hideLibCtxMenu(); return; }
-  if (profileMenu && !profileMenu.hidden) { setProfileMenuOpen(false); return; }
-  if (archiveOverlay && !archiveOverlay.hidden) { closeArchiveOverlay(); return; }
-  if (docsOverlay && !docsOverlay.hidden) { closeDocsOverlay(); return; }
-  if (forgeCanvasChatModelMenu && !forgeCanvasChatModelMenu.hidden) { setCanvasModelMenuOpen(false); return; }
-  if (forgeCanvasChatProgramPicker && !forgeCanvasChatProgramPicker.hidden) { closeCanvasChatProgramPicker(); return; }
-  if (alphaProgramPicker && !alphaProgramPicker.hidden) { closeProgramPicker(); return; }
-  if (marsLensView?.classList.contains("is-open")) { closeMarsLensView(); return; }
-  if (alphaLogMenu && !alphaLogMenu.hidden) { hideAlphaLogMenu(); return; }
-  if (alphaChartMenu && !alphaChartMenu.hidden) { hideAlphaChartMenu(); return; }
-  if (forgeJobMenu && !forgeJobMenu.hidden) { hideForgeJobMenu(); return; }
-  if (workspaceMenu && !workspaceMenu.hidden) { setWorkspaceMenuOpen(false); return; }
+  if (runFirstMatchingAction([
+    [!!libCtxMenu && !libCtxMenu.hidden, () => hideLibCtxMenu()],
+    [!!profileMenu && !profileMenu.hidden, () => setProfileMenuOpen(false)],
+    [!!archiveOverlay && !archiveOverlay.hidden, () => closeArchiveOverlay()],
+    [!!docsOverlay && !docsOverlay.hidden, () => closeDocsOverlay()],
+    [!!forgeCanvasChatModelMenu && !forgeCanvasChatModelMenu.hidden, () => setCanvasModelMenuOpen(false)],
+    [!!forgeCanvasChatProgramPicker && !forgeCanvasChatProgramPicker.hidden, () => closeCanvasChatProgramPicker()],
+    [!!alphaProgramPicker && !alphaProgramPicker.hidden, () => closeProgramPicker()],
+    [!!marsLensView?.classList.contains("is-open"), () => closeMarsLensView()],
+    [!!alphaLogMenu && !alphaLogMenu.hidden, () => hideAlphaLogMenu()],
+    [!!alphaChartMenu && !alphaChartMenu.hidden, () => hideAlphaChartMenu()],
+    [!!forgeJobMenu && !forgeJobMenu.hidden, () => hideForgeJobMenu()],
+    [!!workspaceMenu && !workspaceMenu.hidden, () => setWorkspaceMenuOpen(false)],
+  ])) return;
   if (libraryOverlay && !libraryOverlay.hidden) closeLibraryOverlay();
   if (mcpOverlay && !mcpOverlay.hidden) closeMcpOverlay();
   if (providerOverlay && !providerOverlay.hidden) closeProviderOverlay();
@@ -18608,42 +20781,32 @@ forgeShellRuntime?.registerAction?.("document-click", (payload) => {
   const target = payload?.target;
   if (!(target instanceof Element)) return;
 
-  if (profileMenu && !profileMenu.hidden && !target.closest("#profileMenu, #profileBtn")) {
-    setProfileMenuOpen(false);
-  }
-
-  if (archiveOverlay && !archiveOverlay.hidden && target === archiveOverlay) {
-    closeArchiveOverlay();
-  }
-
-  if (forgeCanvasChatModelMenu && !forgeCanvasChatModelMenu.hidden && !target.closest(".canvas-model-anchor")) {
-    setCanvasModelMenuOpen(false);
-  }
-
-  if (
-    forgeCanvasChatProgramPicker &&
-    !forgeCanvasChatProgramPicker.hidden &&
-    !forgeCanvasChatProgramPicker.contains(target) &&
-    !forgeCanvasChatPrograms?.contains(target)
-  ) {
-    closeCanvasChatProgramPicker();
-  }
-
-  if (
-    alphaProgramPicker &&
-    !alphaProgramPicker.hidden &&
-    !alphaProgramPicker.contains(target) &&
-    !alphaAddProgramBtn?.contains(target)
-  ) {
-    closeProgramPicker();
-  }
+  handleOutsideDismiss([
+    [!!profileMenu && !profileMenu.hidden && !target.closest("#profileMenu, #profileBtn"), () => setProfileMenuOpen(false)],
+    [!!archiveOverlay && !archiveOverlay.hidden && target === archiveOverlay, () => closeArchiveOverlay()],
+    [!!forgeCanvasChatModelMenu && !forgeCanvasChatModelMenu.hidden && !target.closest(".canvas-model-anchor"), () => setCanvasModelMenuOpen(false)],
+    [
+      !!forgeCanvasChatProgramPicker
+      && !forgeCanvasChatProgramPicker.hidden
+      && !forgeCanvasChatProgramPicker.contains(target)
+      && !forgeCanvasChatPrograms?.contains(target),
+      () => closeCanvasChatProgramPicker(),
+    ],
+    [
+      !!alphaProgramPicker
+      && !alphaProgramPicker.hidden
+      && !alphaProgramPicker.contains(target)
+      && !alphaAddProgramBtn?.contains(target),
+      () => closeProgramPicker(),
+    ],
+  ]);
 
   document.querySelectorAll(".barrel-inline.expanded").forEach((el) => {
     if (!el.contains(target)) collapseBarrel(el);
   });
 });
 
-// â”€â”€ MCP tools overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── ActCode / MCP overlay ─────────────────────────────────────────────
 
 const navMcpBtn   = document.getElementById("navMcpBtn");
 const mcpOverlay  = document.getElementById("mcpOverlay");
@@ -18652,45 +20815,96 @@ const mcpEmpty    = document.getElementById("mcpEmpty");
 const mcpClose    = document.getElementById("mcpClose");
 const mcpSearch   = document.getElementById("mcpSearch");
 const mcpCount    = document.getElementById("mcpCount");
+const mcpEmptyTitle = mcpEmpty?.querySelector?.("p");
+const mcpEmptySub = mcpEmpty?.querySelector?.(".library-empty-sub");
 
 let mcpFilter    = "all";
 let mcpSearchVal = "";
 
 // Active MCP commands currently exposed by forge_mcp.
 const MCP_TOOLS_ACTIVE = [
-  { name: "about",     legacy: "forge_about",                   desc: "Doctrine and thresholds: Forge before user data >256 KB, >1k rows, heavy compute, hashes/proofs/artifacts." },
-  { name: "capabilities", legacy: "ops",                        desc: "Forge GPS only when the domain/template is unclear; returns recommended next call." },
-  { name: "create",    legacy: "define",                        desc: "Create reusable compute programs from natural intent, JSON metrics or Metric DSL tags." },
-  { name: "run",       legacy: "execute/alpha/claim",           desc: "Fast path dispatcher: plan/run before Read/shell over data, docs, logs, simulations or repeated work." },
-  { name: "jobs",      legacy: "forge_jobs_list",               desc: "Find pending/running/completed sessions without enumerating forge-store files." },
-  { name: "read",      legacy: "programs/artifacts/docs",       desc: "Read compact results, proofs, previews and downloadable artifacts, including 3D .ply mappings." },
-  { name: "logs",      legacy: "forge_job_log_tail",            desc: "Stream bounded live compute logs by cursor; never paste full logs into the LLM." },
-  { name: "cancel",    legacy: "forge_job_cancel",              desc: "Cancel/retry a pending or running job safely from Forge instead of killing processes." },
+  { name: "about",     legacy: "forge_about",                   desc: "Doctrine and thresholds: Forge before user data >256 KB, >1k rows, heavy compute, hashes/proofs/artifacts.", descFr: "Rappelle quand Forge doit prendre la main avant d'envoyer des données lourdes au LLM." },
+  { name: "capabilities", legacy: "ops",                        desc: "Forge GPS only when the domain/template is unclear; returns recommended next call.", descFr: "Aide à choisir la bonne famille d'action quand le besoin n'est pas encore clair." },
+  { name: "create",    legacy: "define",                        desc: "Create reusable compute programs from natural intent, JSON metrics or Metric DSL tags.", descFr: "Crée des programmes réutilisables à partir d'une intention, d'un JSON métrique ou du DSL Forge." },
+  { name: "run",       legacy: "execute/alpha/claim",           desc: "Fast path dispatcher: plan/run before Read/shell over data, docs, logs, simulations or repeated work.", descFr: "Lance le chemin rapide pour planifier ou exécuter un calcul, une lecture ou un traitement répété." },
+  { name: "jobs",      legacy: "forge_jobs_list",               desc: "Find pending/running/completed sessions without enumerating forge-store files.", descFr: "Liste les sessions en attente, en cours ou terminées sans parcourir les fichiers internes." },
+  { name: "read",      legacy: "programs/artifacts/docs",       desc: "Read compact results, proofs, previews and downloadable artifacts, including 3D .ply mappings.", descFr: "Lit des résultats compacts, des preuves, des aperçus et des artefacts téléchargeables." },
+  { name: "logs",      legacy: "forge_job_log_tail",            desc: "Stream bounded live compute logs by cursor; never paste full logs into the LLM.", descFr: "Suit les logs de calcul en flux borné sans envoyer le fichier complet au modèle." },
+  { name: "cancel",    legacy: "forge_job_cancel",              desc: "Cancel/retry a pending or running job safely from Forge instead of killing processes.", descFr: "Annule ou relance un job en sécurité depuis Forge." },
 ];
 
 const MCP_TOOLS_TEMPLATES = [
-  { name: "about", command: "about {}", desc: "Learn when Forge saves LLM tokens by doing heavy compute locally." },
-  { name: "run", command: "run {}", desc: "Fastest path: claim and run the only pending UI upload." },
-  { name: "run", command: "run { pending: true }", desc: "Claim the newest pending UI upload without copying a CSV path." },
-  { name: "run", command: "run { intent: \"summarize this dataset and detect anomalies\", inputs: [{ path: \"C:\\\\data\\\\file.csv\", role: \"data\" }], plan_only: true }", desc: "Fast path: one planning call when the intent is clear." },
-  { name: "run", command: "run { job_id: \"...\" }", desc: "Fast path: claim and run a pending UI upload." },
-  { name: "capabilities", command: "capabilities { domain: \"finance\", detail: \"compact\" }", desc: "Get compact domain guidance without dumping the full catalogue." },
-  { name: "capabilities", command: "capabilities { domain: \"security\", detailed: true }", desc: "Discover defensive crypto/hash metrics and synthetic lab mode." },
-  { name: "capabilities", command: "capabilities { query: \"large CSV volume anomalies\", detailed: true }", desc: "Ask Forge what to do next before touching raw data." },
-  { name: "run", command: "run { intent: \"find volume anomalies in this CSV\", inputs: [{ path: \"C:\\\\data\\\\file.csv\", role: \"csv\" }], plan_only: true }", desc: "Plan a natural-language compute request without side effects." },
-  { name: "run", command: "run { intent: \"measure hash avalanche, collision rate and bit bias\", capability: \"security_crypto\", plan_only: true }", desc: "Plan crypto/hash compute and ask file vs synthetic mode." },
-  { name: "run", command: "run { intent: \"measure hash avalanche, collision rate and bit bias in synthetic lab mode\", capability: \"security_crypto\" }", desc: "Run a defensive crypto/hash experiment without a file." },
-  { name: "create", command: "create { title: \"Volume anomaly detector\", domain: \"finance\", intent: \"Find abnormal volume regimes in OHLCV CSVs\", goal: \"Detect unusual volume regimes\", spec_text: \"<metric id='volume_z' kind='transform' domain='finance' op='zscore' inputs='volume' output='volume_z' dtype='timeseries' unit='sigma' window='48' />\" }", desc: "Create a Forge Metric DSL v1 program." },
-  { name: "run", command: "run { program: \"Volume anomaly detector\", inputs: [{ path: \"C:\\\\data\\\\file.csv\", role: \"market_data\" }] }", desc: "Run a library program by name, not only by hash." },
-  { name: "create", command: "create { title: \"DNA k-mer hash quality\", domain: \"biology\", intent: \"Measure sequence entropy and k-mer hash collisions\", goal: \"Return compact sequence metrics and proof hashes\", metrics: [{ id: \"kmer_collision\", kind: \"compare\", tag: \"kmer_collision_rate\", op: \"kmer_collision_rate\", inputs: [\"sequence\"], output: \"collision_rate\", dtype: \"distribution\", params: { k: 7 }, proof: \"hash\" }] }", desc: "Create a non-finance scientific DSL program." },
-  { name: "create", command: "create { title: \"Hash quality explorer\", domain: \"security\", intent: \"Evaluate avalanche, collision rate and bit bias for lab hash experiments\", goal: \"Return compact defensive crypto metrics and proof hashes\", metrics: [{ id: \"avalanche\", kind: \"simulate\", tag: \"avalanche\", op: \"synthetic_hash_avalanche\", inputs: [\"synthetic\"], output: \"avalanche_score\", dtype: \"distribution\", params: { samples: 4096, bytes: 32, hash_bits: 64 } }] }", desc: "Create a reusable defensive crypto DSL program." },
-  { name: "run", command: "run { program_hash: \"...\", inputs: [{ path: \"C:\\\\data\\\\file.csv\", role: \"market_data\" }] }", desc: "Run a reusable program by content hash." },
-  { name: "run", command: "run { job_id: \"...\", title: \"NATGAS H4 strategy\" }", desc: "Claim the selected pending upload with an agent-chosen title." },
-  { name: "read", command: "read { job_id: \"...\", kind: \"artifacts\" }", desc: "Read artifact refs, hashes, proofs and downloadable 3D .ply mappings." },
-  { name: "logs", command: "logs { job_id: \"...\", cursor: 0 }", desc: "Stream logs without reading the full file." },
-  { name: "read", command: "read { kind: \"docs\", query: \"NATGAS\", type: \"csv\" }", desc: "Search the Documents library." },
-  { name: "read", command: "read { job_id: \"...\", kind: \"preview\", max_bytes: 4096 }", desc: "Read only a small preview." },
+  { name: "about", command: "about {}", desc: "Learn when Forge saves LLM tokens by doing heavy compute locally.", descFr: "Exemple minimal pour voir quand Forge économise des tokens au modèle." },
+  { name: "run", command: "run {}", desc: "Fastest path: claim and run the only pending UI upload.", descFr: "Chemin le plus rapide pour prendre et lancer l'unique upload en attente." },
+  { name: "run", command: "run { pending: true }", desc: "Claim the newest pending UI upload without copying a CSV path.", descFr: "Prend le dernier upload en attente sans copier de chemin CSV." },
+  { name: "run", command: "run { intent: \"summarize this dataset and detect anomalies\", inputs: [{ path: \"C:\\\\data\\\\file.csv\", role: \"data\" }], plan_only: true }", desc: "Fast path: one planning call when the intent is clear.", descFr: "Exemple de planification simple quand l'intention est déjà claire." },
+  { name: "run", command: "run { job_id: \"...\" }", desc: "Fast path: claim and run a pending UI upload.", descFr: "Prend puis lance un job en attente à partir de son identifiant." },
+  { name: "capabilities", command: "capabilities { domain: \"finance\", detail: \"compact\" }", desc: "Get compact domain guidance without dumping the full catalogue.", descFr: "Récupère une aide compacte par domaine sans ouvrir tout le catalogue." },
+  { name: "capabilities", command: "capabilities { domain: \"security\", detailed: true }", desc: "Discover defensive crypto/hash metrics and synthetic lab mode.", descFr: "Explore les capacités crypto, hash et mode labo synthétique." },
+  { name: "capabilities", command: "capabilities { query: \"large CSV volume anomalies\", detailed: true }", desc: "Ask Forge what to do next before touching raw data.", descFr: "Demande à Forge quoi faire avant de toucher aux données brutes." },
+  { name: "run", command: "run { intent: \"find volume anomalies in this CSV\", inputs: [{ path: \"C:\\\\data\\\\file.csv\", role: \"csv\" }], plan_only: true }", desc: "Plan a natural-language compute request without side effects.", descFr: "Planifie une demande de calcul en langage naturel sans effet de bord." },
+  { name: "run", command: "run { intent: \"measure hash avalanche, collision rate and bit bias\", capability: \"security_crypto\", plan_only: true }", desc: "Plan crypto/hash compute and ask file vs synthetic mode.", descFr: "Prépare une analyse crypto/hash et laisse Forge choisir le bon mode." },
+  { name: "run", command: "run { intent: \"measure hash avalanche, collision rate and bit bias in synthetic lab mode\", capability: \"security_crypto\" }", desc: "Run a defensive crypto/hash experiment without a file.", descFr: "Lance une expérience crypto/hash défensive sans fichier d'entrée." },
+  { name: "create", command: "create { title: \"Volume anomaly detector\", domain: \"finance\", intent: \"Find abnormal volume regimes in OHLCV CSVs\", goal: \"Detect unusual volume regimes\", spec_text: \"<metric id='volume_z' kind='transform' domain='finance' op='zscore' inputs='volume' output='volume_z' dtype='timeseries' unit='sigma' window='48' />\" }", desc: "Create a Forge Metric DSL v1 program.", descFr: "Crée un programme Forge Metric DSL v1 réutilisable." },
+  { name: "run", command: "run { program: \"Volume anomaly detector\", inputs: [{ path: \"C:\\\\data\\\\file.csv\", role: \"market_data\" }] }", desc: "Run a library program by name, not only by hash.", descFr: "Exécute un programme enregistré par son nom." },
+  { name: "create", command: "create { title: \"DNA k-mer hash quality\", domain: \"biology\", intent: \"Measure sequence entropy and k-mer hash collisions\", goal: \"Return compact sequence metrics and proof hashes\", metrics: [{ id: \"kmer_collision\", kind: \"compare\", tag: \"kmer_collision_rate\", op: \"kmer_collision_rate\", inputs: [\"sequence\"], output: \"collision_rate\", dtype: \"distribution\", params: { k: 7 }, proof: \"hash\" }] }", desc: "Create a non-finance scientific DSL program.", descFr: "Crée un programme scientifique hors finance." },
+  { name: "create", command: "create { title: \"Hash quality explorer\", domain: \"security\", intent: \"Evaluate avalanche, collision rate and bit bias for lab hash experiments\", goal: \"Return compact defensive crypto metrics and proof hashes\", metrics: [{ id: \"avalanche\", kind: \"simulate\", tag: \"avalanche\", op: \"synthetic_hash_avalanche\", inputs: [\"synthetic\"], output: \"avalanche_score\", dtype: \"distribution\", params: { samples: 4096, bytes: 32, hash_bits: 64 } }] }", desc: "Create a reusable defensive crypto DSL program.", descFr: "Crée un programme crypto défensif réutilisable." },
+  { name: "run", command: "run { program_hash: \"...\", inputs: [{ path: \"C:\\\\data\\\\file.csv\", role: \"market_data\" }] }", desc: "Run a reusable program by content hash.", descFr: "Exécute un programme réutilisable par son hash." },
+  { name: "run", command: "run { job_id: \"...\", title: \"NATGAS H4 strategy\" }", desc: "Claim the selected pending upload with an agent-chosen title.", descFr: "Prend le job choisi avec un titre défini par l'agent." },
+  { name: "read", command: "read { job_id: \"...\", kind: \"artifacts\" }", desc: "Read artifact refs, hashes, proofs and downloadable 3D .ply mappings.", descFr: "Lit les artefacts, hashes, preuves et sorties téléchargeables." },
+  { name: "logs", command: "logs { job_id: \"...\", cursor: 0 }", desc: "Stream logs without reading the full file.", descFr: "Suit les logs sans relire tout le fichier." },
+  { name: "read", command: "read { kind: \"docs\", query: \"NATGAS\", type: \"csv\" }", desc: "Search the Documents library.", descFr: "Recherche dans la bibliothèque de documents." },
+  { name: "read", command: "read { job_id: \"...\", kind: \"preview\", max_bytes: 4096 }", desc: "Read only a small preview.", descFr: "Lit seulement un petit aperçu." },
 ];
+
+function actCodeIsFrench() {
+  return isRealEstateShellActive();
+}
+
+function actCodeLabel(textEn, textFr) {
+  return actCodeIsFrench() ? textFr : textEn;
+}
+
+function actCodeCommandText(entry) {
+  const raw = String(entry?.command || entry?.name || "").trim();
+  if (!raw) return "/";
+  return raw.startsWith("/") ? raw : `/${raw}`;
+}
+
+function actCodeAliasText(entry) {
+  const legacy = String(entry?.legacy || "").trim();
+  if (!legacy) return "";
+  return legacy.startsWith("/") ? legacy : `/${legacy}`;
+}
+
+function actCodeDescription(entry) {
+  return actCodeIsFrench()
+    ? String(entry?.descFr || entry?.desc || "").trim()
+    : String(entry?.desc || "").trim();
+}
+
+function syncMcpOverlayCopy() {
+  const filterLabel = actCodeLabel("Filter ActCode / MCP commands", "Filtrer les commandes ActCode / MCP");
+  mcpOverlay?.setAttribute("aria-label", "ActCode / MCP");
+  mcpClose?.setAttribute("aria-label", actCodeLabel("Close ActCode / MCP", "Fermer ActCode / MCP"));
+  mcpSearch?.setAttribute("placeholder", actCodeLabel("Search commands…", "Rechercher une commande…"));
+  mcpEmptyTitle && (mcpEmptyTitle.textContent = actCodeLabel("No ActCode / MCP commands yet", "Aucune commande ActCode / MCP"));
+  mcpEmptySub && (mcpEmptySub.textContent = actCodeLabel(
+    "Direct commands and reusable templates will appear here.",
+    "Les commandes directes et les templates réutilisables apparaîtront ici."
+  ));
+  const filters = Array.from(document.querySelectorAll(".mcp-filter-btn"));
+  const labels = {
+    all: actCodeLabel("All", "Tout"),
+    active: actCodeLabel("Active", "Actives"),
+    templates: actCodeLabel("Templates", "Templates"),
+  };
+  for (const button of filters) {
+    const filter = String(button.getAttribute("data-filter") || "all");
+    button.textContent = labels[filter] || labels.all;
+  }
+  document.querySelector(".actcode-filters")?.setAttribute("aria-label", filterLabel);
+}
 
 async function copyMcpCommand(text, button) {
   try {
@@ -18698,7 +20912,7 @@ async function copyMcpCommand(text, button) {
     if (button) {
       button.classList.add("copied");
       const old = button.innerHTML;
-      button.innerHTML = "âœ“";
+      button.innerHTML = "✓";
       setTimeout(() => {
         button.classList.remove("copied");
         button.innerHTML = old;
@@ -18711,6 +20925,7 @@ async function copyMcpCommand(text, button) {
 
 function renderMcpToolList() {
   if (!mcpToolList || !mcpEmpty) return;
+  syncMcpOverlayCopy();
   mcpToolList.innerHTML = "";
 
   let pool;
@@ -18727,6 +20942,7 @@ function renderMcpToolList() {
         t.name.toLowerCase().includes(q) ||
         (t.legacy || "").toLowerCase().includes(q) ||
         (t.command || "").toLowerCase().includes(q) ||
+        String(t.descFr || "").toLowerCase().includes(q) ||
         t.desc.toLowerCase().includes(q))
     : pool;
 
@@ -18740,31 +20956,32 @@ function renderMcpToolList() {
   mcpToolList.style.display = "flex";
   for (const t of tools) {
     const row = document.createElement("div");
-    row.className = "mcp-tool-row" + (t.tag === "template" ? " is-template" : "");
-    const commandText = t.command || t.name;
+    row.className = "mcp-tool-row actcode-row" + (t.tag === "template" ? " is-template" : "");
+    const commandText = actCodeCommandText(t);
+    const aliasText = actCodeAliasText(t);
+    const descText = actCodeDescription(t);
     const nameWrap = document.createElement("span");
-    nameWrap.className = "mcp-tool-name-wrap";
-    const name = document.createElement("span"); name.className = "mcp-tool-name"; name.textContent = t.name;
+    nameWrap.className = "mcp-tool-name-wrap actcode-command-wrap";
+    const name = document.createElement("span"); name.className = "mcp-tool-name actcode-command"; name.textContent = commandText;
     nameWrap.appendChild(name);
-    if (t.legacy) {
+    if (aliasText) {
       const legacy = document.createElement("span");
-      legacy.className = "mcp-tool-legacy";
-      legacy.textContent = t.legacy;
+      legacy.className = "mcp-tool-legacy actcode-alias";
+      legacy.textContent = actCodeIsFrench() ? `Alias ${aliasText}` : `Alias ${aliasText}`;
       nameWrap.appendChild(legacy);
     }
-    const desc = document.createElement("span"); desc.className = "mcp-tool-desc"; desc.textContent = t.desc;
-    const tag  = document.createElement("span"); tag.className  = "mcp-tool-tag";  tag.textContent  = t.tag;
+    const desc = document.createElement("span"); desc.className = "mcp-tool-desc actcode-desc"; desc.textContent = descText;
     const copy = document.createElement("button");
-    copy.className = "mcp-tool-copy";
+    copy.className = "mcp-tool-copy actcode-copy";
     copy.type = "button";
-    copy.title = `Copy ${commandText}`;
-    copy.setAttribute("aria-label", `Copy ${commandText}`);
+    copy.title = actCodeLabel(`Copy ${commandText}`, `Copier ${commandText}`);
+    copy.setAttribute("aria-label", actCodeLabel(`Copy ${commandText}`, `Copier ${commandText}`));
     copy.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
     copy.addEventListener("click", e => {
       e.stopPropagation();
       void copyMcpCommand(commandText, copy);
     });
-    row.appendChild(nameWrap); row.appendChild(desc); row.appendChild(tag); row.appendChild(copy);
+    row.appendChild(nameWrap); row.appendChild(desc); row.appendChild(copy);
     mcpToolList.appendChild(row);
   }
 }
@@ -18775,13 +20992,18 @@ function setTopbarMcpMode(on) {
 
 function openMcpOverlay() {
   if (!mcpOverlay) return;
-  if (libraryOverlay && !libraryOverlay.hidden) closeLibraryOverlay();
-  if (typeof programsOverlay !== "undefined" && programsOverlay && !programsOverlay.hidden) closeProgramsOverlay();
-  if (typeof providerOverlay !== "undefined" && providerOverlay && !providerOverlay.hidden) closeProviderOverlay();
+  runVisibleClosers([
+    [!!libraryOverlay && !libraryOverlay.hidden, () => closeLibraryOverlay()],
+    [typeof programsOverlay !== "undefined" && !!programsOverlay && !programsOverlay.hidden, () => closeProgramsOverlay()],
+    [typeof providerOverlay !== "undefined" && !!providerOverlay && !providerOverlay.hidden, () => closeProviderOverlay()],
+  ]);
   mcpOverlay.hidden = false;
   setTopbarMcpMode(true);
+  syncMcpOverlayCopy();
   renderMcpToolList();
-  if (mcpSearch) { mcpSearch.value = ""; mcpSearchVal = ""; mcpSearch.focus(); }
+  resetAndFocusTextInput(mcpSearch, () => {
+    mcpSearchVal = "";
+  });
 }
 
 function closeMcpOverlay() {
@@ -18789,25 +21011,25 @@ function closeMcpOverlay() {
   setTopbarMcpMode(false);
 }
 
-forgeShellRuntime?.registerAction?.("mcp-toggle", () => {
-  mcpOverlay && !mcpOverlay.hidden ? closeMcpOverlay() : openMcpOverlay();
-});
-forgeShellRuntime?.registerAction?.("mcp-close", () => closeMcpOverlay());
-if (mcpSearch) mcpSearch.addEventListener("input", () => {
-  mcpSearchVal = mcpSearch.value;
+forgeShellRuntime?.registerAction?.("mcp-toggle", createOverlayToggleAction({
+  isOpen: () => !!mcpOverlay && !mcpOverlay.hidden,
+  open: () => openMcpOverlay(),
+  close: () => closeMcpOverlay(),
+}));
+forgeShellRuntime?.registerAction?.("mcp-close", createCloseAction(() => closeMcpOverlay()));
+bindTextFilterInput(mcpSearch, (value) => {
+  mcpSearchVal = value;
   renderMcpToolList();
 });
 
-forgeShellRuntime?.registerAction?.("mcp-filter", (payload) => {
-  const filter = String(payload?.dataset?.filter || "all");
-  document.querySelectorAll(".mcp-filter-btn").forEach((button) => {
-    button.classList.toggle("active", button.dataset.filter === filter);
-  });
-  mcpFilter = filter;
-  renderMcpToolList();
-});
+forgeShellRuntime?.registerAction?.("mcp-filter", createDatasetFilterAction({
+  selector: ".mcp-filter-btn",
+  readFilter: (payload) => String(payload?.dataset?.filter || "all"),
+  setFilter: (filter) => { mcpFilter = filter; },
+  render: () => renderMcpToolList(),
+}));
 
-// â”€â”€ LLM provider settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── LLM provider settings ────────────────────────────────────────
 
 const providerDom = Object.fromEntries(`
   providerOverlay providerClose providerConnectionChip providerWorkbench providerTerminalDeck
@@ -18938,7 +21160,7 @@ function normalizeCliModelRef(model, fallback, aliases = {}) {
   if (!raw) return fallback;
   const key = raw
     .toLowerCase()
-    .replace(/[â€™']/g, "")
+    .replace(/[’']/g, "")
     .replace(/[^a-z0-9.]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
@@ -18956,31 +21178,35 @@ function normalizeCliModelRef(model, fallback, aliases = {}) {
 }
 
 function normalizeGeminiModelRef(model) {
-  return normalizeCliModelRef(model, "gemini-2.5-pro", {
+  const normalized = normalizeCliModelRef(model, "gemini-3-pro", {
     "gemini 3": "gemini-3-pro",
     "gemini 3 pro": "gemini-3-pro",
     "3": "gemini-3-pro",
     "3 pro": "gemini-3-pro",
-    "gemini 2.5": "gemini-2.5-pro",
-    "gemini 2.5 pro": "gemini-2.5-pro",
-    "2.5": "gemini-2.5-pro",
-    "2.5 pro": "gemini-2.5-pro",
-    "2.5 flash": "gemini-2.5-flash",
   });
+  const hit = normalized.toLowerCase().match(/^gemini-(\d+)/);
+  return hit && Number(hit[1]) >= 3 ? normalized : "gemini-3-pro";
 }
 
 function normalizeClaudeModelRef(model) {
-  return normalizeCliModelRef(model, "claude-code-default", {
-    "default": "claude-code-default",
-    "claude default": "claude-code-default",
-    "claude code default": "claude-code-default",
-    "opus": "opus",
-    "claude opus": "opus",
-    "sonnet": "sonnet",
-    "claude sonnet": "sonnet",
-    "haiku": "haiku",
-    "claude haiku": "haiku",
+  const normalized = normalizeCliModelRef(model, "claude-sonnet-4.6", {
+    "default": "claude-sonnet-4.6",
+    "claude default": "claude-sonnet-4.6",
+    "claude code default": "claude-sonnet-4.6",
+    "opus": "claude-opus-4.6",
+    "claude opus": "claude-opus-4.6",
+    "opus 4.6": "claude-opus-4.6",
+    "claude opus 4.6": "claude-opus-4.6",
+    "sonnet": "claude-sonnet-4.6",
+    "claude sonnet": "claude-sonnet-4.6",
+    "sonnet 4.6": "claude-sonnet-4.6",
+    "claude sonnet 4.6": "claude-sonnet-4.6",
   });
+  const hit = normalized.toLowerCase().match(/^claude-(sonnet|opus)-(\d+)(?:\.(\d+))?/);
+  if (!hit) return "claude-sonnet-4.6";
+  const major = Number(hit[2] || 0);
+  const minor = Number(hit[3] || 0);
+  return major > 4 || (major === 4 && minor >= 6) ? normalized : "claude-sonnet-4.6";
 }
 
 function setStoredRuntimeModelRef(storageKey, model, normalizer) {
@@ -19094,7 +21320,7 @@ function renderVoiceProviderStatus(status, options = {}) {
     voiceProviderUsage.textContent = `${used.toLocaleString()} / ${settings.monthlyLimit.toLocaleString()} chars`;
   }
   if (voiceProviderCache) {
-    voiceProviderCache.textContent = `${Number(status?.cacheFiles || 0).toLocaleString()} files Â· ${formatVoiceBytes(status?.cacheBytes)}`;
+    voiceProviderCache.textContent = `${Number(status?.cacheFiles || 0).toLocaleString()} files · ${formatVoiceBytes(status?.cacheBytes)}`;
   }
   if (voiceElevenApiKey && status) {
     voiceElevenApiKey.placeholder = configured ? "Saved locally" : "sk_...";
@@ -19373,11 +21599,11 @@ function resetOandaProviderDraft() {
 
 function oandaProviderTerminalIntroLines() {
   return [
-    "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ   â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ",
-    "â–ˆâ–ˆ      â–ˆâ–ˆ    â–ˆâ–ˆ â–ˆâ–ˆ   â–ˆâ–ˆ â–ˆâ–ˆ       â–ˆâ–ˆ",
-    "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ   â–ˆâ–ˆ    â–ˆâ–ˆ â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆ   â–ˆâ–ˆâ–ˆ â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ",
-    "â–ˆâ–ˆ      â–ˆâ–ˆ    â–ˆâ–ˆ â–ˆâ–ˆ   â–ˆâ–ˆ â–ˆâ–ˆ    â–ˆâ–ˆ â–ˆâ–ˆ",
-    "â–ˆâ–ˆ       â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆ   â–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ",
+    "███████  ██████  ██████   ██████  ███████",
+    "██      ██    ██ ██   ██ ██       ██",
+    "█████   ██    ██ ██████  ██   ███ █████",
+    "██      ██    ██ ██   ██ ██    ██ ██",
+    "██       ██████  ██   ██  ██████  ███████",
   ];
 }
 
@@ -20075,66 +22301,6 @@ function providerWorkbenchDisplayName(kind) {
   return providerWorkbenchMeta(kind).label;
 }
 
-function providerStatusTextBlob(status) {
-  return `${String(status?.authSource || "")}\n${String(status?.message || "")}`.toLowerCase();
-}
-
-function providerStatusNeedsNode(status) {
-  return /node\.js|npm/i.test(String(status?.message || ""));
-}
-
-function providerStatusNeedsRepair(status) {
-  return /found but not executable|found on disk, but forge could not execute|permissions|access denied|acces refuse/i
-    .test(providerStatusTextBlob(status));
-}
-
-function providerCliEffectiveInstalled(status) {
-  return !!status?.installed || !!status?.connected || providerStatusNeedsRepair(status);
-}
-
-function providerCliFriendlySource(kind, status) {
-  const connected = !!status?.connected;
-  const installed = providerCliEffectiveInstalled(status);
-  const source = providerStatusTextBlob(status);
-  if (connected) {
-    if (kind === "gemini") {
-      if (source.includes("api key")) return "saved local key";
-      if (source.includes("oauth") || source.includes("google")) return "Google login";
-      return "Gemini ready";
-    }
-    if (kind === "claude") {
-      if (source.includes("oauth") || source.includes("claude.ai")) return "Claude.ai login";
-      if (source.includes("credential")) return "saved local login";
-      return "Claude ready";
-    }
-    return "OpenAI login";
-  }
-  if (providerStatusNeedsRepair(status)) return "automatic repair";
-  if (installed) return "local setup";
-  return "automatic setup";
-}
-
-function providerCliFriendlyHint(kind, status, options = {}) {
-  const busy = !!options.busy;
-  const connected = !!status?.connected;
-  const installed = providerCliEffectiveInstalled(status);
-  const selectedModel = options.selectedModel || providerWorkbenchModel(kind);
-  const display = providerWorkbenchDisplayName(kind);
-  const modelText = selectedModel ? ` Selected model: ${selectedModel}.` : "";
-  if (busy) return `Checking ${display} in Forge.${modelText}`;
-  if (connected) return `${display} is ready in Forge.${modelText}`;
-  if (providerStatusNeedsRepair(status)) {
-    return `${display} is being repaired automatically in Forge.${modelText}`;
-  }
-  if (providerStatusNeedsNode(status)) {
-    return `Node.js is required before Forge can finish the automatic ${display} setup.${modelText}`;
-  }
-  if (installed) {
-    return `${display} is preparing its local connection in Forge.${modelText}`;
-  }
-  return `${display} is preparing. Forge will install and connect it automatically when the environment is ready.${modelText}`;
-}
-
 const providerAutoHealLastAttempt = new Map();
 let providerAutoHealTimer = null;
 
@@ -20182,14 +22348,6 @@ function providerWorkbenchMeta(kind) {
   return { label, logo, model, status };
 }
 
-function providerWorkbenchStateText(status) {
-  const connected = !!status?.connected;
-  const installed = providerCliEffectiveInstalled(status);
-  if (connected) return "ready";
-  if (installed) return "auth";
-  return "missing";
-}
-
 function stripAnsiTerminalCodes(value) {
   return String(value || "").replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
 }
@@ -20223,7 +22381,7 @@ function providerTerminalRawOutput(provider) {
 }
 
 const providerTerminalProfileRows = {
-  codex: ["Codex", "OpenAI Codex CLI", "subscription", "OPENAI SUBSCRIPTION BRIDGE", "Codex CLI bridge for local Forge sessions", "Reuse local ChatGPT / Codex subscription auth, open the runtime directly inside Forge, and keep session routing on this machine."],
+  codex: ["Codex", "OpenAI OAuth Direct", "subscription", "OPENAI OAUTH DIRECT", "Direct OpenAI OAuth console for local Forge sessions", "Reuse local ChatGPT subscription auth, keep Codex direct in Forge, and route tool turns through the embedded OAuth console."],
   gemini: ["Gemini", "Gemini CLI", "auth", "GOOGLE CLI BRIDGE", "Gemini CLI bridge for local Forge sessions", "Launch Gemini directly inside Forge, reuse local CLI auth or the saved local API key, and keep installation plus login in one terminal surface."],
   claude: ["Claude", "Claude Code CLI", "auth", "ANTHROPIC CLI BRIDGE", "Claude Code login bridge for local Forge sessions", "Open Claude Code inside Forge, finish Claude.ai authentication locally, and keep the linked workspace flow inside the embedded terminal."],
 };
@@ -20235,18 +22393,18 @@ function providerTerminalStoryProfile(provider) {
 
 function providerTerminalPixelGlyphs() {
   return {
-    A: [" â–ˆâ–ˆâ–ˆ ", "â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆâ–ˆ"],
-    C: [" â–ˆâ–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆ   ", " â–ˆâ–ˆâ–ˆâ–ˆ"],
-    D: ["â–ˆâ–ˆâ–ˆâ–ˆ ", "â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆâ–ˆâ–ˆ "],
-    E: ["â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆâ–ˆâ–ˆ ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ"],
-    G: [" â–ˆâ–ˆâ–ˆâ–ˆ ", "â–ˆâ–ˆ    ", "â–ˆâ–ˆ â–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ   â–ˆâ–ˆ", " â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ "],
-    I: ["â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ", "  â–ˆâ–ˆ ", "  â–ˆâ–ˆ ", "  â–ˆâ–ˆ ", "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ"],
-    L: ["â–ˆâ–ˆ   ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆ   ", "â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ"],
-    M: ["â–ˆâ–ˆ   â–ˆâ–ˆ", "â–ˆâ–ˆâ–ˆ â–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ   â–ˆâ–ˆ", "â–ˆâ–ˆ   â–ˆâ–ˆ"],
-    N: ["â–ˆâ–ˆ   â–ˆâ–ˆ", "â–ˆâ–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆâ–ˆ", "â–ˆâ–ˆ   â–ˆâ–ˆ"],
-    O: [" â–ˆâ–ˆâ–ˆâ–ˆ ", "â–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ", " â–ˆâ–ˆâ–ˆâ–ˆ "],
-    U: ["â–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ", " â–ˆâ–ˆâ–ˆâ–ˆ "],
-    X: ["â–ˆâ–ˆ  â–ˆâ–ˆ", " â–ˆâ–ˆ â–ˆâ–ˆ", "  â–ˆâ–ˆâ–ˆ ", " â–ˆâ–ˆ â–ˆâ–ˆ", "â–ˆâ–ˆ  â–ˆâ–ˆ"],
+    A: [" ███ ", "██ ██", "█████", "██ ██", "██ ██"],
+    C: [" ████", "██   ", "██   ", "██   ", " ████"],
+    D: ["████ ", "██ ██", "██ ██", "██ ██", "████ "],
+    E: ["█████", "██   ", "████ ", "██   ", "█████"],
+    G: [" ████ ", "██    ", "██ ███", "██   ██", " █████ "],
+    I: ["█████", "  ██ ", "  ██ ", "  ██ ", "█████"],
+    L: ["██   ", "██   ", "██   ", "██   ", "█████"],
+    M: ["██   ██", "███ ███", "██ █ ██", "██   ██", "██   ██"],
+    N: ["██   ██", "███  ██", "██ ██ ██", "██  ███", "██   ██"],
+    O: [" ████ ", "██  ██", "██  ██", "██  ██", " ████ "],
+    U: ["██  ██", "██  ██", "██  ██", "██  ██", " ████ "],
+    X: ["██  ██", " ██ ██", "  ███ ", " ██ ██", "██  ██"],
   };
 }
 
@@ -20346,6 +22504,20 @@ function providerTerminalStoryPreviewLines(provider) {
       tone: providerTerminalStoryPreviewTone(line),
     }));
   if (lines.length) return lines;
+  if (provider === "codex") {
+    return connected
+      ? [
+          { text: "OpenAI OAuth is ready for Codex direct in Forge.", tone: "success" },
+          { text: providerCliFriendlyHint(provider, status, {
+            selectedModel: status?.modelRef || providerWorkbenchModel(provider),
+            displayName: providerWorkbenchDisplayName(provider),
+          }), tone: "muted" },
+        ]
+      : [
+          { text: "Open the embedded OAuth console to connect your ChatGPT subscription.", tone: "accent" },
+          { text: "Type open to relaunch the browser or refresh after sign-in completes.", tone: "muted" },
+        ];
+  }
   if (running || opening) {
     return [
       { text: `Preparing the live ${profile.runtime} session inside Forge.`, tone: "accent" },
@@ -20355,7 +22527,10 @@ function providerTerminalStoryPreviewLines(provider) {
   if (connected) {
     return [
       { text: `${profile.runtime} is ready to open in Forge.`, tone: "success" },
-      { text: providerCliFriendlyHint(provider, status, { selectedModel: status?.modelRef || providerWorkbenchModel(provider) }), tone: "muted" },
+      { text: providerCliFriendlyHint(provider, status, {
+        selectedModel: status?.modelRef || providerWorkbenchModel(provider),
+        displayName: providerWorkbenchDisplayName(provider),
+      }), tone: "muted" },
     ];
   }
   if (providerStatusNeedsRepair(status)) {
@@ -20384,6 +22559,11 @@ function providerTerminalStoryPreviewLines(provider) {
 
 function providerTerminalStoryActionText(provider) {
   const { profile, connected, installed, running, opening, needsNode } = providerTerminalStoryState(provider);
+  if (provider === "codex") {
+    if (opening || running) return "Forge is routing the OpenAI OAuth console into the embedded terminal.";
+    if (connected) return "Press Open above to reopen the direct Codex OAuth console inside Forge.";
+    return "Open the embedded OAuth console to launch ChatGPT sign-in, then refresh Forge.";
+  }
   if (opening || running) return `Forge is routing the live ${profile.name} session into the embedded terminal.`;
   if (connected) return `Press Open above to launch ${profile.name} inside Forge.`;
   if (installed) return `Forge is completing the ${profile.name} connection automatically.`;
@@ -20552,6 +22732,9 @@ function setProviderTerminalOpening(kind, opening) {
 
 function providerWorkbenchCanOpen(kind) {
   if (kind === "oanda") return true;
+  if (kind === "codex") {
+    return !!providerWorkbenchStatus(kind)?.connected || providerTerminalIsRunning(kind);
+  }
   const status = providerWorkbenchStatus(kind);
   const connected = !!status?.connected;
   const installed = providerCliEffectiveInstalled(status);
@@ -20560,6 +22743,7 @@ function providerWorkbenchCanOpen(kind) {
 
 function providerShouldAutoHeal(kind, status) {
   if (!["codex", "gemini", "claude"].includes(kind)) return false;
+  if (kind === "codex") return false;
   if (!forgeCanInvoke()) return false;
   if (!status) return true;
   if (providerTerminalIsRunning(kind) || providerTerminalIsOpening(kind)) return false;
@@ -20582,12 +22766,15 @@ async function maybeAutoHealProvider(kind, status, options = {}) {
 
 function startProviderAutoHealRobot() {
   if (providerAutoHealTimer || !forgeCanInvoke()) return;
+  if (providerOverlay && providerOverlay.hidden) return;
   providerAutoHealTimer = setInterval(() => {
+    if (providerOverlay && providerOverlay.hidden) return;
     void refreshProviderWorkbenchStatuses({ silent: true, autoHeal: true });
   }, 30000);
 }
 
 async function maybeAutoLaunchProviderWorkbench(kind) {
+  if (kind === "codex" && !providerWorkbenchStatus(kind)?.connected) return;
   if (!providerWorkbenchCanOpen(kind)) return;
   if (providerTerminalIsRunning(kind) || providerTerminalIsOpening(kind)) return;
   await openProviderWorkbench(kind);
@@ -20700,21 +22887,26 @@ function renderProviderWorkbench() {
   const installed = providerCliEffectiveInstalled(status);
   const needsNode = providerStatusNeedsNode(status);
   const stateText = providerWorkbenchStateText(status);
-  const launchText = connected
-    ? "Open"
-    : installed
-      ? "Repair"
-      : needsNode
-        ? "Needs Node"
-        : "Install";
-  const launchDisabled = kind === "codex" ? !installed : false;
+  const launchText = kind === "codex"
+    ? connected ? "Open" : "Connect"
+    : connected
+      ? "Open"
+      : installed
+        ? "Repair"
+        : needsNode
+          ? "Needs Node"
+          : "Install";
+  const launchDisabled = kind === "codex" ? false : false;
   const workbenchState = {
     kind,
     label: providerWorkbenchDisplayName(kind),
     meta: providerWorkbenchModel(kind),
     stateText,
     logo: providerWorkbenchLogoClass(kind),
-    hint: providerCliFriendlyHint(kind, status, { selectedModel: providerWorkbenchModel(kind) }),
+    hint: providerCliFriendlyHint(kind, status, {
+      selectedModel: providerWorkbenchModel(kind),
+      displayName: providerWorkbenchDisplayName(kind),
+    }),
     launchText,
     launchDisabled,
   };
@@ -20728,7 +22920,10 @@ function renderProviderWorkbench() {
     providerWorkbenchActiveLogo.classList.add(providerWorkbenchLogoClass(kind));
   }
   if (providerWorkbenchHint) {
-    providerWorkbenchHint.textContent = providerCliFriendlyHint(kind, status, { selectedModel: providerWorkbenchModel(kind) });
+    providerWorkbenchHint.textContent = providerCliFriendlyHint(kind, status, {
+      selectedModel: providerWorkbenchModel(kind),
+      displayName: providerWorkbenchDisplayName(kind),
+    });
   }
   if (providerWorkbenchLaunch) {
     providerWorkbenchLaunch.textContent = launchText;
@@ -20760,7 +22955,7 @@ function mountProviderWorkbenchTerminals() {
 }
 
 const providerTerminalText = {
-  codex: ["Open Codex in Forge", "Codex is preparing...", "Type a command or answer for Codex CLI", "Preparing Codex CLI"],
+  codex: ["Open OpenAI OAuth in Forge", "OpenAI OAuth is preparing...", "Type help, open, or refresh for OpenAI OAuth", "Preparing OpenAI OAuth"],
   gemini: ["Start Gemini in Forge", "Gemini is preparing...", "Type a command or answer for Gemini CLI", "Preparing Gemini CLI"],
   claude: ["Start Claude in Forge", "Claude is preparing...", "Type a command or answer for Claude Code CLI", "Preparing Claude Code CLI"],
 };
@@ -20773,12 +22968,12 @@ function providerTerminalDom(provider) {
 
 const PROVIDER_TERMINAL_COMMANDS = {
   codex: {
-    snapshot: "codex_terminal_snapshot",
-    start: "codex_terminal_start",
-    send_input: "codex_terminal_send_input",
-    resize: "codex_terminal_resize",
-    stop: "codex_terminal_stop",
-    clear: "codex_terminal_clear",
+    snapshot: "openai_oauth_terminal_snapshot",
+    start: "openai_oauth_terminal_start",
+    send_input: "openai_oauth_terminal_send_input",
+    resize: "openai_oauth_terminal_resize",
+    stop: "openai_oauth_terminal_stop",
+    clear: "openai_oauth_terminal_clear",
   },
   gemini: {
     snapshot: "gemini_terminal_snapshot",
@@ -20991,7 +23186,7 @@ function renderProviderTerminal(provider, snapshot = {}, options = {}) {
   setProviderTerminalRunning(provider, running);
   const phase = String(snapshot.phase || (running ? "running" : "idle")).trim();
   const message = String(snapshot.message || "").trim();
-  if (dom.state) dom.state.textContent = message ? `${phase} Â· ${message}` : phase;
+  if (dom.state) dom.state.textContent = message ? `${phase} · ${message}` : phase;
   let filteredSnapshotOutput = "";
   if (typeof snapshot.output === "string") {
     filteredSnapshotOutput = setProviderTerminalOutput(provider, snapshot.output);
@@ -21121,16 +23316,11 @@ async function clearProviderTerminal(provider) {
 
 function bindProviderTerminalControls(provider) {
   const dom = providerTerminalDom(provider);
-  dom.send?.addEventListener("click", () => { void sendProviderTerminalInput(provider); });
-  dom.input?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      void sendProviderTerminalInput(provider);
-    }
-  });
-  dom.stop?.addEventListener("click", () => { void stopProviderTerminal(provider); });
-  dom.hide?.addEventListener("click", () => { setProviderTerminalVisible(provider, false); });
-  dom.clear?.addEventListener("click", () => { void clearProviderTerminal(provider); });
+  bindClickAction(dom.send, () => { void sendProviderTerminalInput(provider); });
+  bindEnterAction(dom.input, () => sendProviderTerminalInput(provider));
+  bindClickAction(dom.stop, () => { void stopProviderTerminal(provider); });
+  bindClickAction(dom.hide, () => { setProviderTerminalVisible(provider, false); });
+  bindClickAction(dom.clear, () => { void clearProviderTerminal(provider); });
 }
 
 function renderCliProviderStatus(kind, status, options = {}) {
@@ -21191,7 +23381,11 @@ function renderCliProviderStatus(kind, status, options = {}) {
     }
   }
   if (elements.hintEl) {
-    elements.hintEl.textContent = providerCliFriendlyHint(kind, status, { busy, selectedModel: elements.selectedModel });
+    elements.hintEl.textContent = providerCliFriendlyHint(kind, status, {
+      busy,
+      selectedModel: elements.selectedModel,
+      displayName: providerWorkbenchDisplayName(kind),
+    });
   }
   const launcherState = busy ? "checking" : connected ? "ready" : installed ? "auth" : "missing";
   renderProviderWorkbenchLauncher(kind, launcherState, { muted: !connected && !installed });
@@ -21201,12 +23395,19 @@ function renderCliProviderStatus(kind, status, options = {}) {
 
 function renderCodexProviderStatus(status, options = {}) {
   const busy = !!options.busy;
-  const connected = !!status?.connected;
-  const installed = !!status?.installed || connected;
-  codexProviderLastStatus = status || codexProviderLastStatus;
+  const normalized = status
+    ? {
+        ...status,
+        installed: true,
+        authSource: status?.authSource || "OpenAI OAuth",
+        modelRef: selectedOpenAiModelRef(),
+      }
+    : codexProviderLastStatus;
+  const connected = !!normalized?.connected;
+  codexProviderLastStatus = normalized || codexProviderLastStatus;
   const codexLauncherMeta = providerLauncherDom("codex").meta;
   if (codexLauncherMeta) codexLauncherMeta.textContent = selectedOpenAiModelRef();
-  renderProviderWorkbenchLauncher("codex", busy ? "checking" : connected ? "ready" : installed ? "auth" : "missing", { muted: !connected && !installed });
+  renderProviderWorkbenchLauncher("codex", busy ? "checking" : connected ? "ready" : "auth", { muted: !connected });
   renderCliProviderTerminalShell("codex");
   renderProviderWorkbench();
 }
@@ -21223,7 +23424,7 @@ async function refreshOpenAiProviderStatus(options = {}) {
   }
   if (!options.silent) renderOpenAiProviderStatus(openAiProviderLastStatus, { busy: true });
   try {
-    const status = await forgeInvoke("openai_subscription_status", {}, {
+    const status = await forgeInvoke("openai_oauth_status", {}, {
       section: "provider",
       timeoutMs: 8000,
       dedupeKey: "openai-status",
@@ -21257,17 +23458,10 @@ async function refreshOpenAiProviderStatus(options = {}) {
 
 async function refreshCliProviderStatuses(options = {}) {
   if (!options.silent) {
-    renderCodexProviderStatus(codexProviderLastStatus, { busy: true });
     renderCliProviderStatus("gemini", geminiProviderLastStatus, { busy: true });
     renderCliProviderStatus("claude", claudeProviderLastStatus, { busy: true });
   }
   if (!forgeCanInvoke()) {
-    renderCodexProviderStatus({
-      connected: false,
-      installed: false,
-      authSource: "none",
-      message: "Open Forge as a Tauri app to detect Codex CLI.",
-    });
     renderCliProviderStatus("gemini", {
       connected: false,
       installed: false,
@@ -21282,13 +23476,7 @@ async function refreshCliProviderStatuses(options = {}) {
     });
     return;
   }
-  const [codex, gemini, claude, geminiKey] = await Promise.all([
-    forgeInvoke("codex_provider_status", {}, { section: "provider", timeoutMs: 8000, dedupeKey: "codex-status" }).catch((err) => ({
-      connected: false,
-      installed: false,
-      authSource: "error",
-      message: `Codex status failed: ${err}`,
-    })),
+  const [gemini, claude, geminiKey] = await Promise.all([
     forgeInvoke("gemini_provider_status", {}, { section: "provider", timeoutMs: 8000, dedupeKey: "gemini-status" }).catch((err) => ({
       connected: false,
       installed: false,
@@ -21306,10 +23494,8 @@ async function refreshCliProviderStatuses(options = {}) {
   if (geminiProviderApiKey && geminiKey) {
     geminiProviderApiKey.placeholder = geminiKey.configured ? "Saved locally" : "AIza...";
   }
-  renderCodexProviderStatus(codex);
   renderCliProviderStatus("gemini", gemini);
   renderCliProviderStatus("claude", claude);
-  void maybeAutoHealProvider("codex", codex, options);
   void maybeAutoHealProvider("gemini", gemini, options);
   void maybeAutoHealProvider("claude", claude, options);
 }
@@ -21358,7 +23544,7 @@ async function connectOpenAiProvider() {
     openAiProviderConnect.textContent = "Opening";
   }
   try {
-    const result = await forgeInvoke("openai_subscription_login", {}, {
+    const result = await forgeInvoke("openai_oauth_login", {}, {
       section: "provider",
       timeoutMs: 30000,
     });
@@ -21384,14 +23570,14 @@ async function connectCodexProvider(options = {}) {
   if (!forgeCanInvoke()) {
     renderCodexProviderStatus({
       connected: false,
-      installed: false,
-      authSource: "none",
-      message: "Open Forge as a Tauri app to install or connect Codex CLI.",
+      installed: true,
+      authSource: "OpenAI OAuth",
+      message: "Open Forge as a Tauri app to launch the OpenAI OAuth console.",
     });
     return;
   }
   if (!options.background && providerWorkbenchHint) {
-    providerWorkbenchHint.textContent = "Codex is opening inside Forge.";
+    providerWorkbenchHint.textContent = "OpenAI OAuth is opening inside Forge.";
   }
   try {
     await startProviderTerminal("codex");
@@ -21400,9 +23586,9 @@ async function connectCodexProvider(options = {}) {
   } catch (err) {
     renderCodexProviderStatus({
       connected: false,
-      installed: !!codexProviderLastStatus?.installed,
+      installed: true,
       authSource: "error",
-      message: `Codex setup failed: ${err}`,
+      message: `OpenAI OAuth console failed: ${err}`,
     });
   }
 }
@@ -21555,12 +23741,15 @@ async function connectClaudeProvider(options = {}) { return connectCliProvider("
 
 function openProviderOverlay(options = {}) {
   if (!providerOverlay) return;
-  if (libraryOverlay && !libraryOverlay.hidden) closeLibraryOverlay();
-  if (mcpOverlay && !mcpOverlay.hidden) closeMcpOverlay();
-  if (typeof programsOverlay !== "undefined" && programsOverlay && !programsOverlay.hidden) closeProgramsOverlay();
-  if (docsOverlay && !docsOverlay.hidden) closeDocsOverlay();
+  runVisibleClosers([
+    [!!libraryOverlay && !libraryOverlay.hidden, () => closeLibraryOverlay()],
+    [!!mcpOverlay && !mcpOverlay.hidden, () => closeMcpOverlay()],
+    [typeof programsOverlay !== "undefined" && !!programsOverlay && !programsOverlay.hidden, () => closeProgramsOverlay()],
+    [!!docsOverlay && !docsOverlay.hidden, () => closeDocsOverlay()],
+  ]);
   const selectedProvider = options?.provider || activeProviderWorkbench || "codex";
   providerOverlay.hidden = false;
+  startProviderAutoHealRobot();
   mountProviderWorkbenchTerminals();
   hydrateProviderModelPickers();
   if (!oandaProviderTerminalBaseHtml || oandaProviderTerminalPhase === "boot") startOandaProviderTerminal({ preserveDraft: true });
@@ -21583,7 +23772,7 @@ function closeProviderOverlay() {
   setTopbarProviderMode(false);
 }
 
-forgeShellRuntime?.registerAction?.("provider-close", () => closeProviderOverlay());
+forgeShellRuntime?.registerAction?.("provider-close", createCloseAction(() => closeProviderOverlay()));
 if (providerOverlay) providerOverlay.addEventListener("mousedown", (event) => {
   if (providerOverlay.hidden) return;
   const target = event.target;
@@ -21591,33 +23780,37 @@ if (providerOverlay) providerOverlay.addEventListener("mousedown", (event) => {
   if (providerWorkbench?.contains(target)) return;
   closeProviderOverlay();
 });
-["codex", "gemini", "claude", "oanda"].forEach((kind) => {
-  forgeShellRuntime?.registerAction?.(`provider-launch-${kind}`, () => {
+const providerLaunchActions = Object.freeze([
+  ["provider-launch-codex", "codex"],
+  ["provider-launch-gemini", "gemini"],
+  ["provider-launch-claude", "claude"],
+  ["provider-launch-oanda", "oanda"],
+]);
+providerLaunchActions.forEach(([actionName, kind]) => {
+  forgeShellRuntime?.registerAction?.(actionName, createAsyncAction(async () => {
     setActiveProviderWorkbench(kind, { focusTerminal: true, ensureTerminal: kind !== "oanda" });
-    void maybeAutoLaunchProviderWorkbench(kind);
-  });
+    await maybeAutoLaunchProviderWorkbench(kind);
+  }));
 });
 forgeShellRuntime?.registerAction?.("provider-workbench-launch", () => {
   void openProviderWorkbench(activeProviderWorkbench, { restart: activeProviderWorkbench === "oanda" });
 });
-forgeShellRuntime?.registerAction?.("provider-workbench-refresh", () => {
-  void refreshProviderWorkbenchStatuses();
-});
-startProviderAutoHealRobot();
-forgeShellRuntime?.registerAction?.("provider-refresh-all", () => {
-  void refreshOpenAiProviderStatus();
-  void refreshCliProviderStatuses();
-  void refreshOandaProviderStatus();
-  void refreshVoiceProviderStatus();
-});
-forgeShellRuntime?.registerAction?.("provider-oanda-send", () => {
-  void submitOandaProviderTerminalInput();
-});
+forgeShellRuntime?.registerAction?.("provider-workbench-refresh", createAsyncAction(() => refreshProviderWorkbenchStatuses()));
+forgeShellRuntime?.registerAction?.("provider-refresh-all", createAsyncAction(async () => {
+  await Promise.allSettled([
+    refreshOpenAiProviderStatus(),
+    refreshCliProviderStatuses(),
+    refreshOandaProviderStatus(),
+    refreshVoiceProviderStatus(),
+  ]);
+}));
+forgeShellRuntime?.registerAction?.("provider-oanda-send", createAsyncAction(() => submitOandaProviderTerminalInput()));
 forgeShellRuntime?.registerAction?.("provider-oanda-reset", () => {
   startOandaProviderTerminal();
   focusOandaProviderTerminalField(oandaProviderTerminalPhase === "post" ? "post" : oandaProviderTerminalActiveField);
 });
-if (oandaProviderTerminalOutput) oandaProviderTerminalOutput.addEventListener("click", (event) => {
+const oandaProviderTerminalOutputTarget = [oandaProviderTerminalOutput];
+bindEventAction(oandaProviderTerminalOutputTarget, "click", (event) => {
   const actionEl = event.target instanceof Element ? event.target.closest("[data-oanda-action]") : null;
   const action = actionEl?.getAttribute?.("data-oanda-action");
   if (action === "validate" && !oandaProviderTerminalBusy) {
@@ -21630,10 +23823,10 @@ if (oandaProviderTerminalOutput) oandaProviderTerminalOutput.addEventListener("c
   if (!field || oandaProviderTerminalBusy || oandaProviderTerminalPhase !== "editing") return;
   focusOandaProviderTerminalField(field);
 });
-if (oandaProviderTerminalOutput) oandaProviderTerminalOutput.addEventListener("scroll", () => {
+bindEventAction(oandaProviderTerminalOutputTarget, "scroll", () => {
   syncOandaProviderTerminalScrollbar();
 });
-if (oandaProviderTerminalOutput) oandaProviderTerminalOutput.addEventListener("input", (event) => {
+bindEventAction(oandaProviderTerminalOutputTarget, "input", (event) => {
   const editable = event.target instanceof Element ? event.target.closest("[data-oanda-input]") : null;
   if (!editable) return;
   const field = editable.getAttribute("data-oanda-input");
@@ -21642,21 +23835,21 @@ if (oandaProviderTerminalOutput) oandaProviderTerminalOutput.addEventListener("i
   oandaProviderTerminalMaskedCarry[field] = false;
   setOandaProviderFieldValue(field, editable.value || "");
 });
-if (oandaProviderTerminalOutput) oandaProviderTerminalOutput.addEventListener("focusin", (event) => {
+bindEventAction(oandaProviderTerminalOutputTarget, "focusin", (event) => {
   const editable = event.target instanceof Element ? event.target.closest("[data-oanda-input]") : null;
   if (!editable) return;
   const field = editable.getAttribute("data-oanda-input");
   if (!field) return;
   oandaProviderTerminalActiveField = field;
 });
-if (oandaProviderTerminalOutput) oandaProviderTerminalOutput.addEventListener("contextmenu", (event) => {
+bindEventAction(oandaProviderTerminalOutputTarget, "contextmenu", (event) => {
   const editable = event.target instanceof Element ? event.target.closest("[data-oanda-input]") : null;
   if (!editable) return;
   const field = editable.getAttribute("data-oanda-input");
   if (field === "apiKey" || field === "accountId" || field === "baseUrl") return;
   event.preventDefault();
 });
-if (oandaProviderTerminalOutput) oandaProviderTerminalOutput.addEventListener("keydown", (event) => {
+bindEventAction(oandaProviderTerminalOutputTarget, "keydown", (event) => {
   if (oandaProviderTerminalBusy) return;
   const isValidateHotkey = isOandaDigitOneHotkey(event);
   const editable = event.target instanceof Element ? event.target.closest("[data-oanda-input]") : null;
@@ -21727,7 +23920,7 @@ if (oandaProviderTerminalOutput) oandaProviderTerminalOutput.addEventListener("k
     void submitOandaProviderTerminalInput(isValidateHotkey ? "1" : "2");
   }
 });
-if (oandaProviderTerminalOutput) oandaProviderTerminalOutput.addEventListener("paste", (event) => {
+bindEventAction(oandaProviderTerminalOutputTarget, "paste", (event) => {
   const editable = event.target instanceof Element ? event.target.closest("[data-oanda-input]") : null;
   if (!editable) return;
   const field = editable.getAttribute("data-oanda-input");
@@ -21781,76 +23974,39 @@ if (oandaProviderTerminalScrollbar && oandaProviderTerminalScrollbarThumb && oan
     window.requestAnimationFrame(syncOandaProviderTerminalScrollbar);
   });
 }
-if (oandaProviderTerminalInput) oandaProviderTerminalInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    void submitOandaProviderTerminalInput();
-  }
-});
-if (oandaProviderTerminalInput) oandaProviderTerminalInput.addEventListener("input", () => {
+bindEnterAction(oandaProviderTerminalInput, () => submitOandaProviderTerminalInput());
+bindInputAction([oandaProviderTerminalInput], () => {
   syncOandaProviderDraftFromInput();
 });
-forgeShellRuntime?.registerAction?.("provider-openai-connect", () => {
-  void connectOpenAiProvider();
-});
-if (openAiProviderModel) openAiProviderModel.addEventListener("change", () => {
+forgeShellRuntime?.registerAction?.("provider-openai-connect", createAsyncAction(() => connectOpenAiProvider()));
+bindEventAction([openAiProviderModel], "change", () => {
   setStoredOpenAiModelRef(openAiProviderModel.value);
   hydrateProviderModelPickers();
 });
-forgeShellRuntime?.registerAction?.("provider-gemini-save-key", () => {
-  void saveGeminiProviderApiKey();
+const providerQuickActions = Object.freeze([
+  ["provider-gemini-connect", () => connectGeminiProvider()],
+  ["provider-gemini-refresh", () => refreshCliProviderStatuses()],
+  ["provider-gemini-clear-key", () => clearGeminiProviderApiKey()],
+  ["provider-claude-connect", () => connectClaudeProvider()],
+  ["provider-claude-refresh", () => refreshCliProviderStatuses()],
+  ["provider-voice-clear-key", () => clearElevenLabsApiKey()],
+]);
+forgeShellRuntime?.registerAction?.("provider-gemini-save-key", createAsyncAction(() => saveGeminiProviderApiKey()));
+providerQuickActions.forEach(([actionName, effect]) => {
+  forgeShellRuntime?.registerAction?.(actionName, createAsyncAction(effect));
 });
-forgeShellRuntime?.registerAction?.("provider-gemini-connect", () => {
-  void connectGeminiProvider();
-});
-forgeShellRuntime?.registerAction?.("provider-gemini-refresh", () => {
-  void refreshCliProviderStatuses();
-});
-forgeShellRuntime?.registerAction?.("provider-gemini-clear-key", () => {
-  void clearGeminiProviderApiKey();
-});
-if (geminiProviderApiKey) geminiProviderApiKey.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    void saveGeminiProviderApiKey();
-  }
-});
+bindEnterAction(geminiProviderApiKey, () => saveGeminiProviderApiKey());
 ["codex", "gemini", "claude"].forEach(bindProviderTerminalControls);
 ["gemini", "claude"].forEach(bindCliProviderModelPicker);
-forgeShellRuntime?.registerAction?.("provider-claude-connect", () => {
-  void connectClaudeProvider();
-});
-forgeShellRuntime?.registerAction?.("provider-claude-refresh", () => {
-  void refreshCliProviderStatuses();
-});
-forgeShellRuntime?.registerAction?.("provider-voice-save-key", () => {
-  void saveElevenLabsApiKey();
-});
-forgeShellRuntime?.registerAction?.("provider-voice-clear-key", () => {
-  void clearElevenLabsApiKey();
-});
-if (voiceElevenApiKey) voiceElevenApiKey.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    void saveElevenLabsApiKey();
-  }
-});
-[voiceElevenVoiceId, voiceElevenModel, voiceMonthlyLimit, voiceOrpheusEndpoint, voiceOrpheusVoice, voiceAutoSpeak]
-  .filter(Boolean)
-  .forEach((field) => {
-    field.addEventListener("input", () => {
-      saveVoiceProviderSettingsFromUi();
-      renderVoiceProviderStatus(voiceProviderLastStatus);
-    });
-    field.addEventListener("change", () => {
-      saveVoiceProviderSettingsFromUi();
-      renderVoiceProviderStatus(voiceProviderLastStatus);
-    });
-    field.addEventListener("blur", () => {
-      saveVoiceProviderSettingsFromUi();
-      renderVoiceProviderStatus(voiceProviderLastStatus);
-    });
-  });
+forgeShellRuntime?.registerAction?.("provider-voice-save-key", createAsyncAction(() => saveElevenLabsApiKey()));
+bindEnterAction(voiceElevenApiKey, () => saveElevenLabsApiKey());
+bindInputLifecycle(
+  [voiceElevenVoiceId, voiceElevenModel, voiceMonthlyLimit, voiceOrpheusEndpoint, voiceOrpheusVoice, voiceAutoSpeak],
+  () => {
+    saveVoiceProviderSettingsFromUi();
+    renderVoiceProviderStatus(voiceProviderLastStatus);
+  },
+);
 
 hydrateProviderModelPickers();
 setCanvasChatTargetMode(canvasChatStoredTargetMode(), canvasChatStoredActiveTargets());
@@ -21860,7 +24016,7 @@ setCanvasChatTargetMode(canvasChatStoredTargetMode(), canvasChatStoredActiveTarg
 // the backend handler isn't wired up.
 if (typeof refreshAllRuntimeModelCatalogs === "function") refreshAllRuntimeModelCatalogs();
 
-// â”€â”€ My programs overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── My programs overlay ───────────────────────────────────────────
 
 const navProgramsBtn   = document.getElementById("navProgramsBtn");
 const programsOverlay  = document.getElementById("programsOverlay");
@@ -22112,7 +24268,7 @@ async function runProgramFromUi(program, button) {
       request: {
         programHash: program.hash || null,
         program: program.hash ? null : program.name,
-        title: `${program.name || "Forge program"} Â· UI run`,
+        title: `${program.name || "Forge program"} · UI run`,
         inputs,
       },
     }, { section: "programs", timeoutMs: 120000 });
@@ -22256,7 +24412,7 @@ function normalizeForgeProgram(program) {
     views,
     lensUrl,
     visualMode: lensUrl || /visual|lens/i.test(kind) ? "lens" : "",
-    desc: descParts.join(" Â· "),
+    desc: descParts.join(" · "),
     tag: hasPlanetView ? "Planet" : missingCount ? "needs ops" : customCount ? "custom" : mode.replaceAll("_", " "),
     pinned: !!program?.pinned,
     draft: customCount > 0 || missingCount > 0 || /draft|custom|missing/i.test(mode),
@@ -22310,7 +24466,7 @@ function renderProgramsList() {
     row.className = "mcp-tool-row program-row";
     const nameWrap = document.createElement("span");
     nameWrap.className = "mcp-tool-name-wrap";
-    const name = document.createElement("span"); name.className = "mcp-tool-name"; name.textContent = p.name || "â€”";
+    const name = document.createElement("span"); name.className = "mcp-tool-name"; name.textContent = p.name || "—";
     nameWrap.appendChild(name);
     if (p.hash) {
       const hash = document.createElement("span");
@@ -22367,14 +24523,18 @@ function setTopbarProgramsMode(on) {
 
 function openProgramsOverlay() {
   if (!programsOverlay) return;
-  if (libraryOverlay && !libraryOverlay.hidden) closeLibraryOverlay();
-  if (mcpOverlay && !mcpOverlay.hidden) closeMcpOverlay();
-  if (typeof providerOverlay !== "undefined" && providerOverlay && !providerOverlay.hidden) closeProviderOverlay();
+  runVisibleClosers([
+    [!!libraryOverlay && !libraryOverlay.hidden, () => closeLibraryOverlay()],
+    [!!mcpOverlay && !mcpOverlay.hidden, () => closeMcpOverlay()],
+    [typeof providerOverlay !== "undefined" && !!providerOverlay && !providerOverlay.hidden, () => closeProviderOverlay()],
+  ]);
   programsOverlay.hidden = false;
   setTopbarProgramsMode(true);
   renderProgramsList();
   void refreshProgramsRegistry();
-  if (programsSearch) { programsSearch.value = ""; programsSearchVal = ""; programsSearch.focus(); }
+  resetAndFocusTextInput(programsSearch, () => {
+    programsSearchVal = "";
+  });
 }
 
 function closeProgramsOverlay() {
@@ -22382,35 +24542,35 @@ function closeProgramsOverlay() {
   setTopbarProgramsMode(false);
 }
 
-forgeShellRuntime?.registerAction?.("programs-toggle", () => {
-  programsOverlay && !programsOverlay.hidden ? closeProgramsOverlay() : openProgramsOverlay();
-});
-forgeShellRuntime?.registerAction?.("programs-close", () => closeProgramsOverlay());
+forgeShellRuntime?.registerAction?.("programs-toggle", createOverlayToggleAction({
+  isOpen: () => !!programsOverlay && !programsOverlay.hidden,
+  open: () => openProgramsOverlay(),
+  close: () => closeProgramsOverlay(),
+}));
+forgeShellRuntime?.registerAction?.("programs-close", createCloseAction(() => closeProgramsOverlay()));
 forgeShellRuntime?.registerAction?.("program-create-toggle", () => {
   setProgramCreateOpen(programCreatePanel?.hidden !== false);
 });
 forgeShellRuntime?.registerAction?.("program-create-cancel", () => setProgramCreateOpen(false));
-if (programCreatePanel) programCreatePanel.addEventListener("submit", createProgramFromUi);
-if (programTemplateStrip) programTemplateStrip.addEventListener("click", event => {
+bindEventAction([programCreatePanel], "submit", createProgramFromUi);
+bindEventAction([programTemplateStrip], "click", (event) => {
   const button = event.target.closest("button[data-template]");
   if (!button) return;
   applyProgramTemplate(button.dataset.template);
 });
-if (programsSearch) programsSearch.addEventListener("input", () => {
-  programsSearchVal = programsSearch.value;
+bindTextFilterInput(programsSearch, (value) => {
+  programsSearchVal = value;
   renderProgramsList();
 });
 
-forgeShellRuntime?.registerAction?.("programs-filter", (payload) => {
-  const filter = String(payload?.dataset?.filter || "all");
-  document.querySelectorAll(".programs-filter-btn").forEach((button) => {
-    button.classList.toggle("active", button.dataset.filter === filter);
-  });
-  programsFilter = filter;
-  renderProgramsList();
-});
+forgeShellRuntime?.registerAction?.("programs-filter", createDatasetFilterAction({
+  selector: ".programs-filter-btn",
+  readFilter: (payload) => String(payload?.dataset?.filter || "all"),
+  setFilter: (filter) => { programsFilter = filter; },
+  render: () => renderProgramsList(),
+}));
 
-// â”€â”€ Library context menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Library context menu ──────────────────────────────────────────
 
 const libCtxMenu = document.getElementById("libCtxMenu");
 let libCtxActiveJob = null;
@@ -22499,7 +24659,7 @@ window.addEventListener("click", e => {
   if (!libCtxMenu.contains(e.target)) hideLibCtxMenu();
 }, true);
 
-// â”€â”€ Library card actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Library card actions ──────────────────────────────────────────
 
 function libPinJob(job) {
   const jobId = job.jobId || job.job_id || "";
@@ -22614,8 +24774,8 @@ function libShowSessions(job) {
   panel.className = "lib-sessions-panel";
   panel.innerHTML = `
     <div class="lib-sessions-header">
-      <button class="lib-sessions-back" type="button">â† Back</button>
-      <span>Sessions â€” ${forgeJobLabel(job)}</span>
+      <button class="lib-sessions-back" type="button">← Back</button>
+      <span>Sessions — ${forgeJobLabel(job)}</span>
     </div>
     <div class="lib-sessions-list">
       ${related.length === 0
@@ -22628,7 +24788,7 @@ function libShowSessions(job) {
             const active = jid === (job.jobId || job.job_id) ? " active" : "";
             return `<div class="lib-session-row${active}" data-job-id="${jid}">
               <span class="lib-session-title">${jlabel}</span>
-              <span class="lib-session-meta">${jst} Â· ${jdate}</span>
+              <span class="lib-session-meta">${jst} · ${jdate}</span>
             </div>`;
           }).join("")}
     </div>`;
@@ -22651,12 +24811,12 @@ function libShowSessions(job) {
   libraryOverlay.appendChild(panel);
 }
 
-// â”€â”€ Library card (menu button + pinned state) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Library card (menu button + pinned state) ─────────────────────
 function createLibCard(job) {
   const jobId   = job.jobId || job.job_id || "";
   const label   = forgeJobLabel(job);
   const type    = detectLibFileType(label);
-  const ext     = type === "generic" ? "â€”" : type.toUpperCase();
+  const ext     = type === "generic" ? "—" : type.toUpperCase();
   const isPinned = !!(job.pinned || job.is_pinned);
 
   const card = document.createElement("div");
@@ -22671,7 +24831,7 @@ function createLibCard(job) {
   card.innerHTML = `
     <div class="lib-card-preview">
       ${libPreviewHTML(type, label, jobId)}
-      <button class="lib-card-menu-btn" type="button" title="Options">â‹¯</button>
+      <button class="lib-card-menu-btn" type="button" title="Options">⋯</button>
     </div>
     <div class="lib-card-foot">
       ${pinIcon}<span class="lib-card-name">${label}</span>
@@ -22693,7 +24853,7 @@ function createLibCard(job) {
   return card;
 }
 
-// â”€â”€ Panel mode tabs (Compute / Atlas) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Panel mode tabs (Compute / Atlas) ─────────────────────────────
 
 const panelTabBtns  = document.querySelectorAll(".panel-tab");
 const panelTabPanes = document.querySelectorAll(".panel-tab-pane");
@@ -22711,14 +24871,13 @@ function setPanelMode(mode) {
   if (mode === "atlas") refreshMyAtlas(true);
 }
 
-panelTabBtns.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    if (btn.disabled || btn.getAttribute("aria-disabled") === "true") return;
-    setPanelMode(btn.dataset.tab);
-  });
+bindEventAction(Array.from(panelTabBtns), "click", (event) => {
+  const btn = event.currentTarget;
+  if (btn?.disabled || btn?.getAttribute?.("aria-disabled") === "true") return;
+  setPanelMode(btn?.dataset?.tab);
 });
 
-// â”€â”€ Atlas sub-tabs (World atlas / Your atlas) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Atlas sub-tabs (World atlas / Your atlas) ─────────────────────
 const atlasSubTabBtns = document.querySelectorAll(".atlas-subtab");
 const atlasSubPanes = document.querySelectorAll(".atlas-subpane");
 const myAtlasStats = document.getElementById("myAtlasStats");
@@ -22755,11 +24914,11 @@ myAtlasList?.addEventListener("click", (event) => {
   insertCanvasChatToken(token);
 });
 
-// â”€â”€ Cube drag & drop â”€â”€
-// Atlas â†’ Atlas slot (same tray): move/swap.
-// Atlas â†’ Chat node-slot: clone (atlas keeps the original).
-// Chat â†’ Chat node-slot: move/swap.
-// Chat â†’ outside (no valid drop target): the chat slot is emptied.
+// ── Cube drag & drop ──
+// Atlas → Atlas slot (same tray): move/swap.
+// Atlas → Chat node-slot: clone (atlas keeps the original).
+// Chat → Chat node-slot: move/swap.
+// Chat → outside (no valid drop target): the chat slot is emptied.
 const chatNodeSlotsRoot = document.getElementById("forgeCanvasChatNodeSlots");
 
 function findCubeDropTarget(cube, x, y, sourceTray) {
@@ -22783,7 +24942,7 @@ function startCubeDrag(event) {
   event.stopPropagation();
   cube.setPointerCapture(event.pointerId);
   cube.classList.add("dragging");
-  // Treat atlas-tray and popup-row origins as "source = clone" â€” both
+  // Treat atlas-tray and popup-row origins as "source = clone" — both
   // leave the original in place and create a copy in the chat slot.
   // Chat-slot origin is the only "movable" source.
   const sourceIsAtlas = !sourceSlot || sourceSlot.classList.contains("my-atlas-slot");
@@ -22823,7 +24982,7 @@ function startCubeDrag(event) {
     const targetIsChat = dropTarget?.classList.contains("canvas-chat-nodeslot");
     const targetIsAtlas = dropTarget?.classList.contains("my-atlas-slot");
 
-    // Chat-slot origin â†’ no valid drop = empty the chat slot.
+    // Chat-slot origin → no valid drop = empty the chat slot.
     if (!sourceIsAtlas && !dropTarget) {
       cube.remove();
       return;
@@ -22831,7 +24990,7 @@ function startCubeDrag(event) {
     if (!dropTarget || dropTarget === sourceSlot) return;
 
     if (sourceIsAtlas && targetIsChat) {
-      // Atlas tray or popup row â†’ chat slot: clone, source stays.
+      // Atlas tray or popup row → chat slot: clone, source stays.
       const occupant = dropTarget.querySelector(".my-atlas-cube");
       occupant?.remove();
       const clone = cube.cloneNode(true);
@@ -22842,7 +25001,7 @@ function startCubeDrag(event) {
       return;
     }
     if (targetIsChat && sourceSlot) {
-      // Chat â†’ chat: move/swap.
+      // Chat → chat: move/swap.
       const occupant = dropTarget.querySelector(".my-atlas-cube");
       if (occupant) sourceSlot.appendChild(occupant);
       dropTarget.appendChild(cube);
@@ -22850,7 +25009,7 @@ function startCubeDrag(event) {
       return;
     }
     if (sourceSlot && !sourceIsAtlas && targetIsAtlas) {
-      // Chat â†’ atlas slot: move/swap (return cube to the atlas tray).
+      // Chat → atlas slot: move/swap (return cube to the atlas tray).
       const occupant = dropTarget.querySelector(".my-atlas-cube");
       if (occupant) sourceSlot.appendChild(occupant);
       dropTarget.appendChild(cube);
@@ -22858,7 +25017,7 @@ function startCubeDrag(event) {
       return;
     }
     if (sourceSlot && sourceIsAtlas && targetIsAtlas) {
-      // Atlas â†’ atlas slot: move/swap inside the same tray.
+      // Atlas → atlas slot: move/swap inside the same tray.
       const occupant = dropTarget.querySelector(".my-atlas-cube");
       if (occupant) sourceSlot.appendChild(occupant);
       dropTarget.appendChild(cube);
@@ -22874,7 +25033,7 @@ function startCubeDrag(event) {
 chatNodeSlotsRoot?.addEventListener("pointerdown", startCubeDrag);
 forgeCanvasChatProgramPicker?.addEventListener("pointerdown", startCubeDrag);
 
-// â”€â”€ Cube reveal animation â”€â”€
+// ── Cube reveal animation ──
 // Clicking a cube inside a chat slot or a sent-message snapshot drops
 // the cube down out of its slot and types out [name] + math icon +
 // [formula] to its right. Click again to collapse.
@@ -22941,7 +25100,7 @@ function typewriteText(target, text, charDelayMs = 18, done) {
   setTimeout(tick, 30);
 }
 
-// Click on cube (anywhere â€” chat slot or sent-message snapshot) toggles
+// Click on cube (anywhere — chat slot or sent-message snapshot) toggles
 // the reveal. Drag still wins via pointerdown; this only triggers on a
 // pure click that wasn't preceded by a drag.
 function onCubeClickForReveal(event) {
@@ -22949,7 +25108,7 @@ function onCubeClickForReveal(event) {
   if (!cube) return;
   const slot = cube.closest(".canvas-chat-nodeslot, .canvas-message-atlas-slot");
   if (!slot) return;
-  // If a drag was in progress, the cube has the dragging class â€” skip.
+  // If a drag was in progress, the cube has the dragging class — skip.
   if (cube.classList.contains("dragging")) return;
   event.preventDefault();
   event.stopPropagation();
@@ -22969,7 +25128,7 @@ function atlasShortHash(value, mode = "compact") {
   if (mode === "full") {
     return text.length > 14 ? `${text.slice(0, 8)}...${text.slice(-4)}` : text;
   }
-  return text.length > 8 ? `${text.slice(0, 6)}â€¦` : text;
+  return text.length > 8 ? `${text.slice(0, 6)}…` : text;
 }
 
 function atlasItemTitle(item, fallback) {
@@ -22978,7 +25137,7 @@ function atlasItemTitle(item, fallback) {
 
 function atlasNodeInitials(tag) {
   const clean = String(tag || "").replace(/[^a-zA-Z0-9]/g, "");
-  return clean.slice(0, 4).toUpperCase() || "â€”";
+  return clean.slice(0, 4).toUpperCase() || "—";
 }
 
 function atlasNodeColorClass(tag) {
@@ -23038,7 +25197,7 @@ function atlasEntitySummary(entity = null) {
       seen.add(key);
       return true;
     })
-    .join(" Â· ");
+    .join(" · ");
 }
 
 function renderMyAtlasSection(title, entities) {
@@ -23077,7 +25236,7 @@ function buildMyAtlasEntities(atlas = {}) {
         item?.metric_count != null ? `${item.metric_count} metric${Number(item.metric_count) === 1 ? "" : "s"}` : "",
         item?.run_count != null ? `${item.run_count} run${Number(item.run_count) === 1 ? "" : "s"}` : "",
         item?.source_label || "",
-      ].filter(Boolean).join(" Â· "),
+      ].filter(Boolean).join(" · "),
       hash: item?.program_hash || item?.programHash || "",
     });
     if (entity) entities.push(entity);
@@ -23093,7 +25252,7 @@ function buildMyAtlasEntities(atlas = {}) {
         item?.algorithm || "",
         item?.formula || "",
         item?.source_label || "",
-      ].filter(Boolean).join(" Â· "),
+      ].filter(Boolean).join(" · "),
       hash: item?.tag_hash || item?.hash || "",
     });
     if (entity) entities.push(entity);
@@ -23187,7 +25346,7 @@ window.ForgeHardwareCell?.install?.({
   invalidateProofPanel: invalidateWebExplorerProofPanel,
 });
 
-// â”€â”€ Web explorer surface â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Web explorer surface ──────────────────────────────────────────
 
 webExplorerBtn = document.getElementById("webexplorer");
 webExplorerSurface = document.getElementById("webExplorerSurface");
@@ -23468,7 +25627,7 @@ function createWebExplorerHistoryItem(entry) {
     entry.kind === "search" ? (isRealEstateShellActive() ? "Recherche Google" : "Google search") : (entry.domain || (isRealEstateShellActive() ? "Page web" : "Web page")),
     time,
     Number(entry.visitCount || 0) > 1 ? `${entry.visitCount} ${isRealEstateShellActive() ? "visites" : "visits"}` : "",
-  ].filter(Boolean).join(" Â· ");
+  ].filter(Boolean).join(" · ");
   title.appendChild(main);
   title.appendChild(meta);
   li.appendChild(title);
@@ -23477,21 +25636,21 @@ function createWebExplorerHistoryItem(entry) {
   pinBtn.type = "button";
   pinBtn.className = `webexplorer-history-pin-btn${entry.pinned ? " is-pinned" : ""}`;
   pinBtn.setAttribute("aria-label", entry.pinned
-    ? (isRealEstateShellActive() ? "DÃ©sÃ©pingler la page web" : "Unpin web page")
-    : (isRealEstateShellActive() ? "Ã‰pingler la page web" : "Pin web page"));
+    ? (isRealEstateShellActive() ? "Désépingler la page web" : "Unpin web page")
+    : (isRealEstateShellActive() ? "Épingler la page web" : "Pin web page"));
   pinBtn.innerHTML = `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M9.5 3.75h5l-.6 5.2 3.35 3.2v1.35H6.75v-1.35l3.35-3.2-.6-5.2Z" />
       <path d="M12 13.5v6" />
     </svg>`;
-  pinBtn.addEventListener("click", (event) => {
+  bindClickAction(pinBtn, (event) => {
     event.preventDefault();
     event.stopPropagation();
     setWebExplorerHistoryPinned(entry.id, !entry.pinned);
   });
   li.appendChild(pinBtn);
 
-  li.addEventListener("click", () => {
+  bindClickAction(li, () => {
     void navigateWebExplorerHistoryEntry(entry.id);
   });
   return li;
@@ -23537,7 +25696,7 @@ function renderWebExplorerHistoryPanel(force = false) {
   ].join("::");
   if (!force && key === webExplorerHistoryRenderKey) return;
   webExplorerHistoryRenderKey = key;
-  renderWebExplorerHistoryList(webExplorerPinnedHistoryList, pinned, isRealEstateShellActive() ? "Aucune page web Ã©pinglÃ©e" : "No pinned web page");
+  renderWebExplorerHistoryList(webExplorerPinnedHistoryList, pinned, isRealEstateShellActive() ? "Aucune page web épinglée" : "No pinned web page");
   renderWebExplorerHistoryList(webExplorerHistoryList, recent, isRealEstateShellActive() ? "Aucun historique web" : "No web history yet");
   if (webExplorerClearHistoryBtn) webExplorerClearHistoryBtn.disabled = recent.length === 0;
   requestAnimationFrame(() => {
@@ -23798,14 +25957,14 @@ function webExplorerSurfaceBounds() {
   const reservedTop = [];
   const viewportWidth = window.visualViewport?.width || window.innerWidth || (x + width);
   const viewportHeight = window.visualViewport?.height || window.innerHeight || (y + height);
-  const titlebar = document.querySelector(".window-titlebar");
+  const titlebar = windowTitlebar;
   if (titlebar && !titlebar.hidden) {
     const titlebarRect = titlebar.getBoundingClientRect();
     if (titlebarRect.width > 0 && titlebarRect.height > 0 && titlebarRect.bottom > y) {
       reservedTop.push(Math.max(0, titlebarRect.bottom - y));
     }
   }
-  const titlebarControls = document.querySelector(".titlebar-controls");
+  const titlebarControls = windowTitlebarControls;
   if (titlebarControls && !titlebarControls.hidden) {
     const controlsRect = titlebarControls.getBoundingClientRect();
     const overlapsVertically = controlsRect.height > 0 && controlsRect.bottom > y && controlsRect.top < (y + height);
@@ -23979,9 +26138,9 @@ function buildWebExplorerGoogleTabs(currentUrl) {
   const tabDefs = [
     { key: "all", label: "Tous", params: {} },
     { key: "images", label: "Images", params: { tbm: "isch" } },
-    { key: "news", label: "ActualitÃ©s", params: { tbm: "nws" } },
-    { key: "videos", label: "VidÃ©os", params: { tbm: "vid" } },
-    { key: "shortVideos", label: "VidÃ©os courtes", params: { udm: "39" } },
+    { key: "news", label: "Actualités", params: { tbm: "nws" } },
+    { key: "videos", label: "Vidéos", params: { tbm: "vid" } },
+    { key: "shortVideos", label: "Vidéos courtes", params: { udm: "39" } },
     { key: "web", label: "Web", params: { udm: "14" } },
   ];
   const activeKey = currentWebExplorerGoogleTabKey(url.toString());
@@ -24369,7 +26528,7 @@ function renderWebExplorerClonePage(blocks = []) {
         </div>
         ${capturedHiddenTextEntries.length ? `
           <section class="webexplorer-extract-section suspicious webexplorer-clone-hidden-report">
-            <div class="webexplorer-extract-section-title">Texte cachÃ© / non visible</div>
+            <div class="webexplorer-extract-section-title">Texte caché / non visible</div>
             <div class="webexplorer-extract-text-list">
             ${capturedHiddenTextEntries.slice(0, 160).map((entry) => `
               <article class="webexplorer-extract-text-row hidden">
@@ -24518,7 +26677,7 @@ function renderWebExplorerClonePage(blocks = []) {
         </section>` : ""}
       ${hiddenTextEntries.length ? `
         <section class="webexplorer-extract-section suspicious">
-          <div class="webexplorer-extract-section-title">Texte cachÃ© / non visible</div>
+          <div class="webexplorer-extract-section-title">Texte caché / non visible</div>
           <div class="webexplorer-extract-text-list">
           ${hiddenTextEntries.slice(0, 120).map((entry) => `
             <article class="webexplorer-extract-text-row hidden">
@@ -24794,6 +26953,7 @@ async function hideNativeWebExplorer() {
     alphaTrace("webexplorer.native.hide.begin");
     await forgeInvoke("webexplorer_native_hide", {}, {
       section: "webexplorer",
+      requiresActiveSection: true,
       bootSafe: true,
       timeoutMs: 5000,
     });
@@ -24945,6 +27105,7 @@ async function refreshWebExplorerMemorySnapshot() {
       webExplorerProofStats.lastRenderMode = String(analysis?.contentPlan?.renderMode || "");
       webExplorerProofStats.lastPageProfile = String(analysis?.contentPlan?.pageProfile || "");
       webExplorerProofStats.lastAnalysisProof = analysis?.proof || null;
+      webExplorerCollectionDiagnostics = await refreshWebExplorerCollectionDiagnostics();
       webExplorerProofStats.lastError = "";
       updateWebExplorerHistoryTitleFromMemory();
       alphaTrace("webexplorer.analysis", {
@@ -24987,6 +27148,7 @@ async function refreshWebExplorerMemorySnapshot() {
     } catch (err) {
       console.warn("[webexplorer] memory snapshot failed", err);
       webExplorerProofStats.lastError = String(err?.message || err || "");
+      webExplorerCollectionDiagnostics = null;
       webExplorerRewritePlan = null;
       webExplorerRegionPlan = null;
       webExplorerContentPlan = null;
@@ -25024,7 +27186,7 @@ function applyWebExplorerSnapshot(snapshot, options = {}) {
   }
   if (workspaceFolderName) workspaceFolderName.textContent = "Forge";
   if (workspaceProjectName) workspaceProjectName.textContent = "Web explorer";
-  const titlebarTitle = windowTitlebar?.querySelector(".titlebar-title");
+  const titlebarTitle = windowTitlebarTitle;
   if (titlebarTitle) titlebarTitle.textContent = "Forge";
   if (!options.skipHistory) {
     recordWebExplorerHistoryVisit(snapshot, {
@@ -25289,14 +27451,22 @@ const realEstateCrmScrollbar = document.getElementById("realEstateCrmScrollbar")
 const realEstateCrmScrollbarThumb = document.getElementById("realEstateCrmScrollbarThumb");
 let realEstateModeActive = false;
 let realEstateOnboardingState = null;
+let realEstateAgencyProfile = null;
+let realEstateAgencyWebResearchReport = null;
+let lastRealEstateSessionTitleSyncKey = "";
 let realEstateOnboardingLoading = false;
 let realEstateOnboardingAnnouncedQuestion = "";
 let realEstateOnboardingLlmTurnInFlight = false;
 let realEstateOnboardingMachineSignature = "";
+let realEstateIdentityConfirmationPending = false;
+let realEstateAgencyEarthAllowed = false;
 let realEstateLlmInitTimer = 0;
 let realEstateLlmInitProgress = 0;
 let realEstateLlmStatusRefreshInFlight = false;
 let realEstateLlmStatusLastRefreshAt = 0;
+let realEstateBackendWarmTimer = 0;
+let realEstateBackendWarmInFlight = false;
+let realEstateBackendWarmLastAt = 0;
 try {
   realEstateModeActive = window.localStorage?.getItem?.(REAL_ESTATE_MODE_STORAGE_KEY) === "1";
 } catch (_) {}
@@ -25307,65 +27477,66 @@ const REAL_ESTATE_TOOL_BY_COMMAND = window.ForgeRealEstateTools?.byCommand || ne
 const REAL_ESTATE_CRM_TOOLS = window.ForgeRealEstateTools?.crmTools || Object.freeze([]);
 
 const realEstateOnboardingRuntime = createRealEstateOnboardingRuntime({
-  getModeActive: () => realEstateModeActive,
-  get: (key) => ({
-    state: realEstateOnboardingState,
-    loading: realEstateOnboardingLoading,
-    announcedQuestion: realEstateOnboardingAnnouncedQuestion,
-    llmTurnInFlight: realEstateOnboardingLlmTurnInFlight,
-    machineSignature: realEstateOnboardingMachineSignature,
-    initTimer: realEstateLlmInitTimer,
-    initProgress: realEstateLlmInitProgress,
-    statusRefreshInFlight: realEstateLlmStatusRefreshInFlight,
-    statusLastRefreshAt: realEstateLlmStatusLastRefreshAt,
-  }[key]),
-  set: (key, value) => {
-    if (key === "state") realEstateOnboardingState = value;
-    else if (key === "loading") realEstateOnboardingLoading = value;
-    else if (key === "announcedQuestion") realEstateOnboardingAnnouncedQuestion = value;
-    else if (key === "llmTurnInFlight") realEstateOnboardingLlmTurnInFlight = value;
-    else if (key === "machineSignature") realEstateOnboardingMachineSignature = value;
-    else if (key === "initTimer") realEstateLlmInitTimer = value;
-    else if (key === "initProgress") realEstateLlmInitProgress = value;
-    else if (key === "statusRefreshInFlight") realEstateLlmStatusRefreshInFlight = value;
-    else if (key === "statusLastRefreshAt") realEstateLlmStatusLastRefreshAt = value;
+  get: (name) => {
+    if (name === "state") return realEstateOnboardingState;
+    if (name === "loading") return realEstateOnboardingLoading;
+    if (name === "announcedQuestion") return realEstateOnboardingAnnouncedQuestion;
+    if (name === "llmTurnInFlight") return realEstateOnboardingLlmTurnInFlight;
+    if (name === "machineSignature") return realEstateOnboardingMachineSignature;
+    if (name === "initTimer") return realEstateLlmInitTimer;
+    if (name === "initProgress") return realEstateLlmInitProgress;
+    if (name === "statusRefreshInFlight") return realEstateLlmStatusRefreshInFlight;
+    if (name === "statusLastRefreshAt") return realEstateLlmStatusLastRefreshAt;
+    return undefined;
   },
-  getProviderRows: () => [
-    ["codex", codexProviderLastStatus],
+  set: (name, value) => {
+    if (name === "state") realEstateOnboardingState = value || null;
+    else if (name === "loading") realEstateOnboardingLoading = !!value;
+    else if (name === "announcedQuestion") realEstateOnboardingAnnouncedQuestion = String(value || "");
+    else if (name === "llmTurnInFlight") realEstateOnboardingLlmTurnInFlight = !!value;
+    else if (name === "machineSignature") realEstateOnboardingMachineSignature = String(value || "");
+    else if (name === "initTimer") realEstateLlmInitTimer = Number(value || 0);
+    else if (name === "initProgress") realEstateLlmInitProgress = Number(value || 0);
+    else if (name === "statusRefreshInFlight") realEstateLlmStatusRefreshInFlight = !!value;
+    else if (name === "statusLastRefreshAt") realEstateLlmStatusLastRefreshAt = Number(value || 0);
+  },
+  getModeActive: () => realEstateModeActive,
+  dispatchOnboarding: (status, questionId) => forgeShellRuntime?.dispatch?.({
+    type: "SET_ONBOARDING",
+    scope: "real-estate",
+    status,
+    questionId: questionId || "",
+  }),
+  getProviderRows: () => ([
+    ["codex", codexProviderLastStatus || openAiProviderLastStatus],
     ["gemini", geminiProviderLastStatus],
     ["claude", claudeProviderLastStatus],
-  ],
+  ]),
   providerCliEffectiveInstalled,
   refreshOpenAiProviderStatus,
   refreshCliProviderStatuses,
   alphaDropZone: () => alphaDropZone,
   alphaDropZoneTitle: () => alphaDropZoneTitle,
   alphaDropZoneSub: () => alphaDropZoneSub,
-  dispatchOnboarding: (status, questionId) => forgeShellRuntime?.dispatch?.({
-    type: "SET_ONBOARDING",
-    scope: "real-estate",
-    status,
-    questionId,
-  }),
-  packetForModel: (state, report, options) => window.ForgeRealEstateOnboarding?.packetForModel?.(state, report, options),
-  canvasChatRuntimeTargets,
-  selectedOpenAiModelRef,
-  selectedCanvasReasoningEffort,
+  packetForModel: (state, report, options) => window.ForgeRealEstateOnboarding?.packetForModel?.(state, report, options) || "",
+  canvasChatRuntimeTargets: (text) => canvasChatRuntimeTargets(text),
+  selectedOpenAiModelRef: () => selectedOpenAiModelRef?.() || "gpt-5.3-codex",
+  selectedCanvasReasoningEffort: (runtime) => selectedCanvasReasoningEffort?.(runtime),
   canvasChatBusyInCurrentSession,
   forgeCanInvoke,
-  forgeInvoke,
   currentAlphaSessionJobId,
+  isEmptyAlphaContext: () => !currentAlphaSessionJobId() && !alphaPendingFile && !alphaSessionFiles.length && !alphaDocState.fileName,
+  startAlphaEmptySession,
   setAlphaActiveTab,
   setCanvasChatBusy,
   setCanvasChatPendingAssistants,
-  isEmptyAlphaContext: () => !alphaPendingFile && !alphaSessionFiles.length && !alphaDocState.fileName,
-  startAlphaEmptySession,
+  forgeInvoke,
   appendCanvasChatMessage,
   canvasChatTargetLabel,
   canvasResponseRuntime,
   syncAlphaDropSurface,
-  forgeTauriInvoke: (...args) => forgeTauri?.invoke?.(...args),
-  refreshRealEstateHarvesterStatus,
+  forgeTauriInvoke: forgeTauri?.invoke ? (command, args = {}, options = {}) => forgeTauri.invoke(command, args, options) : null,
+  refreshRealEstateHarvesterStatus: () => refreshRealEstateHarvesterStatus(),
 });
 
 function realEstateOnboardingActive() { return realEstateOnboardingRuntime.active(); }
@@ -25379,11 +27550,24 @@ function realEstateOnboardingQuestionLine(state = realEstateOnboardingState) { r
 function realEstateOnboardingPromptText(state = realEstateOnboardingState) { return realEstateOnboardingRuntime.promptText(state); }
 function syncRealEstateOnboardingCanvas() { return realEstateOnboardingRuntime.syncCanvas(); }
 function realEstateOnboardingPacketForModel(state = realEstateOnboardingState, report = null, options = {}) { return realEstateOnboardingRuntime.packetForModel(state, report, options); }
-function realEstateOnboardingTargetForTurn() { return realEstateOnboardingRuntime.targetForTurn(); }
 function realEstateOnboardingLlmReplyLooksUsable(text) { return realEstateOnboardingRuntime.replyLooksUsable(text); }
-function requestRealEstateOnboardingLlmTurn(state = realEstateOnboardingState) { return realEstateOnboardingRuntime.requestLlmTurn(state); }
+function requestRealEstateOnboardingLlmTurn(state = realEstateOnboardingState, options = {}) { return realEstateOnboardingRuntime.requestLlmTurn(state, options); }
 function refreshRealEstateOnboardingState(options = {}) { return realEstateOnboardingRuntime.refreshState(options); }
 function recordRealEstateOnboardingAnswerForLlm(answer) { return realEstateOnboardingRuntime.recordAnswer(answer); }
+function recordRealEstateOnboardingAnswerForQuestion(questionId, answer) { return realEstateOnboardingRuntime.recordAnswer(answer, { questionId }); }
+function extractRealEstateAgencyIdentity(userMessage = "") {
+  const raw = String(userMessage || "").trim();
+  if (!raw) return Promise.resolve(null);
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  const match = normalized.match(/^(.+?)[,\-–]\s*([A-Za-zÀ-ÿ' -]{2,})$/);
+  if (match) {
+    return Promise.resolve({
+      agencyName: String(match[1] || "").trim(),
+      city: String(match[2] || "").trim(),
+    });
+  }
+  return Promise.resolve(null);
+}
 const realEstateLanguageRuntime = createRealEstateLanguageRuntime({
   isActive: () => realEstateModeActive,
   hasSource: () => !!(selectedForgeJobId || alphaPendingFile || alphaSessionFiles.length || alphaDocState.fileName),
@@ -25419,6 +27603,29 @@ function setComposerPrompt(text, options = {}) {
   input.value = text || "";
   input.focus?.({ preventScroll: true });
   input.setSelectionRange?.(input.value.length, input.value.length);
+  syncCanvasCommandRailState();
+  if (typeof autosizeCanvasChatInput === "function") autosizeCanvasChatInput();
+  if (typeof syncCanvasChatSendState === "function") syncCanvasChatSendState();
+  if (typeof syncTradingSlashCommandState === "function") syncTradingSlashCommandState();
+}
+
+function injectTextIntoCanvasComposer(text) {
+  const value = String(text || "").trim();
+  if (!value) return;
+  const input = typeof primaryCanvasComposerInput === "function"
+    ? primaryCanvasComposerInput()
+    : forgeCanvasChatInput;
+  if (!input) return;
+  const current = String(input.value || "");
+  const start = Number.isFinite(input.selectionStart) ? input.selectionStart : current.length;
+  const end = Number.isFinite(input.selectionEnd) ? input.selectionEnd : current.length;
+  const needsLeadingSpace = start > 0 && !/\s$/.test(current.slice(0, start));
+  const needsTrailingSpace = end < current.length && !/^\s/.test(current.slice(end));
+  const insertion = `${needsLeadingSpace ? " " : ""}${value}${needsTrailingSpace ? " " : ""}`;
+  input.value = `${current.slice(0, start)}${insertion}${current.slice(end)}`;
+  const cursor = start + insertion.length;
+  input.focus?.({ preventScroll: true });
+  input.setSelectionRange?.(cursor, cursor);
   syncCanvasCommandRailState();
   if (typeof autosizeCanvasChatInput === "function") autosizeCanvasChatInput();
   if (typeof syncCanvasChatSendState === "function") syncCanvasChatSendState();
@@ -25490,11 +27697,69 @@ async function presentBloombergLiveNative(bounds = null, options = {}) {
   });
   return true;
 }
+
+async function hideBloombergLiveNative() {
+  if (!forgeCanInvoke()) return false;
+  try {
+    await forgeInvoke("bloomberg_live_native_hide", {}, {
+      section: "trading",
+      requiresActiveSection: true,
+      bootSafe: true,
+      timeoutMs: 5000,
+      trace: true,
+      dedupeKey: "hide",
+    });
+    return true;
+  } catch (err) {
+    console.warn("[trading] bloomberg native hide failed", err);
+    return false;
+  }
+}
+
+async function openGmailWebviewActionSurface(url = "", options = {}) {
+  if (!forgeTauri?.invoke) return null;
+  return forgeTauri.invoke("gmail_webview_action_surface", {
+    url,
+    mode: String(options.mode || "inbox"),
+  }, {
+    section: "shell",
+    bootSafe: true,
+    timeoutMs: 15000,
+    trace: true,
+    dedupeKey: "gmail-webview",
+  });
+}
+
+async function startGoogleOauth(options = {}) {
+  if (!forgeTauri?.invoke) return null;
+  return forgeTauri.invoke("google_oauth_start", {
+    provider: String(options.provider || "google"),
+    scope: String(options.scope || ""),
+  }, {
+    section: "shell",
+    bootSafe: true,
+    timeoutMs: 20000,
+    trace: true,
+    dedupeKey: "google-oauth-start",
+  });
+}
 window.__forgePresentBloombergLiveNative = presentBloombergLiveNative;
+window.__forgeHideBloombergLiveNative = hideBloombergLiveNative;
+window.__forgeOpenGmailWebviewActionSurface = openGmailWebviewActionSurface;
+window.__forgeStartGoogleOauth = startGoogleOauth;
 
 const realEstateModeRuntime = createRealEstateModeRuntime({
   getActive: () => realEstateModeActive,
-  setActive: (next) => { realEstateModeActive = !!next; },
+  setActive: (next) => {
+    realEstateModeActive = !!next;
+    if (!realEstateModeActive) {
+      realEstateIdentityConfirmationPending = false;
+      realEstateAgencyEarthAllowed = false;
+      realEstateAgencyWebResearchReport = null;
+      agencyEarthSessionJobId = "";
+    }
+    syncRealEstateBackendKeepalive();
+  },
   persistActive: (next) => {
     try { window.localStorage?.setItem?.(REAL_ESTATE_MODE_STORAGE_KEY, next ? "1" : "0"); } catch (_) {}
   },
@@ -25513,7 +27778,17 @@ const realEstateModeRuntime = createRealEstateModeRuntime({
   refreshOnboardingState: (options) => refreshRealEstateOnboardingState(options),
   setToolsOpen: (open) => setRealEstateToolsPanelOpen(open),
   setContactsOpen: (open) => setRealEstateCrmPanelOpen(open),
-  setOnboardingState: (state) => { realEstateOnboardingState = state; },
+  setOnboardingState: (state) => {
+    realEstateOnboardingState = state;
+    if (String(state?.question?.id || "") === "agency_identity") {
+      realEstateIdentityConfirmationPending = false;
+      realEstateAgencyEarthAllowed = false;
+      realEstateAgencyWebResearchReport = null;
+    } else if (state && state.required === false) {
+      realEstateAgencyEarthAllowed = true;
+    }
+    syncRealEstateAgencyIdentityFromState(state);
+  },
   getInitTimer: () => realEstateLlmInitTimer,
   setInitTimer: (value) => { realEstateLlmInitTimer = value; },
   setStatusRefreshInFlight: (value) => { realEstateLlmStatusRefreshInFlight = value; },
@@ -25543,8 +27818,17 @@ const realEstateModeRuntime = createRealEstateModeRuntime({
   dispatchMode: (payload) => forgeShellRuntime?.dispatch?.({ type: "SET_REAL_ESTATE_MODE", ...payload }),
   refreshHarvesterStatus: () => refreshRealEstateHarvesterStatus(),
 });
+syncRealEstateBackendKeepalive();
 
-function syncRealEstateModeUi(options = {}) { return realEstateModeRuntime.sync(options); }
+function syncRealEstateModeUi(options = {}) {
+  const result = realEstateModeRuntime.sync(options);
+  syncRealEstateAgencyIdentityFromState(realEstateOnboardingState);
+  syncPlanetTopbarModeState();
+  if (realEstateModeActive) {
+    void releaseRealEstateTransientUiLocks();
+  }
+  return result;
+}
 function setRealEstateModeActive(nextActive) { return realEstateModeRuntime.setActive(nextActive); }
 window.__forgeSetRealEstateModeActive = setRealEstateModeActive;
 window.__forgeToggleRealEstateMode = () => realEstateModeRuntime.toggle();
@@ -25593,15 +27877,20 @@ async function routeRealEstateToolCommand(text) {
 realEstatePanelRuntime.install();
 syncRealEstateModeUi();
 syncRealEstatePanelBounds();
+installAgencyEarthBoundsObservers();
 
-forgeShellRuntime?.registerAction?.("toggle-real-estate", () => setRealEstateModeActive(!realEstateModeActive));
+forgeShellRuntime?.registerAction?.("toggle-real-estate", createToggleAction({
+  isActive: () => realEstateModeActive,
+  activate: () => setRealEstateModeActive(true),
+  deactivate: () => setRealEstateModeActive(false),
+}));
 
 forgeShellRuntime?.registerAction?.("real-estate-home", () => {
   if (!realEstateModeActive) setRealEstateModeActive(true);
   setRealEstateToolsPanelOpen(false);
   setRealEstateCrmPanelOpen(false);
   setWebExplorerActive(false);
-  setComposerPrompt("Ouvre l'accueil agence immo et prÃ©pare une synthÃ¨se opÃ©rationnelle: mandats, prospects, acquÃ©reurs, biens, veille locale, planning et prioritÃ©s du jour.");
+  setComposerPrompt("Ouvre l'accueil agence immo et prépare une synthèse opérationnelle: mandats, prospects, acquéreurs, biens, veille locale, planning et priorités du jour.");
   syncRealEstateModeUi();
 });
 
@@ -25619,71 +27908,50 @@ forgeShellRuntime?.registerAction?.("real-estate-properties", () => {
 
 registerWebExplorerToolsWithAtlas();
 
-forgeShellRuntime?.registerAction?.("toggle-webexplorer", () => setWebExplorerActive(!isWebExplorerUiActive()));
+forgeShellRuntime?.registerAction?.("toggle-webexplorer", createToggleAction({
+  isActive: () => isWebExplorerUiActive(),
+  activate: () => setWebExplorerActive(true),
+  deactivate: () => setWebExplorerActive(false),
+}));
 
-webExplorerClearHistoryBtn?.addEventListener("click", () => {
+bindClickAction(webExplorerClearHistoryBtn, () => {
   loadWebExplorerHistory();
   webExplorerHistoryEntries = webExplorerHistoryEntries.filter((entry) => entry.pinned);
   saveWebExplorerHistory();
   renderWebExplorerHistoryPanel(true);
 });
 
-webExplorerToolSubbar?.addEventListener("click", (event) => {
+function handleWebExplorerToolSubbarClick(event) {
   if (!isWebExplorerUiActive()) return;
   const closeButton = event.target?.closest?.("[data-webexplorer-action='close']");
-  if (closeButton) {
-    event.preventDefault();
-    event.stopPropagation();
-    setWebExplorerToolSubbarMode("none");
-    return;
-  }
   const expandButton = event.target?.closest?.("[data-webexplorer-action='toggle-expand']");
-  if (expandButton) {
-    event.preventDefault();
-    event.stopPropagation();
-    webExplorerToolSubbarExpanded = !webExplorerToolSubbarExpanded;
-    renderWebExplorerToolSubbar();
-    return;
-  }
   const sectionButton = event.target?.closest?.("[data-webexplorer-section]");
-  if (sectionButton) {
-    event.preventDefault();
-    event.stopPropagation();
-    webExplorerToolSubbarSection = normalizeWebExplorerToolSection(sectionButton.dataset.webexplorerSection || "extract");
-    renderWebExplorerToolSubbar();
-    return;
-  }
   const tokenButton = event.target?.closest?.("[data-webexplorer-token]");
-  if (tokenButton) {
-    event.preventDefault();
-    event.stopPropagation();
-    injectWebExplorerChatToken(tokenButton.dataset.webexplorerToken || "");
-    return;
-  }
-  event.preventDefault();
-  event.stopPropagation();
+  if (runFirstMatchingAction([
+    [!!closeButton, () => { consumeEvent(event); setWebExplorerToolSubbarMode("none"); }],
+    [!!expandButton, () => { consumeEvent(event); webExplorerToolSubbarExpanded = !webExplorerToolSubbarExpanded; renderWebExplorerToolSubbar(); }],
+    [!!sectionButton, () => { consumeEvent(event); webExplorerToolSubbarSection = normalizeWebExplorerToolSection(sectionButton.dataset.webexplorerSection || "extract"); renderWebExplorerToolSubbar(); }],
+    [!!tokenButton, () => { consumeEvent(event); injectWebExplorerChatToken(tokenButton.dataset.webexplorerToken || ""); }],
+  ])) return;
+  consumeEvent(event);
+}
+
+webExplorerToolSubbar?.addEventListener("click", (event) => {
+  handleWebExplorerToolSubbarClick(event);
 });
 
-webExplorerExtractTrigger?.addEventListener("click", (event) => {
+function handleWebExplorerSubbarTrigger(mode, event) {
   if (!isWebExplorerUiActive()) return;
   event.preventDefault();
   event.stopPropagation();
-  toggleWebExplorerToolSubbarMode("extract");
-});
+  toggleWebExplorerToolSubbarMode(mode);
+}
 
-webExplorerScoreTrigger?.addEventListener("click", (event) => {
-  if (!isWebExplorerUiActive()) return;
-  event.preventDefault();
-  event.stopPropagation();
-  toggleWebExplorerToolSubbarMode("score");
-});
+bindClickAction(webExplorerExtractTrigger, (event) => handleWebExplorerSubbarTrigger("extract", event));
 
-webExplorerActTrigger?.addEventListener("click", (event) => {
-  if (!isWebExplorerUiActive()) return;
-  event.preventDefault();
-  event.stopPropagation();
-  toggleWebExplorerToolSubbarMode("act");
-});
+bindClickAction(webExplorerScoreTrigger, (event) => handleWebExplorerSubbarTrigger("score", event));
+
+bindClickAction(webExplorerActTrigger, (event) => handleWebExplorerSubbarTrigger("act", event));
 
 if (isWebExplorerSurface) {
   syncWebExplorerChatModeUi();
@@ -25705,7 +27973,7 @@ window.ForgeSearchPalette?.install?.({
   runtime: forgeShellRuntime,
 });
 
-// â”€â”€ 3D mapping view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── 3D mapping view ───────────────────────────────────────────────
 // Pure WebGL2 point-cloud renderer with 4 mode-specific data builders.
 // Renderer is decoupled from compute: each mode produces (positions, colors)
 // Float32Arrays. To swap a mode to Rust later, replace its compute function
@@ -25715,13 +27983,14 @@ alpha3dToggle   = document.getElementById("alpha3dToggle");
 const alpha3dView     = document.getElementById("alpha3dView");
 const alpha3dCanvas   = document.getElementById("alpha3dCanvas");
 const alpha3dEmpty    = document.getElementById("alpha3dEmpty");
-const marsLensToggle  = document.getElementById("marsLensToggle");
+marsLensToggle = document.getElementById("marsLensToggle");
 marsLensView    = document.getElementById("marsLensView");
 marsLensFrame   = document.getElementById("marsLensFrame");
 inlinePlanetView = document.getElementById("inlinePlanetView");
 inlinePlanetFrame = document.getElementById("inlinePlanetFrame");
 marsLensClose = document.getElementById("marsLensClose");
 planetBodySelect = document.getElementById("planetBodySelect");
+syncPlanetTopbarModeState();
 alpha3dModeBtns = document.querySelectorAll(".alpha-3d-mode-btn");
 alpha3dNewMapBtn = document.getElementById("alpha3dNewMap");
 alpha3dSelectionMarker = document.getElementById("alpha3dSelectionMarker");
@@ -25812,7 +28081,7 @@ function updateAlpha3dAxisLabels() {
 }
 
 function updateAlpha3dLegend() {
-  // Kept for backwards compat â€” now a no-op since the gizmo replaces the panel.
+  // Kept for backwards compat — now a no-op since the gizmo replaces the panel.
   if (!alpha3dLegend) return;
   const cfg = ALPHA_3D_LEGEND[alpha3dState.mode] || ALPHA_3D_LEGEND.candles3d;
   alpha3dLegendTitle.textContent = cfg.title;
@@ -25843,8 +28112,8 @@ function updateAlpha3dLegend() {
   }
   const candles = alphaDocState?.candles || [];
   const n = candles.length;
-  const metaTail = isCandles && zMeta ? `Z: ${zMeta.label} Â· ${cfg.meta}` : cfg.meta;
-  alpha3dLegendMeta.textContent = `${metaTail} Â· ${n.toLocaleString()} bars`;
+  const metaTail = isCandles && zMeta ? `Z: ${zMeta.label} · ${cfg.meta}` : cfg.meta;
+  alpha3dLegendMeta.textContent = `${metaTail} · ${n.toLocaleString()} bars`;
 }
 
 function alpha3dModeLabel(mode = alpha3dState.mode) {
@@ -25936,7 +28205,7 @@ function updateAlpha3dResultOverlay() {
         : `pt ${formatCount(selection.point_index ?? selection.vertex_index)}`;
     parts.push(sel);
   }
-  alpha3dResultOverlay.appendChild(createUiEl("span", "alpha-3d-result-line", parts.join(" Â· ")));
+  alpha3dResultOverlay.appendChild(createUiEl("span", "alpha-3d-result-line", parts.join(" · ")));
 }
 
 function updateAlpha3dZSelectorVisibility() {
@@ -26044,8 +28313,8 @@ function updateAlpha3dButtonState() {
     alpha3dToggle.title = "3D chart";
     alpha3dToggle.setAttribute("aria-label", "Open 3D chart");
   } else {
-    alpha3dToggle.title = "3D chart â€” load a CSV to enable";
-    alpha3dToggle.setAttribute("aria-label", "3D chart (disabled â€” no data)");
+    alpha3dToggle.title = "3D chart — load a CSV to enable";
+    alpha3dToggle.setAttribute("aria-label", "3D chart (disabled — no data)");
   }
   alpha3dToggle.style.opacity = hasData ? "" : "0.35";
   alpha3dToggle.style.cursor = hasData ? "pointer" : "not-allowed";
@@ -26137,27 +28406,83 @@ function closeMarsLensView() {
   syncInlinePlanetView();
 }
 
-forgeShellRuntime?.registerAction?.("alpha-3d-toggle", () => {
-  if (alpha3dToggle.disabled) return;
-  if (alpha3dState.open) closeAlpha3dView();
-  else openAlpha3dView();
-});
+function syncPlanetTopbarModeState() {
+  if (!marsLensToggle) return;
+  if (isRealEstateShellActive()) {
+    marsLensToggle.title = "Google Earth";
+    marsLensToggle.setAttribute("aria-label", "Ouvrir Google Earth");
+    marsLensToggle.setAttribute("aria-pressed", agencyEarthNativeVisible ? "true" : "false");
+    marsLensToggle.classList.toggle("is-agency-earth-toggle", true);
+    return;
+  }
+  marsLensToggle.title = "Planet";
+  marsLensToggle.setAttribute("aria-label", "Open Planet tool");
+  marsLensToggle.setAttribute("aria-pressed", marsLensView?.classList.contains("is-open") ? "true" : "false");
+  marsLensToggle.classList.toggle("is-agency-earth-toggle", false);
+}
 
-forgeShellRuntime?.registerAction?.("mars-lens-toggle", () => {
+function stageAgencyEarthProfileRequest() {
+  stageCanvasChatTextForRetry("Pour ouvrir Google Earth, confirme d'abord le nom de l'agence immobiliere et la ville.");
+  (primaryCanvasComposerInput?.() || forgeCanvasChatInput)?.focus?.({ preventScroll: true });
+}
+
+function openAgencyEarthFromTopbar() {
+  if (!isRealEstateShellActive()) return false;
   if (marsLensView?.classList.contains("is-open")) closeMarsLensView();
-  else openMarsLensView();
-});
+  if (!realEstateAgencyProfile) {
+    stageAgencyEarthProfileRequest();
+    syncPlanetTopbarModeState();
+    return true;
+  }
+  bindAgencyEarthToCurrentSession();
+  realEstateAgencyEarthAllowed = true;
+  scheduleAgencyEarthNativeSync({ forceReload: !agencyEarthNativeVisible });
+  syncPlanetTopbarModeState();
+  return true;
+}
 
-forgeShellRuntime?.registerAction?.("mars-lens-close", () => closeMarsLensView());
+function closeAgencyEarthFromTopbar() {
+  if (!isRealEstateShellActive()) return false;
+  realEstateAgencyEarthAllowed = false;
+  agencyEarthSessionJobId = "";
+  void hideAgencyEarthNative();
+  syncPlanetTopbarModeState();
+  return true;
+}
+
+forgeShellRuntime?.registerAction?.("alpha-3d-toggle", createToggleAction({
+  canToggle: () => !alpha3dToggle.disabled,
+  isActive: () => alpha3dState.open,
+  activate: () => openAlpha3dView(),
+  deactivate: () => closeAlpha3dView(),
+}));
+
+forgeShellRuntime?.registerAction?.("mars-lens-toggle", createToggleAction({
+  isActive: () => isRealEstateShellActive()
+    ? agencyEarthNativeVisible
+    : !!marsLensView?.classList.contains("is-open"),
+  activate: () => {
+    if (isRealEstateShellActive()) return openAgencyEarthFromTopbar();
+    return openMarsLensView();
+  },
+  deactivate: () => {
+    if (isRealEstateShellActive()) return closeAgencyEarthFromTopbar();
+    return closeMarsLensView();
+  },
+}));
+
+forgeShellRuntime?.registerAction?.("mars-lens-close", createCloseAction(() => closeMarsLensView()));
 
 planetBodySelect?.addEventListener("change", () => {
   openMarsLensView(planetSphereUrlForBody(planetBodySelect.value));
 });
 
-forgeShellRuntime?.registerAction?.("alpha-split-toggle", () => {
-  if (alphaSplitViewToggle.disabled) return;
-  setAlphaSplitView(!alphaSplitViewEnabled);
-});
+forgeShellRuntime?.registerAction?.("alpha-split-toggle", createToggleAction({
+  canToggle: () => !alphaSplitViewToggle.disabled,
+  isActive: () => alphaSplitViewEnabled,
+  activate: () => setAlphaSplitView(true),
+  deactivate: () => setAlphaSplitView(false),
+}));
 
 function seedNewAlpha3dMapPrompt() {
   if (!forgeCanvasChatInput) return;
@@ -26166,7 +28491,7 @@ function seedNewAlpha3dMapPrompt() {
   const zMeta = ALPHA_3D_Z_METRICS[alpha3dState.zMetric];
   const zHint = zMeta ? zMeta.short || zMeta.label.toLowerCase() : alpha3dState.zMetric;
   const tail = bars ? ` (${formatCount(bars)} bars)` : "";
-  const prompt = `Design a custom 3D map for ${file}${tail}. Pick X / Y / Z axes (current Z = ${zHint}), a geometry (points, ribbons, surface, latticeâ€¦) and a colour rule that surfaces a non-trivial structure â€” not just price/volume/time noise. Materialize it as a Forge artifact and project it into the 3D view.`;
+  const prompt = `Design a custom 3D map for ${file}${tail}. Pick X / Y / Z axes (current Z = ${zHint}), a geometry (points, ribbons, surface, lattice…) and a colour rule that surfaces a non-trivial structure — not just price/volume/time noise. Materialize it as a Forge artifact and project it into the 3D view.`;
   forgeCanvasChatInput.value = prompt;
   if (typeof autosizeCanvasChatInput === "function") autosizeCanvasChatInput();
   forgeCanvasChatInput.focus();
@@ -26176,30 +28501,29 @@ function seedNewAlpha3dMapPrompt() {
   forgeCanvasChatInput.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-forgeShellRuntime?.registerAction?.("alpha-3d-new-map", () => {
-  seedNewAlpha3dMapPrompt();
-});
+forgeShellRuntime?.registerAction?.("alpha-3d-new-map", createActionSequence(
+  () => seedNewAlpha3dMapPrompt(),
+));
 
-alpha3dModeBtns.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    alpha3dModeBtns.forEach((b) => {
-      b.classList.toggle("active", b === btn);
-      b.setAttribute("aria-selected", String(b === btn));
-    });
-    alpha3dState.mode = btn.dataset.mode;
-    alpha3dState.camera.yaw = 0.7;
-    alpha3dState.camera.pitch = 0.35;
-    alpha3dState.camera.dist = 1.8;
-    clearAlpha3dSelection();
-    updateAlpha3dZSelectorVisibility();
-    rebuildAlpha3dPoints();
-    updateAlpha3dAxisLabels();
-    updateAlpha3dResultOverlay();
-    scheduleAlpha3dRender();
+bindEventAction(Array.from(alpha3dModeBtns), "click", (event) => {
+  const btn = event.currentTarget;
+  alpha3dModeBtns.forEach((b) => {
+    b.classList.toggle("active", b === btn);
+    b.setAttribute("aria-selected", String(b === btn));
   });
+  alpha3dState.mode = btn?.dataset?.mode;
+  alpha3dState.camera.yaw = 0.7;
+  alpha3dState.camera.pitch = 0.35;
+  alpha3dState.camera.dist = 1.8;
+  clearAlpha3dSelection();
+  updateAlpha3dZSelectorVisibility();
+  rebuildAlpha3dPoints();
+  updateAlpha3dAxisLabels();
+  updateAlpha3dResultOverlay();
+  scheduleAlpha3dRender();
 });
 
-alpha3dZMetricEl?.addEventListener("change", () => {
+bindEventAction([alpha3dZMetricEl], "change", () => {
   alpha3dState.zMetric = alpha3dZMetricEl.value;
   clearAlpha3dSelection();
   rebuildAlpha3dPoints();
@@ -26225,7 +28549,7 @@ function resizeAlpha3dCanvas() {
   resizeAlpha3dCanvasToDisplay(alpha3dCanvas, alpha3dState, window.devicePixelRatio || 1);
 }
 
-// â”€â”€ Mode compute (positions + colors per mode) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Mode compute (positions + colors per mode) ────────────────────
 
 function alpha3dPressureRequestKey() {
   const instrument = String(alphaDocState?.tradingInstrument || alphaTradingHeaderState.instrumentLabel || "").trim();
@@ -26300,7 +28624,7 @@ function updateAlpha3dSignalPanel() {
   const source = String(alpha3dState.pressureData?.source || "mock");
   alpha3dSignalPanel.innerHTML = `
     <div class="alpha-3d-panel-kicker">${escapeHtml(source.toUpperCase())} pressure MVP</div>
-    <div class="alpha-3d-panel-title">${escapeHtml(panel.instrument)} Â· ${escapeHtml(panel.timeframe)}</div>
+    <div class="alpha-3d-panel-title">${escapeHtml(panel.instrument)} · ${escapeHtml(panel.timeframe)}</div>
     <div class="alpha-3d-panel-signal signal-${escapeAttr(signal.toLowerCase())}">${escapeHtml(signal)}</div>
     <div class="alpha-3d-panel-grid">
       <div><span>current candle</span><strong>${escapeHtml(panel.currentCandle || "n/a")}</strong></div>
@@ -26427,7 +28751,7 @@ function rebuildAlpha3dPoints() {
   updateAlpha3dSignalPanel();
 }
 
-// â”€â”€ Camera matrices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Camera matrices ──────────────────────────────────────────────
 
 function alpha3dCameraMatrices() {
   const { yaw, pitch, dist } = alpha3dState.camera;
@@ -26769,5 +29093,3 @@ function renderAlpha3d() {
 updateAlpha3dButtonState();
 forgeSections?.markReady?.();
 forgeShellRuntime?.dispatch?.({ type: "BOOT_READY" });
-
-
