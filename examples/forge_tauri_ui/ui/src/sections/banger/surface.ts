@@ -3,6 +3,7 @@ import "./controller.js";
 import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, recenterMeshXY, recenterSceneXY, serializeScene } from "./scenes.js";
 import { IngenRender, NSDF_TOTAL_FLOATS } from "./ingen-render.js";
 import { parseSplatFile } from "./splat-loader.js";
+import { buildSphericalDroneSceneOps, SPHERICAL_DRONE_PARAMS } from "./drone-scene.js";
 import * as worlds from "./worlds.js";
 
 // Banger — viewport hybride : INGEN Render (WebGPU compute, SDF + grille
@@ -8447,6 +8448,21 @@ import * as worlds from "./worlds.js";
       // Leave everything else zero : trilinear of zero features → zero
       // input vector → MLP outputs b2 (zero) → constant 0 distance.
       return (window as any).__forgeBangerLoadNeuralSdf(buf);
+    };
+
+    // Drone sphérique conçu par Forge (examples/forge_drone_design.rs).
+    // Charge la scène SDF directement dans INGEN Banger : 0 calcul LLM,
+    // les params (cage 10.5cm, 4 hélices ⌀5.76cm internes, weight 5.6cm,
+    // RPi, caméra, WiFi) sortent du hill-climb Rust à score 0.
+    window.__forgeBangerLoadDroneScene = () => {
+      const sceneOps = buildSphericalDroneSceneOps();
+      const res = (window as any).__forgeBangerSetScene?.(sceneOps);
+      return {
+        ok: !!res?.ok,
+        params: { ...SPHERICAL_DRONE_PARAMS },
+        ops: sceneOps.length,
+        ...(res || {}),
+      };
     };
 
     // Smoke helper : random pastel starfield of 32 splats around origin.

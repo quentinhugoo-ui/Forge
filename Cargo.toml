@@ -91,3 +91,7 @@ path = "examples/cpu_simd_batch_bench.rs"
 name = "cpu_bit_intrinsics_bench"
 path = "examples/cpu_bit_intrinsics_bench.rs"
 
+[[example]]
+name = "forge_drone_design"
+path = "examples/forge_drone_design.rs"
+
