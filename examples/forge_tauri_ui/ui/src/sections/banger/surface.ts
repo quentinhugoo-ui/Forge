@@ -36,39 +36,14 @@ import * as worlds from "./worlds.js";
   els.stage = els.view.closest(".canvas-stage");
   let bangerController = null;
 
-  // ---------- shaders (WebGL2 transitionnel — phase 4 retire le reste) ----------
-  // INGEN COMPUTE §19 Phase 1 a supprimé : makeCube (dead code), makeGrid
-  // (remplacé par grille analytique compute), VS_SDF/FS_SDF (remplacés par
-  // INGEN Render WGSL).
+  // ---------- maths catalog (INGEN COMPUTE §19 Phase 4) ----------
+  // Plus aucun shader WebGL2 — uniquement les helpers maths (M4, axis
+  // tables) consommés par le gizmo SVG et la sélection 2D.
   const {
     M4,
     AXIS_RGB,
     AXIS_HEX,
-    VS_MESH,
-    FS_MESH,
-    VS_LINE,
-    FS_LINE,
   } = window.ForgeBangerCatalog || {};
-  function compile(gl, type, src) {
-    const sh = gl.createShader(type);
-    gl.shaderSource(sh, src);
-    gl.compileShader(sh);
-    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-      console.error("[banger] shader compile error:", gl.getShaderInfoLog(sh));
-      return null;
-    }
-    return sh;
-  }
-  function link(gl, vs, fs) {
-    const p = gl.createProgram();
-    gl.attachShader(p, vs); gl.attachShader(p, fs);
-    gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-      console.error("[banger] program link error:", gl.getProgramInfoLog(p));
-      return null;
-    }
-    return p;
-  }
 
   // ---------- renderer state ----------
   let gl = null;
@@ -714,7 +689,7 @@ import * as worlds from "./worlds.js";
     if (keepWarmMs > 0) {
       boomRenderContinuousUntil = Math.max(boomRenderContinuousUntil, boomNowMs() + keepWarmMs);
     }
-    if (gpuState === "active" && gl && !raf) {
+    if (gpuState === "active" && ingenRender && !raf) {
       raf = requestAnimationFrame(render);
     }
   }
@@ -2425,7 +2400,7 @@ import * as worlds from "./worlds.js";
       template,
       opcodes: boomComputeTemplateOpcodes(template),
     });
-    const backend = options.backend || (gl ? "WebGL2ComputeIR" : "CpuSimComputeIR");
+    const backend = options.backend || (ingenRender && ingenReady ? "IngenComputeIR" : "CpuSimComputeIR");
     const program = {
       kind: "kasm-compute-program",
       version: 1,
@@ -2515,7 +2490,7 @@ import * as worlds from "./worlds.js";
       metricHashes,
       environmentHash: boomKasmObjectHash("compute-environment-v1", {
         backend: computeProgram.backend,
-        renderer: !!gl,
+        renderer: !!ingenRender && ingenReady,
         workgroupSize: computeProgram.dispatch.workgroupSize,
       }),
     };
@@ -2828,7 +2803,7 @@ import * as worlds from "./worlds.js";
       testSetHash: skill.testSetHash,
       environmentHash: boomKasmObjectHash("skill-environment-v1", {
         cacheMaxBytes: BOOM_COMPUTE_CACHE_MAX_BYTES,
-        renderer: !!gl,
+        renderer: !!ingenRender && ingenReady,
       }),
     };
     proofRecord.id = boomKasmObjectHash("skill-proof-record-v1", proofRecord);
@@ -3975,7 +3950,7 @@ import * as worlds from "./worlds.js";
       metricHashes,
       environmentHash: boomKasmObjectHash("environment-v1", {
         userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
-        renderer: !!gl,
+        renderer: !!ingenRender && ingenReady,
         cacheMaxBytes: BOOM_COMPUTE_CACHE_MAX_BYTES,
       }),
     };
@@ -7227,71 +7202,26 @@ import * as worlds from "./worlds.js";
     return true;
   }
 
+  // INGEN COMPUTE §19 Phase 4 — initGL ne touche plus à WebGL2.
+  // `gl` reste null pour toute la vie de la session ; les helpers GPU
+  // historiques (rebuildBoomDisplayMesh / rebuildBoomSlicerPreview /
+  // createSceneMesh) ont déjà des early-returns `if (!gl)` qui les
+  // dégénèrent en no-op data-only — la donnée CPU (pos, nrm, bounds)
+  // reste, juste plus de VAO. Phase 5 ramènera le mesh via SVDAG /
+  // OP_SAMPLED_SDF dans INGEN Render.
   function initGL() {
-    gl = els.canvas.getContext("webgl2", { antialias: true, alpha: true, premultipliedAlpha: false });
-    if (!gl) {
-      console.error("[banger] WebGL2 not available");
+    if (!els.gpuCanvas || !IngenRender.supported()) {
+      console.warn("[banger] WebGPU indisponible — INGEN Render désactivé");
       return false;
     }
-    // Safety net : if the GPU driver loses the context (shader divergence,
-    // OOM, driver reset), stop the RAF loop right away so we don't spam
-    // failing GL calls every frame and freeze the UI.
-    els.canvas.addEventListener("webglcontextlost", (event) => {
-      event.preventDefault();
-      console.warn("[banger] WebGL context lost — stopping render loop.");
-      gpuState = "stopped";
-      try { setGpuStatus("GPU context lost", "paused"); } catch (_) {}
-      if (raf) { cancelAnimationFrame(raf); raf = 0; }
-    }, { once: true });
-    const vsM = compile(gl, gl.VERTEX_SHADER, VS_MESH);
-    const fsM = compile(gl, gl.FRAGMENT_SHADER, FS_MESH);
-    const vsL = compile(gl, gl.VERTEX_SHADER, VS_LINE);
-    const fsL = compile(gl, gl.FRAGMENT_SHADER, FS_LINE);
-    if (!vsM || !fsM || !vsL || !fsL) return false;
-    meshProg = link(gl, vsM, fsM);
-    lineProg = link(gl, vsL, fsL);
-    if (!meshProg || !lineProg) return false;
-
-    uMeshModel = gl.getUniformLocation(meshProg, "uModel");
-    uMeshProj  = gl.getUniformLocation(meshProg, "uProj");
-    uMeshView  = gl.getUniformLocation(meshProg, "uView");
-    uMeshColor = gl.getUniformLocation(meshProg, "uColor");
-    uMeshClipOffset = gl.getUniformLocation(meshProg, "uClipOffset");
-    uLineProj  = gl.getUniformLocation(lineProg, "uProj");
-    uLineView  = gl.getUniformLocation(lineProg, "uView");
-    uLineFadeNear = gl.getUniformLocation(lineProg, "uFadeNear");
-    uLineFadeFar  = gl.getUniformLocation(lineProg, "uFadeFar");
-    uLineClipOffset = gl.getUniformLocation(lineProg, "uClipOffset");
-
-    // INGEN Render (Phase 1) — instancié dès que le canvas GPU est dispo.
-    // L'init est async ; en attendant, render() saute le pass GPU.
-    if (els.gpuCanvas && IngenRender.supported()) {
-      ingenRender = new IngenRender(els.gpuCanvas);
-      ingenRender.init().then((ok) => {
-        ingenReady = !!ok;
-        if (ok) requestBoomRender("ingen-render-ready", 0);
-      }).catch((err) => {
-        console.warn("[banger] INGEN Render init failed:", err);
-        ingenRender = null;
-      });
-    } else if (!IngenRender.supported()) {
-      console.warn("[banger] WebGPU unavailable — INGEN Render disabled");
-    }
-
-    gl.enable(gl.DEPTH_TEST);
-    gl.depthFunc(gl.LEQUAL);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    if (sceneMesh && !sceneMesh.vao && sceneMesh.pos?.length && sceneMesh.nrm?.length) {
-      createSceneMesh({
-        pos: sceneMesh.base?.pos || sceneMesh.pos,
-        nrm: sceneMesh.base?.nrm || sceneMesh.nrm,
-        count: sceneMesh.base?.count || sceneMesh.count,
-        faceCount: sceneMesh.base?.faceCount || sceneMesh.faceCount,
-        bounds: sceneMesh.bounds,
-      }, findBoomItem("imported-mesh")?.name || "Imported mesh");
-    }
-    rebuildBoomSlicerPreview();
+    ingenRender = new IngenRender(els.gpuCanvas);
+    ingenRender.init().then((ok) => {
+      ingenReady = !!ok;
+      if (ok) requestBoomRender("ingen-render-ready", 0);
+    }).catch((err) => {
+      console.warn("[banger] INGEN Render init failed:", err);
+      ingenRender = null;
+    });
     return true;
   }
 
@@ -7299,36 +7229,30 @@ import * as worlds from "./worlds.js";
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
   }
 
-  // Release every GPU-side resource. We only do this on full shutdown.
-  // On simple blur/visibility changes we keep the WebGL context alive,
-  // which avoids black/white restores on some drivers when the app regains focus.
+  // Phase 4 — releaseGL devient releaseRender : seul INGEN Render possède
+  // des ressources GPU vivantes. Les helpers WebGL2 sont devenus data-only.
   function releaseGL() {
     stopRenderLoop();
-    if (!gl) return;
     try {
       releaseBoomSlicerPreview();
       releaseBoomDerivedMesh(sceneMesh);
       clearBoomGpuResourceCache();
-      if (sceneMesh?.vao) {
-        for (const buffer of sceneMesh.buffers || []) gl.deleteBuffer(buffer);
-        gl.deleteVertexArray(sceneMesh.vao);
+      if (sceneMesh) {
         sceneMesh.vao = null;
         sceneMesh.buffers = [];
       }
-      if (meshProg) gl.deleteProgram(meshProg);
-      if (lineProg) gl.deleteProgram(lineProg);
     } catch (err) {
       console.warn("[banger] releaseGL error:", err);
     }
-    meshProg = null; lineProg = null;
     try { ingenRender?.destroy(); } catch (_) {}
     ingenRender = null;
     ingenReady = false;
-    gl = null;
   }
 
   function resize() {
-    if (!gl) return;
+    // Phase 4 — pas de WebGL2 viewport. Le canvas WebGL2 (#bangerCanvas) ne
+    // sert plus que de surface de capture pointeur ; on synchronise quand
+    // même sa taille pour que les hit-tests restent corrects.
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = els.canvas.getBoundingClientRect();
     const w = Math.max(2, Math.floor(rect.width * dpr));
@@ -7341,7 +7265,6 @@ import * as worlds from "./worlds.js";
       els.gpuCanvas.width = w;
       els.gpuCanvas.height = h;
     }
-    gl.viewport(0, 0, w, h);
     if (ingenReady && ingenRender) ingenRender.resize(w, h);
   }
 
@@ -7916,7 +7839,10 @@ import * as worlds from "./worlds.js";
 
   function render(ts) {
     raf = 0;
-    if (gpuState !== "active" || !gl) return;
+    // Phase 4 — INGEN Render est le seul gate de render. Si l'adapter
+    // WebGPU n'a pas encore répondu, on saute proprement la frame
+    // (requestBoomRender la rejouera dès `ingenReady` flip à true).
+    if (gpuState !== "active" || !ingenRender) return;
     const renderStarted = boomNowMs();
     const continuous = boomRenderContinuousActive(renderStarted);
     if (!boomRenderDirty && !continuous) {
@@ -7960,9 +7886,9 @@ import * as worlds from "./worlds.js";
     const w = els.canvas.width, h = els.canvas.height;
     applyBoomAnimationFrame(ts);
 
-    gl.clearColor(0.0, 0.0, 0.0, 0.0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
+    // Phase 4 — plus de gl.clear : INGEN Render écrit chaque pixel via
+    // textureStore en compute. La proj / view CPU restent pour le gizmo
+    // SVG et la sélection 2D (drawBoomSelectionOverlay).
     const proj = M4.perspective(46 * Math.PI / 180, w / h, 0.1, 2400);
     const eye = cameraEye();
     const [clipOffsetX, clipOffsetY] = canvasCenterClipOffset();
@@ -7999,42 +7925,10 @@ import * as worlds from "./worlds.js";
       });
     }
 
-    const drawableMesh = sceneMesh?.display?.vao ? sceneMesh.display : sceneMesh;
-    if (drawableMesh?.vao && sceneMesh.visible !== false) {
-      gl.useProgram(meshProg);
-      gl.uniformMatrix4fv(uMeshProj, false, proj);
-      gl.uniformMatrix4fv(uMeshView, false, view);
-      gl.uniform2f(uMeshClipOffset, clipOffsetX, clipOffsetY);
-      gl.bindVertexArray(drawableMesh.vao);
-      const passes = meshRenderPasses(sceneMesh);
-      for (const pass of passes) {
-        gl.uniformMatrix4fv(uMeshModel, false, pass.model || meshModelMatrix({ transform: pass.transform }));
-        const baseColor = pass.color || sceneMesh.color || new Float32Array([0.84, 0.85, 0.90]);
-        const previewColor = slicerPreviewEnabled()
-          ? new Float32Array([baseColor[0] * 0.48, baseColor[1] * 0.46, baseColor[2] * 0.44])
-          : baseColor;
-        gl.uniform3fv(uMeshColor, previewColor);
-        gl.drawArrays(gl.TRIANGLES, 0, drawableMesh.count);
-      }
-    }
-
-    if (slicerPreview?.vao && slicerPreviewEnabled()) {
-      gl.useProgram(lineProg);
-      gl.uniformMatrix4fv(uLineProj, false, proj);
-      gl.uniformMatrix4fv(uLineView, false, view);
-      gl.uniform2f(uLineClipOffset, clipOffsetX, clipOffsetY);
-      gl.uniform1f(uLineFadeNear, Math.max(40.0, camera.distance * 1.2));
-      gl.uniform1f(uLineFadeFar, Math.max(240.0, camera.distance * 9.0));
-      gl.disable(gl.DEPTH_TEST);
-      gl.depthMask(false);
-      gl.bindVertexArray(slicerPreview.vao);
-      gl.drawArrays(gl.LINES, 0, slicerPreview.count);
-      gl.depthMask(true);
-      gl.enable(gl.DEPTH_TEST);
-    }
-
-    gl.bindVertexArray(null);
-
+    // Phase 4 — le pass mesh + slicer WebGL2 a été retiré. Les meshes
+    // importés et le toolpath FDM reviendront via INGEN Render (Phase 5
+    // SVDAG / Phase 6 voxel→SDF sampling) — la donnée CPU est conservée
+    // intacte (sceneMesh.base.pos/nrm, slicerPreview.lines).
     lastProj = proj;
     lastView = view;
     lastClipOffset = [clipOffsetX, clipOffsetY];
@@ -8293,9 +8187,10 @@ import * as worlds from "./worlds.js";
   function activate() {
     if (gpuState === "active") return;
     resetForgeDefaultPanel();
-    if (!gl) {
+    // Phase 4 — gate sur INGEN Render plutôt que le contexte WebGL2 mort.
+    if (!ingenRender) {
       if (!initGL()) {
-        console.error("[banger] GL init failed");
+        console.error("[banger] INGEN Render init failed");
         gpuState = "idle";
         return;
       }
@@ -8455,22 +8350,9 @@ import * as worlds from "./worlds.js";
   window.addEventListener("blur", onWindowBlur);
   window.addEventListener("focus", onWindowFocus);
   window.addEventListener("beforeunload", shutdown);
-  els.canvas.addEventListener("webglcontextlost", (e) => {
-    e.preventDefault();
-    stopRenderLoop();
-    gl = null;
-    meshProg = null;
-    lineProg = null;
-    try { ingenRender?.destroy(); } catch (_) {}
-    ingenRender = null;
-    ingenReady = false;
-    gpuState = isViewVisible() ? "suspended" : "idle";
-    setGpuStatus("GPU paused", "paused");
-  });
-  els.canvas.addEventListener("webglcontextrestored", () => {
-    if (!isViewVisible()) return;
-    activate();
-  });
+  // Phase 4 — plus de contexte WebGL2 sur els.canvas, donc plus de
+  // `webglcontextlost` à écouter. INGEN Render gère ses propres erreurs
+  // d'adapter WebGPU dans IngenRender.init() / destroy().
   if (typeof window !== "undefined") {
     bangerController = window.ForgeBangerController?.create?.({
       runtime: window.ForgeShellRuntime,
@@ -8556,7 +8438,10 @@ import * as worlds from "./worlds.js";
     // (banger_voxelize_mesh), bind the result as a 3D texture so the
     // OP_SAMPLED_SDF opcode can reach it. Returns timing + bounds.
     window.__forgeBangerLoadMeshSdf = async (arrayBuffer, gridSize) => {
-      if (!gl) return { ok: false, error: "GL not initialised" };
+      // Phase 4 — la voxelisation backend reste branchée et continue de
+      // produire les distances signées CPU-side (utilisable par tooling /
+      // export). L'upload GPU se fera dans INGEN Render Phase 6
+      // (3D-texture WebGPU + opcode OP_SAMPLED_SDF dans le compute WGSL).
       if (!arrayBuffer || !arrayBuffer.byteLength) return { ok: false, error: "empty buffer" };
       const bytes = new Uint8Array(arrayBuffer);
       let bin = "";
@@ -8575,24 +8460,12 @@ import * as worlds from "./worlds.js";
       if (!resp?.ok || !resp.voxelsB64) {
         return { ok: false, error: resp?.error || "voxelize backend returned no data" };
       }
-      // Decode base64 → Float32Array (grid³ signed distances).
       const voxelBin = atob(resp.voxelsB64);
       const voxelU8 = new Uint8Array(voxelBin.length);
       for (let i = 0; i < voxelBin.length; i += 1) voxelU8[i] = voxelBin.charCodeAt(i);
-      const voxels = new Float32Array(voxelU8.buffer.slice(voxelU8.byteOffset, voxelU8.byteOffset + voxelU8.byteLength));
-      // (Re)create the 3D texture.
-      if (meshSdfTex) gl.deleteTexture(meshSdfTex);
-      meshSdfTex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_3D, meshSdfTex);
-      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-      gl.texImage3D(gl.TEXTURE_3D, 0, gl.R32F, resp.gridSize, resp.gridSize, resp.gridSize, 0, gl.RED, gl.FLOAT, voxels);
       meshSdfBoundsMin = new Float32Array(resp.boundsMin);
       meshSdfBoundsMax = new Float32Array(resp.boundsMax);
-      meshSdfLoaded = 1;
+      meshSdfLoaded = 0; // INGEN compute n'a pas encore le binding (Phase 6).
       requestBoomRender("sdf-mesh-load", 200);
       return {
         ok: true,
@@ -8601,6 +8474,7 @@ import * as worlds from "./worlds.js";
         elapsedMs: resp.elapsedMs,
         boundsMin: Array.from(meshSdfBoundsMin),
         boundsMax: Array.from(meshSdfBoundsMax),
+        warning: "mesh→SDF GPU binding pending INGEN Render Phase 6",
       };
     };
     exposeBoomAuditState();

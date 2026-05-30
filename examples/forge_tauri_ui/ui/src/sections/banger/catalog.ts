@@ -67,92 +67,15 @@ export const AXIS_HEX = {
   zNeg: "#495caa",
 };
 
-// INGEN COMPUTE §19 Phase 1 a supprimé makeCube (dead code : créé mais
-// jamais dessiné dans le render loop) et makeGrid (remplacé par la grille
-// analytique sub-pixel du compute shader WGSL — voir ingen-render.ts).
-
-export const VS_MESH = `#version 300 es
-  precision highp float;
-  in vec3 aPos;
-  in vec3 aNormal;
-  uniform mat4 uModel;
-  uniform mat4 uProj;
-  uniform mat4 uView;
-  uniform vec2 uClipOffset;
-  out vec3 vNormal;
-  out vec3 vWorld;
-  void main() {
-    vec4 worldPos = uModel * vec4(aPos, 1.0);
-    vNormal = normalize(mat3(uModel) * aNormal);
-    vWorld  = worldPos.xyz;
-    gl_Position = uProj * uView * worldPos;
-    gl_Position.xy += uClipOffset * gl_Position.w;
-  }
-`;
-export const FS_MESH = `#version 300 es
-  precision highp float;
-  in vec3 vNormal;
-  in vec3 vWorld;
-  out vec4 fragColor;
-  uniform vec3 uColor;
-  void main() {
-    vec3 N = normalize(vNormal);
-    vec3 L = normalize(vec3(0.6, 0.9, 0.7));
-    float ndl = max(dot(N, L), 0.0);
-    vec3 ambient = vec3(0.18, 0.18, 0.22);
-    vec3 diffuse = uColor * (0.55 + 0.55 * ndl);
-    vec3 col = ambient + diffuse;
-    // soft rim
-    float rim = pow(1.0 - max(dot(N, vec3(0.0,0.0,1.0)), 0.0), 2.0);
-    col += rim * 0.08 * vec3(1.0, 0.7, 0.4);
-    fragColor = vec4(col, 1.0);
-  }
-`;
-export const VS_LINE = `#version 300 es
-  precision highp float;
-  in vec3 aPos;
-  in vec3 aColor;
-  uniform mat4 uProj;
-  uniform mat4 uView;
-  uniform vec2 uClipOffset;
-  out vec3 vColor;
-  out vec3 vViewPos;
-  void main() {
-    vColor = aColor;
-    vec4 viewPos = uView * vec4(aPos, 1.0);
-    vViewPos = viewPos.xyz;
-    gl_Position = uProj * viewPos;
-    gl_Position.xy += uClipOffset * gl_Position.w;
-  }
-`;
-export const FS_LINE = `#version 300 es
-  precision highp float;
-  in vec3 vColor;
-  in vec3 vViewPos;
-  out vec4 fragColor;
-  uniform float uFadeNear;
-  uniform float uFadeFar;
-  void main() {
-    float dist = length(vViewPos);
-    float fade = 1.0 - smoothstep(uFadeNear, uFadeFar, dist);
-    fade = clamp(fade, 0.0, 1.0);
-    fragColor = vec4(vColor * fade, fade);
-  }
-`;
-
-
-
-// INGEN COMPUTE §19 Phase 1 — exposition WebGL2 réduite : seules les
-// passes mesh + line transitoires (Phase 4 les retire) sont publiées.
-// SDF + grille + cube sont gérés par INGEN Render (ingen-render.ts).
+// INGEN COMPUTE §19 — Phase 1 a supprimé makeCube + makeGrid + VS_SDF/FS_SDF.
+// Phase 4 supprime les derniers shaders WebGL2 (VS_MESH/FS_MESH/VS_LINE/FS_LINE)
+// et l'init `getContext("webgl2")`. Tout le rendu vit dans INGEN Render
+// (ingen-render.ts, WebGPU compute). Ce catalog ne publie plus que les
+// helpers maths utilisés par le gizmo SVG et la sélection 2D.
 export const ForgeBangerCatalog = Object.freeze({
   M4,
   AXIS_RGB,
   AXIS_HEX,
-  VS_MESH,
-  FS_MESH,
-  VS_LINE,
-  FS_LINE,
 });
 
 declare global {

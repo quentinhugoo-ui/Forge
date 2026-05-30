@@ -162,10 +162,14 @@ expect("trading lifecycle controller is TypeScript source of truth", tradingCont
 expect("trading UI state patches are TypeScript source of truth", tradingStateTs.includes("tradingDeactivatePatch") && tradingBundleJs.includes("ForgeTradingState") && tradingJs.includes("ForgeTradingState?.deactivatePatch") && tradingJs.includes("ForgeTradingState?.normalizeChatSubbarMode"));
 expect("trading static catalog lives outside trading.js", tradingCatalogTs.includes("ForgeTradingCatalog") && tradingCatalogTs.includes("TRADING_INDICATOR_LIBRARY") && tradingBundleJs.includes("ForgeTradingCatalog") && tradingJs.includes("window.ForgeTradingCatalog") && !tradingJs.includes("const TRADING_INDICATOR_LIBRARY = ["));
 expect("banger lifecycle controller is TypeScript source of truth", bangerControllerTs.includes("createForgeBangerController") && bangerBundleJs.includes("ForgeBangerController") && bangerJs.includes("window.ForgeBangerController?.create") && bangerJs.includes("bangerController.toggle()"));
-// INGEN COMPUTE §19 Phase 1 — makeCube / makeGrid / VS_SDF / FS_SDF ont
-// disparu de catalog.ts (compute INGEN Render les remplace). On valide
-// leur absence pour empêcher toute réapparition silencieuse.
-expect("banger shader/math catalog lives outside banger.js", bangerCatalogTs.includes("ForgeBangerCatalog") && bangerCatalogTs.includes("VS_MESH") && bangerCatalogTs.includes("export const M4") && !bangerCatalogTs.includes("export function makeCube") && !bangerCatalogTs.includes("export function makeGrid") && !bangerCatalogTs.includes("export const VS_SDF") && !bangerCatalogTs.includes("export const FS_SDF") && bangerBundleJs.includes("ForgeBangerCatalog") && bangerJs.includes("window.ForgeBangerCatalog") && !bangerJs.includes("const VS_MESH = `") && !bangerJs.includes("const M4 = {") && !bangerJs.includes("function makeCube") && !bangerJs.includes("function makeGrid"));
+// INGEN COMPUTE §19 Phase 1+4 — purge complète des shaders WebGL2 du
+// catalog : makeCube / makeGrid (Phase 1), VS_SDF/FS_SDF (Phase 1),
+// VS_MESH/FS_MESH/VS_LINE/FS_LINE (Phase 4). Catalog ne publie plus que
+// M4 + axis tables. On valide l'absence pour empêcher toute réapparition.
+expect("banger maths catalog purged of WebGL2 shaders", bangerCatalogTs.includes("ForgeBangerCatalog") && bangerCatalogTs.includes("export const M4") && !bangerCatalogTs.includes("export const VS_MESH") && !bangerCatalogTs.includes("export const FS_MESH") && !bangerCatalogTs.includes("export const VS_LINE") && !bangerCatalogTs.includes("export const FS_LINE") && !bangerCatalogTs.includes("export const VS_SDF") && !bangerCatalogTs.includes("export const FS_SDF") && !bangerCatalogTs.includes("export function makeCube") && !bangerCatalogTs.includes("export function makeGrid") && bangerBundleJs.includes("ForgeBangerCatalog") && bangerJs.includes("window.ForgeBangerCatalog") && !bangerJs.includes("function makeCube") && !bangerJs.includes("function makeGrid"));
+// INGEN COMPUTE §19 Phase 4 verifier — plus aucun getContext("webgl2")
+// ne doit survivre dans le surface du banger.
+expect("banger surface no longer initialises a WebGL2 context", !bangerJs.includes("getContext(\"webgl2\"") && !bangerJs.includes("getContext('webgl2'") && bangerJs.includes("new IngenRender("));
 expect("banger close action is TypeScript-routed", shellRuntimeJs.includes('"#bangerExitBtn", "close-banger"') && bangerBundleJs.includes('"close-banger"') && !bangerJs.includes('els.exitBtn?.addEventListener("click"'));
 expect("trading workspace opens through typed controller action only", tradingControllerTs.includes('registerAction("open-trading"') && !tradingJs.includes("forge:trading-toggle-request") && !tradingJs.includes("handleTradingWorkspaceButtonClick"));
 expect(
