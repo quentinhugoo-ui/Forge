@@ -33,6 +33,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 pub mod inertia;
+pub mod modal;
 pub mod planner;
 
 // ---------------------------------------------------------------------------

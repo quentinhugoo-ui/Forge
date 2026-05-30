@@ -15,8 +15,9 @@
 //!
 //! Run : cargo run --example forge_drone_pipeline --release
 
+use scan::act_codes::modal::ModalActCode;
 use scan::act_codes::planner::{run_inertia_plan, PlanReport, SubPart};
-use scan::act_codes::{ActLedger, SdfOp};
+use scan::act_codes::{ActCode, ActLedger, Artifact, SdfOp};
 
 // Drone v1 optimum from forge_drone_design (score 0 on all constraints).
 const CAGE_OUTER: f64 = 0.104878;
@@ -216,9 +217,49 @@ fn main() -> std::io::Result<()> {
         "mutating one component must recompute exactly one sub-part"
     );
 
+    // --- modal × hélices : the flutter cross-check --------------------------
+    // Run the modal act code on the CAGE (the resonating structural shell).
+    // ABS wave speed c = sqrt(E/rho) ~ sqrt(2.3e9/1050) ~ 1480 m/s.
+    let cage_ops = drone_subparts(WEIGHT_R_DEFAULT)[0].ops.clone();
+    let modal_code = ModalActCode::with(64, 6, 1480.0, 60);
+    let (modal_json, modal_cached) = ledger.run_cached(&modal_code, &cage_ops)?;
+    let cage_modes = match modal_code.run(&cage_ops) {
+        Artifact::Scalars { values, .. } => values,
+        _ => vec![],
+    };
+    // Blade-pass band : 2-blade props at the hover RPM range 8k-12k.
+    // f_blade = RPM/60 * blades. We flag any cage mode within +/-15% of any
+    // blade-pass frequency the rotor will sweep through on spin-up.
+    let blade_count = 2.0;
+    let rpm_lo = 8000.0;
+    let rpm_hi = 12000.0;
+    let fb_lo = rpm_lo / 60.0 * blade_count;
+    let fb_hi = rpm_hi / 60.0 * blade_count;
+    println!("\n=== modal x props (flutter) ===");
+    println!(
+        "  cage modes (Hz): [{}]  {}",
+        cage_modes.iter().map(|f| format!("{:.0}", f)).collect::<Vec<_>>().join(", "),
+        if modal_cached { "[cache]" } else { "[compute]" }
+    );
+    println!("  blade-pass band : {:.0}-{:.0} Hz (2 blades, 8k-12k RPM)", fb_lo, fb_hi);
+    let mut flutter_hit = None;
+    for &f in &cage_modes {
+        if f >= fb_lo * 0.85 && f <= fb_hi * 1.15 {
+            flutter_hit = Some(f);
+            break;
+        }
+    }
+    let flutter_flag = match flutter_hit {
+        Some(f) => format!("FAIL flutter : cage mode {:.0} Hz inside blade-pass band — stiffen cage or change RPM", f),
+        None => "PASS flutter : no cage mode in the blade-pass band".to_string(),
+    };
+    println!("  {}", flutter_flag);
+    let _ = modal_json;
+
     // --- Step 3 : viability flags for the LLM -------------------------------
     println!("\n=== viability flags (drone v2) ===");
-    let flags = viability_flags(&mutated);
+    let mut flags = viability_flags(&mutated);
+    flags.push(flutter_flag);
     for f in &flags {
         println!("  {}", f);
     }
