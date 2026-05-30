@@ -15615,14 +15615,20 @@ body.banger-fullscreen-mode .topbar-proof-btn {
   display: none;
 }
 
-.content.is-banger-layout .left-panel > *:not(.boom-blender-panel) {
+/* §banger : the Scene Collection panel coexists with the shell-level
+   Pinned + Recents + profile dropdown so Banger users keep the same
+   session navigation as every other section. We only hide what's
+   redundant : the Compute/Atlas/Pool nav (workflow already lives at the
+   top of the Banger panel) and the non-compute tab panes. */
+.content.is-banger-layout .left-panel > .panel-tabs,
+.content.is-banger-layout .left-panel > .panel-tab-pane:not([data-tab-pane="compute"]) {
   display: none !important;
 }
 
 .content.is-banger-layout .boom-blender-panel {
   display: grid;
-  grid-template-rows: auto minmax(236px, 1.08fr) minmax(228px, 0.92fr);
-  height: 100%;
+  grid-template-rows: auto auto;
+  height: auto;
   min-height: 0;
   background:
     linear-gradient(180deg, rgba(50,50,48,0.64), rgba(28,28,27,0.96) 18%, rgba(26,26,25,0.98));
