@@ -21,6 +21,7 @@ import * as worlds from "./worlds.js";
     statVerts: $("bangerStatVerts"),
     statFaces: $("bangerStatFaces"),
     statFps: $("bangerStatFps"),
+    statCache: $("bangerStatCache"),
     gizmo:   $("bangerGizmo"),
     exitBtn: $("bangerExitBtn"),
     stage:   null,
@@ -7937,12 +7938,19 @@ import * as worlds from "./worlds.js";
     if (continuous) boomRenderStats.continuousFrames += 1;
     else boomRenderStats.dirtyFrames += 1;
 
-    // FPS
+    // FPS + KASM cache hit-ratio (INGEN COMPUTE §19 Phase 3). Both refresh
+    // on the same 500 ms tick to keep DOM writes off the 60 Hz path.
     if (fpsTimer === 0) fpsTimer = ts;
     fpsFrames++;
     if (ts - fpsTimer >= 500) {
       lastFps = Math.round((fpsFrames * 1000) / (ts - fpsTimer));
       if (els.statFps) els.statFps.textContent = String(lastFps);
+      if (els.statCache && ingenRender) {
+        const s = ingenRender.getStats();
+        els.statCache.textContent = s.frames > 0
+          ? Math.round(s.hitRatio * 100) + "%"
+          : "—";
+      }
       fpsFrames = 0;
       fpsTimer = ts;
     }
@@ -8325,6 +8333,7 @@ import * as worlds from "./worlds.js";
     gpuState = "suspended";
     stopRenderLoop();
     if (els.statFps) els.statFps.textContent = "—";
+    if (els.statCache) els.statCache.textContent = "—";
     setGpuStatus("GPU paused", "paused");
     backendBusy = backendInvoke("banger_engine_stop");
   }
@@ -8334,6 +8343,7 @@ import * as worlds from "./worlds.js";
     gpuState = "shutdown";
     releaseGL();
     if (els.statFps) els.statFps.textContent = "—";
+    if (els.statCache) els.statCache.textContent = "—";
     backendBusy = backendInvoke("banger_engine_stop");
     gpuState = "idle";
   }

@@ -391,7 +391,7 @@
               </button>
               <button class="profile-menu-item" type="button" data-profile-action="mcp">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h8v8H8z"/><path d="M4 4h4v4H4z"/><path d="M16 4h4v4h-4z"/><path d="M4 16h4v4H4z"/><path d="M16 16h4v4h-4z"/></svg>
-                <span>Act Code</span>
+                <span>ActCode / MCP</span>
               </button>
               <button class="profile-menu-item" type="button" data-profile-action="daemon">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -501,7 +501,7 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M8 8h8v8H8z"/><path d="M4 4h4v4H4z"/><path d="M16 4h4v4h-4z"/><path d="M4 16h4v4H4z"/><path d="M16 16h4v4h-4z"/>
                 </svg>
-                Act Code
+                ActCode / MCP
                 <span id="mcpCount" class="library-count">0</span>
                 <div class="lib-topbar-spacer"></div>
                 <div class="library-search-wrap">
@@ -510,7 +510,7 @@
                   </svg>
                   <input id="mcpSearch" class="library-search-input" type="text" placeholder="Search commands…" autocomplete="off" />
                 </div>
-                <button id="mcpClose" class="library-close-btn" type="button" aria-label="Close Act Code">
+                <button id="mcpClose" class="library-close-btn" type="button" aria-label="Close ActCode / MCP">
                   <svg viewBox="0 0 12 12" focusable="false"><path d="m3 3 6 6M9 3 3 9" /></svg>
                 </button>
               </div>
@@ -618,6 +618,7 @@
                   <span><b>Verts</b> <span id="bangerStatVerts">8</span></span>
                   <span><b>Faces</b> <span id="bangerStatFaces">6</span></span>
                   <span><b>FPS</b> <span id="bangerStatFps">—</span></span>
+                  <span><b>Cache</b> <span id="bangerStatCache">—</span></span>
                 </div>
                 <div class="banger-axis-gizmo" aria-hidden="true">
                   <svg viewBox="-32 -32 64 64" focusable="false">
@@ -1315,9 +1316,9 @@
 
                 </article>
               </div>
-              <div id="mcpOverlay" class="library-overlay" hidden aria-label="Act Code">
+              <div id="mcpOverlay" class="library-overlay" hidden aria-label="ActCode / MCP">
                 <div class="library-pane actcode-pane">
-                  <div class="library-filters actcode-filters" role="group" aria-label="Filter Act Code commands">
+                  <div class="library-filters actcode-filters" role="group" aria-label="Filter ActCode / MCP commands">
                     <button class="mcp-filter-btn active" data-filter="all" type="button">All</button>
                     <button class="mcp-filter-btn" data-filter="active" type="button">Active</button>
                     <button class="mcp-filter-btn" data-filter="templates" type="button">Templates</button>
@@ -1331,7 +1332,7 @@
                       <path d="M8 32h8v8H8z" />
                       <path d="M32 32h8v8h-8z" />
                     </svg>
-                    <p>No Act Code commands yet</p>
+                    <p>No ActCode / MCP commands yet</p>
                     <p class="library-empty-sub">Direct commands and reusable templates will appear here.</p>
                   </div>
                 </div>

@@ -203,6 +203,30 @@ export interface IngenCamera {
   tanHalfFovY: number;
 }
 
+// FNV-1a 32-bit hash over a Uint32 stream. Fast inline loop, no deps.
+// Used by INGEN COMPUTE §19 Phase 3 (KASM frame cache) — collisions are
+// tolerable here : worst case a stale frame is shown for ~16 ms before
+// the next mutation forces a fresh dispatch.
+function fnv1a32(view: Uint32Array): number {
+  let h = 0x811c9dc5 >>> 0;
+  for (let i = 0; i < view.length; i += 1) {
+    h = ((h ^ (view[i] >>> 0)) >>> 0);
+    h = (Math.imul(h, 0x01000193) >>> 0);
+  }
+  return h >>> 0;
+}
+
+export interface IngenStats {
+  /** Total render() calls since last reset. */
+  frames: number;
+  /** Calls that skipped the compute dispatch thanks to the frame cache. */
+  hits: number;
+  /** Calls that ran a full compute pass. */
+  misses: number;
+  /** hits / frames, in [0, 1]. */
+  hitRatio: number;
+}
+
 export class IngenRender {
   readonly canvas: HTMLCanvasElement;
   private device: GPUDevice | null = null;
@@ -216,6 +240,20 @@ export class IngenRender {
   private format: GPUTextureFormat = "rgba8unorm";
   private width = 0;
   private height = 0;
+  // KASM frame cache (INGEN COMPUTE §19 Phase 3). Frame hash = (opsHash,
+  // camHash, dims). If unchanged from the previous render() the compute
+  // dispatch is skipped and the persistent storage texture is blitted
+  // straight to the swap chain. In an idle viewport this saturates at
+  // 100 % hit ; in orbit/edit it drops to 0 % which is correct (every
+  // pixel changes anyway, tile-level caching would buy nothing without
+  // a spatial index — out of scope for Phase 3).
+  private opsHash = 0;
+  private dimsKey = 0;
+  private cachedCamHash = 0;
+  private cachedOpsHash = 0;
+  private cachedDimsKey = 0;
+  private cacheValid = false;
+  private stats: IngenStats = { frames: 0, hits: 0, misses: 0, hitRatio: 0 };
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -284,6 +322,10 @@ export class IngenRender {
     if (w === this.width && h === this.height && this.outTexture) return;
     this.width = w;
     this.height = h;
+    // Resize destroys the storage texture, so any cached frame is gone —
+    // invalidate the KASM cache to force a fresh compute on the next render.
+    this.cacheValid = false;
+    this.dimsKey = ((w & 0xffff) | ((h & 0xffff) << 16)) >>> 0;
     this.outTexture?.destroy?.();
     this.outTexture = this.device.createTexture({
       label: "ingen-out",
@@ -316,13 +358,21 @@ export class IngenRender {
     const safeCount = Math.max(0, Math.min(MAX_OPS, count | 0));
     const header = new Uint32Array([safeCount, 0, 0, 0]);
     this.device.queue.writeBuffer(this.opsBuffer, 0, header);
+    // Hash the active ops region (header + payload) so render() can skip
+    // dispatch when the scene hasn't moved.
+    const floatsNeeded = safeCount * 8;
+    const u32 = new Uint32Array(2 + floatsNeeded);
+    u32[0] = safeCount;
+    u32[1] = 0;
     if (safeCount > 0) {
-      const floatsNeeded = safeCount * 8;
       const view = ops.byteLength >= floatsNeeded * 4
         ? new Float32Array(ops.buffer, ops.byteOffset, floatsNeeded)
         : ops;
+      const opsU32 = new Uint32Array(view.buffer, view.byteOffset, floatsNeeded);
+      u32.set(opsU32, 2);
       this.device.queue.writeBuffer(this.opsBuffer, 16, view);
     }
+    this.opsHash = fnv1a32(u32);
   }
 
   render(cam: IngenCamera): void {
@@ -330,32 +380,64 @@ export class IngenRender {
     const w = this.width;
     const h = this.height;
 
-    // Camera UBO : 6 vec4s = 96 bytes.
-    const u = new Float32Array(24);
-    u[0] = cam.pos[0]; u[1] = cam.pos[1]; u[2] = cam.pos[2]; u[3] = cam.tanHalfFovY;
-    u[4] = cam.fwd[0]; u[5] = cam.fwd[1]; u[6] = cam.fwd[2]; u[7] = 0;
-    u[8] = cam.right[0]; u[9] = cam.right[1]; u[10] = cam.right[2]; u[11] = 0;
-    u[12] = cam.up[0]; u[13] = cam.up[1]; u[14] = cam.up[2]; u[15] = 0;
-    u[16] = w; u[17] = h; u[18] = 0; u[19] = 0;
-    u[20] = 0; u[21] = 0; u[22] = 0; u[23] = 0;
-    this.device.queue.writeBuffer(this.camBuffer!, 0, u);
+    // Hash camera before writing it to the UBO — saves a writeBuffer on hits.
+    const camU = new Float32Array(24);
+    camU[0] = cam.pos[0]; camU[1] = cam.pos[1]; camU[2] = cam.pos[2]; camU[3] = cam.tanHalfFovY;
+    camU[4] = cam.fwd[0]; camU[5] = cam.fwd[1]; camU[6] = cam.fwd[2]; camU[7] = 0;
+    camU[8] = cam.right[0]; camU[9] = cam.right[1]; camU[10] = cam.right[2]; camU[11] = 0;
+    camU[12] = cam.up[0]; camU[13] = cam.up[1]; camU[14] = cam.up[2]; camU[15] = 0;
+    camU[16] = w; camU[17] = h; camU[18] = 0; camU[19] = 0;
+    camU[20] = 0; camU[21] = 0; camU[22] = 0; camU[23] = 0;
+    const camHash = fnv1a32(new Uint32Array(camU.buffer));
 
+    // KASM frame cache : a hit needs camera + ops + dims all unchanged
+    // since the last successful compute dispatch.
+    const hit = this.cacheValid
+      && camHash === this.cachedCamHash
+      && this.opsHash === this.cachedOpsHash
+      && this.dimsKey === this.cachedDimsKey;
+
+    this.stats.frames += 1;
     const encoder = this.device.createCommandEncoder({ label: "ingen-encoder" });
-    const pass = encoder.beginComputePass({ label: "ingen-pass" });
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
-    const gx = Math.ceil(w / 8);
-    const gy = Math.ceil(h / 8);
-    pass.dispatchWorkgroups(gx, gy, 1);
-    pass.end();
 
-    // Blit storage → swap-chain.
+    if (!hit) {
+      this.device.queue.writeBuffer(this.camBuffer!, 0, camU);
+      const pass = encoder.beginComputePass({ label: "ingen-pass" });
+      pass.setPipeline(this.pipeline);
+      pass.setBindGroup(0, this.bindGroup);
+      const gx = Math.ceil(w / 8);
+      const gy = Math.ceil(h / 8);
+      pass.dispatchWorkgroups(gx, gy, 1);
+      pass.end();
+      this.cachedCamHash = camHash;
+      this.cachedOpsHash = this.opsHash;
+      this.cachedDimsKey = this.dimsKey;
+      this.cacheValid = true;
+      this.stats.misses += 1;
+    } else {
+      this.stats.hits += 1;
+    }
+
+    // Blit storage → swap-chain. Always required because each frame has
+    // its own swap-chain texture ; the storage texture itself is persistent.
     encoder.copyTextureToTexture(
       { texture: this.outTexture! },
       { texture: this.context.getCurrentTexture() },
       { width: w, height: h, depthOrArrayLayers: 1 },
     );
     this.device.queue.submit([encoder.finish()]);
+
+    this.stats.hitRatio = this.stats.frames > 0 ? this.stats.hits / this.stats.frames : 0;
+  }
+
+  /** Snapshot of frame-cache counters. Cheap, can be polled per frame. */
+  getStats(): IngenStats {
+    return { ...this.stats };
+  }
+
+  /** Reset hit/miss counters (HUD reset, benchmark window). */
+  resetStats(): void {
+    this.stats = { frames: 0, hits: 0, misses: 0, hitRatio: 0 };
   }
 
   destroy(): void {
