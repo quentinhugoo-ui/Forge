@@ -34,6 +34,11 @@ export const OP_REPEAT       = 30;
  *  intersect / diff the winning side's material survives ; at SMIN the
  *  materials lerp by softmin weight (organic blends, not just shapes). */
 export const OP_MATERIAL     = 40;
+/** §18 Pillar A : Sparse Voxel DAG sample. The op slot encodes a world-
+ *  space transform (origin in `center`, side length in `voxelSpan`) ;
+ *  the SVDAG buffer itself is bound globally on the GPU (one SVDAG at a
+ *  time in Phase 5 ; multi-SVDAG via `rootIndex` arrives in Phase 5b). */
+export const OP_SVDAG        = 50;
 
 export const SDF_MAX_OPS = 64;
 export const SDF_FLOATS_PER_OP = 8;
@@ -50,6 +55,7 @@ export type SdfOp =
   | { op: "repeat";       period: Vec3 }
   | { op: "material";     color: Vec3; roughness?: number; metallic?: number }
   | { op: "sampledSdf" }
+  | { op: "svdag";        center: Vec3; voxelSpan: number; rootIndex?: number }
   | { op: "union" }
   | { op: "intersect" }
   | { op: "diff" }
@@ -65,6 +71,7 @@ const OP_CODE: Record<SdfOp["op"], number> = {
   repeat:     OP_REPEAT,
   material:   OP_MATERIAL,
   sampledSdf: OP_SAMPLED_SDF,
+  svdag:      OP_SVDAG,
   union:      OP_UNION,
   intersect:  OP_INTERSECT,
   diff:       OP_DIFF,
@@ -141,8 +148,17 @@ export function serializeScene(ops: readonly SdfOp[]): SerializedScene {
       buf[base + 5] = Math.max(0.0, Math.min(1.0, o.metallic ?? 0.0));
     } else if (o.op === "smin") {
       buf[base + 4] = o.k;
+    } else if (o.op === "svdag") {
+      // §18 Pillar A : world-space origin (a.yzw), voxel-grid side length
+      // (b.x), root pool index (b.y, defaults to whatever the WGSL header
+      // declares — typically 0).
+      buf[base + 1] = o.center[0];
+      buf[base + 2] = o.center[1];
+      buf[base + 3] = o.center[2];
+      buf[base + 4] = o.voxelSpan;
+      buf[base + 5] = o.rootIndex ?? 0;
     }
-    // union/intersect/diff carry no params.
+    // union/intersect/diff/sampledSdf carry no params.
   }
   return { buffer: buf, count: ops.length };
 }

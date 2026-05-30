@@ -19,6 +19,7 @@ pub mod landauer;
 pub mod meta;
 mod monster;
 mod store;
+pub mod svdag;
 
 // `atlas::Atlas` is reached via the explicit `scan::atlas::Atlas` path.
 // We do NOT re-export it at the crate root to avoid collision with the

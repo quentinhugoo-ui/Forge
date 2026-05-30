@@ -7,7 +7,7 @@
 
 import {
   OP_SPHERE, OP_BOX, OP_TORUS, OP_CAPSULE, OP_ROUNDED_BOX,
-  OP_UNION, OP_INTERSECT, OP_DIFF, OP_SMIN,
+  OP_UNION, OP_INTERSECT, OP_DIFF, OP_SMIN, OP_SVDAG,
 } from "./scenes.js";
 
 // Layout-stable opcodes shipped to WGSL. Mirrors scenes.ts 1:1.
@@ -42,9 +42,23 @@ struct Ops {
   data:  array<vec4<f32>, ${MAX_OPS * 2}>,
 };
 
+// INGEN COMPUTE §18 Pillar A : Sparse Voxel DAG storage (Phase 5).
+// Layout : header [root, dim, depth, _pad] + per-node 9 u32
+// (childmask + 8 child indices). Sentinels : 0 = SVDAG_EMPTY, 1 = SVDAG_FULL.
+// The buffer is always bound — an "empty SVDAG" is a 4-word header
+// with root = 0, so the traverser short-circuits without crashing.
+struct Svdag {
+  root:  u32,
+  dim:   u32,
+  depth: u32,
+  _pad:  u32,
+  nodes: array<u32>,
+};
+
 @group(0) @binding(0) var<uniform>          cam: Camera;
 @group(0) @binding(1) var<storage, read>    ops: Ops;
 @group(0) @binding(2) var                   outTex: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(3) var<storage, read>    svdag: Svdag;
 
 fn sd_sphere(p: vec3<f32>, r: f32) -> f32 { return length(p) - r; }
 
@@ -74,6 +88,62 @@ fn smin_k(a: f32, b: f32, k: f32) -> f32 {
   let kk = max(k, 1e-4);
   let h = clamp(0.5 + 0.5 * (b - a) / kk, 0.0, 1.0);
   return mix(b, a, h) - kk * h * (1.0 - h);
+}
+
+// SVDAG traversal — sample a world-space point p, given the voxel grid
+// origin (lower corner) and side length 'span' in world units. Returns
+// a signed distance suitable for the raymarcher : negative when inside
+// an occupied voxel, positive (~voxel_size) when outside or in an empty
+// cell. Caps at 'span' to keep raymarch steps bounded outside the AABB.
+fn sd_svdag(p: vec3<f32>, origin: vec3<f32>, span: f32, root_override: u32) -> f32 {
+  if (span <= 0.0) { return 1.0e6; }
+  let dim = svdag.dim;
+  if (dim == 0u) { return 1.0e6; }
+  // Analytical box SDF on the AABB — when outside it dominates and steers
+  // the raymarcher straight to the SVDAG bounding box.
+  let half = vec3<f32>(span * 0.5);
+  let centre = origin + half;
+  let q = abs(p - centre) - half;
+  let box_d = length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+  if (box_d > 1e-4) { return box_d; }
+
+  // Map p into voxel index space.
+  let voxel_size = span / f32(dim);
+  let local = (p - origin) / voxel_size;
+  let cx = u32(clamp(floor(local.x), 0.0, f32(dim) - 1.0));
+  let cy = u32(clamp(floor(local.y), 0.0, f32(dim) - 1.0));
+  let cz = u32(clamp(floor(local.z), 0.0, f32(dim) - 1.0));
+
+  var root_idx: u32 = svdag.root;
+  if (root_override != 0u) { root_idx = root_override; }
+  var idx: u32 = root_idx;
+  var size: u32 = dim;
+  var px: u32 = cx;
+  var py: u32 = cy;
+  var pz: u32 = cz;
+  // Bounded loop — log2(dim) iterations max for any supported size.
+  for (var i: u32 = 0u; i < 16u; i = i + 1u) {
+    if (size <= 1u) { break; }
+    if (idx == 0u) { return voxel_size * 0.5; } // EMPTY
+    if (idx == 1u) { return -voxel_size * 0.5; } // FULL leaf
+    let half_size = size / 2u;
+    let ox = select(0u, 1u, px >= half_size);
+    let oy = select(0u, 1u, py >= half_size);
+    let oz = select(0u, 1u, pz >= half_size);
+    let oct = ox | (oy << 1u) | (oz << 2u);
+    px = px - ox * half_size;
+    py = py - oy * half_size;
+    pz = pz - oz * half_size;
+    // The 'nodes' array starts at byte 16 of the buffer (after the 4-word
+    // header), so its index 0 is the first u32 of the first node body. A
+    // node at pool index 'idx' (>=2) occupies words (idx-2)*9 .. (idx-2)*9+8 ;
+    // the child for octant 'oct' lives at +1 + oct (slot 0 = childmask).
+    let off = (idx - 2u) * 9u + 1u + oct;
+    idx = svdag.nodes[off];
+    size = half_size;
+  }
+  if (idx == 1u) { return -voxel_size * 0.5; }
+  return voxel_size * 0.5;
 }
 
 fn scene(p: vec3<f32>) -> f32 {
@@ -111,6 +181,11 @@ fn scene(p: vec3<f32>) -> f32 {
     } else if (op == ${OP_SMIN}u) {
       sp = sp - 1;
       stack[sp - 1] = smin_k(stack[sp - 1], stack[sp], b.w);
+    } else if (op == ${OP_SVDAG}u) {
+      // §18 Pillar A : a.yzw = world-space origin, b.x = side length
+      // (world units), b.y = root override (0 = use svdag header root).
+      stack[sp] = sd_svdag(p, a.yzw, b.x, u32(b.y + 0.5));
+      sp = sp + 1;
     }
   }
   if (sp <= 0) { return 1.0e6; }
@@ -234,6 +309,8 @@ export class IngenRender {
   private pipeline: GPUComputePipeline | null = null;
   private camBuffer: GPUBuffer | null = null;
   private opsBuffer: GPUBuffer | null = null;
+  private svdagBuffer: GPUBuffer | null = null;
+  private svdagCapacity = 0;
   private outTexture: GPUTexture | null = null;
   private outView: GPUTextureView | null = null;
   private bindGroup: GPUBindGroup | null = null;
@@ -310,6 +387,16 @@ export class IngenRender {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       label: "ingen-ops",
     });
+    // SVDAG buffer starts as an "empty SVDAG" header — root=0 makes the
+    // WGSL traverser short-circuit to "no occupancy" without UB. Grows
+    // on the first uploadSvdag() call.
+    this.svdagCapacity = 64; // 4 header words + a few spare bodies, all zero.
+    this.svdagBuffer = this.device.createBuffer({
+      size: this.svdagCapacity * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      label: "ingen-svdag",
+    });
+    this.device.queue.writeBuffer(this.svdagBuffer, 0, new Uint32Array([0, 0, 0, 0]));
 
     this.resize(this.canvas.width || 1, this.canvas.height || 1);
     return true;
@@ -344,8 +431,54 @@ export class IngenRender {
         { binding: 0, resource: { buffer: this.camBuffer! } },
         { binding: 1, resource: { buffer: this.opsBuffer! } },
         { binding: 2, resource: this.outView! },
+        { binding: 3, resource: { buffer: this.svdagBuffer! } },
       ],
     });
+  }
+
+  /**
+   * Upload a packed SVDAG buffer (matches `Svdag::packed` from `src/svdag.rs`).
+   * The buffer's first 4 u32 are the header [root, dim, depth, _pad] ; the
+   * remainder is a flat 9-u32-per-node pool. Pass the result of
+   * `Svdag::from_occupancy(...).packed` straight through. Calling with an
+   * empty Uint32Array resets the SVDAG to its empty-header state.
+   */
+  uploadSvdag(packed: Uint32Array): void {
+    if (!this.device) return;
+    const required = Math.max(4, packed.length);
+    if (required > this.svdagCapacity) {
+      this.svdagBuffer?.destroy?.();
+      // Round up to a power of two so growth doesn't thrash reallocation.
+      let cap = this.svdagCapacity;
+      while (cap < required) cap *= 2;
+      this.svdagCapacity = cap;
+      this.svdagBuffer = this.device.createBuffer({
+        size: cap * 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        label: "ingen-svdag",
+      });
+      // Bind group references the old buffer — recreate it.
+      if (this.pipeline && this.outView && this.camBuffer && this.opsBuffer) {
+        this.bindGroup = this.device.createBindGroup({
+          label: "ingen-bg",
+          layout: this.pipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.camBuffer } },
+            { binding: 1, resource: { buffer: this.opsBuffer } },
+            { binding: 2, resource: this.outView },
+            { binding: 3, resource: { buffer: this.svdagBuffer! } },
+          ],
+        });
+      }
+    }
+    if (packed.length === 0) {
+      this.device.queue.writeBuffer(this.svdagBuffer!, 0, new Uint32Array([0, 0, 0, 0]));
+    } else {
+      this.device.queue.writeBuffer(this.svdagBuffer!, 0, packed);
+    }
+    // SVDAG changed → invalidate the frame cache so the next render
+    // dispatches compute instead of replaying a stale framebuffer.
+    this.cacheValid = false;
   }
 
   /**
@@ -444,10 +577,13 @@ export class IngenRender {
     this.outTexture?.destroy?.();
     this.camBuffer?.destroy?.();
     this.opsBuffer?.destroy?.();
+    this.svdagBuffer?.destroy?.();
     this.outTexture = null;
     this.outView = null;
     this.camBuffer = null;
     this.opsBuffer = null;
+    this.svdagBuffer = null;
+    this.svdagCapacity = 0;
     this.pipeline = null;
     this.bindGroup = null;
     this.context = null;

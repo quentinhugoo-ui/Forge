@@ -8477,6 +8477,32 @@ import * as worlds from "./worlds.js";
         warning: "mesh→SDF GPU binding pending INGEN Render Phase 6",
       };
     };
+
+    // INGEN COMPUTE §18 Pillar A — upload a packed SVDAG (header + 9-u32
+    // nodes, layout matches `src/svdag.rs::Svdag::packed`). Triggers one
+    // re-render so the new occupancy field reaches the screen.
+    window.__forgeBangerLoadSvdag = (packed) => {
+      if (!ingenRender) return { ok: false, error: "INGEN Render not initialised" };
+      const u32 = packed instanceof Uint32Array
+        ? packed
+        : (packed?.buffer ? new Uint32Array(packed.buffer, packed.byteOffset || 0, ((packed.byteLength || 0) / 4) | 0) : null);
+      if (!u32) return { ok: false, error: "expected Uint32Array (packed SVDAG)" };
+      ingenRender.uploadSvdag(u32);
+      requestBoomRender("ingen-svdag-load", 200);
+      return { ok: true, words: u32.length };
+    };
+
+    // Smoke helper : build a hand-rolled 2³ fully-occupied SVDAG and
+    // upload it. Useful from devtools to prove the pipeline (no Rust
+    // round-trip needed). The voxel cube ends up at (0, 0, 0)–(1, 1, 1)
+    // by default ; pair with `__forgeBangerSetScene` and an OP_SVDAG op.
+    window.__forgeBangerLoadTestSvdag = () => {
+      const packed = new Uint32Array([
+        /* header */ 2, 2, 1, 0,
+        /* node 2 */ 0xff, 1, 1, 1, 1, 1, 1, 1, 1,
+      ]);
+      return (window as any).__forgeBangerLoadSvdag(packed);
+    };
     exposeBoomAuditState();
   }
 
