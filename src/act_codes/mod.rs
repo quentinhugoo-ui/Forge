@@ -35,6 +35,8 @@ use sha2::{Digest, Sha256};
 pub mod inertia;
 pub mod modal;
 pub mod planner;
+pub mod thermal;
+pub mod voxel;
 
 // ---------------------------------------------------------------------------
 // SDF op model — mirrors examples/forge_tauri_ui/ui/src/sections/banger/scenes.ts

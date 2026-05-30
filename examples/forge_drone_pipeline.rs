@@ -17,6 +17,7 @@
 
 use scan::act_codes::modal::ModalActCode;
 use scan::act_codes::planner::{run_inertia_plan, PlanReport, SubPart};
+use scan::act_codes::thermal::{HeatSource, ThermalActCode};
 use scan::act_codes::{ActCode, ActLedger, Artifact, SdfOp};
 
 // Drone v1 optimum from forge_drone_design (score 0 on all constraints).
@@ -256,10 +257,47 @@ fn main() -> std::io::Result<()> {
     println!("  {}", flutter_flag);
     let _ = modal_json;
 
+    // --- thermique : hotspot RPi + 4 moteurs dans la coque sealed ----------
+    // RPi ~3 W au centre, 4 moteurs ~5 W sur l'anneau hélice. Cage ABS
+    // (k=0.17 W/m.K), convection naturelle (h_conv=12, pas de downwash ici
+    // — le couplage thermique×CFD remplacera h_conv par v_air du cfd_hover).
+    // On résout sur la coque + l'air interne approximé en remplissant la
+    // sphère INTÉRIEURE pleine comme médium conducteur.
+    let thermal_medium = vec![SdfOp::Sphere { center: [0.0, 0.0, 0.0], radius: CAGE_INNER }];
+    // RPi SoC ~1.8cm, brushless motors ~2cm — finite source radii avoid the
+    // point-source singularity that low-k ABS would otherwise exaggerate.
+    let mut sources = vec![HeatSource { pos: [0.0, 0.0, 0.0], watts: 3.0, radius: 0.018 }];
+    for k in 0..4u32 {
+        let theta = (k as f64) * std::f64::consts::FRAC_PI_2;
+        sources.push(HeatSource {
+            pos: [PROP_RING_R * theta.cos(), PROP_RING_R * theta.sin(), PROP_RING_Z],
+            watts: 5.0,
+            radius: 0.020,
+        });
+    }
+    let thermal_code = ThermalActCode::new(40, 0.17, 12.0, 25.0, sources);
+    let (_tj, thermal_cached) = ledger.run_cached(&thermal_code, &thermal_medium)?;
+    let (t_max, t_mean) = match thermal_code.run(&thermal_medium) {
+        Artifact::Scalars { values, .. } if values.len() >= 5 => (values[0], values[4]),
+        _ => (f64::NAN, f64::NAN),
+    };
+    println!("\n=== thermique (RPi 3W + 4 moteurs 5W) ===");
+    println!(
+        "  T_max = {:.1} C, T_mean = {:.1} C  {}",
+        t_max, t_mean, if thermal_cached { "[cache]" } else { "[compute]" }
+    );
+    let thermal_flag = if t_max > 70.0 {
+        format!("FAIL thermal : hotspot {:.1} C > 70 C (RPi throttle) — ventiler ou dissiper", t_max)
+    } else {
+        format!("PASS thermal : hotspot {:.1} C < 70 C (RPi safe)", t_max)
+    };
+    println!("  {}", thermal_flag);
+
     // --- Step 3 : viability flags for the LLM -------------------------------
     println!("\n=== viability flags (drone v2) ===");
     let mut flags = viability_flags(&mutated);
     flags.push(flutter_flag);
+    flags.push(thermal_flag);
     for f in &flags {
         println!("  {}", f);
     }

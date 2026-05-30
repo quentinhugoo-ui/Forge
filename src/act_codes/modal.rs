@@ -21,7 +21,8 @@
 //! blade-pass band turns the cage into a resonator and the drone shakes
 //! itself apart. `modal` is the act code that surfaces that collision.
 
-use super::{eval_scene, scene_aabb, ActCode, Artifact, SdfOp};
+use super::voxel::Voxels;
+use super::{ActCode, Artifact, SdfOp};
 
 #[derive(Clone, Debug)]
 pub struct ModalActCode {
@@ -47,83 +48,6 @@ impl Default for ModalActCode {
 impl ModalActCode {
     pub fn with(grid: u32, modes: u32, wave_speed: f64, lanczos_steps: u32) -> Self {
         Self { grid, modes, wave_speed, lanczos_steps }
-    }
-}
-
-/// Voxelised occupancy + the index map needed for the sparse Laplacian.
-struct Voxels {
-    nx: usize,
-    ny: usize,
-    nz: usize,
-    /// cell-linear-index → dof-index (or usize::MAX if empty).
-    dof_of_cell: Vec<usize>,
-    /// dof-index → (ix, iy, iz).
-    cell_of_dof: Vec<(usize, usize, usize)>,
-    /// voxel pitch (m).
-    h: f64,
-}
-
-impl Voxels {
-    fn occupy(ops: &[SdfOp], grid: u32) -> Self {
-        let (lo, hi) = scene_aabb(ops);
-        let span = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
-        let longest = span[0].max(span[1]).max(span[2]).max(1e-6);
-        let h = longest / grid as f64;
-        let nx = ((span[0] / h).ceil() as usize + 1).max(1);
-        let ny = ((span[1] / h).ceil() as usize + 1).max(1);
-        let nz = ((span[2] / h).ceil() as usize + 1).max(1);
-
-        let mut dof_of_cell = vec![usize::MAX; nx * ny * nz];
-        let mut cell_of_dof = Vec::new();
-        for iz in 0..nz {
-            for iy in 0..ny {
-                for ix in 0..nx {
-                    let p = [
-                        lo[0] + (ix as f64 + 0.5) * h,
-                        lo[1] + (iy as f64 + 0.5) * h,
-                        lo[2] + (iz as f64 + 0.5) * h,
-                    ];
-                    if eval_scene(ops, p) < 0.0 {
-                        let lin = (iz * ny + iy) * nx + ix;
-                        dof_of_cell[lin] = cell_of_dof.len();
-                        cell_of_dof.push((ix, iy, iz));
-                    }
-                }
-            }
-        }
-        Self { nx, ny, nz, dof_of_cell, cell_of_dof, h }
-    }
-
-    fn ndof(&self) -> usize { self.cell_of_dof.len() }
-
-    #[inline]
-    fn dof_at(&self, ix: usize, iy: usize, iz: usize) -> Option<usize> {
-        let lin = (iz * self.ny + iy) * self.nx + ix;
-        let d = self.dof_of_cell[lin];
-        if d == usize::MAX { None } else { Some(d) }
-    }
-
-    /// y = L x, where L is the graph Laplacian with Neumann (free) boundary :
-    /// diagonal = number of occupied neighbours, off-diagonal = −1 per edge.
-    /// Computed implicitly from the occupancy — no stored matrix.
-    fn laplacian_matvec(&self, x: &[f64], y: &mut [f64]) {
-        for (d, &(ix, iy, iz)) in self.cell_of_dof.iter().enumerate() {
-            let mut deg = 0.0;
-            let mut acc = 0.0;
-            let mut neigh = |nx: usize, ny: usize, nz: usize, this: &Self| {
-                if let Some(nd) = this.dof_at(nx, ny, nz) {
-                    deg += 1.0;
-                    acc += x[nd];
-                }
-            };
-            if ix > 0 { neigh(ix - 1, iy, iz, self); }
-            if ix + 1 < self.nx { neigh(ix + 1, iy, iz, self); }
-            if iy > 0 { neigh(ix, iy - 1, iz, self); }
-            if iy + 1 < self.ny { neigh(ix, iy + 1, iz, self); }
-            if iz > 0 { neigh(ix, iy, iz - 1, self); }
-            if iz + 1 < self.nz { neigh(ix, iy, iz + 1, self); }
-            y[d] = deg * x[d] - acc;
-        }
     }
 }
 
