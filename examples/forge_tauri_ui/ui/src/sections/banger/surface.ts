@@ -6586,7 +6586,9 @@ import * as worlds from "./worlds.js";
     if (!boomSidebarRoot || !boomSidebarRoot.isConnected) {
       boomSidebarRoot = document.createElement("section");
       boomSidebarRoot.className = "boom-blender-panel";
-      els.leftPanel.appendChild(boomSidebarRoot);
+      // prepend so the Scene Collection sits ABOVE the shell-level
+      // Pinned / Recents / hardware specs / Profile dropdown.
+      els.leftPanel.insertBefore(boomSidebarRoot, els.leftPanel.firstChild);
     }
     if (!boomSidebarBound) {
       boomSidebarRoot.addEventListener("click", (event) => {

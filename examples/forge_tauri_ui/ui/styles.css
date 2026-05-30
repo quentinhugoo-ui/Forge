@@ -15616,12 +15616,20 @@ body.banger-fullscreen-mode .topbar-proof-btn {
 }
 
 /* §banger : the Scene Collection panel coexists with the shell-level
-   Pinned + Recents + profile dropdown so Banger users keep the same
-   session navigation as every other section. We only hide what's
-   redundant : the Compute/Atlas/Pool nav (workflow already lives at the
-   top of the Banger panel) and the non-compute tab panes. */
+   Pinned + Recents + Profile dropdown so Banger users keep the same
+   session navigation as every other section.
+
+   Hidden in Banger : panel-tabs (Compute/Atlas/Pool nav redundant
+   with Banger's own Design/Slicer), non-compute panes, and the
+   .panel-actions row (New session / Documents / My programs) which
+   doesn't apply to a SDF scene editor.
+
+   Order in Banger : Scene Collection (boom-blender-panel) first,
+   then Pinned, Recents, hardware specs, Profile button — handled
+   by surface.ts using prepend() at insertion time. */
 .content.is-banger-layout .left-panel > .panel-tabs,
-.content.is-banger-layout .left-panel > .panel-tab-pane:not([data-tab-pane="compute"]) {
+.content.is-banger-layout .left-panel > .panel-tab-pane:not([data-tab-pane="compute"]),
+.content.is-banger-layout .left-panel .panel-actions {
   display: none !important;
 }
 
