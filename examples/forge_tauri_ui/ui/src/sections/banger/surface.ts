@@ -46,10 +46,9 @@ import * as worlds from "./worlds.js";
   } = window.ForgeBangerCatalog || {};
 
   // ---------- renderer state ----------
-  let gl = null;
-  let meshProg = null, lineProg = null;
-  let uMeshModel, uMeshProj, uMeshView, uMeshColor, uMeshClipOffset;
-  let uLineProj, uLineView, uLineFadeNear, uLineFadeFar, uLineClipOffset;
+  // INGEN COMPUTE §19 Phase 4 — `gl`, `meshProg`, `lineProg` et leurs
+  // uniforms WebGL2 ont disparu. Seul INGEN Render (WebGPU compute) gère
+  // les ressources GPU vivantes.
   // INGEN Render — WebGPU compute (SDF + grille analytique + axes).
   // Async init : `ingenReady` reste false jusqu'à ce que l'adapter ait
   // répondu, ce qui permet de rendre la frame sans crash si WebGPU n'est
@@ -65,8 +64,8 @@ import * as worlds from "./worlds.js";
   let sdfDebugMode = 0;
   // INGEN §19.5 : 1 = proxy-gaussian halo on raymarch misses (on by default).
   let sdfGlow = 1;
-  // INGEN §11 mesh→SDF voxel texture state.
-  let meshSdfTex = null;
+  // INGEN §11 mesh→SDF — bounds CPU only (Phase 4 a retiré le upload
+  // GL ; le binding WebGPU 3D-texture arrive en Phase 6).
   let meshSdfBoundsMin = new Float32Array([0, 0, 0]);
   let meshSdfBoundsMax = new Float32Array([0, 0, 0]);
   let meshSdfLoaded = 0;
@@ -884,14 +883,11 @@ import * as worlds from "./worlds.js";
     ].filter(Boolean));
   }
 
-  function deleteBoomGpuResource(resource) {
-    if (!gl || !resource) return;
-    try {
-      for (const buffer of resource.buffers || []) gl.deleteBuffer(buffer);
-      if (resource.vao) gl.deleteVertexArray(resource.vao);
-    } catch (err) {
-      console.warn("[banger] deleteBoomGpuResource error:", err);
-    }
+  function deleteBoomGpuResource(_resource) {
+    // Phase 4 — plus aucune ressource GL à libérer. INGEN Render Phase 5+
+    // gérera ses propres buffers (SVDAG / splats / nsdf) directement dans
+    // IngenRender.destroy(). Helper conservé (référencé par le cache LRU)
+    // mais désormais no-op.
   }
 
   function evictBoomGpuResources(requiredBytes = 0) {
@@ -5183,14 +5179,6 @@ import * as worlds from "./worlds.js";
 
   function releaseBoomSlicerPreview() {
     if (!slicerPreview) return;
-    if (gl && slicerPreview.vao && !slicerPreview.gpuCacheKey) {
-      try {
-        for (const buffer of slicerPreview.buffers || []) gl.deleteBuffer(buffer);
-        gl.deleteVertexArray(slicerPreview.vao);
-      } catch (err) {
-        console.warn("[banger] releaseBoomSlicerPreview error:", err);
-      }
-    }
     slicerPreview = null;
     requestBoomRender("slicer-preview-release");
   }
@@ -5343,7 +5331,7 @@ import * as worlds from "./worlds.js";
       planZ += layerStep * stepFactor;
     }
     const previewPlanKey = kasmHashString(`slicer-preview-plan|${sourceHash}|${passHash}|${kasmQuantize(layerStep)}|${regionSelection?.hash || ""}|${boomScene.slicer?.workflow || ""}|${layerPlan.map((layer) => layer.cacheKey).join("|")}`);
-    if (slicerPreview?.cacheKey === previewPlanKey && ((gl && slicerPreview.vao) || (!gl && !slicerPreview.vao))) {
+    if (slicerPreview?.cacheKey === previewPlanKey) {
       emitBoomAudit("slicer_preview_reuse_gate", "HIT", previewPlanKey, 0, layerPlan.length, "layers");
       return {
         cacheKey: previewPlanKey,
@@ -5407,48 +5395,18 @@ import * as worlds from "./worlds.js";
   }
 
   function uploadBoomSlicerPreview(geometry) {
-    if (!gl || !geometry?.pos?.length || !geometry?.col?.length) return;
-    const cacheKey = boomGpuResourceKey("slicer-preview", geometry.cacheKey || "preview");
-    const cachedResource = lookupBoomGpuResource("gpu_slicer_upload", cacheKey, geometry.layerCount || 0, "layers");
-    if (cachedResource) {
-      slicerPreview = {
-        ...geometry,
-        vao: cachedResource.vao,
-        buffers: cachedResource.buffers,
-        gpuCacheKey: cacheKey,
-      };
-      return;
-    }
-    const started = boomNowMs();
-    const uploadBytes = (geometry.pos.byteLength || 0) + (geometry.col.byteLength || 0);
-    const vao = gl.createVertexArray();
-    gl.bindVertexArray(vao);
-    const posBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, geometry.pos, gl.STATIC_DRAW);
-    const aPosL = gl.getAttribLocation(lineProg, "aPos");
-    gl.enableVertexAttribArray(aPosL);
-    gl.vertexAttribPointer(aPosL, 3, gl.FLOAT, false, 0, 0);
-    const colBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, colBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, geometry.col, gl.STATIC_DRAW);
-    const aColorL = gl.getAttribLocation(lineProg, "aColor");
-    gl.enableVertexAttribArray(aColorL);
-    gl.vertexAttribPointer(aColorL, 3, gl.FLOAT, false, 0, 0);
-    gl.bindVertexArray(null);
+    // Phase 4 — pas d'upload GPU pour le slicer preview tant qu'INGEN
+    // Render n'a pas son passe lignes WebGPU (Phase 8 ray-query reprend
+    // shadow lines via SDF). On stocke la géométrie CPU-only pour que
+    // l'audit / la sélection 2D / le K-ASM graph y voient toujours quelque
+    // chose ; le rendu lui-même est silencieux jusqu'au pass WebGPU lignes.
+    if (!geometry?.pos?.length || !geometry?.col?.length) return;
     slicerPreview = {
       ...geometry,
-      vao,
-      buffers: [posBuf, colBuf],
-      gpuCacheKey: cacheKey,
+      vao: null,
+      buffers: [],
+      gpuCacheKey: null,
     };
-    const store = rememberBoomGpuResource(cacheKey, { vao, buffers: [posBuf, colBuf] }, uploadBytes, "slicer-preview");
-    emitBoomAudit("gpu_slicer_upload", "MISS", cacheKey, boomNowMs() - started, geometry.layerCount || 0, "layers", {
-      bytes: uploadBytes,
-      stored: store.stored,
-      evicted: store.evicted,
-      evictedBytes: store.evictedBytes,
-    });
   }
 
   function rebuildBoomSlicerPreview() {
@@ -5463,77 +5421,26 @@ import * as worlds from "./worlds.js";
       requestBoomRender("slicer-preview-empty");
       return;
     }
-    if (slicerPreview?.cacheKey === geometry.cacheKey && ((gl && slicerPreview.vao) || (!gl && !slicerPreview.vao))) {
+    if (slicerPreview?.cacheKey === geometry.cacheKey) {
       emitBoomAudit("slicer_preview_upload", "HIT", geometry.cacheKey, 0, geometry.layerCount || 0, "layers");
       requestBoomRender("slicer-preview-hit");
       return;
     }
     releaseBoomSlicerPreview();
-    if (!gl) {
-      slicerPreview = { ...geometry, vao: null, buffers: [] };
-      requestBoomRender("slicer-preview-js");
-      return;
-    }
     uploadBoomSlicerPreview(geometry);
     requestBoomRender("slicer-preview-upload");
   }
 
   function releaseBoomDerivedMesh(mesh = sceneMesh) {
-    if (!mesh?.display) return;
-    if (gl && mesh.display.vao && !mesh.display.gpuCacheKey) {
-      try {
-        for (const buffer of mesh.display.buffers || []) gl.deleteBuffer(buffer);
-        gl.deleteVertexArray(mesh.display.vao);
-      } catch (err) {
-        console.warn("[banger] releaseBoomDerivedMesh error:", err);
-      }
-    }
-    mesh.display = null;
+    if (mesh?.display) mesh.display = null;
   }
 
-  function uploadBoomDisplayGeometry(mesh, geometry, displayKey = "") {
-    if (!gl || !mesh || !geometry?.pos?.length || !geometry?.nrm?.length) return;
-    const cacheKey = boomGpuResourceKey("display-mesh", displayKey || boomGeometryHash(geometry));
-    const cachedResource = lookupBoomGpuResource("gpu_display_upload", cacheKey, geometry.faceCount || geometry.pos.length / 9, "faces");
-    if (cachedResource) {
-      mesh.display = {
-        ...geometry,
-        vao: cachedResource.vao,
-        buffers: cachedResource.buffers,
-        gpuCacheKey: cacheKey,
-      };
-      return;
-    }
-    const started = boomNowMs();
-    const uploadBytes = (geometry.pos.byteLength || 0) + (geometry.nrm.byteLength || 0);
-    const vao = gl.createVertexArray();
-    gl.bindVertexArray(vao);
-    const posBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, geometry.pos, gl.STATIC_DRAW);
-    const aPosM = gl.getAttribLocation(meshProg, "aPos");
-    gl.enableVertexAttribArray(aPosM);
-    gl.vertexAttribPointer(aPosM, 3, gl.FLOAT, false, 0, 0);
-    const nrmBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, nrmBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, geometry.nrm, gl.STATIC_DRAW);
-    const aNormalM = gl.getAttribLocation(meshProg, "aNormal");
-    gl.enableVertexAttribArray(aNormalM);
-    gl.vertexAttribPointer(aNormalM, 3, gl.FLOAT, false, 0, 0);
-    gl.bindVertexArray(null);
-    mesh.display = {
-      ...geometry,
-      vao,
-      buffers: [posBuf, nrmBuf],
-      gpuCacheKey: cacheKey,
-    };
-    const store = rememberBoomGpuResource(cacheKey, { vao, buffers: [posBuf, nrmBuf] }, uploadBytes, "display-mesh");
-    emitBoomAudit("gpu_display_upload", "MISS", cacheKey, boomNowMs() - started, geometry.faceCount || geometry.pos.length / 9, "faces", {
-      bytes: uploadBytes,
-      stored: store.stored,
-      evicted: store.evicted,
-      evictedBytes: store.evictedBytes,
-    });
+  function uploadBoomDisplayGeometry(mesh, geometry, _displayKey = "") {
+    // Phase 4 — pas d'upload GPU pour les meshes display. La donnée CPU
+    // (pos/nrm/faceCount) reste consommable par le sélecteur 2D et le KASM
+    // graph ; le rendu attend qu'INGEN Phase 5+ voxel→SDF / SVDAG le porte.
+    if (!mesh || !geometry?.pos?.length || !geometry?.nrm?.length) return;
+    mesh.display = { ...geometry, vao: null, buffers: [], gpuCacheKey: null };
   }
 
   function rebuildBoomDisplayMesh(mesh = sceneMesh) {
@@ -5581,21 +5488,9 @@ import * as worlds from "./worlds.js";
       return;
     }
     const geometryHash = boomGeometryHash(geometry);
-    if (!gl) {
-      mesh.display = { ...geometry, vao: null, buffers: [] };
-      try {
-        Object.defineProperty(mesh.display, "kasmHash", { value: geometryHash, configurable: true, enumerable: false });
-      } catch (_) {
-        mesh.display.kasmHash = geometryHash;
-      }
-      mesh.displayCacheKey = displayKey;
-      mesh.displayHash = geometryHash;
-      mesh.nativeModifierStackHash = nativeModifierHash;
-      clearBoomPickHandle("display-mesh-js");
-      emitBoomAudit("display_mesh", "MISS", displayKey, boomNowMs() - displayStarted, geometry.faceCount || geometry.pos.length / 9, "faces", { output: "derived-js" });
-      requestBoomRender("display-mesh-js");
-      return;
-    }
+    // Phase 4 — chemin unique : CPU-only. INGEN Render (Phase 5+) consommera
+    // la géométrie via SVDAG/SDF voxelisé ; en attendant, on stocke pos/nrm
+    // pour le pick + KASM graph et on n'ouvre aucun VAO.
     uploadBoomDisplayGeometry(mesh, geometry, displayKey);
     if (mesh.display) {
       try {
@@ -5607,9 +5502,9 @@ import * as worlds from "./worlds.js";
     mesh.displayCacheKey = displayKey;
     mesh.displayHash = geometryHash;
     mesh.nativeModifierStackHash = nativeModifierHash;
-    clearBoomPickHandle("display-mesh-gpu");
-    emitBoomAudit("display_mesh", "MISS", displayKey, boomNowMs() - displayStarted, geometry.faceCount || geometry.pos.length / 9, "faces", { output: "derived-gpu" });
-    requestBoomRender("display-mesh-gpu");
+    clearBoomPickHandle("display-mesh-cpu");
+    emitBoomAudit("display_mesh", "MISS", displayKey, boomNowMs() - displayStarted, geometry.faceCount || geometry.pos.length / 9, "faces", { output: "derived-cpu" });
+    requestBoomRender("display-mesh-cpu");
   }
 
   function refreshBoomMeshPreview(item = activeBoomMeshItem()) {
@@ -6956,14 +6851,6 @@ import * as worlds from "./worlds.js";
     const importedItem = findBoomItem("imported-mesh");
     releaseBoomSlicerPreview();
     releaseBoomDerivedMesh(sceneMesh);
-    if (gl && sceneMesh?.vao) {
-      try {
-        for (const buffer of sceneMesh.buffers || []) gl.deleteBuffer(buffer);
-        gl.deleteVertexArray(sceneMesh.vao);
-      } catch (err) {
-        console.warn("[banger] releaseSceneMesh error:", err);
-      }
-    }
     applyBoomKasmGraph(null, importedItem);
     clearBoomAnimationState();
     clearBoomComponentSelection();
@@ -7109,54 +6996,14 @@ import * as worlds from "./worlds.js";
       vertexCount: meshData.count || 0,
       faceCount: meshData.faceCount || 0,
     };
-    if (!gl) {
-      sceneMesh = {
-        ...meshData,
-        vao: null,
-        buffers: [],
-        base: {
-          pos: meshData.pos,
-          nrm: meshData.nrm,
-          count: meshData.count,
-          faceCount: meshData.faceCount,
-          source: meshData.source || null,
-          normalizeView: meshData.normalizeView || null,
-        },
-        vertexCount: meshData.count,
-        faceCount: meshData.faceCount,
-        color: [0.84, 0.85, 0.90],
-        visible: item.visible,
-        transform: item.transform,
-      };
-      clearBoomComponentSelection();
-      clearBoomRegionSelection();
-      rebuildBoomDisplayMesh(sceneMesh);
-      syncBoomKasmGraph(item, sceneMesh);
-      rebuildBoomSlicerPreview();
-      updateBoomMeshStats();
-      renderBoomSidebar();
-      renderBoomViewportHud();
-      return true;
-    }
-    const vao = gl.createVertexArray();
-    gl.bindVertexArray(vao);
-    const posBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, meshData.pos, gl.STATIC_DRAW);
-    const aPosM = gl.getAttribLocation(meshProg, "aPos");
-    gl.enableVertexAttribArray(aPosM);
-    gl.vertexAttribPointer(aPosM, 3, gl.FLOAT, false, 0, 0);
-    const nrmBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, nrmBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, meshData.nrm, gl.STATIC_DRAW);
-    const aNormalM = gl.getAttribLocation(meshProg, "aNormal");
-    gl.enableVertexAttribArray(aNormalM);
-    gl.vertexAttribPointer(aNormalM, 3, gl.FLOAT, false, 0, 0);
-    gl.bindVertexArray(null);
+    // Phase 4 — chemin unique CPU-only. Le mesh ingéré garde sa donnée
+    // brute (pos/nrm/bounds) accessible aux outils 2D et au KASM graph ;
+    // INGEN Render (Phase 5 SVDAG / Phase 6 voxel→SDF) consommera ensuite
+    // cette donnée pour la rendre dans le compute pass.
     sceneMesh = {
       ...meshData,
-      vao,
-      buffers: [posBuf, nrmBuf],
+      vao: null,
+      buffers: [],
       base: {
         pos: meshData.pos,
         nrm: meshData.nrm,
@@ -7202,13 +7049,9 @@ import * as worlds from "./worlds.js";
     return true;
   }
 
-  // INGEN COMPUTE §19 Phase 4 — initGL ne touche plus à WebGL2.
-  // `gl` reste null pour toute la vie de la session ; les helpers GPU
-  // historiques (rebuildBoomDisplayMesh / rebuildBoomSlicerPreview /
-  // createSceneMesh) ont déjà des early-returns `if (!gl)` qui les
-  // dégénèrent en no-op data-only — la donnée CPU (pos, nrm, bounds)
-  // reste, juste plus de VAO. Phase 5 ramènera le mesh via SVDAG /
-  // OP_SAMPLED_SDF dans INGEN Render.
+  // INGEN COMPUTE §19 Phase 4 — initRender crée INGEN Render (WebGPU
+  // compute) sur le canvas GPU. Aucun fallback WebGL2 : si l'adapter
+  // refuse, le banger reste sombre et `ingenReady` ne flip jamais à true.
   function initGL() {
     if (!els.gpuCanvas || !IngenRender.supported()) {
       console.warn("[banger] WebGPU indisponible — INGEN Render désactivé");
@@ -7229,18 +7072,15 @@ import * as worlds from "./worlds.js";
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
   }
 
-  // Phase 4 — releaseGL devient releaseRender : seul INGEN Render possède
-  // des ressources GPU vivantes. Les helpers WebGL2 sont devenus data-only.
+  // Phase 4 — releaseRender : seules les ressources INGEN Render sont
+  // vivantes côté GPU. La donnée CPU (sceneMesh / slicerPreview) reste,
+  // INGEN n'en a juste pas encore l'usage (Phase 5+ SVDAG la consommera).
   function releaseGL() {
     stopRenderLoop();
     try {
       releaseBoomSlicerPreview();
       releaseBoomDerivedMesh(sceneMesh);
       clearBoomGpuResourceCache();
-      if (sceneMesh) {
-        sceneMesh.vao = null;
-        sceneMesh.buffers = [];
-      }
     } catch (err) {
       console.warn("[banger] releaseGL error:", err);
     }
