@@ -161,6 +161,63 @@ export function scatter(
   return ops;
 }
 
+/** INGEN-native showcase scene — uses ONLY ops the WebGPU raymarcher
+ *  supports (sphere / capsule / torus / smin / union ; no terrain /
+ *  material / repeat). A smin-blended mountain, scattered boulders, a ring
+ *  of trees, a torus arch and floating spheres — built to exercise the new
+ *  lighting (soft shadows, AO, GI radiance cache, sky). ~52 ops, well under
+ *  the 128-op budget. Objects rest on the z=0 grid floor. */
+export function showcaseScene(): SdfOp[] {
+  const ops: SdfOp[] = [];
+
+  // Central mountain : smin-blended spheres rising from the grid.
+  ops.push({ op: "sphere", center: v3(0, 0, 1.5), radius: 4.2 });
+  ops.push({ op: "sphere", center: v3(3.6, 2.2, 0.4), radius: 2.8 });
+  ops.push({ op: "smin", k: 2.4 });
+  ops.push({ op: "sphere", center: v3(-3.2, -2.4, 0.7), radius: 3.0 });
+  ops.push({ op: "smin", k: 2.4 });
+  ops.push({ op: "sphere", center: v3(-1.2, 3.4, 1.0), radius: 2.2 });
+  ops.push({ op: "smin", k: 2.0 });
+  ops.push({ op: "sphere", center: v3(1.6, -3.2, 0.6), radius: 2.0 });
+  ops.push({ op: "smin", k: 2.0 });
+
+  // Boulders scattered around the base.
+  const boulders: { c: Vec3; r: number }[] = [
+    { c: v3(7, -4.5, 0.66), r: 1.2 },
+    { c: v3(-7, 4.5, 0.82), r: 1.5 },
+    { c: v3(5.5, 5.5, 0.55), r: 1.0 },
+    { c: v3(-5.5, -5.5, 0.72), r: 1.3 },
+    { c: v3(8, 1, 0.50), r: 0.9 },
+  ];
+  for (const b of boulders) {
+    ops.push({ op: "sphere", center: b.c, radius: b.r });
+    ops.push({ op: "union" });
+  }
+
+  // Ring of trees (capsule trunk + sphere canopy, smin-blended).
+  const treeCount = 7;
+  for (let i = 0; i < treeCount; i += 1) {
+    const a = (i / treeCount) * Math.PI * 2;
+    const x = Math.cos(a) * 9.5;
+    const y = Math.sin(a) * 9.5;
+    const h = 1.6 + (i % 3) * 0.3;
+    ops.push({ op: "capsule", a: v3(x, y, 0), b: v3(x, y, h), radius: 0.12 });
+    ops.push({ op: "sphere", center: v3(x, y, h + 0.5), radius: 0.7 });
+    ops.push({ op: "smin", k: 5.0 });
+    ops.push({ op: "union" });
+  }
+
+  // Torus arch + a couple of floating spheres (shadow / GI showcase).
+  ops.push({ op: "torus", center: v3(0, -8.5, 3.0), majorRadius: 2.6, minorRadius: 0.35 });
+  ops.push({ op: "union" });
+  ops.push({ op: "sphere", center: v3(4, 0, 5.5), radius: 0.9 });
+  ops.push({ op: "union" });
+  ops.push({ op: "sphere", center: v3(-4, 1, 4.5), radius: 0.7 });
+  ops.push({ op: "union" });
+
+  return ops;
+}
+
 /** Atmospheric world preset : terrain + scattered trees + a few houses.
  *  Returns a complete SdfOp[] ready for __forgeBangerSetScene. The
  *  caller still has to enable sky / fog separately (those are global

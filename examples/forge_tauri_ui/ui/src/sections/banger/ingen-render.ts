@@ -564,7 +564,10 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     t = t + d;
   }
 
-  var col = vec3<f32>(0.035, 0.035, 0.045);
+  // Sky background : an escaped primary ray shows the same environment the
+  // GI samples (horizon gradient + sun glow), so the scene reads as a lit
+  // world instead of flat void. The grid / surface draw over it below.
+  var col = sky_env(dir);
 
   // Ground-plane intersection for analytical grid (Banger is Z-up).
   // Solves cam.pos.z + dir.z * tg = 0  → tg. Gated by the Scene
