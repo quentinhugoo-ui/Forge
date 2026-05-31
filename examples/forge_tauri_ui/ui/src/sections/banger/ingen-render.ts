@@ -53,6 +53,10 @@ struct Camera {
   _p2:           f32,
   resolution:    vec2<f32>,
   centerOffset:  vec2<f32>,
+  sampleIndex:   f32,
+  _p3:           f32,
+  _p4:           f32,
+  _p5:           f32,
 };
 
 struct Ops {
@@ -105,6 +109,21 @@ struct Splats {
 // Header[0] > 0.5 → network active ; else the eval returns +1e6 so the
 // op cannot affect the scene.
 @group(0) @binding(5) var<storage, read>    nsdf: array<f32>;
+
+// INGEN COMPUTE §19.4 — Progressive accumulation buffer. One vec4 per
+// pixel holding the running mean colour (rgb) integrated over many
+// sub-pixel / area-light jittered samples while the viewport is idle.
+// The KASM frame cache decides when to keep dispatching (converging) vs.
+// blit the converged image — turning otherwise-skipped idle frames into
+// an alias-free, soft-shadowed ultra-HD render.
+@group(0) @binding(6) var<storage, read_write> accum: array<vec4<f32>>;
+
+// §20 Fusion v2 — per-splat sun shadow. cs_shadow marche un rayon
+// soft_shadow de chaque splat vers le soleil à travers scene() (le champ
+// SDF) et écrit un scalaire d'ombre [0,1] ; cs_main le lit pour assombrir
+// les splats sous les objets SDF. Calculé une fois par splat (pas par
+// pixel) → vraies ombres SDF sur les captures 3DGS sans faire fondre le GPU.
+@group(0) @binding(7) var<storage, read_write> shadow: array<f32>;
 
 fn sd_sphere(p: vec3<f32>, r: f32) -> f32 { return length(p) - r; }
 
@@ -335,6 +354,54 @@ fn normal(p: vec3<f32>) -> vec3<f32> {
   ));
 }
 
+// Soft shadow via sphere-tracing toward the (jittered) sun. The running
+// min of k*h/t is the classic Inigo Quilez penumbra estimator ; combined
+// with the per-sample light jitter the accumulator converges to a true
+// area-light soft shadow instead of a hard binary one.
+fn soft_shadow(ro: vec3<f32>, rd: vec3<f32>, mint: f32, maxt: f32, k: f32) -> f32 {
+  var res = 1.0;
+  var t = mint;
+  for (var i: u32 = 0u; i < 40u; i = i + 1u) {
+    if (t >= maxt) { break; }
+    let h = scene(ro + rd * t);
+    if (h < 0.0008) { return 0.0; }
+    res = min(res, k * h / t);
+    t = t + clamp(h, 0.015, 0.4);
+  }
+  return clamp(res, 0.0, 1.0);
+}
+
+// SDF ambient occlusion — 5 taps marched along the surface normal (IQ).
+// Cheap proxy for how "buried" a point is ; multiplies the ambient term
+// so creases and contacts darken without any extra geometry.
+fn calc_ao(p: vec3<f32>, n: vec3<f32>) -> f32 {
+  var occ = 0.0;
+  var sca = 1.0;
+  for (var i: u32 = 0u; i < 5u; i = i + 1u) {
+    let hr = 0.012 + 0.14 * f32(i) / 4.0;
+    let d = scene(p + n * hr);
+    occ = occ + (hr - d) * sca;
+    sca = sca * 0.92;
+  }
+  return clamp(1.0 - 2.6 * occ, 0.0, 1.0);
+}
+
+// Halton low-discrepancy radical inverse — drives sub-pixel jitter and
+// area-light sampling for the progressive accumulator. Bases 2/3 jitter
+// the pixel, 5/7 jitter the sun disk.
+fn halton(index: u32, base: u32) -> f32 {
+  var f = 1.0;
+  var r = 0.0;
+  var i = index;
+  for (var k: u32 = 0u; k < 16u; k = k + 1u) {
+    if (i == 0u) { break; }
+    f = f / f32(base);
+    r = r + f * f32(i % base);
+    i = i / base;
+  }
+  return r;
+}
+
 // Analytical sub-pixel grid.
 // Compute shaders cannot use fragment derivatives (fwidth/dpdx/dpdy), so
 // line width is estimated in cs_main from depth and viewport height.
@@ -349,7 +416,16 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
 
   let res = vec2<f32>(f32(dims.x), f32(dims.y));
-  let px = (vec2<f32>(f32(gid.x), f32(gid.y)) + vec2<f32>(0.5)) / res;
+  // Progressive accumulation : Halton sub-pixel jitter keyed on the sample
+  // index gives temporal supersampling (alias-free edges) while the
+  // viewport is idle. Sample 0 is the un-jittered centre so the first
+  // (in-motion) frame stays crisp and responsive.
+  let si = u32(cam.sampleIndex + 0.5);
+  var jit = vec2<f32>(0.0);
+  if (si > 0u) {
+    jit = vec2<f32>(halton(si + 1u, 2u), halton(si + 1u, 3u)) - vec2<f32>(0.5);
+  }
+  let px = (vec2<f32>(f32(gid.x), f32(gid.y)) + vec2<f32>(0.5) + jit) / res;
   let uv = vec2<f32>(px.x * 2.0 - 1.0, 1.0 - px.y * 2.0);
   let lens_uv = uv - cam.centerOffset;
   let aspect = res.x / res.y;
@@ -357,6 +433,18 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     cam.fwd
     + cam.right * (lens_uv.x * aspect * cam.tanHalfFovY)
     + cam.up    * (lens_uv.y * cam.tanHalfFovY)
+  );
+
+  // Sun (Z-up) with a per-sample jittered disk offset → soft penumbra and
+  // soft specular that converge as the accumulator integrates many rays.
+  let sun = normalize(vec3<f32>(0.5, 0.4, 0.85));
+  let la1 = halton(si + 1u, 5u);
+  let la2 = halton(si + 1u, 7u);
+  let lrad = sqrt(la2) * 0.055;
+  let ljit = normalize(
+    sun
+    + cam.right * (cos(6.2831853 * la1) * lrad)
+    + cam.up    * (sin(6.2831853 * la1) * lrad)
   );
 
   // Sphere-trace.
@@ -379,6 +467,13 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let tg = -cam.pos.z / dir.z;
     if (tg > 0.0 && (!hit || tg < t)) {
       let p = cam.pos + dir * tg;
+      // Contact shadow : SDF objects cast a soft shadow onto the ground
+      // plane. Only traced on accumulation samples (si > 0) so the in-motion
+      // preview stays cheap ; the shadow fades in as the view settles.
+      if (si > 0u) {
+        let gsh = soft_shadow(p + vec3<f32>(0.0, 0.0, 0.02), ljit, 0.05, 60.0, 9.0);
+        col = col * (0.35 + 0.65 * gsh);
+      }
       let g = grid_xy(p, 2.5);
       let pixel_world = max(0.0025, (2.0 * tg * cam.tanHalfFovY) / max(res.y, 1.0));
       let grid_width = pixel_world * 1.35;
@@ -397,10 +492,31 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (hit) {
     let p = cam.pos + dir * t;
     let n = normal(p);
-    let l = normalize(vec3<f32>(0.45, 0.85, 0.30));
-    let diff = max(dot(n, l), 0.0);
-    let rim = pow(1.0 - max(dot(n, -dir), 0.0), 2.0);
-    col = vec3<f32>(0.78, 0.80, 0.84) * (0.18 + 0.82 * diff) + vec3<f32>(0.20) * rim;
+
+    let ndl = max(dot(n, ljit), 0.0);
+    // Soft shadow + AO only on accumulation samples — the moving 1-spp
+    // preview stays responsive, then crisp shadows and contact darkening
+    // converge in as the viewport goes idle.
+    var sh = 1.0;
+    var ao = 1.0;
+    if (si > 0u) {
+      sh = soft_shadow(p + n * 0.012, ljit, 0.02, 60.0, 12.0);
+      ao = calc_ao(p, n);
+    }
+
+    // Hemispheric sky/ground ambient (Z-up), modulated by SDF occlusion.
+    let sky = 0.5 + 0.5 * n.z;
+    let amb = mix(vec3<f32>(0.10, 0.11, 0.14), vec3<f32>(0.34, 0.36, 0.42), sky) * ao;
+
+    // Shadowed Blinn-Phong specular + Fresnel sheen on the silhouette.
+    let hvec = normalize(ljit - dir);
+    let spec = pow(max(dot(n, hvec), 0.0), 48.0) * sh * ndl;
+    let fres = pow(1.0 - max(dot(n, -dir), 0.0), 4.0);
+
+    let base = vec3<f32>(0.80, 0.82, 0.86);
+    var lit = base * (amb + vec3<f32>(1.05, 1.00, 0.92) * (ndl * sh));
+    lit = lit + vec3<f32>(0.90) * spec + vec3<f32>(0.10, 0.12, 0.16) * fres;
+    col = min(lit, vec3<f32>(1.4));
   }
 
   // §18 Pillar C — Gaussian splat accumulation. Layout 16-float par splat
@@ -412,12 +528,23 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // anisotropique complète (Jacobien Zwicker) reviendra dans un commit
   // dédié avec tests interactifs — la version précédente cassait le
   // pipeline sur AMD Radeon iGPU (écran noir).
+  //
+  // §20 Fusion des piliers — profondeur partagée SDF ↔ splats. Le SDF est
+  // un occulteur opaque : tout splat dont la profondeur (le long de fwd)
+  // passe DERRIÈRE la surface SDF touchée est masqué, au lieu de briller
+  // au travers. C'est ce qui fait vivre le réel capturé et le procédural
+  // dans le même monde. Le blend reste additif (préserve le glow des
+  // gaussiennes bakées) ; les vraies ombres SDF sur splats arrivent en v2
+  // via une pré-passe d'ombrage par-splat.
   let n_splats = splats.count;
   if (n_splats > 0u) {
     let tanY = cam.tanHalfFovY;
     let uv_x = uv.x * aspect;
     let uv_y = uv.y;
-    var accum = vec3<f32>(0.0);
+    // Profondeur de la surface SDF le long de l'axe caméra (1e9 si rien
+    // touché → aucun splat occulté).
+    let surf_z = select(1.0e9, t * dot(dir, cam.fwd), hit);
+    var splat_col = vec3<f32>(0.0);
     for (var i: u32 = 0u; i < n_splats; i = i + 1u) {
       let s0 = splats.data[i * 4u + 0u]; // (pos.xyz, opacity)
       let s1 = splats.data[i * 4u + 1u]; // (scale.xyz, _)
@@ -426,21 +553,56 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
       let to_splat = s0.xyz - cam.pos;
       let depth = dot(to_splat, cam.fwd);
       if (depth < 0.05) { continue; }
+      let sig_world = max((s1.x + s1.y + s1.z) * (1.0 / 3.0), 1e-4);
+      // Occlusion par le SDF : un splat franchement derrière la surface est
+      // caché. La marge sig_world laisse passer ceux qui l'affleurent pour
+      // éviter une silhouette dure sur les contacts.
+      if (depth - sig_world > surf_z) { continue; }
       let sx = dot(to_splat, cam.right) / (depth * tanY);
       let sy = dot(to_splat, cam.up)    / (depth * tanY);
-      let sig_world = max((s1.x + s1.y + s1.z) * (1.0 / 3.0), 1e-4);
       let sig_screen = sig_world / (depth * tanY);
       let dx = uv_x - sx;
       let dy = uv_y - sy;
       let r2 = (dx * dx + dy * dy) / max(sig_screen * sig_screen, 1e-6);
       if (r2 > 9.0) { continue; }
+      // §20 Fusion v2 — the SDF field casts a real shadow on this splat
+      // (1 = lit, 0 = fully occluded), precomputed once per splat by cs_shadow.
       let w = exp(-0.5 * r2) * s0.w;
-      accum = accum + s3.rgb * w;
+      splat_col = splat_col + s3.rgb * w * shadow[i];
     }
-    col = col + accum;
+    col = col + splat_col;
   }
 
-  textureStore(outTex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(col, 1.0));
+  // Progressive accumulation : sample 0 seeds the running mean, every
+  // later (idle) sample folds in with weight 1/(n+1) so the buffer holds
+  // the unbiased average. The 8-bit storage texture always shows the
+  // current mean — the image visibly sharpens and the shadows soften as
+  // the accumulator converges, then the host stops dispatching.
+  let pix = gid.y * dims.x + gid.x;
+  var mean: vec3<f32>;
+  if (si == 0u) {
+    mean = col;
+  } else {
+    mean = mix(accum[pix].xyz, col, 1.0 / f32(si + 1u));
+  }
+  accum[pix] = vec4<f32>(mean, 1.0);
+  textureStore(outTex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(mean, 1.0));
+}
+
+// §20 Fusion v2 — per-splat sun-shadow pre-pass. One thread per splat
+// marches a soft shadow ray toward the (un-jittered) sun through the SDF
+// field. The scalar is reused by every pixel in cs_main, so an SDF object
+// casts a real soft shadow onto a captured 3DGS scene for the cost of
+// N_splats rays per frame instead of N_splats × pixels. Recomputed only
+// when splats or the SDF field change (never on camera orbit).
+@compute @workgroup_size(64)
+fn cs_shadow(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= splats.count) { return; }
+  let s0 = splats.data[i * 4u + 0u];
+  // Must match the base sun direction used in cs_main.
+  let sun = normalize(vec3<f32>(0.5, 0.4, 0.85));
+  shadow[i] = soft_shadow(s0.xyz + sun * 0.02, sun, 0.02, 60.0, 10.0);
 }
 `;
 
@@ -484,6 +646,10 @@ export class IngenRender {
   private device: GPUDevice | null = null;
   private context: GPUCanvasContext | null = null;
   private pipeline: GPUComputePipeline | null = null;
+  // §20 Fusion v2 — second compute pipeline (per-splat sun-shadow pre-pass)
+  // sharing one explicit bind-group layout with the main raymarch pipeline.
+  private pipelineShadow: GPUComputePipeline | null = null;
+  private bindGroupLayout: GPUBindGroupLayout | null = null;
   private camBuffer: GPUBuffer | null = null;
   private opsBuffer: GPUBuffer | null = null;
   private svdagBuffer: GPUBuffer | null = null;
@@ -491,6 +657,21 @@ export class IngenRender {
   private splatsBuffer: GPUBuffer | null = null;
   private splatsCapacity = 0;
   private nsdfBuffer: GPUBuffer | null = null;
+  // §19.4 progressive accumulator. One vec4 per pixel ; recreated on resize.
+  private accumBuffer: GPUBuffer | null = null;
+  private accumPixels = 0;
+  // §20 Fusion v2 — per-splat sun-shadow buffer (one f32 per splat) plus the
+  // dirty flag that gates the pre-pass. Splat shadows depend only on splat
+  // positions + the SDF field + the fixed sun — never the camera — so they
+  // are recomputed on upload, not on every orbit frame.
+  private shadowBuffer: GPUBuffer | null = null;
+  private shadowCapacity = 0; // capacity in splats (f32 entries)
+  private splatCount = 0;
+  private shadowDirty = true;
+  // Current converged sample count for the static scene. Reset to 0 whenever
+  // the camera / ops / dims change ; climbs to `maxSamples` while idle.
+  private sampleCount = 0;
+  private readonly maxSamples = 256;
   private outTexture: GPUTexture | null = null;
   private outView: GPUTextureView | null = null;
   private bindGroup: GPUBindGroup | null = null;
@@ -554,15 +735,43 @@ export class IngenRender {
     // than letting the pipeline silently become invalid (= black screen).
     this.device.pushErrorScope("validation");
     const module = this.device.createShaderModule({ code: WGSL, label: "ingen-render-wgsl" });
+    // Explicit bind-group layout so the main raymarch pipeline and the
+    // per-splat shadow pre-pass can share ONE bind group. (`layout: "auto"`
+    // would derive incompatible layouts because each entry point touches a
+    // different subset of the bindings.)
+    const COMPUTE = GPUShaderStage.COMPUTE;
+    this.bindGroupLayout = this.device.createBindGroupLayout({
+      label: "ingen-bgl",
+      entries: [
+        { binding: 0, visibility: COMPUTE, buffer: { type: "uniform" } },
+        { binding: 1, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
+        { binding: 2, visibility: COMPUTE, storageTexture: { access: "write-only", format: "rgba8unorm", viewDimension: "2d" } },
+        { binding: 3, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
+        { binding: 4, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
+        { binding: 5, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
+        { binding: 6, visibility: COMPUTE, buffer: { type: "storage" } },
+        { binding: 7, visibility: COMPUTE, buffer: { type: "storage" } },
+      ],
+    });
+    const pipelineLayout = this.device.createPipelineLayout({
+      label: "ingen-pipeline-layout",
+      bindGroupLayouts: [this.bindGroupLayout],
+    });
     this.pipeline = this.device.createComputePipeline({
       label: "ingen-render-pipeline",
-      layout: "auto",
+      layout: pipelineLayout,
       compute: { module, entryPoint: "cs_main" },
+    });
+    this.pipelineShadow = this.device.createComputePipeline({
+      label: "ingen-shadow-pipeline",
+      layout: pipelineLayout,
+      compute: { module, entryPoint: "cs_shadow" },
     });
     const validationErr = await this.device.popErrorScope();
     if (validationErr) {
       console.error("[ingen-render] WGSL validation error:", (validationErr as any).message);
       this.pipeline = null;
+      this.pipelineShadow = null;
       return false;
     }
     // Async compilation diagnostic — Chrome reports info-level messages
@@ -622,6 +831,15 @@ export class IngenRender {
     });
     this.device.queue.writeBuffer(this.nsdfBuffer, 0, new Float32Array([0, 16, 0, 0]));
 
+    // §20 Fusion v2 — per-splat shadow scalars, sized for the default splat
+    // capacity ; grows in lock-step with the splats buffer.
+    this.shadowCapacity = 256;
+    this.shadowBuffer = this.device.createBuffer({
+      size: this.shadowCapacity * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      label: "ingen-shadow",
+    });
+
     this.resize(this.canvas.width || 1, this.canvas.height || 1);
     return true;
   }
@@ -636,7 +854,21 @@ export class IngenRender {
     // Resize destroys the storage texture, so any cached frame is gone —
     // invalidate the KASM cache to force a fresh compute on the next render.
     this.cacheValid = false;
+    this.sampleCount = 0;
     this.dimsKey = ((w & 0xffff) | ((h & 0xffff) << 16)) >>> 0;
+
+    // (Re)allocate the accumulation buffer to match the new pixel count.
+    const pixels = w * h;
+    if (pixels !== this.accumPixels) {
+      this.accumBuffer?.destroy?.();
+      this.accumBuffer = this.device.createBuffer({
+        size: pixels * 16, // vec4<f32> per pixel
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        label: "ingen-accum",
+      });
+      this.accumPixels = pixels;
+    }
+
     this.outTexture?.destroy?.();
     this.outTexture = this.device.createTexture({
       label: "ingen-out",
@@ -650,7 +882,7 @@ export class IngenRender {
     this.outView = this.outTexture.createView();
     this.bindGroup = this.device.createBindGroup({
       label: "ingen-bg",
-      layout: this.pipeline!.getBindGroupLayout(0),
+      layout: this.bindGroupLayout!,
       entries: [
         { binding: 0, resource: { buffer: this.camBuffer! } },
         { binding: 1, resource: { buffer: this.opsBuffer! } },
@@ -658,6 +890,8 @@ export class IngenRender {
         { binding: 3, resource: { buffer: this.svdagBuffer! } },
         { binding: 4, resource: { buffer: this.splatsBuffer! } },
         { binding: 5, resource: { buffer: this.nsdfBuffer! } },
+        { binding: 6, resource: { buffer: this.accumBuffer! } },
+        { binding: 7, resource: { buffer: this.shadowBuffer! } },
       ],
     });
   }
@@ -680,6 +914,7 @@ export class IngenRender {
       return;
     }
     this.device.queue.writeBuffer(this.nsdfBuffer, 0, packed);
+    this.shadowDirty = true; // neural field changed → recompute splat shadows
     this.cacheValid = false; // weights changed → re-dispatch next frame
   }
 
@@ -697,6 +932,7 @@ export class IngenRender {
     if (!this.device || !this.splatsBuffer) return;
     const safeCount = Math.max(0, count | 0);
     const requiredWords = 4 + safeCount * 16;
+    let realloced = false;
     if (requiredWords > this.splatsCapacity) {
       this.splatsBuffer.destroy?.();
       let cap = Math.max(this.splatsCapacity, 16);
@@ -707,20 +943,36 @@ export class IngenRender {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         label: "ingen-splats",
       });
-      if (this.pipeline && this.outView && this.camBuffer && this.opsBuffer && this.svdagBuffer && this.nsdfBuffer) {
-        this.bindGroup = this.device.createBindGroup({
-          label: "ingen-bg",
-          layout: this.pipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: { buffer: this.camBuffer } },
-            { binding: 1, resource: { buffer: this.opsBuffer } },
-            { binding: 2, resource: this.outView },
-            { binding: 3, resource: { buffer: this.svdagBuffer } },
-            { binding: 4, resource: { buffer: this.splatsBuffer! } },
-            { binding: 5, resource: { buffer: this.nsdfBuffer } },
-          ],
-        });
-      }
+      realloced = true;
+    }
+    // Grow the per-splat shadow buffer in lock-step (§20 Fusion v2).
+    if (safeCount > this.shadowCapacity) {
+      this.shadowBuffer?.destroy?.();
+      let scap = Math.max(this.shadowCapacity, 16);
+      while (scap < safeCount) scap *= 2;
+      this.shadowCapacity = scap;
+      this.shadowBuffer = this.device.createBuffer({
+        size: scap * 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        label: "ingen-shadow",
+      });
+      realloced = true;
+    }
+    if (realloced && this.bindGroupLayout && this.outView && this.camBuffer && this.opsBuffer && this.svdagBuffer && this.nsdfBuffer && this.accumBuffer && this.shadowBuffer) {
+      this.bindGroup = this.device.createBindGroup({
+        label: "ingen-bg",
+        layout: this.bindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.camBuffer } },
+          { binding: 1, resource: { buffer: this.opsBuffer } },
+          { binding: 2, resource: this.outView },
+          { binding: 3, resource: { buffer: this.svdagBuffer } },
+          { binding: 4, resource: { buffer: this.splatsBuffer! } },
+          { binding: 5, resource: { buffer: this.nsdfBuffer } },
+          { binding: 6, resource: { buffer: this.accumBuffer } },
+          { binding: 7, resource: { buffer: this.shadowBuffer } },
+        ],
+      });
     }
     this.device.queue.writeBuffer(this.splatsBuffer!, 0, new Uint32Array([safeCount, 0, 0, 0]));
     if (safeCount > 0) {
@@ -730,6 +982,8 @@ export class IngenRender {
         : packed;
       this.device.queue.writeBuffer(this.splatsBuffer!, 16, view);
     }
+    this.splatCount = safeCount;
+    this.shadowDirty = true; // splat positions changed → recompute shadows
     this.cacheValid = false;
   }
 
@@ -791,10 +1045,10 @@ export class IngenRender {
         label: "ingen-svdag",
       });
       // Bind group references the old buffer — recreate it.
-      if (this.pipeline && this.outView && this.camBuffer && this.opsBuffer && this.splatsBuffer && this.nsdfBuffer) {
+      if (this.bindGroupLayout && this.outView && this.camBuffer && this.opsBuffer && this.splatsBuffer && this.nsdfBuffer && this.accumBuffer && this.shadowBuffer) {
         this.bindGroup = this.device.createBindGroup({
           label: "ingen-bg",
-          layout: this.pipeline.getBindGroupLayout(0),
+          layout: this.bindGroupLayout,
           entries: [
             { binding: 0, resource: { buffer: this.camBuffer } },
             { binding: 1, resource: { buffer: this.opsBuffer } },
@@ -802,6 +1056,8 @@ export class IngenRender {
             { binding: 3, resource: { buffer: this.svdagBuffer! } },
             { binding: 4, resource: { buffer: this.splatsBuffer } },
             { binding: 5, resource: { buffer: this.nsdfBuffer } },
+            { binding: 6, resource: { buffer: this.accumBuffer } },
+            { binding: 7, resource: { buffer: this.shadowBuffer } },
           ],
         });
       }
@@ -813,6 +1069,8 @@ export class IngenRender {
     }
     // SVDAG changed → invalidate the frame cache so the next render
     // dispatches compute instead of replaying a stale framebuffer.
+    // The SDF field changed → splat shadows must be recomputed (§20 v2).
+    this.shadowDirty = true;
     this.cacheValid = false;
   }
 
@@ -840,7 +1098,11 @@ export class IngenRender {
       u32.set(opsU32, 2);
       this.device.queue.writeBuffer(this.opsBuffer, 16, view);
     }
-    this.opsHash = fnv1a32(u32);
+    const newHash = fnv1a32(u32);
+    // uploadOps is called every frame ; only flag splat shadows dirty when
+    // the SDF field actually changed (§20 v2) so orbiting never recomputes.
+    if (newHash !== this.opsHash) this.shadowDirty = true;
+    this.opsHash = newHash;
   }
 
   render(cam: IngenCamera): void {
@@ -855,21 +1117,44 @@ export class IngenRender {
     camU[8] = cam.right[0]; camU[9] = cam.right[1]; camU[10] = cam.right[2]; camU[11] = 0;
     camU[12] = cam.up[0]; camU[13] = cam.up[1]; camU[14] = cam.up[2]; camU[15] = 0;
     camU[16] = w; camU[17] = h; camU[18] = cam.centerOffset?.[0] ?? 0; camU[19] = cam.centerOffset?.[1] ?? 0;
+    // sampleIndex (camU[20]) is filled in just before dispatch — it must NOT
+    // enter the hash, otherwise every accumulation frame would look "new"
+    // and the scene would never be detected as idle.
     camU[20] = 0; camU[21] = 0; camU[22] = 0; camU[23] = 0;
     const camHash = fnv1a32(new Uint32Array(camU.buffer));
 
-    // KASM frame cache : a hit needs camera + ops + dims all unchanged
-    // since the last successful compute dispatch.
-    const hit = this.cacheValid
-      && camHash === this.cachedCamHash
-      && this.opsHash === this.cachedOpsHash
-      && this.dimsKey === this.cachedDimsKey;
+    // KASM frame cache → progressive accumulation. The scene is "unchanged"
+    // when camera + ops + dims all match the last dispatch. On a change we
+    // restart the accumulator at sample 0 (crisp, responsive 1-spp frame).
+    // While unchanged we keep folding in jittered samples up to maxSamples,
+    // converging to an alias-free, soft-shadowed image, then stop.
+    const sceneChanged = !this.cacheValid
+      || camHash !== this.cachedCamHash
+      || this.opsHash !== this.cachedOpsHash
+      || this.dimsKey !== this.cachedDimsKey;
+    if (sceneChanged) this.sampleCount = 0;
 
     this.stats.frames += 1;
     const encoder = this.device.createCommandEncoder({ label: "ingen-encoder" });
 
-    if (!hit) {
+    const converging = this.sampleCount < this.maxSamples;
+    if (sceneChanged || converging) {
+      camU[20] = this.sampleCount; // accumulation / jitter seed
       this.device.queue.writeBuffer(this.camBuffer!, 0, camU);
+
+      // §20 Fusion v2 — per-splat sun-shadow pre-pass. Runs once per change
+      // (shadows are camera-independent) ; the result is read by the main
+      // pass below in the same command buffer (pass ordering guarantees the
+      // shadow writes are visible). One thread per splat.
+      if (this.shadowDirty && this.splatCount > 0 && this.pipelineShadow) {
+        const spass = encoder.beginComputePass({ label: "ingen-shadow-pass" });
+        spass.setPipeline(this.pipelineShadow);
+        spass.setBindGroup(0, this.bindGroup);
+        spass.dispatchWorkgroups(Math.ceil(this.splatCount / 64), 1, 1);
+        spass.end();
+        this.shadowDirty = false;
+      }
+
       const pass = encoder.beginComputePass({ label: "ingen-pass" });
       pass.setPipeline(this.pipeline);
       pass.setBindGroup(0, this.bindGroup);
@@ -877,6 +1162,7 @@ export class IngenRender {
       const gy = Math.ceil(h / 8);
       pass.dispatchWorkgroups(gx, gy, 1);
       pass.end();
+      this.sampleCount += 1;
       this.cachedCamHash = camHash;
       this.cachedOpsHash = this.opsHash;
       this.cachedDimsKey = this.dimsKey;
@@ -903,6 +1189,16 @@ export class IngenRender {
     return { ...this.stats };
   }
 
+  /**
+   * True while the progressive accumulator still has samples to integrate
+   * for the current static scene. The render host keeps requesting frames
+   * until this returns false, then lets the loop go idle — so an untouched
+   * viewport sharpens to ultra-HD instead of stopping at 1 spp.
+   */
+  isConverging(): boolean {
+    return !!this.pipeline && this.sampleCount < this.maxSamples;
+  }
+
   /** Reset hit/miss counters (HUD reset, benchmark window). */
   resetStats(): void {
     this.stats = { frames: 0, hits: 0, misses: 0, hitRatio: 0 };
@@ -915,6 +1211,8 @@ export class IngenRender {
     this.svdagBuffer?.destroy?.();
     this.splatsBuffer?.destroy?.();
     this.nsdfBuffer?.destroy?.();
+    this.accumBuffer?.destroy?.();
+    this.shadowBuffer?.destroy?.();
     this.outTexture = null;
     this.outView = null;
     this.camBuffer = null;
@@ -924,7 +1222,14 @@ export class IngenRender {
     this.splatsBuffer = null;
     this.splatsCapacity = 0;
     this.nsdfBuffer = null;
+    this.accumBuffer = null;
+    this.accumPixels = 0;
+    this.shadowBuffer = null;
+    this.shadowCapacity = 0;
+    this.splatCount = 0;
     this.pipeline = null;
+    this.pipelineShadow = null;
+    this.bindGroupLayout = null;
     this.bindGroup = null;
     this.context = null;
     this.device = null;
