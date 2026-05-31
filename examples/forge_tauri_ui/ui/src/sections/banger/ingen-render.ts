@@ -402,6 +402,65 @@ fn halton(index: u32, base: u32) -> f32 {
   return r;
 }
 
+// §20 GI Tier 1 — path tracing helpers.
+
+// Secondary-ray sphere trace : returns the hit distance or -1 on miss.
+// Cheaper step budget than the primary (indirect rays tolerate slack).
+fn trace(ro: vec3<f32>, rd: vec3<f32>, max_steps: u32) -> f32 {
+  var t = 0.0;
+  for (var i: u32 = 0u; i < max_steps; i = i + 1u) {
+    let d = scene(ro + rd * t);
+    if (d < 0.0008 * max(t, 1.0)) { return t; }
+    if (t > 120.0) { break; }
+    t = t + d;
+  }
+  return -1.0;
+}
+
+// Environment radiance for a ray that escapes the scene : a sky gradient
+// (Z-up) plus a soft sun glow. Doubles as the indirect "infinite bounce"
+// fill term, so surfaces pick up coloured ambient light.
+fn sky_env(rd: vec3<f32>) -> vec3<f32> {
+  let up = clamp(rd.z * 0.5 + 0.5, 0.0, 1.0);
+  var s = mix(vec3<f32>(0.18, 0.20, 0.26), vec3<f32>(0.42, 0.56, 0.86), up);
+  let sun = normalize(vec3<f32>(0.5, 0.4, 0.85));
+  s = s + vec3<f32>(1.0, 0.92, 0.74) * (pow(max(dot(rd, sun), 0.0), 64.0) * 0.6);
+  return s;
+}
+
+// Cosine-weighted hemisphere sample around n (importance sampling for a
+// Lambertian bounce — the pdf cancels the cosine, so throughput *= albedo).
+fn cosine_dir(n: vec3<f32>, u1: f32, u2: f32) -> vec3<f32> {
+  let r = sqrt(u1);
+  let phi = 6.2831853 * u2;
+  let x = r * cos(phi);
+  let y = r * sin(phi);
+  let z = sqrt(max(0.0, 1.0 - u1));
+  var up = vec3<f32>(0.0, 0.0, 1.0);
+  if (abs(n.z) > 0.999) { up = vec3<f32>(1.0, 0.0, 0.0); }
+  let tang = normalize(cross(up, n));
+  let bitang = cross(n, tang);
+  return normalize(tang * x + bitang * y + n * z);
+}
+
+// Per-pixel decorrelated RNG (PCG-style integer hash) keyed on pixel,
+// sample index and bounce — gives each accumulation sample a fresh path.
+fn hash_u32(x: u32) -> u32 {
+  var v = x;
+  v = v ^ (v >> 16u);
+  v = v * 0x7feb352du;
+  v = v ^ (v >> 15u);
+  v = v * 0x846ca68bu;
+  v = v ^ (v >> 16u);
+  return v;
+}
+fn rand2(px: vec2<u32>, s: u32, b: u32) -> vec2<f32> {
+  let seed = px.x * 1973u + px.y * 9277u + s * 26699u + b * 131u + 1u;
+  let h1 = hash_u32(seed);
+  let h2 = hash_u32(h1 ^ 0x68bc21ebu);
+  return vec2<f32>(f32(h1) / 4294967296.0, f32(h2) / 4294967296.0);
+}
+
 // Analytical sub-pixel grid.
 // Compute shaders cannot use fragment derivatives (fwidth/dpdx/dpdy), so
 // line width is estimated in cs_main from depth and viewport height.
@@ -490,33 +549,49 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   if (hit) {
-    let p = cam.pos + dir * t;
-    let n = normal(p);
+    // §20 GI Tier 1 — diffuse path tracing, integrated by the progressive
+    // accumulator. While moving (si==0) a single cheap bounce (direct sun +
+    // AO-modulated sky ambient) keeps 1-spp responsive ; at rest each idle
+    // sample traces a full multi-bounce path, so indirect light, soft GI and
+    // colour fill converge in — the SDF surface lit like a real environment.
+    let albedo  = vec3<f32>(0.80, 0.82, 0.86);
+    let sun_col = vec3<f32>(1.00, 0.96, 0.88) * 1.6;
+    var radiance   = vec3<f32>(0.0);
+    var throughput = vec3<f32>(1.0);
+    var ro  = cam.pos + dir * t;
+    var nrm = normal(ro);
+    let max_bounces = select(1u, 3u, si > 0u);
+    for (var b: u32 = 0u; b < max_bounces; b = b + 1u) {
+      // Direct sun contribution at this surface point (soft-shadowed when idle).
+      let ndl = max(dot(nrm, ljit), 0.0);
+      var sh = 1.0;
+      if (si > 0u && ndl > 0.0) {
+        sh = soft_shadow(ro + nrm * 0.012, ljit, 0.02, 60.0, 12.0);
+      }
+      radiance = radiance + throughput * albedo * sun_col * (ndl * sh);
 
-    let ndl = max(dot(n, ljit), 0.0);
-    // Soft shadow + AO only on accumulation samples — the moving 1-spp
-    // preview stays responsive, then crisp shadows and contact darkening
-    // converge in as the viewport goes idle.
-    var sh = 1.0;
-    var ao = 1.0;
-    if (si > 0u) {
-      sh = soft_shadow(p + n * 0.012, ljit, 0.02, 60.0, 12.0);
-      ao = calc_ao(p, n);
+      if (b + 1u >= max_bounces) {
+        // Terminal bounce : sky hemisphere as the remaining-bounce fill.
+        // On the moving preview, modulate by SDF AO so it still reads solid.
+        var occ = 1.0;
+        if (si == 0u) { occ = calc_ao(ro, nrm); }
+        radiance = radiance + throughput * albedo * sky_env(nrm) * occ;
+        break;
+      }
+
+      // Cosine-weighted Lambertian bounce ; trace toward the next surface.
+      let u = rand2(gid.xy, si, b);
+      let wi = cosine_dir(nrm, u.x, u.y);
+      throughput = throughput * albedo;
+      let th = trace(ro + nrm * 0.02, wi, 64u);
+      if (th < 0.0) {
+        radiance = radiance + throughput * sky_env(wi); // escaped to sky
+        break;
+      }
+      ro  = ro + nrm * 0.02 + wi * th;
+      nrm = normal(ro);
     }
-
-    // Hemispheric sky/ground ambient (Z-up), modulated by SDF occlusion.
-    let sky = 0.5 + 0.5 * n.z;
-    let amb = mix(vec3<f32>(0.10, 0.11, 0.14), vec3<f32>(0.34, 0.36, 0.42), sky) * ao;
-
-    // Shadowed Blinn-Phong specular + Fresnel sheen on the silhouette.
-    let hvec = normalize(ljit - dir);
-    let spec = pow(max(dot(n, hvec), 0.0), 48.0) * sh * ndl;
-    let fres = pow(1.0 - max(dot(n, -dir), 0.0), 4.0);
-
-    let base = vec3<f32>(0.80, 0.82, 0.86);
-    var lit = base * (amb + vec3<f32>(1.05, 1.00, 0.92) * (ndl * sh));
-    lit = lit + vec3<f32>(0.90) * spec + vec3<f32>(0.10, 0.12, 0.16) * fres;
-    col = min(lit, vec3<f32>(1.4));
+    col = min(radiance, vec3<f32>(2.0));
   }
 
   // §18 Pillar C — Gaussian splat accumulation. Layout 16-float par splat
