@@ -1041,6 +1041,10 @@ export class IngenRender {
       ani[dst + 15] = 0;
     }
     this.uploadSplatsAnisotropic(ani, safeCount);
+    // The isotropic adapter is only ever fed SDF-baked glow gaussians, so it
+    // owns the additive intent (§20 Fusion v3). Real captures call
+    // uploadSplatsAnisotropic directly and flip setSplatSolid(true).
+    this.setSplatSolid(false);
   }
 
   /**
