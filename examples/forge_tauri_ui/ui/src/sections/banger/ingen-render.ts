@@ -875,6 +875,9 @@ export class IngenRender {
   private cachedDimsKey = 0;
   private cacheValid = false;
   private stats: IngenStats = { frames: 0, hits: 0, misses: 0, hitRatio: 0 };
+  // Which GPU adapter WebGPU actually selected (filled in init()). A vendor
+  // of "" or isFallback=true means a software/CPU rasteriser — unusable.
+  private adapterInfo: { vendor: string; architecture: string; description: string; isFallback: boolean } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -890,10 +893,49 @@ export class IngenRender {
       console.warn("[ingen-render] WebGPU unavailable in this runtime");
       return false;
     }
-    const adapter = await nav.gpu.requestAdapter({ powerPreference: "high-performance" });
+    // Ask explicitly for the discrete high-performance GPU and refuse a
+    // software fallback up front (forceFallbackAdapter:false). On a hybrid
+    // laptop this is the difference between the RTX 3050 and the weak iGPU
+    // — and between the iGPU and an unusable CPU/WARP software rasteriser.
+    let adapter = await nav.gpu.requestAdapter({
+      powerPreference: "high-performance",
+      forceFallbackAdapter: false,
+    });
+    if (!adapter) {
+      // Last resort : let the runtime pick anything (may be the iGPU) so the
+      // viewport at least lights up, but we'll flag it loudly below.
+      adapter = await nav.gpu.requestAdapter();
+    }
     if (!adapter) {
       console.warn("[ingen-render] no GPUAdapter");
       return false;
+    }
+    // GPU diagnostics — surface exactly which adapter is in use so a wrong
+    // (iGPU) or software (CPU) selection is obvious instead of silent lag.
+    let info: any = null;
+    try {
+      info = (adapter as any).info
+        || (typeof (adapter as any).requestAdapterInfo === "function"
+          ? await (adapter as any).requestAdapterInfo()
+          : null);
+    } catch (_) { /* info is best-effort */ }
+    const isFallback = !!(adapter as any).isFallbackAdapter;
+    const desc = `${info?.vendor || "?"} / ${info?.architecture || "?"} / ${info?.description || info?.device || "?"}`;
+    this.adapterInfo = {
+      vendor: info?.vendor ?? "",
+      architecture: info?.architecture ?? "",
+      description: info?.description ?? info?.device ?? "",
+      isFallback,
+    };
+    const software = isFallback
+      || /software|warp|swiftshader|llvmpipe|basic render|microsoft basic/i.test(desc);
+    if (software) {
+      console.error(
+        `[ingen-render] ⚠️ adaptateur LOGICIEL/CPU détecté (${desc}) — le rendu sera inutilisable. `
+        + "Forcer le GPU discret : Windows → Paramètres → Affichage → Graphismes → l'app → Hautes performances.",
+      );
+    } else {
+      console.log(`[ingen-render] GPU adapter: ${desc}`);
     }
     this.device = await adapter.requestDevice();
     const ctx = this.canvas.getContext("webgpu") as GPUCanvasContext | null;
@@ -1423,6 +1465,15 @@ export class IngenRender {
   /** Snapshot of frame-cache counters. Cheap, can be polled per frame. */
   getStats(): IngenStats {
     return { ...this.stats };
+  }
+
+  /**
+   * Which GPU adapter WebGPU selected, for diagnostics / HUD. Returns null
+   * before init(). `isFallback === true` or an empty vendor means a
+   * software/CPU rasteriser is in use (unusable — force the discrete GPU).
+   */
+  getAdapterInfo(): { vendor: string; architecture: string; description: string; isFallback: boolean } | null {
+    return this.adapterInfo ? { ...this.adapterInfo } : null;
   }
 
   /**
