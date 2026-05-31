@@ -21,7 +21,7 @@ const MAX_OPS = 128;
 const OPS_BYTES = 16 /* count + pad */ + MAX_OPS * 32;
 
 // §20 GI cache — probe volume size. Must match WGSL PROBE_GRID.
-const PROBE_GRID = 32;
+const PROBE_GRID = 16;
 const PROBE_TOTAL = PROBE_GRID * PROBE_GRID * PROBE_GRID;
 
 // §18 Pillar B — Neural SDF compact (Instant-NGP-style, fixed shape so the
@@ -138,7 +138,7 @@ struct Splats {
 // recompute billions of identical light calcs" win, on modest hardware.
 @group(0) @binding(8) var<storage, read_write> probes: array<vec4<f32>>;
 
-const PROBE_GRID: u32 = 32u;
+const PROBE_GRID: u32 = 16u;
 const PROBE_HALF: f32 = 6.0; // world half-extent of the cache cube
 
 fn sd_sphere(p: vec3<f32>, r: f32) -> f32 { return length(p) - r; }
@@ -377,7 +377,7 @@ fn normal(p: vec3<f32>) -> vec3<f32> {
 fn soft_shadow(ro: vec3<f32>, rd: vec3<f32>, mint: f32, maxt: f32, k: f32) -> f32 {
   var res = 1.0;
   var t = mint;
-  for (var i: u32 = 0u; i < 40u; i = i + 1u) {
+  for (var i: u32 = 0u; i < 24u; i = i + 1u) {
     if (t >= maxt) { break; }
     let h = scene(ro + rd * t);
     if (h < 0.0008) { return 0.0; }
@@ -553,14 +553,15 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     + cam.up    * (sin(6.2831853 * la1) * lrad)
   );
 
-  // Sphere-trace.
+  // Sphere-trace (primary). 80 steps / 100-unit far plane — tuned for a
+  // modest GPU at 1080p ; the accumulator hides the slightly shorter reach.
   var t: f32 = 0.0;
   var hit: bool = false;
-  for (var i: u32 = 0u; i < 128u; i = i + 1u) {
+  for (var i: u32 = 0u; i < 80u; i = i + 1u) {
     let p = cam.pos + dir * t;
     let d = scene(p);
     if (d < 0.0008 * max(t, 1.0)) { hit = true; break; }
-    if (t > 200.0) { break; }
+    if (t > 100.0) { break; }
     t = t + d;
   }
 
@@ -746,20 +747,21 @@ fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
   let sun_col = vec3<f32>(1.0, 0.96, 0.88) * 1.6;
   let albedo = vec3<f32>(0.80, 0.82, 0.86);
 
-  let n_rays = 6u;
+  // Cheap bake : few rays, short traces, and an UNSHADOWED one-bounce (the
+  // sharp shadows live on the per-pixel direct term ; shadowing the indirect
+  // bounce too would cost a 40-step march per ray for little visible gain).
+  let n_rays = 4u;
   var acc = vec3<f32>(0.0);
   for (var r: u32 = 0u; r < n_rays; r = r + 1u) {
     let u = rand2(vec2<u32>(idx, idx ^ 0x9e3779b9u), bake, r);
     let wi = sphere_dir(u.x, u.y);
-    let th = trace(p, wi, 64u);
+    let th = trace(p, wi, 32u);
     if (th < 0.0) {
       acc = acc + sky_env(wi);
     } else {
       let hp = p + wi * th;
       let hn = normal(hp);
-      let ndl = max(dot(hn, sun), 0.0);
-      let sh = soft_shadow(hp + hn * 0.012, sun, 0.02, 60.0, 10.0);
-      acc = acc + albedo * sun_col * (ndl * sh);
+      acc = acc + albedo * sun_col * max(dot(hn, sun), 0.0);
     }
   }
   acc = acc * (1.0 / f32(n_rays));
@@ -845,12 +847,14 @@ export class IngenRender {
   // on camera orbit, so the baked GI is reused across viewpoints.
   private probesBuffer: GPUBuffer | null = null;
   private probeSample = 0;
-  private readonly probeMaxSamples = 48;
+  private readonly probeMaxSamples = 24;
   private probeDirty = true;
   // Current converged sample count for the static scene. Reset to 0 whenever
   // the camera / ops / dims change ; climbs to `maxSamples` while idle.
   private sampleCount = 0;
-  private readonly maxSamples = 256;
+  // Convergence budget — kept modest so the GPU isn't pegged for seconds of
+  // heavy idle samples after every camera stop on a weak GPU.
+  private readonly maxSamples = 64;
   private outTexture: GPUTexture | null = null;
   private outView: GPUTextureView | null = null;
   private bindGroup: GPUBindGroup | null = null;
