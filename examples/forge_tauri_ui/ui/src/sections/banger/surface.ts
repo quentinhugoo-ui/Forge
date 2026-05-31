@@ -58,9 +58,9 @@ import * as worlds from "./worlds.js";
   // tout WebGL2 ; le fallback transitoire ici n'est qu'un guard de boot.
   let ingenRender = null;
   let ingenReady = false;
-  // INGEN §19.3 : the scene is data, not source. The DEFAULT_SCENE here
-  // reproduces the previous hardcoded smin of two spheres ; future scenes
-  // can be swapped via window.__forgeBangerSetScene without recompile.
+  // INGEN §19.3 : the scene is data, not source. Banger starts empty by
+  // default; future scenes are supplied by /newcompute_ -> /newobject_ or
+  // window.__forgeBangerSetScene without shader recompilation.
   let sdfScene = serializeScene(DEFAULT_SCENE);
   // INGEN §13 : 0 = lit render, 1 = Lipschitz heatmap.
   let sdfDebugMode = 0;
@@ -5894,13 +5894,6 @@ import * as worlds from "./worlds.js";
         <span>${tab.title}</span>
       </button>
     `).join("");
-    const workflowTabs = `
-      <div class="boom-workflow-bar" role="tablist" aria-label="BOOM workflow">
-        <button class="boom-workflow-btn${boomScene.workspaceMode === "design" ? " is-active" : ""}" data-action="workspace-mode" data-workspace-mode="design" role="tab" aria-selected="${boomScene.workspaceMode === "design" ? "true" : "false"}">Design</button>
-        <button class="boom-workflow-btn${boomScene.workspaceMode === "slicer" ? " is-active" : ""}" data-action="workspace-mode" data-workspace-mode="slicer" role="tab" aria-selected="${boomScene.workspaceMode === "slicer" ? "true" : "false"}">Slicer</button>
-      </div>
-    `;
-
     const transformMarkup = activeTransform ? `
       <section class="boom-inspector-card">
         <div class="boom-inspector-card-head">
@@ -6407,7 +6400,6 @@ import * as worlds from "./worlds.js";
     }
 
     const html = `
-      ${workflowTabs}
       <div class="boom-outliner">
         <div class="boom-panel-head">
           <div class="boom-panel-title">
@@ -6481,11 +6473,6 @@ import * as worlds from "./worlds.js";
           const item = boomItemById(id);
           if (!item?.selectable) return;
           executeBoomTool("boom.scene.select_item", { itemId: id, preserveMeshComponentSelection: true });
-        } else if (action === "workspace-mode") {
-          executeBoomTool("boom.scene.workspace_mode", { mode: trigger.dataset.workspaceMode || "design" });
-          if (boomScene.workspaceMode === "slicer") {
-            void refreshBoomPrinterDiscovery();
-          }
         } else if (action === "toggle-collection") {
           boomScene.collectionExpanded = !boomScene.collectionExpanded;
           renderBoomSidebar();
@@ -7659,6 +7646,18 @@ import * as worlds from "./worlds.js";
     return [offsetX, offsetY];
   }
 
+  function bangerRenderCenterClipOffset() {
+    const canvasRect = els.canvas.getBoundingClientRect();
+    if (!canvasRect.width || !canvasRect.height) return [0, 0];
+    const canvasCx = canvasRect.left + canvasRect.width * 0.5;
+    const leftPanelRect = els.leftPanel?.getBoundingClientRect?.();
+    const leftEdge = leftPanelRect?.width ? leftPanelRect.right : canvasRect.left;
+    const rightEdge = canvasRect.right || window.innerWidth || canvasCx;
+    const targetCx = leftEdge + (rightEdge - leftEdge) * 0.5;
+    const offsetX = (targetCx - canvasCx) / (canvasRect.width * 0.5);
+    return [Number.isFinite(offsetX) ? offsetX : 0, 0];
+  }
+
   function syncBoomViewportAnchors() {
     if (!els.stage) return;
     const stageRect = els.stage.getBoundingClientRect();
@@ -7768,6 +7767,7 @@ import * as worlds from "./worlds.js";
         pos: eye,
         fwd, right, up,
         tanHalfFovY: Math.tan((46 * Math.PI / 180) * 0.5),
+        centerOffset: bangerRenderCenterClipOffset(),
       });
     }
 
@@ -8028,6 +8028,29 @@ import * as worlds from "./worlds.js";
     if (jobList) jobList.innerHTML = '<li class="job-item muted">No compute job yet</li>';
     const historyHeading = document.querySelector(".history-heading span");
     if (historyHeading) historyHeading.textContent = "Recents";
+    refreshBangerComputeRecents(jobList);
+  }
+
+  async function refreshBangerComputeRecents(jobList = document.getElementById("forgeJobList")) {
+    if (!jobList) return;
+    try {
+      const library = await backendInvoke("forge_brain_compute_library", { limit: 6 });
+      const computes = Array.isArray(library?.computes) ? library.computes : [];
+      if (!computes.length) return;
+      jobList.innerHTML = computes.map((entry) => {
+        const command = entry?.command || `/compute_${String(entry?.sessionName || "session").replace(/[^\w.-]+/g, "_")}_`;
+        const created = Number(entry?.createdAtMs || entry?.updatedAtMs || 0);
+        const createdLabel = created > 0 ? new Date(created).toLocaleDateString() : "saved";
+        const runs = Math.max(1, Number(entry?.runCount || 1));
+        return `<li class="job-item" data-compute-command="${escapeBoomHtml(command)}">
+          <span class="job-dot"></span>
+          <span class="job-title">${escapeBoomHtml(command)}</span>
+          <span class="job-meta">${escapeBoomHtml(createdLabel)} · ${runs} run${runs > 1 ? "s" : ""}</span>
+        </li>`;
+      }).join("");
+    } catch (err) {
+      console.warn("[banger] unable to refresh compute recents:", err);
+    }
   }
 
   function activate() {
