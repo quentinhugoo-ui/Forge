@@ -20,6 +20,10 @@ import {
 const MAX_OPS = 128;
 const OPS_BYTES = 16 /* count + pad */ + MAX_OPS * 32;
 
+// §20 GI cache — probe volume size. Must match WGSL PROBE_GRID.
+const PROBE_GRID = 32;
+const PROBE_TOTAL = PROBE_GRID * PROBE_GRID * PROBE_GRID;
+
 // §18 Pillar B — Neural SDF compact (Instant-NGP-style, fixed shape so the
 // WGSL forward is fully unrolled). L=4 levels of multires hash grid, F=2
 // features per entry, T=4096 entries per level, HIDDEN=16 neurons, INPUTS
@@ -55,7 +59,7 @@ struct Camera {
   centerOffset:  vec2<f32>,
   sampleIndex:   f32,
   splatSolid:    f32,
-  _p4:           f32,
+  probeSample:   f32,
   _p5:           f32,
 };
 
@@ -124,6 +128,18 @@ struct Splats {
 // les splats sous les objets SDF. Calculé une fois par splat (pas par
 // pixel) → vraies ombres SDF sur les captures 3DGS sans faire fondre le GPU.
 @group(0) @binding(7) var<storage, read_write> shadow: array<f32>;
+
+// §20 GI cache — world-space radiance probe volume (Lumen-style surface
+// cache). PROBE_GRID³ probes over a fixed cube centred on the origin, each
+// holding incoming irradiance (rgb). cs_probe bakes them ; cs_main reads
+// one trilinear sample per pixel instead of path tracing. The bake is
+// view-independent and content-hashed : it only re-runs when geometry or
+// lights change, so orbiting the camera reuses the whole GI — the "don't
+// recompute billions of identical light calcs" win, on modest hardware.
+@group(0) @binding(8) var<storage, read_write> probes: array<vec4<f32>>;
+
+const PROBE_GRID: u32 = 32u;
+const PROBE_HALF: f32 = 6.0; // world half-extent of the cache cube
 
 fn sd_sphere(p: vec3<f32>, r: f32) -> f32 { return length(p) - r; }
 
@@ -428,19 +444,50 @@ fn sky_env(rd: vec3<f32>) -> vec3<f32> {
   return s;
 }
 
-// Cosine-weighted hemisphere sample around n (importance sampling for a
-// Lambertian bounce — the pdf cancels the cosine, so throughput *= albedo).
-fn cosine_dir(n: vec3<f32>, u1: f32, u2: f32) -> vec3<f32> {
-  let r = sqrt(u1);
+// Uniform sphere sample — a probe gathers incoming light from all
+// directions, so the bake shoots rays over the full sphere.
+fn sphere_dir(u1: f32, u2: f32) -> vec3<f32> {
+  let z = 1.0 - 2.0 * u1;
+  let r = sqrt(max(0.0, 1.0 - z * z));
   let phi = 6.2831853 * u2;
-  let x = r * cos(phi);
-  let y = r * sin(phi);
-  let z = sqrt(max(0.0, 1.0 - u1));
-  var up = vec3<f32>(0.0, 0.0, 1.0);
-  if (abs(n.z) > 0.999) { up = vec3<f32>(1.0, 0.0, 0.0); }
-  let tang = normalize(cross(up, n));
-  let bitang = cross(n, tang);
-  return normalize(tang * x + bitang * y + n * z);
+  return vec3<f32>(r * cos(phi), r * sin(phi), z);
+}
+
+// World position of probe (i, j, k) inside the cache cube.
+fn probe_pos(i: u32, j: u32, k: u32) -> vec3<f32> {
+  let g = f32(PROBE_GRID);
+  let span = 2.0 * PROBE_HALF;
+  return vec3<f32>(
+    -PROBE_HALF + (f32(i) + 0.5) / g * span,
+    -PROBE_HALF + (f32(j) + 0.5) / g * span,
+    -PROBE_HALF + (f32(k) + 0.5) / g * span,
+  );
+}
+
+// Trilinear gather of cached irradiance at a world point. Out-of-cube
+// points clamp to the boundary probes (graceful far-field fade).
+fn sample_probe(p: vec3<f32>) -> vec3<f32> {
+  let g = f32(PROBE_GRID);
+  let span = 2.0 * PROBE_HALF;
+  let local = (p + vec3<f32>(PROBE_HALF)) / span * g - vec3<f32>(0.5);
+  let p0 = floor(local);
+  let fr = local - p0;
+  let gi = i32(PROBE_GRID) - 1;
+  var acc = vec3<f32>(0.0);
+  for (var c: u32 = 0u; c < 8u; c = c + 1u) {
+    let dx = i32(c & 1u);
+    let dy = i32((c >> 1u) & 1u);
+    let dz = i32((c >> 2u) & 1u);
+    let ix = clamp(i32(p0.x) + dx, 0, gi);
+    let iy = clamp(i32(p0.y) + dy, 0, gi);
+    let iz = clamp(i32(p0.z) + dz, 0, gi);
+    let wx = select(1.0 - fr.x, fr.x, dx == 1);
+    let wy = select(1.0 - fr.y, fr.y, dy == 1);
+    let wz = select(1.0 - fr.z, fr.z, dz == 1);
+    let idx = (u32(iz) * PROBE_GRID + u32(iy)) * PROBE_GRID + u32(ix);
+    acc = acc + (wx * wy * wz) * probes[idx].xyz;
+  }
+  return acc;
 }
 
 // Per-pixel decorrelated RNG (PCG-style integer hash) keyed on pixel,
@@ -549,49 +596,27 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 
   if (hit) {
-    // §20 GI Tier 1 — diffuse path tracing, integrated by the progressive
-    // accumulator. While moving (si==0) a single cheap bounce (direct sun +
-    // AO-modulated sky ambient) keeps 1-spp responsive ; at rest each idle
-    // sample traces a full multi-bounce path, so indirect light, soft GI and
-    // colour fill converge in — the SDF surface lit like a real environment.
+    // §20 GI cache — split lighting (Lumen-style) : sharp DIRECT sun is
+    // evaluated per pixel (soft-shadowed + AO when idle), while the soft
+    // INDIRECT bounce is a single trilinear read from the cached radiance
+    // probe volume baked by cs_probe. This collapses the per-pixel
+    // multi-bounce path trace into one lookup, so the cost stays flat as the
+    // camera orbits and the GI is reused until the scene actually changes.
+    let p = cam.pos + dir * t;
+    let n = normal(p);
     let albedo  = vec3<f32>(0.80, 0.82, 0.86);
     let sun_col = vec3<f32>(1.00, 0.96, 0.88) * 1.6;
-    var radiance   = vec3<f32>(0.0);
-    var throughput = vec3<f32>(1.0);
-    var ro  = cam.pos + dir * t;
-    var nrm = normal(ro);
-    let max_bounces = select(1u, 3u, si > 0u);
-    for (var b: u32 = 0u; b < max_bounces; b = b + 1u) {
-      // Direct sun contribution at this surface point (soft-shadowed when idle).
-      let ndl = max(dot(nrm, ljit), 0.0);
-      var sh = 1.0;
-      if (si > 0u && ndl > 0.0) {
-        sh = soft_shadow(ro + nrm * 0.012, ljit, 0.02, 60.0, 12.0);
-      }
-      radiance = radiance + throughput * albedo * sun_col * (ndl * sh);
 
-      if (b + 1u >= max_bounces) {
-        // Terminal bounce : sky hemisphere as the remaining-bounce fill.
-        // On the moving preview, modulate by SDF AO so it still reads solid.
-        var occ = 1.0;
-        if (si == 0u) { occ = calc_ao(ro, nrm); }
-        radiance = radiance + throughput * albedo * sky_env(nrm) * occ;
-        break;
-      }
-
-      // Cosine-weighted Lambertian bounce ; trace toward the next surface.
-      let u = rand2(gid.xy, si, b);
-      let wi = cosine_dir(nrm, u.x, u.y);
-      throughput = throughput * albedo;
-      let th = trace(ro + nrm * 0.02, wi, 64u);
-      if (th < 0.0) {
-        radiance = radiance + throughput * sky_env(wi); // escaped to sky
-        break;
-      }
-      ro  = ro + nrm * 0.02 + wi * th;
-      nrm = normal(ro);
+    let ndl = max(dot(n, ljit), 0.0);
+    var sh = 1.0;
+    var ao = 1.0;
+    if (si > 0u) {
+      if (ndl > 0.0) { sh = soft_shadow(p + n * 0.012, ljit, 0.02, 60.0, 12.0); }
+      ao = calc_ao(p, n);
     }
-    col = min(radiance, vec3<f32>(2.0));
+    let direct = albedo * sun_col * (ndl * sh);
+    let indirect = albedo * sample_probe(p + n * 0.15) * ao;
+    col = min(direct + indirect, vec3<f32>(2.0));
   }
 
   // §18 Pillar C — Gaussian splat accumulation. Layout 16-float par splat
@@ -695,6 +720,53 @@ fn cs_shadow(@builtin(global_invocation_id) gid: vec3<u32>) {
   let sun = normalize(vec3<f32>(0.5, 0.4, 0.85));
   shadow[i] = soft_shadow(s0.xyz + sun * 0.02, sun, 0.02, 60.0, 10.0);
 }
+
+// §20 GI cache — radiance probe bake. One thread per probe shoots a few
+// uniform-sphere rays, gathering one-bounce incoming radiance (direct sun
+// at the hit, or sky for an escaped ray). The result is folded into the
+// probe via a running mean keyed on cam.probeSample, so the volume
+// converges over a handful of bakes then freezes. View-independent : the
+// host only re-bakes (resets probeSample) when geometry or lights change,
+// never on camera orbit — that is the KASM content-hash reuse in practice.
+@compute @workgroup_size(64)
+fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let total = PROBE_GRID * PROBE_GRID * PROBE_GRID;
+  let idx = gid.x;
+  if (idx >= total) { return; }
+  let i = idx % PROBE_GRID;
+  let j = (idx / PROBE_GRID) % PROBE_GRID;
+  let k = idx / (PROBE_GRID * PROBE_GRID);
+  let p = probe_pos(i, j, k);
+
+  let bake = u32(cam.probeSample + 0.5);
+  let sun = normalize(vec3<f32>(0.5, 0.4, 0.85));
+  let sun_col = vec3<f32>(1.0, 0.96, 0.88) * 1.6;
+  let albedo = vec3<f32>(0.80, 0.82, 0.86);
+
+  let n_rays = 6u;
+  var acc = vec3<f32>(0.0);
+  for (var r: u32 = 0u; r < n_rays; r = r + 1u) {
+    let u = rand2(vec2<u32>(idx, idx ^ 0x9e3779b9u), bake, r);
+    let wi = sphere_dir(u.x, u.y);
+    let th = trace(p, wi, 64u);
+    if (th < 0.0) {
+      acc = acc + sky_env(wi);
+    } else {
+      let hp = p + wi * th;
+      let hn = normal(hp);
+      let ndl = max(dot(hn, sun), 0.0);
+      let sh = soft_shadow(hp + hn * 0.012, sun, 0.02, 60.0, 10.0);
+      acc = acc + albedo * sun_col * (ndl * sh);
+    }
+  }
+  acc = acc * (1.0 / f32(n_rays));
+
+  if (bake == 0u) {
+    probes[idx] = vec4<f32>(acc, 1.0);
+  } else {
+    probes[idx] = vec4<f32>(mix(probes[idx].xyz, acc, 1.0 / f32(bake + 1u)), 1.0);
+  }
+}
 `;
 
 export interface IngenCamera {
@@ -740,6 +812,8 @@ export class IngenRender {
   // §20 Fusion v2 — second compute pipeline (per-splat sun-shadow pre-pass)
   // sharing one explicit bind-group layout with the main raymarch pipeline.
   private pipelineShadow: GPUComputePipeline | null = null;
+  // §20 GI cache — third pipeline, the world-space radiance probe bake.
+  private pipelineProbe: GPUComputePipeline | null = null;
   private bindGroupLayout: GPUBindGroupLayout | null = null;
   private camBuffer: GPUBuffer | null = null;
   private opsBuffer: GPUBuffer | null = null;
@@ -763,6 +837,13 @@ export class IngenRender {
   // for SDF-baked gaussians) ; true = weighted-OIT over-blend (solid look for
   // real 3DGS captures). Enters the camera hash so toggling re-renders.
   private splatSolid = false;
+  // §20 GI cache — radiance probe volume + its bake convergence counter.
+  // probeSample resets only when geometry/lights change (probeDirty), never
+  // on camera orbit, so the baked GI is reused across viewpoints.
+  private probesBuffer: GPUBuffer | null = null;
+  private probeSample = 0;
+  private readonly probeMaxSamples = 48;
+  private probeDirty = true;
   // Current converged sample count for the static scene. Reset to 0 whenever
   // the camera / ops / dims change ; climbs to `maxSamples` while idle.
   private sampleCount = 0;
@@ -846,6 +927,7 @@ export class IngenRender {
         { binding: 5, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
         { binding: 6, visibility: COMPUTE, buffer: { type: "storage" } },
         { binding: 7, visibility: COMPUTE, buffer: { type: "storage" } },
+        { binding: 8, visibility: COMPUTE, buffer: { type: "storage" } },
       ],
     });
     const pipelineLayout = this.device.createPipelineLayout({
@@ -862,11 +944,17 @@ export class IngenRender {
       layout: pipelineLayout,
       compute: { module, entryPoint: "cs_shadow" },
     });
+    this.pipelineProbe = this.device.createComputePipeline({
+      label: "ingen-probe-pipeline",
+      layout: pipelineLayout,
+      compute: { module, entryPoint: "cs_probe" },
+    });
     const validationErr = await this.device.popErrorScope();
     if (validationErr) {
       console.error("[ingen-render] WGSL validation error:", (validationErr as any).message);
       this.pipeline = null;
       this.pipelineShadow = null;
+      this.pipelineProbe = null;
       return false;
     }
     // Async compilation diagnostic — Chrome reports info-level messages
@@ -935,6 +1023,15 @@ export class IngenRender {
       label: "ingen-shadow",
     });
 
+    // §20 GI cache — radiance probe volume (PROBE_GRID³ vec4). Fixed size,
+    // never reallocates ; zero-initialised so the first frames read black
+    // indirect until the bake converges.
+    this.probesBuffer = this.device.createBuffer({
+      size: PROBE_TOTAL * 16,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      label: "ingen-probes",
+    });
+
     this.resize(this.canvas.width || 1, this.canvas.height || 1);
     return true;
   }
@@ -987,6 +1084,7 @@ export class IngenRender {
         { binding: 5, resource: { buffer: this.nsdfBuffer! } },
         { binding: 6, resource: { buffer: this.accumBuffer! } },
         { binding: 7, resource: { buffer: this.shadowBuffer! } },
+        { binding: 8, resource: { buffer: this.probesBuffer! } },
       ],
     });
   }
@@ -1010,6 +1108,7 @@ export class IngenRender {
     }
     this.device.queue.writeBuffer(this.nsdfBuffer, 0, packed);
     this.shadowDirty = true; // neural field changed → recompute splat shadows
+    this.probeDirty = true;  // …and rebake the GI probe volume (§20)
     this.cacheValid = false; // weights changed → re-dispatch next frame
   }
 
@@ -1053,7 +1152,7 @@ export class IngenRender {
       });
       realloced = true;
     }
-    if (realloced && this.bindGroupLayout && this.outView && this.camBuffer && this.opsBuffer && this.svdagBuffer && this.nsdfBuffer && this.accumBuffer && this.shadowBuffer) {
+    if (realloced && this.bindGroupLayout && this.outView && this.camBuffer && this.opsBuffer && this.svdagBuffer && this.nsdfBuffer && this.accumBuffer && this.shadowBuffer && this.probesBuffer) {
       this.bindGroup = this.device.createBindGroup({
         label: "ingen-bg",
         layout: this.bindGroupLayout,
@@ -1066,6 +1165,7 @@ export class IngenRender {
           { binding: 5, resource: { buffer: this.nsdfBuffer } },
           { binding: 6, resource: { buffer: this.accumBuffer } },
           { binding: 7, resource: { buffer: this.shadowBuffer } },
+          { binding: 8, resource: { buffer: this.probesBuffer } },
         ],
       });
     }
@@ -1144,7 +1244,7 @@ export class IngenRender {
         label: "ingen-svdag",
       });
       // Bind group references the old buffer — recreate it.
-      if (this.bindGroupLayout && this.outView && this.camBuffer && this.opsBuffer && this.splatsBuffer && this.nsdfBuffer && this.accumBuffer && this.shadowBuffer) {
+      if (this.bindGroupLayout && this.outView && this.camBuffer && this.opsBuffer && this.splatsBuffer && this.nsdfBuffer && this.accumBuffer && this.shadowBuffer && this.probesBuffer) {
         this.bindGroup = this.device.createBindGroup({
           label: "ingen-bg",
           layout: this.bindGroupLayout,
@@ -1157,6 +1257,7 @@ export class IngenRender {
             { binding: 5, resource: { buffer: this.nsdfBuffer } },
             { binding: 6, resource: { buffer: this.accumBuffer } },
             { binding: 7, resource: { buffer: this.shadowBuffer } },
+            { binding: 8, resource: { buffer: this.probesBuffer } },
           ],
         });
       }
@@ -1168,8 +1269,9 @@ export class IngenRender {
     }
     // SVDAG changed → invalidate the frame cache so the next render
     // dispatches compute instead of replaying a stale framebuffer.
-    // The SDF field changed → splat shadows must be recomputed (§20 v2).
+    // The SDF field changed → splat shadows and GI probes must rebake (§20).
     this.shadowDirty = true;
+    this.probeDirty = true;
     this.cacheValid = false;
   }
 
@@ -1198,9 +1300,13 @@ export class IngenRender {
       this.device.queue.writeBuffer(this.opsBuffer, 16, view);
     }
     const newHash = fnv1a32(u32);
-    // uploadOps is called every frame ; only flag splat shadows dirty when
-    // the SDF field actually changed (§20 v2) so orbiting never recomputes.
-    if (newHash !== this.opsHash) this.shadowDirty = true;
+    // uploadOps is called every frame ; only flag the SDF-dependent caches
+    // dirty when the field actually changed (§20) so orbiting never
+    // recomputes splat shadows or the GI probe volume.
+    if (newHash !== this.opsHash) {
+      this.shadowDirty = true;
+      this.probeDirty = true;
+    }
     this.opsHash = newHash;
   }
 
@@ -1233,19 +1339,30 @@ export class IngenRender {
       || this.opsHash !== this.cachedOpsHash
       || this.dimsKey !== this.cachedDimsKey;
     if (sceneChanged) this.sampleCount = 0;
+    // GI probe cache resets only on geometry/light change (probeDirty), never
+    // on camera orbit — so the baked indirect light is reused across all
+    // viewpoints. This is the KASM content-hash reuse made concrete.
+    if (this.probeDirty) {
+      this.probeSample = 0;
+      this.probeDirty = false;
+    }
 
     this.stats.frames += 1;
     const encoder = this.device.createCommandEncoder({ label: "ingen-encoder" });
 
     const converging = this.sampleCount < this.maxSamples;
-    if (sceneChanged || converging) {
-      camU[20] = this.sampleCount; // accumulation / jitter seed
+    const probeBaking = this.probeSample < this.probeMaxSamples;
+    // Dispatch whenever the image must change : a moved/converging view, OR a
+    // still-baking probe volume (so the main pass re-runs to show the refined
+    // GI). Camera orbit with frozen probes still falls under `converging`.
+    if (sceneChanged || converging || probeBaking) {
+      camU[20] = this.sampleCount;  // primary AA / jitter seed
+      camU[22] = this.probeSample;  // probe bake accumulation seed
       this.device.queue.writeBuffer(this.camBuffer!, 0, camU);
 
-      // §20 Fusion v2 — per-splat sun-shadow pre-pass. Runs once per change
-      // (shadows are camera-independent) ; the result is read by the main
-      // pass below in the same command buffer (pass ordering guarantees the
-      // shadow writes are visible). One thread per splat.
+      // §20 Fusion v2 — per-splat sun-shadow pre-pass. Camera-independent ;
+      // read by the main pass below in the same command buffer (pass ordering
+      // makes the writes visible). One thread per splat.
       if (this.shadowDirty && this.splatCount > 0 && this.pipelineShadow) {
         const spass = encoder.beginComputePass({ label: "ingen-shadow-pass" });
         spass.setPipeline(this.pipelineShadow);
@@ -1253,6 +1370,18 @@ export class IngenRender {
         spass.dispatchWorkgroups(Math.ceil(this.splatCount / 64), 1, 1);
         spass.end();
         this.shadowDirty = false;
+      }
+
+      // §20 GI cache — bake one more set of probe rays while converging.
+      // Camera-independent ; read by the main pass (probe gather) in the same
+      // command buffer. Stops once the volume has converged, then frozen.
+      if (probeBaking && this.pipelineProbe) {
+        const ppass = encoder.beginComputePass({ label: "ingen-probe-pass" });
+        ppass.setPipeline(this.pipelineProbe);
+        ppass.setBindGroup(0, this.bindGroup);
+        ppass.dispatchWorkgroups(Math.ceil(PROBE_TOTAL / 64), 1, 1);
+        ppass.end();
+        this.probeSample += 1;
       }
 
       const pass = encoder.beginComputePass({ label: "ingen-pass" });
@@ -1296,7 +1425,8 @@ export class IngenRender {
    * viewport sharpens to ultra-HD instead of stopping at 1 spp.
    */
   isConverging(): boolean {
-    return !!this.pipeline && this.sampleCount < this.maxSamples;
+    return !!this.pipeline
+      && (this.sampleCount < this.maxSamples || this.probeSample < this.probeMaxSamples);
   }
 
   /**
@@ -1326,6 +1456,7 @@ export class IngenRender {
     this.nsdfBuffer?.destroy?.();
     this.accumBuffer?.destroy?.();
     this.shadowBuffer?.destroy?.();
+    this.probesBuffer?.destroy?.();
     this.outTexture = null;
     this.outView = null;
     this.camBuffer = null;
@@ -1340,8 +1471,11 @@ export class IngenRender {
     this.shadowBuffer = null;
     this.shadowCapacity = 0;
     this.splatCount = 0;
+    this.probesBuffer = null;
+    this.probeSample = 0;
     this.pipeline = null;
     this.pipelineShadow = null;
+    this.pipelineProbe = null;
     this.bindGroupLayout = null;
     this.bindGroup = null;
     this.context = null;
