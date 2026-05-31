@@ -54,7 +54,7 @@ struct Camera {
   resolution:    vec2<f32>,
   centerOffset:  vec2<f32>,
   sampleIndex:   f32,
-  _p3:           f32,
+  splatSolid:    f32,
   _p4:           f32,
   _p5:           f32,
 };
@@ -545,6 +545,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // touché → aucun splat occulté).
     let surf_z = select(1.0e9, t * dot(dir, cam.fwd), hit);
     var splat_col = vec3<f32>(0.0);
+    var splat_w   = 0.0;
     for (var i: u32 = 0u; i < n_splats; i = i + 1u) {
       let s0 = splats.data[i * 4u + 0u]; // (pos.xyz, opacity)
       let s1 = splats.data[i * 4u + 1u]; // (scale.xyz, _)
@@ -567,10 +568,25 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (r2 > 9.0) { continue; }
       // §20 Fusion v2 — the SDF field casts a real shadow on this splat
       // (1 = lit, 0 = fully occluded), precomputed once per splat by cs_shadow.
-      let w = exp(-0.5 * r2) * s0.w;
-      splat_col = splat_col + s3.rgb * w * shadow[i];
+      let contrib = exp(-0.5 * r2) * s0.w * shadow[i];
+      splat_col = splat_col + s3.rgb * contrib;
+      splat_w   = splat_w + contrib;
     }
-    col = col + splat_col;
+    // §20 Fusion v3 — two intents, gated by cam.splatSolid :
+    //  • solid (real 3DGS captures) : weighted-OIT over-blend. The dense
+    //    splat cloud saturates toward opaque (alpha = 1 - exp(-Σw)) and
+    //    composites OVER the SDF/background, so a scanned scene reads as a
+    //    real solid surface. Order-independent → still one compute pass.
+    //  • additive (SDF-baked gaussians) : legacy glow, preserved exactly.
+    if (cam.splatSolid > 0.5) {
+      if (splat_w > 1e-4) {
+        let solid = splat_col / splat_w;     // weighted mean colour
+        let alpha = 1.0 - exp(-splat_w);     // coverage → opaque where dense
+        col = mix(col, solid, alpha);
+      }
+    } else {
+      col = col + splat_col;
+    }
   }
 
   // Progressive accumulation : sample 0 seeds the running mean, every
@@ -668,6 +684,10 @@ export class IngenRender {
   private shadowCapacity = 0; // capacity in splats (f32 entries)
   private splatCount = 0;
   private shadowDirty = true;
+  // §20 Fusion v3 — splat compositing intent. false = additive glow (default,
+  // for SDF-baked gaussians) ; true = weighted-OIT over-blend (solid look for
+  // real 3DGS captures). Enters the camera hash so toggling re-renders.
+  private splatSolid = false;
   // Current converged sample count for the static scene. Reset to 0 whenever
   // the camera / ops / dims change ; climbs to `maxSamples` while idle.
   private sampleCount = 0;
@@ -1119,8 +1139,9 @@ export class IngenRender {
     camU[16] = w; camU[17] = h; camU[18] = cam.centerOffset?.[0] ?? 0; camU[19] = cam.centerOffset?.[1] ?? 0;
     // sampleIndex (camU[20]) is filled in just before dispatch — it must NOT
     // enter the hash, otherwise every accumulation frame would look "new"
-    // and the scene would never be detected as idle.
-    camU[20] = 0; camU[21] = 0; camU[22] = 0; camU[23] = 0;
+    // and the scene would never be detected as idle. splatSolid (camU[21])
+    // IS hashed so flipping the compositing intent forces a fresh render.
+    camU[20] = 0; camU[21] = this.splatSolid ? 1 : 0; camU[22] = 0; camU[23] = 0;
     const camHash = fnv1a32(new Uint32Array(camU.buffer));
 
     // KASM frame cache → progressive accumulation. The scene is "unchanged"
@@ -1197,6 +1218,19 @@ export class IngenRender {
    */
   isConverging(): boolean {
     return !!this.pipeline && this.sampleCount < this.maxSamples;
+  }
+
+  /**
+   * §20 Fusion v3 — choose how splats composite. `false` (default) keeps the
+   * additive glow used by SDF-baked gaussians ; `true` switches to a solid
+   * weighted-OIT over-blend so real 3DGS captures read as opaque surfaces.
+   * Toggling invalidates the frame cache so the next render reflects it.
+   */
+  setSplatSolid(on: boolean): void {
+    const next = !!on;
+    if (next === this.splatSolid) return;
+    this.splatSolid = next;
+    this.cacheValid = false;
   }
 
   /** Reset hit/miss counters (HUD reset, benchmark window). */
