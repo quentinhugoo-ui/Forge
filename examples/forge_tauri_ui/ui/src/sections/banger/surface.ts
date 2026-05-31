@@ -6500,6 +6500,9 @@ import * as worlds from "./worlds.js";
           if (item.id === "imported-mesh" && sceneMesh) {
             if (field === "visible" || field === "renderable") sceneMesh.visible = item[field];
           }
+          if (item.id === "grid" && field === "visible") {
+            requestBoomRender("grid-visibility-toggle");
+          }
           renderBoomSidebar();
           renderBoomViewportHud();
         } else if (action === "tab") {
@@ -7768,6 +7771,7 @@ import * as worlds from "./worlds.js";
         fwd, right, up,
         tanHalfFovY: Math.tan((46 * Math.PI / 180) * 0.5),
         centerOffset: bangerRenderCenterClipOffset(),
+        showGrid: boomItemById("grid")?.visible !== false,
       });
     }
 

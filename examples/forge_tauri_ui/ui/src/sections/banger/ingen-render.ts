@@ -46,13 +46,13 @@ struct Camera {
   pos:           vec3<f32>,
   tanHalfFovY:   f32,
   fwd:           vec3<f32>,
-  _p0:           f32,
+  showGrid:      f32,
   right:         vec3<f32>,
   _p1:           f32,
   up:            vec3<f32>,
   _p2:           f32,
   resolution:    vec2<f32>,
-  _p3:           vec2<f32>,
+  centerOffset:  vec2<f32>,
 };
 
 struct Ops {
@@ -335,11 +335,11 @@ fn normal(p: vec3<f32>) -> vec3<f32> {
   ));
 }
 
-// Analytical sub-pixel grid (Phase 2 will extend with axes + fade).
-// Distance to nearest grid line in world XZ plane, sampled with screen-space
-// derivative for crisp 1-pixel lines at any zoom — no texture, no MSAA needed.
-fn grid_xz(p: vec3<f32>, step: f32) -> f32 {
-  let q = abs(fract(p.xz / step - 0.5) - 0.5) * step;
+// Analytical sub-pixel grid.
+// Compute shaders cannot use fragment derivatives (fwidth/dpdx/dpdy), so
+// line width is estimated in cs_main from depth and viewport height.
+fn grid_xy(p: vec3<f32>, step: f32) -> f32 {
+  let q = abs(fract(p.xy / step - 0.5) - 0.5) * step;
   return min(q.x, q.y);
 }
 
@@ -349,12 +349,14 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= dims.x || gid.y >= dims.y) { return; }
 
   let res = vec2<f32>(f32(dims.x), f32(dims.y));
-  let uv = (vec2<f32>(f32(gid.x), f32(gid.y)) + vec2<f32>(0.5)) / res * 2.0 - 1.0;
+  let px = (vec2<f32>(f32(gid.x), f32(gid.y)) + vec2<f32>(0.5)) / res;
+  let uv = vec2<f32>(px.x * 2.0 - 1.0, 1.0 - px.y * 2.0);
+  let lens_uv = uv - cam.centerOffset;
   let aspect = res.x / res.y;
   let dir = normalize(
     cam.fwd
-    + cam.right * (uv.x * aspect * cam.tanHalfFovY)
-    + cam.up    * (uv.y * cam.tanHalfFovY)
+    + cam.right * (lens_uv.x * aspect * cam.tanHalfFovY)
+    + cam.up    * (lens_uv.y * cam.tanHalfFovY)
   );
 
   // Sphere-trace.
@@ -370,24 +372,25 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   var col = vec3<f32>(0.035, 0.035, 0.045);
 
-  // Ground-plane intersection for analytical grid (Phase 0 minimal grid).
-  // Solves cam.pos.y + dir.y * tg = 0  → tg.
-  if (abs(dir.y) > 1e-4) {
-    let tg = -cam.pos.y / dir.y;
+  // Ground-plane intersection for analytical grid (Banger is Z-up).
+  // Solves cam.pos.z + dir.z * tg = 0  → tg. Gated by the Scene
+  // Collection "Grid" eye toggle (cam.showGrid).
+  if (cam.showGrid > 0.5 && abs(dir.z) > 1e-4) {
+    let tg = -cam.pos.z / dir.z;
     if (tg > 0.0 && (!hit || tg < t)) {
       let p = cam.pos + dir * tg;
-      let g = grid_xz(p, 1.0);
-      let w = fwidth(g);
-      let line = 1.0 - smoothstep(0.0, w * 1.5, g);
+      let g = grid_xy(p, 2.5);
+      let pixel_world = max(0.0025, (2.0 * tg * cam.tanHalfFovY) / max(res.y, 1.0));
+      let grid_width = pixel_world * 1.35;
+      let axis_width = pixel_world * 2.2;
+      let line = 1.0 - smoothstep(0.0, grid_width, g);
       let fade = exp(-tg * 0.012);
       col = mix(col, vec3<f32>(0.45, 0.46, 0.50), line * fade * 0.8);
-      // Red X axis, green Z axis (sub-pixel).
-      let ax = abs(p.z);
+      // Red X axis, green Y axis on the horizontal Z=0 floor.
+      let ax = abs(p.y);
       let az = abs(p.x);
-      let wx = fwidth(ax);
-      let wz = fwidth(az);
-      col = mix(col, vec3<f32>(0.90, 0.25, 0.25), (1.0 - smoothstep(0.0, wx * 1.5, ax)) * fade);
-      col = mix(col, vec3<f32>(0.25, 0.85, 0.40), (1.0 - smoothstep(0.0, wz * 1.5, az)) * fade);
+      col = mix(col, vec3<f32>(0.90, 0.25, 0.25), (1.0 - smoothstep(0.0, axis_width, ax)) * fade);
+      col = mix(col, vec3<f32>(0.25, 0.85, 0.40), (1.0 - smoothstep(0.0, axis_width, az)) * fade);
     }
   }
 
@@ -447,6 +450,9 @@ export interface IngenCamera {
   right: [number, number, number];
   up: [number, number, number];
   tanHalfFovY: number;
+  centerOffset?: [number, number];
+  /** Ground grid visibility — defaults to shown when omitted. */
+  showGrid?: boolean;
 }
 
 // FNV-1a 32-bit hash over a Uint32 stream. Fast inline loop, no deps.
@@ -845,10 +851,10 @@ export class IngenRender {
     // Hash camera before writing it to the UBO — saves a writeBuffer on hits.
     const camU = new Float32Array(24);
     camU[0] = cam.pos[0]; camU[1] = cam.pos[1]; camU[2] = cam.pos[2]; camU[3] = cam.tanHalfFovY;
-    camU[4] = cam.fwd[0]; camU[5] = cam.fwd[1]; camU[6] = cam.fwd[2]; camU[7] = 0;
+    camU[4] = cam.fwd[0]; camU[5] = cam.fwd[1]; camU[6] = cam.fwd[2]; camU[7] = cam.showGrid === false ? 0 : 1;
     camU[8] = cam.right[0]; camU[9] = cam.right[1]; camU[10] = cam.right[2]; camU[11] = 0;
     camU[12] = cam.up[0]; camU[13] = cam.up[1]; camU[14] = cam.up[2]; camU[15] = 0;
-    camU[16] = w; camU[17] = h; camU[18] = 0; camU[19] = 0;
+    camU[16] = w; camU[17] = h; camU[18] = cam.centerOffset?.[0] ?? 0; camU[19] = cam.centerOffset?.[1] ?? 0;
     camU[20] = 0; camU[21] = 0; camU[22] = 0; camU[23] = 0;
     const camHash = fnv1a32(new Uint32Array(camU.buffer));
 
