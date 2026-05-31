@@ -14094,11 +14094,20 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
 }
 .mcp-tool-row:hover { background: rgba(238,238,232,0.03); border-color: rgba(238,238,232,0.10); }
 .mcp-tool-row.is-template { opacity: 0.65; }
+.mcp-tool-row.is-pack {
+  background: rgba(66,214,189,0.055);
+  border-color: rgba(66,214,189,0.18);
+}
+.mcp-tool-row.is-pack:hover {
+  background: rgba(66,214,189,0.075);
+  border-color: rgba(66,214,189,0.30);
+}
 .mcp-tool-row.program-row {
   grid-template-columns: minmax(150px, 260px) minmax(0, 1fr) auto auto;
 }
 .mcp-tool-name-wrap { min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
 .mcp-tool-name { color: #f1f1ea; font: 700 0.86rem "Geist Mono", ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-tool-row.is-pack .mcp-tool-name { color: rgba(112,235,214,0.96); }
 .mcp-tool-legacy { color: #575751; font: 0.64rem "Geist Mono", ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcp-tool-desc { color: #8a8a84; font-size: 0.76rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-tool-tag { color: #6a6a64; font: 0.65rem "Geist Mono", ui-monospace, Consolas, monospace; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 6px; border: 1px solid rgba(238,238,232,0.08); border-radius: 2px; }
@@ -14118,6 +14127,14 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   color: #f1f1ea;
   background: rgba(238,238,232,0.055);
   border-color: rgba(238,238,232,0.10);
+}
+.mcp-tool-row.is-pack .mcp-tool-copy {
+  color: rgba(112,235,214,0.95);
+  border-color: rgba(66,214,189,0.18);
+}
+.mcp-tool-row.is-pack .mcp-tool-copy:hover {
+  background: rgba(66,214,189,0.10);
+  border-color: rgba(66,214,189,0.30);
 }
 .mcp-tool-copy.copied {
   color: #42d6bd;
@@ -15547,7 +15564,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
 .banger-view {
   position: fixed;
   inset: 0;
-  z-index: 12;
+  z-index: 2;
   background: transparent;
   animation: bangerFadeIn 180ms ease-out;
   overflow: hidden;
@@ -15615,7 +15632,10 @@ body.banger-fullscreen-mode .topbar-proof-btn {
   box-shadow: 0 0 0 1px rgba(255,255,255,0.015) inset;
   height: calc(100% - 10px);
   margin-bottom: 10px;
-  padding: 0;
+  /* Keep the shell's standard padding (12px 6px 10px 8px) so the
+     Pinned / Recents / hardware / Profile stack lines up exactly like
+     every other section ; the Scene Collection panel below bleeds back
+     to full width via negative margins. */
   pointer-events: auto;
   overflow: hidden;
 }
@@ -15654,6 +15674,11 @@ body.banger-fullscreen-mode .topbar-proof-btn {
   flex-shrink: 0;
   height: auto;
   min-height: 0;
+  /* Bleed into the left-panel padding (top/right/left) so the Scene
+     Collection header stays full-width while the shell session list
+     below keeps the standard inset. Bottom kept at 0 — the flex gap
+     supplies the spacing to the Pinned section. */
+  margin: -12px -6px 0 -8px;
   background:
     linear-gradient(180deg, rgba(50,50,48,0.64), rgba(28,28,27,0.96) 18%, rgba(26,26,25,0.98));
   color: #cfcfc9;
