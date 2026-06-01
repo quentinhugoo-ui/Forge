@@ -959,6 +959,47 @@ fn atmosphere_scatter(rd: vec3<f32>, sun: vec3<f32>, fog: f32) -> vec3<f32> {
   return sky_env(rd) * (0.72 + fog * 0.22) + shaft;
 }
 
+// §28 Île lointaine — silhouette de montagne boisée posée à l'horizon dans
+// l'axe du soleil. Pas de raymarch (c'est lointain) : un profil de crête
+// analytique en azimut (somme de sinus = plusieurs pics) sous une enveloppe
+// qui la fait émerger puis retomber dans la mer, ombré par bandes d'altitude
+// (grève -> forêt -> roche) et noyé dans la brume d'horizon (aerial
+// perspective) pour vendre la distance. Retour rgb + couverture alpha.
+fn distant_island(rd: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
+  let caz = atan2(sun.y, sun.x);
+  let az = atan2(rd.y, rd.x);
+  var daz = az - caz;
+  daz = daz - 6.2831853 * round(daz / 6.2831853);   // wrap [-pi, pi]
+  let half_w = 0.32;
+  let env = 1.0 - smoothstep(half_w * 0.62, half_w, abs(daz));
+  if (env <= 0.0) { return vec4<f32>(0.0); }
+  // Ligne de crête (radians au-dessus de l'horizon) : 3 octaves de sinus
+  // donnent plusieurs sommets ; l'enveloppe tronque vers la côte.
+  let ridge = (
+      0.034 * (0.5 + 0.5 * sin(daz * 7.0 + 1.3))
+    + 0.022 * (0.5 + 0.5 * sin(daz * 13.0 - 0.7))
+    + 0.013 * (0.5 + 0.5 * sin(daz * 23.0 + 2.1))
+  ) * pow(env, 0.6) + 0.004;
+  let base = -0.006;                                  // pied juste sous l'horizon
+  let elev = asin(clamp(rd.z, -1.0, 1.0));
+  if (elev < base || elev > base + ridge) { return vec4<f32>(0.0); }
+  let h = (elev - base) / max(ridge, 1.0e-4);         // hauteur normalisée [0,1]
+  let tex = terrain_fbm(vec2<f32>(daz * 26.0, h * 9.0) + vec2<f32>(31.0, 7.0), 4u);
+  // Bandes d'altitude : grève rocheuse, forêt (mottée par le bruit), roche nue.
+  let sand    = vec3<f32>(0.32, 0.29, 0.24);
+  let forest  = vec3<f32>(0.06, 0.15, 0.07);
+  let forest2 = vec3<f32>(0.11, 0.22, 0.10);
+  let rock    = vec3<f32>(0.26, 0.24, 0.22);
+  var alb = mix(sand, mix(forest, forest2, tex), smoothstep(0.04, 0.20, h));
+  alb = mix(alb, rock, smoothstep(0.60, 0.86, h));
+  let shade = 0.62 + 0.38 * (0.5 + 0.5 * sin(daz * 7.0 + 1.3));   // relief diffus
+  var c = alb * shade;
+  c = c + vec3<f32>(1.0, 0.6, 0.34) * smoothstep(0.80, 1.0, h) * 0.45;   // crêtes ourlées de soleil
+  c = mix(c, vec3<f32>(0.95, 0.66, 0.56), 0.5);       // aerial perspective vers la brume rosée
+  let edge_top = smoothstep(0.0, 0.012, (base + ridge) - elev);   // anti-alias du sommet
+  return vec4<f32>(c, env * edge_top);
+}
+
 // --- §21 Ocean : value-noise FBM for animated wave height + normal. ---
 fn hash2(p: vec2<f32>) -> f32 {
   return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
@@ -1343,6 +1384,13 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   var col = vec3<f32>(0.070, 0.072, 0.075);
   if (cam.skyEnabled > 0.5) {
     col = sky_env(dir);
+    // §28 — île lointaine compositée sur le ciel uniquement pour les rayons
+    // de fond (pas de géométrie SDF devant). L'océan, tracé plus bas, masque
+    // sa base ; l'aerial perspective est déjà cuite dans sa couleur.
+    if (!hit) {
+      let isle = distant_island(dir, sun);
+      col = mix(col, isle.rgb, isle.a);
+    }
   }
 
   // Ground-plane intersection for analytical grid (Banger is Z-up).
