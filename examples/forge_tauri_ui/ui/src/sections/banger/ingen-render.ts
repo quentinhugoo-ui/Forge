@@ -743,6 +743,23 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // viewport is idle. Sample 0 is the un-jittered centre so the first
   // (in-motion) frame stays crisp and responsive.
   let si = u32(cam.sampleIndex + 0.5);
+
+  // §24 Checkerboard — during motion (si==0) march only half the pixels each
+  // frame (alternating parity) and reuse the other half from history. ~2×
+  // fewer primary marches while moving ; static frames stay full-res so they
+  // converge cleanly. Flags ride in the history header (.w of slots 1/2).
+  let pix0 = gid.y * dims.x + gid.x;
+  if (history[1].w > 0.5 && si == 0u) {
+    let parity = u32(history[2].w + 0.5);
+    if (((gid.x + gid.y) & 1u) != parity) {
+      let h = history[4u + pix0];           // last frame's value at this pixel
+      accum[pix0] = h;
+      textureStore(outTex, vec2<i32>(i32(gid.x), i32(gid.y)),
+        vec4<f32>(aces_tonemap(h.xyz * 1.1), 1.0));
+      return;
+    }
+  }
+
   var jit = vec2<f32>(0.0);
   if (si > 0u) {
     jit = vec2<f32>(halton(si + 1u, 2u), halton(si + 1u, 3u)) - vec2<f32>(0.5);
@@ -1150,7 +1167,11 @@ export class IngenRender {
   // `prevBasis` holds the previous frame's camera for the reproject header.
   private historyBuffer: GPUBuffer | null = null;
   private reproject = false;
-  private readonly prevBasis = new Float32Array(16); // pos|enable, fwd, right, up
+  // §24 Checkerboard — march half the pixels per motion frame. Parity flips
+  // each rendered frame ; flags ride in the history header's spare .w slots.
+  private checkerboard = false;
+  private frameParity = 0;
+  private readonly prevBasis = new Float32Array(16); // pos|enable, fwd|cb, right|parity, up
   private prevBasisValid = false;
   // §20 Fusion v2 — per-splat sun-shadow buffer (one f32 per splat) plus the
   // dirty flag that gates the pre-pass. Splat shadows depend only on splat
@@ -1893,10 +1914,13 @@ export class IngenRender {
       camU[22] = this.probeSample;  // probe bake accumulation seed
       this.device.queue.writeBuffer(this.camBuffer!, 0, camU);
 
-      // §23 — temporal reprojection : write the history header = the PREVIOUS
-      // frame's camera (enabled only once a valid prior frame exists).
+      // §23/§24 — write the history header = the PREVIOUS frame's camera plus
+      // the reproject enable (.w of slot 0) and the checkerboard enable +
+      // parity (.w of slots 1/2). Enabled only once a valid prior frame exists.
       if (this.historyBuffer) {
         this.prevBasis[3] = (this.reproject && this.prevBasisValid) ? 1 : 0;
+        this.prevBasis[7] = (this.checkerboard && this.prevBasisValid) ? 1 : 0;
+        this.prevBasis[11] = this.frameParity;
         this.device.queue.writeBuffer(this.historyBuffer, 0, this.prevBasis);
       }
 
@@ -1932,12 +1956,14 @@ export class IngenRender {
       pass.dispatchWorkgroups(gx, gy, 1);
       pass.end();
 
-      // §23 — copy this frame's result into the history pixel region (after
-      // the 4-vec4 header) so the next frame can reproject from it. Gated by
-      // the toggle so the copy costs nothing when reprojection is off.
-      if (this.reproject && this.historyBuffer && this.accumBuffer) {
+      // §23/§24 — copy this frame's result into the history pixel region (after
+      // the 4-vec4 header) so the next frame can reproject / fill from it.
+      // Needed by both reprojection and checkerboard ; skipped when both off.
+      if ((this.reproject || this.checkerboard) && this.historyBuffer && this.accumBuffer) {
         encoder.copyBufferToBuffer(this.accumBuffer, 0, this.historyBuffer, 64, this.accumPixels * 16);
       }
+      // §24 — alternate the checkerboard half each rendered frame.
+      this.frameParity ^= 1;
 
       this.sampleCount += 1;
       this.cachedCamHash = camHash;
@@ -2027,6 +2053,19 @@ export class IngenRender {
    */
   setReproject(on: boolean): void {
     this.reproject = !!on;
+    this.cacheValid = false;
+  }
+
+  /**
+   * §24 — enable/disable checkerboard rendering (default off). When on, a
+   * moving view marches only half the pixels each frame (alternating) and
+   * reuses the other half from history → ~2× fewer primary marches in motion.
+   * Static frames stay full-resolution. Pairs naturally with reprojection ;
+   * watch for checkerboard shimmer on fast motion (a sign to add motion-
+   * compensated fill for the reused half).
+   */
+  setCheckerboard(on: boolean): void {
+    this.checkerboard = !!on;
     this.cacheValid = false;
   }
 
