@@ -1,9 +1,9 @@
 // @ts-nocheck
 import "./controller.js";
-import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, recenterMeshXY, recenterSceneXY, serializeScene } from "./scenes.js";
+import { DEFAULT_SCENE, SDF_MAX_GAUSSIANS, bakeGaussiansOnSurface, miniPathTraceScene, recenterMeshXY, recenterSceneXY, serializeScene } from "./scenes.js";
 import { IngenRender, NSDF_TOTAL_FLOATS } from "./ingen-render.js";
 import { parseSplatFile } from "./splat-loader.js";
-import { buildSphericalDroneSceneOps, SPHERICAL_DRONE_PARAMS } from "./drone-scene.js";
+import { buildSphericalDroneSceneOps, SPHERICAL_DRONE_PARAMS, SPHERICAL_DRONE_SCENE_PARTS } from "./drone-scene.js";
 import * as worlds from "./worlds.js";
 
 // Banger — viewport hybride : INGEN Render (WebGPU compute, SDF + grille
@@ -24,6 +24,7 @@ import * as worlds from "./worlds.js";
     statFaces: $("bangerStatFaces"),
     statFps: $("bangerStatFps"),
     statCache: $("bangerStatCache"),
+    newSessionBtn: $("bangerNewSessionBtn"),
     gizmo:   $("bangerGizmo"),
     exitBtn: $("bangerExitBtn"),
     stage:   null,
@@ -58,26 +59,56 @@ import * as worlds from "./worlds.js";
   // tout WebGL2 ; le fallback transitoire ici n'est qu'un guard de boot.
   let ingenRender = null;
   let ingenReady = false;
+  const BANGER_GPU_QUALITY_DIM = 1180;
+  const BANGER_GPU_WARM_START_DIM = 420;
+  let bangerGpuWarmStartUntilMs = 0;
+  let bangerFrameTimer = 0;
   // INGEN §19.3 : the scene is data, not source. Banger starts empty by
   // default; future scenes are supplied by /newcompute_ -> /newobject_ or
   // window.__forgeBangerSetScene without shader recompilation.
-  let sdfScene = serializeScene(DEFAULT_SCENE);
+  const BANGER_DEFAULT_NEWOBJECT = worlds.defaultOceanSunsetNewObject?.() || { ops: DEFAULT_SCENE, objectParts: [] };
+  let sdfScene = serializeScene(BANGER_DEFAULT_NEWOBJECT.ops || DEFAULT_SCENE);
+  let sdfSceneSourceOps = Array.isArray(BANGER_DEFAULT_NEWOBJECT.ops) ? [...BANGER_DEFAULT_NEWOBJECT.ops] : [];
+  let sdfSceneParts = [];
+  let bangerSessionBlank = false;
+  let bangerSessionId = "";
+  let bangerRecentRenderKey = "";
+  let bangerComputeRecentRows = "";
+  let bangerRecentPointerSelectAtMs = 0;
+  let bangerFallbackDrawn = false;
+  const BANGER_RECENTS_STORAGE_KEY = "forge.banger.recentSessions.v1";
+  const BANGER_CANVAS_SESSION_STORAGE_PREFIX = "forge.canvas.session.v1:";
   // INGEN §13 : 0 = lit render, 1 = Lipschitz heatmap.
   let sdfDebugMode = 0;
   // INGEN §19.5 : 1 = proxy-gaussian halo on raymarch misses (on by default).
   let sdfGlow = 1;
+  // Foliage quality: 0 off, 1 surface layer, 2 near impostors, 3 full impostors.
+  let sdfFoliageQuality = 2;
+  let sdfAutoFoliageQuality = true;
+  let sdfFoliageQualityTarget = 2;
+  let sdfFoliageAutoLastChangeMs = 0;
+  let sdfFoliageAutoStableTicks = 0;
+  let sdfFieldletCutState = { keys: new Set(), lastAtMs: 0 };
+  let sdfFieldletAutoBudget = true;
+  let sdfFieldletTargetPixelError = 1.35;
+  let sdfFieldletBrickBudget = 48;
+  let sdfFieldletAutoLastChangeMs = 0;
+  let sdfFieldletAutoStableTicks = 0;
   // INGEN §11 mesh→SDF — bounds CPU only (Phase 4 a retiré le upload
   // GL ; le binding WebGPU 3D-texture arrive en Phase 6).
   let meshSdfBoundsMin = new Float32Array([0, 0, 0]);
   let meshSdfBoundsMax = new Float32Array([0, 0, 0]);
   let meshSdfLoaded = 0;
   // INGEN §19.5 baked Gaussian splats — derived from the live SDF scene.
-  let sdfGaussians = bakeGaussiansOnSurface(DEFAULT_SCENE, 0);
+  let sdfGaussians = bakeGaussiansOnSurface(sdfSceneSourceOps, 0);
   const sdfDefaultGaussianCount = 32;
   // §world-building atmosphere — off by default to preserve the
   // existing transparent-canvas behaviour for non-world scenes.
-  let sdfSky = 0;
-  let sdfFog = 0;
+  let sdfSky = BANGER_DEFAULT_NEWOBJECT.renderControls?.skyEnabled === false ? 0 : 1;
+  let sdfFog = BANGER_DEFAULT_NEWOBJECT.renderControls?.fogEnabled === false ? 0 : 1;
+  let sdfWaterLevel = BANGER_DEFAULT_NEWOBJECT.renderControls?.waterLevel ?? null;
+  let sdfReproject = false;
+  let sdfCheckerboard = false;
 
   // Camera state survives suspend/resume — it's pure JS, no GPU resources.
   let camera = {
@@ -86,6 +117,14 @@ import * as worlds from "./worlds.js";
     distance: 22,
     target: [0, 0, 0],
   };
+  if (BANGER_DEFAULT_NEWOBJECT.renderControls?.camera) {
+    camera = {
+      azimuth: BANGER_DEFAULT_NEWOBJECT.renderControls.camera.azimuth,
+      elevation: BANGER_DEFAULT_NEWOBJECT.renderControls.camera.elevation,
+      distance: BANGER_DEFAULT_NEWOBJECT.renderControls.camera.distance,
+      target: [...BANGER_DEFAULT_NEWOBJECT.renderControls.camera.target],
+    };
+  }
   let lastFps = 0, fpsAccum = 0, fpsFrames = 0, fpsTimer = 0;
   let raf = 0;
   let boomRenderDirty = true;
@@ -626,11 +665,7 @@ import * as worlds from "./worlds.js";
       exposeBoomAuditState();
     };
     window.__forgeBoomClearComputeCache = () => {
-      boomComputeCache.clear();
-      boomComputeCacheBytes = 0;
-      boomCacheStats = { hits: 0, misses: 0, evictions: 0, evictedBytes: 0, oversizedSkips: 0 };
-      boomAuditLog = [];
-      exposeBoomAuditState();
+      clearBoomComputeCache();
     };
     window.__forgeBoomClearGpuResourceCache = () => {
       clearBoomGpuResourceCache();
@@ -681,6 +716,232 @@ import * as worlds from "./worlds.js";
     return boomAnimationIsActive() || now < boomRenderContinuousUntil;
   }
 
+  function selectedForgeSessionId() {
+    try {
+      const snapshot = window.__forgeCurrentSessionSnapshot?.();
+      return String(snapshot?.currentAlphaSessionJobId || window.__forgeCurrentAlphaSessionId?.() || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function bindBangerToSelectedSession(_reason = "bind") {
+    bangerSessionId = selectedForgeSessionId();
+    return bangerSessionId;
+  }
+
+  function bangerSessionMatchesSelected(sessionId = bangerSessionId) {
+    return String(sessionId || "") === selectedForgeSessionId();
+  }
+
+  function bangerGpuMayRun() {
+    return isViewVisible();
+  }
+
+  function loadBangerRecentSessions() {
+    try {
+      const raw = window.localStorage?.getItem?.(BANGER_RECENTS_STORAGE_KEY) || "[]";
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.filter((entry) => entry?.id).slice(0, 18)
+        : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveBangerRecentSessions(entries) {
+    try {
+      window.localStorage?.setItem?.(BANGER_RECENTS_STORAGE_KEY, JSON.stringify((entries || []).slice(0, 18)));
+    } catch (_) {}
+  }
+
+  function bangerSessionDisplayTitle(title, createdAtMs = Date.now()) {
+    const value = String(title || "").trim();
+    if (value && !/^new session$/i.test(value)) return value;
+    try {
+      return `New session ${new Date(createdAtMs || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    } catch (_) {
+      return "New session";
+    }
+  }
+
+  function bangerSessionTitleIsGeneric(title) {
+    const value = String(title || "").trim();
+    return !value || /^new session(?:\s+\d{1,2}:\d{2})?$/i.test(value) || /^nouvelle session/i.test(value);
+  }
+
+  function bangerStoredSessionMessages(sessionId) {
+    const id = String(sessionId || "").trim();
+    if (!id) return [];
+    try {
+      const payload = JSON.parse(window.localStorage?.getItem?.(`${BANGER_CANVAS_SESSION_STORAGE_PREFIX}${id}`) || "null");
+      return Array.isArray(payload?.messages) ? payload.messages : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function bangerSessionHasUserContent(sessionId) {
+    return bangerStoredSessionMessages(sessionId).some((message) => (
+      String(message?.role || "").trim() === "user"
+      && String(message?.text || "").trim().length > 0
+    ));
+  }
+
+  function compactBangerRecentSessions(entries = loadBangerRecentSessions(), preferredEmptyId = "") {
+    const preferred = String(preferredEmptyId || "").trim();
+    const seen = new Set();
+    const unique = [];
+    for (const entry of entries || []) {
+      const id = String(entry?.id || "").trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      unique.push(entry);
+    }
+    const emptyIds = unique
+      .map((entry) => String(entry.id || "").trim())
+      .filter((id) => id && !bangerSessionHasUserContent(id));
+    const keepEmptyId = preferred && emptyIds.includes(preferred)
+      ? preferred
+      : (emptyIds[0] || "");
+    const compact = unique.filter((entry) => {
+      const id = String(entry.id || "").trim();
+      return bangerSessionHasUserContent(id) || !emptyIds.length || id === keepEmptyId;
+    });
+    if (compact.length !== unique.length || unique.length !== (entries || []).length) {
+      saveBangerRecentSessions(compact);
+    }
+    return compact;
+  }
+
+  function reusableEmptyBangerSessionId(preferredId = selectedForgeSessionId()) {
+    const preferred = String(preferredId || "").trim();
+    if (preferred && !bangerSessionHasUserContent(preferred)) return preferred;
+    const entry = compactBangerRecentSessions(loadBangerRecentSessions(), preferred)
+      .find((candidate) => !bangerSessionHasUserContent(candidate.id));
+    return String(entry?.id || "").trim();
+  }
+
+  function rememberBangerRecentSession(id, title = "New session", options = {}) {
+    const sessionId = String(id || "").trim();
+    if (!sessionId) return null;
+    const now = Date.now();
+    const loaded = loadBangerRecentSessions();
+    const previous = loaded.find((entry) => String(entry.id || "") === sessionId) || null;
+    const existing = loaded.filter((entry) => String(entry.id || "") !== sessionId);
+    const createdAtMs = previous?.createdAtMs || now;
+    const entry = {
+      id: sessionId,
+      title: bangerSessionDisplayTitle(title || previous?.title || "New session", createdAtMs),
+      updatedAtMs: now,
+      createdAtMs,
+    };
+    if (options.touch === false && previous) {
+      const updated = loaded.map((candidate) => (
+        String(candidate.id || "") === sessionId
+          ? { ...candidate, ...entry, updatedAtMs: candidate.updatedAtMs || entry.updatedAtMs }
+          : candidate
+      ));
+      saveBangerRecentSessions(updated);
+      return entry;
+    }
+    saveBangerRecentSessions(compactBangerRecentSessions([entry, ...existing], sessionId));
+    return entry;
+  }
+
+  function syncBangerRecentSessionTitle(detail = {}) {
+    const sessionId = String(
+      detail?.currentAlphaSessionJobId
+        || detail?.selectedForgeJobId
+        || detail?.activeAlphaSessionJobId
+        || selectedForgeSessionId()
+        || bangerSessionId
+        || ""
+    ).trim();
+    const title = String(detail?.sessionTitle || detail?.title || "").trim();
+    if (!sessionId || bangerSessionTitleIsGeneric(title)) return false;
+    const loaded = loadBangerRecentSessions();
+    let changed = false;
+    const updated = loaded.map((entry) => {
+      if (String(entry?.id || "") !== sessionId) return entry;
+      if (String(entry?.title || "") === title) return entry;
+      changed = true;
+      return {
+        ...entry,
+        title,
+        updatedAtMs: Number(entry?.updatedAtMs || entry?.createdAtMs || Date.now()),
+      };
+    });
+    if (!changed) return false;
+    saveBangerRecentSessions(updated);
+    bangerRecentRenderKey = "";
+    if (isViewVisible()) renderBangerRecentSessions();
+    return true;
+  }
+
+  function selectBangerRecentSession(sessionId) {
+    const id = String(sessionId || "").trim();
+    if (!id) return false;
+    bangerSessionId = id;
+    const previous = loadBangerRecentSessions().find((entry) => String(entry.id || "") === id) || null;
+    rememberBangerRecentSession(id, previous?.title || "New session", { touch: false });
+    renderBangerRecentSessions();
+    requestBoomRender("recent-session-selected", 120);
+    window.setTimeout(() => {
+      if (!isViewVisible()) return;
+      if (selectedForgeSessionId() !== id && typeof window.__forgeSelectSession === "function") {
+        try { window.__forgeSelectSession(id); } catch (_) {}
+      }
+    }, 0);
+    return true;
+  }
+
+  function bangerRecentSessionIdFromEvent(event) {
+    const target = event?.target;
+    const row = target?.closest?.(
+      "#forgeJobList [data-banger-session-id], #forgeJobList [data-job-id], #forgePinnedJobList [data-banger-session-id], #forgePinnedJobList [data-job-id]"
+    );
+    if (!row || row.matches?.("[data-compute-command]")) return "";
+    return String(row.dataset?.bangerSessionId || row.dataset?.jobId || "").trim();
+  }
+
+  function handleBangerRecentSessionPointer(event) {
+    if (!isViewVisible()) return false;
+    if (event.type === "pointerdown" && event.button !== 0) return false;
+    const sessionId = bangerRecentSessionIdFromEvent(event);
+    if (!sessionId) return false;
+    const now = Date.now();
+    if (event.type === "click" && now - bangerRecentPointerSelectAtMs < 450) return true;
+    bangerRecentPointerSelectAtMs = now;
+    selectBangerRecentSession(sessionId);
+    return true;
+  }
+
+  function renderBangerRecentSessions(jobList = document.getElementById("forgeJobList"), computeRows = bangerComputeRecentRows) {
+    if (!jobList) return;
+    const activeId = String(bangerSessionId || selectedForgeSessionId() || "").trim();
+    const recents = compactBangerRecentSessions(loadBangerRecentSessions(), activeId);
+    const sessionRows = recents.map((entry) => {
+      const id = String(entry.id || "");
+      const title = String(entry.title || "New session");
+      const updated = Number(entry.updatedAtMs || entry.createdAtMs || 0);
+      const when = updated > 0 ? new Date(updated).toLocaleDateString() : "saved";
+      const active = id && id === activeId ? " active" : "";
+      return `<li class="job-item${active}" data-banger-session-id="${escapeBoomHtml(id)}" data-job-id="${escapeBoomHtml(id)}">
+        <span class="job-dot"></span>
+        <span class="job-title">${escapeBoomHtml(title)}</span>
+        <span class="job-meta">${escapeBoomHtml(when)}</span>
+      </li>`;
+    }).join("");
+    const rows = [sessionRows, computeRows].filter(Boolean).join("");
+    const renderKey = `${activeId}::${rows || "empty"}`;
+    if (renderKey === bangerRecentRenderKey && jobList.children.length) return;
+    bangerRecentRenderKey = renderKey;
+    jobList.innerHTML = rows || '<li class="job-item muted">No recent session yet</li>';
+    try { window.ForgeSidebarCell?.syncScrollbars?.(); } catch (_) {}
+  }
+
   function requestBoomRender(reason = "dirty", continuousMs = 0) {
     boomRenderDirty = true;
     boomRenderReason = reason || "dirty";
@@ -690,7 +951,7 @@ import * as worlds from "./worlds.js";
     if (keepWarmMs > 0) {
       boomRenderContinuousUntil = Math.max(boomRenderContinuousUntil, boomNowMs() + keepWarmMs);
     }
-    if (gpuState === "active" && ingenRender && !raf) {
+    if (gpuState === "active" && ingenRender && !raf && bangerGpuMayRun()) {
       raf = requestAnimationFrame(render);
     }
   }
@@ -968,6 +1229,14 @@ import * as worlds from "./worlds.js";
     boomGpuResourceCache.clear();
     boomGpuResourceBytes = 0;
     boomGpuStats = { hits: 0, misses: 0, evictions: 0, evictedBytes: 0, protectedSkips: 0, oversizedSkips: 0 };
+  }
+
+  function clearBoomComputeCache() {
+    boomComputeCache.clear();
+    boomComputeCacheBytes = 0;
+    boomCacheStats = { hits: 0, misses: 0, evictions: 0, evictedBytes: 0, oversizedSkips: 0 };
+    boomAuditLog = [];
+    exposeBoomAuditState();
   }
 
   function boomHashText(hash, text) {
@@ -3653,6 +3922,7 @@ import * as worlds from "./worlds.js";
       if (boomScene.propertyTab === "modifiers" && !isBoomMeshItem(item)) boomScene.propertyTab = "object";
       renderBoomSidebar();
       renderBoomViewportHud();
+      requestBoomRender("scene-item-select", 160);
       return boomKasmPatchAppliedResult(command, { item: { id: item.id, name: item.name, type: item.type } });
     }
 
@@ -4277,6 +4547,7 @@ import * as worlds from "./worlds.js";
       if (boomScene.propertyTab === "modifiers" && !isBoomMeshItem(item)) boomScene.propertyTab = "object";
       renderBoomSidebar();
       renderBoomViewportHud();
+      requestBoomRender("scene-item-select", 160);
       return boomToolResult(normalized, true, {
         item: { id: item.id, name: item.name, type: item.type },
       });
@@ -4440,6 +4711,234 @@ import * as worlds from "./worlds.js";
     if (vertices > 0) bits.push(`${vertices.toLocaleString("en-US")} verts`);
     if (faces > 0) bits.push(`${faces.toLocaleString("en-US")} faces`);
     return bits.join(" · ");
+  }
+
+  function isBoomSdfPartItem(item) {
+    return !!item?.meta?.sdfPart;
+  }
+
+  function boomSdfPartStats(item) {
+    const meta = item?.meta || {};
+    const bits = [];
+    const role = String(meta.role || "").trim();
+    if (role) bits.push(role);
+    const opCount = Number(meta.primitiveRange?.count || meta.opCount || 0);
+    if (opCount > 0) bits.push(`${opCount} SDF op${opCount === 1 ? "" : "s"}`);
+    const curationCount = Array.isArray(meta.curationRefs) ? meta.curationRefs.length : 0;
+    if (curationCount > 0) bits.push(`${curationCount} curation proof${curationCount === 1 ? "" : "s"}`);
+    return bits.join(" - ");
+  }
+
+  function boomSceneItemMeta(item) {
+    if (isBoomMeshItem(item)) return boomImportedMeshStats(item);
+    if (isBoomSdfPartItem(item)) return boomSdfPartStats(item);
+    return "";
+  }
+
+  function sdfSceneRecenterOffset(ops = []) {
+    let sumX = 0;
+    let sumY = 0;
+    let n = 0;
+    for (const op of ops || []) {
+      if (op?.op === "sphere" || op?.op === "box" || op?.op === "torus" || op?.op === "roundedBox") {
+        sumX += Number(op.center?.[0] || 0);
+        sumY += Number(op.center?.[1] || 0);
+        n += 1;
+      } else if (op?.op === "capsule") {
+        sumX += 0.5 * (Number(op.a?.[0] || 0) + Number(op.b?.[0] || 0));
+        sumY += 0.5 * (Number(op.a?.[1] || 0) + Number(op.b?.[1] || 0));
+        n += 1;
+      }
+    }
+    if (!n) return [0, 0];
+    const dx = sumX / n;
+    const dy = sumY / n;
+    return [Math.abs(dx) < 1e-6 ? 0 : dx, Math.abs(dy) < 1e-6 ? 0 : dy];
+  }
+
+  function sdfPointShiftXY(point, offset = [0, 0]) {
+    return [
+      Number(point?.[0] || 0) - Number(offset?.[0] || 0),
+      Number(point?.[1] || 0) - Number(offset?.[1] || 0),
+      Number(point?.[2] || 0),
+    ];
+  }
+
+  function normalizeSdfBounds(bounds, offset = [0, 0]) {
+    const min = bounds?.min || bounds?.minimum || bounds?.lo || bounds?.a;
+    const max = bounds?.max || bounds?.maximum || bounds?.hi || bounds?.b;
+    if (Array.isArray(min) && Array.isArray(max) && min.length >= 3 && max.length >= 3) {
+      return { min: sdfPointShiftXY(min, offset), max: sdfPointShiftXY(max, offset) };
+    }
+    return null;
+  }
+
+  function mergeSdfBounds(a, b) {
+    if (!a) return b || null;
+    if (!b) return a || null;
+    return {
+      min: [Math.min(a.min[0], b.min[0]), Math.min(a.min[1], b.min[1]), Math.min(a.min[2], b.min[2])],
+      max: [Math.max(a.max[0], b.max[0]), Math.max(a.max[1], b.max[1]), Math.max(a.max[2], b.max[2])],
+    };
+  }
+
+  function sdfPrimitiveBounds(op) {
+    if (!op) return null;
+    if (op.op === "sphere") {
+      const c = op.center || [0, 0, 0];
+      const r = Math.max(0, Number(op.radius || 0));
+      return { min: [c[0] - r, c[1] - r, c[2] - r], max: [c[0] + r, c[1] + r, c[2] + r] };
+    }
+    if (op.op === "box") {
+      const c = op.center || [0, 0, 0];
+      const h = op.halfExtents || [0, 0, 0];
+      return { min: [c[0] - h[0], c[1] - h[1], c[2] - h[2]], max: [c[0] + h[0], c[1] + h[1], c[2] + h[2]] };
+    }
+    if (op.op === "roundedBox") {
+      const c = op.center || [0, 0, 0];
+      const h = op.halfExtents || [0, 0, 0];
+      const r = Math.max(0, Number(op.cornerRadius || 0));
+      return { min: [c[0] - h[0] - r, c[1] - h[1] - r, c[2] - h[2] - r], max: [c[0] + h[0] + r, c[1] + h[1] + r, c[2] + h[2] + r] };
+    }
+    if (op.op === "torus") {
+      const c = op.center || [0, 0, 0];
+      const rr = Math.max(0, Number(op.majorRadius || 0)) + Math.max(0, Number(op.minorRadius || 0));
+      const z = Math.max(0, Number(op.minorRadius || 0));
+      return { min: [c[0] - rr, c[1] - rr, c[2] - z], max: [c[0] + rr, c[1] + rr, c[2] + z] };
+    }
+    if (op.op === "capsule") {
+      const a = op.a || [0, 0, 0];
+      const b = op.b || [0, 0, 0];
+      const r = Math.max(0, Number(op.radius || 0));
+      return {
+        min: [Math.min(a[0], b[0]) - r, Math.min(a[1], b[1]) - r, Math.min(a[2], b[2]) - r],
+        max: [Math.max(a[0], b[0]) + r, Math.max(a[1], b[1]) + r, Math.max(a[2], b[2]) + r],
+      };
+    }
+    return null;
+  }
+
+  function sdfBoundsForOps(ops = []) {
+    let bounds = null;
+    for (const op of ops || []) bounds = mergeSdfBounds(bounds, sdfPrimitiveBounds(op));
+    return bounds;
+  }
+
+  function normalizeSdfPartRange(part, sceneOps) {
+    const range = part?.primitiveRange || part?.opRange || part?.range || null;
+    let start = Number(range?.start ?? range?.offset ?? part?.primitiveStart ?? part?.opStart ?? 0);
+    let count = Number(range?.count ?? part?.primitiveCount ?? part?.opCount ?? 0);
+    if (!count && Array.isArray(part?.opIndices)) count = part.opIndices.length;
+    start = Math.max(0, Math.min(sceneOps.length, Math.floor(Number.isFinite(start) ? start : 0)));
+    count = Math.max(0, Math.min(sceneOps.length - start, Math.floor(Number.isFinite(count) ? count : 0)));
+    return { start, count };
+  }
+
+  function sdfPartId(part, index) {
+    const raw = String(part?.id || part?.name || part?.label || `part-${index + 1}`).trim().toLowerCase();
+    const slug = raw.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || `part-${index + 1}`;
+    return `sdf-part-${index + 1}-${slug}`;
+  }
+
+  function normalizeSdfSceneParts(rawParts, sceneOps = [], offset = [0, 0]) {
+    const sourceParts = Array.isArray(rawParts) ? rawParts : [];
+    const normalized = sourceParts.map((part, index) => {
+      const range = normalizeSdfPartRange(part, sceneOps);
+      const indexedOps = Array.isArray(part?.opIndices) ? part.opIndices.map((value) => sceneOps[Number(value)]).filter(Boolean) : [];
+      const rangedOps = range.count > 0 ? sceneOps.slice(range.start, range.start + range.count) : [];
+      const bounds = normalizeSdfBounds(part?.bounds || part?.aabb || part?.worldBounds || part?.boundingBox, offset)
+        || sdfBoundsForOps(indexedOps.length ? indexedOps : rangedOps)
+        || sdfBoundsForOps(sceneOps);
+      return {
+        id: sdfPartId(part, index),
+        partKey: String(part?.id || part?.key || index + 1),
+        name: String(part?.name || part?.label || `SDF part ${index + 1}`).trim() || `SDF part ${index + 1}`,
+        type: String(part?.type || "object").trim() || "object",
+        role: String(part?.role || part?.description || part?.purpose || "").trim(),
+        material: String(part?.material || part?.materialId || "").trim(),
+        primitiveRange: range,
+        opIndices: Array.isArray(part?.opIndices) ? part.opIndices.map((value) => Number(value)).filter(Number.isFinite) : [],
+        curationRefs: Array.isArray(part?.curationRefs)
+          ? part.curationRefs.map((value) => String(value)).filter(Boolean)
+          : (Array.isArray(part?.computeRefs) ? part.computeRefs.map((value) => String(value)).filter(Boolean) : []),
+        proofHash: String(part?.partHash || part?.proofHash || "").trim(),
+        bounds,
+      };
+    }).filter((part) => part.bounds);
+    if (!normalized.length && sceneOps.length > 0) {
+      normalized.push({
+        id: "sdf-part-1-object",
+        partKey: "object",
+        name: "SDF object",
+        type: "object",
+        role: "complete generated object",
+        material: "",
+        primitiveRange: { start: 0, count: sceneOps.length },
+        opIndices: [],
+        curationRefs: [],
+        proofHash: "",
+        bounds: sdfBoundsForOps(sceneOps),
+      });
+    }
+    return normalized.filter((part) => part.bounds);
+  }
+
+  function removeSdfPartSceneItems() {
+    for (let i = boomScene.items.length - 1; i >= 0; i -= 1) {
+      if (isBoomSdfPartItem(boomScene.items[i])) boomScene.items.splice(i, 1);
+    }
+    if (!boomScene.items.some((item) => item.id === boomScene.activeId)) boomScene.activeId = "grid";
+  }
+
+  function syncSdfPartSceneItems(parts = []) {
+    removeSdfPartSceneItems();
+    const items = parts.map((part, index) => ({
+      id: part.id,
+      name: part.name,
+      type: "object",
+      visible: true,
+      selectable: true,
+      renderable: true,
+      transform: {
+        location: [
+          Number(((part.bounds.min[0] + part.bounds.max[0]) * 0.5).toFixed(4)),
+          Number(((part.bounds.min[1] + part.bounds.max[1]) * 0.5).toFixed(4)),
+          Number(((part.bounds.min[2] + part.bounds.max[2]) * 0.5).toFixed(4)),
+        ],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        mode: "XYZ Euler",
+      },
+      meta: {
+        sdfPart: true,
+        partKey: part.partKey,
+        partIndex: index,
+        role: part.role,
+        material: part.material,
+        primitiveRange: part.primitiveRange,
+        opIndices: part.opIndices,
+        opCount: part.primitiveRange?.count || part.opIndices?.length || 0,
+        curationRefs: part.curationRefs,
+        proofHash: part.proofHash,
+        bounds: part.bounds,
+      },
+    }));
+    if (items.length) {
+      const lightIndex = boomScene.items.findIndex((item) => item.id === "light");
+      const insertAt = lightIndex >= 0 ? lightIndex + 1 : boomScene.items.length;
+      boomScene.items.splice(insertAt, 0, ...items);
+      boomScene.collectionExpanded = true;
+    }
+  }
+
+  function setSdfScenePartManifest(rawParts, sceneOps = [], offset = [0, 0]) {
+    sdfSceneParts = normalizeSdfSceneParts(rawParts, sceneOps, offset);
+    syncSdfPartSceneItems(sdfSceneParts);
+  }
+
+  function clearSdfScenePartManifest() {
+    sdfSceneParts = [];
+    removeSdfPartSceneItems();
   }
 
   function boomItemById(id) {
@@ -5867,14 +6366,14 @@ import * as worlds from "./worlds.js";
       ? boomObjectRows().map((item) => {
           const isActive = item.id === boomScene.activeId;
           const itemName = escapeBoomHtml(item.name);
-          const itemMeta = escapeBoomHtml(boomImportedMeshStats(item) || "Imported mesh");
+          const itemMeta = escapeBoomHtml(boomSceneItemMeta(item));
           return `
             <div class="boom-outliner-row boom-outliner-row-object${isActive ? " is-active" : ""}" data-action="select" data-id="${item.id}" role="treeitem" aria-selected="${isActive ? "true" : "false"}">
               <span class="boom-outliner-indent" aria-hidden="true"></span>
               <span class="boom-outliner-type boom-outliner-type-${item.type}" aria-hidden="true">${boomIcon(item.type)}</span>
               <span class="boom-outliner-copy">
                 <span class="boom-outliner-label">${itemName}</span>
-                ${item.type === "mesh" && item.meta?.imported
+                ${itemMeta
                   ? `<span class="boom-outliner-meta">${itemMeta}</span>`
                   : ""}
               </span>
@@ -7010,6 +7509,8 @@ import * as worlds from "./worlds.js";
       visible: item.visible,
       transform: item.transform,
     };
+    bindBangerToSelectedSession("mesh-import");
+    bangerSessionBlank = false;
     clearBoomComponentSelection();
     clearBoomRegionSelection();
     rebuildBoomDisplayMesh(sceneMesh);
@@ -7046,22 +7547,44 @@ import * as worlds from "./worlds.js";
   // refuse, le banger reste sombre et `ingenReady` ne flip jamais à true.
   function initGL() {
     if (!els.gpuCanvas || !IngenRender.supported()) {
+      drawBangerBootFallback("webgpu unavailable");
       console.warn("[banger] WebGPU indisponible — INGEN Render désactivé");
       return false;
     }
+    bangerGpuWarmStartUntilMs = boomNowMs() + 1400;
+    resize();
+    drawBangerBootFallback("webgpu init");
     ingenRender = new IngenRender(els.gpuCanvas);
+    ingenRender.setBootLite?.(2400);
     ingenRender.init().then((ok) => {
       ingenReady = !!ok;
-      if (ok) requestBoomRender("ingen-render-ready", 0);
+      if (ok) {
+        ingenRender?.setWater?.(sdfWaterLevel);
+        ingenRender?.setBootLite?.(1800);
+        requestBoomRender("ingen-render-ready", 0);
+        window.setTimeout(() => {
+          if (!ingenReady || !ingenRender) return;
+          bangerGpuWarmStartUntilMs = 0;
+          resize();
+          requestBoomRender("ingen-warm-start-quality", 160);
+        }, 1150);
+      } else {
+        drawBangerBootFallback("webgpu failed");
+      }
     }).catch((err) => {
       console.warn("[banger] INGEN Render init failed:", err);
       ingenRender = null;
+      drawBangerBootFallback("webgpu error");
     });
     return true;
   }
 
   function stopRenderLoop() {
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    if (bangerFrameTimer) {
+      window.clearTimeout(bangerFrameTimer);
+      bangerFrameTimer = 0;
+    }
   }
 
   // Phase 4 — releaseRender : seules les ressources INGEN Render sont
@@ -7093,11 +7616,92 @@ import * as worlds from "./worlds.js";
       els.canvas.width = w;
       els.canvas.height = h;
     }
-    if (els.gpuCanvas && (els.gpuCanvas.width !== w || els.gpuCanvas.height !== h)) {
-      els.gpuCanvas.width = w;
-      els.gpuCanvas.height = h;
+    // Cap the WebGPU raymarch resolution (CSS upscales the canvas to fill).
+    // The pointer/overlay canvas stays full-res so gizmo + hit-tests are
+    // exact ; only the per-pixel SDF cost scales down. On a modest GPU at
+    // 1080p+ this is the single biggest frame-time win. The progressive
+    // accumulator hides most of the softness once the view settles.
+    const warmStarting = bangerGpuWarmStartUntilMs > 0 && boomNowMs() < bangerGpuWarmStartUntilMs;
+    const MAX_GPU_DIM = warmStarting ? BANGER_GPU_WARM_START_DIM : BANGER_GPU_QUALITY_DIM;
+    const scale = Math.min(1, MAX_GPU_DIM / Math.max(w, h));
+    const gw = scale < 1 ? Math.max(2, Math.round(w * scale)) : w;
+    const gh = scale < 1 ? Math.max(2, Math.round(h * scale)) : h;
+    if (els.gpuCanvas && (els.gpuCanvas.width !== gw || els.gpuCanvas.height !== gh)) {
+      els.gpuCanvas.width = gw;
+      els.gpuCanvas.height = gh;
     }
-    if (ingenReady && ingenRender) ingenRender.resize(w, h);
+    if (ingenReady && ingenRender) ingenRender.resize(gw, gh);
+  }
+
+  function drawBangerBootFallback(reason = "boot") {
+    const canvas = els.canvas;
+    const ctx = canvas?.getContext?.("2d");
+    if (!canvas || !ctx) return;
+    const w = canvas.width || 2;
+    const h = canvas.height || 2;
+    ctx.save();
+    ctx.clearRect(0, 0, w, h);
+    const sky = ctx.createLinearGradient(0, 0, 0, h * 0.72);
+    sky.addColorStop(0, "rgba(62, 128, 218, 0.98)");
+    sky.addColorStop(0.52, "rgba(128, 176, 224, 0.96)");
+    sky.addColorStop(1, "rgba(238, 168, 94, 0.90)");
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+
+    const horizon = h * 0.53;
+    const sunX = w * 0.71;
+    const sunY = horizon - h * 0.035;
+    const sunR = Math.max(24, Math.min(w, h) * 0.052);
+    const glow = ctx.createRadialGradient(sunX, sunY, sunR * 0.15, sunX, sunY, sunR * 6.5);
+    glow.addColorStop(0, "rgba(255, 215, 90, 0.95)");
+    glow.addColorStop(0.16, "rgba(255, 147, 76, 0.46)");
+    glow.addColorStop(1, "rgba(255, 147, 76, 0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "rgba(255, 221, 84, 0.94)";
+    ctx.beginPath();
+    ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+    ctx.fill();
+
+    const mist = ctx.createLinearGradient(0, horizon - h * 0.12, 0, horizon + h * 0.14);
+    mist.addColorStop(0, "rgba(226, 235, 232, 0)");
+    mist.addColorStop(0.54, "rgba(226, 235, 232, 0.30)");
+    mist.addColorStop(1, "rgba(226, 235, 232, 0)");
+    ctx.fillStyle = mist;
+    ctx.fillRect(0, horizon - h * 0.15, w, h * 0.32);
+
+    const sea = ctx.createLinearGradient(0, horizon, 0, h);
+    sea.addColorStop(0, "rgba(32, 105, 142, 0.94)");
+    sea.addColorStop(0.46, "rgba(16, 78, 108, 0.98)");
+    sea.addColorStop(1, "rgba(7, 36, 55, 1)");
+    ctx.fillStyle = sea;
+    ctx.fillRect(0, horizon, w, h - horizon);
+    const tNow = boomNowMs() * 0.001;
+    ctx.lineWidth = Math.max(1, Math.min(w, h) / 980);
+    for (let i = 0; i < 18; i += 1) {
+      const y = horizon + (i / 18) * (h - horizon) * 0.92 + Math.sin(tNow * 0.9 + i * 0.7) * 2;
+      const alpha = 0.16 + i * 0.012;
+      ctx.strokeStyle = `rgba(190, 230, 238, ${alpha})`;
+      ctx.beginPath();
+      for (let x = -w * 0.05; x <= w * 1.05; x += w / 28) {
+        const yy = y + Math.sin(x * 0.014 + i * 0.8 + tNow * 0.8) * (2.2 + i * 0.09);
+        if (x <= -w * 0.04) ctx.moveTo(x, yy);
+        else ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
+    }
+    ctx.fillStyle = "rgba(3, 12, 20, 0.12)";
+    ctx.fillRect(0, horizon, w, h - horizon);
+    ctx.restore();
+    bangerFallbackDrawn = true;
+  }
+
+  function clearBangerBootFallback() {
+    if (!bangerFallbackDrawn) return;
+    const canvas = els.canvas;
+    const ctx = canvas?.getContext?.("2d");
+    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width || 0, canvas.height || 0);
+    bangerFallbackDrawn = false;
   }
 
   function cameraEye() {
@@ -7567,18 +8171,54 @@ import * as worlds from "./worlds.js";
     return boomSelectionOverlay;
   }
 
+  function drawSdfPartSelectionOverlay(parts) {
+    const item = activeBoomItem();
+    if (!isBoomSdfPartItem(item) || item.visible === false || item.renderable === false) return false;
+    const bounds = item.meta?.bounds;
+    if (!bounds?.min || !bounds?.max) return false;
+    const corners = [
+      [bounds.min[0], bounds.min[1], bounds.min[2]],
+      [bounds.max[0], bounds.min[1], bounds.min[2]],
+      [bounds.min[0], bounds.max[1], bounds.min[2]],
+      [bounds.max[0], bounds.max[1], bounds.min[2]],
+      [bounds.min[0], bounds.min[1], bounds.max[2]],
+      [bounds.max[0], bounds.min[1], bounds.max[2]],
+      [bounds.min[0], bounds.max[1], bounds.max[2]],
+      [bounds.max[0], bounds.max[1], bounds.max[2]],
+    ].map((corner) => projectWorldToCanvasPoint(corner)).filter(Boolean);
+    if (corners.length < 2) return false;
+    const xs = corners.map((point) => point.x);
+    const ys = corners.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const pad = 7;
+    const cx = (minX + maxX) * 0.5;
+    const cy = (minY + maxY) * 0.5;
+    const label = escapeBoomHtml(item.name || "SDF part");
+    parts.push(`<rect class="boom-sdf-part-selection-box" x="${(minX - pad).toFixed(2)}" y="${(minY - pad).toFixed(2)}" width="${Math.max(14, maxX - minX + pad * 2).toFixed(2)}" height="${Math.max(14, maxY - minY + pad * 2).toFixed(2)}" rx="8" />`);
+    parts.push(`<circle class="boom-sdf-part-selection-dot" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4.2" />`);
+    parts.push(`<text class="boom-sdf-part-selection-label" x="${(minX - pad).toFixed(2)}" y="${Math.max(18, minY - 13).toFixed(2)}">${label}</text>`);
+    return true;
+  }
+
   function drawBoomSelectionOverlay() {
     const overlay = ensureBoomSelectionOverlay();
     const rect = els.canvas.getBoundingClientRect();
     overlay.setAttribute("viewBox", `0 0 ${Math.max(1, rect.width)} ${Math.max(1, rect.height)}`);
     overlay.innerHTML = "";
-    if (!boomKasmGraph) return;
     const selection = boomScene.componentSelection;
     const region = activeBoomRegionSelection();
     const vertexMap = boomKasmVertexMap();
     const model = boomComponentTransform(selection?.passIndex || 0);
     const makeCircle = (x, y, r, cls) => `<circle class="${cls}" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${r}" />`;
     const parts = [];
+    if (drawSdfPartSelectionOverlay(parts)) {
+      overlay.innerHTML = parts.join("");
+      return;
+    }
+    if (!boomKasmGraph) return;
     if (region?.vertexIds?.length) {
       for (const vertexId of region.vertexIds.slice(0, 96)) {
         const vertex = vertexMap.get(vertexId);
@@ -7654,11 +8294,98 @@ import * as worlds from "./worlds.js";
     if (!canvasRect.width || !canvasRect.height) return [0, 0];
     const canvasCx = canvasRect.left + canvasRect.width * 0.5;
     const leftPanelRect = els.leftPanel?.getBoundingClientRect?.();
-    const leftEdge = leftPanelRect?.width ? leftPanelRect.right : canvasRect.left;
+    const sidebarCollapsed = els.content?.classList?.contains("sidebar-collapsed")
+      || document.body?.classList?.contains("sidebar-collapsed");
+    const leftEdge = (!sidebarCollapsed && leftPanelRect?.width > 1)
+      ? leftPanelRect.right
+      : canvasRect.left;
     const rightEdge = canvasRect.right || window.innerWidth || canvasCx;
     const targetCx = leftEdge + (rightEdge - leftEdge) * 0.5;
     const offsetX = (targetCx - canvasCx) / (canvasRect.width * 0.5);
     return [Number.isFinite(offsetX) ? offsetX : 0, 0];
+  }
+
+  function bangerCurrentIngenCamera() {
+    const eye = cameraEye();
+    let fx = camera.target[0] - eye[0];
+    let fy = camera.target[1] - eye[1];
+    let fz = camera.target[2] - eye[2];
+    const flen = Math.hypot(fx, fy, fz) || 1;
+    const fwd = [fx / flen, fy / flen, fz / flen];
+    const worldUp = [0, 0, 1];
+    const rx = fwd[1] * worldUp[2] - fwd[2] * worldUp[1];
+    const ry = fwd[2] * worldUp[0] - fwd[0] * worldUp[2];
+    const rz = fwd[0] * worldUp[1] - fwd[1] * worldUp[0];
+    const rlen = Math.hypot(rx, ry, rz) || 1;
+    const right = [rx / rlen, ry / rlen, rz / rlen];
+    const up = [
+      right[1] * fwd[2] - right[2] * fwd[1],
+      right[2] * fwd[0] - right[0] * fwd[2],
+      right[0] * fwd[1] - right[1] * fwd[0],
+    ];
+    return {
+      pos: eye,
+      fwd,
+      right,
+      up,
+      tanHalfFovY: Math.tan((46 * Math.PI / 180) * 0.5),
+      centerOffset: bangerRenderCenterClipOffset(),
+    };
+  }
+
+  async function readBangerGpuCanvasRgb(width, height) {
+    const source = els.gpuCanvas || els.canvas;
+    if (!source || typeof createImageBitmap !== "function") return null;
+    let bitmap = null;
+    try {
+      bitmap = await createImageBitmap(source);
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return null;
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      return ctx.getImageData(0, 0, width, height).data;
+    } catch (err) {
+      return { error: String(err?.message || err) };
+    } finally {
+      try { bitmap?.close?.(); } catch (_) {}
+    }
+  }
+
+  function compareMiniPathTraceToGpu(reference, gpuRgba, tolerance) {
+    if (!gpuRgba || gpuRgba.error) {
+      return { available: false, error: gpuRgba?.error || "GPU canvas readback unavailable" };
+    }
+    let mse = 0;
+    let lumaAbs = 0;
+    const n = Math.max(1, reference.width * reference.height);
+    const gpuRgb = new Uint8ClampedArray(n * 3);
+    for (let i = 0; i < n; i += 1) {
+      const r = gpuRgba[i * 4 + 0] ?? 0;
+      const g = gpuRgba[i * 4 + 1] ?? 0;
+      const b = gpuRgba[i * 4 + 2] ?? 0;
+      gpuRgb[i * 3 + 0] = r;
+      gpuRgb[i * 3 + 1] = g;
+      gpuRgb[i * 3 + 2] = b;
+      const rr = (reference.displayRgb[i * 3 + 0] ?? 0) / 255;
+      const rg = (reference.displayRgb[i * 3 + 1] ?? 0) / 255;
+      const rb = (reference.displayRgb[i * 3 + 2] ?? 0) / 255;
+      const gr = r / 255;
+      const gg = g / 255;
+      const gb = b / 255;
+      mse += (rr - gr) ** 2 + (rg - gg) ** 2 + (rb - gb) ** 2;
+      lumaAbs += Math.abs((rr * 0.2126 + rg * 0.7152 + rb * 0.0722) - (gr * 0.2126 + gg * 0.7152 + gb * 0.0722));
+    }
+    const rmse = Math.sqrt(mse / (n * 3));
+    return {
+      available: true,
+      gpuHash: boomKasmObjectHash("mini-path-trace-gpu-rgb-v1", Array.from(gpuRgb)),
+      rmse,
+      meanAbsLuma: lumaAbs / n,
+      tolerance,
+      passed: rmse <= tolerance,
+    };
   }
 
   function syncBoomViewportAnchors() {
@@ -7681,16 +8408,41 @@ import * as worlds from "./worlds.js";
     }
   }
 
+  // L'animation de l'eau doit continuer à tiquer même caméra immobile et
+  // accumulateur convergé pour le tick courant. La sortie anticipée (idle)
+  // ET le planificateur de fin de frame délèguent ici, sinon l'océan se fige
+  // dès que la fenêtre interaction-continuous expire (boucle morte).
+  function scheduleBangerWaterTick() {
+    if (raf || bangerFrameTimer || !isViewVisible()) return;
+    const delay = ingenReady && ingenRender ? ingenRender.nextFrameDelayMs?.() : null;
+    if (delay == null) return;
+    bangerFrameTimer = window.setTimeout(() => {
+      bangerFrameTimer = 0;
+      requestBoomRender("water-animation-tick", 0);
+    }, Math.max(0, Number(delay) || 0));
+  }
+
   function render(ts) {
     raf = 0;
     // Phase 4 — INGEN Render est le seul gate de render. Si l'adapter
     // WebGPU n'a pas encore répondu, on saute proprement la frame
     // (requestBoomRender la rejouera dès `ingenReady` flip à true).
     if (gpuState !== "active" || !ingenRender) return;
+    if (!bangerGpuMayRun()) {
+      boomRenderContinuousUntil = 0;
+      boomRenderStats.idleSkips += 1;
+      return;
+    }
     const renderStarted = boomNowMs();
     const continuous = boomRenderContinuousActive(renderStarted);
-    if (!boomRenderDirty && !continuous) {
+    // §19.4 — keep pumping frames while the progressive accumulator still
+    // has samples to integrate for the current static scene, even when the
+    // viewport is otherwise idle (not dirty, not continuous). This is what
+    // lets an untouched view sharpen to ultra-HD then truly stop.
+    const accumulating = ingenReady && ingenRender ? ingenRender.isConverging() : false;
+    if (!boomRenderDirty && !continuous && !accumulating) {
       boomRenderStats.idleSkips += 1;
+      scheduleBangerWaterTick();
       return;
     }
     // Safety net : if the shader / GL state corrupts (e.g. context lost,
@@ -7717,6 +8469,8 @@ import * as worlds from "./worlds.js";
       if (els.statFps) els.statFps.textContent = String(lastFps);
       if (els.statCache && ingenRender) {
         const s = ingenRender.getStats();
+        tuneBangerFoliageQuality(ts, s);
+        tuneBangerFieldletBudget(ts, s);
         els.statCache.textContent = s.frames > 0
           ? Math.round(s.hitRatio * 100) + "%"
           : "—";
@@ -7772,7 +8526,12 @@ import * as worlds from "./worlds.js";
         tanHalfFovY: Math.tan((46 * Math.PI / 180) * 0.5),
         centerOffset: bangerRenderCenterClipOffset(),
         showGrid: boomItemById("grid")?.visible !== false,
+        skyEnabled: sdfSky > 0,
+        foliageQuality: sdfFoliageQuality,
       });
+      clearBangerBootFallback();
+    } else {
+      drawBangerBootFallback("webgpu warming");
     }
 
     // Phase 4 — le pass mesh + slicer WebGL2 a été retiré. Les meshes
@@ -7784,8 +8543,13 @@ import * as worlds from "./worlds.js";
     lastClipOffset = [clipOffsetX, clipOffsetY];
     drawGizmoAccurate(proj, view, lastClipOffset);
     drawBoomSelectionOverlay();
-    if (boomRenderContinuousActive() && !raf) {
+    // Reschedule while either the camera is animating (continuous) or the
+    // SDF accumulator is still converging on a static scene (§19.4).
+    const stillConverging = ingenReady && ingenRender ? ingenRender.isConverging() : false;
+    if ((boomRenderContinuousActive() || stillConverging) && !raf) {
       raf = requestAnimationFrame(render);
+    } else {
+      scheduleBangerWaterTick();
     }
     } catch (err) {
       // Skip the bad frame ; do NOT disable the loop or change gpuState.
@@ -7794,6 +8558,64 @@ import * as worlds from "./worlds.js";
       // level (catalog.ts::scene). Permanent stop here would just
       // replace the symptom with another black screen.
       console.warn("[banger] render frame skipped:", err);
+      drawBangerBootFallback("render skipped");
+      if (isViewVisible() && gpuState === "active" && !raf) {
+        raf = requestAnimationFrame(render);
+      }
+    }
+  }
+
+  function tuneBangerFoliageQuality(nowMs, stats) {
+    if (!sdfAutoFoliageQuality || !stats || !Number.isFinite(lastFps) || lastFps <= 0) return;
+    if (nowMs - sdfFoliageAutoLastChangeMs < 1600) return;
+    const hitRatio = Number(stats.hitRatio) || 0;
+    const underPressure = lastFps < 34 || (lastFps < 45 && hitRatio < 0.18);
+    const stable = lastFps > 54 && hitRatio > 0.55;
+    if (underPressure && sdfFoliageQuality > 0) {
+      sdfFoliageQuality -= 1;
+      sdfFoliageQualityTarget = sdfFoliageQuality;
+      sdfFoliageAutoStableTicks = 0;
+      sdfFoliageAutoLastChangeMs = nowMs;
+      requestBoomRender("sdf-foliage-auto-down", 180);
+    } else if (stable && sdfFoliageQuality < Math.max(0, Math.min(3, sdfFoliageQualityTarget))) {
+      sdfFoliageAutoStableTicks += 1;
+      if (sdfFoliageAutoStableTicks >= 4) {
+        sdfFoliageQuality += 1;
+        sdfFoliageQualityTarget = sdfFoliageQuality;
+        sdfFoliageAutoStableTicks = 0;
+        sdfFoliageAutoLastChangeMs = nowMs;
+        requestBoomRender("sdf-foliage-auto-up", 220);
+      }
+    } else {
+      sdfFoliageAutoStableTicks = Math.max(0, sdfFoliageAutoStableTicks - 1);
+    }
+  }
+
+  function tuneBangerFieldletBudget(nowMs, stats) {
+    if (!sdfFieldletAutoBudget || !stats || !Number.isFinite(lastFps) || lastFps <= 0) return;
+    if (nowMs - sdfFieldletAutoLastChangeMs < 1800) return;
+    const hitRatio = Number(stats.hitRatio) || 0;
+    const underPressure = lastFps < 32 || (lastFps < 44 && hitRatio < 0.22);
+    const stable = lastFps > 56 && hitRatio > 0.58;
+    if (underPressure) {
+      const nextError = Math.min(4.5, Number((sdfFieldletTargetPixelError * 1.22 + 0.08).toFixed(3)));
+      const nextBudget = Math.max(12, Math.floor(sdfFieldletBrickBudget * 0.82));
+      if (nextError !== sdfFieldletTargetPixelError || nextBudget !== sdfFieldletBrickBudget) {
+        sdfFieldletTargetPixelError = nextError;
+        sdfFieldletBrickBudget = nextBudget;
+        sdfFieldletAutoStableTicks = 0;
+        sdfFieldletAutoLastChangeMs = nowMs;
+      }
+    } else if (stable) {
+      sdfFieldletAutoStableTicks += 1;
+      if (sdfFieldletAutoStableTicks >= 4) {
+        sdfFieldletTargetPixelError = Math.max(0.65, Number((sdfFieldletTargetPixelError * 0.88).toFixed(3)));
+        sdfFieldletBrickBudget = Math.min(64, Math.max(sdfFieldletBrickBudget + 4, Math.ceil(sdfFieldletBrickBudget * 1.08)));
+        sdfFieldletAutoStableTicks = 0;
+        sdfFieldletAutoLastChangeMs = nowMs;
+      }
+    } else {
+      sdfFieldletAutoStableTicks = Math.max(0, sdfFieldletAutoStableTicks - 1);
     }
   }
 
@@ -7845,6 +8667,101 @@ import * as worlds from "./worlds.js";
     } catch (err) {
       console.warn("[banger] unable to reset to new session:", err);
     }
+  }
+
+  function bangerDefaultNewObject() {
+    return worlds.defaultOceanSunsetNewObject?.() || BANGER_DEFAULT_NEWOBJECT;
+  }
+
+  function applyBangerNewObjectRenderControls(manifest = {}) {
+    const controls = manifest?.renderControls || manifest?.previewHandoff?.renderControls || null;
+    if (!controls) return;
+    sdfSky = controls.skyEnabled === false ? 0 : 1;
+    sdfFog = controls.fogEnabled === false ? 0 : 1;
+    sdfWaterLevel = controls.waterLevel === undefined ? null : controls.waterLevel;
+    if (controls.camera) {
+      camera.target = Array.isArray(controls.camera.target) ? [...controls.camera.target] : camera.target;
+      camera.distance = Number.isFinite(Number(controls.camera.distance)) ? Number(controls.camera.distance) : camera.distance;
+      camera.azimuth = Number.isFinite(Number(controls.camera.azimuth)) ? Number(controls.camera.azimuth) : camera.azimuth;
+      camera.elevation = Number.isFinite(Number(controls.camera.elevation)) ? Number(controls.camera.elevation) : camera.elevation;
+    }
+    ingenRender?.setWater?.(sdfWaterLevel);
+  }
+
+  function resetBangerCanvasForSession(reason = "new-session") {
+    const defaultObject = bangerDefaultNewObject();
+    const defaultOps = Array.isArray(defaultObject?.ops) ? [...defaultObject.ops] : [];
+    bangerSessionBlank = false;
+    sdfScene = serializeScene(defaultOps);
+    sdfSceneSourceOps = defaultOps;
+    sdfGaussians = bakeGaussiansOnSurface(defaultOps, 0);
+    sdfFieldletCutState = { keys: new Set(), lastAtMs: 0 };
+    meshSdfBoundsMin = new Float32Array([0, 0, 0]);
+    meshSdfBoundsMax = new Float32Array([0, 0, 0]);
+    meshSdfLoaded = 0;
+    applyBangerNewObjectRenderControls(defaultObject);
+    boomScene.activeId = "grid";
+    boomScene.workspaceMode = "design";
+    boomScene.propertyTab = "object";
+    boomScene.editMode = "object";
+    boomScene.filter = "";
+    boomScene.kasmGraphView = "world";
+    boomScene.selectedKasmHash = "";
+    boomScene.collectionExpanded = true;
+    clearBoomRegionSelection();
+    setSdfScenePartManifest(defaultObject?.objectParts || defaultObject?.parts || [], defaultOps, [0, 0]);
+    releaseSceneMesh();
+    clearBoomGpuResourceCache();
+    clearBoomComputeCache();
+    try { ingenRender?.uploadSplats?.(new Float32Array(0), 0); } catch (_) {}
+    try { ingenRender?.uploadSdfBrickAtlas?.([], 2); } catch (_) {}
+    try { ingenRender?.uploadSvdag?.(new Uint32Array(0)); } catch (_) {}
+    try {
+      const inactiveNsdf = new Float32Array(NSDF_TOTAL_FLOATS);
+      inactiveNsdf[1] = 16;
+      ingenRender?.uploadNeuralSdf?.(inactiveNsdf);
+    } catch (_) {}
+    updateBoomMeshStats();
+    renderBoomSidebar();
+    renderBoomViewportHud();
+    requestBoomRender(`banger-${reason}`, 160);
+    return { ok: true, blank: true };
+  }
+
+  async function startBangerNewSession(reason = "new-session", options = {}) {
+    let sessionId = selectedForgeSessionId();
+    let created = null;
+    if (options.createShellSession !== false && typeof window.__forgeCreateEmptySession === "function") {
+      const reusableEmptyId = reusableEmptyBangerSessionId(sessionId);
+      if (reusableEmptyId) {
+        bangerSessionId = reusableEmptyId;
+        compactBangerRecentSessions(loadBangerRecentSessions(), reusableEmptyId);
+        if (reusableEmptyId !== sessionId) {
+          selectBangerRecentSession(reusableEmptyId);
+        } else {
+          rememberBangerRecentSession(reusableEmptyId, "New session", { touch: false });
+          renderBangerRecentSessions();
+          resetBangerCanvasForSession("reuse-empty-session");
+        }
+        return { ok: true, reusedEmptySession: true, sessionId: reusableEmptyId };
+      }
+      try {
+        created = await window.__forgeCreateEmptySession({
+          kind: "banger_session",
+          title: "New session",
+          resetCurrent: true,
+        });
+        sessionId = String(created?.jobId || created?.job_id || selectedForgeSessionId() || sessionId || "").trim();
+      } catch (err) {
+        console.warn("[banger] unable to create shell session:", err);
+      }
+    }
+    if (!sessionId) sessionId = `banger-local-${Date.now().toString(36)}`;
+    bangerSessionId = sessionId;
+    const previous = loadBangerRecentSessions().find((entry) => String(entry.id || "") === sessionId) || null;
+    rememberBangerRecentSession(sessionId, created?.title || previous?.title || "New session");
+    renderBangerRecentSessions();
+    return resetBangerCanvasForSession(reason);
   }
 
   function setLayoutActive(active) {
@@ -8030,18 +8947,35 @@ import * as worlds from "./worlds.js";
     if (pinnedList) pinnedList.innerHTML = "";
     const jobList = document.getElementById("forgeJobList");
     if (jobList) jobList.innerHTML = '<li class="job-item muted">No compute job yet</li>';
+    bangerRecentRenderKey = "";
     const historyHeading = document.querySelector(".history-heading span");
     if (historyHeading) historyHeading.textContent = "Recents";
     refreshBangerComputeRecents(jobList);
   }
 
+  function reclaimBangerLeftPanel(reason = "banger-focus") {
+    resetForgeDefaultPanel();
+    window.requestAnimationFrame(() => {
+      if (isViewVisible() || window.__forgeBoomIsActive) {
+        resetForgeDefaultPanel();
+        syncBoomInteractionContract();
+      }
+    });
+    window.setTimeout(() => {
+      if (isViewVisible() || window.__forgeBoomIsActive) {
+        resetForgeDefaultPanel();
+      }
+    }, 120);
+    return { ok: true, reason };
+  }
+
   async function refreshBangerComputeRecents(jobList = document.getElementById("forgeJobList")) {
     if (!jobList) return;
+    renderBangerRecentSessions(jobList, bangerComputeRecentRows);
     try {
       const library = await backendInvoke("forge_brain_compute_library", { limit: 6 });
       const computes = Array.isArray(library?.computes) ? library.computes : [];
-      if (!computes.length) return;
-      jobList.innerHTML = computes.map((entry) => {
+      const computeRows = computes.map((entry) => {
         const command = entry?.command || `/compute_${String(entry?.sessionName || "session").replace(/[^\w.-]+/g, "_")}_`;
         const created = Number(entry?.createdAtMs || entry?.updatedAtMs || 0);
         const createdLabel = created > 0 ? new Date(created).toLocaleDateString() : "saved";
@@ -8052,14 +8986,24 @@ import * as worlds from "./worlds.js";
           <span class="job-meta">${escapeBoomHtml(createdLabel)} · ${runs} run${runs > 1 ? "s" : ""}</span>
         </li>`;
       }).join("");
+      if (computeRows !== bangerComputeRecentRows) {
+        bangerComputeRecentRows = computeRows;
+        renderBangerRecentSessions(jobList, bangerComputeRecentRows);
+      }
     } catch (err) {
       console.warn("[banger] unable to refresh compute recents:", err);
     }
   }
 
   function activate() {
+    reclaimBangerLeftPanel("activate");
+    if (!sdfSceneParts.length && BANGER_DEFAULT_NEWOBJECT.objectParts?.length) {
+      setSdfScenePartManifest(BANGER_DEFAULT_NEWOBJECT.objectParts, sdfSceneSourceOps, [0, 0]);
+    }
+    if (!bangerSessionMatchesSelected()) {
+      void startBangerNewSession("activate-selected-session", { createShellSession: false });
+    }
     if (gpuState === "active") return;
-    resetForgeDefaultPanel();
     // Phase 4 — gate sur INGEN Render plutôt que le contexte WebGL2 mort.
     if (!ingenRender) {
       if (!initGL()) {
@@ -8129,7 +9073,10 @@ import * as worlds from "./worlds.js";
 
   function openOverlay() {
     if (window.__forgeRealEstateModeActive) return;
-    if (isViewVisible()) return; // already open
+    if (isViewVisible()) {
+      reclaimBangerLeftPanel("open-visible");
+      return; // already open
+    }
     try {
       if (window.__forgeTradingChatBridge?.isActive?.()) window.__forgeCloseTrading?.();
     } catch (_) {}
@@ -8154,12 +9101,13 @@ import * as worlds from "./worlds.js";
       window.__forgeBoomConsoleContext = buildBoomConsoleContext;
       window.__forgeBoomExecuteTool = executeBoomTool;
     }
+    reclaimBangerLeftPanel("open");
     ensureGpuStatusBadge();
     requestAnimationFrame(() => syncBoomInteractionContract());
     if (boomScene.workspaceMode === "slicer") {
       void refreshBoomPrinterDiscovery();
     }
-    if (document.visibilityState === "visible" && document.hasFocus()) {
+    if (document.visibilityState === "visible") {
       activate();
     } else {
       gpuState = "suspended";
@@ -8207,13 +9155,13 @@ import * as worlds from "./worlds.js";
     if (!isViewVisible()) return;
     if (document.visibilityState === "hidden") {
       suspend();
-    } else if (document.hasFocus()) {
+    } else {
       activate();
     }
   }
   function onWindowBlur() {
     if (!isViewVisible()) return;
-    suspend();
+    requestBoomRender("window-blur-keepalive", 120);
   }
   function onWindowFocus() {
     if (!isViewVisible()) return;
@@ -8222,6 +9170,36 @@ import * as worlds from "./worlds.js";
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("blur", onWindowBlur);
   window.addEventListener("focus", onWindowFocus);
+  document.addEventListener("click", handleBangerRecentSessionPointer);
+  window.addEventListener("forge:session-selection-changed", (event) => {
+    syncBangerRecentSessionTitle(event?.detail || {});
+    if (!isViewVisible()) {
+      bindBangerToSelectedSession("session-selection-hidden");
+      return;
+    }
+    void startBangerNewSession("selected-session-change", { createShellSession: false });
+  });
+  window.addEventListener("forge:session-metadata-changed", (event) => {
+    syncBangerRecentSessionTitle(event?.detail || {});
+  });
+  els.newSessionBtn?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void startBangerNewSession("new-session-button");
+  });
+  window.addEventListener("forge:sidebar-collapsed", () => {
+    if (!isViewVisible()) return;
+    resize();
+    requestBoomRender("sidebar-toggle", 260);
+    window.requestAnimationFrame(() => {
+      resize();
+      requestBoomRender("sidebar-toggle-settled", 220);
+    });
+    window.setTimeout(() => {
+      resize();
+      requestBoomRender("sidebar-toggle-final", 120);
+    }, 210);
+  });
   window.addEventListener("beforeunload", shutdown);
   // Phase 4 — plus de contexte WebGL2 sur els.canvas, donc plus de
   // `webglcontextlost` à écouter. INGEN Render gère ses propres erreurs
@@ -8241,16 +9219,53 @@ import * as worlds from "./worlds.js";
     window.__forgeBoomExecuteTool = () => ({ ok: false, tool: "boom.unavailable", detail: { error: "inactive" }, context: { active: false } });
     window.__forgeOpenBoom = () => (bangerController ? bangerController.open() : openOverlay());
     window.__forgeCloseBoom = () => (bangerController ? bangerController.close() : closeOverlay());
+    window.__forgeBangerReclaimLeftPanel = reclaimBangerLeftPanel;
+    window.__forgeBangerNewSession = () => startBangerNewSession("api");
+    window.__forgeBangerSessionSnapshot = () => ({
+      bangerSessionId,
+      selectedSessionId: selectedForgeSessionId(),
+      gpuMayRun: bangerGpuMayRun(),
+      blank: bangerSessionBlank,
+    });
+    window.ForgeShellRuntime?.subscribe?.((state) => {
+      if (state?.activeSection === "banger" || isViewVisible() || window.__forgeBoomIsActive) {
+        reclaimBangerLeftPanel("shell-state");
+      }
+    });
     // INGEN §19.3 — agent / ForgeSlash entry point for swapping the SDF
     // scene. Accepts the SdfOp[] type from scenes.ts ; rejects gracefully
     // on bad input. Triggers a single re-render via requestBoomRender.
-    window.__forgeBangerSetScene = (ops) => {
+    window.__forgeBangerSetScene = (ops, manifest = {}) => {
       try {
+        const rawOps = Array.isArray(ops)
+          ? ops
+          : (Array.isArray(ops?.ops) ? ops.ops : Array.isArray(ops?.sceneOps) ? ops.sceneOps : []);
+        const rawManifest = manifest && typeof manifest === "object" ? manifest : {};
+        const rawParts = Array.isArray(rawManifest.parts)
+          ? rawManifest.parts
+          : Array.isArray(rawManifest.objectParts)
+            ? rawManifest.objectParts
+            : Array.isArray(rawManifest.object_parts)
+              ? rawManifest.object_parts
+              : Array.isArray(ops?.parts)
+                ? ops.parts
+                : Array.isArray(ops?.objectParts)
+                  ? ops.objectParts
+                  : Array.isArray(ops?.object_parts)
+                    ? ops.object_parts
+                    : [];
         // Doctrine Banger : tout nouvel objet atterrit avec son centroïde
         // XY à (0, 0). Z préservé. Bake direct dans la donnée — pas de
         // transform fantôme à propager dans le shader.
-        const sceneOps = recenterSceneXY(ops || []);
+        const recenterOffset = sdfSceneRecenterOffset(rawOps);
+        const sceneOps = recenterSceneXY(rawOps || []);
+        bindBangerToSelectedSession("set-scene");
+        sdfSceneSourceOps = sceneOps;
         sdfScene = serializeScene(sceneOps);
+        bangerSessionBlank = sceneOps.length === 0 && rawParts.length === 0;
+        applyBangerNewObjectRenderControls(rawManifest);
+        if (sceneOps.length > 0 || rawParts.length > 0) setSdfScenePartManifest(rawParts, sceneOps, recenterOffset);
+        else clearSdfScenePartManifest();
         // §19.5 — re-derive Gaussian splats from the new (recentered) SDF
         // so they stay anchored to the live surface (skipped if count = 0).
         if (sdfGaussians.count > 0) {
@@ -8259,8 +9274,10 @@ import * as worlds from "./worlds.js";
           // in Phase 6b — splats migrent uniquement sur changement.
           ingenRender?.uploadSplats(sdfGaussians.buffer, sdfGaussians.count);
         }
+        renderBoomSidebar();
+        renderBoomViewportHud();
         requestBoomRender("sdf-scene-update", 200);
-        return { ok: true, count: sdfScene.count, gaussians: sdfGaussians.count };
+        return { ok: true, count: sdfScene.count, parts: sdfSceneParts.length, gaussians: sdfGaussians.count };
       } catch (err) {
         console.warn("[banger] __forgeBangerSetScene rejected:", err);
         return { ok: false, error: String(err?.message || err) };
@@ -8273,6 +9290,11 @@ import * as worlds from "./worlds.js";
     //   __forgeBangerWorlds.tree([2,0,0])
     //   __forgeBangerSetScene(__forgeBangerWorlds.defaultLandscape(42))
     window.__forgeBangerWorlds = worlds;
+    // Load the INGEN-native lighting showcase (montagne / arbres / arche).
+    window.__forgeBangerShowcase = () => {
+      bangerSessionBlank = false;
+      return window.__forgeBangerSetScene(worlds.showcaseScene());
+    };
     window.__forgeBangerSetSky = (on) => {
       sdfSky = on ? 1 : 0;
       requestBoomRender("sdf-sky-toggle", 200);
@@ -8282,6 +9304,258 @@ import * as worlds from "./worlds.js";
       sdfFog = on ? 1 : 0;
       requestBoomRender("sdf-fog-toggle", 200);
       return { ok: true, fog: sdfFog };
+    };
+    // §21 Ocean — toggle the analytic water plane. Pass a world Z height
+    // (default 0), or false/null to disable. Pairs with __forgeBangerSetSky.
+    window.__forgeBangerSetOcean = (level) => {
+      const lvl = (level === false || level === null || level === undefined)
+        ? null
+        : (typeof level === "number" ? level : 0);
+      sdfWaterLevel = lvl;
+      ingenRender?.setWater?.(lvl);
+      requestBoomRender("ocean-toggle", 0);
+      return { ok: true, water: lvl };
+    };
+    window.__forgeBangerSetWeather = (spec = {}) => {
+      const manifest = worlds.weatherManifest?.(spec) || null;
+      sdfSky = manifest?.skyEnabled === false ? 0 : 1;
+      sdfFog = manifest?.fogEnabled === false ? 0 : 1;
+      sdfWaterLevel = manifest?.waterLevel ?? null;
+      ingenRender?.setWater?.(sdfWaterLevel);
+      requestBoomRender("weather-toggle", 220);
+      return { ok: !!manifest, manifest };
+    };
+    // §23 Temporal reprojection toggle (experimental). On → a moving view
+    // reuses last frame's converged shading (depth-validated) instead of
+    // restarting accumulation ; cleaner motion, shorter post-stop convergence.
+    window.__forgeBangerSetReproject = (on) => {
+      const enabled = on !== false;
+      sdfReproject = enabled;
+      ingenRender?.setReproject?.(enabled);
+      requestBoomRender("reproject-toggle", 0);
+      return { ok: true, reproject: enabled };
+    };
+    // §24 Checkerboard toggle (experimental). On → marche la moitié des pixels
+    // par frame en mouvement (~2× moins de marche). À coupler avec reproject.
+    window.__forgeBangerSetCheckerboard = (on) => {
+      const enabled = on !== false;
+      sdfCheckerboard = enabled;
+      ingenRender?.setCheckerboard?.(enabled);
+      requestBoomRender("checkerboard-toggle", 0);
+      return { ok: true, checkerboard: enabled };
+    };
+    // P4 verifier: compact CPU mini path tracer + optional GPU canvas readback.
+    // It checks the temporal WebGPU result against the same SDF source without
+    // adding a second renderer or persistent validation tool.
+    window.__forgeBangerValidateMiniPathTrace = async (opts = {}) => {
+      const cfg = opts && typeof opts === "object" ? opts : {};
+      const width = Math.max(2, Math.min(48, Number(cfg.width) || 16));
+      const height = Math.max(2, Math.min(48, Number(cfg.height) || width));
+      const samples = Math.max(1, Math.min(32, Number(cfg.samples) || 4));
+      const sceneOps = Array.isArray(cfg.scene) && cfg.scene.length
+        ? cfg.scene
+        : (sdfSceneSourceOps.length ? sdfSceneSourceOps : DEFAULT_SCENE);
+      const cameraSpec = cfg.camera || bangerCurrentIngenCamera();
+      if (cfg.refresh !== false) {
+        requestBoomRender("mini-path-trace-validate", 180);
+        await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+      }
+      const reference = miniPathTraceScene(sceneOps, cameraSpec, {
+        width,
+        height,
+        samples,
+        seed: Number(cfg.seed ?? 0xB40A9E) >>> 0,
+        maxSteps: Number(cfg.maxSteps) || 96,
+        maxDistance: Number(cfg.maxDistance) || 120,
+      });
+      const tolerance = Math.max(0.02, Math.min(1.0, Number(cfg.tolerance) || 0.42));
+      const gpuRgba = cfg.gpu === false ? null : await readBangerGpuCanvasRgb(reference.width, reference.height);
+      const comparison = compareMiniPathTraceToGpu(reference, gpuRgba, tolerance);
+      const sceneHash = boomKasmObjectHash("mini-path-trace-scene-v1", sceneOps);
+      const cameraHash = boomKasmObjectHash("mini-path-trace-camera-v1", cameraSpec);
+      const proof = {
+        schema: "banger.mini_path_trace_validation.v1",
+        sceneHash,
+        cameraHash,
+        referenceHash: reference.hash,
+        gpuHash: comparison.gpuHash || null,
+        width: reference.width,
+        height: reference.height,
+        samples: reference.samples,
+        tolerance,
+        rmse: comparison.rmse ?? null,
+        meanAbsLuma: comparison.meanAbsLuma ?? null,
+        temporal: {
+          accumulation: true,
+          reprojection: sdfReproject,
+          checkerboard: sdfCheckerboard,
+          depthValidatedHistory: true,
+        },
+      };
+      return {
+        ok: comparison.available ? !!comparison.passed : true,
+        verdict: comparison.available ? (comparison.passed ? "passed" : "review") : "cpu-reference-only",
+        ...proof,
+        proofHash: boomKasmObjectHash("mini-path-trace-validation-proof-v1", proof),
+        reference: {
+          meanLuminance: reference.meanLuminance,
+          maxLuminance: reference.maxLuminance,
+          hitRatio: reference.hitRatio,
+          elapsedMs: Number(reference.elapsedMs.toFixed(3)),
+        },
+        gpuComparison: comparison,
+      };
+    };
+    window.__forgeBangerShadowProof = () => {
+      const renderer = ingenRender?.getShadowStats?.() || null;
+      const sceneOps = sdfSceneSourceOps.length ? sdfSceneSourceOps : DEFAULT_SCENE;
+      const proof = {
+        schema: "banger.sdf_shadow_proof.v1",
+        sceneHash: boomKasmObjectHash("sdf-shadow-scene-v1", sceneOps),
+        renderer,
+        doctrine: "SDF source authoritative; shadow pages are transient replay caches",
+      };
+      return {
+        ok: !!renderer,
+        ...proof,
+        proofHash: boomKasmObjectHash("sdf-shadow-proof-v1", proof),
+      };
+    };
+    window.__forgeBangerTemporalProof = () => {
+      const renderer = ingenRender?.getTemporalStats?.() || null;
+      const sceneOps = sdfSceneSourceOps.length ? sdfSceneSourceOps : DEFAULT_SCENE;
+      const adversarial = worlds.temporalAdversarialManifest?.() || null;
+      const proof = {
+        schema: "banger.temporal_reconstruction_proof.v1",
+        sceneHash: boomKasmObjectHash("temporal-scene-v1", sceneOps),
+        renderer,
+        adversarial,
+        doctrine: "SDF hit reprojection is the motion source; history is clipped before reuse",
+      };
+      return {
+        ok: !!renderer,
+        ...proof,
+        proofHash: boomKasmObjectHash("temporal-reconstruction-proof-v1", proof),
+      };
+    };
+    window.__forgeBangerDeformationProof = (rig = {}, time = 0, scene = null) => {
+      const sceneOps = Array.isArray(scene) && scene.length
+        ? scene
+        : (sdfSceneSourceOps.length ? sdfSceneSourceOps : DEFAULT_SCENE);
+      const result = worlds.deformSceneWithField?.(sceneOps, rig, time) || null;
+      const proof = {
+        schema: "banger.deformation_field_proof.v1",
+        sceneHash: boomKasmObjectHash("deformation-scene-v1", sceneOps),
+        manifest: result?.manifest || null,
+        doctrine: "Semantic rig deforms SDF source parameters; viewport caches remain transient",
+      };
+      return {
+        ok: !!result,
+        deformedOps: result?.ops || [],
+        ...proof,
+        proofHash: boomKasmObjectHash("deformation-field-proof-v1", proof),
+      };
+    };
+    window.__forgeBangerCharacterProof = (spec = {}, at = [0, 0, 0]) => {
+      const origin = (Array.isArray(at)
+        ? [0, 1, 2].map((i) => {
+            const n = Number(at?.[i]);
+            return Number.isFinite(n) ? n : 0;
+          })
+        : [0, 0, 0]) as [number, number, number];
+      const ops = worlds.characterSdf?.(origin, spec) || [];
+      const manifest = worlds.characterManifest?.(origin, spec) || null;
+      const proof = {
+        schema: "banger.character_sdf_proof.v1",
+        sceneHash: boomKasmObjectHash("character-sdf-scene-v1", ops),
+        manifest,
+        doctrine: "LLM controls semantic SDF character parts; hair, cloth and deformation caches are transient hashable projections",
+      };
+      return {
+        ok: !!manifest && ops.length > 0,
+        ops,
+        ...proof,
+        proofHash: boomKasmObjectHash("character-sdf-proof-v1", proof),
+      };
+    };
+    window.__forgeBangerCharacter = (spec = {}, at = [0, 0, 0]) => {
+      const proof = window.__forgeBangerCharacterProof(spec, at);
+      if (!proof?.ok) return proof;
+      const applied = window.__forgeBangerSetScene(proof.ops, { character: proof.manifest });
+      return { ...proof, applied };
+    };
+    window.__forgeBangerWorldStreamProof = (camera = [0, 0, 1.7], velocity = [0, 0, 0], spec = {}) => {
+      const manifest = worlds.worldStreamManifest?.(camera, velocity, spec) || null;
+      const proof = {
+        schema: "banger.world_stream_proof.v1",
+        manifest,
+        doctrine: "SDF source stays authoritative; world cells are content-addressed transient stream decisions with deterministic replay",
+      };
+      return {
+        ok: !!manifest && !!manifest.budget?.budgetOk,
+        ...proof,
+        proofHash: boomKasmObjectHash("world-stream-proof-v1", proof),
+      };
+    };
+    // §21 One-shot atmospheric landscape : showcase scene + sky + ocean at z=0.
+    window.__forgeBangerRenderGraphProof = (camera = [0, 0, 1.7], velocity = [0, 0, 0], streamSpec = {}, graphSpec = {}) => {
+      const renderer = ingenRender?.getRenderGraphStats?.() || null;
+      const manifest = worlds.renderGraphManifest?.(camera, velocity, streamSpec, graphSpec, renderer || {}) || null;
+      const proof = {
+        schema: "banger.render_graph_proof.v1",
+        manifest,
+        renderer,
+        doctrine: "Frame graph is a hashable projection of SDF stream state; GPU buffers, pages and tables stay transient caches",
+      };
+      return {
+        ok: !!manifest && !!manifest.profile?.budgetOk,
+        ...proof,
+        proofHash: boomKasmObjectHash("render-graph-proof-v1", proof),
+      };
+    };
+    window.__forgeBangerGpuCullingProof = (camera = [0, 0, 1.7], velocity = [0, 0, 0], streamSpec = {}, graphSpec = {}) => {
+      const renderer = ingenRender?.getRenderGraphStats?.() || null;
+      const manifest = worlds.renderGraphManifest?.(camera, velocity, streamSpec, graphSpec, renderer || {}) || null;
+      const culling = manifest?.culling || null;
+      const proof = {
+        schema: "banger.gpu_culling_proof.v1",
+        graphHash: manifest?.graphHash || null,
+        culling,
+        doctrine: "Frustum, HZB, compaction and indirect args are derived from SDF stream pages; no cache becomes authoring authority",
+      };
+      return {
+        ok: !!culling && culling.visiblePageCount <= (graphSpec?.maxVisiblePages || 2048),
+        ...proof,
+        proofHash: boomKasmObjectHash("gpu-culling-proof-v1", proof),
+      };
+    };
+    window.__forgeBangerDefaultOceanSunset = () => {
+      const object = bangerDefaultNewObject();
+      const res = window.__forgeBangerSetScene(object.ops || [], object);
+      return {
+        ok: !!res?.ok,
+        object,
+        ...(res || {}),
+      };
+    };
+    window.__forgeBangerDefaultOceanSunsetComputePlan = () => {
+      const object = bangerDefaultNewObject();
+      return {
+        ok: Array.isArray(object.computePlan) && object.computePlan.length === 4,
+        command: object.command,
+        computePlanHash: object.computePlanHash || object.previewHandoff?.evidenceComputePlanHash || object.previewHandoff?.computePlanHash || null,
+        mathCurationHash: object.mathCurationHash || object.previewHandoff?.mathCurationHash || null,
+        webResearch: object.webResearch || [],
+        computePlan: object.computePlan || [],
+        llmCuration: object.llmCuration || [],
+        objectProofHash: object.proofHash || null,
+      };
+    };
+    window.__forgeBangerLandscape = () => {
+      window.__forgeBangerSetScene(worlds.showcaseScene());
+      window.__forgeBangerSetSky(true);
+      window.__forgeBangerSetOcean(0);
+      return { ok: true };
     };
     // §19.5 explicit Gaussian splatting toggle / count override.
     // count = 0 disables splats. count > 0 re-bakes against the current
@@ -8300,6 +9574,453 @@ import * as worlds from "./worlds.js";
       }
     };
     // INGEN §13 verifier toggle. 0 = lit, 1 = |grad d| heatmap.
+    function clampSdfVec3(value, fallback) {
+      const src = Array.isArray(value) ? value : fallback;
+      return [0, 1, 2].map((i) => {
+        const n = Number(src?.[i]);
+        return Number.isFinite(n) ? n : fallback[i];
+      });
+    }
+
+    function sdfBrickCoordKey(coord) {
+      return `${Number(coord?.lod) || 0}:${Number(coord?.x) || 0}:${Number(coord?.y) || 0}:${Number(coord?.z) || 0}`;
+    }
+
+    function sdfParentCoord(coord) {
+      const lod = Math.max(0, Number(coord?.lod) | 0);
+      if (lod <= 0) return null;
+      return {
+        x: Math.max(0, Math.floor((Number(coord?.x) || 0) / 2)),
+        y: Math.max(0, Math.floor((Number(coord?.y) || 0) / 2)),
+        z: Math.max(0, Math.floor((Number(coord?.z) || 0) / 2)),
+        lod: lod - 1,
+      };
+    }
+
+    function finalizeSdfFieldletCut(selectedEntries, scoredByLevel, totalBudget, minLod, validCutEnabled) {
+      const allEntries = new Map();
+      for (const level of scoredByLevel || []) {
+        for (const entry of level.scored || []) {
+          allEntries.set(sdfBrickCoordKey(entry.coord), entry);
+        }
+      }
+      const selected = new Map();
+      const forcedParents = new Set();
+      const addEntry = (entry, forcedParent) => {
+        if (!entry?.coord) return;
+        const key = sdfBrickCoordKey(entry.coord);
+        selected.set(key, entry);
+        if (forcedParent) forcedParents.add(key);
+      };
+      for (const entry of selectedEntries || []) {
+        addEntry(entry, false);
+        if (!validCutEnabled) continue;
+        let parent = sdfParentCoord(entry.coord);
+        while (parent && parent.lod >= minLod) {
+          const parentEntry = allEntries.get(sdfBrickCoordKey(parent));
+          if (parentEntry) addEntry(parentEntry, true);
+          parent = sdfParentCoord(parent);
+        }
+      }
+
+      const expandedCount = selected.size;
+      const hardCap = Math.min(64, Math.max(1, Number(totalBudget) || 1));
+      let entries = Array.from(selected.values());
+      if (entries.length > hardCap) {
+        entries.sort((a, b) => {
+          const ap = forcedParents.has(sdfBrickCoordKey(a.coord)) ? 0 : 1;
+          const bp = forcedParents.has(sdfBrickCoordKey(b.coord)) ? 0 : 1;
+          if (ap !== bp) return ap - bp;
+          if (a.score !== b.score) return a.score - b.score;
+          return sdfBrickCoordKey(a.coord).localeCompare(sdfBrickCoordKey(b.coord));
+        });
+        entries = entries.slice(0, hardCap);
+      }
+      entries.sort((a, b) => {
+        const al = Number(a.coord?.lod) || 0;
+        const bl = Number(b.coord?.lod) || 0;
+        if (al !== bl) return al - bl;
+        return sdfBrickCoordKey(a.coord).localeCompare(sdfBrickCoordKey(b.coord));
+      });
+      const previousKeys = sdfFieldletCutState.keys instanceof Set ? sdfFieldletCutState.keys : new Set();
+      const coords = entries.map((entry) => entry.coord);
+      const nextKeys = new Set(coords.map(sdfBrickCoordKey));
+      const previousKept = coords.reduce((count, coord) => count + (previousKeys.has(sdfBrickCoordKey(coord)) ? 1 : 0), 0);
+      sdfFieldletCutState = { keys: nextKeys, lastAtMs: boomNowMs() };
+      return {
+        coords,
+        validCutParents: Array.from(forcedParents).filter((key) => nextKeys.has(key)).length,
+        expandedCount,
+        trimmed: Math.max(0, expandedCount - coords.length),
+        previousKept,
+      };
+    }
+
+    function selectSdfBrickCoordsForCamera(spec, explicitBricks) {
+      if (Array.isArray(explicitBricks)) {
+        return {
+          bricks: explicitBricks,
+          culling: {
+            mode: "explicit",
+            selected: explicitBricks.length,
+            budget: explicitBricks.length,
+            total: explicitBricks.length,
+          },
+        };
+      }
+      if (spec?.cameraCull === false) {
+        return { bricks: null, culling: { mode: "backend-default" } };
+      }
+
+      const bricksPerAxis = Math.max(1, Math.min(16, Number(spec?.bricksPerAxis) || 4));
+      const maxLod = Math.max(0, Math.min(2, Number(spec?.maxLod ?? spec?.lod ?? 2) | 0));
+      const minLod = Math.max(0, Math.min(maxLod, Number(spec?.minLod ?? 0) | 0));
+      const boundsMin = clampSdfVec3(spec?.boundsMin, [-4, -4, -4]);
+      const boundsMax = clampSdfVec3(spec?.boundsMax, [4, 4, 4]);
+      const eye = cameraEye();
+      const focus = clampSdfVec3(spec?.focus, camera.target);
+      const tanHalfFovY = Math.tan((46 * Math.PI / 180) * 0.5);
+      const viewportHeight = Math.max(1, Number(els.canvas?.clientHeight || els.canvas?.height || 720));
+      const focalPx = (viewportHeight * 0.5) / Math.max(1.0e-4, tanHalfFovY);
+      const targetPixelError = Math.max(0.35, Math.min(8, Number(spec?.targetPixelError ?? spec?.screenPixelError) || sdfFieldletTargetPixelError));
+      const brickResolution = Math.max(2, Math.min(24, Number(spec?.brickResolution) || 8));
+      const adaptiveBrickBudget = Math.max(4, Math.min(64, Number(spec?.brickBudget) || sdfFieldletBrickBudget));
+      const hysteresisEnabled = spec?.hysteresis !== false;
+      const validCutEnabled = spec?.validCut !== false;
+      const hysteresisBias = hysteresisEnabled
+        ? Math.max(0, Math.min(50000, Number(spec?.hysteresisBias) || targetPixelError * 2400))
+        : 0;
+
+      let fx = focus[0] - eye[0];
+      let fy = focus[1] - eye[1];
+      let fz = focus[2] - eye[2];
+      const fl = Math.hypot(fx, fy, fz) || 1;
+      fx /= fl; fy /= fl; fz /= fl;
+
+      function scoreSdfBrickLevel(lod) {
+        const axis = Math.max(1, bricksPerAxis << lod);
+        const sx = (boundsMax[0] - boundsMin[0]) / axis;
+        const sy = (boundsMax[1] - boundsMin[1]) / axis;
+        const sz = (boundsMax[2] - boundsMin[2]) / axis;
+        const brickRadius2 = (sx * sx + sy * sy + sz * sz) * 0.25;
+        const fieldletErrorWorld = Math.hypot(sx / brickResolution, sy / brickResolution, sz / brickResolution) * 0.5;
+        const scored = [];
+        for (let z = 0; z < axis; z += 1) {
+          for (let y = 0; y < axis; y += 1) {
+            for (let x = 0; x < axis; x += 1) {
+              const cx = boundsMin[0] + (x + 0.5) * sx;
+              const cy = boundsMin[1] + (y + 0.5) * sy;
+              const cz = boundsMin[2] + (z + 0.5) * sz;
+              const tx = cx - focus[0];
+              const ty = cy - focus[1];
+              const tz = cz - focus[2];
+              const focusDist2 = tx * tx + ty * ty + tz * tz;
+              const ex = cx - eye[0];
+              const ey = cy - eye[1];
+              const ez = cz - eye[2];
+              const depth = ex * fx + ey * fy + ez * fz;
+              const eyeDist2 = ex * ex + ey * ey + ez * ez;
+              const rayDist2 = Math.max(0, eyeDist2 - depth * depth);
+              const behindPenalty = depth < -Math.sqrt(brickRadius2) ? 1000000 + Math.abs(depth) * 1000 : 0;
+              const screenErrorPx = fieldletErrorWorld * focalPx / Math.max(Math.sqrt(brickRadius2), depth);
+              const detailPressure = Math.max(0, screenErrorPx - targetPixelError);
+              const coord = { x, y, z, lod };
+              const residentBias = sdfFieldletCutState.keys?.has?.(sdfBrickCoordKey(coord)) ? hysteresisBias : 0;
+              scored.push({
+                coord,
+                score: focusDist2 + rayDist2 * 0.25 + eyeDist2 * 0.03 + behindPenalty - detailPressure * 10000 - residentBias,
+                screenErrorPx,
+                errorWorld: fieldletErrorWorld,
+                detailPressure,
+                resident: residentBias > 0,
+              });
+            }
+          }
+        }
+        scored.sort((a, b) => {
+          if (a.score !== b.score) return a.score - b.score;
+          return (a.coord.z - b.coord.z) || (a.coord.y - b.coord.y) || (a.coord.x - b.coord.x);
+        });
+        return { axis, scored };
+      }
+
+      if (spec?.multiLod === false) {
+        const lod = Math.max(minLod, Math.min(maxLod, Number(spec?.lod) | 0 || 0));
+        const { axis, scored } = scoreSdfBrickLevel(lod);
+        const total = axis * axis * axis;
+        const defaultBudget = Math.min(adaptiveBrickBudget, total);
+        const budget = Math.max(1, Math.min(64, total, Number(spec?.brickBudget) || defaultBudget));
+        const chosen = scored.slice(0, budget);
+        const previousKeys = sdfFieldletCutState.keys instanceof Set ? sdfFieldletCutState.keys : new Set();
+        const previousKept = chosen.reduce((count, entry) => count + (previousKeys.has(sdfBrickCoordKey(entry.coord)) ? 1 : 0), 0);
+        sdfFieldletCutState = {
+          keys: new Set(chosen.map((entry) => sdfBrickCoordKey(entry.coord))),
+          lastAtMs: boomNowMs(),
+        };
+        return {
+          bricks: chosen.map((entry) => entry.coord),
+          culling: {
+            mode: "camera-budget",
+            selected: budget,
+            budget,
+            total,
+            axis,
+            lod,
+            targetPixelError,
+            maxScreenErrorPx: chosen.reduce((max, entry) => Math.max(max, entry.screenErrorPx), 0),
+            hysteresis: { enabled: hysteresisEnabled, previousKept, bias: hysteresisBias },
+            validCut: { enabled: false, reason: "single_lod" },
+            adaptiveBudget: {
+              enabled: sdfFieldletAutoBudget && spec?.brickBudget == null && spec?.targetPixelError == null && spec?.screenPixelError == null,
+              brickBudget: sdfFieldletBrickBudget,
+              targetPixelError: sdfFieldletTargetPixelError,
+            },
+            focus,
+            eye,
+          },
+        };
+      }
+
+      const levels = [];
+      for (let lod = maxLod; lod >= minLod; lod -= 1) levels.push(lod);
+      const totalBudget = Math.max(1, Math.min(64, Number(spec?.brickBudget) || Math.min(adaptiveBrickBudget, 12 + levels.length * 12)));
+      const scoredByLevel = levels.map((lod) => ({ lod, ...scoreSdfBrickLevel(lod) }));
+      const weights = scoredByLevel.map((level) => {
+        const need = level.scored
+          .slice(0, Math.min(64, level.scored.length))
+          .reduce((sum, entry) => sum + Math.min(4, entry.detailPressure), 0);
+        return Math.pow(1.55, level.lod - minLod) * (1 + need * 0.05);
+      });
+      const weightSum = weights.reduce((sum, value) => sum + value, 0) || 1;
+      let remaining = totalBudget;
+      const selectedEntries = [];
+      const cullingLevels = [];
+      for (let i = 0; i < levels.length; i += 1) {
+        const { lod, axis, scored } = scoredByLevel[i];
+        const levelTotal = axis * axis * axis;
+        const levelsLeft = levels.length - i - 1;
+        const rawBudget = i === levels.length - 1
+          ? remaining
+          : Math.round(totalBudget * weights[i] / weightSum);
+        const levelBudget = Math.max(1, Math.min(levelTotal, remaining - levelsLeft, rawBudget));
+        selectedEntries.push(...scored.slice(0, levelBudget));
+        remaining -= levelBudget;
+        const chosen = scored.slice(0, levelBudget);
+        cullingLevels.push({
+          lod,
+          axis,
+          selected: levelBudget,
+          total: levelTotal,
+          maxScreenErrorPx: chosen.reduce((max, entry) => Math.max(max, entry.screenErrorPx), 0),
+          avgScreenErrorPx: chosen.reduce((sum, entry) => sum + entry.screenErrorPx, 0) / Math.max(1, chosen.length),
+        });
+        if (remaining <= 0) break;
+      }
+      const cut = finalizeSdfFieldletCut(selectedEntries, scoredByLevel, totalBudget, minLod, validCutEnabled);
+
+      return {
+        bricks: cut.coords,
+        culling: {
+          mode: "camera-multilod",
+          selected: cut.coords.length,
+          budget: totalBudget,
+          minLod,
+          maxLod,
+          targetPixelError,
+          focalPx,
+          viewportHeight,
+          hysteresis: {
+            enabled: hysteresisEnabled,
+            previousKept: cut.previousKept,
+            bias: hysteresisBias,
+          },
+          validCut: {
+            enabled: validCutEnabled,
+            parents: cut.validCutParents,
+            expanded: cut.expandedCount,
+            trimmed: cut.trimmed,
+          },
+          adaptiveBudget: {
+            enabled: sdfFieldletAutoBudget && spec?.brickBudget == null && spec?.targetPixelError == null && spec?.screenPixelError == null,
+            brickBudget: sdfFieldletBrickBudget,
+            targetPixelError: sdfFieldletTargetPixelError,
+          },
+          levels: cullingLevels,
+          focus,
+          eye,
+        },
+      };
+    }
+
+    function uploadSdfBrickArtifacts(bricks, brickResolution, reason, activate, sessionId = bangerSessionId) {
+      if (!bangerSessionMatchesSelected(sessionId)) return false;
+      let uploaded = false;
+      const bricksWithValues = Array.isArray(bricks)
+        ? bricks.filter((brick) => brick?.values && brick?.boundsMin && brick?.boundsMax)
+        : [];
+      if (bricksWithValues.length && ingenRender?.uploadSdfBrickAtlas) {
+        uploaded = !!ingenRender.uploadSdfBrickAtlas(
+          bricksWithValues.map((brick) => ({
+            values: new Float32Array(brick.values),
+            boundsMin: brick.boundsMin,
+            boundsMax: brick.boundsMax,
+            surfaceBoundsMin: brick.surfaceBoundsMin,
+            surfaceBoundsMax: brick.surfaceBoundsMax,
+            errorWorld: brick.errorWorld,
+            skipDistance: brick.skipDistance,
+            classification: brick.classification,
+            materialId: brick.materialId,
+            material: brick.material,
+          })),
+          brickResolution,
+        );
+      } else if (bricksWithValues.length && ingenRender?.uploadSdfBrick) {
+        const first = bricksWithValues[0];
+        uploaded = !!ingenRender.uploadSdfBrick(
+          new Float32Array(first.values),
+          first.boundsMin,
+          first.boundsMax,
+          brickResolution,
+        );
+      }
+      if (uploaded && activate !== false) {
+        bangerSessionBlank = false;
+        sdfScene = serializeScene([{ op: "sampledSdf" }]);
+        requestBoomRender(reason, 160);
+      }
+      return uploaded;
+    }
+
+    window.__forgeBangerBakeSdfBricks = async (scene, spec, bricks, includeValues) => {
+      const bakeSessionId = bindBangerToSelectedSession("sdf-brick-bake");
+      const sceneOps = Array.isArray(scene) && scene.length ? scene : DEFAULT_SCENE;
+      const ops = [];
+      let nextMaterialId = 1;
+      for (const op of sceneOps) {
+        if (op?.op === "material") {
+          const explicitId = Number(op.materialId ?? op.material_id ?? op.id);
+          const materialId = Number.isFinite(explicitId) && explicitId > 0
+            ? Math.max(1, Math.min(1024, explicitId | 0))
+            : Math.max(1, Math.min(1024, nextMaterialId++));
+          ops.push({ kind: "material", materialId });
+          continue;
+        }
+        if (op?.op === "sphere") {
+          ops.push({ kind: "sphere", center: op.center, radius: op.radius });
+        } else if (op?.op === "box") {
+          ops.push({ kind: "box", center: op.center, halfExtents: op.halfExtents });
+        } else if (op?.op === "union") {
+          ops.push({ kind: "union" });
+        } else if (op?.op === "intersect") {
+          ops.push({ kind: "intersection" });
+        } else if (op?.op === "diff") {
+          ops.push({ kind: "subtraction" });
+        } else if (op?.op === "smin") {
+          ops.push({ kind: "softUnion", sharpness: op.k });
+        } else {
+          return { ok: false, error: `SDF brick cache v0 does not support op '${op?.op || "unknown"}' yet` };
+        }
+      }
+      const brickSelection = selectSdfBrickCoordsForCamera(spec || {}, bricks);
+      const request = {
+        ops,
+        spec: {
+          brickResolution: Math.max(2, Math.min(24, Number(spec?.brickResolution) || 8)),
+          bricksPerAxis: Math.max(1, Math.min(16, Number(spec?.bricksPerAxis) || 4)),
+          boundsMin: Array.isArray(spec?.boundsMin) ? spec.boundsMin : [-4, -4, -4],
+          boundsMax: Array.isArray(spec?.boundsMax) ? spec.boundsMax : [4, 4, 4],
+        },
+        bricks: brickSelection.bricks,
+        includeValues: !!includeValues,
+      };
+      try {
+        const progressive = !!includeValues
+          && spec?.progressive !== false
+          && brickSelection.culling?.mode === "camera-multilod"
+          && Array.isArray(brickSelection.bricks)
+          && brickSelection.bricks.length > 1;
+        if (progressive) {
+          const lods = Array.from(new Set(brickSelection.bricks.map((coord) => Number(coord?.lod) || 0)))
+            .sort((a, b) => a - b);
+          const accumulatedBricks = [];
+          const stages = [];
+          let uploaded = false;
+          let stageCacheHits = 0;
+          let stageCacheMisses = 0;
+          let finalStage = null;
+          for (const lod of lods) {
+            const batch = brickSelection.bricks.filter((coord) => (Number(coord?.lod) || 0) === lod);
+            if (!batch.length) continue;
+            const stageRequest = { ...request, bricks: batch, includeValues: true };
+            const stageResp = await backendInvoke("banger_bake_sdf_bricks", { request: stageRequest });
+            if (!stageResp?.ok) {
+              return {
+                ok: false,
+                error: stageResp?.error || `SDF brick stream failed at lod ${lod}`,
+                culling: brickSelection.culling,
+                stages,
+              };
+            }
+            finalStage = stageResp;
+            const stageBricks = Array.isArray(stageResp.bricks) ? stageResp.bricks : [];
+            accumulatedBricks.push(...stageBricks);
+            stageCacheHits += Number(stageResp.cacheHits) || 0;
+            stageCacheMisses += Number(stageResp.cacheMisses) || 0;
+            stages.push({
+              lod,
+              brickCount: stageResp.brickCount,
+              cacheHits: stageResp.cacheHits,
+              cacheMisses: stageResp.cacheMisses,
+              proofHash: stageResp.proofHash,
+              outputHash: stageResp.outputHash,
+            });
+            uploaded = uploadSdfBrickArtifacts(
+              accumulatedBricks,
+              request.spec.brickResolution,
+              `sdf-brick-stream-lod-${lod}`,
+              spec?.activate,
+              bakeSessionId,
+            ) || uploaded;
+          }
+
+          const aggregateResp = await backendInvoke("banger_bake_sdf_bricks", {
+            request: { ...request, bricks: brickSelection.bricks, includeValues: false },
+          });
+          if (!aggregateResp?.ok) {
+            return {
+              ...finalStage,
+              schema: "banger.sdf.brick_stream.partial.v0",
+              bricks: accumulatedBricks,
+              uploaded,
+              culling: brickSelection.culling,
+              stages,
+              stageCacheHits,
+              stageCacheMisses,
+              aggregateError: aggregateResp?.error || "aggregate proof failed",
+            };
+          }
+          return {
+            ...aggregateResp,
+            schema: "banger.sdf.brick_stream.v0",
+            bricks: accumulatedBricks,
+            uploaded,
+            culling: brickSelection.culling,
+            stages,
+            stageCacheHits,
+            stageCacheMisses,
+            streamProofHashes: stages.map((stage) => stage.proofHash),
+          };
+        }
+
+        const resp = await backendInvoke("banger_bake_sdf_bricks", { request });
+        const uploaded = resp?.ok
+          ? uploadSdfBrickArtifacts(resp.bricks, request.spec.brickResolution, "sdf-brick-cache-upload", spec?.activate, bakeSessionId)
+          : false;
+        return { ...resp, uploaded, culling: brickSelection.culling };
+      } catch (err) {
+        return { ok: false, error: `backend invoke failed: ${err?.message || err}` };
+      }
+    };
     window.__forgeBangerSetDebugMode = (mode) => {
       sdfDebugMode = Number(mode) | 0;
       requestBoomRender("sdf-debug-toggle", 200);
@@ -8310,6 +10031,55 @@ import * as worlds from "./worlds.js";
       sdfGlow = on ? 1 : 0;
       requestBoomRender("sdf-glow-toggle", 200);
       return { ok: true, glow: sdfGlow };
+    };
+    window.__forgeBangerSetFoliageQuality = (quality) => {
+      sdfFoliageQuality = Math.max(0, Math.min(3, Number(quality) | 0));
+      sdfFoliageQualityTarget = sdfFoliageQuality;
+      sdfAutoFoliageQuality = false;
+      sdfFoliageAutoStableTicks = 0;
+      requestBoomRender("sdf-foliage-quality", 220);
+      return { ok: true, foliageQuality: sdfFoliageQuality, auto: sdfAutoFoliageQuality };
+    };
+    window.__forgeBangerSetFieldletBudget = (opts) => {
+      const cfg = opts && typeof opts === "object" ? opts : {};
+      if (Object.prototype.hasOwnProperty.call(cfg, "auto")) {
+        sdfFieldletAutoBudget = cfg.auto !== false;
+      }
+      if (Number.isFinite(Number(cfg.targetPixelError))) {
+        sdfFieldletTargetPixelError = Math.max(0.35, Math.min(8, Number(cfg.targetPixelError)));
+      }
+      if (Number.isFinite(Number(cfg.brickBudget))) {
+        sdfFieldletBrickBudget = Math.max(4, Math.min(64, Number(cfg.brickBudget) | 0));
+      }
+      sdfFieldletAutoStableTicks = 0;
+      sdfFieldletAutoLastChangeMs = 0;
+      return {
+        ok: true,
+        auto: sdfFieldletAutoBudget,
+        targetPixelError: sdfFieldletTargetPixelError,
+        brickBudget: sdfFieldletBrickBudget,
+        residentFieldlets: sdfFieldletCutState.keys?.size || 0,
+      };
+    };
+    window.__forgeBangerGetFieldletBudget = () => ({
+      ok: true,
+      auto: sdfFieldletAutoBudget,
+      targetPixelError: sdfFieldletTargetPixelError,
+      brickBudget: sdfFieldletBrickBudget,
+      stableTicks: sdfFieldletAutoStableTicks,
+      residentFieldlets: sdfFieldletCutState.keys?.size || 0,
+      lastFps,
+    });
+    window.__forgeBangerSetAutoFoliageQuality = (on, target) => {
+      sdfAutoFoliageQuality = on !== false;
+      if (Number.isFinite(Number(target))) {
+        sdfFoliageQualityTarget = Math.max(0, Math.min(3, Number(target) | 0));
+        sdfFoliageQuality = sdfFoliageQualityTarget;
+      }
+      sdfFoliageAutoStableTicks = 0;
+      sdfFoliageAutoLastChangeMs = 0;
+      requestBoomRender("sdf-foliage-auto-toggle", 220);
+      return { ok: true, foliageQuality: sdfFoliageQuality, auto: sdfAutoFoliageQuality };
     };
     // INGEN §11 mesh→SDF : upload an STL byte buffer, voxelise in Rust
     // (banger_voxelize_mesh), bind the result as a 3D texture so the
@@ -8343,6 +10113,7 @@ import * as worlds from "./worlds.js";
       meshSdfBoundsMin = new Float32Array(resp.boundsMin);
       meshSdfBoundsMax = new Float32Array(resp.boundsMax);
       meshSdfLoaded = 0; // INGEN compute n'a pas encore le binding (Phase 6).
+      bindBangerToSelectedSession("mesh-sdf-load");
       requestBoomRender("sdf-mesh-load", 200);
       return {
         ok: true,
@@ -8364,6 +10135,7 @@ import * as worlds from "./worlds.js";
         ? packed
         : (packed?.buffer ? new Uint32Array(packed.buffer, packed.byteOffset || 0, ((packed.byteLength || 0) / 4) | 0) : null);
       if (!u32) return { ok: false, error: "expected Uint32Array (packed SVDAG)" };
+      bindBangerToSelectedSession("svdag-load");
       ingenRender.uploadSvdag(u32);
       requestBoomRender("ingen-svdag-load", 200);
       return { ok: true, words: u32.length };
@@ -8393,8 +10165,10 @@ import * as worlds from "./worlds.js";
         : (packed?.buffer ? new Float32Array(packed.buffer, packed.byteOffset || 0, ((packed.byteLength || 0) / 4) | 0) : null);
       if (!f32) return { ok: false, error: "expected Float32Array (8 floats per splat)" };
       const safeCount = Math.max(0, Math.min(Math.floor(f32.length / 8), Number(count) | 0 || Math.floor(f32.length / 8)));
+      bindBangerToSelectedSession("splats-load");
       sdfGaussians = { buffer: f32, count: safeCount };
-      ingenRender.uploadSplats(f32, safeCount);
+      bangerSessionBlank = safeCount === 0 && sdfScene.count === 0;
+      ingenRender.uploadSplats(f32, safeCount); // isotrope baké → additif (auto)
       requestBoomRender("ingen-splats-load", 200);
       return { ok: true, splats: safeCount, layout: "isotropic-8f" };
     };
@@ -8431,7 +10205,12 @@ import * as worlds from "./worlds.js";
           }
         }
       }
+      bindBangerToSelectedSession("splat-file-load");
       ingenRender.uploadSplatsAnisotropic(buf, count);
+      bangerSessionBlank = count === 0 && sdfScene.count === 0;
+      // §20 Fusion v3 — une vraie capture 3DGS doit lire comme une surface
+      // solide : over-blend OIT, pas le glow additif des gaussiennes bakées.
+      ingenRender.setSplatSolid?.(true);
       // Sentinel : sdfGaussians.count = 0 empêche le bake-on-surface (qui
       // n'a plus l'upload per-frame de toute façon) d'écraser notre set.
       sdfGaussians = { buffer: buf, count: 0 };
@@ -8458,6 +10237,7 @@ import * as worlds from "./worlds.js";
       if (f32.length !== NSDF_TOTAL_FLOATS) {
         return { ok: false, error: `expected ${NSDF_TOTAL_FLOATS} floats, got ${f32.length}` };
       }
+      bindBangerToSelectedSession("neural-sdf-load");
       ingenRender.uploadNeuralSdf(f32);
       requestBoomRender("ingen-nsdf-load", 200);
       return { ok: true, floats: f32.length, active: f32[0] > 0.5 };
@@ -8483,7 +10263,7 @@ import * as worlds from "./worlds.js";
     // RPi, caméra, WiFi) sortent du hill-climb Rust à score 0.
     window.__forgeBangerLoadDroneScene = () => {
       const sceneOps = buildSphericalDroneSceneOps();
-      const res = (window as any).__forgeBangerSetScene?.(sceneOps);
+      const res = (window as any).__forgeBangerSetScene?.(sceneOps, { parts: SPHERICAL_DRONE_SCENE_PARTS });
       return {
         ok: !!res?.ok,
         params: { ...SPHERICAL_DRONE_PARAMS },
@@ -8527,6 +10307,8 @@ import * as worlds from "./worlds.js";
       requestBoomRender("resize");
     });
     ro.observe(els.canvas);
+    if (els.content) ro.observe(els.content);
+    if (els.leftPanel) ro.observe(els.leftPanel);
   } else {
     window.addEventListener("resize", () => {
       resize();

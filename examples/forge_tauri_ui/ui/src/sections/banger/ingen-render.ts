@@ -7,7 +7,7 @@
 
 import {
   OP_SPHERE, OP_BOX, OP_TORUS, OP_CAPSULE, OP_ROUNDED_BOX,
-  OP_UNION, OP_INTERSECT, OP_DIFF, OP_SMIN, OP_MATERIAL, OP_SAMPLED_SDF, OP_SVDAG, OP_NEURAL_SDF,
+  OP_TERRAIN, OP_UNION, OP_INTERSECT, OP_DIFF, OP_SMIN, OP_MATERIAL, OP_SAMPLED_SDF, OP_SVDAG, OP_NEURAL_SDF,
 } from "./scenes.js";
 
 // Layout-stable opcodes shipped to WGSL. Mirrors scenes.ts 1:1.
@@ -20,9 +20,10 @@ import {
 const MAX_OPS = 128;
 const OPS_BYTES = 16 /* count + pad */ + MAX_OPS * 32;
 
-// §20 GI cache — probe volume size. Must match WGSL PROBE_GRID.
+// §20 GI cache — cascaded probe volume size. Must match WGSL constants.
 const PROBE_GRID = 16;
-const PROBE_TOTAL = PROBE_GRID * PROBE_GRID * PROBE_GRID;
+const PROBE_CASCADES = 3;
+const PROBE_TOTAL = PROBE_GRID * PROBE_GRID * PROBE_GRID * PROBE_CASCADES;
 
 // §18 Pillar B — Neural SDF compact (Instant-NGP-style, fixed shape so the
 // WGSL forward is fully unrolled). L=4 levels of multires hash grid, F=2
@@ -129,21 +130,21 @@ struct Splats {
 // pixel) → vraies ombres SDF sur les captures 3DGS sans faire fondre le GPU.
 @group(0) @binding(7) var<storage, read_write> shadow: array<f32>;
 
-// §20 GI cache — world-space radiance probe volume (Lumen-style surface
-// cache). PROBE_GRID³ probes over a fixed cube centred on the origin, each
-// holding incoming irradiance (rgb). cs_probe bakes them ; cs_main reads
-// one trilinear sample per pixel instead of path tracing. The bake is
-// view-independent and content-hashed : it only re-runs when geometry or
-// lights change, so orbiting the camera reuses the whole GI — the "don't
-// recompute billions of identical light calcs" win, on modest hardware.
+// §20 GI cache — cascaded world-space radiance probe volume (Lumen/SDFGI
+// style surface cache). PROBE_CASCADES concentric PROBE_GRID³ cubes share
+// this one buffer ; near probes stay dense while far probes cover open-world
+// space. cs_probe bakes them ; cs_main reads one blended trilinear sample per
+// pixel. The bake is view-independent and content-hashed : it only re-runs
+// when geometry or lights change.
 @group(0) @binding(8) var<storage, read_write> probes: array<vec4<f32>>;
 
 // Fieldlet SDF atlas (§18 / Nanite-like cut). Always bound. Header floats:
-// [active, resolution, brick_count, table_stride, values_base, _pad, _pad, header_stride].
+// [active, resolution, brick_count, table_stride, values_base, material_base, material_stride, header_stride].
 // Each table row is 20 floats: bounds min/max, value offset, material id,
-// surface bounds, error metadata and classification. The first safe shader
-// path only uses full brick bounds + trilinear values; skip distances stay
-// uploaded for future gated acceleration, not for primary correctness.
+// surface bounds, error metadata, classification and compact material offset.
+// The first safe shader path only uses full brick bounds + trilinear values;
+// skip distances stay uploaded for future gated acceleration, not for primary
+// correctness.
 @group(0) @binding(9) var<storage, read> sdfBrick: array<f32>;
 
 // §23 — temporal reprojection history. A stable copy of last frame's result
@@ -161,7 +162,11 @@ struct Splats {
 // @HISTEND
 
 const PROBE_GRID: u32 = 16u;
-const PROBE_HALF: f32 = 6.0; // world half-extent of the cache cube
+const PROBE_CASCADES: u32 = 3u;
+const PROBE_CASCADE_STRIDE: u32 = PROBE_GRID * PROBE_GRID * PROBE_GRID;
+const PROBE_HALF: f32 = 6.0; // world half-extent of cascade 0
+const RESTIR_LIGHT_COUNT: u32 = 24u;
+const RESTIR_CANDIDATES: u32 = 6u;
 
 fn sd_sphere(p: vec3<f32>, r: f32) -> f32 { return length(p) - r; }
 
@@ -191,6 +196,126 @@ fn smin_k(a: f32, b: f32, k: f32) -> f32 {
   let kk = max(k, 1e-4);
   let h = clamp(0.5 + 0.5 * (b - a) / kk, 0.0, 1.0);
   return mix(b, a, h) - kk * h * (1.0 - h);
+}
+
+// Terrain value noise mirrors scenes.ts exactly enough for CPU/GPU distance
+// parity. This keeps OP_TERRAIN an authored SDF op, not a viewport-only trick.
+fn terrain_hash21(p: vec2<f32>) -> f32 {
+  var q = fract(p * vec2<f32>(123.45, 678.91));
+  let d = dot(q, q) + 45.32;
+  q = q + vec2<f32>(d);
+  return fract(q.x * q.y);
+}
+
+fn terrain_vnoise(p: vec2<f32>) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = terrain_hash21(i);
+  let b = terrain_hash21(i + vec2<f32>(1.0, 0.0));
+  let c = terrain_hash21(i + vec2<f32>(0.0, 1.0));
+  let d = terrain_hash21(i + vec2<f32>(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+fn terrain_fbm(p: vec2<f32>, octaves: u32) -> f32 {
+  var v = 0.0;
+  var amp = 0.5;
+  var q = p;
+  let count = clamp(octaves, 1u, 6u);
+  for (var i: u32 = 0u; i < 6u; i = i + 1u) {
+    if (i >= count) { break; }
+    v = v + amp * terrain_vnoise(q);
+    q = q * 2.0;
+    amp = amp * 0.5;
+  }
+  return v;
+}
+
+fn terrain_hash31(p: vec3<f32>) -> f32 {
+  var q = fract(p * vec3<f32>(127.1, 311.7, 74.7));
+  let d = dot(q, q) + 37.719;
+  q = q + vec3<f32>(d);
+  return fract(q.x * q.y * q.z * (q.x + q.y + q.z));
+}
+
+fn terrain_vnoise3(p: vec3<f32>) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  var out = 0.0;
+  for (var dz: u32 = 0u; dz < 2u; dz = dz + 1u) {
+    let wz = select(1.0 - u.z, u.z, dz == 1u);
+    for (var dy: u32 = 0u; dy < 2u; dy = dy + 1u) {
+      let wy = select(1.0 - u.y, u.y, dy == 1u);
+      for (var dx: u32 = 0u; dx < 2u; dx = dx + 1u) {
+        let wx = select(1.0 - u.x, u.x, dx == 1u);
+        out = out + terrain_hash31(i + vec3<f32>(f32(dx), f32(dy), f32(dz))) * wx * wy * wz;
+      }
+    }
+  }
+  return out;
+}
+
+fn terrain_fbm3(p: vec3<f32>, octaves: u32) -> f32 {
+  var v = 0.0;
+  var amp = 0.5;
+  var q = p;
+  let count = clamp(octaves, 1u, 6u);
+  for (var i: u32 = 0u; i < 6u; i = i + 1u) {
+    if (i >= count) { break; }
+    v = v + amp * terrain_vnoise3(q);
+    q = q * 2.0;
+    amp = amp * 0.5;
+  }
+  return v;
+}
+
+fn sd_terrain(
+  p: vec3<f32>,
+  amplitude: f32,
+  frequency: f32,
+  ground_z: f32,
+  octaves_f: f32,
+  cave_strength: f32,
+  overhang_strength: f32,
+  erosion_strength: f32
+) -> f32 {
+  let amp = max(abs(amplitude), 1.0e-5);
+  let freq = max(abs(frequency), 1.0e-5);
+  let octaves = u32(clamp(octaves_f, 1.0, 6.0) + 0.5);
+  let base = terrain_fbm(p.xy * freq, octaves);
+  let ridge = 1.0 - abs(terrain_fbm(p.xy * freq * 0.43 + vec2<f32>(13.7, -4.1), octaves) * 2.0 - 1.0);
+  let channel_core = max(ridge * 1.25 - 0.35, 0.0);
+  let channel = channel_core * channel_core;
+  let fine = terrain_fbm(p.xy * freq * 4.0 + vec2<f32>(5.3, -9.7), min(octaves + 1u, 6u)) - 0.5;
+  let er = clamp(erosion_strength, 0.0, 1.0);
+  let height = amp * (base - er * 0.38 * channel + er * 0.10 * fine) + ground_z;
+  let base_d = p.z - height;
+  var d = base_d;
+
+  let oh = clamp(overhang_strength, 0.0, 1.0);
+  if (oh > 0.0001) {
+    let depth = clamp(-base_d / (amp * 1.7 + 0.5), 0.0, 1.0);
+    let ledge = terrain_fbm3(vec3<f32>(p.x * freq * 1.7 + 5.7, p.y * freq * 1.7 - 3.1, p.z * freq * 0.9 + 8.3), octaves) - 0.5;
+    let lip_core = max(1.0 - abs(ridge - 0.72) / 0.18, 0.0);
+    let lip = lip_core * lip_core;
+    d = d - (ledge * 0.55 * depth + lip * 0.18 * smoothstep(0.05, 0.85, depth)) * oh * amp;
+  }
+
+  let cv = clamp(cave_strength, 0.0, 1.0);
+  if (cv > 0.0001) {
+    let depth_below = -base_d;
+    let cave_gate =
+      smoothstep(0.08, amp * 0.45 + 0.12, depth_below) *
+      (1.0 - smoothstep(amp * 2.6 + 0.4, amp * 4.0 + 1.0, depth_below));
+    let cave_noise = terrain_fbm3(vec3<f32>(p.x * freq * 2.4 + 11.1, p.y * freq * 2.4 - 17.2, p.z * freq * 1.8 + 3.5), octaves);
+    let cave_d =
+      (abs(cave_noise - 0.5) - (0.10 + cv * 0.14)) * (amp * 2.4 + 0.6) +
+      (1.0 - cave_gate) * (amp * 4.0 + 4.0);
+    d = max(d, -cave_d);
+  }
+  return d;
 }
 
 // §18 Pillar B — Neural SDF forward. Multires hash grid (L levels, F
@@ -404,6 +529,38 @@ fn sd_sampled_brick(p: vec3<f32>) -> f32 {
   return nearest_box;
 }
 
+fn sampled_brick_table(p: vec3<f32>) -> u32 {
+  if (sdfBrick[0] <= 0.5) { return 0u; }
+  let brick_count = min(u32(max(sdfBrick[2], 0.0) + 0.5), 64u);
+  let stride = max(u32(max(sdfBrick[3], 8.0) + 0.5), 8u);
+  let table_base = max(u32(max(sdfBrick[7], 8.0) + 0.5), 8u);
+  var best_table: u32 = 0u;
+  var best_volume = 1.0e30;
+  var found = false;
+
+  for (var i: u32 = 0u; i < 64u; i = i + 1u) {
+    if (i >= brick_count) { break; }
+    let table = table_base + i * stride;
+    let bmin = vec3<f32>(sdfBrick[table + 0u], sdfBrick[table + 1u], sdfBrick[table + 2u]);
+    let bmax = vec3<f32>(sdfBrick[table + 3u], sdfBrick[table + 4u], sdfBrick[table + 5u]);
+    let half = max((bmax - bmin) * 0.5, vec3<f32>(1.0e-5));
+    let center = (bmin + bmax) * 0.5;
+    let q = abs(p - center) - half;
+    let box_d = length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+    if (box_d <= 1.0e-4) {
+      let volume = half.x * half.y * half.z;
+      if (!found || volume < best_volume) {
+        found = true;
+        best_volume = volume;
+        best_table = table;
+      }
+    }
+  }
+
+  if (!found) { return 0u; }
+  return best_table;
+}
+
 fn scene(p: vec3<f32>) -> f32 {
   var stack: array<f32, 16>;
   var sp: i32 = 0;
@@ -426,6 +583,9 @@ fn scene(p: vec3<f32>) -> f32 {
       sp = sp + 1;
     } else if (op == ${OP_ROUNDED_BOX}u) {
       stack[sp] = sd_rounded_box(p - a.yzw, b.xyz, b.w);
+      sp = sp + 1;
+    } else if (op == ${OP_TERRAIN}u) {
+      stack[sp] = sd_terrain(p, a.y, a.z, a.w, b.x, b.y, b.z, b.w);
       sp = sp + 1;
     } else if (op == ${OP_UNION}u) {
       sp = sp - 1;
@@ -460,7 +620,7 @@ fn scene(p: vec3<f32>) -> f32 {
 
 // §22 PBR — surface material. The distance stack machine above only carries
 // floats ; this twin runs the SAME program once at the hit point, tracking
-// the (albedo, roughness, metallic) of the CLOSEST surface. OP_MATERIAL sets
+// the PBR material of the CLOSEST surface. OP_MATERIAL sets
 // the current material for the primitives that follow ; boolean ops keep the
 // material of the winning operand. Called once per shaded pixel — far cheaper
 // than the march, so marching/shadows/AO stay distance-only.
@@ -468,10 +628,117 @@ struct Mat {
   albedo: vec3<f32>,
   rough:  f32,
   metal:  f32,
+  detail: f32,
+  decal:  f32,
 }
 
 fn default_mat() -> Mat {
-  return Mat(vec3<f32>(0.80, 0.82, 0.86), 0.55, 0.0);
+  return Mat(vec3<f32>(0.80, 0.82, 0.86), 0.55, 0.0, 0.0, 0.0);
+}
+
+fn material_id_albedo(material_id: u32) -> vec3<f32> {
+  let k = material_id % 8u;
+  if (k == 1u) { return vec3<f32>(0.72, 0.12, 0.10); }
+  if (k == 2u) { return vec3<f32>(0.26, 0.46, 0.20); }
+  if (k == 3u) { return vec3<f32>(0.70, 0.68, 0.62); }
+  if (k == 4u) { return vec3<f32>(0.36, 0.22, 0.13); }
+  if (k == 5u) { return vec3<f32>(0.85, 0.85, 0.88); }
+  if (k == 6u) { return vec3<f32>(0.55, 0.70, 0.80); }
+  if (k == 7u) { return vec3<f32>(0.08, 0.08, 0.09); }
+  return vec3<f32>(0.80, 0.82, 0.86);
+}
+
+fn material_from_id(material_id: u32, fallback: Mat) -> Mat {
+  let safe_id = min(material_id, 1024u);
+  if (safe_id == 0u) { return fallback; }
+  return Mat(
+    material_id_albedo(safe_id),
+    clamp(0.35 + 0.08 * f32(safe_id % 7u), 0.08, 0.95),
+    select(0.0, 0.65, safe_id % 11u == 5u),
+    clamp(0.12 + 0.04 * f32(safe_id % 5u), 0.0, 0.35),
+    0.0
+  );
+}
+
+fn material_from_sdf_row(table: u32, fallback: Mat) -> Mat {
+  let material_id = min(u32(max(sdfBrick[table + 7u], 0.0) + 0.5), 1024u);
+  let base = material_from_id(material_id, fallback);
+  let material_offset = u32(max(sdfBrick[table + 17u], 0.0) + 0.5);
+  if (material_offset == 0u) { return base; }
+  return Mat(
+    clamp(vec3<f32>(
+      sdfBrick[material_offset + 0u],
+      sdfBrick[material_offset + 1u],
+      sdfBrick[material_offset + 2u]
+    ), vec3<f32>(0.0), vec3<f32>(1.0)),
+    clamp(sdfBrick[material_offset + 3u], 0.02, 1.0),
+    clamp(sdfBrick[material_offset + 4u], 0.0, 1.0),
+    clamp(sdfBrick[material_offset + 5u], 0.0, 1.0),
+    clamp(sdfBrick[material_offset + 6u], 0.0, 1.0)
+  );
+}
+
+fn sampled_brick_material(p: vec3<f32>, fallback: Mat) -> Mat {
+  let table = sampled_brick_table(p);
+  if (table == 0u) { return fallback; }
+  return material_from_sdf_row(table, fallback);
+}
+
+fn blend_mat(a: Mat, b: Mat, t: f32) -> Mat {
+  let w = clamp(t, 0.0, 1.0);
+  return Mat(
+    mix(a.albedo, b.albedo, w),
+    mix(a.rough, b.rough, w),
+    mix(a.metal, b.metal, w),
+    mix(a.detail, b.detail, w),
+    mix(a.decal, b.decal, w)
+  );
+}
+
+fn material_decal_mask(p: vec3<f32>, m: Mat) -> f32 {
+  let w = clamp(m.decal, 0.0, 1.0);
+  if (w <= 0.0001) { return 0.0; }
+  let n1 = fbm2(p.xy * 3.7 + vec2<f32>(p.z * 1.3, -p.z * 0.9));
+  let n2 = fbm2(p.yz * 6.1 + vec2<f32>(2.7, p.x * 0.8));
+  let streak = smoothstep(0.34, 0.86, n1 * 0.62 + n2 * 0.38);
+  return streak * w;
+}
+
+fn apply_material_layers(p: vec3<f32>, m: Mat) -> Mat {
+  let mask = material_decal_mask(p, m);
+  let dirt = vec3<f32>(0.075, 0.064, 0.046);
+  return Mat(
+    mix(m.albedo, m.albedo * 0.58 + dirt, mask),
+    mix(m.rough, 0.94, mask * 0.72),
+    m.metal * (1.0 - mask * 0.45),
+    m.detail,
+    m.decal
+  );
+}
+
+fn material_detail_height(p: vec3<f32>, m: Mat) -> f32 {
+  let strength = clamp(m.detail, 0.0, 1.0);
+  if (strength <= 0.0001 && m.decal <= 0.0001) { return 0.0; }
+  let freq = 16.0 + strength * 46.0;
+  let h = (
+    fbm2(p.xy * freq) +
+    fbm2(p.yz * (freq * 0.77) + vec2<f32>(4.1, 1.7)) +
+    fbm2(p.zx * (freq * 0.91) + vec2<f32>(-2.3, 3.4))
+  ) * 0.3333333 - 0.5;
+  return h * strength * 0.018 + material_decal_mask(p, m) * 0.006;
+}
+
+fn material_detail_normal(p: vec3<f32>, n: vec3<f32>, m: Mat) -> vec3<f32> {
+  if (m.detail <= 0.0001 && m.decal <= 0.0001) { return n; }
+  let e = 0.012;
+  let h0 = material_detail_height(p, m);
+  let g = vec3<f32>(
+    material_detail_height(p + vec3<f32>(e, 0.0, 0.0), m) - h0,
+    material_detail_height(p + vec3<f32>(0.0, e, 0.0), m) - h0,
+    material_detail_height(p + vec3<f32>(0.0, 0.0, e), m) - h0
+  ) / e;
+  let tangent_grad = g - n * dot(g, n);
+  return normalize(n - tangent_grad * 0.55);
 }
 
 fn eval_material(p: vec3<f32>) -> Mat {
@@ -485,7 +752,7 @@ fn eval_material(p: vec3<f32>) -> Mat {
     let b = ops.data[i * 2u + 1u];
     let op = u32(a.x + 0.5);
     if (op == ${OP_MATERIAL}u) {
-      cur = Mat(a.yzw, max(b.x, 0.02), clamp(b.y, 0.0, 1.0));
+      cur = Mat(a.yzw, max(b.x, 0.02), clamp(b.y, 0.0, 1.0), clamp(b.z, 0.0, 1.0), clamp(b.w, 0.0, 1.0));
     } else if (op == ${OP_SPHERE}u) {
       dstack[sp] = sd_sphere(p - a.yzw, b.x); mstack[sp] = cur; sp = sp + 1;
     } else if (op == ${OP_BOX}u) {
@@ -496,8 +763,10 @@ fn eval_material(p: vec3<f32>) -> Mat {
       dstack[sp] = sd_capsule(p, a.yzw, b.xyz, b.w); mstack[sp] = cur; sp = sp + 1;
     } else if (op == ${OP_ROUNDED_BOX}u) {
       dstack[sp] = sd_rounded_box(p - a.yzw, b.xyz, b.w); mstack[sp] = cur; sp = sp + 1;
+    } else if (op == ${OP_TERRAIN}u) {
+      dstack[sp] = sd_terrain(p, a.y, a.z, a.w, b.x, b.y, b.z, b.w); mstack[sp] = cur; sp = sp + 1;
     } else if (op == ${OP_SAMPLED_SDF}u) {
-      dstack[sp] = sd_sampled_brick(p); mstack[sp] = cur; sp = sp + 1;
+      dstack[sp] = sd_sampled_brick(p); mstack[sp] = sampled_brick_material(p, cur); sp = sp + 1;
     } else if (op == ${OP_SVDAG}u) {
       dstack[sp] = sd_svdag(p, a.yzw, b.x, u32(b.y + 0.5)); mstack[sp] = cur; sp = sp + 1;
     } else if (op == ${OP_NEURAL_SDF}u) {
@@ -513,12 +782,16 @@ fn eval_material(p: vec3<f32>) -> Mat {
       dstack[sp - 1] = max(dstack[sp - 1], -dstack[sp]);
     } else if (op == ${OP_SMIN}u) {
       sp = sp - 1;
-      if (dstack[sp] < dstack[sp - 1]) { mstack[sp - 1] = mstack[sp]; }
+      let ad = dstack[sp - 1];
+      let bd = dstack[sp];
+      let kk = max(b.w, 1e-4);
+      let h = clamp(0.5 + 0.5 * (bd - ad) / kk, 0.0, 1.0);
+      mstack[sp - 1] = blend_mat(mstack[sp], mstack[sp - 1], h);
       dstack[sp - 1] = smin_k(dstack[sp - 1], dstack[sp], b.w);
     }
   }
   if (sp <= 0) { return default_mat(); }
-  return mstack[0];
+  return apply_material_layers(p, mstack[0]);
 }
 
 fn normal(p: vec3<f32>) -> vec3<f32> {
@@ -528,6 +801,18 @@ fn normal(p: vec3<f32>) -> vec3<f32> {
     scene(p + e.yxy) - scene(p - e.yxy),
     scene(p + e.yyx) - scene(p - e.yyx)
   ));
+}
+
+// P5 shadow bias: SDF-native, normal-aware and curvature-aware. This keeps
+// acne down at grazing angles without pushing shadows loose everywhere.
+fn sdf_shadow_bias(p: vec3<f32>, n: vec3<f32>, rd: vec3<f32>) -> f32 {
+  let ndl = clamp(dot(n, rd), 0.0, 1.0);
+  let grazing = 1.0 - ndl;
+  let e = 0.018;
+  let front = abs(scene(p + n * e) - e);
+  let back = abs(scene(p - n * e) + e);
+  let curvature = clamp((front + back) / max(2.0 * e, 0.0001), 0.0, 1.0);
+  return 0.005 + 0.018 * grazing * grazing + 0.012 * curvature;
 }
 
 // Soft shadow via sphere-tracing toward the (jittered) sun. The running
@@ -545,6 +830,32 @@ fn soft_shadow(ro: vec3<f32>, rd: vec3<f32>, mint: f32, maxt: f32, k: f32) -> f3
     t = t + clamp(h, 0.015, 0.4);
   }
   return clamp(res, 0.0, 1.0);
+}
+
+// P5 contact shadow: very short SDF march before the long soft-shadow ray.
+// It recovers tight grounding detail without a shadow-map side path.
+fn sdf_contact_shadow(ro: vec3<f32>, rd: vec3<f32>, maxt: f32) -> f32 {
+  var res = 1.0;
+  var t = 0.012;
+  for (var i: u32 = 0u; i < 10u; i = i + 1u) {
+    if (t >= maxt) { break; }
+    let h = scene(ro + rd * t);
+    if (h < 0.0007) { return 0.0; }
+    res = min(res, 8.0 * h / max(t, 0.001));
+    t = t + clamp(h, 0.008, 0.12);
+  }
+  return clamp(res, 0.0, 1.0);
+}
+
+// P5 unified SDF shadow query. scene() already routes through authored SDF
+// ops, sampled bricks, SVDAG and Neural SDF, so this is the compact
+// raymarch/ray-query hybrid path instead of a parallel shadow renderer.
+fn sdf_shadow_visibility(p: vec3<f32>, geom_n: vec3<f32>, rd: vec3<f32>, maxt: f32, k: f32) -> f32 {
+  let bias = sdf_shadow_bias(p, geom_n, rd);
+  let ro = p + geom_n * bias;
+  let far_shadow = soft_shadow(ro, rd, max(0.012, bias * 0.75), maxt, k);
+  let contact = sdf_contact_shadow(ro, rd, min(maxt, 1.25));
+  return far_shadow * mix(0.38, 1.0, contact);
 }
 
 // SDF ambient occlusion — 5 taps marched along the surface normal (IQ).
@@ -599,18 +910,42 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, max_steps: u32) -> f32 {
 // drives the GI ambient and the ocean's reflection, so the whole frame
 // shares one coherent lighting environment.
 fn sky_env(rd: vec3<f32>) -> vec3<f32> {
-  let sun = normalize(vec3<f32>(0.5, 0.4, 0.85));
+  let sun = normalize(vec3<f32>(0.82, 0.18, 0.16));
   let up = clamp(rd.z, -1.0, 1.0);
-  let zenith  = vec3<f32>(0.16, 0.33, 0.66);
-  let horizon = vec3<f32>(0.60, 0.69, 0.82);
+  let zenith  = vec3<f32>(0.18, 0.38, 0.72);
+  let horizon = vec3<f32>(0.70, 0.78, 0.90);
   let ground  = vec3<f32>(0.09, 0.10, 0.12);
   var col = mix(horizon, zenith, clamp(up, 0.0, 1.0));
   col = mix(col, ground, clamp(-up * 2.5, 0.0, 1.0));
   let mu = max(dot(rd, sun), 0.0);
   // Mie halo (broad warm glow) + crisp sun disk.
-  col = col + vec3<f32>(1.0, 0.78, 0.50) * (pow(mu, 8.0) * 0.32);
-  col = col + vec3<f32>(1.0, 0.96, 0.88) * (pow(mu, 900.0) * 7.0);
+  col = mix(col, vec3<f32>(1.0, 0.54, 0.28), pow(mu, 4.0) * 0.38);
+  col = col + vec3<f32>(1.0, 0.62, 0.34) * (pow(mu, 9.0) * 0.48);
+  col = col + vec3<f32>(1.0, 0.88, 0.70) * (pow(mu, 700.0) * 8.0);
+  let cloud = smoothstep(0.58, 0.82, terrain_fbm(rd.xy * 2.4 + vec2<f32>(17.0, -9.0), 4u))
+    * smoothstep(0.03, 0.42, rd.z);
+  col = mix(col, vec3<f32>(0.82, 0.86, 0.90), cloud * 0.22);
   return col;
+}
+
+fn atmosphere_fog_amount(ro: vec3<f32>, rd: vec3<f32>, dist: f32) -> f32 {
+  let d = clamp(dist, 0.0, 120.0);
+  let mid = ro + rd * min(d * 0.5, 60.0);
+  // Chute en altitude plus douce (0.22 -> 0.16) : la nappe basse monte plus
+  // haut, donc la brume habille l'horizon au-dessus de l'eau au lieu de
+  // rester collée au sol.
+  let height_fog = exp(-max(mid.z, 0.0) * 0.16);
+  let valley = 0.5 + 0.5 * terrain_fbm(mid.xy * 0.035 + vec2<f32>(11.1, -7.3), 3u);
+  // Brume plus présente : socle ~2x + contribution height-fog ~2x. La mi-
+  // distance reste lisible, l'horizon s'estompe nettement.
+  let density = 0.020 + 0.058 * height_fog * valley;
+  return clamp(1.0 - exp(-d * density), 0.0, 0.96);
+}
+
+fn atmosphere_scatter(rd: vec3<f32>, sun: vec3<f32>, fog: f32) -> vec3<f32> {
+  let forward = pow(max(dot(rd, sun), 0.0), 10.0);
+  let shaft = vec3<f32>(1.0, 0.82, 0.58) * forward * fog * 0.55;
+  return sky_env(rd) * (0.72 + fog * 0.22) + shaft;
 }
 
 // --- §21 Ocean : value-noise FBM for animated wave height + normal. ---
@@ -640,7 +975,10 @@ fn fbm2(p: vec2<f32>) -> f32 {
 }
 fn water_height(xy: vec2<f32>, t: f32) -> f32 {
   let flow = vec2<f32>(0.6, 0.35) * t;
-  return fbm2((xy + flow) * 0.25) * 0.55 + fbm2((xy - flow * 0.7) * 0.62) * 0.18;
+  let swell_a = sin(dot(xy, normalize(vec2<f32>(0.88, 0.22))) * 0.34 + t * 0.72) * 0.22;
+  let swell_b = sin(dot(xy, normalize(vec2<f32>(-0.28, 0.96))) * 0.58 + t * 1.05) * 0.08;
+  let chop = (fbm2((xy + flow) * 0.25) - 0.5) * 0.30 + (fbm2((xy - flow * 0.7) * 0.62) - 0.5) * 0.10;
+  return swell_a + swell_b + chop;
 }
 fn water_normal(xy: vec2<f32>, t: f32) -> vec3<f32> {
   let e = 0.15;
@@ -659,23 +997,39 @@ fn sphere_dir(u1: f32, u2: f32) -> vec3<f32> {
   return vec3<f32>(r * cos(phi), r * sin(phi), z);
 }
 
-// World position of probe (i, j, k) inside the cache cube.
-fn probe_pos(i: u32, j: u32, k: u32) -> vec3<f32> {
+fn max_abs3(p: vec3<f32>) -> f32 {
+  return max(max(abs(p.x), abs(p.y)), abs(p.z));
+}
+
+fn probe_half(cascade: u32) -> f32 {
+  if (cascade == 0u) { return PROBE_HALF; }
+  if (cascade == 1u) { return PROBE_HALF * 3.0; }
+  return PROBE_HALF * 9.0;
+}
+
+fn probe_index(cascade: u32, i: u32, j: u32, k: u32) -> u32 {
+  return cascade * PROBE_CASCADE_STRIDE + (k * PROBE_GRID + j) * PROBE_GRID + i;
+}
+
+// World position of probe (i, j, k) inside one concentric cache cascade.
+fn probe_pos(cascade: u32, i: u32, j: u32, k: u32) -> vec3<f32> {
   let g = f32(PROBE_GRID);
-  let span = 2.0 * PROBE_HALF;
+  let half = probe_half(cascade);
+  let span = 2.0 * half;
   return vec3<f32>(
-    -PROBE_HALF + (f32(i) + 0.5) / g * span,
-    -PROBE_HALF + (f32(j) + 0.5) / g * span,
-    -PROBE_HALF + (f32(k) + 0.5) / g * span,
+    -half + (f32(i) + 0.5) / g * span,
+    -half + (f32(j) + 0.5) / g * span,
+    -half + (f32(k) + 0.5) / g * span,
   );
 }
 
-// Trilinear gather of cached irradiance at a world point. Out-of-cube
-// points clamp to the boundary probes (graceful far-field fade).
-fn sample_probe(p: vec3<f32>) -> vec3<f32> {
+// Trilinear gather inside one cascade. Out-of-cube points clamp to the
+// boundary probes so the largest cascade degrades gracefully at the far field.
+fn sample_probe_cascade(p: vec3<f32>, cascade: u32) -> vec3<f32> {
   let g = f32(PROBE_GRID);
-  let span = 2.0 * PROBE_HALF;
-  let local = (p + vec3<f32>(PROBE_HALF)) / span * g - vec3<f32>(0.5);
+  let half = probe_half(cascade);
+  let span = 2.0 * half;
+  let local = clamp((p + vec3<f32>(half)) / span * g - vec3<f32>(0.5), vec3<f32>(0.0), vec3<f32>(g - 1.0));
   let p0 = floor(local);
   let fr = local - p0;
   let gi = i32(PROBE_GRID) - 1;
@@ -690,10 +1044,52 @@ fn sample_probe(p: vec3<f32>) -> vec3<f32> {
     let wx = select(1.0 - fr.x, fr.x, dx == 1);
     let wy = select(1.0 - fr.y, fr.y, dy == 1);
     let wz = select(1.0 - fr.z, fr.z, dz == 1);
-    let idx = (u32(iz) * PROBE_GRID + u32(iy)) * PROBE_GRID + u32(ix);
+    let idx = probe_index(cascade, u32(ix), u32(iy), u32(iz));
     acc = acc + (wx * wy * wz) * probes[idx].xyz;
   }
   return acc;
+}
+
+// Cascaded probe gather : dense near field, progressively larger far field,
+// with transition blends so indirect light does not pop at cascade borders.
+fn sample_probe(p: vec3<f32>) -> vec3<f32> {
+  let r = max_abs3(p);
+  var cascade = 0u;
+  if (r > probe_half(0u) * 0.90) { cascade = 1u; }
+  if (r > probe_half(1u) * 0.90) { cascade = 2u; }
+  let near_col = sample_probe_cascade(p, cascade);
+  if (cascade + 1u >= PROBE_CASCADES) {
+    return near_col;
+  }
+  let h = probe_half(cascade);
+  let fade = smoothstep(h * 0.70, h * 0.90, r);
+  return mix(near_col, sample_probe_cascade(p, cascade + 1u), fade);
+}
+
+// Surface-cache proxy for P4 GI. The canonical object stays the SDF graph ;
+// splats uploaded by bakeGaussiansOnSurface are only surfel-like samples of
+// that field, reused here to tint the low-frequency probe bake.
+fn sample_surface_cache(p: vec3<f32>) -> vec3<f32> {
+  if (cam.splatSolid > 0.5) {
+    return vec3<f32>(0.0);
+  }
+  let n = min(splats.count, 32u);
+  var acc = vec3<f32>(0.0);
+  var wsum = 0.0;
+  for (var i: u32 = 0u; i < n; i = i + 1u) {
+    let s0 = splats.data[i * 4u + 0u];
+    let s1 = splats.data[i * 4u + 1u];
+    let s3 = splats.data[i * 4u + 3u];
+    let sigma = clamp((s1.x + s1.y + s1.z) * 0.33333334, 0.025, 3.0);
+    let d = p - s0.xyz;
+    let w = exp(-dot(d, d) / max(2.0 * sigma * sigma, 0.00001)) * clamp(s0.w, 0.0, 1.0);
+    acc = acc + clamp(s3.rgb, vec3<f32>(0.0), vec3<f32>(1.8)) * w;
+    wsum = wsum + w;
+  }
+  if (wsum <= 0.0001) {
+    return vec3<f32>(0.0);
+  }
+  return acc / wsum;
 }
 
 // Per-pixel decorrelated RNG (PCG-style integer hash) keyed on pixel,
@@ -714,6 +1110,90 @@ fn rand2(px: vec2<u32>, s: u32, b: u32) -> vec2<f32> {
   return vec2<f32>(f32(h1) / 4294967296.0, f32(h2) / 4294967296.0);
 }
 
+fn luminance(c: vec3<f32>) -> f32 {
+  return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+struct DirectLightEval {
+  dir: vec3<f32>,
+  radiance: vec3<f32>,
+  dist: f32,
+  proxy: f32,
+};
+
+// Compact many-light set for ReSTIR-DI Tier 1. It is procedural and
+// deterministic, so no light-list buffer or pass is introduced ; later the
+// same sampler can read emissive SDF/surfel lights from the resource table.
+fn procedural_light_eval(i: u32, p: vec3<f32>, n: vec3<f32>) -> DirectLightEval {
+  let fi = f32(i);
+  let ring = 2.6 + f32(i % 6u) * 1.65;
+  let angle = fi * 2.39996323 + f32(i / 6u) * 0.73;
+  let pos = vec3<f32>(
+    cos(angle) * ring + sin(fi * 1.17) * 1.1,
+    sin(angle) * ring + cos(fi * 0.91) * 1.1,
+    0.9 + f32((i * 7u) % 6u) * 0.55
+  );
+  let to_l = pos - p;
+  let dist2 = max(dot(to_l, to_l), 0.04);
+  let dist = sqrt(dist2);
+  let dir = to_l / dist;
+  let hue = vec3<f32>(
+    0.72 + 0.28 * sin(fi * 1.31),
+    0.58 + 0.24 * sin(fi * 1.73 + 1.2),
+    0.42 + 0.30 * sin(fi * 2.11 + 2.4)
+  );
+  let intensity = 0.18 + 0.10 * f32((i * 5u) % 7u);
+  let radiance = clamp(hue, vec3<f32>(0.08), vec3<f32>(1.0)) * (intensity / (0.75 + dist2));
+  let proxy = luminance(radiance) * max(dot(n, dir), 0.0);
+  return DirectLightEval(dir, radiance, dist, proxy);
+}
+
+fn direct_brdf(m: Mat, n: vec3<f32>, viewd: vec3<f32>, wi: vec3<f32>, radiance: vec3<f32>) -> vec3<f32> {
+  let ndl = max(dot(n, wi), 0.0);
+  if (ndl <= 0.0) { return vec3<f32>(0.0); }
+  let f0 = mix(vec3<f32>(0.04), m.albedo, m.metal);
+  let kd = 1.0 - m.metal;
+  let h = normalize(wi + viewd);
+  let nh = max(dot(n, h), 0.0);
+  var a2 = max(m.rough * m.rough, 0.002);
+  a2 = a2 * a2;
+  let denom = nh * nh * (a2 - 1.0) + 1.0;
+  let ndf = a2 / (3.14159265 * denom * denom);
+  let fres = f0 + (1.0 - f0) * pow(1.0 - max(dot(h, viewd), 0.0), 5.0);
+  return m.albedo * kd * radiance * ndl + radiance * (ndf * ndl) * fres;
+}
+
+// ReSTIR-DI Tier 1: streaming weighted reservoir over many lights, one
+// selected light shadowed through the SDF. Temporal stability comes from the
+// existing accumulation/history path; persistent reservoir buffers remain a
+// later upgrade, not a new branch today.
+fn restir_direct_light(p: vec3<f32>, geom_n: vec3<f32>, n: vec3<f32>, viewd: vec3<f32>, m: Mat, px: vec2<u32>, si: u32) -> vec3<f32> {
+  if (si == 0u) { return vec3<f32>(0.0); }
+  var chosen = procedural_light_eval(0u, p, n);
+  var chosen_w = 0.0;
+  var wsum = 0.0;
+  for (var c: u32 = 0u; c < RESTIR_CANDIDATES; c = c + 1u) {
+    let rnd = rand2(px, si + 97u, c + 41u);
+    let li = min(u32(floor(rnd.x * f32(RESTIR_LIGHT_COUNT))), RESTIR_LIGHT_COUNT - 1u);
+    let ev = procedural_light_eval(li, p, n);
+    let w = ev.proxy;
+    if (w > 0.000001) {
+      wsum = wsum + w;
+      if (rnd.y * wsum <= w) {
+        chosen = ev;
+        chosen_w = w;
+      }
+    }
+  }
+  if (wsum <= 0.000001 || chosen_w <= 0.000001) {
+    return vec3<f32>(0.0);
+  }
+  let max_t = max(0.05, min(chosen.dist - 0.04, 60.0));
+  let vis = sdf_shadow_visibility(p, geom_n, chosen.dir, max_t, 12.0);
+  let ris_scale = (wsum * f32(RESTIR_LIGHT_COUNT)) / (f32(RESTIR_CANDIDATES) * chosen_w);
+  return direct_brdf(m, n, viewd, chosen.dir, chosen.radiance * vis) * ris_scale * 0.35;
+}
+
 // §22 — ACES filmic tonemap (Narkowicz approximation). Maps linear HDR to
 // display, rolling bright PBR specular / sun / reflections off smoothly
 // instead of the old hard clamp that flattened them to white.
@@ -724,6 +1204,24 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
   let d = 0.59;
   let e = 0.14;
   return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// P7 SDF-aware temporal reconstruction. The previous colour is clipped around
+// the current SDF sample before blending, so disocclusions/thin foliage/water
+// do not drag stale history across the frame. Motion is screen-space distance
+// between current and previous projected hit positions.
+fn taa_clip_history(history_col: vec3<f32>, current_col: vec3<f32>, motion: f32) -> vec3<f32> {
+  let lum_h = luminance(history_col);
+  let lum_c = luminance(current_col);
+  let reactive = clamp(abs(lum_h - lum_c) * 1.6 + motion * 2.4, 0.0, 1.0);
+  let radius = vec3<f32>(0.035 + reactive * 0.38);
+  return clamp(history_col, current_col - radius, current_col + radius);
+}
+
+fn taa_history_weight(motion: f32, depth_rel: f32) -> f32 {
+  let motion_reject = smoothstep(0.012, 0.11, motion);
+  let depth_reject = smoothstep(0.015, 0.080, depth_rel);
+  return clamp(0.90 - motion_reject * 0.55 - depth_reject * 0.35, 0.12, 0.90);
 }
 
 // Analytical sub-pixel grid.
@@ -780,7 +1278,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   // Sun (Z-up) with a per-sample jittered disk offset → soft penumbra and
   // soft specular that converge as the accumulator integrates many rays.
-  let sun = normalize(vec3<f32>(0.5, 0.4, 0.85));
+  let sun = normalize(vec3<f32>(0.82, 0.18, 0.16));
   let la1 = halton(si + 1u, 5u);
   let la2 = halton(si + 1u, 7u);
   let lrad = sqrt(la2) * 0.055;
@@ -820,7 +1318,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
       // plane. Only traced on accumulation samples (si > 0) so the in-motion
       // preview stays cheap ; the shadow fades in as the view settles.
       if (si > 0u) {
-        let gsh = soft_shadow(p + vec3<f32>(0.0, 0.0, 0.02), ljit, 0.05, 60.0, 9.0);
+        let gsh = sdf_shadow_visibility(p, vec3<f32>(0.0, 0.0, 1.0), ljit, 60.0, 9.0);
         col = col * (0.35 + 0.65 * gsh);
       }
       let g = grid_xy(p, 2.5);
@@ -846,8 +1344,9 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // multi-bounce path trace into one lookup, so the cost stays flat as the
     // camera orbits and the GI is reused until the scene actually changes.
     let p = cam.pos + dir * t;
-    let n = normal(p);
+    let geom_n = normal(p);
     let m = eval_material(p);
+    let n = material_detail_normal(p, geom_n, m);
     let sun_col = vec3<f32>(1.00, 0.96, 0.88) * 1.6;
     let viewd = -dir;
 
@@ -855,8 +1354,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var sh = 1.0;
     var ao = 1.0;
     if (si > 0u) {
-      if (ndl > 0.0) { sh = soft_shadow(p + n * 0.012, ljit, 0.02, 60.0, 12.0); }
-      ao = calc_ao(p, n);
+      if (ndl > 0.0) { sh = sdf_shadow_visibility(p, geom_n, ljit, 60.0, 12.0); }
+      ao = calc_ao(p, geom_n);
     }
 
     // §22 PBR — metallic-roughness. F0 = 0.04 dielectric, tinted by albedo
@@ -874,9 +1373,10 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let fres = f0 + (1.0 - f0) * pow(1.0 - max(dot(hsun, viewd), 0.0), 5.0);
     let direct_d = m.albedo * kd * sun_col * (ndl * sh);
     let direct_s = sun_col * (ndf * ndl * sh) * fres;
+    let direct_many = restir_direct_light(p, geom_n, n, viewd, m, vec2<u32>(gid.x, gid.y), si);
 
     // Indirect : cached diffuse GI (albedo-tinted) + environment specular.
-    let indirect_d = m.albedo * kd * sample_probe(p + n * 0.15) * ao;
+    let indirect_d = m.albedo * kd * sample_probe(p + geom_n * 0.15) * ao;
 
     // §26 Scene reflections — for metals / smooth surfaces, trace ONE
     // reflection ray and shade the hit (direct sun + cached GI) so the chrome
@@ -885,20 +1385,21 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rdir = reflect(dir, n);
     var env = sky_env(rdir);
     if (si > 0u && (m.metal > 0.5 || m.rough < 0.35)) {
-      let rt = trace(p + n * 0.02, rdir, 48u);
+      let rt = trace(p + geom_n * 0.02, rdir, 48u);
       if (rt > 0.0) {
-        let rp = p + n * 0.02 + rdir * rt;
-        let rn = normal(rp);
+        let rp = p + geom_n * 0.02 + rdir * rt;
+        let rgeom_n = normal(rp);
         let rm = eval_material(rp);
-        let rsh = soft_shadow(rp + rn * 0.012, sun, 0.02, 60.0, 10.0);
-        env = rm.albedo * (sun_col * (max(dot(rn, sun), 0.0) * rsh) + sample_probe(rp + rn * 0.15));
+        let rn = material_detail_normal(rp, rgeom_n, rm);
+        let rsh = sdf_shadow_visibility(rp, rgeom_n, sun, 60.0, 10.0);
+        env = rm.albedo * (sun_col * (max(dot(rn, sun), 0.0) * rsh) + sample_probe(rp + rgeom_n * 0.15));
       }
     }
     let indirect_s = env * f0 * (1.0 - m.rough * 0.7) * ao;
 
     // Linear HDR — no hard clamp ; the ACES tonemap at store time handles
     // the rolloff so bright specular/reflections stay detailed.
-    col = direct_d + direct_s + indirect_d + indirect_s;
+    col = direct_d + direct_s + direct_many + indirect_d + indirect_s;
   }
 
   // §21 Ocean — analytic water plane at cam.waterLevel (disabled when the
@@ -929,8 +1430,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // (gated by the sky, so the neutral Forge background stays clean). This is
   // what gives a landscape its sense of scale and depth.
   if (cam.skyEnabled > 0.5 && front_t < 1.0e8) {
-    let fog = 1.0 - exp(-front_t * 0.018);
-    col = mix(col, sky_env(dir), clamp(fog, 0.0, 0.92));
+    let fog = atmosphere_fog_amount(cam.pos, dir, front_t);
+    col = mix(col, atmosphere_scatter(dir, sun, fog), fog);
   }
 
   // §18 Pillar C — Gaussian splat accumulation. Layout 16-float par splat
@@ -1041,8 +1542,13 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
           let hcol = history[pix2];
           // Reuse only if the history pixel is the same surface (depths agree
           // within a distance-proportional tolerance → rejects disocclusion).
-          if (hcol.w < 1.0e8 && abs(hcol.w - relf) < 0.03 * relf + 0.02) {
-            mean = mix(hcol.xyz, col, 0.1); // exponential TAA blend
+          let depth_delta = abs(hcol.w - relf);
+          if (hcol.w < 1.0e8 && depth_delta < 0.03 * relf + 0.02) {
+            let motion = length(vec2<f32>(ppx, ppy) - px);
+            let clipped = taa_clip_history(hcol.xyz, col, motion);
+            let depth_rel = depth_delta / max(relf, 0.001);
+            let weight = taa_history_weight(motion, depth_rel);
+            mean = mix(col, clipped, weight);
           }
         }
       }
@@ -1068,7 +1574,7 @@ fn cs_shadow(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (i >= splats.count) { return; }
   let s0 = splats.data[i * 4u + 0u];
   // Must match the base sun direction used in cs_main.
-  let sun = normalize(vec3<f32>(0.5, 0.4, 0.85));
+  let sun = normalize(vec3<f32>(0.82, 0.18, 0.16));
   shadow[i] = soft_shadow(s0.xyz + sun * 0.02, sun, 0.02, 60.0, 10.0);
 }
 
@@ -1081,18 +1587,19 @@ fn cs_shadow(@builtin(global_invocation_id) gid: vec3<u32>) {
 // never on camera orbit — that is the KASM content-hash reuse in practice.
 @compute @workgroup_size(64)
 fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let total = PROBE_GRID * PROBE_GRID * PROBE_GRID;
+  let total = PROBE_CASCADE_STRIDE * PROBE_CASCADES;
   let idx = gid.x;
   if (idx >= total) { return; }
-  let i = idx % PROBE_GRID;
-  let j = (idx / PROBE_GRID) % PROBE_GRID;
-  let k = idx / (PROBE_GRID * PROBE_GRID);
-  let p = probe_pos(i, j, k);
+  let cascade = idx / PROBE_CASCADE_STRIDE;
+  let local_idx = idx - cascade * PROBE_CASCADE_STRIDE;
+  let i = local_idx % PROBE_GRID;
+  let j = (local_idx / PROBE_GRID) % PROBE_GRID;
+  let k = local_idx / (PROBE_GRID * PROBE_GRID);
+  let p = probe_pos(cascade, i, j, k);
 
   let bake = u32(cam.probeSample + 0.5);
-  let sun = normalize(vec3<f32>(0.5, 0.4, 0.85));
+  let sun = normalize(vec3<f32>(0.82, 0.18, 0.16));
   let sun_col = vec3<f32>(1.0, 0.96, 0.88) * 1.6;
-  let albedo = vec3<f32>(0.80, 0.82, 0.86);
 
   // Cheap bake : few rays, short traces, and an UNSHADOWED one-bounce (the
   // sharp shadows live on the per-pixel direct term ; shadowing the indirect
@@ -1100,9 +1607,9 @@ fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
   let n_rays = 4u;
   var acc = vec3<f32>(0.0);
   for (var r: u32 = 0u; r < n_rays; r = r + 1u) {
-    let u = rand2(vec2<u32>(idx, idx ^ 0x9e3779b9u), bake, r);
+    let u = rand2(vec2<u32>(local_idx ^ (cascade * 0x9e3779b9u), idx ^ 0x85ebca6bu), bake, r + cascade * 17u);
     let wi = sphere_dir(u.x, u.y);
-    let th = trace(p, wi, 32u);
+    let th = trace(p, wi, select(32u, 48u, cascade > 0u));
     if (th < 0.0) {
       acc = acc + sky_env(wi);
     } else {
@@ -1116,7 +1623,11 @@ fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
       // benign relaxation (Gauss-Seidel) race — GI is low-frequency.
       let direct = sun_col * max(dot(hn, sun), 0.0);
       let indirect = sample_probe(hp);
-      acc = acc + albedo * (direct + indirect);
+      let hm = eval_material(hp);
+      let cache_col = sample_surface_cache(hp);
+      let cache_on = dot(cache_col, cache_col) > 0.0001;
+      let surf_albedo = mix(hm.albedo, cache_col, select(0.0, 0.35, cache_on));
+      acc = acc + surf_albedo * (direct + indirect);
     }
   }
   acc = acc * (1.0 / f32(n_rays));
@@ -1166,6 +1677,10 @@ function fnv1a32(view: Uint32Array): number {
   return h >>> 0;
 }
 
+function hex32(value: number): string {
+  return (value >>> 0).toString(16).padStart(8, "0");
+}
+
 export interface IngenStats {
   /** Total render() calls since last reset. */
   frames: number;
@@ -1175,6 +1690,71 @@ export interface IngenStats {
   misses: number;
   /** hits / frames, in [0, 1]. */
   hitRatio: number;
+}
+
+export interface IngenShadowStats {
+  schema: "banger.sdf_shadow_cache.v1";
+  cacheHash: string;
+  sourceHash: string;
+  lightHash: string;
+  pageCount: number;
+  splatCount: number;
+  dirty: boolean;
+  bias: "normal-curvature";
+  contactShadow: boolean;
+  hybridQuery: "scene-sdf-brick-svdag-neural";
+}
+
+export interface IngenTemporalStats {
+  schema: "banger.temporal_reconstruction.v1";
+  frameHash: string;
+  sourceHash: string;
+  historyHash: string;
+  hasHistory: boolean;
+  reprojection: boolean;
+  checkerboard: boolean;
+  sampleCount: number;
+  maxSamples: number;
+  motionVectors: "sdf-world-hit-reprojection";
+  historyClamping: boolean;
+  reconstruction: "progressive-taa-checkerboard";
+  historyValid: boolean;
+}
+
+export interface IngenRenderPassProfile {
+  id: string;
+  dispatches: number;
+  workgroups: number;
+  cpuMs: number;
+  active: boolean;
+  cacheHash: string;
+}
+
+export interface IngenRenderResourceProfile {
+  id: string;
+  bytes: number;
+  transient: boolean;
+  resourceHash: string;
+}
+
+export interface IngenRenderGraphStats {
+  schema: "banger.ingen_render_graph_stats.v1";
+  frameHash: string;
+  sourceHash: string;
+  width: number;
+  height: number;
+  bindGroupBindings: number;
+  approxVramBytes: number;
+  frameCacheHitRatio: number;
+  sampleCount: number;
+  maxSamples: number;
+  shadowPages: number;
+  splats: number;
+  hasHistory: boolean;
+  cpuFrameMs: number;
+  submitted: boolean;
+  passes: readonly IngenRenderPassProfile[];
+  resources: readonly IngenRenderResourceProfile[];
 }
 
 export class IngenRender {
@@ -1224,6 +1804,17 @@ export class IngenRender {
   private shadowCapacity = 0; // capacity in splats (f32 entries)
   private splatCount = 0;
   private shadowDirty = true;
+  private shadowCacheHash = "00000000";
+  private shadowSourceHash = "00000000";
+  private shadowLightHash = "00000000";
+  private shadowPageCount = 0;
+  private splatHash = 0;
+  private svdagHash = 0;
+  private nsdfHash = 0;
+  private sdfBrickHash = 0;
+  private temporalFrameHash = "00000000";
+  private temporalSourceHash = "00000000";
+  private temporalHistoryHash = "00000000";
   // §20 Fusion v3 — splat compositing intent. false = additive glow (default,
   // for SDF-baked gaussians) ; true = weighted-OIT over-blend (solid look for
   // real 3DGS captures). Enters the camera hash so toggling re-renders.
@@ -1238,18 +1829,21 @@ export class IngenRender {
   // §21 Ocean — world-space water height, or -1e9 = disabled. When enabled,
   // `time` advances so the waves animate (which keeps the loop live).
   private waterLevel = -1e9;
+  private bootLiteUntilMs = 0;
+  private nextAnimatedFrameAtMs = 0;
   // Current converged sample count for the static scene. Reset to 0 whenever
   // the camera / ops / dims change ; climbs to `maxSamples` while idle.
   private sampleCount = 0;
   // Convergence budget — kept modest so the GPU isn't pegged for seconds of
   // heavy idle samples after every camera stop on a weak GPU.
-  private readonly maxSamples = 64;
+  private readonly maxSamples = 24;
   private outTexture: GPUTexture | null = null;
   private outView: GPUTextureView | null = null;
   private bindGroup: GPUBindGroup | null = null;
   private format: GPUTextureFormat = "rgba8unorm";
   private width = 0;
   private height = 0;
+  private renderGraphStats: IngenRenderGraphStats | null = null;
   // KASM frame cache (INGEN COMPUTE §19 Phase 3). Frame hash = (opsHash,
   // camHash, dims). If unchanged from the previous render() the compute
   // dispatch is skipped and the persistent storage texture is blitted
@@ -1400,11 +1994,14 @@ export class IngenRender {
       label: "ingen-pipeline-layout",
       bindGroupLayouts: [this.bindGroupLayout],
     });
-    this.pipeline = this.device.createComputePipeline({
+    const mainDesc = {
       label: "ingen-render-pipeline",
       layout: pipelineLayout,
       compute: { module, entryPoint: "cs_main" },
-    });
+    };
+    this.pipeline = typeof (this.device as any).createComputePipelineAsync === "function"
+      ? await (this.device as any).createComputePipelineAsync(mainDesc)
+      : this.device.createComputePipeline(mainDesc);
     const validationErr = await this.device.popErrorScope();
     if (validationErr) {
       console.error("[ingen-render] WGSL validation error:", (validationErr as any).message);
@@ -1424,6 +2021,7 @@ export class IngenRender {
       }).catch(() => {});
     }
     this.deferAuxiliaryPipelines(module, pipelineLayout);
+    this.bootLiteUntilMs = performance.now() + 2200;
 
     this.camBuffer = this.device.createBuffer({
       size: 96, // Camera struct, padded to 16-byte multiples
@@ -1490,9 +2088,10 @@ export class IngenRender {
       label: "ingen-shadow",
     });
 
-    // §20 GI cache — radiance probe volume (PROBE_GRID³ vec4). Fixed size,
-    // never reallocates ; zero-initialised so the first frames read black
-    // indirect until the bake converges.
+    // §20 GI cache — cascaded radiance probe volume
+    // (PROBE_CASCADES * PROBE_GRID³ vec4). Fixed size, never reallocates ;
+    // zero-initialised so the first frames read black indirect until the bake
+    // converges.
     this.probesBuffer = this.device.createBuffer({
       size: PROBE_TOTAL * 16,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -1621,6 +2220,93 @@ export class IngenRender {
     this.refreshBindGroup();
   }
 
+  setBootLite(durationMs = 1800): void {
+    this.bootLiteUntilMs = Math.max(this.bootLiteUntilMs, performance.now() + Math.max(0, Number(durationMs) || 0));
+    this.cacheValid = false;
+  }
+
+  private bootLiteActive(now = performance.now()): boolean {
+    return now < this.bootLiteUntilMs;
+  }
+
+  private effectiveMaxSamples(now = performance.now()): number {
+    if (this.waterLevel > -1e8) return 1;
+    return this.bootLiteActive(now) ? 2 : this.maxSamples;
+  }
+
+  private hashF32Payload(seed: number, view: Float32Array, activeWords = view.length): number {
+    const words = Math.max(0, Math.min(activeWords | 0, view.length));
+    const header = new Uint32Array(2 + words);
+    header[0] = seed >>> 0;
+    header[1] = words >>> 0;
+    if (words > 0) {
+      const u32 = new Uint32Array(view.buffer, view.byteOffset, words);
+      header.set(u32, 2);
+    }
+    return fnv1a32(header);
+  }
+
+  private refreshShadowCacheHash(): void {
+    // Virtual-shadow first stage: pages are content-addressed by the SDF
+    // sources they query, not by a mutable mesh shadow-map. One page covers up
+    // to 128 splats for the current prepass; per-pixel SDF shadows share the
+    // same source hash and are replayed deterministically from scene().
+    this.shadowPageCount = Math.max(1, Math.ceil(Math.max(this.splatCount, 1) / 128));
+    const light = new Uint32Array([
+      0x50473335, // fixed P5 sun/light model marker
+      500, 400, 850,
+      24, 10,
+    ]);
+    const lightHash = fnv1a32(light);
+    this.shadowLightHash = hex32(lightHash);
+    const source = new Uint32Array([
+      0x53444653, // "SDFS"
+      this.opsHash >>> 0,
+      this.splatHash >>> 0,
+      this.svdagHash >>> 0,
+      this.nsdfHash >>> 0,
+      this.sdfBrickHash >>> 0,
+      this.splatCount >>> 0,
+    ]);
+    const sourceHash = fnv1a32(source);
+    this.shadowSourceHash = hex32(sourceHash);
+    const cache = new Uint32Array([
+      0x53504835, // "SPH5"
+      sourceHash >>> 0,
+      lightHash >>> 0,
+      this.shadowPageCount >>> 0,
+      this.shadowCapacity >>> 0,
+    ]);
+    this.shadowCacheHash = hex32(fnv1a32(cache));
+  }
+
+  private refreshTemporalHash(camHash = this.cachedCamHash): void {
+    const source = new Uint32Array([
+      0x544d5037, // "TMP7"
+      this.opsHash >>> 0,
+      this.splatHash >>> 0,
+      this.svdagHash >>> 0,
+      this.nsdfHash >>> 0,
+      this.sdfBrickHash >>> 0,
+      this.dimsKey >>> 0,
+    ]);
+    const sourceHash = fnv1a32(source);
+    this.temporalSourceHash = hex32(sourceHash);
+    const history = new Uint32Array(this.prevBasis.buffer.slice(0));
+    this.temporalHistoryHash = hex32(fnv1a32(history));
+    const frame = new Uint32Array([
+      0x46524d37, // "FRM7"
+      sourceHash >>> 0,
+      camHash >>> 0,
+      this.sampleCount >>> 0,
+      this.frameParity >>> 0,
+      this.reproject ? 1 : 0,
+      this.checkerboard ? 1 : 0,
+      this.hasHistory ? 1 : 0,
+    ]);
+    this.temporalFrameHash = hex32(fnv1a32(frame));
+  }
+
   /**
    * Upload a Neural SDF weight buffer (§18 Pillar B). 'packed' must be a
    * Float32Array of length NSDF_TOTAL_FLOATS — the layout matches the
@@ -1639,6 +2325,8 @@ export class IngenRender {
       return;
     }
     this.device.queue.writeBuffer(this.nsdfBuffer, 0, packed);
+    this.nsdfHash = this.hashF32Payload(0x4e534446, packed);
+    this.refreshShadowCacheHash();
     this.shadowDirty = true; // neural field changed → recompute splat shadows
     this.probeDirty = true;  // …and rebake the GI probe volume (§20)
     this.cacheValid = false; // weights changed → re-dispatch next frame
@@ -1686,15 +2374,20 @@ export class IngenRender {
     }
     if (realloced) this.refreshBindGroup();
     this.device.queue.writeBuffer(this.splatsBuffer!, 0, new Uint32Array([safeCount, 0, 0, 0]));
+    let activeView = new Float32Array(0);
     if (safeCount > 0) {
       const floatsNeeded = safeCount * 16;
       const view = packed.byteLength >= floatsNeeded * 4
         ? new Float32Array(packed.buffer, packed.byteOffset, floatsNeeded)
         : packed;
+      activeView = view;
       this.device.queue.writeBuffer(this.splatsBuffer!, 16, view);
     }
     this.splatCount = safeCount;
+    this.splatHash = this.hashF32Payload(0x3353504c, activeView);
+    this.refreshShadowCacheHash();
     this.shadowDirty = true; // splat positions changed → recompute shadows
+    this.probeDirty = true;  // surface cache changed → rebake GI probes
     this.cacheValid = false;
   }
 
@@ -1755,7 +2448,10 @@ export class IngenRender {
       .slice(0, 64);
 
     if (!active.length) {
-      this.device.queue.writeBuffer(this.sdfBrickBuffer, 0, new Float32Array([0, res, 0, 20, 8, 0, 0, 8]));
+      const emptyAtlas = new Float32Array([0, res, 0, 20, 8, 0, 0, 8]);
+      this.device.queue.writeBuffer(this.sdfBrickBuffer, 0, emptyAtlas);
+      this.sdfBrickHash = this.hashF32Payload(0x424b5330, emptyAtlas);
+      this.refreshShadowCacheHash();
       this.shadowDirty = true;
       this.probeDirty = true;
       this.cacheValid = false;
@@ -1764,9 +2460,11 @@ export class IngenRender {
 
     const headerStride = 8;
     const tableStride = 20;
+    const materialStride = 12;
     const tableBase = headerStride;
     const valuesBase = tableBase + active.length * tableStride;
-    const requiredWords = valuesBase + active.length * voxelsPerBrick;
+    const materialBase = valuesBase + active.length * voxelsPerBrick;
+    const requiredWords = materialBase + active.length * materialStride;
     if (requiredWords > this.sdfBrickCapacity) {
       this.sdfBrickBuffer.destroy?.();
       let cap = Math.max(this.sdfBrickCapacity, 16);
@@ -1786,10 +2484,14 @@ export class IngenRender {
     packed[2] = active.length;
     packed[3] = tableStride;
     packed[4] = valuesBase;
-    packed[5] = 0;
-    packed[6] = 0;
+    packed[5] = materialBase;
+    packed[6] = materialStride;
     packed[7] = tableBase;
 
+    const clamp01 = (value: any, fallback = 0) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : fallback;
+    };
     const vec3 = (value: any, fallback: number[]) => {
       const out = fallback.slice(0, 3);
       for (let i = 0; i < 3; i += 1) {
@@ -1807,15 +2509,46 @@ export class IngenRender {
       const n = Number(value);
       return Number.isFinite(n) ? Math.max(0, Math.min(3, n)) : 2;
     };
+    const materialAlbedo = (materialId: number) => {
+      const palette = [
+        [0.80, 0.82, 0.86],
+        [0.72, 0.12, 0.10],
+        [0.26, 0.46, 0.20],
+        [0.70, 0.68, 0.62],
+        [0.36, 0.22, 0.13],
+        [0.85, 0.85, 0.88],
+        [0.55, 0.70, 0.80],
+        [0.08, 0.08, 0.09],
+      ];
+      return palette[Math.max(0, materialId | 0) % palette.length];
+    };
+    const compactMaterial = (brick: any, materialId: number) => {
+      const source = brick?.material || brick?.pbrMaterial || brick?.materialSample || {};
+      return {
+        albedo: vec3(source.albedo || source.color || brick?.albedo, materialAlbedo(materialId)),
+        roughness: Math.max(0.02, Math.min(1, Number(source.roughness ?? brick?.roughness) || Math.max(0.08, Math.min(0.95, 0.35 + 0.08 * (materialId % 7))))),
+        metallic: clamp01(source.metallic ?? brick?.metallic, materialId % 11 === 5 ? 0.65 : 0),
+        normalDetailStrength: clamp01(source.normalDetailStrength ?? brick?.normalDetailStrength, Math.max(0, Math.min(0.35, 0.12 + 0.04 * (materialId % 5)))),
+        decalWeight: clamp01(source.decalWeight ?? brick?.decalWeight, 0),
+        subsurface: clamp01(source.subsurface ?? brick?.subsurface, 0),
+        transmission: clamp01(source.transmission ?? brick?.transmission, 0),
+        anisotropy: clamp01(source.anisotropy ?? brick?.anisotropy, 0),
+        layerCount: Math.max(0, Math.min(8, Number(source.layerCount ?? brick?.layerCount) | 0)),
+        energyConserving: source.energyConserving !== false,
+      };
+    };
 
     for (let i = 0; i < active.length; i += 1) {
       const brick = active[i];
       const row = tableBase + i * tableStride;
       const valueOffset = valuesBase + i * voxelsPerBrick;
+      const materialOffset = materialBase + i * materialStride;
       const bmin = vec3(brick.boundsMin, [-1, -1, -1]);
       const bmax = vec3(brick.boundsMax, [1, 1, 1]);
       const smin = vec3(brick.surfaceBoundsMin, bmin);
       const smax = vec3(brick.surfaceBoundsMax, bmax);
+      const materialId = Math.max(0, Math.min(1024, Number(brick.materialId) | 0));
+      const material = compactMaterial(brick, materialId);
       packed[row + 0] = bmin[0];
       packed[row + 1] = bmin[1];
       packed[row + 2] = bmin[2];
@@ -1823,7 +2556,7 @@ export class IngenRender {
       packed[row + 4] = bmax[1];
       packed[row + 5] = bmax[2];
       packed[row + 6] = valueOffset;
-      packed[row + 7] = Math.max(0, Math.min(1024, Number(brick.materialId) | 0));
+      packed[row + 7] = materialId;
       packed[row + 8] = smin[0];
       packed[row + 9] = smin[1];
       packed[row + 10] = smin[2];
@@ -1833,9 +2566,22 @@ export class IngenRender {
       packed[row + 14] = Math.max(0, Number(brick.errorWorld) || 0);
       packed[row + 15] = Math.max(0, Number(brick.skipDistance) || 0);
       packed[row + 16] = classificationCode(brick.classification);
-      packed[row + 17] = 0;
-      packed[row + 18] = 0;
+      packed[row + 17] = materialOffset;
+      packed[row + 18] = material.layerCount;
       packed[row + 19] = 0;
+
+      packed[materialOffset + 0] = material.albedo[0];
+      packed[materialOffset + 1] = material.albedo[1];
+      packed[materialOffset + 2] = material.albedo[2];
+      packed[materialOffset + 3] = material.roughness;
+      packed[materialOffset + 4] = material.metallic;
+      packed[materialOffset + 5] = material.normalDetailStrength;
+      packed[materialOffset + 6] = material.decalWeight;
+      packed[materialOffset + 7] = material.subsurface;
+      packed[materialOffset + 8] = material.transmission;
+      packed[materialOffset + 9] = material.anisotropy;
+      packed[materialOffset + 10] = material.layerCount;
+      packed[materialOffset + 11] = material.energyConserving ? 1 : 0;
 
       const values = brick.values instanceof Float32Array
         ? brick.values
@@ -1847,6 +2593,8 @@ export class IngenRender {
     }
 
     this.device.queue.writeBuffer(this.sdfBrickBuffer, 0, packed);
+    this.sdfBrickHash = this.hashF32Payload(0x424b5341, packed);
+    this.refreshShadowCacheHash();
     this.shadowDirty = true;
     this.probeDirty = true;
     this.cacheValid = false;
@@ -1878,10 +2626,14 @@ export class IngenRender {
       this.refreshBindGroup();
     }
     if (packed.length === 0) {
-      this.device.queue.writeBuffer(this.svdagBuffer!, 0, new Uint32Array([0, 0, 0, 0]));
+      const empty = new Uint32Array([0, 0, 0, 0]);
+      this.device.queue.writeBuffer(this.svdagBuffer!, 0, empty);
+      this.svdagHash = fnv1a32(empty);
     } else {
       this.device.queue.writeBuffer(this.svdagBuffer!, 0, packed);
+      this.svdagHash = fnv1a32(packed);
     }
+    this.refreshShadowCacheHash();
     // SVDAG changed → invalidate the frame cache so the next render
     // dispatches compute instead of replaying a stale framebuffer.
     // The SDF field changed → splat shadows and GI probes must rebake (§20).
@@ -1923,12 +2675,17 @@ export class IngenRender {
       this.probeDirty = true;
     }
     this.opsHash = newHash;
+    this.refreshShadowCacheHash();
   }
 
   render(cam: IngenCamera): void {
     if (!this.device || !this.context || !this.pipeline || !this.bindGroup) return;
+    const now = performance.now();
+    const frameStarted = now;
+    const passProfiles: IngenRenderPassProfile[] = [];
     const w = this.width;
     const h = this.height;
+    const bootLite = this.bootLiteActive(now);
 
     // Hash camera before writing it to the UBO — saves a writeBuffer on hits.
     const camU = new Float32Array(24);
@@ -1937,8 +2694,10 @@ export class IngenRender {
     // §21 — camU[11] = time (advances only while the ocean is on, so a static
     // scene still hashes stable and goes idle) ; camU[15] = water level.
     const waterOn = this.waterLevel > -1e8;
+    const waterFrameMs = bootLite ? 90 : 56;
+    const waterTick = waterOn ? Math.floor(now / waterFrameMs) : 0;
     camU[8] = cam.right[0]; camU[9] = cam.right[1]; camU[10] = cam.right[2];
-    camU[11] = waterOn ? (performance.now() * 0.001) : 0;
+    camU[11] = waterOn ? waterTick * waterFrameMs * 0.001 : 0;
     camU[12] = cam.up[0]; camU[13] = cam.up[1]; camU[14] = cam.up[2];
     camU[15] = this.waterLevel;
     camU[16] = w; camU[17] = h; camU[18] = cam.centerOffset?.[0] ?? 0; camU[19] = cam.centerOffset?.[1] ?? 0;
@@ -1970,12 +2729,15 @@ export class IngenRender {
     this.stats.frames += 1;
     const encoder = this.device.createCommandEncoder({ label: "ingen-encoder" });
 
-    const converging = this.sampleCount < this.maxSamples;
+    const effectiveMaxSamples = this.effectiveMaxSamples(now);
+    const converging = this.sampleCount < effectiveMaxSamples;
     // Never let GI probe baking sit in front of the first visible frame.
     // The first dispatch shows direct lighting immediately; cached indirect
     // light starts refining only after at least one image has been blitted and
     // after the deferred probe pipeline is actually ready.
     const probeBaking = !!this.pipelineProbe
+      && !bootLite
+      && !waterOn
       && this.sampleCount > 0
       && this.probeSample < this.probeMaxSamples;
     // Dispatch whenever the image must change : a moved/converging view, OR a
@@ -1999,12 +2761,22 @@ export class IngenRender {
       // §20 Fusion v2 — per-splat sun-shadow pre-pass. Camera-independent ;
       // read by the main pass below in the same command buffer (pass ordering
       // makes the writes visible). One thread per splat.
-      if (this.shadowDirty && this.splatCount > 0 && this.pipelineShadow) {
+      if (!bootLite && this.shadowDirty && this.splatCount > 0 && this.pipelineShadow) {
+        const passStarted = performance.now();
+        const workgroups = Math.ceil(this.splatCount / 64);
         const spass = encoder.beginComputePass({ label: "ingen-shadow-pass" });
         spass.setPipeline(this.pipelineShadow);
         spass.setBindGroup(0, this.bindGroup);
-        spass.dispatchWorkgroups(Math.ceil(this.splatCount / 64), 1, 1);
+        spass.dispatchWorkgroups(workgroups, 1, 1);
         spass.end();
+        passProfiles.push({
+          id: "shadow_pages",
+          dispatches: 1,
+          workgroups,
+          cpuMs: performance.now() - passStarted,
+          active: true,
+          cacheHash: this.shadowCacheHash,
+        });
         this.shadowDirty = false;
       }
 
@@ -2012,14 +2784,25 @@ export class IngenRender {
       // Camera-independent ; read by the main pass (probe gather) in the same
       // command buffer. Stops once the volume has converged, then frozen.
       if (probeBaking && this.pipelineProbe) {
+        const passStarted = performance.now();
+        const workgroups = Math.ceil(PROBE_TOTAL / 64);
         const ppass = encoder.beginComputePass({ label: "ingen-probe-pass" });
         ppass.setPipeline(this.pipelineProbe);
         ppass.setBindGroup(0, this.bindGroup);
-        ppass.dispatchWorkgroups(Math.ceil(PROBE_TOTAL / 64), 1, 1);
+        ppass.dispatchWorkgroups(workgroups, 1, 1);
         ppass.end();
+        passProfiles.push({
+          id: "radiance_probes",
+          dispatches: 1,
+          workgroups,
+          cpuMs: performance.now() - passStarted,
+          active: true,
+          cacheHash: hex32(this.opsHash ^ this.splatHash ^ this.probeSample),
+        });
         this.probeSample += 1;
       }
 
+      const mainPassStarted = performance.now();
       const pass = encoder.beginComputePass({ label: "ingen-pass" });
       pass.setPipeline(this.pipeline);
       pass.setBindGroup(0, this.bindGroup);
@@ -2027,6 +2810,14 @@ export class IngenRender {
       const gy = Math.ceil(h / 8);
       pass.dispatchWorkgroups(gx, gy, 1);
       pass.end();
+      passProfiles.push({
+        id: "main_sdf_raycast",
+        dispatches: 1,
+        workgroups: gx * gy,
+        cpuMs: performance.now() - mainPassStarted,
+        active: true,
+        cacheHash: hex32(this.opsHash ^ camHash ^ this.sdfBrickHash ^ this.nsdfHash),
+      });
 
       // §23/§24 — copy this frame's result into the history pixel region (after
       // the 4-vec4 header) so the next frame can reproject / fill from it.
@@ -2038,22 +2829,40 @@ export class IngenRender {
       this.frameParity ^= 1;
 
       this.sampleCount += 1;
+      if (waterOn) this.nextAnimatedFrameAtMs = (waterTick + 1) * waterFrameMs;
       this.cachedCamHash = camHash;
       this.cachedOpsHash = this.opsHash;
       this.cachedDimsKey = this.dimsKey;
       this.cacheValid = true;
       this.stats.misses += 1;
     } else {
+      passProfiles.push({
+        id: "frame_cache",
+        dispatches: 0,
+        workgroups: 0,
+        cpuMs: 0,
+        active: true,
+        cacheHash: hex32(this.cachedCamHash ^ this.cachedOpsHash),
+      });
       this.stats.hits += 1;
     }
 
     // Blit storage → swap-chain. Always required because each frame has
     // its own swap-chain texture ; the storage texture itself is persistent.
+    const presentStarted = performance.now();
     encoder.copyTextureToTexture(
       { texture: this.outTexture! },
       { texture: this.context.getCurrentTexture() },
       { width: w, height: h, depthOrArrayLayers: 1 },
     );
+    passProfiles.push({
+      id: "post_temporal_present",
+      dispatches: 0,
+      workgroups: 1,
+      cpuMs: performance.now() - presentStarted,
+      active: true,
+      cacheHash: hex32(camHash ^ this.temporalHistoryHash.length ^ this.frameParity),
+    });
     this.device.queue.submit([encoder.finish()]);
 
     // §23 — remember this frame's camera for next-frame reprojection.
@@ -2062,13 +2871,93 @@ export class IngenRender {
     this.prevBasis[8] = cam.right[0]; this.prevBasis[9] = cam.right[1]; this.prevBasis[10] = cam.right[2];
     this.prevBasis[12] = cam.up[0]; this.prevBasis[13] = cam.up[1]; this.prevBasis[14] = cam.up[2];
     this.prevBasisValid = true;
+    this.refreshTemporalHash(camHash);
 
     this.stats.hitRatio = this.stats.frames > 0 ? this.stats.hits / this.stats.frames : 0;
+    const resources: IngenRenderResourceProfile[] = [
+      { id: "ops", bytes: OPS_BYTES, transient: false, resourceHash: hex32(this.opsHash) },
+      { id: "svdag", bytes: this.svdagCapacity * 4, transient: true, resourceHash: hex32(this.svdagHash) },
+      { id: "splats", bytes: this.splatsCapacity * 32, transient: true, resourceHash: hex32(this.splatHash) },
+      { id: "neural_sdf", bytes: NSDF_TOTAL_FLOATS * 4, transient: true, resourceHash: hex32(this.nsdfHash) },
+      { id: "sdf_bricks", bytes: this.sdfBrickCapacity * 4, transient: true, resourceHash: hex32(this.sdfBrickHash) },
+      { id: "shadow", bytes: this.shadowCapacity * 4, transient: true, resourceHash: this.shadowCacheHash },
+      { id: "probes", bytes: PROBE_TOTAL * 16, transient: true, resourceHash: hex32(this.opsHash ^ this.probeSample) },
+      { id: "accum", bytes: this.accumPixels * 16, transient: true, resourceHash: this.temporalFrameHash },
+      { id: "history", bytes: this.historyBuffer ? 64 + this.accumPixels * 16 : 0, transient: true, resourceHash: this.temporalHistoryHash },
+      { id: "output", bytes: w * h * 4, transient: true, resourceHash: hex32(camHash ^ this.opsHash) },
+    ];
+    const approxVramBytes = resources.reduce((sum, resource) => sum + resource.bytes, 0);
+    this.renderGraphStats = {
+      schema: "banger.ingen_render_graph_stats.v1",
+      frameHash: this.temporalFrameHash,
+      sourceHash: this.temporalSourceHash,
+      width: w,
+      height: h,
+      bindGroupBindings: this.hasHistory ? 11 : 10,
+      approxVramBytes,
+      frameCacheHitRatio: this.stats.hitRatio,
+      sampleCount: this.sampleCount,
+      maxSamples: effectiveMaxSamples,
+      shadowPages: this.shadowPageCount,
+      splats: this.splatCount,
+      hasHistory: this.hasHistory,
+      cpuFrameMs: performance.now() - frameStarted,
+      submitted: true,
+      passes: passProfiles,
+      resources,
+    };
   }
 
   /** Snapshot of frame-cache counters. Cheap, can be polled per frame. */
   getStats(): IngenStats {
     return { ...this.stats };
+  }
+
+  /** P9.bis first-stage render graph stats: current passes/resources, no new pipeline. */
+  getRenderGraphStats(): IngenRenderGraphStats | null {
+    if (!this.renderGraphStats) return null;
+    return {
+      ...this.renderGraphStats,
+      passes: this.renderGraphStats.passes.map((pass) => ({ ...pass })),
+      resources: this.renderGraphStats.resources.map((resource) => ({ ...resource })),
+    };
+  }
+
+  /** P5 virtual-shadow first-stage proof: content-addressed SDF shadow cache. */
+  getShadowStats(): IngenShadowStats {
+    this.refreshShadowCacheHash();
+    return {
+      schema: "banger.sdf_shadow_cache.v1",
+      cacheHash: this.shadowCacheHash,
+      sourceHash: this.shadowSourceHash,
+      lightHash: this.shadowLightHash,
+      pageCount: this.shadowPageCount,
+      splatCount: this.splatCount,
+      dirty: this.shadowDirty,
+      bias: "normal-curvature",
+      contactShadow: true,
+      hybridQuery: "scene-sdf-brick-svdag-neural",
+    };
+  }
+
+  /** P7 temporal reconstruction proof: SDF motion, clamped history, replay hashes. */
+  getTemporalStats(): IngenTemporalStats {
+    this.refreshTemporalHash();
+    return {
+      schema: "banger.temporal_reconstruction.v1",
+      frameHash: this.temporalFrameHash,
+      sourceHash: this.temporalSourceHash,
+      historyHash: this.temporalHistoryHash,
+      hasHistory: this.hasHistory,
+      reprojection: this.reproject,
+      checkerboard: this.checkerboard,
+      sampleCount: this.sampleCount,
+      maxSamples: this.effectiveMaxSamples(),
+      motionVectors: "sdf-world-hit-reprojection",
+      historyClamping: true,
+      reconstruction: "progressive-taa-checkerboard",
+      historyValid: this.prevBasisValid,
+    };
   }
 
   /**
@@ -2087,9 +2976,17 @@ export class IngenRender {
    * viewport sharpens to ultra-HD instead of stopping at 1 spp.
    */
   isConverging(): boolean {
+    const now = performance.now();
     return !!this.pipeline
-      && (this.sampleCount < this.maxSamples
-        || (!!this.pipelineProbe && this.probeSample < this.probeMaxSamples));
+      && (this.sampleCount < this.effectiveMaxSamples(now)
+        || (!this.bootLiteActive(now) && this.waterLevel <= -1e8 && !!this.pipelineProbe && this.probeSample < this.probeMaxSamples));
+  }
+
+  nextFrameDelayMs(): number | null {
+    if (!this.pipeline || this.waterLevel <= -1e8) return null;
+    if (this.isConverging()) return 0;
+    const delay = this.nextAnimatedFrameAtMs - performance.now();
+    return Math.max(0, Math.min(120, delay));
   }
 
   /**
@@ -2178,6 +3075,19 @@ export class IngenRender {
     this.shadowBuffer = null;
     this.shadowCapacity = 0;
     this.splatCount = 0;
+    this.shadowDirty = true;
+    this.shadowCacheHash = "00000000";
+    this.shadowSourceHash = "00000000";
+    this.shadowLightHash = "00000000";
+    this.shadowPageCount = 0;
+    this.splatHash = 0;
+    this.svdagHash = 0;
+    this.nsdfHash = 0;
+    this.sdfBrickHash = 0;
+    this.temporalFrameHash = "00000000";
+    this.temporalSourceHash = "00000000";
+    this.temporalHistoryHash = "00000000";
+    this.renderGraphStats = null;
     this.probesBuffer = null;
     this.probeSample = 0;
     this.pipeline = null;
