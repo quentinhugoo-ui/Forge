@@ -1088,7 +1088,15 @@ fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
     } else {
       let hp = p + wi * th;
       let hn = normal(hp);
-      acc = acc + albedo * sun_col * max(dot(hn, sun), 0.0);
+      // §25 Multi-bounce GI : direct sun at the bounce surface PLUS the
+      // cached indirect from the previous bake (sample_probe at hp). The
+      // cache feeds itself → energy propagates one extra bounce per bake
+      // iteration, converging to multi-bounce GI (Lumen/NRC-style) for
+      // ~zero extra cost. The read of neighbouring probes mid-dispatch is a
+      // benign relaxation (Gauss-Seidel) race — GI is low-frequency.
+      let direct = sun_col * max(dot(hn, sun), 0.0);
+      let indirect = sample_probe(hp);
+      acc = acc + albedo * (direct + indirect);
     }
   }
   acc = acc * (1.0 / f32(n_rays));
