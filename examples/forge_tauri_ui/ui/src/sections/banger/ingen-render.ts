@@ -45,7 +45,7 @@ export const NSDF_W1_FLOATS = NSDF_HIDDEN * NSDF_INPUTS;
 export const NSDF_MLP_FLOATS = NSDF_W1_FLOATS + NSDF_HIDDEN + NSDF_HIDDEN + 1;
 export const NSDF_TOTAL_FLOATS = NSDF_HEADER_FLOATS + NSDF_TABLE_FLOATS + NSDF_MLP_FLOATS;
 
-const WGSL = `
+const WGSL_SRC = `
 struct Camera {
   pos:           vec3<f32>,
   tanHalfFovY:   f32,
@@ -156,7 +156,9 @@ struct Splats {
 //   history[4u + pix] = (colour.rgb, depthAlongFwd)
 // The 4-vec4 header is written by the host each frame ; the pixel region is
 // a copy of accum. One binding carries both, minimal plumbing.
+// @HISTBEGIN
 @group(0) @binding(10) var<storage, read> history: array<vec4<f32>>;
+// @HISTEND
 
 const PROBE_GRID: u32 = 16u;
 const PROBE_HALF: f32 = 6.0; // world half-extent of the cache cube
@@ -744,6 +746,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // (in-motion) frame stays crisp and responsive.
   let si = u32(cam.sampleIndex + 0.5);
 
+  // @HISTBEGIN
   // §24 Checkerboard — during motion (si==0) march only half the pixels each
   // frame (alternating parity) and reuse the other half from history. ~2×
   // fewer primary marches while moving ; static frames stay full-res so they
@@ -759,6 +762,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
       return;
     }
   }
+  // @HISTEND
 
   var jit = vec2<f32>(0.0);
   if (si > 0u) {
@@ -1018,6 +1022,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // frame's converged shading for a surface still on screen (depth-checked)
     // instead of restarting at 1 spp ; otherwise start fresh.
     mean = col;
+    // @HISTBEGIN
     if (history[0].w > 0.5 && front_t < 1.0e8) {
       let pPos = history[0].xyz;
       let pFwd = history[1].xyz;
@@ -1042,6 +1047,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
       }
     }
+    // @HISTEND
   }
   accum[pix] = vec4<f32>(mean, cam_depth); // linear HDR + depth ; never tonemapped
   // §22 — filmic ACES + exposure at display time only (the buffer stays
@@ -1123,6 +1129,17 @@ fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 `;
 
+// §27 Adaptive GPU build — the temporal-reprojection / checkerboard features
+// need a 9th storage buffer (`history`), one over WebGPU's guaranteed per-stage
+// floor of 8. On adapters that allow ≥9 we ship the full shader ; on ones that
+// only guarantee 8 we strip the history-dependent sections (the `// @HISTBEGIN`
+// … `// @HISTEND` blocks) so the bind group stays at 8 buffers and the renderer
+// works on ANY compliant GPU instead of going black. Everything else is intact.
+function wgslVariant(hasHistory: boolean): string {
+  if (hasHistory) return WGSL_SRC;
+  return WGSL_SRC.replace(/[ \t]*\/\/ @HISTBEGIN[\s\S]*?\/\/ @HISTEND[^\n]*\n?/g, "");
+}
+
 export interface IngenCamera {
   pos: [number, number, number];
   fwd: [number, number, number];
@@ -1188,6 +1205,10 @@ export class IngenRender {
   // a copy of last frame's accum ; `reproject` gates it (default off) ;
   // `prevBasis` holds the previous frame's camera for the reproject header.
   private historyBuffer: GPUBuffer | null = null;
+  // §27 — set in init() from adapter.limits : true only if the GPU allows the
+  // 9th storage buffer (history). When false, the shader is built WITHOUT the
+  // reprojection / checkerboard sections and the bind group stays at 8 buffers.
+  private hasHistory = true;
   private reproject = false;
   // §24 Checkerboard — march half the pixels per motion frame. Parity flips
   // each rendered frame ; flags ride in the history header's spare .w slots.
@@ -1305,27 +1326,31 @@ export class IngenRender {
     } else {
       console.log(`[ingen-render] GPU adapter: ${desc}`);
     }
-    // The bind group uses 9 storage buffers (ops, svdag, splats, nsdf, accum,
-    // shadow, probes, sdfBrick, history) — one over WebGPU's default per-stage
-    // limit of 8. Request the adapter's actual max (RTX 3050 = 16) so the
-    // bind-group layout validates ; without this the whole pipeline fails to
-    // create and the viewport stays black.
+    // §27 Adaptive — the full feature set needs 9 storage buffers (ops, svdag,
+    // splats, nsdf, accum, probes, sdfBrick, history + …), one over WebGPU's
+    // guaranteed per-stage floor of 8. We DETECT what THIS GPU supports and
+    // adapt : if it allows ≥9 we request the higher limit and build the full
+    // shader (temporal reprojection + checkerboard) ; if it only guarantees 8
+    // we build the reduced shader (those features off) so the renderer works
+    // on ANY GPU instead of going black. No per-card hardcoding.
     const adapterStorage = (adapter.limits && (adapter.limits as any).maxStorageBuffersPerShaderStage) || 8;
     let device: GPUDevice | null = null;
+    let hasHistory = false;
     if (adapterStorage >= 9) {
       try {
         device = await adapter.requestDevice({
           requiredLimits: { maxStorageBuffersPerShaderStage: adapterStorage },
         });
+        hasHistory = true;
       } catch (_) { device = null; }
     }
     if (!device) {
-      // Adapter can't give us 9 storage buffers — fall back to the default
-      // device (the layout will still need ≤8 ; logged so it's visible).
-      console.warn(`[ingen-render] maxStorageBuffersPerShaderStage=${adapterStorage} (<9) — bind group may exceed the limit`);
       device = await adapter.requestDevice();
+      hasHistory = false;
     }
     this.device = device;
+    this.hasHistory = hasHistory;
+    console.log(`[ingen-render] maxStorageBuffersPerShaderStage=${adapterStorage} → reprojection/checkerboard ${hasHistory ? "ON" : "OFF (8-buffer GPU, reduced shader)"}`);
     const ctx = this.canvas.getContext("webgpu") as GPUCanvasContext | null;
     if (!ctx) {
       console.warn("[ingen-render] canvas.getContext('webgpu') returned null");
@@ -1347,28 +1372,30 @@ export class IngenRender {
     // Diagnostic — surface any WGSL compile error to the console rather
     // than letting the pipeline silently become invalid (= black screen).
     this.device.pushErrorScope("validation");
-    const module = this.device.createShaderModule({ code: WGSL, label: "ingen-render-wgsl" });
+    const module = this.device.createShaderModule({ code: wgslVariant(this.hasHistory), label: "ingen-render-wgsl" });
     // Explicit bind-group layout so the main raymarch pipeline and the
     // per-splat shadow pre-pass can share ONE bind group. (`layout: "auto"`
     // would derive incompatible layouts because each entry point touches a
     // different subset of the bindings.)
     const COMPUTE = GPUShaderStage.COMPUTE;
-    this.bindGroupLayout = this.device.createBindGroupLayout({
-      label: "ingen-bgl",
-      entries: [
-        { binding: 0, visibility: COMPUTE, buffer: { type: "uniform" } },
-        { binding: 1, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
-        { binding: 2, visibility: COMPUTE, storageTexture: { access: "write-only", format: "rgba8unorm", viewDimension: "2d" } },
-        { binding: 3, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
-        { binding: 4, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
-        { binding: 5, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
-        { binding: 6, visibility: COMPUTE, buffer: { type: "storage" } },
-        { binding: 7, visibility: COMPUTE, buffer: { type: "storage" } },
-        { binding: 8, visibility: COMPUTE, buffer: { type: "storage" } },
-        { binding: 9, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
-        { binding: 10, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
-      ],
-    });
+    const bglEntries: any[] = [
+      { binding: 0, visibility: COMPUTE, buffer: { type: "uniform" } },
+      { binding: 1, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 2, visibility: COMPUTE, storageTexture: { access: "write-only", format: "rgba8unorm", viewDimension: "2d" } },
+      { binding: 3, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 4, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 5, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 6, visibility: COMPUTE, buffer: { type: "storage" } },
+      { binding: 7, visibility: COMPUTE, buffer: { type: "storage" } },
+      { binding: 8, visibility: COMPUTE, buffer: { type: "storage" } },
+      { binding: 9, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
+    ];
+    // §27 — the history buffer (binding 10, the 9th storage buffer) only exists
+    // on GPUs that allow >8 ; on the 8-buffer floor the reduced shader omits it.
+    if (this.hasHistory) {
+      bglEntries.push({ binding: 10, visibility: COMPUTE, buffer: { type: "read-only-storage" } });
+    }
+    this.bindGroupLayout = this.device.createBindGroupLayout({ label: "ingen-bgl", entries: bglEntries });
     const pipelineLayout = this.device.createPipelineLayout({
       label: "ingen-pipeline-layout",
       bindGroupLayouts: [this.bindGroupLayout],
@@ -1480,27 +1507,27 @@ export class IngenRender {
     if (!this.device || !this.bindGroupLayout || !this.outView
       || !this.camBuffer || !this.opsBuffer || !this.svdagBuffer
       || !this.splatsBuffer || !this.nsdfBuffer || !this.accumBuffer
-      || !this.shadowBuffer || !this.probesBuffer || !this.sdfBrickBuffer
-      || !this.historyBuffer) {
+      || !this.shadowBuffer || !this.probesBuffer || !this.sdfBrickBuffer) {
       return;
     }
-    this.bindGroup = this.device.createBindGroup({
-      label: "ingen-bg",
-      layout: this.bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.camBuffer } },
-        { binding: 1, resource: { buffer: this.opsBuffer } },
-        { binding: 2, resource: this.outView },
-        { binding: 3, resource: { buffer: this.svdagBuffer } },
-        { binding: 4, resource: { buffer: this.splatsBuffer } },
-        { binding: 5, resource: { buffer: this.nsdfBuffer } },
-        { binding: 6, resource: { buffer: this.accumBuffer } },
-        { binding: 7, resource: { buffer: this.shadowBuffer } },
-        { binding: 8, resource: { buffer: this.probesBuffer } },
-        { binding: 9, resource: { buffer: this.sdfBrickBuffer } },
-        { binding: 10, resource: { buffer: this.historyBuffer } },
-      ],
-    });
+    // §27 — history (binding 10) only exists on >8-buffer GPUs.
+    if (this.hasHistory && !this.historyBuffer) return;
+    const entries: any[] = [
+      { binding: 0, resource: { buffer: this.camBuffer } },
+      { binding: 1, resource: { buffer: this.opsBuffer } },
+      { binding: 2, resource: this.outView },
+      { binding: 3, resource: { buffer: this.svdagBuffer } },
+      { binding: 4, resource: { buffer: this.splatsBuffer } },
+      { binding: 5, resource: { buffer: this.nsdfBuffer } },
+      { binding: 6, resource: { buffer: this.accumBuffer } },
+      { binding: 7, resource: { buffer: this.shadowBuffer } },
+      { binding: 8, resource: { buffer: this.probesBuffer } },
+      { binding: 9, resource: { buffer: this.sdfBrickBuffer } },
+    ];
+    if (this.hasHistory && this.historyBuffer) {
+      entries.push({ binding: 10, resource: { buffer: this.historyBuffer } });
+    }
+    this.bindGroup = this.device.createBindGroup({ label: "ingen-bg", layout: this.bindGroupLayout, entries });
   }
 
   private deferAuxiliaryPipelines(module: GPUShaderModule, pipelineLayout: GPUPipelineLayout): void {
@@ -1567,13 +1594,16 @@ export class IngenRender {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
         label: "ingen-accum",
       });
-      // §23 — history buffer : 4-vec4 camera header + per-pixel copy of accum.
+      // §23/§27 — history buffer (4-vec4 camera header + per-pixel copy of
+      // accum) only on GPUs that allow the 9th storage buffer.
       this.historyBuffer?.destroy?.();
-      this.historyBuffer = this.device.createBuffer({
-        size: (4 + pixels) * 16,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        label: "ingen-history",
-      });
+      this.historyBuffer = this.hasHistory
+        ? this.device.createBuffer({
+            size: (4 + pixels) * 16,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            label: "ingen-history",
+          })
+        : null;
       this.accumPixels = pixels;
     }
 
@@ -2094,7 +2124,8 @@ export class IngenRender {
    * Experimental : watch for ghosting on fast motion ; tune or disable.
    */
   setReproject(on: boolean): void {
-    this.reproject = !!on;
+    // §27 — no-op on 8-buffer GPUs (the reduced shader has no history buffer).
+    this.reproject = this.hasHistory && !!on;
     this.cacheValid = false;
   }
 
@@ -2107,7 +2138,8 @@ export class IngenRender {
    * compensated fill for the reused half).
    */
   setCheckerboard(on: boolean): void {
-    this.checkerboard = !!on;
+    // §27 — no-op on 8-buffer GPUs (the reduced shader has no history buffer).
+    this.checkerboard = this.hasHistory && !!on;
     this.cacheValid = false;
   }
 
