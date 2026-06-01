@@ -1142,13 +1142,13 @@ export function defaultOceanSunsetNewObject(): DefaultOceanSunsetNewObject {
     newObjectWebResearchStep(
       "web_ile_terrain_sota",
       "ile",
-      "distant island silhouette: mountainous relief and forest cover that read at horizon distance",
+      "marched SDF island: bounded heightfield relief with vegetation that the camera can approach and fly over",
       [
         "https://iquilezles.org/articles/fbm/",
-        "https://iquilezles.org/articles/morenoise/",
-        "https://dev.epicgames.com/documentation/en-us/unreal-engine/sky-atmosphere",
+        "https://iquilezles.org/articles/terrainmarching/",
+        "https://iquilezles.org/articles/distfunctions/",
       ],
-      ["azimuth ridge profile", "rotated value-noise relief", "altitude vegetation banding", "aerial perspective desaturation", "analytic distant terrain"],
+      ["bounded heightfield SDF", "fbm + ridge relief", "Lipschitz overstep bound", "cylinder bounding early-out", "altitude vegetation banding"],
     ),
   ] as const;
   const researchRefs = (partId: string) => webResearch
@@ -1258,20 +1258,20 @@ export function defaultOceanSunsetNewObject(): DefaultOceanSunsetNewObject {
     newObjectComputeStep(
       "newcompute_ile_terrain",
       "ile",
-      "place a distant mountainous island under the sun with believable relief and vegetation at near-zero render cost",
-      "azimuth ridge profile from value-noise fbm with altitude-banded vegetation and aerial perspective",
+      "place a real marched 3D island under the sun: mountainous relief and vegetation the camera can approach and fly over, without flooding the SDF hot path",
+      "bounded radial-dome heightfield SDF with fbm relief, conservative Lipschitz scaling and a cylinder bounding early-out",
       [
-        "ridge(theta)=env(theta)*sum_k a_k*(0.5+0.5*sin(f_k*theta+phi_k))",
-        "env(theta)=1-smoothstep(w0,w1,|theta-theta_sun|)",
-        "veg(h)=mix(rock,forest,smoothstep(h0,h1,h))*fbm(theta,h)",
-        "C_view=mix(C_island,C_haze,aerial), aerial in [0,1]",
+        "height(xy)=sea-d0+env(r)*(peak*(b0+b1*(fbm-c)+b2*ridge))",
+        "env(r)=1-smoothstep(R*0.15,R,r)  // dome -> shoreline under the sea",
+        "d_island=(z-height)*L,  L<1 keeps the pseudo-SDF non-overstepping",
+        "d_bound=cylinder(R+m,peak)  // far rays skip fbm via this lower bound",
       ],
-      { azimuthHalfWidthRad: 0.32, peakElevationRad: 0.069, treeLineFrac: 0.62, aerial: 0.5 },
-      { peaks: 3, vegetationAlbedoG: 0.18, rockAlbedo: 0.25, hazeBlend: 0.5 },
+      { centerX: 70, centerY: 15, footprintRadius: 26, peakHeight: 17, lipschitz: 0.4 },
+      { reliefOctaves: 5, ridgeOctaves: 4, treeLineHeight: 2.4, rockLineHeight: 11.0 },
       [
-        "limit: island stays a background silhouette, never a marched SDF source in the hot path",
-        "metamorphic: widening azimuthHalfWidth grows the island without moving its centre",
-        "coupling: centre azimuth is locked to the shared sun direction",
+        "stability: Lipschitz<1 prevents heightfield overstep at grazing sun angles",
+        "perf: cylinder bound keeps fbm out of the march for non-island rays",
+        "metamorphic: raising footprintRadius widens the island without moving its centre",
       ],
       [
         "https://iquilezles.org/articles/fbm/",
@@ -1318,10 +1318,10 @@ export function defaultOceanSunsetNewObject(): DefaultOceanSunsetNewObject {
     newObjectMathCuration(
       "ile",
       computeEvidence("ile"),
-      "Azimuth ridge profile with altitude vegetation banding curated for a distant island under the sun",
-      { azimuthHalfWidthRad: 0.32, peakElevationRad: 0.069, treeLineFrac: 0.62, peaks: 3, hazeBlend: 0.5 },
-      "Author /newobject_ part 'ile' as a distant background silhouette source; relief and vegetation stay a render cache, not marched geometry.",
-      ["accepted horizon-only silhouette", "rejected full terrain SDF in the march hot path", "kept centre azimuth locked to the sun"],
+      "Bounded radial-dome heightfield SDF with altitude vegetation banding curated for a real marched island under the sun",
+      { centerX: 70, centerY: 15, footprintRadius: 26, peakHeight: 17, lipschitz: 0.4 },
+      "Author /newobject_ part 'ile' as a real marched SDF source; bounded heightfield with a cylinder early-out keeps it a true 3D object the camera can fly over.",
+      ["accepted bounded heightfield island", "rejected infinite terrain plane (global floor)", "kept Lipschitz scaling to prevent overstep"],
     ),
   ] as const;
   const curationRefs = (partId: string) => llmCuration
@@ -1363,9 +1363,9 @@ export function defaultOceanSunsetNewObject(): DefaultOceanSunsetNewObject {
     newObjectPart(
       "ile",
       "Ile lointaine",
-      "distant mountainous island under the sun: forested relief silhouette with aerial perspective, rendered as a background cache",
-      { min: v3(360, 40, 0), max: v3(470, 150, 26) },
-      { azimuthHalfWidthRad: 0.32, peakElevationRad: 0.069, treeLineFrac: 0.62, peaks: 3, hazeBlend: 0.5, vegetation: true },
+      "real marched SDF island under the sun: forested mountainous relief rising from the sea, lit by sun shadows and sky ambient",
+      { min: v3(44, -11, 0), max: v3(96, 41, 17) },
+      { centerX: 70, centerY: 15, footprintRadius: 26, peakHeight: 17, vegetation: true, marched: true },
       curationRefs("ile"),
     ),
   ] as const;
