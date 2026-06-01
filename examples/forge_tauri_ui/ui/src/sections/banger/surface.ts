@@ -62,6 +62,7 @@ import * as worlds from "./worlds.js";
   const BANGER_GPU_QUALITY_DIM = 1180;
   const BANGER_GPU_WARM_START_DIM = 420;
   let bangerGpuWarmStartUntilMs = 0;
+  let bangerGpuPrewarmed = false;
   let bangerFrameTimer = 0;
   // INGEN §19.3 : the scene is data, not source. Banger starts empty by
   // default; future scenes are supplied by /newcompute_ -> /newobject_ or
@@ -7579,6 +7580,22 @@ import * as worlds from "./worlds.js";
     return true;
   }
 
+  // Pré-chauffage GPU : la compilation du shader INGEN (3000+ lignes WGSL)
+  // est le gros coût d'ouverture de Banger. On la lance en arrière-plan dès le
+  // boot (idle) ou au survol du bouton, pendant que l'utilisateur est ailleurs,
+  // pour qu'à l'ouverture la pipeline soit déjà prête → affichage instantané.
+  // initGL ne passe PAS gpuState à "active", donc aucune frame n'est rendue
+  // tant que l'utilisateur n'ouvre pas : on ne fait que chauffer device +
+  // pipeline. Une seule fois, et seulement si WebGPU est disponible.
+  function prewarmBangerGpu() {
+    if (bangerGpuPrewarmed || ingenRender) return;
+    if (!els.gpuCanvas || !IngenRender.supported?.()) return;
+    bangerGpuPrewarmed = true;
+    try { initGL(); } catch (err) {
+      console.warn("[banger] GPU prewarm failed:", err);
+    }
+  }
+
   function stopRenderLoop() {
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     if (bangerFrameTimer) {
@@ -9011,6 +9028,12 @@ import * as worlds from "./worlds.js";
         gpuState = "idle";
         return;
       }
+    } else if (ingenReady) {
+      // Pipeline déjà compilée (pré-chauffée au boot) : initGL est sauté, donc
+      // on ré-arme ici un court warm-start pour une première frame basse-déf
+      // immédiate puis montée en qualité — la compilation, elle, est déjà faite.
+      bangerGpuWarmStartUntilMs = boomNowMs() + 900;
+      ingenRender.setBootLite?.(900);
     }
     if (!inputAttached) {
       attachInput();
@@ -9201,6 +9224,15 @@ import * as worlds from "./worlds.js";
     }, 210);
   });
   window.addEventListener("beforeunload", shutdown);
+  // Pré-chauffer le GPU pour une ouverture instantanée : au survol du bouton
+  // (intention forte, zéro gaspillage) et en idle après le boot (garantit
+  // l'instantané même au clic direct sans survol).
+  els.boomBtn?.addEventListener("pointerenter", prewarmBangerGpu, { once: true });
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(prewarmBangerGpu, { timeout: 3000 });
+  } else {
+    window.setTimeout(prewarmBangerGpu, 1500);
+  }
   // Phase 4 — plus de contexte WebGL2 sur els.canvas, donc plus de
   // `webglcontextlost` à écouter. INGEN Render gère ses propres erreurs
   // d'adapter WebGPU dans IngenRender.init() / destroy().
