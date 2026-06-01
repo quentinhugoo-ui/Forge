@@ -910,18 +910,21 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, max_steps: u32) -> f32 {
 // drives the GI ambient and the ocean's reflection, so the whole frame
 // shares one coherent lighting environment.
 fn sky_env(rd: vec3<f32>) -> vec3<f32> {
-  let sun = normalize(vec3<f32>(0.82, 0.18, 0.16));
+  let sun = normalize(vec3<f32>(0.82, 0.18, 0.085));
   let up = clamp(rd.z, -1.0, 1.0);
-  let zenith  = vec3<f32>(0.18, 0.38, 0.72);
-  let horizon = vec3<f32>(0.70, 0.78, 0.90);
-  let ground  = vec3<f32>(0.09, 0.10, 0.12);
+  // Coucher de soleil : zénith bleu nuit profond, horizon pêche/rosé qui
+  // teinte aussi le reflet sur l'eau et l'ambiance GI (le ciel pilote tout
+  // le frame), bande basse plus chaude encore près du sol.
+  let zenith  = vec3<f32>(0.14, 0.26, 0.58);
+  let horizon = vec3<f32>(0.96, 0.62, 0.56);
+  let ground  = vec3<f32>(0.12, 0.09, 0.10);
   var col = mix(horizon, zenith, clamp(up, 0.0, 1.0));
   col = mix(col, ground, clamp(-up * 2.5, 0.0, 1.0));
   let mu = max(dot(rd, sun), 0.0);
-  // Mie halo (broad warm glow) + crisp sun disk.
-  col = mix(col, vec3<f32>(1.0, 0.54, 0.28), pow(mu, 4.0) * 0.38);
-  col = col + vec3<f32>(1.0, 0.62, 0.34) * (pow(mu, 9.0) * 0.48);
-  col = col + vec3<f32>(1.0, 0.88, 0.70) * (pow(mu, 700.0) * 8.0);
+  // Halo Mie orange large + lueur rosée resserrée + disque solaire chaud.
+  col = mix(col, vec3<f32>(1.0, 0.45, 0.22), pow(mu, 3.0) * 0.55);
+  col = col + vec3<f32>(1.0, 0.46, 0.40) * (pow(mu, 8.0) * 0.62);
+  col = col + vec3<f32>(1.0, 0.72, 0.46) * (pow(mu, 700.0) * 8.0);
   let cloud = smoothstep(0.58, 0.82, terrain_fbm(rd.xy * 2.4 + vec2<f32>(17.0, -9.0), 4u))
     * smoothstep(0.03, 0.42, rd.z);
   col = mix(col, vec3<f32>(0.82, 0.86, 0.90), cloud * 0.22);
@@ -944,7 +947,7 @@ fn atmosphere_fog_amount(ro: vec3<f32>, rd: vec3<f32>, dist: f32) -> f32 {
 
 fn atmosphere_scatter(rd: vec3<f32>, sun: vec3<f32>, fog: f32) -> vec3<f32> {
   let forward = pow(max(dot(rd, sun), 0.0), 10.0);
-  let shaft = vec3<f32>(1.0, 0.82, 0.58) * forward * fog * 0.55;
+  let shaft = vec3<f32>(1.0, 0.60, 0.38) * forward * fog * 0.62;
   return sky_env(rd) * (0.72 + fog * 0.22) + shaft;
 }
 
@@ -1278,7 +1281,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   // Sun (Z-up) with a per-sample jittered disk offset → soft penumbra and
   // soft specular that converge as the accumulator integrates many rays.
-  let sun = normalize(vec3<f32>(0.82, 0.18, 0.16));
+  let sun = normalize(vec3<f32>(0.82, 0.18, 0.085));
   let la1 = halton(si + 1u, 5u);
   let la2 = halton(si + 1u, 7u);
   let lrad = sqrt(la2) * 0.055;
@@ -1347,7 +1350,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let geom_n = normal(p);
     let m = eval_material(p);
     let n = material_detail_normal(p, geom_n, m);
-    let sun_col = vec3<f32>(1.00, 0.96, 0.88) * 1.6;
+    let sun_col = vec3<f32>(1.00, 0.72, 0.46) * 1.55;
     let viewd = -dir;
 
     let ndl = max(dot(n, ljit), 0.0);
@@ -1574,7 +1577,7 @@ fn cs_shadow(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (i >= splats.count) { return; }
   let s0 = splats.data[i * 4u + 0u];
   // Must match the base sun direction used in cs_main.
-  let sun = normalize(vec3<f32>(0.82, 0.18, 0.16));
+  let sun = normalize(vec3<f32>(0.82, 0.18, 0.085));
   shadow[i] = soft_shadow(s0.xyz + sun * 0.02, sun, 0.02, 60.0, 10.0);
 }
 
@@ -1598,8 +1601,8 @@ fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
   let p = probe_pos(cascade, i, j, k);
 
   let bake = u32(cam.probeSample + 0.5);
-  let sun = normalize(vec3<f32>(0.82, 0.18, 0.16));
-  let sun_col = vec3<f32>(1.0, 0.96, 0.88) * 1.6;
+  let sun = normalize(vec3<f32>(0.82, 0.18, 0.085));
+  let sun_col = vec3<f32>(1.0, 0.72, 0.46) * 1.55;
 
   // Cheap bake : few rays, short traces, and an UNSHADOWED one-bounce (the
   // sharp shadows live on the per-pixel direct term ; shadowing the indirect
