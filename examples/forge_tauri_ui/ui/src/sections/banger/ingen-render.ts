@@ -871,11 +871,25 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let direct_d = m.albedo * kd * sun_col * (ndl * sh);
     let direct_s = sun_col * (ndf * ndl * sh) * fres;
 
-    // Indirect : cached diffuse GI (albedo-tinted) + a cheap environment
-    // specular (sky reflection) so metals and smooth surfaces actually
-    // reflect their surroundings instead of reading as flat clay.
+    // Indirect : cached diffuse GI (albedo-tinted) + environment specular.
     let indirect_d = m.albedo * kd * sample_probe(p + n * 0.15) * ao;
-    let env = sky_env(reflect(dir, n));
+
+    // §26 Scene reflections — for metals / smooth surfaces, trace ONE
+    // reflection ray and shade the hit (direct sun + cached GI) so the chrome
+    // arch and metal spheres reflect the actual world, not a flat sky. Only on
+    // accumulation samples (idle) so motion stays cheap ; sky on miss / rough.
+    let rdir = reflect(dir, n);
+    var env = sky_env(rdir);
+    if (si > 0u && (m.metal > 0.5 || m.rough < 0.35)) {
+      let rt = trace(p + n * 0.02, rdir, 48u);
+      if (rt > 0.0) {
+        let rp = p + n * 0.02 + rdir * rt;
+        let rn = normal(rp);
+        let rm = eval_material(rp);
+        let rsh = soft_shadow(rp + rn * 0.012, sun, 0.02, 60.0, 10.0);
+        env = rm.albedo * (sun_col * (max(dot(rn, sun), 0.0) * rsh) + sample_probe(rp + rn * 0.15));
+      }
+    }
     let indirect_s = env * f0 * (1.0 - m.rough * 0.7) * ao;
 
     // Linear HDR — no hard clamp ; the ACES tonemap at store time handles
