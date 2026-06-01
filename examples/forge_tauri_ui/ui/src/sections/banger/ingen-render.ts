@@ -318,36 +318,6 @@ fn sd_terrain(
   return d;
 }
 
-// §28 Île SDF — vraie île 3D marchée par le raymarcher (relief montagneux +
-// côtes qui plongent sous la mer), pas une silhouette de fond. Bornée à une
-// empreinte circulaire ; un cylindre englobant sert d'early-out conservateur
-// (l'île ⊂ cylindre → sous-estimateur sûr pour le sphere-tracing) pour ne pas
-// évaluer le fbm coûteux sur les rayons qui passent loin. La hauteur est un
-// dôme radial (centre haut → rivage sous l'eau) + relief fbm, renvoyée en
-// pseudo-SDF Lipschitz (×0.4) pour éviter le sur-pas sur les versants rasants.
-fn island_center() -> vec2<f32> { return vec2<f32>(70.0, 15.0); }
-const ISLAND_RADIUS: f32 = 26.0;
-const ISLAND_PEAK:   f32 = 17.0;
-
-fn sd_island(p: vec3<f32>) -> f32 {
-  let sea = cam.waterLevel;
-  let rel = p.xy - island_center();
-  let r = length(rel);
-  // Cylindre englobant (rayon, de la mer au sommet + marge).
-  let dr_c = r - (ISLAND_RADIUS + 2.0);
-  let dz_c = abs(p.z - (sea + ISLAND_PEAK * 0.5)) - (ISLAND_PEAK * 0.5 + 4.0);
-  let d2 = vec2<f32>(dr_c, dz_c);
-  let d_cyl = min(max(dr_c, dz_c), 0.0) + length(max(d2, vec2<f32>(0.0)));
-  if (d_cyl > 1.5) { return d_cyl; }
-  // Dôme radial : 1 au centre, 0 au rivage ; au-delà la hauteur passe sous la
-  // mer (pas d'île). Relief = fbm + crêtes pour des sommets montagneux.
-  let env = 1.0 - smoothstep(ISLAND_RADIUS * 0.15, ISLAND_RADIUS, r);
-  let relief = terrain_fbm(rel * 0.045 + vec2<f32>(19.0, 6.0), 5u);
-  let ridge = 1.0 - abs(terrain_fbm(rel * 0.07 + vec2<f32>(-3.1, 8.4), 4u) * 2.0 - 1.0);
-  let height = sea - 4.0 + env * (ISLAND_PEAK * (0.62 + 0.55 * (relief - 0.35) + 0.30 * ridge));
-  return (p.z - height) * 0.4;
-}
-
 // §18 Pillar B — Neural SDF forward. Multires hash grid (L levels, F
 // features per entry, T entries per level) feeds a tiny 2-layer MLP with
 // ReLU. All shapes are compile-time constants so the whole forward pass
@@ -644,11 +614,8 @@ fn scene(p: vec3<f32>) -> f32 {
       sp = sp + 1;
     }
   }
-  var d = select(1.0e6, stack[0], sp > 0);
-  // §28 — l'île n'existe que dans le monde océan (même gate que la mer), pour
-  // ne pas polluer les scènes SDF chargées par /newobject_ ailleurs.
-  if (cam.waterLevel > -1.0e8) { d = min(d, sd_island(p)); }
-  return d;
+  if (sp <= 0) { return 1.0e6; }
+  return stack[0];
 }
 
 // §22 PBR — surface material. The distance stack machine above only carries
@@ -667,23 +634,6 @@ struct Mat {
 
 fn default_mat() -> Mat {
   return Mat(vec3<f32>(0.80, 0.82, 0.86), 0.55, 0.0, 0.0, 0.0);
-}
-
-// §28 — matériau de l'île par bande d'altitude (grève sableuse → forêt →
-// roche), motté par un fbm pour casser l'uniformité. Passe par le PBR normal
-// (soleil direct + ombres + AO + fill ciel) donc l'île est un vrai relief
-// éclairé. detail = 0.18 active le bump fbm de surface.
-fn island_material(p: vec3<f32>) -> Mat {
-  let h = p.z - cam.waterLevel;
-  let patch = terrain_fbm(p.xy * 0.12 + vec2<f32>(4.0, 9.0), 4u);
-  let sand    = vec3<f32>(0.40, 0.36, 0.27);
-  let forest  = vec3<f32>(0.06, 0.15, 0.06);
-  let forest2 = vec3<f32>(0.13, 0.24, 0.11);
-  let rock    = vec3<f32>(0.30, 0.28, 0.25);
-  var alb = mix(sand, mix(forest, forest2, patch), smoothstep(0.5, 2.4, h));
-  alb = mix(alb, rock, smoothstep(9.0, 14.0, h));
-  let rough = mix(0.80, 0.95, smoothstep(0.5, 2.4, h));
-  return Mat(alb, rough, 0.0, 0.18, 0.0);
 }
 
 fn material_id_albedo(material_id: u32) -> vec3<f32> {
@@ -840,10 +790,6 @@ fn eval_material(p: vec3<f32>) -> Mat {
       dstack[sp - 1] = smin_k(dstack[sp - 1], dstack[sp], b.w);
     }
   }
-  var base_d = select(1.0e6, dstack[0], sp > 0);
-  // §28 — si l'île est la surface la plus proche, renvoyer son matériau par
-  // bande d'altitude plutôt que le matériau d'op.
-  if (cam.waterLevel > -1.0e8 && sd_island(p) < base_d) { return island_material(p); }
   if (sp <= 0) { return default_mat(); }
   return apply_material_layers(p, mstack[0]);
 }
@@ -1011,6 +957,47 @@ fn atmosphere_scatter(rd: vec3<f32>, sun: vec3<f32>, fog: f32) -> vec3<f32> {
   let forward = pow(max(dot(rd, sun), 0.0), 10.0);
   let shaft = vec3<f32>(1.0, 0.60, 0.38) * forward * fog * 0.62;
   return sky_env(rd) * (0.72 + fog * 0.22) + shaft;
+}
+
+// §28 Île lointaine — silhouette de montagne boisée posée à l'horizon dans
+// l'axe du soleil. Pas de raymarch (c'est lointain) : un profil de crête
+// analytique en azimut (somme de sinus = plusieurs pics) sous une enveloppe
+// qui la fait émerger puis retomber dans la mer, ombré par bandes d'altitude
+// (grève -> forêt -> roche) et noyé dans la brume d'horizon (aerial
+// perspective) pour vendre la distance. Retour rgb + couverture alpha.
+fn distant_island(rd: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
+  let caz = atan2(sun.y, sun.x);
+  let az = atan2(rd.y, rd.x);
+  var daz = az - caz;
+  daz = daz - 6.2831853 * round(daz / 6.2831853);   // wrap [-pi, pi]
+  let half_w = 0.32;
+  let env = 1.0 - smoothstep(half_w * 0.62, half_w, abs(daz));
+  if (env <= 0.0) { return vec4<f32>(0.0); }
+  // Ligne de crête (radians au-dessus de l'horizon) : 3 octaves de sinus
+  // donnent plusieurs sommets ; l'enveloppe tronque vers la côte.
+  let ridge = (
+      0.034 * (0.5 + 0.5 * sin(daz * 7.0 + 1.3))
+    + 0.022 * (0.5 + 0.5 * sin(daz * 13.0 - 0.7))
+    + 0.013 * (0.5 + 0.5 * sin(daz * 23.0 + 2.1))
+  ) * pow(env, 0.6) + 0.004;
+  let base = -0.006;                                  // pied juste sous l'horizon
+  let elev = asin(clamp(rd.z, -1.0, 1.0));
+  if (elev < base || elev > base + ridge) { return vec4<f32>(0.0); }
+  let h = (elev - base) / max(ridge, 1.0e-4);         // hauteur normalisée [0,1]
+  let tex = terrain_fbm(vec2<f32>(daz * 26.0, h * 9.0) + vec2<f32>(31.0, 7.0), 4u);
+  // Bandes d'altitude : grève rocheuse, forêt (mottée par le bruit), roche nue.
+  let sand    = vec3<f32>(0.32, 0.29, 0.24);
+  let forest  = vec3<f32>(0.06, 0.15, 0.07);
+  let forest2 = vec3<f32>(0.11, 0.22, 0.10);
+  let rock    = vec3<f32>(0.26, 0.24, 0.22);
+  var alb = mix(sand, mix(forest, forest2, tex), smoothstep(0.04, 0.20, h));
+  alb = mix(alb, rock, smoothstep(0.60, 0.86, h));
+  let shade = 0.62 + 0.38 * (0.5 + 0.5 * sin(daz * 7.0 + 1.3));   // relief diffus
+  var c = alb * shade;
+  c = c + vec3<f32>(1.0, 0.6, 0.34) * smoothstep(0.80, 1.0, h) * 0.45;   // crêtes ourlées de soleil
+  c = mix(c, vec3<f32>(0.95, 0.66, 0.56), 0.5);       // aerial perspective vers la brume rosée
+  let edge_top = smoothstep(0.0, 0.012, (base + ridge) - elev);   // anti-alias du sommet
+  return vec4<f32>(c, env * edge_top);
 }
 
 // --- §21 Ocean : value-noise FBM for animated wave height + normal. ---
@@ -1388,7 +1375,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let p = cam.pos + dir * t;
     let d = scene(p);
     if (d < 0.0008 * max(t, 1.0)) { hit = true; break; }
-    if (t > 140.0) { break; }
+    if (t > 100.0) { break; }
     t = t + d;
   }
 
@@ -1397,6 +1384,13 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   var col = vec3<f32>(0.070, 0.072, 0.075);
   if (cam.skyEnabled > 0.5) {
     col = sky_env(dir);
+    // §28 — île lointaine compositée sur le ciel uniquement pour les rayons
+    // de fond (pas de géométrie SDF devant). L'océan, tracé plus bas, masque
+    // sa base ; l'aerial perspective est déjà cuite dans sa couleur.
+    if (!hit) {
+      let isle = distant_island(dir, sun);
+      col = mix(col, isle.rgb, isle.a);
+    }
   }
 
   // Ground-plane intersection for analytical grid (Banger is Z-up).
@@ -1468,13 +1462,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let direct_many = restir_direct_light(p, geom_n, n, viewd, m, vec2<u32>(gid.x, gid.y), si);
 
     // Indirect : cached diffuse GI (albedo-tinted) + environment specular.
-    var indirect_d = m.albedo * kd * sample_probe(p + geom_n * 0.15) * ao;
-    // §28 — en monde océan le volume GI ne bake pas (probes froides) : fill
-    // ciel hémisphérique pour que les versants ombrés de l'île ne tombent pas
-    // au noir. Teinté par le ciel coucher → ambiance rosée cohérente.
-    if (cam.waterLevel > -1.0e8) {
-      indirect_d = indirect_d + m.albedo * kd * sky_env(geom_n) * (0.24 * ao);
-    }
+    let indirect_d = m.albedo * kd * sample_probe(p + geom_n * 0.15) * ao;
 
     // §26 Scene reflections — for metals / smooth surfaces, trace ONE
     // reflection ray and shade the hit (direct sun + cached GI) so the chrome
