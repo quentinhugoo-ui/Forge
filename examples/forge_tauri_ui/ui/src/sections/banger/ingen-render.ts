@@ -1,4 +1,4 @@
-// @ts-nocheck
+﻿// @ts-nocheck
 // INGEN Render — WebGPU compute-driven raymarcher for Banger.
 // Phase 0 (INGEN COMPUTE §18-19) : ops buffer → compute pass → present.
 // Replaces the WebGL2 fragment-SDF path (catalog.ts FS_SDF / VS_SDF).
@@ -7,7 +7,7 @@
 
 import {
   OP_SPHERE, OP_BOX, OP_TORUS, OP_CAPSULE, OP_ROUNDED_BOX,
-  OP_UNION, OP_INTERSECT, OP_DIFF, OP_SMIN, OP_SVDAG, OP_NEURAL_SDF,
+  OP_UNION, OP_INTERSECT, OP_DIFF, OP_SMIN, OP_SAMPLED_SDF, OP_SVDAG, OP_NEURAL_SDF,
 } from "./scenes.js";
 
 // Layout-stable opcodes shipped to WGSL. Mirrors scenes.ts 1:1.
@@ -52,15 +52,15 @@ struct Camera {
   fwd:           vec3<f32>,
   showGrid:      f32,
   right:         vec3<f32>,
-  _p1:           f32,
+  time:          f32,
   up:            vec3<f32>,
-  _p2:           f32,
+  waterLevel:    f32,
   resolution:    vec2<f32>,
   centerOffset:  vec2<f32>,
   sampleIndex:   f32,
   splatSolid:    f32,
   probeSample:   f32,
-  _p5:           f32,
+  skyEnabled:    f32,
 };
 
 struct Ops {
@@ -137,6 +137,14 @@ struct Splats {
 // lights change, so orbiting the camera reuses the whole GI — the "don't
 // recompute billions of identical light calcs" win, on modest hardware.
 @group(0) @binding(8) var<storage, read_write> probes: array<vec4<f32>>;
+
+// Fieldlet SDF atlas (§18 / Nanite-like cut). Always bound. Header floats:
+// [active, resolution, brick_count, table_stride, values_base, _pad, _pad, header_stride].
+// Each table row is 20 floats: bounds min/max, value offset, material id,
+// surface bounds, error metadata and classification. The first safe shader
+// path only uses full brick bounds + trilinear values; skip distances stay
+// uploaded for future gated acceleration, not for primary correctness.
+@group(0) @binding(9) var<storage, read> sdfBrick: array<f32>;
 
 const PROBE_GRID: u32 = 16u;
 const PROBE_HALF: f32 = 6.0; // world half-extent of the cache cube
@@ -310,6 +318,78 @@ fn sd_svdag(p: vec3<f32>, origin: vec3<f32>, span: f32, root_override: u32) -> f
   return voxel_size * 0.5;
 }
 
+fn sd_sampled_brick_at(p: vec3<f32>, table: u32, res: u32) -> f32 {
+  let bmin = vec3<f32>(sdfBrick[table + 0u], sdfBrick[table + 1u], sdfBrick[table + 2u]);
+  let bmax = vec3<f32>(sdfBrick[table + 3u], sdfBrick[table + 4u], sdfBrick[table + 5u]);
+  let value_offset = u32(max(sdfBrick[table + 6u], 0.0) + 0.5);
+  let denom = max(vec3<f32>(bmax - bmin), vec3<f32>(1.0e-5));
+  let uvw = clamp((p - bmin) / denom, vec3<f32>(0.0), vec3<f32>(1.0));
+  let rr = max(res, 2u);
+  let grid = f32(rr - 1u);
+  let gp = uvw * grid;
+  let p0 = floor(gp);
+  let fr = gp - p0;
+  let ix = u32(clamp(p0.x, 0.0, grid));
+  let iy = u32(clamp(p0.y, 0.0, grid));
+  let iz = u32(clamp(p0.z, 0.0, grid));
+  let ix1 = min(ix + 1u, rr - 1u);
+  let iy1 = min(iy + 1u, rr - 1u);
+  let iz1 = min(iz + 1u, rr - 1u);
+  let r2 = rr * rr;
+  let i000 = value_offset + iz * r2 + iy * rr + ix;
+  let i100 = value_offset + iz * r2 + iy * rr + ix1;
+  let i010 = value_offset + iz * r2 + iy1 * rr + ix;
+  let i110 = value_offset + iz * r2 + iy1 * rr + ix1;
+  let i001 = value_offset + iz1 * r2 + iy * rr + ix;
+  let i101 = value_offset + iz1 * r2 + iy * rr + ix1;
+  let i011 = value_offset + iz1 * r2 + iy1 * rr + ix;
+  let i111 = value_offset + iz1 * r2 + iy1 * rr + ix1;
+  let c00 = mix(sdfBrick[i000], sdfBrick[i100], fr.x);
+  let c10 = mix(sdfBrick[i010], sdfBrick[i110], fr.x);
+  let c01 = mix(sdfBrick[i001], sdfBrick[i101], fr.x);
+  let c11 = mix(sdfBrick[i011], sdfBrick[i111], fr.x);
+  let c0 = mix(c00, c10, fr.y);
+  let c1 = mix(c01, c11, fr.y);
+  return mix(c0, c1, fr.z);
+}
+
+fn sd_sampled_brick(p: vec3<f32>) -> f32 {
+  if (sdfBrick[0] <= 0.5) { return 1.0e6; }
+  let res = u32(max(sdfBrick[1], 2.0) + 0.5);
+  let brick_count = min(u32(max(sdfBrick[2], 0.0) + 0.5), 64u);
+  let stride = max(u32(max(sdfBrick[3], 8.0) + 0.5), 8u);
+  let table_base = max(u32(max(sdfBrick[7], 8.0) + 0.5), 8u);
+  var nearest_box = 1.0e6;
+  var best_table: u32 = table_base;
+  var best_volume = 1.0e30;
+  var found = false;
+
+  for (var i: u32 = 0u; i < 64u; i = i + 1u) {
+    if (i >= brick_count) { break; }
+    let table = table_base + i * stride;
+    let bmin = vec3<f32>(sdfBrick[table + 0u], sdfBrick[table + 1u], sdfBrick[table + 2u]);
+    let bmax = vec3<f32>(sdfBrick[table + 3u], sdfBrick[table + 4u], sdfBrick[table + 5u]);
+    let half = max((bmax - bmin) * 0.5, vec3<f32>(1.0e-5));
+    let center = (bmin + bmax) * 0.5;
+    let q = abs(p - center) - half;
+    let box_d = length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+    nearest_box = min(nearest_box, max(box_d, 0.0));
+    if (box_d <= 1.0e-4) {
+      let volume = half.x * half.y * half.z;
+      if (!found || volume < best_volume) {
+        found = true;
+        best_volume = volume;
+        best_table = table;
+      }
+    }
+  }
+
+  if (found) {
+    return sd_sampled_brick_at(p, best_table, res);
+  }
+  return nearest_box;
+}
+
 fn scene(p: vec3<f32>) -> f32 {
   var stack: array<f32, 16>;
   var sp: i32 = 0;
@@ -345,6 +425,9 @@ fn scene(p: vec3<f32>) -> f32 {
     } else if (op == ${OP_SMIN}u) {
       sp = sp - 1;
       stack[sp - 1] = smin_k(stack[sp - 1], stack[sp], b.w);
+    } else if (op == ${OP_SAMPLED_SDF}u) {
+      stack[sp] = sd_sampled_brick(p);
+      sp = sp + 1;
     } else if (op == ${OP_SVDAG}u) {
       // §18 Pillar A : a.yzw = world-space origin, b.x = side length
       // (world units), b.y = root override (0 = use svdag header root).
@@ -433,15 +516,61 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, max_steps: u32) -> f32 {
   return -1.0;
 }
 
-// Environment radiance for a ray that escapes the scene : a sky gradient
-// (Z-up) plus a soft sun glow. Doubles as the indirect "infinite bounce"
-// fill term, so surfaces pick up coloured ambient light.
+// §21 Atmosphere — analytic physically-flavoured sky. A Rayleigh-ish
+// vertical gradient (deep zenith → pale horizon → darker ground), a broad
+// warm Mie forward-scatter halo around the sun, and a sharp sun disk. Also
+// drives the GI ambient and the ocean's reflection, so the whole frame
+// shares one coherent lighting environment.
 fn sky_env(rd: vec3<f32>) -> vec3<f32> {
-  let up = clamp(rd.z * 0.5 + 0.5, 0.0, 1.0);
-  var s = mix(vec3<f32>(0.18, 0.20, 0.26), vec3<f32>(0.42, 0.56, 0.86), up);
   let sun = normalize(vec3<f32>(0.5, 0.4, 0.85));
-  s = s + vec3<f32>(1.0, 0.92, 0.74) * (pow(max(dot(rd, sun), 0.0), 64.0) * 0.6);
-  return s;
+  let up = clamp(rd.z, -1.0, 1.0);
+  let zenith  = vec3<f32>(0.16, 0.33, 0.66);
+  let horizon = vec3<f32>(0.60, 0.69, 0.82);
+  let ground  = vec3<f32>(0.09, 0.10, 0.12);
+  var col = mix(horizon, zenith, clamp(up, 0.0, 1.0));
+  col = mix(col, ground, clamp(-up * 2.5, 0.0, 1.0));
+  let mu = max(dot(rd, sun), 0.0);
+  // Mie halo (broad warm glow) + crisp sun disk.
+  col = col + vec3<f32>(1.0, 0.78, 0.50) * (pow(mu, 8.0) * 0.32);
+  col = col + vec3<f32>(1.0, 0.96, 0.88) * (pow(mu, 900.0) * 7.0);
+  return col;
+}
+
+// --- §21 Ocean : value-noise FBM for animated wave height + normal. ---
+fn hash2(p: vec2<f32>) -> f32 {
+  return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+}
+fn vnoise(p: vec2<f32>) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = hash2(i);
+  let b = hash2(i + vec2<f32>(1.0, 0.0));
+  let c = hash2(i + vec2<f32>(0.0, 1.0));
+  let d = hash2(i + vec2<f32>(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+fn fbm2(p: vec2<f32>) -> f32 {
+  var v = 0.0;
+  var amp = 0.5;
+  var q = p;
+  for (var i: u32 = 0u; i < 4u; i = i + 1u) {
+    v = v + amp * vnoise(q);
+    q = q * 2.02;
+    amp = amp * 0.5;
+  }
+  return v;
+}
+fn water_height(xy: vec2<f32>, t: f32) -> f32 {
+  let flow = vec2<f32>(0.6, 0.35) * t;
+  return fbm2((xy + flow) * 0.25) * 0.55 + fbm2((xy - flow * 0.7) * 0.62) * 0.18;
+}
+fn water_normal(xy: vec2<f32>, t: f32) -> vec3<f32> {
+  let e = 0.15;
+  let h0 = water_height(xy, t);
+  let hx = water_height(xy + vec2<f32>(e, 0.0), t);
+  let hy = water_height(xy + vec2<f32>(0.0, e), t);
+  return normalize(vec3<f32>(-(hx - h0) / e, -(hy - h0) / e, 1.0));
 }
 
 // Uniform sphere sample — a probe gathers incoming light from all
@@ -565,10 +694,12 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     t = t + d;
   }
 
-  // Sky background : an escaped primary ray shows the same environment the
-  // GI samples (horizon gradient + sun glow), so the scene reads as a lit
-  // world instead of flat void. The grid / surface draw over it below.
-  var col = sky_env(dir);
+  // Default Banger background is the Forge shell's neutral black/gray, not
+  // the world-sky. The sky stays available, but only when explicitly enabled.
+  var col = vec3<f32>(0.070, 0.072, 0.075);
+  if (cam.skyEnabled > 0.5) {
+    col = sky_env(dir);
+  }
 
   // Ground-plane intersection for analytical grid (Banger is Z-up).
   // Solves cam.pos.z + dir.z * tg = 0  → tg. Gated by the Scene
@@ -621,6 +752,38 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let direct = albedo * sun_col * (ndl * sh);
     let indirect = albedo * sample_probe(p + n * 0.15) * ao;
     col = min(direct + indirect, vec3<f32>(2.0));
+  }
+
+  // §21 Ocean — analytic water plane at cam.waterLevel (disabled when the
+  // level sits at the -1e9 sentinel). FBM-wave normal → Fresnel sky
+  // reflection over a depth-tinted refraction, plus a sharp sun glint.
+  // Composited by depth against the SDF surface (mountains poke through).
+  var front_t = select(1.0e9, t, hit);
+  if (cam.waterLevel > -1.0e8 && abs(dir.z) > 1.0e-4) {
+    let tw = (cam.waterLevel - cam.pos.z) / dir.z;
+    if (tw > 0.05 && (!hit || tw < t)) {
+      let wp = cam.pos + dir * tw;
+      let nrm = water_normal(wp.xy, cam.time);
+      let viewd = -dir;
+      let f0 = 0.02;
+      let fres = f0 + (1.0 - f0) * pow(1.0 - max(dot(nrm, viewd), 0.0), 5.0);
+      let refl = sky_env(reflect(dir, nrm));
+      let deep = vec3<f32>(0.015, 0.07, 0.10);
+      let shallow = vec3<f32>(0.06, 0.20, 0.24);
+      let refr = mix(deep, shallow, clamp(nrm.z, 0.0, 1.0));
+      let hvec = normalize(ljit + viewd);
+      let glint = pow(max(dot(nrm, hvec), 0.0), 200.0) * 4.0;
+      col = mix(refr, refl, fres) + vec3<f32>(1.0, 0.95, 0.85) * glint;
+      front_t = tw;
+    }
+  }
+
+  // §21 Aerial perspective — distant surfaces fade into the atmosphere
+  // (gated by the sky, so the neutral Forge background stays clean). This is
+  // what gives a landscape its sense of scale and depth.
+  if (cam.skyEnabled > 0.5 && front_t < 1.0e8) {
+    let fog = 1.0 - exp(-front_t * 0.018);
+    col = mix(col, sky_env(dir), clamp(fog, 0.0, 0.92));
   }
 
   // §18 Pillar C — Gaussian splat accumulation. Layout 16-float par splat
@@ -783,6 +946,8 @@ export interface IngenCamera {
   centerOffset?: [number, number];
   /** Ground grid visibility — defaults to shown when omitted. */
   showGrid?: boolean;
+  /** Procedural sky visibility — defaults to Forge neutral background. */
+  skyEnabled?: boolean;
 }
 
 // FNV-1a 32-bit hash over a Uint32 stream. Fast inline loop, no deps.
@@ -819,6 +984,7 @@ export class IngenRender {
   private pipelineShadow: GPUComputePipeline | null = null;
   // §20 GI cache — third pipeline, the world-space radiance probe bake.
   private pipelineProbe: GPUComputePipeline | null = null;
+  private auxiliaryPipelinesStarted = false;
   private bindGroupLayout: GPUBindGroupLayout | null = null;
   private camBuffer: GPUBuffer | null = null;
   private opsBuffer: GPUBuffer | null = null;
@@ -827,6 +993,8 @@ export class IngenRender {
   private splatsBuffer: GPUBuffer | null = null;
   private splatsCapacity = 0;
   private nsdfBuffer: GPUBuffer | null = null;
+  private sdfBrickBuffer: GPUBuffer | null = null;
+  private sdfBrickCapacity = 0; // capacity in f32 words
   // §19.4 progressive accumulator. One vec4 per pixel ; recreated on resize.
   private accumBuffer: GPUBuffer | null = null;
   private accumPixels = 0;
@@ -849,6 +1017,9 @@ export class IngenRender {
   private probeSample = 0;
   private readonly probeMaxSamples = 24;
   private probeDirty = true;
+  // §21 Ocean — world-space water height, or -1e9 = disabled. When enabled,
+  // `time` advances so the waves animate (which keeps the loop live).
+  private waterLevel = -1e9;
   // Current converged sample count for the static scene. Reset to 0 whenever
   // the camera / ops / dims change ; climbs to `maxSamples` while idle.
   private sampleCount = 0;
@@ -977,6 +1148,7 @@ export class IngenRender {
         { binding: 6, visibility: COMPUTE, buffer: { type: "storage" } },
         { binding: 7, visibility: COMPUTE, buffer: { type: "storage" } },
         { binding: 8, visibility: COMPUTE, buffer: { type: "storage" } },
+        { binding: 9, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
       ],
     });
     const pipelineLayout = this.device.createPipelineLayout({
@@ -987,16 +1159,6 @@ export class IngenRender {
       label: "ingen-render-pipeline",
       layout: pipelineLayout,
       compute: { module, entryPoint: "cs_main" },
-    });
-    this.pipelineShadow = this.device.createComputePipeline({
-      label: "ingen-shadow-pipeline",
-      layout: pipelineLayout,
-      compute: { module, entryPoint: "cs_shadow" },
-    });
-    this.pipelineProbe = this.device.createComputePipeline({
-      label: "ingen-probe-pipeline",
-      layout: pipelineLayout,
-      compute: { module, entryPoint: "cs_probe" },
     });
     const validationErr = await this.device.popErrorScope();
     if (validationErr) {
@@ -1016,6 +1178,7 @@ export class IngenRender {
         }
       }).catch(() => {});
     }
+    this.deferAuxiliaryPipelines(module, pipelineLayout);
 
     this.camBuffer = this.device.createBuffer({
       size: 96, // Camera struct, padded to 16-byte multiples
@@ -1063,6 +1226,16 @@ export class IngenRender {
     });
     this.device.queue.writeBuffer(this.nsdfBuffer, 0, new Float32Array([0, 16, 0, 0]));
 
+    // Fieldlet SDF atlas. Empty header by default: OP_SAMPLED_SDF returns a
+    // far positive distance until uploadSdfBrickAtlas() activates it.
+    this.sdfBrickCapacity = 16;
+    this.sdfBrickBuffer = this.device.createBuffer({
+      size: this.sdfBrickCapacity * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      label: "ingen-sdf-brick-atlas",
+    });
+    this.device.queue.writeBuffer(this.sdfBrickBuffer, 0, new Float32Array([0, 2, 0, 8, 8, 0, 0, 8]));
+
     // §20 Fusion v2 — per-splat shadow scalars, sized for the default splat
     // capacity ; grows in lock-step with the splats buffer.
     this.shadowCapacity = 256;
@@ -1083,6 +1256,72 @@ export class IngenRender {
 
     this.resize(this.canvas.width || 1, this.canvas.height || 1);
     return true;
+  }
+
+  private refreshBindGroup(): void {
+    if (!this.device || !this.bindGroupLayout || !this.outView
+      || !this.camBuffer || !this.opsBuffer || !this.svdagBuffer
+      || !this.splatsBuffer || !this.nsdfBuffer || !this.accumBuffer
+      || !this.shadowBuffer || !this.probesBuffer || !this.sdfBrickBuffer) {
+      return;
+    }
+    this.bindGroup = this.device.createBindGroup({
+      label: "ingen-bg",
+      layout: this.bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.camBuffer } },
+        { binding: 1, resource: { buffer: this.opsBuffer } },
+        { binding: 2, resource: this.outView },
+        { binding: 3, resource: { buffer: this.svdagBuffer } },
+        { binding: 4, resource: { buffer: this.splatsBuffer } },
+        { binding: 5, resource: { buffer: this.nsdfBuffer } },
+        { binding: 6, resource: { buffer: this.accumBuffer } },
+        { binding: 7, resource: { buffer: this.shadowBuffer } },
+        { binding: 8, resource: { buffer: this.probesBuffer } },
+        { binding: 9, resource: { buffer: this.sdfBrickBuffer } },
+      ],
+    });
+  }
+
+  private deferAuxiliaryPipelines(module: GPUShaderModule, pipelineLayout: GPUPipelineLayout): void {
+    if (!this.device || this.auxiliaryPipelinesStarted) return;
+    this.auxiliaryPipelinesStarted = true;
+    const start = () => {
+      const device = this.device;
+      if (!device) return;
+      const makePipeline = async (label: string, entryPoint: string) => {
+        const desc = { label, layout: pipelineLayout, compute: { module, entryPoint } };
+        if (typeof (device as any).createComputePipelineAsync === "function") {
+          return await (device as any).createComputePipelineAsync(desc);
+        }
+        return device.createComputePipeline(desc);
+      };
+      device.pushErrorScope("validation");
+      Promise.all([
+        makePipeline("ingen-shadow-pipeline", "cs_shadow"),
+        makePipeline("ingen-probe-pipeline", "cs_probe"),
+      ]).then(async ([shadow, probe]) => {
+        const validationErr = await device.popErrorScope();
+        if (validationErr) {
+          console.warn("[ingen-render] auxiliary pipeline validation:", (validationErr as any).message);
+          return;
+        }
+        if (this.device !== device) return;
+        this.pipelineShadow = shadow;
+        this.pipelineProbe = probe;
+        this.shadowDirty = true;
+        this.probeDirty = true;
+        this.cacheValid = false;
+      }).catch(async (err) => {
+        try { await device.popErrorScope(); } catch (_) {}
+        console.warn("[ingen-render] auxiliary pipeline warmup failed:", err?.message || err);
+      });
+    };
+    if (typeof (globalThis as any).requestIdleCallback === "function") {
+      (globalThis as any).requestIdleCallback(start, { timeout: 700 });
+    } else {
+      globalThis.setTimeout(start, 120);
+    }
   }
 
   resize(width: number, height: number): void {
@@ -1121,21 +1360,7 @@ export class IngenRender {
         GPUTextureUsage.TEXTURE_BINDING,
     });
     this.outView = this.outTexture.createView();
-    this.bindGroup = this.device.createBindGroup({
-      label: "ingen-bg",
-      layout: this.bindGroupLayout!,
-      entries: [
-        { binding: 0, resource: { buffer: this.camBuffer! } },
-        { binding: 1, resource: { buffer: this.opsBuffer! } },
-        { binding: 2, resource: this.outView! },
-        { binding: 3, resource: { buffer: this.svdagBuffer! } },
-        { binding: 4, resource: { buffer: this.splatsBuffer! } },
-        { binding: 5, resource: { buffer: this.nsdfBuffer! } },
-        { binding: 6, resource: { buffer: this.accumBuffer! } },
-        { binding: 7, resource: { buffer: this.shadowBuffer! } },
-        { binding: 8, resource: { buffer: this.probesBuffer! } },
-      ],
-    });
+    this.refreshBindGroup();
   }
 
   /**
@@ -1201,23 +1426,7 @@ export class IngenRender {
       });
       realloced = true;
     }
-    if (realloced && this.bindGroupLayout && this.outView && this.camBuffer && this.opsBuffer && this.svdagBuffer && this.nsdfBuffer && this.accumBuffer && this.shadowBuffer && this.probesBuffer) {
-      this.bindGroup = this.device.createBindGroup({
-        label: "ingen-bg",
-        layout: this.bindGroupLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.camBuffer } },
-          { binding: 1, resource: { buffer: this.opsBuffer } },
-          { binding: 2, resource: this.outView },
-          { binding: 3, resource: { buffer: this.svdagBuffer } },
-          { binding: 4, resource: { buffer: this.splatsBuffer! } },
-          { binding: 5, resource: { buffer: this.nsdfBuffer } },
-          { binding: 6, resource: { buffer: this.accumBuffer } },
-          { binding: 7, resource: { buffer: this.shadowBuffer } },
-          { binding: 8, resource: { buffer: this.probesBuffer } },
-        ],
-      });
-    }
+    if (realloced) this.refreshBindGroup();
     this.device.queue.writeBuffer(this.splatsBuffer!, 0, new Uint32Array([safeCount, 0, 0, 0]));
     if (safeCount > 0) {
       const floatsNeeded = safeCount * 16;
@@ -1271,6 +1480,121 @@ export class IngenRender {
     this.setSplatSolid(false);
   }
 
+  uploadSdfBrick(values: Float32Array, boundsMin: number[], boundsMax: number[], resolution?: number): boolean {
+    return this.uploadSdfBrickAtlas([{ values, boundsMin, boundsMax }], resolution);
+  }
+
+  uploadSdfBrickAtlas(bricks: any[], resolution?: number): boolean {
+    if (!this.device || !this.sdfBrickBuffer) return false;
+    const src = Array.isArray(bricks) ? bricks : [];
+    const firstValues = src.find((brick) => brick?.values)?.values;
+    const inferredRes = resolution
+      || (firstValues?.length ? Math.round(Math.cbrt(Number(firstValues.length))) : 0);
+    const res = Math.max(2, Math.min(64, Number(inferredRes) | 0 || 2));
+    const voxelsPerBrick = res * res * res;
+    const active = src
+      .filter((brick) => brick?.values && brick?.boundsMin && brick?.boundsMax)
+      .slice(0, 64);
+
+    if (!active.length) {
+      this.device.queue.writeBuffer(this.sdfBrickBuffer, 0, new Float32Array([0, res, 0, 20, 8, 0, 0, 8]));
+      this.shadowDirty = true;
+      this.probeDirty = true;
+      this.cacheValid = false;
+      return true;
+    }
+
+    const headerStride = 8;
+    const tableStride = 20;
+    const tableBase = headerStride;
+    const valuesBase = tableBase + active.length * tableStride;
+    const requiredWords = valuesBase + active.length * voxelsPerBrick;
+    if (requiredWords > this.sdfBrickCapacity) {
+      this.sdfBrickBuffer.destroy?.();
+      let cap = Math.max(this.sdfBrickCapacity, 16);
+      while (cap < requiredWords) cap *= 2;
+      this.sdfBrickCapacity = cap;
+      this.sdfBrickBuffer = this.device.createBuffer({
+        size: cap * 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        label: "ingen-sdf-brick-atlas",
+      });
+      this.refreshBindGroup();
+    }
+
+    const packed = new Float32Array(requiredWords);
+    packed[0] = 1;
+    packed[1] = res;
+    packed[2] = active.length;
+    packed[3] = tableStride;
+    packed[4] = valuesBase;
+    packed[5] = 0;
+    packed[6] = 0;
+    packed[7] = tableBase;
+
+    const vec3 = (value: any, fallback: number[]) => {
+      const out = fallback.slice(0, 3);
+      for (let i = 0; i < 3; i += 1) {
+        const n = Number(value?.[i]);
+        if (Number.isFinite(n)) out[i] = n;
+      }
+      return out;
+    };
+    const classificationCode = (value: any) => {
+      if (typeof value === "string") {
+        const lower = value.toLowerCase();
+        if (lower.includes("outside")) return 0;
+        if (lower.includes("inside")) return 1;
+      }
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.max(0, Math.min(3, n)) : 2;
+    };
+
+    for (let i = 0; i < active.length; i += 1) {
+      const brick = active[i];
+      const row = tableBase + i * tableStride;
+      const valueOffset = valuesBase + i * voxelsPerBrick;
+      const bmin = vec3(brick.boundsMin, [-1, -1, -1]);
+      const bmax = vec3(brick.boundsMax, [1, 1, 1]);
+      const smin = vec3(brick.surfaceBoundsMin, bmin);
+      const smax = vec3(brick.surfaceBoundsMax, bmax);
+      packed[row + 0] = bmin[0];
+      packed[row + 1] = bmin[1];
+      packed[row + 2] = bmin[2];
+      packed[row + 3] = bmax[0];
+      packed[row + 4] = bmax[1];
+      packed[row + 5] = bmax[2];
+      packed[row + 6] = valueOffset;
+      packed[row + 7] = Math.max(0, Math.min(1024, Number(brick.materialId) | 0));
+      packed[row + 8] = smin[0];
+      packed[row + 9] = smin[1];
+      packed[row + 10] = smin[2];
+      packed[row + 11] = smax[0];
+      packed[row + 12] = smax[1];
+      packed[row + 13] = smax[2];
+      packed[row + 14] = Math.max(0, Number(brick.errorWorld) || 0);
+      packed[row + 15] = Math.max(0, Number(brick.skipDistance) || 0);
+      packed[row + 16] = classificationCode(brick.classification);
+      packed[row + 17] = 0;
+      packed[row + 18] = 0;
+      packed[row + 19] = 0;
+
+      const values = brick.values instanceof Float32Array
+        ? brick.values
+        : new Float32Array(brick.values);
+      packed.set(values.subarray(0, Math.min(values.length, voxelsPerBrick)), valueOffset);
+      if (values.length < voxelsPerBrick) {
+        packed.fill(1.0e6, valueOffset + values.length, valueOffset + voxelsPerBrick);
+      }
+    }
+
+    this.device.queue.writeBuffer(this.sdfBrickBuffer, 0, packed);
+    this.shadowDirty = true;
+    this.probeDirty = true;
+    this.cacheValid = false;
+    return true;
+  }
+
   /**
    * Upload a packed SVDAG buffer (matches `Svdag::packed` from `src/svdag.rs`).
    * The buffer's first 4 u32 are the header [root, dim, depth, _pad] ; the
@@ -1293,23 +1617,7 @@ export class IngenRender {
         label: "ingen-svdag",
       });
       // Bind group references the old buffer — recreate it.
-      if (this.bindGroupLayout && this.outView && this.camBuffer && this.opsBuffer && this.splatsBuffer && this.nsdfBuffer && this.accumBuffer && this.shadowBuffer && this.probesBuffer) {
-        this.bindGroup = this.device.createBindGroup({
-          label: "ingen-bg",
-          layout: this.bindGroupLayout,
-          entries: [
-            { binding: 0, resource: { buffer: this.camBuffer } },
-            { binding: 1, resource: { buffer: this.opsBuffer } },
-            { binding: 2, resource: this.outView },
-            { binding: 3, resource: { buffer: this.svdagBuffer! } },
-            { binding: 4, resource: { buffer: this.splatsBuffer } },
-            { binding: 5, resource: { buffer: this.nsdfBuffer } },
-            { binding: 6, resource: { buffer: this.accumBuffer } },
-            { binding: 7, resource: { buffer: this.shadowBuffer } },
-            { binding: 8, resource: { buffer: this.probesBuffer } },
-          ],
-        });
-      }
+      this.refreshBindGroup();
     }
     if (packed.length === 0) {
       this.device.queue.writeBuffer(this.svdagBuffer!, 0, new Uint32Array([0, 0, 0, 0]));
@@ -1368,14 +1676,19 @@ export class IngenRender {
     const camU = new Float32Array(24);
     camU[0] = cam.pos[0]; camU[1] = cam.pos[1]; camU[2] = cam.pos[2]; camU[3] = cam.tanHalfFovY;
     camU[4] = cam.fwd[0]; camU[5] = cam.fwd[1]; camU[6] = cam.fwd[2]; camU[7] = cam.showGrid === false ? 0 : 1;
-    camU[8] = cam.right[0]; camU[9] = cam.right[1]; camU[10] = cam.right[2]; camU[11] = 0;
-    camU[12] = cam.up[0]; camU[13] = cam.up[1]; camU[14] = cam.up[2]; camU[15] = 0;
+    // §21 — camU[11] = time (advances only while the ocean is on, so a static
+    // scene still hashes stable and goes idle) ; camU[15] = water level.
+    const waterOn = this.waterLevel > -1e8;
+    camU[8] = cam.right[0]; camU[9] = cam.right[1]; camU[10] = cam.right[2];
+    camU[11] = waterOn ? (performance.now() * 0.001) : 0;
+    camU[12] = cam.up[0]; camU[13] = cam.up[1]; camU[14] = cam.up[2];
+    camU[15] = this.waterLevel;
     camU[16] = w; camU[17] = h; camU[18] = cam.centerOffset?.[0] ?? 0; camU[19] = cam.centerOffset?.[1] ?? 0;
     // sampleIndex (camU[20]) is filled in just before dispatch — it must NOT
     // enter the hash, otherwise every accumulation frame would look "new"
     // and the scene would never be detected as idle. splatSolid (camU[21])
     // IS hashed so flipping the compositing intent forces a fresh render.
-    camU[20] = 0; camU[21] = this.splatSolid ? 1 : 0; camU[22] = 0; camU[23] = 0;
+    camU[20] = 0; camU[21] = this.splatSolid ? 1 : 0; camU[22] = 0; camU[23] = cam.skyEnabled ? 1 : 0;
     const camHash = fnv1a32(new Uint32Array(camU.buffer));
 
     // KASM frame cache → progressive accumulation. The scene is "unchanged"
@@ -1400,7 +1713,13 @@ export class IngenRender {
     const encoder = this.device.createCommandEncoder({ label: "ingen-encoder" });
 
     const converging = this.sampleCount < this.maxSamples;
-    const probeBaking = this.probeSample < this.probeMaxSamples;
+    // Never let GI probe baking sit in front of the first visible frame.
+    // The first dispatch shows direct lighting immediately; cached indirect
+    // light starts refining only after at least one image has been blitted and
+    // after the deferred probe pipeline is actually ready.
+    const probeBaking = !!this.pipelineProbe
+      && this.sampleCount > 0
+      && this.probeSample < this.probeMaxSamples;
     // Dispatch whenever the image must change : a moved/converging view, OR a
     // still-baking probe volume (so the main pass re-runs to show the refined
     // GI). Camera orbit with frozen probes still falls under `converging`.
@@ -1484,7 +1803,8 @@ export class IngenRender {
    */
   isConverging(): boolean {
     return !!this.pipeline
-      && (this.sampleCount < this.maxSamples || this.probeSample < this.probeMaxSamples);
+      && (this.sampleCount < this.maxSamples
+        || (!!this.pipelineProbe && this.probeSample < this.probeMaxSamples));
   }
 
   /**
@@ -1500,6 +1820,17 @@ export class IngenRender {
     this.cacheValid = false;
   }
 
+  /**
+   * §21 Ocean — enable the analytic water plane at world height `level`, or
+   * disable with `null`. While enabled, `time` advances so the waves animate
+   * (the loop stays live) ; disabling lets the viewport go idle again.
+   * Invalidates the frame cache so the change is shown immediately.
+   */
+  setWater(level: number | null): void {
+    this.waterLevel = (level === null || level === undefined) ? -1e9 : level;
+    this.cacheValid = false;
+  }
+
   /** Reset hit/miss counters (HUD reset, benchmark window). */
   resetStats(): void {
     this.stats = { frames: 0, hits: 0, misses: 0, hitRatio: 0 };
@@ -1512,6 +1843,7 @@ export class IngenRender {
     this.svdagBuffer?.destroy?.();
     this.splatsBuffer?.destroy?.();
     this.nsdfBuffer?.destroy?.();
+    this.sdfBrickBuffer?.destroy?.();
     this.accumBuffer?.destroy?.();
     this.shadowBuffer?.destroy?.();
     this.probesBuffer?.destroy?.();
@@ -1524,6 +1856,8 @@ export class IngenRender {
     this.splatsBuffer = null;
     this.splatsCapacity = 0;
     this.nsdfBuffer = null;
+    this.sdfBrickBuffer = null;
+    this.sdfBrickCapacity = 0;
     this.accumBuffer = null;
     this.accumPixels = 0;
     this.shadowBuffer = null;
@@ -1534,6 +1868,7 @@ export class IngenRender {
     this.pipeline = null;
     this.pipelineShadow = null;
     this.pipelineProbe = null;
+    this.auxiliaryPipelinesStarted = false;
     this.bindGroupLayout = null;
     this.bindGroup = null;
     this.context = null;
