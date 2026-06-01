@@ -7,7 +7,7 @@
 
 import {
   OP_SPHERE, OP_BOX, OP_TORUS, OP_CAPSULE, OP_ROUNDED_BOX,
-  OP_UNION, OP_INTERSECT, OP_DIFF, OP_SMIN, OP_SAMPLED_SDF, OP_SVDAG, OP_NEURAL_SDF,
+  OP_UNION, OP_INTERSECT, OP_DIFF, OP_SMIN, OP_MATERIAL, OP_SAMPLED_SDF, OP_SVDAG, OP_NEURAL_SDF,
 } from "./scenes.js";
 
 // Layout-stable opcodes shipped to WGSL. Mirrors scenes.ts 1:1.
@@ -444,6 +444,69 @@ fn scene(p: vec3<f32>) -> f32 {
   return stack[0];
 }
 
+// §22 PBR — surface material. The distance stack machine above only carries
+// floats ; this twin runs the SAME program once at the hit point, tracking
+// the (albedo, roughness, metallic) of the CLOSEST surface. OP_MATERIAL sets
+// the current material for the primitives that follow ; boolean ops keep the
+// material of the winning operand. Called once per shaded pixel — far cheaper
+// than the march, so marching/shadows/AO stay distance-only.
+struct Mat {
+  albedo: vec3<f32>,
+  rough:  f32,
+  metal:  f32,
+}
+
+fn default_mat() -> Mat {
+  return Mat(vec3<f32>(0.80, 0.82, 0.86), 0.55, 0.0);
+}
+
+fn eval_material(p: vec3<f32>) -> Mat {
+  var dstack: array<f32, 16>;
+  var mstack: array<Mat, 16>;
+  var sp: i32 = 0;
+  var cur: Mat = default_mat();
+  let n = ops.count;
+  for (var i: u32 = 0u; i < n; i = i + 1u) {
+    let a = ops.data[i * 2u];
+    let b = ops.data[i * 2u + 1u];
+    let op = u32(a.x + 0.5);
+    if (op == ${OP_MATERIAL}u) {
+      cur = Mat(a.yzw, max(b.x, 0.02), clamp(b.y, 0.0, 1.0));
+    } else if (op == ${OP_SPHERE}u) {
+      dstack[sp] = sd_sphere(p - a.yzw, b.x); mstack[sp] = cur; sp = sp + 1;
+    } else if (op == ${OP_BOX}u) {
+      dstack[sp] = sd_box(p - a.yzw, b.xyz); mstack[sp] = cur; sp = sp + 1;
+    } else if (op == ${OP_TORUS}u) {
+      dstack[sp] = sd_torus(p - a.yzw, b.x, b.y); mstack[sp] = cur; sp = sp + 1;
+    } else if (op == ${OP_CAPSULE}u) {
+      dstack[sp] = sd_capsule(p, a.yzw, b.xyz, b.w); mstack[sp] = cur; sp = sp + 1;
+    } else if (op == ${OP_ROUNDED_BOX}u) {
+      dstack[sp] = sd_rounded_box(p - a.yzw, b.xyz, b.w); mstack[sp] = cur; sp = sp + 1;
+    } else if (op == ${OP_SAMPLED_SDF}u) {
+      dstack[sp] = sd_sampled_brick(p); mstack[sp] = cur; sp = sp + 1;
+    } else if (op == ${OP_SVDAG}u) {
+      dstack[sp] = sd_svdag(p, a.yzw, b.x, u32(b.y + 0.5)); mstack[sp] = cur; sp = sp + 1;
+    } else if (op == ${OP_NEURAL_SDF}u) {
+      dstack[sp] = sd_neural(p, a.yzw, b.x); mstack[sp] = cur; sp = sp + 1;
+    } else if (op == ${OP_UNION}u) {
+      sp = sp - 1;
+      if (dstack[sp] < dstack[sp - 1]) { dstack[sp - 1] = dstack[sp]; mstack[sp - 1] = mstack[sp]; }
+    } else if (op == ${OP_INTERSECT}u) {
+      sp = sp - 1;
+      if (dstack[sp] > dstack[sp - 1]) { dstack[sp - 1] = dstack[sp]; mstack[sp - 1] = mstack[sp]; }
+    } else if (op == ${OP_DIFF}u) {
+      sp = sp - 1;
+      dstack[sp - 1] = max(dstack[sp - 1], -dstack[sp]);
+    } else if (op == ${OP_SMIN}u) {
+      sp = sp - 1;
+      if (dstack[sp] < dstack[sp - 1]) { mstack[sp - 1] = mstack[sp]; }
+      dstack[sp - 1] = smin_k(dstack[sp - 1], dstack[sp], b.w);
+    }
+  }
+  if (sp <= 0) { return default_mat(); }
+  return mstack[0];
+}
+
 fn normal(p: vec3<f32>) -> vec3<f32> {
   let e = vec2<f32>(0.001, 0.0);
   return normalize(vec3<f32>(
@@ -739,8 +802,9 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // camera orbits and the GI is reused until the scene actually changes.
     let p = cam.pos + dir * t;
     let n = normal(p);
-    let albedo  = vec3<f32>(0.80, 0.82, 0.86);
+    let m = eval_material(p);
     let sun_col = vec3<f32>(1.00, 0.96, 0.88) * 1.6;
+    let viewd = -dir;
 
     let ndl = max(dot(n, ljit), 0.0);
     var sh = 1.0;
@@ -749,9 +813,31 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (ndl > 0.0) { sh = soft_shadow(p + n * 0.012, ljit, 0.02, 60.0, 12.0); }
       ao = calc_ao(p, n);
     }
-    let direct = albedo * sun_col * (ndl * sh);
-    let indirect = albedo * sample_probe(p + n * 0.15) * ao;
-    col = min(direct + indirect, vec3<f32>(2.0));
+
+    // §22 PBR — metallic-roughness. F0 = 0.04 dielectric, tinted by albedo
+    // for metals ; kd kills diffuse on metals.
+    let f0 = mix(vec3<f32>(0.04), m.albedo, m.metal);
+    let kd = 1.0 - m.metal;
+
+    // Direct : Lambert diffuse + GGX specular highlight from the sun.
+    let hsun = normalize(ljit + viewd);
+    let nh = max(dot(n, hsun), 0.0);
+    var a2 = max(m.rough * m.rough, 0.002);
+    a2 = a2 * a2;
+    let denom = nh * nh * (a2 - 1.0) + 1.0;
+    let ndf = a2 / (3.14159265 * denom * denom);
+    let fres = f0 + (1.0 - f0) * pow(1.0 - max(dot(hsun, viewd), 0.0), 5.0);
+    let direct_d = m.albedo * kd * sun_col * (ndl * sh);
+    let direct_s = sun_col * (ndf * ndl * sh) * fres;
+
+    // Indirect : cached diffuse GI (albedo-tinted) + a cheap environment
+    // specular (sky reflection) so metals and smooth surfaces actually
+    // reflect their surroundings instead of reading as flat clay.
+    let indirect_d = m.albedo * kd * sample_probe(p + n * 0.15) * ao;
+    let env = sky_env(reflect(dir, n));
+    let indirect_s = env * f0 * (1.0 - m.rough * 0.7) * ao;
+
+    col = min(direct_d + direct_s + indirect_d + indirect_s, vec3<f32>(3.5));
   }
 
   // §21 Ocean — analytic water plane at cam.waterLevel (disabled when the

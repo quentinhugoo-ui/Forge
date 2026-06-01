@@ -170,7 +170,8 @@ export function scatter(
 export function showcaseScene(): SdfOp[] {
   const ops: SdfOp[] = [];
 
-  // Central mountain : smin-blended spheres rising from the grid.
+  // Central mountain : smin-blended spheres rising from the grid (stone).
+  ops.push(mat(MATERIALS.stone));
   ops.push({ op: "sphere", center: v3(0, 0, 1.5), radius: 4.2 });
   ops.push({ op: "sphere", center: v3(3.6, 2.2, 0.4), radius: 2.8 });
   ops.push({ op: "smin", k: 2.4 });
@@ -201,17 +202,23 @@ export function showcaseScene(): SdfOp[] {
     const x = Math.cos(a) * 9.5;
     const y = Math.sin(a) * 9.5;
     const h = 1.6 + (i % 3) * 0.3;
+    ops.push(mat(MATERIALS.bark));
     ops.push({ op: "capsule", a: v3(x, y, 0), b: v3(x, y, h), radius: 0.12 });
+    ops.push(mat(MATERIALS.foliage));
     ops.push({ op: "sphere", center: v3(x, y, h + 0.5), radius: 0.7 });
     ops.push({ op: "smin", k: 5.0 });
     ops.push({ op: "union" });
   }
 
-  // Torus arch + a couple of floating spheres (shadow / GI showcase).
+  // Chrome torus arch + a couple of painted/metal floating spheres — these
+  // exercise the metallic-roughness path (sky reflection, GGX highlight).
+  ops.push(mat(MATERIALS.chrome));
   ops.push({ op: "torus", center: v3(0, -8.5, 3.0), majorRadius: 2.6, minorRadius: 0.35 });
   ops.push({ op: "union" });
+  ops.push(mat(MATERIALS.paint_red));
   ops.push({ op: "sphere", center: v3(4, 0, 5.5), radius: 0.9 });
   ops.push({ op: "union" });
+  ops.push(mat(MATERIALS.metal));
   ops.push({ op: "sphere", center: v3(-4, 1, 4.5), radius: 0.7 });
   ops.push({ op: "union" });
 
