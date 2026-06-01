@@ -1305,7 +1305,27 @@ export class IngenRender {
     } else {
       console.log(`[ingen-render] GPU adapter: ${desc}`);
     }
-    this.device = await adapter.requestDevice();
+    // The bind group uses 9 storage buffers (ops, svdag, splats, nsdf, accum,
+    // shadow, probes, sdfBrick, history) — one over WebGPU's default per-stage
+    // limit of 8. Request the adapter's actual max (RTX 3050 = 16) so the
+    // bind-group layout validates ; without this the whole pipeline fails to
+    // create and the viewport stays black.
+    const adapterStorage = (adapter.limits && (adapter.limits as any).maxStorageBuffersPerShaderStage) || 8;
+    let device: GPUDevice | null = null;
+    if (adapterStorage >= 9) {
+      try {
+        device = await adapter.requestDevice({
+          requiredLimits: { maxStorageBuffersPerShaderStage: adapterStorage },
+        });
+      } catch (_) { device = null; }
+    }
+    if (!device) {
+      // Adapter can't give us 9 storage buffers — fall back to the default
+      // device (the layout will still need ≤8 ; logged so it's visible).
+      console.warn(`[ingen-render] maxStorageBuffersPerShaderStage=${adapterStorage} (<9) — bind group may exceed the limit`);
+      device = await adapter.requestDevice();
+    }
+    this.device = device;
     const ctx = this.canvas.getContext("webgpu") as GPUCanvasContext | null;
     if (!ctx) {
       console.warn("[ingen-render] canvas.getContext('webgpu') returned null");
