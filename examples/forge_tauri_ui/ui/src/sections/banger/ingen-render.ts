@@ -700,6 +700,18 @@ fn rand2(px: vec2<u32>, s: u32, b: u32) -> vec2<f32> {
   return vec2<f32>(f32(h1) / 4294967296.0, f32(h2) / 4294967296.0);
 }
 
+// §22 — ACES filmic tonemap (Narkowicz approximation). Maps linear HDR to
+// display, rolling bright PBR specular / sun / reflections off smoothly
+// instead of the old hard clamp that flattened them to white.
+fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
+  let a = 2.51;
+  let b = 0.03;
+  let c = 2.43;
+  let d = 0.59;
+  let e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 // Analytical sub-pixel grid.
 // Compute shaders cannot use fragment derivatives (fwidth/dpdx/dpdy), so
 // line width is estimated in cs_main from depth and viewport height.
@@ -837,7 +849,9 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let env = sky_env(reflect(dir, n));
     let indirect_s = env * f0 * (1.0 - m.rough * 0.7) * ao;
 
-    col = min(direct_d + direct_s + indirect_d + indirect_s, vec3<f32>(3.5));
+    // Linear HDR — no hard clamp ; the ACES tonemap at store time handles
+    // the rolloff so bright specular/reflections stay detailed.
+    col = direct_d + direct_s + indirect_d + indirect_s;
   }
 
   // §21 Ocean — analytic water plane at cam.waterLevel (disabled when the
@@ -954,8 +968,11 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   } else {
     mean = mix(accum[pix].xyz, col, 1.0 / f32(si + 1u));
   }
-  accum[pix] = vec4<f32>(mean, 1.0);
-  textureStore(outTex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(mean, 1.0));
+  accum[pix] = vec4<f32>(mean, 1.0); // linear HDR — averaged, never tonemapped
+  // §22 — filmic ACES + exposure at display time only (the buffer stays
+  // linear so the running average is unbiased).
+  let mapped = aces_tonemap(mean * 1.1);
+  textureStore(outTex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(mapped, 1.0));
 }
 
 // §20 Fusion v2 — per-splat sun-shadow pre-pass. One thread per splat
