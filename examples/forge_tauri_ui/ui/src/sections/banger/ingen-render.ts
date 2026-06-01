@@ -146,6 +146,18 @@ struct Splats {
 // uploaded for future gated acceleration, not for primary correctness.
 @group(0) @binding(9) var<storage, read> sdfBrick: array<f32>;
 
+// §23 — temporal reprojection history. A stable copy of last frame's result
+// so a moving view can reuse the converged shading of surfaces still on
+// screen instead of restarting accumulation at 1 spp. Layout :
+//   history[0] = (prevCamPos.xyz, reprojectEnabled)
+//   history[1] = (prevCamFwd.xyz, _)
+//   history[2] = (prevCamRight.xyz, _)
+//   history[3] = (prevCamUp.xyz, _)
+//   history[4u + pix] = (colour.rgb, depthAlongFwd)
+// The 4-vec4 header is written by the host each frame ; the pixel region is
+// a copy of accum. One binding carries both, minimal plumbing.
+@group(0) @binding(10) var<storage, read> history: array<vec4<f32>>;
+
 const PROBE_GRID: u32 = 16u;
 const PROBE_HALF: f32 = 6.0; // world half-extent of the cache cube
 
@@ -962,13 +974,45 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // current mean — the image visibly sharpens and the shadows soften as
   // the accumulator converges, then the host stops dispatching.
   let pix = gid.y * dims.x + gid.x;
+  // §23 — depth (along fwd) of the nearest surface, stored in .w so temporal
+  // reprojection can depth-validate a reused history pixel.
+  let cam_depth = select(1.0e9, front_t * dot(dir, cam.fwd), front_t < 1.0e8);
+
   var mean: vec3<f32>;
-  if (si == 0u) {
-    mean = col;
-  } else {
+  if (si > 0u) {
+    // Static camera : in-place progressive accumulation (own pixel, no race).
     mean = mix(accum[pix].xyz, col, 1.0 / f32(si + 1u));
+  } else {
+    // First sample after a change. With reprojection enabled, reuse last
+    // frame's converged shading for a surface still on screen (depth-checked)
+    // instead of restarting at 1 spp ; otherwise start fresh.
+    mean = col;
+    if (history[0].w > 0.5 && front_t < 1.0e8) {
+      let pPos = history[0].xyz;
+      let pFwd = history[1].xyz;
+      let pRight = history[2].xyz;
+      let pUp = history[3].xyz;
+      let P = cam.pos + dir * front_t;
+      let rel = P - pPos;
+      let relf = dot(rel, pFwd);
+      if (relf > 0.05) {
+        let lx = (dot(rel, pRight) / relf) / (aspect * cam.tanHalfFovY);
+        let ly = (dot(rel, pUp)    / relf) / cam.tanHalfFovY;
+        let ppx = (lx + 1.0) * 0.5;
+        let ppy = (1.0 - ly) * 0.5;
+        if (ppx > 0.0 && ppx < 1.0 && ppy > 0.0 && ppy < 1.0) {
+          let pix2 = 4u + (u32(ppy * res.y) * dims.x + u32(ppx * res.x));
+          let hcol = history[pix2];
+          // Reuse only if the history pixel is the same surface (depths agree
+          // within a distance-proportional tolerance → rejects disocclusion).
+          if (hcol.w < 1.0e8 && abs(hcol.w - relf) < 0.03 * relf + 0.02) {
+            mean = mix(hcol.xyz, col, 0.1); // exponential TAA blend
+          }
+        }
+      }
+    }
   }
-  accum[pix] = vec4<f32>(mean, 1.0); // linear HDR — averaged, never tonemapped
+  accum[pix] = vec4<f32>(mean, cam_depth); // linear HDR + depth ; never tonemapped
   // §22 — filmic ACES + exposure at display time only (the buffer stays
   // linear so the running average is unbiased).
   let mapped = aces_tonemap(mean * 1.1);
@@ -1101,6 +1145,13 @@ export class IngenRender {
   // §19.4 progressive accumulator. One vec4 per pixel ; recreated on resize.
   private accumBuffer: GPUBuffer | null = null;
   private accumPixels = 0;
+  // §23 — temporal reprojection. `historyBuffer` = 4-vec4 camera header +
+  // a copy of last frame's accum ; `reproject` gates it (default off) ;
+  // `prevBasis` holds the previous frame's camera for the reproject header.
+  private historyBuffer: GPUBuffer | null = null;
+  private reproject = false;
+  private readonly prevBasis = new Float32Array(16); // pos|enable, fwd, right, up
+  private prevBasisValid = false;
   // §20 Fusion v2 — per-splat sun-shadow buffer (one f32 per splat) plus the
   // dirty flag that gates the pre-pass. Splat shadows depend only on splat
   // positions + the SDF field + the fixed sun — never the camera — so they
@@ -1252,6 +1303,7 @@ export class IngenRender {
         { binding: 7, visibility: COMPUTE, buffer: { type: "storage" } },
         { binding: 8, visibility: COMPUTE, buffer: { type: "storage" } },
         { binding: 9, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
+        { binding: 10, visibility: COMPUTE, buffer: { type: "read-only-storage" } },
       ],
     });
     const pipelineLayout = this.device.createPipelineLayout({
@@ -1365,7 +1417,8 @@ export class IngenRender {
     if (!this.device || !this.bindGroupLayout || !this.outView
       || !this.camBuffer || !this.opsBuffer || !this.svdagBuffer
       || !this.splatsBuffer || !this.nsdfBuffer || !this.accumBuffer
-      || !this.shadowBuffer || !this.probesBuffer || !this.sdfBrickBuffer) {
+      || !this.shadowBuffer || !this.probesBuffer || !this.sdfBrickBuffer
+      || !this.historyBuffer) {
       return;
     }
     this.bindGroup = this.device.createBindGroup({
@@ -1382,6 +1435,7 @@ export class IngenRender {
         { binding: 7, resource: { buffer: this.shadowBuffer } },
         { binding: 8, resource: { buffer: this.probesBuffer } },
         { binding: 9, resource: { buffer: this.sdfBrickBuffer } },
+        { binding: 10, resource: { buffer: this.historyBuffer } },
       ],
     });
   }
@@ -1441,13 +1495,21 @@ export class IngenRender {
     this.dimsKey = ((w & 0xffff) | ((h & 0xffff) << 16)) >>> 0;
 
     // (Re)allocate the accumulation buffer to match the new pixel count.
+    // COPY_SRC so each frame's result can be copied into the reproject history.
     const pixels = w * h;
     if (pixels !== this.accumPixels) {
       this.accumBuffer?.destroy?.();
       this.accumBuffer = this.device.createBuffer({
         size: pixels * 16, // vec4<f32> per pixel
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
         label: "ingen-accum",
+      });
+      // §23 — history buffer : 4-vec4 camera header + per-pixel copy of accum.
+      this.historyBuffer?.destroy?.();
+      this.historyBuffer = this.device.createBuffer({
+        size: (4 + pixels) * 16,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        label: "ingen-history",
       });
       this.accumPixels = pixels;
     }
@@ -1831,6 +1893,13 @@ export class IngenRender {
       camU[22] = this.probeSample;  // probe bake accumulation seed
       this.device.queue.writeBuffer(this.camBuffer!, 0, camU);
 
+      // §23 — temporal reprojection : write the history header = the PREVIOUS
+      // frame's camera (enabled only once a valid prior frame exists).
+      if (this.historyBuffer) {
+        this.prevBasis[3] = (this.reproject && this.prevBasisValid) ? 1 : 0;
+        this.device.queue.writeBuffer(this.historyBuffer, 0, this.prevBasis);
+      }
+
       // §20 Fusion v2 — per-splat sun-shadow pre-pass. Camera-independent ;
       // read by the main pass below in the same command buffer (pass ordering
       // makes the writes visible). One thread per splat.
@@ -1862,6 +1931,14 @@ export class IngenRender {
       const gy = Math.ceil(h / 8);
       pass.dispatchWorkgroups(gx, gy, 1);
       pass.end();
+
+      // §23 — copy this frame's result into the history pixel region (after
+      // the 4-vec4 header) so the next frame can reproject from it. Gated by
+      // the toggle so the copy costs nothing when reprojection is off.
+      if (this.reproject && this.historyBuffer && this.accumBuffer) {
+        encoder.copyBufferToBuffer(this.accumBuffer, 0, this.historyBuffer, 64, this.accumPixels * 16);
+      }
+
       this.sampleCount += 1;
       this.cachedCamHash = camHash;
       this.cachedOpsHash = this.opsHash;
@@ -1880,6 +1957,13 @@ export class IngenRender {
       { width: w, height: h, depthOrArrayLayers: 1 },
     );
     this.device.queue.submit([encoder.finish()]);
+
+    // §23 — remember this frame's camera for next-frame reprojection.
+    this.prevBasis[0] = cam.pos[0]; this.prevBasis[1] = cam.pos[1]; this.prevBasis[2] = cam.pos[2];
+    this.prevBasis[4] = cam.fwd[0]; this.prevBasis[5] = cam.fwd[1]; this.prevBasis[6] = cam.fwd[2];
+    this.prevBasis[8] = cam.right[0]; this.prevBasis[9] = cam.right[1]; this.prevBasis[10] = cam.right[2];
+    this.prevBasis[12] = cam.up[0]; this.prevBasis[13] = cam.up[1]; this.prevBasis[14] = cam.up[2];
+    this.prevBasisValid = true;
 
     this.stats.hitRatio = this.stats.frames > 0 ? this.stats.hits / this.stats.frames : 0;
   }
@@ -1934,6 +2018,18 @@ export class IngenRender {
     this.cacheValid = false;
   }
 
+  /**
+   * §23 — enable/disable temporal reprojection (default off). When on, a
+   * moving view reuses last frame's converged shading for surfaces still on
+   * screen (depth-validated) instead of restarting accumulation at 1 spp —
+   * so motion stays clean and the post-stop convergence is much shorter.
+   * Experimental : watch for ghosting on fast motion ; tune or disable.
+   */
+  setReproject(on: boolean): void {
+    this.reproject = !!on;
+    this.cacheValid = false;
+  }
+
   /** Reset hit/miss counters (HUD reset, benchmark window). */
   resetStats(): void {
     this.stats = { frames: 0, hits: 0, misses: 0, hitRatio: 0 };
@@ -1948,6 +2044,7 @@ export class IngenRender {
     this.nsdfBuffer?.destroy?.();
     this.sdfBrickBuffer?.destroy?.();
     this.accumBuffer?.destroy?.();
+    this.historyBuffer?.destroy?.();
     this.shadowBuffer?.destroy?.();
     this.probesBuffer?.destroy?.();
     this.outTexture = null;
@@ -1963,6 +2060,8 @@ export class IngenRender {
     this.sdfBrickCapacity = 0;
     this.accumBuffer = null;
     this.accumPixels = 0;
+    this.historyBuffer = null;
+    this.prevBasisValid = false;
     this.shadowBuffer = null;
     this.shadowCapacity = 0;
     this.splatCount = 0;
