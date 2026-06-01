@@ -938,7 +938,15 @@ fn atmosphere_fog_amount(ro: vec3<f32>, rd: vec3<f32>, dist: f32) -> f32 {
   // haut, donc la brume habille l'horizon au-dessus de l'eau au lieu de
   // rester collée au sol.
   let height_fog = exp(-max(mid.z, 0.0) * 0.16);
-  let valley = 0.5 + 0.5 * terrain_fbm(mid.xy * 0.035 + vec2<f32>(11.1, -7.3), 3u);
+  // Léger mouvement aléatoire : la nappe dérive lentement et se déforme via
+  // un domain warp animé par cam.time → la brume respire au lieu d'être figée
+  // (le temps n'avance que quand l'océan est actif, sinon la brume reste fixe).
+  let drift = vec2<f32>(cam.time * 0.021, cam.time * 0.013);
+  let wmid = mid.xy + (vec2<f32>(
+    terrain_fbm(mid.xy * 0.02 + drift, 2u),
+    terrain_fbm(mid.xy * 0.02 + drift + vec2<f32>(3.7, 1.9), 2u)
+  ) - 0.5) * 6.0;
+  let valley = 0.5 + 0.5 * terrain_fbm(wmid * 0.035 + drift + vec2<f32>(11.1, -7.3), 3u);
   // Brume plus présente : socle ~2x + contribution height-fog ~2x. La mi-
   // distance reste lisible, l'horizon s'estompe nettement.
   let density = 0.020 + 0.058 * height_fog * valley;
@@ -976,18 +984,45 @@ fn fbm2(p: vec2<f32>) -> f32 {
   }
   return v;
 }
-fn water_height(xy: vec2<f32>, t: f32) -> f32 {
-  let flow = vec2<f32>(0.6, 0.35) * t;
+// FBM océan dédié : rotation incommensurable (~37°) par octave pour
+// décorréler les axes du lattice value-noise → supprime le cadrillage
+// axis-aligned des vagues. fbm2 reste intact pour les décals/détails matière.
+fn ocean_fbm(p: vec2<f32>) -> f32 {
+  var v = 0.0;
+  var amp = 0.5;
+  var q = p;
+  let rot = mat2x2<f32>(0.80, 0.60, -0.60, 0.80);
+  for (var i: u32 = 0u; i < 4u; i = i + 1u) {
+    v = v + amp * vnoise(q);
+    q = rot * q * 2.02;
+    amp = amp * 0.5;
+  }
+  return v;
+}
+fn water_height(xy: vec2<f32>, warp: vec2<f32>, t: f32) -> f32 {
+  let wxy = xy + warp;
+  let flow_a = vec2<f32>(0.6, 0.35) * t;
+  let flow_b = vec2<f32>(-0.42, 0.5) * t;
   let swell_a = sin(dot(xy, normalize(vec2<f32>(0.88, 0.22))) * 0.34 + t * 0.72) * 0.22;
   let swell_b = sin(dot(xy, normalize(vec2<f32>(-0.28, 0.96))) * 0.58 + t * 1.05) * 0.08;
-  let chop = (fbm2((xy + flow) * 0.25) - 0.5) * 0.30 + (fbm2((xy - flow * 0.7) * 0.62) - 0.5) * 0.10;
+  let chop = (ocean_fbm((wxy + flow_a) * 0.25) - 0.5) * 0.30
+           + (ocean_fbm((wxy - flow_b * 0.7) * 0.62) - 0.5) * 0.10;
   return swell_a + swell_b + chop;
 }
 fn water_normal(xy: vec2<f32>, t: f32) -> vec3<f32> {
   let e = 0.15;
-  let h0 = water_height(xy, t);
-  let hx = water_height(xy + vec2<f32>(e, 0.0), t);
-  let hy = water_height(xy + vec2<f32>(0.0, e), t);
+  // Domain warping animé : on advecte les coordonnées d'échantillonnage par
+  // un champ de bruit basse fréquence qui dérive lentement (t). Le clapot
+  // devient turbulent et non répétitif au lieu de défiler en ligne droite.
+  // Déformation calculée une seule fois et partagée par les 3 prises de la
+  // dérivée (négligeable sur un pas e = 0.15) → +33% de coût seulement.
+  let warp = (vec2<f32>(
+    ocean_fbm(xy * 0.18 + vec2<f32>(0.0, t * 0.16)),
+    ocean_fbm(xy * 0.18 + vec2<f32>(5.2, 1.3 - t * 0.13))
+  ) - 0.5) * 1.8;
+  let h0 = water_height(xy, warp, t);
+  let hx = water_height(xy + vec2<f32>(e, 0.0), warp, t);
+  let hy = water_height(xy + vec2<f32>(0.0, e), warp, t);
   return normalize(vec3<f32>(-(hx - h0) / e, -(hy - h0) / e, 1.0));
 }
 
