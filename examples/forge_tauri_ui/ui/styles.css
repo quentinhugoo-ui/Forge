@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   /* Canvas (body) is the darkest tone — frames the workspace.
      Panels sit a step lighter; the chat bar the lightest of the
      three so it reads as a foreground surface above the canvas. */
@@ -193,17 +193,17 @@ body.banger-fullscreen-mode .window-titlebar {
 
 /* Hide 3D button when overlays are active (consistent with proof-btn behavior) */
 .topbar-lib-mode .topbar-3d-btn,
-.topbar-mcp-mode .topbar-3d-btn,
+.topbar-ActCode-mode .topbar-3d-btn,
 .topbar-programs-mode .topbar-3d-btn,
 .topbar-docs-mode .topbar-3d-btn,
 .topbar-provider-mode .topbar-3d-btn,
 .topbar-lib-mode .topbar-mars-lens-btn,
-.topbar-mcp-mode .topbar-mars-lens-btn,
+.topbar-ActCode-mode .topbar-mars-lens-btn,
 .topbar-programs-mode .topbar-mars-lens-btn,
 .topbar-docs-mode .topbar-mars-lens-btn,
 .topbar-provider-mode .topbar-mars-lens-btn,
 .topbar-lib-mode .topbar-split-btn,
-.topbar-mcp-mode .topbar-split-btn,
+.topbar-ActCode-mode .topbar-split-btn,
 .topbar-programs-mode .topbar-split-btn,
 .topbar-docs-mode .topbar-split-btn,
 .topbar-provider-mode .topbar-split-btn {
@@ -454,7 +454,7 @@ body.webexplorer-window-mode .app-nav,
 body.webexplorer-window-mode #topbarLibraryTitle,
 body.webexplorer-window-mode #topbarProgramsTitle,
 body.webexplorer-window-mode #topbarDocsTitle,
-body.webexplorer-window-mode #topbarMcpTitle,
+body.webexplorer-window-mode #topbarActCodeTitle,
 body.webexplorer-window-mode #topbarProviderTitle,
 body.webexplorer-window-mode #workspaceMenu,
 body.webexplorer-window-mode #alphaFileTrayActions,
@@ -4301,11 +4301,11 @@ body.webexplorer-topbar-nav-mode #webExplorerTopbarTabs {
 /* When library is open, swap breadcrumb ↔ Documents title */
 .topbar-lib-mode #topbarBreadcrumb   { display: none; }
 .topbar-lib-mode #topbarLibraryTitle { display: flex; }
-.topbar-mcp-mode #topbarBreadcrumb   { display: none; }
-.topbar-mcp-mode #topbarMcpTitle     { display: flex; }
-.topbar-mcp-mode .topbar-proof-btn   { display: none; }
-.topbar-mcp-mode .library-search-wrap { width: 220px; flex-shrink: 0; }
-.topbar-mcp-mode .library-search-input { font-size: 0.75rem; padding: 4px 8px 4px 26px; }
+.topbar-ActCode-mode #topbarBreadcrumb   { display: none; }
+.topbar-ActCode-mode #topbarActCodeTitle     { display: flex; }
+.topbar-ActCode-mode .topbar-proof-btn   { display: none; }
+.topbar-ActCode-mode .library-search-wrap { width: 220px; flex-shrink: 0; }
+.topbar-ActCode-mode .library-search-input { font-size: 0.75rem; padding: 4px 8px 4px 26px; }
 .topbar-programs-mode #topbarBreadcrumb     { display: none; }
 .topbar-programs-mode #topbarProgramsTitle  { display: flex; }
 .topbar-programs-mode .topbar-proof-btn     { display: none; }
@@ -13872,7 +13872,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
 .lib-filter-btn:hover { background: rgba(255,255,255,0.05); color: #9a9a94; }
 .lib-filter-btn.active { background: rgba(255,255,255,0.08); color: #d8d8d2; }
 
-.mcp-filter-btn {
+.ActCode-filter-btn {
   appearance: none;
   border: 0;
   border-radius: 5px;
@@ -13884,24 +13884,24 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
 }
-.mcp-filter-btn:hover { background: rgba(255,255,255,0.05); color: #9a9a94; }
-.mcp-filter-btn.active { background: rgba(255,255,255,0.08); color: #d8d8d2; }
+.ActCode-filter-btn:hover { background: rgba(255,255,255,0.05); color: #9a9a94; }
+.ActCode-filter-btn.active { background: rgba(255,255,255,0.08); color: #d8d8d2; }
 
-.mcp-doctrine-grid {
+.ActCode-doctrine-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   padding: 10px 16px 2px;
 }
 
-.mcp-doctrine-card {
+.ActCode-doctrine-card {
   border: 1px solid rgba(238,238,232,0.06);
   border-radius: 8px;
   padding: 12px 14px;
   background: rgba(238,238,232,0.018);
 }
 
-.mcp-doctrine-kicker {
+.ActCode-doctrine-kicker {
   display: block;
   color: #d6c49a;
   font: 0.66rem "Geist Mono", ui-monospace, Consolas, monospace;
@@ -13910,7 +13910,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   margin-bottom: 7px;
 }
 
-.mcp-doctrine-card p {
+.ActCode-doctrine-card p {
   margin: 0;
   color: #9a9a94;
   font-size: 0.77rem;
@@ -15563,7 +15563,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   cursor: wait;
 }
 
-.mcp-tool-list {
+.ActCode-tool-list {
   flex: 1;
   overflow-y: auto;
   padding: 10px 16px 16px;
@@ -15572,11 +15572,11 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   gap: 4px;
 }
 
-.mcp-tool-list::-webkit-scrollbar { width: 4px; }
-.mcp-tool-list::-webkit-scrollbar-track { background: transparent; }
-.mcp-tool-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+.ActCode-tool-list::-webkit-scrollbar { width: 4px; }
+.ActCode-tool-list::-webkit-scrollbar-track { background: transparent; }
+.ActCode-tool-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
-.mcp-tool-row {
+.ActCode-tool-row {
   display: grid;
   grid-template-columns: minmax(150px, 260px) minmax(0, 1fr) auto 32px;
   align-items: center;
@@ -15586,26 +15586,26 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   border-radius: 4px;
   background: transparent;
 }
-.mcp-tool-row:hover { background: rgba(238,238,232,0.03); border-color: rgba(238,238,232,0.10); }
-.mcp-tool-row.is-template { opacity: 0.65; }
-.mcp-tool-row.is-pack {
+.ActCode-tool-row:hover { background: rgba(238,238,232,0.03); border-color: rgba(238,238,232,0.10); }
+.ActCode-tool-row.is-template { opacity: 0.65; }
+.ActCode-tool-row.is-pack {
   background: rgba(66,214,189,0.055);
   border-color: rgba(66,214,189,0.18);
 }
-.mcp-tool-row.is-pack:hover {
+.ActCode-tool-row.is-pack:hover {
   background: rgba(66,214,189,0.075);
   border-color: rgba(66,214,189,0.30);
 }
-.mcp-tool-row.program-row {
+.ActCode-tool-row.program-row {
   grid-template-columns: minmax(150px, 260px) minmax(0, 1fr) auto auto;
 }
-.mcp-tool-name-wrap { min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
-.mcp-tool-name { color: #f1f1ea; font: 700 0.86rem "Geist Mono", ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mcp-tool-row.is-pack .mcp-tool-name { color: rgba(112,235,214,0.96); }
-.mcp-tool-legacy { color: #575751; font: 0.64rem "Geist Mono", ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mcp-tool-desc { color: #8a8a84; font-size: 0.76rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mcp-tool-tag { color: #6a6a64; font: 0.65rem "Geist Mono", ui-monospace, Consolas, monospace; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 6px; border: 1px solid rgba(238,238,232,0.08); border-radius: 2px; }
-.mcp-tool-copy {
+.ActCode-tool-name-wrap { min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
+.ActCode-tool-name { color: #f1f1ea; font: 700 0.86rem "Geist Mono", ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ActCode-tool-row.is-pack .ActCode-tool-name { color: rgba(112,235,214,0.96); }
+.ActCode-tool-legacy { color: #575751; font: 0.64rem "Geist Mono", ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ActCode-tool-desc { color: #8a8a84; font-size: 0.76rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ActCode-tool-tag { color: #6a6a64; font: 0.65rem "Geist Mono", ui-monospace, Consolas, monospace; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 6px; border: 1px solid rgba(238,238,232,0.08); border-radius: 2px; }
+.ActCode-tool-copy {
   width: 28px;
   height: 28px;
   display: grid;
@@ -15617,20 +15617,20 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   cursor: pointer;
   transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
 }
-.mcp-tool-copy:hover {
+.ActCode-tool-copy:hover {
   color: #f1f1ea;
   background: rgba(238,238,232,0.055);
   border-color: rgba(238,238,232,0.10);
 }
-.mcp-tool-row.is-pack .mcp-tool-copy {
+.ActCode-tool-row.is-pack .ActCode-tool-copy {
   color: rgba(112,235,214,0.95);
   border-color: rgba(66,214,189,0.18);
 }
-.mcp-tool-row.is-pack .mcp-tool-copy:hover {
+.ActCode-tool-row.is-pack .ActCode-tool-copy:hover {
   background: rgba(66,214,189,0.10);
   border-color: rgba(66,214,189,0.30);
 }
-.mcp-tool-copy.copied {
+.ActCode-tool-copy.copied {
   color: #42d6bd;
   background: rgba(66,214,189,0.10);
   border-color: rgba(66,214,189,0.20);
@@ -17229,23 +17229,6 @@ body.banger-fullscreen-mode .proof-panel.console-mode .proof-panel-content {
    sits under the floating close (×). */
 body.banger-fullscreen-mode .proof-panel.console-mode .boom-collection-head {
   padding-right: 30px;
-}
-
-/* Banger: open the right panel as an OVERLAY over the canvas instead of a grid
-   column, so the central area (and its top toolbar icons) keeps its width and
-   the icons stay put when the panel opens. Keep the same on-screen rect. */
-body.banger-fullscreen-mode .content.proof-open {
-  --right-panel-width: 0px;
-}
-
-body.banger-fullscreen-mode .content.proof-open .proof-panel {
-  position: absolute;
-  top: 48px;
-  right: 8px;
-  bottom: 56px;
-  height: auto;
-  margin: 0;
-  z-index: 40;
 }
 
 .boom-outliner,
