@@ -160,6 +160,11 @@ cd examples\forge_tauri_ui; npm.cmd run audit:js-debt
 Nothing updates by itself; updates are always a deliberate, tested decision (pin in `Cargo.lock`, bump on purpose, verify, keep a rollback). Minor/patch bumps are safe via `cargo update`; major/breaking bumps (e.g. Dioxus `0.7 -> 0.8`) are manual, read the release notes first.
 
 - Reminder set **2026-06-02**: later, propose a full refresh of all Forge languages/toolchains (Rust, Dioxus/Leptos + WASM stack, Node/TS for the legacy UI) once the front migration is underway. Do not auto-bump majors; surface a checklist, let the user validate.
+- Decision set **2026-06-02**: drop Tauri for native Dioxus desktop (wry/tao, no IPC — see `MIGRATION_FRONT.md` Étape 9 bis) **once Dioxus desktop is mature enough**. The IPC win only lands in this native path; keeping Tauri is pointless once it does. Gate on these maturity criteria before proposing the switch:
+  - Dioxus **0.8+** native APIs stable (camera/geo/storage/OAuth) and a stable "1.0" core subset;
+  - `dx bundle` packaging at parity (installers, icons, code signing) + a viable auto-updater path;
+  - we can **re-secure WebExplorer** ourselves (webview isolation/CSP/navigation hooks for external web content) — this is the decisive blocker for Forge, not packaging.
+  - How to check: track Dioxus releases (`https://github.com/DioxusLabs/dioxus/releases`), `cargo outdated -w`, and the 0.8 roadmap; re-run the `MIGRATION_FRONT.md` Étape 1 POC measures on the native target. Propose, never auto-switch.
 
 ```powershell
 rustup update                         # update the Rust toolchain itself
