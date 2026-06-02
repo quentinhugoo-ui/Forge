@@ -30,6 +30,7 @@ import * as worlds from "./worlds.js";
     stage:   null,
     content: document.querySelector("#alphaSection .content"),
     leftPanel: document.querySelector("#alphaSection .left-panel"),
+    rightPanelContent: document.querySelector("#alphaProofContent"),
   };
 
   if (!els.boomBtn || !els.view || !els.canvas) {
@@ -70,6 +71,7 @@ import * as worlds from "./worlds.js";
   const BANGER_DEFAULT_NEWOBJECT = worlds.defaultOceanSunsetNewObject?.() || { ops: DEFAULT_SCENE, objectParts: [] };
   let sdfScene = serializeScene(BANGER_DEFAULT_NEWOBJECT.ops || DEFAULT_SCENE);
   let sdfSceneSourceOps = Array.isArray(BANGER_DEFAULT_NEWOBJECT.ops) ? [...BANGER_DEFAULT_NEWOBJECT.ops] : [];
+  let sdfSceneNewObjectContract = BANGER_DEFAULT_NEWOBJECT;
   let sdfSceneParts = [];
   let bangerSessionBlank = false;
   let bangerSessionId = "";
@@ -169,6 +171,8 @@ import * as worlds from "./worlds.js";
   let inputAttached = false;
   let dropAttached = false;
   let gpuStatusEl = null;
+  let bangerWebGpuAdapterStatus = null;
+  let bangerNativeGpuStatus = null;
   let runtimeStatus = null;
   let boomSidebarRoot = null;
   let boomSidebarBound = false;
@@ -455,17 +459,58 @@ import * as worlds from "./worlds.js";
       return null;
     });
   }
-  function applyBackendStatus(status) {
-    if (!status || !gpuStatusEl) return;
-    if (status.state === "active") {
-      const tag = status.backend ? `${status.backend}` : "active";
-      const name = status.adapter_name ? ` · ${status.adapter_name}` : "";
-      setGpuStatus(`GPU ${tag}${name}`, "active");
-    } else if (status.state === "stopped") {
-      setGpuStatus("GPU paused", "paused");
-    } else {
-      setGpuStatus("GPU idle", "paused");
+  function compactBangerGpuName(name, fallback = "GPU") {
+    const text = String(name || "").replace(/\s+/g, " ").trim();
+    if (!text) return fallback;
+    return text.length > 38 ? `${text.slice(0, 35)}...` : text;
+  }
+
+  function bangerAdapterLooksSoftware(info) {
+    const joined = [
+      info?.vendor,
+      info?.architecture,
+      info?.description,
+      info?.adapter_name,
+      info?.adapterKind,
+      info?.adapter_kind,
+    ].filter(Boolean).join(" ");
+    return !!info?.isFallback || /software|warp|swiftshader|llvmpipe|basic render|microsoft basic/i.test(joined);
+  }
+
+  function refreshBangerGpuStatusLabel() {
+    if (!gpuStatusEl) return;
+    const parts = [];
+    const web = bangerWebGpuAdapterStatus;
+    if (web) {
+      parts.push(`WebGPU ${compactBangerGpuName(web.description || web.vendor || web.architecture, "adapter")}`);
+    } else if (ingenReady) {
+      parts.push("WebGPU active");
     }
+    const native = bangerNativeGpuStatus;
+    if (native?.state === "active") {
+      const backend = native.backend || "wgpu";
+      const name = compactBangerGpuName(native.adapter_name, "");
+      parts.push(name ? `native ${backend} ${name}` : `native ${backend}`);
+    } else if (native?.state === "stopped") {
+      parts.push("native paused");
+    }
+    if (runtimeStatus) {
+      const warmed = runtimeStatus.backendReady && runtimeStatus.atlasAttached;
+      const programs = Number(runtimeStatus.installedPrograms || 0);
+      parts.push(warmed ? `KASM warm ${programs}p` : "KASM cold");
+    }
+    if (!parts.length) {
+      setGpuStatus(gpuState === "active" ? "GPU active" : "GPU idle", gpuState === "active" ? "active" : "paused");
+      return;
+    }
+    const software = bangerAdapterLooksSoftware(web) || bangerAdapterLooksSoftware(native);
+    setGpuStatus(parts.join(" / "), software ? "paused" : "active");
+  }
+
+  function applyBackendStatus(status) {
+    if (!status) return;
+    bangerNativeGpuStatus = status;
+    refreshBangerGpuStatusLabel();
   }
 
   function applyRuntimeStatus(status) {
@@ -477,11 +522,7 @@ import * as worlds from "./worlds.js";
     const warmed = status.backendReady && status.atlasAttached;
     const programs = Number(status.installedPrograms || 0);
     const cacheEntries = Number(status.runCacheEntries || 0) + Number(status.inspectCacheEntries || 0);
-    if (warmed) {
-      setGpuStatus(`KASM warm · atlas ready · ${programs} progs`, "active");
-    } else {
-      setGpuStatus("KASM cold", "paused");
-    }
+    refreshBangerGpuStatusLabel();
     try {
       els.view.dataset.runtimeReady = warmed ? "true" : "false";
       els.view.dataset.runtimePrograms = String(programs);
@@ -4816,6 +4857,16 @@ import * as worlds from "./worlds.js";
         max: [Math.max(a[0], b[0]) + r, Math.max(a[1], b[1]) + r, Math.max(a[2], b[2]) + r],
       };
     }
+    if (op.op === "islandTerrain") {
+      const c = op.center || [0, 0, 0];
+      const rx = Math.max(1, Number(op.radiusX || 1));
+      const ry = Math.max(1, Number(op.radiusY || 1));
+      const h = Math.max(0.1, Number(op.height || 1));
+      return {
+        min: [c[0] - rx * 1.32, c[1] - ry * 1.32, c[2] - 4],
+        max: [c[0] + rx * 1.32, c[1] + ry * 1.32, c[2] + h + 2],
+      };
+    }
     return null;
   }
 
@@ -4954,6 +5005,165 @@ import * as worlds from "./worlds.js";
       hash = Math.imul(hash, 16777619);
     }
     return `kasm-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  }
+
+  function bangerClipJsonValue(value, maxChars = 14000) {
+    const text = JSON.stringify(value ?? null);
+    if (text.length <= maxChars) return value;
+    return {
+      clipped: true,
+      hash: kasmHashString(text),
+      originalChars: text.length,
+      preview: text.slice(0, Math.max(0, maxChars - 180)),
+    };
+  }
+
+  function bangerCompactNewObjectContract(source = {}, sceneOps = [], rawParts = []) {
+    const object = source && typeof source === "object" ? source : {};
+    return bangerClipJsonValue({
+      schema: "forge.banger.newobject.source_contract.v1",
+      command: object.command || object.actCodeCommand || "/newobject_",
+      actCode: object.actCode || object.act_code || object.commandText || object.sourceActCode || null,
+      sourceComputeRefs: object.source_compute_refs || object.sourceComputeRefs || object.computeRefs || null,
+      llmMathCuration: object.llm_math_curation || object.llmMathCuration || object.llmCuration || null,
+      computePlanHash: object.computePlanHash || object.previewHandoff?.evidenceComputePlanHash || object.previewHandoff?.computePlanHash || null,
+      mathCurationHash: object.mathCurationHash || object.previewHandoff?.mathCurationHash || null,
+      proofHash: object.proofHash || object.objectProofHash || null,
+      previewHandoff: object.previewHandoff || object.preview_handoff || null,
+      webResearch: object.webResearch || object.web_research || [],
+      computePlan: object.computePlan || object.compute_plan || [],
+      objectParts: rawParts,
+      sceneOpCount: sceneOps.length,
+      sceneHash: boomKasmObjectHash("banger-chat-scene-ops-v1", sceneOps),
+      doctrine: "/newcompute_ evidence informs llm_math_curation; /newobject_ remains LLM-authored SDF source, never raw compute auto-injection.",
+    });
+  }
+
+  function bangerPartOps(part) {
+    if (!part) return sdfSceneSourceOps;
+    if (Array.isArray(part.opIndices) && part.opIndices.length) {
+      return part.opIndices.map((idx) => sdfSceneSourceOps[Number(idx)]).filter(Boolean);
+    }
+    const start = Math.max(0, Number(part.primitiveRange?.start || 0) | 0);
+    const count = Math.max(0, Number(part.primitiveRange?.count || 0) | 0);
+    return count ? sdfSceneSourceOps.slice(start, start + count) : sdfSceneSourceOps;
+  }
+
+  function bangerCollectComputeEvidence(selectedPart = null) {
+    const evidence = [];
+    const seen = new Set();
+    const push = (entry) => {
+      if (!entry) return;
+      const key = typeof entry === "string" ? entry : JSON.stringify(entry);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      evidence.push(entry);
+    };
+    const contract = sdfSceneNewObjectContract || {};
+    for (const ref of selectedPart?.curationRefs || []) push({ scope: "selected_object", ref });
+    if (selectedPart?.proofHash) push({ scope: "selected_object", proofHash: selectedPart.proofHash });
+    for (const part of sdfSceneParts) {
+      for (const ref of part.curationRefs || []) push({ scope: "scene_object", objectId: part.id, ref });
+      if (part.proofHash) push({ scope: "scene_object", objectId: part.id, proofHash: part.proofHash });
+    }
+    const sourceRefs = contract.sourceComputeRefs || contract.source_compute_refs;
+    if (sourceRefs) push({ scope: "newobject", sourceComputeRefs: sourceRefs });
+    for (const entry of Array.isArray(contract.computePlan) ? contract.computePlan : []) {
+      push({ scope: "newobject_compute_plan", entry });
+      if (evidence.length >= 48) break;
+    }
+    for (const key of ["computePlanHash", "mathCurationHash", "proofHash"]) {
+      if (contract[key]) push({ scope: "newobject", [key]: contract[key] });
+    }
+    return evidence.slice(0, 64);
+  }
+
+  async function captureBangerChatScreenshot(maxWidth = 240, maxHeight = 160) {
+    const source = els.gpuCanvas || els.canvas;
+    if (!source || typeof createImageBitmap !== "function") return null;
+    requestBoomRender("chat-attachment-screenshot", 80);
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    let bitmap = null;
+    try {
+      bitmap = await createImageBitmap(source);
+      const scale = Math.min(maxWidth / Math.max(1, bitmap.width), maxHeight / Math.max(1, bitmap.height), 1);
+      const width = Math.max(2, Math.round(bitmap.width * scale));
+      const height = Math.max(2, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+      return {
+        mime: "image/jpeg",
+        width,
+        height,
+        dataUrl,
+        hash: kasmHashString(dataUrl),
+      };
+    } catch (err) {
+      return { error: String(err?.message || err) };
+    } finally {
+      try { bitmap?.close?.(); } catch (_) {}
+    }
+  }
+
+  async function buildBangerChatAttachment(options = {}) {
+    const selectedId = String(options.selectedObjectId || boomScene.activeId || "").trim();
+    const item = boomItemById(selectedId);
+    const selectedPart = isBoomSdfPartItem(item)
+      ? sdfSceneParts.find((part) => part.id === item.id || part.partKey === item.meta?.partKey) || null
+      : (sdfSceneParts[0] || null);
+    const selectedOps = bangerPartOps(selectedPart);
+    const sceneObjects = sdfSceneParts.map((part) => ({
+      id: part.id,
+      partKey: part.partKey,
+      name: part.name,
+      role: part.role,
+      material: part.material,
+      bounds: part.bounds,
+      primitiveRange: part.primitiveRange,
+      opIndices: part.opIndices,
+      curationRefs: part.curationRefs,
+      proofHash: part.proofHash,
+    }));
+    const selectedObject = selectedPart ? sceneObjects.find((entry) => entry.id === selectedPart.id) : {
+      id: item?.id || "scene",
+      name: item?.name || "Banger scene",
+      role: "complete SDF scene",
+    };
+    const screenshot = options.includeScreenshot === false ? null : await captureBangerChatScreenshot();
+    const attachment = {
+      schema: "forge.banger.chat_attachment.v1",
+      kind: "banger_sdf_scene_object",
+      source: "banger-scene-selection",
+      name: `${selectedObject?.name || "Banger SDF object"}.banger-sdf`,
+      selectedObject,
+      sceneObjects,
+      selectedSdfOps: selectedOps,
+      sceneSdfOps: sdfSceneSourceOps,
+      newobjectContract: sdfSceneNewObjectContract || bangerCompactNewObjectContract({}, sdfSceneSourceOps, sdfSceneParts),
+      computeEvidence: bangerCollectComputeEvidence(selectedPart),
+      screenshot,
+      previewImageDataUrl: screenshot?.dataUrl || "",
+    };
+    attachment.size = JSON.stringify({ ...attachment, screenshot: screenshot ? { ...screenshot, dataUrl: "" } : null }).length;
+    return attachment;
+  }
+
+  async function stageBangerSelectionInChat(itemId) {
+    const item = boomItemById(itemId);
+    if (!item || (!isBoomSdfPartItem(item) && item.id !== "imported-mesh")) return;
+    const attachment = await buildBangerChatAttachment({ selectedObjectId: item.id, includeScreenshot: true });
+    window.dispatchEvent(new CustomEvent("forge:canvas-chat-stage-virtual-attachment", {
+      detail: {
+        attachment,
+        source: "banger-scene-selection",
+        replaceSource: "banger-scene-selection",
+      },
+    }));
   }
 
   function kasmQuantize(value) {
@@ -6954,13 +7164,20 @@ import * as worlds from "./worlds.js";
   }
 
   function ensureBoomSidebar() {
-    if (!els.leftPanel) return;
-    if (!boomSidebarRoot || !boomSidebarRoot.isConnected) {
+    // Scene Collection lives in the RIGHT panel (#alphaProofContent), not the
+    // left panel. The shell console renderer yields the right-panel content to
+    // banger (see renderAlphaConsolePanel guard), so we open it in console mode
+    // and own the content here.
+    const host = els.rightPanelContent;
+    if (!host) return;
+    try { window.__forgeSetRightPanelMode?.("console", true); } catch (_) {}
+    if (!boomSidebarRoot) {
       boomSidebarRoot = document.createElement("section");
-      boomSidebarRoot.className = "boom-blender-panel";
-      // prepend so the Scene Collection sits ABOVE the shell-level
-      // Pinned / Recents / hardware specs / Profile dropdown.
-      els.leftPanel.insertBefore(boomSidebarRoot, els.leftPanel.firstChild);
+      boomSidebarRoot.className = "boom-blender-panel boom-blender-panel-right";
+    }
+    if (boomSidebarRoot.parentElement !== host) {
+      host.innerHTML = "";
+      host.appendChild(boomSidebarRoot);
     }
     if (!boomSidebarBound) {
       boomSidebarRoot.addEventListener("click", (event) => {
@@ -6973,6 +7190,7 @@ import * as worlds from "./worlds.js";
           const item = boomItemById(id);
           if (!item?.selectable) return;
           executeBoomTool("boom.scene.select_item", { itemId: id, preserveMeshComponentSelection: true });
+          void stageBangerSelectionInChat(id);
         } else if (action === "toggle-collection") {
           boomScene.collectionExpanded = !boomScene.collectionExpanded;
           renderBoomSidebar();
@@ -7560,6 +7778,8 @@ import * as worlds from "./worlds.js";
     ingenRender.init().then((ok) => {
       ingenReady = !!ok;
       if (ok) {
+        bangerWebGpuAdapterStatus = ingenRender?.getAdapterInfo?.() || null;
+        refreshBangerGpuStatusLabel();
         ingenRender?.setWater?.(sdfWaterLevel);
         ingenRender?.setBootLite?.(1800);
         requestBoomRender("ingen-render-ready", 0);
@@ -7570,11 +7790,15 @@ import * as worlds from "./worlds.js";
           requestBoomRender("ingen-warm-start-quality", 160);
         }, 1150);
       } else {
+        bangerWebGpuAdapterStatus = null;
+        refreshBangerGpuStatusLabel();
         drawBangerBootFallback("webgpu failed");
       }
     }).catch((err) => {
       console.warn("[banger] INGEN Render init failed:", err);
       ingenRender = null;
+      bangerWebGpuAdapterStatus = null;
+      refreshBangerGpuStatusLabel();
       drawBangerBootFallback("webgpu error");
     });
     return true;
@@ -7619,6 +7843,8 @@ import * as worlds from "./worlds.js";
     try { ingenRender?.destroy(); } catch (_) {}
     ingenRender = null;
     ingenReady = false;
+    bangerWebGpuAdapterStatus = null;
+    refreshBangerGpuStatusLabel();
   }
 
   function resize() {
@@ -8711,6 +8937,7 @@ import * as worlds from "./worlds.js";
     bangerSessionBlank = false;
     sdfScene = serializeScene(defaultOps);
     sdfSceneSourceOps = defaultOps;
+    sdfSceneNewObjectContract = bangerCompactNewObjectContract(defaultObject, defaultOps, defaultObject?.objectParts || defaultObject?.parts || []);
     sdfGaussians = bakeGaussiansOnSurface(defaultOps, 0);
     sdfFieldletCutState = { keys: new Set(), lastAtMs: 0 };
     meshSdfBoundsMin = new Float32Array([0, 0, 0]);
@@ -8940,7 +9167,7 @@ import * as worlds from "./worlds.js";
     stats.appendChild(sep);
     stats.appendChild(pill);
     gpuStatusEl = pill.querySelector(".banger-gpu-label");
-    setGpuStatus("GPU active", "active");
+    refreshBangerGpuStatusLabel();
   }
 
   function resetForgeDefaultPanel() {
@@ -9045,7 +9272,7 @@ import * as worlds from "./worlds.js";
     }
     fpsTimer = 0; fpsFrames = 0;
     gpuState = "active";
-    setGpuStatus("GPU active", "active");
+    refreshBangerGpuStatusLabel();
     resize();
     requestBoomRender("activate");
     requestAnimationFrame(() => {
@@ -9070,7 +9297,9 @@ import * as worlds from "./worlds.js";
     if (els.statFps) els.statFps.textContent = "—";
     if (els.statCache) els.statCache.textContent = "—";
     setGpuStatus("GPU paused", "paused");
-    backendBusy = backendInvoke("banger_engine_stop");
+    backendBusy = backendInvoke("banger_engine_stop").then((status) => {
+      applyBackendStatus(status);
+    });
   }
 
   function shutdown() {
@@ -9079,7 +9308,9 @@ import * as worlds from "./worlds.js";
     releaseGL();
     if (els.statFps) els.statFps.textContent = "—";
     if (els.statCache) els.statCache.textContent = "—";
-    backendBusy = backendInvoke("banger_engine_stop");
+    backendBusy = backendInvoke("banger_engine_stop").then((status) => {
+      applyBackendStatus(status);
+    });
     gpuState = "idle";
   }
 
@@ -9293,6 +9524,13 @@ import * as worlds from "./worlds.js";
         const sceneOps = recenterSceneXY(rawOps || []);
         bindBangerToSelectedSession("set-scene");
         sdfSceneSourceOps = sceneOps;
+        const sourceContract = {
+          ...(rawOps && typeof ops === "object" && !Array.isArray(ops) ? ops : {}),
+          ...rawManifest,
+          ops: sceneOps,
+          objectParts: rawParts,
+        };
+        sdfSceneNewObjectContract = bangerCompactNewObjectContract(sourceContract, sceneOps, rawParts);
         sdfScene = serializeScene(sceneOps);
         bangerSessionBlank = sceneOps.length === 0 && rawParts.length === 0;
         applyBangerNewObjectRenderControls(rawManifest);
@@ -9561,6 +9799,29 @@ import * as worlds from "./worlds.js";
         proofHash: boomKasmObjectHash("gpu-culling-proof-v1", proof),
       };
     };
+    window.__forgeBangerGpuProof = async () => {
+      const webGpuAdapter = ingenRender?.getAdapterInfo?.() || bangerWebGpuAdapterStatus || null;
+      const nativeGpu = await backendInvoke("banger_engine_status");
+      if (nativeGpu) applyBackendStatus(nativeGpu);
+      const runtime = runtimeStatus || await backendInvoke("banger_runtime_status");
+      if (runtime) applyRuntimeStatus(runtime);
+      const proof = {
+        schema: "banger.gpu_use_proof.v1",
+        webGpuAdapter,
+        nativeGpu: nativeGpu || bangerNativeGpuStatus || null,
+        runtimeGpuReport: runtime?.gpuReport || runtime?.gpu_report || [],
+        renderStats: ingenRender?.getStats?.() || null,
+        renderGraphStats: ingenRender?.getRenderGraphStats?.() || null,
+        softwareFallback: bangerAdapterLooksSoftware(webGpuAdapter) || bangerAdapterLooksSoftware(nativeGpu),
+        doctrine: "Viewport raymarch, native BangerEngine and compute probes request GPU paths; CPU/webview fallback is reported, not hidden.",
+      };
+      return {
+        ok: !!webGpuAdapter && !proof.softwareFallback,
+        ...proof,
+        proofHash: boomKasmObjectHash("banger-gpu-use-proof-v1", proof),
+      };
+    };
+    window.__forgeBangerBuildChatAttachment = (options = {}) => buildBangerChatAttachment(options);
     window.__forgeBangerDefaultOceanSunset = () => {
       const object = bangerDefaultNewObject();
       const res = window.__forgeBangerSetScene(object.ops || [], object);
@@ -9573,7 +9834,7 @@ import * as worlds from "./worlds.js";
     window.__forgeBangerDefaultOceanSunsetComputePlan = () => {
       const object = bangerDefaultNewObject();
       return {
-        ok: Array.isArray(object.computePlan) && object.computePlan.length === 4,
+        ok: Array.isArray(object.computePlan) && object.computePlan.length >= 5,
         command: object.command,
         computePlanHash: object.computePlanHash || object.previewHandoff?.evidenceComputePlanHash || object.previewHandoff?.computePlanHash || null,
         mathCurationHash: object.mathCurationHash || object.previewHandoff?.mathCurationHash || null,

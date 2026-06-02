@@ -434,6 +434,7 @@ body.webexplorer-surface #alphaTokenSavings,
 body.webexplorer-surface .compute-transcript,
 body.webexplorer-surface .canvas-chat-thread,
 body.webexplorer-surface .canvas-live-compute-card,
+body.webexplorer-surface .canvas-live-compute-deck,
 body.webexplorer-surface .trading-timeframe-rail,
 body.webexplorer-surface .trading-compare-menu,
 body.webexplorer-surface .canvas-chat-trading-actions,
@@ -716,7 +717,8 @@ body.webexplorer-google-connected-mode #webExplorerSurface {
 
 .webexplorer-clone-mode,
 .webexplorer-clone-count {
-  flex: 0 0 auto;
+  --chat-command-square-size: 128px;
+  flex: 0 0 var(--chat-command-square-size);
   border: 1px solid rgba(60, 64, 67, 0.14);
   border-radius: 999px;
   padding: 4px 9px;
@@ -6632,7 +6634,11 @@ body.webexplorer-surface #workspaceFolderName {
   transition: background 140ms ease, box-shadow 140ms ease;
 }
 
-.canvas-chat > :not(.canvas-chat-trading-subbar):not(.canvas-chat-secure-info) {
+/* Give in-flow children a stacking context above the secure overlays, but
+   exclude the absolutely-positioned corner overlays (voice-out top-right,
+   dictation bar bottom-centre) — this rule's higher specificity was
+   overriding their own `position: absolute` and dropping them into flow. */
+.canvas-chat > :not(.canvas-chat-trading-subbar):not(.canvas-chat-secure-info):not(.canvas-chat-voiceout-corner):not(.canvas-chat-dictation-bar) {
   position: relative;
   z-index: 1;
 }
@@ -6643,18 +6649,18 @@ body.webexplorer-surface #workspaceFolderName {
   bottom: calc(100% + 10px);
   transform: translateX(-50%);
   z-index: 34;
-  width: min(920px, calc(100vw - 420px));
-  min-width: min(720px, calc(100vw - 48px));
-  max-height: min(520px, calc(100vh - 190px));
+  width: min(880px, calc(100vw - 420px));
+  min-width: min(560px, calc(100vw - 48px));
+  max-height: min(390px, calc(100vh - 260px));
   overflow: auto;
-  padding: 16px;
-  border: 1px solid rgba(238,238,232,0.08);
+  padding: 18px 18px 16px;
+  border: 1px solid rgba(238,238,232,0.09);
   border-radius: 8px;
-  background: rgba(18,18,17,0.94);
+  background: rgba(24,24,23,0.96);
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.035),
-    0 18px 60px rgba(0,0,0,0.42);
-  color: rgba(238,238,232,0.92);
+    inset 0 1px 0 rgba(255,255,255,0.025),
+    0 16px 48px rgba(0,0,0,0.40);
+  color: rgba(238,240,235,0.92);
   cursor: default;
 }
 
@@ -6673,57 +6679,53 @@ body.webexplorer-surface #workspaceFolderName {
 .banger-brief-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  font: 700 15px/1.25 Geist, "Segoe UI", sans-serif;
+  font: 600 0.86rem/1.25 Geist, "Segoe UI", -apple-system, sans-serif;
 }
 
 .banger-brief-title span {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 24px;
-  min-width: 34px;
-  border-radius: 999px;
-  background: rgba(238,197,45,0.14);
-  color: rgba(248,213,54,0.92);
-  font: 750 11px/1 "Geist Mono", ui-monospace, Consolas, monospace;
+  flex: 0 0 auto;
+  min-width: 42px;
+  color: rgba(104,208,196,0.92);
+  font: 500 0.74rem/1 "Geist Mono", ui-monospace, Consolas, monospace;
 }
 
 .banger-brief-title strong {
   min-width: 0;
   overflow-wrap: anywhere;
+  color: rgba(238,240,235,0.94);
 }
 
 .banger-brief-close {
   appearance: none;
   border: 0;
   background: transparent;
-  color: rgba(238,238,232,0.66);
+  color: rgba(188,190,186,0.70);
   width: 28px;
   height: 28px;
   display: inline-grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
 }
 
 .banger-brief-close:hover {
-  background: rgba(255,255,255,0.06);
-  color: rgba(255,255,255,0.92);
+  background: rgba(255,255,255,0.045);
+  color: rgba(242,244,239,0.94);
 }
 
 .banger-brief-detail {
-  margin: 8px 0 12px;
-  color: rgba(238,238,232,0.62);
-  font: 600 12px/1.35 Geist, "Segoe UI", sans-serif;
+  margin: 11px 0 15px;
+  color: rgba(184,186,181,0.76);
+  font: 500 0.78rem/1.4 Geist, "Segoe UI", -apple-system, sans-serif;
 }
 
 .banger-brief-options {
   display: grid;
-  gap: 5px;
+  gap: 6px;
 }
 
 .banger-brief-option {
@@ -6733,36 +6735,42 @@ body.webexplorer-surface #workspaceFolderName {
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-  min-height: 58px;
-  padding: 10px;
-  border: 1px solid rgba(255,255,255,0.035);
-  border-radius: 6px;
-  background: rgba(255,255,255,0.045);
+  min-height: 48px;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid rgba(238,238,232,0.07);
+  border-radius: 4px;
+  background: rgba(238,238,232,0.025);
   color: inherit;
   cursor: pointer;
   text-align: left;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.banger-brief-option:hover,
+.banger-brief-option:hover {
+  background: rgba(238,238,232,0.04);
+  border-color: rgba(238,238,232,0.12);
+}
+
 .banger-brief-option.is-selected {
-  background: rgba(255,255,255,0.075);
-  border-color: rgba(238,197,45,0.28);
+  background: rgba(104,208,196,0.045);
+  border-color: rgba(104,208,196,0.30);
+  box-shadow: inset 2px 0 0 rgba(104,208,196,0.68);
 }
 
 .banger-brief-option-copy {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 
 .banger-brief-option-copy strong {
-  font: 750 13px/1.2 Geist, "Segoe UI", sans-serif;
-  color: rgba(246,246,240,0.95);
+  font: 600 0.78rem/1.2 Geist, "Segoe UI", -apple-system, sans-serif;
+  color: rgba(238,240,235,0.94);
 }
 
 .banger-brief-option-copy span {
-  font: 600 12px/1.25 Geist, "Segoe UI", sans-serif;
-  color: rgba(238,238,232,0.58);
+  font: 500 0.72rem/1.25 Geist, "Segoe UI", -apple-system, sans-serif;
+  color: rgba(184,186,181,0.72);
   overflow-wrap: anywhere;
 }
 
@@ -6771,48 +6779,62 @@ body.webexplorer-surface #workspaceFolderName {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  height: 24px;
-  border-radius: 5px;
-  border: 1px solid rgba(255,255,255,0.09);
-  background: rgba(255,255,255,0.045);
-  color: rgba(238,238,232,0.66);
-  font: 700 11px/1 "Geist Mono", ui-monospace, Consolas, monospace;
+  min-width: 18px;
+  height: 18px;
+  border: 0;
+  background: transparent;
+  color: rgba(184,186,181,0.56);
+  font: 500 0.68rem/1 "Geist Mono", ui-monospace, Consolas, monospace;
 }
 
 .banger-brief-other {
   width: 100%;
-  min-height: 42px;
+  min-height: 40px;
   resize: vertical;
-  border: 0;
-  border-radius: 6px;
-  padding: 10px 12px;
-  background: rgba(255,255,255,0.08);
-  color: rgba(246,246,240,0.92);
-  font: 600 13px/1.3 Geist, "Segoe UI", sans-serif;
+  border: 1px solid rgba(104,208,196,0.18);
+  border-radius: 4px;
+  padding: 9px 10px;
+  background: rgba(238,238,232,0.035);
+  color: rgba(238,240,235,0.92);
+  font: 500 0.78rem/1.35 Geist, "Segoe UI", -apple-system, sans-serif;
   outline: none;
 }
 
+.banger-brief-other:focus {
+  border-color: rgba(104,208,196,0.36);
+  box-shadow: 0 0 0 1px rgba(104,208,196,0.10);
+}
+
 .banger-brief-foot {
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
 .banger-brief-nav {
   appearance: none;
-  min-width: 104px;
-  height: 32px;
-  border: 1px solid rgba(255,255,255,0.07);
-  border-radius: 6px;
-  background: rgba(255,255,255,0.045);
-  color: rgba(238,238,232,0.78);
+  min-width: 96px;
+  height: 30px;
+  border: 1px solid rgba(238,238,232,0.08);
+  border-radius: 4px;
+  background: rgba(238,238,232,0.035);
+  color: rgba(184,186,181,0.78);
   cursor: pointer;
-  font: 700 12px/1 Geist, "Segoe UI", sans-serif;
+  font: 600 0.74rem/1 Geist, "Segoe UI", -apple-system, sans-serif;
 }
 
 .banger-brief-nav.primary {
-  border-color: rgba(238,197,45,0.34);
-  color: rgba(250,224,91,0.95);
-  background: rgba(238,197,45,0.11);
+  border-color: rgba(104,208,196,0.28);
+  color: rgba(104,208,196,0.94);
+  background: rgba(104,208,196,0.055);
+}
+
+.banger-brief-nav:hover:not(:disabled) {
+  background: rgba(238,238,232,0.055);
+  border-color: rgba(238,238,232,0.14);
+}
+
+.banger-brief-nav.primary:hover:not(:disabled) {
+  background: rgba(104,208,196,0.075);
+  border-color: rgba(104,208,196,0.38);
 }
 
 .banger-brief-nav:disabled {
@@ -6829,19 +6851,19 @@ body.webexplorer-surface #workspaceFolderName {
 }
 
 .banger-brief-dots span {
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(238,238,232,0.20);
+  width: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(238,238,232,0.18);
 }
 
 .banger-brief-dots span.answered {
-  background: rgba(238,197,45,0.42);
+  background: rgba(104,208,196,0.38);
 }
 
 .banger-brief-dots span.active {
-  width: 18px;
-  background: rgba(238,197,45,0.92);
+  width: 16px;
+  background: rgba(104,208,196,0.88);
 }
 
 @media (max-width: 900px) {
@@ -7547,10 +7569,70 @@ body.webexplorer-surface #workspaceFolderName {
 }
 
 .canvas-chat-textwrap {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto;
+  align-items: start;
+  position: relative;
   width: 100%;
   padding: 0 2px 6px;
   cursor: text;
+}
+
+.canvas-chat-trading-selection-pill {
+  position: absolute;
+  left: 0;
+  top: -16px;
+  display: inline-flex;
+  align-items: center;
+  max-width: min(520px, 74vw);
+  gap: 5px;
+  margin: 0;
+  color: rgba(104, 201, 189, 0.96);
+  font: 430 0.66rem/1.15 Geist, "Segoe UI", -apple-system, sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+  text-shadow: 0 0 10px rgba(104, 201, 189, 0.16);
+}
+
+.canvas-chat-trading-selection-pill[hidden] {
+  display: none;
+}
+
+.canvas-chat-trading-selection-pill-text {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.canvas-chat-trading-selection-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvas-chat-trading-selection-arrow {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 8px;
+  fill: currentColor;
+  opacity: 0.96;
+  transform: translateY(0.5px);
+}
+
+.canvas-chat-textwrap > .canvas-chat-command-rail {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.canvas-chat-textwrap > .canvas-chat-input-grid {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .canvas-chat-input-grid {
@@ -7749,15 +7831,215 @@ body.webexplorer-surface #workspaceFolderName {
 .canvas-chat-command-rail {
   --canvas-command-ch: 10;
   flex: 0 0 auto;
-  min-width: 96px;
   min-height: 30px;
   max-width: min(64%, 420px);
   display: inline-flex;
-  align-items: flex-start;
-  gap: 9px;
+  align-items: center;
+  gap: 8px;
   padding: 0 2px 0 0;
-  cursor: text;
+  cursor: default;
   color: rgba(238,238,232,0.58);
+}
+
+/* Chat body splits into a tall engraved square on the left and a stacked
+   column (prompt row + toolbar) on the right. The square spans the full
+   height of that stack, so every section's tools naturally sit to its
+   right — no per-mode shifting needed. */
+.canvas-chat-body {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  width: 100%;
+  box-sizing: border-box;
+  padding-left: calc(var(--canvas-chat-command-square-size, 94px) + (var(--canvas-chat-command-square-inset, 8px) * 2));
+}
+
+.canvas-chat > .canvas-chat-body {
+  position: static !important;
+}
+
+.canvas-chat > .canvas-chat-body::before {
+  content: "";
+  position: absolute;
+  left: calc(
+    var(--canvas-chat-command-square-inset, 8px)
+    + var(--canvas-chat-command-square-size, 94px)
+    + (var(--canvas-chat-command-square-inset, 8px) / 2)
+    + 6px
+  );
+  top: calc(var(--canvas-chat-command-square-inset, 8px) + 13px);
+  bottom: calc(var(--canvas-chat-command-square-inset, 8px) + 13px);
+  z-index: 2;
+  width: 1px;
+  border-radius: 1px;
+  background: rgba(135, 142, 136, 0.24);
+  box-shadow:
+    inset 1px 0 0 rgba(255,255,255,0.045),
+    0 1px 1px rgba(0,0,0,0.10);
+  pointer-events: none;
+}
+
+.canvas-chat-stack {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* Engraved square that replaces the manual slash-command typing space.
+   Darker grey than the #2a2a28 chat surface and recessed into the
+   material, matching the relief of the Atlas node-slots / program-group.
+   Size is explicit: a flex item with `align-self: stretch` + `aspect-ratio`
+   resolves its width before the stretched height is known, so it collapses
+   to a vertical rectangle — a fixed square avoids that. The stack stretches
+   to match this height. The command field in the rail stays read-only:
+   users no longer type commands here, but section tools (real estate) inject. */
+.canvas-chat-command-square {
+  position: relative;
+  flex: 0 0 auto;
+  /* Stretch to the full height of the bar, then mirror that height as the
+     width via aspect-ratio — a true square that always meets the bar's top
+     and bottom edges, whatever the content height. */
+  align-self: flex-start;
+  width: var(--chat-command-square-size);
+  height: var(--chat-command-square-size);
+  min-width: var(--chat-command-square-size);
+  min-height: var(--chat-command-square-size);
+  border-radius: 4px;
+  /* Same tone as the left panel (var(--surface)); gentle, low-contrast
+     engrave rather than the previous hard relief. */
+  background: var(--surface);
+  box-shadow:
+    inset 0 1px 1px rgba(0,0,0,0.34),
+    inset 0 -1px 0 rgba(255,255,255,0.04),
+    inset 1px 0 0 rgba(0,0,0,0.14),
+    inset -1px 0 0 rgba(0,0,0,0.10);
+}
+
+/* + upload button hugging the square's bottom-left corner. */
+.canvas-chat-command-square-add {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  z-index: 4;
+}
+
+.canvas-chat-trading-live-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.canvas-chat-trading-live-preview[hidden] {
+  display: none;
+}
+
+.canvas-chat-command-square.has-trading-selection-live-preview > .canvas-chat-universal-viewer {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.canvas-chat-command-tokens {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 250px;
+  overflow: hidden;
+}
+
+.canvas-chat-command-tokens:empty {
+  display: none;
+}
+
+.canvas-chat-command-token {
+  appearance: none;
+  border: 0;
+  border-radius: 3px;
+  min-width: 0;
+  max-width: 132px;
+  padding: 2px 0;
+  background: transparent;
+  color: rgba(117,226,211,0.96);
+  font: 700 0.88rem/1.4 "Geist Mono", ui-monospace, Consolas, "SF Mono", monospace;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.canvas-chat-command-token:hover {
+  background: transparent;
+  color: rgba(154,238,226,0.98);
+}
+
+.canvas-chat-command-token[data-command-token="/transcript_"] {
+  background: rgba(255, 78, 78, 0.11);
+  color: rgba(255, 192, 192, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(255, 78, 78, 0.2);
+}
+
+.canvas-chat-command-record-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 999px;
+  background: #ff4e4e;
+  box-shadow: 0 0 0 3px rgba(255, 78, 78, 0.12);
+}
+
+/* Read-only command field. Collapsed to nothing when empty so the rail
+   reads as just the engraved square; expands to show a command only when
+   a section tool injects one (width driven by --canvas-command-ch). */
+.canvas-chat-command-input {
+  appearance: none;
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  height: 24px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: rgba(104,208,196,0.98);
+  font: 700 0.88rem/1.4 "Geist Mono", ui-monospace, Consolas, "SF Mono", monospace;
+  letter-spacing: 0;
+  outline: none;
+  pointer-events: none;
+  cursor: default;
+}
+
+.canvas-chat-command-input.has-command-value {
+  flex: 0 0 clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
+  width: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
+  min-width: 76px;
+  max-width: min(42vw, 286px);
+  padding: 2px 0;
+}
+
+.canvas-chat-command-rail.has-command .canvas-chat-command-input {
+  flex-basis: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
+  width: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
+  min-width: 76px;
+}
+
+.canvas-chat.is-secure-encrypted .canvas-chat-command-rail.has-command .canvas-chat-command-input {
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .canvas-chat-connect-lock {
@@ -7816,106 +8098,8 @@ body.webexplorer-surface #workspaceFolderName {
   cursor: default;
 }
 
-.canvas-chat-command-tokens {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  max-width: 250px;
-  overflow: hidden;
-}
-
-.canvas-chat-command-token {
-  appearance: none;
-  border: 0;
-  border-radius: 3px;
-  min-width: 0;
-  max-width: 132px;
-  padding: 2px 0;
-  background: transparent;
-  color: rgba(117,226,211,0.96);
-  font: 700 0.88rem/1.4 "Geist Mono", ui-monospace, Consolas, "SF Mono", monospace;
-  letter-spacing: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.canvas-chat-command-token:hover {
-  background: transparent;
-  color: rgba(154,238,226,0.98);
-}
-
-.canvas-chat-command-token[data-command-token="/transcript_"] {
-  background: rgba(255, 78, 78, 0.11);
-  color: rgba(255, 192, 192, 0.96);
-  box-shadow: inset 0 0 0 1px rgba(255, 78, 78, 0.2);
-}
-
-.canvas-chat-command-record-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 6px;
-  border-radius: 999px;
-  background: #ff4e4e;
-  box-shadow: 0 0 0 3px rgba(255, 78, 78, 0.12);
-}
-
-.canvas-chat-command-input {
-  appearance: none;
-  flex: 0 0 clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
-  width: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
-  min-width: 76px;
-  max-width: min(42vw, 286px);
-  height: 24px;
-  border: 0;
-  padding: 2px 0;
-  background: transparent;
-  color: rgba(104,208,196,0.98);
-  font: 700 0.88rem/1.4 "Geist Mono", ui-monospace, Consolas, "SF Mono", monospace;
-  letter-spacing: 0;
-  outline: none;
-}
-
-.canvas-chat-command-input::placeholder {
-  font-family: "Geist Mono", ui-monospace, Consolas, "SF Mono", monospace;
-  color: rgba(238,238,232,0.26);
-}
-
-.canvas-chat-command-input:focus,
-.canvas-chat-command-input:not(:placeholder-shown) {
-  width: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
-}
-
-.canvas-chat-command-input.has-suggestion::placeholder {
-  color: rgba(238,238,232,0.38);
-}
-
-.canvas-chat-command-rail.has-command {
-  min-width: 0;
-}
-
-.canvas-chat-command-rail.has-command .canvas-chat-command-input {
-  flex-basis: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
-  width: clamp(76px, calc(var(--canvas-command-ch, 10) * 1ch), 286px);
-  min-width: 76px;
-}
-
-.canvas-chat.is-secure-encrypted .canvas-chat-command-rail.has-command .canvas-chat-command-input {
-  flex: 0 0 0;
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  padding: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-
 .canvas-chat-command-separator {
+  display: none;
   flex: 0 0 auto;
   padding-top: 2px;
   color: rgba(238,238,232,0.22);
@@ -7923,6 +8107,11 @@ body.webexplorer-surface #workspaceFolderName {
   pointer-events: none;
   user-select: none;
 }
+
+.canvas-chat-command-rail[data-has-command="true"] .canvas-chat-command-separator {
+  display: inline-flex;
+}
+
 .canvas-chat-input-grid > .canvas-chat-prompt-divider {
   flex: 0 0 24px;
 }
@@ -8031,6 +8220,25 @@ body.webexplorer-surface #workspaceFolderName {
 body.webexplorer-surface .canvas-chat-webexplorer-subbar[data-mode] {
   display: flex;
   pointer-events: auto;
+}
+
+body.banger-fullscreen-mode .canvas-chat-trading-subbar[data-mode="banger-questionnaire"] {
+  display: flex;
+  pointer-events: auto;
+  font-family: Geist, "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
+  animation: bangerQuestionnaireOpen 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: 50% 100%;
+}
+
+@keyframes bangerQuestionnaireOpen {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .canvas-chat-trading-subbar[data-mode="indicators"] {
@@ -8210,6 +8418,88 @@ body.webexplorer-surface .canvas-chat-webexplorer-subbar[data-mode] {
   min-height: 180px;
 }
 
+.banger-brief-trading-body {
+  display: grid;
+  gap: 12px;
+}
+
+.banger-brief-trading-detail {
+  color: rgba(184, 186, 181, 0.72);
+  font: 500 0.78rem/1.35 Geist, "Segoe UI", -apple-system, sans-serif;
+}
+
+.banger-brief-trading-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+}
+
+.banger-brief-trading-choice {
+  position: relative;
+  min-height: 34px;
+  border: 1px solid rgba(238,238,232,0.07);
+  border-radius: 4px;
+  padding: 7px 28px 7px 10px;
+}
+
+.canvas-chat-trading-subbar[data-mode="banger-questionnaire"] .canvas-chat-trading-subbar-link,
+.canvas-chat-trading-subbar[data-mode="banger-questionnaire"] .canvas-chat-trading-subbar-grid-command {
+  font-family: Geist, "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
+  letter-spacing: 0;
+}
+
+.banger-brief-trading-choice.is-attached {
+  border-color: rgba(104,208,196,0.28);
+  background: rgba(104,208,196,0.045);
+}
+
+.banger-brief-trading-copy {
+  display: block;
+  margin-top: 4px;
+  color: rgba(184, 186, 181, 0.62);
+  font: 500 0.70rem/1.25 Geist, "Segoe UI", -apple-system, sans-serif;
+}
+
+.banger-brief-trading-key {
+  position: absolute;
+  right: 9px;
+  top: 9px;
+  color: rgba(184, 186, 181, 0.46);
+  font: 500 0.66rem/1 "Geist Mono", ui-monospace, Consolas, monospace;
+}
+
+.canvas-chat-trading-subbar[data-mode="banger-questionnaire"] .banger-brief-other {
+  height: 38px;
+  min-height: 38px;
+  max-height: 38px;
+  resize: none;
+  overflow: hidden;
+  scrollbar-width: none;
+  font: 500 0.78rem/1.35 Geist, "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
+}
+
+.canvas-chat-trading-subbar[data-mode="banger-questionnaire"] .banger-brief-other::-webkit-scrollbar {
+  display: none;
+}
+
+.banger-brief-trading-foot {
+  display: grid;
+  grid-template-columns: 120px minmax(80px, 1fr) 120px;
+  align-items: center;
+  gap: 12px;
+}
+
+.banger-brief-trading-nav {
+  min-height: 28px;
+  border: 1px solid rgba(238,238,232,0.07);
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+
+.banger-brief-trading-nav:disabled {
+  opacity: 0.36;
+  cursor: default;
+}
+
 .canvas-chat-tools {
   display: flex;
   align-items: center;
@@ -8236,16 +8526,8 @@ body:not(.webexplorer-surface) .canvas-chat-webexplorer-actions {
   display: inline-flex;
 }
 
-.canvas-chat.is-trading-mode #forgeCanvasChatAttach {
-  display: none !important;
-}
-
 body.webexplorer-surface .canvas-chat-webexplorer-actions {
   display: inline-flex !important;
-}
-
-body.webexplorer-surface #forgeCanvasChatAttach {
-  display: none !important;
 }
 
 .canvas-chat-trading-trigger {
@@ -8559,6 +8841,634 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.canvas-chat .canvas-chat-body > .canvas-chat-command-square {
+  position: absolute !important;
+  left: var(--canvas-chat-command-square-inset, 8px) !important;
+  top: var(--canvas-chat-command-square-inset, 8px) !important;
+  bottom: auto !important;
+  flex: 0 0 auto !important;
+  align-self: auto !important;
+  display: block !important;
+  width: var(--canvas-chat-command-square-size, 94px) !important;
+  min-width: 0 !important;
+  height: var(--canvas-chat-command-square-size, 94px) !important;
+  min-height: 0 !important;
+  aspect-ratio: 1 / 1 !important;
+  border-radius: 4px !important;
+  z-index: 2;
+  background: #1c1c1b !important;
+  overflow: hidden !important;
+  box-shadow:
+    inset 0 1px 1px rgba(0,0,0,0.34),
+    inset 0 -1px 0 rgba(255,255,255,0.04),
+    inset 1px 0 0 rgba(0,0,0,0.14),
+    inset -1px 0 0 rgba(0,0,0,0.10) !important;
+}
+
+.canvas-chat .canvas-chat-body > .canvas-chat-command-square > #forgeCanvasChatAttach {
+  position: absolute !important;
+  left: 3px !important;
+  right: auto !important;
+  top: auto !important;
+  bottom: 3px !important;
+  display: grid !important;
+  width: 22px !important;
+  height: 22px !important;
+  padding: 0 !important;
+  transform: none !important;
+  z-index: 4;
+  background: transparent !important;
+  color: rgba(246,246,240,0.94) !important;
+  box-shadow: none !important;
+  text-shadow:
+    0 1px 2px rgba(0,0,0,0.95),
+    0 0 6px rgba(0,0,0,0.72) !important;
+}
+
+.canvas-chat .canvas-chat-body > .canvas-chat-command-square > #forgeCanvasChatAttach.is-drop-hover {
+  color: rgba(104,244,224,0.96);
+  background: rgba(66,214,189,0.10);
+  box-shadow:
+    inset 0 0 0 1px rgba(104,244,224,0.24),
+    0 0 16px rgba(66,214,189,0.18);
+}
+
+.canvas-chat .canvas-chat-body > .canvas-chat-command-square.is-drop-hover {
+  box-shadow:
+    inset 0 1px 1px rgba(0,0,0,0.34),
+    inset 0 -1px 0 rgba(255,255,255,0.04),
+    inset 1px 0 0 rgba(0,0,0,0.14),
+    inset -1px 0 0 rgba(0,0,0,0.10),
+    0 0 0 1px rgba(104,244,224,0.28),
+    0 0 18px rgba(66,214,189,0.16) !important;
+}
+
+.canvas-chat-universal-viewer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 12px);
+  z-index: 36;
+  height: min(420px, calc(100vh - 280px));
+  min-height: 260px;
+  display: grid;
+  grid-template-rows: 34px minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid rgba(238,238,232,0.08);
+  background: rgba(22,22,21,0.98);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.035),
+    0 18px 54px rgba(0,0,0,0.44);
+  cursor: default;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer {
+  inset: 0 !important;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-viewer-head {
+  display: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-square-close {
+  display: grid;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-viewer-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-viewer-body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid {
+  width: 100%;
+  height: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(36px, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 3px;
+  padding: 4px;
+  overflow: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="1"] {
+  grid-template-columns: 1fr;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="2"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="3"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="4"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="5"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="6"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="7"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="8"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="9"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="10"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="11"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="12"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="13"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="14"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="15"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="16"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="17"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="18"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="19"],
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-grid[data-count="20"] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-card {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-card::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-card:has(.canvas-chat-universal-3d),
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-viewer-body:has(.canvas-chat-universal-3d) {
+  overflow: hidden;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-loading,
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-fallback {
+  width: calc(100% - 12px);
+  font-size: 0.58rem;
+  line-height: 1.2;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-fallback-title {
+  margin-bottom: 3px;
+  font-size: 0.62rem;
+  line-height: 1.15;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-text {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 6px 6px 28px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-size: 0.5rem;
+  line-height: 1.25;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-text::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-table {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 5px 5px 28px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-size: 0.48rem;
+  line-height: 1.2;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-table::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-document {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 4px 4px 28px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-document::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-csv-chart {
+  inset: 4px 4px 28px 4px;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-audio {
+  width: calc(100% - 12px);
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer video.canvas-chat-universal-media {
+  object-fit: cover;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer img.canvas-chat-universal-media {
+  object-fit: cover;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-font {
+  padding: 10px 6px 28px;
+  font-size: 0.94rem;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-frame-clip {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-frame-clip.html-document {
+  overflow: hidden;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-frame.html-document {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: none;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-frame.html,
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-frame.web,
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-frame.youtube,
+.canvas-chat-command-square > .canvas-chat-universal-viewer .canvas-chat-universal-frame.document {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 430px;
+  height: 680px;
+  transform: scale(calc(var(--canvas-chat-command-square-size, 94px) / 360));
+  transform-origin: top left;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.canvas-chat.has-upload-error .canvas-chat-universal-viewer {
+  bottom: calc(100% + 34px);
+}
+
+.canvas-chat-universal-viewer[hidden] {
+  display: none !important;
+}
+
+.canvas-chat-universal-viewer-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 28px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid rgba(238,238,232,0.07);
+  background: rgba(42,42,40,0.92);
+}
+
+.canvas-chat-universal-viewer-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(238,238,232,0.88);
+  font: 650 0.78rem/1.2 Geist, "Segoe UI", -apple-system, sans-serif;
+}
+
+.canvas-chat-universal-viewer-meta {
+  color: rgba(238,238,232,0.42);
+  font: 500 0.66rem/1 "Geist Mono", Consolas, monospace;
+  white-space: nowrap;
+}
+
+.canvas-chat-universal-viewer-close {
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 3px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: rgba(238,238,232,0.58);
+  cursor: pointer;
+  font: 600 18px/1 Geist, "Segoe UI", sans-serif;
+}
+
+.canvas-chat-universal-viewer-close:hover {
+  background: rgba(255,255,255,0.06);
+  color: rgba(246,246,240,0.92);
+}
+
+.canvas-chat-universal-square-close {
+  appearance: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 5;
+  display: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(8,8,8,0.58);
+  color: rgba(246,246,240,0.92);
+  cursor: pointer;
+  font: 700 12px/1 Geist, "Segoe UI", sans-serif;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.08),
+    0 4px 12px rgba(0,0,0,0.25);
+}
+
+.canvas-chat-universal-square-close:hover {
+  background: rgba(255,79,85,0.16);
+  color: #fff;
+}
+
+.canvas-chat-universal-viewer-body {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: stretch;
+  background: transparent;
+}
+
+.canvas-chat-universal-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-auto-rows: minmax(180px, 1fr);
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+  background: transparent;
+}
+
+.canvas-chat-universal-card {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: stretch;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.canvas-chat-universal-frame,
+.canvas-chat-universal-media,
+.canvas-chat-universal-3d,
+.canvas-chat-universal-3d canvas {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: transparent;
+}
+
+.canvas-chat-universal-frame-clip {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.canvas-chat-universal-frame {
+  overflow: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.canvas-chat-universal-frame::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.canvas-chat-universal-3d {
+  overflow: hidden;
+  contain: strict;
+}
+
+.canvas-chat-universal-frame.html {
+  background: #fff;
+}
+
+.canvas-chat-universal-media {
+  object-fit: contain;
+  background: transparent;
+}
+
+video.canvas-chat-universal-media::-webkit-media-controls,
+video.canvas-chat-universal-media::-webkit-media-controls-enclosure,
+video.canvas-chat-universal-media::-webkit-media-controls-panel,
+video.canvas-chat-universal-media::-webkit-media-controls-overlay-play-button,
+video.canvas-chat-universal-media::-webkit-media-controls-play-button,
+video.canvas-chat-universal-media::-webkit-media-controls-timeline,
+video.canvas-chat-universal-media::-webkit-media-controls-current-time-display,
+video.canvas-chat-universal-media::-webkit-media-controls-time-remaining-display,
+video.canvas-chat-universal-media::-webkit-media-controls-mute-button,
+video.canvas-chat-universal-media::-webkit-media-controls-volume-slider,
+video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.canvas-chat-universal-audio {
+  align-self: center;
+  justify-self: center;
+  width: min(560px, calc(100% - 48px));
+}
+
+.canvas-chat-universal-table {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 4), minmax(72px, 1fr));
+  align-content: start;
+  overflow: auto;
+  padding: 12px 12px 24px;
+  color: rgba(238,238,232,0.8);
+  font: 0.66rem/1.35 "Geist Mono", Consolas, monospace;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(238,238,232,0.18) transparent;
+}
+
+.canvas-chat-universal-table span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding: 3px 5px;
+  border-bottom: 1px solid rgba(238,238,232,0.055);
+}
+
+.canvas-chat-universal-csv-chart {
+  position: absolute;
+  inset: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.canvas-chat-universal-csv-chart canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.canvas-chat-universal-document {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.canvas-chat-universal-document::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.canvas-chat-universal-pdf-page {
+  width: 100%;
+  height: auto;
+  display: block;
+  border: 0;
+  background: #fff;
+}
+
+.canvas-chat-universal-document-more {
+  color: rgba(238,238,232,0.62);
+  font: 600 0.58rem/1.2 Geist, "Segoe UI", sans-serif;
+  text-align: center;
+}
+
+.canvas-chat-universal-font {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 20px;
+  color: rgba(238,238,232,0.88);
+  font-size: clamp(1rem, 8vw, 4rem);
+  line-height: 1;
+  text-align: center;
+}
+
+.canvas-chat-universal-text {
+  margin: 0;
+  padding: 14px 16px 24px;
+  overflow: auto;
+  color: rgba(238,238,232,0.84);
+  font: 0.72rem/1.5 "Geist Mono", Consolas, monospace;
+  white-space: pre-wrap;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(238,238,232,0.18) transparent;
+}
+
+.canvas-chat-universal-loading,
+.canvas-chat-universal-fallback {
+  align-self: center;
+  justify-self: center;
+  width: min(560px, calc(100% - 48px));
+  color: rgba(238,238,232,0.62);
+  font: 500 0.82rem/1.45 Geist, "Segoe UI", -apple-system, sans-serif;
+  text-align: center;
+}
+
+.canvas-chat-universal-fallback-title {
+  margin-bottom: 8px;
+  color: rgba(238,238,232,0.88);
+  font: 650 0.9rem/1.25 Geist, "Segoe UI", -apple-system, sans-serif;
+}
+
+.canvas-chat-upload-error {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 37;
+  min-height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #ff4f55;
+  box-shadow: none;
+  font: 600 0.76rem/1.25 Geist, "Segoe UI", -apple-system, sans-serif;
+  letter-spacing: 0;
+  text-align: left;
+  pointer-events: none;
+  text-shadow: 0 0 10px rgba(255,79,85,0.16);
+}
+
+.canvas-chat-upload-error[hidden] {
+  display: none !important;
 }
 
 .canvas-model-anchor {
@@ -9478,31 +10388,41 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   stroke-linejoin: round;
 }
 
+.canvas-live-compute-deck {
+  position: relative;
+  z-index: 1;
+  width: min(780px, 100%);
+  max-width: 100%;
+  max-height: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  align-items: start;
+  gap: 10px 14px;
+  margin: 6px 0 12px;
+  pointer-events: auto;
+  overflow: visible;
+}
+
 .canvas-live-compute-card {
-  position: absolute;
-  top: 88px;
-  right: max(34px, 3.2vw);
-  z-index: 24;
-  width: min(720px, 42vw);
-  max-width: calc(100% - 430px);
-  height: min(560px, calc(100% - 230px));
-  min-height: 330px;
+  position: relative;
+  aspect-ratio: 4 / 3;
+  min-height: 136px;
+  max-height: 170px;
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 6px;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: rgba(246,246,242,0.88);
-  pointer-events: auto;
   overflow: hidden;
   -webkit-mask-image:
-    linear-gradient(to right, transparent 0, #000 30px, #000 calc(100% - 30px), transparent 100%),
-    linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 40px), transparent 100%);
+    linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%),
+    linear-gradient(to bottom, transparent 0, #000 16px, #000 calc(100% - 20px), transparent 100%);
   -webkit-mask-composite: source-in;
   mask-image:
-    linear-gradient(to right, transparent 0, #000 30px, #000 calc(100% - 30px), transparent 100%),
-    linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 40px), transparent 100%);
+    linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%),
+    linear-gradient(to bottom, transparent 0, #000 16px, #000 calc(100% - 20px), transparent 100%);
   mask-composite: intersect;
 }
 
@@ -9511,7 +10431,7 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   align-items: baseline;
   justify-content: space-between;
   gap: 16px;
-  padding: 0 24px;
+  padding: 0 6px;
 }
 
 .canvas-live-compute-title {
@@ -9520,7 +10440,7 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: rgba(246,246,242,0.82);
-  font: 700 0.82rem/1.2 Geist, "Segoe UI", -apple-system, sans-serif;
+  font: 750 0.76rem/1.15 "Geist Mono", Consolas, monospace;
 }
 
 .canvas-live-compute-status {
@@ -9546,7 +10466,7 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
-  padding: 0 24px;
+  padding: 0;
 }
 
 .canvas-live-compute-metrics span,
@@ -9560,7 +10480,7 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
 }
 
 .canvas-live-compute-section {
-  padding: 0 24px;
+  padding: 0 6px;
 }
 
 .canvas-live-compute-section h3 {
@@ -9573,15 +10493,21 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
 
 .canvas-live-math-row {
   display: grid;
-  grid-template-columns: minmax(80px, 116px) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(44px, 62px) minmax(0, 1fr);
+  gap: 7px;
   align-items: baseline;
-  margin: 5px 0;
+  margin: 2px 0;
+  animation: canvasLiveMathStream 460ms linear infinite;
+}
+
+@keyframes canvasLiveMathStream {
+  from { transform: translateY(0); opacity: 0.52; }
+  to { transform: translateY(-7px); opacity: 0.9; }
 }
 
 .canvas-live-math-label {
   color: rgba(246,246,242,0.72);
-  font: 650 0.72rem/1.25 Geist, "Segoe UI", -apple-system, sans-serif;
+  font: 650 0.58rem/1.15 "Geist Mono", Consolas, monospace;
 }
 
 .canvas-live-math-row code {
@@ -9589,14 +10515,30 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   overflow: hidden;
   text-overflow: ellipsis;
   color: rgba(169,205,224,0.78);
-  font: 0.68rem/1.45 "Geist Mono", Consolas, monospace;
+  font: 0.56rem/1.2 "Geist Mono", Consolas, monospace;
   white-space: nowrap;
+}
+
+.canvas-live-compute-footer {
+  margin-top: -8px;
+  display: flex;
+  justify-content: flex-end;
+  grid-column: span 1;
+}
+
+.canvas-live-compute-footer .canvas-thinking-compute-strip.live {
+  padding: 0;
+  margin: 0;
+  justify-content: flex-end;
+  transform: scale(0.82);
+  transform-origin: 100% 0;
 }
 
 .canvas-live-compute-section.cache {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
+  margin-top: auto;
 }
 
 .canvas-live-cache-row {
@@ -9610,10 +10552,10 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
 }
 
 .canvas-live-cache-row.redundant {
-  border-color: rgba(36,218,204,0.26);
-  background: rgba(18,150,138,0.12);
+  border-color: rgba(36,218,204,0.34);
+  background: rgba(18,150,138,0.08);
   color: rgba(77,232,218,0.88);
-  box-shadow: inset 0 0 0 1px rgba(36,218,204,0.08);
+  box-shadow: 0 0 14px rgba(36,218,204,0.10);
 }
 
 .canvas-live-cache-text {
@@ -9820,6 +10762,16 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
 
 .canvas-chat-message.monologue-continuation .canvas-chat-text {
   padding-left: 0;
+}
+
+.canvas-chat-message.loop-streaming.monologue-continuation,
+.canvas-chat-message.agent-narration.monologue-continuation {
+  margin-top: -18px;
+}
+
+.canvas-chat-message.loop-streaming.monologue-continuation .canvas-chat-text,
+.canvas-chat-message.agent-narration.monologue-continuation .canvas-chat-text {
+  max-width: min(900px, 100%);
 }
 
 .canvas-chat-message.agent-narration .canvas-chat-text,
@@ -10280,6 +11232,52 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
 .canvas-thinking-events .canvas-thinking-event::before {
   content: "";
   display: none;
+}
+
+.canvas-thinking-compute-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0;
+  margin: 8px 0 0 19px;
+  color: rgba(238,238,232,0.58);
+  font: 500 0.68rem/1.35 Geist, "Segoe UI", -apple-system, sans-serif;
+  letter-spacing: 0;
+}
+
+.canvas-thinking-compute-strip.live {
+  margin: 0;
+  padding: 0 18px 2px;
+}
+
+.canvas-thinking-compute-cell {
+  display: inline-grid;
+  grid-template-columns: auto;
+  gap: 2px;
+  min-width: 92px;
+  padding: 0 14px 0 0;
+  margin-right: 14px;
+  border-right: 1px solid rgba(68, 217, 201, 0.18);
+  background: transparent;
+}
+
+.canvas-thinking-compute-cell:last-child {
+  border-right: 0;
+  margin-right: 0;
+  padding-right: 0;
+}
+
+.canvas-thinking-compute-label {
+  color: rgba(238,238,232,0.38);
+  font: 600 0.58rem/1.2 Geist, "Segoe UI", -apple-system, sans-serif;
+  text-transform: uppercase;
+}
+
+.canvas-thinking-compute-value {
+  color: rgba(84, 229, 214, 0.88);
+  font: 650 0.78rem/1.1 "Geist Mono", Consolas, monospace;
+  white-space: nowrap;
+  text-shadow: 0 0 12px rgba(42, 221, 198, 0.10);
 }
 
 @keyframes canvasThinkingEventFlip {
@@ -12166,6 +13164,288 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   color: rgba(238,238,232,0.46);
   font-size: 0.76rem;
   line-height: 1.45;
+}
+
+.session-plan-panel {
+  padding: 2px 0 0;
+}
+
+.proof-panel.banger-project-mode .proof-panel-header {
+  padding-bottom: 8px;
+}
+
+.proof-panel.banger-project-mode .proof-panel-header p,
+.proof-panel.banger-project-mode .proof-panel-tabs {
+  display: none;
+}
+
+.proof-panel.banger-project-mode .proof-panel-header h2 {
+  font-size: 0.92rem;
+  line-height: 1.15;
+}
+
+.proof-panel.banger-project-mode .proof-panel-content {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.banger-project-panel {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 14px;
+  font-family: Geist, "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
+}
+
+.banger-project-pane {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 7px;
+  border-top: 1px solid rgba(238,238,232,0.07);
+}
+
+.banger-project-pane:first-child {
+  border-top: 0;
+}
+
+.banger-project-pane-title {
+  margin: 0;
+  padding: 0 0 2px;
+  color: rgba(238,238,232,0.58);
+  font: 650 0.66rem/1.2 Geist, "Segoe UI", -apple-system, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.banger-project-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 7px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(238,238,232,0.18) transparent;
+  -ms-overflow-style: none;
+}
+
+.banger-project-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.banger-project-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.banger-project-scroll::-webkit-scrollbar-thumb {
+  background: rgba(238,238,232,0.18);
+  border-radius: 0;
+  transition: background 200ms ease;
+}
+
+.banger-project-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(238,238,232,0.18);
+}
+
+.banger-project-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(238,238,232,0.32);
+}
+
+.banger-project-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.banger-project-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.session-plan-steps {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid rgba(238,238,232,0.08);
+}
+
+.session-plan-step {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(238,238,232,0.08);
+  font: 500 0.72rem/1.28 Geist, "Segoe UI", -apple-system, sans-serif;
+  color: rgba(238,238,232,0.72);
+}
+
+.session-plan-index {
+  width: 20px;
+  height: 16px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 3px;
+  border: 1px solid rgba(238,238,232,0.10);
+  color: rgba(104,208,196,0.76);
+  font: 500 0.56rem/1 "Geist Mono", ui-monospace, Consolas, monospace;
+}
+
+.session-plan-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.session-plan-label {
+  display: block;
+  color: rgba(238,238,232,0.86);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.session-plan-status,
+.session-plan-empty {
+  color: rgba(238,238,232,0.42);
+  font: 500 0.62rem/1.25 Geist, "Segoe UI", -apple-system, sans-serif;
+}
+
+.session-plan-step.is-done .session-plan-label {
+  color: rgba(238,238,232,0.42);
+  text-decoration: line-through;
+  text-decoration-color: rgba(104,208,196,0.42);
+}
+
+.session-plan-step.is-done .session-plan-index {
+  border-color: rgba(104,208,196,0.28);
+  color: rgba(104,208,196,0.82);
+}
+
+.session-plan-step.is-active .session-plan-label {
+  color: rgba(238,238,232,0.94);
+}
+
+.session-plan-step.is-active .session-plan-index {
+  background: rgba(104,208,196,0.08);
+  border-color: rgba(104,208,196,0.30);
+  color: rgba(104,208,196,0.95);
+  animation: bangerProjectActivePulse 1800ms ease-in-out infinite;
+}
+
+.session-plan-step.is-active {
+  animation: bangerProjectRowBreath 2200ms ease-in-out infinite;
+}
+
+@keyframes bangerProjectActivePulse {
+  0%, 100% {
+    box-shadow: 0 0 0 rgba(104,208,196,0);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(104,208,196,0.13);
+  }
+}
+
+@keyframes bangerProjectRowBreath {
+  0%, 100% {
+    background: transparent;
+  }
+  50% {
+    background: rgba(104,208,196,0.025);
+  }
+}
+
+.session-plan-empty {
+  margin: 0;
+  padding: 8px 0;
+}
+
+.banger-materials-panel {
+  padding: 0;
+  font-family: Geist, "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
+  font-size: 0.72rem;
+}
+
+.banger-materials-empty,
+.banger-materials-summary,
+.banger-materials-proof,
+.banger-material-role,
+.banger-material-meta {
+  margin: 0;
+  line-height: 1.32;
+}
+
+.banger-materials-empty,
+.banger-materials-summary,
+.banger-materials-proof {
+  color: rgba(238,238,232,0.62);
+}
+
+.banger-materials-proof {
+  margin-top: 8px;
+  margin-bottom: 10px;
+  font-size: 0.66rem;
+  font-family: "Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.banger-materials-section {
+  margin: 0 0 12px;
+}
+
+.banger-materials-category {
+  margin: 0 0 6px;
+  font: inherit;
+  color: rgba(238,238,232,0.46);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.banger-materials-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.banger-material-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 0;
+  border-top: 1px solid rgba(238,238,232,0.075);
+  background: transparent;
+}
+
+.banger-material-row:first-child {
+  border-top-color: rgba(238,238,232,0.045);
+}
+
+.banger-material-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.banger-material-head strong,
+.banger-material-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.banger-material-head span,
+.banger-material-meta,
+.banger-material-role {
+  color: rgba(238,238,232,0.58);
+}
+
+.banger-material-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  color: rgba(238,238,232,0.5);
+  font-size: 0.64rem;
+  font-family: "Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 
 .log-group {
@@ -15858,22 +17138,33 @@ body.banger-fullscreen-mode .topbar-proof-btn {
   display: none;
 }
 
-/* §banger : the Scene Collection panel coexists with the shell-level
-   Pinned + Recents + Profile dropdown so Banger users keep the same
-   session navigation as every other section.
+/* §banger : the Scene Collection now lives in the RIGHT panel
+   (#alphaProofContent, console mode) — see ensureBoomSidebar() in
+   sections/banger/surface.ts. The left panel keeps the standard
+   shell session navigation (Pinned + Recents + Profile dropdown).
 
-   Hidden in Banger : panel-tabs (Compute/Atlas/Pool nav redundant
-   with Banger's own Design/Slicer), non-compute panes, and the
-   .panel-actions row (New session / Documents / My programs) which
-   doesn't apply to a SDF scene editor.
-
-   Order in Banger : Scene Collection (boom-blender-panel) first,
-   then Pinned, Recents, hardware specs, Profile button — handled
-   by surface.ts using prepend() at insertion time. */
+   Hidden in Banger left panel : panel-tabs (Compute/Atlas/Pool nav
+   redundant with Banger's own Design/Slicer), non-compute panes, and
+   the .panel-actions row (New session / Documents / My programs)
+   which doesn't apply to a SDF scene editor. */
 .content.is-banger-layout .left-panel > .panel-tabs,
 .content.is-banger-layout .left-panel > .panel-tab-pane:not([data-tab-pane="compute"]),
 .content.is-banger-layout .left-panel .panel-actions {
   display: none !important;
+}
+
+.banger-session-actions {
+  display: none;
+}
+
+.content.is-banger-layout .banger-session-actions {
+  display: grid;
+  gap: 8px;
+  margin: 2px 0 18px;
+}
+
+.content.is-banger-layout .banger-session-actions .panel-action {
+  width: 100%;
 }
 
 .content.is-banger-layout .boom-blender-panel {
@@ -15897,6 +17188,16 @@ body.banger-fullscreen-mode .topbar-proof-btn {
     linear-gradient(180deg, rgba(50,50,48,0.64), rgba(28,28,27,0.96) 18%, rgba(26,26,25,0.98));
   color: #cfcfc9;
   font-family: "Geist", "Segoe UI", sans-serif;
+}
+
+/* Scene Collection relocated to the right panel: drop the left-panel bleed
+   margins and fill the proof-panel content width. Higher specificity than
+   `.content.is-banger-layout .boom-blender-panel` so margins reset cleanly. */
+.content.is-banger-layout .proof-panel .boom-blender-panel-right {
+  margin: 0;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .boom-outliner,
@@ -16074,8 +17375,8 @@ body.banger-fullscreen-mode .topbar-proof-btn {
 }
 
 .boom-outliner-row-object.is-active {
-  background: rgba(116,136,255,0.18);
-  color: #f2f4ff;
+  background: rgba(49,200,178,0.14);
+  color: #ecfffb;
 }
 
 .boom-outliner-indent {
@@ -16117,7 +17418,7 @@ body.banger-fullscreen-mode .topbar-proof-btn {
 }
 
 .boom-outliner-row-object.is-active .boom-outliner-meta {
-  color: rgba(228,232,255,0.84);
+  color: rgba(202,255,247,0.82);
 }
 
 .boom-outliner-type {
@@ -16130,6 +17431,7 @@ body.banger-fullscreen-mode .topbar-proof-btn {
 .boom-outliner-type-grid { color: #f3aa62; }
 .boom-outliner-type-light { color: #87d27b; }
 .boom-outliner-type-mesh { color: #8f9fff; }
+.boom-outliner-type-object { color: #56eedc; }
 .boom-outliner-type-collection { color: #d4d1c5; }
 
 .boom-outliner-toggles {
@@ -17048,6 +18350,29 @@ body.banger-fullscreen-mode .topbar-proof-btn {
   filter: drop-shadow(0 0 12px rgba(255, 214, 82, 0.18));
 }
 
+.boom-sdf-part-selection-box {
+  fill: rgba(49, 200, 178, 0.045);
+  stroke: rgba(86, 238, 220, 0.94);
+  stroke-width: 1.6;
+  stroke-dasharray: 7 5;
+  filter: drop-shadow(0 0 12px rgba(49, 200, 178, 0.22));
+}
+
+.boom-sdf-part-selection-dot {
+  fill: rgba(86, 238, 220, 0.96);
+  stroke: rgba(6, 18, 18, 0.86);
+  stroke-width: 1.3;
+}
+
+.boom-sdf-part-selection-label {
+  fill: rgba(200, 255, 248, 0.92);
+  font: 600 11px "Geist", "Segoe UI", sans-serif;
+  letter-spacing: 0;
+  paint-order: stroke;
+  stroke: rgba(5, 10, 10, 0.82);
+  stroke-width: 3;
+}
+
 .boom-modebar {
   display: inline-flex;
   align-items: center;
@@ -17144,11 +18469,15 @@ body.banger-fullscreen-mode .topbar-proof-btn {
 
 /* When Banger is active, hide the dropzone + the legacy 2D/3D canvases. */
 .canvas-stage.is-banger-mode .empty-session-shell,
-.canvas-stage.is-banger-mode #alphaCanvas,
 .canvas-stage.is-banger-mode #alpha3dView,
 .canvas-stage.is-banger-mode #marsLensView,
 .canvas-stage.is-banger-mode #alphaCardFade {
   display: none !important;
+}
+
+.canvas-stage.is-banger-mode #alphaCanvas {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* Trademark sits low-right inside the embedded view; overrides the older

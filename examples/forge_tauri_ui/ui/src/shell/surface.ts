@@ -9542,10 +9542,8 @@ function buildAlphaConsoleLogBody(output, outputKind) {
 function renderAlphaConsolePanel() {
   if (!alphaProofContent || !alphaProofPanelOpen || alphaRightPanelMode !== "console") return;
   if (isBangerSurfaceActive()) {
-    const bangerEmptyKey = "banger-console-empty";
-    if (alphaConsoleRenderedKey === bangerEmptyKey) return;
-    alphaConsoleRenderedKey = bangerEmptyKey;
-    alphaProofContent.innerHTML = "";
+    // Banger owns the right-panel content: it mounts the Scene Collection
+    // (.boom-blender-panel) into #alphaProofContent itself. Do not touch it.
     return;
   }
   if (!isTradingPanelActive() && alphaConsoleState.language === "pine") {
@@ -16253,15 +16251,17 @@ function nextCanvasAttachmentTarget(target) {
 }
 
 function canvasPendingFileObject(item) {
+  if (canvasPendingFileIsVirtual(item)) return canvasPendingFileVirtualAttachment(item);
   return item?.file || item;
 }
 
 function canvasPendingFileName(item) {
-  return String(canvasPendingFileObject(item)?.name || "").trim();
+  const virtual = canvasPendingFileVirtualAttachment(item);
+  return String(virtual?.name || virtual?.selectedObject?.name || canvasPendingFileObject(item)?.name || "").trim();
 }
 
 function canvasPendingFileSize(item) {
-  return Number(canvasPendingFileObject(item)?.size || 0);
+  return Number(canvasPendingFileVirtualAttachment(item)?.size || canvasPendingFileObject(item)?.size || 0);
 }
 
 function canvasPendingFileTarget(item) {
@@ -16270,6 +16270,20 @@ function canvasPendingFileTarget(item) {
 
 function canvasPendingFileSource(item) {
   return String(item?.source || "").trim();
+}
+
+function canvasPendingFileVirtualAttachment(item) {
+  return item?.virtualAttachment || null;
+}
+
+function canvasPendingFileIsVirtual(item) {
+  const attachment = canvasPendingFileVirtualAttachment(item);
+  return !!attachment && typeof attachment === "object";
+}
+
+function canvasPendingFileIsRealUpload(item) {
+  const file = item?.file || item;
+  return typeof File !== "undefined" && file instanceof File;
 }
 
 function canvasPendingProgramTarget(program) {
@@ -16453,6 +16467,33 @@ function addCanvasChatPendingFiles(fileListLike, options = {}) {
   syncCanvasChatSendState();
 }
 
+function addCanvasChatPendingVirtualAttachment(attachment, options = {}) {
+  if (!attachment || typeof attachment !== "object") return;
+  const target = normalizeCanvasAttachmentTarget(options.target || attachment.target || defaultCanvasAttachmentTarget());
+  const source = String(options.source || attachment.source || attachment.kind || "virtual").trim();
+  const replaceSource = String(options.replaceSource || source || "").trim();
+  if (replaceSource) {
+    for (let i = forgeCanvasChatPendingFiles.length - 1; i >= 0; i -= 1) {
+      if (canvasPendingFileSource(forgeCanvasChatPendingFiles[i]) === replaceSource) {
+        forgeCanvasChatPendingFiles.splice(i, 1);
+      }
+    }
+  }
+  if (forgeCanvasChatPendingFiles.length >= CANVAS_CHAT_MAX_PENDING_FILES) {
+    showCanvasChatUploadError("20 fichiers maximum. Attachment Banger ignore.");
+    return;
+  }
+  forgeCanvasChatPendingFiles.push({ virtualAttachment: attachment, target, source });
+  showCanvasChatUploadError("");
+  if (!options.skipPreview) {
+    forgeCanvasChatUniversalViewer.open({
+      files: forgeCanvasChatPendingFiles.map(canvasPendingFileObject).filter(Boolean),
+    });
+  }
+  renderCanvasChatAttachments();
+  syncCanvasChatSendState();
+}
+
 function clearCanvasChatPendingFilesBySource(source = "") {
   const clean = String(source || "").trim();
   if (!clean) return false;
@@ -16593,6 +16634,14 @@ function canvasAssignedProgramsForRuntime(programs, runtime) {
 }
 
 function compactAttachedFileProfile(file) {
+  const virtual = canvasPendingFileVirtualAttachment(file);
+  if (virtual) {
+    const name = canvasPendingFileName(file) || "Banger SDF object";
+    const selected = virtual.selectedObject?.id ? `selected=${virtual.selectedObject.id}` : "";
+    const sceneCount = Array.isArray(virtual.sceneObjects) ? `${virtual.sceneObjects.length} scene objects` : "";
+    const computeCount = Array.isArray(virtual.computeEvidence) ? `${virtual.computeEvidence.length} compute refs` : "";
+    return `${name} (banger_sdf_scene_object${selected ? `, ${selected}` : ""})${[sceneCount, computeCount].filter(Boolean).length ? ` - ${[sceneCount, computeCount].filter(Boolean).join("; ")}` : ""}`;
+  }
   const name = canvasPendingFileName(file) || "attached file";
   const size = Number(canvasPendingFileSize(file) || file?.size || 0);
   const lower = name.toLowerCase();
@@ -16619,6 +16668,7 @@ function compactAttachedFileProfile(file) {
  */
 const CANVAS_LLM_ATTACHMENT_MAX_CHARS_PER_FILE = 18000;
 const CANVAS_LLM_ATTACHMENT_MAX_TOTAL_CHARS = 120000;
+const CANVAS_LLM_BANGER_ATTACHMENT_MAX_CHARS = 60000;
 
 function canvasChatClipTextForLlm(text, max = CANVAS_LLM_ATTACHMENT_MAX_CHARS_PER_FILE) {
   const clean = String(text || "").replace(/\u0000/g, "").trim();
@@ -16744,6 +16794,10 @@ function canvasChatManifestPathForAttachment(name = "") {
 }
 
 async function canvasChatLlmAttachmentEntry(item, budget) {
+  if (canvasPendingFileIsVirtual(item)) {
+    const refreshed = await canvasChatRefreshVirtualAttachment(item);
+    return canvasChatVirtualAttachmentContext(refreshed, budget);
+  }
   const file = canvasPendingFileObject(item);
   if (!file) return "";
   const name = canvasPendingFileName(item) || file.name || "attached file";
@@ -16799,6 +16853,60 @@ async function canvasChatLlmAttachmentEntry(item, budget) {
   return `${header.filter(Boolean).join("\n")}\n${body}`;
 }
 
+async function canvasChatRefreshVirtualAttachment(item) {
+  const attachment = canvasPendingFileVirtualAttachment(item);
+  if (!attachment) return null;
+  if (
+    attachment.kind === "banger_sdf_scene_object"
+    && typeof window.__forgeBangerBuildChatAttachment === "function"
+  ) {
+    try {
+      const fresh = await window.__forgeBangerBuildChatAttachment({
+        selectedObjectId: attachment.selectedObject?.id || attachment.selectedObjectId || "",
+        includeScreenshot: true,
+      });
+      if (fresh && typeof fresh === "object") {
+        item.virtualAttachment = { ...attachment, ...fresh };
+        return item.virtualAttachment;
+      }
+    } catch (err) {
+      console.warn("[forge] Banger attachment refresh failed:", err);
+    }
+  }
+  return attachment;
+}
+
+function canvasChatVirtualAttachmentContext(attachment, budget = CANVAS_LLM_ATTACHMENT_MAX_CHARS_PER_FILE) {
+  if (!attachment) return "";
+  if (attachment.kind !== "banger_sdf_scene_object" && attachment.schema !== "forge.banger.chat_attachment.v1") {
+    return `VIRTUAL_ATTACHMENT:\n${canvasChatClipTextForLlm(JSON.stringify(attachment, null, 2), budget)}`;
+  }
+  const screenshot = attachment.screenshot || {};
+  const context = {
+    schema: "FORGE_BANGER_SCENE_CONTEXT_V1",
+    instruction: "This attachment came from Banger Scene Collection through the same chat-square attachment circuit as uploaded 3D files. Treat selectedObject as the focused object, but reason over all sceneObjects and their SDF/source evidence.",
+    selectedObject: attachment.selectedObject || null,
+    sceneObjects: attachment.sceneObjects || [],
+    selectedSdfOps: attachment.selectedSdfOps || [],
+    sceneSdfOps: attachment.sceneSdfOps || [],
+    newobjectContract: attachment.newobjectContract || null,
+    computeEvidence: attachment.computeEvidence || [],
+    screenshot: {
+      mime: screenshot.mime || "",
+      width: screenshot.width || 0,
+      height: screenshot.height || 0,
+      hash: screenshot.hash || "",
+      note: screenshot.dataUrl ? "A compact render screenshot data URL is attached below when it fits the LLM budget." : "Screenshot unavailable from canvas readback.",
+    },
+  };
+  let body = JSON.stringify(context, null, 2);
+  const dataUrl = String(screenshot.dataUrl || "");
+  if (dataUrl && body.length + dataUrl.length + 64 <= budget) {
+    body += `\n\nscreenshotDataUrl:\n${dataUrl}`;
+  }
+  return canvasChatClipTextForLlm(body, budget);
+}
+
 async function canvasChatAttachmentContextPacketForModel(files = []) {
   const assigned = Array.from(files || []).filter(Boolean);
   if (!assigned.length) return "";
@@ -16807,7 +16915,10 @@ async function canvasChatAttachmentContextPacketForModel(files = []) {
   for (const item of assigned) {
     if (remaining <= 0) break;
     try {
-      const entry = await canvasChatLlmAttachmentEntry(item, Math.min(CANVAS_LLM_ATTACHMENT_MAX_CHARS_PER_FILE, remaining));
+      const itemBudget = canvasPendingFileIsVirtual(item)
+        ? Math.min(CANVAS_LLM_BANGER_ATTACHMENT_MAX_CHARS, remaining)
+        : Math.min(CANVAS_LLM_ATTACHMENT_MAX_CHARS_PER_FILE, remaining);
+      const entry = await canvasChatLlmAttachmentEntry(item, itemBudget);
       if (!entry) continue;
       entries.push(entry);
       remaining -= entry.length;
@@ -19361,7 +19472,10 @@ async function sendForgeCanvasChatMessage(event) {
   const stagedFiles = forgeCanvasChatPendingFiles.slice();
   const stagedPrograms = forgeCanvasChatPendingPrograms.slice();
   const stagedAtlasItems = collectChatSlotAtlasItems();
-  const stagedFileObjects = stagedFiles.map(canvasPendingFileObject).filter(Boolean);
+  const stagedUploadFileObjects = stagedFiles
+    .filter(canvasPendingFileIsRealUpload)
+    .map(canvasPendingFileObject)
+    .filter(Boolean);
   if (!displayText && !stagedFiles.length && !stagedPrograms.length && !stagedAtlasItems.length) return;
   bangerEngineeringBriefBypassOnce = false;
   if (canvasChatBusyInCurrentSession()) {
@@ -19532,10 +19646,10 @@ async function sendForgeCanvasChatMessage(event) {
   forgeCanvasChatActiveTurnId = turnId;
   forgeCanvasChatActiveSessionId = turnSessionJobId || "";
   setCanvasChatBusy(true);
-  if (stagedFiles.length) {
+  if (stagedUploadFileObjects.length) {
     try {
       const hasSession = !!currentAlphaSessionJobId() || alphaSessionFiles.length > 0 || !!alphaPendingFile || !!alphaDocState.fileName;
-      await alphaHandleFiles(stagedFileObjects, { append: hasSession, jobId: currentAlphaSessionJobId(), skipPlanPreview: true });
+      await alphaHandleFiles(stagedUploadFileObjects, { append: hasSession, jobId: currentAlphaSessionJobId(), skipPlanPreview: true });
       turnSessionJobId = turnSessionJobId || currentAlphaSessionJobId();
       forgeCanvasChatActiveSessionId = turnSessionJobId || forgeCanvasChatActiveSessionId;
       setCanvasChatBusy(true);
@@ -21833,6 +21947,18 @@ window.addEventListener("forge:canvas-chat-stage-files", (event) => {
     replaceSource: detail.replaceSource,
     skipPreview: !!detail.skipPreview,
     skipBoomPreview: detail.skipBoomPreview !== false,
+  });
+});
+
+window.addEventListener("forge:canvas-chat-stage-virtual-attachment", (event) => {
+  const detail = event?.detail || {};
+  const attachment = detail.attachment || detail;
+  if (!attachment || typeof attachment !== "object") return;
+  addCanvasChatPendingVirtualAttachment(attachment, {
+    source: detail.source || attachment.source || "banger-scene-selection",
+    replaceSource: detail.replaceSource || attachment.replaceSource || "banger-scene-selection",
+    target: detail.target || attachment.target || "",
+    skipPreview: !!detail.skipPreview,
   });
 });
 
