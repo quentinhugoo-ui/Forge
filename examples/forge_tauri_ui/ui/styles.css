@@ -17256,7 +17256,7 @@ body.banger-fullscreen-mode .proof-panel.console-mode .boom-collection-head {
    collection toggles + filter on a single row (replaces the old two-line
    "Scene Collection" header + "Collection" sub-row). */
 .boom-collection-head {
-  grid-template-columns: auto auto minmax(0, auto) minmax(36px, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, auto) minmax(36px, 1fr) auto;
   gap: 6px;
   cursor: pointer;
 }

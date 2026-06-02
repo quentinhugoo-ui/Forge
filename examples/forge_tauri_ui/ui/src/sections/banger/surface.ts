@@ -7119,11 +7119,6 @@ import * as worlds from "./worlds.js";
             <span class="boom-search-icon" aria-hidden="true">${boomIcon("search")}</span>
             <input type="search" data-action="filter" placeholder="Search" value="${escapeBoomHtml(boomScene.filter)}">
           </label>
-          <span class="boom-outliner-toggles boom-outliner-toggles-passive" aria-hidden="true">
-            <span class="boom-toggle is-on">${boomIcon("eye")}</span>
-            <span class="boom-toggle is-on">${boomIcon("cursor")}</span>
-            <span class="boom-toggle is-on">${boomIcon("render")}</span>
-          </span>
           <button class="boom-panel-icon" data-action="noop" title="Filter">${boomIcon("filter")}</button>
         </div>
         <div class="boom-outliner-tree" role="tree" aria-label="Scene collection">
