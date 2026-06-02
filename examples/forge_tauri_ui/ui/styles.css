@@ -17193,6 +17193,16 @@ body.banger-fullscreen-mode .topbar-proof-btn {
   font-family: "Geist", "Segoe UI", sans-serif;
 }
 
+/* Scene Collection relocated to the right panel: drop the left-panel bleed
+   margins and fill the proof-panel content width. Higher specificity than
+   `.content.is-banger-layout .boom-blender-panel` so margins reset cleanly. */
+.content.is-banger-layout .proof-panel .boom-blender-panel-right {
+  margin: 0;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .boom-outliner,
 .boom-properties {
   min-height: 0;

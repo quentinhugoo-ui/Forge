@@ -9542,10 +9542,8 @@ function buildAlphaConsoleLogBody(output, outputKind) {
 function renderAlphaConsolePanel() {
   if (!alphaProofContent || !alphaProofPanelOpen || alphaRightPanelMode !== "console") return;
   if (isBangerSurfaceActive()) {
-    const bangerEmptyKey = "banger-console-empty";
-    if (alphaConsoleRenderedKey === bangerEmptyKey) return;
-    alphaConsoleRenderedKey = bangerEmptyKey;
-    alphaProofContent.innerHTML = "";
+    // Banger owns the right-panel content: it mounts the Scene Collection
+    // (.boom-blender-panel) into #alphaProofContent itself. Do not touch it.
     return;
   }
   if (!isTradingPanelActive() && alphaConsoleState.language === "pine") {

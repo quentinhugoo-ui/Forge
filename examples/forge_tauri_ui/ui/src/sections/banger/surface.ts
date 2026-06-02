@@ -30,6 +30,7 @@ import * as worlds from "./worlds.js";
     stage:   null,
     content: document.querySelector("#alphaSection .content"),
     leftPanel: document.querySelector("#alphaSection .left-panel"),
+    rightPanelContent: document.querySelector("#alphaProofContent"),
   };
 
   if (!els.boomBtn || !els.view || !els.canvas) {
@@ -7163,13 +7164,20 @@ import * as worlds from "./worlds.js";
   }
 
   function ensureBoomSidebar() {
-    if (!els.leftPanel) return;
-    if (!boomSidebarRoot || !boomSidebarRoot.isConnected) {
+    // Scene Collection lives in the RIGHT panel (#alphaProofContent). We only
+    // MOUNT here — opening the panel is deferred to the end of openOverlay so
+    // we never trigger a re-entrant shell render mid-init (that killed input
+    // wiring previously). The shell console renderer yields this content to
+    // banger via the renderAlphaConsolePanel guard.
+    const host = els.rightPanelContent;
+    if (!host) return;
+    if (!boomSidebarRoot) {
       boomSidebarRoot = document.createElement("section");
-      boomSidebarRoot.className = "boom-blender-panel";
-      // prepend so the Scene Collection sits ABOVE the shell-level
-      // Pinned / Recents / hardware specs / Profile dropdown.
-      els.leftPanel.insertBefore(boomSidebarRoot, els.leftPanel.firstChild);
+      boomSidebarRoot.className = "boom-blender-panel boom-blender-panel-right";
+    }
+    if (boomSidebarRoot.parentElement !== host) {
+      host.innerHTML = "";
+      host.appendChild(boomSidebarRoot);
     }
     if (!boomSidebarBound) {
       boomSidebarRoot.addEventListener("click", (event) => {
@@ -9359,6 +9367,13 @@ import * as worlds from "./worlds.js";
       gpuState = "suspended";
       setGpuStatus("GPU paused", "paused");
     }
+    // Reveal the Scene Collection in the right panel AFTER init is complete
+    // (input wiring done). Deferred so the shell render is never re-entrant
+    // with banger boot — opening it mid-init previously killed all clicks.
+    requestAnimationFrame(() => {
+      if (!isViewVisible() && !window.__forgeBoomIsActive) return;
+      try { window.__forgeSetRightPanelMode?.("console", true); } catch (_) {}
+    });
   }
 
   function closeOverlay() {
