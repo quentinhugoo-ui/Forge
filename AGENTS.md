@@ -1,4 +1,4 @@
-# Forge Agent Brief
+﻿# Forge Agent Brief
 
 Canonical backup: https://github.com/quentinhugoo-ui/Forge.git
 
@@ -9,7 +9,7 @@ This is the single source of truth for coding agents. Keep it short and current.
 Forge is a compact local agent OS:
 
 ```text
-LLM CLI -> ForgeSlash/Intent -> Godel verification -> KASM/FBC/Monster compute -> proof/artifact -> Tauri action
+LLM CLI -> BrainCommand/Intent -> Godel verification -> KASM/FBC/Monster compute -> proof/artifact -> Tauri action
 ```
 
 Prefer shorter circuits. Remove obsolete nodes before adding new ones.
@@ -21,7 +21,7 @@ Prefer shorter circuits. Remove obsolete nodes before adding new ones.
 - Never run recursive delete/move without resolved absolute path guards.
 - Do not commit caches, build outputs, datasets, secrets, `.vs/`, `target/`, `.forge-store/`, `.forge-data/` or `lab_findings.jsonl`.
 - Use `rg` for search and compact command outputs for large files.
-- For large/repeated/numerical/document-heavy work, use Forge direct-command discipline first: keep raw data on disk, exchange compact manifests, hashes and artifacts. MCP is only the external compatibility bridge.
+- For large/repeated/numerical/document-heavy work, use Forge direct-command discipline first: keep raw data on disk, exchange compact manifests, hashes and artifacts. ActCode is only the external compatibility bridge.
 - Commit and push meaningful work to GitHub before risky cleanup.
 
 ## Coding Doctrine
@@ -75,19 +75,25 @@ Every code change must reduce architectural drag:
 - Core library: `src/lib.rs`
 - Brain/memory: `src/brain.rs`
 - Godel machine: `src/godel.rs`
-- KASM runtime: `src/kasm.rs` plus dialect spec `src/kasm.td`
+- KASM runtime: `src/kasm.rs` plus dialect spec `src/kasm.td`; DeltaKASM auto-promotes matching `VecI64 -> VSumI64 -> I64` calls through normal `kasm::execute`.
 - Monster compute: `src/monster.rs`
 - Tauri backend: `examples/forge_tauri_ui/src-tauri/src/**`
 - Tauri UI: `examples/forge_tauri_ui/ui/**`
+- Banger Brain runtime: `examples/forge_tauri_ui/src-tauri/src/forge_brain_runtime.rs`
 - Runtime architecture: `FORGE_RUNTIME_ARCHITECTURE.md`
 - Native bytecode direction: `FORGE_NATIVE_BYTECODE.md`
 - Direct agent CLI: `examples/forge_tauri_ui/src-tauri/src/bin/forge_agent.rs`
 - Direct agent runtime: `examples/forge_tauri_ui/src-tauri/src/forge_agent_runtime.rs`
+- Collection OS kernel: `examples/forge_tauri_ui/src-tauri/src/collection_os.rs`
+- Forge Harvester: the general collection execution layer built on Collection OS.
+- Real Estate Harvester: the first vertical sector pack/adapter, not the general collection engine.
 - UI sections: shell, alpha, forge, WebExplorer, real-estate, real-estate-main, trading and banger.
 - UI source is TypeScript under `examples/forge_tauri_ui/ui/src/**`; browser JavaScript under `ui/dist/**/*.js` is generated only.
 - Native section bridge: WebExplorer and Bloomberg live actions must pass through `ui/src/shell/tauri-bridge.ts` / generated `ui/dist/forge-tauri-bridge.js` and `SECTION_OWNERSHIP.json`.
-- MCP server: `examples/forge_tauri_ui/src-tauri/src/bin/forge_mcp.rs`
-- MCP surface contract: MCP is transport for external LLM clients, not the Forge OS action language. The internal primary path is `forge_agent` direct CLI plus ForgeSlash/KASM/FBC. The external compatibility surface is `forge.search`, `forge.execute`, `forge.read_projection`, `forge.cancel`; the broad MCP catalog remains callable as legacy/internal compatibility via `FORGE_MCP_SURFACE=broad` or `FORGE_MCP_LEGACY_SURFACE=1`.
+- ActCode server: `examples/forge_tauri_ui/src-tauri/src/bin/FORGE_AGENT.rs`
+- ActCode surface contract: ActCode is transport for external LLM clients, not the Forge OS action language. The internal primary path is `forge_agent` direct CLI plus BrainCommand/KASM/FBC. The external compatibility surface is `forge.search`, `forge.execute`, `forge.read_projection`, `forge.cancel`; the broad ActCode catalog remains callable as legacy/internal compatibility via `FORGE_AGENT_SURFACE=broad` or `FORGE_AGENT_LEGACY_SURFACE=1`.
+- Banger ActCode surface: Brain stores only `/newcompute_`, `/selectcompute_` and `/newobject_`; historical computes appear as dynamic `/compute_<session>_` rows from the compute library, not as permanent Brain notes.
+- Banger compute library: SQLite under the Forge store at `brain/computes/compute_library.sqlite`; exact fragment/proof indexes are the authority for compute reuse.
 
 ## Brain, Memory And Godel
 
@@ -105,8 +111,10 @@ Core files:
 - `src/godel.rs`
 - `src/apply.rs`
 - `src/monster.rs`
+- `examples/forge_tauri_ui/src-tauri/src/forge_brain_runtime.rs`
 - `examples/forge_tauri_ui/src-tauri/src/forge_agent_tools.rs`
-- `examples/forge_tauri_ui/src-tauri/src/bin/forge_mcp.rs`
+- `examples/forge_tauri_ui/src-tauri/src/bin/FORGE_AGENT.rs`
+- `examples/forge_tauri_ui/src-tauri/src/collection_os.rs`
 
 ## UI Discipline
 
@@ -139,12 +147,27 @@ Real-estate shell logic is split into section runtimes:
 cargo check --lib --tests
 cargo test brain --lib
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml
-cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge_mcp
+cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin FORGE_AGENT
 node examples\forge_tauri_ui\scripts\forge-surface-manifest.mjs --check
 node examples\forge_tauri_ui\scripts\forge-ui-smoke.mjs
 node examples\forge_tauri_ui\scripts\forge-ui-section-audit.mjs
 node examples\forge_tauri_ui\scripts\forge-tauri-bus-audit.mjs --strict
 cd examples\forge_tauri_ui; npm.cmd run audit:js-debt
+```
+
+## Dependency / Toolchain Maintenance
+
+Nothing updates by itself; updates are always a deliberate, tested decision (pin in `Cargo.lock`, bump on purpose, verify, keep a rollback). Minor/patch bumps are safe via `cargo update`; major/breaking bumps (e.g. Dioxus `0.7 -> 0.8`) are manual, read the release notes first.
+
+- Reminder set **2026-06-02**: later, propose a full refresh of all Forge languages/toolchains (Rust, Dioxus/Leptos + WASM stack, Node/TS for the legacy UI) once the front migration is underway. Do not auto-bump majors; surface a checklist, let the user validate.
+
+```powershell
+rustup update                         # update the Rust toolchain itself
+cargo update                          # safe minor/patch bumps within Cargo.toml ranges
+cargo install cargo-outdated cargo-audit   # one-time: install the veille tools
+cargo outdated -w                     # list deps behind latest (workspace)
+cargo audit                           # security advisories (the `npm audit` of Rust)
+cd examples\forge_tauri_ui; npm.cmd outdated; npm.cmd audit   # legacy TS UI side
 ```
 
 ## Git Safety
