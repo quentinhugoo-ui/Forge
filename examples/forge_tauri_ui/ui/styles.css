@@ -17203,6 +17203,34 @@ body.banger-fullscreen-mode .topbar-proof-btn {
   min-height: 0;
 }
 
+/* Banger: the Scene Collection must start at the very top of the right panel.
+   Float the close (×) over the top-right corner so the shell header reserves
+   no vertical space, and bleed the content to the panel edges. */
+body.banger-fullscreen-mode .proof-panel.console-mode .proof-panel-header {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 6;
+  min-height: 0;
+  padding: 5px 6px 0 0;
+  border-bottom: 0;
+  pointer-events: none;
+}
+
+body.banger-fullscreen-mode .proof-panel.console-mode .proof-panel-header .proof-close {
+  pointer-events: auto;
+}
+
+body.banger-fullscreen-mode .proof-panel.console-mode .proof-panel-content {
+  padding: 0;
+}
+
+/* Reserve room on the right of the merged header so its filter button never
+   sits under the floating close (×). */
+body.banger-fullscreen-mode .proof-panel.console-mode .boom-collection-head {
+  padding-right: 30px;
+}
+
 .boom-outliner,
 .boom-properties {
   min-height: 0;
@@ -17222,6 +17250,20 @@ body.banger-fullscreen-mode .topbar-proof-btn {
   padding: 8px 10px 7px;
   background: rgba(42,42,40,0.94);
   border-bottom: 1px solid rgba(255,255,255,0.045);
+}
+
+/* Merged Scene Collection header: disclosure + icon + label + search +
+   collection toggles + filter on a single row (replaces the old two-line
+   "Scene Collection" header + "Collection" sub-row). */
+.boom-collection-head {
+  grid-template-columns: auto auto minmax(0, auto) minmax(36px, 1fr) auto auto;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.boom-collection-head .boom-panel-title-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .boom-panel-title {

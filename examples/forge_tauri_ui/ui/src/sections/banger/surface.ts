@@ -7111,29 +7111,22 @@ import * as worlds from "./worlds.js";
 
     const html = `
       <div class="boom-outliner">
-        <div class="boom-panel-head">
-          <div class="boom-panel-title">
-            <span class="boom-panel-title-icon" aria-hidden="true">${boomIcon("collection")}</span>
-            <span class="boom-panel-title-label">Scene Collection</span>
-          </div>
-          <label class="boom-search">
+        <div class="boom-panel-head boom-collection-head" data-action="toggle-collection" role="treeitem" aria-expanded="${boomScene.collectionExpanded ? "true" : "false"}">
+          <span class="boom-outliner-disclosure${boomScene.collectionExpanded ? " is-open" : ""}" aria-hidden="true">${boomIcon("chevron")}</span>
+          <span class="boom-panel-title-icon boom-outliner-type-collection" aria-hidden="true">${boomIcon("collection")}</span>
+          <span class="boom-panel-title-label">Collection</span>
+          <label class="boom-search" data-action="noop">
             <span class="boom-search-icon" aria-hidden="true">${boomIcon("search")}</span>
             <input type="search" data-action="filter" placeholder="Search" value="${escapeBoomHtml(boomScene.filter)}">
           </label>
+          <span class="boom-outliner-toggles boom-outliner-toggles-passive" aria-hidden="true">
+            <span class="boom-toggle is-on">${boomIcon("eye")}</span>
+            <span class="boom-toggle is-on">${boomIcon("cursor")}</span>
+            <span class="boom-toggle is-on">${boomIcon("render")}</span>
+          </span>
           <button class="boom-panel-icon" data-action="noop" title="Filter">${boomIcon("filter")}</button>
         </div>
         <div class="boom-outliner-tree" role="tree" aria-label="Scene collection">
-          <div class="boom-outliner-row boom-outliner-row-collection boom-outliner-row-collection-top" data-action="toggle-collection" role="treeitem" aria-expanded="${boomScene.collectionExpanded ? "true" : "false"}">
-            <span class="boom-outliner-indent boom-outliner-indent-top" aria-hidden="true"></span>
-            <span class="boom-outliner-disclosure${boomScene.collectionExpanded ? " is-open" : ""}">${boomIcon("chevron")}</span>
-            <span class="boom-outliner-type boom-outliner-type-collection" aria-hidden="true">${boomIcon("collection")}</span>
-            <span class="boom-outliner-label">Collection</span>
-            <span class="boom-outliner-toggles boom-outliner-toggles-passive">
-              <span class="boom-toggle is-on">${boomIcon("eye")}</span>
-              <span class="boom-toggle is-on">${boomIcon("cursor")}</span>
-              <span class="boom-toggle is-on">${boomIcon("render")}</span>
-            </span>
-          </div>
           ${objectRows || '<div class="boom-outliner-empty">No object matches the current filter.</div>'}
         </div>
       </div>
