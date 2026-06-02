@@ -17138,15 +17138,18 @@ body.banger-fullscreen-mode .topbar-proof-btn {
   display: none;
 }
 
-/* §banger : the Scene Collection now lives in the RIGHT panel
-   (#alphaProofContent, console mode) — see ensureBoomSidebar() in
-   sections/banger/surface.ts. The left panel keeps the standard
-   shell session navigation (Pinned + Recents + Profile dropdown).
+/* §banger : the Scene Collection panel coexists with the shell-level
+   Pinned + Recents + Profile dropdown so Banger users keep the same
+   session navigation as every other section.
 
-   Hidden in Banger left panel : panel-tabs (Compute/Atlas/Pool nav
-   redundant with Banger's own Design/Slicer), non-compute panes, and
-   the .panel-actions row (New session / Documents / My programs)
-   which doesn't apply to a SDF scene editor. */
+   Hidden in Banger : panel-tabs (Compute/Atlas/Pool nav redundant
+   with Banger's own Design/Slicer), non-compute panes, and the
+   .panel-actions row (New session / Documents / My programs) which
+   doesn't apply to a SDF scene editor.
+
+   Order in Banger : Scene Collection (boom-blender-panel) first,
+   then Pinned, Recents, hardware specs, Profile button — handled
+   by surface.ts using prepend() at insertion time. */
 .content.is-banger-layout .left-panel > .panel-tabs,
 .content.is-banger-layout .left-panel > .panel-tab-pane:not([data-tab-pane="compute"]),
 .content.is-banger-layout .left-panel .panel-actions {
@@ -17188,16 +17191,6 @@ body.banger-fullscreen-mode .topbar-proof-btn {
     linear-gradient(180deg, rgba(50,50,48,0.64), rgba(28,28,27,0.96) 18%, rgba(26,26,25,0.98));
   color: #cfcfc9;
   font-family: "Geist", "Segoe UI", sans-serif;
-}
-
-/* Scene Collection relocated to the right panel: drop the left-panel bleed
-   margins and fill the proof-panel content width. Higher specificity than
-   `.content.is-banger-layout .boom-blender-panel` so margins reset cleanly. */
-.content.is-banger-layout .proof-panel .boom-blender-panel-right {
-  margin: 0;
-  width: 100%;
-  flex: 1 1 auto;
-  min-height: 0;
 }
 
 .boom-outliner,

@@ -30,7 +30,6 @@ import * as worlds from "./worlds.js";
     stage:   null,
     content: document.querySelector("#alphaSection .content"),
     leftPanel: document.querySelector("#alphaSection .left-panel"),
-    rightPanelContent: document.querySelector("#alphaProofContent"),
   };
 
   if (!els.boomBtn || !els.view || !els.canvas) {
@@ -7164,20 +7163,13 @@ import * as worlds from "./worlds.js";
   }
 
   function ensureBoomSidebar() {
-    // Scene Collection lives in the RIGHT panel (#alphaProofContent), not the
-    // left panel. The shell console renderer yields the right-panel content to
-    // banger (see renderAlphaConsolePanel guard), so we open it in console mode
-    // and own the content here.
-    const host = els.rightPanelContent;
-    if (!host) return;
-    try { window.__forgeSetRightPanelMode?.("console", true); } catch (_) {}
-    if (!boomSidebarRoot) {
+    if (!els.leftPanel) return;
+    if (!boomSidebarRoot || !boomSidebarRoot.isConnected) {
       boomSidebarRoot = document.createElement("section");
-      boomSidebarRoot.className = "boom-blender-panel boom-blender-panel-right";
-    }
-    if (boomSidebarRoot.parentElement !== host) {
-      host.innerHTML = "";
-      host.appendChild(boomSidebarRoot);
+      boomSidebarRoot.className = "boom-blender-panel";
+      // prepend so the Scene Collection sits ABOVE the shell-level
+      // Pinned / Recents / hardware specs / Profile dropdown.
+      els.leftPanel.insertBefore(boomSidebarRoot, els.leftPanel.firstChild);
     }
     if (!boomSidebarBound) {
       boomSidebarRoot.addEventListener("click", (event) => {
