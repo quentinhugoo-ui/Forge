@@ -140,5 +140,72 @@ global Dioxus, Leptos seulement si un mur perf précis l'exige.
 - Ergonomie réelle du pont commandes Tauri typé (Dioxus `use_server_future` vs invoke direct).
 - Confort Subsecond en dev desktop sur ce repo (tip crate vs workspace).
 
+---
+
+## 7. Décision d'archi CACHÉE : garder Tauri, ou le supprimer ?
+
+Trouvaille majeure de l'approfondissement : **Dioxus desktop utilise `wry` + `tao` — exactement la même
+techno de webview que Tauri.** Forge a donc deux chemins, et c'est un vrai choix doctrinal (circuit court) :
+
+| | **Chemin A — garder Tauri** | **Chemin B — supprimer Tauri** |
+|---|---|---|
+| Archi | Coquille Tauri + Dioxus rendu WASM dans la webview | Dioxus desktop seul (wry/tao en direct) |
+| Frontière | Commandes Tauri (IPC) conservées, typées | **Plus d'IPC** : accès natif Rust direct |
+| Middlemen | Tauri reste un intermédiaire | **Un acteur entier supprimé** |
+| Risque | Faible, incrémental, rollback facile | Élevé : on perd plugins/écosystème Tauri |
+| Doctrine Forge | OK | **Plus aligné** (« supprimer les middlemen », circuit le plus court) |
+
+**Recommandation nuancée** : migrer en **Chemin A d'abord** (sécurité, incrémental — c'est ce que décrit
+`MIGRATION_FRONT.md`), puis, une fois toutes les sections en Dioxus et l'IPC réduit à presque rien, **évaluer
+le Chemin B** comme une suppression finale de Tauri (Étape 9 bis). On ne tranche pas B à l'aveugle : on y arrive
+quand l'IPC ne sert presque plus à rien. C'est exactement « supprimer les nœuds obsolètes avant d'en ajouter ».
+
+> Dioxus 0.8 (en cours, sans date) vise justement des **APIs natives de première classe** (caméra, géoloc,
+> stockage, OAuth) + un sous-ensemble « 1.0 » stable pour les auteurs de libs. Ça renforce le Chemin B à terme.
+
+## 8. Benchmarks (où ça se situe réellement)
+
+- **Leptos** : réactivité fine façon SolidJS → updates chirurgicales, **proche du vanilla JS** (no-framework)
+  sur `js-framework-benchmark`. Le plus rapide des Rust sur le DOM pur.
+- **Dioxus** : après l'optimisation **template-diffing**, **à parité avec SolidJS**, devant Sycamore et Yew.
+  Son VirtualDOM « fiber-like » batch intelligemment ; léger surcoût vs Leptos, négligeable en pratique.
+- **Les deux battent React** largement, tout en restant proches du JS natif. Référence officielle :
+  `krausest.github.io/js-framework-benchmark`.
+
+**Lecture Forge** : la perf de rendu DOM n'est PAS ton mur (tes murs sont le GPU/WGSL et le poids du bundle).
+Donc le choix Dioxus vs Leptos se joue sur archi/ergonomie/splitting, pas sur 5 % de benchmark DOM.
+
+## 9. Les autres prétendants (vérifié, pour ne rien rater)
+
+- **Sycamore** — réactivité fine façon SolidJS, axé perf. Sérieux mais écosystème/fullstack plus mince que
+  Leptos. Pas d'avantage décisif pour Forge.
+- **Yew** — le plus ancien, modèle React, stable, mais **VirtualDOM plus lourd** (diffing complet). En retrait
+  perf. Non retenu.
+- **Floem / Xilem** — pistes GPU-natives (hors navigateur), encore immatures, hors cible « webview Tauri ».
+  À surveiller, pas à adopter.
+- **Conclusion** : le duo **Dioxus / Leptos** reste le SOTA pertinent pour Forge. Rien de plus mûr à l'horizon.
+
+## 10. WASM multithreading (levier futur pour tes sections lourdes)
+
+- Le multithreading WASM est en **stage 3** et expédié par tous les runtimes JS majeurs.
+- Côté Rust : `wasm-bindgen` le supporte mais exige **nightly + bons flags** (threads via `SharedArrayBuffer`,
+  en-têtes COOP/COEP). Pas trivial.
+- **Lecture Forge** : pertinent à terme pour pousser du calcul (banger, KASM côté front) sur plusieurs threads
+  WASM au lieu de bloquer le thread UI. À garder en réserve, pas une dépendance de la migration initiale.
+
+## 11. Faits de version (instantané juin 2026)
+
+- **Dioxus 0.7** : version stable finale (cycle clos **23 jan 2026**) — apporte Dioxus **Native** (moteur HTML/CSS
+  **Blitz**, collab Firefox/Google/Servo/Bevy + **Vello** GPU), **hot-patch Rust** (Subsecond), **wasm-split**,
+  bibliothèque de composants (façon shadcn/Radix), détection Tailwind auto. Master = **0.8.0-alpha**.
+- **Dioxus 0.8** (en cours, sans date) : APIs natives (caméra/géoloc/stockage/OAuth), cross-platform, « 1.0 »
+  d'un sous-ensemble pour libs.
+- **Leptos** : **0.8.19** stable (islands-router, server fns WebSockets, erreurs typées), **0.9.0-alpha**
+  (19 mai 2026) surtout nettoyage/semver-breaking, pas de grosse nouveauté.
+- **WebAssembly 3.0** standard (GC, Memory64, exceptions) ; **reference-types** réduit la glue JS ; threads WASM
+  stage 3.
+
+---
+
 > Ce doc est un instantané. Quand la migration avance, fusionner les conclusions dans `ROADMAP.md` et
 > compresser/supprimer ce fichier (un doc n'est pas une archive).
