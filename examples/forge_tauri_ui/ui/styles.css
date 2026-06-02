@@ -17231,6 +17231,23 @@ body.banger-fullscreen-mode .proof-panel.console-mode .boom-collection-head {
   padding-right: 30px;
 }
 
+/* Banger: open the right panel as an OVERLAY over the canvas instead of a grid
+   column, so the central area (and its top toolbar icons) keeps its width and
+   the icons stay put when the panel opens. Keep the same on-screen rect. */
+body.banger-fullscreen-mode .content.proof-open {
+  --right-panel-width: 0px;
+}
+
+body.banger-fullscreen-mode .content.proof-open .proof-panel {
+  position: absolute;
+  top: 48px;
+  right: 8px;
+  bottom: 56px;
+  height: auto;
+  margin: 0;
+  z-index: 40;
+}
+
 .boom-outliner,
 .boom-properties {
   min-height: 0;
