@@ -14874,6 +14874,83 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   flex: 0 0 auto;
 }
 
+/* Prominent in-panel "Sign in with Google" CTA. Sits above the status row
+   so the action is obvious even when Forge thinks the user is already
+   "connected" via a local API key. Teal/turquoise tone matches the rest
+   of the Forge provider terminal palette. */
+.provider-story-cta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(49, 200, 178, 0.55);
+  border-radius: 10px;
+  background: linear-gradient(
+    135deg,
+    rgba(49, 200, 178, 0.18) 0%,
+    rgba(49, 200, 178, 0.06) 100%
+  );
+  box-shadow: 0 0 0 1px rgba(49, 200, 178, 0.08), 0 0 18px rgba(49, 200, 178, 0.18);
+  color: #f3f3ef;
+  font: 0.8rem/1.36 "Cascadia Mono", Consolas, "SF Mono", monospace;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.provider-story-cta:hover,
+.provider-story-cta:focus-visible {
+  border-color: rgba(49, 200, 178, 0.85);
+  background: linear-gradient(
+    135deg,
+    rgba(49, 200, 178, 0.28) 0%,
+    rgba(49, 200, 178, 0.10) 100%
+  );
+  box-shadow: 0 0 0 1px rgba(49, 200, 178, 0.20), 0 0 26px rgba(49, 200, 178, 0.30);
+  outline: none;
+}
+
+.provider-story-cta:active {
+  transform: translateY(1px);
+}
+
+.provider-story-cta-glyph {
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #1a73e8;
+  font: 700 1rem/1 "Cascadia Mono", Consolas, "SF Mono", monospace;
+  letter-spacing: 0;
+}
+
+.provider-story-cta-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.provider-story-cta-title {
+  color: var(--provider-story-accent, var(--forge-voice-accent));
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.provider-story-cta-subtitle {
+  color: rgba(238, 238, 232, 0.72);
+  font-weight: 400;
+}
+
 .oanda-terminal-panel {
   min-height: auto;
   overflow: visible;

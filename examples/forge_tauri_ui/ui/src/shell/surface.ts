@@ -27605,7 +27605,7 @@ function providerTerminalRawOutput(provider) {
 
 const providerTerminalProfileRows = {
   codex: ["Codex", "OpenAI OAuth Direct", "subscription", "OPENAI OAUTH DIRECT", "Direct OpenAI OAuth console for local Forge sessions", "Reuse local ChatGPT subscription auth, keep Codex direct in Forge, and route tool turns through the embedded OAuth console."],
-  gemini: ["Gemini", "Gemini CLI", "auth", "GOOGLE CLI BRIDGE", "Gemini CLI bridge for local Forge sessions", "Launch Gemini directly inside Forge, reuse local CLI auth or the saved local API key, and keep installation plus login in one terminal surface."],
+  gemini: ["Gemini", "Google OAuth Direct", "subscription", "GOOGLE OAUTH DIRECT", "Direct Google OAuth console for local Forge sessions", "Reuse your Google account auth, keep Gemini direct in Forge, and route tool turns through the embedded OAuth console."],
   claude: ["Claude", "Claude Code CLI", "auth", "ANTHROPIC CLI BRIDGE", "Claude Code login bridge for local Forge sessions", "Open Claude Code inside Forge, finish Claude.ai authentication locally, and keep the linked workspace flow inside the embedded terminal."],
 };
 
@@ -27807,6 +27807,31 @@ function buildProviderStoryMark() {
     .join("");
 }
 
+// Renders the prominent in-panel CTA that triggers the one-click OAuth
+// browser flow (currently Gemini only — Claude OAuth is not exposed by
+// Anthropic, so we keep the CLI bridge there). Returns an empty string for
+// providers that don't need the CTA or for sessions that are already
+// authenticated via OAuth (status authSource mentions OAuth / Google login).
+function providerTerminalConnectCta(provider, status) {
+  if (provider !== "gemini") return "";
+  const blob = `${String(status?.authSource || "")}\n${String(status?.message || "")}`.toLowerCase();
+  const hasGoogleOAuth = blob.includes("oauth") || blob.includes("google login");
+  if (hasGoogleOAuth) return "";
+  return `
+    <button
+      type="button"
+      id="geminiProviderOauthCta"
+      class="provider-story-cta"
+      aria-label="Sign in with Google to connect Gemini">
+      <span class="provider-story-cta-glyph" aria-hidden="true">G</span>
+      <span class="provider-story-cta-body">
+        <span class="provider-story-cta-title">Sign in with Google</span>
+        <span class="provider-story-cta-subtitle">Authorize Forge to use your Gemini account — no API key needed.</span>
+      </span>
+    </button>
+  `;
+}
+
 function buildCliProviderTerminalShell(provider) {
   const { profile, status, connected, stateText, tone, running, opening } = providerTerminalStoryState(provider);
   const wordmark = providerTerminalPixelWordmark(profile.name).map((line) => (
@@ -27844,6 +27869,7 @@ function buildCliProviderTerminalShell(provider) {
         </div>
       </div>
       <div class="provider-story-panel">
+        ${providerTerminalConnectCta(provider, status)}
         <div class="provider-story-statusline"><span class="provider-story-label">status</span><span class="${statusToneClass}">${escapeOandaTerminalHtml(stateText)}</span></div>
         <div class="provider-story-statusline"><span class="provider-story-label">runtime</span>${escapeOandaTerminalHtml(profile.runtime)}</div>
         <div class="provider-story-statusline"><span class="provider-story-label">${escapeOandaTerminalHtml(profile.sourceLabel)}</span>${escapeOandaTerminalHtml(sourceLabel)}</div>
@@ -28110,15 +28136,27 @@ function renderProviderWorkbench() {
   const installed = providerCliEffectiveInstalled(status);
   const needsNode = providerStatusNeedsNode(status);
   const stateText = providerWorkbenchStateText(status);
+  // Gemini gets a dedicated, action-clear label so the user sees the
+  // browser-based OAuth flow is one click away — not buried under a
+  // generic "Open" that historically meant "open the embedded terminal".
+  // We surface "Connect Google" until the saved OAuth creds are actually
+  // present on disk (auth source mentions OAuth); after that the button
+  // says "Open" because the user might just want the embedded terminal.
+  const blob = `${String(status?.authSource || "")}\n${String(status?.message || "")}`.toLowerCase();
+  const hasGoogleOAuth = blob.includes("oauth") || blob.includes("google login");
   const launchText = kind === "codex"
     ? connected ? "Open" : "Connect"
-    : connected
-      ? "Open"
-      : installed
-        ? "Repair"
-        : needsNode
-          ? "Needs Node"
-          : "Install";
+    : kind === "gemini"
+      ? hasGoogleOAuth
+        ? "Open"
+        : "Connect Google"
+      : connected
+        ? "Open"
+        : installed
+          ? "Repair"
+          : needsNode
+            ? "Needs Node"
+            : "Install";
   const launchDisabled = kind === "codex" ? false : false;
   const workbenchState = {
     kind,
@@ -29038,6 +29076,15 @@ providerLaunchActions.forEach(([actionName, kind]) => {
 forgeShellRuntime?.registerAction?.("provider-workbench-launch", () => {
   void openProviderWorkbench(activeProviderWorkbench, { restart: activeProviderWorkbench === "oanda" });
 });
+forgeShellRuntime?.registerAction?.("provider-gemini-oauth-connect", createAsyncAction(async () => {
+  // Dedicated handler for the prominent in-panel "Sign in with Google"
+  // button. Routes through the same connectGeminiProvider path as the
+  // top-right launch button, but with an explicit focusTerminal so the
+  // user is immediately watching the right surface when the browser
+  // returns from Google's consent screen.
+  setActiveProviderWorkbench("gemini", { focusTerminal: true });
+  await connectGeminiProvider({ background: false });
+}));
 forgeShellRuntime?.registerAction?.("provider-workbench-refresh", createAsyncAction(() => refreshProviderWorkbenchStatuses()));
 forgeShellRuntime?.registerAction?.("provider-refresh-all", createAsyncAction(async () => {
   await Promise.allSettled([

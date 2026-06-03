@@ -1,4 +1,4 @@
-import type { ForgeShellActionName, ForgeShellActionPayload } from "./shell-actions.js";
+﻿import type { ForgeShellActionName, ForgeShellActionPayload } from "./shell-actions.js";
 
 export interface ForgeShellActionRuntime {
   runAction(name: ForgeShellActionName, payload?: ForgeShellActionPayload): boolean;
@@ -44,14 +44,15 @@ const shellClickActions = Object.freeze([
   ["#geminiProviderConnect", "provider-gemini-connect"],
   ["#geminiProviderRefresh", "provider-gemini-refresh"],
   ["#geminiProviderClearKey", "provider-gemini-clear-key"],
+  ["#geminiProviderOauthCta", "provider-gemini-oauth-connect"],
   ["#claudeProviderConnect", "provider-claude-connect"],
   ["#claudeProviderRefresh", "provider-claude-refresh"],
   ["#voiceElevenSaveKey", "provider-voice-save-key"],
   ["#voiceElevenClearKey", "provider-voice-clear-key"],
   ["#navLibraryBtn", "library-toggle"],
   ["#libraryClose", "library-close"],
-  ["#navMcpBtn", "mcp-toggle"],
-  ["#mcpClose", "mcp-close"],
+  ["#navActCodeBtn", "ActCode-toggle"],
+  ["#ActCodeClose", "ActCode-close"],
   ["#navProgramsBtn", "programs-toggle"],
   ["#programsClose", "programs-close"],
   ["#programCreateToggle", "program-create-toggle"],
@@ -63,7 +64,7 @@ const shellClickActions = Object.freeze([
   ["#alphaSplitViewToggle", "alpha-split-toggle"],
   ["#alpha3dNewMap", "alpha-3d-new-map"],
   [".lib-filter-btn", "library-filter"],
-  [".mcp-filter-btn", "mcp-filter"],
+  [".ActCode-filter-btn", "ActCode-filter"],
   [".programs-filter-btn", "programs-filter"],
   [".atlas-subtab", "atlas-subtab"],
 ] satisfies readonly (readonly [string, ForgeShellActionName])[]);
