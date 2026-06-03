@@ -6,7 +6,7 @@ This is the single source of truth for coding agents. Keep it short and current.
 
 ## Mission
 
-InGen is a compact local agent OS. Forge is its content-addressed compute language, formerly KASM in code:
+InGen is a compact local agent OS. Forge is its content-addressed compute language, formerly KASM in code :
 
 ```text
 LLM CLI -> BrainCommand/Intent -> Godel verification -> Forge bytecode/Monster compute -> proof/artifact -> Tauri action
@@ -14,22 +14,13 @@ LLM CLI -> BrainCommand/Intent -> Godel verification -> Forge bytecode/Monster c
 
 Prefer shorter circuits. Remove obsolete nodes before adding new ones.
 
-## North Star (long-horizon, gated)
-
-These are direction, not the active checklist (that stays in `ROADMAP.md`). Each phase is a hard gate: do not open phase N+1 before phase N has shipped a mature, verified result. Never push two of these walls at once.
-
-1. **Deliver a complete, mature InGen app.** Prerequisite to everything below. The agentic loop (perception -> intent -> Godel verification -> Forge runtime -> action) must be stable, native and verifiable before any OS or hardware ambition.
-2. **Turn InGen into an agentic OS that replaces Windows.** End state: a native (no webview, wgpu/Dioxus direct) mono-app appliance on a minimal Linux kernel — the machine boots into InGen. Reuses the kernel's drivers; InGen is the whole userland. Hard prerequisite: the native front migration (`MIGRATION_FRONT.md`) must be finished first.
-3. **Move the mature agentic OS onto local Grace-Blackwell silicon (DGX Spark now / RTX Spark fall 2026).** Goal: replace the cloud LLM dependency with a local brain — run, fine-tune and distill the agentic model in-house on 128 GB unified memory, ARM64. DGX Spark (Linux, NVIDIA-supported drivers, already shipping) is the dev target; RTX Spark (Windows-on-ARM, consumer) is the distribution horizon. Requires an ARM64 InGen build.
-
-**Open question (decisive, unresolved):** can a local model match a frontier cloud model (GPT-5.5 / Claude Opus 4.8)? Honest stance: no raw-scale parity on one box near-term — frontier pre-training compute is the wall. But that is the wrong target. InGen's bet is that **domain specialization + Godel verification + reusable verified programs** let a smaller local model match or beat the frontier *on InGen's agentic tasks*, because the verifier catches errors and content-addressed programs offload reasoning. Treat raw-parity as a non-goal; treat verified task parity as the real, testable objective.
 
 ## Hard Rules
 
 - Protect `C:\Users\quent\Documents\EVE\MAP`.
 - Preserve unrelated user changes.
 - Never run recursive delete/move without resolved absolute path guards.
-- Do not commit caches, build outputs, datasets, secrets, `.vs/`, `target/`, `.forge-store/`, `.forge-data/` or `lab_findings.jsonl`.
+- Do not commit caches, build outputs, datasets, secrets, `.vs/`, `target/`, `.forge-store/` or `.forge-data/`.
 - Use `rg` for search and compact command outputs for large files.
 - For large/repeated/numerical/document-heavy work, use InGen direct-command discipline first: keep raw data on disk, exchange compact manifests, hashes and artifacts.
 - Commit and push meaningful work to GitHub before risky cleanup.
@@ -38,9 +29,9 @@ These are direction, not the active checklist (that stays in `ROADMAP.md`). Each
 
 This doctrine is mandatory, not aspirational. For any non-trivial answer, plan, code change, refactor, architecture decision or cleanup, agents must use it as the main reasoning frame before choosing an implementation path.
 
-Before writing code beyond a purely mechanical one-line edit, research deeply the current state of the art when internet access is available: recent official docs, papers, serious repos, release notes and market direction. Treat that current state as the average floor, not the target. Then build as if InGen must live one step ahead of it: surf the incoming wave, not the already-visible one, while staying verifiable locally.
+Before writing code beyond a purely mechanical one-line edit, research deeply (minimum 5 deep search on web, clone serious GitHub repo to explore last innovations, the current state of the art when internet access is available: recent official docs, papers, release notes and market direction. Treat that current state as the average floor, not the target. Then build as if InGen must live one step ahead of it: surf the incoming wave, not the already-visible one, while staying verifiable locally.
 
-Code at the frontier, not at the average. For meaningful work, identify the wall being broken: latency, memory, context size, proof quality, UI branching, sandbox reach, agent autonomy or developer experience. Treat established practice as the floor, then push one wall with a small hypothesis, a local verifier, and a rollback path.
+Code at the frontier of the code know at the today date, not at the average. For meaningful work, treat established coding practice as not good enough, make hypothesis of the frontier you can break, if you succeed to easily obviously you didnét break any frontier, you need to fail in your itérations, it's normal in the process of writing innovative code, but Don't fake it, Don't pretend to fail while you're writing established code.
 
 Frontier code must be ambitious and disciplined:
 
@@ -203,3 +194,13 @@ The GitHub `master` branch is a clean snapshot history. The older local history 
 ## Documentation Rule
 
 Docs are context for agents, not an archive. Historical detail belongs in Git history. If a doc becomes noisy, compress it. Live objectives belong in `ROADMAP.md`, not in private side lists.
+
+## North Star (long-horizon, gated)
+
+These are direction, not the active checklist (that stays in `ROADMAP.md`). Each phase is a hard gate: do not open phase N+1 before phase N has shipped a mature, verified result. Never push two of these walls at once.
+
+1. **Deliver a complete, mature InGen app.** Prerequisite to everything below. The agentic loop (perception -> intent -> Godel verification -> Forge runtime -> action) must be stable, native and verifiable before any OS or hardware ambition.
+2. **Turn InGen into an agentic OS that replaces Windows.** End state: a native (no webview, wgpu/Dioxus direct) mono-app appliance on a minimal Linux kernel — the machine boots into InGen. Reuses the kernel's drivers; InGen is the whole userland. Hard prerequisite: the native front migration (`MIGRATION_FRONT.md`) must be finished first.
+3. **Move the mature agentic OS onto local Grace-Blackwell silicon (DGX Spark now / RTX Spark fall 2026).** Goal: replace the cloud LLM dependency with a local brain — run, fine-tune and distill the agentic model in-house on 128 GB unified memory, ARM64. DGX Spark (Linux, NVIDIA-supported drivers, already shipping) is the dev target; RTX Spark (Windows-on-ARM, consumer) is the distribution horizon. Requires an ARM64 InGen build.
+
+**Open question (decisive, unresolved):** can a local model match a frontier cloud model (GPT-5.5 / Claude Opus 4.8)? Honest stance: no raw-scale parity on one box near-term — frontier pre-training compute is the wall. But that is the wrong target. InGen's bet is that **domain specialization + Godel verification + reusable verified programs** let a smaller local model match or beat the frontier *on InGen's agentic tasks*, because the verifier catches errors and content-addressed programs offload reasoning. Treat raw-parity as a non-goal; treat verified task parity as the real, testable objective.

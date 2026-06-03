@@ -23,7 +23,7 @@ const maxBytes = Number(argValue("--max-bytes") ?? 1024 * 1024);
 const discoveryBytes = Number(argValue("--discovery-bytes") ?? 512 * 1024);
 const downloadLimit = Number(argValue("--download-limit") ?? 32);
 const parserLimit = Number(argValue("--parser-limit") ?? 64);
-const stages = new Set((argValue("--stages") ?? "audit,discovery,download,parse,resolve,intel,seeds,simulate,memory,dataflow,toolcells,evidence").split(",").map((it) => it.trim()).filter(Boolean));
+const stages = new Set((argValue("--stages") ?? "audit,discovery,download,parse,resolve,intel,seeds,memory,dataflow,evidence").split(",").map((it) => it.trim()).filter(Boolean));
 
 const dataDir = join(storePath, "real-estate-harvester", "data");
 const sourceManifestPath = join(dataDir, "source_manifest.jsonl");
@@ -50,7 +50,6 @@ const stepResults = [];
 
 if (!existsSync(registryPath)) fail(`registry not found: ${registryPath}`);
 if (!existsSync(adaptersPath)) fail(`parser adapters registry not found: ${adaptersPath}`);
-if (!existsSync(toolCellsPath)) fail(`tool cells registry not found: ${toolCellsPath}`);
 mkdirSync(dataDir, { recursive: true });
 
 if (stages.has("audit")) {
@@ -144,19 +143,6 @@ if (stages.has("seeds")) {
   }
 }
 
-if (stages.has("simulate")) {
-  if (!existsSync(kasmMetricSeedsPath)) {
-    stepResults.push(skippedStep("simulate", "missing_kasm_metric_seeds", kasmMetricSeedsPath));
-  } else {
-    stepResults.push(runStep("simulate", "real-estate-kasm-simulator.mjs", [
-      `--seeds=${kasmMetricSeedsPath}`,
-      `--store=${storePath}`,
-      "--pretty",
-      `--limit=${parserLimit}`,
-    ]));
-  }
-}
-
 if (stages.has("memory")) {
   if (!existsSync(rankedActionsPath) || !existsSync(kasmRustComputePath)) {
     stepResults.push(skippedStep("memory", "missing_ranked_actions_or_compute", `${rankedActionsPath} | ${kasmRustComputePath}`));
@@ -177,17 +163,6 @@ if (stages.has("dataflow")) {
     `--store=${storePath}`,
     "--pretty",
     `--limit=${parserLimit}`,
-  ]));
-}
-
-if (stages.has("toolcells")) {
-  stepResults.push(runStep("toolcells", "real-estate-tool-cell-runner.mjs", [
-    `--registry=${toolCellsPath}`,
-    `--store=${storePath}`,
-    "--tool=marche-veille",
-    "--engine=forge_bytecode_v0",
-    "--refresh-fbc",
-    "--pretty",
   ]));
 }
 

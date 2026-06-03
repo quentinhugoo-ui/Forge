@@ -25,8 +25,7 @@ node examples\forge_tauri_ui\scripts\real-estate-parser-router.mjs --pretty --do
 node examples\forge_tauri_ui\scripts\real-estate-entity-resolver.mjs --pretty --events=C:\tmp\forge-real-estate-source-discovery\real-estate-harvester\data\normalized_events.jsonl --store=C:\tmp\forge-real-estate-source-discovery --limit=20
 node examples\forge_tauri_ui\scripts\real-estate-intel-pack-builder.mjs --pretty --graph=C:\tmp\forge-real-estate-source-discovery\real-estate-harvester\data\entity_graph.jsonl --events=C:\tmp\forge-real-estate-source-discovery\real-estate-harvester\data\normalized_events.jsonl --store=C:\tmp\forge-real-estate-source-discovery --limit=20
 node examples\forge_tauri_ui\scripts\real-estate-kasm-seed-builder.mjs --pretty --packs=C:\tmp\forge-real-estate-source-discovery\real-estate-harvester\data\intel_packs.jsonl --store=C:\tmp\forge-real-estate-source-discovery --limit=20
-node examples\forge_tauri_ui\scripts\real-estate-kasm-simulator.mjs --pretty --seeds=C:\tmp\forge-real-estate-source-discovery\real-estate-harvester\data\kasm_metric_seeds.jsonl --store=C:\tmp\forge-real-estate-source-discovery --limit=20
-node examples\forge_tauri_ui\scripts\real-estate-brain-commit.mjs --pretty --ranked=C:\tmp\forge-real-estate-source-discovery\real-estate-harvester\data\ranked_actions.json --compute=C:\tmp\forge-real-estate-source-discovery\real-estate-harvester\data\kasm_rust_compute.json --packs=C:\tmp\forge-real-estate-source-discovery\real-estate-harvester\data\intel_packs.jsonl --store=C:\tmp\forge-real-estate-source-discovery --limit=20
+node examples\forge_tauri_ui\scripts\real-estate-brain-commit.mjs --pretty --packs=C:\tmp\forge-real-estate-source-discovery\real-estate-harvester\data\intel_packs.jsonl --store=C:\tmp\forge-real-estate-source-discovery --limit=20
 ```
 
 Prefer the unified pipeline. The individual commands are lower-level debugging tools. Live runs write hashes and metadata, and raw files stay in the harvester store.
@@ -41,6 +40,4 @@ The intel pack builder consumes the graph and normalized events to emit `intel_p
 
 The KASM seed builder consumes intel packs to emit `kasm_metric_seeds.jsonl`: numeric feature vectors, priority scores, simulation hints and proof hashes.
 
-The KASM simulator calls the Rust `lab_runner_immo` massive compute path with `--seeds kasm_metric_seeds.jsonl`, then emits `kasm_rust_compute.json`, `kasm_simulation_results.jsonl` and `ranked_actions.json`. The JS layer stays an artifact adapter; Rust owns the seed-backed scenario matrix.
-
-The brain commit bridge consumes `ranked_actions.json`, `kasm_rust_compute.json` and `intel_packs.jsonl` to emit `real_estate_memory_commits.jsonl`: compact semantic `brain_commit` requests anchored by action hashes, Rust proof hashes and evidence refs.
+The brain commit bridge consumes `intel_packs.jsonl` to emit `real_estate_memory_commits.jsonl`: compact semantic `brain_commit` requests anchored by action hashes and evidence refs.

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+﻿import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -85,12 +85,10 @@ const lineBudgets = {
   "examples/forge_tauri_ui/src-tauri/src/main.rs": 8000,
   "examples/forge_tauri_ui/ui/src/shell/surface.ts": 7000,
   "examples/forge_tauri_ui/ui/styles.css": 3500,
-  "examples/lab_runner_trading.rs": 2500,
-  "examples/forge_tauri_ui/src-tauri/src/bin/forge_mcp.rs": 3000,
+  "examples/forge_tauri_ui/src-tauri/src/bin/FORGE_AGENT.rs": 3000,
   "examples/forge_tauri_ui/src-tauri/src/trading.rs": 3500,
   "examples/forge_tauri_ui/ui/src/sections/banger/surface.ts": 2500,
   "examples/forge_tauri_ui/ui/src/sections/trading/surface.ts": 3000,
-  "examples/lab_runner_banger.rs": 2000,
   "examples/forge_tauri_ui/src-tauri/src/forge_agent_tools.rs": 2500,
 };
 
@@ -387,8 +385,8 @@ function extractTauriCommands() {
   };
 }
 
-function extractMcpTools() {
-  const text = read("src-tauri/src/bin/forge_mcp.rs");
+function extractActCodeTools() {
+  const text = read("src-tauri/src/bin/FORGE_AGENT.rs");
   const toolsStart = text.indexOf("fn tools_list()");
   const callStart = text.indexOf("fn handle_tool_call");
   const toolsBlock = toolsStart >= 0 && callStart > toolsStart ? text.slice(toolsStart, callStart) : "";
@@ -401,12 +399,12 @@ function extractMcpTools() {
   for (let match; (match = namePattern.exec(defaultVisibleBlock));) {
     visible.push(match[1]);
   }
-  const helperPattern = /mcp_tool\(\s*"([a-z][a-z0-9_.]+)"/g;
+  const helperPattern = /ActCode_tool\(\s*"([a-z][a-z0-9_.]+)"/g;
   for (let match; (match = helperPattern.exec(defaultVisibleBlock));) {
     visible.push(match[1]);
   }
 
-  const callEnd = text.indexOf("fn mcp_internal_tool_response", callStart);
+  const callEnd = text.indexOf("fn ActCode_internal_tool_response", callStart);
   const callBlock = callStart >= 0 && callEnd > callStart ? text.slice(callStart, callEnd) : "";
   const handled = [];
   const armPattern = /^\s*((?:"[^"]+"\s*(?:\|\s*)?)+)=>/gm;
@@ -414,8 +412,8 @@ function extractMcpTools() {
     const names = [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
     handled.push(...names);
   }
-  const aliasesStart = text.indexOf("const MCP_TOOL_ALIASES");
-  const aliasesEnd = text.indexOf("const MCP_INTERNAL_TOOL_ROUTES", aliasesStart);
+  const aliasesStart = text.indexOf("const ActCode_TOOL_ALIASES");
+  const aliasesEnd = text.indexOf("const ActCode_INTERNAL_TOOL_ROUTES", aliasesStart);
   const aliasesBlock = aliasesStart >= 0 && aliasesEnd > aliasesStart ? text.slice(aliasesStart, aliasesEnd) : "";
   for (const match of aliasesBlock.matchAll(/"([^"]+)"/g)) {
     handled.push(match[1]);
@@ -563,7 +561,7 @@ function extractUiSurface(registeredTauriCommands) {
 }
 
 function validate(manifest) {
-  const expectedMcp = [
+  const expectedActCode = [
     "forge.search",
     "forge.execute",
     "forge.read_projection",
@@ -571,12 +569,12 @@ function validate(manifest) {
   ];
   const expectedSections = ["shell", "alpha", "forge", "webexplorer", "real-estate", "real-estate-main", "trading", "banger"];
   const expectedSensitive = ["webexplorer_native_present", "bloomberg_live_native_present"];
-  const mcpVisible = new Set(manifest.mcp.visible);
+  const ActCodeVisible = new Set(manifest.ActCode.visible);
   const sections = new Set(manifest.ui.sections.map((section) => section.id));
   const tauriRegistered = new Set(manifest.tauri.registered.map((entry) => entry.basename));
 
-  for (const tool of expectedMcp) {
-    if (!mcpVisible.has(tool)) failures.push(`missing visible MCP tool: ${tool}`);
+  for (const tool of expectedActCode) {
+    if (!ActCodeVisible.has(tool)) failures.push(`missing visible ActCode tool: ${tool}`);
   }
   for (const section of expectedSections) {
     if (!sections.has(section)) failures.push(`missing UI section: ${section}`);
@@ -587,8 +585,8 @@ function validate(manifest) {
   for (const missing of manifest.tauri.annotatedButUnregistered) {
     warnings.push(`tauri command annotated but not registered: ${missing}`);
   }
-  for (const missing of manifest.mcp.visibleWithoutHandler) {
-    failures.push(`visible MCP tool has no handler arm: ${missing}`);
+  for (const missing of manifest.ActCode.visibleWithoutHandler) {
+    failures.push(`visible ActCode tool has no handler arm: ${missing}`);
   }
   for (const hit of manifest.ui.frontendUnknownIpcInvocations) {
     warnings.push(`frontend IPC command is not registered with Tauri: ${hit}`);
@@ -612,7 +610,7 @@ const manifest = {
   structure: structureMetrics(),
   vendorArtifacts: vendorArtifacts(),
   tauri: extractTauriCommands(),
-  mcp: extractMcpTools(),
+  ActCode: extractActCodeTools(),
 };
 manifest.ui = extractUiSurface(new Set(manifest.tauri.registered.map((entry) => entry.basename)));
 manifest.proofHash = sha256(JSON.stringify(manifest));
@@ -640,7 +638,7 @@ if (jsonMode) {
   }`);
   console.log(`[forge-surface-manifest] pressure ${pressure || "none"}`);
   console.log(`[forge-surface-manifest] tauri registered=${manifest.tauri.registeredCount} annotated=${manifest.tauri.annotatedCount}`);
-  console.log(`[forge-surface-manifest] mcp visible=${manifest.mcp.visibleCount} handledAliases=${manifest.mcp.handledAliasCount}`);
+  console.log(`[forge-surface-manifest] ActCode visible=${manifest.ActCode.visibleCount} handledAliases=${manifest.ActCode.handledAliasCount}`);
   console.log(`[forge-surface-manifest] ui sections=${manifest.ui.sections.length} frontendCommands=${manifest.ui.frontendCommandCount}`);
   console.log(`[forge-surface-manifest] vendorArtifacts=${manifest.vendorArtifacts.length}`);
 }

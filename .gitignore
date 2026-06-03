@@ -9,12 +9,6 @@ target/
 *.swp
 *.bak
 
-# Lab append-only log : croît à plusieurs centaines de MB sans rotation.
-# C'est de la donnée de R&D locale, pas du code de prod. Pas dans git.
-# Pour archiver : `cargo run --release --example lab_runner -- prune 100000`
-# qui garde les N dernières entrées.
-lab_findings.jsonl
-
 .forge-store/
 **/.forge-store/
 

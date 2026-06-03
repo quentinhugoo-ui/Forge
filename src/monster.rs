@@ -52,9 +52,6 @@ const FEATURE_VALIDATION_LOG_PATH: &str = "feature_validation.jsonl";
 /// `MonsterNode::analyze_program`. Aujourd'hui purement informatif â€”
 /// la consommation par le triage multi-Ã©chelle (Phase 12.1+) viendra
 /// dans des sessions ultÃ©rieures.
-///
-/// (Le nom Ã©vite la collision avec `monster::lab::ProgramAnalysis`
-/// qui dÃ©crit autre chose cÃ´tÃ© synthÃ©tiseur.)
 #[derive(Debug, Clone)]
 pub struct KasmStructure {
     pub size_label: &'static str,
@@ -7089,7 +7086,7 @@ mod atlas {
 //! ### Lookup
 //!
 //! - **O(1) hash lookup** quand les examples utilisateur matchent
-//!   exactement les inputs canoniques (cas standard lab_runner).
+//!   exactement les inputs canoniques.
 //!   On hash le vecteur des outputs et on lookup dans une HashMap.
 //! - **Fallback linear scan** sinon (compatibilitÃ© large).
 //!
@@ -7154,9 +7151,8 @@ pub trait AtlasIngest: Send + Sync {
     ) -> bool;
 }
 
-/// Inputs canoniques pour l'index. **Doivent matcher
-/// `lab_runner::build_diverse_inputs`** : sinon les lookups O(1)
-/// Ã©chouent et on retombe sur linear scan.
+/// Inputs canoniques pour l'index : si les examples ne matchent pas
+/// cette sÃ©quence, les lookups O(1) Ã©chouent et on retombe sur linear scan.
 pub const ATLAS_CANONICAL_INPUTS: [i64; 12] = [
     -7, -1, 1, 11, -100, 100, -987, 987, -12345, -50000, 12345, 50000,
 ];
@@ -7317,8 +7313,8 @@ impl Atlas {
     ///
     /// StratÃ©gie :
     /// 1. **Fast path O(1)** : si les examples sont alignÃ©s sur les
-    ///    inputs canoniques (mÃªme sÃ©quence, mÃªme ordre â€” typique
-    ///    `lab_runner`), hash lookup direct. **Pas de fallback linear
+    ///    inputs canoniques (mÃªme sÃ©quence, mÃªme ordre),
+    ///    hash lookup direct. **Pas de fallback linear
     ///    scan** : si l'atlas ne contient pas la classe sÃ©mantique,
     ///    inutile de scanner â€” par construction c'est dÃ©finitif.
     /// 2. **Slow path O(N)** : SEULEMENT si les inputs ne matchent
@@ -7443,8 +7439,8 @@ fn program_matches_examples(prog: &Program, examples: &[(i64, i64)]) -> bool {
 //   â€¢ forge.cas as cryptographic audit substrate
 //   â€¢ Erlang let-it-crash â€” submit() returns bool, flush silent on Drop
 
-/// FNV-1a 64-bit hash. Preserved bit-stable from the legacy
-/// `lab::fnv64` to keep migrated `hot-atlas.bin` keys consistent.
+/// FNV-1a 64-bit hash, bit-stable to keep migrated `hot-atlas.bin`
+/// keys consistent.
 pub(crate) fn fnv64(data: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     for &b in data {
@@ -10314,7 +10310,7 @@ impl MonsterNode {
     /// identical calls hit the brain.
     ///
     /// This method does **not** persist to git or push to the atlas â€”
-    /// that decision belongs to the caller (lab_runner ingests through
+    /// that decision belongs to the caller (a batch ingester goes through
     /// `LiveAtlas::submit_batch`; an interactive REPL might not). Keeps
     /// the dispatch loop allocation-light.
     pub fn dispatch_batch(
@@ -10511,7 +10507,7 @@ fn try_dispatch_batch_cpu_fast(
     calls: &[BatchCall],
 ) -> io::Result<Option<Vec<DispatchResult>>> {
     // PrÃ©-check : tous les programmes du batch doivent Ãªtre CPU-routable.
-    // Single-program batch : cas dominant (lab_runner, gpu_dispatch bench).
+    // Single-program batch : cas dominant (gpu_dispatch bench).
     use std::collections::HashMap;
     let mut hot_cache: HashMap<Hash, Arc<HotProgram>> = HashMap::new();
     for call in calls {
@@ -18001,14 +17997,14 @@ use crate::kasm::Op;
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Feature validation suite (Î¦.Î¼.feature-validate, 2026-05-01)
 //
-// Le lab_runner standard (run_lab_batch) ne touche que les ops v0.x
+// La validation standard ne touche que les ops v0.x
 // scalaires. Les 13 features v1.0 KASM (Cond, Comptime, Memoize,
 // MultiMethod, Pipeline, Vmap/Pmap, Reduce/Scan, Filter/Zip, VecI64
 // storage, Grad, Fori/While, Switch/Try, Iterate/Outer/TakeWhile,
 // Adaptive) ne sont jamais exercÃ©es par le synthÃ©tiseur.
 //
 // Cette suite "validate-features" produit 1 ligne JSONL par feature
-// dans lab_findings.jsonl avec source="feature_validation",
+// dans feature_validation.jsonl avec source="feature_validation",
 // wave=<id>, feature=<name>, status="PASS"|"FAIL", details=<msg>.
 // Les features anciennes (dÃ©jÃ  livrÃ©es + testÃ©es en unit tests) sont
 // re-validÃ©es ici aussi pour garantir qu'elles fonctionnent dans le
@@ -18699,7 +18695,7 @@ pub(super) fn validate_features_impl() -> io::Result<()> {
     {
         // Î£.10 : audit `format!()` chaud â†’ `&'static str` prÃ©-formatÃ©s.
         // VÃ©rification que format_kcps utilise format! controlÃ©.
-        let pre_alloc: &'static str = "lab_findings.jsonl";
+        let pre_alloc: &'static str = "feature_validation.jsonl";
         let ok = pre_alloc.as_ptr() as usize != 0 && pre_alloc.len() > 0;
         record("2.Î£.10", "static str pour logs (Î£.10, audit format!)",
             if ok { "PASS" } else { "FAIL" },

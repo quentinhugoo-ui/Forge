@@ -38,8 +38,7 @@ Artefacts opérationnels:
 - `examples/forge_tauri_ui/scripts/real-estate-entity-resolver.mjs`: resolver déterministe qui lit `normalized_events.jsonl`, canonise les candidats et produit `entity_graph.jsonl`.
 - `examples/forge_tauri_ui/scripts/real-estate-intel-pack-builder.mjs`: builder qui lit `entity_graph.jsonl` + `normalized_events.jsonl` et produit `intel_packs.jsonl` pour KASM/brain/LLM.
 - `examples/forge_tauri_ui/scripts/real-estate-kasm-seed-builder.mjs`: builder qui lit `intel_packs.jsonl` et produit `kasm_metric_seeds.jsonl`, un mini feature store local pour simulations KASM.
-- `examples/forge_tauri_ui/scripts/real-estate-kasm-simulator.mjs`: orchestrateur qui appelle le lab Rust `lab_runner_immo`, écrit `kasm_rust_compute.json`, `kasm_simulation_results.jsonl` et `ranked_actions.json`.
-- `examples/forge_tauri_ui/scripts/real-estate-brain-commit.mjs`: bridge mémoire qui lit `ranked_actions.json`, `kasm_rust_compute.json` et `intel_packs.jsonl`, puis écrit `real_estate_memory_commits.jsonl` prêt pour `brain_commit`.
+- `examples/forge_tauri_ui/scripts/real-estate-brain-commit.mjs`: bridge mémoire qui lit `intel_packs.jsonl`, puis écrit `real_estate_memory_commits.jsonl` prêt pour `brain_commit`.
 
 Doctrine SOTA:
 
@@ -51,8 +50,7 @@ Doctrine SOTA:
 - Le `entity-resolver` suit le plancher Splink/Dedupe: blocking/canonicité d'abord, scoring explicite et preuves par hash, puis seulement plus tard apprentissage actif ou matching probabiliste.
 - Le `intel-pack-builder` suit le plancher Great Expectations/Soda/OpenLineage: qualité, contrat, provenance, puis produit des packs LLM-safe avec score d'utilisabilité, signaux, trous de données, actions et preuves.
 - Le `kasm-seed-builder` suit le plancher Feature Store/observability: transformer les packs en features numériques versionnées, puis laisser KASM simuler sans relire les raws.
-- Le `kasm-simulator` pousse le mur calcul: le JS reste un adaptateur d'artefacts, pendant que `lab_runner_immo` lit `kasm_metric_seeds.jsonl`, expanse les seeds en espace métrique massif, exécute une matrice propriétés x scénarios x horizons, cache les étapes content-addressed et retourne seulement scores, hashes, work items et actions classées.
-- Le `brain-commit` pousse le mur context-size: les actions classées deviennent des notes sémantiques compactes, hashées et ancrées dans les preuves, afin que les commandes immo puissent rappeler le résultat avant tout calcul LLM natif.
+- Le `brain-commit` pousse le mur context-size: les intel packs deviennent des notes sémantiques compactes, hashées et ancrées dans les preuves, afin que les commandes immo puissent rappeler le résultat avant tout calcul LLM natif.
 
 Principe d'ordre:
 

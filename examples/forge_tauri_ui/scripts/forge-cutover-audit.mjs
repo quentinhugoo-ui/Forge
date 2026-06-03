@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+﻿import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -71,7 +71,6 @@ const sectionRegistryTs = read("ui/src/shell/section-registry.ts");
 const manifestsTs = read("ui/src/sections/manifests.ts");
 const dataflow = read("scripts/real-estate-living-dataflow-graph.mjs");
 const toolCells = read("source-registry/real-estate-tool-cells.json");
-const toolCellRunner = read("scripts/real-estate-tool-cell-runner.mjs");
 const evidenceMemory = read("scripts/real-estate-evidence-memory-builder.mjs");
 const pipeline = read("scripts/real-estate-source-pipeline.mjs");
 const manualJsLock = read("ui/src/MANUAL_JS_LOCK.md");
@@ -99,16 +98,16 @@ expect(
 );
 expect("6 Durable Job Runtime must have unified job ledger", jobRuntimeRs.includes("ForgeUnifiedJob") && jobRuntimeRs.includes("forge_job_ledger.jsonl") && jobRuntimeRs.includes("recover_job_ledger"));
 expect("7 Living Dataflow Graph must materialize content-addressed views", dataflow.includes("living_dataflow_graph.json") && dataflow.includes("inputHash") && dataflow.includes("source -> raw -> event -> entity/signal -> intelPack -> score -> action -> memoryFact"));
-expect("8 Tool Cells must manifest schemas, permissions and proofs", toolCells.includes('"inputSchema"') && toolCells.includes('"outputSchema"') && toolCells.includes('"permissions"') && toolCellRunner.includes("manifestHash") && toolCellRunner.includes("proofHash"));
+expect("8 Tool Cells must manifest schemas, permissions and proofs", toolCells.includes('"inputSchema"') && toolCells.includes('"outputSchema"') && toolCells.includes('"permissions"'));
 expect("9 Evidence Memory must produce sourced, contradictory/supersedable facts", evidenceMemory.includes("evidence_memory_facts.jsonl") && evidenceMemory.includes("supersedes") && evidenceMemory.includes("contradicts") && evidenceMemory.includes("sourceHash") && evidenceMemory.includes("proofHash"));
-expect("10 Pipeline must run dataflow, toolcells and evidence stages", pipeline.includes("runStep(\"dataflow\"") && pipeline.includes("runStep(\"toolcells\"") && pipeline.includes("runStep(\"evidence\""));
+expect("10 Pipeline must run dataflow and evidence stages", pipeline.includes("runStep(\"dataflow\"") && pipeline.includes("runStep(\"evidence\""));
 expect(
   "11 Intent UI contract must be TS-owned and bundled through the shell runtime",
   intentSurfaceTs.includes("step_16_ts_owned_contract") &&
-    intentSurfaceTs.includes("FORGE_MCP_COMPACT_SURFACE=1") &&
-    intentSurfaceTs.includes("FORGE_INTENT_MCP_SURFACE=1") &&
+    intentSurfaceTs.includes("FORGE_AGENT_COMPACT_SURFACE=1") &&
+    intentSurfaceTs.includes("FORGE_INTENT_ActCode_SURFACE=1") &&
     intentSurfaceTs.includes("direct JS listeners") &&
-    intentSurfaceTs.includes("duplicate intent runners outside ForgeSlash/forge_mcp.rs") &&
+    intentSurfaceTs.includes("duplicate intent runners outside BrainCommand/FORGE_AGENT.rs") &&
     mainTs.includes("forgeIntentSurfaceContract") &&
     mainTs.includes("ForgeIntentSurfaceContract"),
 );
