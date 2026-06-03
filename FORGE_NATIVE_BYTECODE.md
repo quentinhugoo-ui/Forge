@@ -191,6 +191,44 @@ Done:
   normal/curvature, Banger virtual geometry pages, radiance caches, virtual
   shadow pages, physical material payloads, hashed PCG graphs, spatial
   streaming cells, light budgets and mesh/SDF/shader/proof/preview exports.
+- Complex-primitive bounds tranche 69: the same six primitive families now
+  carry fine amplitude-amplification bounds in the bounds-inference pipeline,
+  not the [-1e15, 1e15] catch-all that used to blow `mean(...)` through any
+  reasonable sample tolerance. The new arms in `infer_builtin_bounds`:
+  - `convolution(signal, kernel)` / `fir_filter(signal, taps)` use the same
+    finite-support Young's-inequality bound as `signal_transform_bounds`:
+    `K · max|signal| · max|kernel|` with `K = 4096` (matches the FFT cap).
+  - `iir_filter(signal, b, a)` adds an 8× pole budget on top of the same
+    formula (`K · 8 · max|signal| · max|b|`).
+  - `window_hann(signal)` / `window_blackman(signal)` pass the signal carrier
+    through (window samples live in [-1, 1] so Young gives identity).
+  - `spectrogram(signal, nperseg)` uses the DFT triangular bound
+    `nperseg · max|signal|` when the `nperseg` literal is known (else the
+    signal cap), so `spectrogram([-1,1], 16) ∈ [-16, 16]` exactly.
+  - `wavelet_step(signal)` uses a 2× cover of the Haar `√2` bound.
+  - `mean`, `median`, `quantile`, `minmax`, AD passthroughs (`grad`, `jvp`,
+    `vjp`, `jacobian`, `hessian`, `hessian_diag`, `adjoint`,
+    `sensitivity_forward/adjoint`) now propagate the carrier's bound exactly
+    instead of widening to 1e15. `sum` and `sparse_reduce` use `bounded_sum`
+    (the loop-cap × carrier range), `variance` / `std` use the
+    Bhatia-Davis-style range bound `(b-a)²/4` and `(b-a)/2`.
+  - Graph traversal carries domain-specific bounds:
+    `bfs_step / connected_components_step ∈ [0, 1e12]` (node-id range),
+    `shortest_path_step ∈ [0, 1e15]`, `pagerank_step ∈ [0, 1]` (normalised
+    rank vector).
+  - Unit propagation: `convolution`, `fir_filter`, `iir_filter`, `spectrogram`
+    now propagate the signal's unit dim through their 2- or 3-arg shapes
+    (kernel/taps/nperseg treated as dimensionless coefficients/indices). The
+    pre-existing arm only matched the 1-arg variant, which prevented these
+    primitives from ever being used in a real `forge_program` module before
+    tranche 69. `csr_matvec` / `sparse_solve` carry the RHS unit through.
+
+  Together with tranche 63-68 (typed shape), a Forge module can now write
+  `emit out: f64 = mean(spectrogram(signal, 16u32))` with `signal ∈ [-1, 1]`
+  and the bounds resolve to a tight `[-16, 16]` instead of the old
+  `[-1e15, 1e15]`. The Monster `/newcompute_` plan still routes ops by name
+  to the specialised signal/AD/graph/sparse shader profiles; the tighter
+  bounds just unblock the constraint/sample-tolerance check.
 - Complex-primitive shape tranche 63-68: six primitive families now carry real
   typed shape semantics in `ForgeExpr::infer_ty` instead of only-acceptance
   passthrough.

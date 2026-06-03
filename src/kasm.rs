@@ -20247,14 +20247,21 @@ fn infer_builtin_unit_dim(name: &str, args: &[ForgeExpr], units: &[ForgeUnitDim]
         "neg" | "abs" | "floor" | "ceil" | "round" | "trunc" | "fract" | "sign" | "saturate"
         | "zscore" | "normalize_stats" | "moving_avg" | "ewma" | "importance_sample" | "resample"
         | "sort" | "unique" | "partition" | "compact" | "prefix_sum" | "fft" | "ifft" | "rfft"
-        | "convolution" | "correlation" | "fir_filter" | "iir_filter" | "window_hann"
-        | "window_blackman" | "spectrogram" | "wavelet_step" | "coo_to_csr" | "sparse_reduce"
+        | "window_hann" | "window_blackman" | "wavelet_step" | "coo_to_csr" | "sparse_reduce"
         | "bfs_step" | "shortest_path_step" | "pagerank_step" | "connected_components_step"
         | "surfel_accumulate" | "integrate_force" | "integrate_velocity" | "fluid_advect_step"
         | "pressure_projection_step" | "constraint_project" | "unit_cast" | "byte_store"
         | "span" | "slice_view" | "grad" | "jacobian" | "hessian" | "hessian_diag" | "adjoint"
         | "jvp" | "vjp" | "sensitivity_forward" | "sensitivity_adjoint" | "optimize"
         | "constraint_solve" if units.len() == 1 => Some(units[0]),
+        // Signal primitives that take a kernel / taps / window-size in their
+        // tail args: the output carries the signal carrier's unit (kernel /
+        // tail args are dimensionless coefficients/indices).
+        "convolution" | "fir_filter" | "spectrogram" if units.len() == 2 => Some(units[0]),
+        "iir_filter" if units.len() == 3 => Some(units[0]),
+        // Sparse matrix × vector / sparse linear solve: output keeps the
+        // right-hand side's unit (matrix entries dimensionless).
+        "csr_matvec" | "sparse_solve" if units.len() == 2 => Some(units[1]),
         "index" | "sum" | "mean" | "variance" | "std" | "median" | "quantile" | "minmax"
         | "robust_loss" | "sample" | "take" | "gather" | "masked_load" | "graph_neighbors"
         | "voxel_sample" | "thermal_flux_step" if !units.is_empty() => Some(units[0]),
@@ -20524,6 +20531,83 @@ fn signal_transform_bounds(_signal: &ForgeExpr, input: ForgeBounds) -> Option<Fo
     ForgeBounds::new(-4096.0 * max_abs, 4096.0 * max_abs)
 }
 
+/// Same-mode convolution / FIR / sparse-matvec amplitude bound (Young's
+/// inequality, finite-support version): each output sample is bounded by
+/// `K · max|signal| · max|kernel|` where `K` is the bounded signal-loop cap
+/// (matches the FFT cap above for consistency). Tight when both carriers stay
+/// inside [-M, M] — e.g. `convolution([-1,1], [-1,1])` ⇒ `[-K, K]` instead of
+/// `[-1e15, 1e15]`.
+fn signal_convolution_bounds(signal: ForgeBounds, kernel: ForgeBounds) -> Option<ForgeBounds> {
+    const K: f64 = 4096.0;
+    let s = signal.min.abs().max(signal.max.abs());
+    let k = kernel.min.abs().max(kernel.max.abs());
+    let bound = K * s * k;
+    ForgeBounds::new(-bound, bound)
+}
+
+/// IIR amplitude bound: same as FIR with an extra factor for recursive
+/// amplification. The denominator carrier `a` should never include 0 (would
+/// blow the recursion), so we conservatively multiply by an 8× pole-budget.
+fn signal_iir_bounds(
+    signal: ForgeBounds,
+    b: ForgeBounds,
+    _a: ForgeBounds,
+) -> Option<ForgeBounds> {
+    const K: f64 = 4096.0;
+    const POLE_BUDGET: f64 = 8.0;
+    let s = signal.min.abs().max(signal.max.abs());
+    let bb = b.min.abs().max(b.max.abs());
+    let bound = K * POLE_BUDGET * s * bb;
+    ForgeBounds::new(-bound, bound)
+}
+
+/// Hann / Blackman window taper: window samples live in [-1, 1] (Hann is
+/// [0, 1], Blackman approximately [-0.5, 1]). The output preserves the
+/// signal carrier (Young's inequality with kernel L_∞ = 1).
+fn signal_window_bounds(signal: ForgeBounds) -> Option<ForgeBounds> {
+    Some(signal)
+}
+
+/// Spectrogram bin amplitude bound: each STFT bin is bounded by
+/// `nperseg · max|signal|` (DFT triangular bound). When the `nperseg` literal
+/// is known, the bound is exact; otherwise fall back to the signal cap.
+fn signal_spectrogram_bounds(nperseg_expr: &ForgeExpr, signal: ForgeBounds) -> Option<ForgeBounds> {
+    let nperseg = forge_expr_u32_literal(nperseg_expr).map(|v| v as f64).unwrap_or(4096.0);
+    let max_abs = signal.min.abs().max(signal.max.abs());
+    let bound = nperseg * max_abs;
+    ForgeBounds::new(-bound, bound)
+}
+
+/// One DWT step (Mallat / Haar): cA and cD samples are bounded by
+/// `√2 · max|signal|`. We use 2× as a conservative cover for higher-order
+/// daubechies/biorthogonal kernels.
+fn signal_wavelet_step_bounds(signal: ForgeBounds) -> Option<ForgeBounds> {
+    let max_abs = signal.min.abs().max(signal.max.abs());
+    let bound = 2.0 * max_abs;
+    ForgeBounds::new(-bound, bound)
+}
+
+/// Sum / sparse_reduce over a bounded carrier: sum of N values in `[a, b]` is
+/// in `[N·a, N·b]`. We use the same loop cap K (4096) as the other signal
+/// helpers — Forge's bounded-control discipline guarantees no static
+/// collection blows past it.
+fn bounded_sum_bounds(carrier: ForgeBounds) -> Option<ForgeBounds> {
+    const K: f64 = 4096.0;
+    ForgeBounds::new(K * carrier.min.min(0.0), K * carrier.max.max(0.0))
+}
+
+/// Variance / std of values in `[a, b]`: variance ≤ (b - a)² / 4 (extremal
+/// Bernoulli distribution), std ≤ (b - a) / 2.
+fn stats_dispersion_bounds(carrier: ForgeBounds, name: &str) -> Option<ForgeBounds> {
+    let range = (carrier.max - carrier.min).max(0.0);
+    let var_max = (range * range) / 4.0;
+    match name {
+        "variance" => ForgeBounds::new(0.0, var_max),
+        "std" => ForgeBounds::new(0.0, range / 2.0),
+        _ => None,
+    }
+}
+
 fn infer_fori_bounds(
     args: &[ForgeExpr],
     variables: &[(String, ForgeBounds)],
@@ -20722,16 +20806,33 @@ fn infer_builtin_bounds(name: &str, args: &[ForgeExpr], bounds: &[ForgeBounds]) 
         | "slice" | "concat" | "split" | "tile" | "repeat" | "broadcast" | "sort" | "unique"
         | "partition" | "compact" | "prefix_sum" | "importance_sample" | "resample"
         | "zscore" | "normalize_stats" | "moving_avg" | "ewma"
-        | "convolution" | "correlation" | "fir_filter" | "iir_filter" | "window_hann"
-        | "window_blackman" | "spectrogram" | "wavelet_step" | "coo_to_csr" | "sparse_reduce"
-        | "bfs_step" | "shortest_path_step" | "pagerank_step" | "connected_components_step"
+        | "coo_to_csr"
         | "surfel_accumulate" | "integrate_force" | "integrate_velocity" | "fluid_advect_step"
         | "pressure_projection_step" | "constraint_project" | "unit_cast" | "span" | "slice_view"
             if !bounds.is_empty() => Some(bounds[0]),
         "fft" | "rfft" if bounds.len() == 1 => signal_transform_bounds(&args[0], bounds[0]),
         "ifft" if bounds.len() == 1 => Some(bounds[0]),
-        "sum" | "mean" | "variance" | "std" | "median" | "quantile" | "minmax"
-        | "covariance" | "linear_regression" | "robust_loss" if !bounds.is_empty() => {
+        "convolution" if bounds.len() == 2 => signal_convolution_bounds(bounds[0], bounds[1]),
+        "fir_filter" if bounds.len() == 2 => signal_convolution_bounds(bounds[0], bounds[1]),
+        "iir_filter" if bounds.len() == 3 => signal_iir_bounds(bounds[0], bounds[1], bounds[2]),
+        "window_hann" | "window_blackman" if bounds.len() == 1 => signal_window_bounds(bounds[0]),
+        "spectrogram" if bounds.len() == 2 => signal_spectrogram_bounds(&args[1], bounds[0]),
+        "wavelet_step" if bounds.len() == 1 => signal_wavelet_step_bounds(bounds[0]),
+        "sparse_reduce" if bounds.len() == 1 => bounded_sum_bounds(bounds[0]),
+        "csr_matvec" if bounds.len() == 2 => signal_convolution_bounds(bounds[0], bounds[1]),
+        "sparse_solve" if bounds.len() == 2 => signal_convolution_bounds(bounds[0], bounds[1]),
+        "bfs_step" if bounds.len() == 1 => ForgeBounds::new(0.0, 1.0e12),
+        "shortest_path_step" if bounds.len() == 1 => ForgeBounds::new(0.0, 1.0e15),
+        "pagerank_step" if bounds.len() == 1 => ForgeBounds::new(0.0, 1.0),
+        "connected_components_step" if bounds.len() == 1 => ForgeBounds::new(0.0, 1.0e12),
+        "grad" | "hessian_diag" | "adjoint" | "jvp" | "vjp"
+        | "sensitivity_forward" | "sensitivity_adjoint"
+            if bounds.len() == 1 => Some(bounds[0]),
+        "jacobian" | "hessian" if bounds.len() == 1 => Some(bounds[0]),
+        "mean" | "median" | "quantile" | "minmax" if !bounds.is_empty() => Some(bounds[0]),
+        "variance" | "std" if !bounds.is_empty() => stats_dispersion_bounds(bounds[0], name),
+        "sum" if !bounds.is_empty() => bounded_sum_bounds(bounds[0]),
+        "covariance" | "linear_regression" | "robust_loss" if !bounds.is_empty() => {
             ForgeBounds::new(-1.0e15, 1.0e15)
         }
         "pareto" | "pareto_front" | "argsort" | "histogram" | "bin_count" if !bounds.is_empty() => {
@@ -21291,6 +21392,97 @@ artifact_handoff:
             ForgeExpr::parse("sparse_reduce(signal)").unwrap().infer_ty(&vars, &funcs),
             Some(ForgeType::Scalar(ForgeScalarTy::F64)),
         );
+    }
+
+    #[test]
+    fn forge_complex_primitives_have_fine_bounds_in_program_validation() {
+        // Each module below is shaped so it ONLY parses if the new fine
+        // bounds for the targeted primitive flow through `mean(...)` and
+        // satisfy the sample tolerance. With the old [-1e15, 1e15] catch-all
+        // these modules failed to validate (tolerance was unreachable); with
+        // the new tight bounds they validate.
+        let header = r#"
+forge_module:
+  module FAMILY_PROBE version 1
+forge_imports:
+  none
+forge_constants:
+  none
+forge_functions:
+  fn id(x: f64) -> f64 { return x }
+forge_program:
+  emit out: f64 = EXPR
+forge_inputs:
+  INPUTS
+forge_outputs:
+  output out: f64 unit none handoff scalar
+forge_constraints:
+  assert finite(out)
+forge_samples:
+  case one { given GIVENS; expect out approx 0.0 tolerance TOL }
+forge_cost:
+  max_steps=4000
+  max_memory_mb=8
+  precision=f64
+artifact_handoff:
+  proof_hash,output_hash
+"#;
+        let cases: &[(&str, &str, &str, &str, &str)] = &[
+            (
+                "convolution_4096_cap",
+                "mean(convolution(signal, kernel))",
+                "param signal: array<f64,64> unit none bounds [-1.0, 1.0] nominal 0.0\n  param kernel: array<f64,8> unit none bounds [-1.0, 1.0] nominal 0.0",
+                "signal=0.0, kernel=0.0",
+                "5.0e3",
+            ),
+            (
+                "window_hann_passthrough",
+                "mean(window_hann(signal))",
+                "param signal: array<f64,64> unit none bounds [-1.0, 1.0] nominal 0.0",
+                "signal=0.0",
+                "1.5",
+            ),
+            (
+                "spectrogram_nperseg_x_amplitude",
+                "mean(spectrogram(signal, 16u32))",
+                "param signal: array<f64,64> unit none bounds [-1.0, 1.0] nominal 0.0",
+                "signal=0.0",
+                "20.0",
+            ),
+            (
+                "wavelet_step_sqrt2_cover",
+                "mean(wavelet_step(signal))",
+                "param signal: array<f64,64> unit none bounds [-1.0, 1.0] nominal 0.0",
+                "signal=0.0",
+                "5.0",
+            ),
+            (
+                "pagerank_step_normalized",
+                "mean(pagerank_step(graph))",
+                "param graph: graph<u64,f32> unit none bounds [0.0, 1.0] nominal 0.0",
+                "graph=0.0",
+                "1.5",
+            ),
+            (
+                "ad_grad_passthrough",
+                "length(grad(point))",
+                "param point: vec<f64,3> unit none bounds [-1.0, 1.0] nominal 0.0",
+                "point=0.0",
+                "3.0",
+            ),
+        ];
+        for (label, expr, inputs, givens, tolerance) in cases {
+            let source = header
+                .replace("FAMILY_PROBE", &format!("bounds_probe_{label}"))
+                .replace("EXPR", expr)
+                .replace("INPUTS", inputs)
+                .replace("GIVENS", givens)
+                .replace("TOL", tolerance);
+            assert!(
+                ForgeModuleSpec::parse(&source).is_some(),
+                "{label}: tight bounds must let the module validate with tolerance={tolerance}",
+            );
+        }
     }
 
     #[test]

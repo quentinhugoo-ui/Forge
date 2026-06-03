@@ -25658,11 +25658,6 @@ fn monster_builds_typed_gpu_buffer_abi_from_forge_ir() {
 
 #[test]
 fn monster_signal_filter_shader_profile_is_specialized() {
-    // Coverage of the signal-family type/shape semantics lives in the kasm
-    // unit test `forge_complex_primitives_have_real_typed_shape_semantics`.
-    // Here we only assert Monster's name-based shader-profile dispatch still
-    // routes the new typed convolution/spectrogram/wavelet_step ops to the
-    // specialized tiled-convolution shader without falling back to a probe.
     for op in ["convolution", "spectrogram", "wavelet_step"] {
         assert_eq!(
             crate::monster::compute_graph::shader_profile_for_kernel(
@@ -25681,6 +25676,57 @@ fn monster_signal_filter_shader_profile_is_specialized() {
         assert!(!profile.contains("probe") && !profile.contains("reference"),
             "Monster must not fall back to a reference/probe shader for {op}");
     }
+}
+
+#[test]
+fn monster_lowers_objective1_signal_filter_shapes_into_specialized_profiles() {
+    // Forge module exercising every signal-family op enriched with real typed
+    // shape semantics. The amplification-aware bounds (Young's inequality for
+    // convolution/FIR, `nperseg · max|s|` for spectrogram, √2 cover for the
+    // wavelet step) keep `mean(...)` inside a deterministic range, so Monster
+    // can lower + bind the typed buffer ABI without the wide-bounds blowup.
+    let source = r#"
+forge_module:
+  module signal_shapes_e2e version 1
+forge_imports:
+  none
+forge_constants:
+  none
+forge_functions:
+  fn taper(s: array<f64,64>) -> array<f64,64> { return window_hann(s) }
+  fn conv(s: array<f64,64>, k: array<f64,8>) -> array<f64,64> { return convolution(s, k) }
+  fn fir(s: array<f64,64>, k: array<f64,8>) -> array<f64,64> { return fir_filter(s, k) }
+  fn iir(s: array<f64,64>, b: array<f64,4>, a: array<f64,4>) -> array<f64,64> { return iir_filter(s, b, a) }
+  fn spec_mean(s: array<f64,64>) -> f64 { return mean(spectrogram(s, 16u32)) }
+  fn dwt_mean(s: array<f64,64>) -> f64 { return mean(wavelet_step(s)) }
+  fn pipeline(s: array<f64,64>, k: array<f64,8>, b: array<f64,4>, a: array<f64,4>) -> f64 { return mean(iir(fir(conv(taper(s), k), k), b, a)) }
+forge_program:
+  let acc = pipeline(signal, kernel, b_taps, a_taps)
+  let extra = spec_mean(signal) + dwt_mean(signal)
+  emit out: f64 = acc + extra
+forge_inputs:
+  param signal: array<f64,64> unit none bounds [-1.0, 1.0] nominal 0.0
+  param kernel: array<f64,8> unit none bounds [-1.0, 1.0] nominal 0.0
+  param b_taps: array<f64,4> unit none bounds [-1.0, 1.0] nominal 0.0
+  param a_taps: array<f64,4> unit none bounds [-1.0, 1.0] nominal 1.0
+forge_outputs:
+  output out: f64 unit none handoff scalar
+forge_constraints:
+  assert finite(out)
+forge_samples:
+  case one { given signal=0.0, kernel=0.0, b_taps=0.0, a_taps=1.0; expect out approx 0.0 tolerance 1.0e12 }
+forge_cost:
+  max_steps=200000
+  max_memory_mb=8
+  precision=f64
+artifact_handoff:
+  proof_hash,output_hash
+"#;
+    let plan = crate::monster::compute_graph::MonsterComputeGraphPlan::from_forge_source(source)
+        .expect("signal-family module with fine bounds builds a Monster plan");
+    assert_eq!(plan.proof_hash.len(), 64);
+    assert_eq!(plan.compute_ir_hash.len(), 64);
+    assert!(plan.compute_ir_node_count > 0);
 }
 
 
