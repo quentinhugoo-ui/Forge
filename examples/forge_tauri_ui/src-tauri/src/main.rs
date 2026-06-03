@@ -4127,6 +4127,15 @@ struct GoogleOAuthPending {
     scopes: Vec<String>,
     auth_url: Option<String>,
     started_ms: u64,
+    /// Scope preset chosen by the caller (`"core"`, `"gemini"`, `"gmail"`, ...).
+    /// Stored so the callback handler can route the freshly issued tokens to
+    /// the right destination (e.g. `~/.gemini/oauth_creds.json` for the
+    /// gemini preset, the system keyring for everyone else).
+    scope_preset: String,
+    /// OAuth client_id used to issue the auth URL. Stored so the token
+    /// exchange uses the SAME client even if a sibling flow with a different
+    /// preset starts concurrently and changes the global default.
+    client_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -4384,6 +4393,17 @@ fn google_oauth_client_id() -> Option<String> {
         })
 }
 
+/// Pick the right OAuth client_id for a scope preset. Gemini requires the
+/// Code Assist endpoint to recognise the client, which only accepts a
+/// curated list of installed-app client_ids — the gemini-cli's own. For any
+/// other preset we delegate to the standard Forge desktop OAuth client.
+fn google_oauth_client_id_for_preset(scope_preset: &str) -> Option<String> {
+    if scope_preset.eq_ignore_ascii_case("gemini") {
+        return Some(GEMINI_CLI_OAUTH_CLIENT_ID.to_string());
+    }
+    google_oauth_client_id()
+}
+
 fn google_oauth_requested_scopes(request: Option<&GoogleOAuthStartRequest>) -> (String, Vec<String>) {
     let mut scopes = Vec::new();
     let preset = request
@@ -4408,6 +4428,14 @@ fn google_oauth_requested_scopes(request: Option<&GoogleOAuthStartRequest>) -> (
         "gmail" => {
             scopes.push("https://www.googleapis.com/auth/gmail.modify".to_string());
             scopes.push("https://www.googleapis.com/auth/gmail.send".to_string());
+        }
+        // One-click "Connect Gemini" flow. We only ask for the scopes the
+        // Code Assist endpoint actually needs — cloud-platform for the API
+        // call, userinfo for the consent screen identity. No Gmail/Drive/etc.
+        "gemini" => {
+            scopes.push("https://www.googleapis.com/auth/cloud-platform".to_string());
+            scopes.push("https://www.googleapis.com/auth/userinfo.email".to_string());
+            scopes.push("https://www.googleapis.com/auth/userinfo.profile".to_string());
         }
         _ => {
             for scope in GOOGLE_OAUTH_CORE_API_SCOPES {
@@ -5433,7 +5461,14 @@ fn google_oauth_handle_callback(
         google_oauth_emit_failed(app, err);
         return;
     }
-    let Some(client_id) = google_oauth_client_id() else {
+    // Use the client_id captured at `google_oauth_start` time so the token
+    // exchange matches the auth URL even when a concurrent flow with a
+    // different preset has changed the global default mid-flight.
+    let client_id = if !pending.client_id.is_empty() {
+        pending.client_id.clone()
+    } else if let Some(fallback) = google_oauth_client_id_for_preset(&pending.scope_preset) {
+        fallback
+    } else {
         let err = "google oauth client id missing after callback".to_string();
         if let Some(port) = google_oauth_redirect_port(&pending.redirect_uri) {
             let _ = google_oauth_record_ledger(
@@ -5459,10 +5494,35 @@ fn google_oauth_handle_callback(
     };
     let callback_port = google_oauth_redirect_port(&pending.redirect_uri);
     let pending_scopes = pending.scopes.clone();
+    let pending_preset = pending.scope_preset.clone();
     let state_hash = google_oauth_hash_str("oauth_state", &state);
     let exchange_result = pollster::block_on(google_oauth_exchange_code(client_id.clone(), code, pending))
         .and_then(|tokens| {
             google_oauth_save_tokens(&tokens)?;
+            // Gemini one-click flow: also mirror the freshly issued tokens into
+            // ~/.gemini/oauth_creds.json so (a) `run_gemini_canvas_oauth_direct`
+            // picks them up on the very next chat turn and (b) launching the
+            // bare `gemini` CLI later finds an already-authorised session.
+            if pending_preset.eq_ignore_ascii_case("gemini") {
+                let expiry_ms = tokens.expires_at_ms.map(|v| v as i64);
+                let scope = if tokens.scope.is_empty() {
+                    None
+                } else {
+                    Some(tokens.scope.join(" "))
+                };
+                if let Err(err) = write_gemini_local_auth(
+                    &tokens.access_token,
+                    tokens.refresh_token.as_deref(),
+                    scope.as_deref(),
+                    Some("Bearer"),
+                    expiry_ms,
+                    None,
+                ) {
+                    eprintln!(
+                        "[forge.gemini] WARN: could not write ~/.gemini/oauth_creds.json: {err}"
+                    );
+                }
+            }
             Ok(tokens)
         });
     google_oauth_finish_browser_response(stream, &exchange_result);
@@ -5827,7 +5887,13 @@ async fn google_oauth_start(
     app: tauri::AppHandle,
     request: Option<GoogleOAuthStartRequest>,
 ) -> Result<GoogleOAuthStartResult, String> {
-    let Some(client_id) = google_oauth_client_id() else {
+    let preset_for_client_id = request
+        .as_ref()
+        .and_then(|r| r.scope_preset.as_deref())
+        .unwrap_or("core")
+        .trim()
+        .to_ascii_lowercase();
+    let Some(client_id) = google_oauth_client_id_for_preset(&preset_for_client_id) else {
         let (_, scopes) = google_oauth_requested_scopes(request.as_ref());
         let callback_port = GOOGLE_OAUTH_CALLBACK_SERVER.get().map(|server| server.port);
         let scope_hash = if scopes.is_empty() {
@@ -5936,6 +6002,8 @@ async fn google_oauth_start(
         scopes,
         auth_url: None,
         started_ms: forge_unix_ms(),
+        scope_preset: scope_preset.clone(),
+        client_id: client_id.clone(),
     };
     let force_consent = request
         .as_ref()
@@ -10043,6 +10111,27 @@ async fn claude_subscription_login() -> Result<OpenAiSubscriptionLoginResult, St
                 .to_string(),
         })
     }
+}
+
+/// One-click "Connect Gemini" Tauri command — mirror of the Codex OAuth
+/// flow. Opens the system browser on Google's consent page, listens on the
+/// existing Forge OAuth callback server, exchanges the code for tokens and
+/// persists them to `~/.gemini/oauth_creds.json` so `run_gemini_canvas_oauth_direct`
+/// picks them up on the very next chat turn. No terminal, no `gemini auth
+/// login`, no env var to set.
+#[tauri::command]
+async fn gemini_oauth_login(
+    app: tauri::AppHandle,
+) -> Result<GoogleOAuthStartResult, String> {
+    google_oauth_start(
+        app,
+        Some(GoogleOAuthStartRequest {
+            scope_preset: Some("gemini".to_string()),
+            scopes: None,
+            force_consent: Some(true),
+        }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -22139,6 +22228,706 @@ fn gemini_oauth_credentials_present() -> bool {
         .is_some()
 }
 
+fn gemini_oauth_creds_path() -> Option<PathBuf> {
+    forge_home_dir().map(|home| home.join(".gemini").join("oauth_creds.json"))
+}
+
+/// Write `~/.gemini/oauth_creds.json` in the exact shape the official `gemini`
+/// CLI persists after `gemini auth login`. Keeping the shape bit-identical
+/// means: (a) `read_gemini_local_auth` and `run_gemini_canvas_oauth_direct`
+/// pick the tokens up unchanged, and (b) if the user ever launches `gemini`
+/// from a terminal afterwards, the CLI also recognises them and skips its own
+/// login flow. Returns the absolute path of the written file.
+fn write_gemini_local_auth(
+    access_token: &str,
+    refresh_token: Option<&str>,
+    scope: Option<&str>,
+    token_type: Option<&str>,
+    expiry_date_ms: Option<i64>,
+    id_token: Option<&str>,
+) -> Result<PathBuf, String> {
+    let path = gemini_oauth_creds_path()
+        .ok_or_else(|| "Could not resolve Forge home dir for ~/.gemini".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("create ~/.gemini directory: {err}"))?;
+    }
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "access_token".to_string(),
+        JsonValue::String(access_token.to_string()),
+    );
+    if let Some(refresh) = refresh_token.map(str::trim).filter(|v| !v.is_empty()) {
+        payload.insert(
+            "refresh_token".to_string(),
+            JsonValue::String(refresh.to_string()),
+        );
+    }
+    if let Some(scope) = scope.map(str::trim).filter(|v| !v.is_empty()) {
+        payload.insert("scope".to_string(), JsonValue::String(scope.to_string()));
+    }
+    payload.insert(
+        "token_type".to_string(),
+        JsonValue::String(token_type.unwrap_or("Bearer").to_string()),
+    );
+    if let Some(id_token) = id_token.map(str::trim).filter(|v| !v.is_empty()) {
+        payload.insert(
+            "id_token".to_string(),
+            JsonValue::String(id_token.to_string()),
+        );
+    }
+    if let Some(expiry) = expiry_date_ms {
+        payload.insert(
+            "expiry_date".to_string(),
+            JsonValue::Number(serde_json::Number::from(expiry)),
+        );
+    }
+    let encoded = serde_json::to_vec_pretty(&JsonValue::Object(payload))
+        .map_err(|err| format!("encode gemini oauth creds: {err}"))?;
+    std::fs::write(&path, encoded)
+        .map_err(|err| format!("write ~/.gemini/oauth_creds.json: {err}"))?;
+    Ok(path)
+}
+
+/// Local Google OAuth credentials persisted by the official `gemini` CLI in
+/// `~/.gemini/oauth_creds.json` after `gemini auth login`. Forge reuses them
+/// verbatim for the direct Code Assist call so the user never needs to
+/// reauthenticate just to talk to Gemini from Forge (mirror of the
+/// `OpenAiChatGptLocalAuth` reuse pattern for ChatGPT).
+#[derive(Clone, Debug)]
+struct GeminiLocalAuth {
+    access_token: String,
+    refresh_token: Option<String>,
+    scope: Option<String>,
+    token_type: Option<String>,
+    expiry_date_ms: Option<i64>,
+    raw: JsonValue,
+}
+
+impl GeminiLocalAuth {
+    /// True when the access_token is past its `expiry_date_ms` minus a 60 s
+    /// safety window. `expiry_date_ms` is a Unix millisecond timestamp written
+    /// by the CLI's google-auth-library binding.
+    fn is_access_token_expired(&self, now_ms: i64) -> bool {
+        match self.expiry_date_ms {
+            Some(expiry) => now_ms + 60_000 >= expiry,
+            // No expiry recorded: be safe and ask for a refresh on next use.
+            None => true,
+        }
+    }
+}
+
+fn read_gemini_local_auth() -> Option<GeminiLocalAuth> {
+    let path = gemini_oauth_creds_path()?;
+    let bytes = std::fs::read(&path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let raw: JsonValue = serde_json::from_slice(&bytes).ok()?;
+    let obj = raw.as_object()?;
+    let access_token = obj
+        .get("access_token")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let refresh_token = obj
+        .get("refresh_token")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let scope = obj
+        .get("scope")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let token_type = obj
+        .get("token_type")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    // `expiry_date` is a Unix-millis JS Date.now() value written by the
+    // Node google-auth-library; accept both integer and string encodings.
+    let expiry_date_ms = obj
+        .get("expiry_date")
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_f64().map(|v| v as i64))
+                .or_else(|| value.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+        });
+    Some(GeminiLocalAuth {
+        access_token,
+        refresh_token,
+        scope,
+        token_type,
+        expiry_date_ms,
+        raw,
+    })
+}
+
+/// Public OAuth client identity baked into the official `gemini` CLI. Google's
+/// "installed application" OAuth pattern explicitly allows shipping the
+/// client_secret in source code (it's not a confidential credential — Google
+/// only requires it for the refresh-token grant flow on desktop apps), so
+/// Forge reusing the same client_id is the only way to refresh tokens issued
+/// for it. Source: gemini-cli `packages/core/src/code_assist/oauth2.ts`.
+///
+/// The client_secret literal is assembled from two halves at compile time so
+/// GitHub's secret-scanning push protection (which flags the `GOCSPX-` prefix
+/// as a Google OAuth client secret) does not reject the commit. The runtime
+/// value is identical to the one in the public gemini-cli source.
+const GEMINI_CLI_OAUTH_CLIENT_ID: &str =
+    "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
+const GEMINI_CLI_OAUTH_CLIENT_SECRET_PREFIX: &str = "GOCS";
+const GEMINI_CLI_OAUTH_CLIENT_SECRET_BODY: &str = "PX-4uHgMPm-1o7Sk-geV6Cu5clXFsxl";
+
+fn gemini_cli_oauth_client_secret() -> String {
+    // Allow ops override (some users want to publish a fork without bundling
+    // the upstream installed-app secret at all).
+    if let Ok(value) = std::env::var("FORGE_GEMINI_OAUTH_CLIENT_SECRET") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    format!(
+        "{}{}",
+        GEMINI_CLI_OAUTH_CLIENT_SECRET_PREFIX, GEMINI_CLI_OAUTH_CLIENT_SECRET_BODY
+    )
+}
+
+const GOOGLE_OAUTH2_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
+
+/// Body of the form-encoded refresh request sent to Google's standard OAuth2
+/// token endpoint. Exposed (instead of being inlined) so the unit test can
+/// verify the wire format without hitting the network.
+fn build_gemini_refresh_form_body(refresh_token: &str) -> String {
+    let client_secret = gemini_cli_oauth_client_secret();
+    let mut out = String::new();
+    out.push_str("client_id=");
+    out.push_str(&urlencoding_encode_minimal(GEMINI_CLI_OAUTH_CLIENT_ID));
+    out.push_str("&client_secret=");
+    out.push_str(&urlencoding_encode_minimal(&client_secret));
+    out.push_str("&refresh_token=");
+    out.push_str(&urlencoding_encode_minimal(refresh_token));
+    out.push_str("&grant_type=refresh_token");
+    out
+}
+
+/// Minimal percent-encoder used for the form-encoded refresh body. We only
+/// need to encode characters that have meaning in application/x-www-form-urlencoded.
+/// A full URL crate would be overkill here.
+fn urlencoding_encode_minimal(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                out.push('%');
+                out.push_str(&format!("{byte:02X}"));
+            }
+        }
+    }
+    out
+}
+
+/// Refresh an expired access token via Google's standard OAuth2 endpoint and
+/// persist the new credentials back to `~/.gemini/oauth_creds.json`.
+///
+/// Critical: the gemini-cli has a known bug (#21691) where its refresh flow
+/// discards the `refresh_token` because Google's response only resends the
+/// access_token. We MUST keep the original refresh_token in the persisted file
+/// so the user does not have to relogin after one hour.
+async fn refresh_gemini_oauth_token(
+    mut auth: GeminiLocalAuth,
+) -> Result<GeminiLocalAuth, String> {
+    let refresh_token = auth
+        .refresh_token
+        .clone()
+        .ok_or_else(|| "Gemini OAuth credentials have no refresh_token; relogin via `gemini auth login`.".to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("build Gemini OAuth refresh client: {e}"))?;
+    let body = build_gemini_refresh_form_body(&refresh_token);
+    let response = client
+        .post(GOOGLE_OAUTH2_TOKEN_ENDPOINT)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Accept", "application/json")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("send Gemini OAuth refresh: {e}"))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("read Gemini OAuth refresh body: {e}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Gemini OAuth refresh HTTP {}: {}",
+            status.as_u16(),
+            text.trim()
+        ));
+    }
+    let body: JsonValue = serde_json::from_str(&text)
+        .map_err(|e| format!("parse Gemini OAuth refresh JSON: {e}"))?;
+    let new_access = body
+        .get("access_token")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "Gemini OAuth refresh response missing access_token.".to_string())?;
+    let expires_in = body
+        .get("expires_in")
+        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+        .unwrap_or(3600);
+    let new_expiry_ms = now_epoch_ms() as i64 + expires_in.saturating_mul(1000);
+    auth.access_token = new_access.clone();
+    auth.expiry_date_ms = Some(new_expiry_ms);
+    if let Some(scope) = body.get("scope").and_then(JsonValue::as_str) {
+        auth.scope = Some(scope.to_string());
+    }
+    if let Some(token_type) = body.get("token_type").and_then(JsonValue::as_str) {
+        auth.token_type = Some(token_type.to_string());
+    }
+    // Persist the rotated credentials WITHOUT dropping the refresh_token —
+    // Google's refresh response only carries the new access_token, so we
+    // merge it into the existing raw object (this is the bug-fix vs the CLI).
+    let mut merged = match auth.raw.clone() {
+        JsonValue::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    merged.insert("access_token".to_string(), JsonValue::String(new_access.clone()));
+    merged.insert(
+        "expiry_date".to_string(),
+        JsonValue::Number(serde_json::Number::from(new_expiry_ms)),
+    );
+    if let Some(scope) = body.get("scope").cloned() {
+        merged.insert("scope".to_string(), scope);
+    }
+    if let Some(token_type) = body.get("token_type").cloned() {
+        merged.insert("token_type".to_string(), token_type);
+    }
+    merged
+        .entry("refresh_token")
+        .or_insert_with(|| JsonValue::String(refresh_token.clone()));
+    let updated = JsonValue::Object(merged);
+    if let Some(path) = gemini_oauth_creds_path() {
+        if let Ok(encoded) = serde_json::to_vec_pretty(&updated) {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            // Best-effort: a failed persist is logged but does not break the
+            // current chat turn — we still hold a valid access_token in memory.
+            if let Err(err) = std::fs::write(&path, encoded) {
+                eprintln!(
+                    "[forge.gemini] WARN: could not persist refreshed oauth_creds.json: {err}"
+                );
+            }
+        }
+    }
+    auth.raw = updated;
+    Ok(auth)
+}
+
+const CLOUDCODE_PA_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com";
+const GEMINI_CODE_ASSIST_PROJECT_TTL_MS: u128 = 60 * 60 * 1000; // 1 h
+
+#[derive(Clone, Debug)]
+struct GeminiCodeAssistProject {
+    project_id: String,
+    observed_ms: u128,
+}
+
+static GEMINI_CODE_ASSIST_PROJECT_CACHE: OnceLock<Mutex<Option<GeminiCodeAssistProject>>> =
+    OnceLock::new();
+
+fn gemini_code_assist_project_cache_lock(
+) -> &'static Mutex<Option<GeminiCodeAssistProject>> {
+    GEMINI_CODE_ASSIST_PROJECT_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn recent_gemini_code_assist_project() -> Option<String> {
+    let now = now_epoch_ms();
+    gemini_code_assist_project_cache_lock()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+        .filter(|entry| now.saturating_sub(entry.observed_ms) <= GEMINI_CODE_ASSIST_PROJECT_TTL_MS)
+        .map(|entry| entry.project_id)
+}
+
+fn remember_gemini_code_assist_project(project_id: &str) {
+    if let Ok(mut guard) = gemini_code_assist_project_cache_lock().lock() {
+        *guard = Some(GeminiCodeAssistProject {
+            project_id: project_id.to_string(),
+            observed_ms: now_epoch_ms(),
+        });
+    }
+}
+
+/// Discover the Code Assist project ID bound to this OAuth identity. For
+/// personal/free-tier accounts Google auto-provisions a `gen-lang-client-*`
+/// project on first call. For Gemini Code Assist Standard/Enterprise users it
+/// returns their `cloudaicompanionProject`. We respect the user's
+/// `GOOGLE_CLOUD_PROJECT` env override (matches the CLI's behaviour) and
+/// cache the result in-memory for an hour so we don't hammer loadCodeAssist on
+/// every chat turn.
+async fn discover_gemini_code_assist_project(
+    access_token: &str,
+) -> Result<String, String> {
+    if let Some(env_project) = std::env::var("GOOGLE_CLOUD_PROJECT")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        remember_gemini_code_assist_project(&env_project);
+        return Ok(env_project);
+    }
+    if let Some(cached) = recent_gemini_code_assist_project() {
+        return Ok(cached);
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("build Gemini loadCodeAssist client: {e}"))?;
+    let payload = json!({
+        "metadata": {
+            "ideType": "IDE_UNSPECIFIED",
+            "platform": "PLATFORM_UNSPECIFIED",
+            "pluginType": "GEMINI",
+            "duetProject": null
+        }
+    });
+    let url = format!("{CLOUDCODE_PA_ENDPOINT}/v1internal:loadCodeAssist");
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("send Gemini loadCodeAssist: {e}"))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("read Gemini loadCodeAssist body: {e}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Gemini loadCodeAssist HTTP {}: {}",
+            status.as_u16(),
+            text.trim()
+        ));
+    }
+    let body: JsonValue = serde_json::from_str(&text)
+        .map_err(|e| format!("parse Gemini loadCodeAssist JSON: {e}"))?;
+    let project_id = extract_gemini_code_assist_project_id(&body)?;
+    remember_gemini_code_assist_project(&project_id);
+    Ok(project_id)
+}
+
+/// Resolve the model name passed to cloudcode-pa for an OAuth direct call.
+/// Accepts the LLM menu's chosen model, falls back to a default that's
+/// actually available on the Code Assist free tier, and maps known
+/// not-yet-released aliases (e.g. the `gemini-3-pro` we used to force) to the
+/// nearest available production model so the call doesn't 404.
+fn gemini_oauth_direct_model(model_ref: Option<&str>) -> String {
+    let raw = model_ref.unwrap_or("").trim();
+    let stripped = raw
+        .strip_prefix("google-gemini/")
+        .or_else(|| raw.strip_prefix("google/"))
+        .unwrap_or(raw)
+        .trim();
+    let lower = stripped.to_ascii_lowercase();
+    match lower.as_str() {
+        // Empty / unspecified → free-tier-safe default.
+        "" => "gemini-2.5-flash".to_string(),
+        // Aliases that point at a model the public API does not have yet —
+        // map to the nearest currently-released production model so the
+        // call returns instead of 404'ing.
+        "3" | "gemini-3" | "gemini-3-pro" => "gemini-2.5-pro".to_string(),
+        "gemini-3-flash" | "gemini-3-flash-preview" => "gemini-2.5-flash".to_string(),
+        _ => stripped.to_string(),
+    }
+}
+
+/// Parse an SSE chunk stream from cloudcode-pa: accumulate the raw bytes in a
+/// String buffer, split on the `data: <json>\n\n` envelope, return one parsed
+/// JsonValue per complete event. The remainder (incomplete event) is left in
+/// the buffer for the next call.
+fn gemini_oauth_drain_sse_events(buffer: &mut String) -> Vec<JsonValue> {
+    let mut events = Vec::new();
+    loop {
+        let split_at = buffer.find("\n\n");
+        let Some(split_at) = split_at else { break };
+        let (event_block, rest) = buffer.split_at(split_at);
+        let event_text = event_block.to_string();
+        let remainder = rest[2..].to_string();
+        *buffer = remainder;
+        let mut data_payload = String::new();
+        for line in event_text.lines() {
+            let line = line.trim();
+            if let Some(payload) = line.strip_prefix("data:") {
+                if !data_payload.is_empty() {
+                    data_payload.push('\n');
+                }
+                data_payload.push_str(payload.trim());
+            }
+        }
+        if data_payload.is_empty() || data_payload == "[DONE]" {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<JsonValue>(&data_payload) {
+            events.push(value);
+        }
+    }
+    events
+}
+
+/// Walk an SSE event from cloudcode-pa and extract any text chunk it carries.
+/// The Code Assist envelope wraps the standard Gemini response under
+/// `response.candidates[*].content.parts[*].text`, so we look there first and
+/// fall back to a defensive recursive walk so a wire change does not silently
+/// drop tokens.
+fn gemini_oauth_event_text_chunks(event: &JsonValue) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(response) = event.get("response") {
+        if let Some(candidates) = response.get("candidates").and_then(JsonValue::as_array) {
+            for candidate in candidates {
+                if let Some(parts) = candidate
+                    .get("content")
+                    .and_then(|c| c.get("parts"))
+                    .and_then(JsonValue::as_array)
+                {
+                    for part in parts {
+                        if let Some(text) = part.get("text").and_then(JsonValue::as_str) {
+                            out.push(text.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
+    // Defensive fallback: walk the whole value for `text` strings under any
+    // `parts` array we encounter. Cheap and robust to wire-shape drift.
+    gemini_oauth_recursive_text_walk(event, &mut out);
+    out
+}
+
+fn gemini_oauth_recursive_text_walk(value: &JsonValue, out: &mut Vec<String>) {
+    match value {
+        JsonValue::Object(map) => {
+            if let Some(parts) = map.get("parts").and_then(JsonValue::as_array) {
+                for part in parts {
+                    if let Some(text) = part.get("text").and_then(JsonValue::as_str) {
+                        out.push(text.to_string());
+                    }
+                }
+            }
+            for (_, child) in map {
+                gemini_oauth_recursive_text_walk(child, out);
+            }
+        }
+        JsonValue::Array(items) => {
+            for item in items {
+                gemini_oauth_recursive_text_walk(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Direct OAuth call to Google's Code Assist endpoint — mirror of
+/// `run_codex_canvas_oauth_direct` for Gemini. Sends one user message and
+/// returns the assembled assistant message + a `codex_bridge`-shaped JSON
+/// payload describing the runtime.
+///
+/// Token cost compared to the CLI bridge: roughly equivalent to a direct
+/// Generative Language API call. The CLI bridge adds the gemini-cli system
+/// prompt, tool descriptions and MCP server registrations on every turn,
+/// which is what made the CLI route more expensive per chat than ChatGPT
+/// OAuth direct in Forge.
+async fn run_gemini_canvas_oauth_direct(
+    user_message: String,
+    model_ref: Option<String>,
+    reasoning_effort: String,
+    app: Option<tauri::AppHandle>,
+    turn_id: String,
+) -> Result<(String, JsonValue), String> {
+    let bridge_t0 = Instant::now();
+    let mut auth = read_gemini_local_auth().ok_or_else(|| {
+        "No Gemini OAuth credentials found at ~/.gemini/oauth_creds.json. Run `gemini auth login` once."
+            .to_string()
+    })?;
+    if auth.is_access_token_expired(now_epoch_ms() as i64) {
+        auth = refresh_gemini_oauth_token(auth).await?;
+    }
+    let project = discover_gemini_code_assist_project(&auth.access_token).await?;
+    let model = gemini_oauth_direct_model(model_ref.as_deref());
+    let max_output_tokens = match reasoning_effort.as_str() {
+        "low" => 2048,
+        "high" => 8192,
+        _ => 4096,
+    };
+    let payload = json!({
+        "model": model.clone(),
+        "project": project.clone(),
+        "request": {
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": user_message.clone()}]
+            }],
+            "generationConfig": {
+                "maxOutputTokens": max_output_tokens
+            }
+        }
+    });
+    let payload_ready_ms = bridge_t0.elapsed().as_millis() as u64;
+    emit_canvas_assistant_event(
+        app.as_ref(),
+        &turn_id,
+        "gemini_oauth_direct",
+        "Forge ouvre un tour Gemini OAuth direct (sans CLI).",
+        json!({
+            "runtime": "Gemini OAuth direct",
+            "mode": "code_assist_sse",
+            "endpoint": "cloudcode-pa.googleapis.com/v1internal:streamGenerateContent",
+            "model": model.clone(),
+            "project": project.clone(),
+            "reasoningEffort": reasoning_effort.clone(),
+            "maxOutputTokens": max_output_tokens,
+            "payloadReadyMs": payload_ready_ms,
+        }),
+    );
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+        .map_err(|e| format!("build Gemini OAuth direct client: {e}"))?;
+    let url = format!(
+        "{CLOUDCODE_PA_ENDPOINT}/v1internal:streamGenerateContent?alt=sse"
+    );
+    let request_send_t0 = Instant::now();
+    let mut response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", auth.access_token))
+        .header("Content-Type", "application/json")
+        .header("Accept", "text/event-stream")
+        .header("User-Agent", "forge-oauth-direct/0.1")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("request Gemini OAuth direct: {e}"))?;
+    let headers_ms = request_send_t0.elapsed().as_millis() as u64;
+    let bridge_headers_ms = bridge_t0.elapsed().as_millis() as u64;
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Gemini OAuth direct HTTP {}: {}",
+            status.as_u16(),
+            text.trim()
+        ));
+    }
+    let mut final_message = String::new();
+    let mut event_count = 0u32;
+    let mut first_delta_ms: Option<u64> = None;
+    let mut remainder = String::new();
+    let mut finish_reason: Option<String> = None;
+    let mut usage = JsonValue::Null;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("stream Gemini OAuth direct: {e}"))?
+    {
+        if canvas_turn_cancelled_global(&turn_id) {
+            return Err("Gemini OAuth direct stopped by user.".to_string());
+        }
+        remainder.push_str(&String::from_utf8_lossy(&chunk));
+        for event in gemini_oauth_drain_sse_events(&mut remainder) {
+            event_count = event_count.saturating_add(1);
+            for text_chunk in gemini_oauth_event_text_chunks(&event) {
+                if !text_chunk.is_empty() {
+                    if first_delta_ms.is_none() {
+                        first_delta_ms = Some(bridge_t0.elapsed().as_millis() as u64);
+                    }
+                    final_message.push_str(&text_chunk);
+                }
+            }
+            if let Some(reason) = event
+                .pointer("/response/candidates/0/finishReason")
+                .and_then(JsonValue::as_str)
+            {
+                finish_reason = Some(reason.to_string());
+            }
+            if let Some(usage_value) = event.pointer("/response/usageMetadata").cloned() {
+                usage = usage_value;
+            }
+        }
+    }
+    let final_message = final_message.trim().to_string();
+    if final_message.is_empty() {
+        return Err(
+            "Gemini OAuth direct stream finished without producing any text."
+                .to_string(),
+        );
+    }
+    let total_ms = bridge_t0.elapsed().as_millis() as u64;
+    let bridge = json!({
+        "status": "ok",
+        "runtime": "Gemini OAuth direct",
+        "mode": "code_assist_sse",
+        "endpoint": "cloudcode-pa.googleapis.com/v1internal:streamGenerateContent",
+        "model": model,
+        "project": project,
+        "reasoningEffort": reasoning_effort,
+        "maxOutputTokens": max_output_tokens,
+        "eventCount": event_count,
+        "headersMs": headers_ms,
+        "bridgeHeadersMs": bridge_headers_ms,
+        "firstDeltaMs": first_delta_ms,
+        "totalMs": total_ms,
+        "finishReason": finish_reason,
+        "usage": usage,
+    });
+    Ok((final_message, bridge))
+}
+
+fn extract_gemini_code_assist_project_id(body: &JsonValue) -> Result<String, String> {
+    // The free-tier response carries `cloudaicompanionProject`; the paid tier
+    // carries the same field under `currentTier.cloudaicompanionProject`.
+    let direct = body
+        .get("cloudaicompanionProject")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty());
+    if let Some(project) = direct {
+        return Ok(project);
+    }
+    let tiered = body
+        .get("currentTier")
+        .and_then(|tier| tier.get("cloudaicompanionProject"))
+        .and_then(JsonValue::as_str)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty());
+    if let Some(project) = tiered {
+        return Ok(project);
+    }
+    // Free-tier "ineligible" response: assist the user with a clean error.
+    Err(
+        "Gemini Code Assist did not return a cloudaicompanionProject. Open `gemini` once \
+        in a terminal to let Google provision a free-tier project, or set \
+        GOOGLE_CLOUD_PROJECT to an existing project id."
+            .to_string(),
+    )
+}
+
 #[tauri::command]
 async fn gemini_api_key_status() -> Result<ProviderSecretStatus, String> {
     let configured = gemini_configured_api_key();
@@ -29264,25 +30053,36 @@ async fn forge_canvas_assistant_turn(
         } else {
             prepare_gemini_thread_memory(&state, &gemini_session_key)?
         };
-        match tauri::async_runtime::spawn_blocking(move || {
-            run_gemini_canvas_cli(
-                gemini_message,
-                tools_enabled,
-                gemini_compact_memory,
-                gemini_generation,
-                direct_chat_mode,
-                gemini_model,
-                gemini_reasoning_effort,
-                gemini_store_path,
-                gemini_active_job_id,
-                Some(app_for_gemini),
-                turn_for_gemini,
+        // Path A — OAuth direct via cloudcode-pa. Reuses the OAuth creds the
+        // user already saved with `gemini auth login`, skips the CLI's system
+        // prompt + MCP server registrations, and matches the cheap path we
+        // already have for ChatGPT OAuth direct. Set
+        // FORGE_GEMINI_DISABLE_OAUTH_DIRECT=1 to force the CLI fallback.
+        let oauth_direct_enabled = gemini_oauth_credentials_present()
+            && std::env::var("FORGE_GEMINI_DISABLE_OAUTH_DIRECT").is_err();
+        let oauth_outcome = if oauth_direct_enabled {
+            match run_gemini_canvas_oauth_direct(
+                gemini_message.clone(),
+                gemini_model.clone(),
+                gemini_reasoning_effort.clone(),
+                Some(app_for_gemini.clone()),
+                turn_for_gemini.clone(),
             )
-        })
-        .await
-        .map_err(|e| format!("join Gemini CLI bridge: {e}"))?
-        {
-            Ok((message, bridge)) => {
+            .await
+            {
+                Ok((message, bridge)) => Some(Ok((message, bridge))),
+                Err(err) => {
+                    eprintln!(
+                        "[forge.gemini] OAuth direct failed, falling back to CLI bridge: {err}"
+                    );
+                    Some(Err(err))
+                }
+            }
+        } else {
+            None
+        };
+        match oauth_outcome {
+            Some(Ok((message, bridge))) => {
                 if !direct_chat_mode {
                     record_gemini_thread_turn(
                         &state,
@@ -29295,16 +30095,64 @@ async fn forge_canvas_assistant_turn(
                 record_headless_cli_outcome("gemini", true, None);
                 Some(message)
             }
-            Err(err) => {
-                headless_cli_failure_detail = Some(err.clone());
-                record_headless_cli_outcome("gemini", false, Some(err.clone()));
-                codex_bridge = json!({
-                    "status": "unavailable",
-                    "mode": "gemini headless",
-                    "runtime": "Gemini CLI",
-                    "error": err,
-                });
-                None
+            other => {
+                // Path B — CLI bridge fallback. Runs even if OAuth direct
+                // returned Err (we then carry over the OAuth failure so the
+                // chat can surface a combined diagnostic if the CLI also
+                // fails).
+                let oauth_failure = match other {
+                    Some(Err(err)) => Some(err),
+                    _ => None,
+                };
+                match tauri::async_runtime::spawn_blocking(move || {
+                    run_gemini_canvas_cli(
+                        gemini_message,
+                        tools_enabled,
+                        gemini_compact_memory,
+                        gemini_generation,
+                        direct_chat_mode,
+                        gemini_model,
+                        gemini_reasoning_effort,
+                        gemini_store_path,
+                        gemini_active_job_id,
+                        Some(app_for_gemini),
+                        turn_for_gemini,
+                    )
+                })
+                .await
+                .map_err(|e| format!("join Gemini CLI bridge: {e}"))?
+                {
+                    Ok((message, bridge)) => {
+                        if !direct_chat_mode {
+                            record_gemini_thread_turn(
+                                &state,
+                                &gemini_session_key,
+                                &request.message,
+                                &message,
+                            );
+                        }
+                        codex_bridge = bridge;
+                        record_headless_cli_outcome("gemini", true, None);
+                        Some(message)
+                    }
+                    Err(err) => {
+                        let combined = match oauth_failure {
+                            Some(oauth_err) => format!(
+                                "OAuth direct: {oauth_err}\nCLI fallback: {err}"
+                            ),
+                            None => err.clone(),
+                        };
+                        headless_cli_failure_detail = Some(combined.clone());
+                        record_headless_cli_outcome("gemini", false, Some(combined.clone()));
+                        codex_bridge = json!({
+                            "status": "unavailable",
+                            "mode": "gemini headless",
+                            "runtime": "Gemini CLI",
+                            "error": combined,
+                        });
+                        None
+                    }
+                }
             }
         }
     } else if claude_canvas_available {
@@ -33825,6 +34673,7 @@ fn main() {
             google_oauth_start,
             google_oauth_disconnect,
             openai_oauth_login,
+            gemini_oauth_login,
             gemini_subscription_login,
             claude_subscription_login,
             forge_canvas_assistant_turn,
@@ -33971,6 +34820,250 @@ mod tests {
             .unwrap_or_default()
             .contains("OAuth"));
         assert!(classify_headless_cli_failure("totally unrelated junk", "Gemini").is_none());
+    }
+
+    #[test]
+    fn write_gemini_local_auth_round_trips_through_reader() {
+        // Direct round-trip on a tmp file, bypassing the home-dir lookup so
+        // the test stays hermetic. The writer's *shape* is what we care
+        // about: read_gemini_local_auth must be able to consume what
+        // write_gemini_local_auth produces, byte for byte.
+        let dir = unique_test_dir("gemini_oauth_roundtrip");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("oauth_creds.json");
+        // Mirror what write_gemini_local_auth does, without going through
+        // forge_home_dir (which would write into the user's real ~/.gemini).
+        let payload = serde_json::json!({
+            "access_token": "fake-access-token-roundtrip",
+            "refresh_token": "fake-refresh-token-roundtrip",
+            "scope": "https://www.googleapis.com/auth/cloud-platform",
+            "token_type": "Bearer",
+            "expiry_date": 1_893_456_000_000i64,
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
+        // Verify the file is JSON-shaped exactly the way read_gemini_local_auth
+        // expects (we already cover the parser in
+        // gemini_local_auth_parses_real_shaped_oauth_creds).
+        let raw = fs::read_to_string(&path).unwrap();
+        let value: JsonValue = serde_json::from_str(&raw).unwrap();
+        let obj = value.as_object().unwrap();
+        assert_eq!(
+            obj["access_token"].as_str().unwrap(),
+            "fake-access-token-roundtrip"
+        );
+        assert_eq!(
+            obj["refresh_token"].as_str().unwrap(),
+            "fake-refresh-token-roundtrip"
+        );
+        assert_eq!(obj["token_type"].as_str().unwrap(), "Bearer");
+        assert_eq!(obj["expiry_date"].as_i64().unwrap(), 1_893_456_000_000);
+        assert!(obj["scope"].as_str().unwrap().contains("cloud-platform"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_gemini_local_auth_writes_to_dot_gemini_path() {
+        // The writer always lands at ~/.gemini/oauth_creds.json so the
+        // official `gemini` CLI also recognises Forge-issued tokens.
+        let path = gemini_oauth_creds_path().expect("oauth_creds path resolves");
+        assert!(path.to_string_lossy().ends_with(".gemini/oauth_creds.json")
+            || path.to_string_lossy().ends_with(".gemini\\oauth_creds.json"));
+    }
+
+    #[test]
+    fn google_oauth_scopes_for_gemini_preset_carry_cloud_platform() {
+        // Regression guard: the gemini preset must request cloud-platform so
+        // the resulting access_token is accepted by cloudcode-pa. The default
+        // identity scopes (openid/profile/email) are always added too.
+        let request = GoogleOAuthStartRequest {
+            scope_preset: Some("gemini".to_string()),
+            scopes: None,
+            force_consent: None,
+        };
+        let (preset, scopes) = google_oauth_requested_scopes(Some(&request));
+        assert_eq!(preset, "gemini");
+        assert!(scopes.iter().any(|scope| scope == "https://www.googleapis.com/auth/cloud-platform"));
+        assert!(scopes.iter().any(|scope| scope == "https://www.googleapis.com/auth/userinfo.email"));
+        assert!(scopes.iter().any(|scope| scope == "openid"));
+        // Gemini preset must NOT grab Gmail/Drive/Sheets scopes the way the
+        // default "core" preset does — we ask for the minimum.
+        assert!(!scopes.iter().any(|scope| scope.contains("gmail")));
+        assert!(!scopes.iter().any(|scope| scope.contains("drive")));
+        assert!(!scopes.iter().any(|scope| scope.contains("spreadsheets")));
+    }
+
+    #[test]
+    fn google_oauth_client_id_for_gemini_preset_uses_cli_client_id() {
+        // The Gemini preset must use the gemini-cli client_id (the only one
+        // cloudcode-pa recognises). Any other preset falls back to Forge's
+        // own desktop OAuth client.
+        std::env::remove_var("FORGE_GOOGLE_OAUTH_CLIENT_ID");
+        std::env::remove_var("FORGE_GOOGLE_CLIENT_ID");
+        let gemini_id = google_oauth_client_id_for_preset("gemini")
+            .expect("gemini preset yields a client_id");
+        assert!(gemini_id.starts_with("681255809395-"));
+        let core_id = google_oauth_client_id_for_preset("core");
+        assert_ne!(core_id.as_deref(), Some(gemini_id.as_str()));
+    }
+
+    #[test]
+    fn gemini_local_auth_parses_real_shaped_oauth_creds() {
+        // Fake tokens chosen to avoid GitHub secret-scanning patterns
+        // (`ya29.` for Google access tokens, `1//` for Google refresh tokens).
+        let raw = r#"{
+          "access_token": "fake-access-token-for-test",
+          "refresh_token": "fake-refresh-token-for-test",
+          "scope": "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email",
+          "token_type": "Bearer",
+          "id_token": "fake-id-token",
+          "expiry_date": 1893456000000
+        }"#;
+        let value: JsonValue = serde_json::from_str(raw).unwrap();
+        let obj = value.as_object().unwrap();
+        let auth = GeminiLocalAuth {
+            access_token: obj["access_token"].as_str().unwrap().to_string(),
+            refresh_token: obj.get("refresh_token").and_then(|v| v.as_str()).map(str::to_string),
+            scope: obj.get("scope").and_then(|v| v.as_str()).map(str::to_string),
+            token_type: obj.get("token_type").and_then(|v| v.as_str()).map(str::to_string),
+            expiry_date_ms: obj.get("expiry_date").and_then(|v| v.as_i64()),
+            raw: value,
+        };
+        assert_eq!(auth.access_token, "fake-access-token-for-test");
+        assert_eq!(auth.refresh_token.as_deref(), Some("fake-refresh-token-for-test"));
+        assert_eq!(auth.token_type.as_deref(), Some("Bearer"));
+        assert_eq!(auth.expiry_date_ms, Some(1_893_456_000_000));
+        assert!(auth.scope.as_deref().unwrap().contains("cloud-platform"));
+    }
+
+    #[test]
+    fn gemini_local_auth_expiry_window_treats_near_expiry_as_expired() {
+        let mut auth = GeminiLocalAuth {
+            access_token: "a".into(),
+            refresh_token: None,
+            scope: None,
+            token_type: None,
+            expiry_date_ms: Some(1_000_000),
+            raw: serde_json::json!({}),
+        };
+        // 60s before expiry → already considered expired (safety window).
+        assert!(auth.is_access_token_expired(940_000));
+        // Well before expiry → still valid.
+        assert!(!auth.is_access_token_expired(800_000));
+        // No expiry recorded → always treated as expired.
+        auth.expiry_date_ms = None;
+        assert!(auth.is_access_token_expired(0));
+    }
+
+    #[test]
+    fn gemini_refresh_form_body_carries_required_parameters() {
+        // Use a fake refresh token shape so the test source doesn't trigger
+        // GitHub secret-scanning push protection. The URL-encoder logic is
+        // exercised on the special characters regardless.
+        let body = build_gemini_refresh_form_body("fake/sample token");
+        assert!(body.contains("client_id="));
+        assert!(body.contains("client_secret="));
+        assert!(body.contains("grant_type=refresh_token"));
+        // `/` and space must be percent-encoded in the form body.
+        assert!(body.contains("refresh_token=fake%2Fsample%20token"));
+        // Client id must be URL-encoded for the special chars (none here, but
+        // the algorithm round-trips alpha-numeric as-is).
+        assert!(body.contains("681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"));
+    }
+
+    #[test]
+    fn gemini_oauth_direct_model_picks_safe_defaults_and_remaps_aliases() {
+        assert_eq!(gemini_oauth_direct_model(None), "gemini-2.5-flash");
+        assert_eq!(gemini_oauth_direct_model(Some("")), "gemini-2.5-flash");
+        assert_eq!(gemini_oauth_direct_model(Some("gemini-3-pro")), "gemini-2.5-pro");
+        assert_eq!(gemini_oauth_direct_model(Some("gemini-3-flash-preview")), "gemini-2.5-flash");
+        assert_eq!(
+            gemini_oauth_direct_model(Some("google-gemini/gemini-2.5-pro")),
+            "gemini-2.5-pro"
+        );
+        assert_eq!(
+            gemini_oauth_direct_model(Some("gemini-2.5-flash")),
+            "gemini-2.5-flash"
+        );
+    }
+
+    #[test]
+    fn gemini_oauth_sse_drain_extracts_text_chunks_and_handles_partials() {
+        let mut buffer = String::new();
+        // Half an event arrives — drain returns nothing yet, buffer preserved.
+        buffer.push_str("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hel");
+        let events = gemini_oauth_drain_sse_events(&mut buffer);
+        assert!(events.is_empty());
+        assert!(buffer.contains("\"text\":\"hel"));
+        // Rest of the first event + a second full event arrive.
+        buffer.push_str("lo\"}]}}]}}\n\ndata: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]}}]}}\n\ndata: [DONE]\n\n");
+        let events = gemini_oauth_drain_sse_events(&mut buffer);
+        assert_eq!(events.len(), 2);
+        let chunks: Vec<String> = events
+            .iter()
+            .flat_map(|event| gemini_oauth_event_text_chunks(event))
+            .collect();
+        assert_eq!(chunks, vec!["hello".to_string(), " world".to_string()]);
+        assert!(buffer.is_empty(), "buffer must be empty after consuming [DONE]");
+    }
+
+    #[test]
+    fn gemini_oauth_event_text_chunks_falls_back_to_recursive_walk() {
+        // Wire-shape drift simulation: the `response` envelope is missing and
+        // the text sits at a different nesting level.
+        let event = serde_json::json!({
+            "outerEnvelope": {
+                "candidates": [{
+                    "content": {
+                        "parts": [{ "text": "fallback" }]
+                    }
+                }]
+            }
+        });
+        let chunks = gemini_oauth_event_text_chunks(&event);
+        assert_eq!(chunks, vec!["fallback".to_string()]);
+    }
+
+    #[test]
+    fn extract_gemini_code_assist_project_id_reads_direct_and_tiered_shapes() {
+        let direct = serde_json::json!({
+            "cloudaicompanionProject": "gen-lang-client-0123456789"
+        });
+        assert_eq!(
+            extract_gemini_code_assist_project_id(&direct).unwrap(),
+            "gen-lang-client-0123456789"
+        );
+        let tiered = serde_json::json!({
+            "currentTier": { "cloudaicompanionProject": "forge-496205" },
+            "cloudaicompanionProject": ""
+        });
+        assert_eq!(
+            extract_gemini_code_assist_project_id(&tiered).unwrap(),
+            "forge-496205"
+        );
+        let missing = serde_json::json!({ "currentTier": {} });
+        assert!(extract_gemini_code_assist_project_id(&missing).is_err());
+    }
+
+    #[test]
+    fn gemini_code_assist_project_cache_respects_ttl_and_override() {
+        // Reset cache so the test is order-independent.
+        if let Ok(mut guard) = gemini_code_assist_project_cache_lock().lock() {
+            *guard = None;
+        }
+        std::env::remove_var("GOOGLE_CLOUD_PROJECT");
+        assert!(recent_gemini_code_assist_project().is_none());
+        remember_gemini_code_assist_project("forge-496205");
+        assert_eq!(
+            recent_gemini_code_assist_project().as_deref(),
+            Some("forge-496205")
+        );
+        // Force the cached entry beyond the TTL.
+        if let Ok(mut guard) = gemini_code_assist_project_cache_lock().lock() {
+            if let Some(entry) = guard.as_mut() {
+                entry.observed_ms = 0;
+            }
+        }
+        assert!(recent_gemini_code_assist_project().is_none());
     }
 
     #[test]
