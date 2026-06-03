@@ -6273,6 +6273,22 @@ struct HeadlessCliOutcome {
 
 const HEADLESS_CLI_OUTCOME_TTL_MS: u128 = 30 * 60 * 1000;
 
+/// Default `--version` probe timeout for the Gemini and Claude CLI binaries.
+/// The previous value (3 s) was too tight for a Windows cold start where the
+/// Node.js shim + ~50 MB CLI bundle can take 5-10 s to even print a version,
+/// which caused the LLM menu to incorrectly fall back to "automatic repair"
+/// while the CLI was perfectly functional in the embedded terminal.
+const LLM_CLI_PROBE_TIMEOUT_DEFAULT_SECS: u64 = 12;
+
+fn llm_cli_probe_timeout() -> Duration {
+    let secs = std::env::var("FORGE_LLM_CLI_PROBE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| (1..=120).contains(value))
+        .unwrap_or(LLM_CLI_PROBE_TIMEOUT_DEFAULT_SECS);
+    Duration::from_secs(secs)
+}
+
 static HEADLESS_CLI_OUTCOMES: OnceLock<Mutex<HashMap<String, HeadlessCliOutcome>>> =
     OnceLock::new();
 
@@ -22775,7 +22791,7 @@ fn gemini_cli_probe(candidate: &Path) -> bool {
     }
     let mut command = gemini_cli_command(candidate);
     command.arg("--version");
-    run_command_capture_timeout(command, Duration::from_secs(3))
+    run_command_capture_timeout(command, llm_cli_probe_timeout())
         .map(|(ok, _, _)| ok)
         .unwrap_or(false)
 }
@@ -23139,7 +23155,7 @@ fn claude_cli_probe(candidate: &Path) -> bool {
     }
     let mut command = claude_cli_command(candidate);
     command.arg("--version");
-    run_command_capture_timeout(command, Duration::from_secs(3))
+    run_command_capture_timeout(command, llm_cli_probe_timeout())
         .map(|(ok, _, _)| ok)
         .unwrap_or(false)
 }
@@ -23407,8 +23423,14 @@ fn ensure_gemini_forge_agent_settings(
     }
     let forge_agent = forge_agent_binary_path()?;
     let root = settings.as_object_mut().expect("settings object");
+    // Canonical MCP key — Gemini CLI 0.4+ reads `mcpServers` from
+    // ~/.gemini/settings.json. A previous find-and-replace renamed this to
+    // `ActCodeServers`, which the CLI silently ignored (no MCP server,
+    // therefore no Forge tool callability) and which surfaced upstream as
+    // `unknown option '--ActCode-config'` on the Claude side. Always keep
+    // the protocol-level key as `mcpServers`.
     let servers = root
-        .entry("ActCodeServers".to_string())
+        .entry("mcpServers".to_string())
         .or_insert_with(|| json!({}));
     if !servers.is_object() {
         *servers = json!({});
@@ -23422,7 +23444,7 @@ fn ensure_gemini_forge_agent_settings(
     }
     servers
         .as_object_mut()
-        .expect("ActCodeServers object")
+        .expect("mcpServers object")
         .insert(
             "forge".to_string(),
             json!({
@@ -23457,8 +23479,11 @@ fn ensure_claude_forge_agent_config(
     if let Some(job_id) = active_job_id.map(str::trim).filter(|v| !v.is_empty()) {
         env["FORGE_ACTIVE_JOB_ID"] = json!(job_id);
     }
+    // Canonical Claude Code MCP config — the `mcpServers` key is what the
+    // Claude CLI reads when invoked with `--mcp-config <file>`. The previous
+    // `ActCodeServers` form was silently ignored.
     let config = json!({
-        "ActCodeServers": {
+        "mcpServers": {
             "forge": {
                 "command": forge_agent.display().to_string(),
                 "cwd": workspace.display().to_string(),
@@ -23467,9 +23492,9 @@ fn ensure_claude_forge_agent_config(
         }
     });
     let bytes = serde_json::to_vec_pretty(&config)
-        .map_err(|e| format!("encode Claude ActCode config: {e}"))?;
+        .map_err(|e| format!("encode Claude MCP config: {e}"))?;
     std::fs::write(&config_path, bytes)
-        .map_err(|e| format!("write Claude ActCode config: {e}"))?;
+        .map_err(|e| format!("write Claude MCP config: {e}"))?;
     Ok(config_path)
 }
 
@@ -27174,7 +27199,7 @@ fn run_claude_canvas_cli(
             "path": candidate.display().to_string(),
             "model": model_label,
             "reasoningEffort": reasoning_effort.as_str(),
-            "ActCodeConfig": config_path.display().to_string(),
+            "mcpConfig": config_path.display().to_string(),
             "toolsEnabled": tools_enabled,
             "directChatMode": direct_chat_mode,
             "threadGeneration": thread_generation,
@@ -27195,17 +27220,22 @@ fn run_claude_canvas_cli(
         );
     let mut command = claude_cli_command(&candidate);
     configure_forge_llm_cli_command(&mut command);
+    // Canonical Claude Code CLI flags — `--mcp-config`, `--strict-mcp-config`
+    // and `mcp__<server>__<tool>` allowedTools matcher. A previous rename to
+    // `--ActCode-config` / `ActCode__forge__*` made the CLI reject the
+    // invocation with `error: unknown option '--ActCode-config'`, which is
+    // exactly the headless failure surfaced by tranche f311da0.
     command
         .current_dir(forge_workspace_dir())
         .arg("-p")
         .arg(prompt)
         .arg("--output-format")
         .arg("json")
-        .arg("--ActCode-config")
+        .arg("--mcp-config")
         .arg(&config_path)
-        .arg("--strict-ActCode-config")
+        .arg("--strict-mcp-config")
         .arg("--allowedTools")
-        .arg("ActCode__forge__*")
+        .arg("mcp__forge__*")
         .env("FORGE_STORE_DIR", &store_path)
         .env("FORGE_AGENT_MODEL", "forge-claude-code")
         .env_remove("ANTHROPIC_API_KEY")
@@ -27335,7 +27365,7 @@ fn run_claude_canvas_cli(
             "mode": "claude headless",
             "model": model_label,
             "reasoningEffort": reasoning_effort,
-            "ActCodeConfig": config_path.display().to_string(),
+            "mcpConfig": config_path.display().to_string(),
             "toolsEnabled": tools_enabled,
             "directChatMode": direct_chat_mode,
             "threadGeneration": thread_generation,
@@ -33941,6 +33971,86 @@ mod tests {
             .unwrap_or_default()
             .contains("OAuth"));
         assert!(classify_headless_cli_failure("totally unrelated junk", "Gemini").is_none());
+    }
+
+    #[test]
+    fn llm_cli_probe_timeout_falls_back_to_12_seconds() {
+        // The previous 3 s timeout was too tight on Windows cold starts and
+        // caused a "automatic repair" false positive. The default must give
+        // the Node.js shim + CLI bundle enough room.
+        std::env::remove_var("FORGE_LLM_CLI_PROBE_TIMEOUT_SECS");
+        assert_eq!(llm_cli_probe_timeout(), Duration::from_secs(12));
+    }
+
+    #[test]
+    fn llm_cli_probe_timeout_can_be_overridden_via_env_var() {
+        std::env::set_var("FORGE_LLM_CLI_PROBE_TIMEOUT_SECS", "30");
+        assert_eq!(llm_cli_probe_timeout(), Duration::from_secs(30));
+        std::env::set_var("FORGE_LLM_CLI_PROBE_TIMEOUT_SECS", "0");
+        assert_eq!(
+            llm_cli_probe_timeout(),
+            Duration::from_secs(12),
+            "out-of-range override must fall back to the default",
+        );
+        std::env::set_var("FORGE_LLM_CLI_PROBE_TIMEOUT_SECS", "9999");
+        assert_eq!(
+            llm_cli_probe_timeout(),
+            Duration::from_secs(12),
+            "out-of-range override must fall back to the default",
+        );
+        std::env::set_var("FORGE_LLM_CLI_PROBE_TIMEOUT_SECS", "abc");
+        assert_eq!(llm_cli_probe_timeout(), Duration::from_secs(12));
+        std::env::remove_var("FORGE_LLM_CLI_PROBE_TIMEOUT_SECS");
+    }
+
+    #[test]
+    fn claude_and_gemini_cli_use_canonical_mcp_flags_and_keys() {
+        // Regression guard: a previous global find-and-replace silently
+        // renamed every `mcp` token to `ActCode`, including the Claude
+        // Code CLI flags `--mcp-config`, `--strict-mcp-config` and the
+        // `mcp__forge__*` allowedTools matcher, plus the `mcpServers`
+        // key inside the MCP config files Claude/Gemini read. The result
+        // was the headless CLI rejecting the invocation with
+        // `error: unknown option '--ActCode-config'`.
+        //
+        // These three CLI flags + two JSON keys are protocol-level — they
+        // belong to the MCP wire spec, not Forge's internal naming. They
+        // must stay verbatim or both CLIs break again. We assert against
+        // the production half of main.rs (everything before this test
+        // module), so the forbidden tokens spelled out inside this test
+        // itself never trigger a false positive.
+        let full_src = main_rs_source();
+        // The Windows checkout may carry CRLF line endings, so search for the
+        // line-ending-agnostic prefix "#[cfg(test)]" followed by "mod tests {"
+        // on the next line. Falling back to the bare `mod tests {` keeps the
+        // guard robust under heavy refactors of the test header.
+        let cut = full_src
+            .find("mod tests {")
+            .expect("`mod tests {` marker must be present in main.rs");
+        let prod_src = &full_src[..cut];
+        for canonical in [
+            "\"--mcp-config\"",
+            "\"--strict-mcp-config\"",
+            "\"mcp__forge__*\"",
+            "\"mcpServers\"",
+        ] {
+            assert!(
+                prod_src.contains(canonical),
+                "production main.rs must keep canonical MCP token {canonical:?} \
+                 (CLI flag or JSON key) — Claude/Gemini CLI break without it",
+            );
+        }
+        let renamed_config = "\"--Act".to_string() + "Code-config\"";
+        let renamed_strict = "\"--strict-Act".to_string() + "Code-config\"";
+        let renamed_tools = "\"Act".to_string() + "Code__forge__*\"";
+        let renamed_servers = "\"Act".to_string() + "CodeServers\"";
+        for forbidden in [renamed_config, renamed_strict, renamed_tools, renamed_servers] {
+            assert!(
+                !prod_src.contains(&forbidden),
+                "production main.rs must not use {forbidden:?} — Claude/Gemini \
+                 CLI reject these renamed forms of the canonical MCP tokens.",
+            );
+        }
     }
 
     #[test]
