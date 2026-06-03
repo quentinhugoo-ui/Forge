@@ -1,5 +1,7 @@
 ﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#![recursion_limit = "256"]
+
 //! Forge UI ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â single-actor Tauri backend.
 //!
 //! Architecture (zÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ro middleman) :
@@ -36,7 +38,15 @@ mod forge_agent_runtime;
 #[allow(dead_code)]
 mod forge_agent_tools;
 mod banger;
+mod banger_native_engine;
+#[allow(dead_code)]
+mod banger_field;
+mod banger_gaussian_splat;
+mod banger_geo_tiles;
 mod banger_mesh;
+mod banger_neural_sdf;
+mod banger_skyfall_probe;
+mod gpu_preference;
 mod trading;
 mod trading_manifest;
 mod trading_pressure;
@@ -48,7 +58,7 @@ mod forge_job_runtime;
 mod forge_job_io;
 mod forge_kasm_ledger;
 mod forge_program_cache;
-mod forge_ui_atlas_runtime;
+mod forge_brain_runtime;
 
 /// Format compact "YYYY-MM-DD" depuis epoch ms ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â utilisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© par les
 /// reverse_synth log lines pour situer la pÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©riode parsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e. Pas de
@@ -91,8 +101,7 @@ use scan::fbc::{
 use scan::kasm::{Node, Op, Program, Target, Ty};
 use scan::{
     gpu_capability_report, register_cuda_dll_path, take_last_cuda_status, BatchCall, BatchInput,
-    BulkEvaluator, Hash, MemoryGovernor, MonsterEvolutionConfig, MonsterNode, MonsterSource, Store,
-    SynthProgress, SynthProgressFn,
+    BulkEvaluator, Hash, MemoryGovernor, MonsterNode, MonsterSource, Store,
 };
 use forge_job_io::{
     forge_job_mirror_dirs, read_forge_job_log_from_dirs, read_forge_job_log_tail_from_dirs,
@@ -2958,9 +2967,9 @@ fn build_agency_earth_ui_atlas<R: Runtime>(
             proof_hash: String::new(),
     };
     let (observe_input, kernel_run) =
-        forge_ui_atlas_runtime::normalize_observe_v2(observe_input);
+        forge_brain_runtime::normalize_observe_v2(observe_input);
     let webgpu_kernel_run =
-        forge_ui_atlas_runtime::webgpu_visual_bounds_micro_kernel(&observe_input.tree_hash);
+        forge_brain_runtime::webgpu_visual_bounds_micro_kernel(&observe_input.tree_hash);
     let observe = collection_os::finalize_collection_observe_v2(observe_input);
     let command_map = collection_command_map_from_observe_v2(&observe);
     let tagged_count = tag_agency_earth_actionable_nodes(app, &command_map.commands)
@@ -2993,7 +3002,7 @@ fn build_agency_earth_ui_atlas<R: Runtime>(
         "commandMapProofHash": command_map.proof_hash,
         "taggedCount": tagged_count,
         "coverage": coverage,
-        "runtime": forge_ui_atlas_runtime::runtime_manifest(),
+        "runtime": forge_brain_runtime::runtime_manifest(),
         "kernelRun": kernel_run,
         "webgpuKernelRun": webgpu_kernel_run,
         "overlayNodes": overlay_nodes.clone(),
@@ -3014,7 +3023,7 @@ fn build_agency_earth_ui_atlas<R: Runtime>(
         "coverage": coverage,
         "observeProofHash": observe.proof_hash,
         "commandMapProofHash": command_map.proof_hash,
-        "runtime": forge_ui_atlas_runtime::runtime_manifest(),
+        "runtime": forge_brain_runtime::runtime_manifest(),
         "kernelRun": kernel_run,
         "webgpuKernelRun": webgpu_kernel_run,
         "overlayNodes": overlay_nodes,
@@ -3065,8 +3074,8 @@ fn agency_earth_ui_atlas<R: Runtime>(
 }
 
 #[tauri::command]
-fn forge_ui_atlas_runtime_snapshot() -> JsonValue {
-    forge_ui_atlas_runtime::runtime_manifest()
+fn forge_brain_runtime_snapshot() -> JsonValue {
+    forge_brain_runtime::runtime_manifest()
 }
 
 #[tauri::command]
@@ -3836,7 +3845,7 @@ async fn agency_web_research_crawl(contact: JsonValue) -> JsonValue {
         "photos": photos,
         "paragraphs": paragraphs,
     }));
-    let webgpu = forge_ui_atlas_runtime::webgpu_visual_bounds_micro_kernel(&atlas_hash);
+    let webgpu = forge_brain_runtime::webgpu_visual_bounds_micro_kernel(&atlas_hash);
     json!({
         "schema": "forge.agency_web_research.report.v1",
         "status": "ok",
@@ -6251,6 +6260,48 @@ fn provider_cli_health_lock() -> &'static Mutex<HashMap<String, ProviderCliHealt
     PROVIDER_CLI_HEALTH.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Per-provider record of the most recent headless CLI outcome. Used to
+/// surface "ready, but the last chat call failed because …" in the LLM menu,
+/// so the user does not see a green "ready" badge while the CLI bridge is
+/// actually broken. The TTL keeps stale failures from hiding a recovered CLI.
+#[derive(Clone, Debug)]
+struct HeadlessCliOutcome {
+    ok: bool,
+    detail: Option<String>,
+    observed_ms: u128,
+}
+
+const HEADLESS_CLI_OUTCOME_TTL_MS: u128 = 30 * 60 * 1000;
+
+static HEADLESS_CLI_OUTCOMES: OnceLock<Mutex<HashMap<String, HeadlessCliOutcome>>> =
+    OnceLock::new();
+
+fn headless_cli_outcome_lock() -> &'static Mutex<HashMap<String, HeadlessCliOutcome>> {
+    HEADLESS_CLI_OUTCOMES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn record_headless_cli_outcome(provider: &str, ok: bool, detail: Option<String>) {
+    if let Ok(mut guard) = headless_cli_outcome_lock().lock() {
+        guard.insert(
+            provider.to_string(),
+            HeadlessCliOutcome {
+                ok,
+                detail,
+                observed_ms: now_epoch_ms(),
+            },
+        );
+    }
+}
+
+fn recent_headless_cli_outcome(provider: &str) -> Option<HeadlessCliOutcome> {
+    let now = now_epoch_ms();
+    headless_cli_outcome_lock()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(provider).cloned())
+        .filter(|entry| now.saturating_sub(entry.observed_ms) <= HEADLESS_CLI_OUTCOME_TTL_MS)
+}
+
 fn provider_display_name(provider: &str) -> &'static str {
     match provider {
         "codex" => "Codex",
@@ -6727,6 +6778,7 @@ fn build_codex_canvas_direct_oauth_instructions(reasoning_effort: &str) -> Strin
             reasoning_effort
         ),
         "style=français naturel, concis; réponds directement; conserve les accents français corrects (é, è, ê, à, ç, œ) dans le texte visible.".to_string(),
+        "Nommage de session: dès que la demande de l'utilisateur est claire et que le titre courant est encore « New session », émets une seule fois un bloc ```FORGE_SESSION_TITLE_JSON {\"title\":\"...\"}``` avec un titre court (2 à 5 mots) qui résume le projet. Ce bloc est masqué du chat et renomme la session à gauche et au-dessus du canva. Ne le répète pas si la session est déjà bien nommée.".to_string(),
     ]
     .join("\n")
 }
@@ -7113,7 +7165,7 @@ fn finalize_codex_direct_template_selection(
     catalog: &JsonValue,
     selection: JsonValue,
 ) -> Result<JsonValue, String> {
-    let (template_id, forge_slash, answer, reason, confidence) =
+    let (template_id, brain_command, answer, reason, confidence) =
         validate_codex_direct_template_selection(catalog, &selection)?;
     let entry = codex_direct_template_catalog_entry(catalog, &template_id);
     let template_code = entry
@@ -7133,7 +7185,7 @@ fn finalize_codex_direct_template_selection(
         "templateCode": template_code,
         "toolHints": tool_hints,
         "primaryDomain": primary_domain,
-        "forgeSlash": forge_slash,
+        "BrainCommand": brain_command,
         "answer": answer,
         "reason": reason,
         "confidence": confidence,
@@ -7623,12 +7675,12 @@ fn validate_codex_direct_template_selection(
             normalized_slots.insert(key.to_string(), json!(value));
         }
     }
-    let forge_slash_template = entry
-        .get("forgeSlashTemplate")
+    let brain_command_template = entry
+        .get("BrainCommandTemplate")
         .and_then(JsonValue::as_str)
-        .ok_or_else(|| format!("template `{template_id}` is missing forgeSlashTemplate"))?;
-    let forge_slash = render_direct_template_string(forge_slash_template, &normalized_slots)?;
-    Ok((template_id, Some(forge_slash), answer, reason, confidence))
+        .ok_or_else(|| format!("template `{template_id}` is missing BrainCommandTemplate"))?;
+    let brain_command = render_direct_template_string(brain_command_template, &normalized_slots)?;
+    Ok((template_id, Some(brain_command), answer, reason, confidence))
 }
 
 fn canvas_runtime_attemptable(runtime: &str, status: &OpenAiSubscriptionStatus) -> bool {
@@ -20475,7 +20527,7 @@ async fn create_forge_pending_job(
         })
         .unwrap_or_else(|| {
             if file_count == 0 {
-                "mcp_session".to_string()
+                "ActCode_session".to_string()
             } else {
                 "alpha_strategy_from_csv".to_string()
             }
@@ -20497,7 +20549,7 @@ async fn create_forge_pending_job(
         .and_then(|m| m.get("archived"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let mcp_hint = if file_count == 0 {
+    let actcode_hint = if file_count == 0 {
         json!({
             "tool": "forge_session",
             "arguments": {
@@ -20545,11 +20597,11 @@ async fn create_forge_pending_job(
             "avoided_bytes": total_bytes,
             "estimated_tokens": (total_bytes + 3) / 4,
             "exact_tokens": null,
-            "note": "Pending UI upload: no MCP agent has claimed this job yet."
+            "note": "Pending UI upload: no ActCode agent has claimed this job yet."
         },
         "created_ms": created_ms,
         "log_path": log_path.display().to_string(),
-        "mcp_hint": mcp_hint
+        "actcode_hint": actcode_hint
     });
     let manifest_bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|e| format!("encode pending job manifest: {e}"))?;
@@ -20561,7 +20613,7 @@ async fn create_forge_pending_job(
     };
     let pending_log = if existing_manifest.is_some() {
         format!(
-            "{}{}pending upload session updated\nfiles={}\nprimary={}\nbytes={}\nwaiting for MCP agent to claim calculation\n",
+            "{}{}pending upload session updated\nfiles={}\nprimary={}\nbytes={}\nwaiting for ActCode agent to claim calculation\n",
             existing_log,
             if existing_log.is_empty() || existing_log.ends_with('\n') { "" } else { "\n" },
             file_count,
@@ -20569,10 +20621,10 @@ async fn create_forge_pending_job(
             total_bytes
         )
     } else if file_count == 0 {
-        "pending empty session created\nfiles=0\nprimary=\nbytes=0\nwaiting for MCP agent to claim calculation\n".to_string()
+        "pending empty session created\nfiles=0\nprimary=\nbytes=0\nwaiting for ActCode agent to claim calculation\n".to_string()
     } else {
         format!(
-            "pending upload session created\nfiles={}\nprimary={}\nbytes={}\nwaiting for MCP agent to claim calculation\n",
+            "pending upload session created\nfiles={}\nprimary={}\nbytes={}\nwaiting for ActCode agent to claim calculation\n",
             file_count,
             primary_file_path,
             total_bytes
@@ -20610,7 +20662,7 @@ async fn create_forge_pending_job(
             "avoided_bytes": total_bytes,
             "estimated_tokens": (total_bytes + 3) / 4,
             "exact_tokens": null,
-            "note": "Pending UI upload: no MCP agent has claimed this job yet."
+            "note": "Pending UI upload: no ActCode agent has claimed this job yet."
         })),
         performance: None,
         last_modified_ms: modified_ms,
@@ -21111,7 +21163,7 @@ fn sensitive_tauri_command_guard_metadata() -> &'static [SensitiveTauriCommandGu
             boot_safe: false,
         },
         SensitiveTauriCommandGuardMetadata {
-            command: "publish_forge_job_to_mcp",
+            command: "publish_forge_job_to_actcode",
             owner: "shell",
             surface: "artifact_publish",
             requires_fbc_guard: false,
@@ -21242,29 +21294,29 @@ fn ensure_builtin_mars_geonodes(store_path: &Path) -> Result<(), String> {
     forge_agent_tools::ensure_builtin_mars_geonodes(store_path)
 }
 
-fn forge_mcp_binary_path() -> Result<PathBuf, String> {
+fn forge_agent_binary_path() -> Result<PathBuf, String> {
     let current = std::env::current_exe().map_err(|e| format!("locate current executable: {e}"))?;
-    let binary_name = if cfg!(windows) { "forge_mcp.exe" } else { "forge_mcp" };
+    let binary_name = if cfg!(windows) { "FORGE_AGENT.exe" } else { "FORGE_AGENT" };
     Ok(current.with_file_name(binary_name))
 }
 
-fn write_mcp_message<W: Write>(writer: &mut W, value: &JsonValue) -> Result<(), String> {
-    let body = serde_json::to_vec(value).map_err(|e| format!("encode MCP message: {e}"))?;
+fn write_actcode_message<W: Write>(writer: &mut W, value: &JsonValue) -> Result<(), String> {
+    let body = serde_json::to_vec(value).map_err(|e| format!("encode ActCode message: {e}"))?;
     write!(writer, "Content-Length: {}\r\n\r\n", body.len())
-        .map_err(|e| format!("write MCP header: {e}"))?;
+        .map_err(|e| format!("write ActCode header: {e}"))?;
     writer
         .write_all(&body)
-        .map_err(|e| format!("write MCP body: {e}"))?;
-    writer.flush().map_err(|e| format!("flush MCP stdin: {e}"))
+        .map_err(|e| format!("write ActCode body: {e}"))?;
+    writer.flush().map_err(|e| format!("flush ActCode stdin: {e}"))
 }
 
-fn read_mcp_message<R: BufRead>(reader: &mut R) -> Result<Option<JsonValue>, String> {
+fn read_actcode_message<R: BufRead>(reader: &mut R) -> Result<Option<JsonValue>, String> {
     let mut content_length = None;
     loop {
         let mut line = String::new();
         let read = reader
             .read_line(&mut line)
-            .map_err(|e| format!("read MCP header: {e}"))?;
+            .map_err(|e| format!("read ActCode header: {e}"))?;
         if read == 0 {
             return Ok(None);
         }
@@ -21278,44 +21330,44 @@ fn read_mcp_message<R: BufRead>(reader: &mut R) -> Result<Option<JsonValue>, Str
                     value
                         .trim()
                         .parse::<usize>()
-                        .map_err(|e| format!("parse MCP content-length: {e}"))?,
+                        .map_err(|e| format!("parse ActCode content-length: {e}"))?,
                 );
             }
         }
     }
-    let len = content_length.ok_or_else(|| "MCP response missing Content-Length".to_string())?;
+    let len = content_length.ok_or_else(|| "ActCode response missing Content-Length".to_string())?;
     let mut body = vec![0u8; len];
     reader
         .read_exact(&mut body)
-        .map_err(|e| format!("read MCP body: {e}"))?;
+        .map_err(|e| format!("read ActCode body: {e}"))?;
     serde_json::from_slice(&body)
         .map(Some)
-        .map_err(|e| format!("decode MCP body: {e}"))
+        .map_err(|e| format!("decode ActCode body: {e}"))
 }
 
-fn call_forge_mcp_tool(store_path: PathBuf, tool: &str, args: JsonValue) -> Result<JsonValue, String> {
-    let mcp_path = forge_mcp_binary_path()?;
-    if !mcp_path.exists() {
+fn call_forge_agent_tool(store_path: PathBuf, tool: &str, args: JsonValue) -> Result<JsonValue, String> {
+    let actcode_path = forge_agent_binary_path()?;
+    if !actcode_path.exists() {
         return Err(format!(
-            "Forge MCP binary not found at '{}'. Build it with cargo build --bin forge_mcp.",
-            mcp_path.display()
+            "Forge ActCode binary not found at '{}'. Build it with cargo build --bin FORGE_AGENT.",
+            actcode_path.display()
         ));
     }
-    let mut child = Command::new(&mcp_path)
+    let mut child = Command::new(&actcode_path)
         .env("FORGE_STORE_DIR", &store_path)
-        .env("FORGE_MCP_MODEL", "forge-ui")
+        .env("FORGE_AGENT_MODEL", "forge-ui")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("start Forge MCP '{}': {e}", mcp_path.display()))?;
+        .map_err(|e| format!("start Forge ActCode '{}': {e}", actcode_path.display()))?;
 
     {
         let stdin = child
             .stdin
             .as_mut()
-            .ok_or_else(|| "Forge MCP stdin unavailable".to_string())?;
-        write_mcp_message(stdin, &json!({
+            .ok_or_else(|| "Forge ActCode stdin unavailable".to_string())?;
+        write_actcode_message(stdin, &json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "initialize",
@@ -21328,12 +21380,12 @@ fn call_forge_mcp_tool(store_path: PathBuf, tool: &str, args: JsonValue) -> Resu
                 }
             }
         }))?;
-        write_mcp_message(stdin, &json!({
+        write_actcode_message(stdin, &json!({
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
             "params": {}
         }))?;
-        write_mcp_message(stdin, &json!({
+        write_actcode_message(stdin, &json!({
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/call",
@@ -21348,10 +21400,10 @@ fn call_forge_mcp_tool(store_path: PathBuf, tool: &str, args: JsonValue) -> Resu
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| "Forge MCP stdout unavailable".to_string())?;
+        .ok_or_else(|| "Forge ActCode stdout unavailable".to_string())?;
     let mut reader = BufReader::new(stdout);
     let mut tool_response = None;
-    while let Some(message) = read_mcp_message(&mut reader)? {
+    while let Some(message) = read_actcode_message(&mut reader)? {
         if message.get("id").and_then(JsonValue::as_i64) == Some(2) {
             tool_response = Some(message);
             break;
@@ -21359,22 +21411,22 @@ fn call_forge_mcp_tool(store_path: PathBuf, tool: &str, args: JsonValue) -> Resu
     }
     let output = child
         .wait_with_output()
-        .map_err(|e| format!("wait Forge MCP: {e}"))?;
+        .map_err(|e| format!("wait Forge ActCode: {e}"))?;
     let message = tool_response.ok_or_else(|| {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
-            "Forge MCP did not return a tool response".to_string()
+            "Forge ActCode did not return a tool response".to_string()
         } else {
-            format!("Forge MCP did not return a tool response: {stderr}")
+            format!("Forge ActCode did not return a tool response: {stderr}")
         }
     })?;
     if let Some(error) = message.get("error") {
-        return Err(format!("Forge MCP tool error: {error}"));
+        return Err(format!("Forge ActCode tool error: {error}"));
     }
     let result = message
         .get("result")
         .cloned()
-        .ok_or_else(|| "Forge MCP response missing result".to_string())?;
+        .ok_or_else(|| "Forge ActCode response missing result".to_string())?;
     if let Some(text) = result
         .get("content")
         .and_then(JsonValue::as_array)
@@ -21391,7 +21443,7 @@ fn call_forge_mcp_tool(store_path: PathBuf, tool: &str, args: JsonValue) -> Resu
 }
 
 fn forge_program_run_cached(store_path: PathBuf, args: JsonValue) -> Result<JsonValue, String> {
-    forge_program_run_cached_with(store_path, args, call_forge_mcp_tool)
+    forge_program_run_cached_with(store_path, args, call_forge_agent_tool)
 }
 
 #[tauri::command]
@@ -21428,7 +21480,7 @@ async fn run_forge_program(
     }
     tauri::async_runtime::spawn_blocking(move || forge_program_run_cached(store_path, args))
         .await
-        .map_err(|e| format!("join Forge MCP runner: {e}"))?
+        .map_err(|e| format!("join Forge ActCode runner: {e}"))?
 }
 
 #[tauri::command]
@@ -21470,9 +21522,9 @@ async fn create_forge_program(
             obj.insert("program_kind".to_string(), json!(program_kind));
         }
     }
-    tauri::async_runtime::spawn_blocking(move || call_forge_mcp_tool(store_path, "create", args))
+    tauri::async_runtime::spawn_blocking(move || call_forge_agent_tool(store_path, "create", args))
         .await
-        .map_err(|e| format!("join Forge MCP create: {e}"))?
+        .map_err(|e| format!("join Forge ActCode create: {e}"))?
 }
 
 #[tauri::command]
@@ -21513,7 +21565,7 @@ async fn list_forge_capability_templates(
             }
         }
         for domain in domains {
-            let response = call_forge_mcp_tool(
+            let response = call_forge_agent_tool(
                 store_path.clone(),
                 "capabilities",
                 json!({ "domain": domain, "detailed": true }),
@@ -21539,7 +21591,7 @@ async fn list_forge_capability_templates(
         Ok(out)
     })
     .await
-    .map_err(|e| format!("join Forge MCP capabilities: {e}"))?
+    .map_err(|e| format!("join Forge ActCode capabilities: {e}"))?
 }
 
 #[tauri::command]
@@ -22948,6 +23000,7 @@ fn gemini_cli_status(model_ref: Option<&str>) -> OpenAiSubscriptionStatus {
         "Gemini CLI is installed, but no Gemini API key or Google OAuth credentials were found."
             .to_string()
     };
+    let message = annotate_status_with_last_headless_outcome(message, "gemini", "Gemini");
     let status = OpenAiSubscriptionStatus {
         connected,
         installed,
@@ -22967,6 +23020,39 @@ fn gemini_cli_status(model_ref: Option<&str>) -> OpenAiSubscriptionStatus {
         remember_provider_cli_health("gemini", &status);
     }
     sticky_provider_cli_status("gemini", status, candidate_exists_but_unusable)
+}
+
+/// If the most recent headless CLI call for this provider failed (within the
+/// 30-minute TTL window), append a short hint to the status `message` so the
+/// LLM menu reflects the real headless health, not just "binary + key found".
+/// The full reason is already exposed in the chat assistant message via
+/// `compose_headless_cli_failure_message`.
+fn annotate_status_with_last_headless_outcome(
+    base: String,
+    provider: &str,
+    provider_label: &str,
+) -> String {
+    let Some(outcome) = recent_headless_cli_outcome(provider) else {
+        return base;
+    };
+    if outcome.ok {
+        return base;
+    }
+    let raw = outcome.detail.as_deref().map(str::trim).unwrap_or("");
+    let snippet = if raw.is_empty() {
+        String::new()
+    } else {
+        let mut cut = raw.len().min(220);
+        while !raw.is_char_boundary(cut) && cut > 0 {
+            cut -= 1;
+        }
+        let trimmed = &raw[..cut];
+        let suffix = if raw.len() > cut { "…" } else { "" };
+        format!(" Détail : {trimmed}{suffix}")
+    };
+    format!(
+        "{base} Dernier appel headless {provider_label} : échec.{snippet}"
+    )
 }
 
 fn gemini_bridge_model_arg(model_ref: Option<&str>) -> Option<String> {
@@ -23281,6 +23367,7 @@ fn claude_cli_status(model_ref: Option<&str>) -> OpenAiSubscriptionStatus {
         "Claude Code CLI is installed, but Forge could not verify Claude.ai auth. Use Connect Claude subscription."
             .to_string()
     };
+    let message = annotate_status_with_last_headless_outcome(message, "claude", "Claude");
     let status = OpenAiSubscriptionStatus {
         connected,
         installed,
@@ -23302,7 +23389,7 @@ fn claude_cli_status(model_ref: Option<&str>) -> OpenAiSubscriptionStatus {
     sticky_provider_cli_status("claude", status, candidate_exists_but_unusable)
 }
 
-fn ensure_gemini_forge_mcp_settings(
+fn ensure_gemini_forge_agent_settings(
     store_path: &Path,
     active_job_id: Option<&str>,
 ) -> Result<PathBuf, String> {
@@ -23318,28 +23405,28 @@ fn ensure_gemini_forge_mcp_settings(
     if !settings.is_object() {
         settings = json!({});
     }
-    let forge_mcp = forge_mcp_binary_path()?;
+    let forge_agent = forge_agent_binary_path()?;
     let root = settings.as_object_mut().expect("settings object");
     let servers = root
-        .entry("mcpServers".to_string())
+        .entry("ActCodeServers".to_string())
         .or_insert_with(|| json!({}));
     if !servers.is_object() {
         *servers = json!({});
     }
     let mut env = json!({
         "FORGE_STORE_DIR": store_path.display().to_string(),
-        "FORGE_MCP_MODEL": "forge-gemini-cli"
+        "FORGE_AGENT_MODEL": "forge-gemini-cli"
     });
     if let Some(job_id) = active_job_id.map(str::trim).filter(|v| !v.is_empty()) {
         env["FORGE_ACTIVE_JOB_ID"] = json!(job_id);
     }
     servers
         .as_object_mut()
-        .expect("mcpServers object")
+        .expect("ActCodeServers object")
         .insert(
             "forge".to_string(),
             json!({
-                "command": forge_mcp.display().to_string(),
+                "command": forge_agent.display().to_string(),
                 "cwd": workspace.display().to_string(),
                 "env": env,
                 "timeout": 600000,
@@ -23353,7 +23440,7 @@ fn ensure_gemini_forge_mcp_settings(
     Ok(settings_path)
 }
 
-fn ensure_claude_forge_mcp_config(
+fn ensure_claude_forge_agent_config(
     store_path: &Path,
     active_job_id: Option<&str>,
 ) -> Result<PathBuf, String> {
@@ -23361,28 +23448,28 @@ fn ensure_claude_forge_mcp_config(
     let claude_dir = workspace.join(".claude");
     std::fs::create_dir_all(&claude_dir)
         .map_err(|e| format!("create Claude config directory: {e}"))?;
-    let config_path = claude_dir.join("forge-mcp.json");
-    let forge_mcp = forge_mcp_binary_path()?;
+    let config_path = claude_dir.join("forge-ActCode.json");
+    let forge_agent = forge_agent_binary_path()?;
     let mut env = json!({
         "FORGE_STORE_DIR": store_path.display().to_string(),
-        "FORGE_MCP_MODEL": "forge-claude-code"
+        "FORGE_AGENT_MODEL": "forge-claude-code"
     });
     if let Some(job_id) = active_job_id.map(str::trim).filter(|v| !v.is_empty()) {
         env["FORGE_ACTIVE_JOB_ID"] = json!(job_id);
     }
     let config = json!({
-        "mcpServers": {
+        "ActCodeServers": {
             "forge": {
-                "command": forge_mcp.display().to_string(),
+                "command": forge_agent.display().to_string(),
                 "cwd": workspace.display().to_string(),
                 "env": env
             }
         }
     });
     let bytes = serde_json::to_vec_pretty(&config)
-        .map_err(|e| format!("encode Claude MCP config: {e}"))?;
+        .map_err(|e| format!("encode Claude ActCode config: {e}"))?;
     std::fs::write(&config_path, bytes)
-        .map_err(|e| format!("write Claude MCP config: {e}"))?;
+        .map_err(|e| format!("write Claude ActCode config: {e}"))?;
     Ok(config_path)
 }
 
@@ -24342,6 +24429,96 @@ fn semantic_cache_is_cacheable(user_message: &str, assistant_message: &str) -> b
     (8..=700).contains(&user_len) && (2..=2_000).contains(&assistant_len)
 }
 
+/// Produce a chat assistant message that surfaces the real headless CLI
+/// failure (Gemini / Claude) when one is captured, instead of the generic
+/// "n'a pas pu répondre" fallback. The user can then see whether the CLI
+/// failed because of an expired API key, exhausted quota, unavailable model,
+/// missing OAuth refresh, etc.
+///
+/// The detail is sniffed for common Google AI / Anthropic error families and
+/// translated to a French-language hint; the raw CLI output is always kept
+/// underneath so the user has the ground truth.
+fn compose_headless_cli_failure_message(
+    generic: &str,
+    detail: Option<&str>,
+    provider_label: &str,
+) -> String {
+    let Some(raw_detail) = detail.map(str::trim).filter(|s| !s.is_empty()) else {
+        return generic.to_string();
+    };
+    let hint = classify_headless_cli_failure(raw_detail, provider_label);
+    let truncated = if raw_detail.len() > 1200 {
+        let mut cut = 1200;
+        while !raw_detail.is_char_boundary(cut) && cut > 0 {
+            cut -= 1;
+        }
+        format!("{}…", &raw_detail[..cut])
+    } else {
+        raw_detail.to_string()
+    };
+    match hint {
+        Some(hint) => format!("{generic}\n\n{hint}\n\nDétail CLI:\n{truncated}"),
+        None => format!("{generic}\n\nDétail CLI:\n{truncated}"),
+    }
+}
+
+/// Classify a headless CLI error string into a short French-language hint
+/// pointing the user toward the most likely cause. Returns `None` when the
+/// shape of the error doesn't match any known family — in that case the raw
+/// detail is shown without an interpretation.
+fn classify_headless_cli_failure(detail: &str, provider_label: &str) -> Option<String> {
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("resource_exhausted")
+        || lower.contains("quota")
+        || lower.contains("rate limit")
+        || lower.contains("429")
+    {
+        return Some(format!(
+            "Cause probable : quota {provider_label} épuisé. Attendez la fin du cycle de facturation ou augmentez le quota."
+        ));
+    }
+    if lower.contains("permission_denied")
+        || lower.contains("unauthenticated")
+        || lower.contains("invalid api key")
+        || lower.contains("api key not valid")
+        || lower.contains("401")
+        || lower.contains("403")
+    {
+        return Some(format!(
+            "Cause probable : clé API / authentification {provider_label} invalide ou expirée. Régénérez la clé puis enregistrez-la depuis le terminal {provider_label} embarqué."
+        ));
+    }
+    if lower.contains("invalid_argument")
+        && (lower.contains("model") || lower.contains("modèle"))
+        || lower.contains("model not found")
+        || lower.contains("unsupported model")
+    {
+        return Some(format!(
+            "Cause probable : modèle {provider_label} indisponible pour ce compte. Choisissez un autre modèle dans le menu LLM."
+        ));
+    }
+    if lower.contains("timed out") || lower.contains("timeout") {
+        return Some(format!(
+            "Cause probable : la CLI {provider_label} a dépassé le délai imparti (180 s). Réessayez ou allégez la requête."
+        ));
+    }
+    if lower.contains("network")
+        || lower.contains("connection refused")
+        || lower.contains("dns")
+        || lower.contains("getaddrinfo")
+    {
+        return Some(
+            "Cause probable : connectivité réseau coupée vers les serveurs Google / Anthropic.".to_string(),
+        );
+    }
+    if lower.contains("oauth") || lower.contains("refresh token") || lower.contains("creds.json") {
+        return Some(format!(
+            "Cause probable : la session OAuth {provider_label} a expiré. Ouvrez le terminal {provider_label} embarqué et relancez la connexion."
+        ));
+    }
+    None
+}
+
 fn sanitize_canvas_assistant_message(text: &str) -> String {
     let cleaned_lines: Vec<&str> = text
         .lines()
@@ -25086,6 +25263,31 @@ fn commit_real_estate_agency_identity_memory(
         &text,
         "confirmed_agency_identity",
     )
+}
+
+fn ensure_banger_actcode_brain_memories(store_path: &Path) -> Result<JsonValue, String> {
+    let mut memories = Vec::new();
+    for note_args in forge_brain_runtime::banger_brain_seed_notes() {
+        let fact_key = note_args
+            .get("fact_key")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("")
+            .to_string();
+        let result = forge_agent_tools::brain_commit(store_path, &note_args)?;
+        memories.push(json!({
+            "factKey": fact_key,
+            "action": result.pointer("/note/action").and_then(JsonValue::as_str).unwrap_or("stored"),
+            "hash": result.pointer("/note/hash").and_then(JsonValue::as_str).unwrap_or(""),
+            "verificationStatus": result.pointer("/note/verification_status").and_then(JsonValue::as_str).unwrap_or(""),
+        }));
+    }
+    Ok(json!({
+        "status": "ok",
+        "scope": "banger",
+        "category": "Banger",
+        "memoryLayer": "semantic",
+        "memories": memories,
+    }))
 }
 
 fn append_real_estate_privacy_audit(store_path: &Path, event: &JsonValue) -> Result<(), String> {
@@ -26954,7 +27156,7 @@ fn run_claude_canvas_cli(
     app: Option<tauri::AppHandle>,
     turn_id: String,
 ) -> Result<(String, JsonValue), String> {
-    let config_path = ensure_claude_forge_mcp_config(&store_path, active_job_id.as_deref())?;
+    let config_path = ensure_claude_forge_agent_config(&store_path, active_job_id.as_deref())?;
     let candidate = claude_cli_binary_path().ok_or_else(|| {
         "Claude Code CLI was not found. Install @anthropic-ai/claude-code with npm, then run `claude` once to login.".to_string()
     })?;
@@ -26972,7 +27174,7 @@ fn run_claude_canvas_cli(
             "path": candidate.display().to_string(),
             "model": model_label,
             "reasoningEffort": reasoning_effort.as_str(),
-            "mcpConfig": config_path.display().to_string(),
+            "ActCodeConfig": config_path.display().to_string(),
             "toolsEnabled": tools_enabled,
             "directChatMode": direct_chat_mode,
             "threadGeneration": thread_generation,
@@ -26999,13 +27201,13 @@ fn run_claude_canvas_cli(
         .arg(prompt)
         .arg("--output-format")
         .arg("json")
-        .arg("--mcp-config")
+        .arg("--ActCode-config")
         .arg(&config_path)
-        .arg("--strict-mcp-config")
+        .arg("--strict-ActCode-config")
         .arg("--allowedTools")
-        .arg("mcp__forge__*")
+        .arg("ActCode__forge__*")
         .env("FORGE_STORE_DIR", &store_path)
-        .env("FORGE_MCP_MODEL", "forge-claude-code")
+        .env("FORGE_AGENT_MODEL", "forge-claude-code")
         .env_remove("ANTHROPIC_API_KEY")
         .env_remove("ANTHROPIC_AUTH_TOKEN")
         .env_remove("CLAUDE_CODE_USE_BEDROCK")
@@ -27133,7 +27335,7 @@ fn run_claude_canvas_cli(
             "mode": "claude headless",
             "model": model_label,
             "reasoningEffort": reasoning_effort,
-            "mcpConfig": config_path.display().to_string(),
+            "ActCodeConfig": config_path.display().to_string(),
             "toolsEnabled": tools_enabled,
             "directChatMode": direct_chat_mode,
             "threadGeneration": thread_generation,
@@ -27161,7 +27363,7 @@ fn run_gemini_canvas_cli(
     app: Option<tauri::AppHandle>,
     turn_id: String,
 ) -> Result<(String, JsonValue), String> {
-    let settings_path = ensure_gemini_forge_mcp_settings(&store_path, active_job_id.as_deref())?;
+    let settings_path = ensure_gemini_forge_agent_settings(&store_path, active_job_id.as_deref())?;
     let candidate = gemini_cli_binary_path()
         .ok_or_else(|| "Gemini CLI was not found. Install @google/gemini-cli with npm.".to_string())?;
     let model = gemini_bridge_model_arg(model_ref.as_deref())
@@ -27206,7 +27408,7 @@ fn run_gemini_canvas_cli(
         .arg("--model")
         .arg(&model)
         .env("FORGE_STORE_DIR", &store_path)
-        .env("FORGE_MCP_MODEL", "forge-gemini-cli")
+        .env("FORGE_AGENT_MODEL", "forge-gemini-cli")
         .env("NO_COLOR", "1")
         .env("TERM", "xterm-256color")
         .stdin(Stdio::null())
@@ -27344,6 +27546,233 @@ fn run_gemini_canvas_cli(
             "usage": gemini_usage_from_stats(&stats),
             "stats": stats
         }),
+    ))
+}
+
+#[tauri::command]
+fn forge_brain_compute_library(limit: Option<usize>) -> JsonValue {
+    forge_brain_runtime::compute_library_manifest(&forge_store_dir(), limit.unwrap_or(80))
+}
+
+#[tauri::command]
+fn forge_brain_material_library(limit: Option<usize>) -> JsonValue {
+    forge_brain_runtime::material_library_manifest(&forge_store_dir(), limit.unwrap_or(80))
+}
+
+#[tauri::command]
+fn forge_brain_record_material_research(payload: JsonValue) -> Result<JsonValue, String> {
+    forge_brain_runtime::record_material_research(&forge_store_dir(), payload)
+}
+
+#[tauri::command]
+fn forge_brain_hot_fragment_index() -> Result<JsonValue, String> {
+    forge_brain_runtime::prewarm_compute_hot_index(&forge_store_dir())
+}
+
+#[tauri::command]
+fn forge_brain_run_actcode(
+    act_code: String,
+    brief: Option<String>,
+    max_ops: Option<usize>,
+) -> Result<JsonValue, String> {
+    let store_path = forge_store_dir();
+    let act_code_trimmed = act_code.trim().to_string();
+    let brief_text = brief.unwrap_or_default();
+    if act_code_trimmed.starts_with("/selectcompute_") {
+        return forge_brain_runtime::select_compute_from_library(
+            &store_path,
+            act_code_trimmed,
+            Some(brief_text),
+        );
+    }
+    if act_code_trimmed.starts_with("/compute_") {
+        let compute_name = act_code_trimmed
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_start_matches("/compute_")
+            .trim_end_matches('_')
+            .replace('_', " ");
+        return forge_brain_runtime::select_compute_from_library(
+            &store_path,
+            format!("/selectcompute_\nquery={compute_name}\nselection_policy=exact_or_latest\nreuse_policy=reuse_hashes\nrequired_hashes=actCodeHash,resultHash,proofHash"),
+            Some(compute_name),
+        );
+    }
+    if act_code_trimmed.starts_with("/newcompute_") {
+        let act_hash = forge_brain_runtime::newcompute_input_hash(&act_code_trimmed, &brief_text);
+        let micro_memo = forge_brain_runtime::newcompute_micro_memo(&act_code_trimmed);
+        let reuse_plan = forge_brain_runtime::compute_fragment_reuse_plan(&store_path, &micro_memo)
+            .unwrap_or_else(|err| json!({
+                "schema": "forge.brain.kasm_reuse_plan.v1",
+                "status": "unavailable",
+                "error": err,
+            }));
+        if forge_brain_runtime::lookup_compute_by_act_hash(&store_path, &act_hash).is_some() {
+            let mut result = forge_brain_runtime::record_memoized_compute_hit(&store_path, &act_hash)?;
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("reusePlan".to_string(), reuse_plan);
+            }
+            return Ok(result);
+        }
+        let mut result = forge_brain_runtime::forge_brain_run_actcode_with_store(
+            &store_path,
+            act_code_trimmed.clone(),
+            Some(brief_text.clone()),
+            max_ops,
+        )?;
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("reusePlan".to_string(), reuse_plan);
+        }
+        if let Some(monster_prepared) = result.get("monsterPreparedCompute") {
+            let monster_reuse_plan = forge_brain_runtime::compute_fragment_reuse_plan_for_monster(
+                &store_path,
+                monster_prepared,
+            )
+            .unwrap_or_else(|err| json!({
+                "schema": "forge.brain.monster_reuse_plan.v1",
+                "status": "unavailable",
+                "error": err,
+            }));
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("monsterReusePlan".to_string(), monster_reuse_plan);
+            }
+        }
+        if result.get("status").and_then(JsonValue::as_str) == Some("newcompute_launched") {
+            let record = forge_brain_runtime::record_newcompute_run(
+                &store_path,
+                &act_code_trimmed,
+                &brief_text,
+                &result,
+            )?;
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("computeLibrary".to_string(), record);
+            }
+        }
+        return Ok(result);
+    }
+    let mut result = forge_brain_runtime::forge_brain_run_actcode(
+        act_code_trimmed.clone(),
+        Some(brief_text.clone()),
+        max_ops,
+    )?;
+    if result.get("status").and_then(JsonValue::as_str) == Some("newcompute_launched") {
+        let record = forge_brain_runtime::record_newcompute_run(
+            &store_path,
+            &act_code_trimmed,
+            &brief_text,
+            &result,
+        )?;
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("computeLibrary".to_string(), record);
+        }
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn forge_brain_design_brief(
+    app: tauri::AppHandle,
+    brief: String,
+    turn_id: Option<String>,
+) -> Result<JsonValue, String> {
+    let turn_id = turn_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("forge-atlas-design-{}", forge_unix_ms()));
+    let brief = brief.trim().to_string();
+    if brief.is_empty() {
+        return Err("empty design brief".to_string());
+    }
+    emit_canvas_agent_narration(
+        Some(&app),
+        &turn_id,
+        "codex",
+        "Je prepare les templates Banger: /newcompute_ pour les calculs, puis /newobject_ pour construire l'objet SDF.",
+        "before_tool",
+    );
+    let report = forge_brain_runtime::forge_brain_design_brief_report(&brief, 42);
+    emit_canvas_agent_tool_event(
+        Some(&app),
+        &turn_id,
+        "newcompute_template",
+        "Forge ouvre /newcompute_ et /newobject_",
+        json!({
+            "transport": "Forge KASM",
+            "thinkingLabel": "templates Banger",
+            "requiredSlots": report.get("requiredSlots").cloned().unwrap_or(JsonValue::Null),
+            "objectTemplate": report.get("objectTemplate").cloned().unwrap_or(JsonValue::Null),
+            "requestHash": report.get("requestHash").cloned().unwrap_or(JsonValue::Null),
+        }),
+    );
+    emit_canvas_agent_tool_event(
+        Some(&app),
+        &turn_id,
+        "newcompute_launch_gate",
+        "KASM bloque le lancement tant que les cases obligatoires ne sont pas remplies",
+        json!({
+            "transport": "Forge KASM",
+            "thinkingLabel": "verification slots",
+            "missingRequiredSlots": report.get("missingRequiredSlots").cloned().unwrap_or(JsonValue::Null),
+        }),
+    );
+    emit_canvas_agent_tool_event(
+        Some(&app),
+        &turn_id,
+        "newcompute_interactions",
+        "Le moteur attend equations, algorithmes, invariants, tests et interactions croisees",
+        json!({
+            "transport": "Forge KASM",
+            "thinkingLabel": "contrat mathematique",
+            "template": report.get("template").cloned().unwrap_or(JsonValue::Null),
+        }),
+    );
+    emit_canvas_agent_narration(
+        Some(&app),
+        &turn_id,
+        "codex",
+        "J'injecte les contrats Banger au modele: il doit ecrire les maths dans /newcompute_, puis l'objet SDF dans /newobject_.",
+        "after_tool",
+    );
+    Ok(report)
+}
+
+#[tauri::command]
+fn forge_brain_banger_identity(
+    app: tauri::AppHandle,
+    session_job_id: Option<String>,
+    turn_id: Option<String>,
+    user_message: Option<String>,
+) -> Result<JsonValue, String> {
+    let turn_id = turn_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("forge-banger-brain-{}", forge_unix_ms()));
+    let session_job_id = session_job_id.unwrap_or_default();
+    let user_message = user_message.unwrap_or_default();
+    let report =
+        forge_brain_runtime::banger_identity_brain_report(&session_job_id, &turn_id, &user_message);
+    let _ = app;
+    Ok(report)
+}
+
+#[tauri::command]
+fn forge_brain_session_title(
+    message: String,
+    previous_title: Option<String>,
+    scope: Option<String>,
+    turn_id: Option<String>,
+) -> Result<JsonValue, String> {
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return Err("empty title source message".to_string());
+    }
+    Ok(forge_brain_runtime::session_title_actcode_report(
+        &message,
+        previous_title.unwrap_or_default().as_str(),
+        scope.unwrap_or_else(|| "forge".to_string()).as_str(),
+        turn_id.unwrap_or_default().as_str(),
     ))
 }
 
@@ -27593,7 +28022,7 @@ fn direct_canvas_safe_step(
     }
 }
 
-fn execute_canvas_forgeslash_safe(
+fn execute_canvas_brain_command_safe(
     store_path: &Path,
     source: &str,
     max_bytes: usize,
@@ -28709,6 +29138,11 @@ async fn forge_canvas_assistant_turn(
             "OpenAI subscription auth is not connected".to_string()
         }
     });
+    // Captured headless CLI failure detail (Gemini / Claude). Surfaced in the
+    // assistant message when the CLI bridge errors out, so the user can see
+    // *why* — quota exhausted, expired API key, model unavailable, etc. —
+    // instead of the generic "n'a pas pu répondre" fallback.
+    let mut headless_cli_failure_detail: Option<String> = None;
     let gemini_canvas_available =
         use_gemini && (provider.connected || provider.installed || provider_terminal_running("gemini"));
     let claude_canvas_available =
@@ -28828,9 +29262,12 @@ async fn forge_canvas_assistant_turn(
                     );
                 }
                 codex_bridge = bridge;
+                record_headless_cli_outcome("gemini", true, None);
                 Some(message)
             }
             Err(err) => {
+                headless_cli_failure_detail = Some(err.clone());
+                record_headless_cli_outcome("gemini", false, Some(err.clone()));
                 codex_bridge = json!({
                     "status": "unavailable",
                     "mode": "gemini headless",
@@ -28908,9 +29345,12 @@ async fn forge_canvas_assistant_turn(
                     );
                 }
                 codex_bridge = bridge;
+                record_headless_cli_outcome("claude", true, None);
                 Some(message)
             }
             Err(err) => {
+                headless_cli_failure_detail = Some(err.clone());
+                record_headless_cli_outcome("claude", false, Some(err.clone()));
                 codex_bridge = json!({
                     "status": "unavailable",
                     "mode": "claude headless",
@@ -28985,8 +29425,9 @@ async fn forge_canvas_assistant_turn(
             let turn_for_codex = turn_id.clone();
             let store_path_for_template_exec = store_path_for_codex_tools.clone();
             let direct_template_attempt = async {
+                let selector_message = current_canvas_user_message(&codex_message).to_string();
                 let selection = run_codex_canvas_oauth_direct_template_selector(
-                    &codex_message,
+                    &selector_message,
                     &codex_reasoning_effort,
                     codex_model.as_deref(),
                     request.privacy_scope.as_deref(),
@@ -28999,12 +29440,12 @@ async fn forge_canvas_assistant_turn(
                     "Codex a choisi un template direct Forge.",
                     selection.clone(),
                 );
-                let forge_slash = selection
-                    .get("forgeSlash")
+                let brain_command = selection
+                    .get("BrainCommand")
                     .and_then(JsonValue::as_str)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .ok_or_else(|| "template selection did not return forgeSlash".to_string())?
+                    .ok_or_else(|| "template selection did not return BrainCommand".to_string())?
                     .to_string();
                 let template_label = selection
                     .get("description")
@@ -29024,7 +29465,7 @@ async fn forge_canvas_assistant_turn(
                     "codex_bridge",
                     "Forge execute localement le template direct en mode safe.",
                     json!({
-                        "forgeSlash": forge_slash,
+                        "BrainCommand": brain_command,
                         "templateId": selection.get("templateId").cloned().unwrap_or(JsonValue::Null),
                         "toolHints": selection.get("toolHints").cloned().unwrap_or(JsonValue::Null),
                         "primaryDomain": selection.get("primaryDomain").cloned().unwrap_or(JsonValue::Null),
@@ -29037,18 +29478,18 @@ async fn forge_canvas_assistant_turn(
                     "forge_direct_template",
                     "utilise l'outil template Forge",
                     json!({
-                        "forgeSlash": forge_slash,
+                        "BrainCommand": brain_command,
                         "templateId": selection.get("templateId").cloned().unwrap_or(JsonValue::Null),
                         "templateCode": selection.get("templateCode").cloned().unwrap_or(JsonValue::Null),
                         "transport": "backend",
                     }),
                 );
-                let forge_slash_for_exec = forge_slash.clone();
+                let brain_command_for_exec = brain_command.clone();
                 let projection = tauri::async_runtime::spawn_blocking(move || {
-                    execute_canvas_forgeslash_safe(&store_path_for_template_exec, &forge_slash_for_exec, 4096)
+                    execute_canvas_brain_command_safe(&store_path_for_template_exec, &brain_command_for_exec, 4096)
                 })
                 .await
-                .map_err(|e| format!("join direct ForgeSlash safe execution: {e}"))??;
+                .map_err(|e| format!("join direct BrainCommand safe execution: {e}"))??;
                 let compact_projection = compact_canvas_template_projection(&projection);
                 emit_canvas_agent_narration(
                     Some(&app),
@@ -29072,7 +29513,7 @@ async fn forge_canvas_assistant_turn(
                 let synthesis_prompt = format!(
                     "Question utilisateur:\n{}\n\nTemplate Forge choisi:\n{}\n\nProjection Forge compacte verifiee (JSON, sans donnees brutes):\n{}\n\nReponds en francais de facon concise. Si le resultat est un plan_only, explique clairement ce que Forge a prepare ou lu sans inventer d'execution side-effect.",
                     codex_message,
-                    forge_slash,
+                    brain_command,
                     projection_text
                 );
                 let synthesis_prompt = prepend_real_estate_active_memory_snapshot(
@@ -29245,29 +29686,39 @@ async fn forge_canvas_assistant_turn(
     let mut assistant_message = if let Some(message) = codex_attempt_message {
         message
     } else if provider.connected {
-        if use_gemini {
-            "Gemini n'a pas pu répondre cette fois. Vérifiez la connexion internet et que le compte Gemini dispose encore d'un accès ou quota disponible.".to_string()
+        let generic = if use_gemini {
+            "Gemini n'a pas pu répondre cette fois. Vérifiez la connexion internet et que le compte Gemini dispose encore d'un accès ou quota disponible."
         } else if use_claude {
-            "Claude n'a pas pu répondre cette fois. Vérifiez la connexion internet et que le compte Claude dispose encore d'un accès ou quota disponible.".to_string()
+            "Claude n'a pas pu répondre cette fois. Vérifiez la connexion internet et que le compte Claude dispose encore d'un accès ou quota disponible."
         } else {
-            "Codex n'a pas pu répondre cette fois. Vérifiez la connexion internet et que le compte OpenAI dispose encore de forfait disponible.".to_string()
-        }
+            "Codex n'a pas pu répondre cette fois. Vérifiez la connexion internet et que le compte OpenAI dispose encore de forfait disponible."
+        };
+        compose_headless_cli_failure_message(
+            generic,
+            headless_cli_failure_detail.as_deref(),
+            if use_gemini { "Gemini" } else if use_claude { "Claude" } else { "Codex" },
+        )
     } else {
-        if use_gemini {
+        let generic = if use_gemini {
             if provider.installed || provider_terminal_running("gemini") {
-                "Gemini n'est pas joignable pour l'instant. Vérifiez la connexion internet et l'état du compte Gemini.".to_string()
+                "Gemini n'est pas joignable pour l'instant. Vérifiez la connexion internet et l'état du compte Gemini."
             } else {
-                "Gemini n'est pas encore connecté. Vérifiez la configuration du compte Gemini avant de réessayer.".to_string()
+                "Gemini n'est pas encore connecté. Vérifiez la configuration du compte Gemini avant de réessayer."
             }
         } else if use_claude {
             if provider.installed || provider_terminal_running("claude") {
-                "Claude n'est pas joignable pour l'instant. Vérifiez la connexion internet et l'état du compte Claude.".to_string()
+                "Claude n'est pas joignable pour l'instant. Vérifiez la connexion internet et l'état du compte Claude."
             } else {
-                "Claude n'est pas encore connecté. Vérifiez la configuration du compte Claude avant de réessayer.".to_string()
+                "Claude n'est pas encore connecté. Vérifiez la configuration du compte Claude avant de réessayer."
             }
         } else {
-            "Codex n'est pas joignable pour l'instant. Vérifiez la connexion internet et que le compte OpenAI dispose encore de forfait disponible.".to_string()
-        }
+            "Codex n'est pas joignable pour l'instant. Vérifiez la connexion internet et que le compte OpenAI dispose encore de forfait disponible."
+        };
+        compose_headless_cli_failure_message(
+            generic,
+            headless_cli_failure_detail.as_deref(),
+            if use_gemini { "Gemini" } else if use_claude { "Claude" } else { "Codex" },
+        )
     };
     if assistant_message.trim().is_empty() {
         assistant_message = if use_gemini {
@@ -29413,7 +29864,7 @@ async fn cancel_forge_canvas_activity(
     let job_cancel = if let Some(job_id) = job_id.clone() {
         let cancel_reason = reason.clone();
         match tauri::async_runtime::spawn_blocking(move || {
-            call_forge_mcp_tool(
+            call_forge_agent_tool(
                 store_path,
                 "cancel",
                 json!({
@@ -29423,7 +29874,7 @@ async fn cancel_forge_canvas_activity(
             )
         })
         .await
-        .map_err(|e| format!("join Forge MCP cancel: {e}"))?
+        .map_err(|e| format!("join Forge ActCode cancel: {e}"))?
         {
             Ok(value) => value,
             Err(err) => json!({
@@ -29578,7 +30029,7 @@ async fn export_forge_3d_artifacts(
             "draw_mode": mode.draw_mode.as_deref().unwrap_or("points"),
             "point_size": mode.point_size.unwrap_or(1.0),
             "legend": mode.legend.clone().unwrap_or(JsonValue::Null),
-            "mcp_injectable": true,
+            "ActCode_injectable": true,
             "download": {
                 "delivery": "by_reference",
                 "path": ply_path.display().to_string(),
@@ -29662,7 +30113,7 @@ async fn export_forge_3d_artifacts(
         "agent_guidance": [
             "Use this mapping to choose the right 3D artifact for the completed compute result.",
             "Do not inline .ply contents into the LLM context.",
-            "Use Forge MCP read { kind:'artifacts', job_id } to fetch downloadable file references and hashes."
+            "Use Forge ActCode read { kind:'artifacts', job_id } to fetch downloadable file references and hashes."
         ]
     });
     let visual_mapping_bytes = serde_json::to_vec_pretty(&visual_mapping_doc)
@@ -29687,7 +30138,7 @@ async fn export_forge_3d_artifacts(
                 "index_hash_algorithm": "forge_fnv1a64",
                 "index_hash": format!("{index_hash:016x}"),
                 "download_by_reference_only": true,
-                "mcp_injectable": true
+                "ActCode_injectable": true
             }),
         );
         obj.insert("artifacts_3d".to_string(), json!(artifacts));
@@ -29705,7 +30156,7 @@ async fn export_forge_3d_artifacts(
                 "hash": format!("{visual_mapping_hash:016x}"),
                 "view_count": artifacts.len() as u64,
                 "download_by_reference_only": true,
-                "mcp_injectable": true
+                "ActCode_injectable": true
             }),
         );
     }
@@ -29908,7 +30359,7 @@ async fn read_forge_job_artifact_text(
             "ui_download_only": true,
             "source_content_included": false,
             "large_point_cloud_included": false,
-            "mcp_should_use_references": true
+            "ActCode_should_use_references": true
         }),
     })
 }
@@ -30012,7 +30463,7 @@ async fn persist_forge_canvas_session_state(
 /// Fast non-cryptographic fingerprint of file bytes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â used as run-cache key.
 /// Good enough for "same file?" identity; not for security.
 #[tauri::command]
-async fn publish_forge_job_to_mcp(
+async fn publish_forge_job_to_actcode(
     job_id: String,
     state: tauri::State<'_, Mutex<ForgeAppState>>,
 ) -> Result<JsonValue, String> {
@@ -30036,7 +30487,7 @@ async fn publish_forge_job_to_mcp(
     let artifacts_3d = obj.get("artifacts_3d").cloned().unwrap_or_else(|| json!([]));
     let visual_mapping = obj.get("visual_mapping").cloned().unwrap_or(JsonValue::Null);
     obj.insert(
-        "mcp_result".to_string(),
+        "ActCode_result".to_string(),
         json!({
             "available": true,
             "published_ms": now_epoch_ms() as u64,
@@ -30053,7 +30504,7 @@ async fn publish_forge_job_to_mcp(
             "artifacts_3d": artifacts_3d,
             "visual_mapping": visual_mapping,
             "agent_delivery_guidance": [
-                "Use Forge MCP read { kind:'artifacts', job_id } to fetch downloadable visual mapping and 3D artifact references.",
+                "Use Forge ActCode read { kind:'artifacts', job_id } to fetch downloadable visual mapping and 3D artifact references.",
                 "Use forge_analyze_3d_mapping when the user asks what the 3D geometry means; it returns compact PCA/cluster/outlier diagnostics without raw points.",
                 "Do not inline .ply/.json metrics/proof artifacts into the LLM context.",
                 "Attach/import the referenced files in the target agent app when supported."
@@ -30174,334 +30625,25 @@ async fn start_computation(
 
     if kind.starts_with("reverse_synth_") {
         let t_start = Instant::now();
-        log!("[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ reverse synthesis dispatch ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â parsing CSV...", kind);
-        let bars = match trading::parse_csv(&bytes) {
-            Ok(b) => b,
-            Err(e) => {
-                let msg = format!("CSV parse error: {e}");
-                log!("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {msg}");
-                return Err(msg);
-            }
-        };
         log!(
-            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ parsed {} bars (range: {} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {})",
-            kind,
-            bars.len(),
-            ms_to_iso(bars.first().map(|b| b.time_ms).unwrap_or(0)),
-            ms_to_iso(bars.last().map(|b| b.time_ms).unwrap_or(0)),
+            "[{}] legacy reverse_synth path removed; route compute through /newcompute_ and Monster GPU mass compute",
+            kind
         );
-
-        let cfg = trading::SynthConfig::default();
-        log!(
-            "[{}] config : SL={}pt, target_pnl/day={}pt, horizon={}bars, train_split={:.0}%",
-            kind,
-            cfg.sl_points,
-            cfg.target_pnl_per_day,
-            cfg.max_horizon_bars,
-            cfg.train_split * 100.0,
+        res!(
+            "Legacy reverse_synth has been removed. Build the compute as /newcompute_ Forge code and execute it through Monster."
         );
-
-        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Split temporel train / holdout ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-        // CRITIQUE : Forge ne doit voir QUE le train. Le holdout sert
-        // exclusivement ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  mesurer la gÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ralisation out-of-sample.
-        let train_end_bar = trading::train_holdout_split(bars.len(), cfg);
-        log!(
-            "[{}] split temporel : train [{}, {}) | holdout [{}, {})",
-            kind,
-            trading::MIN_HISTORY,
-            train_end_bar,
-            train_end_bar,
-            bars.len(),
-        );
-
-        log!("[{}] building train examples (atlas-backed) ...", kind);
-        let synth_file_hash = quick_file_hash(&bytes);
-        let train_examples = trading::build_examples_in_range_masked_with_atlas(
-            &bars,
-            trading::MIN_HISTORY..train_end_bar,
-            cfg,
-            &trading::FeatureMask::all(),
-            &backend.atlas,
-            synth_file_hash,
-        );
-        let n_long = train_examples.iter().filter(|(_, l)| *l == 1).count();
-        let n_short = train_examples.iter().filter(|(_, l)| *l == -1).count();
-        let n_flat = train_examples.iter().filter(|(_, l)| *l == 0).count();
-        log!(
-            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ {} train examples : LONG={} ({:.1}%) SHORT={} ({:.1}%) FLAT={} ({:.1}%)",
-            kind,
-            train_examples.len(),
-            n_long, 100.0 * n_long as f64 / train_examples.len().max(1) as f64,
-            n_short, 100.0 * n_short as f64 / train_examples.len().max(1) as f64,
-            n_flat, 100.0 * n_flat as f64 / train_examples.len().max(1) as f64,
-        );
-
-        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Forge synthesis : progressive deepening ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-        // PlutÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´t qu'un seul gros call evolve_i64_program(generations=5,
-        // max_nodes=25), on fait 4 stages avec max_nodes croissant :
-        //
-        //   stage 1 : max_nodes=10 (~1-3s)  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â programmes simples
-        //   stage 2 : max_nodes=15 (~3-8s)  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â programmes moyens
-        //   stage 3 : max_nodes=20 (~8-20s) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â programmes complexes
-        //   stage 4 : max_nodes=25 (~20-60s)ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â search complÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨te
-        //
-        // Avantages :
-        //   - **Live progress** : 4 milestones loggÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s au user pendant
-        //     la search au lieu d'un seul gros bloc silencieux
-        //   - **Strats simples trouvÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©es vite** : si stage 1 trouve dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©jÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â 
-        //     un programme ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  exact_train, on peut early-exit
-        //   - **Best-of cumulatif** : on garde le programme avec le
-        //     meilleur train_loss across stages
-        let stages: [(usize, usize); 4] = [
-            (10, 5),   // (max_nodes, generations)
-            (15, 5),
-            (20, 5),
-            (25, 5),
-        ];
-        log!(
-            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Forge synthesis (progressive deepening, 4 stages, examples={}) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬",
-            kind,
-            train_examples.len(),
-        );
-        let synth_t0 = Instant::now();
-        let mut best_outcome: Option<scan::MonsterEvolutionOutcome> = None;
-        let mut total_candidates: usize = 0;
-        for (stage_idx, &(max_nodes, generations)) in stages.iter().enumerate() {
-            let stage_t0 = Instant::now();
-            log!(
-                "[{}]   stage {}/4 : max_nodes={}, generations={} ...",
-                kind,
-                stage_idx + 1,
-                max_nodes,
-                generations,
-            );
-            let evo_cfg = MonsterEvolutionConfig {
-                generations,
-                max_nodes,
-                beam_width: 768,
-                holdout_stride: 4,
-                progress: None,
-                skip_prepass: false,
-            };
-            // ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¦.ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½.7g ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Heartbeat thread : ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©met un log toutes les 10s
-            // pendant que evolve_i64_program tourne (sinon UI muet
-            // pendant 30s ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  5min selon la complexitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© du stage). Le
-            // thread se kill quand stop=true (synth terminÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e). Polling
-            // 200ms pour rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©agir vite au stop sans busy loop.
-            let stop = Arc::new(AtomicBool::new(false));
-            let heartbeat = {
-                let stop = Arc::clone(&stop);
-                let app_clone = app.clone();
-                let kind_clone = kind.clone();
-                let stage_num = stage_idx + 1;
-                thread::spawn(move || {
-                    let hb_start = Instant::now();
-                    let mut last_emit = Instant::now();
-                    while !stop.load(Ordering::Relaxed) {
-                        thread::sleep(Duration::from_millis(200));
-                        if last_emit.elapsed() >= Duration::from_secs(10) {
-                            emit_log(&app_clone, format!(
-                                "[{}]   ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â±  stage {}/4 still running... ({}s elapsed, max_nodes={})",
-                                kind_clone, stage_num,
-                                hb_start.elapsed().as_secs(),
-                                max_nodes,
-                            ));
-                            last_emit = Instant::now();
-                        }
-                    }
-                })
-            };
-            let synth_result = backend.node.evolve_i64_program(&train_examples, evo_cfg);
-            stop.store(true, Ordering::Relaxed);
-            let _ = heartbeat.join();
-            match synth_result {
-                Ok(outcome) => {
-                    let stage_elapsed = stage_t0.elapsed();
-                    total_candidates = total_candidates.saturating_add(outcome.candidates_evaluated);
-                    log!(
-                        "[{}]   stage {}/4 ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ {:.2}s : source={} tried={} kept={} nodes={} train_loss={} exact_train={} exact_holdout={} atlas_score={:.0}%",
-                        kind,
-                        stage_idx + 1,
-                        stage_elapsed.as_secs_f64(),
-                        outcome.source,
-                        outcome.combinations_tried,
-                        outcome.candidates_evaluated,
-                        outcome.program.nodes().len(),
-                        outcome.train_loss,
-                        outcome.exact_train,
-                        outcome.exact_holdout,
-                        if outcome.combinations_tried > 0 { 100.0 * outcome.atlas_score_hits as f64 / outcome.combinations_tried as f64 } else { 0.0 },
-                    );
-                    let is_better = best_outcome
-                        .as_ref()
-                        .map(|prev| {
-                            (outcome.holdout_loss, outcome.train_loss, outcome.program.nodes().len())
-                                < (prev.holdout_loss, prev.train_loss, prev.program.nodes().len())
-                        })
-                        .unwrap_or(true);
-                    if is_better {
-                        best_outcome = Some(outcome.clone());
-                    }
-                    // Early exit si on a dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©jÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  un programme exact sur train+holdout interne
-                    if outcome.exact_train && outcome.exact_holdout {
-                        log!(
-                            "[{}]   early exit : stage {} a trouvÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© exact_train + exact_holdout, stages suivants skipÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s",
-                            kind,
-                            stage_idx + 1,
-                        );
-                        break;
-                    }
-                }
-                Err(e) => {
-                    log!(
-                        "[{}]   stage {}/4 ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {} (continuing with next stage)",
-                        kind,
-                        stage_idx + 1,
-                        e,
-                    );
-                }
-            }
-        }
-        let synth_elapsed = synth_t0.elapsed();
-        let outcome = best_outcome.ok_or_else(|| {
-            "Forge synth failed: aucun stage n'a produit de programme valide".to_string()
-        })?;
-        log!(
-            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ synth done in {:.2}s total ({} candidates across all stages)",
-            kind,
-            synth_elapsed.as_secs_f64(),
-            total_candidates,
-        );
-        log!(
-            "[{}]   best : source={} nodes={} train_loss={} exact_train={} exact_holdout={}",
-            kind,
-            outcome.source,
-            outcome.program.nodes().len(),
-            outcome.train_loss,
-            outcome.exact_train,
-            outcome.exact_holdout,
-        );
-        log!("[{}] strategy hash: {}", kind, outcome.program_hash);
-
-        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°valuation par-jour sur train et holdout ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-        // On lance le programme synthÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© via call_one_i64 (bÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ficie
-        // automatiquement de l'auto-router CPU + du RAM cache pour les
-        // features qui se rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©pÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨tent). Le predict_label callback fait
-        // la conversion i64 sortie KASM ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±1 / 0 via signum().
-        let prog_hash = outcome.program_hash;
-        let predict = |features: i64| -> i64 {
-            backend
-                .node
-                .call_one_i64(&prog_hash, features)
-                .map(|v| v.signum())
-                .unwrap_or(0)
-        };
-        let eval_t0 = Instant::now();
-        log!("[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ evaluating strategy on TRAIN ({} bars) ...", kind, train_end_bar - trading::MIN_HISTORY);
-        let eval_train = {
-            let app_clone = app.clone();
-            let kind_clone = kind.clone();
-            trading::eval_strategy_with_progress(
-                &bars,
-                trading::MIN_HISTORY..train_end_bar,
-                cfg,
-                predict,
-                move |done, total| {
-                    let pct = 100.0 * done as f64 / total.max(1) as f64;
-                    emit_log(&app_clone, format!(
-                        "[{}]   train eval : {}/{} bars ({:.0}%)",
-                        kind_clone, done, total, pct,
-                    ));
-                },
-            )
-        };
-        log!("[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ evaluating strategy on HOLDOUT ({} bars) ...", kind, bars.len() - train_end_bar);
-        let eval_holdout = {
-            let app_clone = app.clone();
-            let kind_clone = kind.clone();
-            trading::eval_strategy_with_progress(
-                &bars,
-                train_end_bar..bars.len(),
-                cfg,
-                predict,
-                move |done, total| {
-                    let pct = 100.0 * done as f64 / total.max(1) as f64;
-                    emit_log(&app_clone, format!(
-                        "[{}]   holdout eval : {}/{} bars ({:.0}%)",
-                        kind_clone, done, total, pct,
-                    ));
-                },
-            )
-        };
-        let eval_elapsed = eval_t0.elapsed();
-        log!(
-            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ eval done in {:.2}s ({} train + {} holdout decisions)",
-            kind,
-            eval_elapsed.as_secs_f64(),
-            eval_train.total_trades,
-            eval_holdout.total_trades,
-        );
-
-        res!("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚Â Reverse Synthesis ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Forge real synth ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢Ãƒâ€šÃ‚Â");
-        res!("Strategy hash : {}", outcome.program_hash);
-        res!("Source: {}  | KASM nodes: {}  | Synth time: {:.2}s | tried={} kept={} atlas_score={:.0}%",
-             outcome.source, outcome.program.nodes().len(),
-             synth_elapsed.as_secs_f64(),
-             outcome.combinations_tried, outcome.candidates_evaluated,
-             if outcome.combinations_tried > 0 { 100.0 * outcome.atlas_score_hits as f64 / outcome.combinations_tried as f64 } else { 0.0 });
-        res!("");
-        res!("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ TRAIN (in-sample) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬");
-        res!("  {} jours ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©valuÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s, {} trades ({} long, {} short)",
-             eval_train.days_evaluated, eval_train.total_trades,
-             eval_train.long_trades, eval_train.short_trades);
-        res!("  WR par-trade : {:.1}%  | avg P&L/trade : {:.4}p  | total P&L : {:.3}p",
-             eval_train.pct_winning_trades(),
-             eval_train.avg_pnl_per_trade(),
-             eval_train.total_pnl_points);
-        res!("  ÃƒÆ’Ã‚Â¢Ãƒâ€¹Ã…â€œÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ {:.1}% jours profitables (cumul ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ +{}p)  [cible : ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 85%]",
-             eval_train.pct_days_target_hit(), cfg.target_pnl_per_day);
-        res!("");
-        res!("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ HOLDOUT (out-of-sample, bougies non vues par Forge) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬");
-        res!("  {} jours ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©valuÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s, {} trades ({} long, {} short)",
-             eval_holdout.days_evaluated, eval_holdout.total_trades,
-             eval_holdout.long_trades, eval_holdout.short_trades);
-        res!("  WR par-trade : {:.1}%  | avg P&L/trade : {:.4}p  | total P&L : {:.3}p",
-             eval_holdout.pct_winning_trades(),
-             eval_holdout.avg_pnl_per_trade(),
-             eval_holdout.total_pnl_points);
-        res!("  ÃƒÆ’Ã‚Â¢Ãƒâ€¹Ã…â€œÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ {:.1}% jours profitables (cumul ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ +{}p)  [cible : ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 85%]",
-             eval_holdout.pct_days_target_hit(), cfg.target_pnl_per_day);
-        res!("");
-        let success = eval_holdout.pct_days_target_hit() >= 85.0
-            && eval_holdout.total_trades >= 500;
-        if success {
-            res!("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ STRATÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°GIE TROUVÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°E : holdout atteint la cible 85% jours profitables avec ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥500 trades");
-        } else {
-            res!("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Cible non atteinte sur holdout : {:.1}% jours profitables / {} trades (besoin ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥85% / ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥500)",
-                 eval_holdout.pct_days_target_hit(), eval_holdout.total_trades);
-            res!("  ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°tape B (genetic search avec fitness alignÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© par-jour) reste ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  activer");
-        }
-
         let elapsed = t_start.elapsed();
         let report = ProcessReport {
             kind: kind.clone(),
-            total_kmers: train_examples.len(),
-            distinct: eval_holdout.days_target_hit,
+            total_kmers: bytes.len(),
+            distinct: 0,
             elapsed_ms: elapsed.as_secs_f64() * 1000.0,
-            ns_per_kmer: if train_examples.is_empty() {
+            ns_per_kmer: if bytes.is_empty() {
                 0.0
             } else {
-                elapsed.as_nanos() as f64 / train_examples.len() as f64
+                elapsed.as_nanos() as f64 / bytes.len() as f64
             },
         };
-        log!(
-            "[{}] ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ end-to-end {:.2}s ({} train ex, synth {:.2}s, eval {:.2}s)",
-            kind,
-            report.elapsed_ms / 1000.0,
-            report.total_kmers,
-            synth_elapsed.as_secs_f64(),
-            eval_elapsed.as_secs_f64(),
-        );
         backend.run_cache.insert(
             cache_key,
             CachedRun { entries: entries.clone(), report: report.clone() },
@@ -32497,7 +32639,7 @@ async fn inspect_program_map(
             ));
 
             // Routing preview: inspect candidates (d2/d3) are ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¤12 nodes but
-            // the beam search scoring path uses gpu_synth::score_batch_gpu
+            // Legacy alpha scoring no longer owns compute; Monster /newcompute_ does.
             // which splits across CUDA + WGPU when pairs ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 32 and n_examples ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥ 1000.
             let gpu_mode = if cfg!(all(feature = "cuda", feature = "wgpu")) {
                 "DUAL-GPU (CUDA + WGPU split)"
@@ -32750,6 +32892,18 @@ async fn banger_runtime_status(
         semantic_cache_entries: app_state.semantic_cache.len(),
         gpu_report: gpu_capability_report(),
     })
+}
+
+#[tauri::command]
+async fn banger_native_prepare_render_handoff(
+    request: banger_native_engine::BangerNativeRenderPrepareRequest,
+    state: tauri::State<'_, Mutex<ForgeAppState>>,
+    app: tauri::AppHandle,
+) -> Result<banger_native_engine::BangerNativeRenderPrepareResponse, String> {
+    let _report = ensure_backend_ready(&state, &app, "banger_native_prepare_render_handoff")?;
+    let mut app_state = state.lock().map_err(|e| e.to_string())?;
+    let backend = app_state.backend_mut()?;
+    banger_native_engine::BangerNativeEngine::prepare_render_handoff(&backend.node, request)
 }
 
 #[derive(Serialize)]
@@ -33412,2161 +33566,19 @@ async fn start_alpha_synthesis(
     state: tauri::State<'_, Mutex<ForgeAppState>>,
     app: tauri::AppHandle,
 ) -> Result<AlphaReport, String> {
-    let AlphaStartRequest {
-        csv_bytes,
-        file_hash,
-        params,
-    } = request;
-    let parsed_file_hash = file_hash
-        .as_deref()
-        .map(|raw| raw.parse::<u64>().map_err(|e| format!("invalid file_hash '{raw}': {e}")))
-        .transpose()?;
-    let payload_len = csv_bytes.as_ref().map(|b| b.len()).unwrap_or(0);
-    let start_enter_t0 = Instant::now();
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.enter bytes={} file_hash={} max_nodes={} tp={} target={}",
-            payload_len,
-            parsed_file_hash
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "<none>".to_string()),
-            params.max_nodes,
-            params.tp_points,
-            params.target
-        ),
-    );
+    let _ = request;
+    let _ = state;
     emit_alpha_log(
         &app,
-        format!(
-            "[start-prof] backend handler entered bytes={} file_hash={} max_nodes={} tp={} target={}",
-            payload_len,
-            parsed_file_hash
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "<none>".to_string()),
-            params.max_nodes,
-            params.tp_points,
-            params.target
-        ),
+        "Legacy alpha synthesis has been removed; use /newcompute_ so Monster hosts, verifies and executes Forge compute.".to_string(),
     );
-    eprintln!(
-        "[alpha-start-prof] enter bytes={} file_hash={} max_nodes={} tp={} target={}",
-        payload_len,
-        parsed_file_hash
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "<none>".to_string()),
-        params.max_nodes,
-        params.tp_points,
-        params.target
-    );
-    let backend_open_t0 = Instant::now();
-    alpha_trace(&app, "backend", "start.backend.ensure.begin");
-    emit_alpha_log(
-        &app,
-        "[start-prof] ensuring compute backend is ready before dispatch...".to_string(),
-    );
-    let backend_report = ensure_backend_ready(&state, &app, "start")?;
-    let backend_open_ms = backend_open_t0.elapsed().as_millis() as u64;
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.backend.ready open_ms={} wait_ms={} already_ready={} elapsed_ms={}",
-            backend_report.open_ms,
-            backend_report.wait_ms,
-            backend_report.already_ready,
-            backend_open_ms
-        ),
-    );
-    emit_alpha_log(
-        &app,
-        format!(
-            "[start-prof] backend ready open={}ms wait={}ms already_ready={}",
-            backend_report.open_ms,
-            backend_report.wait_ms,
-            backend_report.already_ready
-        ),
-    );
-
-    let state_lock_t0 = Instant::now();
-    alpha_trace(&app, "backend", "start.lock.wait");
-    let mut app_state = state.lock().map_err(|e| e.to_string())?;
-    let state_lock_ms = state_lock_t0.elapsed().as_millis() as u64;
-    alpha_trace(
-        &app,
-        "backend",
-        format!("start.lock.acquired wait_ms={state_lock_ms}"),
-    );
-    emit_alpha_log(
-        &app,
-        format!("[start-prof] backend state lock acquired in {} ms", state_lock_ms),
-    );
-    let backend = app_state
-        .backend
-        .as_mut()
-        .ok_or_else(|| "backend not initialized after ensure_backend_ready".to_string())?;
-
-    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Helpers locaux pour le canal alpha-* ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-    macro_rules! alog {
-        ($($arg:tt)*) => {{ emit_alpha_log(&app, format!($($arg)*)); }};
-    }
-
-    let emit_synth_depth = |app_cb: &tauri::AppHandle, p: &SynthProgress, tag: &str| {
-        if p.phase == "start" {
-            emit_alpha_log(app_cb, format!(
-                "  ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ d{}/{} | {} pairs | beam {} | best: {} {}",
-                p.depth, p.max_depth, p.pairs, p.beam_size, p.best_expr, tag
-            ));
-        } else if p.phase == "done" {
-            let work = p.total_scorings as u64 * p.n_examples as u64;
-            let tp = if p.depth_ms > 0 { work / p.depth_ms.max(1) / 1000 } else { 0 };
-            let total_jobs = p.jobs_dispatched + p.jobs_skipped;
-            let skipped_pct = if total_jobs > 0 {
-                100.0 * p.jobs_skipped as f64 / total_jobs as f64
-            } else {
-                0.0
-            };
-            emit_alpha_log(app_cb, format!(
-                "  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ d{}/{} | {} | {}ms | {} M-ops/s | loss={} | atlas pair/op={}/{} | jobs {}/{} skipped ({:.1}%) | {} {}",
-                p.depth,
-                p.max_depth,
-                p.gpu_backend,
-                p.depth_ms,
-                tp,
-                p.best_loss,
-                p.atlas_full_pair_hits,
-                p.atlas_opcode_hits,
-                p.jobs_skipped,
-                total_jobs,
-                skipped_pct,
-                p.best_expr,
-                tag
-            ));
-        } else if p.phase == "evolve" {
-            emit_alpha_log(app_cb, format!("  {}", p.best_expr));
-        }
-    };
-
-    let emit_runtime_outcome = |label: &str, out: &scan::MonsterEvolutionOutcome| {
-        let total_jobs = out.gpu_jobs_dispatched + out.gpu_jobs_skipped;
-        let skipped_pct = if total_jobs > 0 {
-            100.0 * out.gpu_jobs_skipped as f64 / total_jobs as f64
-        } else {
-            0.0
-        };
-        alog!(
-            "    {} runtime : atlas RESULT={} | pair hits={} | opcode hits={} | gpu jobs dispatched={} | skipped={} / {} ({:.1}%)",
-            label,
-            out.atlas_score_hits,
-            out.atlas_full_pair_hits,
-            out.atlas_opcode_hits,
-            out.gpu_jobs_dispatched,
-            out.gpu_jobs_skipped,
-            total_jobs,
-            skipped_pct
-        );
-    };
-
-    let t_start = Instant::now();
-    let alpha_file_hash = parsed_file_hash.unwrap_or_else(|| {
-        quick_file_hash(
-            csv_bytes
-                .as_ref()
-                .expect("csv_bytes required when file_hash missing")
-                .as_slice(),
-        )
-    });
-    alpha_trace(
-        &app,
-        "backend",
-        format!("start.file_hash.resolved file_hash={alpha_file_hash}"),
-    );
-    let prestart_lookup_t0 = Instant::now();
-    let alpha_prestart = load_alpha_prestart_from_store(&backend, alpha_file_hash)?;
-    let prestart_lookup_ms = prestart_lookup_t0.elapsed().as_millis() as u64;
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.prestart.lookup ms={} hit={}",
-            prestart_lookup_ms,
-            alpha_prestart.is_some()
-        ),
-    );
-    eprintln!(
-        "[alpha-start-prof] lock={}ms backend={}ms prestart_lookup={}ms prestart_hit={}",
-        state_lock_ms,
-        backend_open_ms,
-        prestart_lookup_ms,
-        alpha_prestart.is_some()
-    );
-    alog!(
-        "[start-prof] lock={}ms backend={}ms prestart_lookup={}ms prestart_hit={}",
-        state_lock_ms,
-        backend_open_ms,
-        prestart_lookup_ms,
-        alpha_prestart.is_some()
-    );
-    if payload_len > 0 {
-        alog!("alpha synthesis dispatch - preparing CSV payload ({} bytes)...", payload_len);
-    } else {
-        alog!(
-            "alpha synthesis dispatch - reusing persisted pre-start artifact via file_hash={}",
-            alpha_file_hash
-        );
-    }
-    alog!("  config : target={}, SL=fixed 7p, TP=+/-{}p, spread~0.8p, min/day=7p, max_nodes={}, features={} (auto-scanned)",
-          params.target, params.tp_points.abs(), params.max_nodes, trading::BASE_FEATURE_COUNT);
-
-    let parse_or_reuse_t0 = Instant::now();
-    let parsed_bars = if alpha_prestart.is_some() {
-        None
-    } else {
-        Some(trading::parse_csv(
-            csv_bytes
-                .as_ref()
-                .ok_or_else(|| "alpha prestart artifact missing and no csv_bytes provided".to_string())?,
-        )
-            .map_err(|e| format!("CSV parse error: {e}"))?)
-    };
-    let parse_or_reuse_ms = parse_or_reuse_t0.elapsed().as_millis() as u64;
-    let bars = parsed_bars
-        .as_deref()
-        .unwrap_or_else(|| alpha_prestart.as_ref().unwrap().bars.as_slice());
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.bars.ready source={} bars={} ms={}",
-            if alpha_prestart.is_some() { "prestart" } else { "csv" },
-            bars.len(),
-            parse_or_reuse_ms
-        ),
-    );
-    let start_plan = build_alpha_start_execution_plan(alpha_prestart.as_ref(), bars.len());
-    alog!(
-        "[start-prof] parse_or_reuse={}ms click_to_backend_entry={}ms",
-        parse_or_reuse_ms,
-        start_enter_t0.elapsed().as_millis() as u64
-    );
-    if bars.len() < 250 {
-        return Err(format!(
-            "Need at least 250 OHLC bars for meaningful train/holdout split, got {}",
-            bars.len()
-        ));
-    }
-    if alpha_prestart.is_some() {
-        alog!("reused persisted pre-start artifact (parsed bars + raw VWAP mapping)");
-        log_alpha_prestart_manifest(&alpha_prestart.as_ref().unwrap().manifest, |line| alog!("{line}"));
-    }
-    log_alpha_start_execution_plan(&start_plan, |line| alog!("{line}"));
-    alog!("parsed {} bars (range: {} -> {})",
-          bars.len(),
-          ms_to_iso(bars.first().map(|b| b.time_ms).unwrap_or(0)),
-          ms_to_iso(bars.last().map(|b| b.time_ms).unwrap_or(0)));
-
-    // ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¦.ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½.7g ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Conversion d'unitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© critique : le panel envoie "9 points"
-    // (convention trader = 9 cents pour NATGAS), le backend convertit
-    // en prix rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©el (ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â0.01) pour le simulateur. Sans cette conversion,
-    // un SL de 9$ sur NATGAS ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  3$ ne se dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©clenche JAMAIS et le
-    // cost_threshold = 4.5$ est inatteignable sur 6 bougies H4 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢
-    // 100% des labels = FLAT ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Forge trouve trivialement `y=0`.
-    //
-    // POINT_SIZE = 0.01 est hardcodÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© pour NATGAS (1 point = 1 cent).
-    // ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ futurifier : exposer dans le panel UI comme dropdown
-    // "Asset tick size" (forex EUR_USD = 0.0001, gold = 0.10, etc.)
-    const POINT_SIZE: f64 = 0.01;
-    const FIXED_SL_POINTS: f64 = 7.0;
-    const MIN_DAILY_TARGET_POINTS: f64 = 7.0;
-    const OANDA_SPREAD_POINTS: f64 = 0.8;
-    let sl_price_units = FIXED_SL_POINTS * POINT_SIZE;
-    let tp_price_units = params.tp_points.abs() * POINT_SIZE;
-    let spread_price_units = OANDA_SPREAD_POINTS * POINT_SIZE;
-    alog!("unit conversion : SL fixed {} pts -> {:.4}, TP {} pts -> {:.4}, spread {:.1} pts -> {:.4} (POINT_SIZE={})",
-          FIXED_SL_POINTS, sl_price_units,
-          params.tp_points.abs(), tp_price_units,
-          OANDA_SPREAD_POINTS, spread_price_units, POINT_SIZE);
-    let cfg = trading::SynthConfig {
-        sl_points: sl_price_units,
-        tp_points: tp_price_units,
-        spread_points: spread_price_units,
-        max_horizon_bars: 6,
-        target_pnl_per_day: MIN_DAILY_TARGET_POINTS * POINT_SIZE,
-        train_split: 0.7,
-    };
-    let tp_grid_points = trading::tp_grid_points(cfg);
-    let tp_grid_display = tp_grid_points
-        .iter()
-        .map(|tp| format!("{:.2}", tp / POINT_SIZE))
-        .collect::<Vec<_>>()
-        .join(", ");
-    alog!(
-        "tp grid : [{}] pts (Atlas-backed LONG/SHORT edge votes per H4 close)",
-        tp_grid_display
-    );
-
-    let train_end_bar = trading::train_holdout_split(bars.len(), cfg);
-    alog!("split temporel : train [{}, {}) | holdout [{}, {})",
-          trading::MIN_HISTORY, train_end_bar, train_end_bar, bars.len());
-
-    alog!("materializing raw VWAP feature cache in RAM ...");
-    alpha_trace(&app, "backend", "start.raw_features.begin");
-    let raw_feature_cache_t0 = Instant::now();
-    let (raw_feature_cache, raw_feature_stats) = if let Some(prestart) = alpha_prestart.as_ref() {
-        if prestart.manifest.raw_feature_rows_missing == 0 {
-            (std::sync::Arc::clone(&prestart.raw_feature_cache), None)
-        } else {
-            let (cache, stats) = trading::build_raw_feature_cache_with_atlas(
-                bars,
-                trading::MIN_HISTORY..bars.len(),
-                &backend.atlas,
-                alpha_file_hash,
-            );
-            (std::sync::Arc::new(cache), Some(stats))
-        }
-    } else {
-        let (cache, stats) = trading::build_raw_feature_cache_with_atlas(
-            bars,
-            trading::MIN_HISTORY..bars.len(),
-            &backend.atlas,
-            alpha_file_hash,
-        );
-        (std::sync::Arc::new(cache), Some(stats))
-    };
-    if start_plan.refresh_prestart_after_raw_fill {
-        let persisted = persist_alpha_prestart_to_store(
-            &backend,
-            alpha_file_hash,
-            bars,
-            raw_feature_cache.as_slice(),
-        )?;
-        let manifest = build_alpha_prestart_manifest(alpha_file_hash, bars, raw_feature_cache.as_slice());
-        alog!(
-            "alpha pre-start artifact persisted after Start: {}",
-            if persisted { "new" } else { "already known" }
-        );
-        log_alpha_prestart_manifest(&manifest, |line| alog!("{line}"));
-    }
-    let raw_feature_cache_elapsed = raw_feature_cache_t0.elapsed();
-    let raw_feature_rows = raw_feature_cache.iter().filter(|row| row.is_some()).count();
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.raw_features.done seconds={:.3} rows={} source={}",
-            raw_feature_cache_elapsed.as_secs_f64(),
-            raw_feature_rows,
-            start_plan.raw_cache_source
-        ),
-    );
-    if let Some(stats) = raw_feature_stats {
-        alog!("raw feature cache ready in {:.2}s ({} bars materialized, atlas hits={}, recomputed={}, persisted scalars={})",
-              raw_feature_cache_elapsed.as_secs_f64(), raw_feature_rows, stats.atlas_hits, stats.computed_rows, stats.persisted_values);
-        alog!(
-            "  raw avoidance: {:.1}% avoided",
-            avoided_pct(stats.atlas_hits, stats.computed_rows)
-        );
-    } else {
-        alog!("raw feature cache ready in {:.2}s ({} bars materialized, source={})",
-              raw_feature_cache_elapsed.as_secs_f64(), raw_feature_rows, start_plan.raw_cache_source);
-        alog!("  raw avoidance: 100.0% avoided");
-    }
-
-    alog!("building binary feature examples (VWAP-centric, atlas-backed) ...");
-    alog!(
-        "materializing binary trade labels in RAM ... policy={}",
-        start_plan.labels_source
-    );
-    let label_cache_t0 = Instant::now();
-    alpha_trace(&app, "backend", "start.labels.begin");
-    let (label_cache, label_cache_stats) = trading::build_binary_label_cache_with_stats(
-        bars,
-        trading::MIN_HISTORY..bars.len(),
-        cfg,
-        &backend.atlas,
-        alpha_file_hash,
-    );
-    let label_cache_elapsed = label_cache_t0.elapsed();
-    let label_rows = label_cache.iter().filter(|row| row.is_some()).count();
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.labels.done seconds={:.3} rows={} atlas_hits={} recomputed={}",
-            label_cache_elapsed.as_secs_f64(),
-            label_rows,
-            label_cache_stats.atlas_hits,
-            label_cache_stats.computed_rows
-        ),
-    );
-    alog!("[ok] binary label cache ready in {:.2}s ({} bars materialized, atlas hits={}, recomputed={}, persisted={})",
-          label_cache_elapsed.as_secs_f64(), label_rows, label_cache_stats.atlas_hits, label_cache_stats.computed_rows, label_cache_stats.persisted_values);
-    alog!(
-        "  label avoidance: {:.1}% avoided",
-        avoided_pct(label_cache_stats.atlas_hits, label_cache_stats.computed_rows)
-    );
-
-    let per_feature = trading::build_binary_feature_examples_with_caches(
-        bars,
-        trading::MIN_HISTORY..train_end_bar,
-        &raw_feature_cache,
-        &label_cache,
-    );
-    if per_feature.is_empty() || per_feature[0].1.is_empty() {
-        alog!("[warn] no examples generated (need swing points + VWAP history)");
-        return Err("no examples generated - CSV too short or all bars filtered out".to_string());
-    }
-    let n_total = per_feature[0].1.len();
-    let n_long = per_feature[0].1.iter().filter(|(_, l)| *l == 1).count();
-    let n_short = per_feature[0].2.iter().filter(|(_, l)| *l == 1).count();
-    let n_flat = n_total.saturating_sub(n_long.max(n_short));
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.examples.ready total={} features={} long_pos={} short_pos={}",
-            n_total,
-            per_feature.len(),
-            n_long,
-            n_short
-        ),
-    );
-    alog!("[ok] {} examples -> {} features (BINARY labels):",
-          n_total, per_feature.len());
-    alog!("  LONG opps  = {} ({:.1}%)",
-          n_long, 100.0 * n_long as f64 / n_total.max(1) as f64);
-    alog!("  SHORT opps = {} ({:.1}%)",
-          n_short, 100.0 * n_short as f64 / n_total.max(1) as f64);
-    alog!("  FLAT ~= {} ({:.1}%)",
-          n_flat, 100.0 * n_flat as f64 / n_total.max(1) as f64);
-    for (name, long_ex, _) in &per_feature {
-        let vals: Vec<i64> = long_ex.iter().map(|(v, _)| *v).collect();
-        let min = vals.iter().copied().min().unwrap_or(0);
-        let max = vals.iter().copied().max().unwrap_or(0);
-        let mean = if vals.is_empty() { 0 } else { vals.iter().sum::<i64>() / vals.len() as i64 };
-        alog!("  feature {:>12} : range [{}, {}], mean={}", name, min, max, mean);
-    }
-
-    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Dual-classifier synthesis : LONG + SHORT detectors per feature ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-    //
-    // Core fix: ternary labels {-1, 0, 1} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ two binary classifiers {0, 1}.
-    // CmpGt/CmpLt ops produce {0, 1} natively, so the beam search can now
-    // find meaningful signals like `CmpGt(vwap_sigma, 150)` = 1 ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ LONG.
-    // LONG and SHORT detectors are independent and can be on DIFFERENT
-    // features (e.g. LONG from vwap_sigma, SHORT from avwap_hi).
-    let max_nodes = (params.max_nodes as usize).max(8).min(24);
-    let n_feat = per_feature.len();
-    alog!("[info] Forge dual-classifier synthesis ({} features -> 2 dirs, max_nodes={}, DUAL-GPU)",
-          n_feat, max_nodes);
-
-    let stats_pre = backend.node.stats();
-    let synth_t0 = Instant::now();
-    let mut total_candidates: usize = 0;
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.synth.stage1.begin features={} max_nodes={}",
-            per_feature.len(),
-            max_nodes
-        ),
-    );
-
-    #[derive(Clone, Copy, Debug)]
-    struct DetectorQuality {
-        fires: usize,
-        true_positives: usize,
-        distinct_inputs: usize,
-        distinct_fire_inputs: usize,
-        viable: bool,
-    }
-
-    fn detector_quality(
-        node: &MonsterNode,
-        program_hash: &Hash,
-        examples: &[(i64, i64)],
-    ) -> DetectorQuality {
-        let mut distinct_inputs: Vec<i64> = examples.iter().map(|(x, _)| *x).collect();
-        distinct_inputs.sort_unstable();
-        distinct_inputs.dedup();
-
-        let mut fired_inputs = Vec::new();
-        let mut fires = 0usize;
-        let mut true_positives = 0usize;
-        for (x, label) in examples {
-            let pred = node.call_one_i64(program_hash, *x).unwrap_or(0);
-            if pred != 0 {
-                fires += 1;
-                fired_inputs.push(*x);
-                if *label == 1 {
-                    true_positives += 1;
-                }
-            }
-        }
-        fired_inputs.sort_unstable();
-        fired_inputs.dedup();
-
-        let total = examples.len().max(1);
-        let min_fires = total.div_ceil(40).max(8);
-        let max_fires = (total * 7 / 10).max(min_fires);
-        let min_distinct_fire_inputs = distinct_inputs.len().div_ceil(12).max(2);
-        let viable = fires >= min_fires
-            && fires <= max_fires
-            && true_positives > 0
-            && fired_inputs.len() >= min_distinct_fire_inputs.min(distinct_inputs.len().max(1));
-
-        DetectorQuality {
-            fires,
-            true_positives,
-            distinct_inputs: distinct_inputs.len(),
-            distinct_fire_inputs: fired_inputs.len(),
-            viable,
-        }
-    }
-
-    fn split_baseline_losses(examples: &[(i64, i64)], holdout_stride: usize) -> (u128, u128) {
-        if examples.is_empty() {
-            return (0, 0);
-        }
-        if examples.len() < holdout_stride {
-            let positives = examples.iter().filter(|(_, label)| *label == 1).count();
-            let negatives = examples.len().saturating_sub(positives);
-            let baseline = positives.min(negatives) as u128;
-            return (baseline, baseline);
-        }
-
-        let mut train_pos = 0usize;
-        let mut train_neg = 0usize;
-        let mut holdout_pos = 0usize;
-        let mut holdout_neg = 0usize;
-        for (index, &(_, label)) in examples.iter().enumerate() {
-            let is_positive = label == 1;
-            let is_holdout = index % holdout_stride == holdout_stride - 1;
-            match (is_holdout, is_positive) {
-                (true, true) => holdout_pos += 1,
-                (true, false) => holdout_neg += 1,
-                (false, true) => train_pos += 1,
-                (false, false) => train_neg += 1,
-            }
-        }
-        if holdout_pos + holdout_neg == 0 {
-            holdout_pos = train_pos;
-            holdout_neg = train_neg;
-        }
-        if train_pos + train_neg == 0 {
-            train_pos = holdout_pos;
-            train_neg = holdout_neg;
-        }
-        (
-            train_pos.min(train_neg) as u128,
-            holdout_pos.min(holdout_neg) as u128,
-        )
-    }
-
-    enum BeamScreenVerdict {
-        Continue(&'static str),
-        Prune(&'static str),
-    }
-
-    fn should_continue_full_search(
-        out: &scan::MonsterEvolutionOutcome,
-        quality: DetectorQuality,
-        examples: &[(i64, i64)],
-        holdout_stride: usize,
-    ) -> BeamScreenVerdict {
-        if quality.viable {
-            return BeamScreenVerdict::Continue("viable quick pass");
-        }
-
-        let total = examples.len().max(1);
-        let fire_ratio = quality.fires as f64 / total as f64;
-        let min_seed_tp = total.div_ceil(200).max(4);
-        let min_seed_distinct = quality.distinct_inputs.div_ceil(16).max(2);
-        let (train_baseline_loss, holdout_baseline_loss) =
-            split_baseline_losses(examples, holdout_stride.max(2));
-
-        if out.holdout_loss < holdout_baseline_loss || out.train_loss < train_baseline_loss {
-            return BeamScreenVerdict::Continue("beats trivial baseline");
-        }
-        if fire_ratio >= 0.02
-            && fire_ratio <= 0.85
-            && quality.true_positives >= min_seed_tp
-            && quality.distinct_fire_inputs >= min_seed_distinct.min(quality.distinct_inputs.max(1))
-        {
-            return BeamScreenVerdict::Continue("signal spread worth deepening");
-        }
-        if quality.fires == 0 {
-            return BeamScreenVerdict::Prune("never fires");
-        }
-        if quality.true_positives == 0 {
-            return BeamScreenVerdict::Prune("fires without true positives");
-        }
-        if fire_ratio >= 0.95 {
-            return BeamScreenVerdict::Prune("near-constant always-on detector");
-        }
-        if quality.distinct_fire_inputs <= 1 {
-            return BeamScreenVerdict::Prune("single-input collapse");
-        }
-        BeamScreenVerdict::Prune("quick pass stayed at trivial baseline")
-    }
-
-    fn beam_search_config(
-        generations: usize,
-        max_nodes: usize,
-        beam_width: usize,
-        progress: Option<SynthProgressFn>,
-    ) -> MonsterEvolutionConfig {
-        MonsterEvolutionConfig {
-            generations,
-            max_nodes,
-            beam_width,
-            holdout_stride: 4,
-            progress,
-            skip_prepass: true,
-        }
-    }
-
-    fn is_better_detector(
-        out: &scan::MonsterEvolutionOutcome,
-        quality: DetectorQuality,
-        prev: Option<(&scan::MonsterEvolutionOutcome, DetectorQuality)>,
-    ) -> bool {
-        match prev {
-            None => quality.viable,
-            Some((prev_out, prev_quality)) => {
-                if quality.viable != prev_quality.viable {
-                    return quality.viable;
-                }
-                if quality.true_positives != prev_quality.true_positives {
-                    return quality.true_positives > prev_quality.true_positives;
-                }
-                if out.holdout_loss != prev_out.holdout_loss {
-                    return out.holdout_loss < prev_out.holdout_loss;
-                }
-                if out.train_loss != prev_out.train_loss {
-                    return out.train_loss < prev_out.train_loss;
-                }
-                if quality.distinct_fire_inputs != prev_quality.distinct_fire_inputs {
-                    return quality.distinct_fire_inputs > prev_quality.distinct_fire_inputs;
-                }
-                out.program.nodes().len() < prev_out.program.nodes().len()
-            }
-        }
-    }
-
-    // Best LONG / SHORT detectors ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â tracked independently
-    fn example_column_signature(long_ex: &[(i64, i64)], short_ex: &[(i64, i64)]) -> Vec<i64> {
-        let mut sig = Vec::with_capacity((long_ex.len() + short_ex.len()) * 2 + 1);
-        for &(x, label) in long_ex {
-            sig.push(x);
-            sig.push(label);
-        }
-        sig.push(i64::MIN);
-        for &(x, label) in short_ex {
-            sig.push(x);
-            sig.push(label);
-        }
-        sig
-    }
-
-    let mut feature_by_signature: HashMap<Vec<i64>, usize> =
-        HashMap::with_capacity(per_feature.len());
-    let mut feature_representatives = Vec::with_capacity(per_feature.len());
-    let mut feature_column_classes: Vec<Vec<usize>> = Vec::with_capacity(per_feature.len());
-    for (fi, (_, long_ex, short_ex)) in per_feature.iter().enumerate() {
-        let sig = example_column_signature(long_ex, short_ex);
-        if let Some(&rep_pos) = feature_by_signature.get(&sig) {
-            feature_column_classes[rep_pos].push(fi);
-        } else {
-            let rep_pos = feature_representatives.len();
-            feature_by_signature.insert(sig, rep_pos);
-            feature_representatives.push(fi);
-            feature_column_classes.push(vec![fi]);
-        }
-    }
-    let feature_duplicate_count = per_feature
-        .len()
-        .saturating_sub(feature_representatives.len());
-    if feature_duplicate_count > 0 {
-        alog!(
-            "[ok] feature column dedup: {} raw -> {} unique ({} duplicate columns skipped before beam)",
-            per_feature.len(),
-            feature_representatives.len(),
-            feature_duplicate_count
-        );
-    }
-
-    let mut best_long: Option<(scan::MonsterEvolutionOutcome, usize, &str, DetectorQuality)> = None;
-    let mut best_short: Option<(scan::MonsterEvolutionOutcome, usize, &str, DetectorQuality)> = None;
-    let mut long_models: Vec<Option<scan::MonsterEvolutionOutcome>> = vec![None; n_feat];
-    let mut short_models: Vec<Option<scan::MonsterEvolutionOutcome>> = vec![None; n_feat];
-
-    for (rep_pos, &fi) in feature_representatives.iter().enumerate() {
-        let (feat_name, long_ex, short_ex) = &per_feature[fi];
-        let duplicate_count = feature_column_classes[rep_pos].len().saturating_sub(1);
-        if duplicate_count > 0 {
-            alog!(
-                "  dedup reuse: feature '{}' represents {} identical columns",
-                feat_name,
-                duplicate_count + 1
-            );
-        }
-        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ LONG detector ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-        let n_pos_long = long_ex.iter().filter(|(_, l)| *l == 1).count();
-        if n_pos_long > 0 {
-            let n_ex = long_ex.len();
-            alog!("[LONG] {}/{} {} ({} ex, {} pos={:.1}%)",
-                  fi + 1, n_feat, feat_name, n_ex, n_pos_long,
-                  100.0 * n_pos_long as f64 / n_ex.max(1) as f64);
-            let cb: SynthProgressFn = {
-                let app_cb = app.clone();
-                let tag = format!("[{}/{}:{} LONG]", fi + 1, n_feat, feat_name);
-                Arc::new(move |p: SynthProgress| emit_synth_depth(&app_cb, &p, &tag))
-            };
-            let full_cfg = beam_search_config(5, max_nodes, 384, Some(cb));
-            match backend.node.evolve_i64_program(long_ex, full_cfg) {
-                Ok(out) => {
-                    total_candidates += out.candidates_evaluated;
-                    let quality = detector_quality(&backend.node, &out.program_hash, long_ex);
-                    for &dup_fi in &feature_column_classes[rep_pos] {
-                        long_models[dup_fi] = Some(out.clone());
-                    }
-                    let is_better = is_better_detector(
-                        &out,
-                        quality,
-                        best_long
-                            .as_ref()
-                            .map(|(prev, _, _, prev_quality)| (prev, *prev_quality)),
-                    );
-                    let m = if is_better { "[best]" } else { "      " };
-                    alog!("  {} {} LONG : loss(t/h)={}/{} nodes={} src={} | fires={} tp={} distinct={}/{} viable={}",
-                          m, feat_name, out.train_loss, out.holdout_loss,
-                          out.program.nodes().len(), out.source,
-                          quality.fires, quality.true_positives,
-                          quality.distinct_fire_inputs, quality.distinct_inputs, quality.viable);
-                    emit_runtime_outcome(&format!("{} LONG", feat_name), &out);
-                    if is_better { best_long = Some((out, fi, feat_name, quality)); }
-                }
-                Err(e) => alog!("  [err] {} LONG : {}", feat_name, e),
-            }
-        }
-
-        // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ SHORT detector ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-        let n_pos_short = short_ex.iter().filter(|(_, l)| *l == 1).count();
-        if n_pos_short > 0 {
-            let n_ex = short_ex.len();
-            alog!("[SHORT] {}/{} {} ({} ex, {} pos={:.1}%)",
-                  fi + 1, n_feat, feat_name, n_ex, n_pos_short,
-                  100.0 * n_pos_short as f64 / n_ex.max(1) as f64);
-            let cb: SynthProgressFn = {
-                let app_cb = app.clone();
-                let tag = format!("[{}/{}:{} SHORT]", fi + 1, n_feat, feat_name);
-                Arc::new(move |p: SynthProgress| emit_synth_depth(&app_cb, &p, &tag))
-            };
-            let full_cfg = beam_search_config(5, max_nodes, 384, Some(cb));
-            match backend.node.evolve_i64_program(short_ex, full_cfg) {
-                Ok(out) => {
-                    total_candidates += out.candidates_evaluated;
-                    let quality = detector_quality(&backend.node, &out.program_hash, short_ex);
-                    for &dup_fi in &feature_column_classes[rep_pos] {
-                        short_models[dup_fi] = Some(out.clone());
-                    }
-                    let is_better = is_better_detector(
-                        &out,
-                        quality,
-                        best_short
-                            .as_ref()
-                            .map(|(prev, _, _, prev_quality)| (prev, *prev_quality)),
-                    );
-                    let m = if is_better { "[best]" } else { "      " };
-                    alog!("  {} {} SHORT : loss(t/h)={}/{} nodes={} src={} | fires={} tp={} distinct={}/{} viable={}",
-                          m, feat_name, out.train_loss, out.holdout_loss,
-                          out.program.nodes().len(), out.source,
-                          quality.fires, quality.true_positives,
-                          quality.distinct_fire_inputs, quality.distinct_inputs, quality.viable);
-                    emit_runtime_outcome(&format!("{} SHORT", feat_name), &out);
-                    if is_better { best_short = Some((out, fi, feat_name, quality)); }
-                }
-                Err(e) => alog!("  [err] {} SHORT : {}", feat_name, e),
-            }
-        }
-    } // end per-feature loop
-
-    let synth_elapsed = synth_t0.elapsed();
-    let mut total_synth_elapsed = synth_elapsed + raw_feature_cache_elapsed + label_cache_elapsed;
-    let (long_out, long_fi, long_fname, long_quality) = best_long.ok_or_else(|| {
-        "Alpha synth failed: no feature produced a valid LONG detector".to_string()
-    })?;
-    let (short_out, short_fi, short_fname, short_quality) = best_short.ok_or_else(|| {
-        "Alpha synth failed: no feature produced a valid SHORT detector".to_string()
-    })?;
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.synth.stage1.done seconds={:.3} candidates={} long_feature={} short_feature={}",
-            synth_elapsed.as_secs_f64(),
-            total_candidates,
-            long_fname,
-            short_fname
-        ),
-    );
-
-    let stats_post = backend.node.stats();
-    let op_memo_hits = stats_post.op_memo_hits.saturating_sub(stats_pre.op_memo_hits);
-    let op_memo_misses = stats_post.op_memo_misses.saturating_sub(stats_pre.op_memo_misses);
-    let op_memo_total = op_memo_hits + op_memo_misses;
-    let op_memo_hit_rate = if op_memo_total > 0 {
-        100.0 * op_memo_hits as f64 / op_memo_total as f64
-    } else { 0.0 };
-    let ram_hits = stats_post.ram_value_hits.saturating_sub(stats_pre.ram_value_hits);
-    let executions = stats_post.executions.saturating_sub(stats_pre.executions);
-
-    alog!("[ok] synth done in {:.2}s total ({} candidates across {} unique feature columns -> 2 dirs)",
-          synth_elapsed.as_secs_f64(), total_candidates, feature_representatives.len());
-    alog!("  LONG  detector: feature '{}' (idx={}) -> loss(t/h)={}/{} nodes={} src={} | fires={} tp={} distinct={}/{} viable={}",
-          long_fname, long_fi, long_out.train_loss, long_out.holdout_loss,
-          long_out.program.nodes().len(), long_out.source,
-          long_quality.fires, long_quality.true_positives,
-          long_quality.distinct_fire_inputs, long_quality.distinct_inputs, long_quality.viable);
-    alog!("  SHORT detector: feature '{}' (idx={}) -> loss(t/h)={}/{} nodes={} src={} | fires={} tp={} distinct={}/{} viable={}",
-          short_fname, short_fi, short_out.train_loss, short_out.holdout_loss,
-          short_out.program.nodes().len(), short_out.source,
-          short_quality.fires, short_quality.true_positives,
-          short_quality.distinct_fire_inputs, short_quality.distinct_inputs, short_quality.viable);
-    emit_runtime_outcome("best LONG detector", &long_out);
-    emit_runtime_outcome("best SHORT detector", &short_out);
-    alog!("  LONG hash : {}", long_out.program_hash);
-    alog!("  SHORT hash: {}", short_out.program_hash);
-    alog!("multi-scale dedup stats (op_memo + cache + CSE)");
-    alog!("  op_memo  : {} hits / {} misses ({} total) -> {:.1}% hit rate",
-          op_memo_hits, op_memo_misses, op_memo_total, op_memo_hit_rate);
-    alog!("  ram cache: {} value hits", ram_hits);
-    alog!("  executions: {}", executions);
-
-    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Stage 1 evaluation: best single-feature LONG/SHORT detectors ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-    let long_hash = long_out.program_hash;
-    let short_hash = short_out.program_hash;
-    alog!(
-        "[info] materializing final stage 1 prediction caches ... policy={}",
-        start_plan.stage1_predictions_source
-    );
-    alpha_trace(&app, "backend", "start.predictions.stage1.begin");
-    let base_prediction_t0 = Instant::now();
-    let (base_long_predictions, base_short_predictions) = {
-        let prediction_range =
-            trading::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars);
-        let (long_preds, long_stats, long_distinct) = trading::build_prediction_cache_with_atlas(
-            bars,
-            prediction_range.clone(),
-            &backend.atlas,
-            alpha_file_hash,
-            &long_hash,
-            |i| {
-                raw_feature_cache
-                    .get(i)
-                    .copied()
-                    .flatten()
-                    .map(|raw_feats| raw_feats[long_fi])
-            },
-            |feat| backend.node.call_one_i64(&long_hash, feat).unwrap_or(0),
-        );
-        let (short_preds, short_stats, short_distinct) = trading::build_prediction_cache_with_atlas(
-            bars,
-            prediction_range,
-            &backend.atlas,
-            alpha_file_hash,
-            &short_hash,
-            |i| {
-                raw_feature_cache
-                    .get(i)
-                    .copied()
-                    .flatten()
-                    .map(|raw_feats| raw_feats[short_fi])
-            },
-            |feat| backend.node.call_one_i64(&short_hash, feat).unwrap_or(0),
-        );
-        alog!(
-            "[ok] stage 1 prediction caches ready in {:.2}s (policy={} | LONG atlas={} recomputed={} persisted={} / {} distinct, SHORT atlas={} recomputed={} persisted={} / {} distinct)",
-            base_prediction_t0.elapsed().as_secs_f64(),
-            start_plan.stage1_predictions_source,
-            long_stats.atlas_hits,
-            long_stats.computed_rows,
-            long_stats.persisted_values,
-            long_distinct,
-            short_stats.atlas_hits,
-            short_stats.computed_rows,
-            short_stats.persisted_values,
-            short_distinct
-        );
-        alog!(
-            "  stage 1 prediction avoidance: {:.1}% avoided",
-            avoided_pct(
-                long_stats.atlas_hits + short_stats.atlas_hits,
-                long_stats.computed_rows + short_stats.computed_rows,
-            )
-        );
-        (long_preds, short_preds)
-    };
-    let base_decision_fp = detector_pair_fingerprint(&long_hash, &short_hash);
-    let base_decision_t0 = Instant::now();
-    let (base_decisions, base_decision_stats) = trading::build_decision_cache_with_atlas(
-        bars,
-        trading::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars),
-        &backend.atlas,
-        alpha_file_hash,
-        base_decision_fp,
-        &base_long_predictions,
-        &base_short_predictions,
-    );
-    alog!(
-        "[ok] stage 1 decision cache ready in {:.2}s (atlas={} recomputed={} persisted={})",
-        base_decision_t0.elapsed().as_secs_f64(),
-        base_decision_stats.atlas_hits,
-        base_decision_stats.computed_rows,
-        base_decision_stats.persisted_values
-    );
-    alog!(
-        "  stage 1 decision avoidance: {:.1}% avoided",
-        avoided_pct(base_decision_stats.atlas_hits, base_decision_stats.computed_rows)
-    );
-    let base_prediction_elapsed = base_prediction_t0.elapsed();
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.predictions.stage1.done seconds={:.3}",
-            base_prediction_elapsed.as_secs_f64()
-        ),
-    );
-
-    let emit_signal = |bar_idx: usize, direction: &str, price: f64| {
-        if let Some(bar) = bars.get(bar_idx) {
-            emit_alpha_signal(&app, format!("{} @ {} @ {:.4}",
-                direction, bar.time_ms, price));
-        }
-    };
-
-    let eval_t0 = Instant::now();
-    alpha_trace(&app, "backend", "start.eval.stage1.begin");
-    alog!("[info] stage 1 eval: LONG on '{}', SHORT on '{}' ...",
-          long_fname, short_fname);
-    alog!("  TRAIN ({} bars) ...", train_end_bar - trading::MIN_HISTORY);
-    let base_eval_train = trading::eval_strategy_decision_cache(
-        bars,
-        trading::MIN_HISTORY..train_end_bar,
-        cfg,
-        &base_decisions,
-        |_, _, _| {},
-    );
-
-    alog!("  HOLDOUT ({} bars) ...", bars.len() - train_end_bar);
-    let base_eval_holdout = trading::eval_strategy_decision_cache(
-        bars,
-        train_end_bar..bars.len(),
-        cfg,
-        &base_decisions,
-        |_, _, _| {},
-    );
-    let eval_elapsed = eval_t0.elapsed();
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.eval.stage1.done seconds={:.3} train_trades={} holdout_trades={}",
-            eval_elapsed.as_secs_f64(),
-            base_eval_train.total_trades,
-            base_eval_holdout.total_trades
-        ),
-    );
-    alog!("[ok] stage 1 eval done in {:.2}s ({} train + {} holdout trades)",
-          eval_elapsed.as_secs_f64(),
-          base_eval_train.total_trades, base_eval_holdout.total_trades);
-    alog!("  LONG trades: {} | SHORT trades: {} | total: {}",
-          base_eval_holdout.long_trades, base_eval_holdout.short_trades, base_eval_holdout.total_trades);
-
-    let mut total_eval_elapsed = eval_elapsed + base_prediction_elapsed;
-    let rank_eval = |e: &trading::StrategyEval| -> (i64, i64, i64, i64, i64, i64, i64) {
-        let pf = e.profit_factor();
-        let avg_daily_pnl = if e.days_evaluated > 0 {
-            e.total_pnl_points / e.days_evaluated as f64
-        } else {
-            0.0
-        };
-        let daily_surplus_vs_target = avg_daily_pnl - cfg.target_pnl_per_day;
-        (
-            (e.pct_days_target_hit() * 100.0).round() as i64,
-            (daily_surplus_vs_target * 10_000.0).round() as i64,
-            (avg_daily_pnl * 10_000.0).round() as i64,
-            e.days_target_hit as i64,
-            ((if pf.is_finite() { pf.min(999.0) } else { 999.0 }) * 100.0).round() as i64,
-            (e.avg_pnl_per_trade() * 10_000.0).round() as i64,
-            (e.total_pnl_points * 1_000.0).round() as i64,
-        )
-    };
-    let window_passes_target = |e: &trading::StrategyEval| -> bool {
-        if e.days_evaluated == 0 || e.total_trades < 20 {
-            return false;
-        }
-        let avg_daily_pnl = e.total_pnl_points / e.days_evaluated as f64;
-        avg_daily_pnl >= cfg.target_pnl_per_day && e.pct_days_target_hit() >= 60.0
-    };
-    let rank_walkforward = |wf: &AlphaWalkforwardSummary| -> (i64, i64, i64, i64, i64, i64) {
-        (
-            wf.windows_passing as i64,
-            (wf.worst_target_hit_pct * 100.0).round() as i64,
-            (wf.avg_target_hit_pct * 100.0).round() as i64,
-            (wf.worst_daily_pnl_points * 10_000.0).round() as i64,
-            (wf.avg_daily_pnl_points * 10_000.0).round() as i64,
-            wf.total_oos_trades.min(i64::MAX as usize) as i64,
-        )
-    };
-    let rank_model = |wf: &AlphaWalkforwardSummary, e: &trading::StrategyEval|
-        -> ((i64, i64, i64, i64, i64, i64), (i64, i64, i64, i64, i64, i64, i64))
-    {
-        let wf_rank = rank_walkforward(wf);
-        let holdout_rank = rank_eval(e);
-        (wf_rank, holdout_rank)
-    };
-    let stage1_modelset_fp = {
-        const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-        const FNV_PRIME: u64 = 0x100000001b3;
-        let mut fp = FNV_OFFSET;
-        let mut mix = |byte: u8| {
-            fp ^= byte as u64;
-            fp = fp.wrapping_mul(FNV_PRIME);
-        };
-        for fi in 0..n_feat {
-            mix(b'L');
-            mix(fi as u8);
-            if let Some(model) = &long_models[fi] {
-                for &byte in model.program_hash.as_bytes() {
-                    mix(byte);
-                }
-            } else {
-                mix(0xFF);
-            }
-            mix(b'S');
-            mix(fi as u8);
-            if let Some(model) = &short_models[fi] {
-                for &byte in model.program_hash.as_bytes() {
-                    mix(byte);
-                }
-            } else {
-                mix(0xFE);
-            }
-        }
-        fp
-    };
-
-    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Stage 2 synthesis: confluence across the base detectors ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-    let mut meta_long_bundle: Option<(scan::MonsterEvolutionOutcome, usize, &str)> = None;
-    let mut meta_short_bundle: Option<(scan::MonsterEvolutionOutcome, usize, &str)> = None;
-    let mut meta_eval_train_opt: Option<trading::StrategyEval> = None;
-    let mut meta_eval_holdout_opt: Option<trading::StrategyEval> = None;
-    let mut meta_decisions_opt: Option<Vec<i8>> = None;
-
-    alog!("");
-    alog!(
-        "[info] precomputing confluence inputs from stage 1 detectors ... policy={}",
-        start_plan.confluence_source
-    );
-    alpha_trace(&app, "backend", "start.confluence.inputs.begin");
-    let confluence_cache_t0 = Instant::now();
-    let confluence_cache = {
-        let vote_cache_range =
-            trading::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars);
-        let mut stage1_long_vote_caches: Vec<Option<Vec<i8>>> = vec![None; n_feat];
-        let mut stage1_short_vote_caches: Vec<Option<Vec<i8>>> = vec![None; n_feat];
-        let mut detector_caches_built = 0usize;
-        let mut detector_input_distinct = 0usize;
-        let mut atlas_row_hits = 0usize;
-        let mut computed_rows = 0usize;
-        let mut persisted_scalars = 0usize;
-
-        for fi in 0..n_feat {
-            if let Some(model) = &long_models[fi] {
-                let (preds, stats, distinct_inputs) = trading::build_prediction_cache_with_atlas(
-                    bars,
-                    vote_cache_range.clone(),
-                    &backend.atlas,
-                    alpha_file_hash,
-                    &model.program_hash,
-                    |i| {
-                        raw_feature_cache
-                            .get(i)
-                            .copied()
-                            .flatten()
-                            .map(|raw_feats| raw_feats[fi])
-                    },
-                    |feat| backend.node.call_one_i64(&model.program_hash, feat).unwrap_or(0),
-                );
-                detector_caches_built += 1;
-                detector_input_distinct += distinct_inputs;
-                alog!(
-                    "  stage 1 LONG vote cache {:>16}: atlas={} recomputed={} persisted={} / {} distinct inputs",
-                    trading::FEATURE_NAMES[fi],
-                    stats.atlas_hits,
-                    stats.computed_rows,
-                    stats.persisted_values,
-                    distinct_inputs
-                );
-                stage1_long_vote_caches[fi] = Some(preds);
-            }
-            if let Some(model) = &short_models[fi] {
-                let (preds, stats, distinct_inputs) = trading::build_prediction_cache_with_atlas(
-                    bars,
-                    vote_cache_range.clone(),
-                    &backend.atlas,
-                    alpha_file_hash,
-                    &model.program_hash,
-                    |i| {
-                        raw_feature_cache
-                            .get(i)
-                            .copied()
-                            .flatten()
-                            .map(|raw_feats| raw_feats[fi])
-                    },
-                    |feat| backend.node.call_one_i64(&model.program_hash, feat).unwrap_or(0),
-                );
-                detector_caches_built += 1;
-                detector_input_distinct += distinct_inputs;
-                alog!(
-                    "  stage 1 SHORT vote cache {:>15}: atlas={} recomputed={} persisted={} / {} distinct inputs",
-                    trading::FEATURE_NAMES[fi],
-                    stats.atlas_hits,
-                    stats.computed_rows,
-                    stats.persisted_values,
-                    distinct_inputs
-                );
-                stage1_short_vote_caches[fi] = Some(preds);
-            }
-        }
-
-        let mut ready = 0usize;
-        let mut rows: Vec<Option<[i64; trading::CONFLUENCE_FEATURE_COUNT]>> =
-            vec![None; bars.len()];
-        let start = trading::MIN_HISTORY;
-        let end = bars.len().saturating_sub(cfg.max_horizon_bars);
-        for i in start..end {
-            if raw_feature_cache.get(i).copied().flatten().is_none() {
-                continue;
-            }
-            let mut atlas_row = [0i64; trading::CONFLUENCE_FEATURE_COUNT];
-            let mut atlas_complete = true;
-            for cfi in 0..trading::CONFLUENCE_FEATURE_COUNT {
-                let key = scan::atlas::Atlas::confluence_feature_key(
-                    alpha_file_hash,
-                    stage1_modelset_fp,
-                    cfi as u8,
-                    i as u32,
-                );
-                if let Some(value) = backend.atlas.lookup_result(&key) {
-                    atlas_row[cfi] = scan::atlas::Atlas::unpack_i64(&value);
-                } else {
-                    atlas_complete = false;
-                    break;
-                }
-            }
-            if atlas_complete {
-                rows[i] = Some(atlas_row);
-                ready += 1;
-                atlas_row_hits += 1;
-                continue;
-            }
-            let mut long_preds = [0i64; trading::BASE_FEATURE_COUNT];
-            let mut short_preds = [0i64; trading::BASE_FEATURE_COUNT];
-            for fi in 0..n_feat {
-                if let Some(cache) = &stage1_long_vote_caches[fi] {
-                    long_preds[fi] = cache.get(i).copied().unwrap_or(0) as i64;
-                }
-                if let Some(cache) = &stage1_short_vote_caches[fi] {
-                    short_preds[fi] = cache.get(i).copied().unwrap_or(0) as i64;
-                }
-            }
-            let confluence = trading::derive_confluence_features(&long_preds, &short_preds);
-            for cfi in 0..trading::CONFLUENCE_FEATURE_COUNT {
-                let key = scan::atlas::Atlas::confluence_feature_key(
-                    alpha_file_hash,
-                    stage1_modelset_fp,
-                    cfi as u8,
-                    i as u32,
-                );
-                let packed = scan::atlas::Atlas::pack_i64(confluence[cfi]);
-                if backend.atlas.record_result(&key, &packed).unwrap_or(false) {
-                    persisted_scalars += 1;
-                }
-            }
-            rows[i] = Some(confluence);
-            ready += 1;
-            computed_rows += 1;
-        }
-        alog!(
-            "[ok] confluence cache ready in {:.2}s ({} bars materialized, {} detector caches, {} distinct detector inputs, atlas rows={}, recomputed rows={}, persisted scalars={})",
-            confluence_cache_t0.elapsed().as_secs_f64(),
-            ready,
-            detector_caches_built,
-            detector_input_distinct,
-            atlas_row_hits,
-            computed_rows,
-            persisted_scalars
-        );
-        alog!(
-            "  confluence avoidance: {:.1}% avoided",
-            avoided_pct(atlas_row_hits, computed_rows)
-        );
-        rows
-    };
-    total_synth_elapsed += confluence_cache_t0.elapsed();
-
-    alog!("[info] building confluence examples from cached stage 1 detectors ...");
-    let confluence_examples = trading::build_confluence_feature_examples_from_labels(
-        bars,
-        trading::MIN_HISTORY..train_end_bar,
-        &label_cache,
-        |i| confluence_cache.get(i).copied().flatten(),
-    );
-
-    if !confluence_examples.is_empty() && !confluence_examples[0].1.is_empty() {
-        let n_meta_feat = confluence_examples.len();
-        let meta_total = confluence_examples[0].1.len();
-        alog!("[ok] {} confluence examples -> {} meta-features", meta_total, n_meta_feat);
-        for (name, long_ex, _) in &confluence_examples {
-            let vals: Vec<i64> = long_ex.iter().map(|(v, _)| *v).collect();
-            let min = vals.iter().copied().min().unwrap_or(0);
-            let max = vals.iter().copied().max().unwrap_or(0);
-            let mean = if vals.is_empty() { 0 } else { vals.iter().sum::<i64>() / vals.len() as i64 };
-            alog!("  meta {:>16} : range [{}, {}], mean={}", name, min, max, mean);
-        }
-
-        let mut meta_by_signature: HashMap<Vec<i64>, usize> =
-            HashMap::with_capacity(confluence_examples.len());
-        let mut meta_representatives = Vec::with_capacity(confluence_examples.len());
-        let mut meta_column_classes: Vec<Vec<usize>> =
-            Vec::with_capacity(confluence_examples.len());
-        for (fi, (_, long_ex, short_ex)) in confluence_examples.iter().enumerate() {
-            let sig = example_column_signature(long_ex, short_ex);
-            if let Some(&rep_pos) = meta_by_signature.get(&sig) {
-                meta_column_classes[rep_pos].push(fi);
-            } else {
-                let rep_pos = meta_representatives.len();
-                meta_by_signature.insert(sig, rep_pos);
-                meta_representatives.push(fi);
-                meta_column_classes.push(vec![fi]);
-            }
-        }
-        let meta_duplicate_count = confluence_examples
-            .len()
-            .saturating_sub(meta_representatives.len());
-        if meta_duplicate_count > 0 {
-            alog!(
-                "[ok] confluence column dedup: {} raw -> {} unique ({} duplicate columns skipped before beam)",
-                confluence_examples.len(),
-                meta_representatives.len(),
-                meta_duplicate_count
-            );
-        }
-
-        let meta_synth_t0 = Instant::now();
-        let mut meta_best_long: Option<(scan::MonsterEvolutionOutcome, usize, &str, DetectorQuality)> = None;
-        let mut meta_best_short: Option<(scan::MonsterEvolutionOutcome, usize, &str, DetectorQuality)> = None;
-        alpha_trace(
-            &app,
-            "backend",
-            format!(
-                "start.synth.stage2.begin confluence_features={}",
-                confluence_examples.len()
-            ),
-        );
-
-        for (rep_pos, &fi) in meta_representatives.iter().enumerate() {
-            let (feat_name, long_ex, short_ex) = &confluence_examples[fi];
-            let duplicate_count = meta_column_classes[rep_pos].len().saturating_sub(1);
-            if duplicate_count > 0 {
-                alog!(
-                    "  dedup reuse: confluence '{}' represents {} identical columns",
-                    feat_name,
-                    duplicate_count + 1
-                );
-            }
-            let n_pos_long = long_ex.iter().filter(|(_, l)| *l == 1).count();
-            if n_pos_long > 0 {
-                alog!("[LONG] confluence {}/{} {} ({} ex, {} pos={:.1}%)",
-                      fi + 1, n_meta_feat, feat_name, long_ex.len(), n_pos_long,
-                      100.0 * n_pos_long as f64 / long_ex.len().max(1) as f64);
-                let cb: SynthProgressFn = {
-                    let app_cb = app.clone();
-                    let tag = format!("[C {}/{}:{} LONG]", fi + 1, n_meta_feat, feat_name);
-                Arc::new(move |p: SynthProgress| emit_synth_depth(&app_cb, &p, &tag))
-                };
-                let quick_cfg = beam_search_config(2, max_nodes.min(11), 192, Some(cb.clone()));
-                let full_cfg = beam_search_config(5, max_nodes, 384, Some(cb));
-                match backend.node.evolve_i64_program(long_ex, quick_cfg) {
-                    Ok(mut out) => {
-                        total_candidates += out.candidates_evaluated;
-                        let mut quality = detector_quality(&backend.node, &out.program_hash, long_ex);
-                        alog!(
-                            "  [screen] confluence {} LONG quick pass: loss(t/h)={}/{} nodes={} fires={} tp={} distinct={}/{} viable={}",
-                            feat_name,
-                            out.train_loss,
-                            out.holdout_loss,
-                            out.program.nodes().len(),
-                            quality.fires,
-                            quality.true_positives,
-                            quality.distinct_fire_inputs,
-                            quality.distinct_inputs,
-                            quality.viable
-                        );
-                        if max_nodes > 11 {
-                            match should_continue_full_search(&out, quality, long_ex, 4) {
-                                BeamScreenVerdict::Continue(reason) => {
-                                    alog!(
-                                        "  [screen] confluence {} LONG: {} -> continuing full beam",
-                                        feat_name,
-                                        reason
-                                    );
-                                    match backend.node.evolve_i64_program(long_ex, full_cfg) {
-                                        Ok(full_out) => {
-                                            total_candidates += full_out.candidates_evaluated;
-                                            out = full_out;
-                                            quality = detector_quality(
-                                                &backend.node,
-                                                &out.program_hash,
-                                                long_ex,
-                                            );
-                                        }
-                                        Err(e) => {
-                                            alog!(
-                                                "  [warn] confluence {} LONG full beam failed after quick pass: {}",
-                                                feat_name,
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                                BeamScreenVerdict::Prune(reason) => {
-                                    alog!(
-                                        "  [prune] confluence {} LONG: {} -> skipping deeper generations",
-                                        feat_name,
-                                        reason
-                                    );
-                                }
-                            }
-                        }
-                        let is_better = is_better_detector(
-                            &out,
-                            quality,
-                            meta_best_long
-                                .as_ref()
-                                .map(|(prev, _, _, prev_quality)| (prev, *prev_quality)),
-                        );
-                        let m = if is_better { "[best]" } else { "      " };
-                        alog!("  {} {} LONG : loss(t/h)={}/{} nodes={} src={} | fires={} tp={} distinct={}/{} viable={}",
-                              m, feat_name, out.train_loss, out.holdout_loss,
-                              out.program.nodes().len(), out.source,
-                              quality.fires, quality.true_positives,
-                              quality.distinct_fire_inputs, quality.distinct_inputs, quality.viable);
-                        emit_runtime_outcome(&format!("confluence {} LONG", feat_name), &out);
-                        if is_better { meta_best_long = Some((out, fi, feat_name, quality)); }
-                    }
-                    Err(e) => alog!("  [err] {} LONG : {}", feat_name, e),
-                }
-            }
-
-            let n_pos_short = short_ex.iter().filter(|(_, l)| *l == 1).count();
-            if n_pos_short > 0 {
-                alog!("[SHORT] confluence {}/{} {} ({} ex, {} pos={:.1}%)",
-                      fi + 1, n_meta_feat, feat_name, short_ex.len(), n_pos_short,
-                      100.0 * n_pos_short as f64 / short_ex.len().max(1) as f64);
-                let cb: SynthProgressFn = {
-                    let app_cb = app.clone();
-                    let tag = format!("[C {}/{}:{} SHORT]", fi + 1, n_meta_feat, feat_name);
-                    Arc::new(move |p: SynthProgress| emit_synth_depth(&app_cb, &p, &tag))
-                };
-                let quick_cfg = beam_search_config(2, max_nodes.min(11), 192, Some(cb.clone()));
-                let full_cfg = beam_search_config(5, max_nodes, 384, Some(cb));
-                match backend.node.evolve_i64_program(short_ex, quick_cfg) {
-                    Ok(mut out) => {
-                        total_candidates += out.candidates_evaluated;
-                        let mut quality = detector_quality(&backend.node, &out.program_hash, short_ex);
-                        alog!(
-                            "  [screen] confluence {} SHORT quick pass: loss(t/h)={}/{} nodes={} fires={} tp={} distinct={}/{} viable={}",
-                            feat_name,
-                            out.train_loss,
-                            out.holdout_loss,
-                            out.program.nodes().len(),
-                            quality.fires,
-                            quality.true_positives,
-                            quality.distinct_fire_inputs,
-                            quality.distinct_inputs,
-                            quality.viable
-                        );
-                        if max_nodes > 11 {
-                            match should_continue_full_search(&out, quality, short_ex, 4) {
-                                BeamScreenVerdict::Continue(reason) => {
-                                    alog!(
-                                        "  [screen] confluence {} SHORT: {} -> continuing full beam",
-                                        feat_name,
-                                        reason
-                                    );
-                                    match backend.node.evolve_i64_program(short_ex, full_cfg) {
-                                        Ok(full_out) => {
-                                            total_candidates += full_out.candidates_evaluated;
-                                            out = full_out;
-                                            quality = detector_quality(
-                                                &backend.node,
-                                                &out.program_hash,
-                                                short_ex,
-                                            );
-                                        }
-                                        Err(e) => {
-                                            alog!(
-                                                "  [warn] confluence {} SHORT full beam failed after quick pass: {}",
-                                                feat_name,
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                                BeamScreenVerdict::Prune(reason) => {
-                                    alog!(
-                                        "  [prune] confluence {} SHORT: {} -> skipping deeper generations",
-                                        feat_name,
-                                        reason
-                                    );
-                                }
-                            }
-                        }
-                        let is_better = is_better_detector(
-                            &out,
-                            quality,
-                            meta_best_short
-                                .as_ref()
-                                .map(|(prev, _, _, prev_quality)| (prev, *prev_quality)),
-                        );
-                        let m = if is_better { "[best]" } else { "      " };
-                        alog!("  {} {} SHORT : loss(t/h)={}/{} nodes={} src={} | fires={} tp={} distinct={}/{} viable={}",
-                              m, feat_name, out.train_loss, out.holdout_loss,
-                              out.program.nodes().len(), out.source,
-                              quality.fires, quality.true_positives,
-                              quality.distinct_fire_inputs, quality.distinct_inputs, quality.viable);
-                        emit_runtime_outcome(&format!("confluence {} SHORT", feat_name), &out);
-                        if is_better { meta_best_short = Some((out, fi, feat_name, quality)); }
-                    }
-                    Err(e) => alog!("  [err] {} SHORT : {}", feat_name, e),
-                }
-            }
-        }
-
-        if let (Some((meta_long_out, meta_long_fi, meta_long_name, meta_long_quality)),
-                Some((meta_short_out, meta_short_fi, meta_short_name, meta_short_quality))) = (meta_best_long, meta_best_short) {
-            let meta_synth_elapsed = meta_synth_t0.elapsed();
-            total_synth_elapsed += meta_synth_elapsed;
-            alpha_trace(
-                &app,
-                "backend",
-                format!(
-                    "start.synth.stage2.done seconds={:.3} long_feature={} short_feature={}",
-                    meta_synth_elapsed.as_secs_f64(),
-                    meta_long_name,
-                    meta_short_name
-                ),
-            );
-            alog!("[ok] confluence synth done in {:.2}s", meta_synth_elapsed.as_secs_f64());
-            alog!("  LONG  confluence: '{}' -> loss(t/h)={}/{} nodes={} src={} | fires={} tp={} distinct={}/{} viable={}",
-                  meta_long_name, meta_long_out.train_loss, meta_long_out.holdout_loss,
-                  meta_long_out.program.nodes().len(), meta_long_out.source,
-                  meta_long_quality.fires, meta_long_quality.true_positives,
-                  meta_long_quality.distinct_fire_inputs, meta_long_quality.distinct_inputs, meta_long_quality.viable);
-            alog!("  SHORT confluence: '{}' -> loss(t/h)={}/{} nodes={} src={} | fires={} tp={} distinct={}/{} viable={}",
-                  meta_short_name, meta_short_out.train_loss, meta_short_out.holdout_loss,
-                  meta_short_out.program.nodes().len(), meta_short_out.source,
-                  meta_short_quality.fires, meta_short_quality.true_positives,
-                  meta_short_quality.distinct_fire_inputs, meta_short_quality.distinct_inputs, meta_short_quality.viable);
-
-            emit_runtime_outcome("best LONG confluence", &meta_long_out);
-            emit_runtime_outcome("best SHORT confluence", &meta_short_out);
-
-            let meta_eval_t0 = Instant::now();
-            alpha_trace(&app, "backend", "start.eval.stage2.begin");
-            let meta_long_hash = meta_long_out.program_hash;
-            let meta_short_hash = meta_short_out.program_hash;
-            let meta_prediction_t0 = Instant::now();
-            let (meta_long_predictions, meta_short_predictions) = {
-                let prediction_range =
-                    trading::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars);
-                let (long_preds, long_stats, long_distinct) =
-                    trading::build_prediction_cache_with_atlas(
-                        bars,
-                        prediction_range.clone(),
-                        &backend.atlas,
-                        alpha_file_hash,
-                        &meta_long_hash,
-                        |i| {
-                            confluence_cache
-                                .get(i)
-                                .copied()
-                                .flatten()
-                                .map(|confluence| confluence[meta_long_fi])
-                        },
-                        |feat| backend.node.call_one_i64(&meta_long_hash, feat).unwrap_or(0),
-                    );
-                let (short_preds, short_stats, short_distinct) =
-                    trading::build_prediction_cache_with_atlas(
-                        bars,
-                        prediction_range,
-                        &backend.atlas,
-                        alpha_file_hash,
-                        &meta_short_hash,
-                        |i| {
-                            confluence_cache
-                                .get(i)
-                                .copied()
-                                .flatten()
-                                .map(|confluence| confluence[meta_short_fi])
-                        },
-                        |feat| backend.node.call_one_i64(&meta_short_hash, feat).unwrap_or(0),
-                    );
-                alog!(
-                    "[ok] stage 2 prediction caches ready in {:.2}s (policy={} | LONG atlas={} recomputed={} persisted={} / {} distinct, SHORT atlas={} recomputed={} persisted={} / {} distinct)",
-                    meta_prediction_t0.elapsed().as_secs_f64(),
-                    start_plan.stage2_predictions_source,
-                    long_stats.atlas_hits,
-                    long_stats.computed_rows,
-                    long_stats.persisted_values,
-                    long_distinct,
-                    short_stats.atlas_hits,
-                    short_stats.computed_rows,
-                    short_stats.persisted_values,
-                    short_distinct
-                );
-                alog!(
-                    "  stage 2 prediction avoidance: {:.1}% avoided",
-                    avoided_pct(
-                        long_stats.atlas_hits + short_stats.atlas_hits,
-                        long_stats.computed_rows + short_stats.computed_rows,
-                    )
-                );
-                (long_preds, short_preds)
-            };
-            let meta_decision_fp = detector_pair_fingerprint(&meta_long_hash, &meta_short_hash);
-            let meta_decision_t0 = Instant::now();
-            let (meta_decisions, meta_decision_stats) = trading::build_decision_cache_with_atlas(
-                bars,
-                trading::MIN_HISTORY..bars.len().saturating_sub(cfg.max_horizon_bars),
-                &backend.atlas,
-                alpha_file_hash,
-                meta_decision_fp,
-                &meta_long_predictions,
-                &meta_short_predictions,
-            );
-            alog!(
-                "[ok] stage 2 decision cache ready in {:.2}s (atlas={} recomputed={} persisted={})",
-                meta_decision_t0.elapsed().as_secs_f64(),
-                meta_decision_stats.atlas_hits,
-                meta_decision_stats.computed_rows,
-                meta_decision_stats.persisted_values
-            );
-            alog!(
-                "  stage 2 decision avoidance: {:.1}% avoided",
-                avoided_pct(meta_decision_stats.atlas_hits, meta_decision_stats.computed_rows)
-            );
-            alog!("[info] stage 2 eval: LONG on confluence '{}', SHORT on '{}' ...",
-                  meta_long_name, meta_short_name);
-            let meta_eval_train = trading::eval_strategy_decision_cache(
-                bars,
-                trading::MIN_HISTORY..train_end_bar,
-                cfg,
-                &meta_decisions,
-                |_, _, _| {},
-            );
-            let meta_eval_holdout = trading::eval_strategy_decision_cache(
-                bars,
-                train_end_bar..bars.len(),
-                cfg,
-                &meta_decisions,
-                |_, _, _| {},
-            );
-            let meta_eval_elapsed = meta_eval_t0.elapsed();
-            total_eval_elapsed += meta_eval_elapsed;
-            alpha_trace(
-                &app,
-                "backend",
-                format!(
-                    "start.eval.stage2.done seconds={:.3} train_trades={} holdout_trades={}",
-                    meta_eval_elapsed.as_secs_f64(),
-                    meta_eval_train.total_trades,
-                    meta_eval_holdout.total_trades
-                ),
-            );
-            alog!("[ok] stage 2 eval done in {:.2}s ({} train + {} holdout trades)",
-                  meta_eval_elapsed.as_secs_f64(),
-                  meta_eval_train.total_trades, meta_eval_holdout.total_trades);
-            alog!("  LONG trades: {} | SHORT trades: {} | total: {}",
-                  meta_eval_holdout.long_trades, meta_eval_holdout.short_trades, meta_eval_holdout.total_trades);
-
-            meta_long_bundle = Some((meta_long_out, meta_long_fi, meta_long_name));
-            meta_short_bundle = Some((meta_short_out, meta_short_fi, meta_short_name));
-            meta_eval_train_opt = Some(meta_eval_train);
-            meta_eval_holdout_opt = Some(meta_eval_holdout);
-            meta_decisions_opt = Some(meta_decisions);
-        } else {
-            alog!("[warn] confluence stage skipped: no valid LONG/SHORT confluence detector pair");
-        }
-    } else {
-        alog!("[warn] confluence stage skipped: no confluence examples generated");
-    }
-
-    let usable_walkforward_bars = bars
-        .len()
-        .saturating_sub(trading::MIN_HISTORY)
-        .saturating_sub(cfg.max_horizon_bars);
-    let walkforward_cfg = if usable_walkforward_bars >= 4_096 {
-        let n_windows = if usable_walkforward_bars >= 24_000 {
-            6
-        } else if usable_walkforward_bars >= 16_000 {
-            5
-        } else if usable_walkforward_bars >= 8_000 {
-            4
-        } else {
-            3
-        };
-        let step = (usable_walkforward_bars / (n_windows + 6)).max(512);
-        let window_size = usable_walkforward_bars.saturating_sub(n_windows * step);
-        Some(scan::WalkForwardConfig {
-            window_size,
-            step,
-            n_windows,
-        })
-    } else {
-        None
-    };
-    let walkforward_windows = walkforward_cfg.and_then(|wf_cfg| {
-        match scan::walkforward_windows(wf_cfg, usable_walkforward_bars) {
-            Ok(wins) => Some((wf_cfg, wins)),
-            Err(e) => {
-                alog!("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â  walk-forward skipped: {}", e);
-                None
-            }
-        }
-    });
-
-    let mut base_walkforward = AlphaWalkforwardSummary::default();
-    let mut meta_walkforward_opt: Option<AlphaWalkforwardSummary> = None;
-
-    if let Some((wf_cfg, wf_windows)) = &walkforward_windows {
-        alog!("");
-        alog!("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ walk-forward stability scan (same H4 file, rolling OOS windows) ...");
-        alog!(
-            "  config: {} windows | in-sample={} bars | out-of-sample={} bars",
-            wf_cfg.n_windows,
-            wf_cfg.window_size,
-            wf_cfg.step
-        );
-
-        let mut base_sum_target = 0.0;
-        let mut base_sum_daily = 0.0;
-        let mut base_worst_target = f64::INFINITY;
-        let mut base_worst_daily = f64::INFINITY;
-        let mut base_total_trades = 0usize;
-        let mut base_passing = 0usize;
-        for (wi, win) in wf_windows.iter().enumerate() {
-            let abs_range = (trading::MIN_HISTORY + win.out_of_sample.start)
-                ..(trading::MIN_HISTORY + win.out_of_sample.end);
-            let eval = trading::eval_strategy_decision_cache(
-                bars,
-                abs_range.clone(),
-                cfg,
-                &base_decisions,
-                |_, _, _| {},
-            );
-            let avg_daily = if eval.days_evaluated > 0 {
-                eval.total_pnl_points / eval.days_evaluated as f64
-            } else {
-                0.0
-            };
-            let target_hit = eval.pct_days_target_hit();
-            if window_passes_target(&eval) {
-                base_passing += 1;
-            }
-            base_sum_target += target_hit;
-            base_sum_daily += avg_daily;
-            base_worst_target = base_worst_target.min(target_hit);
-            base_worst_daily = base_worst_daily.min(avg_daily);
-            base_total_trades += eval.total_trades;
-            let from = bars
-                .get(abs_range.start)
-                .map(|b| ms_to_iso(b.time_ms))
-                .unwrap_or_else(|| "n/a".to_string());
-            let to = bars
-                .get(abs_range.end.saturating_sub(1))
-                .map(|b| ms_to_iso(b.time_ms))
-                .unwrap_or_else(|| "n/a".to_string());
-            alog!(
-                "  BASE WF {}/{} {} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {} | {:.1}% days>=7p | avg/day {:.2}p | trades {}",
-                wi + 1,
-                wf_windows.len(),
-                from,
-                to,
-                target_hit,
-                avg_daily,
-                eval.total_trades
-            );
-        }
-        base_walkforward = AlphaWalkforwardSummary {
-            windows_total: wf_windows.len(),
-            windows_passing: base_passing,
-            avg_target_hit_pct: if wf_windows.is_empty() {
-                0.0
-            } else {
-                base_sum_target / wf_windows.len() as f64
-            },
-            worst_target_hit_pct: if base_worst_target.is_finite() {
-                base_worst_target
-            } else {
-                0.0
-            },
-            avg_daily_pnl_points: if wf_windows.is_empty() {
-                0.0
-            } else {
-                base_sum_daily / wf_windows.len() as f64
-            },
-            worst_daily_pnl_points: if base_worst_daily.is_finite() {
-                base_worst_daily
-            } else {
-                0.0
-            },
-            total_oos_trades: base_total_trades,
-        };
-        alog!(
-            "  BASE WF summary: pass {}/{} | avg {:.1}% days>=7p | worst {:.1}% | avg/day {:.2}p | worst/day {:.2}p",
-            base_walkforward.windows_passing,
-            base_walkforward.windows_total,
-            base_walkforward.avg_target_hit_pct,
-            base_walkforward.worst_target_hit_pct,
-            base_walkforward.avg_daily_pnl_points,
-            base_walkforward.worst_daily_pnl_points
-        );
-
-        if let (
-            Some((_meta_long_out, _meta_long_fi, _)),
-            Some((_meta_short_out, _meta_short_fi, _)),
-            Some(meta_decisions),
-        ) = (
-            meta_long_bundle.as_ref(),
-            meta_short_bundle.as_ref(),
-            meta_decisions_opt.as_ref(),
-        )
-        {
-            let mut meta_sum_target = 0.0;
-            let mut meta_sum_daily = 0.0;
-            let mut meta_worst_target = f64::INFINITY;
-            let mut meta_worst_daily = f64::INFINITY;
-            let mut meta_total_trades = 0usize;
-            let mut meta_passing = 0usize;
-            for (wi, win) in wf_windows.iter().enumerate() {
-                let abs_range = (trading::MIN_HISTORY + win.out_of_sample.start)
-                    ..(trading::MIN_HISTORY + win.out_of_sample.end);
-                let eval = trading::eval_strategy_decision_cache(
-                    bars,
-                    abs_range.clone(),
-                    cfg,
-                    meta_decisions,
-                    |_, _, _| {},
-                );
-                let avg_daily = if eval.days_evaluated > 0 {
-                    eval.total_pnl_points / eval.days_evaluated as f64
-                } else {
-                    0.0
-                };
-                let target_hit = eval.pct_days_target_hit();
-                if window_passes_target(&eval) {
-                    meta_passing += 1;
-                }
-                meta_sum_target += target_hit;
-                meta_sum_daily += avg_daily;
-                meta_worst_target = meta_worst_target.min(target_hit);
-                meta_worst_daily = meta_worst_daily.min(avg_daily);
-                meta_total_trades += eval.total_trades;
-                let from = bars
-                    .get(abs_range.start)
-                    .map(|b| ms_to_iso(b.time_ms))
-                    .unwrap_or_else(|| "n/a".to_string());
-                let to = bars
-                    .get(abs_range.end.saturating_sub(1))
-                    .map(|b| ms_to_iso(b.time_ms))
-                    .unwrap_or_else(|| "n/a".to_string());
-                alog!(
-                    "  CONF WF {}/{} {} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {} | {:.1}% days>=7p | avg/day {:.2}p | trades {}",
-                    wi + 1,
-                    wf_windows.len(),
-                    from,
-                    to,
-                    target_hit,
-                    avg_daily,
-                    eval.total_trades
-                );
-            }
-            let meta_walkforward = AlphaWalkforwardSummary {
-                windows_total: wf_windows.len(),
-                windows_passing: meta_passing,
-                avg_target_hit_pct: if wf_windows.is_empty() {
-                    0.0
-                } else {
-                    meta_sum_target / wf_windows.len() as f64
-                },
-                worst_target_hit_pct: if meta_worst_target.is_finite() {
-                    meta_worst_target
-                } else {
-                    0.0
-                },
-                avg_daily_pnl_points: if wf_windows.is_empty() {
-                    0.0
-                } else {
-                    meta_sum_daily / wf_windows.len() as f64
-                },
-                worst_daily_pnl_points: if meta_worst_daily.is_finite() {
-                    meta_worst_daily
-                } else {
-                    0.0
-                },
-                total_oos_trades: meta_total_trades,
-            };
-            alog!(
-                "  CONF WF summary: pass {}/{} | avg {:.1}% days>=7p | worst {:.1}% | avg/day {:.2}p | worst/day {:.2}p",
-                meta_walkforward.windows_passing,
-                meta_walkforward.windows_total,
-                meta_walkforward.avg_target_hit_pct,
-                meta_walkforward.worst_target_hit_pct,
-                meta_walkforward.avg_daily_pnl_points,
-                meta_walkforward.worst_daily_pnl_points
-            );
-            meta_walkforward_opt = Some(meta_walkforward);
-        }
-    } else {
-        alog!("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ walk-forward stability scan skipped: insufficient H4 history after warmup/horizon");
-    }
-
-    let use_confluence = meta_eval_holdout_opt.as_ref()
-        .map(|e| match meta_walkforward_opt.as_ref() {
-            Some(meta_wf) => rank_model(meta_wf, e) > rank_model(&base_walkforward, &base_eval_holdout),
-            None => false,
-        })
-        .unwrap_or(false);
-
-    let (final_train, final_holdout, final_strategy_hash, final_source, final_kasm_nodes, final_label, final_walkforward) =
-        if use_confluence {
-            let (meta_long_out, _, meta_long_name) = meta_long_bundle.as_ref().unwrap();
-            let (meta_short_out, _, meta_short_name) = meta_short_bundle.as_ref().unwrap();
-            (
-                meta_eval_train_opt.clone().unwrap(),
-                meta_eval_holdout_opt.clone().unwrap(),
-                format!("LONG={} | SHORT={}", meta_long_out.program_hash, meta_short_out.program_hash),
-                format!("stage2-confluence: LONG={} ({:?}) | SHORT={} ({:?})",
-                    meta_long_name, meta_long_out.source, meta_short_name, meta_short_out.source),
-                meta_long_out.program.nodes().len() + meta_short_out.program.nodes().len(),
-                "STAGE 2 CONFLUENCE",
-                meta_walkforward_opt.clone().unwrap_or_default(),
-            )
-        } else {
-            (
-                base_eval_train.clone(),
-                base_eval_holdout.clone(),
-                format!("LONG={} | SHORT={}", long_hash, short_hash),
-                format!("stage1-base: LONG={} ({:?}) | SHORT={} ({:?})",
-                    long_fname, long_out.source, short_fname, short_out.source),
-                long_out.program.nodes().len() + short_out.program.nodes().len(),
-                "STAGE 1 BASE",
-                base_walkforward.clone(),
-            )
-        };
-
-    alog!("");
-    alog!("SELECTED MODEL: {}", final_label);
-    alog!("  source: {}", final_source);
-    alog!("  model rank key   = {:?}", rank_model(&final_walkforward, &final_holdout));
-    alog!("  holdout score key = {:?}", rank_eval(&final_holdout));
-    if final_walkforward.windows_total > 0 {
-        alog!(
-            "  walk-forward key = {:?} | pass {}/{} | avg {:.1}% days>=7p | worst {:.1}% | avg/day {:.2}p | worst/day {:.2}p",
-            rank_walkforward(&final_walkforward),
-            final_walkforward.windows_passing,
-            final_walkforward.windows_total,
-            final_walkforward.avg_target_hit_pct,
-            final_walkforward.worst_target_hit_pct,
-            final_walkforward.avg_daily_pnl_points,
-            final_walkforward.worst_daily_pnl_points
-        );
-    }
-
-    let walkforward_ok = final_walkforward.windows_total == 0
-        || (
-            final_walkforward.windows_passing * 3 >= final_walkforward.windows_total * 2
-            && final_walkforward.avg_target_hit_pct >= 60.0
-            && final_walkforward.worst_target_hit_pct >= 45.0
-        );
-    let success = final_holdout.pct_days_target_hit() >= 85.0
-        && final_holdout.total_trades >= 100
-        && walkforward_ok;
-    if success {
-        alog!("[SUCCESS] STRATEGIE TROUVEE");
-        alog!("[ok] STRATEGIE TROUVEE: holdout {:.1}% jours target, {} trades, WF pass {}/{}",
-              final_holdout.pct_days_target_hit(), final_holdout.total_trades,
-              final_walkforward.windows_passing, final_walkforward.windows_total);
-    } else {
-        alog!("[warn] cible non atteinte: {:.1}% jours target, {} trades, WF pass {}/{} (besoin >=85%/>=100 + stabilite multi-fenetres)",
-              final_holdout.pct_days_target_hit(), final_holdout.total_trades,
-              final_walkforward.windows_passing, final_walkforward.windows_total);
-    }
-
-    emit_alpha_signal_reset(&app);
-    let final_chart_signal_t0 = Instant::now();
-    let final_chart_eval = if use_confluence {
-        trading::eval_strategy_decision_cache(
-            bars,
-            train_end_bar..bars.len(),
-            cfg,
-            meta_decisions_opt.as_ref().unwrap(),
-            |bar_idx, dir, price| emit_signal(bar_idx, dir, price),
-        )
-    } else {
-        trading::eval_strategy_decision_cache(
-            bars,
-            train_end_bar..bars.len(),
-            cfg,
-            &base_decisions,
-            |bar_idx, dir, price| emit_signal(bar_idx, dir, price),
-        )
-    };
-    alog!(
-        "[ok] final chart replay in {:.2}s (holdout markers: {} trades, {} long, {} short)",
-        final_chart_signal_t0.elapsed().as_secs_f64(),
-        final_chart_eval.total_trades,
-        final_chart_eval.long_trades,
-        final_chart_eval.short_trades
-    );
-    let periods_per_year = 252.0;
-    let sharpe   = final_holdout.sharpe_ratio(periods_per_year);
-    let sortino  = final_holdout.sortino_ratio(periods_per_year);
-    let calmar   = final_holdout.calmar_ratio(periods_per_year);
-    let mdd      = final_holdout.max_drawdown_points();
-    let pf       = final_holdout.profit_factor();
-    let max_consec = final_holdout.max_consecutive_losing_days();
-    let win_pct  = final_holdout.pct_winning_trades();
-    let avg_pnl  = final_holdout.avg_pnl_per_trade();
-
-    alog!("");
-    alog!("HOLDOUT METRICS (annualized, 252 trading days)");
-    alog!("  Sharpe         : {:.2}  (target >= 1.5)", sharpe);
-    alog!("  Sortino        : {:.2}  (target >= 2.0)", sortino);
-    alog!("  Calmar         : {:.2}  (target >= 1.0)", calmar);
-    alog!("  Max Drawdown   : {:.2} pts", mdd);
-    alog!("  Profit Factor  : {:.2}  (target >= 1.5)", pf);
-    alog!("  Win rate       : {:.1}% ({}/{})",
-          win_pct, final_holdout.winning_trades, final_holdout.total_trades);
-    alog!("  Avg PnL/trade  : {:.4} pts", avg_pnl);
-    alog!("  Max consec losses : {}", max_consec);
-    alog!("");
-
-    let sellable = sharpe >= 1.5 && sortino >= 2.0 && calmar >= 1.0 && pf >= 1.5;
-    if sellable {
-        alog!("HEDGE-FUND-GRADE");
-    } else if sharpe >= 1.0 && pf >= 1.2 {
-        alog!("RETAIL-GRADE: profitable but sub-institutional");
-    } else {
-        alog!("NON-VENDABLE");
-    }
-
-    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Decompile selected programs ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-    alog!("");
-    if use_confluence {
-        let (meta_long_out, _, meta_long_name) = meta_long_bundle.as_ref().unwrap();
-        let (meta_short_out, _, meta_short_name) = meta_short_bundle.as_ref().unwrap();
-        alog!("LONG DETECTOR ({} nodes) on confluence '{}'",
-              meta_long_out.program.nodes().len(), meta_long_name);
-        alog!("  input x = confluence {}", meta_long_name);
-        for line in decompile_program(&meta_long_out.program).lines() {
-            alog!("  {}", line);
-        }
-        alog!("");
-        alog!("SHORT DETECTOR ({} nodes) on confluence '{}'",
-              meta_short_out.program.nodes().len(), meta_short_name);
-        alog!("  input x = confluence {}", meta_short_name);
-        for line in decompile_program(&meta_short_out.program).lines() {
-            alog!("  {}", line);
-        }
-    } else {
-        alog!("LONG DETECTOR ({} nodes) on feature '{}'",
-              long_out.program.nodes().len(), long_fname);
-        alog!("  input x = raw {} value", long_fname);
-        for line in decompile_program(&long_out.program).lines() {
-            alog!("  {}", line);
-        }
-        alog!("");
-        alog!("SHORT DETECTOR ({} nodes) on feature '{}'",
-              short_out.program.nodes().len(), short_fname);
-        alog!("  input x = raw {} value", short_fname);
-        for line in decompile_program(&short_out.program).lines() {
-            alog!("  {}", line);
-        }
-    }
-
-    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Monthly PnL breakdown (holdout) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-    // We use the bars timestamps to compute month boundaries
-    alog!("");
-    alog!("MONTHLY PNL BREAKDOWN (holdout period)");
-    {
-        let holdout_bars = &bars[train_end_bar..];
-        let day_pnls = &final_holdout.day_pnl_distribution;
-        let mut monthly: HashMap<String, (f64, usize, usize)> = HashMap::new();
-        let mut seen_days: Vec<i64> = Vec::new();
-        let mut last_day = -1i64;
-        for bar in holdout_bars.iter() {
-            let d = bar.time_ms / 86_400_000;
-            if d != last_day {
-                seen_days.push(bar.time_ms);
-                last_day = d;
-            }
-        }
-        for (i, &pnl) in day_pnls.iter().enumerate() {
-            let month_key = if i < seen_days.len() {
-                let iso = ms_to_iso(seen_days[i]);
-                iso[..7].to_string() // "YYYY-MM"
-            } else {
-                "unknown".to_string()
-            };
-            let entry = monthly.entry(month_key).or_insert((0.0, 0, 0));
-            entry.0 += pnl;
-            if pnl > 0.0 { entry.1 += 1; } else { entry.2 += 1; }
-        }
-        let mut months: Vec<_> = monthly.into_iter().collect();
-        months.sort_by(|a, b| a.0.cmp(&b.0));
-        for (month, (pnl, pos, neg)) in &months {
-            let marker = if *pnl >= 0.0 { "+" } else { "" };
-            alog!("  {} : {}{:.2}p  ({} green days, {} red days)",
-                  month, marker, pnl, pos, neg);
-        }
-        let total_months = months.len();
-        let profitable_months = months.iter().filter(|(_, (p, _, _))| *p > 0.0).count();
-        alog!("  -> {}/{} months profitable ({:.0}%)",
-              profitable_months, total_months,
-              if total_months > 0 { 100.0 * profitable_months as f64 / total_months as f64 } else { 0.0 });
-    }
-
-    // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Trade distribution stats ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
-    alog!("");
-    alog!("PNL DISTRIBUTION (holdout, per-day)");
-    {
-        let pnls = &final_holdout.day_pnl_distribution;
-        if !pnls.is_empty() {
-            let mut sorted = pnls.clone();
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let n = sorted.len();
-            let p5 = sorted[n * 5 / 100];
-            let p25 = sorted[n * 25 / 100];
-            let p50 = sorted[n / 2];
-            let p75 = sorted[n * 75 / 100];
-            let p95 = sorted[n * 95 / 100];
-            let mean = pnls.iter().sum::<f64>() / n as f64;
-            alog!("  days: {}  mean: {:.3}p  median: {:.3}p", n, mean, p50);
-            alog!("  p5={:.3}  p25={:.3}  p50={:.3}  p75={:.3}  p95={:.3}",
-                  p5, p25, p50, p75, p95);
-            alog!("  worst day: {:.3}p  best day: {:.3}p", sorted[0], sorted[n - 1]);
-        }
-    }
-
-    let total_elapsed = t_start.elapsed();
-    alog!("end-to-end {:.2}s (parse+features+synth {:.2}s + eval {:.2}s)",
-          total_elapsed.as_secs_f64(),
-          total_synth_elapsed.as_secs_f64(),
-          total_eval_elapsed.as_secs_f64());
-
-    let final_report = AlphaReport {
-        strategy_hash: final_strategy_hash,
-        source: final_source,
-        kasm_nodes: final_kasm_nodes,
-        synth_seconds: total_synth_elapsed.as_secs_f64(),
-        eval_seconds: total_eval_elapsed.as_secs_f64(),
-        candidates_evaluated: total_candidates,
-        train_days: final_train.days_evaluated,
-        train_total_trades: final_train.total_trades,
-        train_target_hit_pct: final_train.pct_days_target_hit(),
-        train_total_pnl_points: final_train.total_pnl_points,
-        holdout_days: final_holdout.days_evaluated,
-        holdout_total_trades: final_holdout.total_trades,
-        holdout_target_hit_pct: final_holdout.pct_days_target_hit(),
-        holdout_total_pnl_points: final_holdout.total_pnl_points,
-        holdout_long_trades: final_holdout.long_trades,
-        holdout_short_trades: final_holdout.short_trades,
-        success,
-        // ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â¦.ÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â½.7g ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â JSON ne sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rialise pas Infinity / NaN. Clamp ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  un
-        // sentinel grand mais fini (1e9) pour rester transmissible
-        // au frontend. Le frontend peut dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tecter ce sentinel pour
-        // afficher "ÃƒÆ’Ã‚Â¢Ãƒâ€¹Ã¢â‚¬Â Ãƒâ€¦Ã‚Â¾" symboliquement.
-        holdout_sharpe: if sharpe.is_finite() { sharpe } else { 1.0e9 },
-        holdout_sortino: if sortino.is_finite() { sortino } else { 1.0e9 },
-        holdout_calmar: if calmar.is_finite() { calmar } else { 1.0e9 },
-        holdout_max_drawdown: mdd,
-        holdout_profit_factor: if pf.is_finite() { pf } else { 1.0e9 },
-        holdout_max_consecutive_losing_days: max_consec,
-        holdout_pct_winning_trades: win_pct,
-        holdout_avg_pnl_per_trade: avg_pnl,
-        walkforward_windows: final_walkforward.windows_total,
-        walkforward_windows_passing: final_walkforward.windows_passing,
-        walkforward_avg_target_hit_pct: final_walkforward.avg_target_hit_pct,
-        walkforward_worst_target_hit_pct: final_walkforward.worst_target_hit_pct,
-        walkforward_avg_daily_pnl_points: final_walkforward.avg_daily_pnl_points,
-        walkforward_worst_daily_pnl_points: final_walkforward.worst_daily_pnl_points,
-    };
-
-    let final_model_rank_key = rank_model(&final_walkforward, &final_holdout);
-    let final_holdout_rank_key = rank_eval(&final_holdout);
-    let final_walkforward_rank_key = if final_walkforward.windows_total > 0 {
-        Some(rank_walkforward(&final_walkforward))
-    } else {
-        None
-    };
-    let selection_request_fp = alpha_request_fingerprint(&params, cfg);
-    let selection_artifact = build_alpha_selection_artifact(
-        &final_report,
-        final_label,
-        &final_model_rank_key,
-        &final_holdout_rank_key,
-        final_walkforward_rank_key,
-    );
-    let selection_hash = backend
-        .node
-        .store()
-        .store(&selection_artifact)
-        .map_err(|e| format!("store alpha selection artifact: {e}"))?;
-    let selection_key = scan::atlas::Atlas::alpha_selection_key(alpha_file_hash, selection_request_fp);
-    let selection_new = backend
-        .atlas
-        .record_result(&selection_key, selection_hash.as_bytes())
-        .map_err(|e| format!("persist alpha selection artifact: {e}"))?;
-    alog!(
-        "alpha final selection artifact persisted: {} ({})",
-        selection_hash,
-        if selection_new { "new" } else { "already known" }
-    );
-    alpha_trace(
-        &app,
-        "backend",
-        format!(
-            "start.done success={} holdout_hit={:.2} trades={} candidates={} total_seconds={:.3}",
-            final_report.success,
-            final_report.holdout_target_hit_pct,
-            final_report.holdout_total_trades,
-            final_report.candidates_evaluated,
-            total_elapsed.as_secs_f64()
-        ),
-    );
-
-    Ok(final_report)
+    Err("legacy alpha synthesis removed; use /newcompute_ through Monster GPU mass compute".to_string())
 }
 
 fn main() {
+    // Ask Windows to run this app on the discrete high-performance GPU
+    // (RTX 3050) instead of the iGPU. Effective next launch ; HKCU, reversible.
+    gpu_preference::request_high_performance_gpu();
     tauri::Builder::default()
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
@@ -35645,6 +33657,12 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 let store_path = forge_store_dir();
                 let state = memory_prewarm_app.state::<Mutex<ForgeAppState>>();
+                if let Err(err) = ensure_banger_actcode_brain_memories(&store_path) {
+                    eprintln!("[forge-startup] Banger ActCode brain seed failed: {err}");
+                }
+                if let Err(err) = forge_brain_runtime::prewarm_compute_hot_index(&store_path) {
+                    eprintln!("[forge-startup] Brain hot fragment index prewarm failed: {err}");
+                }
                 prewarm_real_estate_active_memory_snapshot(store_path, state);
             });
             app.manage(banger::BangerEngine::new());
@@ -35673,10 +33691,19 @@ fn main() {
             collection_os_webexplorer_action_cache,
             collection_os_webexplorer_replay_action,
             collection_os_classify_block,
+            forge_brain_runtime::forge_brain_actcode_templates,
+            forge_brain_run_actcode,
+            forge_brain_compute_library,
+            forge_brain_material_library,
+            forge_brain_record_material_research,
+            forge_brain_hot_fragment_index,
+            forge_brain_design_brief,
+            forge_brain_banger_identity,
+            forge_brain_session_title,
             open_webexplorer_window,
             webexplorer_native_present,
             webexplorer_native_hide,
-            forge_ui_atlas_runtime_snapshot,
+            forge_brain_runtime_snapshot,
             agency_earth_native_present,
             agency_earth_ui_atlas,
             agency_earth_act_code,
@@ -35728,7 +33755,7 @@ fn main() {
             read_forge_job_file,
             update_forge_job,
             persist_forge_canvas_session_state,
-            publish_forge_job_to_mcp,
+            publish_forge_job_to_actcode,
             openai_oauth_status,
             codex_provider_status,
             gemini_provider_status,
@@ -35779,6 +33806,7 @@ fn main() {
             apply_program,
             gpu_report,
             banger_runtime_status,
+            banger_native_prepare_render_handoff,
             get_hardware_info,
             gpu_startup_alert,
             open_url,
@@ -35809,6 +33837,21 @@ fn main() {
             banger::banger_engine_start,
             banger::banger_engine_stop,
             banger::banger_engine_status,
+            banger::banger_sdf_compute_smoke,
+            banger_field::banger_compile_field_program,
+            banger_field::banger_encode_fourier_features,
+            banger_field::banger_encode_hash_grid_features,
+            banger_field::banger_reduce_tropical_field,
+            banger_field::banger_bake_sdf_bricks,
+            banger_field::banger_build_sdf_fieldlet_page_table,
+            banger_gaussian_splat::banger_gaussian_splat_audit,
+            banger_geo_tiles::banger_geo_tiles_audit,
+            banger_geo_tiles::banger_geo_tiles_verify,
+            banger_geo_tiles::banger_geo_tiles_plan_view,
+            banger_geo_tiles::banger_geo_subtree_audit,
+            banger_geo_tiles::banger_geosplat_verify,
+            banger_skyfall_probe::forge_skyfall_probe,
+            banger_neural_sdf::banger_train_neural_sdf,
             banger_mesh::banger_voxelize_mesh,
             banger::banger_detect_printers,
             banger::banger_run_rust_console,
@@ -35839,6 +33882,91 @@ mod tests {
 
     fn main_rs_source() -> String {
         fs::read_to_string(workspace_file("src/main.rs")).expect("read main.rs source")
+    }
+
+    #[test]
+    fn headless_cli_failure_message_keeps_generic_when_no_detail() {
+        let generic = "Gemini n'a pas pu répondre cette fois.";
+        let msg = compose_headless_cli_failure_message(generic, None, "Gemini");
+        assert_eq!(msg, generic);
+        let msg_empty = compose_headless_cli_failure_message(generic, Some("   "), "Gemini");
+        assert_eq!(msg_empty, generic);
+    }
+
+    #[test]
+    fn headless_cli_failure_message_surfaces_quota_hint() {
+        let generic = "Gemini n'a pas pu répondre cette fois.";
+        let detail = "Gemini CLI exited with exit code: 1: \
+            { \"error\": { \"code\": 429, \"status\": \"RESOURCE_EXHAUSTED\", \"message\": \"Quota exceeded\" } }";
+        let msg = compose_headless_cli_failure_message(generic, Some(detail), "Gemini");
+        assert!(msg.contains("quota Gemini épuisé"), "quota hint must mention quota: {msg}");
+        assert!(msg.contains("Détail CLI:"), "raw CLI detail must be preserved: {msg}");
+        assert!(msg.contains("RESOURCE_EXHAUSTED"), "raw error keyword must be in detail: {msg}");
+    }
+
+    #[test]
+    fn headless_cli_failure_message_classifies_invalid_api_key() {
+        let detail = "Gemini CLI exited with status 1: \
+            { \"error\": { \"code\": 400, \"status\": \"INVALID_ARGUMENT\", \"message\": \"API key not valid. Please pass a valid API key.\" } }";
+        let msg = compose_headless_cli_failure_message("g", Some(detail), "Gemini");
+        assert!(msg.contains("clé API"), "API key hint: {msg}");
+    }
+
+    #[test]
+    fn headless_cli_failure_message_truncates_long_detail() {
+        let mut detail = String::with_capacity(4096);
+        for _ in 0..4096 {
+            detail.push('é');
+        }
+        let msg = compose_headless_cli_failure_message("g", Some(detail.as_str()), "Gemini");
+        assert!(msg.ends_with('…') || msg.contains('…'));
+        assert!(msg.len() < 4096 + 200);
+    }
+
+    #[test]
+    fn classify_headless_cli_failure_recognises_common_families() {
+        assert!(classify_headless_cli_failure("HTTP 429 rate limit hit", "Gemini")
+            .unwrap_or_default()
+            .contains("quota"));
+        assert!(classify_headless_cli_failure("PERMISSION_DENIED: missing scope", "Claude")
+            .unwrap_or_default()
+            .contains("clé API"));
+        assert!(classify_headless_cli_failure("Gemini CLI timed out after 180 seconds.", "Gemini")
+            .unwrap_or_default()
+            .contains("délai"));
+        assert!(classify_headless_cli_failure("getaddrinfo ENOTFOUND generativelanguage.googleapis.com", "Gemini")
+            .unwrap_or_default()
+            .contains("réseau"));
+        assert!(classify_headless_cli_failure("oauth refresh token expired", "Claude")
+            .unwrap_or_default()
+            .contains("OAuth"));
+        assert!(classify_headless_cli_failure("totally unrelated junk", "Gemini").is_none());
+    }
+
+    #[test]
+    fn headless_cli_outcome_records_and_annotates_status() {
+        // Record a recent failure and verify the status message gets annotated.
+        record_headless_cli_outcome(
+            "gemini",
+            false,
+            Some("Gemini CLI exited with status 1: RESOURCE_EXHAUSTED quota".to_string()),
+        );
+        let annotated = annotate_status_with_last_headless_outcome(
+            "Gemini CLI is ready.".to_string(),
+            "gemini",
+            "Gemini",
+        );
+        assert!(annotated.contains("Dernier appel headless Gemini : échec"));
+        assert!(annotated.contains("RESOURCE_EXHAUSTED"));
+
+        // A success cancels the annotation.
+        record_headless_cli_outcome("gemini", true, None);
+        let clean = annotate_status_with_last_headless_outcome(
+            "Gemini CLI is ready.".to_string(),
+            "gemini",
+            "Gemini",
+        );
+        assert_eq!(clean, "Gemini CLI is ready.");
     }
 
     #[test]
@@ -35894,7 +34022,7 @@ mod tests {
         .expect("local shortcut selected");
 
         assert_eq!(value["templateId"].as_str(), Some("brain_recall_layer"));
-        assert_eq!(value["forgeSlash"].as_str(), Some("/forge project state=brain op=recall scope=real_estate memory_layer=semantic limit=4 include_expired=false"));
+        assert_eq!(value["BrainCommand"].as_str(), Some("/forge project state=brain op=recall scope=real_estate memory_layer=semantic limit=4 include_expired=false"));
     }
 
     #[test]
@@ -35908,7 +34036,7 @@ mod tests {
         .expect("local shortcut selected");
 
         assert_eq!(value["templateId"].as_str(), Some("brain_explain_ref"));
-        assert_eq!(value["forgeSlash"].as_str(), Some("/forge project state=brain op=explain ref=\"refs/brain/llm/real_estate/latest\""));
+        assert_eq!(value["BrainCommand"].as_str(), Some("/forge project state=brain op=explain ref=\"refs/brain/llm/real_estate/latest\""));
     }
 
     #[test]
@@ -35923,7 +34051,7 @@ mod tests {
 
         assert_eq!(value["templateId"].as_str(), Some("skill_candidates"));
         assert_eq!(
-            value["forgeSlash"].as_str(),
+            value["BrainCommand"].as_str(),
             Some("/forge project state=execution kind=skill_candidates limit=5")
         );
     }
@@ -35943,7 +34071,7 @@ mod tests {
             Some("verified_program_candidates")
         );
         assert_eq!(
-            value["forgeSlash"].as_str(),
+            value["BrainCommand"].as_str(),
             Some("/forge project state=execution kind=verified_program_candidates limit=5")
         );
     }
@@ -35960,7 +34088,7 @@ mod tests {
 
         assert_eq!(value["templateId"].as_str(), Some("run_latest_plan"));
         assert_eq!(
-            value["forgeSlash"].as_str(),
+            value["BrainCommand"].as_str(),
             Some("/forge run input=@latest intent=\"analyse le dernier upload avec un plan safe\" plan_only=true")
         );
     }
@@ -35977,7 +34105,7 @@ mod tests {
 
         assert_eq!(value["templateId"].as_str(), Some("project_job"));
         assert_eq!(
-            value["forgeSlash"].as_str(),
+            value["BrainCommand"].as_str(),
             Some("/forge project job_id=abc123 max_bytes=4096")
         );
     }
@@ -35991,7 +34119,7 @@ mod tests {
 
         assert_eq!(value["templateId"].as_str(), Some("replay_projection"));
         assert_eq!(
-            value["forgeSlash"].as_str(),
+            value["BrainCommand"].as_str(),
             Some("/forge replay projection_ref=@projection:feedface")
         );
     }
@@ -36007,7 +34135,7 @@ mod tests {
         .expect("local shortcut selected");
 
         assert_eq!(value["templateId"].as_str(), Some("run_job_plan"));
-        assert!(value["forgeSlash"]
+        assert!(value["BrainCommand"]
             .as_str()
             .unwrap_or("")
             .starts_with("/forge run job_id=abc123 intent=\""));
@@ -36035,7 +34163,7 @@ mod tests {
         assert_eq!(value["templateId"].as_str(), Some("project_job"));
         assert_eq!(value["templateCode"].as_str(), Some("P1"));
         assert_eq!(
-            value["forgeSlash"].as_str(),
+            value["BrainCommand"].as_str(),
             Some("/forge project job_id=abc123 max_bytes=4096")
         );
     }
@@ -36286,7 +34414,7 @@ mod tests {
             "list_forge_jobs",
             "read_forge_job_file",
             "read_forge_job_artifact_text",
-            "publish_forge_job_to_mcp",
+            "publish_forge_job_to_actcode",
             "get_hardware_info",
             "open_url",
             "gmail_webview_action_surface",
