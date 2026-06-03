@@ -191,6 +191,39 @@ Done:
   normal/curvature, Banger virtual geometry pages, radiance caches, virtual
   shadow pages, physical material payloads, hashed PCG graphs, spatial
   streaming cells, light budgets and mesh/SDF/shader/proof/preview exports.
+- Complex-primitive shape tranche 63-68: six primitive families now carry real
+  typed shape semantics in `ForgeExpr::infer_ty` instead of only-acceptance
+  passthrough.
+  - Signal `convolution(signal, kernel)` returns the signal carrier (SciPy /
+    NumPy "same"-mode), kernel must be a float collection no longer than the
+    signal; non-float signal/kernel rejected. `correlation` remains bound to
+    the statistical Pearson primitive.
+  - Signal `fir_filter(signal, taps)` and `iir_filter(signal, b_taps, a_taps)`
+    preserve the signal's shape (SciPy `lfilter` convention); empty or
+    oversized taps rejected. `window_hann(signal)` / `window_blackman(signal)`
+    return the signal carrier element-wise.
+  - Signal `spectrogram(signal, nperseg)` returns
+    `tensor<elem, (nperseg/2+1) x frames x 2>` where `frames = signal_len /
+    nperseg`. Signal must be a power-of-two float array/vec; `nperseg` must be
+    a power-of-two literal that divides the signal length. `wavelet_step` does
+    one Mallat DWT level and returns `tensor<elem, (N/2) x 2>` for an
+    even-length signal (row 0 = approx, row 1 = detail).
+  - AD `jacobian(point)` / `hessian(point)` return `mat<elem, N, N>` when the
+    point is a `vec<elem, N>` (Jacobian / Hessian in JAX/Autograd convention)
+    and a scalar when the point is a scalar. `grad`, `hessian_diag`, `adjoint`,
+    `jvp`, `vjp`, `sensitivity_forward`, `sensitivity_adjoint` preserve the
+    carrier shape and reject non-float.
+  - Sparse `csr_matvec(A, x)` / `sparse_solve(A, b)` return the RHS carrier
+    and require a float collection. `sparse_reduce(field)` returns a scalar in
+    the field's element type (also accepts dense float collections).
+  - Graph `bfs_step(graph)` → `column<node>`, `shortest_path_step(graph)` /
+    `pagerank_step(graph)` → `column<f64>`, `connected_components_step(graph)`
+    → `column<u64>`. Non-graph carriers rejected.
+
+  Monster's `/newcompute_` path already routes these op names to the
+  signal-tiled-convolution / autodiff-dual-jvp-vjp / graph-frontier-csr /
+  sparse-csr-graphblas-spmv specialized shader profiles, so the tightened
+  shapes flow into the typed buffer ABI without any plan-side changes.
 - Property/metamorphic tranche 61-62: Forge now parses/types/hashes an optional
   `forge_properties` section. A module can promise declarative metamorphic /
   property relations about an emitted output across its whole bounded input
@@ -214,9 +247,18 @@ Done:
 Still to do in the language:
 
 1. Give complex primitives real type/shape semantics, not only acceptance:
-   sparse ops, graph traversal, SVD/QR/Cholesky/eigen, ODE/PDE, AD/JVP/VJP,
-   crypto/hash blocks. Signal FFT shape semantics have started; convolution,
-   filters, spectrogram and wavelets still need the same treatment.
+   - ~~signal: convolution, FIR/IIR filters, window tapers, spectrogram,
+     wavelet single DWT step~~ — done (tranche 63-68).
+   - ~~AD/JVP/VJP: grad, jacobian, hessian, hessian_diag, adjoint, jvp, vjp,
+     sensitivity_forward, sensitivity_adjoint~~ — done (tranche 63-68).
+   - ~~sparse ops: csr_matvec, sparse_solve, sparse_reduce, coo_to_csr~~ —
+     done (tranche 63-68).
+   - ~~graph traversal: bfs_step, shortest_path_step, pagerank_step,
+     connected_components_step~~ — done (tranche 63-68).
+   - Still to do: SVD/QR/Cholesky/eigen (return triplet/factorization shape,
+     not just identity), ODE/PDE (step vs. solve shape, time axis),
+     crypto/hash block chaining (CV state vs. digest output, currently fixed
+     `array<u32,8>`).
 2. Add typed result forms for the remaining domain dialects that are not yet
    covered by Monster pages.
 3. ~~Add property/metamorphic test declarations so the LLM can specify

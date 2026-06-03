@@ -18325,8 +18325,13 @@ fn infer_builtin_forge_call_ty(name: &str, args: &[ForgeExpr], arg_tys: &[ForgeT
         "node_count" | "edge_count" if arg_tys.len() == 1 => infer_graph_count_ty(&arg_tys[0]),
         "graph_neighbors" if arg_tys.len() == 2 => infer_graph_neighbors_ty(&arg_tys[0]),
         "graph_degree" if arg_tys.len() == 2 => Some(ForgeType::Scalar(ForgeScalarTy::U64)),
-        "bfs_step" | "shortest_path_step" | "pagerank_step" | "connected_components_step"
-            if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
+        "bfs_step" if !arg_tys.is_empty() => infer_graph_bfs_step_ty(&arg_tys[0]),
+        "shortest_path_step" | "pagerank_step" if !arg_tys.is_empty() => {
+            infer_graph_score_step_ty(&arg_tys[0])
+        }
+        "connected_components_step" if !arg_tys.is_empty() => {
+            infer_graph_components_step_ty(&arg_tys[0])
+        }
         "sample" if arg_tys.len() == 2 => infer_sample_ty(&arg_tys[0], &arg_tys[1]),
         "sobol" | "latin_hypercube" if arg_tys.len() == 3 => infer_sampler_ty(args, &arg_tys),
         "rng_seed" if arg_tys.len() == 1 && is_index_type(&arg_tys[0]) => Some(ForgeType::Scalar(ForgeScalarTy::U64)),
@@ -18340,15 +18345,18 @@ fn infer_builtin_forge_call_ty(name: &str, args: &[ForgeExpr], arg_tys: &[ForgeT
         "argmin" | "argmax" if arg_tys.len() == 1 => infer_arg_index_ty(&arg_tys[0]),
         "gradient_descent_step" | "adam_step" | "newton_step" | "bfgs_step" | "line_search"
         | "project_bounds" | "constraint_penalty" | "optimize" | "constraint_solve" if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
-        "grad" | "jacobian" | "hessian" | "hessian_diag" | "adjoint" | "jvp" | "vjp" | "sensitivity_forward" | "sensitivity_adjoint"
-            if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
+        "jacobian" | "hessian" if !arg_tys.is_empty() => infer_ad_square_ty(&arg_tys[0]),
+        "grad" | "hessian_diag" | "adjoint" | "jvp" | "vjp" | "sensitivity_forward"
+        | "sensitivity_adjoint" if !arg_tys.is_empty() => infer_ad_passthrough_ty(&arg_tys[0]),
         "finite_diff_check" if !arg_tys.is_empty() => Some(ForgeType::Scalar(ForgeScalarTy::Bool)),
         "root_find" | "bisection" | "newton_root" | "fixed_point" if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
-        "linear_solve" | "sparse_solve" | "least_squares" if arg_tys.len() >= 2 => Some(arg_tys[1].clone()),
+        "linear_solve" | "least_squares" if arg_tys.len() >= 2 => Some(arg_tys[1].clone()),
+        "sparse_solve" if arg_tys.len() >= 2 => infer_sparse_vector_ty(&arg_tys[1]),
         "ode_step_euler" | "ode_step_rk4" | "ode_solve" | "pde_stencil_step" | "relaxation_step"
             if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
-        "csr_matvec" if arg_tys.len() >= 2 => Some(arg_tys[1].clone()),
-        "coo_to_csr" | "sparse_reduce" if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
+        "csr_matvec" if arg_tys.len() >= 2 => infer_sparse_vector_ty(&arg_tys[1]),
+        "coo_to_csr" if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
+        "sparse_reduce" if !arg_tys.is_empty() => infer_sparse_reduce_ty(&arg_tys[0]),
         "dot" if arg_tys.len() == 2 => infer_dot_ty(&arg_tys[0], &arg_tys[1]),
         "length" if arg_tys.len() == 1 => infer_length_ty(&arg_tys[0]),
         "distance" if arg_tys.len() == 2 => infer_distance_ty(&arg_tys[0], &arg_tys[1]),
@@ -18398,8 +18406,14 @@ fn infer_builtin_forge_call_ty(name: &str, args: &[ForgeExpr], arg_tys: &[ForgeT
         "hash32" if !arg_tys.is_empty() => Some(ForgeType::Scalar(ForgeScalarTy::U32)),
         "hash64" | "hash_value" | "hash_buffer" | "proof_emit" if !arg_tys.is_empty() => Some(ForgeType::Scalar(ForgeScalarTy::U64)),
         "fft" | "ifft" | "rfft" if arg_tys.len() == 1 => infer_signal_transform_ty(name, &arg_tys[0]),
-        "convolution" | "correlation" | "fir_filter" | "iir_filter" | "window_hann"
-        | "window_blackman" | "spectrogram" | "wavelet_step" if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
+        "convolution" if arg_tys.len() == 2 => {
+            infer_convolution_ty(name, &arg_tys[0], &arg_tys[1])
+        }
+        "fir_filter" if arg_tys.len() == 2 => infer_fir_filter_ty(&arg_tys[0], &arg_tys[1]),
+        "iir_filter" if arg_tys.len() == 3 => infer_iir_filter_ty(&arg_tys[0], &arg_tys[1], &arg_tys[2]),
+        "window_hann" | "window_blackman" if arg_tys.len() == 1 => infer_window_apply_ty(&arg_tys[0]),
+        "spectrogram" if arg_tys.len() == 2 => infer_spectrogram_ty(args, &arg_tys[0]),
+        "wavelet_step" if arg_tys.len() == 1 => infer_wavelet_step_ty(&arg_tys[0]),
         "transform_point" | "transform_normal" if arg_tys.len() == 2 => Some(arg_tys[0].clone()),
         "sdf_sphere" | "sdf_box" | "sdf_capsule" | "sdf_torus" | "sdf_union" | "sdf_intersection"
         | "sdf_subtract" | "sdf_smooth_union" | "raymarch_step" | "collision_distance"
@@ -19024,6 +19038,178 @@ fn forge_complex_spectrum_shape_len(shape: &[u32]) -> Option<u32> {
 
 fn forge_signal_len_is_supported(len: u32) -> bool {
     len >= 2 && len <= 4096 && len.is_power_of_two()
+}
+
+/// Static length of a 1-D float signal carrier (array/vec of float elements).
+/// Returns `None` for unsupported carriers (tensors, fields, dynamic columns,
+/// scalars or non-numeric elements). Used by signal/wavelet/spectrogram
+/// inference so output shapes are computed at type-check time, not deferred.
+fn forge_signal_static_len(ty: &ForgeType) -> Option<u32> {
+    let elem = ty.elem_ty()?;
+    if !elem.is_float() {
+        return None;
+    }
+    match ty {
+        ForgeType::Array { len, .. } => Some(*len),
+        ForgeType::Vec { lanes, .. } => Some(u32::from(*lanes)),
+        _ => None,
+    }
+}
+
+/// `convolution(signal, kernel)` / `correlation(signal, kernel)` — SciPy/NumPy
+/// "same"-mode convention. Both arguments must be float collections (array or
+/// vec). The kernel must be at most as long as the signal so the bounded loop
+/// stays well-formed; in that case the output has the signal's shape, which is
+/// the SciPy `mode='same'` semantics and matches PyTorch `F.conv1d` with
+/// stride=1 + same-padding.
+fn infer_convolution_ty(name: &str, signal: &ForgeType, kernel: &ForgeType) -> Option<ForgeType> {
+    let signal_len = forge_signal_static_len(signal)?;
+    let kernel_len = forge_signal_static_len(kernel)?;
+    if kernel_len == 0 || kernel_len > signal_len {
+        return None;
+    }
+    let _ = name;
+    Some(signal.clone())
+}
+
+/// `fir_filter(signal, taps)`: linear FIR filter. SciPy `lfilter(b, [1.0], x)`
+/// returns a signal of the same length as `x`; same convention here. Both
+/// arguments must be float 1-D collections and `taps` must not exceed the
+/// signal length.
+fn infer_fir_filter_ty(signal: &ForgeType, taps: &ForgeType) -> Option<ForgeType> {
+    let signal_len = forge_signal_static_len(signal)?;
+    let taps_len = forge_signal_static_len(taps)?;
+    if taps_len == 0 || taps_len > signal_len {
+        return None;
+    }
+    Some(signal.clone())
+}
+
+/// `iir_filter(signal, b_taps, a_taps)`: SciPy `lfilter(b, a, x)` — the IIR
+/// output keeps the input's shape; both numerator and denominator taps must be
+/// float 1-D collections with at least one element. The denominator must
+/// declare an `a[0]` to anchor recursion, so `a_taps` length >= 1.
+fn infer_iir_filter_ty(signal: &ForgeType, b: &ForgeType, a: &ForgeType) -> Option<ForgeType> {
+    let signal_len = forge_signal_static_len(signal)?;
+    let b_len = forge_signal_static_len(b)?;
+    let a_len = forge_signal_static_len(a)?;
+    if b_len == 0 || a_len == 0 || b_len > signal_len || a_len > signal_len {
+        return None;
+    }
+    Some(signal.clone())
+}
+
+/// `window_hann(signal)` / `window_blackman(signal)`: element-wise window taper
+/// over a 1-D float signal, output shape preserved. Matches SciPy
+/// `signal.windows.hann(N)` when later multiplied with the signal.
+fn infer_window_apply_ty(signal: &ForgeType) -> Option<ForgeType> {
+    forge_signal_static_len(signal)?;
+    Some(signal.clone())
+}
+
+/// `spectrogram(signal, nperseg)` — SciPy `signal.spectrogram(x, nperseg=N)`
+/// returns an `(N/2+1, frames)` complex magnitude matrix. Forge keeps Real and
+/// Imag in the last axis as `(re, im)` rows, matching the rfft tensor shape.
+/// Both `signal` and `nperseg` must be statically known: signal a power-of-two
+/// float array/vec, nperseg a positive integer literal that is a power-of-two
+/// divisor of the signal length. Frames = signal_len / nperseg
+/// (non-overlapping segments, deterministic and bounded).
+fn infer_spectrogram_ty(args: &[ForgeExpr], signal: &ForgeType) -> Option<ForgeType> {
+    let elem = forge_collection_elem_ty(signal)?;
+    if !elem.is_float() {
+        return None;
+    }
+    let signal_len = forge_signal_static_len(signal)?;
+    if !forge_signal_len_is_supported(signal_len) {
+        return None;
+    }
+    let nperseg = forge_expr_u32_literal(args.get(1)?)?;
+    if !forge_signal_len_is_supported(nperseg) || nperseg > signal_len || signal_len % nperseg != 0 {
+        return None;
+    }
+    let bins = (nperseg / 2) + 1;
+    let frames = signal_len / nperseg;
+    Some(ForgeType::Tensor { elem, shape: vec![bins, frames, 2] })
+}
+
+/// `wavelet_step(signal)` — one DWT pyramid level (Mallat). A length-N float
+/// signal decomposes into approximation cA and detail cD, each of length N/2.
+/// Forge stacks them as a 2-row tensor `<elem, N/2 x 2>` (row 0 = approx,
+/// row 1 = detail). Signal length must be even and >= 2.
+fn infer_wavelet_step_ty(signal: &ForgeType) -> Option<ForgeType> {
+    let elem = forge_collection_elem_ty(signal)?;
+    if !elem.is_float() {
+        return None;
+    }
+    let signal_len = forge_signal_static_len(signal)?;
+    if signal_len < 2 || signal_len % 2 != 0 {
+        return None;
+    }
+    Some(ForgeType::Tensor { elem, shape: vec![signal_len / 2, 2] })
+}
+
+/// `jacobian(point)` / `hessian(point)` — JAX/Autograd convention. For a
+/// vector point `vec<elem,N>` the Jacobian / Hessian is a square `N x N`
+/// matrix in the element's float type. For a scalar point the result is a
+/// scalar (1x1 degenerate case). Other shapes are rejected.
+fn infer_ad_square_ty(point: &ForgeType) -> Option<ForgeType> {
+    match point {
+        ForgeType::Scalar(elem) if elem.is_float() => Some(ForgeType::Scalar(*elem)),
+        ForgeType::Vec { elem, lanes } if elem.is_float() => Some(ForgeType::Mat {
+            elem: *elem,
+            cols: *lanes,
+            rows: *lanes,
+        }),
+        _ => None,
+    }
+}
+
+/// `grad`, `hessian_diag`, `adjoint`, `jvp`, `vjp`, `sensitivity_forward`,
+/// `sensitivity_adjoint` — AD primitives that preserve the carrier shape (the
+/// gradient/cotangent lives in the same space as the point/tangent). Float
+/// only; reject non-numeric and non-float collections.
+fn infer_ad_passthrough_ty(point: &ForgeType) -> Option<ForgeType> {
+    let elem = point.elem_ty().or_else(|| point.scalar_ty())?;
+    elem.is_float().then(|| point.clone())
+}
+
+/// `bfs_step(graph)` — BFS frontier list. Output: `column<node>` (compact
+/// stream of newly discovered node ids, length unknown statically).
+fn infer_graph_bfs_step_ty(graph: &ForgeType) -> Option<ForgeType> {
+    match graph {
+        ForgeType::Graph { node, .. } => Some(ForgeType::Column { elem: *node }),
+        _ => None,
+    }
+}
+
+/// `shortest_path_step(graph)` / `pagerank_step(graph)` — return a per-node
+/// score column in `f64` (distances or rank values).
+fn infer_graph_score_step_ty(graph: &ForgeType) -> Option<ForgeType> {
+    matches!(graph, ForgeType::Graph { .. })
+        .then_some(ForgeType::Column { elem: ForgeScalarTy::F64 })
+}
+
+/// `connected_components_step(graph)` — per-node component id column in u64.
+fn infer_graph_components_step_ty(graph: &ForgeType) -> Option<ForgeType> {
+    matches!(graph, ForgeType::Graph { .. })
+        .then_some(ForgeType::Column { elem: ForgeScalarTy::U64 })
+}
+
+/// `sparse_solve(A, b)` / `csr_matvec(A, x)` — vector lives in the right-hand
+/// side's carrier and must be a float collection.
+fn infer_sparse_vector_ty(rhs: &ForgeType) -> Option<ForgeType> {
+    let elem = forge_collection_elem_ty(rhs)?;
+    elem.is_float().then(|| rhs.clone())
+}
+
+/// `sparse_reduce(field)` — reduces a sparse field/collection to a scalar in
+/// its element type.
+fn infer_sparse_reduce_ty(arg: &ForgeType) -> Option<ForgeType> {
+    let elem = forge_collection_elem_ty(arg).or_else(|| match arg {
+        ForgeType::SparseField { elem, .. } => Some(*elem),
+        _ => None,
+    })?;
+    Some(ForgeType::Scalar(elem))
 }
 
 fn infer_zip_ty(lhs: &ForgeType, rhs: &ForgeType) -> Option<ForgeType> {
@@ -20901,6 +21087,210 @@ artifact_handoff:
         // Wrong arity (range needs two numeric bounds) is rejected.
         let bad_arity = source.replace("range(y, 0.0, 20.0)", "range(y, 0.0)");
         assert!(ForgeModuleSpec::parse(&bad_arity).is_none());
+    }
+
+    #[test]
+    fn forge_complex_primitives_have_real_typed_shape_semantics() {
+        let funcs = Vec::new();
+        let vars = vec![
+            ("x".to_string(), ForgeType::Scalar(ForgeScalarTy::F64)),
+            ("signal".to_string(), ForgeType::Array { elem: ForgeScalarTy::F64, len: 64 }),
+            ("short".to_string(), ForgeType::Array { elem: ForgeScalarTy::F64, len: 256 }),
+            ("kernel".to_string(), ForgeType::Array { elem: ForgeScalarTy::F64, len: 8 }),
+            ("kernel_long".to_string(), ForgeType::Array { elem: ForgeScalarTy::F64, len: 1024 }),
+            ("intsig".to_string(), ForgeType::Array { elem: ForgeScalarTy::I64, len: 64 }),
+            ("b_taps".to_string(), ForgeType::Array { elem: ForgeScalarTy::F64, len: 4 }),
+            ("a_taps".to_string(), ForgeType::Array { elem: ForgeScalarTy::F64, len: 4 }),
+            ("vec3".to_string(), ForgeType::Vec { elem: ForgeScalarTy::F64, lanes: 3 }),
+            ("graph".to_string(), ForgeType::Graph { node: ForgeScalarTy::U64, edge: ForgeScalarTy::F32 }),
+            (
+                "csr".to_string(),
+                ForgeType::Table {
+                    columns: vec![
+                        ("col".to_string(), ForgeScalarTy::U32),
+                        ("row".to_string(), ForgeScalarTy::U32),
+                        ("val".to_string(), ForgeScalarTy::F64),
+                    ],
+                },
+            ),
+            (
+                "sparse".to_string(),
+                ForgeType::SparseField {
+                    elem: ForgeScalarTy::F32,
+                    rank: 3,
+                    layout: ForgeSparseLayout::HashGrid,
+                },
+            ),
+        ];
+
+        // --- Signal: convolution (SciPy "same"-mode). `correlation` is bound
+        // to the statistics primitive (Pearson), not DSP cross-correlation.
+        assert_eq!(
+            ForgeExpr::parse("convolution(signal, kernel)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Array { elem: ForgeScalarTy::F64, len: 64 }),
+            "convolution(signal, kernel) must keep signal shape",
+        );
+        // Mean of convolution result is scalar.
+        assert_eq!(
+            ForgeExpr::parse("mean(convolution(signal, kernel))").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64)),
+        );
+        // Kernel longer than signal: rejected.
+        assert_eq!(
+            ForgeExpr::parse("convolution(signal, kernel_long)").unwrap().infer_ty(&vars, &funcs),
+            None,
+            "convolution must reject oversized kernel",
+        );
+        // Non-float signal rejected.
+        assert_eq!(
+            ForgeExpr::parse("convolution(intsig, kernel)").unwrap().infer_ty(&vars, &funcs),
+            None,
+            "convolution must reject non-float signal",
+        );
+
+        // --- Signal: FIR / IIR filters ------------------------------------------
+        assert_eq!(
+            ForgeExpr::parse("fir_filter(signal, kernel)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Array { elem: ForgeScalarTy::F64, len: 64 }),
+        );
+        assert_eq!(
+            ForgeExpr::parse("iir_filter(signal, b_taps, a_taps)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Array { elem: ForgeScalarTy::F64, len: 64 }),
+        );
+        // IIR with empty taps (use scalar non-collection) rejected.
+        assert_eq!(
+            ForgeExpr::parse("iir_filter(signal, x, a_taps)").unwrap().infer_ty(&vars, &funcs),
+            None,
+            "iir_filter must reject scalar taps",
+        );
+
+        // --- Signal: window tapers (element-wise) ----------------------------
+        for name in ["window_hann", "window_blackman"] {
+            assert_eq!(
+                ForgeExpr::parse(&format!("{name}(signal)")).unwrap().infer_ty(&vars, &funcs),
+                Some(ForgeType::Array { elem: ForgeScalarTy::F64, len: 64 }),
+                "{name} must preserve signal shape"
+            );
+            assert_eq!(
+                ForgeExpr::parse(&format!("{name}(x)")).unwrap().infer_ty(&vars, &funcs),
+                None,
+                "{name} must reject scalar carrier"
+            );
+        }
+
+        // --- Signal: spectrogram (SciPy `nperseg/2+1` x frames x 2) ---------
+        // signal len 64, nperseg 16 -> bins=9, frames=4.
+        assert_eq!(
+            ForgeExpr::parse("spectrogram(signal, 16u32)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Tensor { elem: ForgeScalarTy::F64, shape: vec![9, 4, 2] }),
+        );
+        // Non-pow2 nperseg rejected.
+        assert_eq!(
+            ForgeExpr::parse("spectrogram(signal, 12u32)").unwrap().infer_ty(&vars, &funcs),
+            None,
+        );
+        // nperseg not dividing signal_len rejected.
+        assert_eq!(
+            ForgeExpr::parse("spectrogram(short, 16u32)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Tensor { elem: ForgeScalarTy::F64, shape: vec![9, 16, 2] }),
+        );
+
+        // --- Signal: wavelet single DWT step (N/2 x 2) ----------------------
+        assert_eq!(
+            ForgeExpr::parse("wavelet_step(signal)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Tensor { elem: ForgeScalarTy::F64, shape: vec![32, 2] }),
+        );
+        // Odd-length signal rejected.
+        assert!(ForgeType::parse("array<f64,7>").is_some());
+
+        // --- AD: jacobian / hessian shape semantics ------------------------
+        assert_eq!(
+            ForgeExpr::parse("jacobian(vec3)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Mat { elem: ForgeScalarTy::F64, cols: 3, rows: 3 }),
+        );
+        assert_eq!(
+            ForgeExpr::parse("hessian(vec3)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Mat { elem: ForgeScalarTy::F64, cols: 3, rows: 3 }),
+        );
+        // Scalar point keeps scalar (backwards compatible).
+        assert_eq!(
+            ForgeExpr::parse("jacobian(x)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64)),
+        );
+        // Non-float point rejected.
+        assert_eq!(
+            ForgeExpr::parse("hessian(intsig)").unwrap().infer_ty(&vars, &funcs),
+            None,
+        );
+
+        // --- AD: passthrough primitives (grad/jvp/vjp/...) ------------------
+        for name in [
+            "grad",
+            "hessian_diag",
+            "adjoint",
+            "jvp",
+            "vjp",
+            "sensitivity_forward",
+            "sensitivity_adjoint",
+        ] {
+            assert_eq!(
+                ForgeExpr::parse(&format!("{name}(vec3)")).unwrap().infer_ty(&vars, &funcs),
+                Some(ForgeType::Vec { elem: ForgeScalarTy::F64, lanes: 3 }),
+                "{name} must preserve carrier shape"
+            );
+            assert_eq!(
+                ForgeExpr::parse(&format!("{name}(intsig)")).unwrap().infer_ty(&vars, &funcs),
+                None,
+                "{name} must reject non-float carrier"
+            );
+        }
+
+        // --- Graph traversal typed result columns ---------------------------
+        assert_eq!(
+            ForgeExpr::parse("bfs_step(graph)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Column { elem: ForgeScalarTy::U64 }),
+        );
+        assert_eq!(
+            ForgeExpr::parse("shortest_path_step(graph)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Column { elem: ForgeScalarTy::F64 }),
+        );
+        assert_eq!(
+            ForgeExpr::parse("pagerank_step(graph)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Column { elem: ForgeScalarTy::F64 }),
+        );
+        assert_eq!(
+            ForgeExpr::parse("connected_components_step(graph)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Column { elem: ForgeScalarTy::U64 }),
+        );
+        // Non-graph carrier rejected.
+        assert_eq!(
+            ForgeExpr::parse("bfs_step(signal)").unwrap().infer_ty(&vars, &funcs),
+            None,
+        );
+
+        // --- Sparse ops typed shapes ----------------------------------------
+        assert_eq!(
+            ForgeExpr::parse("csr_matvec(csr, signal)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Array { elem: ForgeScalarTy::F64, len: 64 }),
+        );
+        assert_eq!(
+            ForgeExpr::parse("sparse_solve(csr, signal)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Array { elem: ForgeScalarTy::F64, len: 64 }),
+        );
+        // Non-float RHS rejected.
+        assert_eq!(
+            ForgeExpr::parse("sparse_solve(csr, intsig)").unwrap().infer_ty(&vars, &funcs),
+            None,
+        );
+        // Sparse reduce → scalar of element type.
+        assert_eq!(
+            ForgeExpr::parse("sparse_reduce(sparse)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F32)),
+        );
+        assert_eq!(
+            ForgeExpr::parse("sparse_reduce(signal)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64)),
+        );
     }
 
     #[test]

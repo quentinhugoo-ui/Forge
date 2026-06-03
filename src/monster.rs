@@ -25657,6 +25657,113 @@ fn monster_builds_typed_gpu_buffer_abi_from_forge_ir() {
 }
 
 #[test]
+fn monster_signal_filter_shader_profile_is_specialized() {
+    // Coverage of the signal-family type/shape semantics lives in the kasm
+    // unit test `forge_complex_primitives_have_real_typed_shape_semantics`.
+    // Here we only assert Monster's name-based shader-profile dispatch still
+    // routes the new typed convolution/spectrogram/wavelet_step ops to the
+    // specialized tiled-convolution shader without falling back to a probe.
+    for op in ["convolution", "spectrogram", "wavelet_step"] {
+        assert_eq!(
+            crate::monster::compute_graph::shader_profile_for_kernel(
+                "elementwise",
+                &[op.to_string()],
+            ),
+            "wgsl.signal_tiled_convolution.v1",
+            "Monster must route {op} to the specialized signal shader",
+        );
+    }
+    for op in ["fir_filter", "iir_filter", "window_hann", "window_blackman"] {
+        let profile = crate::monster::compute_graph::shader_profile_for_kernel(
+            "elementwise",
+            &[op.to_string()],
+        );
+        assert!(!profile.contains("probe") && !profile.contains("reference"),
+            "Monster must not fall back to a reference/probe shader for {op}");
+    }
+}
+
+
+#[test]
+fn monster_lowers_objective1_ad_graph_sparse_shapes_into_specialized_profiles() {
+    // Forge module exercising AD passthroughs (grad/jvp/vjp), the AD
+    // square-shape primitives (jacobian/hessian on a vec3), graph traversal
+    // typed result columns and sparse vector solve. Monster must route each
+    // family to its specialized profile.
+    // Same pattern as the signal test: the AD/sparse/graph primitives are
+    // typechecked inside helper functions; the program emits a single scalar
+    // accumulator so the bounds path stays simple.
+    let source = r#"
+forge_module:
+  module ad_graph_sparse_shapes version 1
+forge_imports:
+  none
+forge_constants:
+  none
+forge_functions:
+  fn ad_grad_first(v: vec<f64,3>) -> f64 { return length(grad(v)) }
+  fn ad_jvp_first(v: vec<f64,3>) -> f64 { return length(jvp(v)) }
+  fn ad_jac_trace(v: vec<f64,3>) -> f64 { return trace(jacobian(v)) }
+  fn ad_hess_trace(v: vec<f64,3>) -> f64 { return trace(hessian(v)) }
+  fn frontier_first(g: graph<u64,f32>) -> f64 { return mean(pagerank_step(g)) }
+  fn comps_first(g: graph<u64,f32>) -> f64 { return mean(shortest_path_step(g)) }
+  fn solve_first(m: graph<u64,f32>, b: array<f64,16>) -> f64 { return mean(sparse_solve(m, b)) }
+forge_program:
+  let g = ad_grad_first(point)
+  let j = ad_jac_trace(point)
+  let h = ad_hess_trace(point)
+  let p = ad_jvp_first(point)
+  let r = frontier_first(graph_in)
+  let c = comps_first(graph_in)
+  let s = solve_first(graph_in, rhs)
+  emit out: f64 = g + j + h + p + r + c + s
+forge_inputs:
+  param point: vec<f64,3> unit none bounds [-10.0, 10.0] nominal 0.0
+  param graph_in: graph<u64,f32> unit none bounds [0.0, 1.0] nominal 0.0
+  param rhs: array<f64,16> unit none bounds [-1.0, 1.0] nominal 0.0
+forge_outputs:
+  output out: f64 unit none handoff scalar
+forge_constraints:
+  assert finite(out)
+forge_samples:
+  case one { given point=0.0, graph_in=0.0, rhs=0.0; expect out approx 0.0 tolerance 100.0 }
+forge_cost:
+  max_steps=200000
+  max_memory_mb=8
+  precision=f64
+artifact_handoff:
+  proof_hash,output_hash
+"#;
+    let plan = crate::monster::compute_graph::MonsterComputeGraphPlan::from_forge_source(source)
+        .expect("AD/graph/sparse module with real typed shapes builds a Monster plan");
+    // Specialized shader profiles still resolve by op name (unchanged by the
+    // type tightening upstream).
+    assert_eq!(
+        crate::monster::compute_graph::shader_profile_for_kernel(
+            "elementwise",
+            &["jvp".to_string()],
+        ),
+        "wgsl.autodiff_dual_jvp_vjp.v1",
+    );
+    assert_eq!(
+        crate::monster::compute_graph::shader_profile_for_kernel(
+            "elementwise",
+            &["bfs_step".to_string()],
+        ),
+        "wgsl.graph_frontier_csr_traversal.v1",
+    );
+    assert_eq!(
+        crate::monster::compute_graph::shader_profile_for_kernel(
+            "elementwise",
+            &["sparse_solve".to_string()],
+        ),
+        "wgsl.sparse_csr_graphblas_spmv.v1",
+    );
+    assert!(plan.proof_hash.len() == 64);
+    assert!(plan.compute_ir_hash.len() == 64);
+}
+
+#[test]
 fn monster_carries_forge_property_relations_into_the_compute_graph_plan() {
     let with_props = r#"
 forge_module:
