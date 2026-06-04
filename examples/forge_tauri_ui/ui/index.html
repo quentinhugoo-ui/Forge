@@ -1401,6 +1401,26 @@
                             <button id="codexProviderTerminalStop" class="provider-terminal-chip" type="button">Stop</button>
                           </div>
                         </section>
+                        <section id="openRouterProviderTerminal" class="provider-terminal-shell" hidden aria-label="OpenRouter terminal">
+                          <div class="provider-terminal-head">
+                            <div class="provider-terminal-titlewrap">
+                              <span class="provider-terminal-title">OpenRouter</span>
+                              <span id="openRouterProviderTerminalState" class="provider-terminal-state">Idle</span>
+                            </div>
+                          </div>
+                          <div class="provider-terminal-screen">
+                            <div id="openRouterProviderTerminalViewport" class="provider-terminal-viewport" aria-label="OpenRouter terminal output"></div>
+                            <pre id="openRouterProviderTerminalOutput" class="provider-terminal-output">Ready.</pre>
+                          </div>
+                          <div class="provider-terminal-inputrow">
+                            <span class="provider-terminal-prompt" aria-hidden="true">&gt;</span>
+                            <input id="openRouterProviderTerminalInput" class="provider-terminal-input" type="text" spellcheck="false" placeholder="Type for OpenRouter" autocomplete="off" />
+                            <button id="openRouterProviderTerminalSend" class="provider-terminal-chip provider-terminal-chip-primary" type="button" aria-label="Send">
+                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7M17 7H9M17 7V15"/></svg>
+                            </button>
+                            <button id="openRouterProviderTerminalStop" class="provider-terminal-chip" type="button">Stop</button>
+                          </div>
+                        </section>
                         <section id="oandaProviderTerminal" class="provider-terminal-shell" hidden aria-label="OANDA setup terminal">
                           <div class="provider-terminal-head">
                             <div class="provider-terminal-titlewrap">

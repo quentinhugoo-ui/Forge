@@ -25500,7 +25500,7 @@ if (typeof forgeTauri?.listen === "function") {
   });
   forgeListen("forge-provider-terminal", (e) => {
     try {
-      ["codex", "claude"].forEach((provider) => handleProviderTerminalEvent(provider, e.payload));
+      ["codex", "claude", "openrouter"].forEach((provider) => handleProviderTerminalEvent(provider, e.payload));
     } catch (err) {
       console.error("forge-provider-terminal listener failed", err);
     }
@@ -26272,8 +26272,12 @@ const providerLaunchers = Object.fromEntries(Object.entries({
   state: document.getElementById(`providerLauncher${suffix}State`),
   meta: document.getElementById(`providerLauncher${suffix}Meta`),
 }]));
-const providerTerminalEls = Object.fromEntries(["codex", "claude"].map((provider) => {
-  const id = (suffix = "") => `${provider}ProviderTerminal${suffix}`;
+const providerTerminalEls = Object.fromEntries([
+  ["codex", "codex"],
+  ["claude", "claude"],
+  ["openrouter", "openRouter"],
+].map(([provider, htmlPrefix]) => {
+  const id = (suffix = "") => `${htmlPrefix}ProviderTerminal${suffix}`;
   return [provider, {
     shell: document.getElementById(id()),
     state: document.getElementById(id("State")),
@@ -26297,6 +26301,7 @@ const providerTerminalState = {
   codex: { output: "Ready.", running: false, opening: false },
   gemini: { output: "Ready.", running: false, opening: false },
   claude: { output: "Ready.", running: false, opening: false },
+  openrouter: { output: "Ready.", running: false, opening: false },
 };
 const OANDA_TERMINAL_FIELDS = ["accountId", "apiKey", "baseUrl"];
 const OANDA_TERMINAL_FIELD_META = {
@@ -26473,7 +26478,7 @@ function hydrateProviderModelPickers() {
   const codexLauncherMeta = providerLauncherDom("codex").meta;
   if (codexLauncherMeta) codexLauncherMeta.textContent = selectedOpenAiModelRef();
   ["gemini", "claude"].forEach(hydrateCliProviderModelPicker);
-  ["codex", "claude"].forEach(renderCliProviderTerminalShell);
+  ["codex", "claude", "openrouter"].forEach(renderCliProviderTerminalShell);
   hydrateVoiceProviderSettings();
   syncCanvasChatModelLabel();
   renderProviderWorkbench();
@@ -27593,12 +27598,12 @@ function providerTerminalRawOutput(provider) {
 
 const providerTerminalProfileRows = {
   codex: ["Codex", "OpenAI OAuth Direct", "subscription", "OPENAI OAUTH DIRECT", "Direct OpenAI OAuth console for local Forge sessions", "Reuse local ChatGPT subscription auth, keep Codex direct in Forge, and route tool turns through the embedded OAuth console."],
-  gemini: ["Gemini", "Google OAuth Direct", "subscription", "GOOGLE OAUTH DIRECT", "Direct Google OAuth console for local Forge sessions", "Reuse your Google account auth, keep Gemini direct in Forge, and route tool turns through the embedded OAuth console."],
+  openrouter: ["OpenRouter", "OpenRouter OAuth Direct", "subscription", "OPENROUTER OAUTH DIRECT", "Direct OpenRouter OAuth console for local Forge sessions", "Reuse local OpenRouter sign-in auth, keep OpenRouter direct in Forge, and route tool turns through the embedded OAuth console."],
   claude: ["Claude", "Claude Code CLI", "auth", "ANTHROPIC CLI BRIDGE", "Claude Code login bridge for local Forge sessions", "Open Claude Code inside Forge, finish Claude.ai authentication locally, and keep the linked workspace flow inside the embedded terminal."],
 };
 
 function providerTerminalStoryProfile(provider) {
-  const [name, runtime, sourceLabel, eyebrow, kicker, intro] = providerTerminalProfileRows[provider] || providerTerminalProfileRows.gemini;
+  const [name, runtime, sourceLabel, eyebrow, kicker, intro] = providerTerminalProfileRows[provider] || providerTerminalProfileRows.codex;
   return { name, runtime, metaLabel: "model", sourceLabel, eyebrow, kicker, intro };
 }
 
@@ -27647,10 +27652,23 @@ function providerTerminalStoryStatus(provider) {
       modelRef: selectedClaudeModelRef(),
     };
   }
+  if (provider === "openrouter") {
+    return {
+      ...(openRouterProviderLastStatus || {}),
+      modelRef: selectedOpenRouterModelRef(),
+    };
+  }
   return {
-    ...(geminiProviderLastStatus || {}),
-    modelRef: selectedGeminiModelRef(),
+    ...(codexProviderLastStatus || openAiProviderLastStatus || {}),
+    modelRef: selectedOpenAiModelRef(),
   };
+}
+
+let openRouterProviderLastStatus: any = null;
+function selectedOpenRouterModelRef() {
+  const input = document.getElementById("openRouterProviderModel") as HTMLInputElement | null;
+  const raw = (input?.value || "").trim();
+  return raw || "anthropic/claude-sonnet-4.6";
 }
 
 function providerTerminalStoryState(provider) {
@@ -28009,12 +28027,27 @@ async function openProviderWorkbench(kind, options = {}) {
   }
   if (kind === "codex") return connectCodexProvider(options);
   if (kind === "claude") return connectClaudeProvider(options);
+  if (kind === "openrouter") return connectOpenRouterProvider(options);
   // Any other (or stale) kind falls back to Codex.
   return connectCodexProvider(options);
 }
 
+async function connectOpenRouterProvider(_options: any = {}) {
+  // Mirror connectCodexProvider: the launch button in the OpenRouter
+  // workbench card kicks off the one-click PKCE browser flow. The follow-up
+  // status refresh hydrates the embedded terminal shell so the panel reads
+  // "ready" instead of "Not connected".
+  if (!forgeCanInvoke()) return;
+  try {
+    await forgeInvoke("openrouter_oauth_login", {}, { silent: true });
+  } catch (err) {
+    console.warn("[forge.openrouter] launch failed", err);
+  }
+  setTimeout(() => { void refreshOpenRouterProviderStatus(); }, 1500);
+}
+
 function syncActiveProviderTerminalShell(kind) {
-  const active = ["codex", "claude", "oanda"].includes(kind) ? kind : "codex";
+  const active = ["codex", "claude", "openrouter", "oanda"].includes(kind) ? kind : "codex";
   [
     ["codex", providerTerminalDom("codex").shell],
     ["gemini", providerTerminalDom("gemini").shell],
@@ -29051,6 +29084,17 @@ async function refreshOpenRouterProviderStatus() {
     if (statusChip) statusChip.textContent = status?.connected ? "Ready" : "Not connected";
     if (sourceLabel) sourceLabel.textContent = status?.connected ? "Sign-in OAuth" : "none";
     if (modelLabel) modelLabel.textContent = String(status?.defaultModel || "anthropic/claude-sonnet-4.6");
+    // Mirror the Codex pattern so the embedded terminal "story" header picks
+    // up the same authSource/account fields as Codex.
+    openRouterProviderLastStatus = {
+      connected: !!status?.connected,
+      installed: !!status?.connected,
+      authSource: status?.connected ? "OpenRouter OAuth (~/.forge/openrouter.json)" : "none",
+      accountLabel: status?.connected ? "OpenRouter sign-in" : "Not connected",
+      message: status?.connected ? "OpenRouter sign-in active" : "Not connected",
+      modelRef: status?.defaultModel || "anthropic/claude-sonnet-4.6",
+    };
+    renderCliProviderTerminalShell("openrouter");
   } catch (err) {
     console.warn("[forge.openrouter] status refresh failed", err);
   }
@@ -29269,7 +29313,7 @@ providerQuickActions.forEach(([actionName, effect]) => {
   forgeShellRuntime?.registerAction?.(actionName, createAsyncAction(effect));
 });
 bindEnterAction(geminiProviderApiKey, () => saveGeminiProviderApiKey());
-["codex", "claude"].forEach(bindProviderTerminalControls);
+["codex", "claude", "openrouter"].forEach(bindProviderTerminalControls);
 ["gemini", "claude"].forEach(bindCliProviderModelPicker);
 forgeShellRuntime?.registerAction?.("provider-voice-save-key", createAsyncAction(() => saveElevenLabsApiKey()));
 bindEnterAction(voiceElevenApiKey, () => saveElevenLabsApiKey());
