@@ -12797,7 +12797,7 @@ function renderCanvasModelMenu() {
 
 function setCanvasChatTargetMode(mode, activeOverride = null) {
   const normalized = mode === "both" ? "all" : mode;
-  const next = ["codex", "claude", "all"].includes(normalized) ? normalized : "codex";
+  const next = ["codex", "claude", "openrouter", "all"].includes(normalized) ? normalized : "codex";
   forgeCanvasChatTargetMode = next;
   try {
     localStorage.setItem("forge.canvas.chat.target", next);
@@ -16234,13 +16234,13 @@ function defaultCanvasAttachmentTarget() {
 function canvasAttachmentTargetLabel(target) {
   const normalized = normalizeCanvasAttachmentTarget(target);
   if (normalized === "codex") return "Codex";
-  if (normalized === "gemini") return "Gemini";
+  if (normalized === "openrouter") return "OpenRouter";
   if (normalized === "claude") return "Claude";
   return "All";
 }
 
 function nextCanvasAttachmentTarget(target) {
-  const order = ["codex", "claude", "all"];
+  const order = ["codex", "claude", "openrouter", "all"];
   const idx = order.indexOf(normalizeCanvasAttachmentTarget(target));
   return order[(idx + 1) % order.length];
 }
