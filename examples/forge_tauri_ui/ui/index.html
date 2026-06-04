@@ -849,11 +849,6 @@
                           <span class="provider-logo provider-logo-claude" aria-hidden="true"></span>
                         </button>
                       </div>
-                      <div class="canvas-chat-target-item" data-runtime="openrouter">
-                        <button class="canvas-chat-target-btn" type="button" data-target="openrouter" aria-pressed="false" aria-label="OpenRouter" title="OpenRouter">
-                          <span class="provider-logo provider-logo-openrouter" aria-hidden="true"></span>
-                        </button>
-                      </div>
                     </div>
                     <button id="forgeCanvasChatSend" class="canvas-chat-send" type="submit" aria-label="Send message" disabled>
                       <svg class="canvas-chat-send-arrow" viewBox="0 0 20 20" focusable="false" aria-hidden="true">
@@ -873,7 +868,7 @@
               </form>
               <span id="forgeCanvasChatModelAnchor" class="canvas-model-anchor canvas-model-anchor-below">
                 <button id="forgeCanvasChatModel" class="canvas-chat-model" type="button" aria-haspopup="menu" aria-expanded="false" title="Model and reasoning">
-                  &nbsp;
+                  gpt-5.3-codex
                 </button>
                 <div id="forgeCanvasChatModelMenu" class="canvas-model-menu" hidden role="menu" aria-label="Model and reasoning"></div>
                 <div id="forgeCanvasChatBarrelPicker" class="barrel-picker" hidden role="dialog" aria-label="Model and reasoning">
@@ -1340,17 +1335,6 @@
                             <span id="providerLauncherClaudeDot" class="provider-runtime-dot" aria-hidden="true"></span>
                           </span>
                         </button>
-                        <button id="providerLauncherOpenRouter" class="provider-runtime-btn" data-provider="openrouter" type="button" role="tab" aria-selected="false">
-                          <span class="provider-runtime-logo provider-logo provider-logo-openrouter" aria-hidden="true"></span>
-                          <span class="provider-runtime-copy">
-                            <span class="provider-runtime-name">OpenRouter</span>
-                            <span id="providerLauncherOpenRouterMeta" class="provider-runtime-meta">anthropic/claude-sonnet-4.6</span>
-                          </span>
-                          <span class="provider-runtime-statewrap">
-                            <span id="providerLauncherOpenRouterState" class="provider-runtime-state">idle</span>
-                            <span id="providerLauncherOpenRouterDot" class="provider-runtime-dot" aria-hidden="true"></span>
-                          </span>
-                        </button>
                         <div class="provider-runtime-divider" aria-hidden="true"></div>
                         <div class="provider-runtime-group-label" aria-hidden="true">Brokers</div>
                         <button id="providerLauncherOanda" class="provider-runtime-btn" data-provider="oanda" type="button" role="tab" aria-selected="false">
@@ -1404,26 +1388,6 @@
                               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7M17 7H9M17 7V15"/></svg>
                             </button>
                             <button id="codexProviderTerminalStop" class="provider-terminal-chip" type="button">Stop</button>
-                          </div>
-                        </section>
-                        <section id="openRouterProviderTerminal" class="provider-terminal-shell" hidden aria-label="OpenRouter terminal">
-                          <div class="provider-terminal-head">
-                            <div class="provider-terminal-titlewrap">
-                              <span class="provider-terminal-title">OpenRouter</span>
-                              <span id="openRouterProviderTerminalState" class="provider-terminal-state">Idle</span>
-                            </div>
-                          </div>
-                          <div class="provider-terminal-screen">
-                            <div id="openRouterProviderTerminalViewport" class="provider-terminal-viewport" aria-label="OpenRouter terminal output"></div>
-                            <pre id="openRouterProviderTerminalOutput" class="provider-terminal-output">Ready.</pre>
-                          </div>
-                          <div class="provider-terminal-inputrow">
-                            <span class="provider-terminal-prompt" aria-hidden="true">&gt;</span>
-                            <input id="openRouterProviderTerminalInput" class="provider-terminal-input" type="text" spellcheck="false" placeholder="Type for OpenRouter" autocomplete="off" />
-                            <button id="openRouterProviderTerminalSend" class="provider-terminal-chip provider-terminal-chip-primary" type="button" aria-label="Send">
-                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7M17 7H9M17 7V15"/></svg>
-                            </button>
-                            <button id="openRouterProviderTerminalStop" class="provider-terminal-chip" type="button">Stop</button>
                           </div>
                         </section>
                         <section id="oandaProviderTerminal" class="provider-terminal-shell" hidden aria-label="OANDA setup terminal">
@@ -1547,51 +1511,6 @@
                           <button id="claudeProviderTerminalStop" class="provider-terminal-chip" type="button">Stop</button>
                         </div>
                       </section>
-                    </section>
-                    <section class="provider-card">
-                      <div class="provider-card-head">
-                        <span class="provider-card-icon provider-card-icon-openrouter" aria-hidden="true">
-                          <span class="provider-logo provider-logo-openrouter"></span>
-                        </span>
-                        <div class="provider-card-title">
-                          <h2>OpenRouter</h2>
-                          <p>One key, 200+ models (Claude, GPT, Gemini, Llama, DeepSeek…)</p>
-                        </div>
-                        <span id="openRouterProviderStatus" class="provider-status-chip">Checking</span>
-                      </div>
-                      <div class="provider-meta">
-                        <div>
-                          <span>Source</span>
-                          <strong id="openRouterProviderSource">none</strong>
-                        </div>
-                        <div>
-                          <span>Default model</span>
-                          <strong id="openRouterProviderModelLabel">anthropic/claude-sonnet-4.6</strong>
-                        </div>
-                      </div>
-                      <label class="provider-model-field">
-                        <span>Default model</span>
-                        <input id="openRouterProviderModel" list="openRouterProviderModelList" spellcheck="false" value="anthropic/claude-sonnet-4.6" placeholder="anthropic/claude-sonnet-4.6" />
-                        <datalist id="openRouterProviderModelList">
-                          <option value="anthropic/claude-sonnet-4.6"></option>
-                          <option value="anthropic/claude-opus-4.6"></option>
-                          <option value="openai/gpt-5.5"></option>
-                          <option value="openai/gpt-5.3-codex"></option>
-                          <option value="google/gemini-2.5-pro"></option>
-                          <option value="google/gemini-2.5-flash"></option>
-                          <option value="x-ai/grok-3"></option>
-                          <option value="meta-llama/llama-4-405b-instruct"></option>
-                          <option value="deepseek/deepseek-v3.5"></option>
-                          <option value="mistralai/mistral-large-3"></option>
-                          <option value="qwen/qwen-3-coder"></option>
-                        </datalist>
-                      </label>
-                      <div class="provider-actions">
-                        <button id="openRouterProviderConnect" class="provider-primary-btn" type="button">Sign in with OpenRouter</button>
-                        <button id="openRouterProviderRefresh" class="provider-secondary-btn" type="button">Refresh</button>
-                        <button id="openRouterProviderDisconnect" class="provider-secondary-btn" type="button">Disconnect</button>
-                      </div>
-                      <p id="openRouterProviderHint" class="provider-hint">One click opens the OpenRouter consent page in your browser — sign in with Google/GitHub/email and Forge captures the key automatically. No API key to copy-paste, no Cloud Console.</p>
                     </section>
                     <section id="providerVoiceCard" class="provider-card provider-card-voice">
                       <div class="provider-card-head">
