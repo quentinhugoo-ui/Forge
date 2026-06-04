@@ -3516,7 +3516,7 @@ function restoreAlphaCanvasSessionState(jobId) {
       at: message.at || new Date().toISOString(),
     });
   }
-  if (targetMode && ["codex", "claude", "all"].includes(targetMode)) {
+  if (targetMode && ["codex", "claude", "openrouter", "all"].includes(targetMode)) {
     setCanvasChatTargetMode(targetMode);
   }
   alphaCanvasChatVersion += 1;
@@ -3550,7 +3550,7 @@ function restoreAlphaCanvasSessionStateFromManifest(manifest) {
       at: message.at || new Date().toISOString(),
     });
   }
-  if (targetMode && ["codex", "claude", "all"].includes(targetMode)) {
+  if (targetMode && ["codex", "claude", "openrouter", "all"].includes(targetMode)) {
     setCanvasChatTargetMode(targetMode);
   }
   alphaCanvasChatVersion += 1;
@@ -8364,7 +8364,7 @@ function canvasPendingRuntimeFromEvent(payload) {
   const explicit = String(data.runtime || data.requestedRuntime || data.fallbackRuntime || "")
     .trim()
     .toLowerCase();
-  if (["codex", "claude"].includes(explicit)) return explicit;
+  if (["codex", "claude", "openrouter"].includes(explicit)) return explicit;
   if (stage === "assistant_stream_delta" || stage === "codex_bridge") {
     return "codex";
   }
@@ -12048,7 +12048,7 @@ function canvasChatStoredTargetMode() {
   try {
     const value = localStorage.getItem("forge.canvas.chat.target");
     if (value === "both") return "all";
-    return ["codex", "claude", "all"].includes(value) ? value : "codex";
+    return ["codex", "claude", "openrouter", "all"].includes(value) ? value : "codex";
   } catch (_) {
     return "codex";
   }
@@ -12060,7 +12060,7 @@ function canvasChatStoredActiveTargets() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
-    const filtered = parsed.filter((p) => ["codex", "claude"].includes(p));
+    const filtered = parsed.filter((p) => ["codex", "claude", "openrouter"].includes(p));
     return filtered.length ? filtered : null;
   } catch (_) {
     return null;
@@ -12073,12 +12073,14 @@ function selectedClaudeModelRef() {
 
 function canvasChatTargetLabel(mode) {
   if (mode === "claude") return "Claude";
+  if (mode === "openrouter") return "OpenRouter";
   if (mode === "all") return "All";
   return "Codex";
 }
 
 function canvasRuntimeLogoClass(runtime) {
   if (runtime === "claude") return "provider-logo-claude";
+  if (runtime === "openrouter") return "provider-logo-openrouter";
   return "provider-logo-openai";
 }
 
@@ -12087,7 +12089,7 @@ function canvasRuntimeLogoEl(runtime, className = "") {
 }
 
 function primaryPlanetActionRuntime() {
-  if (["codex", "claude"].includes(forgeCanvasChatTargetMode)) {
+  if (["codex", "claude", "openrouter"].includes(forgeCanvasChatTargetMode)) {
     return forgeCanvasChatTargetMode;
   }
   return activeCanvasChatTargets()[0] || "codex";
@@ -12153,7 +12155,7 @@ const CANVAS_MODEL_PRESETS = Object.freeze({
  * is active (the click handler enforces ≥1 active, but be defensive).
  */
 function activeCanvasChatTargets() {
-  const order = ["codex", "claude"];
+  const order = ["codex", "claude", "openrouter"];
   const active = order.filter((target) =>
     forgeCanvasChatTargetBtns.some(
       (btn) => btn.dataset.target === target && btn.classList.contains("active"),
@@ -12166,7 +12168,7 @@ function canvasRuntimeListForMode(mode = forgeCanvasChatTargetMode) {
   // In "all" mode, only dispatch to the providers actually toggled on
   // (e.g. codex+claude without gemini); single-provider modes stay as-is.
   if (mode === "all") return activeCanvasChatTargets();
-  return ["codex", "claude"].includes(mode) ? [mode] : ["codex"];
+  return ["codex", "claude", "openrouter"].includes(mode) ? [mode] : ["codex"];
 }
 
 function normalizeCanvasReasoningEffort(value) {
@@ -12183,7 +12185,7 @@ function normalizeCanvasReasoningEffort(value) {
 }
 
 function canvasReasoningStorageKey(runtime) {
-  const safeRuntime = ["codex", "claude"].includes(runtime) ? runtime : "codex";
+  const safeRuntime = ["codex", "claude", "openrouter"].includes(runtime) ? runtime : "codex";
   return `forge.canvas.reasoning.${safeRuntime}`;
 }
 
@@ -12208,6 +12210,7 @@ function canvasReasoningEffortLabel(runtime = "codex") {
 
 function selectedCanvasModelRef(runtime = "codex") {
   if (runtime === "claude") return selectedClaudeModelRef();
+  if (runtime === "openrouter") return selectedOpenRouterModelRef();
   return selectedOpenAiModelRef?.() || "gpt-5.3-codex";
 }
 
@@ -12216,6 +12219,11 @@ function setCanvasRuntimeModelRef(runtime, model) {
     const normalized = normalizeClaudeModelRef(model);
     setStoredRuntimeModelRef("forge.claude.model", normalized, normalizeClaudeModelRef);
     if (claudeProviderModel) claudeProviderModel.value = normalized;
+  } else if (runtime === "openrouter") {
+    const normalized = String(model || "").trim() || "anthropic/claude-sonnet-4.6";
+    setStoredRuntimeModelRef("forge.openrouter.model", normalized, (raw) => String(raw || "").trim() || "anthropic/claude-sonnet-4.6");
+    const input = document.getElementById("openRouterProviderModel") as HTMLInputElement | null;
+    if (input) input.value = normalized;
   } else {
     const normalized = normalizeOpenAiModelRef(model);
     setStoredOpenAiModelRef(normalized);
@@ -12620,7 +12628,7 @@ async function refreshRuntimeModelCatalog(runtime) {
 }
 
 function refreshAllRuntimeModelCatalogs() {
-  for (const runtime of ["codex", "claude"]) {
+  for (const runtime of ["codex", "claude", "openrouter"]) {
     void refreshRuntimeModelCatalog(runtime);
   }
 }
@@ -12727,7 +12735,7 @@ function renderCanvasModelMenu() {
   // Show ALL three providers in the tabbar regardless of which are
   // currently active in the chat bar — the user may want to configure
   // model/effort for any LLM independently of toggling its activation.
-  const allRuntimes = ["codex", "claude"];
+  const allRuntimes = ["codex", "claude", "openrouter"];
   const activeSet = new Set(canvasRuntimeListForMode());
   const stored = forgeCanvasChatModelMenu.dataset.tab;
   const activeRuntime = allRuntimes.includes(stored)
@@ -12799,10 +12807,10 @@ function setCanvasChatTargetMode(mode, activeOverride = null) {
   // default to the mode (single provider, or all 3 for "all").
   let activeSet;
   if (Array.isArray(activeOverride) && activeOverride.length) {
-    activeSet = new Set(activeOverride.filter((p) => ["codex", "claude"].includes(p)));
+    activeSet = new Set(activeOverride.filter((p) => ["codex", "claude", "openrouter"].includes(p)));
     if (activeSet.size === 0) activeSet.add("codex");
   } else if (next === "all") {
-    activeSet = new Set(["codex", "claude"]);
+    activeSet = new Set(["codex", "claude", "openrouter"]);
   } else {
     activeSet = new Set([next]);
   }
@@ -13057,7 +13065,7 @@ function stopAndClearCanvasChatPlaceholders() {
 }
 
 function askPlanetGeonodeWithRuntime(item) {
-  const runtime = ["codex", "claude"].includes(item?.runtime) ? item.runtime : primaryPlanetActionRuntime();
+  const runtime = ["codex", "claude", "openrouter"].includes(item?.runtime) ? item.runtime : primaryPlanetActionRuntime();
   if (canvasChatBusyInCurrentSession()) return;
   injectAtlasItemIntoChatSlot(item);
   setCanvasChatTargetMode(runtime, [runtime]);
@@ -13801,7 +13809,7 @@ function localCanvasMicroReplyForTurn(primaryText, geminiText = "", claudeText =
 function canvasFallbackRuntimeFromPayload(payload) {
   const data = payload?.data || {};
   const fallback = String(data.fallbackRuntime || data.runtime || "").trim().toLowerCase();
-  return ["codex", "claude"].includes(fallback) ? fallback : "";
+  return ["codex", "claude", "openrouter"].includes(fallback) ? fallback : "";
 }
 
 function applyCanvasRuntimeFallbackToUi(payload) {
@@ -13825,7 +13833,7 @@ function applyCanvasRuntimeFallbackToUi(payload) {
     alphaLogRenderedVersion = -1;
     scheduleAlphaRender();
   }
-  if (forgeCanvasChatTargetMode !== "all" && ["codex", "claude"].includes(fallback)) {
+  if (forgeCanvasChatTargetMode !== "all" && ["codex", "claude", "openrouter"].includes(fallback)) {
     const modelRef = String(data.modelRef || "").trim();
     if (modelRef) setCanvasRuntimeModelRef(fallback, modelRef);
     setCanvasChatTargetMode(fallback, [fallback]);
@@ -13835,9 +13843,9 @@ function applyCanvasRuntimeFallbackToUi(payload) {
 
 function canvasResponseRuntime(response, target = null) {
   const fallback = String(response?.codexBridge?.fallbackRuntime || "").trim().toLowerCase();
-  if (["codex", "claude"].includes(fallback)) return fallback;
+  if (["codex", "claude", "openrouter"].includes(fallback)) return fallback;
   const requested = String(response?.codexBridge?.requestedRuntime || target?.runtime || "").trim().toLowerCase();
-  if (["codex", "claude"].includes(requested)) return requested;
+  if (["codex", "claude", "openrouter"].includes(requested)) return requested;
   const runtimeText = String(response?.codexBridge?.runtime || "").toLowerCase();
   if (runtimeText.includes("gemini")) return "gemini";
   if (runtimeText.includes("claude")) return "claude";
@@ -16214,11 +16222,11 @@ function syncCanvasChatSendState() {
 function normalizeCanvasAttachmentTarget(target) {
   const value = String(target || "").trim().toLowerCase();
   if (value === "both") return "all";
-  return ["codex", "claude", "all"].includes(value) ? value : "all";
+  return ["codex", "claude", "openrouter", "all"].includes(value) ? value : "all";
 }
 
 function defaultCanvasAttachmentTarget() {
-  return ["codex", "claude"].includes(forgeCanvasChatTargetMode)
+  return ["codex", "claude", "openrouter"].includes(forgeCanvasChatTargetMode)
     ? forgeCanvasChatTargetMode
     : "all";
 }
@@ -19388,7 +19396,7 @@ function restoreForgeSessionCheckpoint(checkpointId = "", sessionJobId = "") {
       });
     }
   }
-  if (checkpoint.targetMode && ["codex", "claude", "all"].includes(checkpoint.targetMode)) {
+  if (checkpoint.targetMode && ["codex", "claude", "openrouter", "all"].includes(checkpoint.targetMode)) {
     setCanvasChatTargetMode(checkpoint.targetMode);
   }
   state.restoredAt = Date.now();
@@ -27977,7 +27985,7 @@ function providerWorkbenchCanOpen(kind) {
 }
 
 function providerShouldAutoHeal(kind, status) {
-  if (!["codex", "claude"].includes(kind)) return false;
+  if (!["codex", "claude", "openrouter"].includes(kind)) return false;
   if (kind === "codex") return false;
   if (!forgeCanInvoke()) return false;
   if (!status) return true;

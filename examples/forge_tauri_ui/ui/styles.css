@@ -14239,11 +14239,13 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   background: #d97757;
 }
 
-/* OpenRouter brand mark — built inline so we don't depend on a new SVG file
-   shipping with the bundle. The mark is the canonical OR "split square"
-   icon rendered as a CSS gradient mask. */
+/* OpenRouter brand mark — built inline so we don't depend on a new SVG
+   file shipping with the bundle. Renders the canonical OpenRouter glyph:
+   a long horizontal pipe with two outward-pointing chevrons at each end,
+   the same logomark openrouter.ai uses on their dashboard / docs. The
+   mask gradient is the OpenRouter brand purple. */
 .provider-logo-openrouter {
-  --provider-logo-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 12h18M6 6l-3 6 3 6M18 6l3 6-3 6' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --provider-logo-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12h18'/%3E%3Cpath d='M7 6 3 12l4 6'/%3E%3Cpath d='m17 6 4 6-4 6'/%3E%3C/svg%3E");
   background: linear-gradient(135deg, #6e6cff 0%, #b388ff 100%);
 }
 
