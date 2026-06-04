@@ -1335,6 +1335,17 @@
                             <span id="providerLauncherClaudeDot" class="provider-runtime-dot" aria-hidden="true"></span>
                           </span>
                         </button>
+                        <button id="providerLauncherOpenRouter" class="provider-runtime-btn" data-provider="openrouter" type="button" role="tab" aria-selected="false">
+                          <span class="provider-runtime-logo provider-logo provider-logo-openrouter" aria-hidden="true"></span>
+                          <span class="provider-runtime-copy">
+                            <span class="provider-runtime-name">OpenRouter</span>
+                            <span id="providerLauncherOpenRouterMeta" class="provider-runtime-meta">anthropic/claude-sonnet-4.6</span>
+                          </span>
+                          <span class="provider-runtime-statewrap">
+                            <span id="providerLauncherOpenRouterState" class="provider-runtime-state">idle</span>
+                            <span id="providerLauncherOpenRouterDot" class="provider-runtime-dot" aria-hidden="true"></span>
+                          </span>
+                        </button>
                         <div class="provider-runtime-divider" aria-hidden="true"></div>
                         <div class="provider-runtime-group-label" aria-hidden="true">Brokers</div>
                         <button id="providerLauncherOanda" class="provider-runtime-btn" data-provider="oanda" type="button" role="tab" aria-selected="false">
@@ -1511,6 +1522,51 @@
                           <button id="claudeProviderTerminalStop" class="provider-terminal-chip" type="button">Stop</button>
                         </div>
                       </section>
+                    </section>
+                    <section class="provider-card">
+                      <div class="provider-card-head">
+                        <span class="provider-card-icon provider-card-icon-openrouter" aria-hidden="true">
+                          <span class="provider-logo provider-logo-openrouter"></span>
+                        </span>
+                        <div class="provider-card-title">
+                          <h2>OpenRouter</h2>
+                          <p>One key, 200+ models (Claude, GPT, Gemini, Llama, DeepSeek…)</p>
+                        </div>
+                        <span id="openRouterProviderStatus" class="provider-status-chip">Checking</span>
+                      </div>
+                      <div class="provider-meta">
+                        <div>
+                          <span>Source</span>
+                          <strong id="openRouterProviderSource">none</strong>
+                        </div>
+                        <div>
+                          <span>Default model</span>
+                          <strong id="openRouterProviderModelLabel">anthropic/claude-sonnet-4.6</strong>
+                        </div>
+                      </div>
+                      <label class="provider-model-field">
+                        <span>Default model</span>
+                        <input id="openRouterProviderModel" list="openRouterProviderModelList" spellcheck="false" value="anthropic/claude-sonnet-4.6" placeholder="anthropic/claude-sonnet-4.6" />
+                        <datalist id="openRouterProviderModelList">
+                          <option value="anthropic/claude-sonnet-4.6"></option>
+                          <option value="anthropic/claude-opus-4.6"></option>
+                          <option value="openai/gpt-5.5"></option>
+                          <option value="openai/gpt-5.3-codex"></option>
+                          <option value="google/gemini-2.5-pro"></option>
+                          <option value="google/gemini-2.5-flash"></option>
+                          <option value="x-ai/grok-3"></option>
+                          <option value="meta-llama/llama-4-405b-instruct"></option>
+                          <option value="deepseek/deepseek-v3.5"></option>
+                          <option value="mistralai/mistral-large-3"></option>
+                          <option value="qwen/qwen-3-coder"></option>
+                        </datalist>
+                      </label>
+                      <div class="provider-actions">
+                        <button id="openRouterProviderConnect" class="provider-primary-btn" type="button">Sign in with OpenRouter</button>
+                        <button id="openRouterProviderRefresh" class="provider-secondary-btn" type="button">Refresh</button>
+                        <button id="openRouterProviderDisconnect" class="provider-secondary-btn" type="button">Disconnect</button>
+                      </div>
+                      <p id="openRouterProviderHint" class="provider-hint">One click opens the OpenRouter consent page in your browser — sign in with Google/GitHub/email and Forge captures the key automatically. No API key to copy-paste, no Cloud Console.</p>
                     </section>
                     <section id="providerVoiceCard" class="provider-card provider-card-voice">
                       <div class="provider-card-head">

@@ -29015,8 +29015,50 @@ if (providerOverlay) providerOverlay.addEventListener("mousedown", (event) => {
 const providerLaunchActions = Object.freeze([
   ["provider-launch-codex", "codex"],
   ["provider-launch-claude", "claude"],
+  ["provider-launch-openrouter", "openrouter"],
   ["provider-launch-oanda", "oanda"],
 ]);
+
+// OpenRouter PKCE OAuth handlers. The Connect button kicks off the one-click
+// browser flow; Refresh re-polls the status (typically after the user signed
+// in and the callback wrote ~/.forge/openrouter.json); Disconnect wipes the
+// saved key.
+forgeShellRuntime?.registerAction?.("provider-openrouter-connect", createAsyncAction(async () => {
+  try {
+    await forgeInvoke("openrouter_oauth_login", {}, { silent: true });
+    setTimeout(() => { void refreshOpenRouterProviderStatus(); }, 1500);
+  } catch (err) {
+    console.warn("[forge.openrouter] login invoke failed", err);
+  }
+}));
+forgeShellRuntime?.registerAction?.("provider-openrouter-refresh", createAsyncAction(() => refreshOpenRouterProviderStatus()));
+forgeShellRuntime?.registerAction?.("provider-openrouter-disconnect", createAsyncAction(async () => {
+  try {
+    await forgeInvoke("openrouter_disconnect", {}, { silent: true });
+    await refreshOpenRouterProviderStatus();
+  } catch (err) {
+    console.warn("[forge.openrouter] disconnect failed", err);
+  }
+}));
+
+async function refreshOpenRouterProviderStatus() {
+  if (!forgeCanInvoke()) return;
+  try {
+    const status: any = await forgeInvoke("openrouter_status", {}, { silent: true });
+    const statusChip = document.getElementById("openRouterProviderStatus");
+    const sourceLabel = document.getElementById("openRouterProviderSource");
+    const modelLabel = document.getElementById("openRouterProviderModelLabel");
+    if (statusChip) statusChip.textContent = status?.connected ? "Ready" : "Not connected";
+    if (sourceLabel) sourceLabel.textContent = status?.connected ? "Sign-in OAuth" : "none";
+    if (modelLabel) modelLabel.textContent = String(status?.defaultModel || "anthropic/claude-sonnet-4.6");
+  } catch (err) {
+    console.warn("[forge.openrouter] status refresh failed", err);
+  }
+}
+
+// Run an initial status fetch on app boot so the chip reflects on-disk state
+// the moment the LLM menu is opened.
+void refreshOpenRouterProviderStatus();
 providerLaunchActions.forEach(([actionName, kind]) => {
   forgeShellRuntime?.registerAction?.(actionName, createAsyncAction(async () => {
     setActiveProviderWorkbench(kind, { focusTerminal: true, ensureTerminal: kind !== "oanda" });

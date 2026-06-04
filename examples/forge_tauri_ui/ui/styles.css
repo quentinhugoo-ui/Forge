@@ -14209,6 +14209,10 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   background: rgba(217,119,87,0.08);
 }
 
+.provider-card-icon-openrouter {
+  background: rgba(132,108,255,0.10);
+}
+
 .provider-card-icon-voice {
   background: rgba(66,214,189,0.08);
   color: #58e3cc;
@@ -14233,6 +14237,14 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
 .provider-logo-claude {
   --provider-logo-url: url("assets/provider-logos/claude.svg");
   background: #d97757;
+}
+
+/* OpenRouter brand mark — built inline so we don't depend on a new SVG file
+   shipping with the bundle. The mark is the canonical OR "split square"
+   icon rendered as a CSS gradient mask. */
+.provider-logo-openrouter {
+  --provider-logo-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 12h18M6 6l-3 6 3 6M18 6l3 6-3 6' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background: linear-gradient(135deg, #6e6cff 0%, #b388ff 100%);
 }
 
 .provider-logo-google {

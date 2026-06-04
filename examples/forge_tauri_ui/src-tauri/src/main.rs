@@ -22227,6 +22227,598 @@ fn gemini_configured_api_key() -> Option<(String, String)> {
         .map(|value| (value, "~/.gemini/.env".to_string()))
 }
 
+// ---------------------------------------------------------------------------
+// OpenRouter PKCE OAuth + direct chat runtime
+// ---------------------------------------------------------------------------
+//
+// OpenRouter exposes a single OpenAI-compatible endpoint that routes to any
+// of the 200+ models in its catalog (Claude, GPT, Gemini, Llama, DeepSeek,
+// etc.). Their PKCE OAuth flow is purpose-built for desktop apps like Forge:
+//   1. Forge opens https://openrouter.ai/auth in the system browser with a
+//      PKCE challenge and a localhost callback URL.
+//   2. The user signs in (Google / GitHub / email) on openrouter.ai and
+//      clicks Authorize.
+//   3. OpenRouter redirects to http://127.0.0.1:<port>/?code=<short-lived>.
+//   4. Forge POSTs the code + the original PKCE verifier to
+//      https://openrouter.ai/api/v1/auth/keys and receives a permanent
+//      API key (sk-or-v1-...).
+//   5. Forge persists the key to ~/.forge/openrouter.json and routes every
+//      future chat turn through run_openrouter_canvas_direct().
+//
+// Zero Cloud-Console dance, zero project-tier provisioning, zero scope
+// approval — the contrast with the abandoned Google Code Assist path is
+// exactly why apps like Cline, OpenClaw and Continue settled on this.
+
+const OPENROUTER_AUTH_URL: &str = "https://openrouter.ai/auth";
+const OPENROUTER_KEY_EXCHANGE_URL: &str = "https://openrouter.ai/api/v1/auth/keys";
+const OPENROUTER_CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
+const OPENROUTER_CALLBACK_PREFERRED_PORT: u16 = 53683;
+const OPENROUTER_CALLBACK_TIMEOUT_SECS: u64 = 600;
+const OPENROUTER_DEFAULT_MODEL: &str = "anthropic/claude-sonnet-4.6";
+
+#[derive(Clone, Debug)]
+struct OpenRouterPkcePending {
+    code_verifier: String,
+    redirect_uri: String,
+    started_ms: u128,
+}
+
+#[derive(Clone)]
+struct OpenRouterCallbackServer {
+    port: u16,
+}
+
+static OPENROUTER_PKCE_PENDING: OnceLock<Mutex<Option<OpenRouterPkcePending>>> = OnceLock::new();
+static OPENROUTER_CALLBACK_SERVER: OnceLock<OpenRouterCallbackServer> = OnceLock::new();
+
+fn openrouter_pending_lock() -> &'static Mutex<Option<OpenRouterPkcePending>> {
+    OPENROUTER_PKCE_PENDING.get_or_init(|| Mutex::new(None))
+}
+
+fn openrouter_local_auth_path() -> Option<PathBuf> {
+    forge_home_dir().map(|home| home.join(".forge").join("openrouter.json"))
+}
+
+/// Locally persisted OpenRouter API key. Stored as JSON so we can later add
+/// auxiliary fields (issued-at timestamp, last refresh, picked default model
+/// per session, etc.) without breaking the on-disk format.
+#[derive(Clone, Debug)]
+struct OpenRouterLocalAuth {
+    key: String,
+    saved_at_ms: Option<i64>,
+}
+
+fn read_openrouter_local_auth() -> Option<OpenRouterLocalAuth> {
+    let path = openrouter_local_auth_path()?;
+    let bytes = std::fs::read(&path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let value: JsonValue = serde_json::from_slice(&bytes).ok()?;
+    let obj = value.as_object()?;
+    let key = obj
+        .get("key")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let saved_at_ms = obj.get("saved_at_ms").and_then(|v| v.as_i64());
+    Some(OpenRouterLocalAuth { key, saved_at_ms })
+}
+
+fn openrouter_credentials_present() -> bool {
+    read_openrouter_local_auth().is_some()
+}
+
+fn write_openrouter_local_auth(key: &str) -> Result<PathBuf, String> {
+    let path = openrouter_local_auth_path()
+        .ok_or_else(|| "Could not resolve Forge home dir for ~/.forge".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create ~/.forge: {e}"))?;
+    }
+    let payload = json!({
+        "key": key,
+        "saved_at_ms": now_epoch_ms() as i64,
+        "schema": "forge.openrouter.local_auth.v1",
+    });
+    let encoded = serde_json::to_vec_pretty(&payload)
+        .map_err(|e| format!("encode openrouter auth: {e}"))?;
+    std::fs::write(&path, encoded).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+fn bind_openrouter_callback_listener() -> Result<TcpListener, String> {
+    if let Ok(listener) =
+        TcpListener::bind(("127.0.0.1", OPENROUTER_CALLBACK_PREFERRED_PORT))
+    {
+        return Ok(listener);
+    }
+    TcpListener::bind(("127.0.0.1", 0u16))
+        .map_err(|e| format!("openrouter callback bind failed: {e}"))
+}
+
+fn ensure_openrouter_callback_server(app: &tauri::AppHandle) -> Result<u16, String> {
+    if let Some(server) = OPENROUTER_CALLBACK_SERVER.get() {
+        return Ok(server.port);
+    }
+    let listener = bind_openrouter_callback_listener()?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("openrouter callback local_addr: {e}"))?
+        .port();
+    let app_for_thread = app.clone();
+    thread::spawn(move || run_openrouter_callback_server(listener, app_for_thread));
+    let _ = OPENROUTER_CALLBACK_SERVER.set(OpenRouterCallbackServer { port });
+    Ok(OPENROUTER_CALLBACK_SERVER
+        .get()
+        .map(|server| server.port)
+        .unwrap_or(port))
+}
+
+fn run_openrouter_callback_server(listener: TcpListener, app: tauri::AppHandle) {
+    for accepted in listener.incoming() {
+        let Ok(mut stream) = accepted else {
+            continue;
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let mut buffer = [0u8; 8192];
+        let read = match stream.read(&mut buffer) {
+            Ok(0) => continue,
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        let request_text = String::from_utf8_lossy(&buffer[..read]).to_string();
+        let first_line = request_text.lines().next().unwrap_or("");
+        // first_line format: "GET /?code=XXXX HTTP/1.1"
+        let path_and_query = first_line.split_whitespace().nth(1).unwrap_or("");
+        let code = parse_query_param(path_and_query, "code");
+        if let Some(code) = code.filter(|c| !c.trim().is_empty()) {
+            let body = OPENROUTER_CALLBACK_BROWSER_HTML.as_bytes();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(body);
+            let _ = stream.flush();
+            let app_clone = app.clone();
+            thread::spawn(move || {
+                let result = pollster::block_on(openrouter_exchange_code_for_key(code));
+                openrouter_emit_completion(&app_clone, result);
+            });
+        } else {
+            let body = b"<html><body><h2>Forge OpenRouter sign-in failed</h2><p>The browser did not send back a code. Try again from the Forge LLM menu.</p></body></html>";
+            let response = format!(
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(body);
+            let _ = stream.flush();
+        }
+    }
+}
+
+const OPENROUTER_CALLBACK_BROWSER_HTML: &str = "\
+<!doctype html><html><head><meta charset=\"utf-8\"><title>Forge · OpenRouter connected</title>\
+<style>body{font:14px/1.5 -apple-system,Segoe UI,sans-serif;color:#f3f3ef;background:#101010;padding:48px;text-align:center}h2{color:#42d6bd}p{color:#cfcfc8;max-width:420px;margin:12px auto 0}</style>\
+</head><body><h2>OpenRouter connected ✓</h2><p>You can close this tab and go back to Forge — the chat is ready.</p></body></html>";
+
+fn parse_query_param(path_and_query: &str, key: &str) -> Option<String> {
+    let query = path_and_query.split_once('?')?.1;
+    for pair in query.split('&') {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        if k == key {
+            return Some(percent_decode_minimal(v));
+        }
+    }
+    None
+}
+
+fn percent_decode_minimal(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    out.push(byte);
+                    i += 3;
+                    continue;
+                }
+                out.push(bytes[i]);
+                i += 1;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            other => {
+                out.push(other);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+async fn openrouter_exchange_code_for_key(code: String) -> Result<OpenRouterLocalAuth, String> {
+    let pending = openrouter_pending_lock()
+        .lock()
+        .map_err(|_| "openrouter pkce lock poisoned".to_string())?
+        .take()
+        .ok_or_else(|| "OpenRouter PKCE flow expired — restart from the LLM menu.".to_string())?;
+    let elapsed_ms = now_epoch_ms().saturating_sub(pending.started_ms);
+    if elapsed_ms > (OPENROUTER_CALLBACK_TIMEOUT_SECS as u128).saturating_mul(1000) {
+        return Err("OpenRouter PKCE flow expired — restart from the LLM menu.".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("build OpenRouter client: {e}"))?;
+    let payload = json!({
+        "code": code,
+        "code_verifier": pending.code_verifier,
+        "code_challenge_method": "S256",
+    });
+    let response = client
+        .post(OPENROUTER_KEY_EXCHANGE_URL)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("post OpenRouter key exchange: {e}"))?;
+    let status = response.status();
+    let body_text = response
+        .text()
+        .await
+        .map_err(|e| format!("read OpenRouter key exchange body: {e}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "OpenRouter key exchange HTTP {}: {}",
+            status.as_u16(),
+            body_text.trim()
+        ));
+    }
+    let value: JsonValue = serde_json::from_str(&body_text)
+        .map_err(|e| format!("parse OpenRouter key exchange JSON: {e}"))?;
+    let key = value
+        .get("key")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "OpenRouter key exchange response missing 'key'.".to_string())?;
+    let _ = write_openrouter_local_auth(&key)?;
+    Ok(OpenRouterLocalAuth {
+        key,
+        saved_at_ms: Some(now_epoch_ms() as i64),
+    })
+}
+
+fn openrouter_emit_completion(
+    app: &tauri::AppHandle,
+    result: Result<OpenRouterLocalAuth, String>,
+) {
+    let payload = match result {
+        Ok(_) => json!({
+            "ok": true,
+            "connected": true,
+            "source": "openrouter_pkce",
+        }),
+        Err(err) => json!({
+            "ok": false,
+            "connected": false,
+            "error": err,
+        }),
+    };
+    let _ = app.emit("forge.openrouter.oauth", payload);
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenRouterOAuthStartResult {
+    started: bool,
+    configured: bool,
+    auth_url: Option<String>,
+    callback_port: Option<u16>,
+    message: String,
+}
+
+/// Open the OpenRouter consent page in the system browser. The PKCE
+/// verifier is stashed in OPENROUTER_PKCE_PENDING and consumed by the
+/// callback server when OpenRouter redirects back with a code.
+#[tauri::command]
+async fn openrouter_oauth_login(
+    app: tauri::AppHandle,
+) -> Result<OpenRouterOAuthStartResult, String> {
+    let port = ensure_openrouter_callback_server(&app)?;
+    let redirect_uri = format!("http://127.0.0.1:{port}/openrouter/callback");
+    let code_verifier = google_oauth_random_token(64)?;
+    let code_challenge = google_oauth_code_challenge(&code_verifier);
+    {
+        let mut guard = openrouter_pending_lock()
+            .lock()
+            .map_err(|_| "openrouter pkce lock poisoned".to_string())?;
+        *guard = Some(OpenRouterPkcePending {
+            code_verifier,
+            redirect_uri: redirect_uri.clone(),
+            started_ms: now_epoch_ms(),
+        });
+    }
+    let auth_url = {
+        let mut url = Url::parse(OPENROUTER_AUTH_URL)
+            .map_err(|e| format!("parse OpenRouter auth URL: {e}"))?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("callback_url", &redirect_uri);
+            query.append_pair("code_challenge", &code_challenge);
+            query.append_pair("code_challenge_method", "S256");
+        }
+        url.to_string()
+    };
+    open_system_browser_url(&auth_url, OPENROUTER_AUTH_URL)?;
+    Ok(OpenRouterOAuthStartResult {
+        started: true,
+        configured: true,
+        auth_url: Some(auth_url),
+        callback_port: Some(port),
+        message: "OpenRouter sign-in opened in your browser.".to_string(),
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenRouterStatusPayload {
+    connected: bool,
+    has_key: bool,
+    default_model: String,
+    saved_at_ms: Option<i64>,
+}
+
+#[tauri::command]
+async fn openrouter_status() -> Result<OpenRouterStatusPayload, String> {
+    let auth = read_openrouter_local_auth();
+    Ok(OpenRouterStatusPayload {
+        connected: auth.is_some(),
+        has_key: auth.is_some(),
+        default_model: OPENROUTER_DEFAULT_MODEL.to_string(),
+        saved_at_ms: auth.and_then(|a| a.saved_at_ms),
+    })
+}
+
+#[tauri::command]
+async fn openrouter_disconnect() -> Result<bool, String> {
+    let Some(path) = openrouter_local_auth_path() else {
+        return Ok(true);
+    };
+    if !path.exists() {
+        return Ok(true);
+    }
+    std::fs::remove_file(&path).map_err(|e| format!("remove openrouter creds: {e}"))?;
+    Ok(true)
+}
+
+/// Lightweight catalogue endpoint so the UI can populate a model dropdown.
+/// We re-emit the OpenRouter response verbatim — id, name, pricing, context
+/// length, top_provider — so the UI can sort / filter without re-fetching.
+#[tauri::command]
+async fn openrouter_list_models() -> Result<JsonValue, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("build OpenRouter models client: {e}"))?;
+    let response = client
+        .get(OPENROUTER_MODELS_URL)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("fetch OpenRouter models: {e}"))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("read OpenRouter models body: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("OpenRouter models HTTP {}: {}", status.as_u16(), text.trim()));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("parse OpenRouter models JSON: {e}"))
+}
+
+/// Drain SSE chunks from OpenRouter's `chat/completions?stream=true`. Same
+/// envelope as OpenAI: each event is `data: <json>\n\n` and the stream ends
+/// with `data: [DONE]\n\n`. Lifted from gemini's SSE drain so the parser
+/// handles partial frames across chunk boundaries.
+fn openrouter_drain_sse_events(buffer: &mut String) -> Vec<JsonValue> {
+    let mut events = Vec::new();
+    loop {
+        let split_at = buffer.find("\n\n");
+        let Some(split_at) = split_at else { break };
+        let (event_block, rest) = buffer.split_at(split_at);
+        let event_text = event_block.to_string();
+        let remainder = rest[2..].to_string();
+        *buffer = remainder;
+        let mut data_payload = String::new();
+        for line in event_text.lines() {
+            let line = line.trim();
+            if let Some(payload) = line.strip_prefix("data:") {
+                if !data_payload.is_empty() {
+                    data_payload.push('\n');
+                }
+                data_payload.push_str(payload.trim());
+            }
+        }
+        if data_payload.is_empty() || data_payload == "[DONE]" {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<JsonValue>(&data_payload) {
+            events.push(value);
+        }
+    }
+    events
+}
+
+/// Extract one assistant token delta from a single SSE event. OpenAI's
+/// streaming envelope nests deltas under `choices[*].delta.content`; some
+/// OpenRouter upstreams also emit `choices[*].message.content`, so we cover
+/// both for resilience.
+fn openrouter_event_text_chunks(event: &JsonValue) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(choices) = event.get("choices").and_then(JsonValue::as_array) {
+        for choice in choices {
+            if let Some(text) = choice
+                .get("delta")
+                .and_then(|d| d.get("content"))
+                .and_then(JsonValue::as_str)
+            {
+                out.push(text.to_string());
+            } else if let Some(text) = choice
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(JsonValue::as_str)
+            {
+                out.push(text.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Direct OpenRouter chat call — mirror of run_codex_canvas_oauth_direct.
+/// Sends a single user turn through the OpenAI-compatible streaming endpoint
+/// and returns (assistant text, bridge JSON) for the canvas chat to render.
+async fn run_openrouter_canvas_direct(
+    user_message: String,
+    model_ref: Option<String>,
+    reasoning_effort: String,
+    app: Option<tauri::AppHandle>,
+    turn_id: String,
+) -> Result<(String, JsonValue), String> {
+    let bridge_t0 = Instant::now();
+    let auth = read_openrouter_local_auth().ok_or_else(|| {
+        "No OpenRouter key — click Connect OpenRouter from the LLM menu first.".to_string()
+    })?;
+    let model = model_ref
+        .and_then(|raw| {
+            let trimmed = raw.trim().to_string();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        })
+        .unwrap_or_else(|| OPENROUTER_DEFAULT_MODEL.to_string());
+    let max_tokens = match reasoning_effort.as_str() {
+        "low" => 2048,
+        "high" => 8192,
+        _ => 4096,
+    };
+    let payload = json!({
+        "model": model.clone(),
+        "messages": [{ "role": "user", "content": user_message.clone() }],
+        "max_tokens": max_tokens,
+        "stream": true,
+    });
+    emit_canvas_assistant_event(
+        app.as_ref(),
+        &turn_id,
+        "openrouter_oauth_direct",
+        "Forge ouvre un tour OpenRouter direct.",
+        json!({
+            "runtime": "OpenRouter OAuth Direct",
+            "mode": "openrouter_sse",
+            "endpoint": OPENROUTER_CHAT_URL,
+            "model": model.clone(),
+            "reasoningEffort": reasoning_effort.clone(),
+            "maxTokens": max_tokens,
+        }),
+    );
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+        .map_err(|e| format!("build OpenRouter chat client: {e}"))?;
+    let request_send_t0 = Instant::now();
+    let mut response = client
+        .post(OPENROUTER_CHAT_URL)
+        .header("Authorization", format!("Bearer {}", auth.key))
+        .header("Content-Type", "application/json")
+        .header("Accept", "text/event-stream")
+        .header("HTTP-Referer", "https://github.com/quentinhugoo-ui/Forge")
+        .header("X-Title", "Forge")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("request OpenRouter chat: {e}"))?;
+    let headers_ms = request_send_t0.elapsed().as_millis() as u64;
+    let bridge_headers_ms = bridge_t0.elapsed().as_millis() as u64;
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "OpenRouter chat HTTP {}: {}",
+            status.as_u16(),
+            text.trim()
+        ));
+    }
+    let mut final_message = String::new();
+    let mut event_count = 0u32;
+    let mut first_delta_ms: Option<u64> = None;
+    let mut remainder = String::new();
+    let mut finish_reason: Option<String> = None;
+    let mut usage = JsonValue::Null;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("stream OpenRouter chat: {e}"))?
+    {
+        if canvas_turn_cancelled_global(&turn_id) {
+            return Err("OpenRouter chat stopped by user.".to_string());
+        }
+        remainder.push_str(&String::from_utf8_lossy(&chunk));
+        for event in openrouter_drain_sse_events(&mut remainder) {
+            event_count = event_count.saturating_add(1);
+            for text_chunk in openrouter_event_text_chunks(&event) {
+                if !text_chunk.is_empty() {
+                    if first_delta_ms.is_none() {
+                        first_delta_ms = Some(bridge_t0.elapsed().as_millis() as u64);
+                    }
+                    final_message.push_str(&text_chunk);
+                }
+            }
+            if let Some(reason) = event
+                .pointer("/choices/0/finish_reason")
+                .and_then(JsonValue::as_str)
+            {
+                finish_reason = Some(reason.to_string());
+            }
+            if let Some(usage_value) = event.get("usage").cloned() {
+                usage = usage_value;
+            }
+        }
+    }
+    let final_message = final_message.trim().to_string();
+    if final_message.is_empty() {
+        return Err("OpenRouter stream finished without producing any text.".to_string());
+    }
+    let total_ms = bridge_t0.elapsed().as_millis() as u64;
+    let bridge = json!({
+        "status": "ok",
+        "runtime": "OpenRouter OAuth Direct",
+        "mode": "openrouter_sse",
+        "endpoint": OPENROUTER_CHAT_URL,
+        "model": model,
+        "reasoningEffort": reasoning_effort,
+        "maxTokens": max_tokens,
+        "eventCount": event_count,
+        "headersMs": headers_ms,
+        "bridgeHeadersMs": bridge_headers_ms,
+        "firstDeltaMs": first_delta_ms,
+        "totalMs": total_ms,
+        "finishReason": finish_reason,
+        "usage": usage,
+    });
+    Ok((final_message, bridge))
+}
+
 fn gemini_oauth_credentials_present() -> bool {
     forge_home_dir()
         .map(|home| home.join(".gemini").join("oauth_creds.json"))
@@ -29759,6 +30351,7 @@ async fn forge_canvas_assistant_turn(
     };
     let use_gemini = runtime == "gemini";
     let use_claude = runtime == "claude";
+    let use_openrouter = runtime == "openrouter";
     let raw_user_message = original_request_message.trim();
     let current_user_message = current_canvas_user_message(raw_user_message);
     let user_message = request.message.trim();
@@ -30030,6 +30623,52 @@ async fn forge_canvas_assistant_turn(
             "reasoningEffort": reasoning_effort,
         });
         Some(message)
+    } else if use_openrouter && openrouter_credentials_present() {
+        // OpenRouter direct OAuth route. Sends one user turn to OpenRouter's
+        // OpenAI-compatible streaming endpoint and routes the result back as
+        // any other assistant message — no CLI, no token refresh, no scope
+        // dance. The user only needs the one-click PKCE login from the LLM
+        // menu to have a working session.
+        let or_message = real_estate_direct_action
+            .as_ref()
+            .map(|(prompt, _, _)| prompt.clone())
+            .unwrap_or_else(|| request.message.clone());
+        let or_message = if real_estate_direct_action.is_some() {
+            or_message
+        } else {
+            prepend_real_estate_active_memory_snapshot(
+                or_message,
+                real_estate_active_memory_prompt,
+            )
+        };
+        let or_model = effective_model_ref.clone();
+        let or_reasoning_effort = reasoning_effort.clone();
+        let app_for_or = app.clone();
+        let turn_for_or = turn_id.clone();
+        match run_openrouter_canvas_direct(
+            or_message,
+            or_model,
+            or_reasoning_effort,
+            Some(app_for_or),
+            turn_for_or,
+        )
+        .await
+        {
+            Ok((message, bridge)) => {
+                codex_bridge = bridge;
+                Some(message)
+            }
+            Err(err) => {
+                headless_cli_failure_detail = Some(err.clone());
+                codex_bridge = json!({
+                    "status": "unavailable",
+                    "mode": "openrouter oauth direct",
+                    "runtime": "OpenRouter OAuth Direct",
+                    "error": err,
+                });
+                None
+            }
+        }
     } else if gemini_canvas_available {
         let gemini_message = real_estate_direct_action
             .as_ref()
@@ -34680,6 +35319,10 @@ fn main() {
             google_oauth_start,
             google_oauth_disconnect,
             openai_oauth_login,
+            openrouter_oauth_login,
+            openrouter_status,
+            openrouter_disconnect,
+            openrouter_list_models,
             claude_subscription_login,
             forge_canvas_assistant_turn,
             cancel_forge_canvas_activity,
@@ -34805,6 +35448,51 @@ mod tests {
         let msg = compose_headless_cli_failure_message("g", Some(detail.as_str()), "Gemini");
         assert!(msg.ends_with('…') || msg.contains('…'));
         assert!(msg.len() < 4096 + 200);
+    }
+
+    #[test]
+    #[test]
+    fn openrouter_sse_drain_extracts_text_chunks_and_handles_partials() {
+        let mut buffer = String::new();
+        buffer.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"hel");
+        let events = openrouter_drain_sse_events(&mut buffer);
+        assert!(events.is_empty(), "partial event must stay buffered");
+        buffer.push_str("lo\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\ndata: [DONE]\n\n");
+        let events = openrouter_drain_sse_events(&mut buffer);
+        assert_eq!(events.len(), 2);
+        let chunks: Vec<String> = events
+            .iter()
+            .flat_map(|event| openrouter_event_text_chunks(event))
+            .collect();
+        assert_eq!(chunks, vec!["hello".to_string(), " world".to_string()]);
+        assert!(buffer.is_empty(), "[DONE] must drain the trailer");
+    }
+
+    #[test]
+    fn openrouter_event_text_chunks_falls_back_to_message_content() {
+        // Some OpenRouter upstreams emit `choices[*].message.content` on the
+        // last event instead of `choices[*].delta.content` — verify we still
+        // pick it up.
+        let event = serde_json::json!({
+            "choices": [{ "message": { "content": "trailing" } }]
+        });
+        assert_eq!(openrouter_event_text_chunks(&event), vec!["trailing".to_string()]);
+    }
+
+    #[test]
+    fn openrouter_callback_parses_code_from_query_string() {
+        let code = parse_query_param("/openrouter/callback?code=abc123&state=xyz", "code");
+        assert_eq!(code.as_deref(), Some("abc123"));
+        let missing = parse_query_param("/openrouter/callback", "code");
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn percent_decode_minimal_decodes_url_encoded_bytes() {
+        assert_eq!(percent_decode_minimal("hello%20world"), "hello world");
+        assert_eq!(percent_decode_minimal("a%2Fb"), "a/b");
+        assert_eq!(percent_decode_minimal("plus+sign"), "plus sign");
+        assert_eq!(percent_decode_minimal("untouched"), "untouched");
     }
 
     #[test]
