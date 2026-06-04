@@ -27646,6 +27646,18 @@ function providerTerminalPixelWordmark(name) {
   return rows;
 }
 
+// Declared BEFORE providerTerminalStoryStatus so the function body can read
+// it during early boot without hitting a Temporal Dead Zone (the function
+// is hoisted, the `let` binding isn't — having the `let` after the function
+// crashes the entire shell init when something calls
+// providerTerminalStoryStatus on the first paint).
+let openRouterProviderLastStatus: any = null;
+function selectedOpenRouterModelRef() {
+  const input = document.getElementById("openRouterProviderModel") as HTMLInputElement | null;
+  const raw = (input?.value || "").trim();
+  return raw || "anthropic/claude-sonnet-4.6";
+}
+
 function providerTerminalStoryStatus(provider) {
   if (provider === "codex") {
     return {
@@ -27670,13 +27682,6 @@ function providerTerminalStoryStatus(provider) {
     ...(codexProviderLastStatus || openAiProviderLastStatus || {}),
     modelRef: selectedOpenAiModelRef(),
   };
-}
-
-let openRouterProviderLastStatus: any = null;
-function selectedOpenRouterModelRef() {
-  const input = document.getElementById("openRouterProviderModel") as HTMLInputElement | null;
-  const raw = (input?.value || "").trim();
-  return raw || "anthropic/claude-sonnet-4.6";
 }
 
 function providerTerminalStoryState(provider) {
