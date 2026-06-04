@@ -26303,6 +26303,15 @@ let openAiProviderLastStatus = null;
 let codexProviderLastStatus = null;
 let geminiProviderLastStatus = null;
 let claudeProviderLastStatus = null;
+// Declared here, alongside the other provider last-status vars and BEFORE the
+// top-level `renderCliProviderTerminalShell` forEach below, so that the boot
+// pass — which renders the openrouter terminal shell and therefore reads this
+// binding via providerTerminalStoryStatus('openrouter') — never hits a
+// Temporal Dead Zone. A previous fix only moved it ahead of
+// providerTerminalStoryStatus, missing the earlier top-level render call,
+// which crashed the whole shell boot (hardware detection + webexplorer
+// google logo never initialised).
+let openRouterProviderLastStatus: any = null;
 let oandaProviderLastStatus = null;
 let voiceProviderLastStatus = null;
 const providerTerminalState = {
@@ -27646,12 +27655,6 @@ function providerTerminalPixelWordmark(name) {
   return rows;
 }
 
-// Declared BEFORE providerTerminalStoryStatus so the function body can read
-// it during early boot without hitting a Temporal Dead Zone (the function
-// is hoisted, the `let` binding isn't — having the `let` after the function
-// crashes the entire shell init when something calls
-// providerTerminalStoryStatus on the first paint).
-let openRouterProviderLastStatus: any = null;
 function selectedOpenRouterModelRef() {
   const input = document.getElementById("openRouterProviderModel") as HTMLInputElement | null;
   const raw = (input?.value || "").trim();
