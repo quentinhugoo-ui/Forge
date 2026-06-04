@@ -27814,8 +27814,15 @@ function buildProviderStoryMark() {
 // authenticated via OAuth (status authSource mentions OAuth / Google login).
 function providerTerminalConnectCta(provider, status) {
   if (provider !== "gemini") return "";
-  const blob = `${String(status?.authSource || "")}\n${String(status?.message || "")}`.toLowerCase();
-  const hasGoogleOAuth = blob.includes("oauth") || blob.includes("google login");
+  // Hide only when authSource explicitly reports the active credential is
+  // Google OAuth (e.g. "Google OAuth (~/.gemini/oauth_creds.json)").
+  // We must NOT match against status.message because Rust may write
+  // strings like "no Gemini API key or Google OAuth credentials were
+  // found" which contain "oauth" but signal the opposite — that's what
+  // made the button flash and disappear on the first refresh.
+  const authLower = String(status?.authSource || "").toLowerCase().trim();
+  const hasGoogleOAuth =
+    authLower.startsWith("google oauth") || authLower.startsWith("google login");
   if (hasGoogleOAuth) return "";
   return `
     <button
@@ -28140,10 +28147,14 @@ function renderProviderWorkbench() {
   // browser-based OAuth flow is one click away — not buried under a
   // generic "Open" that historically meant "open the embedded terminal".
   // We surface "Connect Google" until the saved OAuth creds are actually
-  // present on disk (auth source mentions OAuth); after that the button
-  // says "Open" because the user might just want the embedded terminal.
-  const blob = `${String(status?.authSource || "")}\n${String(status?.message || "")}`.toLowerCase();
-  const hasGoogleOAuth = blob.includes("oauth") || blob.includes("google login");
+  // present on disk (auth source explicitly starts with "Google OAuth");
+  // after that the button says "Open" because the user might just want
+  // the embedded terminal. We check authSource only — status.message may
+  // contain the substring "oauth" even when OAuth is NOT connected
+  // (e.g. "no Google OAuth credentials were found").
+  const authLower = String(status?.authSource || "").toLowerCase().trim();
+  const hasGoogleOAuth =
+    authLower.startsWith("google oauth") || authLower.startsWith("google login");
   const launchText = kind === "codex"
     ? connected ? "Open" : "Connect"
     : kind === "gemini"
