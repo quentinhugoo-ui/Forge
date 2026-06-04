@@ -5279,9 +5279,19 @@ fn google_oauth_browser_response(mut stream: TcpStream, title: &str, body: &str)
 }
 
 fn bind_google_oauth_callback_listener() -> Result<TcpListener, String> {
-    TcpListener::bind(("127.0.0.1", GOOGLE_OAUTH_CALLBACK_PREFERRED_PORT)).map_err(|err| {
+    // Try the preferred port first so users who pre-registered a redirect URI
+    // for 127.0.0.1:53682 in their own GCP project still get a stable URL.
+    // Fall back to an ephemeral port when it's already taken (zombie listener
+    // from a crashed Forge, another instance, system-reserved port, etc.) so
+    // a single port collision never blocks the OAuth flow. The actual port
+    // is always read back from local_addr() and forwarded to Google as the
+    // redirect_uri — they don't have to match the preferred constant.
+    if let Ok(listener) = TcpListener::bind(("127.0.0.1", GOOGLE_OAUTH_CALLBACK_PREFERRED_PORT)) {
+        return Ok(listener);
+    }
+    TcpListener::bind(("127.0.0.1", 0u16)).map_err(|err| {
         format!(
-            "google oauth loopback bind 127.0.0.1:{} failed: {err}. Close the other Forge instance using this OAuth channel.",
+            "google oauth loopback bind 127.0.0.1:{} (and ephemeral fallback) failed: {err}",
             GOOGLE_OAUTH_CALLBACK_PREFERRED_PORT
         )
     })
