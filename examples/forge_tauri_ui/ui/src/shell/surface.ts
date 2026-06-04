@@ -3516,7 +3516,7 @@ function restoreAlphaCanvasSessionState(jobId) {
       at: message.at || new Date().toISOString(),
     });
   }
-  if (targetMode && ["codex", "gemini", "claude", "all"].includes(targetMode)) {
+  if (targetMode && ["codex", "claude", "all"].includes(targetMode)) {
     setCanvasChatTargetMode(targetMode);
   }
   alphaCanvasChatVersion += 1;
@@ -3550,7 +3550,7 @@ function restoreAlphaCanvasSessionStateFromManifest(manifest) {
       at: message.at || new Date().toISOString(),
     });
   }
-  if (targetMode && ["codex", "gemini", "claude", "all"].includes(targetMode)) {
+  if (targetMode && ["codex", "claude", "all"].includes(targetMode)) {
     setCanvasChatTargetMode(targetMode);
   }
   alphaCanvasChatVersion += 1;
@@ -8364,7 +8364,7 @@ function canvasPendingRuntimeFromEvent(payload) {
   const explicit = String(data.runtime || data.requestedRuntime || data.fallbackRuntime || "")
     .trim()
     .toLowerCase();
-  if (["codex", "gemini", "claude"].includes(explicit)) return explicit;
+  if (["codex", "claude"].includes(explicit)) return explicit;
   if (stage === "assistant_stream_delta" || stage === "codex_bridge") {
     return "codex";
   }
@@ -12048,7 +12048,7 @@ function canvasChatStoredTargetMode() {
   try {
     const value = localStorage.getItem("forge.canvas.chat.target");
     if (value === "both") return "all";
-    return ["codex", "gemini", "claude", "all"].includes(value) ? value : "codex";
+    return ["codex", "claude", "all"].includes(value) ? value : "codex";
   } catch (_) {
     return "codex";
   }
@@ -12060,15 +12060,11 @@ function canvasChatStoredActiveTargets() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
-    const filtered = parsed.filter((p) => ["codex", "gemini", "claude"].includes(p));
+    const filtered = parsed.filter((p) => ["codex", "claude"].includes(p));
     return filtered.length ? filtered : null;
   } catch (_) {
     return null;
   }
-}
-
-function selectedGeminiModelRef() {
-  return normalizeGeminiModelRef(geminiProviderModel?.value || storedRuntimeModelRef("forge.gemini.model"));
 }
 
 function selectedClaudeModelRef() {
@@ -12076,14 +12072,12 @@ function selectedClaudeModelRef() {
 }
 
 function canvasChatTargetLabel(mode) {
-  if (mode === "gemini") return "Gemini";
   if (mode === "claude") return "Claude";
   if (mode === "all") return "All";
   return "Codex";
 }
 
 function canvasRuntimeLogoClass(runtime) {
-  if (runtime === "gemini") return "provider-logo-gemini";
   if (runtime === "claude") return "provider-logo-claude";
   return "provider-logo-openai";
 }
@@ -12093,7 +12087,7 @@ function canvasRuntimeLogoEl(runtime, className = "") {
 }
 
 function primaryPlanetActionRuntime() {
-  if (["codex", "gemini", "claude"].includes(forgeCanvasChatTargetMode)) {
+  if (["codex", "claude"].includes(forgeCanvasChatTargetMode)) {
     return forgeCanvasChatTargetMode;
   }
   return activeCanvasChatTargets()[0] || "codex";
@@ -12149,7 +12143,6 @@ const CANVAS_REASONING_EFFORTS = Object.freeze([
 
 const CANVAS_MODEL_PRESETS = Object.freeze({
   codex: ["gpt-5.3-codex", "gpt-5.5", "gpt-5.4"],
-  gemini: ["gemini-3-pro"],
   claude: ["claude-sonnet-4.6", "claude-opus-4.6"],
 });
 
@@ -12160,7 +12153,7 @@ const CANVAS_MODEL_PRESETS = Object.freeze({
  * is active (the click handler enforces ≥1 active, but be defensive).
  */
 function activeCanvasChatTargets() {
-  const order = ["codex", "gemini", "claude"];
+  const order = ["codex", "claude"];
   const active = order.filter((target) =>
     forgeCanvasChatTargetBtns.some(
       (btn) => btn.dataset.target === target && btn.classList.contains("active"),
@@ -12173,7 +12166,7 @@ function canvasRuntimeListForMode(mode = forgeCanvasChatTargetMode) {
   // In "all" mode, only dispatch to the providers actually toggled on
   // (e.g. codex+claude without gemini); single-provider modes stay as-is.
   if (mode === "all") return activeCanvasChatTargets();
-  return ["codex", "gemini", "claude"].includes(mode) ? [mode] : ["codex"];
+  return ["codex", "claude"].includes(mode) ? [mode] : ["codex"];
 }
 
 function normalizeCanvasReasoningEffort(value) {
@@ -12190,7 +12183,7 @@ function normalizeCanvasReasoningEffort(value) {
 }
 
 function canvasReasoningStorageKey(runtime) {
-  const safeRuntime = ["codex", "gemini", "claude"].includes(runtime) ? runtime : "codex";
+  const safeRuntime = ["codex", "claude"].includes(runtime) ? runtime : "codex";
   return `forge.canvas.reasoning.${safeRuntime}`;
 }
 
@@ -12214,17 +12207,12 @@ function canvasReasoningEffortLabel(runtime = "codex") {
 }
 
 function selectedCanvasModelRef(runtime = "codex") {
-  if (runtime === "gemini") return selectedGeminiModelRef();
   if (runtime === "claude") return selectedClaudeModelRef();
   return selectedOpenAiModelRef?.() || "gpt-5.3-codex";
 }
 
 function setCanvasRuntimeModelRef(runtime, model) {
-  if (runtime === "gemini") {
-    const normalized = normalizeGeminiModelRef(model);
-    setStoredRuntimeModelRef("forge.gemini.model", normalized, normalizeGeminiModelRef);
-    if (geminiProviderModel) geminiProviderModel.value = normalized;
-  } else if (runtime === "claude") {
+  if (runtime === "claude") {
     const normalized = normalizeClaudeModelRef(model);
     setStoredRuntimeModelRef("forge.claude.model", normalized, normalizeClaudeModelRef);
     if (claudeProviderModel) claudeProviderModel.value = normalized;
@@ -12632,7 +12620,7 @@ async function refreshRuntimeModelCatalog(runtime) {
 }
 
 function refreshAllRuntimeModelCatalogs() {
-  for (const runtime of ["codex", "gemini", "claude"]) {
+  for (const runtime of ["codex", "claude"]) {
     void refreshRuntimeModelCatalog(runtime);
   }
 }
@@ -12739,7 +12727,7 @@ function renderCanvasModelMenu() {
   // Show ALL three providers in the tabbar regardless of which are
   // currently active in the chat bar — the user may want to configure
   // model/effort for any LLM independently of toggling its activation.
-  const allRuntimes = ["codex", "gemini", "claude"];
+  const allRuntimes = ["codex", "claude"];
   const activeSet = new Set(canvasRuntimeListForMode());
   const stored = forgeCanvasChatModelMenu.dataset.tab;
   const activeRuntime = allRuntimes.includes(stored)
@@ -12801,7 +12789,7 @@ function renderCanvasModelMenu() {
 
 function setCanvasChatTargetMode(mode, activeOverride = null) {
   const normalized = mode === "both" ? "all" : mode;
-  const next = ["codex", "gemini", "claude", "all"].includes(normalized) ? normalized : "codex";
+  const next = ["codex", "claude", "all"].includes(normalized) ? normalized : "codex";
   forgeCanvasChatTargetMode = next;
   try {
     localStorage.setItem("forge.canvas.chat.target", next);
@@ -12811,10 +12799,10 @@ function setCanvasChatTargetMode(mode, activeOverride = null) {
   // default to the mode (single provider, or all 3 for "all").
   let activeSet;
   if (Array.isArray(activeOverride) && activeOverride.length) {
-    activeSet = new Set(activeOverride.filter((p) => ["codex", "gemini", "claude"].includes(p)));
+    activeSet = new Set(activeOverride.filter((p) => ["codex", "claude"].includes(p)));
     if (activeSet.size === 0) activeSet.add("codex");
   } else if (next === "all") {
-    activeSet = new Set(["codex", "gemini", "claude"]);
+    activeSet = new Set(["codex", "claude"]);
   } else {
     activeSet = new Set([next]);
   }
@@ -13069,7 +13057,7 @@ function stopAndClearCanvasChatPlaceholders() {
 }
 
 function askPlanetGeonodeWithRuntime(item) {
-  const runtime = ["codex", "gemini", "claude"].includes(item?.runtime) ? item.runtime : primaryPlanetActionRuntime();
+  const runtime = ["codex", "claude"].includes(item?.runtime) ? item.runtime : primaryPlanetActionRuntime();
   if (canvasChatBusyInCurrentSession()) return;
   injectAtlasItemIntoChatSlot(item);
   setCanvasChatTargetMode(runtime, [runtime]);
@@ -13813,7 +13801,7 @@ function localCanvasMicroReplyForTurn(primaryText, geminiText = "", claudeText =
 function canvasFallbackRuntimeFromPayload(payload) {
   const data = payload?.data || {};
   const fallback = String(data.fallbackRuntime || data.runtime || "").trim().toLowerCase();
-  return ["codex", "gemini", "claude"].includes(fallback) ? fallback : "";
+  return ["codex", "claude"].includes(fallback) ? fallback : "";
 }
 
 function applyCanvasRuntimeFallbackToUi(payload) {
@@ -13837,7 +13825,7 @@ function applyCanvasRuntimeFallbackToUi(payload) {
     alphaLogRenderedVersion = -1;
     scheduleAlphaRender();
   }
-  if (forgeCanvasChatTargetMode !== "all" && ["codex", "gemini", "claude"].includes(fallback)) {
+  if (forgeCanvasChatTargetMode !== "all" && ["codex", "claude"].includes(fallback)) {
     const modelRef = String(data.modelRef || "").trim();
     if (modelRef) setCanvasRuntimeModelRef(fallback, modelRef);
     setCanvasChatTargetMode(fallback, [fallback]);
@@ -13847,9 +13835,9 @@ function applyCanvasRuntimeFallbackToUi(payload) {
 
 function canvasResponseRuntime(response, target = null) {
   const fallback = String(response?.codexBridge?.fallbackRuntime || "").trim().toLowerCase();
-  if (["codex", "gemini", "claude"].includes(fallback)) return fallback;
+  if (["codex", "claude"].includes(fallback)) return fallback;
   const requested = String(response?.codexBridge?.requestedRuntime || target?.runtime || "").trim().toLowerCase();
-  if (["codex", "gemini", "claude"].includes(requested)) return requested;
+  if (["codex", "claude"].includes(requested)) return requested;
   const runtimeText = String(response?.codexBridge?.runtime || "").toLowerCase();
   if (runtimeText.includes("gemini")) return "gemini";
   if (runtimeText.includes("claude")) return "claude";
@@ -16226,11 +16214,11 @@ function syncCanvasChatSendState() {
 function normalizeCanvasAttachmentTarget(target) {
   const value = String(target || "").trim().toLowerCase();
   if (value === "both") return "all";
-  return ["codex", "gemini", "claude", "all"].includes(value) ? value : "all";
+  return ["codex", "claude", "all"].includes(value) ? value : "all";
 }
 
 function defaultCanvasAttachmentTarget() {
-  return ["codex", "gemini", "claude"].includes(forgeCanvasChatTargetMode)
+  return ["codex", "claude"].includes(forgeCanvasChatTargetMode)
     ? forgeCanvasChatTargetMode
     : "all";
 }
@@ -16244,7 +16232,7 @@ function canvasAttachmentTargetLabel(target) {
 }
 
 function nextCanvasAttachmentTarget(target) {
-  const order = ["codex", "gemini", "claude", "all"];
+  const order = ["codex", "claude", "all"];
   const idx = order.indexOf(normalizeCanvasAttachmentTarget(target));
   return order[(idx + 1) % order.length];
 }
@@ -19400,7 +19388,7 @@ function restoreForgeSessionCheckpoint(checkpointId = "", sessionJobId = "") {
       });
     }
   }
-  if (checkpoint.targetMode && ["codex", "gemini", "claude", "all"].includes(checkpoint.targetMode)) {
+  if (checkpoint.targetMode && ["codex", "claude", "all"].includes(checkpoint.targetMode)) {
     setCanvasChatTargetMode(checkpoint.targetMode);
   }
   state.restoredAt = Date.now();
@@ -25512,7 +25500,7 @@ if (typeof forgeTauri?.listen === "function") {
   });
   forgeListen("forge-provider-terminal", (e) => {
     try {
-      ["codex", "gemini", "claude"].forEach((provider) => handleProviderTerminalEvent(provider, e.payload));
+      ["codex", "claude"].forEach((provider) => handleProviderTerminalEvent(provider, e.payload));
     } catch (err) {
       console.error("forge-provider-terminal listener failed", err);
     }
@@ -26284,7 +26272,7 @@ const providerLaunchers = Object.fromEntries(Object.entries({
   state: document.getElementById(`providerLauncher${suffix}State`),
   meta: document.getElementById(`providerLauncher${suffix}Meta`),
 }]));
-const providerTerminalEls = Object.fromEntries(["codex", "gemini", "claude"].map((provider) => {
+const providerTerminalEls = Object.fromEntries(["codex", "claude"].map((provider) => {
   const id = (suffix = "") => `${provider}ProviderTerminal${suffix}`;
   return [provider, {
     shell: document.getElementById(id()),
@@ -26485,7 +26473,7 @@ function hydrateProviderModelPickers() {
   const codexLauncherMeta = providerLauncherDom("codex").meta;
   if (codexLauncherMeta) codexLauncherMeta.textContent = selectedOpenAiModelRef();
   ["gemini", "claude"].forEach(hydrateCliProviderModelPicker);
-  ["codex", "gemini", "claude"].forEach(renderCliProviderTerminalShell);
+  ["codex", "claude"].forEach(renderCliProviderTerminalShell);
   hydrateVoiceProviderSettings();
   syncCanvasChatModelLabel();
   renderProviderWorkbench();
@@ -27810,33 +27798,12 @@ function buildProviderStoryMark() {
 // Renders the prominent in-panel CTA that triggers the one-click OAuth
 // browser flow (currently Gemini only — Claude OAuth is not exposed by
 // Anthropic, so we keep the CLI bridge there). Returns an empty string for
-// providers that don't need the CTA or for sessions that are already
-// authenticated via OAuth (status authSource mentions OAuth / Google login).
-function providerTerminalConnectCta(provider, status) {
-  if (provider !== "gemini") return "";
-  // Hide only when authSource explicitly reports the active credential is
-  // Google OAuth (e.g. "Google OAuth (~/.gemini/oauth_creds.json)").
-  // We must NOT match against status.message because Rust may write
-  // strings like "no Gemini API key or Google OAuth credentials were
-  // found" which contain "oauth" but signal the opposite — that's what
-  // made the button flash and disappear on the first refresh.
-  const authLower = String(status?.authSource || "").toLowerCase().trim();
-  const hasGoogleOAuth =
-    authLower.startsWith("google oauth") || authLower.startsWith("google login");
-  if (hasGoogleOAuth) return "";
-  return `
-    <button
-      type="button"
-      id="geminiProviderOauthCta"
-      class="provider-story-cta"
-      aria-label="Sign in with Google to connect Gemini">
-      <span class="provider-story-cta-glyph" aria-hidden="true">G</span>
-      <span class="provider-story-cta-body">
-        <span class="provider-story-cta-title">Sign in with Google</span>
-        <span class="provider-story-cta-subtitle">Authorize Forge to use your Gemini account — no API key needed.</span>
-      </span>
-    </button>
-  `;
+function providerTerminalConnectCta(_provider, _status) {
+  // Provider-specific call-to-action above the status panel. Currently no
+  // provider injects one — kept as an extension point so any future
+  // OAuth-direct flow can render its own CTA without restructuring the
+  // shell template.
+  return "";
 }
 
 function buildCliProviderTerminalShell(provider) {
@@ -27846,9 +27813,7 @@ function buildCliProviderTerminalShell(provider) {
   )).join("");
   const accountLabel = provider === "codex"
     ? String(status?.accountLabel || "Not connected")
-    : provider === "gemini"
-      ? String(status?.configured ? "Local API key saved" : "CLI login")
-      : "Claude.ai local login";
+    : "Claude.ai local login";
   const sourceLabel = providerCliFriendlySource(provider, status);
   const metaValue = String(status?.modelRef || providerWorkbenchModel(provider));
   const previewLines = providerTerminalStoryPreviewLines(provider);
@@ -27958,11 +27923,7 @@ function providerTerminalReplaySeed(provider, text) {
   if (!normalized) return "";
   const maxChars = 24000;
   const tail = normalized.length > maxChars ? normalized.slice(-maxChars) : normalized;
-  const anchor = provider === "codex"
-    ? "OpenAI Codex"
-    : provider === "gemini"
-      ? "Gemini CLI"
-      : "Claude";
+  const anchor = provider === "codex" ? "OpenAI Codex" : "Claude";
   const anchorIndex = tail.indexOf(anchor);
   if (anchorIndex >= 0) {
     const windowStart = Math.max(0, anchorIndex - 256);
@@ -27998,7 +27959,7 @@ function providerWorkbenchCanOpen(kind) {
 }
 
 function providerShouldAutoHeal(kind, status) {
-  if (!["codex", "gemini", "claude"].includes(kind)) return false;
+  if (!["codex", "claude"].includes(kind)) return false;
   if (kind === "codex") return false;
   if (!forgeCanInvoke()) return false;
   if (!status) return true;
@@ -28048,11 +28009,12 @@ async function openProviderWorkbench(kind, options = {}) {
   }
   if (kind === "codex") return connectCodexProvider(options);
   if (kind === "claude") return connectClaudeProvider(options);
-  return connectGeminiProvider(options);
+  // Any other (or stale) kind falls back to Codex.
+  return connectCodexProvider(options);
 }
 
 function syncActiveProviderTerminalShell(kind) {
-  const active = ["codex", "gemini", "claude", "oanda"].includes(kind) ? kind : "codex";
+  const active = ["codex", "claude", "oanda"].includes(kind) ? kind : "codex";
   [
     ["codex", providerTerminalDom("codex").shell],
     ["gemini", providerTerminalDom("gemini").shell],
@@ -28068,11 +28030,11 @@ function syncActiveProviderTerminalShell(kind) {
 }
 
 function setActiveProviderWorkbench(kind, options = {}) {
-  const normalized = ["codex", "gemini", "claude", "oanda"].includes(kind) ? kind : "codex";
+  const normalized = ["codex", "claude", "oanda"].includes(kind) ? kind : "codex";
   activeProviderWorkbench = normalized;
   try { localStorage.setItem("forge.provider.workbench.active", normalized); } catch (_) {}
   if (isTradingBrokerProvider(normalized)) setActiveTradingBroker(normalized);
-  ["codex", "gemini", "claude", "oanda"].forEach((name) => {
+  ["codex", "claude", "oanda"].forEach((name) => {
     const button = providerLauncherDom(name).button;
     const on = name === normalized;
     button?.classList.toggle("active", on);
@@ -28987,26 +28949,6 @@ async function connectCliProvider(provider, options = {}) {
     if (!options.background && meta.hint) {
       meta.hint.textContent = meta.openingHint;
     }
-    // Path A — Gemini OAuth direct: opens the system browser on Google's
-    // consent page (same UX as Codex's "Connect ChatGPT"), no terminal,
-    // no `gemini auth login` to type. Falls back to the CLI terminal flow
-    // below if the Tauri command is unavailable or rejects.
-    if (provider === "gemini") {
-      try {
-        const result = await forgeInvoke("gemini_oauth_login", {}, { silent: true });
-        const startedOrPending = !!(result && (result.started || result.pending));
-        if (startedOrPending) {
-          if (meta.hint) {
-            meta.hint.textContent = "Validate Google consent in the browser tab Forge just opened…";
-          }
-          watchCliProviderLogin(provider);
-          setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 1200);
-          return;
-        }
-      } catch (err) {
-        console.warn("[forge.gemini] OAuth direct unavailable, falling back to CLI terminal", err);
-      }
-    }
     await startProviderTerminal(provider);
     watchCliProviderLogin(provider);
     setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 1200);
@@ -29027,8 +28969,6 @@ async function connectCliProvider(provider, options = {}) {
 }
 
 function watchClaudeProviderLogin() { return watchCliProviderLogin("claude"); }
-function watchGeminiProviderLogin() { return watchCliProviderLogin("gemini"); }
-async function connectGeminiProvider(options = {}) { return connectCliProvider("gemini", options); }
 async function connectClaudeProvider(options = {}) { return connectCliProvider("claude", options); }
 
 function openProviderOverlay(options = {}) {
@@ -29074,7 +29014,6 @@ if (providerOverlay) providerOverlay.addEventListener("mousedown", (event) => {
 });
 const providerLaunchActions = Object.freeze([
   ["provider-launch-codex", "codex"],
-  ["provider-launch-gemini", "gemini"],
   ["provider-launch-claude", "claude"],
   ["provider-launch-oanda", "oanda"],
 ]);
@@ -29087,15 +29026,6 @@ providerLaunchActions.forEach(([actionName, kind]) => {
 forgeShellRuntime?.registerAction?.("provider-workbench-launch", () => {
   void openProviderWorkbench(activeProviderWorkbench, { restart: activeProviderWorkbench === "oanda" });
 });
-forgeShellRuntime?.registerAction?.("provider-gemini-oauth-connect", createAsyncAction(async () => {
-  // Dedicated handler for the prominent in-panel "Sign in with Google"
-  // button. Routes through the same connectGeminiProvider path as the
-  // top-right launch button, but with an explicit focusTerminal so the
-  // user is immediately watching the right surface when the browser
-  // returns from Google's consent screen.
-  setActiveProviderWorkbench("gemini", { focusTerminal: true });
-  await connectGeminiProvider({ background: false });
-}));
 forgeShellRuntime?.registerAction?.("provider-workbench-refresh", createAsyncAction(() => refreshProviderWorkbenchStatuses()));
 forgeShellRuntime?.registerAction?.("provider-refresh-all", createAsyncAction(async () => {
   await Promise.allSettled([
@@ -29297,7 +29227,7 @@ providerQuickActions.forEach(([actionName, effect]) => {
   forgeShellRuntime?.registerAction?.(actionName, createAsyncAction(effect));
 });
 bindEnterAction(geminiProviderApiKey, () => saveGeminiProviderApiKey());
-["codex", "gemini", "claude"].forEach(bindProviderTerminalControls);
+["codex", "claude"].forEach(bindProviderTerminalControls);
 ["gemini", "claude"].forEach(bindCliProviderModelPicker);
 forgeShellRuntime?.registerAction?.("provider-voice-save-key", createAsyncAction(() => saveElevenLabsApiKey()));
 bindEnterAction(voiceElevenApiKey, () => saveElevenLabsApiKey());

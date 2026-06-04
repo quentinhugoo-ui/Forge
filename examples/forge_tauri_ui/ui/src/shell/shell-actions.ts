@@ -25,7 +25,6 @@
   | "real-estate-properties"
   | "provider-close"
   | "provider-launch-codex"
-  | "provider-launch-gemini"
   | "provider-launch-claude"
   | "provider-launch-oanda"
   | "provider-workbench-launch"
@@ -34,11 +33,6 @@
   | "provider-oanda-send"
   | "provider-oanda-reset"
   | "provider-openai-connect"
-  | "provider-gemini-save-key"
-  | "provider-gemini-connect"
-  | "provider-gemini-oauth-connect"
-  | "provider-gemini-refresh"
-  | "provider-gemini-clear-key"
   | "provider-claude-connect"
   | "provider-claude-refresh"
   | "provider-voice-save-key"
@@ -298,11 +292,6 @@ export function providerCliFriendlySource(kind: string, status: unknown): string
     return connected ? "OpenAI OAuth" : "browser sign-in";
   }
   if (connected) {
-    if (kind === "gemini") {
-      if (blob.includes("api key")) return "saved local key";
-      if (blob.includes("oauth") || blob.includes("google")) return "Google login";
-      return "Gemini ready";
-    }
     if (kind === "claude") {
       if (blob.includes("oauth") || blob.includes("claude.ai")) return "Claude.ai login";
       if (blob.includes("credential")) return "saved local login";

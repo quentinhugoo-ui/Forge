@@ -69,7 +69,7 @@
       <nav class="app-nav">
         <span class="app-logo">Forge</span>
         <button id="navForge" class="nav-btn retired" type="button">Retired</button>
-        <button id="navAlpha" class="nav-btn active" type="button">MCP Compute</button>
+        <button id="navAlpha" class="nav-btn active" type="button">ActCode Compute</button>
       </nav>
 
       <div id="forgeSection" class="section retired" hidden>
@@ -89,7 +89,7 @@
           <aside class="left-panel alpha-panel">
             <div class="panel-heading retired">
               <p class="eyebrow">Agent Compute</p>
-              <h1>Forge MCP</h1>
+              <h1>Forge ActCode</h1>
               <p class="status" id="alphaStatusText">Drop a file or wait for an agent job</p>
             </div>
 
@@ -235,7 +235,7 @@
                 <li><a href="#docs-interface" class="panel-docs-toc-link" data-target="docs-interface">Interface</a></li>
                 <li><a href="#docs-sessions" class="panel-docs-toc-link" data-target="docs-sessions">Sessions &amp; jobs</a></li>
                 <li><a href="#docs-programs" class="panel-docs-toc-link" data-target="docs-programs">Programs</a></li>
-                <li><a href="#docs-mcp" class="panel-docs-toc-link" data-target="docs-mcp">MCP tools</a></li>
+                <li><a href="#docs-ActCode" class="panel-docs-toc-link" data-target="docs-ActCode">ActCode tools</a></li>
                 <li><a href="#docs-daemon" class="panel-docs-toc-link" data-target="docs-daemon">Daemon &amp; agents</a></li>
                 <li><a href="#docs-proof" class="panel-docs-toc-link" data-target="docs-proof">Verification &amp; proofs</a></li>
                 <li><a href="#docs-gpu" class="panel-docs-toc-link" data-target="docs-gpu">GPU &amp; acceleration</a></li>
@@ -246,6 +246,19 @@
                 <li><a href="#docs-troubleshoot" class="panel-docs-toc-link" data-target="docs-troubleshoot">Troubleshooting</a></li>
               </ul>
             </nav>
+
+            <div class="banger-session-actions" aria-label="Banger session actions">
+              <button id="bangerNewSessionBtn" class="panel-action" type="button" aria-label="New Banger session">
+                <span class="panel-action-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M12 5h7v7" />
+                    <path d="M18.5 5.5 10 14" />
+                    <path d="M15 11v6.5A1.5 1.5 0 0 1 13.5 19h-8A1.5 1.5 0 0 1 4 17.5v-8A1.5 1.5 0 0 1 5.5 8H12" />
+                  </svg>
+                </span>
+                <span>New session</span>
+              </button>
+            </div>
 
             <div class="pin-section">
               <div class="pin-heading">Pinned</div>
@@ -389,9 +402,9 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                 <span>Documentation</span>
               </button>
-              <button class="profile-menu-item" type="button" data-profile-action="mcp">
+              <button class="profile-menu-item" type="button" data-profile-action="ActCode">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h8v8H8z"/><path d="M4 4h4v4H4z"/><path d="M16 4h4v4h-4z"/><path d="M4 16h4v4H4z"/><path d="M16 16h4v4h-4z"/></svg>
-                <span>ActCode / MCP</span>
+                <span>ActCode / ActCode</span>
               </button>
               <button class="profile-menu-item" type="button" data-profile-action="daemon">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -497,20 +510,20 @@
                   <svg viewBox="0 0 12 12" focusable="false"><path d="m3 3 6 6M9 3 3 9" /></svg>
                 </button>
               </div>
-              <div id="topbarMcpTitle" class="topbar-library-title">
+              <div id="topbarActCodeTitle" class="topbar-library-title">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M8 8h8v8H8z"/><path d="M4 4h4v4H4z"/><path d="M16 4h4v4h-4z"/><path d="M4 16h4v4H4z"/><path d="M16 16h4v4h-4z"/>
                 </svg>
-                ActCode / MCP
-                <span id="mcpCount" class="library-count">0</span>
+                ActCode / ActCode
+                <span id="ActCodeCount" class="library-count">0</span>
                 <div class="lib-topbar-spacer"></div>
                 <div class="library-search-wrap">
                   <svg class="library-search-icon" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
                     <circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 5 5" />
                   </svg>
-                  <input id="mcpSearch" class="library-search-input" type="text" placeholder="Search commands…" autocomplete="off" />
+                  <input id="ActCodeSearch" class="library-search-input" type="text" placeholder="Search commands…" autocomplete="off" />
                 </div>
-                <button id="mcpClose" class="library-close-btn" type="button" aria-label="Close ActCode / MCP">
+                <button id="ActCodeClose" class="library-close-btn" type="button" aria-label="Close ActCode / ActCode">
                   <svg viewBox="0 0 12 12" focusable="false"><path d="m3 3 6 6M9 3 3 9" /></svg>
                 </button>
               </div>
@@ -608,7 +621,7 @@
                   <input id="alphaFileInput" class="file-input" type="file" accept="*" multiple />
                 </div>
               </div>
-              <canvas id="alphaCanvas" aria-label="Forge MCP artifact canvas"></canvas>
+              <canvas id="alphaCanvas" aria-label="Forge ActCode artifact canvas"></canvas>
               <div id="alphaCardFade" class="alpha-card-fade" aria-hidden="true"></div>
 
               <div id="bangerView" class="banger-view" hidden aria-label="Banger 3D viewport">
@@ -705,24 +718,31 @@
                     <span class="dictation-key alt">Alt</span>
                   </span>
                 </button>
-                <input id="forgeCanvasChatFileInput" class="file-input" type="file" accept="*" multiple aria-hidden="true" />
+                <input id="forgeCanvasChatFileInput" class="file-input" type="file" multiple aria-hidden="true" />
+                <div id="forgeBangerEngineeringBrief" class="banger-engineering-brief" hidden aria-live="polite"></div>
                 <div id="forgeCanvasChatAttachments" class="canvas-chat-attachments" hidden></div>
+                <div class="canvas-chat-body">
+                  <div class="canvas-chat-command-square">
+                    <button id="forgeCanvasChatAttach" class="canvas-chat-iconbtn canvas-chat-command-square-add" type="button" aria-label="Upload files">
+                      <svg viewBox="0 0 20 20" focusable="false" aria-hidden="true">
+                        <path d="M10 4v12" />
+                        <path d="M4 10h12" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="canvas-chat-stack">
                 <div class="canvas-chat-textwrap">
-                  <div id="forgeCanvasChatCommandRail" class="canvas-chat-command-rail" role="group" aria-label="Command prefix">
+                  <div id="forgeCanvasChatCommandRail" class="canvas-chat-command-rail" role="group" aria-label="Command slot">
                     <div id="forgeCanvasChatCommandTokens" class="canvas-chat-command-tokens" aria-label="Active command tokens"></div>
-                    <input id="forgeCanvasChatCommandInput" class="canvas-chat-command-input" type="text" value="" placeholder="/" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Command prefix" />
+                    <input id="forgeCanvasChatCommandInput" class="canvas-chat-command-input" type="text" value="" placeholder="" readonly tabindex="-1" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Active command" />
                     <span class="canvas-chat-command-separator" aria-hidden="true">|</span>
                   </div>
                   <div class="canvas-chat-input-grid">
                     <textarea id="forgeCanvasChatInput" class="canvas-chat-input" rows="1" placeholder="" spellcheck="false" aria-label="Codex prompt"></textarea>
-                    <div id="forgeCanvasChatPromptDivider" class="canvas-chat-prompt-divider" hidden aria-hidden="true">/</div>
-                    <textarea id="forgeCanvasChatGeminiInput" class="canvas-chat-input canvas-chat-input-gemini" rows="1" placeholder="Gemini" spellcheck="false" aria-label="Gemini prompt" hidden></textarea>
                     <div id="forgeCanvasChatPromptDividerClaude" class="canvas-chat-prompt-divider canvas-chat-prompt-divider-claude" hidden aria-hidden="true">/</div>
                     <textarea id="forgeCanvasChatClaudeInput" class="canvas-chat-input canvas-chat-input-claude" rows="1" placeholder="Claude" spellcheck="false" aria-label="Claude prompt" hidden></textarea>
                   </div>
                 </div>
-                <div id="forgeCanvasTradingSubbar" class="canvas-chat-trading-subbar" hidden></div>
-                <div id="forgeCanvasWebExplorerSubbar" class="canvas-chat-trading-subbar canvas-chat-webexplorer-subbar" hidden></div>
                 <div class="canvas-chat-toolbar">
                   <div class="canvas-chat-tools canvas-chat-tools-left">
                     <div class="canvas-chat-webexplorer-mark" aria-hidden="true">
@@ -809,55 +829,6 @@
                         <span class="canvas-chat-trading-trigger-label">Alert</span>
                       </button>
                     </div>
-                    <button id="forgeCanvasChatAttach" class="canvas-chat-iconbtn" type="button" aria-label="Upload files">
-                      <svg viewBox="0 0 20 20" focusable="false" aria-hidden="true">
-                        <path d="M10 4v12" />
-                        <path d="M4 10h12" />
-                      </svg>
-                    </button>
-                    <div class="canvas-chat-program-group">
-                      <span class="program-picker-anchor">
-                        <button id="forgeCanvasChatPrograms" class="canvas-chat-iconbtn" type="button" aria-label="Find programs" aria-haspopup="listbox" aria-expanded="false">
-                          <svg viewBox="0 0 20 20" focusable="false" aria-hidden="true">
-                            <path d="m7.5 6.5-3.5 3.5 3.5 3.5" />
-                            <path d="m12.5 6.5 3.5 3.5-3.5 3.5" />
-                          </svg>
-                        </button>
-                        <div id="forgeCanvasChatProgramPicker" class="program-picker" hidden role="dialog" aria-label="Atlas items">
-                          <div class="program-picker-arrow" aria-hidden="true"></div>
-                          <div class="program-picker-header">
-                            <span class="program-picker-title">ATLAS</span>
-                            <span class="program-picker-actions">
-                              <button id="forgeCanvasChatRemoveSlot" class="program-picker-add" type="button" aria-label="Remove a node slot from the chat" title="Remove slot">
-                                <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8"/></svg>
-                              </button>
-                              <button id="forgeCanvasChatAddSlot" class="program-picker-add" type="button" aria-label="Add a node slot in the chat" title="Add slot">
-                                <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2v8M2 6h8"/></svg>
-                              </button>
-                            </span>
-                          </div>
-                          <div id="forgeCanvasChatPickerInstruments" class="program-picker-section" hidden>
-                            <div class="program-picker-section-title">Instruments</div>
-                            <ul id="forgeCanvasChatProgramPickerList" class="program-picker-list"></ul>
-                          </div>
-                          <div id="forgeCanvasChatPickerNodes" class="program-picker-section" hidden>
-                            <div class="program-picker-section-title">Nodes</div>
-                            <ul id="forgeCanvasChatPickerNodesList" class="program-picker-list program-picker-list-nodes"></ul>
-                          </div>
-                          <div id="forgeCanvasChatPickerGeoNodes" class="program-picker-section" hidden>
-                            <div class="program-picker-section-title">GeoNodes</div>
-                            <ul id="forgeCanvasChatPickerGeoNodesList" class="program-picker-list program-picker-list-nodes"></ul>
-                          </div>
-                          <div id="forgeCanvasChatProgramPickerEmpty" class="program-picker-empty" hidden>Atlas is empty.</div>
-                        </div>
-                      </span>
-                      <div id="forgeCanvasChatNodeSlots" class="canvas-chat-nodeslots" role="group" aria-label="Drop nodes here">
-                        <div class="canvas-chat-nodeslot" data-slot="0"></div>
-                        <div class="canvas-chat-nodeslot" data-slot="1"></div>
-                        <div class="canvas-chat-nodeslot" data-slot="2"></div>
-                        <div class="canvas-chat-nodeslot" data-slot="3"></div>
-                      </div>
-                    </div>
                   </div>
                   <div class="canvas-chat-tools canvas-chat-tools-right">
                     <div id="forgeCanvasChatTarget" class="canvas-chat-target" role="group" aria-label="Assistant target">
@@ -871,11 +842,6 @@
                       <div class="canvas-chat-target-item" data-runtime="codex">
                         <button class="canvas-chat-target-btn active" type="button" data-target="codex" aria-pressed="true" aria-label="Codex" title="Codex">
                           <span class="provider-logo provider-logo-openai" aria-hidden="true"></span>
-                        </button>
-                      </div>
-                      <div class="canvas-chat-target-item" data-runtime="gemini">
-                        <button class="canvas-chat-target-btn" type="button" data-target="gemini" aria-pressed="false" aria-label="Gemini" title="Gemini">
-                          <span class="provider-logo provider-logo-gemini" aria-hidden="true"></span>
                         </button>
                       </div>
                       <div class="canvas-chat-target-item" data-runtime="claude">
@@ -895,6 +861,10 @@
                     </button>
                   </div>
                 </div>
+                  </div>
+                </div>
+                <div id="forgeCanvasTradingSubbar" class="canvas-chat-trading-subbar" hidden></div>
+                <div id="forgeCanvasWebExplorerSubbar" class="canvas-chat-trading-subbar canvas-chat-webexplorer-subbar" hidden></div>
               </form>
               <span id="forgeCanvasChatModelAnchor" class="canvas-model-anchor canvas-model-anchor-below">
                 <button id="forgeCanvasChatModel" class="canvas-chat-model" type="button" aria-haspopup="menu" aria-expanded="false" title="Model and reasoning">
@@ -941,7 +911,7 @@
                       <path d="M18 28h12" />
                     </svg>
                     <p>No documents yet</p>
-                    <p class="library-empty-sub">Drop files above to create an MCP job. Processed files appear here.</p>
+                    <p class="library-empty-sub">Drop files above to create an ActCode job. Processed files appear here.</p>
                   </div>
                 </div>
               </div>
@@ -991,7 +961,7 @@
                       <button id="programCreateSave" class="primary" type="submit">Save program</button>
                     </div>
                   </form>
-                  <div id="programsList" class="mcp-tool-list"></div>
+                  <div id="programsList" class="ActCode-tool-list"></div>
                   <div id="programsEmpty" class="library-empty">
                     <svg viewBox="0 0 48 48" focusable="false" aria-hidden="true">
                       <path d="m18 12-10 12 10 12" />
@@ -1010,7 +980,7 @@
                     <span class="docs-kicker">Forge</span>
                     <h1>Welcome to Forge</h1>
                     <p class="docs-lead">Forge is a <strong>content-addressed</strong>, deterministic compute substrate. Every valid program is a stable cryptographic identity, verifiable and reproducible across machines.</p>
-                    <p>In practice: you drop a file (CSV, JSON, PDF, TXT), Forge creates a <em>job</em> that you or an AI agent can run through the MCP protocol. The result is hashed, archived locally, and reusable — if the same computation is requested twice, Forge recognizes it and returns the result without recomputing.</p>
+                    <p>In practice: you drop a file (CSV, JSON, PDF, TXT), Forge creates a <em>job</em> that you or an AI agent can run through the ActCode protocol. The result is hashed, archived locally, and reusable — if the same computation is requested twice, Forge recognizes it and returns the result without recomputing.</p>
                     <div class="docs-callout">
                       <strong>Doctrine:</strong> the best computation is the one you don't have to perform. Forge memoizes at 6 scales (micro to meta) so a sub-computation is never redone.
                     </div>
@@ -1021,7 +991,7 @@
                     <ol class="docs-steps">
                       <li><strong>Drop a file</strong> — drag-and-drop a CSV, JSON, PDF or TXT into the central canvas. Multiple files are accepted.</li>
                       <li><strong>(Optional) Pick a program</strong> — click the <code>&lt;/&gt;</code> icon at the bottom of the canvas to apply an in-memory program to the session.</li>
-                      <li><strong>Run the computation</strong> — either via the <strong>Start</strong> button, or by letting an MCP agent (Claude Code, Codex, etc.) trigger the job.</li>
+                      <li><strong>Run the computation</strong> — either via the <strong>Start</strong> button, or by letting an ActCode agent (Claude Code, Codex, etc.) trigger the job.</li>
                       <li><strong>Watch execution</strong> — <strong>Live logs</strong> tab for business logs (parsing, indicators, synthesis), <strong>Artifact</strong> tab for the visual result.</li>
                       <li><strong>Verify the proof</strong> — the shield icon (top-right) opens the <strong>Compute proof</strong> panel with hashes and manifests.</li>
                     </ol>
@@ -1036,8 +1006,8 @@
                     <h3>Atlas</h3>
                     <p>Local append-only memory (<code>forge.cas</code> + <code>atlas</code>). Stores computation results and enables cross-session reuse. If you relaunch the same program on the same file in a fresh session, the result comes from the atlas — instant.</p>
 
-                    <h3>MCP-first</h3>
-                    <p>Forge is, above all, a <strong>Model Context Protocol</strong> server. The graphical interface is an observation panel: the agents (Claude Code, Codex, others) are the actual orchestrators. Here you see history, proofs, logs — they launch, create, and publish results.</p>
+                    <h3>ActCode-first</h3>
+                    <p>Forge is, above all, a <strong>direct agent protocol</strong> server. The graphical interface is an observation panel: the agents (Claude Code, Codex, others) are the actual orchestrators. Here you see history, proofs, logs — they launch, create, and publish results.</p>
 
                     <h3>Determinism</h3>
                     <p>No clock, no ambient RNG enters a hash. A computation launched in 2026 on this machine yields the same hash if rerun in 2030 on another machine. This is what makes the <em>proof</em> portable.</p>
@@ -1066,7 +1036,7 @@
 
                   <section id="docs-programs" class="docs-section">
                     <h2>Programs</h2>
-                    <p>A <strong>program</strong> is a reusable computation: its bytes define its identity. Forge ships with a library of ready-made programs (kmer_hash, OHLCV indicators, alpha synth, etc.) and agents can register new ones through MCP <code>create</code>.</p>
+                    <p>A <strong>program</strong> is a reusable computation: its bytes define its identity. Forge ships with a library of ready-made programs (kmer_hash, OHLCV indicators, alpha synth, etc.) and agents can register new ones through ActCode <code>create</code>.</p>
                     <h3>Apply a program to a session</h3>
                     <ol class="docs-steps">
                       <li>Drop a file into the session.</li>
@@ -1078,9 +1048,9 @@
                     <p>Button in the left panel: full library, search, filters (All / Pinned / Drafts).</p>
                   </section>
 
-                  <section id="docs-mcp" class="docs-section">
-                    <h2>MCP tools</h2>
-                    <p>The MCP surface is intentionally compact. Any agent connected to <code>forge_mcp</code> can call these 8 tools:</p>
+                  <section id="docs-ActCode" class="docs-section">
+                    <h2>ActCode tools</h2>
+                    <p>The ActCode surface is intentionally compact. Any agent connected to <code>FORGE_AGENT</code> can call these 8 tools:</p>
                     <table class="docs-table">
                       <thead><tr><th>Tool</th><th>Role</th></tr></thead>
                       <tbody>
@@ -1094,39 +1064,39 @@
                         <tr><td><code>cancel</code></td><td>Cancel a running job.</td></tr>
                       </tbody>
                     </table>
-                    <p class="docs-note"><strong>Token safety:</strong> every MCP response returns indexes, summaries, and references — never raw CSV, raw logs, or full matrices. Each payload carries a <code>token_safety</code> field.</p>
+                    <p class="docs-note"><strong>Token safety:</strong> every ActCode response returns indexes, summaries, and references — never raw CSV, raw logs, or full matrices. Each payload carries a <code>token_safety</code> field.</p>
                   </section>
 
                   <section id="docs-daemon" class="docs-section">
                     <h2>Daemon &amp; agents</h2>
-                    <p class="docs-lead">Forge ships as <code>forge_mcp</code>, a long-lived MCP server. Any agent that speaks the <strong>Model Context Protocol</strong> can connect to it as a client and call Forge's 8 tools without cold-start overhead.</p>
+                    <p class="docs-lead">Forge ships as <code>FORGE_AGENT</code>, a long-lived ActCode server. Any agent that speaks the <strong>direct agent protocol</strong> can connect to it as a client and call Forge's 8 tools without cold-start overhead.</p>
 
                     <h3>Why a daemon?</h3>
                     <p>Each Forge process keeps a warm state: the atlas in RAM, the program library loaded, GPU contexts initialized. When an agent makes a second call, there is no re-init cost — the result either comes from the atlas instantly or executes on a primed runtime. Compare with a CLI shell-out per call (<code>child_process.spawn</code>): every invocation re-loads the runtime, the library, and any models. For a workflow doing 100 memory searches, that's <strong>10+ seconds of overhead per call</strong> eliminated.</p>
 
                     <h3>Transport</h3>
-                    <p>Forge speaks <strong>stdio MCP</strong> by default (point-to-point, one client per server process). Stdio is the standard transport for local agents and is supported by every major MCP client. HTTP/SSE transport may follow if multi-client scenarios appear.</p>
+                    <p>Forge speaks <strong>stdio ActCode</strong> by default (point-to-point, one client per server process). Stdio is the standard transport for local agents and is supported by every major ActCode client. HTTP/SSE transport may follow if multi-client scenarios appear.</p>
 
                     <h3>OpenClaw</h3>
-                    <p><a href="https://docs.openclaw.ai/cli/mcp" target="_blank" rel="noopener">OpenClaw</a> is an MCP host: it consumes external tools to extend its agent's capabilities. To connect it to Forge, declare <code>forge_mcp</code> in OpenClaw's MCP configuration, pointing at the Forge binary. OpenClaw then discovers the 8 tools at startup and exposes them to its agent loop — no bridge CLI, no shell-out per call.</p>
+                    <p><a href="https://docs.openclaw.ai/cli/ActCode" target="_blank" rel="noopener">OpenClaw</a> is an ActCode host: it consumes external tools to extend its agent's capabilities. To connect it to Forge, declare <code>FORGE_AGENT</code> in OpenClaw's ActCode configuration, pointing at the Forge binary. OpenClaw then discovers the 8 tools at startup and exposes them to its agent loop — no bridge CLI, no shell-out per call.</p>
                     <p>OpenClaw use cases that benefit from a Forge daemon:</p>
                     <ul class="docs-bullets">
                       <li>Outbound prospecting flows that score thousands of leads — Forge memoizes feature extraction across runs.</li>
                       <li>Personal-AI agents querying memory frequently — Forge eliminates the 2.1 GB model-load tax that plain shell-outs incur.</li>
-                      <li>Multi-tool orchestration where Forge runs alongside other MCP servers (databases, browser automation) — OpenClaw routes each call to the right daemon.</li>
+                      <li>Multi-tool orchestration where Forge runs alongside other ActCode servers (databases, browser automation) — OpenClaw routes each call to the right daemon.</li>
                     </ul>
 
                     <h3>Hermes Agent</h3>
-                    <p><a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp" target="_blank" rel="noopener">Hermes Agent</a> by Nous Research has a native MCP client. To wire Forge in, add an entry under <code>mcp_servers</code> in <code>config.yaml</code>:</p>
-                    <pre class="docs-code"><code>mcp_servers:
+                    <p><a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/ActCode" target="_blank" rel="noopener">Hermes Agent</a> by Nous Research has a native ActCode client. To wire Forge in, add an entry under <code>ActCode_servers</code> in <code>config.yaml</code>:</p>
+                    <pre class="docs-code"><code>ActCode_servers:
   forge:
-    command: forge_mcp
+    command: FORGE_AGENT
     args: []
     env:
       FORGE_STORE_DIR: %APPDATA%\com.forge.ui\forge-store</code></pre>
-                    <p>On startup Hermes launches <code>forge_mcp</code> as a subprocess, performs the MCP handshake, and registers the 8 tools alongside its built-in skills. Each connection runs as a long-lived asyncio task in a background daemon thread; if the subprocess dies, Hermes reconnects with exponential backoff (up to 5 retries, max 60 s).</p>
+                    <p>On startup Hermes launches <code>FORGE_AGENT</code> as a subprocess, performs the ActCode handshake, and registers the 8 tools alongside its built-in skills. Each connection runs as a long-lived asyncio task in a background daemon thread; if the subprocess dies, Hermes reconnects with exponential backoff (up to 5 retries, max 60 s).</p>
                     <p>Hermes only inherits a safe baseline of environment variables (<code>PATH</code>, <code>HOME</code>, <code>USER</code>, <code>LANG</code>, <code>LC_ALL</code>, <code>TERM</code>, <code>SHELL</code>, <code>TMPDIR</code>); anything else must be added explicitly under <code>env</code>. Forge's append-only design means it doesn't need any secrets passed in — workspace path is enough.</p>
-                    <p>Hermes can also run <em>as</em> an MCP server (<code>hermes mcp serve</code>), exposing its conversations and platform connections to other clients. A symmetric Forge ↔ Hermes setup is therefore possible: each can call the other's tools.</p>
+                    <p>Hermes can also run <em>as</em> an ActCode server (<code>hermes ActCode serve</code>), exposing its conversations and platform connections to other clients. A symmetric Forge ↔ Hermes setup is therefore possible: each can call the other's tools.</p>
 
                     <h3>Daemon configuration</h3>
                     <table class="docs-table">
@@ -1142,7 +1112,7 @@
                     <h3>Health check</h3>
                     <p>An agent can probe a Forge daemon's readiness with <code>about</code> (cheap, no compute) or <code>capabilities</code> (returns domain &amp; template list). If either succeeds in &lt; 50 ms, the daemon is warm and ready to serve.</p>
 
-                    <p class="docs-note"><strong>Connection model:</strong> stdio MCP is one-client-per-process. To share a single Forge daemon between multiple agents, run multiple <code>forge_mcp</code> subprocesses (each agent owns one) — they all share the same on-disk atlas, so memoization is global even if the processes are independent.</p>
+                    <p class="docs-note"><strong>Connection model:</strong> stdio ActCode is one-client-per-process. To share a single Forge daemon between multiple agents, run multiple <code>FORGE_AGENT</code> subprocesses (each agent owns one) — they all share the same on-disk atlas, so memoization is global even if the processes are independent.</p>
                   </section>
 
                   <section id="docs-proof" class="docs-section">
@@ -1154,7 +1124,7 @@
                       <li><strong>Result hash</strong> — identity of the output.</li>
                       <li><strong>Manifest</strong> — artifact sizes, GPU vendor, duration, LLM accounting.</li>
                     </ul>
-                    <p>The <strong>Compute proof</strong> panel (shield icon, top-right) shows these proofs as copyable rows. For an agent, the proof flows via <code>mcp_result</code> in the manifest: the agent receives the compact reference, never the full payload.</p>
+                    <p>The <strong>Compute proof</strong> panel (shield icon, top-right) shows these proofs as copyable rows. For an agent, the proof flows via <code>ActCode_result</code> in the manifest: the agent receives the compact reference, never the full payload.</p>
                   </section>
 
                   <section id="docs-gpu" class="docs-section">
@@ -1194,7 +1164,7 @@
                     <p>No <code>tokio</code>, no <code>serde_json</code> in the hot path, no <code>reqwest</code>, no async runtime, no framework. Compare with a typical npm or pip project: hundreds of transitive dependencies, each one a potential supply-chain entry point. Forge has, in practice, <strong>one</strong>.</p>
 
                     <h3>No network calls</h3>
-                    <p>The compute substrate never opens a socket. Files don't leave the machine. Models, telemetry, analytics, update probes — none of these exist in the Forge runtime. The MCP server speaks only to local agents on stdin/stdout.</p>
+                    <p>The compute substrate never opens a socket. Files don't leave the machine. Models, telemetry, analytics, update probes — none of these exist in the Forge runtime. The ActCode server speaks only to local agents on stdin/stdout.</p>
 
                     <h3>Deterministic execution</h3>
                     <p>No clock, no ambient RNG, no environment-dependent code path enters a hash. Two identical inputs produce two identical outputs and two identical proofs, on any machine, in any decade. There is no hidden state for an attacker to manipulate.</p>
@@ -1208,8 +1178,8 @@
                     <h3>Local-only by default</h3>
                     <p>Sessions, programs, results and proofs live in the local Forge store (<code>%APPDATA%\com.forge.ui\forge-store</code> by default; <code>FORGE_STORE_DIR</code> overrides it). Sharing a result with a teammate is an explicit, opt-in action — copy the file, send the hash. Nothing leaks by accident.</p>
 
-                    <h3>Token safety on every MCP call</h3>
-                    <p>Every MCP response carries a <code>token_safety</code> field and returns indexes / summaries / references — never raw payloads. An untrusted agent cannot exfiltrate large blobs by request: the server enforces hard limits (16-64 KB on logs, 50 items per list).</p>
+                    <h3>Token safety on every ActCode call</h3>
+                    <p>Every ActCode response carries a <code>token_safety</code> field and returns indexes / summaries / references — never raw payloads. An untrusted agent cannot exfiltrate large blobs by request: the server enforces hard limits (16-64 KB on logs, 50 items per list).</p>
 
                     <p class="docs-note"><strong>Why this matters:</strong> the same property that makes Forge fast (memoization, content-addressing) also makes it secure. There is no shortcut between "less code" and "fewer bugs" — minimal dependencies just mean fewer places for an attacker to hide.</p>
 
@@ -1228,7 +1198,7 @@
                     <ol class="docs-steps">
                       <li><strong>Runtime detection</strong> — the pattern guard intercepts the program <em>before</em> execution.</li>
                       <li><strong>Immediate refusal</strong> — the program does not run; both the submitting agent and the local user receive a clear refusal message naming the rule that fired.</li>
-                      <li><strong>Quarantine</strong> — the program hash and the submitting agent's MCP identity are written to <code>forge.quarantine</code>, an append-only log kept separate from the legitimate atlas.</li>
+                      <li><strong>Quarantine</strong> — the program hash and the submitting agent's ActCode identity are written to <code>forge.quarantine</code>, an append-only log kept separate from the legitimate atlas.</li>
                       <li><strong>24-hour lockout</strong> — re-execution of the same program is refused for 24 h without an explicit <code>--allow-untrusted</code> override.</li>
                       <li><strong>Atlas isolation</strong> — even if the user overrides the lockout, the resulting hashes never contaminate the main atlas; they live in a quarantined namespace.</li>
                       <li><strong>No network reporting</strong> — Forge never phones home. The audit trail stays on your machine. The local-only promise holds, even for malicious activity.</li>
@@ -1236,7 +1206,7 @@
 
                     <p><strong>Accountability</strong></p>
                     <ul class="docs-bullets">
-                      <li><strong>The submitting agent</strong> — its MCP identity is recorded in the quarantine log. The agent owns the submission.</li>
+                      <li><strong>The submitting agent</strong> — its ActCode identity is recorded in the quarantine log. The agent owns the submission.</li>
                       <li><strong>The host user</strong> — may override the lockout, but the override is itself logged. Final control stays with the human.</li>
                       <li><strong>Forge</strong> — technically neutral, but ships the blocklist enabled by default. Disabling it is an explicit, documented choice.</li>
                     </ul>
@@ -1285,7 +1255,7 @@
                     <h2>Keyboard shortcuts</h2>
                     <table class="docs-table docs-table-shortcuts">
                       <tbody>
-                        <tr><td><kbd>Esc</kbd></td><td>Close any overlay (Documents, Programs, MCP, Documentation).</td></tr>
+                        <tr><td><kbd>Esc</kbd></td><td>Close any overlay (Documents, Programs, ActCode, Documentation).</td></tr>
                         <tr><td><kbd>Ctrl</kbd> + <kbd>R</kbd></td><td>Reload the application.</td></tr>
                         <tr><td><kbd>F12</kbd></td><td>Open DevTools (if enabled in this build).</td></tr>
                         <tr><td>Drop</td><td>Drag a file onto the canvas to attach it to the session.</td></tr>
@@ -1316,15 +1286,15 @@
 
                 </article>
               </div>
-              <div id="mcpOverlay" class="library-overlay" hidden aria-label="ActCode / MCP">
+              <div id="ActCodeOverlay" class="library-overlay" hidden aria-label="ActCode / ActCode">
                 <div class="library-pane actcode-pane">
-                  <div class="library-filters actcode-filters" role="group" aria-label="Filter ActCode / MCP commands">
-                    <button class="mcp-filter-btn active" data-filter="all" type="button">All</button>
-                    <button class="mcp-filter-btn" data-filter="active" type="button">Active</button>
-                    <button class="mcp-filter-btn" data-filter="templates" type="button">Templates</button>
+                  <div class="library-filters actcode-filters" role="group" aria-label="Filter ActCode / ActCode commands">
+                    <button class="ActCode-filter-btn active" data-filter="all" type="button">All</button>
+                    <button class="ActCode-filter-btn" data-filter="active" type="button">Active</button>
+                    <button class="ActCode-filter-btn" data-filter="templates" type="button">Templates</button>
                   </div>
-                  <div id="mcpToolList" class="mcp-tool-list actcode-list"></div>
-                  <div id="mcpEmpty" class="library-empty">
+                  <div id="ActCodeToolList" class="ActCode-tool-list actcode-list"></div>
+                  <div id="ActCodeEmpty" class="library-empty">
                     <svg viewBox="0 0 48 48" focusable="false" aria-hidden="true">
                       <path d="M16 16h16v16H16z" />
                       <path d="M8 8h8v8H8z" />
@@ -1332,7 +1302,7 @@
                       <path d="M8 32h8v8H8z" />
                       <path d="M32 32h8v8h-8z" />
                     </svg>
-                    <p>No ActCode / MCP commands yet</p>
+                    <p>No ActCode / ActCode commands yet</p>
                     <p class="library-empty-sub">Direct commands and reusable templates will appear here.</p>
                   </div>
                 </div>
@@ -1352,17 +1322,6 @@
                           <span class="provider-runtime-statewrap">
                             <span id="providerLauncherCodexState" class="provider-runtime-state">idle</span>
                             <span id="providerLauncherCodexDot" class="provider-runtime-dot" aria-hidden="true"></span>
-                          </span>
-                        </button>
-                        <button id="providerLauncherGemini" class="provider-runtime-btn" data-provider="gemini" type="button" role="tab" aria-selected="false">
-                          <span class="provider-runtime-logo provider-logo provider-logo-gemini" aria-hidden="true"></span>
-                          <span class="provider-runtime-copy">
-                            <span class="provider-runtime-name">Gemini</span>
-                            <span id="providerLauncherGeminiMeta" class="provider-runtime-meta">gemini-2.5-pro</span>
-                          </span>
-                          <span class="provider-runtime-statewrap">
-                            <span id="providerLauncherGeminiState" class="provider-runtime-state">idle</span>
-                            <span id="providerLauncherGeminiDot" class="provider-runtime-dot" aria-hidden="true"></span>
                           </span>
                         </button>
                         <button id="providerLauncherClaude" class="provider-runtime-btn" data-provider="claude" type="button" role="tab" aria-selected="false">
@@ -1495,71 +1454,6 @@
                         <button id="openAiProviderRefresh" class="provider-secondary-btn" type="button">Refresh</button>
                       </div>
                       <p id="openAiProviderHint" class="provider-hint">Forge detects Codex OAuth locally without exposing tokens to the frontend.</p>
-                    </section>
-                    <section class="provider-card">
-                      <div class="provider-card-head">
-                        <span class="provider-card-icon provider-card-icon-gemini" aria-hidden="true">
-                          <span class="provider-logo provider-logo-gemini"></span>
-                        </span>
-                        <div class="provider-card-title">
-                          <h2>Gemini CLI</h2>
-                          <p>Google local wrapper</p>
-                        </div>
-                        <span id="geminiProviderStatus" class="provider-status-chip">Checking</span>
-                      </div>
-                      <div class="provider-meta">
-                        <div>
-                          <span>Source</span>
-                          <strong id="geminiProviderSource">none</strong>
-                        </div>
-                        <div>
-                          <span>Model</span>
-                          <strong id="geminiProviderModelLabel">gemini-2.5-pro</strong>
-                        </div>
-                      </div>
-                      <label class="provider-model-field">
-                        <span>Default model</span>
-                        <input id="geminiProviderModel" list="geminiProviderModelList" spellcheck="false" value="gemini-2.5-pro" />
-                        <datalist id="geminiProviderModelList">
-                          <option value="gemini-3-pro"></option>
-                          <option value="gemini-2.5-pro"></option>
-                          <option value="gemini-2.5-flash"></option>
-                          <option value="gemini-2.0-flash"></option>
-                        </datalist>
-                      </label>
-                      <div class="provider-actions">
-                        <button id="geminiProviderConnect" class="provider-primary-btn" type="button">Connect Gemini</button>
-                        <button id="geminiProviderRefresh" class="provider-secondary-btn" type="button">Refresh</button>
-                      </div>
-                      <label class="provider-model-field provider-secret-field">
-                        <span>Gemini API key</span>
-                        <div class="provider-secret-row">
-                          <input id="geminiProviderApiKey" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false" />
-                          <button id="geminiProviderSaveKey" class="provider-primary-btn" type="button">Save key</button>
-                          <button id="geminiProviderClearKey" class="provider-secondary-btn" type="button">Clear</button>
-                        </div>
-                      </label>
-                      <p id="geminiProviderHint" class="provider-hint">Open Gemini directly inside Forge. If Gemini CLI is missing, Forge will try to install it automatically in the embedded terminal. You can also save a Gemini API key locally in ~/.gemini/.env for the most reliable headless runs.</p>
-                      <section id="geminiProviderTerminal" class="provider-terminal-shell" hidden aria-label="Gemini terminal">
-                        <div class="provider-terminal-head">
-                          <div class="provider-terminal-titlewrap">
-                            <span class="provider-terminal-title">Gemini</span>
-                            <span id="geminiProviderTerminalState" class="provider-terminal-state">Idle</span>
-                          </div>
-                        </div>
-                        <div class="provider-terminal-screen">
-                          <div id="geminiProviderTerminalViewport" class="provider-terminal-viewport" aria-label="Gemini terminal output"></div>
-                          <pre id="geminiProviderTerminalOutput" class="provider-terminal-output">Ready.</pre>
-                        </div>
-                        <div class="provider-terminal-inputrow">
-                          <span class="provider-terminal-prompt" aria-hidden="true">&gt;</span>
-                          <input id="geminiProviderTerminalInput" class="provider-terminal-input" type="text" spellcheck="false" placeholder="Type for Gemini" autocomplete="off" />
-                          <button id="geminiProviderTerminalSend" class="provider-terminal-chip provider-terminal-chip-primary" type="button" aria-label="Send">
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7M17 7H9M17 7V15"/></svg>
-                          </button>
-                          <button id="geminiProviderTerminalStop" class="provider-terminal-chip" type="button">Stop</button>
-                        </div>
-                      </section>
                     </section>
                     <section class="provider-card">
                       <div class="provider-card-head">

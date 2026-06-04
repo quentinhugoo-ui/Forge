@@ -29549,6 +29549,13 @@ async fn forge_canvas_assistant_turn(
         .filter(|s| !s.is_empty())
         .unwrap_or("codex")
         .to_ascii_lowercase();
+    // Gemini has been retired from Forge. Any stale config still asking for
+    // it falls back to Codex so the chat does not silently freeze.
+    let requested_runtime = if requested_runtime == "gemini" {
+        "codex".to_string()
+    } else {
+        requested_runtime
+    };
     let requested_model_ref = request.model_ref.as_deref();
     let codex_status = codex_canvas_status(if requested_runtime == "codex" {
         requested_model_ref
@@ -34646,7 +34653,6 @@ fn main() {
             publish_forge_job_to_actcode,
             openai_oauth_status,
             codex_provider_status,
-            gemini_provider_status,
             claude_provider_status,
             forge_canvas_list_runtime_models,
             openai_oauth_terminal_snapshot,
@@ -34655,21 +34661,12 @@ fn main() {
             openai_oauth_terminal_resize,
             openai_oauth_terminal_stop,
             openai_oauth_terminal_clear,
-            gemini_terminal_snapshot,
-            gemini_terminal_start,
-            gemini_terminal_send_input,
-            gemini_terminal_resize,
-            gemini_terminal_stop,
-            gemini_terminal_clear,
             claude_terminal_snapshot,
             claude_terminal_start,
             claude_terminal_send_input,
             claude_terminal_resize,
             claude_terminal_stop,
             claude_terminal_clear,
-            gemini_api_key_status,
-            gemini_api_key_save,
-            gemini_api_key_clear,
             voice_tts_status,
             elevenlabs_api_key_save,
             elevenlabs_api_key_clear,
@@ -34683,8 +34680,6 @@ fn main() {
             google_oauth_start,
             google_oauth_disconnect,
             openai_oauth_login,
-            gemini_oauth_login,
-            gemini_subscription_login,
             claude_subscription_login,
             forge_canvas_assistant_turn,
             cancel_forge_canvas_activity,

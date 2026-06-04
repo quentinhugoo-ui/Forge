@@ -7518,11 +7518,6 @@ body.webexplorer-surface #workspaceFolderName {
   color: rgba(238,238,232,0.74);
 }
 
-.canvas-chat-chip-target.gemini {
-  color: rgba(66,214,189,0.82);
-  border-color: rgba(66,214,189,0.20);
-}
-
 .canvas-chat-chip-target.claude {
   color: rgba(218,192,255,0.86);
   border-color: rgba(218,192,255,0.20);
@@ -8137,7 +8132,6 @@ body.webexplorer-surface #workspaceFolderName {
   scrollbar-color: rgba(238,238,232,0.18) transparent;
 }
 
-.canvas-chat-input-gemini[hidden],
 .canvas-chat-input-claude[hidden] {
   display: none;
 }
@@ -8164,25 +8158,21 @@ body.webexplorer-surface #workspaceFolderName {
 }
 
 .canvas-chat-input.is-slash-command,
-.canvas-chat-input.canvas-chat-input-gemini.is-slash-command,
 .canvas-chat-input.canvas-chat-input-claude.is-slash-command {
   color: rgba(104, 208, 196, 0.98);
 }
 
 .canvas-chat-input.is-slash-metric,
-.canvas-chat-input.canvas-chat-input-gemini.is-slash-metric,
 .canvas-chat-input.canvas-chat-input-claude.is-slash-metric {
   color: rgba(104, 208, 196, 0.98);
 }
 
 .canvas-chat-input.is-slash-program,
-.canvas-chat-input.canvas-chat-input-gemini.is-slash-program,
 .canvas-chat-input.canvas-chat-input-claude.is-slash-program {
   color: rgba(224, 205, 142, 0.98);
 }
 
 .canvas-chat-input.is-slash-create,
-.canvas-chat-input.canvas-chat-input-gemini.is-slash-create,
 .canvas-chat-input.canvas-chat-input-claude.is-slash-create {
   color: rgba(185, 136, 255, 0.98);
 }
@@ -8743,14 +8733,6 @@ body.webexplorer-surface .canvas-chat-webexplorer-logo {
   transition: opacity 120ms ease, filter 120ms ease;
 }
 
-/* The Gemini SVG ships with extra transparent padding around its
-   4-point star, so it reads visually smaller than openai/claude at the
-   same box size. Bump it up so the optical size matches its
-   neighbours. */
-.canvas-chat-target-btn .provider-logo-gemini {
-  width: 14px;
-  height: 14px;
-}
 
 .canvas-chat-target-btn:hover .provider-logo {
   opacity: 0.78;
@@ -11157,8 +11139,8 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   font-weight: 400;
 }
 
-/* Add an explicit space before the typewriter text so "Gemini" and "is …"
-   don't visually fuse when the gap is collapsed. */
+/* Add an explicit space before the typewriter text so the provider name
+   and the surrounding copy don't visually fuse when the gap collapses. */
 .canvas-thinking-status::before {
   content: "\00a0";
   margin-right: 1px;
@@ -14223,10 +14205,6 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   background: rgba(244,244,238,0.055);
 }
 
-.provider-card-icon-gemini {
-  background: rgba(93,139,255,0.08);
-}
-
 .provider-card-icon-claude {
   background: rgba(217,119,87,0.08);
 }
@@ -14255,11 +14233,6 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
 .provider-logo-claude {
   --provider-logo-url: url("assets/provider-logos/claude.svg");
   background: #d97757;
-}
-
-.provider-logo-gemini {
-  --provider-logo-url: url("assets/provider-logos/googlegemini.svg");
-  background: linear-gradient(135deg, #4285f4 0%, #9b72cb 42%, #d96570 70%, #fbbc04 100%);
 }
 
 .provider-logo-google {
@@ -14690,8 +14663,8 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   cursor: default;
 }
 
-:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal),
-:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal) :is(button, input, textarea) {
+:is(#codexProviderTerminal, #claudeProviderTerminal),
+:is(#codexProviderTerminal, #claudeProviderTerminal) :is(button, input, textarea) {
   font-family: "Cascadia Mono", Consolas, "SF Mono", monospace;
 }
 
@@ -14702,13 +14675,6 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   --provider-story-error: #ff8a8a;
 }
 
-#geminiProviderTerminal {
-  --provider-story-accent: #4ee0ff;
-  --provider-story-accent-alt: #ffd36b;
-  --provider-story-mark-b: #85a7ff;
-  --provider-story-error: #ff8a8a;
-}
-
 #claudeProviderTerminal {
   --provider-story-accent: #ffb26b;
   --provider-story-accent-alt: #ffd97d;
@@ -14716,7 +14682,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   --provider-story-error: #ff8a8a;
 }
 
-:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal) .provider-terminal-screen {
+:is(#codexProviderTerminal, #claudeProviderTerminal) .provider-terminal-screen {
   display: flex;
   min-height: clamp(480px, calc(100dvh - 232px), 690px);
   height: clamp(480px, calc(100dvh - 232px), 690px);
@@ -14725,7 +14691,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   position: relative;
 }
 
-:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal) .provider-terminal-output {
+:is(#codexProviderTerminal, #claudeProviderTerminal) .provider-terminal-output {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -14741,17 +14707,17 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   -ms-overflow-style: none;
 }
 
-:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal) .provider-terminal-output::-webkit-scrollbar {
+:is(#codexProviderTerminal, #claudeProviderTerminal) .provider-terminal-output::-webkit-scrollbar {
   width: 0 !important;
   height: 0 !important;
   display: none;
 }
 
-:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal).terminal-live .provider-terminal-output {
+:is(#codexProviderTerminal, #claudeProviderTerminal).terminal-live .provider-terminal-output {
   display: flex;
 }
 
-:is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal).terminal-live .provider-terminal-screen > .provider-terminal-viewport {
+:is(#codexProviderTerminal, #claudeProviderTerminal).terminal-live .provider-terminal-screen > .provider-terminal-viewport {
   display: block;
   z-index: 2;
 }
@@ -15488,7 +15454,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   #oandaProviderTerminal .provider-terminal-output {
     padding: 18px 22px 18px 16px;
   }
-  :is(#codexProviderTerminal, #geminiProviderTerminal, #claudeProviderTerminal) .provider-terminal-output {
+  :is(#codexProviderTerminal, #claudeProviderTerminal) .provider-terminal-output {
     padding: 18px 22px 18px 16px;
   }
   .oanda-terminal-hero {
