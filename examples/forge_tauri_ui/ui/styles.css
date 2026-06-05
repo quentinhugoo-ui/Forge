@@ -12182,161 +12182,222 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   top: 48px;
 }
 
-.market-order-shell {
+/* Market Order panel — scoped under trading-mode proof-panel for specificity */
+.proof-panel.trading-mode .proof-panel-content .market-order-shell {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 2px 0;
+  gap: 0;
+  font-family: Geist, "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
+  color: #ecece6;
 }
-.market-order-asset-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 2px;
-}
-.market-order-asset-label {
-  font-size: 0.92rem;
-  font-weight: 500;
-  color: rgba(238,238,232,0.92);
-  letter-spacing: 0.02em;
-  font-variant-numeric: tabular-nums;
-}
-.market-order-trade-row {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 4px;
-  align-items: stretch;
-}
-.market-order-side-btn {
-  appearance: none;
-  border: 0;
-  background: rgba(238,238,232,0.04);
-  padding: 10px 8px;
-  border-radius: 3px;
+.proof-panel.trading-mode .market-order-section {
+  padding: 12px 0 13px;
+  border-top: 1px solid rgba(238,238,232,0.06);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  cursor: pointer;
-  transition: background 140ms ease;
+  gap: 8px;
 }
-.market-order-side-btn:hover {
-  background: rgba(238,238,232,0.08);
+.proof-panel.trading-mode .market-order-section:first-child {
+  border-top: 0;
+  padding-top: 2px;
 }
-.market-order-side-label {
-  font-size: 0.68rem;
-  font-weight: 400;
-  color: rgba(238,238,232,0.52);
-  letter-spacing: 0.08em;
-}
-.market-order-side-price {
-  font-size: 0.98rem;
-  font-weight: 500;
-  color: rgba(238,238,232,0.96);
-  font-variant-numeric: tabular-nums;
-}
-.market-order-sell .market-order-side-label { color: rgba(230,140,140,0.78); }
-.market-order-buy .market-order-side-label { color: rgba(120,210,180,0.78); }
-.market-order-spread {
+.proof-panel.trading-mode .market-order-section-title {
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-width: 30px;
-}
-.market-order-spread-value {
-  font-size: 0.72rem;
-  color: rgba(80,210,200,0.78);
-  font-variant-numeric: tabular-nums;
-  font-weight: 400;
-}
-.market-order-row {
-  display: grid;
-  grid-template-columns: 76px 1fr auto;
-  gap: 8px;
-  align-items: center;
-  padding: 0 2px;
-}
-.market-order-row-tpsl {
-  grid-template-columns: 76px auto 1fr auto;
-}
-.market-order-row.is-disabled {
-  opacity: 0.42;
-}
-.market-order-row-label {
-  font-size: 0.76rem;
-  color: rgba(238,238,232,0.62);
-  font-weight: 400;
-}
-.market-order-input {
-  appearance: none;
-  background: rgba(238,238,232,0.04);
-  border: 1px solid rgba(238,238,232,0.08);
-  border-radius: 3px;
-  padding: 5px 7px;
-  color: rgba(238,238,232,0.92);
-  font-size: 0.8rem;
-  font-variant-numeric: tabular-nums;
-  width: 100%;
-  min-width: 0;
-  font-family: inherit;
-}
-.market-order-input:focus {
-  outline: none;
-  border-color: rgba(80,210,200,0.42);
-}
-.market-order-input:disabled {
-  background: rgba(238,238,232,0.02);
-  color: rgba(238,238,232,0.42);
-  cursor: not-allowed;
-}
-.market-order-input::-webkit-outer-spin-button,
-.market-order-input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
+  justify-content: space-between;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #6e6e67;
   margin: 0;
+  line-height: 1;
 }
-.market-order-input[type="number"] {
-  -moz-appearance: textfield;
-}
-.market-order-row-info {
-  font-size: 0.7rem;
-  color: rgba(238,238,232,0.52);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
-}
-.market-order-checkbox-row {
+.proof-panel.trading-mode .market-order-asset {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 2px;
-  cursor: pointer;
-  color: rgba(238,238,232,0.78);
-  font-size: 0.76rem;
+  justify-content: space-between;
+  gap: 8px;
 }
-.market-order-checkbox-row input[type="checkbox"] {
+.proof-panel.trading-mode .market-order-asset-name {
+  font-size: 1.04rem;
+  font-weight: 600;
+  color: #ecece6;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+.proof-panel.trading-mode .market-order-asset .barrel-flip {
+  width: 20px;
+  height: 20px;
+  color: rgba(238,238,232,0.46);
+}
+.proof-panel.trading-mode .market-order-asset .barrel-flip svg {
   width: 13px;
   height: 13px;
+}
+.proof-panel.trading-mode .market-order-trade {
+  display: grid;
+  grid-template-columns: 1fr 52px 1fr;
+  gap: 5px;
+  align-items: stretch;
+}
+.proof-panel.trading-mode .market-order-side {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  border: 1px solid rgba(238,238,232,0.09) !important;
+  background: rgba(238,238,232,0.025) !important;
+  padding: 12px 8px 11px !important;
+  border-radius: 5px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  cursor: pointer !important;
+  font-family: inherit !important;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.proof-panel.trading-mode .market-order-side:hover {
+  background: rgba(238,238,232,0.06) !important;
+}
+.proof-panel.trading-mode .market-order-side.is-sell:hover {
+  border-color: rgba(230,140,140,0.42) !important;
+}
+.proof-panel.trading-mode .market-order-side.is-buy:hover {
+  border-color: rgba(120,210,180,0.42) !important;
+}
+.proof-panel.trading-mode .market-order-side-tag {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.proof-panel.trading-mode .market-order-side.is-sell .market-order-side-tag {
+  color: rgba(230,140,140,0.82);
+}
+.proof-panel.trading-mode .market-order-side.is-buy .market-order-side-tag {
+  color: rgba(120,210,180,0.82);
+}
+.proof-panel.trading-mode .market-order-side-price {
+  font-size: 1.06rem;
+  font-weight: 600;
+  color: #ecece6;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.proof-panel.trading-mode .market-order-spread {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+.proof-panel.trading-mode .market-order-spread-tag {
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #4f4f48;
+}
+.proof-panel.trading-mode .market-order-spread-pips {
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: rgba(80,210,200,0.86);
+  font-variant-numeric: tabular-nums;
+}
+.proof-panel.trading-mode .market-order-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.proof-panel.trading-mode .market-order-field-input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.proof-panel.trading-mode .market-order-input {
+  width: 100% !important;
+  min-width: 0 !important;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  border: 1px solid rgba(238,238,232,0.09) !important;
+  border-radius: 5px !important;
+  background: #1b1b1a !important;
+  color: #ecece6 !important;
+  padding: 8px 10px !important;
+  font: 500 0.82rem Geist, "Segoe UI", -apple-system, sans-serif !important;
+  font-variant-numeric: tabular-nums !important;
+  outline: none !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+}
+.proof-panel.trading-mode .market-order-input:focus {
+  border-color: rgba(80,210,200,0.55) !important;
+  background: #1e1e1d !important;
+}
+.proof-panel.trading-mode .market-order-input:disabled {
+  background: #141413 !important;
+  color: rgba(238,238,232,0.32) !important;
+  border-color: rgba(238,238,232,0.05) !important;
+  cursor: not-allowed !important;
+}
+.proof-panel.trading-mode .market-order-input::-webkit-outer-spin-button,
+.proof-panel.trading-mode .market-order-input::-webkit-inner-spin-button {
+  -webkit-appearance: none !important;
+  margin: 0 !important;
+}
+.proof-panel.trading-mode .market-order-input[type="number"] {
+  -moz-appearance: textfield;
+}
+.proof-panel.trading-mode .market-order-field-info {
+  font-size: 0.7rem;
+  color: rgba(238,238,232,0.46);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0.01em;
+}
+.proof-panel.trading-mode .market-order-field-info.is-active {
+  color: rgba(80,210,200,0.72);
+}
+.proof-panel.trading-mode .market-order-toggle {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  background: rgba(238,238,232,0.035) !important;
+  border: 1px solid rgba(238,238,232,0.10) !important;
+  border-radius: 4px !important;
+  color: rgba(238,238,232,0.58) !important;
+  font: 500 0.68rem Geist, sans-serif !important;
+  padding: 6px 9px !important;
+  cursor: pointer !important;
+  letter-spacing: 0.04em !important;
+  text-transform: lowercase;
+  min-width: 46px;
+  flex-shrink: 0;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.proof-panel.trading-mode .market-order-toggle:hover {
+  border-color: rgba(80,210,200,0.42) !important;
+  color: rgba(80,210,200,0.82) !important;
+}
+.proof-panel.trading-mode .market-order-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  color: #b8b8b2;
+  font-size: 0.78rem;
+  font-weight: 500;
+  user-select: none;
+}
+.proof-panel.trading-mode .market-order-checkbox input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
   accent-color: rgba(80,210,200,0.82);
   cursor: pointer;
   margin: 0;
 }
-.market-order-toggle {
-  appearance: none;
-  background: transparent;
-  border: 1px solid rgba(238,238,232,0.10);
-  border-radius: 3px;
-  color: rgba(238,238,232,0.62);
-  font-size: 0.68rem;
-  padding: 3px 7px;
-  cursor: pointer;
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  font-family: inherit;
-  min-width: 42px;
-}
-.market-order-toggle:hover {
-  border-color: rgba(80,210,200,0.42);
-  color: rgba(80,210,200,0.82);
+.proof-panel.trading-mode .market-order-section.is-disabled {
+  opacity: 0.42;
 }
 
 .proof-panel-content {
