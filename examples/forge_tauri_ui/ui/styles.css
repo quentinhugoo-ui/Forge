@@ -4116,7 +4116,7 @@ body.forge-job-dragging * {
 .canvas-wrap {
   min-width: 0;
   min-height: 0;
-  background: transparent;
+  background: var(--bg);
   padding: 8px 20px 0 20px;
   display: flex;
   flex-direction: column;
@@ -6094,6 +6094,7 @@ body.webexplorer-surface #workspaceFolderName {
   position: relative;
   flex: 1;
   min-height: 0;
+  background: var(--bg);
 }
 
 /* Empty rule — the bottom-of-card fade is now achieved via mask-image on the
@@ -6519,7 +6520,7 @@ body.webexplorer-surface #workspaceFolderName {
   display: block;
   border: 0;
   border-radius: 0;
-  background: transparent;
+  background: var(--bg);
 }
 
 .log-layer {
@@ -6606,6 +6607,9 @@ body.webexplorer-surface #workspaceFolderName {
 }
 
 .canvas-chat {
+  --canvas-chat-command-square-size: 94px;
+  --chat-command-square-size: 94px;
+  --canvas-chat-command-square-inset: 8px;
   position: absolute;
   left: 50%;
   bottom: 56px;
@@ -6637,7 +6641,7 @@ body.webexplorer-surface #workspaceFolderName {
    exclude the absolutely-positioned corner overlays (voice-out top-right,
    dictation bar bottom-centre) — this rule's higher specificity was
    overriding their own `position: absolute` and dropping them into flow. */
-.canvas-chat > :not(.canvas-chat-trading-subbar):not(.canvas-chat-secure-info):not(.canvas-chat-voiceout-corner):not(.canvas-chat-dictation-bar) {
+.canvas-chat > :not(.canvas-chat-trading-subbar):not(.canvas-chat-secure-info):not(.canvas-chat-voiceout-corner):not(.canvas-chat-dictation-bar):not(.program-picker):not(.canvas-chat-webexplorer-subbar) {
   position: relative;
   z-index: 1;
 }
@@ -7896,10 +7900,10 @@ body.webexplorer-surface #workspaceFolderName {
      width via aspect-ratio — a true square that always meets the bar's top
      and bottom edges, whatever the content height. */
   align-self: flex-start;
-  width: var(--chat-command-square-size);
-  height: var(--chat-command-square-size);
-  min-width: var(--chat-command-square-size);
-  min-height: var(--chat-command-square-size);
+  width: var(--chat-command-square-size, 94px);
+  height: var(--chat-command-square-size, 94px);
+  min-width: var(--chat-command-square-size, 94px);
+  min-height: var(--chat-command-square-size, 94px);
   border-radius: 4px;
   /* Same tone as the left panel (var(--surface)); gentle, low-contrast
      engrave rather than the previous hard relief. */
