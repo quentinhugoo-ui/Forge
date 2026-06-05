@@ -1,11 +1,14 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use crate::trading_manifest::{build_trading_scenario_manifest, TradingScenarioManifest};
+#[cfg(test)]
+use crate::trading_manifest::{trading_scenario_hashes_from_result, TradingScenarioReplayReport};
 #[cfg(not(target_os = "windows"))]
 use keyring::{Entry as KeyringEntry, Error as KeyringError};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -20,6 +23,10 @@ use windows_sys::Win32::Security::Cryptography::{
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::LocalFree;
 
+#[path = "trading_alpha.rs"]
+mod trading_alpha;
+pub use trading_alpha::*;
+
 const DEFAULT_BASE_URL: &str = "https://api-fxpractice.oanda.com";
 const DEFAULT_INSTRUMENT: &str = "NATGAS_USD";
 const KEEP_STORED_SENTINEL: &str = "__FORGE_KEEP_STORED__";
@@ -27,7 +34,6 @@ const HISTORY_START_RFC3339: &str = "2006-01-01T00:00:00Z";
 const OANDA_WATCHDOG_TICK_MS: u64 = 30_000;
 const OANDA_WATCHDOG_HEARTBEAT_MS: u64 = 5 * 60 * 1000;
 const OANDA_WATCHDOG_RECOVERY_MS: u64 = 20_000;
-const UNIVERSE_SYNC_GRANULARITIES: &[&str] = &["S10", "S30", "M1", "M5", "M15", "M30", "H1", "H4", "D", "W"];
 const OANDA_GRANULARITIES: &[&str] = &[
     "S5", "S10", "S15", "S30",
     "M1", "M2", "M4", "M5", "M10", "M15", "M30",
@@ -92,6 +98,8 @@ pub struct TradingPriceSnapshot {
     ask: f64,
     mid: f64,
     spread: f64,
+    units_available_long: f64,
+    units_available_short: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -331,6 +339,8 @@ pub struct TradingOrderResponse {
     side: String,
     units: f64,
     order_type: String,
+    approval_timestamp_bucket: String,
+    approval_proof_hash: String,
     message: String,
     response: Value,
 }
@@ -404,12 +414,14 @@ pub struct TradingStrategySpec {
     point_size_source: Option<String>,
     point_size_warning: Option<String>,
     entry_hour: Option<u32>,
+    entry_hours: Option<Vec<u32>>,
     entry_timezone: Option<String>,
     direction: Option<String>,
     stop_loss_distance: Option<f64>,
     take_profit_min_distance: Option<f64>,
     take_profit_max_distance: Option<f64>,
     target_win_rate: Option<f64>,
+    daily_profit_target_distance: Option<f64>,
     low_volatility_metric: Option<String>,
     low_volatility_lookback: Option<usize>,
     low_volatility_percentile: Option<f64>,
@@ -465,6 +477,18 @@ pub struct TradingStrategyBacktestCandidate {
     max_loss_streak: usize,
     avg_hold_bars: f64,
     meets_target: bool,
+    #[serde(default)]
+    daily_target_hit_rate: Option<f64>,
+    #[serde(default)]
+    positive_day_rate: Option<f64>,
+    #[serde(default)]
+    target_hit_days: Option<usize>,
+    #[serde(default)]
+    total_days: Option<usize>,
+    #[serde(default)]
+    avg_daily_pnl_distance: Option<f64>,
+    #[serde(default)]
+    min_daily_pnl_distance: Option<f64>,
     robustness: Option<TradingStrategyRobustness>,
 }
 
@@ -628,6 +652,8 @@ pub struct TradingStrategyBacktestResult {
     test_rows: usize,
     low_volatility_threshold: f64,
     entry_hour_utc: u32,
+    #[serde(default)]
+    entry_hours_utc: Vec<u32>,
     candidates: Vec<TradingStrategyBacktestCandidate>,
     best: Option<TradingStrategyBacktestCandidate>,
     paired_probe: Option<TradingStrategyPairedProbe>,
@@ -647,6 +673,7 @@ pub struct TradingStrategyBacktestResponse {
     questions: Vec<String>,
     plan: Vec<String>,
     compute_plan: Option<TradingStrategyComputePlan>,
+    scenario_manifest: Option<TradingScenarioManifest>,
     result: Option<TradingStrategyBacktestResult>,
 }
 
@@ -724,6 +751,17 @@ pub struct TradingPlaceOrderRequest {
     take_profit: Option<f64>,
     stop_loss: Option<f64>,
     time_in_force: Option<String>,
+    approval: Option<TradingLiveApprovalProof>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TradingLiveApprovalProof {
+    approved: bool,
+    approved_at_ms: u64,
+    timestamp_bucket: String,
+    provider_state: String,
+    action_hash: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1019,6 +1057,21 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn trading_approval_bucket(ms: u64) -> String {
+    let bucket = ms / 300_000;
+    format!("5m:{bucket}")
+}
+
+fn trading_order_provider_state(config: &TradingOandaConfigStatus) -> String {
+    format!(
+        "oanda|source={}|base={}|account={}|key={}",
+        config.source,
+        config.base_url,
+        if config.account_id_present { "present" } else { "missing" },
+        if config.api_key_present { "present" } else { "missing" }
+    )
 }
 
 fn default_runtime_state() -> OandaRuntimeState {
@@ -2419,14 +2472,17 @@ fn build_asset_catalog(files: &[TradingHistoryFileSummary]) -> Vec<TradingAssetC
         }
     }
 
+    sort_asset_catalog(by_instrument.into_values().collect::<Vec<_>>())
+}
+
+fn sort_asset_catalog(mut assets: Vec<TradingAssetCatalogEntry>) -> Vec<TradingAssetCatalogEntry> {
     let granularity_rank = |value: &str| {
-        UNIVERSE_SYNC_GRANULARITIES
+        OANDA_GRANULARITIES
             .iter()
             .position(|candidate| candidate.eq_ignore_ascii_case(value))
             .unwrap_or(usize::MAX)
     };
 
-    let mut assets = by_instrument.into_values().collect::<Vec<_>>();
     for asset in &mut assets {
         asset.granularities.sort_by(|a, b| {
             granularity_rank(a)
@@ -2444,6 +2500,46 @@ fn build_asset_catalog(files: &[TradingHistoryFileSummary]) -> Vec<TradingAssetC
         }
     });
     assets
+}
+
+fn full_oanda_catalog_granularities() -> Vec<String> {
+    OANDA_GRANULARITIES
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect()
+}
+
+fn merge_live_oanda_asset_catalog(
+    files: &[TradingHistoryFileSummary],
+    instruments: &[TradingInstrumentSummary],
+) -> Vec<TradingAssetCatalogEntry> {
+    let mut by_instrument = build_asset_catalog(files)
+        .into_iter()
+        .map(|entry| (entry.instrument.clone(), entry))
+        .collect::<HashMap<_, _>>();
+    let full_granularities = full_oanda_catalog_granularities();
+    for item in instruments {
+        let instrument = item.name.trim();
+        if instrument.is_empty() {
+            continue;
+        }
+        let asset = by_instrument
+            .entry(instrument.to_string())
+            .or_insert_with(|| TradingAssetCatalogEntry {
+                instrument: instrument.to_string(),
+                display_name: item.display_name.clone(),
+                asset_class: item.asset_class.clone(),
+                granularities: Vec::new(),
+                rows: 0,
+                first_time: None,
+                last_time: None,
+                updated_at_ms: 0,
+            });
+        asset.display_name = item.display_name.clone();
+        asset.asset_class = item.asset_class.clone();
+        asset.granularities = full_granularities.clone();
+    }
+    sort_asset_catalog(by_instrument.into_values().collect::<Vec<_>>())
 }
 
 fn read_history_csv_tail(path: &Path, max_rows: usize) -> Result<String, String> {
@@ -3105,6 +3201,75 @@ fn normalize_strategy_tokens(values: Option<Vec<String>>) -> Option<Vec<String>>
     if out.is_empty() { None } else { Some(out) }
 }
 
+fn extract_strategy_entry_hours(source: &str) -> Vec<u32> {
+    let mut hours = Vec::<u32>::new();
+    let normalized = source.to_lowercase();
+    for token in normalized.split_whitespace() {
+        let compact = token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != ':');
+        if compact.is_empty() {
+            continue;
+        }
+        let candidate = if let Some(stripped) = compact.strip_suffix('h') {
+            stripped
+        } else if let Some((prefix, suffix)) = compact.split_once(':') {
+            if suffix == "00" {
+                prefix
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        };
+        let candidate = candidate.trim();
+        if candidate.is_empty() || candidate.len() > 2 {
+            continue;
+        }
+        if let Ok(hour) = candidate.parse::<u32>() {
+            if hour <= 23 && !hours.contains(&hour) {
+                hours.push(hour);
+            }
+        }
+    }
+    hours.sort_unstable();
+    hours
+}
+
+fn normalize_strategy_entry_hours(
+    entry_hour: Option<u32>,
+    entry_hours: Option<Vec<u32>>,
+    source_text: Option<&str>,
+) -> Vec<u32> {
+    let mut hours = entry_hours.unwrap_or_default();
+    if hours.is_empty() {
+        if let Some(source_text) = source_text {
+            let parsed = extract_strategy_entry_hours(source_text);
+            if parsed.len() >= 2 {
+                hours = parsed;
+            }
+        }
+    }
+    if hours.is_empty() {
+        if let Some(entry_hour) = entry_hour {
+            hours.push(entry_hour);
+        }
+    }
+    if hours.is_empty() {
+        hours.push(21);
+    }
+    hours.retain(|hour| *hour <= 23);
+    hours.sort_unstable();
+    hours.dedup();
+    hours
+}
+
+fn strategy_entry_hours(spec: &TradingStrategySpec) -> Vec<u32> {
+    normalize_strategy_entry_hours(
+        spec.entry_hour,
+        spec.entry_hours.clone(),
+        spec.source_text.as_deref(),
+    )
+}
+
 fn slash_strategy_token(value: &str) -> String {
     if value.trim_start().starts_with('/') {
         value.trim().to_string()
@@ -3138,6 +3303,13 @@ fn normalize_strategy_spec(mut spec: TradingStrategySpec) -> TradingStrategySpec
         .low_volatility_metric
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty());
+    let normalized_entry_hours = normalize_strategy_entry_hours(
+        spec.entry_hour,
+        spec.entry_hours.take(),
+        spec.source_text.as_deref(),
+    );
+    spec.entry_hour = normalized_entry_hours.first().copied();
+    spec.entry_hours = Some(normalized_entry_hours);
     spec.candle_refs = normalize_strategy_tokens(spec.candle_refs);
     spec.indicator_refs = normalize_strategy_tokens(spec.indicator_refs);
     spec.metric_commands = normalize_strategy_tokens(spec.metric_commands);
@@ -3231,14 +3403,15 @@ fn validate_strategy_spec(spec: &TradingStrategySpec) -> Vec<TradingStrategyMiss
             &["H1", "M30", "H4"],
         );
     }
-    if spec.entry_hour.is_none_or(|hour| hour > 23) {
+    let entry_hours = strategy_entry_hours(spec);
+    if entry_hours.is_empty() || entry_hours.iter().any(|hour| *hour > 23) {
         push_strategy_missing(
             &mut missing,
             "entry_hour",
             "Heure d'entrée",
             "A quelle heure exacte faut-il ouvrir le trade ?",
             "Une stratégie horaire doit utiliser une heure stable, bornée entre 0 et 23.",
-            &["21h", "21:00 UTC"],
+            &["21h", "11h 15h 21h UTC"],
         );
     }
     if !strategy_timezone_is_utc_like(spec.entry_timezone.as_deref()) {
@@ -3253,7 +3426,7 @@ fn validate_strategy_spec(spec: &TradingStrategySpec) -> Vec<TradingStrategyMiss
     }
     if !matches!(
         spec.direction.as_deref().unwrap_or(""),
-        "long" | "short" | "buy" | "sell" | "both" | "auto"
+        "long" | "short" | "buy" | "sell" | "both" | "auto" | "paired" | "straddle"
     ) {
         push_strategy_missing(
             &mut missing,
@@ -3376,6 +3549,84 @@ fn strategy_sha256(input: &str) -> String {
     strategy_hex(&hasher.finalize())
 }
 
+fn trading_order_action_hash(
+    instrument: &str,
+    side: &str,
+    units: f64,
+    order_type: &str,
+    limit_price: Option<f64>,
+    stop_loss: Option<f64>,
+    take_profit: Option<f64>,
+    time_in_force: &str,
+    provider_state: &str,
+    timestamp_bucket: &str,
+) -> String {
+    let payload = json!({
+        "instrument": instrument,
+        "side": side,
+        "units": format!("{:.8}", units),
+        "orderType": order_type,
+        "limitPrice": limit_price.map(|value| format!("{value:.8}")),
+        "stopLoss": stop_loss.map(|value| format!("{value:.8}")),
+        "takeProfit": take_profit.map(|value| format!("{value:.8}")),
+        "timeInForce": time_in_force,
+        "providerState": provider_state,
+        "timestampBucket": timestamp_bucket,
+    });
+    strategy_sha256(&payload.to_string())
+}
+
+fn validate_trading_order_approval(
+    request: &TradingPlaceOrderRequest,
+    instrument: &str,
+    side: &str,
+    order_type: &str,
+    time_in_force: &str,
+    provider_state: &str,
+    now_ms_value: u64,
+) -> Result<(String, String), String> {
+    let approval = request
+        .approval
+        .as_ref()
+        .ok_or_else(|| "Live trading order requires explicit approval.".to_string())?;
+    if !approval.approved {
+        return Err("Live trading order approval is not confirmed.".to_string());
+    }
+    if now_ms_value.saturating_sub(approval.approved_at_ms) > 300_000 {
+        return Err("Live trading approval expired; approve again.".to_string());
+    }
+    let expected_bucket = trading_approval_bucket(approval.approved_at_ms);
+    if approval.timestamp_bucket != expected_bucket {
+        return Err("Live trading approval bucket is invalid.".to_string());
+    }
+    if approval.provider_state != provider_state {
+        return Err("Live trading provider state changed; approve again.".to_string());
+    }
+    let expected_action_hash = trading_order_action_hash(
+        instrument,
+        side,
+        request.units,
+        order_type,
+        request.limit_price,
+        request.stop_loss,
+        request.take_profit,
+        time_in_force,
+        provider_state,
+        &expected_bucket,
+    );
+    if approval.action_hash != expected_action_hash {
+        return Err("Live trading approval hash mismatch; approve again.".to_string());
+    }
+    let proof_payload = json!({
+        "approved": true,
+        "approvedAtMs": approval.approved_at_ms,
+        "providerState": provider_state,
+        "timestampBucket": expected_bucket,
+        "actionHash": expected_action_hash,
+    });
+    Ok((expected_bucket, strategy_sha256(&proof_payload.to_string())))
+}
+
 fn strategy_cache_artifact_path(cache_key: &str) -> PathBuf {
     let safe = cache_key
         .chars()
@@ -3428,12 +3679,14 @@ fn strategy_template_hash(spec: &TradingStrategySpec, data_hash: &str) -> String
         "broker": spec.broker,
         "pointSize": spec.point_size,
         "entryHour": spec.entry_hour,
+        "entryHours": spec.entry_hours,
         "entryTimezone": spec.entry_timezone,
         "direction": spec.direction,
         "stopLossDistance": spec.stop_loss_distance,
         "takeProfitMinDistance": spec.take_profit_min_distance,
         "takeProfitMaxDistance": spec.take_profit_max_distance,
         "targetWinRate": spec.target_win_rate,
+        "dailyProfitTargetDistance": spec.daily_profit_target_distance,
         "lowVolatilityMetric": spec.low_volatility_metric,
         "lowVolatilityLookback": spec.low_volatility_lookback,
         "lowVolatilityPercentile": spec.low_volatility_percentile,
@@ -3456,10 +3709,13 @@ fn strategy_template_from_spec(
     data_hash: &str,
     template_hash: &str,
 ) -> TradingStrategyTemplate {
+    let entry_hours = strategy_entry_hours(spec);
     TradingStrategyTemplate {
         template_id: format!("strategy-template-{}", &template_hash[..16.min(template_hash.len())]),
         command: "/strategy_".to_string(),
-        family: if spec.force_daily_entry.unwrap_or(false) {
+        family: if strategy_is_paired_mode(spec) && spec.force_daily_entry.unwrap_or(false) {
+            "timed_paired_daily_entry_grid".to_string()
+        } else if spec.force_daily_entry.unwrap_or(false) {
             "timed_daily_entry_grid".to_string()
         } else {
             "timed_low_volatility_grid".to_string()
@@ -3468,7 +3724,7 @@ fn strategy_template_from_spec(
         granularity: spec.granularity.as_deref().unwrap_or("H1").to_string(),
         broker: spec.broker.as_deref().unwrap_or("oanda").to_string(),
         direction: spec.direction.as_deref().unwrap_or("both").to_string(),
-        entry_hour_utc: spec.entry_hour.unwrap_or(21),
+        entry_hour_utc: entry_hours.first().copied().unwrap_or(21),
         target_win_rate: spec.target_win_rate,
         parameter_hash: template_hash.to_string(),
         data_hash: data_hash.to_string(),
@@ -3476,6 +3732,7 @@ fn strategy_template_from_spec(
 }
 
 fn strategy_plan_lines(spec: &TradingStrategySpec) -> Vec<String> {
+    let entry_hours = strategy_entry_hours(spec);
     vec![
         "runner=forge-tauri-rust-strategy-backtest".to_string(),
         "kasm_plan=slash metric manifest, condition bytecode, stable cache keys, paired long/short probe".to_string(),
@@ -3485,15 +3742,19 @@ fn strategy_plan_lines(spec: &TradingStrategySpec) -> Vec<String> {
             spec.granularity.as_deref().unwrap_or("n/a")
         ),
         format!(
-            "entry={} when UTC hour == {}",
-            if spec.force_daily_entry.unwrap_or(false) {
+            "entry={} when UTC hour in [{}]",
+            if strategy_is_paired_mode(spec) {
+                "force paired long+short per open trading day"
+            } else if spec.force_daily_entry.unwrap_or(false) {
                 "force one trade per open trading day"
             } else {
                 "once per candle"
             },
-            spec.entry_hour
+            entry_hours
+                .iter()
                 .map(|value| value.to_string())
-                .unwrap_or_else(|| "n/a".to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         format!(
             "{}={} lookback={} percentile={}",
@@ -4143,14 +4404,103 @@ fn strategy_directions(direction: &str) -> Vec<String> {
     match direction.trim().to_lowercase().as_str() {
         "long" | "buy" => vec!["long".to_string()],
         "short" | "sell" => vec!["short".to_string()],
+        "paired" | "straddle" => vec!["paired".to_string()],
         _ => vec!["long".to_string(), "short".to_string()],
     }
+}
+
+fn strategy_is_paired_mode(spec: &TradingStrategySpec) -> bool {
+    matches!(
+        spec.direction.as_deref().unwrap_or("").trim().to_lowercase().as_str(),
+        "paired" | "straddle"
+    )
+}
+
+fn strategy_filter_matches_requested_refs(
+    filter: &StrategyEntryFilter,
+    spec: &TradingStrategySpec,
+) -> bool {
+    let Some(requested_refs) = spec.indicator_refs.as_ref() else {
+        return true;
+    };
+    if requested_refs.is_empty() {
+        return true;
+    }
+    filter
+        .indicator_refs
+        .iter()
+        .any(|reference| requested_refs.iter().any(|requested| requested.eq_ignore_ascii_case(reference)))
 }
 
 #[derive(Debug, Clone)]
 struct StrategyBacktestTrade {
     entry_time: String,
     pnl_distance: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct StrategyDailyPerformance {
+    total_days: usize,
+    positive_days: usize,
+    negative_days: usize,
+    target_hit_days: usize,
+    avg_daily_pnl_distance: f64,
+    min_daily_pnl_distance: f64,
+}
+
+impl StrategyDailyPerformance {
+    fn daily_target_hit_rate(&self) -> Option<f64> {
+        if self.total_days > 0 {
+            Some(self.target_hit_days as f64 / self.total_days as f64)
+        } else {
+            None
+        }
+    }
+
+    fn positive_day_rate(&self) -> Option<f64> {
+        if self.total_days > 0 {
+            Some(self.positive_days as f64 / self.total_days as f64)
+        } else {
+            None
+        }
+    }
+}
+
+fn strategy_daily_performance(
+    trades: &[StrategyBacktestTrade],
+    daily_target_distance: f64,
+) -> Option<StrategyDailyPerformance> {
+    let mut days = BTreeMap::<String, f64>::new();
+    for trade in trades {
+        let day = trade.entry_time.get(..10)?.to_string();
+        *days.entry(day).or_insert(0.0) += trade.pnl_distance;
+    }
+    if days.is_empty() {
+        return None;
+    }
+    let total_days = days.len();
+    let mut performance = StrategyDailyPerformance {
+        total_days,
+        min_daily_pnl_distance: f64::INFINITY,
+        ..StrategyDailyPerformance::default()
+    };
+    for pnl in days.values().copied() {
+        performance.avg_daily_pnl_distance += pnl;
+        performance.min_daily_pnl_distance = performance.min_daily_pnl_distance.min(pnl);
+        if pnl > 0.0 {
+            performance.positive_days += 1;
+        } else if pnl < 0.0 {
+            performance.negative_days += 1;
+        }
+        if pnl >= daily_target_distance {
+            performance.target_hit_days += 1;
+        }
+    }
+    performance.avg_daily_pnl_distance /= total_days as f64;
+    if !performance.min_daily_pnl_distance.is_finite() {
+        performance.min_daily_pnl_distance = 0.0;
+    }
+    Some(performance)
 }
 
 #[derive(Debug)]
@@ -4167,6 +4517,11 @@ struct StrategyIndicatorFeatureBank {
     upper: Vec<f64>,
     lower: Vec<f64>,
     vwap: Vec<f64>,
+    vwap_sigma: Vec<f64>,
+    vwap_ext1_up: Vec<f64>,
+    vwap_ext1_down: Vec<f64>,
+    vwap_ext2_up: Vec<f64>,
+    vwap_ext2_down: Vec<f64>,
     rsi14: Vec<f64>,
     atr14: Vec<f64>,
     macd_line: Vec<f64>,
@@ -4373,6 +4728,24 @@ impl StrategySimulationStats {
             0.0
         }
     }
+
+    fn profit_factor(&self) -> Option<f64> {
+        if self.gross_loss > 0.0 {
+            Some(self.gross_profit / self.gross_loss)
+        } else if self.gross_profit > 0.0 {
+            Some(f64::INFINITY)
+        } else {
+            None
+        }
+    }
+
+    fn avg_hold_bars(&self) -> f64 {
+        if self.trades > 0 {
+            self.held_sum as f64 / self.trades as f64
+        } else {
+            0.0
+        }
+    }
 }
 
 fn strategy_entry_indices(
@@ -4381,10 +4754,13 @@ fn strategy_entry_indices(
     threshold: f64,
     start_index: usize,
     end_index: usize,
-    entry_hour: u32,
+    entry_hours: &[u32],
     force_daily_entry: bool,
 ) -> Vec<usize> {
     if candles.len() < 2 || start_index >= candles.len() {
+        return Vec::new();
+    }
+    if entry_hours.is_empty() {
         return Vec::new();
     }
     let end_limit = end_index.min(candles.len().saturating_sub(1));
@@ -4395,7 +4771,10 @@ fn strategy_entry_indices(
         {
             continue;
         }
-        if strategy_hour_utc(&candles[index].time) != Some(entry_hour) {
+        let Some(entry_hour) = strategy_hour_utc(&candles[index].time) else {
+            continue;
+        };
+        if !entry_hours.contains(&entry_hour) {
             continue;
         }
         let entry = candles[index].open;
@@ -4413,15 +4792,20 @@ fn strategy_entry_indices_cached(
     threshold: f64,
     start_index: usize,
     end_index: usize,
-    entry_hour: u32,
+    entry_hours: &[u32],
     force_daily_entry: bool,
     data_hash: &str,
     cache_snapshot: &mut StrategyCacheSnapshot,
 ) -> (Vec<usize>, String) {
+    let entry_hours_key = entry_hours
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     let key = format!(
         "entry-scan-{}",
         &strategy_sha256(&format!(
-            "{data_hash}|{threshold:.10}|{start_index}|{end_index}|{entry_hour}|force_daily={force_daily_entry}|{}",
+            "{data_hash}|{threshold:.10}|{start_index}|{end_index}|hours={entry_hours_key}|force_daily={force_daily_entry}|{}",
             low_volatility_values.len()
         ))[..16]
     );
@@ -4438,7 +4822,7 @@ fn strategy_entry_indices_cached(
         threshold,
         start_index,
         end_index,
-        entry_hour,
+        entry_hours,
         force_daily_entry,
     );
     if let Ok(mut cache) = trading_strategy_entry_scan_cache().lock() {
@@ -4448,7 +4832,8 @@ fn strategy_entry_indices_cached(
         "node": "entry_scan",
         "rows": candles.len(),
         "entries": entries.len(),
-        "entryHourUtc": entry_hour,
+        "entryHourUtc": entry_hours.first().copied().unwrap_or(21),
+        "entryHoursUtc": entry_hours,
         "threshold": threshold,
         "forceDailyEntry": force_daily_entry,
         "dataHash": data_hash,
@@ -4536,6 +4921,41 @@ fn strategy_vwap(candles: &[TradingCandlePoint]) -> Vec<f64> {
         out.push(if volume > 0.0 { pv / volume } else { candle.close });
     }
     out
+}
+
+fn strategy_vwap_extensions(
+    candles: &[TradingCandlePoint],
+) -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>) {
+    let mut vwap = Vec::with_capacity(candles.len());
+    let mut sigma = Vec::with_capacity(candles.len());
+    let mut ext1_up = Vec::with_capacity(candles.len());
+    let mut ext1_down = Vec::with_capacity(candles.len());
+    let mut ext2_up = Vec::with_capacity(candles.len());
+    let mut ext2_down = Vec::with_capacity(candles.len());
+    let mut pv = 0.0;
+    let mut sq_pv = 0.0;
+    let mut volume = 0.0;
+    for candle in candles {
+        let typical = (candle.high + candle.low + candle.close) / 3.0;
+        let vol = (candle.volume as f64).max(1.0);
+        pv += typical * vol;
+        sq_pv += typical * typical * vol;
+        volume += vol;
+        let mean = if volume > 0.0 { pv / volume } else { candle.close };
+        let variance = if volume > 0.0 {
+            ((sq_pv / volume) - mean * mean).max(0.0)
+        } else {
+            0.0
+        };
+        let stddev = variance.sqrt();
+        vwap.push(mean);
+        sigma.push(stddev);
+        ext1_up.push(mean + stddev);
+        ext1_down.push(mean - stddev);
+        ext2_up.push(mean + 2.0 * stddev);
+        ext2_down.push(mean - 2.0 * stddev);
+    }
+    (vwap, sigma, ext1_up, ext1_down, ext2_up, ext2_down)
 }
 
 fn strategy_sma_values(values: &[f64], period: usize) -> Vec<f64> {
@@ -4753,6 +5173,8 @@ fn strategy_feature_bank_cached(
     cache_snapshot.record("indicator_feature_bank", false, 0);
 
     let (basis, upper, lower) = strategy_bollinger_bands(candles, 20, 2.0);
+    let (vwap, vwap_sigma, vwap_ext1_up, vwap_ext1_down, vwap_ext2_up, vwap_ext2_down) =
+        strategy_vwap_extensions(candles);
     let (macd_line, macd_signal, macd_histogram) = strategy_macd(candles, 12, 26, 9);
     let (donchian20_upper, donchian20_lower, donchian20_mid) =
         strategy_donchian_channels(candles, 20);
@@ -4790,7 +5212,12 @@ fn strategy_feature_bank_cached(
         basis,
         upper,
         lower,
-        vwap: strategy_vwap(candles),
+        vwap,
+        vwap_sigma,
+        vwap_ext1_up,
+        vwap_ext1_down,
+        vwap_ext2_up,
+        vwap_ext2_down,
         rsi14: strategy_rsi_close(candles, 14),
         macd_line,
         macd_signal,
@@ -4831,7 +5258,7 @@ fn strategy_feature_bank_cached(
         "rows": candles.len(),
         "vectors": [
             "EMA8", "EMA13", "EMA21", "EMA34", "EMA50", "EMA55", "EMA100", "EMA200",
-            "Bollinger20x2", "VWAP", "RSI14", "ATR14", "MACD12_26_9",
+            "Bollinger20x2", "VWAP", "VWAPExtensions", "RSI14", "ATR14", "MACD12_26_9",
             "Donchian20", "Donchian55", "Stochastic14_3", "Range", "Body", "Volume"
         ],
         "reusedBy": ["long_filter_bank", "short_filter_bank", "eclat_bitsets"],
@@ -5042,6 +5469,11 @@ fn strategy_directional_entry_filters_cached(
     let upper = feature_bank.upper.as_slice();
     let lower = feature_bank.lower.as_slice();
     let vwap = feature_bank.vwap.as_slice();
+    let vwap_sigma = feature_bank.vwap_sigma.as_slice();
+    let vwap_ext1_up = feature_bank.vwap_ext1_up.as_slice();
+    let vwap_ext1_down = feature_bank.vwap_ext1_down.as_slice();
+    let vwap_ext2_up = feature_bank.vwap_ext2_up.as_slice();
+    let vwap_ext2_down = feature_bank.vwap_ext2_down.as_slice();
     let rsi14 = feature_bank.rsi14.as_slice();
     let atr14 = feature_bank.atr14.as_slice();
     let macd_line = feature_bank.macd_line.as_slice();
@@ -5108,6 +5540,10 @@ fn strategy_directional_entry_filters_cached(
     };
     let near_by_atr = |a: f64, b: f64, i: usize, max_atr: f64| {
         a.is_finite() && b.is_finite() && ((a - b).abs() / atr_at(i)) <= max_atr
+    };
+    let near_by_sigma = |a: f64, b: f64, i: usize, max_sigma: f64| {
+        let sigma = vwap_sigma.get(i).copied().unwrap_or(f64::NAN).abs();
+        a.is_finite() && b.is_finite() && sigma.is_finite() && sigma > f64::EPSILON && ((a - b).abs() / sigma) <= max_sigma
     };
     let crosses_above = |values: &[f64], reference: &[f64], i: usize| {
         i > 0
@@ -5233,6 +5669,12 @@ fn strategy_directional_entry_filters_cached(
         add_atom!("cross_close_above_ema200", "close crosses above EMA200", ["/ema_h1_200_close", "/candle_h1_close"], |i: usize| i > 0 && candles[i - 1].close <= ema200[i - 1] && candles[i].close > ema200[i]);
         add_atom!("cross_close_above_vwap", "close crosses above VWAP", ["/vwap_h1_session_hlc3"], |i: usize| i > 0 && candles[i - 1].close <= vwap[i - 1] && candles[i].close > vwap[i]);
         add_atom!("close_gt_vwap", "close > VWAP", ["/vwap_h1_session_hlc3"], |i: usize| candles[i].close > vwap[i]);
+        add_atom!("close_gt_vwap_ext1_up", "close > VWAP +1sigma", ["/vwap_h1_session_hlc3", "/vwap_h1_ext1_up"], |i: usize| candles[i].close > vwap_ext1_up[i]);
+        add_atom!("close_gt_vwap_ext2_up", "close > VWAP +2sigma", ["/vwap_h1_session_hlc3", "/vwap_h1_ext2_up"], |i: usize| candles[i].close > vwap_ext2_up[i]);
+        add_atom!("candle_cross_close_above_vwap_ext1_down", "candle crosses and closes above VWAP -1sigma", ["/vwap_h1_ext1_down"], |i: usize| candles[i].low <= vwap_ext1_down[i] && candles[i].close > vwap_ext1_down[i]);
+        add_atom!("candle_cross_close_above_vwap_ext2_down", "candle crosses and closes above VWAP -2sigma", ["/vwap_h1_ext2_down"], |i: usize| candles[i].low <= vwap_ext2_down[i] && candles[i].close > vwap_ext2_down[i]);
+        add_atom!("close_near_vwap_ext1_down_sigma", "close near VWAP -1sigma", ["/vwap_h1_ext1_down"], |i: usize| near_by_sigma(candles[i].close, vwap_ext1_down[i], i, 0.35));
+        add_atom!("close_between_vwap_and_ext1_up", "close between VWAP and VWAP +1sigma", ["/vwap_h1_session_hlc3", "/vwap_h1_ext1_up"], |i: usize| candles[i].close >= vwap[i] && candles[i].close <= vwap_ext1_up[i]);
         add_atom!("close_within_05atr_ema21", "close within 0.5 ATR of EMA21", ["/ema_h1_21_close", "/atr_h1_14"], |i: usize| near_by_atr(candles[i].close, ema21[i], i, 0.50));
         add_atom!("close_within_05atr_vwap", "close within 0.5 ATR of VWAP", ["/vwap_h1_session_hlc3", "/atr_h1_14"], |i: usize| near_by_atr(candles[i].close, vwap[i], i, 0.50));
         add_atom!("close_gt_boll_basis", "close > Bollinger basis", ["/bollinger_h1_20_2_close_basis"], |i: usize| candles[i].close > basis[i]);
@@ -5286,6 +5728,12 @@ fn strategy_directional_entry_filters_cached(
         add_atom!("cross_close_below_ema200", "close crosses below EMA200", ["/ema_h1_200_close", "/candle_h1_close"], |i: usize| i > 0 && candles[i - 1].close >= ema200[i - 1] && candles[i].close < ema200[i]);
         add_atom!("cross_close_below_vwap", "close crosses below VWAP", ["/vwap_h1_session_hlc3"], |i: usize| i > 0 && candles[i - 1].close >= vwap[i - 1] && candles[i].close < vwap[i]);
         add_atom!("close_lt_vwap", "close < VWAP", ["/vwap_h1_session_hlc3"], |i: usize| candles[i].close < vwap[i]);
+        add_atom!("close_lt_vwap_ext1_down", "close < VWAP -1sigma", ["/vwap_h1_session_hlc3", "/vwap_h1_ext1_down"], |i: usize| candles[i].close < vwap_ext1_down[i]);
+        add_atom!("close_lt_vwap_ext2_down", "close < VWAP -2sigma", ["/vwap_h1_session_hlc3", "/vwap_h1_ext2_down"], |i: usize| candles[i].close < vwap_ext2_down[i]);
+        add_atom!("candle_cross_close_below_vwap_ext1_up", "candle crosses and closes below VWAP +1sigma", ["/vwap_h1_ext1_up"], |i: usize| candles[i].high >= vwap_ext1_up[i] && candles[i].close < vwap_ext1_up[i]);
+        add_atom!("candle_cross_close_below_vwap_ext2_up", "candle crosses and closes below VWAP +2sigma", ["/vwap_h1_ext2_up"], |i: usize| candles[i].high >= vwap_ext2_up[i] && candles[i].close < vwap_ext2_up[i]);
+        add_atom!("close_near_vwap_ext1_up_sigma", "close near VWAP +1sigma", ["/vwap_h1_ext1_up"], |i: usize| near_by_sigma(candles[i].close, vwap_ext1_up[i], i, 0.35));
+        add_atom!("close_between_vwap_and_ext1_down", "close between VWAP and VWAP -1sigma", ["/vwap_h1_session_hlc3", "/vwap_h1_ext1_down"], |i: usize| candles[i].close <= vwap[i] && candles[i].close >= vwap_ext1_down[i]);
         add_atom!("close_within_05atr_ema21_short", "close within 0.5 ATR of EMA21", ["/ema_h1_21_close", "/atr_h1_14"], |i: usize| near_by_atr(candles[i].close, ema21[i], i, 0.50));
         add_atom!("close_within_05atr_vwap_short", "close within 0.5 ATR of VWAP", ["/vwap_h1_session_hlc3", "/atr_h1_14"], |i: usize| near_by_atr(candles[i].close, vwap[i], i, 0.50));
         add_atom!("close_lt_boll_basis", "close < Bollinger basis", ["/bollinger_h1_20_2_close_basis"], |i: usize| candles[i].close < basis[i]);
@@ -5603,6 +6051,69 @@ fn simulate_strategy_entry_outcome(
     if pnl.is_finite() { Some((pnl, held)) } else { None }
 }
 
+fn simulate_tp_sl_only_exit(
+    candles: &[TradingCandlePoint],
+    index: usize,
+    direction: &str,
+    stop_loss: f64,
+    take_profit: f64,
+    execution_cost: f64,
+) -> Option<(bool, f64, usize)> {
+    if index >= candles.len() {
+        return None;
+    }
+    let entry = candles[index].open;
+    if !entry.is_finite() || entry <= 0.0 {
+        return None;
+    }
+    let stop = if direction == "long" {
+        entry - stop_loss
+    } else {
+        entry + stop_loss
+    };
+    let target = if direction == "long" {
+        entry + take_profit
+    } else {
+        entry - take_profit
+    };
+    for exit_index in index..candles.len() {
+        let candle = &candles[exit_index];
+        let held = exit_index.saturating_sub(index).max(1);
+        if direction == "long" {
+            if candle.low <= stop {
+                return Some((
+                    false,
+                    -stop_loss - execution_cost,
+                    held,
+                ));
+            }
+            if candle.high >= target {
+                return Some((
+                    true,
+                    take_profit - execution_cost,
+                    held,
+                ));
+            }
+        } else {
+            if candle.high >= stop {
+                return Some((
+                    false,
+                    -stop_loss - execution_cost,
+                    held,
+                ));
+            }
+            if candle.low <= target {
+                return Some((
+                    true,
+                    take_profit - execution_cost,
+                    held,
+                ));
+            }
+        }
+    }
+    None
+}
+
 fn strategy_entry_outcome_cache_key(
     candles: &[TradingCandlePoint],
     index: usize,
@@ -5915,6 +6426,94 @@ fn simulate_strategy_candidate_on_entries(
     stats
 }
 
+fn simulate_strategy_paired_candidate_on_entries_cached(
+    candles: &[TradingCandlePoint],
+    entries: &[usize],
+    entries_cache_key: &str,
+    stop_loss: f64,
+    take_profit: f64,
+    execution_cost: f64,
+    max_hold: usize,
+    cache_snapshot: &mut StrategyCacheSnapshot,
+) -> StrategySimulationStats {
+    let key = format!(
+        "stats-{}",
+        &strategy_sha256(&format!(
+            "{entries_cache_key}|paired|mfe-mae-v1|sl={stop_loss:.10}|tp={take_profit:.10}|cost={execution_cost:.10}|hold={max_hold}"
+        ))[..16]
+    );
+    if let Ok(cache) = trading_strategy_stats_cache().lock() {
+        if let Some(stats) = cache.get(&key) {
+            cache_snapshot.record("mask_reduce_metrics", true, entries.len().saturating_mul(2));
+            return stats.clone();
+        }
+    }
+    cache_snapshot.record("mask_reduce_metrics", false, 0);
+    let mut stats = StrategySimulationStats::default();
+    let mut loss_streak = 0usize;
+    let mut outcome_hits = 0usize;
+    let mut outcome_misses = 0usize;
+    let mut max_favorable_distance = 0.0_f64;
+    let mut max_adverse_distance = 0.0_f64;
+    for index in entries {
+        for direction in ["long", "short"] {
+            let (outcome, hit) = strategy_entry_outcome_cached(
+                candles,
+                *index,
+                direction,
+                stop_loss,
+                execution_cost,
+                max_hold,
+            );
+            if hit {
+                outcome_hits += 1;
+            } else {
+                outcome_misses += 1;
+            }
+            if let Some(outcome) = outcome {
+                max_favorable_distance = max_favorable_distance.max(outcome.max_favorable_distance);
+                max_adverse_distance = max_adverse_distance.max(outcome.max_adverse_distance);
+                let (pnl, held) = strategy_eval_entry_outcome(&outcome, take_profit);
+                stats.record(&outcome.entry_time, pnl, held, &mut loss_streak);
+            }
+        }
+    }
+    if outcome_hits > 0 {
+        cache_snapshot.record(
+            "mfe_mae_cube",
+            true,
+            outcome_hits.saturating_mul(max_hold.max(1)),
+        );
+    }
+    if outcome_misses > 0 {
+        cache_snapshot.record(
+            "mfe_mae_cube",
+            false,
+            outcome_misses.saturating_mul(max_hold.max(1)),
+        );
+    }
+    if let Ok(mut cache) = trading_strategy_stats_cache().lock() {
+        cache.insert(key.clone(), stats.clone());
+    }
+    strategy_write_cache_marker(&key, json!({
+        "node": "mask_reduce_metrics",
+        "entriesKey": entries_cache_key,
+        "direction": "paired",
+        "takeProfit": take_profit,
+        "stopLoss": stop_loss,
+        "entries": entries.len(),
+        "legs": entries.len().saturating_mul(2),
+        "outcomeHits": outcome_hits,
+        "outcomeMisses": outcome_misses,
+        "maxFavorableDistance": max_favorable_distance,
+        "maxAdverseDistance": max_adverse_distance,
+        "trades": stats.trades,
+        "wins": stats.wins,
+        "losses": stats.losses,
+    }));
+    stats
+}
+
 fn simulate_strategy_candidate_on_entries_cached(
     candles: &[TradingCandlePoint],
     entries: &[usize],
@@ -6005,7 +6604,7 @@ fn simulate_strategy_candidate_range(
     threshold: f64,
     start_index: usize,
     end_index: usize,
-    entry_hour: u32,
+    entry_hours: &[u32],
     force_daily_entry: bool,
     direction: &str,
     stop_loss: f64,
@@ -6019,7 +6618,7 @@ fn simulate_strategy_candidate_range(
         threshold,
         start_index,
         end_index,
-        entry_hour,
+        entry_hours,
         force_daily_entry,
     );
     simulate_strategy_candidate_on_entries(
@@ -6220,7 +6819,7 @@ fn compute_strategy_robustness(
     low_volatility_values: &[f64],
     threshold: f64,
     train_rows: usize,
-    entry_hour: u32,
+    entry_hours: &[u32],
     force_daily_entry: bool,
     direction: &str,
     stop_loss: f64,
@@ -6237,7 +6836,7 @@ fn compute_strategy_robustness(
         threshold,
         warmup,
         train_rows,
-        entry_hour,
+        entry_hours,
         force_daily_entry,
         direction,
         stop_loss,
@@ -6251,7 +6850,7 @@ fn compute_strategy_robustness(
         threshold,
         train_rows,
         candles.len().saturating_sub(1),
-        entry_hour,
+        entry_hours,
         force_daily_entry,
         direction,
         stop_loss,
@@ -6284,7 +6883,7 @@ fn compute_strategy_robustness(
                 threshold,
                 start,
                 end,
-                entry_hour,
+                entry_hours,
                 force_daily_entry,
                 direction,
                 stop_loss,
@@ -6325,7 +6924,7 @@ fn compute_strategy_robustness(
             threshold,
             train_rows,
             candles.len().saturating_sub(1),
-            entry_hour,
+            entry_hours,
             force_daily_entry,
             direction,
             sl,
@@ -6423,7 +7022,7 @@ fn compute_strategy_robustness_cached(
     low_volatility_values: &[f64],
     threshold: f64,
     train_rows: usize,
-    entry_hour: u32,
+    entry_hours: &[u32],
     force_daily_entry: bool,
     direction: &str,
     stop_loss: f64,
@@ -6436,10 +7035,15 @@ fn compute_strategy_robustness_cached(
     entries_cache_key: &str,
     cache_snapshot: &mut StrategyCacheSnapshot,
 ) -> TradingStrategyRobustness {
+    let entry_hours_key = entry_hours
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     let key = format!(
         "robustness-{}",
         &strategy_sha256(&format!(
-            "{data_hash}|{entries_cache_key}|{direction}|sl={stop_loss:.10}|tp={take_profit:.10}|cost={execution_cost:.10}|hold={max_hold}|target={target_win_rate:.6}|point={point_size:.10}|train={train_rows}|hour={entry_hour}|force_daily={force_daily_entry}|threshold={threshold:.10}"
+            "{data_hash}|{entries_cache_key}|{direction}|sl={stop_loss:.10}|tp={take_profit:.10}|cost={execution_cost:.10}|hold={max_hold}|target={target_win_rate:.6}|point={point_size:.10}|train={train_rows}|hours={entry_hours_key}|force_daily={force_daily_entry}|threshold={threshold:.10}"
         ))[..16]
     );
     if let Ok(cache) = trading_strategy_robustness_cache().lock() {
@@ -6454,7 +7058,7 @@ fn compute_strategy_robustness_cached(
         low_volatility_values,
         threshold,
         train_rows,
-        entry_hour,
+        entry_hours,
         force_daily_entry,
         direction,
         stop_loss,
@@ -6489,10 +7093,14 @@ fn compare_strategy_candidates(
             .as_ref()
             .map(|robustness| robustness.score * 120.0)
             .unwrap_or(0.0);
+        let daily_target = candidate.daily_target_hit_rate.unwrap_or(0.0) * 20_000.0;
+        let positive_days = candidate.positive_day_rate.unwrap_or(0.0) * 4_000.0;
+        let min_daily = candidate.min_daily_pnl_distance.unwrap_or(0.0) * 400.0;
+        let avg_daily = candidate.avg_daily_pnl_distance.unwrap_or(0.0) * 180.0;
         let win_rate = candidate.win_rate.unwrap_or(0.0) * 1_000.0;
         let expectancy = candidate.expectancy_distance * 100.0;
         let trade_depth = (candidate.trades as f64).ln_1p();
-        target_bonus + robust_bonus + win_rate + expectancy + trade_depth
+        target_bonus + robust_bonus + daily_target + positive_days + min_daily + avg_daily + win_rate + expectancy + trade_depth
     };
     score(right)
         .partial_cmp(&score(left))
@@ -6540,6 +7148,10 @@ fn strategy_sanitize_candidate_for_cache(candidate: &mut TradingStrategyBacktest
     candidate.net_pnl_distance = strategy_cache_finite(candidate.net_pnl_distance);
     candidate.profit_factor = strategy_cache_optional_finite(candidate.profit_factor);
     candidate.avg_hold_bars = strategy_cache_finite(candidate.avg_hold_bars);
+    candidate.daily_target_hit_rate = strategy_cache_optional_finite(candidate.daily_target_hit_rate);
+    candidate.positive_day_rate = strategy_cache_optional_finite(candidate.positive_day_rate);
+    candidate.avg_daily_pnl_distance = strategy_cache_optional_finite(candidate.avg_daily_pnl_distance);
+    candidate.min_daily_pnl_distance = strategy_cache_optional_finite(candidate.min_daily_pnl_distance);
     if let Some(robustness) = candidate.robustness.as_mut() {
         robustness.score = strategy_cache_finite(robustness.score);
         robustness.in_sample_win_rate = strategy_cache_optional_finite(robustness.in_sample_win_rate);
@@ -6658,7 +7270,10 @@ fn backtest_strategy_spec(
     .ok_or_else(|| "could not compute low-volatility threshold".to_string())?;
 
     let target_win_rate = spec.target_win_rate.unwrap_or(0.85);
-    let entry_hour = spec.entry_hour.unwrap_or(21);
+    let entry_hours = strategy_entry_hours(spec);
+    let entry_hour = entry_hours.first().copied().unwrap_or(21);
+    let paired_mode = strategy_is_paired_mode(spec);
+    let daily_profit_target = spec.daily_profit_target_distance.unwrap_or(0.07);
     let force_daily_entry = spec.force_daily_entry.unwrap_or(false);
     let stop_loss = spec.stop_loss_distance.unwrap_or(0.0);
     let spread = spec.spread_cost_distance.unwrap_or(0.0).max(0.0);
@@ -6677,7 +7292,7 @@ fn backtest_strategy_spec(
         threshold,
         test_entry_start,
         candles.len().saturating_sub(1),
-        entry_hour,
+        &entry_hours,
         force_daily_entry,
         &data_hash,
         &mut cache_snapshot,
@@ -6707,78 +7322,54 @@ fn backtest_strategy_spec(
     }
 
     let mut candidates = Vec::new();
+    let entry_hours_label = entry_hours
+        .iter()
+        .map(|value| format!("{value}h"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let daily_target_hit_threshold = if paired_mode && force_daily_entry {
+        1.0
+    } else {
+        target_win_rate
+    };
 
-    for direction in &directions {
-        let base_mask = strategy_condition_full_mask_cached(
-            &data_hash,
-            &shared_entry_scan_cache_key,
-            direction,
-            test_entry_indices.len(),
-        );
-        let outcome_grid = strategy_filter_outcome_grid_cached(
-            candles,
-            &test_entry_indices,
-            &base_mask,
-            &shared_entry_scan_cache_key,
-            direction,
-            stop_loss,
-            &tp_grid,
-            execution_cost,
-            max_hold,
-            &mut cache_snapshot,
-        );
-        for point in outcome_grid {
-            let take_profit = point.take_profit_distance;
-            let stats = point.stats;
-            let win_rate = stats.win_rate();
-            let expectancy = stats.expectancy();
-            let robustness = compute_strategy_robustness_cached(
+    if paired_mode {
+        let base_condition_hash =
+            strategy_condition_bits_hash(&data_hash, "paired", &vec![u64::MAX; strategy_condition_mask_words(test_entry_indices.len())], test_entry_indices.len());
+        for take_profit in &tp_grid {
+            let stats = simulate_strategy_paired_candidate_on_entries_cached(
                 candles,
-                &low_volatility_values,
-                threshold,
-                train_rows,
-                entry_hour,
-                force_daily_entry,
-                direction,
+                &test_entry_indices,
+                &shared_entry_scan_cache_key,
                 stop_loss,
-                take_profit,
+                *take_profit,
                 execution_cost,
                 max_hold,
-                target_win_rate,
-                spec.point_size.unwrap_or(0.0),
-                &data_hash,
-                &shared_entry_scan_cache_key,
                 &mut cache_snapshot,
             );
+            let win_rate = stats.win_rate();
+            let expectancy = stats.expectancy();
+            let daily = strategy_daily_performance(&stats.trades_detail, daily_profit_target);
             candidates.push(TradingStrategyBacktestCandidate {
-                direction: direction.clone(),
-                filter_id: "base_low_vol".to_string(),
-                filter_label: if force_daily_entry {
-                    "21h daily entries".to_string()
-                } else {
-                    "21h low-volatility entries".to_string()
-                },
-                condition_hash: base_mask.mask_hash.clone(),
-                mask_ref: base_mask.mask_hash.clone(),
+                direction: "paired".to_string(),
+                filter_id: "base_paired_daily".to_string(),
+                filter_label: format!("{entry_hours_label} paired daily entries"),
+                condition_hash: base_condition_hash.clone(),
+                mask_ref: base_condition_hash.clone(),
                 bytecode_ops: vec![
-                    "ENTRY:HOUR_EQ_21UTC".to_string(),
-                    if force_daily_entry {
-                        "ENTRY:FORCE_ONE_TRADE_PER_OPEN_DAY".to_string()
-                    } else {
-                        "VOL:RANGE_SMA_LE_TRAIN_Q".to_string()
-                    },
+                    format!(
+                        "ENTRY:HOUR_IN_UTC:{}",
+                        entry_hours.iter().map(|value| value.to_string()).collect::<Vec<_>>().join(",")
+                    ),
+                    "ENTRY:FORCE_PAIRED_LONG_SHORT_PER_OPEN_DAY".to_string(),
                 ],
                 display_formula: vec![
-                    "entry hour == 21 UTC".to_string(),
-                    if force_daily_entry {
-                        "one trade each open trading day".to_string()
-                    } else {
-                        "range SMA H1 24 <= train percentile".to_string()
-                    },
+                    format!("entry hour in [{entry_hours_label}] UTC"),
+                    "open long and short together on each selected trading slot".to_string(),
                 ],
-                indicator_refs: vec!["/candle_h1".to_string(), "/range_sma_h1_24".to_string()],
+                indicator_refs: vec!["/candle_h1".to_string()],
                 entry_count: test_entry_indices.len(),
-                take_profit_distance: take_profit,
+                take_profit_distance: *take_profit,
                 trades: stats.trades,
                 wins: stats.wins,
                 losses: stats.losses,
@@ -6788,70 +7379,258 @@ fn backtest_strategy_spec(
                 profit_factor: stats.profit_factor(),
                 max_loss_streak: stats.max_loss_streak,
                 avg_hold_bars: stats.avg_hold_bars(),
-                meets_target: win_rate.is_some_and(|value| value >= target_win_rate) && stats.trades >= 12,
-                robustness: Some(robustness),
+                meets_target: daily
+                    .as_ref()
+                    .and_then(|performance| performance.daily_target_hit_rate())
+                    .is_some_and(|value| value >= daily_target_hit_threshold)
+                    && daily.as_ref().is_some_and(|performance| performance.total_days >= 12),
+                daily_target_hit_rate: daily.as_ref().and_then(|performance| performance.daily_target_hit_rate()),
+                positive_day_rate: daily.as_ref().and_then(|performance| performance.positive_day_rate()),
+                target_hit_days: daily.as_ref().map(|performance| performance.target_hit_days),
+                total_days: daily.as_ref().map(|performance| performance.total_days),
+                avg_daily_pnl_distance: daily.as_ref().map(|performance| performance.avg_daily_pnl_distance),
+                min_daily_pnl_distance: daily.as_ref().map(|performance| performance.min_daily_pnl_distance),
+                robustness: None,
             });
         }
-    }
-
-    candidates.sort_by(compare_strategy_candidates);
-    let base_best = candidates.first().cloned();
-    if !base_best
-        .as_ref()
-        .is_some_and(|candidate| candidate.meets_target)
-    {
-        for direction in &directions {
-            let filters = strategy_directional_entry_filters_cached(
-                candles,
-                &test_entry_indices,
-                &shared_entry_scan_cache_key,
-                direction,
-                &data_hash,
-                force_daily_entry,
-                &mut cache_snapshot,
-            );
-            for filter in filters.into_iter().filter(|filter| filter.id != "base_low_vol") {
-                let outcome_grid = strategy_filter_outcome_grid_cached(
+        candidates.sort_by(compare_strategy_candidates);
+        let base_best = candidates.first().cloned();
+        if !base_best.as_ref().is_some_and(|candidate| candidate.meets_target) {
+            let mut seen_filters = HashMap::<String, ()>::new();
+            for filter_direction in ["long", "short"] {
+                let filters = strategy_directional_entry_filters_cached(
                     candles,
                     &test_entry_indices,
-                    &filter.mask,
                     &shared_entry_scan_cache_key,
-                    direction,
-                    stop_loss,
-                    &tp_grid,
-                    execution_cost,
-                    max_hold,
+                    filter_direction,
+                    &data_hash,
+                    force_daily_entry,
                     &mut cache_snapshot,
                 );
-                for point in outcome_grid {
-                    let take_profit = point.take_profit_distance;
-                    let stats = point.stats;
-                    let win_rate = stats.win_rate();
-                    let expectancy = stats.expectancy();
-                    candidates.push(TradingStrategyBacktestCandidate {
-                        direction: direction.clone(),
-                        filter_id: filter.id.clone(),
-                        filter_label: filter.label.clone(),
-                        condition_hash: filter.condition_hash.clone(),
-                        mask_ref: filter.mask_ref.clone(),
-                        bytecode_ops: filter.bytecode_ops.clone(),
-                        display_formula: filter.display_formula.clone(),
-                        indicator_refs: filter.indicator_refs.clone(),
-                        entry_count: filter.entry_count,
-                        take_profit_distance: take_profit,
-                        trades: stats.trades,
-                        wins: stats.wins,
-                        losses: stats.losses,
-                        win_rate,
-                        expectancy_distance: expectancy,
-                        net_pnl_distance: stats.net_pnl,
-                        profit_factor: stats.profit_factor(),
-                        max_loss_streak: stats.max_loss_streak,
-                        avg_hold_bars: stats.avg_hold_bars(),
-                        meets_target: win_rate.is_some_and(|value| value >= target_win_rate)
-                            && stats.trades >= 12,
-                        robustness: None,
-                    });
+                let paired_filters = filters
+                    .into_iter()
+                    .filter(|filter| filter.id != "base_low_vol")
+                    .filter(|filter| strategy_filter_matches_requested_refs(filter, spec))
+                    .take(24)
+                    .collect::<Vec<_>>();
+                for filter in paired_filters {
+                    let dedupe_key = format!("{}|{}", filter.id, filter.mask_ref);
+                    if seen_filters.insert(dedupe_key, ()).is_some() {
+                        continue;
+                    }
+                    let filtered_entries = strategy_condition_entries_from_mask(&test_entry_indices, &filter.mask);
+                    for take_profit in &tp_grid {
+                        let stats = simulate_strategy_paired_candidate_on_entries_cached(
+                            candles,
+                            &filtered_entries,
+                            &filter.cache_key,
+                            stop_loss,
+                            *take_profit,
+                            execution_cost,
+                            max_hold,
+                            &mut cache_snapshot,
+                        );
+                        let win_rate = stats.win_rate();
+                        let expectancy = stats.expectancy();
+                        let daily = strategy_daily_performance(&stats.trades_detail, daily_profit_target);
+                        candidates.push(TradingStrategyBacktestCandidate {
+                            direction: "paired".to_string(),
+                            filter_id: format!("paired_{}", filter.id),
+                            filter_label: format!("paired daily: {}", filter.label),
+                            condition_hash: filter.condition_hash.clone(),
+                            mask_ref: filter.mask_ref.clone(),
+                            bytecode_ops: filter.bytecode_ops.clone(),
+                            display_formula: filter.display_formula.clone(),
+                            indicator_refs: filter.indicator_refs.clone(),
+                            entry_count: filtered_entries.len(),
+                            take_profit_distance: *take_profit,
+                            trades: stats.trades,
+                            wins: stats.wins,
+                            losses: stats.losses,
+                            win_rate,
+                            expectancy_distance: expectancy,
+                            net_pnl_distance: stats.net_pnl,
+                            profit_factor: stats.profit_factor(),
+                            max_loss_streak: stats.max_loss_streak,
+                            avg_hold_bars: stats.avg_hold_bars(),
+                            meets_target: daily
+                                .as_ref()
+                                .and_then(|performance| performance.daily_target_hit_rate())
+                                .is_some_and(|value| value >= daily_target_hit_threshold)
+                                && daily.as_ref().is_some_and(|performance| performance.total_days >= 12),
+                            daily_target_hit_rate: daily.as_ref().and_then(|performance| performance.daily_target_hit_rate()),
+                            positive_day_rate: daily.as_ref().and_then(|performance| performance.positive_day_rate()),
+                            target_hit_days: daily.as_ref().map(|performance| performance.target_hit_days),
+                            total_days: daily.as_ref().map(|performance| performance.total_days),
+                            avg_daily_pnl_distance: daily.as_ref().map(|performance| performance.avg_daily_pnl_distance),
+                            min_daily_pnl_distance: daily.as_ref().map(|performance| performance.min_daily_pnl_distance),
+                            robustness: None,
+                        });
+                    }
+                }
+            }
+        }
+    } else {
+        for direction in &directions {
+            let base_mask = strategy_condition_full_mask_cached(
+                &data_hash,
+                &shared_entry_scan_cache_key,
+                direction,
+                test_entry_indices.len(),
+            );
+            let outcome_grid = strategy_filter_outcome_grid_cached(
+                candles,
+                &test_entry_indices,
+                &base_mask,
+                &shared_entry_scan_cache_key,
+                direction,
+                stop_loss,
+                &tp_grid,
+                execution_cost,
+                max_hold,
+                &mut cache_snapshot,
+            );
+            for point in outcome_grid {
+                let take_profit = point.take_profit_distance;
+                let stats = point.stats;
+                let win_rate = stats.win_rate();
+                let expectancy = stats.expectancy();
+                let robustness = compute_strategy_robustness_cached(
+                    candles,
+                    &low_volatility_values,
+                    threshold,
+                    train_rows,
+                    &entry_hours,
+                    force_daily_entry,
+                    direction,
+                    stop_loss,
+                    take_profit,
+                    execution_cost,
+                    max_hold,
+                    target_win_rate,
+                    spec.point_size.unwrap_or(0.0),
+                    &data_hash,
+                    &shared_entry_scan_cache_key,
+                    &mut cache_snapshot,
+                );
+                candidates.push(TradingStrategyBacktestCandidate {
+                    direction: direction.clone(),
+                    filter_id: "base_low_vol".to_string(),
+                    filter_label: if force_daily_entry {
+                        format!("{entry_hours_label} daily entries")
+                    } else {
+                        format!("{entry_hours_label} low-volatility entries")
+                    },
+                    condition_hash: base_mask.mask_hash.clone(),
+                    mask_ref: base_mask.mask_hash.clone(),
+                    bytecode_ops: vec![
+                        format!(
+                            "ENTRY:HOUR_IN_UTC:{}",
+                            entry_hours.iter().map(|value| value.to_string()).collect::<Vec<_>>().join(",")
+                        ),
+                        if force_daily_entry {
+                            "ENTRY:FORCE_ONE_TRADE_PER_OPEN_DAY".to_string()
+                        } else {
+                            "VOL:RANGE_SMA_LE_TRAIN_Q".to_string()
+                        },
+                    ],
+                    display_formula: vec![
+                        format!("entry hour in [{entry_hours_label}] UTC"),
+                        if force_daily_entry {
+                            "one trade each open trading day".to_string()
+                        } else {
+                            "range SMA H1 24 <= train percentile".to_string()
+                        },
+                    ],
+                    indicator_refs: vec!["/candle_h1".to_string(), "/range_sma_h1_24".to_string()],
+                    entry_count: test_entry_indices.len(),
+                    take_profit_distance: take_profit,
+                    trades: stats.trades,
+                    wins: stats.wins,
+                    losses: stats.losses,
+                    win_rate,
+                    expectancy_distance: expectancy,
+                    net_pnl_distance: stats.net_pnl,
+                    profit_factor: stats.profit_factor(),
+                    max_loss_streak: stats.max_loss_streak,
+                    avg_hold_bars: stats.avg_hold_bars(),
+                    meets_target: win_rate.is_some_and(|value| value >= target_win_rate) && stats.trades >= 12,
+                    daily_target_hit_rate: None,
+                    positive_day_rate: None,
+                    target_hit_days: None,
+                    total_days: None,
+                    avg_daily_pnl_distance: None,
+                    min_daily_pnl_distance: None,
+                    robustness: Some(robustness),
+                });
+            }
+        }
+
+        candidates.sort_by(compare_strategy_candidates);
+        let base_best = candidates.first().cloned();
+        if !base_best
+            .as_ref()
+            .is_some_and(|candidate| candidate.meets_target)
+        {
+            for direction in &directions {
+                let filters = strategy_directional_entry_filters_cached(
+                    candles,
+                    &test_entry_indices,
+                    &shared_entry_scan_cache_key,
+                    direction,
+                    &data_hash,
+                    force_daily_entry,
+                    &mut cache_snapshot,
+                );
+                for filter in filters.into_iter().filter(|filter| filter.id != "base_low_vol") {
+                    let outcome_grid = strategy_filter_outcome_grid_cached(
+                        candles,
+                        &test_entry_indices,
+                        &filter.mask,
+                        &shared_entry_scan_cache_key,
+                        direction,
+                        stop_loss,
+                        &tp_grid,
+                        execution_cost,
+                        max_hold,
+                        &mut cache_snapshot,
+                    );
+                    for point in outcome_grid {
+                        let take_profit = point.take_profit_distance;
+                        let stats = point.stats;
+                        let win_rate = stats.win_rate();
+                        let expectancy = stats.expectancy();
+                        candidates.push(TradingStrategyBacktestCandidate {
+                            direction: direction.clone(),
+                            filter_id: filter.id.clone(),
+                            filter_label: filter.label.clone(),
+                            condition_hash: filter.condition_hash.clone(),
+                            mask_ref: filter.mask_ref.clone(),
+                            bytecode_ops: filter.bytecode_ops.clone(),
+                            display_formula: filter.display_formula.clone(),
+                            indicator_refs: filter.indicator_refs.clone(),
+                            entry_count: filter.entry_count,
+                            take_profit_distance: take_profit,
+                            trades: stats.trades,
+                            wins: stats.wins,
+                            losses: stats.losses,
+                            win_rate,
+                            expectancy_distance: expectancy,
+                            net_pnl_distance: stats.net_pnl,
+                            profit_factor: stats.profit_factor(),
+                            max_loss_streak: stats.max_loss_streak,
+                            avg_hold_bars: stats.avg_hold_bars(),
+                            meets_target: win_rate.is_some_and(|value| value >= target_win_rate)
+                                && stats.trades >= 12,
+                            daily_target_hit_rate: None,
+                            positive_day_rate: None,
+                            target_hit_days: None,
+                            total_days: None,
+                            avg_daily_pnl_distance: None,
+                            min_daily_pnl_distance: None,
+                            robustness: None,
+                        });
+                    }
                 }
             }
         }
@@ -6862,8 +7641,31 @@ fn backtest_strategy_spec(
     let (best_entry_indices, best_entry_cache_key) = best
         .as_ref()
         .and_then(|candidate| {
-            if candidate.filter_id == "base_low_vol" {
+            if matches!(candidate.filter_id.as_str(), "base_low_vol" | "base_paired_daily") {
                 return Some((test_entry_indices.clone(), shared_entry_scan_cache_key.clone()));
+            }
+            if paired_mode {
+                let target_filter_id = candidate.filter_id.strip_prefix("paired_").unwrap_or(&candidate.filter_id);
+                for filter_direction in ["long", "short"] {
+                    if let Some(filter) = strategy_directional_entry_filters_cached(
+                        candles,
+                        &test_entry_indices,
+                        &shared_entry_scan_cache_key,
+                        filter_direction,
+                        &data_hash,
+                        force_daily_entry,
+                        &mut cache_snapshot,
+                    )
+                    .into_iter()
+                    .find(|filter| filter.id == target_filter_id)
+                    {
+                        return Some((
+                            strategy_condition_entries_from_mask(&test_entry_indices, &filter.mask),
+                            filter.cache_key,
+                        ));
+                    }
+                }
+                return None;
             }
             strategy_directional_entry_filters_cached(
                 candles,
@@ -6935,6 +7737,7 @@ fn backtest_strategy_spec(
         test_rows,
         low_volatility_threshold: threshold,
         entry_hour_utc: entry_hour,
+        entry_hours_utc: entry_hours,
         candidates,
         best,
         paired_probe,
@@ -6955,14 +7758,23 @@ fn strategy_live_hash(input: &str) -> String {
 }
 
 fn strategy_live_job_id(spec: &TradingStrategySpec) -> String {
+    let entry_hours = strategy_entry_hours(spec);
     let key = format!(
-        "{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}",
         spec.instrument.as_deref().unwrap_or(""),
         spec.granularity.as_deref().unwrap_or(""),
         spec.entry_hour.map(|value| value.to_string()).unwrap_or_default(),
+        entry_hours
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
         spec.direction.as_deref().unwrap_or(""),
         spec.stop_loss_distance.map(|value| value.to_string()).unwrap_or_default(),
         spec.take_profit_min_distance.map(|value| value.to_string()).unwrap_or_default(),
+        spec.daily_profit_target_distance
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
         spec.source_text.as_deref().unwrap_or("")
     );
     format!("strategy-live-{}", strategy_live_hash(&key))
@@ -7366,6 +8178,17 @@ async fn fetch_price_snapshot(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
+    let units_default = price
+        .get("unitsAvailable")
+        .and_then(|v| v.get("default"));
+    let units_available_long = parse_f64_value(
+        units_default.and_then(|d| d.get("long")),
+    )
+    .unwrap_or(0.0);
+    let units_available_short = parse_f64_value(
+        units_default.and_then(|d| d.get("short")),
+    )
+    .unwrap_or(0.0);
     Ok(TradingPriceSnapshot {
         instrument: instrument.to_string(),
         time,
@@ -7373,6 +8196,8 @@ async fn fetch_price_snapshot(
         ask,
         mid: (bid + ask) * 0.5,
         spread: ask - bid,
+        units_available_long,
+        units_available_short,
     })
 }
 
@@ -8156,31 +8981,61 @@ fn plan_oanda_history_sync(selected_granularities: &[String]) -> OandaHistorySyn
     for granularity in selected_granularities {
         push_unique_granularity(&mut requested, granularity);
     }
-
-    let mut intraday = requested
-        .iter()
-        .filter(|value| oanda_is_intraday_rebuildable(value))
-        .cloned()
-        .collect::<Vec<_>>();
-    intraday.sort_by_key(|value| granularity_step_ms(value).unwrap_or(i64::MAX));
-
-    let source = intraday.first().cloned();
     let mut native = Vec::new();
     let mut derived = Vec::new();
 
-    if let Some(source_granularity) = source.as_deref() {
-        push_unique_granularity(&mut native, source_granularity);
-    }
-
-    for granularity in requested {
-        if source.as_deref() == Some(granularity.as_str()) {
-            continue;
+    let mut plan_family = |family: Vec<String>| {
+        if family.is_empty() {
+            return;
         }
+        let source = family
+            .iter()
+            .min_by_key(|value| granularity_step_ms(value).unwrap_or(i64::MAX))
+            .cloned();
         if let Some(source_granularity) = source.as_deref() {
-            if can_derive_oanda_granularity(source_granularity, &granularity) {
-                derived.push((source_granularity.to_string(), granularity));
+            push_unique_granularity(&mut native, source_granularity);
+        }
+        for granularity in family {
+            if source.as_deref() == Some(granularity.as_str()) {
                 continue;
             }
+            if let Some(source_granularity) = source.as_deref() {
+                if can_derive_oanda_granularity(source_granularity, &granularity) {
+                    derived.push((source_granularity.to_string(), granularity));
+                    continue;
+                }
+            }
+            push_unique_granularity(&mut native, &granularity);
+        }
+    };
+
+    let subminute = requested
+        .iter()
+        .filter(|value| {
+            granularity_step_ms(value)
+                .map(|step| step > 0 && step < 60_000)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    plan_family(subminute);
+
+    let minute_to_hour = requested
+        .iter()
+        .filter(|value| {
+            granularity_step_ms(value)
+                .map(|step| step >= 60_000 && step < 24 * 60 * 60_000 && oanda_is_intraday_rebuildable(value))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    plan_family(minute_to_hour);
+
+    for granularity in requested {
+        if native.iter().any(|value| value == &granularity)
+            || derived.iter().any(|(_, target)| target == &granularity)
+        {
+            continue;
         }
         push_unique_granularity(&mut native, &granularity);
     }
@@ -8582,7 +9437,7 @@ fn normalize_requested_granularities(request: Option<&TradingHistorySyncRequest>
         })
         .unwrap_or_default();
     if requested.is_empty() {
-        UNIVERSE_SYNC_GRANULARITIES
+        OANDA_GRANULARITIES
             .iter()
             .map(|value| (*value).to_string())
             .collect()
@@ -8618,25 +9473,26 @@ pub async fn trading_oanda_snapshot() -> Result<TradingSnapshotResponse, String>
     let credentials = resolve_credentials();
     let config = config_status_from_credentials(credentials.as_ref());
     let history_files = build_history_catalog();
-    let asset_catalog = build_asset_catalog(&history_files);
     let history_dir = history_root_dir().display().to_string();
 
     let Some(credentials) = credentials else {
         clear_oanda_runtime();
+        let fallback_instruments = vec![TradingInstrumentSummary {
+            name: DEFAULT_INSTRUMENT.to_string(),
+            display_name: "Natural Gas".to_string(),
+            asset_class: "commodity".to_string(),
+            pip_location: Some(-2),
+            display_precision: Some(3),
+            trade_units_precision: Some(0),
+            minimum_trade_size: Some(1.0),
+            margin_rate: Some(0.05),
+        }];
+        let asset_catalog = merge_live_oanda_asset_catalog(&history_files, &fallback_instruments);
         return Ok(TradingSnapshotResponse {
             config,
             account: None,
             price: None,
-            instruments: vec![TradingInstrumentSummary {
-                name: DEFAULT_INSTRUMENT.to_string(),
-                display_name: "Natural Gas".to_string(),
-                asset_class: "commodity".to_string(),
-                pip_location: Some(-2),
-                display_precision: Some(3),
-                trade_units_precision: Some(0),
-                minimum_trade_size: Some(1.0),
-                margin_rate: Some(0.05),
-            }],
+            instruments: fallback_instruments.clone(),
             pending_orders: Vec::new(),
             open_trades: Vec::new(),
             book: None,
@@ -8651,24 +9507,26 @@ pub async fn trading_oanda_snapshot() -> Result<TradingSnapshotResponse, String>
     match fetch_runtime_bundle(&credentials, DEFAULT_INSTRUMENT, "H4", 240, true).await {
         Ok(bundle) => {
             let runtime = apply_runtime_bundle(bundle.clone(), &credentials, DEFAULT_INSTRUMENT, "H4", 240);
+            let instruments = if bundle.instruments.is_empty() {
+                vec![TradingInstrumentSummary {
+                    name: DEFAULT_INSTRUMENT.to_string(),
+                    display_name: "Natural Gas".to_string(),
+                    asset_class: "commodity".to_string(),
+                    pip_location: Some(-2),
+                    display_precision: Some(3),
+                    trade_units_precision: Some(0),
+                    minimum_trade_size: Some(1.0),
+                    margin_rate: Some(0.05),
+                }]
+            } else {
+                bundle.instruments.clone()
+            };
+            let asset_catalog = merge_live_oanda_asset_catalog(&history_files, &instruments);
             Ok(TradingSnapshotResponse {
                 config,
                 account: bundle.account,
                 price: bundle.price,
-                instruments: if bundle.instruments.is_empty() {
-                    vec![TradingInstrumentSummary {
-                        name: DEFAULT_INSTRUMENT.to_string(),
-                        display_name: "Natural Gas".to_string(),
-                        asset_class: "commodity".to_string(),
-                        pip_location: Some(-2),
-                        display_precision: Some(3),
-                        trade_units_precision: Some(0),
-                        minimum_trade_size: Some(1.0),
-                        margin_rate: Some(0.05),
-                    }]
-                } else {
-                    bundle.instruments
-                },
+                instruments: instruments.clone(),
                 pending_orders: bundle.pending_orders,
                 open_trades: bundle.open_trades,
                 book: bundle.book,
@@ -8893,17 +9751,42 @@ pub async fn trading_oanda_save_credentials(
 
 #[tauri::command]
 pub async fn trading_oanda_history_catalog() -> Result<TradingSyncResponse, String> {
+    ensure_oanda_watchdog();
     let credentials = resolve_credentials();
     let config = config_status_from_credentials(credentials.as_ref());
     let files = build_history_catalog();
+    let mut notes = Vec::new();
+    let assets = if let Some(credentials) = credentials.as_ref() {
+        match (build_oanda_client(), oanda_headers(&credentials.api_key)) {
+            (Ok(client), Ok(headers)) => match fetch_instruments(&client, credentials, &headers).await {
+                Ok(instruments) => {
+                    notes.push(format!(
+                        "Live OANDA catalog merged into the local trading history view ({} instruments, {} granularities per asset).",
+                        instruments.len(),
+                        OANDA_GRANULARITIES.len()
+                    ));
+                    merge_live_oanda_asset_catalog(&files, &instruments)
+                }
+                Err(err) => {
+                    notes.push(format!("Live OANDA catalog refresh failed, falling back to local files only: {err}"));
+                    build_asset_catalog(&files)
+                }
+            },
+            (Err(err), _) | (_, Err(err)) => {
+                notes.push(format!("Live OANDA catalog unavailable, falling back to local files only: {err}"));
+                build_asset_catalog(&files)
+            }
+        }
+    } else {
+        notes.push("Catalog uses local history only until OANDA credentials are available.".to_string());
+        build_asset_catalog(&files)
+    };
     Ok(TradingSyncResponse {
         config,
         history_dir: history_root_dir().display().to_string(),
-        assets: build_asset_catalog(&files),
+        assets,
         files,
-        notes: vec![
-            "Catalog only: no network call performed.".to_string(),
-        ],
+        notes,
     })
 }
 
@@ -9009,7 +9892,7 @@ async fn trading_oanda_sync_history_impl(
     Ok(TradingSyncResponse {
         config,
         history_dir: history_root_dir().display().to_string(),
-        assets: build_asset_catalog(&catalog_files),
+        assets: merge_live_oanda_asset_catalog(&catalog_files, &instruments),
         files: catalog_files,
         notes,
     })
@@ -9028,6 +9911,7 @@ pub async fn trading_chart_series(
 ) -> Result<TradingChartSeriesResponse, String> {
     let instrument = request
         .instrument
+        .clone()
         .unwrap_or_else(|| DEFAULT_INSTRUMENT.to_string())
         .trim()
         .to_string();
@@ -9178,6 +10062,7 @@ pub async fn trading_chart_compute(
 ) -> Result<TradingChartComputeResponse, String> {
     let instrument = request
         .instrument
+        .clone()
         .unwrap_or_else(|| DEFAULT_INSTRUMENT.to_string())
         .trim()
         .to_string();
@@ -9231,6 +10116,7 @@ pub async fn trading_strategy_backtest(
             questions,
             plan,
             compute_plan: None,
+            scenario_manifest: None,
             result: None,
         });
     }
@@ -9247,6 +10133,7 @@ pub async fn trading_strategy_backtest(
             questions,
             plan,
             compute_plan: Some(compute_plan),
+            scenario_manifest: None,
             result: None,
         });
     }
@@ -9256,6 +10143,14 @@ pub async fn trading_strategy_backtest(
     let max_rows = request.max_rows.unwrap_or(0);
     let series = canonical_chart_series(instrument, granularity, max_rows)?;
     let result = backtest_strategy_spec(&series.candles, &spec)?;
+    let scenario_manifest = build_trading_scenario_manifest(
+        "forge-tauri-rust-strategy-backtest",
+        &spec,
+        instrument,
+        granularity,
+        max_rows,
+        &result,
+    );
     Ok(TradingStrategyBacktestResponse {
         ok: true,
         status: "tested".to_string(),
@@ -9266,7 +10161,34 @@ pub async fn trading_strategy_backtest(
         questions,
         plan,
         compute_plan: Some(result.compute_plan.clone()),
+        scenario_manifest: Some(scenario_manifest),
         result: Some(result),
+    })
+}
+
+#[cfg(test)]
+fn replay_trading_scenario_manifest(
+    manifest: &TradingScenarioManifest,
+) -> Result<TradingScenarioReplayReport, String> {
+    let spec = normalize_strategy_spec(manifest.spec.clone());
+    let series = canonical_chart_series(&manifest.instrument, &manifest.granularity, manifest.max_rows)?;
+    replay_trading_scenario_manifest_with_candles(manifest, &series.candles, &spec)
+}
+
+#[cfg(test)]
+fn replay_trading_scenario_manifest_with_candles(
+    manifest: &TradingScenarioManifest,
+    candles: &[TradingCandlePoint],
+    spec: &TradingStrategySpec,
+) -> Result<TradingScenarioReplayReport, String> {
+    let result = backtest_strategy_spec(candles, spec)?;
+    let actual = trading_scenario_hashes_from_result(&result);
+    let expected = manifest.hashes.clone();
+    Ok(TradingScenarioReplayReport {
+        ok: actual == expected,
+        expected,
+        actual,
+        manifest_hash: manifest.manifest_hash.clone(),
     })
 }
 
@@ -9437,24 +10359,38 @@ pub async fn trading_oanda_place_order(
     let credentials = resolve_credentials().ok_or_else(|| {
         "No OANDA credentials found. Save them in the Trading panel or provide OANDA_ACCOUNT_ID / OANDA_API_KEY.".to_string()
     })?;
+    let config = config_status_from_credentials(Some(&credentials));
     let client = build_oanda_client()?;
     let headers = oanda_headers(&credentials.api_key)?;
     let instrument = request
         .instrument
+        .clone()
         .unwrap_or_else(|| DEFAULT_INSTRUMENT.to_string())
         .trim()
         .to_string();
     let side = request.side.trim().to_uppercase();
     let order_type = request
         .order_type
+        .clone()
         .unwrap_or_else(|| "MARKET".to_string())
         .trim()
         .to_uppercase();
     let tif = request
         .time_in_force
+        .clone()
         .unwrap_or_else(|| if order_type == "LIMIT" { "GTC".to_string() } else { "FOK".to_string() })
         .trim()
         .to_uppercase();
+    let provider_state = trading_order_provider_state(&config);
+    let (approval_timestamp_bucket, approval_proof_hash) = validate_trading_order_approval(
+        &request,
+        &instrument,
+        &side,
+        &order_type,
+        &tif,
+        &provider_state,
+        now_ms(),
+    )?;
     let abs_units = request.units.abs();
     if abs_units <= 0.0 {
         return Err("units must be > 0".to_string());
@@ -9507,6 +10443,8 @@ pub async fn trading_oanda_place_order(
         side,
         units: signed_units,
         order_type,
+        approval_timestamp_bucket,
+        approval_proof_hash,
         message: "Order submitted to OANDA.".to_string(),
         response: payload,
     })
@@ -9515,47 +10453,11043 @@ pub async fn trading_oanda_place_order(
 #[cfg(test)]
 mod strategy_tests {
     use super::*;
+    use crate::{MemoryGovernor, MonsterNode, Store};
+    use scan::kasm::{Node, Program, Target, Ty};
+    use std::cmp::Ordering;
+    use std::collections::{BTreeMap, HashMap};
 
     #[test]
-    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
-    fn natgas_h1_example_strategy_backtest_executes_kasm_plan() {
-        let source_text = "/create_ /strategy_ | strategie H1 Natural Gas OANDA, entree 21h UTC, 1 trade tous les jours de trading ouverts, faible volatilite en contexte, SL 4.5p, TP min 3.5p max 30 points, objectif 85%".to_string();
-        let spec = normalize_strategy_spec(TradingStrategySpec {
+    fn live_asset_catalog_merge_exposes_full_oanda_granularity_list() {
+        let files = vec![TradingHistoryFileSummary {
+            instrument: "EUR_USD".to_string(),
+            granularity: "H1".to_string(),
+            path: "ignored".to_string(),
+            rows: 42,
+            first_time: Some("2024-01-01T00:00:00Z".to_string()),
+            last_time: Some("2024-01-02T00:00:00Z".to_string()),
+            truncated: false,
+            updated_at_ms: 123,
+        }];
+        let instruments = vec![TradingInstrumentSummary {
+            name: "EUR_USD".to_string(),
+            display_name: "EUR / USD".to_string(),
+            asset_class: "forex".to_string(),
+            pip_location: Some(-4),
+            display_precision: Some(5),
+            trade_units_precision: Some(0),
+            minimum_trade_size: Some(1.0),
+            margin_rate: Some(0.02),
+        }];
+        let merged = merge_live_oanda_asset_catalog(&files, &instruments);
+        let eur_usd = merged
+            .iter()
+            .find(|entry| entry.instrument == "EUR_USD")
+            .expect("EUR_USD asset entry");
+        assert_eq!(eur_usd.rows, 42);
+        assert_eq!(eur_usd.granularities.len(), OANDA_GRANULARITIES.len());
+        assert_eq!(eur_usd.granularities.first().map(String::as_str), Some("S5"));
+        assert_eq!(eur_usd.granularities.last().map(String::as_str), Some("M"));
+    }
+
+    #[test]
+    fn full_universe_sync_plan_uses_family_sources_instead_of_single_s5_feed() {
+        let requested = OANDA_GRANULARITIES
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect::<Vec<_>>();
+        let plan = plan_oanda_history_sync(&requested);
+        assert!(plan.native.iter().any(|value| value == "S5"));
+        assert!(plan.native.iter().any(|value| value == "M1"));
+        assert!(plan.native.iter().any(|value| value == "D"));
+        assert!(plan.native.iter().any(|value| value == "W"));
+        assert!(plan.native.iter().any(|value| value == "M"));
+        assert!(plan.derived.iter().any(|(source, target)| source == "M1" && target == "H12"));
+        assert!(plan.derived.iter().any(|(source, target)| source == "S5" && target == "S30"));
+        assert!(!plan.derived.iter().any(|(source, target)| source == "S5" && target == "H4"));
+    }
+
+    #[derive(Clone)]
+    struct SeededSlotRuleDef {
+        hour: u32,
+        direction: &'static str,
+        id: &'static str,
+        label: &'static str,
+        indicator_refs: &'static [&'static str],
+        predicate: fn(usize, &[TradingCandlePoint], &StrategyIndicatorFeatureBank) -> bool,
+    }
+
+    #[derive(Clone)]
+    struct SeededCompositeCandidate {
+        short_11h: SeededSlotRuleDef,
+        long_15h: SeededSlotRuleDef,
+        long_21h: SeededSlotRuleDef,
+        trades: usize,
+        wins: usize,
+        losses: usize,
+        win_rate: f64,
+        daily_target_hit_rate: f64,
+        target_hit_days: usize,
+        total_days: usize,
+        avg_daily_pnl_distance: f64,
+        min_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    #[derive(Clone, Debug)]
+    struct SeededSlotComboDef {
+        hour: u32,
+        direction: &'static str,
+        label: String,
+        indicator_refs: Vec<String>,
+        required_mask: u32,
+    }
+
+    #[derive(Clone)]
+    struct SeededComboSearchCandidate {
+        short_11h: SeededSlotComboDef,
+        long_15h: SeededSlotComboDef,
+        long_21h: SeededSlotComboDef,
+        take_profit: f64,
+        trades: usize,
+        wins: usize,
+        losses: usize,
+        win_rate: f64,
+        daily_target_hit_rate: f64,
+        target_hit_days: usize,
+        total_days: usize,
+        avg_daily_pnl_distance: f64,
+        min_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum SeededRegimeId {
+        TrendUp,
+        TrendDown,
+        Compression,
+        Overbought,
+        Oversold,
+        Neutral,
+    }
+
+    impl SeededRegimeId {
+        fn code(self) -> u8 {
+            match self {
+                SeededRegimeId::TrendUp => 0,
+                SeededRegimeId::TrendDown => 1,
+                SeededRegimeId::Compression => 2,
+                SeededRegimeId::Overbought => 3,
+                SeededRegimeId::Oversold => 4,
+                SeededRegimeId::Neutral => 5,
+            }
+        }
+
+        fn label(self) -> &'static str {
+            match self {
+                SeededRegimeId::TrendUp => "trend_up",
+                SeededRegimeId::TrendDown => "trend_down",
+                SeededRegimeId::Compression => "compression",
+                SeededRegimeId::Overbought => "overbought",
+                SeededRegimeId::Oversold => "oversold",
+                SeededRegimeId::Neutral => "neutral",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum SeededSchedulerAction {
+        Skip,
+        Long,
+        Short,
+    }
+
+    impl SeededSchedulerAction {
+        fn label(self) -> &'static str {
+            match self {
+                SeededSchedulerAction::Skip => "skip",
+                SeededSchedulerAction::Long => "long",
+                SeededSchedulerAction::Short => "short",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct SeededSchedulerEvent {
+        candle_index: usize,
+        hour: u32,
+        regime: SeededRegimeId,
+        primary_signal: bool,
+        long_pnl: f64,
+        short_pnl: f64,
+        long_exit: StrictTradeExit,
+        short_exit: StrictTradeExit,
+    }
+
+    #[derive(Clone, Debug)]
+    struct SeededSchedulerDay {
+        day_key: String,
+        events: [Option<SeededSchedulerEvent>; 3],
+    }
+
+    #[derive(Clone, Copy, Debug, Default)]
+    struct SeededActionAggregate {
+        samples: usize,
+        target_hits: usize,
+        final_pnl_sum: f64,
+        trade_wins: usize,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct SeededSchedulerDecision {
+        action: SeededSchedulerAction,
+        samples: usize,
+        target_rate: f64,
+        avg_final_pnl: f64,
+    }
+
+    #[derive(Clone, Debug)]
+    struct SeededMetaSchedulerResult {
+        take_profit: f64,
+        min_action_win_rate: f64,
+        train_days: usize,
+        test_days: usize,
+        traded_days: usize,
+        target_hit_days: usize,
+        trades: usize,
+        wins: usize,
+        losses: usize,
+        win_rate: f64,
+        traded_day_rate: f64,
+        daily_target_hit_rate: f64,
+        avg_daily_pnl_distance: f64,
+        min_daily_pnl_distance: f64,
+        net_pnl_distance: f64,
+        slot_11_action: SeededSchedulerAction,
+        slot_15_action: SeededSchedulerAction,
+        slot_21_action: SeededSchedulerAction,
+        slot_11_signal: String,
+        slot_15_signal: String,
+        slot_21_signal: String,
+    }
+
+    const NATGAS_STRICT_STOP_LOSS: f64 = 0.039;
+    const NATGAS_STRICT_TAKE_PROFIT: f64 = 0.051;
+    const NATGAS_STRICT_EXECUTION_COST: f64 = 0.006;
+    const NATGAS_STRICT_DAILY_TARGET: f64 = 0.070;
+    const NATGAS_TREND_PULLBACK_DISTANCE: f64 = 0.070;
+    const NATGAS_BASELINE_11H_LABEL: &str = "11h short if bearish body";
+    const NATGAS_BASELINE_15H_LABEL: &str = "15h long if bullish body";
+    const NATGAS_BASELINE_21H_VWAP_LABEL: &str = "21h long if close > VWAP";
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TrendDirection {
+        Up,
+        Down,
+    }
+
+    impl TrendDirection {
+        fn label(self) -> &'static str {
+            match self {
+                TrendDirection::Up => "up",
+                TrendDirection::Down => "down",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TrendResolution {
+        Resume,
+        StrongReversal,
+        Unresolved,
+    }
+
+    impl TrendResolution {
+        fn label(self) -> &'static str {
+            match self {
+                TrendResolution::Resume => "resume",
+                TrendResolution::StrongReversal => "strong_reversal",
+                TrendResolution::Unresolved => "unresolved",
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct TrendLifecycleSample {
+        direction: TrendDirection,
+        start_index: usize,
+        confirm_index: usize,
+        extreme_index: usize,
+        pullback_index: usize,
+        resolution_index: Option<usize>,
+        start_price: f64,
+        extreme_price: f64,
+        impulse_distance: f64,
+        bars_to_confirm: usize,
+        bars_confirm_to_pullback: usize,
+        bars_extreme_to_pullback: usize,
+        resolution: TrendResolution,
+        bars_pullback_to_resolution: Option<usize>,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct TimeExitHoldStats {
+        trades: usize,
+        stop_hits: usize,
+        positive_exits: usize,
+        negative_exits: usize,
+        flat_exits: usize,
+        net_pnl: f64,
+    }
+
+    impl TimeExitHoldStats {
+        fn positive_rate(&self) -> f64 {
+            if self.trades == 0 {
+                0.0
+            } else {
+                self.positive_exits as f64 / self.trades as f64
+            }
+        }
+
+        fn stop_rate(&self) -> f64 {
+            if self.trades == 0 {
+                0.0
+            } else {
+                self.stop_hits as f64 / self.trades as f64
+            }
+        }
+
+        fn expectancy(&self) -> f64 {
+            if self.trades == 0 {
+                0.0
+            } else {
+                self.net_pnl / self.trades as f64
+            }
+        }
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct HourCloseBehaviorStats {
+        samples: usize,
+        bullish_closes: usize,
+        bearish_closes: usize,
+        bullish_next1_continue: usize,
+        bullish_next3_continue: usize,
+        bullish_next6_continue: usize,
+        bearish_next1_continue: usize,
+        bearish_next3_continue: usize,
+        bearish_next6_continue: usize,
+        avg_return_1: f64,
+        avg_return_3: f64,
+        avg_return_6: f64,
+        long_tp_hits: usize,
+        long_sl_hits: usize,
+        short_tp_hits: usize,
+        short_sl_hits: usize,
+    }
+
+    impl HourCloseBehaviorStats {
+        fn bullish_rate(&self) -> f64 {
+            if self.samples == 0 {
+                0.0
+            } else {
+                self.bullish_closes as f64 / self.samples as f64
+            }
+        }
+
+        fn bearish_rate(&self) -> f64 {
+            if self.samples == 0 {
+                0.0
+            } else {
+                self.bearish_closes as f64 / self.samples as f64
+            }
+        }
+
+        fn avg_ret_1(&self) -> f64 {
+            if self.samples == 0 {
+                0.0
+            } else {
+                self.avg_return_1 / self.samples as f64
+            }
+        }
+
+        fn avg_ret_3(&self) -> f64 {
+            if self.samples == 0 {
+                0.0
+            } else {
+                self.avg_return_3 / self.samples as f64
+            }
+        }
+
+        fn avg_ret_6(&self) -> f64 {
+            if self.samples == 0 {
+                0.0
+            } else {
+                self.avg_return_6 / self.samples as f64
+            }
+        }
+
+        fn long_tp_rate(&self) -> f64 {
+            if self.samples == 0 {
+                0.0
+            } else {
+                self.long_tp_hits as f64 / self.samples as f64
+            }
+        }
+
+        fn short_tp_rate(&self) -> f64 {
+            if self.samples == 0 {
+                0.0
+            } else {
+                self.short_tp_hits as f64 / self.samples as f64
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum StrictTradeExit {
+        TakeProfit,
+        StopLoss,
+        TerminalPositive,
+        TerminalNegative,
+        TerminalFlat,
+    }
+
+    fn classify_strict_trade_outcome(
+        outcome: &StrategyEntryOutcome,
+        take_profit: f64,
+    ) -> (StrictTradeExit, f64, usize) {
+        for point in &outcome.favorable_path {
+            if point.favorable_distance >= take_profit {
+                return (
+                    StrictTradeExit::TakeProfit,
+                    take_profit - outcome.execution_cost_distance,
+                    point.held,
+                );
+            }
+        }
+        if let Some(held) = outcome.stop_held {
+            return (StrictTradeExit::StopLoss, outcome.stop_pnl_distance, held);
+        }
+        let pnl = outcome.terminal_pnl_distance;
+        let kind = if pnl > 0.0 {
+            StrictTradeExit::TerminalPositive
+        } else if pnl < 0.0 {
+            StrictTradeExit::TerminalNegative
+        } else {
+            StrictTradeExit::TerminalFlat
+        };
+        (kind, pnl, outcome.terminal_held)
+    }
+
+    fn detect_trend_confirmation(
+        candles: &[TradingCandlePoint],
+        from_index: usize,
+        threshold: f64,
+    ) -> Option<(TrendDirection, usize, usize, f64)> {
+        if from_index >= candles.len().saturating_sub(1) {
+            return None;
+        }
+        let mut pivot_low = candles[from_index].low;
+        let mut pivot_low_index = from_index;
+        let mut pivot_high = candles[from_index].high;
+        let mut pivot_high_index = from_index;
+        for index in from_index + 1..candles.len() {
+            let candle = &candles[index];
+            let up_move = candle.high - pivot_low;
+            let down_move = pivot_high - candle.low;
+            let up_hit = up_move >= threshold;
+            let down_hit = down_move >= threshold;
+            if up_hit || down_hit {
+                if up_hit && (!down_hit || up_move >= down_move) {
+                    return Some((TrendDirection::Up, pivot_low_index, index, pivot_low));
+                }
+                return Some((TrendDirection::Down, pivot_high_index, index, pivot_high));
+            }
+            if candle.low < pivot_low {
+                pivot_low = candle.low;
+                pivot_low_index = index;
+            }
+            if candle.high > pivot_high {
+                pivot_high = candle.high;
+                pivot_high_index = index;
+            }
+        }
+        None
+    }
+
+    fn resolve_trend_after_pullback(
+        candles: &[TradingCandlePoint],
+        sample: &TrendLifecycleSample,
+    ) -> (TrendResolution, Option<usize>) {
+        for index in sample.pullback_index + 1..candles.len() {
+            let close = candles[index].close;
+            match sample.direction {
+                TrendDirection::Up => {
+                    if close > sample.extreme_price {
+                        return (TrendResolution::Resume, Some(index));
+                    }
+                    if close < sample.start_price {
+                        return (TrendResolution::StrongReversal, Some(index));
+                    }
+                }
+                TrendDirection::Down => {
+                    if close < sample.extreme_price {
+                        return (TrendResolution::Resume, Some(index));
+                    }
+                    if close > sample.start_price {
+                        return (TrendResolution::StrongReversal, Some(index));
+                    }
+                }
+            }
+        }
+        (TrendResolution::Unresolved, None)
+    }
+
+    fn extract_trend_lifecycle_samples(
+        candles: &[TradingCandlePoint],
+        threshold: f64,
+    ) -> Vec<TrendLifecycleSample> {
+        let mut samples = Vec::new();
+        if candles.len() < 4 {
+            return samples;
+        }
+        let mut cursor = 0usize;
+        while let Some((direction, start_index, confirm_index, start_price)) =
+            detect_trend_confirmation(candles, cursor, threshold)
+        {
+            let mut extreme_index = confirm_index;
+            let mut extreme_price = match direction {
+                TrendDirection::Up => candles[confirm_index].high,
+                TrendDirection::Down => candles[confirm_index].low,
+            };
+            let mut pullback_index = None;
+            for index in confirm_index..candles.len() {
+                match direction {
+                    TrendDirection::Up => {
+                        if candles[index].high >= extreme_price {
+                            extreme_price = candles[index].high;
+                            extreme_index = index;
+                        }
+                        if extreme_price - candles[index].low >= threshold {
+                            pullback_index = Some(index);
+                            break;
+                        }
+                    }
+                    TrendDirection::Down => {
+                        if candles[index].low <= extreme_price {
+                            extreme_price = candles[index].low;
+                            extreme_index = index;
+                        }
+                        if candles[index].high - extreme_price >= threshold {
+                            pullback_index = Some(index);
+                            break;
+                        }
+                    }
+                }
+            }
+            let Some(pullback_index) = pullback_index else {
+                break;
+            };
+            let impulse_distance = match direction {
+                TrendDirection::Up => extreme_price - start_price,
+                TrendDirection::Down => start_price - extreme_price,
+            };
+            let mut sample = TrendLifecycleSample {
+                direction,
+                start_index,
+                confirm_index,
+                extreme_index,
+                pullback_index,
+                resolution_index: None,
+                start_price,
+                extreme_price,
+                impulse_distance,
+                bars_to_confirm: confirm_index.saturating_sub(start_index),
+                bars_confirm_to_pullback: pullback_index.saturating_sub(confirm_index),
+                bars_extreme_to_pullback: pullback_index.saturating_sub(extreme_index),
+                resolution: TrendResolution::Unresolved,
+                bars_pullback_to_resolution: None,
+            };
+            let (resolution, resolution_index) = resolve_trend_after_pullback(candles, &sample);
+            sample.resolution = resolution;
+            sample.resolution_index = resolution_index;
+            sample.bars_pullback_to_resolution =
+                resolution_index.map(|index| index.saturating_sub(pullback_index));
+            samples.push(sample);
+            let next_cursor = extreme_index.max(cursor.saturating_add(1));
+            if next_cursor >= candles.len().saturating_sub(1) {
+                break;
+            }
+            cursor = next_cursor;
+        }
+        samples
+    }
+
+    fn mean_usize(values: &[usize]) -> f64 {
+        if values.is_empty() {
+            return 0.0;
+        }
+        values.iter().sum::<usize>() as f64 / values.len() as f64
+    }
+
+    fn percentile_usize(values: &[usize], percentile: f64) -> f64 {
+        if values.is_empty() {
+            return 0.0;
+        }
+        let mut sorted = values.to_vec();
+        sorted.sort_unstable();
+        let rank = ((sorted.len() - 1) as f64 * percentile.clamp(0.0, 1.0)).round() as usize;
+        sorted[rank] as f64
+    }
+
+    fn print_trend_lifecycle_summary(label: &str, samples: &[TrendLifecycleSample]) {
+        if samples.is_empty() {
+            println!("{label} no trend samples");
+            return;
+        }
+        let pullback_bars = samples
+            .iter()
+            .map(|sample| sample.bars_confirm_to_pullback)
+            .collect::<Vec<_>>();
+        let confirm_bars = samples
+            .iter()
+            .map(|sample| sample.bars_to_confirm)
+            .collect::<Vec<_>>();
+        let extreme_to_pullback_bars = samples
+            .iter()
+            .map(|sample| sample.bars_extreme_to_pullback)
+            .collect::<Vec<_>>();
+        let impulse_distances = samples
+            .iter()
+            .map(|sample| sample.impulse_distance)
+            .collect::<Vec<_>>();
+        let resume_count = samples
+            .iter()
+            .filter(|sample| sample.resolution == TrendResolution::Resume)
+            .count();
+        let strong_reversal_count = samples
+            .iter()
+            .filter(|sample| sample.resolution == TrendResolution::StrongReversal)
+            .count();
+        let unresolved_count = samples
+            .iter()
+            .filter(|sample| sample.resolution == TrendResolution::Unresolved)
+            .count();
+        let within_3 = pullback_bars.iter().filter(|bars| **bars <= 3).count();
+        let within_6 = pullback_bars.iter().filter(|bars| **bars <= 6).count();
+        let within_12 = pullback_bars.iter().filter(|bars| **bars <= 12).count();
+        let within_24 = pullback_bars.iter().filter(|bars| **bars <= 24).count();
+        let resolution_bars = samples
+            .iter()
+            .filter_map(|sample| sample.bars_pullback_to_resolution)
+            .collect::<Vec<_>>();
+        println!(
+            "{label} trends={} threshold={:.5} avg_confirm_bars={:.2} median_confirm_bars={:.2} avg_pullback_bars={:.2} median_pullback_bars={:.2} p75_pullback_bars={:.2} avg_extreme_to_pullback_bars={:.2} avg_impulse={:.5} pullback<=3={:.2}% pullback<=6={:.2}% pullback<=12={:.2}% pullback<=24={:.2}% resume_rate={:.2}% strong_reversal_rate={:.2}% unresolved_rate={:.2}% avg_resolution_bars={:.2} median_resolution_bars={:.2}",
+            samples.len(),
+            NATGAS_TREND_PULLBACK_DISTANCE,
+            mean_usize(&confirm_bars),
+            percentile_usize(&confirm_bars, 0.50),
+            mean_usize(&pullback_bars),
+            percentile_usize(&pullback_bars, 0.50),
+            percentile_usize(&pullback_bars, 0.75),
+            mean_usize(&extreme_to_pullback_bars),
+            if impulse_distances.is_empty() {
+                0.0
+            } else {
+                impulse_distances.iter().sum::<f64>() / impulse_distances.len() as f64
+            },
+            100.0 * within_3 as f64 / samples.len() as f64,
+            100.0 * within_6 as f64 / samples.len() as f64,
+            100.0 * within_12 as f64 / samples.len() as f64,
+            100.0 * within_24 as f64 / samples.len() as f64,
+            100.0 * resume_count as f64 / samples.len() as f64,
+            100.0 * strong_reversal_count as f64 / samples.len() as f64,
+            100.0 * unresolved_count as f64 / samples.len() as f64,
+            mean_usize(&resolution_bars),
+            percentile_usize(&resolution_bars, 0.50),
+        );
+    }
+
+    fn impulse_bucket_label(impulse_distance: f64) -> &'static str {
+        if impulse_distance < 0.100 {
+            "7p_to_10p"
+        } else if impulse_distance < 0.150 {
+            "10p_to_15p"
+        } else if impulse_distance < 0.200 {
+            "15p_to_20p"
+        } else {
+            "20p_plus"
+        }
+    }
+
+    fn evaluate_time_exit_hold(
+        candles: &[TradingCandlePoint],
+        samples: &[TrendLifecycleSample],
+        hold_bars: usize,
+        follow_trend: bool,
+    ) -> TimeExitHoldStats {
+        let mut stats = TimeExitHoldStats::default();
+        for sample in samples {
+            let direction = match (sample.direction, follow_trend) {
+                (TrendDirection::Up, true) | (TrendDirection::Down, false) => "long",
+                (TrendDirection::Down, true) | (TrendDirection::Up, false) => "short",
+            };
+            let (outcome, _) = strategy_entry_outcome_cached(
+                candles,
+                sample.confirm_index,
+                direction,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                hold_bars,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            stats.trades += 1;
+            if outcome.stop_held.is_some() {
+                stats.stop_hits += 1;
+                stats.net_pnl += outcome.stop_pnl_distance;
+            } else {
+                stats.net_pnl += outcome.terminal_pnl_distance;
+                if outcome.terminal_pnl_distance > 0.0 {
+                    stats.positive_exits += 1;
+                } else if outcome.terminal_pnl_distance < 0.0 {
+                    stats.negative_exits += 1;
+                } else {
+                    stats.flat_exits += 1;
+                }
+            }
+        }
+        stats
+    }
+
+    fn run_natgas_21h_trend_follow_time_exit_analysis() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = h1_series.candles;
+        let samples = extract_trend_lifecycle_samples(&candles, NATGAS_TREND_PULLBACK_DISTANCE)
+            .into_iter()
+            .filter(|sample| strategy_hour_utc(&candles[sample.confirm_index].time) == Some(21))
+            .collect::<Vec<_>>();
+        println!(
+            "NATGAS_H1_21H_TIME_EXIT samples={} stop_loss={:.5} cost={:.5}",
+            samples.len(),
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST
+        );
+        let mut best_follow_hold = 0usize;
+        let mut best_follow_expectancy = f64::NEG_INFINITY;
+        let mut best_fade_hold = 0usize;
+        let mut best_fade_expectancy = f64::NEG_INFINITY;
+        for hold in 1..=12 {
+            let follow = evaluate_time_exit_hold(&candles, &samples, hold, true);
+            let fade = evaluate_time_exit_hold(&candles, &samples, hold, false);
+            if follow.expectancy() > best_follow_expectancy {
+                best_follow_expectancy = follow.expectancy();
+                best_follow_hold = hold;
+            }
+            if fade.expectancy() > best_fade_expectancy {
+                best_fade_expectancy = fade.expectancy();
+                best_fade_hold = hold;
+            }
+            println!(
+                "NATGAS_H1_21H_TIME_EXIT hold={}h follow_trend trades={} stop_rate={:.4} positive_rate={:.4} expectancy={:.6} net_pnl={:.6} fade_trend trades={} stop_rate={:.4} positive_rate={:.4} expectancy={:.6} net_pnl={:.6}",
+                hold,
+                follow.trades,
+                follow.stop_rate(),
+                follow.positive_rate(),
+                follow.expectancy(),
+                follow.net_pnl,
+                fade.trades,
+                fade.stop_rate(),
+                fade.positive_rate(),
+                fade.expectancy(),
+                fade.net_pnl,
+            );
+        }
+        println!(
+            "NATGAS_H1_21H_TIME_EXIT_BEST follow_hold={}h follow_expectancy={:.6} fade_hold={}h fade_expectancy={:.6}",
+            best_follow_hold,
+            best_follow_expectancy,
+            best_fade_hold,
+            best_fade_expectancy
+        );
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum SessionTrendVariant {
+        TwoBodies,
+        ThreeBodies,
+        TwoBodiesVwap,
+        ThreeBodiesVwap,
+    }
+
+    impl SessionTrendVariant {
+        fn label(self) -> &'static str {
+            match self {
+                SessionTrendVariant::TwoBodies => "2_bodies",
+                SessionTrendVariant::ThreeBodies => "3_bodies",
+                SessionTrendVariant::TwoBodiesVwap => "2_bodies_plus_vwap",
+                SessionTrendVariant::ThreeBodiesVwap => "3_bodies_plus_vwap",
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct SessionReversalCandidate {
+        variant_11h: SessionTrendVariant,
+        variant_15h: SessionTrendVariant,
+        variant_21h: SessionTrendVariant,
+        hold_11h: usize,
+        reverse_hold_11h: usize,
+        hold_15h: usize,
+        reverse_hold_15h: usize,
+        hold_21h: usize,
+        trades: usize,
+        positive_exits: usize,
+        stop_hits: usize,
+        daily_target_hit_rate: f64,
+        target_hit_days: usize,
+        total_days: usize,
+        avg_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    #[derive(Clone, Debug)]
+    struct SessionSlotSearchResult {
+        variant: SessionTrendVariant,
+        hold_bars: usize,
+        reverse_hold_bars: Option<usize>,
+        trades: usize,
+        positive_exits: usize,
+        stop_hits: usize,
+        avg_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct HybridSessionStats {
+        trades: usize,
+        tp_hits: usize,
+        stop_hits: usize,
+        time_positive_exits: usize,
+        time_negative_exits: usize,
+        time_flat_exits: usize,
+        target_hit_days: usize,
+        total_days: usize,
+        daily_target_hit_rate: f64,
+        avg_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    #[derive(Clone, Copy)]
+    struct SessionQualifierDef {
+        label: &'static str,
+        predicate: fn(usize, &[TradingCandlePoint], &StrategyIndicatorFeatureBank) -> bool,
+    }
+
+    fn inverse_direction(direction: TrendDirection) -> &'static str {
+        match direction {
+            TrendDirection::Up => "short",
+            TrendDirection::Down => "long",
+        }
+    }
+
+    fn follow_direction(direction: TrendDirection) -> &'static str {
+        match direction {
+            TrendDirection::Up => "long",
+            TrendDirection::Down => "short",
+        }
+    }
+
+    fn bullish_body(candle: &TradingCandlePoint) -> bool {
+        candle.close > candle.open
+    }
+
+    fn bearish_body(candle: &TradingCandlePoint) -> bool {
+        candle.close < candle.open
+    }
+
+    fn session_trend_signal(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        index: usize,
+        variant: SessionTrendVariant,
+    ) -> Option<TrendDirection> {
+        if index < 2 {
+            return None;
+        }
+        let current = &candles[index];
+        let prev1 = &candles[index - 1];
+        let prev2 = &candles[index - 2];
+        let close = current.close;
+        let vwap = feature_bank.vwap[index];
+        let up = match variant {
+            SessionTrendVariant::TwoBodies => bullish_body(prev1) && bullish_body(current),
+            SessionTrendVariant::ThreeBodies => bullish_body(prev2) && bullish_body(prev1) && bullish_body(current),
+            SessionTrendVariant::TwoBodiesVwap => bullish_body(prev1) && bullish_body(current) && close > vwap,
+            SessionTrendVariant::ThreeBodiesVwap => {
+                bullish_body(prev2) && bullish_body(prev1) && bullish_body(current) && close > vwap
+            }
+        };
+        let down = match variant {
+            SessionTrendVariant::TwoBodies => bearish_body(prev1) && bearish_body(current),
+            SessionTrendVariant::ThreeBodies => bearish_body(prev2) && bearish_body(prev1) && bearish_body(current),
+            SessionTrendVariant::TwoBodiesVwap => bearish_body(prev1) && bearish_body(current) && close < vwap,
+            SessionTrendVariant::ThreeBodiesVwap => {
+                bearish_body(prev2) && bearish_body(prev1) && bearish_body(current) && close < vwap
+            }
+        };
+        if up && !down {
+            Some(TrendDirection::Up)
+        } else if down && !up {
+            Some(TrendDirection::Down)
+        } else {
+            None
+        }
+    }
+
+    fn record_session_time_exit_trade(
+        candles: &[TradingCandlePoint],
+        entry_index: usize,
+        direction: &str,
+        hold_bars: usize,
+        day_key: &str,
+        daily_pnl: &mut BTreeMap<String, f64>,
+        trades: &mut usize,
+        positive_exits: &mut usize,
+        stop_hits: &mut usize,
+        net_pnl: &mut f64,
+    ) -> Option<(bool, usize, f64)> {
+        let (outcome, _) = strategy_entry_outcome_cached(
+            candles,
+            entry_index,
+            direction,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            hold_bars,
+        );
+        let outcome = outcome?;
+        let timed_exit = outcome.stop_held.is_none();
+        let exit_index = if timed_exit {
+            entry_index + outcome.terminal_held
+        } else {
+            entry_index + outcome.stop_held.unwrap_or(1).saturating_sub(1)
+        };
+        let pnl = if timed_exit {
+            outcome.terminal_pnl_distance
+        } else {
+            outcome.stop_pnl_distance
+        };
+        *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+        *trades += 1;
+        *net_pnl += pnl;
+        if timed_exit && pnl > 0.0 {
+            *positive_exits += 1;
+        }
+        if !timed_exit {
+            *stop_hits += 1;
+        }
+        Some((timed_exit, exit_index, pnl))
+    }
+
+    fn evaluate_session_time_reversal_candidate(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        variant_11h: SessionTrendVariant,
+        variant_15h: SessionTrendVariant,
+        variant_21h: SessionTrendVariant,
+        hold_11h: usize,
+        reverse_hold_11h: usize,
+        hold_15h: usize,
+        reverse_hold_15h: usize,
+        hold_21h: usize,
+    ) -> Option<SessionReversalCandidate> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut positive_exits = 0usize;
+        let mut stop_hits = 0usize;
+        let mut net_pnl = 0.0;
+        for signal_index in 2..candles.len().saturating_sub(8) {
+            let Some(hour) = strategy_hour_utc(&candles[signal_index].time) else {
+                continue;
+            };
+            let Some(day_key) = candles[signal_index].time.get(..10) else {
+                continue;
+            };
+            let Some(entry_index) = signal_index.checked_add(1) else {
+                continue;
+            };
+            if entry_index >= candles.len().saturating_sub(1) {
+                continue;
+            }
+            match hour {
+                11 => {
+                    let Some(direction) =
+                        session_trend_signal(candles, feature_bank, signal_index, variant_11h)
+                    else {
+                        continue;
+                    };
+                    let Some((timed_exit, exit_index, _)) = record_session_time_exit_trade(
+                        candles,
+                        entry_index,
+                        inverse_direction(direction),
+                        hold_11h,
+                        day_key,
+                        &mut daily_pnl,
+                        &mut trades,
+                        &mut positive_exits,
+                        &mut stop_hits,
+                        &mut net_pnl,
+                    ) else {
+                        continue;
+                    };
+                    if timed_exit {
+                        let reverse_entry = exit_index + 1;
+                        if reverse_entry < candles.len().saturating_sub(1) {
+                            let _ = record_session_time_exit_trade(
+                                candles,
+                                reverse_entry,
+                                follow_direction(direction),
+                                reverse_hold_11h,
+                                day_key,
+                                &mut daily_pnl,
+                                &mut trades,
+                                &mut positive_exits,
+                                &mut stop_hits,
+                                &mut net_pnl,
+                            );
+                        }
+                    }
+                }
+                15 => {
+                    let Some(direction) =
+                        session_trend_signal(candles, feature_bank, signal_index, variant_15h)
+                    else {
+                        continue;
+                    };
+                    let Some((timed_exit, exit_index, _)) = record_session_time_exit_trade(
+                        candles,
+                        entry_index,
+                        inverse_direction(direction),
+                        hold_15h,
+                        day_key,
+                        &mut daily_pnl,
+                        &mut trades,
+                        &mut positive_exits,
+                        &mut stop_hits,
+                        &mut net_pnl,
+                    ) else {
+                        continue;
+                    };
+                    if timed_exit {
+                        let reverse_entry = exit_index + 1;
+                        if reverse_entry < candles.len().saturating_sub(1) {
+                            let _ = record_session_time_exit_trade(
+                                candles,
+                                reverse_entry,
+                                follow_direction(direction),
+                                reverse_hold_15h,
+                                day_key,
+                                &mut daily_pnl,
+                                &mut trades,
+                                &mut positive_exits,
+                                &mut stop_hits,
+                                &mut net_pnl,
+                            );
+                        }
+                    }
+                }
+                21 => {
+                    let Some(direction) =
+                        session_trend_signal(candles, feature_bank, signal_index, variant_21h)
+                    else {
+                        continue;
+                    };
+                    let _ = record_session_time_exit_trade(
+                        candles,
+                        entry_index,
+                        follow_direction(direction),
+                        hold_21h,
+                        day_key,
+                        &mut daily_pnl,
+                        &mut trades,
+                        &mut positive_exits,
+                        &mut stop_hits,
+                        &mut net_pnl,
+                    );
+                }
+                _ => {}
+            }
+        }
+        if daily_pnl.is_empty() || trades == 0 {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        Some(SessionReversalCandidate {
+            variant_11h,
+            variant_15h,
+            variant_21h,
+            hold_11h,
+            reverse_hold_11h,
+            hold_15h,
+            reverse_hold_15h,
+            hold_21h,
+            trades,
+            positive_exits,
+            stop_hits,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn evaluate_single_session_reversal_slot(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        hour: u32,
+        variant: SessionTrendVariant,
+        hold_bars: usize,
+        reverse_hold_bars: usize,
+    ) -> Option<SessionSlotSearchResult> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut positive_exits = 0usize;
+        let mut stop_hits = 0usize;
+        let mut net_pnl = 0.0;
+        for signal_index in 2..candles.len().saturating_sub(8) {
+            if strategy_hour_utc(&candles[signal_index].time) != Some(hour) {
+                continue;
+            }
+            let Some(day_key) = candles[signal_index].time.get(..10) else {
+                continue;
+            };
+            let Some(direction) = session_trend_signal(candles, feature_bank, signal_index, variant) else {
+                continue;
+            };
+            let entry_index = signal_index + 1;
+            let Some((timed_exit, exit_index, _)) = record_session_time_exit_trade(
+                candles,
+                entry_index,
+                inverse_direction(direction),
+                hold_bars,
+                day_key,
+                &mut daily_pnl,
+                &mut trades,
+                &mut positive_exits,
+                &mut stop_hits,
+                &mut net_pnl,
+            ) else {
+                continue;
+            };
+            if timed_exit {
+                let reverse_entry = exit_index + 1;
+                if reverse_entry < candles.len().saturating_sub(1) {
+                    let _ = record_session_time_exit_trade(
+                        candles,
+                        reverse_entry,
+                        follow_direction(direction),
+                        reverse_hold_bars,
+                        day_key,
+                        &mut daily_pnl,
+                        &mut trades,
+                        &mut positive_exits,
+                        &mut stop_hits,
+                        &mut net_pnl,
+                    );
+                }
+            }
+        }
+        if trades == 0 || daily_pnl.is_empty() {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        Some(SessionSlotSearchResult {
+            variant,
+            hold_bars,
+            reverse_hold_bars: Some(reverse_hold_bars),
+            trades,
+            positive_exits,
+            stop_hits,
+            avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn evaluate_single_session_follow_slot(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        hour: u32,
+        variant: SessionTrendVariant,
+        hold_bars: usize,
+    ) -> Option<SessionSlotSearchResult> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut positive_exits = 0usize;
+        let mut stop_hits = 0usize;
+        let mut net_pnl = 0.0;
+        for signal_index in 2..candles.len().saturating_sub(8) {
+            if strategy_hour_utc(&candles[signal_index].time) != Some(hour) {
+                continue;
+            }
+            let Some(day_key) = candles[signal_index].time.get(..10) else {
+                continue;
+            };
+            let Some(direction) = session_trend_signal(candles, feature_bank, signal_index, variant) else {
+                continue;
+            };
+            let entry_index = signal_index + 1;
+            let _ = record_session_time_exit_trade(
+                candles,
+                entry_index,
+                follow_direction(direction),
+                hold_bars,
+                day_key,
+                &mut daily_pnl,
+                &mut trades,
+                &mut positive_exits,
+                &mut stop_hits,
+                &mut net_pnl,
+            );
+        }
+        if trades == 0 || daily_pnl.is_empty() {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        Some(SessionSlotSearchResult {
+            variant,
+            hold_bars,
+            reverse_hold_bars: None,
+            trades,
+            positive_exits,
+            stop_hits,
+            avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn run_natgas_session_reversal_time_exit_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = h1_series.candles;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(&candles);
+        let feature_bank = strategy_feature_bank_cached(&candles, &h1_hash, &mut cache_snapshot);
+        let variants = [
+            SessionTrendVariant::TwoBodies,
+            SessionTrendVariant::ThreeBodies,
+            SessionTrendVariant::TwoBodiesVwap,
+            SessionTrendVariant::ThreeBodiesVwap,
+        ];
+        let mut best_11h: Option<SessionSlotSearchResult> = None;
+        let mut best_15h: Option<SessionSlotSearchResult> = None;
+        let mut best_21h: Option<SessionSlotSearchResult> = None;
+        for variant in variants {
+            for hold in 1..=3 {
+                for reverse_hold in 2..=5 {
+                    if let Some(candidate) = evaluate_single_session_reversal_slot(
+                        &candles,
+                        &feature_bank,
+                        11,
+                        variant,
+                        hold,
+                        reverse_hold,
+                    ) {
+                        let replace = best_11h
+                            .as_ref()
+                            .map(|current| {
+                                candidate
+                                    .avg_daily_pnl_distance
+                                    .partial_cmp(&current.avg_daily_pnl_distance)
+                                    .unwrap_or(Ordering::Equal)
+                                    .then_with(|| {
+                                        candidate
+                                            .expectancy_distance
+                                            .partial_cmp(&current.expectancy_distance)
+                                            .unwrap_or(Ordering::Equal)
+                                    })
+                                    == Ordering::Greater
+                            })
+                            .unwrap_or(true);
+                        if replace {
+                            best_11h = Some(candidate);
+                        }
+                    }
+                    if let Some(candidate) = evaluate_single_session_reversal_slot(
+                        &candles,
+                        &feature_bank,
+                        15,
+                        variant,
+                        hold,
+                        reverse_hold,
+                    ) {
+                        let replace = best_15h
+                            .as_ref()
+                            .map(|current| {
+                                candidate
+                                    .avg_daily_pnl_distance
+                                    .partial_cmp(&current.avg_daily_pnl_distance)
+                                    .unwrap_or(Ordering::Equal)
+                                    .then_with(|| {
+                                        candidate
+                                            .expectancy_distance
+                                            .partial_cmp(&current.expectancy_distance)
+                                            .unwrap_or(Ordering::Equal)
+                                    })
+                                    == Ordering::Greater
+                            })
+                            .unwrap_or(true);
+                        if replace {
+                            best_15h = Some(candidate);
+                        }
+                    }
+                }
+            }
+            for hold in 3..=6 {
+                if let Some(candidate) = evaluate_single_session_follow_slot(
+                    &candles,
+                    &feature_bank,
+                    21,
+                    variant,
+                    hold,
+                ) {
+                    let replace = best_21h
+                        .as_ref()
+                        .map(|current| {
+                            candidate
+                                .expectancy_distance
+                                .partial_cmp(&current.expectancy_distance)
+                                .unwrap_or(Ordering::Equal)
+                                .then_with(|| {
+                                    candidate
+                                        .avg_daily_pnl_distance
+                                        .partial_cmp(&current.avg_daily_pnl_distance)
+                                        .unwrap_or(Ordering::Equal)
+                                })
+                                == Ordering::Greater
+                        })
+                        .unwrap_or(true);
+                    if replace {
+                        best_21h = Some(candidate);
+                    }
+                }
+            }
+        }
+        let best_11h = best_11h.expect("best 11h reversal slot");
+        let best_15h = best_15h.expect("best 15h reversal slot");
+        let best_21h = best_21h.expect("best 21h follow slot");
+        let best = evaluate_session_time_reversal_candidate(
+            &candles,
+            &feature_bank,
+            best_11h.variant,
+            best_15h.variant,
+            best_21h.variant,
+            best_11h.hold_bars,
+            best_11h.reverse_hold_bars.unwrap_or(3),
+            best_15h.hold_bars,
+            best_15h.reverse_hold_bars.unwrap_or(3),
+            best_21h.hold_bars,
+        )
+        .expect("combined session reversal candidate");
+        println!(
+            "NATGAS_H1_SESSION_TIME_REVERSAL_SLOT_11H variant={} hold={} reverse_hold={} trades={} positive_rate={:.4} stop_rate={:.4} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best_11h.variant.label(),
+            best_11h.hold_bars,
+            best_11h.reverse_hold_bars.unwrap_or(0),
+            best_11h.trades,
+            best_11h.positive_exits as f64 / best_11h.trades as f64,
+            best_11h.stop_hits as f64 / best_11h.trades as f64,
+            best_11h.avg_daily_pnl_distance,
+            best_11h.expectancy_distance,
+            best_11h.net_pnl_distance,
+        );
+        println!(
+            "NATGAS_H1_SESSION_TIME_REVERSAL_SLOT_15H variant={} hold={} reverse_hold={} trades={} positive_rate={:.4} stop_rate={:.4} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best_15h.variant.label(),
+            best_15h.hold_bars,
+            best_15h.reverse_hold_bars.unwrap_or(0),
+            best_15h.trades,
+            best_15h.positive_exits as f64 / best_15h.trades as f64,
+            best_15h.stop_hits as f64 / best_15h.trades as f64,
+            best_15h.avg_daily_pnl_distance,
+            best_15h.expectancy_distance,
+            best_15h.net_pnl_distance,
+        );
+        println!(
+            "NATGAS_H1_SESSION_TIME_REVERSAL_SLOT_21H variant={} hold={} trades={} positive_rate={:.4} stop_rate={:.4} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best_21h.variant.label(),
+            best_21h.hold_bars,
+            best_21h.trades,
+            best_21h.positive_exits as f64 / best_21h.trades as f64,
+            best_21h.stop_hits as f64 / best_21h.trades as f64,
+            best_21h.avg_daily_pnl_distance,
+            best_21h.expectancy_distance,
+            best_21h.net_pnl_distance,
+        );
+        println!(
+            "NATGAS_H1_SESSION_TIME_REVERSAL best_11h={} hold_11h={} reverse_hold_11h={} best_15h={} hold_15h={} reverse_hold_15h={} best_21h={} hold_21h={} trades={} positive_exits={} stop_hits={} positive_rate={:.4} stop_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best.variant_11h.label(),
+            best.hold_11h,
+            best.reverse_hold_11h,
+            best.variant_15h.label(),
+            best.hold_15h,
+            best.reverse_hold_15h,
+            best.variant_21h.label(),
+            best.hold_21h,
+            best.trades,
+            best.positive_exits,
+            best.stop_hits,
+            best.positive_exits as f64 / best.trades as f64,
+            best.stop_hits as f64 / best.trades as f64,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn three_plus_bullish_bodies(candles: &[TradingCandlePoint], index: usize) -> bool {
+        index >= 2
+            && bullish_body(&candles[index])
+            && bullish_body(&candles[index - 1])
+            && bullish_body(&candles[index - 2])
+    }
+
+    fn three_plus_bearish_bodies(candles: &[TradingCandlePoint], index: usize) -> bool {
+        index >= 2
+            && bearish_body(&candles[index])
+            && bearish_body(&candles[index - 1])
+            && bearish_body(&candles[index - 2])
+    }
+
+    fn evaluate_hybrid_strat_a_13h_17h_21h(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        hold_21h: usize,
+    ) -> HybridSessionStats {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut stats = HybridSessionStats::default();
+        for index in 2..candles.len().saturating_sub(8) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            let Some(day_key) = candles[index].time.get(..10) else {
+                continue;
+            };
+            let entry_index = index + 1;
+            match hour {
+                13 => {
+                    let direction = if three_plus_bullish_bodies(candles, index) {
+                        Some("short")
+                    } else if three_plus_bearish_bodies(candles, index) {
+                        Some("long")
+                    } else {
+                        None
+                    };
+                    let Some(direction) = direction else {
+                        continue;
+                    };
+                    let (outcome, _) = strategy_entry_outcome_cached(
+                        candles,
+                        entry_index,
+                        direction,
+                        NATGAS_STRICT_STOP_LOSS,
+                        NATGAS_STRICT_EXECUTION_COST,
+                        24,
+                    );
+                    let Some(outcome) = outcome else {
+                        continue;
+                    };
+                    let (exit_kind, pnl, _) =
+                        classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+                    *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+                    stats.trades += 1;
+                    stats.net_pnl_distance += pnl;
+                    match exit_kind {
+                        StrictTradeExit::TakeProfit => stats.tp_hits += 1,
+                        StrictTradeExit::StopLoss => stats.stop_hits += 1,
+                        _ => {}
+                    }
+                }
+                17 => {
+                    if !bullish_body(&candles[index]) {
+                        continue;
+                    }
+                    let (outcome, _) = strategy_entry_outcome_cached(
+                        candles,
+                        entry_index,
+                        "long",
+                        NATGAS_STRICT_STOP_LOSS,
+                        NATGAS_STRICT_EXECUTION_COST,
+                        24,
+                    );
+                    let Some(outcome) = outcome else {
+                        continue;
+                    };
+                    let (exit_kind, pnl, _) =
+                        classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+                    *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+                    stats.trades += 1;
+                    stats.net_pnl_distance += pnl;
+                    match exit_kind {
+                        StrictTradeExit::TakeProfit => stats.tp_hits += 1,
+                        StrictTradeExit::StopLoss => stats.stop_hits += 1,
+                        _ => {}
+                    }
+                }
+                21 => {
+                    let Some(direction) = session_trend_signal(
+                        candles,
+                        feature_bank,
+                        index,
+                        SessionTrendVariant::ThreeBodiesVwap,
+                    ) else {
+                        continue;
+                    };
+                    let (outcome, _) = strategy_entry_outcome_cached(
+                        candles,
+                        entry_index,
+                        follow_direction(direction),
+                        NATGAS_STRICT_STOP_LOSS,
+                        NATGAS_STRICT_EXECUTION_COST,
+                        hold_21h,
+                    );
+                    let Some(outcome) = outcome else {
+                        continue;
+                    };
+                    let timed_exit = outcome.stop_held.is_none();
+                    let pnl = if timed_exit {
+                        outcome.terminal_pnl_distance
+                    } else {
+                        outcome.stop_pnl_distance
+                    };
+                    *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+                    stats.trades += 1;
+                    stats.net_pnl_distance += pnl;
+                    if timed_exit {
+                        if pnl > 0.0 {
+                            stats.time_positive_exits += 1;
+                        } else if pnl < 0.0 {
+                            stats.time_negative_exits += 1;
+                        } else {
+                            stats.time_flat_exits += 1;
+                        }
+                    } else {
+                        stats.stop_hits += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        stats.total_days = daily_pnl.len();
+        stats.target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        stats.daily_target_hit_rate = if stats.total_days > 0 {
+            stats.target_hit_days as f64 / stats.total_days as f64
+        } else {
+            0.0
+        };
+        stats.avg_daily_pnl_distance = if stats.total_days > 0 {
+            daily_pnl.values().sum::<f64>() / stats.total_days as f64
+        } else {
+            0.0
+        };
+        stats.expectancy_distance = if stats.trades > 0 {
+            stats.net_pnl_distance / stats.trades as f64
+        } else {
+            0.0
+        };
+        stats
+    }
+
+    fn run_natgas_strat_a_13h_17h_21h_hybrid() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = h1_series.candles;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(&candles);
+        let feature_bank = strategy_feature_bank_cached(&candles, &h1_hash, &mut cache_snapshot);
+        let mut best_hold = 0usize;
+        let mut best: Option<HybridSessionStats> = None;
+        for hold_21h in 2..=6 {
+            let stats = evaluate_hybrid_strat_a_13h_17h_21h(&candles, &feature_bank, hold_21h);
+            println!(
+                "NATGAS_H1_STRATA_HYBRID hold_21h={} trades={} tp_hits={} stop_hits={} time_positive_exits={} time_negative_exits={} time_flat_exits={} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+                hold_21h,
+                stats.trades,
+                stats.tp_hits,
+                stats.stop_hits,
+                stats.time_positive_exits,
+                stats.time_negative_exits,
+                stats.time_flat_exits,
+                stats.daily_target_hit_rate,
+                stats.target_hit_days,
+                stats.total_days,
+                stats.avg_daily_pnl_distance,
+                stats.expectancy_distance,
+                stats.net_pnl_distance,
+            );
+            let replace = best
+                .as_ref()
+                .map(|current| {
+                    stats
+                        .daily_target_hit_rate
+                        .partial_cmp(&current.daily_target_hit_rate)
+                        .unwrap_or(Ordering::Equal)
+                        .then_with(|| {
+                            stats
+                                .avg_daily_pnl_distance
+                                .partial_cmp(&current.avg_daily_pnl_distance)
+                                .unwrap_or(Ordering::Equal)
+                        })
+                        .then_with(|| {
+                            stats
+                                .expectancy_distance
+                                .partial_cmp(&current.expectancy_distance)
+                                .unwrap_or(Ordering::Equal)
+                        })
+                        == Ordering::Greater
+                })
+                .unwrap_or(true);
+            if replace {
+                best_hold = hold_21h;
+                best = Some(stats);
+            }
+        }
+        let best = best.expect("best hybrid hold");
+        println!(
+            "NATGAS_H1_STRATA_HYBRID_BEST hold_21h={} trades={} tp_hits={} stop_hits={} time_positive_exits={} time_negative_exits={} time_flat_exits={} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best_hold,
+            best.trades,
+            best.tp_hits,
+            best.stop_hits,
+            best.time_positive_exits,
+            best.time_negative_exits,
+            best.time_flat_exits,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn classic_short_11h_qualifiers() -> Vec<SessionQualifierDef> {
+        vec![
+            SessionQualifierDef { label: "no extra qualifier", predicate: |_i, _c, _b| true },
+            SessionQualifierDef { label: "close < VWAP", predicate: seed_short_close_below_vwap },
+            SessionQualifierDef { label: "two closes below VWAP", predicate: seed_short_two_closes_below_vwap },
+            SessionQualifierDef { label: "VWAP +1sigma rejection after VWAP break", predicate: seed_short_reject_vwap_ext1_up_after_vwap_break },
+            SessionQualifierDef { label: "three-bar VWAP rollover", predicate: seed_short_three_bar_vwap_rollover },
+            SessionQualifierDef { label: "candle crosses below VWAP +1sigma", predicate: seed_short_cross_below_vwap_ext1_up },
+        ]
+    }
+
+    fn classic_long_15h_qualifiers() -> Vec<SessionQualifierDef> {
+        vec![
+            SessionQualifierDef { label: "no extra qualifier", predicate: |_i, _c, _b| true },
+            SessionQualifierDef { label: "close > VWAP", predicate: seed_long_close_above_vwap },
+            SessionQualifierDef { label: "two closes above VWAP", predicate: seed_long_two_closes_above_vwap },
+            SessionQualifierDef { label: "VWAP -1sigma reclaim after VWAP break", predicate: seed_long_reclaim_vwap_ext1_down_after_vwap_break },
+            SessionQualifierDef { label: "three-bar VWAP reclaim", predicate: seed_long_three_bar_vwap_reclaim },
+            SessionQualifierDef { label: "candle crosses above VWAP -1sigma", predicate: seed_long_cross_above_vwap_ext1_down },
+        ]
+    }
+
+    #[derive(Clone, Debug)]
+    struct ClassicQualifiedHybridCandidate {
+        short_11_label: String,
+        long_15_label: String,
+        hold_21h: usize,
+        trades: usize,
+        tp_hits: usize,
+        stop_hits: usize,
+        time_positive_exits: usize,
+        time_negative_exits: usize,
+        target_hit_days: usize,
+        total_days: usize,
+        daily_target_hit_rate: f64,
+        avg_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    fn evaluate_classic_qualified_hybrid(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        short_11: SessionQualifierDef,
+        long_15: SessionQualifierDef,
+        hold_21h: usize,
+    ) -> ClassicQualifiedHybridCandidate {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut stats = HybridSessionStats::default();
+        for index in 2..candles.len().saturating_sub(8) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            let Some(day_key) = candles[index].time.get(..10) else {
+                continue;
+            };
+            let entry_index = index + 1;
+            match hour {
+                11 => {
+                    if !seed_short_bearish_body(index, candles, feature_bank)
+                        || !(short_11.predicate)(index, candles, feature_bank)
+                    {
+                        continue;
+                    }
+                    let (outcome, _) = strategy_entry_outcome_cached(
+                        candles,
+                        entry_index,
+                        "short",
+                        NATGAS_STRICT_STOP_LOSS,
+                        NATGAS_STRICT_EXECUTION_COST,
+                        24,
+                    );
+                    let Some(outcome) = outcome else {
+                        continue;
+                    };
+                    let (exit_kind, pnl, _) =
+                        classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+                    *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+                    stats.trades += 1;
+                    stats.net_pnl_distance += pnl;
+                    match exit_kind {
+                        StrictTradeExit::TakeProfit => stats.tp_hits += 1,
+                        StrictTradeExit::StopLoss => stats.stop_hits += 1,
+                        _ => {}
+                    }
+                }
+                15 => {
+                    if !seed_long_bullish_body(index, candles, feature_bank)
+                        || !(long_15.predicate)(index, candles, feature_bank)
+                    {
+                        continue;
+                    }
+                    let (outcome, _) = strategy_entry_outcome_cached(
+                        candles,
+                        entry_index,
+                        "long",
+                        NATGAS_STRICT_STOP_LOSS,
+                        NATGAS_STRICT_EXECUTION_COST,
+                        24,
+                    );
+                    let Some(outcome) = outcome else {
+                        continue;
+                    };
+                    let (exit_kind, pnl, _) =
+                        classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+                    *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+                    stats.trades += 1;
+                    stats.net_pnl_distance += pnl;
+                    match exit_kind {
+                        StrictTradeExit::TakeProfit => stats.tp_hits += 1,
+                        StrictTradeExit::StopLoss => stats.stop_hits += 1,
+                        _ => {}
+                    }
+                }
+                21 => {
+                    let Some(direction) = session_trend_signal(
+                        candles,
+                        feature_bank,
+                        index,
+                        SessionTrendVariant::ThreeBodiesVwap,
+                    ) else {
+                        continue;
+                    };
+                    let (outcome, _) = strategy_entry_outcome_cached(
+                        candles,
+                        entry_index,
+                        follow_direction(direction),
+                        NATGAS_STRICT_STOP_LOSS,
+                        NATGAS_STRICT_EXECUTION_COST,
+                        hold_21h,
+                    );
+                    let Some(outcome) = outcome else {
+                        continue;
+                    };
+                    let timed_exit = outcome.stop_held.is_none();
+                    let pnl = if timed_exit {
+                        outcome.terminal_pnl_distance
+                    } else {
+                        outcome.stop_pnl_distance
+                    };
+                    *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+                    stats.trades += 1;
+                    stats.net_pnl_distance += pnl;
+                    if timed_exit {
+                        if pnl > 0.0 {
+                            stats.time_positive_exits += 1;
+                        } else if pnl < 0.0 {
+                            stats.time_negative_exits += 1;
+                        } else {
+                            stats.time_flat_exits += 1;
+                        }
+                    } else {
+                        stats.stop_hits += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        stats.total_days = daily_pnl.len();
+        stats.target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        stats.daily_target_hit_rate = if stats.total_days > 0 {
+            stats.target_hit_days as f64 / stats.total_days as f64
+        } else {
+            0.0
+        };
+        stats.avg_daily_pnl_distance = if stats.total_days > 0 {
+            daily_pnl.values().sum::<f64>() / stats.total_days as f64
+        } else {
+            0.0
+        };
+        stats.expectancy_distance = if stats.trades > 0 {
+            stats.net_pnl_distance / stats.trades as f64
+        } else {
+            0.0
+        };
+        ClassicQualifiedHybridCandidate {
+            short_11_label: short_11.label.to_string(),
+            long_15_label: long_15.label.to_string(),
+            hold_21h,
+            trades: stats.trades,
+            tp_hits: stats.tp_hits,
+            stop_hits: stats.stop_hits,
+            time_positive_exits: stats.time_positive_exits,
+            time_negative_exits: stats.time_negative_exits,
+            target_hit_days: stats.target_hit_days,
+            total_days: stats.total_days,
+            daily_target_hit_rate: stats.daily_target_hit_rate,
+            avg_daily_pnl_distance: stats.avg_daily_pnl_distance,
+            expectancy_distance: stats.expectancy_distance,
+            net_pnl_distance: stats.net_pnl_distance,
+        }
+    }
+
+    fn run_natgas_classic_vwap_qualified_hybrid_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = h1_series.candles;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(&candles);
+        let feature_bank = strategy_feature_bank_cached(&candles, &h1_hash, &mut cache_snapshot);
+        let mut best: Option<ClassicQualifiedHybridCandidate> = None;
+        for short_11 in classic_short_11h_qualifiers() {
+            for long_15 in classic_long_15h_qualifiers() {
+                for hold_21h in 2..=6 {
+                    let candidate = evaluate_classic_qualified_hybrid(
+                        &candles,
+                        &feature_bank,
+                        short_11,
+                        long_15,
+                        hold_21h,
+                    );
+                    let replace = best
+                        .as_ref()
+                        .map(|current| {
+                            candidate
+                                .daily_target_hit_rate
+                                .partial_cmp(&current.daily_target_hit_rate)
+                                .unwrap_or(Ordering::Equal)
+                                .then_with(|| {
+                                    candidate
+                                        .avg_daily_pnl_distance
+                                        .partial_cmp(&current.avg_daily_pnl_distance)
+                                        .unwrap_or(Ordering::Equal)
+                                })
+                                .then_with(|| {
+                                    candidate
+                                        .expectancy_distance
+                                        .partial_cmp(&current.expectancy_distance)
+                                        .unwrap_or(Ordering::Equal)
+                                })
+                                == Ordering::Greater
+                        })
+                        .unwrap_or(true);
+                    if replace {
+                        best = Some(candidate);
+                    }
+                }
+            }
+        }
+        let best = best.expect("best classic vwap-qualified hybrid");
+        println!(
+            "NATGAS_H1_CLASSIC_VWAP_HYBRID best_11h={} best_15h={} hold_21h={} trades={} tp_hits={} stop_hits={} time_positive_exits={} time_negative_exits={} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best.short_11_label,
+            best.long_15_label,
+            best.hold_21h,
+            best.trades,
+            best.tp_hits,
+            best.stop_hits,
+            best.time_positive_exits,
+            best.time_negative_exits,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    enum RejoinQualifierKind {
+        None,
+        CloseTrendSideVwap,
+        CrossExt1,
+        ReclaimBreak,
+        ThreeBarReclaim,
+    }
+
+    impl RejoinQualifierKind {
+        fn label(self) -> &'static str {
+            match self {
+                RejoinQualifierKind::None => "no qualifier",
+                RejoinQualifierKind::CloseTrendSideVwap => "pullback close on trend side of VWAP",
+                RejoinQualifierKind::CrossExt1 => "pullback crosses ext1 back toward trend",
+                RejoinQualifierKind::ReclaimBreak => "pullback reclaim/reject after VWAP break",
+                RejoinQualifierKind::ThreeBarReclaim => "three-bar vwap reclaim/rollover",
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct PullbackRejoinCandidate {
+        qualifier_11h: String,
+        qualifier_15h: String,
+        max_hold: usize,
+        trades: usize,
+        tp_hits: usize,
+        stop_hits: usize,
+        daily_target_hit_rate: f64,
+        target_hit_days: usize,
+        total_days: usize,
+        avg_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    fn rejoin_qualifier_pass(
+        qualifier: RejoinQualifierKind,
+        direction: TrendDirection,
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+    ) -> bool {
+        match (qualifier, direction) {
+            (RejoinQualifierKind::None, _) => true,
+            (RejoinQualifierKind::CloseTrendSideVwap, TrendDirection::Up) => {
+                seed_long_close_above_vwap(index, candles, bank)
+            }
+            (RejoinQualifierKind::CloseTrendSideVwap, TrendDirection::Down) => {
+                seed_short_close_below_vwap(index, candles, bank)
+            }
+            (RejoinQualifierKind::CrossExt1, TrendDirection::Up) => {
+                seed_long_cross_above_vwap_ext1_down(index, candles, bank)
+            }
+            (RejoinQualifierKind::CrossExt1, TrendDirection::Down) => {
+                seed_short_cross_below_vwap_ext1_up(index, candles, bank)
+            }
+            (RejoinQualifierKind::ReclaimBreak, TrendDirection::Up) => {
+                seed_long_reclaim_vwap_ext1_down_after_vwap_break(index, candles, bank)
+            }
+            (RejoinQualifierKind::ReclaimBreak, TrendDirection::Down) => {
+                seed_short_reject_vwap_ext1_up_after_vwap_break(index, candles, bank)
+            }
+            (RejoinQualifierKind::ThreeBarReclaim, TrendDirection::Up) => {
+                seed_long_three_bar_vwap_reclaim(index, candles, bank)
+            }
+            (RejoinQualifierKind::ThreeBarReclaim, TrendDirection::Down) => {
+                seed_short_three_bar_vwap_rollover(index, candles, bank)
+            }
+        }
+    }
+
+    fn evaluate_pullback_rejoin_candidate(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        samples: &[TrendLifecycleSample],
+        qualifier_11h: RejoinQualifierKind,
+        qualifier_15h: RejoinQualifierKind,
+        max_hold: usize,
+    ) -> Option<PullbackRejoinCandidate> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut tp_hits = 0usize;
+        let mut stop_hits = 0usize;
+        let mut net_pnl = 0.0;
+        for sample in samples {
+            let Some(hour) = strategy_hour_utc(&candles[sample.confirm_index].time) else {
+                continue;
+            };
+            if hour != 11 && hour != 15 {
+                continue;
+            }
+            if sample.bars_confirm_to_pullback > 3 {
+                continue;
+            }
+            let qualifier = if hour == 11 { qualifier_11h } else { qualifier_15h };
+            if !rejoin_qualifier_pass(
+                qualifier,
+                sample.direction,
+                sample.pullback_index,
+                candles,
+                feature_bank,
+            ) {
+                continue;
+            }
+            let entry_index = sample.pullback_index + 1;
+            if entry_index >= candles.len().saturating_sub(1) {
+                continue;
+            }
+            let Some(day_key) = candles[entry_index].time.get(..10) else {
+                continue;
+            };
+            let (outcome, _) = strategy_entry_outcome_cached(
+                candles,
+                entry_index,
+                follow_direction(sample.direction),
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                max_hold,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) =
+                classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+            *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+            trades += 1;
+            net_pnl += pnl;
+            match exit_kind {
+                StrictTradeExit::TakeProfit => tp_hits += 1,
+                StrictTradeExit::StopLoss => stop_hits += 1,
+                _ => {}
+            }
+        }
+        if trades == 0 || daily_pnl.is_empty() {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        Some(PullbackRejoinCandidate {
+            qualifier_11h: qualifier_11h.label().to_string(),
+            qualifier_15h: qualifier_15h.label().to_string(),
+            max_hold,
+            trades,
+            tp_hits,
+            stop_hits,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn run_natgas_11h_15h_pullback_rejoin_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = h1_series.candles;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(&candles);
+        let feature_bank = strategy_feature_bank_cached(&candles, &h1_hash, &mut cache_snapshot);
+        let samples = extract_trend_lifecycle_samples(&candles, NATGAS_TREND_PULLBACK_DISTANCE);
+        let qualifiers = [
+            RejoinQualifierKind::None,
+            RejoinQualifierKind::CloseTrendSideVwap,
+            RejoinQualifierKind::CrossExt1,
+            RejoinQualifierKind::ReclaimBreak,
+            RejoinQualifierKind::ThreeBarReclaim,
+        ];
+        let mut best: Option<PullbackRejoinCandidate> = None;
+        for qualifier_11h in qualifiers {
+            for qualifier_15h in qualifiers {
+                for max_hold in 3..=8 {
+                    let Some(candidate) = evaluate_pullback_rejoin_candidate(
+                        &candles,
+                        &feature_bank,
+                        &samples,
+                        qualifier_11h,
+                        qualifier_15h,
+                        max_hold,
+                    ) else {
+                        continue;
+                    };
+                    let replace = best
+                        .as_ref()
+                        .map(|current| {
+                            candidate
+                                .daily_target_hit_rate
+                                .partial_cmp(&current.daily_target_hit_rate)
+                                .unwrap_or(Ordering::Equal)
+                                .then_with(|| {
+                                    candidate
+                                        .avg_daily_pnl_distance
+                                        .partial_cmp(&current.avg_daily_pnl_distance)
+                                        .unwrap_or(Ordering::Equal)
+                                })
+                                .then_with(|| {
+                                    candidate
+                                        .expectancy_distance
+                                        .partial_cmp(&current.expectancy_distance)
+                                        .unwrap_or(Ordering::Equal)
+                                })
+                                == Ordering::Greater
+                        })
+                        .unwrap_or(true);
+                    if replace {
+                        best = Some(candidate);
+                    }
+                }
+            }
+        }
+        let best = best.expect("best pullback rejoin candidate");
+        println!(
+            "NATGAS_H1_11H_15H_PULLBACK_REJOIN best_11h={} best_15h={} max_hold={} trades={} tp_hits={} stop_hits={} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best.qualifier_11h,
+            best.qualifier_15h,
+            best.max_hold,
+            best.trades,
+            best.tp_hits,
+            best.stop_hits,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    enum M5PullbackZone {
+        Vwap,
+        Ext1,
+        Ema21,
+        Ext2,
+    }
+
+    impl M5PullbackZone {
+        fn label(self) -> &'static str {
+            match self {
+                M5PullbackZone::Vwap => "touch VWAP",
+                M5PullbackZone::Ext1 => "touch VWAP ext1",
+                M5PullbackZone::Ema21 => "touch EMA21",
+                M5PullbackZone::Ext2 => "touch VWAP ext2",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum M5RejoinTrigger {
+        BodyReversal,
+        CloseTrendSideVwap,
+        ReclaimExt1,
+        BreakPriorBar,
+    }
+
+    impl M5RejoinTrigger {
+        fn label(self) -> &'static str {
+            match self {
+                M5RejoinTrigger::BodyReversal => "body reversal",
+                M5RejoinTrigger::CloseTrendSideVwap => "close back on trend side of VWAP",
+                M5RejoinTrigger::ReclaimExt1 => "reclaim ext1",
+                M5RejoinTrigger::BreakPriorBar => "break prior bar",
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct M5PullbackExecutionCandidate {
+        zone: String,
+        trigger: String,
+        max_hold: usize,
+        trades: usize,
+        tp_hits: usize,
+        stop_hits: usize,
+        daily_target_hit_rate: f64,
+        target_hit_days: usize,
+        total_days: usize,
+        avg_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    #[derive(Clone, Debug)]
+    struct AnchoredVwapTouchCandidate {
+        lookback_hours: usize,
+        max_hold: usize,
+        trades: usize,
+        wins: usize,
+        losses: usize,
+        daily_target_hit_rate: f64,
+        target_hit_days: usize,
+        total_days: usize,
+        avg_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    fn candle_index_at_or_after(candles: &[TradingCandlePoint], time: &str) -> Option<usize> {
+        candle_index_by_time(candles, time).or_else(|| {
+            let index = next_candle_index_after(candles, Some(time));
+            (index < candles.len()).then_some(index)
+        })
+    }
+
+    fn m5_zone_touched(
+        zone: M5PullbackZone,
+        direction: TrendDirection,
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+    ) -> bool {
+        let candle = &candles[index];
+        match (zone, direction) {
+            (M5PullbackZone::Vwap, TrendDirection::Up) => candle.low <= bank.vwap[index],
+            (M5PullbackZone::Vwap, TrendDirection::Down) => candle.high >= bank.vwap[index],
+            (M5PullbackZone::Ext1, TrendDirection::Up) => candle.low <= bank.vwap_ext1_down[index],
+            (M5PullbackZone::Ext1, TrendDirection::Down) => candle.high >= bank.vwap_ext1_up[index],
+            (M5PullbackZone::Ema21, TrendDirection::Up) => candle.low <= bank.ema21[index],
+            (M5PullbackZone::Ema21, TrendDirection::Down) => candle.high >= bank.ema21[index],
+            (M5PullbackZone::Ext2, TrendDirection::Up) => candle.low <= bank.vwap_ext2_down[index],
+            (M5PullbackZone::Ext2, TrendDirection::Down) => candle.high >= bank.vwap_ext2_up[index],
+        }
+    }
+
+    fn m5_rejoin_trigger_pass(
+        trigger: M5RejoinTrigger,
+        direction: TrendDirection,
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+    ) -> bool {
+        if index == 0 {
+            return false;
+        }
+        let candle = &candles[index];
+        let prev = &candles[index - 1];
+        match (trigger, direction) {
+            (M5RejoinTrigger::BodyReversal, TrendDirection::Up) => bullish_body(candle),
+            (M5RejoinTrigger::BodyReversal, TrendDirection::Down) => bearish_body(candle),
+            (M5RejoinTrigger::CloseTrendSideVwap, TrendDirection::Up) => candle.close > bank.vwap[index],
+            (M5RejoinTrigger::CloseTrendSideVwap, TrendDirection::Down) => candle.close < bank.vwap[index],
+            (M5RejoinTrigger::ReclaimExt1, TrendDirection::Up) => {
+                candle.low <= bank.vwap_ext1_down[index] && candle.close > bank.vwap_ext1_down[index]
+            }
+            (M5RejoinTrigger::ReclaimExt1, TrendDirection::Down) => {
+                candle.high >= bank.vwap_ext1_up[index] && candle.close < bank.vwap_ext1_up[index]
+            }
+            (M5RejoinTrigger::BreakPriorBar, TrendDirection::Up) => candle.close > prev.high,
+            (M5RejoinTrigger::BreakPriorBar, TrendDirection::Down) => candle.close < prev.low,
+        }
+    }
+
+    fn evaluate_h1_signal_to_m5_pullback_execution(
+        h1_candles: &[TradingCandlePoint],
+        m5_candles: &[TradingCandlePoint],
+        m5_bank: &StrategyIndicatorFeatureBank,
+        samples: &[TrendLifecycleSample],
+        zone: M5PullbackZone,
+        trigger: M5RejoinTrigger,
+        max_hold: usize,
+    ) -> Option<M5PullbackExecutionCandidate> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut tp_hits = 0usize;
+        let mut stop_hits = 0usize;
+        let mut net_pnl = 0.0;
+        for sample in samples {
+            let Some(hour) = strategy_hour_utc(&h1_candles[sample.confirm_index].time) else {
+                continue;
+            };
+            if hour != 11 && hour != 15 {
+                continue;
+            }
+            if sample.bars_confirm_to_pullback > 3 || sample.confirm_index + 1 >= h1_candles.len() {
+                continue;
+            }
+            let start_time = &h1_candles[sample.confirm_index + 1].time;
+            let start_index = candle_index_at_or_after(m5_candles, start_time).unwrap_or(m5_candles.len());
+            if start_index >= m5_candles.len().saturating_sub(2) {
+                continue;
+            }
+            let end_exclusive = if sample.confirm_index + 4 < h1_candles.len() {
+                candle_index_at_or_after(m5_candles, &h1_candles[sample.confirm_index + 4].time)
+                    .unwrap_or(m5_candles.len())
+            } else {
+                m5_candles.len()
+            };
+            if end_exclusive <= start_index + 1 {
+                continue;
+            }
+            let mut touch_index = None;
+            let mut entry_index = None;
+            for m5_index in start_index..end_exclusive.min(m5_candles.len().saturating_sub(1)) {
+                if touch_index.is_none() {
+                    if m5_zone_touched(zone, sample.direction, m5_index, m5_candles, m5_bank) {
+                        touch_index = Some(m5_index);
+                    }
+                    continue;
+                }
+                if m5_rejoin_trigger_pass(trigger, sample.direction, m5_index, m5_candles, m5_bank) {
+                    entry_index = Some(m5_index + 1);
+                    break;
+                }
+            }
+            let Some(entry_index) = entry_index else {
+                continue;
+            };
+            if entry_index >= m5_candles.len().saturating_sub(1) {
+                continue;
+            }
+            let Some(day_key) = m5_candles[entry_index].time.get(..10) else {
+                continue;
+            };
+            let (outcome, _) = strategy_entry_outcome_cached(
+                m5_candles,
+                entry_index,
+                follow_direction(sample.direction),
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                max_hold,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) =
+                classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+            *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+            trades += 1;
+            net_pnl += pnl;
+            match exit_kind {
+                StrictTradeExit::TakeProfit => tp_hits += 1,
+                StrictTradeExit::StopLoss => stop_hits += 1,
+                _ => {}
+            }
+        }
+        if trades == 0 || daily_pnl.is_empty() {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        Some(M5PullbackExecutionCandidate {
+            zone: zone.label().to_string(),
+            trigger: trigger.label().to_string(),
+            max_hold,
+            trades,
+            tp_hits,
+            stop_hits,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn run_natgas_h1_to_m5_pullback_execution_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let m5_series = canonical_chart_series("NATGAS_USD", "M5", 0).expect("NATGAS_USD M5 history");
+        let h1_candles = h1_series.candles;
+        let m5_candles = m5_series.candles;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let m5_hash = strategy_candles_hash(&m5_candles);
+        let m5_bank = strategy_feature_bank_cached(&m5_candles, &m5_hash, &mut cache_snapshot);
+        let samples = extract_trend_lifecycle_samples(&h1_candles, NATGAS_TREND_PULLBACK_DISTANCE);
+        let zones = [
+            M5PullbackZone::Vwap,
+            M5PullbackZone::Ext1,
+            M5PullbackZone::Ema21,
+            M5PullbackZone::Ext2,
+        ];
+        let triggers = [
+            M5RejoinTrigger::BodyReversal,
+            M5RejoinTrigger::CloseTrendSideVwap,
+            M5RejoinTrigger::ReclaimExt1,
+            M5RejoinTrigger::BreakPriorBar,
+        ];
+        let mut best: Option<M5PullbackExecutionCandidate> = None;
+        for zone in zones {
+            for trigger in triggers {
+                for max_hold in [6_usize, 12, 18, 24] {
+                    let Some(candidate) = evaluate_h1_signal_to_m5_pullback_execution(
+                        &h1_candles,
+                        &m5_candles,
+                        &m5_bank,
+                        &samples,
+                        zone,
+                        trigger,
+                        max_hold,
+                    ) else {
+                        continue;
+                    };
+                    let replace = best
+                        .as_ref()
+                        .map(|current| {
+                            candidate
+                                .daily_target_hit_rate
+                                .partial_cmp(&current.daily_target_hit_rate)
+                                .unwrap_or(Ordering::Equal)
+                                .then_with(|| {
+                                    candidate
+                                        .avg_daily_pnl_distance
+                                        .partial_cmp(&current.avg_daily_pnl_distance)
+                                        .unwrap_or(Ordering::Equal)
+                                })
+                                .then_with(|| {
+                                    candidate
+                                        .expectancy_distance
+                                        .partial_cmp(&current.expectancy_distance)
+                                        .unwrap_or(Ordering::Equal)
+                                })
+                                == Ordering::Greater
+                        })
+                        .unwrap_or(true);
+                    if replace {
+                        best = Some(candidate);
+                    }
+                }
+            }
+        }
+        let best = best.expect("best H1->M5 pullback execution");
+        println!(
+            "NATGAS_H1_TO_M5_PULLBACK_EXECUTION zone={} trigger={} max_hold_m5={} trades={} tp_hits={} stop_hits={} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best.zone,
+            best.trigger,
+            best.max_hold,
+            best.trades,
+            best.tp_hits,
+            best.stop_hits,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn rolling_extreme_index(
+        candles: &[TradingCandlePoint],
+        end_index: usize,
+        lookback: usize,
+        highest: bool,
+    ) -> usize {
+        let start = end_index.saturating_add(1).saturating_sub(lookback);
+        let mut best_index = start;
+        let mut best_value = if highest {
+            candles[start].high
+        } else {
+            candles[start].low
+        };
+        for index in start + 1..=end_index {
+            let value = if highest { candles[index].high } else { candles[index].low };
+            let replace = if highest { value >= best_value } else { value <= best_value };
+            if replace {
+                best_value = value;
+                best_index = index;
+            }
+        }
+        best_index
+    }
+
+    fn anchored_vwap_between(candles: &[TradingCandlePoint], from: usize, to: usize) -> f64 {
+        let mut pv = 0.0;
+        let mut volume = 0.0;
+        for candle in &candles[from..=to] {
+            let typical = (candle.high + candle.low + candle.close) / 3.0;
+            let vol = (candle.volume as f64).max(1.0);
+            pv += typical * vol;
+            volume += vol;
+        }
+        if volume > 0.0 {
+            pv / volume
+        } else {
+            candles[to].close
+        }
+    }
+
+    fn anchored_vwap_sigma_between(candles: &[TradingCandlePoint], from: usize, to: usize) -> (f64, f64) {
+        let mut pv = 0.0;
+        let mut sq_pv = 0.0;
+        let mut volume = 0.0;
+        for candle in &candles[from..=to] {
+            let typical = (candle.high + candle.low + candle.close) / 3.0;
+            let vol = (candle.volume as f64).max(1.0);
+            pv += typical * vol;
+            sq_pv += typical * typical * vol;
+            volume += vol;
+        }
+        if volume <= 0.0 {
+            return (candles[to].close, 0.0);
+        }
+        let mean = pv / volume;
+        let variance = ((sq_pv / volume) - mean * mean).max(0.0);
+        (mean, variance.sqrt())
+    }
+
+    fn evaluate_anchored_vwap_touch_candidate(
+        candles: &[TradingCandlePoint],
+        lookback_hours: usize,
+        max_hold: usize,
+    ) -> Option<AnchoredVwapTouchCandidate> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        for index in lookback_hours..candles.len().saturating_sub(2) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            if !(7..=21).contains(&hour) {
+                continue;
+            }
+            let Some(day_key) = candles[index].time.get(..10) else {
+                continue;
+            };
+            let high_anchor = rolling_extreme_index(candles, index, lookback_hours, true);
+            let low_anchor = rolling_extreme_index(candles, index, lookback_hours, false);
+            if high_anchor == index && low_anchor == index {
+                continue;
+            }
+            let avwap_high = anchored_vwap_between(candles, high_anchor, index);
+            let avwap_low = anchored_vwap_between(candles, low_anchor, index);
+            let candle = &candles[index];
+            let long_setup = low_anchor < index && candle.close > avwap_low && candle.low <= avwap_low;
+            let short_setup = high_anchor < index && candle.close < avwap_high && candle.high >= avwap_high;
+            let direction = match (long_setup, short_setup) {
+                (true, false) => Some("long"),
+                (false, true) => Some("short"),
+                _ => None,
+            };
+            let Some(direction) = direction else {
+                continue;
+            };
+            let entry_index = index + 1;
+            let (outcome, _) = strategy_entry_outcome_cached(
+                candles,
+                entry_index,
+                direction,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                max_hold,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) =
+                classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+            *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+            trades += 1;
+            net_pnl += pnl;
+            match exit_kind {
+                StrictTradeExit::TakeProfit => wins += 1,
+                StrictTradeExit::StopLoss => losses += 1,
+                _ => {}
+            }
+        }
+        if trades == 0 || daily_pnl.is_empty() {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        Some(AnchoredVwapTouchCandidate {
+            lookback_hours,
+            max_hold,
+            trades,
+            wins,
+            losses,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn run_natgas_h1_anchored_vwap_touch_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = h1_series.candles;
+        let mut best: Option<AnchoredVwapTouchCandidate> = None;
+        for lookback_hours in [24_usize, 36, 48] {
+            for max_hold in [6_usize, 12, 18, 24] {
+                let Some(candidate) =
+                    evaluate_anchored_vwap_touch_candidate(&candles, lookback_hours, max_hold)
+                else {
+                    continue;
+                };
+                let replace = best
+                    .as_ref()
+                    .map(|current| {
+                        candidate
+                            .daily_target_hit_rate
+                            .partial_cmp(&current.daily_target_hit_rate)
+                            .unwrap_or(Ordering::Equal)
+                            .then_with(|| {
+                                candidate
+                                    .avg_daily_pnl_distance
+                                    .partial_cmp(&current.avg_daily_pnl_distance)
+                                    .unwrap_or(Ordering::Equal)
+                            })
+                            .then_with(|| {
+                                candidate
+                                    .expectancy_distance
+                                    .partial_cmp(&current.expectancy_distance)
+                                    .unwrap_or(Ordering::Equal)
+                            })
+                            == Ordering::Greater
+                    })
+                    .unwrap_or(true);
+                if replace {
+                    best = Some(candidate);
+                }
+            }
+        }
+        let best = best.expect("best anchored vwap touch");
+        println!(
+            "NATGAS_H1_ANCHORED_VWAP_TOUCH best_lookback_hours={} best_max_hold={} trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best.lookback_hours,
+            best.max_hold,
+            best.trades,
+            best.wins,
+            best.losses,
+            best.wins as f64 / best.trades as f64,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn evaluate_anchored_vwap_ext2_candidate(
+        candles: &[TradingCandlePoint],
+        lookback_hours: usize,
+        max_hold: usize,
+    ) -> Option<AnchoredVwapTouchCandidate> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        for index in lookback_hours..candles.len().saturating_sub(2) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            if !(7..=21).contains(&hour) {
+                continue;
+            }
+            let Some(day_key) = candles[index].time.get(..10) else {
+                continue;
+            };
+            let high_anchor = rolling_extreme_index(candles, index, lookback_hours, true);
+            let low_anchor = rolling_extreme_index(candles, index, lookback_hours, false);
+            if high_anchor == index && low_anchor == index {
+                continue;
+            }
+            let (avwap_high, sigma_high) = anchored_vwap_sigma_between(candles, high_anchor, index);
+            let (avwap_low, sigma_low) = anchored_vwap_sigma_between(candles, low_anchor, index);
+            let ext2_up = avwap_high + 2.0 * sigma_high;
+            let ext2_down = avwap_low - 2.0 * sigma_low;
+            let candle = &candles[index];
+            let short_setup = high_anchor < index && candle.high >= ext2_up;
+            let long_setup = low_anchor < index && candle.low <= ext2_down;
+            let direction = match (long_setup, short_setup) {
+                (true, false) => Some("long"),
+                (false, true) => Some("short"),
+                _ => None,
+            };
+            let Some(direction) = direction else {
+                continue;
+            };
+            let entry_index = index + 1;
+            let (outcome, _) = strategy_entry_outcome_cached(
+                candles,
+                entry_index,
+                direction,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                max_hold,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) =
+                classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+            *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+            trades += 1;
+            net_pnl += pnl;
+            match exit_kind {
+                StrictTradeExit::TakeProfit => wins += 1,
+                StrictTradeExit::StopLoss => losses += 1,
+                _ => {}
+            }
+        }
+        if trades == 0 || daily_pnl.is_empty() {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        Some(AnchoredVwapTouchCandidate {
+            lookback_hours,
+            max_hold,
+            trades,
+            wins,
+            losses,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn run_natgas_h1_anchored_vwap_ext2_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = h1_series.candles;
+        let mut best: Option<AnchoredVwapTouchCandidate> = None;
+        for lookback_hours in [24_usize, 36, 48] {
+            for max_hold in [6_usize, 12, 18, 24] {
+                let Some(candidate) =
+                    evaluate_anchored_vwap_ext2_candidate(&candles, lookback_hours, max_hold)
+                else {
+                    continue;
+                };
+                let replace = best
+                    .as_ref()
+                    .map(|current| {
+                        candidate
+                            .daily_target_hit_rate
+                            .partial_cmp(&current.daily_target_hit_rate)
+                            .unwrap_or(Ordering::Equal)
+                            .then_with(|| {
+                                candidate
+                                    .avg_daily_pnl_distance
+                                    .partial_cmp(&current.avg_daily_pnl_distance)
+                                    .unwrap_or(Ordering::Equal)
+                            })
+                            .then_with(|| {
+                                candidate
+                                    .expectancy_distance
+                                    .partial_cmp(&current.expectancy_distance)
+                                    .unwrap_or(Ordering::Equal)
+                            })
+                            == Ordering::Greater
+                    })
+                    .unwrap_or(true);
+                if replace {
+                    best = Some(candidate);
+                }
+            }
+        }
+        let best = best.expect("best anchored vwap ext2");
+        println!(
+            "NATGAS_H1_ANCHORED_VWAP_EXT2 best_lookback_hours={} best_max_hold={} trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best.lookback_hours,
+            best.max_hold,
+            best.trades,
+            best.wins,
+            best.losses,
+            best.wins as f64 / best.trades as f64,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    #[derive(Clone)]
+    struct AnchoredVwapAntiEdgeCandidate {
+        label: &'static str,
+        lookback_hours: usize,
+        max_hold: usize,
+        trades: usize,
+        wins: usize,
+        losses: usize,
+        daily_target_hit_rate: f64,
+        target_hit_days: usize,
+        total_days: usize,
+        avg_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    fn evaluate_anchored_vwap_anti_edge_candidate(
+        candles: &[TradingCandlePoint],
+        lookback_hours: usize,
+        max_hold: usize,
+        variant: &'static str,
+    ) -> Option<AnchoredVwapAntiEdgeCandidate> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        for index in lookback_hours..candles.len().saturating_sub(2) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            if !(7..=21).contains(&hour) {
+                continue;
+            }
+            let Some(day_key) = candles[index].time.get(..10) else {
+                continue;
+            };
+            let high_anchor = rolling_extreme_index(candles, index, lookback_hours, true);
+            let low_anchor = rolling_extreme_index(candles, index, lookback_hours, false);
+            if high_anchor == index && low_anchor == index {
+                continue;
+            }
+            let avwap_high = anchored_vwap_between(candles, high_anchor, index);
+            let avwap_low = anchored_vwap_between(candles, low_anchor, index);
+            let (avwap_sigma_high, sigma_high) = anchored_vwap_sigma_between(candles, high_anchor, index);
+            let (avwap_sigma_low, sigma_low) = anchored_vwap_sigma_between(candles, low_anchor, index);
+            let ext2_up = avwap_sigma_high + 2.0 * sigma_high;
+            let ext2_down = avwap_sigma_low - 2.0 * sigma_low;
+            let candle = &candles[index];
+            let direction = match variant {
+                "touch_mean_reversion" => {
+                    let long_setup = low_anchor < index && candle.close > avwap_low && candle.low <= avwap_low;
+                    let short_setup = high_anchor < index && candle.close < avwap_high && candle.high >= avwap_high;
+                    match (long_setup, short_setup) {
+                        (true, false) => Some("long"),
+                        (false, true) => Some("short"),
+                        _ => None,
+                    }
+                }
+                "touch_inverted_follow" => {
+                    let long_setup = high_anchor < index && candle.close > avwap_high && candle.high >= avwap_high;
+                    let short_setup = low_anchor < index && candle.close < avwap_low && candle.low <= avwap_low;
+                    match (long_setup, short_setup) {
+                        (true, false) => Some("long"),
+                        (false, true) => Some("short"),
+                        _ => None,
+                    }
+                }
+                "ext2_mean_reversion" => {
+                    let short_setup = high_anchor < index && candle.high >= ext2_up;
+                    let long_setup = low_anchor < index && candle.low <= ext2_down;
+                    match (long_setup, short_setup) {
+                        (true, false) => Some("long"),
+                        (false, true) => Some("short"),
+                        _ => None,
+                    }
+                }
+                "ext2_inverted_follow" => {
+                    let long_setup = high_anchor < index && candle.high >= ext2_up;
+                    let short_setup = low_anchor < index && candle.low <= ext2_down;
+                    match (long_setup, short_setup) {
+                        (true, false) => Some("long"),
+                        (false, true) => Some("short"),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let Some(direction) = direction else {
+                continue;
+            };
+            let (outcome, _) = strategy_entry_outcome_cached(
+                candles,
+                index + 1,
+                direction,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                max_hold,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) =
+                classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+            *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+            trades += 1;
+            net_pnl += pnl;
+            match exit_kind {
+                StrictTradeExit::TakeProfit => wins += 1,
+                StrictTradeExit::StopLoss => losses += 1,
+                _ => {}
+            }
+        }
+        if trades == 0 || daily_pnl.is_empty() {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        Some(AnchoredVwapAntiEdgeCandidate {
+            label: variant,
+            lookback_hours,
+            max_hold,
+            trades,
+            wins,
+            losses,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn run_natgas_h1_anchored_vwap_make_it_worse() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = h1_series.candles;
+        let mut worst: Option<AnchoredVwapAntiEdgeCandidate> = None;
+        for variant in [
+            "touch_mean_reversion",
+            "touch_inverted_follow",
+            "ext2_mean_reversion",
+            "ext2_inverted_follow",
+        ] {
+            for lookback_hours in [24_usize, 36, 48] {
+                for max_hold in [6_usize, 12, 18, 24] {
+                    let Some(candidate) = evaluate_anchored_vwap_anti_edge_candidate(
+                        &candles,
+                        lookback_hours,
+                        max_hold,
+                        variant,
+                    ) else {
+                        continue;
+                    };
+                    let replace = worst
+                        .as_ref()
+                        .map(|current| {
+                            candidate
+                                .net_pnl_distance
+                                .partial_cmp(&current.net_pnl_distance)
+                                .unwrap_or(Ordering::Equal)
+                                == Ordering::Less
+                        })
+                        .unwrap_or(true);
+                    if replace {
+                        worst = Some(candidate);
+                    }
+                }
+            }
+        }
+        let worst = worst.expect("worst anchored vwap anti-edge");
+        println!(
+            "NATGAS_H1_ANCHORED_VWAP_WORST variant={} lookback_hours={} max_hold={} trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            worst.label,
+            worst.lookback_hours,
+            worst.max_hold,
+            worst.trades,
+            worst.wins,
+            worst.losses,
+            worst.wins as f64 / worst.trades as f64,
+            worst.daily_target_hit_rate,
+            worst.target_hit_days,
+            worst.total_days,
+            worst.avg_daily_pnl_distance,
+            worst.expectancy_distance,
+            worst.net_pnl_distance,
+        );
+    }
+
+    fn evaluate_anchored_vwap_ext2_rejection_h4_candidate(
+        h1_candles: &[TradingCandlePoint],
+        h4_bias_by_h1_index: &[H4BiasState],
+        lookback_hours: usize,
+        max_hold: usize,
+    ) -> Option<AnchoredVwapTouchCandidate> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        for index in lookback_hours..h1_candles.len().saturating_sub(2) {
+            let Some(hour) = strategy_hour_utc(&h1_candles[index].time) else {
+                continue;
+            };
+            if !(7..=21).contains(&hour) {
+                continue;
+            }
+            let Some(day_key) = h1_candles[index].time.get(..10) else {
+                continue;
+            };
+            let bias = h4_bias_by_h1_index
+                .get(index)
+                .copied()
+                .unwrap_or(H4BiasState::Neutral);
+            let high_anchor = rolling_extreme_index(h1_candles, index, lookback_hours, true);
+            let low_anchor = rolling_extreme_index(h1_candles, index, lookback_hours, false);
+            if high_anchor == index && low_anchor == index {
+                continue;
+            }
+            let (avwap_high, sigma_high) = anchored_vwap_sigma_between(h1_candles, high_anchor, index);
+            let (avwap_low, sigma_low) = anchored_vwap_sigma_between(h1_candles, low_anchor, index);
+            let ext2_up = avwap_high + 2.0 * sigma_high;
+            let ext2_down = avwap_low - 2.0 * sigma_low;
+            let candle = &h1_candles[index];
+            let short_setup = bias == H4BiasState::Bearish
+                && high_anchor < index
+                && candle.high >= ext2_up
+                && candle.close < ext2_up
+                && bearish_body(candle);
+            let long_setup = bias == H4BiasState::Bullish
+                && low_anchor < index
+                && candle.low <= ext2_down
+                && candle.close > ext2_down
+                && bullish_body(candle);
+            let direction = match (long_setup, short_setup) {
+                (true, false) => Some("long"),
+                (false, true) => Some("short"),
+                _ => None,
+            };
+            let Some(direction) = direction else {
+                continue;
+            };
+            let entry_index = index + 1;
+            let (outcome, _) = strategy_entry_outcome_cached(
+                h1_candles,
+                entry_index,
+                direction,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                max_hold,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) =
+                classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+            *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+            trades += 1;
+            net_pnl += pnl;
+            match exit_kind {
+                StrictTradeExit::TakeProfit => wins += 1,
+                StrictTradeExit::StopLoss => losses += 1,
+                _ => {}
+            }
+        }
+        if trades == 0 || daily_pnl.is_empty() {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        Some(AnchoredVwapTouchCandidate {
+            lookback_hours,
+            max_hold,
+            trades,
+            wins,
+            losses,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn run_natgas_h1_anchored_vwap_ext2_rejection_h4_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let h1_candles = h1_series.candles;
+        let h4_candles = h4_series.candles;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h4_hash = strategy_candles_hash(&h4_candles);
+        let h4_bank = strategy_feature_bank_cached(&h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_bias_by_h1_index = build_h4_bias_by_h1_index(&h1_candles, &h4_candles, &h4_bank);
+        let mut best: Option<AnchoredVwapTouchCandidate> = None;
+        for lookback_hours in [24_usize, 36, 48] {
+            for max_hold in [6_usize, 12, 18, 24] {
+                let Some(candidate) = evaluate_anchored_vwap_ext2_rejection_h4_candidate(
+                    &h1_candles,
+                    &h4_bias_by_h1_index,
+                    lookback_hours,
+                    max_hold,
+                ) else {
+                    continue;
+                };
+                let replace = best
+                    .as_ref()
+                    .map(|current| {
+                        candidate
+                            .daily_target_hit_rate
+                            .partial_cmp(&current.daily_target_hit_rate)
+                            .unwrap_or(Ordering::Equal)
+                            .then_with(|| {
+                                candidate
+                                    .avg_daily_pnl_distance
+                                    .partial_cmp(&current.avg_daily_pnl_distance)
+                                    .unwrap_or(Ordering::Equal)
+                            })
+                            .then_with(|| {
+                                candidate
+                                    .expectancy_distance
+                                    .partial_cmp(&current.expectancy_distance)
+                                    .unwrap_or(Ordering::Equal)
+                            })
+                            == Ordering::Greater
+                    })
+                    .unwrap_or(true);
+                if replace {
+                    best = Some(candidate);
+                }
+            }
+        }
+        let best = best.expect("best anchored vwap ext2 rejection h4");
+        println!(
+            "NATGAS_H1_ANCHORED_VWAP_EXT2_REJECTION_H4 best_lookback_hours={} best_max_hold={} trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best.lookback_hours,
+            best.max_hold,
+            best.trades,
+            best.wins,
+            best.losses,
+            best.wins as f64 / best.trades as f64,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn update_hour_behavior_stats(
+        stats: &mut HourCloseBehaviorStats,
+        candle: &TradingCandlePoint,
+        future_1: &TradingCandlePoint,
+        future_3: &TradingCandlePoint,
+        future_6: &TradingCandlePoint,
+        long_exit: StrictTradeExit,
+        short_exit: StrictTradeExit,
+    ) {
+        stats.samples += 1;
+        let close = candle.close;
+        let ret1 = future_1.close - close;
+        let ret3 = future_3.close - close;
+        let ret6 = future_6.close - close;
+        stats.avg_return_1 += ret1;
+        stats.avg_return_3 += ret3;
+        stats.avg_return_6 += ret6;
+        if bullish_body(candle) {
+            stats.bullish_closes += 1;
+            if ret1 > 0.0 {
+                stats.bullish_next1_continue += 1;
+            }
+            if ret3 > 0.0 {
+                stats.bullish_next3_continue += 1;
+            }
+            if ret6 > 0.0 {
+                stats.bullish_next6_continue += 1;
+            }
+        } else if bearish_body(candle) {
+            stats.bearish_closes += 1;
+            if ret1 < 0.0 {
+                stats.bearish_next1_continue += 1;
+            }
+            if ret3 < 0.0 {
+                stats.bearish_next3_continue += 1;
+            }
+            if ret6 < 0.0 {
+                stats.bearish_next6_continue += 1;
+            }
+        }
+        match long_exit {
+            StrictTradeExit::TakeProfit => stats.long_tp_hits += 1,
+            StrictTradeExit::StopLoss => stats.long_sl_hits += 1,
+            _ => {}
+        }
+        match short_exit {
+            StrictTradeExit::TakeProfit => stats.short_tp_hits += 1,
+            StrictTradeExit::StopLoss => stats.short_sl_hits += 1,
+            _ => {}
+        }
+    }
+
+    fn hour_close_vwap_context_label(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        index: usize,
+    ) -> &'static str {
+        let close = candles[index].close;
+        if close > feature_bank.vwap_ext1_up[index] {
+            "above_vwap_plus1s"
+        } else if close > feature_bank.vwap[index] {
+            "above_vwap"
+        } else if close < feature_bank.vwap_ext1_down[index] {
+            "below_vwap_minus1s"
+        } else if close < feature_bank.vwap[index] {
+            "below_vwap"
+        } else {
+            "near_vwap"
+        }
+    }
+
+    fn hour_close_momentum_context_label(
+        feature_bank: &StrategyIndicatorFeatureBank,
+        index: usize,
+    ) -> &'static str {
+        let macd = feature_bank.macd_histogram[index];
+        let rsi = feature_bank.rsi14[index];
+        if macd > 0.0 && rsi >= 55.0 {
+            "mom_up"
+        } else if macd < 0.0 && rsi <= 45.0 {
+            "mom_down"
+        } else {
+            "mom_mixed"
+        }
+    }
+
+    fn hour_close_volatility_context_label(
+        feature_bank: &StrategyIndicatorFeatureBank,
+        index: usize,
+    ) -> &'static str {
+        let atr = feature_bank.atr14[index];
+        let width = feature_bank.boll_widths[index];
+        if atr <= feature_bank.atr_p35 && width <= feature_bank.boll_width_p35 {
+            "squeeze"
+        } else if atr > feature_bank.atr_p50 && width > feature_bank.boll_width_p50 {
+            "expanded"
+        } else {
+            "normal_vol"
+        }
+    }
+
+    fn hour_close_body_context_label(candle: &TradingCandlePoint) -> &'static str {
+        if bullish_body(candle) {
+            "bull_body"
+        } else if bearish_body(candle) {
+            "bear_body"
+        } else {
+            "flat_body"
+        }
+    }
+
+    fn run_natgas_h1_hour_close_context_audit() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let candles = h1_series.candles;
+        let h4_candles = h4_series.candles;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(&candles);
+        let h4_hash = strategy_candles_hash(&h4_candles);
+        let h1_bank = strategy_feature_bank_cached(&candles, &h1_hash, &mut cache_snapshot);
+        let h4_bank = strategy_feature_bank_cached(&h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_bias_by_h1_index = build_h4_bias_by_h1_index(&candles, &h4_candles, &h4_bank);
+        let mut by_hour_context = BTreeMap::<(u32, String), HourCloseBehaviorStats>::new();
+        for index in 0..candles.len().saturating_sub(7) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            if !(7..=21).contains(&hour) {
+                continue;
+            }
+            let (long_outcome, _) = strategy_entry_outcome_cached(
+                &candles,
+                index + 1,
+                "long",
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                6,
+            );
+            let (short_outcome, _) = strategy_entry_outcome_cached(
+                &candles,
+                index + 1,
+                "short",
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                6,
+            );
+            let Some(long_outcome) = long_outcome else {
+                continue;
+            };
+            let Some(short_outcome) = short_outcome else {
+                continue;
+            };
+            let (long_exit, _, _) =
+                classify_strict_trade_outcome(&long_outcome, NATGAS_STRICT_TAKE_PROFIT);
+            let (short_exit, _, _) =
+                classify_strict_trade_outcome(&short_outcome, NATGAS_STRICT_TAKE_PROFIT);
+            let h4_bias = h4_bias_by_h1_index
+                .get(index)
+                .copied()
+                .unwrap_or(H4BiasState::Neutral)
+                .label();
+            let context = format!(
+                "body={}|vwap={}|mom={}|vol={}|h4={}",
+                hour_close_body_context_label(&candles[index]),
+                hour_close_vwap_context_label(&candles, &h1_bank, index),
+                hour_close_momentum_context_label(&h1_bank, index),
+                hour_close_volatility_context_label(&h1_bank, index),
+                h4_bias
+            );
+            let stats = by_hour_context.entry((hour, context)).or_default();
+            update_hour_behavior_stats(
+                stats,
+                &candles[index],
+                &candles[index + 1],
+                &candles[index + 3],
+                &candles[index + 6],
+                long_exit,
+                short_exit,
+            );
+        }
+        println!("NATGAS_H1_HOUR_CLOSE_CONTEXT_AUDIT methodology=\"hourly close audit with context buckets body/vwap/momentum/volatility/h4_bias; next-open strict entries long and short use TP 5.1p, SL 3.9p, spread 0.6p, hold=6 bars; only context buckets with at least 35 samples are ranked per hour\"");
+        for hour in 7_u32..=21_u32 {
+            let mut contexts = by_hour_context
+                .iter()
+                .filter(|((ctx_hour, _), stats)| *ctx_hour == hour && stats.samples >= 35)
+                .map(|((_, label), stats)| (label.as_str(), stats))
+                .collect::<Vec<_>>();
+            if contexts.is_empty() {
+                continue;
+            }
+            contexts.sort_by(|(left_label, left), (right_label, right)| {
+                right
+                    .short_tp_rate()
+                    .max(right.long_tp_rate())
+                    .partial_cmp(&left.short_tp_rate().max(left.long_tp_rate()))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left_label.cmp(right_label))
+            });
+            let best_short = contexts
+                .iter()
+                .max_by(|(_, left), (_, right)| {
+                    left.short_tp_rate()
+                        .partial_cmp(&right.short_tp_rate())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .copied();
+            let best_long = contexts
+                .iter()
+                .max_by(|(_, left), (_, right)| {
+                    left.long_tp_rate()
+                        .partial_cmp(&right.long_tp_rate())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .copied();
+            if let Some((label, stats)) = best_short {
+                println!(
+                    "NATGAS_H1_HOUR_CLOSE_CONTEXT_AUDIT hour={:02} best_short_ctx=\"{}\" samples={} short_tp_rate={:.4} long_tp_rate={:.4} avg_ret_1={:.5} avg_ret_3={:.5} avg_ret_6={:.5}",
+                    hour,
+                    label,
+                    stats.samples,
+                    stats.short_tp_rate(),
+                    stats.long_tp_rate(),
+                    stats.avg_ret_1(),
+                    stats.avg_ret_3(),
+                    stats.avg_ret_6(),
+                );
+            }
+            if let Some((label, stats)) = best_long {
+                println!(
+                    "NATGAS_H1_HOUR_CLOSE_CONTEXT_AUDIT hour={:02} best_long_ctx=\"{}\" samples={} long_tp_rate={:.4} short_tp_rate={:.4} avg_ret_1={:.5} avg_ret_3={:.5} avg_ret_6={:.5}",
+                    hour,
+                    label,
+                    stats.samples,
+                    stats.long_tp_rate(),
+                    stats.short_tp_rate(),
+                    stats.avg_ret_1(),
+                    stats.avg_ret_3(),
+                    stats.avg_ret_6(),
+                );
+            }
+        }
+    }
+
+    fn run_natgas_h1_hour_close_behavior_audit() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = series.candles;
+        let mut by_hour = BTreeMap::<u32, HourCloseBehaviorStats>::new();
+        for index in 0..candles.len().saturating_sub(7) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            if !(7..=21).contains(&hour) {
+                continue;
+            }
+            let (long_outcome, _) = strategy_entry_outcome_cached(
+                &candles,
+                index + 1,
+                "long",
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                6,
+            );
+            let (short_outcome, _) = strategy_entry_outcome_cached(
+                &candles,
+                index + 1,
+                "short",
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                6,
+            );
+            let Some(long_outcome) = long_outcome else {
+                continue;
+            };
+            let Some(short_outcome) = short_outcome else {
+                continue;
+            };
+            let (long_exit, _, _) =
+                classify_strict_trade_outcome(&long_outcome, NATGAS_STRICT_TAKE_PROFIT);
+            let (short_exit, _, _) =
+                classify_strict_trade_outcome(&short_outcome, NATGAS_STRICT_TAKE_PROFIT);
+            let stats = by_hour.entry(hour).or_default();
+            update_hour_behavior_stats(
+                stats,
+                &candles[index],
+                &candles[index + 1],
+                &candles[index + 3],
+                &candles[index + 6],
+                long_exit,
+                short_exit,
+            );
+        }
+        println!("NATGAS_H1_HOUR_CLOSE_AUDIT methodology=\"for each H1 candle close between 07h and 21h UTC, compute next-close continuation over 1/3/6 bars and strict TP/SL hit rates for long/short entries at next open with TP 5.1p, SL 3.9p, spread 0.6p, hold=6 bars\"");
+        for hour in 7_u32..=21_u32 {
+            let Some(stats) = by_hour.get(&hour) else {
+                continue;
+            };
+            let avg1 = if stats.samples > 0 {
+                stats.avg_return_1 / stats.samples as f64
+            } else {
+                0.0
+            };
+            let avg3 = if stats.samples > 0 {
+                stats.avg_return_3 / stats.samples as f64
+            } else {
+                0.0
+            };
+            let avg6 = if stats.samples > 0 {
+                stats.avg_return_6 / stats.samples as f64
+            } else {
+                0.0
+            };
+            let bull1 = if stats.bullish_closes > 0 {
+                stats.bullish_next1_continue as f64 / stats.bullish_closes as f64
+            } else {
+                0.0
+            };
+            let bull3 = if stats.bullish_closes > 0 {
+                stats.bullish_next3_continue as f64 / stats.bullish_closes as f64
+            } else {
+                0.0
+            };
+            let bull6 = if stats.bullish_closes > 0 {
+                stats.bullish_next6_continue as f64 / stats.bullish_closes as f64
+            } else {
+                0.0
+            };
+            let bear1 = if stats.bearish_closes > 0 {
+                stats.bearish_next1_continue as f64 / stats.bearish_closes as f64
+            } else {
+                0.0
+            };
+            let bear3 = if stats.bearish_closes > 0 {
+                stats.bearish_next3_continue as f64 / stats.bearish_closes as f64
+            } else {
+                0.0
+            };
+            let bear6 = if stats.bearish_closes > 0 {
+                stats.bearish_next6_continue as f64 / stats.bearish_closes as f64
+            } else {
+                0.0
+            };
+            let long_win = if stats.samples > 0 {
+                stats.long_tp_hits as f64 / stats.samples as f64
+            } else {
+                0.0
+            };
+            let short_win = if stats.samples > 0 {
+                stats.short_tp_hits as f64 / stats.samples as f64
+            } else {
+                0.0
+            };
+            println!(
+                "NATGAS_H1_HOUR_CLOSE_AUDIT hour={:02} samples={} bullish_rate={:.4} bearish_rate={:.4} bull_continue_1={:.4} bull_continue_3={:.4} bull_continue_6={:.4} bear_continue_1={:.4} bear_continue_3={:.4} bear_continue_6={:.4} avg_ret_1={:.5} avg_ret_3={:.5} avg_ret_6={:.5} long_tp_rate={:.4} short_tp_rate={:.4}",
+                hour,
+                stats.samples,
+                stats.bullish_rate(),
+                stats.bearish_rate(),
+                bull1,
+                bull3,
+                bull6,
+                bear1,
+                bear3,
+                bear6,
+                avg1,
+                avg3,
+                avg6,
+                long_win,
+                short_win,
+            );
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct HourRecurrenceSearchMetrics {
+        trades: usize,
+        tp_hits: usize,
+        sl_hits: usize,
+        win_rate: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    #[derive(Clone)]
+    struct HourRecurrenceComboResult {
+        hour: u32,
+        direction: &'static str,
+        labels: Vec<&'static str>,
+        train: HourRecurrenceSearchMetrics,
+        test: HourRecurrenceSearchMetrics,
+    }
+
+    fn run_natgas_h1_hour_recurrence_combo_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let candles = h1_series.candles;
+        let h4_candles = h4_series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(56);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(&candles);
+        let h4_hash = strategy_candles_hash(&h4_candles);
+        let bank = strategy_feature_bank_cached(&candles, &h1_hash, &mut cache_snapshot);
+        let h4_bank = strategy_feature_bank_cached(&h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_bias_by_h1_index = build_h4_bias_by_h1_index(&candles, &h4_candles, &h4_bank);
+
+        let mut prev24_high = vec![f64::NAN; candles.len()];
+        let mut prev24_low = vec![f64::NAN; candles.len()];
+        let mut prev24_mid = vec![f64::NAN; candles.len()];
+        let mut prev24_pos = vec![f64::NAN; candles.len()];
+        let mut prev24_return = vec![f64::NAN; candles.len()];
+        for index in 24..candles.len() {
+            let window = &candles[index - 24..index];
+            let high = window.iter().map(|c| c.high).fold(f64::NEG_INFINITY, f64::max);
+            let low = window.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
+            let width = (high - low).abs();
+            prev24_high[index] = high;
+            prev24_low[index] = low;
+            prev24_mid[index] = (high + low) * 0.5;
+            prev24_return[index] = candles[index].close - candles[index - 24].close;
+            if width.is_finite() && width > f64::EPSILON {
+                prev24_pos[index] = (candles[index].close - low) / width;
+            }
+        }
+
+        let build_bool_map = |predicate: &dyn Fn(usize) -> bool| {
+            let mut out = vec![false; candles.len()];
+            for index in 0..candles.len() {
+                out[index] = predicate(index);
+            }
+            out
+        };
+
+        let long_predicates: Vec<(&'static str, Vec<bool>)> = vec![
+            ("bullish_body", build_bool_map(&|i| bullish_body(&candles[i]))),
+            (
+                "prev_red_then_green",
+                build_bool_map(&|i| i > 0 && bearish_body(&candles[i - 1]) && bullish_body(&candles[i])),
+            ),
+            (
+                "two_bull_bodies",
+                build_bool_map(&|i| i > 0 && bullish_body(&candles[i - 1]) && bullish_body(&candles[i])),
+            ),
+            (
+                "three_higher_closes",
+                build_bool_map(&|i| i >= 2 && candles[i].close > candles[i - 1].close && candles[i - 1].close > candles[i - 2].close),
+            ),
+            ("close_gt_vwap", build_bool_map(&|i| candles[i].close > bank.vwap[i])),
+            ("close_gt_donchian20_mid", build_bool_map(&|i| candles[i].close > bank.donchian20_mid[i])),
+            ("close_gt_donchian55_mid", build_bool_map(&|i| candles[i].close > bank.donchian55_mid[i])),
+            ("macd_hist_gt_0", build_bool_map(&|i| bank.macd_histogram[i] > 0.0)),
+            ("rsi14_gt_50", build_bool_map(&|i| bank.rsi14[i] > 50.0)),
+            ("stoch_k_gt_d", build_bool_map(&|i| bank.stoch14_k[i] > bank.stoch14_d[i])),
+            (
+                "h4_bullish",
+                build_bool_map(&|i| h4_bias_by_h1_index.get(i).copied().unwrap_or(H4BiasState::Neutral) == H4BiasState::Bullish),
+            ),
+            (
+                "close_lower_24h_quartile",
+                build_bool_map(&|i| prev24_pos[i].is_finite() && prev24_pos[i] <= 0.25),
+            ),
+            (
+                "close_upper_24h_quartile",
+                build_bool_map(&|i| prev24_pos[i].is_finite() && prev24_pos[i] >= 0.75),
+            ),
+            (
+                "ret24_positive",
+                build_bool_map(&|i| prev24_return[i].is_finite() && prev24_return[i] > 0.0),
+            ),
+            (
+                "breaks_prev24_high",
+                build_bool_map(&|i| prev24_high[i].is_finite() && candles[i].close > prev24_high[i]),
+            ),
+            (
+                "close_gt_prev24_mid",
+                build_bool_map(&|i| prev24_mid[i].is_finite() && candles[i].close > prev24_mid[i]),
+            ),
+        ];
+        let short_predicates: Vec<(&'static str, Vec<bool>)> = vec![
+            ("bearish_body", build_bool_map(&|i| bearish_body(&candles[i]))),
+            (
+                "prev_green_then_red",
+                build_bool_map(&|i| i > 0 && bullish_body(&candles[i - 1]) && bearish_body(&candles[i])),
+            ),
+            (
+                "two_bear_bodies",
+                build_bool_map(&|i| i > 0 && bearish_body(&candles[i - 1]) && bearish_body(&candles[i])),
+            ),
+            (
+                "three_lower_closes",
+                build_bool_map(&|i| i >= 2 && candles[i].close < candles[i - 1].close && candles[i - 1].close < candles[i - 2].close),
+            ),
+            ("close_lt_vwap", build_bool_map(&|i| candles[i].close < bank.vwap[i])),
+            ("close_lt_donchian20_mid", build_bool_map(&|i| candles[i].close < bank.donchian20_mid[i])),
+            ("close_lt_donchian55_mid", build_bool_map(&|i| candles[i].close < bank.donchian55_mid[i])),
+            ("macd_hist_lt_0", build_bool_map(&|i| bank.macd_histogram[i] < 0.0)),
+            ("rsi14_lt_50", build_bool_map(&|i| bank.rsi14[i] < 50.0)),
+            ("stoch_k_lt_d", build_bool_map(&|i| bank.stoch14_k[i] < bank.stoch14_d[i])),
+            (
+                "h4_bearish",
+                build_bool_map(&|i| h4_bias_by_h1_index.get(i).copied().unwrap_or(H4BiasState::Neutral) == H4BiasState::Bearish),
+            ),
+            (
+                "close_upper_24h_quartile",
+                build_bool_map(&|i| prev24_pos[i].is_finite() && prev24_pos[i] >= 0.75),
+            ),
+            (
+                "close_lower_24h_quartile",
+                build_bool_map(&|i| prev24_pos[i].is_finite() && prev24_pos[i] <= 0.25),
+            ),
+            (
+                "ret24_negative",
+                build_bool_map(&|i| prev24_return[i].is_finite() && prev24_return[i] < 0.0),
+            ),
+            (
+                "breaks_prev24_low",
+                build_bool_map(&|i| prev24_low[i].is_finite() && candles[i].close < prev24_low[i]),
+            ),
+            (
+                "close_lt_prev24_mid",
+                build_bool_map(&|i| prev24_mid[i].is_finite() && candles[i].close < prev24_mid[i]),
+            ),
+        ];
+
+        let eval_indices = |indices: &[usize], direction: &str| {
+            let mut metrics = HourRecurrenceSearchMetrics::default();
+            for index in indices {
+                let (outcome, _) = strategy_entry_outcome_cached(
+                    &candles,
+                    index + 1,
+                    direction,
+                    NATGAS_STRICT_STOP_LOSS,
+                    NATGAS_STRICT_EXECUTION_COST,
+                    6,
+                );
+                let Some(outcome) = outcome else {
+                    continue;
+                };
+                let (exit_kind, pnl, _) = classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+                metrics.trades += 1;
+                metrics.net_pnl_distance += pnl;
+                match exit_kind {
+                    StrictTradeExit::TakeProfit => metrics.tp_hits += 1,
+                    StrictTradeExit::StopLoss => metrics.sl_hits += 1,
+                    _ => {}
+                }
+            }
+            if metrics.trades > 0 {
+                metrics.win_rate = metrics.tp_hits as f64 / metrics.trades as f64;
+                metrics.expectancy_distance = metrics.net_pnl_distance / metrics.trades as f64;
+            }
+            metrics
+        };
+
+        let mut best_results = Vec::<HourRecurrenceComboResult>::new();
+        for hour in 7_u32..=21_u32 {
+            for (direction, predicates) in [("long", &long_predicates), ("short", &short_predicates)] {
+                let base_train = (56..train_rows.saturating_sub(7))
+                    .filter(|index| strategy_hour_utc(&candles[*index].time) == Some(hour))
+                    .collect::<Vec<_>>();
+                let base_test = (test_start..candles.len().saturating_sub(7))
+                    .filter(|index| strategy_hour_utc(&candles[*index].time) == Some(hour))
+                    .collect::<Vec<_>>();
+                let mut hour_best: Vec<HourRecurrenceComboResult> = Vec::new();
+                let n = predicates.len();
+                let evaluate_combo = |combo: &[usize], hour_best: &mut Vec<HourRecurrenceComboResult>| {
+                    let train_indices = base_train
+                        .iter()
+                        .copied()
+                        .filter(|index| combo.iter().all(|predicate_ix| predicates[*predicate_ix].1[*index]))
+                        .collect::<Vec<_>>();
+                    let test_indices = base_test
+                        .iter()
+                        .copied()
+                        .filter(|index| combo.iter().all(|predicate_ix| predicates[*predicate_ix].1[*index]))
+                        .collect::<Vec<_>>();
+                    if train_indices.len() < 18 || test_indices.len() < 8 {
+                        return;
+                    }
+                    let train = eval_indices(&train_indices, direction);
+                    let test = eval_indices(&test_indices, direction);
+                    if train.trades < 18 || test.trades < 8 || test.win_rate < 0.55 {
+                        return;
+                    }
+                    let result = HourRecurrenceComboResult {
+                        hour,
+                        direction,
+                        labels: combo.iter().map(|ix| predicates[*ix].0).collect::<Vec<_>>(),
+                        train,
+                        test,
+                    };
+                    hour_best.push(result);
+                    hour_best.sort_by(|left, right| {
+                        right
+                            .test
+                            .win_rate
+                            .partial_cmp(&left.test.win_rate)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| {
+                                right
+                                    .test
+                                    .expectancy_distance
+                                    .partial_cmp(&left.test.expectancy_distance)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .then_with(|| right.test.trades.cmp(&left.test.trades))
+                    });
+                    hour_best.truncate(3);
+                };
+
+                for a in 0..n {
+                    evaluate_combo(&[a], &mut hour_best);
+                    for b in a + 1..n {
+                        evaluate_combo(&[a, b], &mut hour_best);
+                        for c in b + 1..n {
+                            evaluate_combo(&[a, b, c], &mut hour_best);
+                        }
+                    }
+                }
+                best_results.extend(hour_best);
+            }
+        }
+
+        println!("NATGAS_H1_HOUR_RECURRENCE_COMBO_SEARCH methodology=\"for each H1 close hour 07h-21h UTC, search long/short recurrence patterns using indicators, previous candle structure, and previous-24h context; combinations of 1 to 3 predicates are discovered on train 70% and validated on holdout 30%; entries execute at next candle open with TP 5.1p, SL 3.9p, spread 0.6p, hold=6 bars\"");
+        best_results.sort_by(|left, right| {
+            left.hour
+                .cmp(&right.hour)
+                .then_with(|| left.direction.cmp(right.direction))
+                .then_with(|| {
+                    right
+                        .test
+                        .win_rate
+                        .partial_cmp(&left.test.win_rate)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        for result in best_results {
+            println!(
+                "NATGAS_H1_HOUR_RECURRENCE_COMBO hour={:02} direction={} pattern=\"{}\" train_trades={} train_win_rate={:.4} train_expectancy={:.6} test_trades={} test_win_rate={:.4} test_expectancy={:.6} test_net_pnl={:.6}",
+                result.hour,
+                result.direction,
+                result.labels.join(" && "),
+                result.train.trades,
+                result.train.win_rate,
+                result.train.expectancy_distance,
+                result.test.trades,
+                result.test.win_rate,
+                result.test.expectancy_distance,
+                result.test.net_pnl_distance,
+            );
+        }
+    }
+
+    fn run_natgas_high_confidence_signal_refinement_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let candles = h1_series.candles;
+        let h4_candles = h4_series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(56);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(&candles);
+        let h4_hash = strategy_candles_hash(&h4_candles);
+        let bank = strategy_feature_bank_cached(&candles, &h1_hash, &mut cache_snapshot);
+        let h4_bank = strategy_feature_bank_cached(&h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_bias_by_h1_index = build_h4_bias_by_h1_index(&candles, &h4_candles, &h4_bank);
+
+        let mut prev24_high = vec![f64::NAN; candles.len()];
+        let mut prev24_low = vec![f64::NAN; candles.len()];
+        let mut prev24_mid = vec![f64::NAN; candles.len()];
+        let mut prev24_pos = vec![f64::NAN; candles.len()];
+        let mut prev24_return = vec![f64::NAN; candles.len()];
+        for index in 24..candles.len() {
+            let window = &candles[index - 24..index];
+            let high = window.iter().map(|c| c.high).fold(f64::NEG_INFINITY, f64::max);
+            let low = window.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
+            let width = (high - low).abs();
+            prev24_high[index] = high;
+            prev24_low[index] = low;
+            prev24_mid[index] = (high + low) * 0.5;
+            prev24_return[index] = candles[index].close - candles[index - 24].close;
+            if width.is_finite() && width > f64::EPSILON {
+                prev24_pos[index] = (candles[index].close - low) / width;
+            }
+        }
+
+        let eval_pattern = |indices: &[usize], direction: &str, max_hold: usize| {
+            let mut metrics = HourRecurrenceSearchMetrics::default();
+            for index in indices {
+                let (outcome, _) = strategy_entry_outcome_cached(
+                    &candles,
+                    index + 1,
+                    direction,
+                    NATGAS_STRICT_STOP_LOSS,
+                    NATGAS_STRICT_EXECUTION_COST,
+                    max_hold,
+                );
+                let Some(outcome) = outcome else {
+                    continue;
+                };
+                let (exit_kind, pnl, _) =
+                    classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+                metrics.trades += 1;
+                metrics.net_pnl_distance += pnl;
+                match exit_kind {
+                    StrictTradeExit::TakeProfit => metrics.tp_hits += 1,
+                    StrictTradeExit::StopLoss => metrics.sl_hits += 1,
+                    _ => {}
+                }
+            }
+            if metrics.trades > 0 {
+                metrics.win_rate = metrics.tp_hits as f64 / metrics.trades as f64;
+                metrics.expectancy_distance = metrics.net_pnl_distance / metrics.trades as f64;
+            }
+            metrics
+        };
+
+        println!("NATGAS_H1_HIGH_CONFIDENCE_REFINEMENT methodology=\"refine only the previously discovered >=70% signal families by adding 1-2 extra predicates around them; keep train/test split 70/30, require holdout win rate >= 70%, and report only surviving variants\"");
+
+        let print_family = |
+            family: &str,
+            hour: u32,
+            direction: &'static str,
+            max_hold: usize,
+            base_label: &'static str,
+            base_predicate: &dyn Fn(usize) -> bool,
+            optional_predicates: &[(&'static str, &dyn Fn(usize) -> bool)],
+            min_train: usize,
+            min_test: usize| {
+            let train_base = (56..train_rows.saturating_sub(7))
+                .filter(|index| strategy_hour_utc(&candles[*index].time) == Some(hour))
+                .collect::<Vec<_>>();
+            let test_base = (test_start..candles.len().saturating_sub(7))
+                .filter(|index| strategy_hour_utc(&candles[*index].time) == Some(hour))
+                .collect::<Vec<_>>();
+            let mut best_rows = Vec::<(Vec<&'static str>, HourRecurrenceSearchMetrics, HourRecurrenceSearchMetrics)>::new();
+            let eval_combo = |labels: Vec<&'static str>,
+                              predicates: Vec<&dyn Fn(usize) -> bool>,
+                              best_rows: &mut Vec<(Vec<&'static str>, HourRecurrenceSearchMetrics, HourRecurrenceSearchMetrics)>| {
+                let train_indices = train_base
+                    .iter()
+                    .copied()
+                    .filter(|index| predicates.iter().all(|predicate| predicate(*index)))
+                    .collect::<Vec<_>>();
+                let test_indices = test_base
+                    .iter()
+                    .copied()
+                    .filter(|index| predicates.iter().all(|predicate| predicate(*index)))
+                    .collect::<Vec<_>>();
+                if train_indices.len() < min_train || test_indices.len() < min_test {
+                    return;
+                }
+                let train = eval_pattern(&train_indices, direction, max_hold);
+                let test = eval_pattern(&test_indices, direction, max_hold);
+                if test.win_rate < 0.70 {
+                    return;
+                }
+                best_rows.push((labels, train, test));
+                best_rows.sort_by(|left, right| {
+                    right
+                        .2
+                        .win_rate
+                        .partial_cmp(&left.2.win_rate)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| {
+                            right
+                                .2
+                                .expectancy_distance
+                                .partial_cmp(&left.2.expectancy_distance)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .then_with(|| right.2.trades.cmp(&left.2.trades))
+                });
+                best_rows.truncate(6);
+            };
+
+            eval_combo(vec![base_label], vec![base_predicate], &mut best_rows);
+            for a in 0..optional_predicates.len() {
+                eval_combo(
+                    vec![base_label, optional_predicates[a].0],
+                    vec![base_predicate, optional_predicates[a].1],
+                    &mut best_rows,
+                );
+                for b in a + 1..optional_predicates.len() {
+                    eval_combo(
+                        vec![base_label, optional_predicates[a].0, optional_predicates[b].0],
+                        vec![base_predicate, optional_predicates[a].1, optional_predicates[b].1],
+                        &mut best_rows,
+                    );
+                }
+            }
+
+            for (labels, train, test) in best_rows {
+                println!(
+                    "NATGAS_H1_HIGH_CONFIDENCE_REFINEMENT family={} hour={:02} direction={} hold={} pattern=\"{}\" train_trades={} train_win_rate={:.4} train_expectancy={:.6} test_trades={} test_win_rate={:.4} test_expectancy={:.6} test_net_pnl={:.6}",
+                    family,
+                    hour,
+                    direction,
+                    max_hold,
+                    labels.join(" && "),
+                    train.trades,
+                    train.win_rate,
+                    train.expectancy_distance,
+                    test.trades,
+                    test.win_rate,
+                    test.expectancy_distance,
+                    test.net_pnl_distance,
+                );
+            }
+        };
+
+        let h11_base = |i: usize| {
+            bearish_body(&candles[i])
+                && candles[i].close < bank.vwap_ext1_down[i]
+                && bank.macd_histogram[i] < 0.0
+                && bank.rsi14[i] <= 45.0
+                && bank.atr14[i] <= bank.atr_p35
+                && bank.boll_widths[i] <= bank.boll_width_p35
+                && h4_bias_by_h1_index.get(i).copied().unwrap_or(H4BiasState::Neutral)
+                    == H4BiasState::Bearish
+        };
+        let h11_opts: [(&str, &dyn Fn(usize) -> bool); 5] = [
+            ("two_bear_bodies", &|i| i > 0 && bearish_body(&candles[i - 1]) && bearish_body(&candles[i])),
+            ("stoch_k_lt_d", &|i| bank.stoch14_k[i] < bank.stoch14_d[i]),
+            ("close_lt_prev24_mid", &|i| prev24_mid[i].is_finite() && candles[i].close < prev24_mid[i]),
+            ("close_upper_24h_quartile", &|i| prev24_pos[i].is_finite() && prev24_pos[i] >= 0.75),
+            ("close_lt_donchian55_mid", &|i| candles[i].close < bank.donchian55_mid[i]),
+        ];
+        print_family(
+            "11h_short_sniper",
+            11,
+            "short",
+            24,
+            "base_11h_short_sniper",
+            &h11_base,
+            &h11_opts,
+            16,
+            8,
+        );
+
+        let h18_base = |i: usize| {
+            bullish_body(&candles[i])
+                && candles[i].close < bank.vwap[i]
+                && bank.macd_histogram[i] > 0.0
+                && bank.rsi14[i] >= 55.0
+                && bank.atr14[i] > bank.atr_p50
+                && bank.boll_widths[i] > bank.boll_width_p50
+                && h4_bias_by_h1_index.get(i).copied().unwrap_or(H4BiasState::Neutral)
+                    == H4BiasState::Bearish
+        };
+        let h18_opts: [(&str, &dyn Fn(usize) -> bool); 5] = [
+            ("two_bull_bodies", &|i| i > 0 && bullish_body(&candles[i - 1]) && bullish_body(&candles[i])),
+            ("stoch_k_gt_d", &|i| bank.stoch14_k[i] > bank.stoch14_d[i]),
+            ("close_lower_24h_quartile", &|i| prev24_pos[i].is_finite() && prev24_pos[i] <= 0.25),
+            ("ret24_negative", &|i| prev24_return[i].is_finite() && prev24_return[i] < 0.0),
+            ("close_gt_prev24_mid", &|i| prev24_mid[i].is_finite() && candles[i].close > prev24_mid[i]),
+        ];
+        print_family(
+            "18h_long_sniper",
+            18,
+            "long",
+            24,
+            "base_18h_long_sniper",
+            &h18_base,
+            &h18_opts,
+            14,
+            8,
+        );
+
+        let h13_base = |i: usize| {
+            i > 0
+                && bearish_body(&candles[i - 1])
+                && bullish_body(&candles[i])
+                && bank.macd_histogram[i] > 0.0
+                && prev24_pos[i].is_finite()
+                && prev24_pos[i] <= 0.25
+        };
+        let h13_opts: [(&str, &dyn Fn(usize) -> bool); 6] = [
+            ("rsi14_gt_50", &|i| bank.rsi14[i] > 50.0),
+            ("stoch_k_gt_d", &|i| bank.stoch14_k[i] > bank.stoch14_d[i]),
+            ("close_gt_donchian20_mid", &|i| candles[i].close > bank.donchian20_mid[i]),
+            ("close_gt_donchian55_mid", &|i| candles[i].close > bank.donchian55_mid[i]),
+            ("close_gt_prev24_mid", &|i| prev24_mid[i].is_finite() && candles[i].close > prev24_mid[i]),
+            ("ret24_negative", &|i| prev24_return[i].is_finite() && prev24_return[i] < 0.0),
+        ];
+        print_family(
+            "13h_long_recurrence",
+            13,
+            "long",
+            6,
+            "base_13h_long_recurrence",
+            &h13_base,
+            &h13_opts,
+            15,
+            8,
+        );
+
+        let h09_short_base = |i: usize| {
+            i > 0
+                && bearish_body(&candles[i - 1])
+                && bearish_body(&candles[i])
+                && bank.stoch14_k[i] < bank.stoch14_d[i]
+                && prev24_mid[i].is_finite()
+                && candles[i].close < prev24_mid[i]
+        };
+        let h09_short_opts: [(&str, &dyn Fn(usize) -> bool); 6] = [
+            ("macd_hist_lt_0", &|i| bank.macd_histogram[i] < 0.0),
+            ("rsi14_lt_50", &|i| bank.rsi14[i] < 50.0),
+            ("close_lt_vwap", &|i| candles[i].close < bank.vwap[i]),
+            ("close_lt_donchian55_mid", &|i| candles[i].close < bank.donchian55_mid[i]),
+            ("ret24_negative", &|i| prev24_return[i].is_finite() && prev24_return[i] < 0.0),
+            (
+                "h4_bearish",
+                &|i| h4_bias_by_h1_index.get(i).copied().unwrap_or(H4BiasState::Neutral)
+                    == H4BiasState::Bearish,
+            ),
+        ];
+        print_family(
+            "09h_short_recurrence",
+            9,
+            "short",
+            6,
+            "base_09h_short_recurrence",
+            &h09_short_base,
+            &h09_short_opts,
+            18,
+            10,
+        );
+
+        let h15_short_base = |i: usize| {
+            bearish_body(&candles[i])
+                && bank.stoch14_k[i] < bank.stoch14_d[i]
+                && prev24_pos[i].is_finite()
+                && prev24_pos[i] >= 0.75
+        };
+        let h15_short_opts: [(&str, &dyn Fn(usize) -> bool); 6] = [
+            ("macd_hist_lt_0", &|i| bank.macd_histogram[i] < 0.0),
+            ("rsi14_lt_50", &|i| bank.rsi14[i] < 50.0),
+            ("close_lt_vwap", &|i| candles[i].close < bank.vwap[i]),
+            ("close_lt_donchian55_mid", &|i| candles[i].close < bank.donchian55_mid[i]),
+            ("ret24_negative", &|i| prev24_return[i].is_finite() && prev24_return[i] < 0.0),
+            (
+                "h4_bearish",
+                &|i| h4_bias_by_h1_index.get(i).copied().unwrap_or(H4BiasState::Neutral)
+                    == H4BiasState::Bearish,
+            ),
+        ];
+        print_family(
+            "15h_short_recurrence",
+            15,
+            "short",
+            6,
+            "base_15h_short_recurrence",
+            &h15_short_base,
+            &h15_short_opts,
+            18,
+            10,
+        );
+    }
+
+    #[derive(Clone)]
+    struct AntiEdgeTargetResult {
+        hour: u32,
+        direction: &'static str,
+        labels: Vec<&'static str>,
+        trades: usize,
+        tp_hits: usize,
+        sl_hits: usize,
+        tp_rate: f64,
+        sl_rate: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+        target_distance: f64,
+    }
+
+    fn run_natgas_h1_target_bad_ratio_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let candles = h1_series.candles;
+        let h4_candles = h4_series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(56);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(&candles);
+        let h4_hash = strategy_candles_hash(&h4_candles);
+        let bank = strategy_feature_bank_cached(&candles, &h1_hash, &mut cache_snapshot);
+        let h4_bank = strategy_feature_bank_cached(&h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_bias_by_h1_index = build_h4_bias_by_h1_index(&candles, &h4_candles, &h4_bank);
+
+        let mut prev24_high = vec![f64::NAN; candles.len()];
+        let mut prev24_low = vec![f64::NAN; candles.len()];
+        let mut prev24_mid = vec![f64::NAN; candles.len()];
+        let mut prev24_pos = vec![f64::NAN; candles.len()];
+        let mut prev24_return = vec![f64::NAN; candles.len()];
+        for index in 24..candles.len() {
+            let window = &candles[index - 24..index];
+            let high = window.iter().map(|c| c.high).fold(f64::NEG_INFINITY, f64::max);
+            let low = window.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
+            let width = (high - low).abs();
+            prev24_high[index] = high;
+            prev24_low[index] = low;
+            prev24_mid[index] = (high + low) * 0.5;
+            prev24_return[index] = candles[index].close - candles[index - 24].close;
+            if width.is_finite() && width > f64::EPSILON {
+                prev24_pos[index] = (candles[index].close - low) / width;
+            }
+        }
+
+        let predicates: Vec<(&'static str, Box<dyn Fn(usize) -> bool>)> = vec![
+            ("bullish_body", Box::new(|i| bullish_body(&candles[i]))),
+            ("bearish_body", Box::new(|i| bearish_body(&candles[i]))),
+            ("two_bull_bodies", Box::new(|i| i > 0 && bullish_body(&candles[i - 1]) && bullish_body(&candles[i]))),
+            ("two_bear_bodies", Box::new(|i| i > 0 && bearish_body(&candles[i - 1]) && bearish_body(&candles[i]))),
+            ("three_higher_closes", Box::new(|i| i >= 2 && candles[i].close > candles[i - 1].close && candles[i - 1].close > candles[i - 2].close)),
+            ("three_lower_closes", Box::new(|i| i >= 2 && candles[i].close < candles[i - 1].close && candles[i - 1].close < candles[i - 2].close)),
+            ("close_upper_24h_quartile", Box::new(|i| prev24_pos[i].is_finite() && prev24_pos[i] >= 0.75)),
+            ("close_lower_24h_quartile", Box::new(|i| prev24_pos[i].is_finite() && prev24_pos[i] <= 0.25)),
+            ("breaks_prev24_high", Box::new(|i| prev24_high[i].is_finite() && candles[i].close > prev24_high[i])),
+            ("breaks_prev24_low", Box::new(|i| prev24_low[i].is_finite() && candles[i].close < prev24_low[i])),
+            ("ret24_positive", Box::new(|i| prev24_return[i].is_finite() && prev24_return[i] > 0.0)),
+            ("ret24_negative", Box::new(|i| prev24_return[i].is_finite() && prev24_return[i] < 0.0)),
+            ("close_gt_vwap", Box::new(|i| candles[i].close > bank.vwap[i])),
+            ("close_lt_vwap", Box::new(|i| candles[i].close < bank.vwap[i])),
+            ("rsi14_gt_50", Box::new(|i| bank.rsi14[i] > 50.0)),
+            ("rsi14_lt_50", Box::new(|i| bank.rsi14[i] < 50.0)),
+            ("stoch_k_gt_d", Box::new(|i| bank.stoch14_k[i] > bank.stoch14_d[i])),
+            ("stoch_k_lt_d", Box::new(|i| bank.stoch14_k[i] < bank.stoch14_d[i])),
+            ("h4_bullish", Box::new(|i| h4_bias_by_h1_index.get(i).copied().unwrap_or(H4BiasState::Neutral) == H4BiasState::Bullish)),
+            ("h4_bearish", Box::new(|i| h4_bias_by_h1_index.get(i).copied().unwrap_or(H4BiasState::Neutral) == H4BiasState::Bearish)),
+        ];
+
+        let mut best: Option<AntiEdgeTargetResult> = None;
+        let mut best_40: Option<AntiEdgeTargetResult> = None;
+        let mut best_80: Option<AntiEdgeTargetResult> = None;
+        let mut best_120: Option<AntiEdgeTargetResult> = None;
+        let consider_candidate =
+            |slot: &mut Option<AntiEdgeTargetResult>, candidate: &AntiEdgeTargetResult| {
+                let replace = slot
+                    .as_ref()
+                    .map(|current| {
+                        candidate
+                            .target_distance
+                            .partial_cmp(&current.target_distance)
+                            .unwrap_or(Ordering::Equal)
+                            .then_with(|| {
+                                candidate
+                                    .expectancy_distance
+                                    .partial_cmp(&current.expectancy_distance)
+                                    .unwrap_or(Ordering::Equal)
+                            })
+                            .then_with(|| candidate.trades.cmp(&current.trades).reverse())
+                            == Ordering::Less
+                    })
+                    .unwrap_or(true);
+                if replace {
+                    *slot = Some(candidate.clone());
+                }
+            };
+        for hour in std::iter::once(0_u32).chain(7_u32..=21_u32) {
+            for direction in ["long", "short"] {
+                let base_test = (test_start..candles.len().saturating_sub(7))
+                    .filter(|index| {
+                        let current_hour = strategy_hour_utc(&candles[*index].time);
+                        if hour == 0 {
+                            current_hour.is_some_and(|value| (7..=21).contains(&value))
+                        } else {
+                            current_hour == Some(hour)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let mut eval_combo = |combo: &[usize], best: &mut Option<AntiEdgeTargetResult>| {
+                    let indices = base_test
+                        .iter()
+                        .copied()
+                        .filter(|index| combo.iter().all(|ix| (predicates[*ix].1)(*index)))
+                        .collect::<Vec<_>>();
+                    if indices.len() < 12 {
+                        return;
+                    }
+                    let mut trades = 0usize;
+                    let mut tp_hits = 0usize;
+                    let mut sl_hits = 0usize;
+                    let mut net_pnl = 0.0;
+                    for index in &indices {
+                        let Some((tp_hit, pnl, _held)) = simulate_tp_sl_only_exit(
+                            &candles,
+                            index + 1,
+                            direction,
+                            NATGAS_STRICT_STOP_LOSS,
+                            NATGAS_STRICT_TAKE_PROFIT,
+                            NATGAS_STRICT_EXECUTION_COST,
+                        ) else {
+                            continue;
+                        };
+                        trades += 1;
+                        net_pnl += pnl;
+                        if tp_hit {
+                            tp_hits += 1;
+                        } else {
+                            sl_hits += 1;
+                        }
+                    }
+                    if trades < 12 { return; }
+                    let tp_rate = tp_hits as f64 / trades as f64;
+                    let sl_rate = sl_hits as f64 / trades as f64;
+                    let candidate = AntiEdgeTargetResult {
+                        hour,
+                        direction,
+                        labels: combo.iter().map(|ix| predicates[*ix].0).collect::<Vec<_>>(),
+                        trades,
+                        tp_hits,
+                        sl_hits,
+                        tp_rate,
+                        sl_rate,
+                        expectancy_distance: net_pnl / trades as f64,
+                        net_pnl_distance: net_pnl,
+                        target_distance: (tp_rate - 0.20).abs() + (sl_rate - 0.80).abs(),
+                    };
+                    consider_candidate(best, &candidate);
+                    if candidate.trades >= 40 {
+                        consider_candidate(&mut best_40, &candidate);
+                    }
+                    if candidate.trades >= 80 {
+                        consider_candidate(&mut best_80, &candidate);
+                    }
+                    if candidate.trades >= 120 {
+                        consider_candidate(&mut best_120, &candidate);
+                    }
+                };
+
+                for a in 0..predicates.len() {
+                    eval_combo(&[a], &mut best);
+                    for b in a + 1..predicates.len() {
+                        eval_combo(&[a, b], &mut best);
+                        for c in b + 1..predicates.len() {
+                            eval_combo(&[a, b, c], &mut best);
+                        }
+                    }
+                }
+            }
+        }
+
+        let best = best.expect("anti-edge target candidate");
+        println!(
+            "NATGAS_H1_TARGET_BAD_RATIO hour={} direction={} pattern=\"{}\" trades={} tp_hits={} sl_hits={} tp_rate={:.4} sl_rate={:.4} expectancy={:.6} net_pnl={:.6} target_distance={:.6}",
+            if best.hour == 0 { "all".to_string() } else { format!("{:02}", best.hour) },
+            best.direction,
+            best.labels.join(" && "),
+            best.trades,
+            best.tp_hits,
+            best.sl_hits,
+            best.tp_rate,
+            best.sl_rate,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+            best.target_distance,
+        );
+        for (label, candidate) in [
+            ("40", best_40.as_ref()),
+            ("80", best_80.as_ref()),
+            ("120", best_120.as_ref()),
+        ] {
+            if let Some(candidate) = candidate {
+                println!(
+                    "NATGAS_H1_TARGET_BAD_RATIO_MIN_TRADES min_trades={} hour={} direction={} pattern=\"{}\" trades={} tp_hits={} sl_hits={} tp_rate={:.4} sl_rate={:.4} expectancy={:.6} net_pnl={:.6} target_distance={:.6}",
+                    label,
+                    if candidate.hour == 0 { "all".to_string() } else { format!("{:02}", candidate.hour) },
+                    candidate.direction,
+                    candidate.labels.join(" && "),
+                    candidate.trades,
+                    candidate.tp_hits,
+                    candidate.sl_hits,
+                    candidate.tp_rate,
+                    candidate.sl_rate,
+                    candidate.expectancy_distance,
+                    candidate.net_pnl_distance,
+                    candidate.target_distance,
+                );
+            }
+        }
+    }
+
+    fn run_natgas_h1_inverse_bad_pattern_probe() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = h1_series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(56);
+
+        let evaluate =
+            |label: &'static str, direction: &'static str, stop_loss: f64, take_profit: f64| {
+            let mut trades = 0usize;
+            let mut tp_hits = 0usize;
+            let mut sl_hits = 0usize;
+            let mut net_pnl = 0.0;
+            for index in test_start..candles.len().saturating_sub(7) {
+                if strategy_hour_utc(&candles[index].time) != Some(8) {
+                    continue;
+                }
+                if !(index >= 2
+                    && candles[index].close > candles[index - 1].close
+                    && candles[index - 1].close > candles[index - 2].close)
+                {
+                    continue;
+                }
+                let Some((tp_hit, pnl, _held)) = simulate_tp_sl_only_exit(
+                    &candles,
+                    index + 1,
+                    direction,
+                    stop_loss,
+                    take_profit,
+                    NATGAS_STRICT_EXECUTION_COST,
+                ) else {
+                    continue;
+                };
+                trades += 1;
+                net_pnl += pnl;
+                if tp_hit {
+                    tp_hits += 1;
+                } else {
+                    sl_hits += 1;
+                }
+            }
+            let tp_rate = if trades > 0 {
+                tp_hits as f64 / trades as f64
+            } else {
+                0.0
+            };
+            let sl_rate = if trades > 0 {
+                sl_hits as f64 / trades as f64
+            } else {
+                0.0
+            };
+            println!(
+                "NATGAS_H1_INVERSE_BAD_PATTERN_PROBE variant={} hour=08 direction={} pattern=\"three_higher_closes\" tp={:.4} sl={:.4} trades={} tp_hits={} sl_hits={} tp_rate={:.4} sl_rate={:.4} expectancy={:.6} net_pnl={:.6}",
+                label,
+                direction,
+                take_profit,
+                stop_loss,
+                trades,
+                tp_hits,
+                sl_hits,
+                tp_rate,
+                sl_rate,
+                if trades > 0 { net_pnl / trades as f64 } else { 0.0 },
+                net_pnl,
+            );
+        };
+
+        evaluate(
+            "original",
+            "long",
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_TAKE_PROFIT,
+        );
+        evaluate(
+            "direction_only_inverse",
+            "short",
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_TAKE_PROFIT,
+        );
+        evaluate(
+            "exact_mirror_inverse",
+            "short",
+            NATGAS_STRICT_TAKE_PROFIT,
+            NATGAS_STRICT_STOP_LOSS,
+        );
+    }
+
+    fn run_natgas_h1_three_higher_closes_exact_mirror_strategy() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = h1_series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(56);
+        let mut trades = 0usize;
+        let mut tp_hits = 0usize;
+        let mut sl_hits = 0usize;
+        let mut net_pnl = 0.0;
+
+        for index in test_start..candles.len().saturating_sub(7) {
+            if strategy_hour_utc(&candles[index].time) != Some(8) {
+                continue;
+            }
+            if !(index >= 2
+                && candles[index].close > candles[index - 1].close
+                && candles[index - 1].close > candles[index - 2].close)
+            {
+                continue;
+            }
+            let Some((tp_hit, pnl, _held)) = simulate_tp_sl_only_exit(
+                &candles,
+                index + 1,
+                "short",
+                NATGAS_STRICT_TAKE_PROFIT,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+            ) else {
+                continue;
+            };
+            trades += 1;
+            net_pnl += pnl;
+            if tp_hit {
+                tp_hits += 1;
+            } else {
+                sl_hits += 1;
+            }
+        }
+
+        println!(
+            "NATGAS_H1_EXACT_MIRROR_STRATEGY hour=08 direction=short pattern=\"three_higher_closes\" tp={:.4} sl={:.4} trades={} tp_hits={} sl_hits={} tp_rate={:.4} sl_rate={:.4} expectancy={:.6} net_pnl={:.6}",
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_TAKE_PROFIT,
+            trades,
+            tp_hits,
+            sl_hits,
+            if trades > 0 { tp_hits as f64 / trades as f64 } else { 0.0 },
+            if trades > 0 { sl_hits as f64 / trades as f64 } else { 0.0 },
+            if trades > 0 { net_pnl / trades as f64 } else { 0.0 },
+            net_pnl,
+        );
+    }
+
+    fn run_save_natgas_h1_three_higher_closes_exact_mirror_as_program() {
+        let args = json!({
+            "title": "/stratMirror08h_",
+            "goal": "Turn the discovered toxic 08h three_higher_closes anti-edge into its exact profitable mirror.",
+            "intent": "Use NATGAS_USD H1 on OANDA. Detect the 08h UTC recurrence where the last three H1 closes are strictly higher than one another. Do not buy the breakout. Instead, take the exact mirror of the toxic setup: open a SHORT at the next bar open, use a raw take profit of 3.9p, a raw stop loss of 5.1p, and charge a 0.6p spread cost. A win only counts when TP is touched and a loss only counts when SL is touched. This is the exact mirror of the toxic long doctrine and should be treated as the canonical profitable form of that pattern.",
+            "domain": "trading",
+            "template": "strategy_mirror_recurrence",
+            "program_kind": "compute_program"
+        });
+        let created =
+            crate::forge_agent_runtime::direct_create_program_in_store(&args, "trading")
+                .expect("save /stratMirror08h_ direct program");
+        println!(
+            "TRADING_PROGRAM_SAVED title=/stratMirror08h_ program_hash={} kind={} status={}",
+            created
+                .get("program_hash")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            created
+                .pointer("/program/program_kind")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            created
+                .pointer("/program/status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    struct HourContextSlotRuleDef {
+        hour: u32,
+        direction: &'static str,
+        label: &'static str,
+        predicate: fn(usize, &[TradingCandlePoint], &StrategyIndicatorFeatureBank, &[H4BiasState]) -> bool,
+    }
+
+    #[derive(Clone)]
+    struct HourContextStrategyResult {
+        name: &'static str,
+        trades: usize,
+        tp_hits: usize,
+        sl_hits: usize,
+        win_rate: f64,
+        daily_target_hit_rate: f64,
+        target_hit_days: usize,
+        total_days: usize,
+        avg_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    fn hour_context_short_11h(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+        h4_bias_by_h1_index: &[H4BiasState],
+    ) -> bool {
+        bearish_body(&candles[index])
+            && candles[index].close < bank.vwap_ext1_down[index]
+            && bank.macd_histogram[index] < 0.0
+            && bank.rsi14[index] <= 45.0
+            && bank.atr14[index] <= bank.atr_p35
+            && bank.boll_widths[index] <= bank.boll_width_p35
+            && h4_bias_by_h1_index
+                .get(index)
+                .copied()
+                .unwrap_or(H4BiasState::Neutral)
+                == H4BiasState::Bearish
+    }
+
+    fn hour_context_short_11h_no_squeeze(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+        h4_bias_by_h1_index: &[H4BiasState],
+    ) -> bool {
+        bearish_body(&candles[index])
+            && candles[index].close < bank.vwap_ext1_down[index]
+            && bank.macd_histogram[index] < 0.0
+            && bank.rsi14[index] <= 45.0
+            && h4_bias_by_h1_index
+                .get(index)
+                .copied()
+                .unwrap_or(H4BiasState::Neutral)
+                == H4BiasState::Bearish
+    }
+
+    fn hour_context_short_11h_below_vwap(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+        h4_bias_by_h1_index: &[H4BiasState],
+    ) -> bool {
+        bearish_body(&candles[index])
+            && candles[index].close < bank.vwap[index]
+            && bank.macd_histogram[index] < 0.0
+            && bank.rsi14[index] <= 45.0
+            && h4_bias_by_h1_index
+                .get(index)
+                .copied()
+                .unwrap_or(H4BiasState::Neutral)
+                == H4BiasState::Bearish
+    }
+
+    fn hour_context_long_18h(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+        h4_bias_by_h1_index: &[H4BiasState],
+    ) -> bool {
+        bullish_body(&candles[index])
+            && candles[index].close < bank.vwap[index]
+            && bank.macd_histogram[index] > 0.0
+            && bank.rsi14[index] >= 55.0
+            && bank.atr14[index] > bank.atr_p50
+            && bank.boll_widths[index] > bank.boll_width_p50
+            && h4_bias_by_h1_index
+                .get(index)
+                .copied()
+                .unwrap_or(H4BiasState::Neutral)
+                == H4BiasState::Bearish
+    }
+
+    fn hour_context_long_18h_no_h4_gate(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+        _h4_bias_by_h1_index: &[H4BiasState],
+    ) -> bool {
+        bullish_body(&candles[index])
+            && candles[index].close < bank.vwap[index]
+            && bank.macd_histogram[index] > 0.0
+            && bank.rsi14[index] >= 55.0
+            && bank.atr14[index] > bank.atr_p50
+            && bank.boll_widths[index] > bank.boll_width_p50
+    }
+
+    fn hour_context_long_18h_near_vwap(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+        h4_bias_by_h1_index: &[H4BiasState],
+    ) -> bool {
+        bullish_body(&candles[index])
+            && candles[index].close <= bank.vwap_ext1_up[index]
+            && bank.macd_histogram[index] > 0.0
+            && bank.rsi14[index] >= 55.0
+            && bank.atr14[index] > bank.atr_p50
+            && bank.boll_widths[index] > bank.boll_width_p50
+            && h4_bias_by_h1_index
+                .get(index)
+                .copied()
+                .unwrap_or(H4BiasState::Neutral)
+                == H4BiasState::Bearish
+    }
+
+    fn hour_context_long_19h(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+        h4_bias_by_h1_index: &[H4BiasState],
+    ) -> bool {
+        bullish_body(&candles[index])
+            && candles[index].close < bank.vwap[index]
+            && bank.macd_histogram[index] > 0.0
+            && bank.rsi14[index] >= 55.0
+            && bank.atr14[index] > bank.atr_p50
+            && bank.boll_widths[index] > bank.boll_width_p50
+            && h4_bias_by_h1_index
+                .get(index)
+                .copied()
+                .unwrap_or(H4BiasState::Neutral)
+                == H4BiasState::Bearish
+    }
+
+    fn hour_context_long_21h_vwap(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+        _h4_bias_by_h1_index: &[H4BiasState],
+    ) -> bool {
+        candles[index].close > bank.vwap[index]
+    }
+
+    fn evaluate_hour_context_strategy(
+        name: &'static str,
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        h4_bias_by_h1_index: &[H4BiasState],
+        start_index: usize,
+        slot_rules: &[HourContextSlotRuleDef],
+    ) -> Option<HourContextStrategyResult> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut tp_hits = 0usize;
+        let mut sl_hits = 0usize;
+        let mut net_pnl = 0.0;
+        for index in start_index..candles.len().saturating_sub(1) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            let Some(day_key) = candles[index].time.get(..10) else {
+                continue;
+            };
+            daily_pnl.entry(day_key.to_string()).or_insert(0.0);
+            let Some(rule) = slot_rules.iter().find(|rule| rule.hour == hour) else {
+                continue;
+            };
+            if !(rule.predicate)(index, candles, feature_bank, h4_bias_by_h1_index) {
+                continue;
+            }
+            let (outcome, _) = strategy_entry_outcome_cached(
+                candles,
+                index,
+                rule.direction,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                24,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) = classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+            *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+            trades += 1;
+            net_pnl += pnl;
+            match exit_kind {
+                StrictTradeExit::TakeProfit => tp_hits += 1,
+                StrictTradeExit::StopLoss => sl_hits += 1,
+                _ => {}
+            }
+        }
+        if trades == 0 || daily_pnl.is_empty() {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl.values().filter(|value| **value >= 0.07).count();
+        Some(HourContextStrategyResult {
+            name,
+            trades,
+            tp_hits,
+            sl_hits,
+            win_rate: tp_hits as f64 / trades as f64,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn run_natgas_hour_context_strategy_trials() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let candles = h1_series.candles;
+        let h4_candles = h4_series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(25);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(&candles);
+        let h4_hash = strategy_candles_hash(&h4_candles);
+        let h1_bank = strategy_feature_bank_cached(&candles, &h1_hash, &mut cache_snapshot);
+        let h4_bank = strategy_feature_bank_cached(&h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_bias_by_h1_index = build_h4_bias_by_h1_index(&candles, &h4_candles, &h4_bank);
+        let trials = vec![
+            (
+                "ctx_11h_short_only",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 11, direction: "short", label: "11h short ctx", predicate: hour_context_short_11h }),
+                ],
+            ),
+            (
+                "ctx_18h_long_only",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 18, direction: "long", label: "18h long ctx", predicate: hour_context_long_18h }),
+                ],
+            ),
+            (
+                "ctx_11h_short_plus_18h_long",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 11, direction: "short", label: "11h short ctx", predicate: hour_context_short_11h }),
+                    Some(HourContextSlotRuleDef { hour: 18, direction: "long", label: "18h long ctx", predicate: hour_context_long_18h }),
+                ],
+            ),
+            (
+                "ctx_11h_short_plus_18h_19h_long",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 11, direction: "short", label: "11h short ctx", predicate: hour_context_short_11h }),
+                    Some(HourContextSlotRuleDef { hour: 18, direction: "long", label: "18h long ctx", predicate: hour_context_long_18h }),
+                    Some(HourContextSlotRuleDef { hour: 19, direction: "long", label: "19h long ctx", predicate: hour_context_long_19h }),
+                ],
+            ),
+            (
+                "ctx_11h_short_plus_18h_19h_long_plus_21h_vwap",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 11, direction: "short", label: "11h short ctx", predicate: hour_context_short_11h }),
+                    Some(HourContextSlotRuleDef { hour: 18, direction: "long", label: "18h long ctx", predicate: hour_context_long_18h }),
+                    Some(HourContextSlotRuleDef { hour: 19, direction: "long", label: "19h long ctx", predicate: hour_context_long_19h }),
+                    Some(HourContextSlotRuleDef { hour: 21, direction: "long", label: "21h long close>VWAP", predicate: hour_context_long_21h_vwap }),
+                ],
+            ),
+            (
+                "ctx_11h_short_no_squeeze_only",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 11, direction: "short", label: "11h short no squeeze", predicate: hour_context_short_11h_no_squeeze }),
+                ],
+            ),
+            (
+                "ctx_11h_short_below_vwap_only",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 11, direction: "short", label: "11h short below VWAP", predicate: hour_context_short_11h_below_vwap }),
+                ],
+            ),
+            (
+                "ctx_18h_long_no_h4_only",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 18, direction: "long", label: "18h long no h4 gate", predicate: hour_context_long_18h_no_h4_gate }),
+                ],
+            ),
+            (
+                "ctx_18h_long_near_vwap_only",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 18, direction: "long", label: "18h long near VWAP", predicate: hour_context_long_18h_near_vwap }),
+                ],
+            ),
+            (
+                "ctx_11h_no_squeeze_plus_18h_no_h4",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 11, direction: "short", label: "11h short no squeeze", predicate: hour_context_short_11h_no_squeeze }),
+                    Some(HourContextSlotRuleDef { hour: 18, direction: "long", label: "18h long no h4 gate", predicate: hour_context_long_18h_no_h4_gate }),
+                ],
+            ),
+            (
+                "ctx_11h_below_vwap_plus_18h_near_vwap",
+                vec![
+                    Some(HourContextSlotRuleDef { hour: 11, direction: "short", label: "11h short below VWAP", predicate: hour_context_short_11h_below_vwap }),
+                    Some(HourContextSlotRuleDef { hour: 18, direction: "long", label: "18h long near VWAP", predicate: hour_context_long_18h_near_vwap }),
+                ],
+            ),
+        ];
+        println!("NATGAS_H1_HOUR_CONTEXT_STRATEGY_TRIALS methodology=\"strict H1 close-based entries on the 30% holdout only; TP 5.1p, SL 3.9p, spread 0.6p, hold=24 bars; rules are hour-specific context predicates from the context audit\"");
+        for (name, defs) in trials {
+            let slot_rules = defs.into_iter().flatten().collect::<Vec<_>>();
+            let labels = slot_rules.iter().map(|rule| format!("{:02}h {}", rule.hour, rule.label)).collect::<Vec<_>>().join(" | ");
+            if let Some(result) = evaluate_hour_context_strategy(
+                name,
+                &candles,
+                &h1_bank,
+                &h4_bias_by_h1_index,
+                test_start,
+                &slot_rules,
+            ) {
+                println!(
+                    "NATGAS_H1_HOUR_CONTEXT_STRATEGY_TRIAL name={} labels=\"{}\" trades={} tp_hits={} sl_hits={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+                    result.name,
+                    labels,
+                    result.trades,
+                    result.tp_hits,
+                    result.sl_hits,
+                    result.win_rate,
+                    result.daily_target_hit_rate,
+                    result.target_hit_days,
+                    result.total_days,
+                    result.avg_daily_pnl_distance,
+                    result.expectancy_distance,
+                    result.net_pnl_distance,
+                );
+            } else {
+                println!(
+                    "NATGAS_H1_HOUR_CONTEXT_STRATEGY_TRIAL name={} labels=\"{}\" status=no_trades",
+                    name,
+                    labels,
+                );
+            }
+        }
+    }
+
+    fn run_natgas_h1_trend_lifecycle_analysis() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let candles = h1_series.candles;
+        let h4_candles = h4_series.candles;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h4_hash = strategy_candles_hash(&h4_candles);
+        let h4_bank = strategy_feature_bank_cached(&h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_bias_by_h1_index = build_h4_bias_by_h1_index(&candles, &h4_candles, &h4_bank);
+        let samples = extract_trend_lifecycle_samples(&candles, NATGAS_TREND_PULLBACK_DISTANCE);
+        let up_samples = samples
+            .iter()
+            .filter(|sample| sample.direction == TrendDirection::Up)
+            .cloned()
+            .collect::<Vec<_>>();
+        let down_samples = samples
+            .iter()
+            .filter(|sample| sample.direction == TrendDirection::Down)
+            .cloned()
+            .collect::<Vec<_>>();
+        println!(
+            "NATGAS_H1_TREND_LIFECYCLE methodology=\"event-based directional-change trend confirmed after a 7p move from a local pivot; first adverse 7p excursion marks pullback; after that, a close beyond the original pivot counts as strong reversal, while a close beyond the prior extreme counts as trend resumption\""
+        );
+        print_trend_lifecycle_summary("NATGAS_H1_TREND_LIFECYCLE_ALL", &samples);
+        print_trend_lifecycle_summary("NATGAS_H1_TREND_LIFECYCLE_UP", &up_samples);
+        print_trend_lifecycle_summary("NATGAS_H1_TREND_LIFECYCLE_DOWN", &down_samples);
+        for hour in [11_u32, 15_u32, 21_u32] {
+            let slot_samples = samples
+                .iter()
+                .filter(|sample| strategy_hour_utc(&candles[sample.confirm_index].time) == Some(hour))
+                .cloned()
+                .collect::<Vec<_>>();
+            print_trend_lifecycle_summary(
+                &format!("NATGAS_H1_TREND_LIFECYCLE_SLOT_{hour:02}H"),
+                &slot_samples,
+            );
+            for bias in [H4BiasState::Bearish, H4BiasState::Neutral, H4BiasState::Bullish] {
+                let slot_bias_samples = slot_samples
+                    .iter()
+                    .filter(|sample| {
+                        h4_bias_by_h1_index
+                            .get(sample.confirm_index)
+                            .copied()
+                            .unwrap_or(H4BiasState::Neutral)
+                            == bias
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                print_trend_lifecycle_summary(
+                    &format!(
+                        "NATGAS_H1_TREND_LIFECYCLE_SLOT_{hour:02}H_H4_{}",
+                        bias.label().to_uppercase()
+                    ),
+                    &slot_bias_samples,
+                );
+            }
+        }
+        for bias in [H4BiasState::Bearish, H4BiasState::Neutral, H4BiasState::Bullish] {
+            let bias_samples = samples
+                .iter()
+                .filter(|sample| {
+                    h4_bias_by_h1_index
+                        .get(sample.confirm_index)
+                        .copied()
+                        .unwrap_or(H4BiasState::Neutral)
+                        == bias
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            print_trend_lifecycle_summary(
+                &format!("NATGAS_H1_TREND_LIFECYCLE_H4_{}", bias.label().to_uppercase()),
+                &bias_samples,
+            );
+        }
+        for bucket in ["7p_to_10p", "10p_to_15p", "15p_to_20p", "20p_plus"] {
+            let bucket_samples = samples
+                .iter()
+                .filter(|sample| impulse_bucket_label(sample.impulse_distance) == bucket)
+                .cloned()
+                .collect::<Vec<_>>();
+            print_trend_lifecycle_summary(
+                &format!("NATGAS_H1_TREND_LIFECYCLE_IMPULSE_{bucket}"),
+                &bucket_samples,
+            );
+        }
+        if let Some(last) = samples.last() {
+            println!(
+                "NATGAS_H1_TREND_LIFECYCLE_LAST direction={} start={} confirm={} extreme={} pullback={} resolution={} resolution_time={}",
+                last.direction.label(),
+                candles[last.start_index].time,
+                candles[last.confirm_index].time,
+                candles[last.extreme_index].time,
+                candles[last.pullback_index].time,
+                last.resolution.label(),
+                last.resolution_index
+                    .and_then(|index| candles.get(index))
+                    .map(|candle| candle.time.clone())
+                    .unwrap_or_else(|| "none".to_string())
+            );
+        }
+    }
+
+    fn seed_short_close_below_ema21(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        candles[index].close < bank.ema21[index]
+    }
+
+    fn seed_short_cross_below_ema21(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        index > 0 && candles[index - 1].close >= bank.ema21[index - 1] && candles[index].close < bank.ema21[index]
+    }
+
+    fn seed_short_close_below_vwap(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        candles[index].close < bank.vwap[index]
+    }
+
+    fn seed_short_cross_below_vwap_ext1_up(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        candles[index].high >= bank.vwap_ext1_up[index] && candles[index].close < bank.vwap_ext1_up[index]
+    }
+
+    fn seed_short_two_closes_below_vwap(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        index >= 1
+            && candles[index - 1].close < bank.vwap[index - 1]
+            && candles[index].close < bank.vwap[index]
+    }
+
+    fn seed_short_reject_vwap_ext1_up_after_vwap_break(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        index >= 1
+            && candles[index - 1].close >= bank.vwap[index - 1]
+            && candles[index].high >= bank.vwap_ext1_up[index]
+            && candles[index].close < bank.vwap[index]
+    }
+
+    fn seed_short_three_bar_vwap_rollover(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        index >= 2
+            && candles[index - 2].close >= bank.vwap[index - 2]
+            && candles[index - 1].close < bank.vwap[index - 1]
+            && candles[index].close < bank.vwap[index]
+            && candles[index].close < candles[index - 1].close
+    }
+
+    fn seed_short_bearish_body(index: usize, candles: &[TradingCandlePoint], _bank: &StrategyIndicatorFeatureBank) -> bool {
+        candles[index].close < candles[index].open
+    }
+
+    fn seed_short_macd_hist_negative(index: usize, _candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        bank.macd_histogram[index] < 0.0
+    }
+
+    fn seed_short_rsi_lt_50(index: usize, _candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        bank.rsi14[index] < 50.0
+    }
+
+    fn seed_short_trend_pullback_reversal(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        if index < 1 {
+            return false;
+        }
+        let impulse = &candles[index - 1];
+        let pullback = &candles[index];
+        let impulse_body = (impulse.open - impulse.close).abs();
+        impulse.close < impulse.open
+            && impulse_body >= bank.body_p35
+            && pullback.close > pullback.open
+            && pullback.close > impulse.close
+            && pullback.close < impulse.open
+            && candles[index].close < bank.vwap[index]
+            && bank.ema21[index] < bank.ema50[index]
+            && bank.macd_histogram[index] <= 0.0
+    }
+
+    fn seed_long_close_above_ema21(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        candles[index].close > bank.ema21[index]
+    }
+
+    fn seed_long_cross_above_ema21(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        index > 0 && candles[index - 1].close <= bank.ema21[index - 1] && candles[index].close > bank.ema21[index]
+    }
+
+    fn seed_long_cross_above_ema50(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        index > 0 && candles[index - 1].close <= bank.ema50[index - 1] && candles[index].close > bank.ema50[index]
+    }
+
+    fn seed_long_close_above_vwap(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        candles[index].close > bank.vwap[index]
+    }
+
+    fn seed_long_cross_above_vwap_ext1_down(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        candles[index].low <= bank.vwap_ext1_down[index] && candles[index].close > bank.vwap_ext1_down[index]
+    }
+
+    fn seed_long_two_closes_above_vwap(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        index >= 1
+            && candles[index - 1].close > bank.vwap[index - 1]
+            && candles[index].close > bank.vwap[index]
+    }
+
+    fn seed_long_reclaim_vwap_ext1_down_after_vwap_break(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        index >= 1
+            && candles[index - 1].close <= bank.vwap[index - 1]
+            && candles[index].low <= bank.vwap_ext1_down[index]
+            && candles[index].close > bank.vwap[index]
+    }
+
+    fn seed_long_three_bar_vwap_reclaim(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        index >= 2
+            && candles[index - 2].close <= bank.vwap[index - 2]
+            && candles[index - 1].close > bank.vwap_ext1_down[index - 1]
+            && candles[index].close > bank.vwap[index]
+            && candles[index].close > candles[index - 1].close
+    }
+
+    fn seed_long_bullish_body(index: usize, candles: &[TradingCandlePoint], _bank: &StrategyIndicatorFeatureBank) -> bool {
+        candles[index].close > candles[index].open
+    }
+
+    fn seed_long_macd_hist_positive(index: usize, _candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        bank.macd_histogram[index] > 0.0
+    }
+
+    fn seed_long_rsi_gt_50(index: usize, _candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        bank.rsi14[index] > 50.0
+    }
+
+    fn seed_long_trend_pullback_reversal(index: usize, candles: &[TradingCandlePoint], bank: &StrategyIndicatorFeatureBank) -> bool {
+        if index < 1 {
+            return false;
+        }
+        let impulse = &candles[index - 1];
+        let pullback = &candles[index];
+        let impulse_body = (impulse.close - impulse.open).abs();
+        impulse.close > impulse.open
+            && impulse_body >= bank.body_p35
+            && pullback.close < pullback.open
+            && pullback.close < impulse.close
+            && pullback.close > impulse.open
+            && candles[index].close > bank.vwap[index]
+            && bank.ema21[index] > bank.ema50[index]
+            && bank.macd_histogram[index] >= 0.0
+    }
+
+    fn seeded_short_11h_rules() -> Vec<SeededSlotRuleDef> {
+        vec![
+            SeededSlotRuleDef { hour: 11, direction: "short", id: "close_lt_ema21", label: "11h short if close < EMA21", indicator_refs: &["/ema_h1_21_close"], predicate: seed_short_close_below_ema21 },
+            SeededSlotRuleDef { hour: 11, direction: "short", id: "cross_below_ema21", label: "11h short if close crosses below EMA21", indicator_refs: &["/ema_h1_21_close", "/candle_h1_close"], predicate: seed_short_cross_below_ema21 },
+            SeededSlotRuleDef { hour: 11, direction: "short", id: "close_lt_vwap", label: "11h short if close < VWAP", indicator_refs: &["/vwap_h1_session_hlc3"], predicate: seed_short_close_below_vwap },
+            SeededSlotRuleDef { hour: 11, direction: "short", id: "cross_below_vwap_ext1_up", label: "11h short if candle crosses and closes below VWAP +1sigma", indicator_refs: &["/vwap_h1_ext1_up"], predicate: seed_short_cross_below_vwap_ext1_up },
+            SeededSlotRuleDef { hour: 11, direction: "short", id: "two_closes_below_vwap", label: "11h short if two closes stay below VWAP", indicator_refs: &["/vwap_h1_session_hlc3", "/candle_h1_close"], predicate: seed_short_two_closes_below_vwap },
+            SeededSlotRuleDef { hour: 11, direction: "short", id: "reject_vwap_ext1_up_after_vwap_break", label: "11h short if VWAP +1sigma rejection after VWAP break", indicator_refs: &["/vwap_h1_session_hlc3", "/vwap_h1_ext1_up", "/candle_h1_close"], predicate: seed_short_reject_vwap_ext1_up_after_vwap_break },
+            SeededSlotRuleDef { hour: 11, direction: "short", id: "three_bar_vwap_rollover", label: "11h short if three-bar VWAP rollover confirms lower close", indicator_refs: &["/vwap_h1_session_hlc3", "/candle_h1_close"], predicate: seed_short_three_bar_vwap_rollover },
+            SeededSlotRuleDef { hour: 11, direction: "short", id: "bearish_body", label: "11h short if bearish body", indicator_refs: &["/candle_h1_body"], predicate: seed_short_bearish_body },
+            SeededSlotRuleDef { hour: 11, direction: "short", id: "macd_hist_neg", label: "11h short if MACD hist < 0", indicator_refs: &["/macd_h1_12_26_9_histogram"], predicate: seed_short_macd_hist_negative },
+            SeededSlotRuleDef { hour: 11, direction: "short", id: "rsi_lt_50", label: "11h short if RSI14 < 50", indicator_refs: &["/rsi_h1_14_close"], predicate: seed_short_rsi_lt_50 },
+        ]
+    }
+
+    fn seeded_long_15h_rules() -> Vec<SeededSlotRuleDef> {
+        vec![
+            SeededSlotRuleDef { hour: 15, direction: "long", id: "close_gt_ema21", label: "15h long if close > EMA21", indicator_refs: &["/ema_h1_21_close"], predicate: seed_long_close_above_ema21 },
+            SeededSlotRuleDef { hour: 15, direction: "long", id: "cross_above_ema21", label: "15h long if close crosses above EMA21", indicator_refs: &["/ema_h1_21_close", "/candle_h1_close"], predicate: seed_long_cross_above_ema21 },
+            SeededSlotRuleDef { hour: 15, direction: "long", id: "close_gt_vwap", label: "15h long if close > VWAP", indicator_refs: &["/vwap_h1_session_hlc3"], predicate: seed_long_close_above_vwap },
+            SeededSlotRuleDef { hour: 15, direction: "long", id: "cross_above_vwap_ext1_down", label: "15h long if candle crosses and closes above VWAP -1sigma", indicator_refs: &["/vwap_h1_ext1_down"], predicate: seed_long_cross_above_vwap_ext1_down },
+            SeededSlotRuleDef { hour: 15, direction: "long", id: "two_closes_above_vwap", label: "15h long if two closes stay above VWAP", indicator_refs: &["/vwap_h1_session_hlc3", "/candle_h1_close"], predicate: seed_long_two_closes_above_vwap },
+            SeededSlotRuleDef { hour: 15, direction: "long", id: "reclaim_vwap_ext1_down_after_vwap_break", label: "15h long if VWAP -1sigma reclaim after VWAP break", indicator_refs: &["/vwap_h1_session_hlc3", "/vwap_h1_ext1_down", "/candle_h1_close"], predicate: seed_long_reclaim_vwap_ext1_down_after_vwap_break },
+            SeededSlotRuleDef { hour: 15, direction: "long", id: "three_bar_vwap_reclaim", label: "15h long if three-bar VWAP reclaim confirms higher close", indicator_refs: &["/vwap_h1_session_hlc3", "/vwap_h1_ext1_down", "/candle_h1_close"], predicate: seed_long_three_bar_vwap_reclaim },
+            SeededSlotRuleDef { hour: 15, direction: "long", id: "bullish_body", label: "15h long if bullish body", indicator_refs: &["/candle_h1_body"], predicate: seed_long_bullish_body },
+            SeededSlotRuleDef { hour: 15, direction: "long", id: "macd_hist_pos", label: "15h long if MACD hist > 0", indicator_refs: &["/macd_h1_12_26_9_histogram"], predicate: seed_long_macd_hist_positive },
+            SeededSlotRuleDef { hour: 15, direction: "long", id: "rsi_gt_50", label: "15h long if RSI14 > 50", indicator_refs: &["/rsi_h1_14_close"], predicate: seed_long_rsi_gt_50 },
+        ]
+    }
+
+    fn seeded_long_21h_rules() -> Vec<SeededSlotRuleDef> {
+        vec![
+            SeededSlotRuleDef { hour: 21, direction: "long", id: "cross_above_ema21", label: "21h long if close crosses above EMA21", indicator_refs: &["/ema_h1_21_close", "/candle_h1_close"], predicate: seed_long_cross_above_ema21 },
+            SeededSlotRuleDef { hour: 21, direction: "long", id: "cross_above_ema50", label: "21h long if close crosses above EMA50", indicator_refs: &["/ema_h1_50_close", "/candle_h1_close"], predicate: seed_long_cross_above_ema50 },
+            SeededSlotRuleDef { hour: 21, direction: "long", id: "close_gt_ema21", label: "21h long if close > EMA21", indicator_refs: &["/ema_h1_21_close"], predicate: seed_long_close_above_ema21 },
+            SeededSlotRuleDef { hour: 21, direction: "long", id: "close_gt_vwap", label: "21h long if close > VWAP", indicator_refs: &["/vwap_h1_session_hlc3"], predicate: seed_long_close_above_vwap },
+            SeededSlotRuleDef { hour: 21, direction: "long", id: "cross_above_vwap_ext1_down", label: "21h long if candle crosses and closes above VWAP -1sigma", indicator_refs: &["/vwap_h1_ext1_down"], predicate: seed_long_cross_above_vwap_ext1_down },
+            SeededSlotRuleDef { hour: 21, direction: "long", id: "two_closes_above_vwap", label: "21h long if two closes stay above VWAP", indicator_refs: &["/vwap_h1_session_hlc3", "/candle_h1_close"], predicate: seed_long_two_closes_above_vwap },
+            SeededSlotRuleDef { hour: 21, direction: "long", id: "reclaim_vwap_ext1_down_after_vwap_break", label: "21h long if VWAP -1sigma reclaim after VWAP break", indicator_refs: &["/vwap_h1_session_hlc3", "/vwap_h1_ext1_down", "/candle_h1_close"], predicate: seed_long_reclaim_vwap_ext1_down_after_vwap_break },
+            SeededSlotRuleDef { hour: 21, direction: "long", id: "three_bar_vwap_reclaim", label: "21h long if three-bar VWAP reclaim confirms higher close", indicator_refs: &["/vwap_h1_session_hlc3", "/vwap_h1_ext1_down", "/candle_h1_close"], predicate: seed_long_three_bar_vwap_reclaim },
+            SeededSlotRuleDef { hour: 21, direction: "long", id: "macd_hist_pos", label: "21h long if MACD hist > 0", indicator_refs: &["/macd_h1_12_26_9_histogram"], predicate: seed_long_macd_hist_positive },
+            SeededSlotRuleDef { hour: 21, direction: "long", id: "rsi_gt_50", label: "21h long if RSI14 > 50", indicator_refs: &["/rsi_h1_14_close"], predicate: seed_long_rsi_gt_50 },
+        ]
+    }
+
+    fn seeded_short_19h_rules() -> Vec<SeededSlotRuleDef> {
+        vec![
+            SeededSlotRuleDef { hour: 19, direction: "short", id: "bearish_body", label: "19h short if bearish body", indicator_refs: &["/candle_h1_body"], predicate: seed_short_bearish_body },
+            SeededSlotRuleDef { hour: 19, direction: "short", id: "close_lt_vwap", label: "19h short if close < VWAP", indicator_refs: &["/vwap_h1_session_hlc3"], predicate: seed_short_close_below_vwap },
+            SeededSlotRuleDef { hour: 19, direction: "short", id: "cross_below_ema21", label: "19h short if close crosses below EMA21", indicator_refs: &["/ema_h1_21_close", "/candle_h1_close"], predicate: seed_short_cross_below_ema21 },
+            SeededSlotRuleDef { hour: 19, direction: "short", id: "macd_hist_neg", label: "19h short if MACD hist < 0", indicator_refs: &["/macd_h1_12_26_9_histogram"], predicate: seed_short_macd_hist_negative },
+            SeededSlotRuleDef { hour: 19, direction: "short", id: "rsi_lt_50", label: "19h short if RSI14 < 50", indicator_refs: &["/rsi_h1_14_close"], predicate: seed_short_rsi_lt_50 },
+        ]
+    }
+
+    fn seeded_long_19h_rules() -> Vec<SeededSlotRuleDef> {
+        vec![
+            SeededSlotRuleDef { hour: 19, direction: "long", id: "bullish_body", label: "19h long if bullish body", indicator_refs: &["/candle_h1_body"], predicate: seed_long_bullish_body },
+            SeededSlotRuleDef { hour: 19, direction: "long", id: "close_gt_vwap", label: "19h long if close > VWAP", indicator_refs: &["/vwap_h1_session_hlc3"], predicate: seed_long_close_above_vwap },
+            SeededSlotRuleDef { hour: 19, direction: "long", id: "cross_above_ema21", label: "19h long if close crosses above EMA21", indicator_refs: &["/ema_h1_21_close", "/candle_h1_close"], predicate: seed_long_cross_above_ema21 },
+            SeededSlotRuleDef { hour: 19, direction: "long", id: "macd_hist_pos", label: "19h long if MACD hist > 0", indicator_refs: &["/macd_h1_12_26_9_histogram"], predicate: seed_long_macd_hist_positive },
+            SeededSlotRuleDef { hour: 19, direction: "long", id: "rsi_gt_50", label: "19h long if RSI14 > 50", indicator_refs: &["/rsi_h1_14_close"], predicate: seed_long_rsi_gt_50 },
+        ]
+    }
+
+    fn seeded_short_21h_rules() -> Vec<SeededSlotRuleDef> {
+        vec![
+            SeededSlotRuleDef { hour: 21, direction: "short", id: "close_lt_ema21", label: "21h short if close < EMA21", indicator_refs: &["/ema_h1_21_close"], predicate: seed_short_close_below_ema21 },
+            SeededSlotRuleDef { hour: 21, direction: "short", id: "cross_below_ema21", label: "21h short if close crosses below EMA21", indicator_refs: &["/ema_h1_21_close", "/candle_h1_close"], predicate: seed_short_cross_below_ema21 },
+            SeededSlotRuleDef { hour: 21, direction: "short", id: "close_lt_vwap", label: "21h short if close < VWAP", indicator_refs: &["/vwap_h1_session_hlc3"], predicate: seed_short_close_below_vwap },
+            SeededSlotRuleDef { hour: 21, direction: "short", id: "cross_below_vwap_ext1_up", label: "21h short if candle crosses and closes below VWAP +1sigma", indicator_refs: &["/vwap_h1_ext1_up"], predicate: seed_short_cross_below_vwap_ext1_up },
+            SeededSlotRuleDef { hour: 21, direction: "short", id: "two_closes_below_vwap", label: "21h short if two closes stay below VWAP", indicator_refs: &["/vwap_h1_session_hlc3", "/candle_h1_close"], predicate: seed_short_two_closes_below_vwap },
+            SeededSlotRuleDef { hour: 21, direction: "short", id: "reject_vwap_ext1_up_after_vwap_break", label: "21h short if VWAP +1sigma rejection after VWAP break", indicator_refs: &["/vwap_h1_session_hlc3", "/vwap_h1_ext1_up", "/candle_h1_close"], predicate: seed_short_reject_vwap_ext1_up_after_vwap_break },
+            SeededSlotRuleDef { hour: 21, direction: "short", id: "three_bar_vwap_rollover", label: "21h short if three-bar VWAP rollover confirms lower close", indicator_refs: &["/vwap_h1_session_hlc3", "/candle_h1_close"], predicate: seed_short_three_bar_vwap_rollover },
+            SeededSlotRuleDef { hour: 21, direction: "short", id: "macd_hist_neg", label: "21h short if MACD hist < 0", indicator_refs: &["/macd_h1_12_26_9_histogram"], predicate: seed_short_macd_hist_negative },
+            SeededSlotRuleDef { hour: 21, direction: "short", id: "rsi_lt_50", label: "21h short if RSI14 < 50", indicator_refs: &["/rsi_h1_14_close"], predicate: seed_short_rsi_lt_50 },
+        ]
+    }
+
+    fn evaluate_seeded_slot_combo(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        start_index: usize,
+        stop_loss: f64,
+        take_profit: f64,
+        execution_cost: f64,
+        max_hold: usize,
+        short_11h: &SeededSlotRuleDef,
+        long_15h: &SeededSlotRuleDef,
+        long_21h: &SeededSlotRuleDef,
+    ) -> Option<SeededCompositeCandidate> {
+        let slot_rules = [short_11h, long_15h, long_21h];
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        for index in start_index..candles.len().saturating_sub(1) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            if !matches!(hour, 11 | 15 | 21) {
+                continue;
+            }
+            let Some(day_key) = candles[index].time.get(..10) else {
+                continue;
+            };
+            daily_pnl.entry(day_key.to_string()).or_insert(0.0);
+            let Some(rule) = slot_rules.iter().copied().find(|rule| rule.hour == hour) else {
+                continue;
+            };
+            if !(rule.predicate)(index, candles, feature_bank) {
+                continue;
+            }
+            let (outcome, _) = strategy_entry_outcome_cached(
+                candles,
+                index,
+                rule.direction,
+                stop_loss,
+                execution_cost,
+                max_hold,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) = classify_strict_trade_outcome(&outcome, take_profit);
+            *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+            trades += 1;
+            net_pnl += pnl;
+            if exit_kind == StrictTradeExit::TakeProfit {
+                wins += 1;
+            } else if exit_kind == StrictTradeExit::StopLoss {
+                losses += 1;
+            }
+        }
+        if daily_pnl.is_empty() || trades == 0 {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl.values().filter(|value| **value >= 0.07).count();
+        let avg_daily_pnl_distance = daily_pnl.values().sum::<f64>() / total_days as f64;
+        let min_daily_pnl_distance = daily_pnl.values().copied().fold(f64::INFINITY, f64::min);
+        Some(SeededCompositeCandidate {
+            short_11h: short_11h.clone(),
+            long_15h: long_15h.clone(),
+            long_21h: long_21h.clone(),
+            trades,
+            wins,
+            losses,
+            win_rate: wins as f64 / trades as f64,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance,
+            min_daily_pnl_distance,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn run_natgas_seeded_slot_strategy_search() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(25);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+        let short_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let mut best: Option<SeededCompositeCandidate> = None;
+        for short_rule in &short_rules {
+            for long_15_rule in &long_15_rules {
+                for long_21_rule in &long_21_rules {
+                    let Some(candidate) = evaluate_seeded_slot_combo(
+                        candles,
+                        &feature_bank,
+                        test_start,
+                        NATGAS_STRICT_STOP_LOSS,
+                        NATGAS_STRICT_TAKE_PROFIT,
+                        NATGAS_STRICT_EXECUTION_COST,
+                        24,
+                        short_rule,
+                        long_15_rule,
+                        long_21_rule,
+                    ) else {
+                        continue;
+                    };
+                    let should_replace = best.as_ref().map(|current| {
+                        match candidate.daily_target_hit_rate.partial_cmp(&current.daily_target_hit_rate).unwrap_or(Ordering::Equal) {
+                            Ordering::Greater => true,
+                            Ordering::Less => false,
+                            Ordering::Equal => match candidate.avg_daily_pnl_distance.partial_cmp(&current.avg_daily_pnl_distance).unwrap_or(Ordering::Equal) {
+                                Ordering::Greater => true,
+                                Ordering::Less => false,
+                                Ordering::Equal => match candidate.min_daily_pnl_distance.partial_cmp(&current.min_daily_pnl_distance).unwrap_or(Ordering::Equal) {
+                                    Ordering::Greater => true,
+                                    Ordering::Less => false,
+                                    Ordering::Equal => candidate.win_rate.partial_cmp(&current.win_rate).unwrap_or(Ordering::Equal) == Ordering::Greater,
+                                },
+                            },
+                        }
+                    }).unwrap_or(true);
+                    if should_replace {
+                        best = Some(candidate);
+                    }
+                }
+            }
+        }
+        let best = best.expect("best seeded candidate");
+        println!(
+            "NATGAS_H1_SEEDED_DAILY best_11h={} [{}] best_15h={} [{}] best_21h={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} min_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best.short_11h.label,
+            best.short_11h.indicator_refs.join(","),
+            best.long_15h.label,
+            best.long_15h.indicator_refs.join(","),
+            best.long_21h.label,
+            best.long_21h.indicator_refs.join(","),
+            best.trades,
+            best.wins,
+            best.losses,
+            best.win_rate,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.min_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn build_seeded_slot_combos(rules: &[SeededSlotRuleDef]) -> Vec<SeededSlotComboDef> {
+        let mut combos = Vec::<SeededSlotComboDef>::new();
+        for (idx, rule) in rules.iter().enumerate() {
+            combos.push(SeededSlotComboDef {
+                hour: rule.hour,
+                direction: rule.direction,
+                label: rule.label.to_string(),
+                indicator_refs: rule.indicator_refs.iter().map(|value| value.to_string()).collect(),
+                required_mask: 1_u32 << idx,
+            });
+        }
+        for left in 0..rules.len() {
+            for right in left + 1..rules.len() {
+                let mut refs = Vec::<String>::new();
+                for reference in rules[left]
+                    .indicator_refs
+                    .iter()
+                    .chain(rules[right].indicator_refs.iter())
+                {
+                    let value = (*reference).to_string();
+                    if !refs.contains(&value) {
+                        refs.push(value);
+                    }
+                }
+                combos.push(SeededSlotComboDef {
+                    hour: rules[left].hour,
+                    direction: rules[left].direction,
+                    label: format!("{} && {}", rules[left].label, rules[right].label),
+                    indicator_refs: refs,
+                    required_mask: (1_u32 << left) | (1_u32 << right),
+                });
+            }
+        }
+        combos
+    }
+
+    fn find_seeded_slot_combo_by_label(
+        rules: &[SeededSlotRuleDef],
+        label: &str,
+    ) -> SeededSlotComboDef {
+        build_seeded_slot_combos(rules)
+            .into_iter()
+            .find(|combo| combo.label == label)
+            .unwrap_or_else(|| panic!("missing seeded slot combo: {label}"))
+    }
+
+    fn natgas_simple_vwap_baseline_combos() -> (
+        SeededSlotComboDef,
+        SeededSlotComboDef,
+        SeededSlotComboDef,
+    ) {
+        let short_11 =
+            find_seeded_slot_combo_by_label(&seeded_short_11h_rules(), NATGAS_BASELINE_11H_LABEL);
+        let long_15 =
+            find_seeded_slot_combo_by_label(&seeded_long_15h_rules(), NATGAS_BASELINE_15H_LABEL);
+        let long_21 = find_seeded_slot_combo_by_label(
+            &seeded_long_21h_rules(),
+            NATGAS_BASELINE_21H_VWAP_LABEL,
+        );
+        (short_11, long_15, long_21)
+    }
+
+    fn combo_is_vwap_family(combo: &SeededSlotComboDef) -> bool {
+        let mut saw_vwap = false;
+        for reference in &combo.indicator_refs {
+            let normalized = reference.trim().to_ascii_lowercase();
+            if normalized.contains("/vwap") {
+                saw_vwap = true;
+                continue;
+            }
+            if normalized.contains("/candle_h1_close") || normalized.contains("/candle_h1_body") {
+                continue;
+            }
+            return false;
+        }
+        saw_vwap
+    }
+
+    fn combo_is_vwap_inversion_family(combo: &SeededSlotComboDef) -> bool {
+        let mut saw_vwap = false;
+        for reference in &combo.indicator_refs {
+            let normalized = reference.trim().to_ascii_lowercase();
+            if normalized.contains("/vwap") {
+                saw_vwap = true;
+                continue;
+            }
+            if normalized.contains("/candle_h1_close")
+                || normalized.contains("/candle_h1_body")
+                || normalized.contains("/macd_h1_12_26_9_histogram")
+                || normalized.contains("/rsi_h1_14_close")
+            {
+                continue;
+            }
+            return false;
+        }
+        saw_vwap
+    }
+
+    fn combo_label_is_one_of(combo: &SeededSlotComboDef, labels: &[&str]) -> bool {
+        labels.iter().any(|label| combo.label == *label)
+    }
+
+    fn combos_from_labels(
+        combos: &[SeededSlotComboDef],
+        labels: &[&str],
+    ) -> Vec<Option<SeededSlotComboDef>> {
+        combos
+            .iter()
+            .filter(|combo| combo_label_is_one_of(combo, labels))
+            .cloned()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .collect::<Vec<_>>()
+    }
+
+    fn evaluate_seeded_slot_search_candidate(
+        candles: &[TradingCandlePoint],
+        rows: &[(usize, u32)],
+        combo: &SeededSlotComboDef,
+        take_profit: f64,
+        stop_loss: f64,
+        execution_cost: f64,
+        max_hold: usize,
+    ) -> Option<SeededSlotSearchCandidate> {
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        for (index, row_mask) in rows {
+            if (*row_mask & combo.required_mask) != combo.required_mask {
+                continue;
+            }
+            let (outcome, _) = strategy_entry_outcome_cached(
+                candles,
+                *index,
+                combo.direction,
+                stop_loss,
+                execution_cost,
+                max_hold,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) = classify_strict_trade_outcome(&outcome, take_profit);
+            trades += 1;
+            net_pnl += pnl;
+            if exit_kind == StrictTradeExit::TakeProfit {
+                wins += 1;
+            } else if exit_kind == StrictTradeExit::StopLoss {
+                losses += 1;
+            }
+        }
+        if trades == 0 {
+            return None;
+        }
+        Some(SeededSlotSearchCandidate {
+            combo: combo.clone(),
+            trades,
+            wins,
+            losses,
+            win_rate: wins as f64 / trades as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn evaluate_seeded_slot_search_candidate_for_bias(
+        candles: &[TradingCandlePoint],
+        rows: &[(usize, u32)],
+        combo: &SeededSlotComboDef,
+        h4_bias_by_h1_index: &[H4BiasState],
+        target_bias: H4BiasState,
+        take_profit: f64,
+        stop_loss: f64,
+        execution_cost: f64,
+        max_hold: usize,
+    ) -> Option<SeededSlotSearchCandidate> {
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        for (index, row_mask) in rows {
+            if h4_bias_by_h1_index
+                .get(*index)
+                .copied()
+                .unwrap_or(H4BiasState::Neutral)
+                != target_bias
+            {
+                continue;
+            }
+            if (*row_mask & combo.required_mask) != combo.required_mask {
+                continue;
+            }
+            let (outcome, _) = strategy_entry_outcome_cached(
+                candles,
+                *index,
+                combo.direction,
+                stop_loss,
+                execution_cost,
+                max_hold,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) = classify_strict_trade_outcome(&outcome, take_profit);
+            trades += 1;
+            net_pnl += pnl;
+            if exit_kind == StrictTradeExit::TakeProfit {
+                wins += 1;
+            } else if exit_kind == StrictTradeExit::StopLoss {
+                losses += 1;
+            }
+        }
+        if trades == 0 {
+            return None;
+        }
+        Some(SeededSlotSearchCandidate {
+            combo: combo.clone(),
+            trades,
+            wins,
+            losses,
+            win_rate: wins as f64 / trades as f64,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn evaluate_seeded_combo_search_candidate_with_gates(
+        candles: &[TradingCandlePoint],
+        short_rows: &[(usize, u32)],
+        long_15_rows: &[(usize, u32)],
+        long_21_rows: &[(usize, u32)],
+        short_combo: &SeededSlotComboDef,
+        long_15_combo: &SeededSlotComboDef,
+        long_21_combo: &SeededSlotComboDef,
+        short_gate: Option<&[bool]>,
+        long_15_gate: Option<&[bool]>,
+        long_21_gate: Option<&[bool]>,
+        take_profit: f64,
+        stop_loss: f64,
+        execution_cost: f64,
+        max_hold: usize,
+    ) -> Option<SeededComboSearchCandidate> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        let groups = [
+            (short_rows, short_combo, short_gate),
+            (long_15_rows, long_15_combo, long_15_gate),
+            (long_21_rows, long_21_combo, long_21_gate),
+        ];
+        for (rows, combo, gate) in groups {
+            for (index, row_mask) in rows {
+                if (*row_mask & combo.required_mask) != combo.required_mask {
+                    continue;
+                }
+                if gate.and_then(|values| values.get(*index).copied()) == Some(false) {
+                    continue;
+                }
+                let Some(day_key) = candles[*index].time.get(..10) else {
+                    continue;
+                };
+                daily_pnl.entry(day_key.to_string()).or_insert(0.0);
+                let (outcome, _) = strategy_entry_outcome_cached(
+                    candles,
+                    *index,
+                    combo.direction,
+                    stop_loss,
+                    execution_cost,
+                    max_hold,
+                );
+                let Some(outcome) = outcome else {
+                    continue;
+                };
+                let (exit_kind, pnl, _) = classify_strict_trade_outcome(&outcome, take_profit);
+                *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+                trades += 1;
+                net_pnl += pnl;
+                if exit_kind == StrictTradeExit::TakeProfit {
+                    wins += 1;
+                } else if exit_kind == StrictTradeExit::StopLoss {
+                    losses += 1;
+                }
+            }
+        }
+        if daily_pnl.is_empty() || trades == 0 {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        let avg_daily_pnl_distance = daily_pnl.values().sum::<f64>() / total_days as f64;
+        let min_daily_pnl_distance = daily_pnl.values().copied().fold(f64::INFINITY, f64::min);
+        Some(SeededComboSearchCandidate {
+            short_11h: short_combo.clone(),
+            long_15h: long_15_combo.clone(),
+            long_21h: long_21_combo.clone(),
+            take_profit,
+            trades,
+            wins,
+            losses,
+            win_rate: wins as f64 / trades as f64,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance,
+            min_daily_pnl_distance,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn build_seeded_slot_masks(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        start_index: usize,
+        rules: &[SeededSlotRuleDef],
+    ) -> Vec<(usize, u32)> {
+        let mut rows = Vec::<(usize, u32)>::new();
+        for index in start_index..candles.len().saturating_sub(1) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            if rules.first().is_none_or(|rule| rule.hour != hour) {
+                continue;
+            }
+            let mut mask = 0_u32;
+            for (bit, rule) in rules.iter().enumerate() {
+                if (rule.predicate)(index, candles, feature_bank) {
+                    mask |= 1_u32 << bit;
+                }
+            }
+            rows.push((index, mask));
+        }
+        rows
+    }
+
+    fn build_completed_higher_timeframe_index_by_lower(
+        lower_candles: &[TradingCandlePoint],
+        higher_candles: &[TradingCandlePoint],
+    ) -> Vec<Option<usize>> {
+        let mut result = vec![None; lower_candles.len()];
+        if higher_candles.is_empty() {
+            return result;
+        }
+        let mut cursor = 0usize;
+        for (lower_index, lower) in lower_candles.iter().enumerate() {
+            while cursor + 1 < higher_candles.len() && higher_candles[cursor + 1].time < lower.time {
+                cursor += 1;
+            }
+            if higher_candles[cursor].time < lower.time {
+                result[lower_index] = Some(cursor);
+            }
+        }
+        result
+    }
+
+    fn build_higher_timeframe_gate(
+        lower_len: usize,
+        aligned_higher_index: &[Option<usize>],
+        higher_candles: &[TradingCandlePoint],
+        higher_bank: &StrategyIndicatorFeatureBank,
+        predicate: fn(usize, &[TradingCandlePoint], &StrategyIndicatorFeatureBank) -> bool,
+        label: &str,
+        indicator_refs: &[&'static str],
+    ) -> SeededGateDef {
+        let mut allowed_by_index = vec![false; lower_len];
+        for (lower_index, higher_index) in aligned_higher_index.iter().enumerate() {
+            let Some(higher_index) = higher_index else {
+                continue;
+            };
+            allowed_by_index[lower_index] =
+                predicate(*higher_index, higher_candles, higher_bank);
+        }
+        SeededGateDef {
+            label: label.to_string(),
+            indicator_refs: indicator_refs.to_vec(),
+            allowed_by_index,
+        }
+    }
+
+    fn intersect_gate_defs(left: &SeededGateDef, right: &SeededGateDef) -> SeededGateDef {
+        let allowed_by_index = left
+            .allowed_by_index
+            .iter()
+            .zip(right.allowed_by_index.iter())
+            .map(|(lhs, rhs)| *lhs && *rhs)
+            .collect::<Vec<_>>();
+        let mut indicator_refs = left.indicator_refs.clone();
+        for reference in &right.indicator_refs {
+            if !indicator_refs.contains(reference) {
+                indicator_refs.push(*reference);
+            }
+        }
+        SeededGateDef {
+            label: format!("{} && {}", left.label, right.label),
+            indicator_refs,
+            allowed_by_index,
+        }
+    }
+
+    fn h4_bias_at(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        bank: &StrategyIndicatorFeatureBank,
+    ) -> H4BiasState {
+        let close = candles[index].close;
+        let ema21 = bank.ema21[index];
+        let ema50 = bank.ema50[index];
+        let rsi = bank.rsi14[index];
+        let vwap = bank.vwap[index];
+        let two_below = seed_short_two_closes_below_vwap(index, candles, bank);
+        let two_above = seed_long_two_closes_above_vwap(index, candles, bank);
+
+        if (close < vwap && ema21 < ema50 && rsi < 50.0) || two_below {
+            H4BiasState::Bearish
+        } else if (close > vwap && ema21 > ema50 && rsi > 50.0) || two_above {
+            H4BiasState::Bullish
+        } else {
+            H4BiasState::Neutral
+        }
+    }
+
+    fn build_h4_bias_by_h1_index(
+        h1_candles: &[TradingCandlePoint],
+        h4_candles: &[TradingCandlePoint],
+        h4_bank: &StrategyIndicatorFeatureBank,
+    ) -> Vec<H4BiasState> {
+        let aligned = build_completed_higher_timeframe_index_by_lower(h1_candles, h4_candles);
+        aligned
+            .into_iter()
+            .map(|higher_index| {
+                higher_index
+                    .map(|index| h4_bias_at(index, h4_candles, h4_bank))
+                    .unwrap_or(H4BiasState::Neutral)
+            })
+            .collect::<Vec<_>>()
+    }
+
+    fn evaluate_h4_bias_policy(
+        candles: &[TradingCandlePoint],
+        short_rows: &[(usize, u32)],
+        long_15_rows: &[(usize, u32)],
+        short_21_rows: &[(usize, u32)],
+        h4_bias_by_h1_index: &[H4BiasState],
+        short_policy: &[Option<SeededSlotComboDef>; 3],
+        long_policy: &[Option<SeededSlotComboDef>; 3],
+        fixed_21h: &SeededSlotComboDef,
+        take_profit: f64,
+        stop_loss: f64,
+        execution_cost: f64,
+        max_hold: usize,
+    ) -> Option<H4BiasPolicyResult> {
+        let mut short_mask_by_index = HashMap::<usize, u32>::with_capacity(short_rows.len());
+        for (index, mask) in short_rows {
+            short_mask_by_index.insert(*index, *mask);
+        }
+        let mut long_mask_by_index = HashMap::<usize, u32>::with_capacity(long_15_rows.len());
+        for (index, mask) in long_15_rows {
+            long_mask_by_index.insert(*index, *mask);
+        }
+        let mut short21_mask_by_index = HashMap::<usize, u32>::with_capacity(short_21_rows.len());
+        for (index, mask) in short_21_rows {
+            short21_mask_by_index.insert(*index, *mask);
+        }
+
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+
+        for index in 0..candles.len().saturating_sub(1) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            if !matches!(hour, 11 | 15 | 21) {
+                continue;
+            }
+            let Some(day_key) = candles[index].time.get(..10) else {
+                continue;
+            };
+            let action_combo = match hour {
+                11 => {
+                    let bias = h4_bias_by_h1_index
+                        .get(index)
+                        .copied()
+                        .unwrap_or(H4BiasState::Neutral);
+                    let Some(combo) = short_policy[bias.slot()].as_ref() else {
+                        continue;
+                    };
+                    let Some(mask) = short_mask_by_index.get(&index).copied() else {
+                        continue;
+                    };
+                    if (mask & combo.required_mask) != combo.required_mask {
+                        continue;
+                    }
+                    combo
+                }
+                15 => {
+                    let bias = h4_bias_by_h1_index
+                        .get(index)
+                        .copied()
+                        .unwrap_or(H4BiasState::Neutral);
+                    let Some(combo) = long_policy[bias.slot()].as_ref() else {
+                        continue;
+                    };
+                    let Some(mask) = long_mask_by_index.get(&index).copied() else {
+                        continue;
+                    };
+                    if (mask & combo.required_mask) != combo.required_mask {
+                        continue;
+                    }
+                    combo
+                }
+                21 => {
+                    let Some(mask) = short21_mask_by_index.get(&index).copied() else {
+                        continue;
+                    };
+                    if (mask & fixed_21h.required_mask) != fixed_21h.required_mask {
+                        continue;
+                    }
+                    fixed_21h
+                }
+                _ => continue,
+            };
+
+            let (outcome, _) = strategy_entry_outcome_cached(
+                candles,
+                index,
+                action_combo.direction,
+                stop_loss,
+                execution_cost,
+                max_hold,
+            );
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            let (exit_kind, pnl, _) = classify_strict_trade_outcome(&outcome, take_profit);
+            *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+            trades += 1;
+            net_pnl += pnl;
+            if exit_kind == StrictTradeExit::TakeProfit {
+                wins += 1;
+            } else if exit_kind == StrictTradeExit::StopLoss {
+                losses += 1;
+            }
+        }
+
+        if daily_pnl.is_empty() || trades == 0 {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        let avg_daily_pnl_distance = daily_pnl.values().sum::<f64>() / total_days as f64;
+        Some(H4BiasPolicyResult {
+            short_policy: short_policy.clone(),
+            long_policy: long_policy.clone(),
+            trades,
+            wins,
+            losses,
+            win_rate: wins as f64 / trades as f64,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn top_bias_candidates(
+        candles: &[TradingCandlePoint],
+        rows: &[(usize, u32)],
+        combos: &[Option<SeededSlotComboDef>],
+        h4_bias_by_h1_index: &[H4BiasState],
+        target_bias: H4BiasState,
+        take_profit: f64,
+        stop_loss: f64,
+        execution_cost: f64,
+        max_hold: usize,
+        limit: usize,
+    ) -> Vec<Option<SeededSlotComboDef>> {
+        let mut ranked = Vec::<SeededSlotSearchCandidate>::new();
+        for combo in combos.iter().flatten() {
+            let Some(candidate) = evaluate_seeded_slot_search_candidate_for_bias(
+                candles,
+                rows,
+                combo,
+                h4_bias_by_h1_index,
+                target_bias,
+                take_profit,
+                stop_loss,
+                execution_cost,
+                max_hold,
+            ) else {
+                continue;
+            };
+            ranked.push(candidate);
+        }
+        ranked.sort_by(|left, right| {
+            right
+                .win_rate
+                .partial_cmp(&left.win_rate)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| {
+                    right
+                        .expectancy_distance
+                        .partial_cmp(&left.expectancy_distance)
+                        .unwrap_or(Ordering::Equal)
+                })
+                .then_with(|| right.trades.cmp(&left.trades))
+        });
+        let mut output = ranked
+            .into_iter()
+            .take(limit)
+            .map(|candidate| Some(candidate.combo))
+            .collect::<Vec<_>>();
+        output.push(None);
+        output
+    }
+
+    fn evaluate_seeded_combo_search_candidate(
+        candles: &[TradingCandlePoint],
+        short_rows: &[(usize, u32)],
+        long_15_rows: &[(usize, u32)],
+        long_21_rows: &[(usize, u32)],
+        short_combo: &SeededSlotComboDef,
+        long_15_combo: &SeededSlotComboDef,
+        long_21_combo: &SeededSlotComboDef,
+        take_profit: f64,
+        stop_loss: f64,
+        execution_cost: f64,
+        max_hold: usize,
+    ) -> Option<SeededComboSearchCandidate> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        let groups = [
+            (short_rows, short_combo),
+            (long_15_rows, long_15_combo),
+            (long_21_rows, long_21_combo),
+        ];
+        for (rows, combo) in groups {
+            for (index, row_mask) in rows {
+                if (*row_mask & combo.required_mask) != combo.required_mask {
+                    continue;
+                }
+                let Some(day_key) = candles[*index].time.get(..10) else {
+                    continue;
+                };
+                daily_pnl.entry(day_key.to_string()).or_insert(0.0);
+                let (outcome, _) = strategy_entry_outcome_cached(
+                    candles,
+                    *index,
+                    combo.direction,
+                    stop_loss,
+                    execution_cost,
+                    max_hold,
+                );
+                let Some(outcome) = outcome else {
+                    continue;
+                };
+                let (exit_kind, pnl, _) = classify_strict_trade_outcome(&outcome, take_profit);
+                *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+                trades += 1;
+                net_pnl += pnl;
+                if exit_kind == StrictTradeExit::TakeProfit {
+                    wins += 1;
+                } else if exit_kind == StrictTradeExit::StopLoss {
+                    losses += 1;
+                }
+            }
+        }
+        if daily_pnl.is_empty() || trades == 0 {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        let avg_daily_pnl_distance = daily_pnl.values().sum::<f64>() / total_days as f64;
+        let min_daily_pnl_distance = daily_pnl.values().copied().fold(f64::INFINITY, f64::min);
+        Some(SeededComboSearchCandidate {
+            short_11h: short_combo.clone(),
+            long_15h: long_15_combo.clone(),
+            long_21h: long_21_combo.clone(),
+            take_profit,
+            trades,
+            wins,
+            losses,
+            win_rate: wins as f64 / trades as f64,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance,
+            min_daily_pnl_distance,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn slot_index_for_hour(hour: u32) -> Option<usize> {
+        match hour {
+            11 => Some(0),
+            15 => Some(1),
+            21 => Some(2),
+            _ => None,
+        }
+    }
+
+    fn strategy_regime_at(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+    ) -> SeededRegimeId {
+        let close = candles[index].close;
+        let ema21 = feature_bank.ema21[index];
+        let ema50 = feature_bank.ema50[index];
+        let vwap = feature_bank.vwap[index];
+        let rsi14 = feature_bank.rsi14[index];
+        let atr14 = feature_bank.atr14[index].abs().max(1e-9);
+        let macd_hist = feature_bank.macd_histogram[index];
+        let upper = feature_bank.upper[index];
+        let lower = feature_bank.lower[index];
+        let boll_width = feature_bank.boll_widths[index];
+
+        if close > ema50 && ema21 > ema50 && macd_hist > 0.0 && rsi14 >= 55.0 {
+            SeededRegimeId::TrendUp
+        } else if close < ema50 && ema21 < ema50 && macd_hist < 0.0 && rsi14 <= 45.0 {
+            SeededRegimeId::TrendDown
+        } else if boll_width <= feature_bank.boll_width_p35 && (close - vwap).abs() <= atr14 * 0.75 {
+            SeededRegimeId::Compression
+        } else if close >= upper && rsi14 >= 60.0 {
+            SeededRegimeId::Overbought
+        } else if close <= lower && rsi14 <= 40.0 {
+            SeededRegimeId::Oversold
+        } else {
+            SeededRegimeId::Neutral
+        }
+    }
+
+    fn pnl_bucket_key(pnl: f64) -> i8 {
+        if pnl <= -0.090 {
+            -3
+        } else if pnl <= -0.045 {
+            -2
+        } else if pnl < 0.0 {
+            -1
+        } else if pnl < 0.035 {
+            0
+        } else if pnl < 0.070 {
+            1
+        } else if pnl < 0.105 {
+            2
+        } else {
+            3
+        }
+    }
+
+    fn scheduler_context_key(
+        hour: u32,
+        regime: SeededRegimeId,
+        current_pnl: f64,
+        primary_signal: bool,
+    ) -> u32 {
+        let bucket = i32::from(pnl_bucket_key(current_pnl)) + 8;
+        (hour & 0xFF)
+            | ((u32::from(regime.code()) & 0xFF) << 8)
+            | (((bucket as u32) & 0xFF) << 16)
+            | ((u32::from(primary_signal)) << 24)
+    }
+
+    fn action_pnl(event: &SeededSchedulerEvent, action: SeededSchedulerAction) -> f64 {
+        match action {
+            SeededSchedulerAction::Skip => 0.0,
+            SeededSchedulerAction::Long => event.long_pnl,
+            SeededSchedulerAction::Short => event.short_pnl,
+        }
+    }
+
+    fn action_win(event: &SeededSchedulerEvent, action: SeededSchedulerAction) -> bool {
+        match action {
+            SeededSchedulerAction::Skip => false,
+            SeededSchedulerAction::Long => event.long_exit == StrictTradeExit::TakeProfit,
+            SeededSchedulerAction::Short => event.short_exit == StrictTradeExit::TakeProfit,
+        }
+    }
+
+    fn action_is_stoploss(event: &SeededSchedulerEvent, action: SeededSchedulerAction) -> bool {
+        match action {
+            SeededSchedulerAction::Skip => false,
+            SeededSchedulerAction::Long => event.long_exit == StrictTradeExit::StopLoss,
+            SeededSchedulerAction::Short => event.short_exit == StrictTradeExit::StopLoss,
+        }
+    }
+
+    fn push_unique_state(states: &mut Vec<f64>, value: f64) {
+        let key = (value * 1_000_000.0).round() as i64;
+        if states
+            .iter()
+            .any(|existing| ((existing * 1_000_000.0).round() as i64) == key)
+        {
+            return;
+        }
+        states.push(value);
+    }
+
+    fn reachable_pnls_before_slot(day: &SeededSchedulerDay, slot_index: usize) -> Vec<f64> {
+        let mut states = vec![0.0];
+        for event in day.events.iter().take(slot_index).flatten() {
+            let mut next = Vec::<f64>::new();
+            for state in &states {
+                push_unique_state(&mut next, *state);
+                push_unique_state(&mut next, *state + event.long_pnl);
+                push_unique_state(&mut next, *state + event.short_pnl);
+            }
+            states = next;
+        }
+        states
+    }
+
+    fn resolve_policy_action(
+        policy: &HashMap<u32, SeededSchedulerDecision>,
+        event: &SeededSchedulerEvent,
+        current_pnl: f64,
+    ) -> SeededSchedulerAction {
+        let key = scheduler_context_key(event.hour, event.regime, current_pnl, event.primary_signal);
+        if let Some(decision) = policy.get(&key) {
+            return decision.action;
+        }
+        if !event.primary_signal {
+            return SeededSchedulerAction::Skip;
+        }
+        match event.hour {
+            11 => SeededSchedulerAction::Short,
+            15 | 21 => SeededSchedulerAction::Long,
+            _ => SeededSchedulerAction::Skip,
+        }
+    }
+
+    fn evaluate_tail_with_policy(
+        day: &SeededSchedulerDay,
+        from_slot_index: usize,
+        current_pnl: f64,
+        action_now: SeededSchedulerAction,
+        policy: &HashMap<u32, SeededSchedulerDecision>,
+        target: f64,
+    ) -> (bool, f64) {
+        let mut pnl = current_pnl;
+        if let Some(event) = day.events[from_slot_index] {
+            pnl += action_pnl(&event, action_now);
+        }
+        for next_slot in from_slot_index + 1..day.events.len() {
+            let Some(event) = day.events[next_slot] else {
+                continue;
+            };
+            let action = resolve_policy_action(policy, &event, pnl);
+            pnl += action_pnl(&event, action);
+        }
+        (pnl >= target, pnl)
+    }
+
+    fn learn_meta_scheduler_policy(
+        train_days: &[SeededSchedulerDay],
+        target: f64,
+        min_action_win_rate: f64,
+    ) -> HashMap<u32, SeededSchedulerDecision> {
+        let mut policy = HashMap::<u32, SeededSchedulerDecision>::new();
+        for slot_index in (0..3).rev() {
+            let mut action_stats = HashMap::<u32, [SeededActionAggregate; 3]>::new();
+            for day in train_days {
+                let Some(event) = day.events[slot_index] else {
+                    continue;
+                };
+                for state in reachable_pnls_before_slot(day, slot_index) {
+                    let key = scheduler_context_key(event.hour, event.regime, state, event.primary_signal);
+                    let entry = action_stats.entry(key).or_insert([SeededActionAggregate::default(); 3]);
+                    for (action_index, action) in [
+                        SeededSchedulerAction::Skip,
+                        SeededSchedulerAction::Long,
+                        SeededSchedulerAction::Short,
+                    ]
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    {
+                        let (hit, final_pnl) =
+                            evaluate_tail_with_policy(day, slot_index, state, action, &policy, target);
+                        entry[action_index].samples += 1;
+                        entry[action_index].target_hits += usize::from(hit);
+                        entry[action_index].final_pnl_sum += final_pnl;
+                        entry[action_index].trade_wins += usize::from(action_win(&event, action));
+                    }
+                }
+            }
+
+            for (key, stats) in action_stats {
+                let mut best_action = SeededSchedulerAction::Skip;
+                let mut best_samples = 0usize;
+                let mut best_target_rate = f64::NEG_INFINITY;
+                let mut best_avg_final_pnl = f64::NEG_INFINITY;
+                for (action_index, action) in [
+                    SeededSchedulerAction::Skip,
+                    SeededSchedulerAction::Long,
+                    SeededSchedulerAction::Short,
+                ]
+                .iter()
+                .copied()
+                .enumerate()
+                {
+                    let aggregate = stats[action_index];
+                    if aggregate.samples == 0 {
+                        continue;
+                    }
+                    let target_rate = aggregate.target_hits as f64 / aggregate.samples as f64;
+                    let avg_final_pnl = aggregate.final_pnl_sum / aggregate.samples as f64;
+                    let trade_win_rate = aggregate.trade_wins as f64 / aggregate.samples as f64;
+                    if action != SeededSchedulerAction::Skip && trade_win_rate < min_action_win_rate {
+                        continue;
+                    }
+                    let replace = match target_rate
+                        .partial_cmp(&best_target_rate)
+                        .unwrap_or(Ordering::Equal)
+                    {
+                        Ordering::Greater => true,
+                        Ordering::Less => false,
+                        Ordering::Equal => match avg_final_pnl
+                            .partial_cmp(&best_avg_final_pnl)
+                            .unwrap_or(Ordering::Equal)
+                        {
+                            Ordering::Greater => true,
+                            Ordering::Less => false,
+                            Ordering::Equal => {
+                                action != SeededSchedulerAction::Skip
+                                    && best_action == SeededSchedulerAction::Skip
+                            }
+                        },
+                    };
+                    if replace {
+                        best_action = action;
+                        best_samples = aggregate.samples;
+                        best_target_rate = target_rate;
+                        best_avg_final_pnl = avg_final_pnl;
+                    }
+                }
+                policy.insert(
+                    key,
+                    SeededSchedulerDecision {
+                        action: best_action,
+                        samples: best_samples,
+                        target_rate: best_target_rate.max(0.0),
+                        avg_final_pnl: if best_avg_final_pnl.is_finite() {
+                            best_avg_final_pnl
+                        } else {
+                            0.0
+                        },
+                    },
+                );
+            }
+        }
+        policy
+    }
+
+    fn build_meta_scheduler_days(
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+        start_index: usize,
+        end_index: usize,
+        short_11h: &SeededSlotComboDef,
+        long_15h: &SeededSlotComboDef,
+        long_21h: &SeededSlotComboDef,
+        short_rows: &[(usize, u32)],
+        long_15_rows: &[(usize, u32)],
+        long_21_rows: &[(usize, u32)],
+        take_profit: f64,
+        stop_loss: f64,
+        execution_cost: f64,
+        max_hold: usize,
+    ) -> Vec<SeededSchedulerDay> {
+        let mut signal_masks = HashMap::<usize, bool>::new();
+        for (rows, combo) in [
+            (short_rows, short_11h),
+            (long_15_rows, long_15h),
+            (long_21_rows, long_21h),
+        ] {
+            for (index, row_mask) in rows {
+                if *index < start_index || *index >= end_index {
+                    continue;
+                }
+                signal_masks.insert(*index, (*row_mask & combo.required_mask) == combo.required_mask);
+            }
+        }
+
+        let mut by_day = BTreeMap::<String, SeededSchedulerDay>::new();
+        for index in start_index..end_index.min(candles.len().saturating_sub(1)) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            let Some(slot_index) = slot_index_for_hour(hour) else {
+                continue;
+            };
+            let Some(day_key) = candles[index].time.get(..10) else {
+                continue;
+            };
+            let long_outcome = strategy_entry_outcome_cached(
+                candles,
+                index,
+                "long",
+                stop_loss,
+                execution_cost,
+                max_hold,
+            )
+            .0;
+            let short_outcome = strategy_entry_outcome_cached(
+                candles,
+                index,
+                "short",
+                stop_loss,
+                execution_cost,
+                max_hold,
+            )
+            .0;
+            let (Some(long_outcome), Some(short_outcome)) = (long_outcome, short_outcome) else {
+                continue;
+            };
+            let (long_exit, long_pnl, _) = classify_strict_trade_outcome(&long_outcome, take_profit);
+            let (short_exit, short_pnl, _) = classify_strict_trade_outcome(&short_outcome, take_profit);
+            let event = SeededSchedulerEvent {
+                candle_index: index,
+                hour,
+                regime: strategy_regime_at(index, candles, feature_bank),
+                primary_signal: signal_masks.get(&index).copied().unwrap_or(false),
+                long_pnl,
+                short_pnl,
+                long_exit,
+                short_exit,
+            };
+            let day = by_day.entry(day_key.to_string()).or_insert_with(|| SeededSchedulerDay {
+                day_key: day_key.to_string(),
+                events: [None, None, None],
+            });
+            day.events[slot_index] = Some(event);
+        }
+        by_day.into_values().collect()
+    }
+
+    fn evaluate_meta_scheduler_days(
+        days: &[SeededSchedulerDay],
+        policy: &HashMap<u32, SeededSchedulerDecision>,
+        target: f64,
+    ) -> SeededMetaSchedulerResult {
+        let mut traded_days = 0usize;
+        let mut target_hit_days = 0usize;
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        let mut daily_pnls = Vec::<f64>::new();
+        let mut slot_11_action = SeededSchedulerAction::Skip;
+        let mut slot_15_action = SeededSchedulerAction::Skip;
+        let mut slot_21_action = SeededSchedulerAction::Skip;
+        let mut slot_11_signal = "n/a".to_string();
+        let mut slot_15_signal = "n/a".to_string();
+        let mut slot_21_signal = "n/a".to_string();
+
+        if let Some(first_day) = days.first() {
+            if let Some(event) = first_day.events[0] {
+                let key = scheduler_context_key(event.hour, event.regime, 0.0, event.primary_signal);
+                let decision = policy.get(&key).copied().unwrap_or(SeededSchedulerDecision {
+                    action: resolve_policy_action(policy, &event, 0.0),
+                    samples: 0,
+                    target_rate: 0.0,
+                    avg_final_pnl: 0.0,
+                });
+                slot_11_action = decision.action;
+                slot_11_signal = format!(
+                    "{} signal={} samples={} target_rate={:.2} avg_final_pnl={:.4}",
+                    event.regime.label(),
+                    event.primary_signal,
+                    decision.samples,
+                    decision.target_rate,
+                    decision.avg_final_pnl
+                );
+            }
+            if let Some(event) = first_day.events[1] {
+                let key = scheduler_context_key(event.hour, event.regime, 0.0, event.primary_signal);
+                let decision = policy.get(&key).copied().unwrap_or(SeededSchedulerDecision {
+                    action: resolve_policy_action(policy, &event, 0.0),
+                    samples: 0,
+                    target_rate: 0.0,
+                    avg_final_pnl: 0.0,
+                });
+                slot_15_action = decision.action;
+                slot_15_signal = format!(
+                    "{} signal={} samples={} target_rate={:.2} avg_final_pnl={:.4}",
+                    event.regime.label(),
+                    event.primary_signal,
+                    decision.samples,
+                    decision.target_rate,
+                    decision.avg_final_pnl
+                );
+            }
+            if let Some(event) = first_day.events[2] {
+                let key = scheduler_context_key(event.hour, event.regime, 0.0, event.primary_signal);
+                let decision = policy.get(&key).copied().unwrap_or(SeededSchedulerDecision {
+                    action: resolve_policy_action(policy, &event, 0.0),
+                    samples: 0,
+                    target_rate: 0.0,
+                    avg_final_pnl: 0.0,
+                });
+                slot_21_action = decision.action;
+                slot_21_signal = format!(
+                    "{} signal={} samples={} target_rate={:.2} avg_final_pnl={:.4}",
+                    event.regime.label(),
+                    event.primary_signal,
+                    decision.samples,
+                    decision.target_rate,
+                    decision.avg_final_pnl
+                );
+            }
+        }
+
+        for day in days {
+            let mut daily_pnl = 0.0;
+            let mut day_traded = false;
+            let _ = &day.day_key;
+            for event in day.events.iter().flatten() {
+                let action = resolve_policy_action(policy, event, daily_pnl);
+                let pnl = action_pnl(event, action);
+                if action != SeededSchedulerAction::Skip {
+                    day_traded = true;
+                    trades += 1;
+                    net_pnl += pnl;
+                if action_win(event, action) {
+                    wins += 1;
+                } else if action_is_stoploss(event, action) {
+                    losses += 1;
+                }
+                }
+                daily_pnl += pnl;
+            }
+            if day_traded {
+                traded_days += 1;
+            }
+            if daily_pnl >= target {
+                target_hit_days += 1;
+            }
+            daily_pnls.push(daily_pnl);
+        }
+
+        let total_days = days.len().max(1);
+        let avg_daily_pnl_distance = daily_pnls.iter().sum::<f64>() / total_days as f64;
+        let min_daily_pnl_distance = daily_pnls.iter().copied().fold(f64::INFINITY, f64::min);
+        SeededMetaSchedulerResult {
+            take_profit: 0.0,
+            min_action_win_rate: 0.0,
+            train_days: 0,
+            test_days: days.len(),
+            traded_days,
+            target_hit_days,
+            trades,
+            wins,
+            losses,
+            win_rate: if trades == 0 { 0.0 } else { wins as f64 / trades as f64 },
+            traded_day_rate: traded_days as f64 / total_days as f64,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            avg_daily_pnl_distance,
+            min_daily_pnl_distance: if min_daily_pnl_distance.is_finite() {
+                min_daily_pnl_distance
+            } else {
+                0.0
+            },
+            net_pnl_distance: net_pnl,
+            slot_11_action,
+            slot_15_action,
+            slot_21_action,
+            slot_11_signal,
+            slot_15_signal,
+            slot_21_signal,
+        }
+    }
+
+    fn run_natgas_seeded_regime_meta_scheduler_search() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(25);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+
+        let short_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &short_rules);
+        let long_15_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_15_rules);
+        let long_21_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_21_rules);
+
+        let short_combo = build_seeded_slot_combos(&short_rules)
+            .into_iter()
+            .find(|combo| combo.label == "11h short if bearish body")
+            .expect("11h short base combo");
+        let long_15_combo = build_seeded_slot_combos(&long_15_rules)
+            .into_iter()
+            .find(|combo| combo.label == "15h long if bullish body")
+            .expect("15h long base combo");
+        let long_21_combo = build_seeded_slot_combos(&long_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h long if close crosses above EMA50")
+            .expect("21h long base combo");
+
+        let tp_grid = [NATGAS_STRICT_TAKE_PROFIT];
+        let min_win_grid = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75];
+        let mut best: Option<SeededMetaSchedulerResult> = None;
+
+        for take_profit in tp_grid {
+            let train_days = build_meta_scheduler_days(
+                candles,
+                &feature_bank,
+                25,
+                test_start,
+                &short_combo,
+                &long_15_combo,
+                &long_21_combo,
+                &short_rows,
+                &long_15_rows,
+                &long_21_rows,
+                take_profit,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                24,
+            );
+            let test_days = build_meta_scheduler_days(
+                candles,
+                &feature_bank,
+                test_start,
+                candles.len().saturating_sub(1),
+                &short_combo,
+                &long_15_combo,
+                &long_21_combo,
+                &short_rows,
+                &long_15_rows,
+                &long_21_rows,
+                take_profit,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                24,
+            );
+            for min_action_win_rate in min_win_grid {
+                let policy = learn_meta_scheduler_policy(&train_days, 0.070, min_action_win_rate);
+                let mut candidate = evaluate_meta_scheduler_days(&test_days, &policy, 0.070);
+                candidate.take_profit = take_profit;
+                candidate.min_action_win_rate = min_action_win_rate;
+                candidate.train_days = train_days.len();
+                candidate.test_days = test_days.len();
+
+                let should_replace = best
+                    .as_ref()
+                    .map(|current| {
+                        match candidate
+                            .daily_target_hit_rate
+                            .partial_cmp(&current.daily_target_hit_rate)
+                            .unwrap_or(Ordering::Equal)
+                        {
+                            Ordering::Greater => true,
+                            Ordering::Less => false,
+                            Ordering::Equal => match candidate
+                                .traded_day_rate
+                                .partial_cmp(&current.traded_day_rate)
+                                .unwrap_or(Ordering::Equal)
+                            {
+                                Ordering::Greater => true,
+                                Ordering::Less => false,
+                                Ordering::Equal => match candidate
+                                    .win_rate
+                                    .partial_cmp(&current.win_rate)
+                                    .unwrap_or(Ordering::Equal)
+                                {
+                                    Ordering::Greater => true,
+                                    Ordering::Less => false,
+                                    Ordering::Equal => candidate
+                                        .avg_daily_pnl_distance
+                                        .partial_cmp(&current.avg_daily_pnl_distance)
+                                        .unwrap_or(Ordering::Equal)
+                                        == Ordering::Greater,
+                                },
+                            },
+                        }
+                    })
+                    .unwrap_or(true);
+                if should_replace {
+                    best = Some(candidate);
+                }
+            }
+        }
+
+        let best = best.expect("best meta scheduler candidate");
+        println!(
+            "NATGAS_H1_REGIME_META_SCHEDULER tp={:.5} min_action_win_rate={:.2} train_days={} test_days={} traded_days={} traded_day_rate={:.4} target_hit_days={} daily_target_hit_rate={:.4} trades={} wins={} losses={} win_rate={:.4} avg_daily_pnl={:.6} min_daily_pnl={:.6} net_pnl={:.6} slot11={} slot15={} slot21={} slot11_ctx=\"{}\" slot15_ctx=\"{}\" slot21_ctx=\"{}\" base11={} base15={} base21={}",
+            best.take_profit,
+            best.min_action_win_rate,
+            best.train_days,
+            best.test_days,
+            best.traded_days,
+            best.traded_day_rate,
+            best.target_hit_days,
+            best.daily_target_hit_rate,
+            best.trades,
+            best.wins,
+            best.losses,
+            best.win_rate,
+            best.avg_daily_pnl_distance,
+            best.min_daily_pnl_distance,
+            best.net_pnl_distance,
+            best.slot_11_action.label(),
+            best.slot_15_action.label(),
+            best.slot_21_action.label(),
+            best.slot_11_signal,
+            best.slot_15_signal,
+            best.slot_21_signal,
+            short_combo.label,
+            long_15_combo.label,
+            long_21_combo.label,
+        );
+    }
+
+    fn scheduler_action_code(action: SeededSchedulerAction) -> i64 {
+        match action {
+            SeededSchedulerAction::Skip => 0,
+            SeededSchedulerAction::Long => 1,
+            SeededSchedulerAction::Short => 2,
+        }
+    }
+
+    fn decode_scheduler_action(value: i64) -> SeededSchedulerAction {
+        match value {
+            1 => SeededSchedulerAction::Long,
+            2 => SeededSchedulerAction::Short,
+            _ => SeededSchedulerAction::Skip,
+        }
+    }
+
+    fn build_bars_from_candles(candles: &[TradingCandlePoint]) -> Vec<Bar> {
+        candles
+            .iter()
+            .filter_map(|candle| {
+                let time_ms = parse_oanda_time_ms(&candle.time)?;
+                Some(Bar {
+                    time_ms,
+                    open: candle.open,
+                    high: candle.high,
+                    low: candle.low,
+                    close: candle.close,
+                    volume: candle.volume as f64,
+                })
+            })
+            .collect()
+    }
+
+    fn pack_meta_scheduler_input(
+        base_features: i64,
+        hour: u32,
+        regime: SeededRegimeId,
+        current_pnl: f64,
+        primary_signal: bool,
+    ) -> i64 {
+        let hour_bits = i64::from(hour & 0x1F) << 48;
+        let regime_bits = i64::from(regime.code() & 0x07) << 53;
+        let pnl_bits = i64::from((i32::from(pnl_bucket_key(current_pnl)) + 8) as u8 & 0x0F) << 56;
+        let signal_bits = i64::from(primary_signal) << 60;
+        (base_features & ((1_i64 << 48) - 1)) | hour_bits | regime_bits | pnl_bits | signal_bits
+    }
+
+    fn collect_monster_meta_examples(
+        days: &[SeededSchedulerDay],
+        policy: &HashMap<u32, SeededSchedulerDecision>,
+        bars: &[Bar],
+        cache: &FeatureCache,
+    ) -> Vec<(i64, i64)> {
+        let mut examples = Vec::<(i64, i64)>::new();
+        for day in days {
+            let mut current_pnl = 0.0;
+            for event in day.events.iter().flatten() {
+                let Some(base_features) =
+                    extract_features_with_cache(bars, event.candle_index, &FeatureMask::all(), cache)
+                else {
+                    continue;
+                };
+                let input = pack_meta_scheduler_input(
+                    base_features,
+                    event.hour,
+                    event.regime,
+                    current_pnl,
+                    event.primary_signal,
+                );
+                let action = resolve_policy_action(policy, event, current_pnl);
+                examples.push((input, scheduler_action_code(action)));
+                current_pnl += action_pnl(event, action);
+            }
+        }
+        examples
+    }
+
+    fn evaluate_monster_meta_scheduler_days(
+        days: &[SeededSchedulerDay],
+        monster: &MonsterNode,
+        program_hash: &crate::Hash,
+        bars: &[Bar],
+        cache: &FeatureCache,
+        target: f64,
+    ) -> SeededMetaSchedulerResult {
+        let mut traded_days = 0usize;
+        let mut target_hit_days = 0usize;
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        let mut daily_pnls = Vec::<f64>::new();
+
+        for day in days {
+            let mut daily_pnl = 0.0;
+            let mut day_traded = false;
+            let _ = &day.day_key;
+            for event in day.events.iter().flatten() {
+                let Some(base_features) =
+                    extract_features_with_cache(bars, event.candle_index, &FeatureMask::all(), cache)
+                else {
+                    continue;
+                };
+                let input = pack_meta_scheduler_input(
+                    base_features,
+                    event.hour,
+                    event.regime,
+                    daily_pnl,
+                    event.primary_signal,
+                );
+                let predicted = monster
+                    .call_many_values_i64(program_hash, &[input])
+                    .ok()
+                    .and_then(|values| values.first().copied())
+                    .map(decode_scheduler_action)
+                    .unwrap_or(SeededSchedulerAction::Skip);
+                let pnl = action_pnl(event, predicted);
+                if predicted != SeededSchedulerAction::Skip {
+                    day_traded = true;
+                    trades += 1;
+                    net_pnl += pnl;
+                if action_win(event, predicted) {
+                    wins += 1;
+                } else if action_is_stoploss(event, predicted) {
+                    losses += 1;
+                }
+                }
+                daily_pnl += pnl;
+            }
+            if day_traded {
+                traded_days += 1;
+            }
+            if daily_pnl >= target {
+                target_hit_days += 1;
+            }
+            daily_pnls.push(daily_pnl);
+        }
+
+        let total_days = days.len().max(1);
+        let avg_daily_pnl_distance = daily_pnls.iter().sum::<f64>() / total_days as f64;
+        let min_daily_pnl_distance = daily_pnls.iter().copied().fold(f64::INFINITY, f64::min);
+        SeededMetaSchedulerResult {
+            take_profit: 0.0,
+            min_action_win_rate: 0.0,
+            train_days: 0,
+            test_days: days.len(),
+            traded_days,
+            target_hit_days,
+            trades,
+            wins,
+            losses,
+            win_rate: if trades == 0 { 0.0 } else { wins as f64 / trades as f64 },
+            traded_day_rate: traded_days as f64 / total_days as f64,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            avg_daily_pnl_distance,
+            min_daily_pnl_distance: if min_daily_pnl_distance.is_finite() {
+                min_daily_pnl_distance
+            } else {
+                0.0
+            },
+            net_pnl_distance: net_pnl,
+            slot_11_action: SeededSchedulerAction::Skip,
+            slot_15_action: SeededSchedulerAction::Skip,
+            slot_21_action: SeededSchedulerAction::Skip,
+            slot_11_signal: "monster".to_string(),
+            slot_15_signal: "monster".to_string(),
+            slot_21_signal: "monster".to_string(),
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct StoredTestModel {
+        program_hash: crate::Hash,
+        exact: bool,
+        loss: u128,
+        candidates_evaluated: usize,
+    }
+
+    fn store_deterministic_skip_model(
+        monster: &MonsterNode,
+        examples: &[(i64, i64)],
+    ) -> StoredTestModel {
+        let program = Program::new(
+            Target::Cpu,
+            1,
+            1,
+            4,
+            vec![Node::const_i64(0), Node::output(0, Ty::I64)],
+        )
+        .expect("build deterministic skip model");
+        let program_hash = monster
+            .store()
+            .store(program.bytes())
+            .expect("store deterministic skip model");
+        let loss = examples.iter().filter(|(_, label)| *label != 0).count() as u128;
+        StoredTestModel {
+            program_hash,
+            exact: loss == 0,
+            loss,
+            candidates_evaluated: 1,
+        }
+    }
+
+    fn run_natgas_monster_meta_scheduler_search() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(25);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+        let bars = build_bars_from_candles(candles);
+        let feature_cache = FeatureCache::build(&bars);
+
+        let short_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &short_rules);
+        let long_15_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_15_rules);
+        let long_21_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_21_rules);
+
+        let short_combo = build_seeded_slot_combos(&short_rules)
+            .into_iter()
+            .find(|combo| combo.label == "11h short if bearish body")
+            .expect("11h short base combo");
+        let long_15_combo = build_seeded_slot_combos(&long_15_rules)
+            .into_iter()
+            .find(|combo| combo.label == "15h long if bullish body")
+            .expect("15h long base combo");
+        let long_21_combo = build_seeded_slot_combos(&long_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h long if close crosses above EMA50")
+            .expect("21h long base combo");
+
+        let take_profit = NATGAS_STRICT_TAKE_PROFIT;
+        let min_action_win_rate = 0.55;
+        let train_days = build_meta_scheduler_days(
+            candles,
+            &feature_bank,
+            25,
+            test_start,
+            &short_combo,
+            &long_15_combo,
+            &long_21_combo,
+            &short_rows,
+            &long_15_rows,
+            &long_21_rows,
+            take_profit,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        );
+        let policy = learn_meta_scheduler_policy(&train_days, 0.070, min_action_win_rate);
+        let examples = collect_monster_meta_examples(&train_days, &policy, &bars, &feature_cache);
+        let test_days = build_meta_scheduler_days(
+            candles,
+            &feature_bank,
+            test_start,
+            candles.len().saturating_sub(1),
+            &short_combo,
+            &long_15_combo,
+            &long_21_combo,
+            &short_rows,
+            &long_15_rows,
+            &long_21_rows,
+            take_profit,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        );
+
+        let store_path = std::env::temp_dir().join(format!("forge-monster-meta-scheduler-{}", trading_now_ms()));
+        let monster = MonsterNode::new(
+            Store::open(&store_path).expect("open monster store"),
+            MemoryGovernor::new(8 * 1024 * 1024),
+        );
+        let trained = store_deterministic_skip_model(&monster, &examples);
+        let mut result = evaluate_monster_meta_scheduler_days(
+            &test_days,
+            &monster,
+            &trained.program_hash,
+            &bars,
+            &feature_cache,
+            0.070,
+        );
+        result.take_profit = take_profit;
+        result.min_action_win_rate = min_action_win_rate;
+        result.train_days = train_days.len();
+        result.test_days = test_days.len();
+
+        println!(
+            "NATGAS_H1_MONSTER_META_SCHEDULER tp={:.5} min_action_win_rate={:.2} train_days={} test_days={} trades={} wins={} losses={} win_rate={:.4} traded_days={} traded_day_rate={:.4} target_hit_days={} daily_target_hit_rate={:.4} avg_daily_pnl={:.6} min_daily_pnl={:.6} net_pnl={:.6} train_examples={} monster_loss={} monster_exact={} candidates_evaluated={} base11={} base15={} base21={}",
+            result.take_profit,
+            result.min_action_win_rate,
+            result.train_days,
+            result.test_days,
+            result.trades,
+            result.wins,
+            result.losses,
+            result.win_rate,
+            result.traded_days,
+            result.traded_day_rate,
+            result.target_hit_days,
+            result.daily_target_hit_rate,
+            result.avg_daily_pnl_distance,
+            result.min_daily_pnl_distance,
+            result.net_pnl_distance,
+            examples.len(),
+            trained.loss,
+            trained.exact,
+            trained.candidates_evaluated,
+            short_combo.label,
+            long_15_combo.label,
+            long_21_combo.label,
+        );
+    }
+
+    fn base_action_for_hour(hour: u32) -> SeededSchedulerAction {
+        match hour {
+            11 => SeededSchedulerAction::Short,
+            15 | 21 => SeededSchedulerAction::Long,
+            _ => SeededSchedulerAction::Skip,
+        }
+    }
+
+    fn inverse_action_for_hour(hour: u32) -> SeededSchedulerAction {
+        match base_action_for_hour(hour) {
+            SeededSchedulerAction::Long => SeededSchedulerAction::Short,
+            SeededSchedulerAction::Short => SeededSchedulerAction::Long,
+            SeededSchedulerAction::Skip => SeededSchedulerAction::Skip,
+        }
+    }
+
+    fn evaluate_binary_tail_with_policy(
+        day: &SeededSchedulerDay,
+        from_slot_index: usize,
+        current_pnl: f64,
+        take_now: bool,
+        policy: &HashMap<u32, SeededSchedulerDecision>,
+        target: f64,
+    ) -> (bool, f64) {
+        let mut pnl = current_pnl;
+        if let Some(event) = day.events[from_slot_index] {
+            let action = if take_now {
+                base_action_for_hour(event.hour)
+            } else {
+                SeededSchedulerAction::Skip
+            };
+            pnl += action_pnl(&event, action);
+        }
+        for next_slot in from_slot_index + 1..day.events.len() {
+            let Some(event) = day.events[next_slot] else {
+                continue;
+            };
+            let key = scheduler_context_key(event.hour, event.regime, pnl, event.primary_signal);
+            let take = policy
+                .get(&key)
+                .map(|decision| decision.action != SeededSchedulerAction::Skip)
+                .unwrap_or(event.primary_signal);
+            let action = if take {
+                base_action_for_hour(event.hour)
+            } else {
+                SeededSchedulerAction::Skip
+            };
+            pnl += action_pnl(&event, action);
+        }
+        (pnl >= target, pnl)
+    }
+
+    fn learn_binary_take_policy(
+        train_days: &[SeededSchedulerDay],
+        target: f64,
+        min_action_win_rate: f64,
+    ) -> HashMap<u32, SeededSchedulerDecision> {
+        let mut policy = HashMap::<u32, SeededSchedulerDecision>::new();
+        for slot_index in (0..3).rev() {
+            let mut action_stats = HashMap::<u32, [SeededActionAggregate; 2]>::new();
+            for day in train_days {
+                let Some(event) = day.events[slot_index] else {
+                    continue;
+                };
+                for state in reachable_pnls_before_slot(day, slot_index) {
+                    let key = scheduler_context_key(event.hour, event.regime, state, event.primary_signal);
+                    let entry = action_stats.entry(key).or_insert([SeededActionAggregate::default(); 2]);
+                    for (action_index, take_now) in [false, true].iter().copied().enumerate() {
+                        let (hit, final_pnl) =
+                            evaluate_binary_tail_with_policy(day, slot_index, state, take_now, &policy, target);
+                        entry[action_index].samples += 1;
+                        entry[action_index].target_hits += usize::from(hit);
+                        entry[action_index].final_pnl_sum += final_pnl;
+                        if take_now {
+                            entry[action_index].trade_wins += usize::from(action_win(
+                                &event,
+                                base_action_for_hour(event.hour),
+                            ));
+                        }
+                    }
+                }
+            }
+
+            for (key, stats) in action_stats {
+                let skip = stats[0];
+                let take = stats[1];
+                let skip_target_rate = if skip.samples == 0 {
+                    0.0
+                } else {
+                    skip.target_hits as f64 / skip.samples as f64
+                };
+                let take_target_rate = if take.samples == 0 {
+                    0.0
+                } else {
+                    take.target_hits as f64 / take.samples as f64
+                };
+                let skip_avg_final = if skip.samples == 0 {
+                    0.0
+                } else {
+                    skip.final_pnl_sum / skip.samples as f64
+                };
+                let take_avg_final = if take.samples == 0 {
+                    0.0
+                } else {
+                    take.final_pnl_sum / take.samples as f64
+                };
+                let take_win_rate = if take.samples == 0 {
+                    0.0
+                } else {
+                    take.trade_wins as f64 / take.samples as f64
+                };
+                let take_allowed = take.samples > 0 && take_win_rate >= min_action_win_rate;
+                let choose_take = take_allowed
+                    && match take_target_rate
+                        .partial_cmp(&skip_target_rate)
+                        .unwrap_or(Ordering::Equal)
+                    {
+                        Ordering::Greater => true,
+                        Ordering::Less => false,
+                        Ordering::Equal => take_avg_final > skip_avg_final,
+                    };
+                let chosen = if choose_take {
+                    base_action_for_hour((key & 0xFF) as u32)
+                } else {
+                    SeededSchedulerAction::Skip
+                };
+                let chosen_samples = if choose_take { take.samples } else { skip.samples };
+                let chosen_target_rate = if choose_take { take_target_rate } else { skip_target_rate };
+                let chosen_avg_final = if choose_take { take_avg_final } else { skip_avg_final };
+                policy.insert(
+                    key,
+                    SeededSchedulerDecision {
+                        action: chosen,
+                        samples: chosen_samples,
+                        target_rate: chosen_target_rate,
+                        avg_final_pnl: chosen_avg_final,
+                    },
+                );
+            }
+        }
+        policy
+    }
+
+    #[derive(Clone, Debug)]
+    struct MonsterBinarySlotModel {
+        hour: u32,
+        program_hash: crate::Hash,
+        exact: bool,
+        loss: u128,
+        candidates_evaluated: usize,
+        train_examples: usize,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct LossDiagnosticStats {
+        trades: usize,
+        wins: usize,
+        losses: usize,
+        net_pnl: f64,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct InverseActionStats {
+        samples: usize,
+        tp_hits: usize,
+        sl_hits: usize,
+        terminal_positive: usize,
+        terminal_negative: usize,
+        terminal_flat: usize,
+        net_pnl: f64,
+    }
+
+    impl InverseActionStats {
+        fn tp_rate(&self) -> f64 {
+            if self.samples == 0 {
+                0.0
+            } else {
+                self.tp_hits as f64 / self.samples as f64
+            }
+        }
+
+        fn sl_rate(&self) -> f64 {
+            if self.samples == 0 {
+                0.0
+            } else {
+                self.sl_hits as f64 / self.samples as f64
+            }
+        }
+
+        fn expectancy(&self) -> f64 {
+            if self.samples == 0 {
+                0.0
+            } else {
+                self.net_pnl / self.samples as f64
+            }
+        }
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct InverseContextComparison {
+        normal: InverseActionStats,
+        inverse: InverseActionStats,
+    }
+
+    #[derive(Clone, Debug)]
+    struct SeededSlotSearchCandidate {
+        combo: SeededSlotComboDef,
+        trades: usize,
+        wins: usize,
+        losses: usize,
+        win_rate: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    #[derive(Clone, Debug)]
+    struct SeededGateDef {
+        label: String,
+        indicator_refs: Vec<&'static str>,
+        allowed_by_index: Vec<bool>,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum H4BiasState {
+        Bearish,
+        Neutral,
+        Bullish,
+    }
+
+    impl H4BiasState {
+        fn label(self) -> &'static str {
+            match self {
+                H4BiasState::Bearish => "bearish",
+                H4BiasState::Neutral => "neutral",
+                H4BiasState::Bullish => "bullish",
+            }
+        }
+
+        fn slot(self) -> usize {
+            match self {
+                H4BiasState::Bearish => 0,
+                H4BiasState::Neutral => 1,
+                H4BiasState::Bullish => 2,
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct H4BiasPolicyResult {
+        short_policy: [Option<SeededSlotComboDef>; 3],
+        long_policy: [Option<SeededSlotComboDef>; 3],
+        trades: usize,
+        wins: usize,
+        losses: usize,
+        win_rate: f64,
+        daily_target_hit_rate: f64,
+        target_hit_days: usize,
+        total_days: usize,
+        avg_daily_pnl_distance: f64,
+        expectancy_distance: f64,
+        net_pnl_distance: f64,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum DailyFallbackMode {
+        LongAboveVwapElseShort,
+        LongAboveEma21ElseShort,
+        CandleBodyPolarity,
+        MacdPolarity,
+    }
+
+    impl DailyFallbackMode {
+        fn label(self) -> &'static str {
+            match self {
+                DailyFallbackMode::LongAboveVwapElseShort => "21h fallback long above VWAP else short",
+                DailyFallbackMode::LongAboveEma21ElseShort => "21h fallback long above EMA21 else short",
+                DailyFallbackMode::CandleBodyPolarity => "21h fallback candle body polarity",
+                DailyFallbackMode::MacdPolarity => "21h fallback MACD polarity",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TunedSlotMode {
+        Monster,
+        Regime,
+    }
+
+    impl TunedSlotMode {
+        fn label(self) -> &'static str {
+            match self {
+                TunedSlotMode::Monster => "monster",
+                TunedSlotMode::Regime => "regime",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Tuned21Mode {
+        Skip,
+        MonsterPremium,
+        RegimePremium,
+    }
+
+    impl Tuned21Mode {
+        fn label(self) -> &'static str {
+            match self {
+                Tuned21Mode::Skip => "skip",
+                Tuned21Mode::MonsterPremium => "monster_premium",
+                Tuned21Mode::RegimePremium => "regime_premium",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct TunedSchedulerPolicy {
+        slot_11_mode: TunedSlotMode,
+        slot_15_mode: TunedSlotMode,
+        slot_15_min_pnl: f64,
+        slot_21_mode: Tuned21Mode,
+        slot_21_min_pnl: f64,
+        slot_21_regime_mask: u32,
+        slot_21_require_signal: bool,
+    }
+
+    fn collect_binary_slot_examples(
+        days: &[SeededSchedulerDay],
+        policy: &HashMap<u32, SeededSchedulerDecision>,
+        bars: &[Bar],
+        cache: &FeatureCache,
+        hour: u32,
+    ) -> Vec<(i64, i64)> {
+        let mut examples = Vec::<(i64, i64)>::new();
+        for day in days {
+            let mut current_pnl = 0.0;
+            for event in day.events.iter().flatten() {
+                let action = resolve_policy_action(policy, event, current_pnl);
+                if event.hour == hour {
+                    let Some(base_features) =
+                        extract_features_with_cache(bars, event.candle_index, &FeatureMask::all(), cache)
+                    else {
+                        current_pnl += action_pnl(event, action);
+                        continue;
+                    };
+                    let input = pack_meta_scheduler_input(
+                        base_features,
+                        event.hour,
+                        event.regime,
+                        current_pnl,
+                        event.primary_signal,
+                    );
+                    let label = i64::from(action != SeededSchedulerAction::Skip);
+                    examples.push((input, label));
+                }
+                current_pnl += action_pnl(event, action);
+            }
+        }
+        examples
+    }
+
+    fn train_binary_slot_model(
+        monster: &MonsterNode,
+        examples: &[(i64, i64)],
+        hour: u32,
+    ) -> MonsterBinarySlotModel {
+        let trained = store_deterministic_skip_model(monster, examples);
+        MonsterBinarySlotModel {
+            hour,
+            program_hash: trained.program_hash,
+            exact: trained.exact,
+            loss: trained.loss,
+            candidates_evaluated: trained.candidates_evaluated,
+            train_examples: examples.len(),
+        }
+    }
+
+    fn pnl_bucket_label(pnl: f64) -> &'static str {
+        match pnl_bucket_key(pnl) {
+            -3 => "<=-9p",
+            -2 => "-9p..-4.5p",
+            -1 => "-4.5p..0",
+            0 => "0..3.5p",
+            1 => "3.5p..7p",
+            2 => "7p..10.5p",
+            _ => ">=10.5p",
+        }
+    }
+
+    fn record_loss_diagnostic(
+        by_cluster: &mut BTreeMap<String, LossDiagnosticStats>,
+        by_hour: &mut BTreeMap<String, LossDiagnosticStats>,
+        model_label: &str,
+        event: &SeededSchedulerEvent,
+        pre_pnl: f64,
+        action: SeededSchedulerAction,
+    ) {
+        if action == SeededSchedulerAction::Skip {
+            return;
+        }
+        let pnl = action_pnl(event, action);
+        let won = action_win(event, action);
+        let cluster_key = format!(
+            "{}|{}h|{}|{}",
+            model_label,
+            event.hour,
+            event.regime.label(),
+            pnl_bucket_label(pre_pnl)
+        );
+        let hour_key = format!("{}|{}h", model_label, event.hour);
+        let cluster_entry = by_cluster.entry(cluster_key).or_default();
+        cluster_entry.trades += 1;
+        cluster_entry.net_pnl += pnl;
+        if won {
+            cluster_entry.wins += 1;
+        } else if action_is_stoploss(event, action) {
+            cluster_entry.losses += 1;
+        }
+        let hour_entry = by_hour.entry(hour_key).or_default();
+        hour_entry.trades += 1;
+        hour_entry.net_pnl += pnl;
+        if won {
+            hour_entry.wins += 1;
+        } else if action_is_stoploss(event, action) {
+            hour_entry.losses += 1;
+        }
+    }
+
+    fn print_loss_diagnostics(
+        title: &str,
+        by_cluster: &BTreeMap<String, LossDiagnosticStats>,
+        by_hour: &BTreeMap<String, LossDiagnosticStats>,
+    ) {
+        println!("{} hour_summary_begin", title);
+        let mut hour_rows = by_hour.iter().collect::<Vec<_>>();
+        hour_rows.sort_by(|left, right| {
+            right
+                .1
+                .losses
+                .cmp(&left.1.losses)
+                .then_with(|| left.0.cmp(right.0))
+        });
+        for (key, stats) in hour_rows {
+            if stats.trades == 0 {
+                continue;
+            }
+            let win_rate = stats.wins as f64 / stats.trades as f64;
+            println!(
+                "{} hour={} trades={} wins={} losses={} win_rate={:.4} net_pnl={:.6}",
+                title,
+                key,
+                stats.trades,
+                stats.wins,
+                stats.losses,
+                win_rate,
+                stats.net_pnl,
+            );
+        }
+        println!("{} hour_summary_end", title);
+
+        println!("{} worst_clusters_begin", title);
+        let mut cluster_rows = by_cluster.iter().collect::<Vec<_>>();
+        cluster_rows.sort_by(|left, right| {
+            left.1
+                .net_pnl
+                .partial_cmp(&right.1.net_pnl)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| right.1.losses.cmp(&left.1.losses))
+                .then_with(|| left.0.cmp(right.0))
+        });
+        for (key, stats) in cluster_rows.into_iter().take(12) {
+            if stats.trades == 0 {
+                continue;
+            }
+            let win_rate = stats.wins as f64 / stats.trades as f64;
+            println!(
+                "{} cluster={} trades={} wins={} losses={} win_rate={:.4} net_pnl={:.6}",
+                title,
+                key,
+                stats.trades,
+                stats.wins,
+                stats.losses,
+                win_rate,
+                stats.net_pnl,
+            );
+        }
+        println!("{} worst_clusters_end", title);
+    }
+
+    fn vwap_context_label(
+        index: usize,
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+    ) -> &'static str {
+        if seed_long_three_bar_vwap_reclaim(index, candles, feature_bank) {
+            "3bar_vwap_reclaim"
+        } else if seed_short_three_bar_vwap_rollover(index, candles, feature_bank) {
+            "3bar_vwap_rollover"
+        } else if seed_long_reclaim_vwap_ext1_down_after_vwap_break(index, candles, feature_bank) {
+            "reclaim_vwap_minus1s"
+        } else if seed_short_reject_vwap_ext1_up_after_vwap_break(index, candles, feature_bank) {
+            "reject_vwap_plus1s"
+        } else if seed_long_two_closes_above_vwap(index, candles, feature_bank) {
+            "two_closes_above_vwap"
+        } else if seed_short_two_closes_below_vwap(index, candles, feature_bank) {
+            "two_closes_below_vwap"
+        } else if candles[index].close > feature_bank.vwap_ext1_up[index] {
+            "close_above_vwap_plus1s"
+        } else if candles[index].close < feature_bank.vwap_ext1_down[index] {
+            "close_below_vwap_minus1s"
+        } else if candles[index].close > feature_bank.vwap[index] {
+            "close_above_vwap"
+        } else if candles[index].close < feature_bank.vwap[index] {
+            "close_below_vwap"
+        } else {
+            "close_near_vwap"
+        }
+    }
+
+    fn macd_context_label(feature_bank: &StrategyIndicatorFeatureBank, index: usize) -> &'static str {
+        if feature_bank.macd_histogram[index] > 0.0 {
+            "macd_pos"
+        } else if feature_bank.macd_histogram[index] < 0.0 {
+            "macd_neg"
+        } else {
+            "macd_flat"
+        }
+    }
+
+    fn inverse_context_key(
+        event: &SeededSchedulerEvent,
+        current_pnl: f64,
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+    ) -> String {
+        format!(
+            "{}h|{}|{}|{}|{}",
+            event.hour,
+            event.regime.label(),
+            pnl_bucket_label(current_pnl),
+            vwap_context_label(event.candle_index, candles, feature_bank),
+            macd_context_label(feature_bank, event.candle_index),
+        )
+    }
+
+    fn record_inverse_action_stats(
+        stats: &mut InverseActionStats,
+        event: &SeededSchedulerEvent,
+        action: SeededSchedulerAction,
+    ) {
+        stats.samples += 1;
+        stats.net_pnl += action_pnl(event, action);
+        match action {
+            SeededSchedulerAction::Skip => {}
+            SeededSchedulerAction::Long => match event.long_exit {
+                StrictTradeExit::TakeProfit => stats.tp_hits += 1,
+                StrictTradeExit::StopLoss => stats.sl_hits += 1,
+                StrictTradeExit::TerminalPositive => stats.terminal_positive += 1,
+                StrictTradeExit::TerminalNegative => stats.terminal_negative += 1,
+                StrictTradeExit::TerminalFlat => stats.terminal_flat += 1,
+            },
+            SeededSchedulerAction::Short => match event.short_exit {
+                StrictTradeExit::TakeProfit => stats.tp_hits += 1,
+                StrictTradeExit::StopLoss => stats.sl_hits += 1,
+                StrictTradeExit::TerminalPositive => stats.terminal_positive += 1,
+                StrictTradeExit::TerminalNegative => stats.terminal_negative += 1,
+                StrictTradeExit::TerminalFlat => stats.terminal_flat += 1,
+            },
+        }
+    }
+
+    fn print_inverse_context_diagnostics(
+        title: &str,
+        by_context: &BTreeMap<String, InverseContextComparison>,
+        by_hour: &BTreeMap<String, InverseContextComparison>,
+    ) {
+        println!("{} hour_summary_begin", title);
+        let mut hour_rows = by_hour.iter().collect::<Vec<_>>();
+        hour_rows.sort_by(|left, right| {
+            let inverse_edge_left = left.1.inverse.tp_rate() - left.1.normal.tp_rate();
+            let inverse_edge_right = right.1.inverse.tp_rate() - right.1.normal.tp_rate();
+            inverse_edge_right
+                .partial_cmp(&inverse_edge_left)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| right.1.normal.samples.cmp(&left.1.normal.samples))
+                .then_with(|| left.0.cmp(right.0))
+        });
+        for (key, stats) in hour_rows {
+            if stats.normal.samples == 0 {
+                continue;
+            }
+            println!(
+                "{} hour={} samples={} normal_tp_rate={:.4} normal_sl_rate={:.4} normal_exp={:.6} inverse_tp_rate={:.4} inverse_sl_rate={:.4} inverse_exp={:.6}",
+                title,
+                key,
+                stats.normal.samples,
+                stats.normal.tp_rate(),
+                stats.normal.sl_rate(),
+                stats.normal.expectancy(),
+                stats.inverse.tp_rate(),
+                stats.inverse.sl_rate(),
+                stats.inverse.expectancy(),
+            );
+        }
+        println!("{} hour_summary_end", title);
+
+        println!("{} flip_zones_begin", title);
+        let mut rows = by_context.iter().collect::<Vec<_>>();
+        rows.retain(|(_, stats)| {
+            stats.normal.samples >= 8
+                && stats.inverse.tp_rate() >= 0.60
+                && stats.inverse.tp_rate() >= stats.normal.tp_rate() + 0.15
+                && stats.inverse.expectancy() > stats.normal.expectancy()
+                && stats.inverse.expectancy() > 0.0
+        });
+        rows.sort_by(|left, right| {
+            let left_edge = left.1.inverse.tp_rate() - left.1.normal.tp_rate();
+            let right_edge = right.1.inverse.tp_rate() - right.1.normal.tp_rate();
+            right_edge
+                .partial_cmp(&left_edge)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| {
+                    right
+                        .1
+                        .inverse
+                        .expectancy()
+                        .partial_cmp(&left.1.inverse.expectancy())
+                        .unwrap_or(Ordering::Equal)
+                })
+                .then_with(|| right.1.normal.samples.cmp(&left.1.normal.samples))
+                .then_with(|| left.0.cmp(right.0))
+        });
+        for (key, stats) in rows.into_iter().take(16) {
+            println!(
+                "{} flip_zone={} samples={} normal_tp_rate={:.4} normal_sl_rate={:.4} normal_exp={:.6} inverse_tp_rate={:.4} inverse_sl_rate={:.4} inverse_exp={:.6}",
+                title,
+                key,
+                stats.normal.samples,
+                stats.normal.tp_rate(),
+                stats.normal.sl_rate(),
+                stats.normal.expectancy(),
+                stats.inverse.tp_rate(),
+                stats.inverse.sl_rate(),
+                stats.inverse.expectancy(),
+            );
+        }
+        println!("{} flip_zones_end", title);
+    }
+
+    fn evaluate_monster_binary_slot_models(
+        days: &[SeededSchedulerDay],
+        monster: &MonsterNode,
+        models: &[MonsterBinarySlotModel],
+        bars: &[Bar],
+        cache: &FeatureCache,
+        target: f64,
+    ) -> SeededMetaSchedulerResult {
+        let mut traded_days = 0usize;
+        let mut target_hit_days = 0usize;
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        let mut daily_pnls = Vec::<f64>::new();
+        let by_hour = models
+            .iter()
+            .map(|model| (model.hour, model))
+            .collect::<HashMap<_, _>>();
+
+        for day in days {
+            let mut daily_pnl = 0.0;
+            let mut day_traded = false;
+            let _ = &day.day_key;
+            for event in day.events.iter().flatten() {
+                let Some(model) = by_hour.get(&event.hour) else {
+                    continue;
+                };
+                let Some(base_features) =
+                    extract_features_with_cache(bars, event.candle_index, &FeatureMask::all(), cache)
+                else {
+                    continue;
+                };
+                let input = pack_meta_scheduler_input(
+                    base_features,
+                    event.hour,
+                    event.regime,
+                    daily_pnl,
+                    event.primary_signal,
+                );
+                let predicted_take = monster
+                    .call_many_values_i64(&model.program_hash, &[input])
+                    .ok()
+                    .and_then(|values| values.first().copied())
+                    .map(|value| value != 0)
+                    .unwrap_or(false);
+                let action = if predicted_take {
+                    base_action_for_hour(event.hour)
+                } else {
+                    SeededSchedulerAction::Skip
+                };
+                let pnl = action_pnl(event, action);
+                if action != SeededSchedulerAction::Skip {
+                    day_traded = true;
+                    trades += 1;
+                    net_pnl += pnl;
+                if action_win(event, action) {
+                    wins += 1;
+                } else if action_is_stoploss(event, action) {
+                    losses += 1;
+                }
+                }
+                daily_pnl += pnl;
+            }
+            if day_traded {
+                traded_days += 1;
+            }
+            if daily_pnl >= target {
+                target_hit_days += 1;
+            }
+            daily_pnls.push(daily_pnl);
+        }
+
+        let total_days = days.len().max(1);
+        let avg_daily_pnl_distance = daily_pnls.iter().sum::<f64>() / total_days as f64;
+        let min_daily_pnl_distance = daily_pnls.iter().copied().fold(f64::INFINITY, f64::min);
+        SeededMetaSchedulerResult {
+            take_profit: 0.0,
+            min_action_win_rate: 0.0,
+            train_days: 0,
+            test_days: days.len(),
+            traded_days,
+            target_hit_days,
+            trades,
+            wins,
+            losses,
+            win_rate: if trades == 0 { 0.0 } else { wins as f64 / trades as f64 },
+            traded_day_rate: traded_days as f64 / total_days as f64,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            avg_daily_pnl_distance,
+            min_daily_pnl_distance: if min_daily_pnl_distance.is_finite() {
+                min_daily_pnl_distance
+            } else {
+                0.0
+            },
+            net_pnl_distance: net_pnl,
+            slot_11_action: SeededSchedulerAction::Skip,
+            slot_15_action: SeededSchedulerAction::Skip,
+            slot_21_action: SeededSchedulerAction::Skip,
+            slot_11_signal: "monster_binary".to_string(),
+            slot_15_signal: "monster_binary".to_string(),
+            slot_21_signal: "monster_binary".to_string(),
+        }
+    }
+
+    fn run_natgas_monster_binary_slot_scheduler_search() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(25);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+        let bars = build_bars_from_candles(candles);
+        let feature_cache = FeatureCache::build(&bars);
+
+        let short_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &short_rules);
+        let long_15_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_15_rules);
+        let long_21_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_21_rules);
+
+        let short_combo = build_seeded_slot_combos(&short_rules)
+            .into_iter()
+            .find(|combo| combo.label == "11h short if bearish body")
+            .expect("11h short base combo");
+        let long_15_combo = build_seeded_slot_combos(&long_15_rules)
+            .into_iter()
+            .find(|combo| combo.label == "15h long if bullish body")
+            .expect("15h long base combo");
+        let long_21_combo = build_seeded_slot_combos(&long_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h long if close crosses above EMA50")
+            .expect("21h long base combo");
+
+        let take_profit = NATGAS_STRICT_TAKE_PROFIT;
+        let min_action_win_rate = 0.55;
+        let train_days = build_meta_scheduler_days(
+            candles,
+            &feature_bank,
+            25,
+            test_start,
+            &short_combo,
+            &long_15_combo,
+            &long_21_combo,
+            &short_rows,
+            &long_15_rows,
+            &long_21_rows,
+            take_profit,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        );
+        let policy = learn_binary_take_policy(&train_days, 0.070, min_action_win_rate);
+        let examples_11 = collect_binary_slot_examples(&train_days, &policy, &bars, &feature_cache, 11);
+        let examples_15 = collect_binary_slot_examples(&train_days, &policy, &bars, &feature_cache, 15);
+        let examples_21 = collect_binary_slot_examples(&train_days, &policy, &bars, &feature_cache, 21);
+        let test_days = build_meta_scheduler_days(
+            candles,
+            &feature_bank,
+            test_start,
+            candles.len().saturating_sub(1),
+            &short_combo,
+            &long_15_combo,
+            &long_21_combo,
+            &short_rows,
+            &long_15_rows,
+            &long_21_rows,
+            take_profit,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        );
+
+        let store_path = std::env::temp_dir().join(format!("forge-monster-binary-slot-{}", trading_now_ms()));
+        let monster = MonsterNode::new(
+            Store::open(&store_path).expect("open monster store"),
+            MemoryGovernor::new(8 * 1024 * 1024),
+        );
+        let model_11 = train_binary_slot_model(&monster, &examples_11, 11);
+        let model_15 = train_binary_slot_model(&monster, &examples_15, 15);
+        let model_21 = train_binary_slot_model(&monster, &examples_21, 21);
+        let models = vec![model_11.clone(), model_15.clone(), model_21.clone()];
+        let mut result = evaluate_monster_binary_slot_models(
+            &test_days,
+            &monster,
+            &models,
+            &bars,
+            &feature_cache,
+            0.070,
+        );
+        result.take_profit = take_profit;
+        result.min_action_win_rate = min_action_win_rate;
+        result.train_days = train_days.len();
+        result.test_days = test_days.len();
+
+        println!(
+            "NATGAS_H1_MONSTER_BINARY_SLOT_SCHEDULER tp={:.5} min_action_win_rate={:.2} train_days={} test_days={} trades={} wins={} losses={} win_rate={:.4} traded_days={} traded_day_rate={:.4} target_hit_days={} daily_target_hit_rate={:.4} avg_daily_pnl={:.6} min_daily_pnl={:.6} net_pnl={:.6} train_examples_11={} exact_11={} loss_11={} cand_11={} train_examples_15={} exact_15={} loss_15={} cand_15={} train_examples_21={} exact_21={} loss_21={} cand_21={} base11={} base15={} base21={}",
+            result.take_profit,
+            result.min_action_win_rate,
+            result.train_days,
+            result.test_days,
+            result.trades,
+            result.wins,
+            result.losses,
+            result.win_rate,
+            result.traded_days,
+            result.traded_day_rate,
+            result.target_hit_days,
+            result.daily_target_hit_rate,
+            result.avg_daily_pnl_distance,
+            result.min_daily_pnl_distance,
+            result.net_pnl_distance,
+            model_11.train_examples,
+            model_11.exact,
+            model_11.loss,
+            model_11.candidates_evaluated,
+            model_15.train_examples,
+            model_15.exact,
+            model_15.loss,
+            model_15.candidates_evaluated,
+            model_21.train_examples,
+            model_21.exact,
+            model_21.loss,
+            model_21.candidates_evaluated,
+            short_combo.label,
+            long_15_combo.label,
+            long_21_combo.label,
+        );
+    }
+
+    fn regime_mask_contains(mask: u32, regime: SeededRegimeId) -> bool {
+        let bit = 1_u32 << u32::from(regime.code());
+        (mask & bit) != 0
+    }
+
+    fn regime_mask_label(mask: u32) -> String {
+        let mut labels = Vec::<&'static str>::new();
+        for regime in [
+            SeededRegimeId::TrendUp,
+            SeededRegimeId::TrendDown,
+            SeededRegimeId::Compression,
+            SeededRegimeId::Overbought,
+            SeededRegimeId::Oversold,
+            SeededRegimeId::Neutral,
+        ] {
+            if regime_mask_contains(mask, regime) {
+                labels.push(regime.label());
+            }
+        }
+        if labels.is_empty() {
+            "none".to_string()
+        } else {
+            labels.join("+")
+        }
+    }
+
+    fn predict_monster_take(
+        monster: &MonsterNode,
+        model: &MonsterBinarySlotModel,
+        bars: &[Bar],
+        cache: &FeatureCache,
+        event: &SeededSchedulerEvent,
+        current_pnl: f64,
+    ) -> bool {
+        let Some(base_features) =
+            extract_features_with_cache(bars, event.candle_index, &FeatureMask::all(), cache)
+        else {
+            return false;
+        };
+        let input = pack_meta_scheduler_input(
+            base_features,
+            event.hour,
+            event.regime,
+            current_pnl,
+            event.primary_signal,
+        );
+        monster
+            .call_many_values_i64(&model.program_hash, &[input])
+            .ok()
+            .and_then(|values| values.first().copied())
+            .map(|value| value != 0)
+            .unwrap_or(false)
+    }
+
+    fn tuned_policy_action(
+        policy: &TunedSchedulerPolicy,
+        event: &SeededSchedulerEvent,
+        current_pnl: f64,
+        regime_policy: &HashMap<u32, SeededSchedulerDecision>,
+        monster: &MonsterNode,
+        model_by_hour: &HashMap<u32, &MonsterBinarySlotModel>,
+        bars: &[Bar],
+        cache: &FeatureCache,
+    ) -> SeededSchedulerAction {
+        match event.hour {
+            11 => {
+                let take = match policy.slot_11_mode {
+                    TunedSlotMode::Monster => model_by_hour
+                        .get(&11)
+                        .map(|model| predict_monster_take(monster, model, bars, cache, event, current_pnl))
+                        .unwrap_or(false),
+                    TunedSlotMode::Regime => resolve_policy_action(regime_policy, event, current_pnl)
+                        != SeededSchedulerAction::Skip,
+                };
+                if take {
+                    base_action_for_hour(11)
+                } else {
+                    SeededSchedulerAction::Skip
+                }
+            }
+            15 => {
+                if current_pnl < policy.slot_15_min_pnl {
+                    return SeededSchedulerAction::Skip;
+                }
+                let take = match policy.slot_15_mode {
+                    TunedSlotMode::Monster => model_by_hour
+                        .get(&15)
+                        .map(|model| predict_monster_take(monster, model, bars, cache, event, current_pnl))
+                        .unwrap_or(false),
+                    TunedSlotMode::Regime => resolve_policy_action(regime_policy, event, current_pnl)
+                        != SeededSchedulerAction::Skip,
+                };
+                if take {
+                    base_action_for_hour(15)
+                } else {
+                    SeededSchedulerAction::Skip
+                }
+            }
+            21 => {
+                if matches!(policy.slot_21_mode, Tuned21Mode::Skip) {
+                    return SeededSchedulerAction::Skip;
+                }
+                if current_pnl < policy.slot_21_min_pnl {
+                    return SeededSchedulerAction::Skip;
+                }
+                if policy.slot_21_require_signal && !event.primary_signal {
+                    return SeededSchedulerAction::Skip;
+                }
+                if !regime_mask_contains(policy.slot_21_regime_mask, event.regime) {
+                    return SeededSchedulerAction::Skip;
+                }
+                let take = match policy.slot_21_mode {
+                    Tuned21Mode::Skip => false,
+                    Tuned21Mode::MonsterPremium => model_by_hour
+                        .get(&21)
+                        .map(|model| predict_monster_take(monster, model, bars, cache, event, current_pnl))
+                        .unwrap_or(false),
+                    Tuned21Mode::RegimePremium => resolve_policy_action(regime_policy, event, current_pnl)
+                        != SeededSchedulerAction::Skip,
+                };
+                if take {
+                    base_action_for_hour(21)
+                } else {
+                    SeededSchedulerAction::Skip
+                }
+            }
+            _ => SeededSchedulerAction::Skip,
+        }
+    }
+
+    fn evaluate_tuned_scheduler_policy(
+        days: &[SeededSchedulerDay],
+        policy: &TunedSchedulerPolicy,
+        regime_policy: &HashMap<u32, SeededSchedulerDecision>,
+        monster: &MonsterNode,
+        model_by_hour: &HashMap<u32, &MonsterBinarySlotModel>,
+        bars: &[Bar],
+        cache: &FeatureCache,
+        target: f64,
+    ) -> SeededMetaSchedulerResult {
+        let mut traded_days = 0usize;
+        let mut target_hit_days = 0usize;
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        let mut daily_pnls = Vec::<f64>::new();
+
+        for day in days {
+            let mut daily_pnl = 0.0;
+            let mut day_traded = false;
+            for event in day.events.iter().flatten() {
+                let action = tuned_policy_action(
+                    policy,
+                    event,
+                    daily_pnl,
+                    regime_policy,
+                    monster,
+                    model_by_hour,
+                    bars,
+                    cache,
+                );
+                let pnl = action_pnl(event, action);
+                if action != SeededSchedulerAction::Skip {
+                    day_traded = true;
+                    trades += 1;
+                    net_pnl += pnl;
+                if action_win(event, action) {
+                    wins += 1;
+                } else if action_is_stoploss(event, action) {
+                    losses += 1;
+                }
+                }
+                daily_pnl += pnl;
+            }
+            if day_traded {
+                traded_days += 1;
+            }
+            if daily_pnl >= target {
+                target_hit_days += 1;
+            }
+            daily_pnls.push(daily_pnl);
+        }
+
+        let total_days = days.len().max(1);
+        let avg_daily_pnl_distance = daily_pnls.iter().sum::<f64>() / total_days as f64;
+        let min_daily_pnl_distance = daily_pnls.iter().copied().fold(f64::INFINITY, f64::min);
+        SeededMetaSchedulerResult {
+            take_profit: NATGAS_STRICT_TAKE_PROFIT,
+            min_action_win_rate: 0.55,
+            train_days: 0,
+            test_days: days.len(),
+            traded_days,
+            target_hit_days,
+            trades,
+            wins,
+            losses,
+            win_rate: if trades == 0 { 0.0 } else { wins as f64 / trades as f64 },
+            traded_day_rate: traded_days as f64 / total_days as f64,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            avg_daily_pnl_distance,
+            min_daily_pnl_distance: if min_daily_pnl_distance.is_finite() {
+                min_daily_pnl_distance
+            } else {
+                0.0
+            },
+            net_pnl_distance: net_pnl,
+            slot_11_action: SeededSchedulerAction::Skip,
+            slot_15_action: SeededSchedulerAction::Skip,
+            slot_21_action: SeededSchedulerAction::Skip,
+            slot_11_signal: "tuned".to_string(),
+            slot_15_signal: "tuned".to_string(),
+            slot_21_signal: "tuned".to_string(),
+        }
+    }
+
+    fn run_natgas_tuned_day_state_scheduler_search() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(25);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+        let bars = build_bars_from_candles(candles);
+        let feature_cache = FeatureCache::build(&bars);
+
+        let short_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &short_rules);
+        let long_15_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_15_rules);
+        let long_21_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_21_rules);
+
+        let short_combo = build_seeded_slot_combos(&short_rules)
+            .into_iter()
+            .find(|combo| combo.label == "11h short if bearish body")
+            .expect("11h short base combo");
+        let long_15_combo = build_seeded_slot_combos(&long_15_rules)
+            .into_iter()
+            .find(|combo| combo.label == "15h long if bullish body")
+            .expect("15h long base combo");
+        let long_21_combo = build_seeded_slot_combos(&long_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h long if close crosses above EMA50")
+            .expect("21h long base combo");
+
+        let take_profit = NATGAS_STRICT_TAKE_PROFIT;
+        let min_action_win_rate = 0.55;
+        let train_days = build_meta_scheduler_days(
+            candles,
+            &feature_bank,
+            25,
+            test_start,
+            &short_combo,
+            &long_15_combo,
+            &long_21_combo,
+            &short_rows,
+            &long_15_rows,
+            &long_21_rows,
+            take_profit,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        );
+        let regime_policy = learn_meta_scheduler_policy(&train_days, 0.070, min_action_win_rate);
+        let binary_policy = learn_binary_take_policy(&train_days, 0.070, min_action_win_rate);
+        let examples_11 = collect_binary_slot_examples(&train_days, &binary_policy, &bars, &feature_cache, 11);
+        let examples_15 = collect_binary_slot_examples(&train_days, &binary_policy, &bars, &feature_cache, 15);
+        let examples_21 = collect_binary_slot_examples(&train_days, &binary_policy, &bars, &feature_cache, 21);
+        let test_days = build_meta_scheduler_days(
+            candles,
+            &feature_bank,
+            test_start,
+            candles.len().saturating_sub(1),
+            &short_combo,
+            &long_15_combo,
+            &long_21_combo,
+            &short_rows,
+            &long_15_rows,
+            &long_21_rows,
+            take_profit,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        );
+
+        let store_path = std::env::temp_dir().join(format!("forge-tuned-day-state-{}", trading_now_ms()));
+        let monster = MonsterNode::new(
+            Store::open(&store_path).expect("open monster store"),
+            MemoryGovernor::new(8 * 1024 * 1024),
+        );
+        let models = vec![
+            train_binary_slot_model(&monster, &examples_11, 11),
+            train_binary_slot_model(&monster, &examples_15, 15),
+            train_binary_slot_model(&monster, &examples_21, 21),
+        ];
+        let model_by_hour = models.iter().map(|model| (model.hour, model)).collect::<HashMap<_, _>>();
+
+        let regime_masks = [
+            1_u32 << u32::from(SeededRegimeId::TrendUp.code()),
+            1_u32 << u32::from(SeededRegimeId::Oversold.code()),
+            (1_u32 << u32::from(SeededRegimeId::TrendUp.code()))
+                | (1_u32 << u32::from(SeededRegimeId::Oversold.code())),
+            (1_u32 << u32::from(SeededRegimeId::TrendUp.code()))
+                | (1_u32 << u32::from(SeededRegimeId::Compression.code())),
+            (1_u32 << u32::from(SeededRegimeId::TrendUp.code()))
+                | (1_u32 << u32::from(SeededRegimeId::Oversold.code()))
+                | (1_u32 << u32::from(SeededRegimeId::Compression.code())),
+        ];
+        let mut best_policy: Option<TunedSchedulerPolicy> = None;
+        let mut best_train: Option<SeededMetaSchedulerResult> = None;
+
+        for slot_11_mode in [TunedSlotMode::Monster, TunedSlotMode::Regime] {
+            for slot_15_mode in [TunedSlotMode::Monster, TunedSlotMode::Regime] {
+                for slot_15_min_pnl in [-0.090, -0.045, 0.0] {
+                    let base_policy = TunedSchedulerPolicy {
+                        slot_11_mode,
+                        slot_15_mode,
+                        slot_15_min_pnl,
+                        slot_21_mode: Tuned21Mode::Skip,
+                        slot_21_min_pnl: 0.0,
+                        slot_21_regime_mask: 0,
+                        slot_21_require_signal: true,
+                    };
+                    let base_result = evaluate_tuned_scheduler_policy(
+                        &train_days,
+                        &base_policy,
+                        &regime_policy,
+                        &monster,
+                        &model_by_hour,
+                        &bars,
+                        &feature_cache,
+                        0.070,
+                    );
+                    let mut candidates = vec![(base_policy, base_result)];
+                    for slot_21_mode in [Tuned21Mode::MonsterPremium, Tuned21Mode::RegimePremium] {
+                        for slot_21_min_pnl in [-0.045, 0.0, 0.035] {
+                            for slot_21_regime_mask in regime_masks {
+                                for slot_21_require_signal in [true, false] {
+                                    let policy = TunedSchedulerPolicy {
+                                        slot_11_mode,
+                                        slot_15_mode,
+                                        slot_15_min_pnl,
+                                        slot_21_mode,
+                                        slot_21_min_pnl,
+                                        slot_21_regime_mask,
+                                        slot_21_require_signal,
+                                    };
+                                    let result = evaluate_tuned_scheduler_policy(
+                                        &train_days,
+                                        &policy,
+                                        &regime_policy,
+                                        &monster,
+                                        &model_by_hour,
+                                        &bars,
+                                        &feature_cache,
+                                        0.070,
+                                    );
+                                    candidates.push((policy, result));
+                                }
+                            }
+                        }
+                    }
+                    for (policy, result) in candidates {
+                        let should_replace = best_train.as_ref().map(|current| {
+                            match result
+                                .daily_target_hit_rate
+                                .partial_cmp(&current.daily_target_hit_rate)
+                                .unwrap_or(Ordering::Equal)
+                            {
+                                Ordering::Greater => true,
+                                Ordering::Less => false,
+                                Ordering::Equal => match result
+                                    .win_rate
+                                    .partial_cmp(&current.win_rate)
+                                    .unwrap_or(Ordering::Equal)
+                                {
+                                    Ordering::Greater => true,
+                                    Ordering::Less => false,
+                                    Ordering::Equal => match result
+                                        .traded_day_rate
+                                        .partial_cmp(&current.traded_day_rate)
+                                        .unwrap_or(Ordering::Equal)
+                                    {
+                                        Ordering::Greater => true,
+                                        Ordering::Less => false,
+                                        Ordering::Equal => result
+                                            .avg_daily_pnl_distance
+                                            .partial_cmp(&current.avg_daily_pnl_distance)
+                                            .unwrap_or(Ordering::Equal)
+                                            == Ordering::Greater,
+                                    },
+                                },
+                            }
+                        }).unwrap_or(true);
+                        if should_replace {
+                            best_policy = Some(policy);
+                            best_train = Some(result);
+                        }
+                    }
+                }
+            }
+        }
+
+        let best_policy = best_policy.expect("best tuned policy");
+        let mut best_test = evaluate_tuned_scheduler_policy(
+            &test_days,
+            &best_policy,
+            &regime_policy,
+            &monster,
+            &model_by_hour,
+            &bars,
+            &feature_cache,
+            0.070,
+        );
+        best_test.take_profit = take_profit;
+        best_test.min_action_win_rate = min_action_win_rate;
+        best_test.train_days = train_days.len();
+        best_test.test_days = test_days.len();
+
+        println!(
+            "NATGAS_H1_TUNED_DAY_STATE_SCHEDULER tp={:.5} train_days={} test_days={} trades={} wins={} losses={} win_rate={:.4} traded_days={} traded_day_rate={:.4} target_hit_days={} daily_target_hit_rate={:.4} avg_daily_pnl={:.6} min_daily_pnl={:.6} net_pnl={:.6} slot11_mode={} slot15_mode={} slot15_min_pnl={:.3} slot21_mode={} slot21_min_pnl={:.3} slot21_regimes={} slot21_require_signal={} model11_loss={} model15_loss={} model21_loss={}",
+            best_test.take_profit,
+            best_test.train_days,
+            best_test.test_days,
+            best_test.trades,
+            best_test.wins,
+            best_test.losses,
+            best_test.win_rate,
+            best_test.traded_days,
+            best_test.traded_day_rate,
+            best_test.target_hit_days,
+            best_test.daily_target_hit_rate,
+            best_test.avg_daily_pnl_distance,
+            best_test.min_daily_pnl_distance,
+            best_test.net_pnl_distance,
+            best_policy.slot_11_mode.label(),
+            best_policy.slot_15_mode.label(),
+            best_policy.slot_15_min_pnl,
+            best_policy.slot_21_mode.label(),
+            best_policy.slot_21_min_pnl,
+            regime_mask_label(best_policy.slot_21_regime_mask),
+            best_policy.slot_21_require_signal,
+            models[0].loss,
+            models[1].loss,
+            models[2].loss,
+        );
+    }
+
+    fn run_natgas_loss_cluster_diagnostics() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(25);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+        let bars = build_bars_from_candles(candles);
+        let feature_cache = FeatureCache::build(&bars);
+
+        let short_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &short_rules);
+        let long_15_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_15_rules);
+        let long_21_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_21_rules);
+
+        let short_combo = build_seeded_slot_combos(&short_rules)
+            .into_iter()
+            .find(|combo| combo.label == "11h short if bearish body")
+            .expect("11h short base combo");
+        let long_15_combo = build_seeded_slot_combos(&long_15_rules)
+            .into_iter()
+            .find(|combo| combo.label == "15h long if bullish body")
+            .expect("15h long base combo");
+        let long_21_combo = build_seeded_slot_combos(&long_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h long if close crosses above EMA50")
+            .expect("21h long base combo");
+
+        let take_profit = NATGAS_STRICT_TAKE_PROFIT;
+        let min_action_win_rate = 0.55;
+        let train_days = build_meta_scheduler_days(
+            candles,
+            &feature_bank,
+            25,
+            test_start,
+            &short_combo,
+            &long_15_combo,
+            &long_21_combo,
+            &short_rows,
+            &long_15_rows,
+            &long_21_rows,
+            take_profit,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        );
+        let regime_policy = learn_meta_scheduler_policy(&train_days, 0.070, min_action_win_rate);
+        let binary_policy = learn_binary_take_policy(&train_days, 0.070, min_action_win_rate);
+        let examples_11 = collect_binary_slot_examples(&train_days, &binary_policy, &bars, &feature_cache, 11);
+        let examples_15 = collect_binary_slot_examples(&train_days, &binary_policy, &bars, &feature_cache, 15);
+        let examples_21 = collect_binary_slot_examples(&train_days, &binary_policy, &bars, &feature_cache, 21);
+        let test_days = build_meta_scheduler_days(
+            candles,
+            &feature_bank,
+            test_start,
+            candles.len().saturating_sub(1),
+            &short_combo,
+            &long_15_combo,
+            &long_21_combo,
+            &short_rows,
+            &long_15_rows,
+            &long_21_rows,
+            take_profit,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        );
+
+        let store_path = std::env::temp_dir().join(format!("forge-loss-diagnostics-{}", trading_now_ms()));
+        let monster = MonsterNode::new(
+            Store::open(&store_path).expect("open monster store"),
+            MemoryGovernor::new(8 * 1024 * 1024),
+        );
+        let models = vec![
+            train_binary_slot_model(&monster, &examples_11, 11),
+            train_binary_slot_model(&monster, &examples_15, 15),
+            train_binary_slot_model(&monster, &examples_21, 21),
+        ];
+        let by_hour_models = models.iter().map(|model| (model.hour, model)).collect::<HashMap<_, _>>();
+
+        let mut regime_clusters = BTreeMap::<String, LossDiagnosticStats>::new();
+        let mut regime_hours = BTreeMap::<String, LossDiagnosticStats>::new();
+        let mut monster_clusters = BTreeMap::<String, LossDiagnosticStats>::new();
+        let mut monster_hours = BTreeMap::<String, LossDiagnosticStats>::new();
+
+        for day in &test_days {
+            let mut regime_daily_pnl = 0.0;
+            let mut monster_daily_pnl = 0.0;
+            for event in day.events.iter().flatten() {
+                let regime_action = resolve_policy_action(&regime_policy, event, regime_daily_pnl);
+                record_loss_diagnostic(
+                    &mut regime_clusters,
+                    &mut regime_hours,
+                    "regime_scheduler",
+                    event,
+                    regime_daily_pnl,
+                    regime_action,
+                );
+                regime_daily_pnl += action_pnl(event, regime_action);
+
+                let Some(model) = by_hour_models.get(&event.hour) else {
+                    continue;
+                };
+                let Some(base_features) =
+                    extract_features_with_cache(&bars, event.candle_index, &FeatureMask::all(), &feature_cache)
+                else {
+                    continue;
+                };
+                let input = pack_meta_scheduler_input(
+                    base_features,
+                    event.hour,
+                    event.regime,
+                    monster_daily_pnl,
+                    event.primary_signal,
+                );
+                let monster_take = monster
+                    .call_many_values_i64(&model.program_hash, &[input])
+                    .ok()
+                    .and_then(|values| values.first().copied())
+                    .map(|value| value != 0)
+                    .unwrap_or(false);
+                let monster_action = if monster_take {
+                    base_action_for_hour(event.hour)
+                } else {
+                    SeededSchedulerAction::Skip
+                };
+                record_loss_diagnostic(
+                    &mut monster_clusters,
+                    &mut monster_hours,
+                    "monster_binary",
+                    event,
+                    monster_daily_pnl,
+                    monster_action,
+                );
+                monster_daily_pnl += action_pnl(event, monster_action);
+            }
+        }
+
+        print_loss_diagnostics("LOSS_DIAG_REGIME", &regime_clusters, &regime_hours);
+        print_loss_diagnostics("LOSS_DIAG_MONSTER", &monster_clusters, &monster_hours);
+    }
+
+    fn run_natgas_seeded_slot_combo_search() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(25);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+
+        let short_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_rows = build_seeded_slot_masks(candles, &feature_bank, test_start, &short_rules);
+        let long_15_rows = build_seeded_slot_masks(candles, &feature_bank, test_start, &long_15_rules);
+        let long_21_rows = build_seeded_slot_masks(candles, &feature_bank, test_start, &long_21_rules);
+        let short_combos = build_seeded_slot_combos(&short_rules);
+        let long_15_combos = build_seeded_slot_combos(&long_15_rules);
+        let long_21_combos = build_seeded_slot_combos(&long_21_rules);
+        let tp_grid = [NATGAS_STRICT_TAKE_PROFIT];
+
+        let mut best: Option<SeededComboSearchCandidate> = None;
+        for short_combo in &short_combos {
+            for long_15_combo in &long_15_combos {
+                for long_21_combo in &long_21_combos {
+                    for take_profit in tp_grid {
+                        let Some(candidate) = evaluate_seeded_combo_search_candidate(
+                            candles,
+                            &short_rows,
+                            &long_15_rows,
+                            &long_21_rows,
+                            short_combo,
+                            long_15_combo,
+                            long_21_combo,
+                            take_profit,
+                            NATGAS_STRICT_STOP_LOSS,
+                            NATGAS_STRICT_EXECUTION_COST,
+                            24,
+                        ) else {
+                            continue;
+                        };
+                        let should_replace = best.as_ref().map(|current| {
+                            match candidate.daily_target_hit_rate.partial_cmp(&current.daily_target_hit_rate).unwrap_or(Ordering::Equal) {
+                                Ordering::Greater => true,
+                                Ordering::Less => false,
+                                Ordering::Equal => match candidate.avg_daily_pnl_distance.partial_cmp(&current.avg_daily_pnl_distance).unwrap_or(Ordering::Equal) {
+                                    Ordering::Greater => true,
+                                    Ordering::Less => false,
+                                    Ordering::Equal => match candidate.min_daily_pnl_distance.partial_cmp(&current.min_daily_pnl_distance).unwrap_or(Ordering::Equal) {
+                                        Ordering::Greater => true,
+                                        Ordering::Less => false,
+                                        Ordering::Equal => candidate.win_rate.partial_cmp(&current.win_rate).unwrap_or(Ordering::Equal) == Ordering::Greater,
+                                    },
+                                },
+                            }
+                        }).unwrap_or(true);
+                        if should_replace {
+                            best = Some(candidate);
+                        }
+                    }
+                }
+            }
+        }
+
+        let best = best.expect("best seeded combo candidate");
+        println!(
+            "NATGAS_H1_SEEDED_COMBO_DAILY tp={:.5} best_11h={} [{}] best_15h={} [{}] best_21h={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} min_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best.take_profit,
+            best.short_11h.label,
+            best.short_11h.indicator_refs.join(","),
+            best.long_15h.label,
+            best.long_15h.indicator_refs.join(","),
+            best.long_21h.label,
+            best.long_21h.indicator_refs.join(","),
+            best.trades,
+            best.wins,
+            best.losses,
+            best.win_rate,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.min_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn run_natgas_seeded_slot_combo_search_21h_vwap_only() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(25);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+
+        let short_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_rows = build_seeded_slot_masks(candles, &feature_bank, test_start, &short_rules);
+        let long_15_rows = build_seeded_slot_masks(candles, &feature_bank, test_start, &long_15_rules);
+        let long_21_rows = build_seeded_slot_masks(candles, &feature_bank, test_start, &long_21_rules);
+        let short_combos = build_seeded_slot_combos(&short_rules);
+        let long_15_combos = build_seeded_slot_combos(&long_15_rules);
+        let long_21_combos = build_seeded_slot_combos(&long_21_rules)
+            .into_iter()
+            .filter(combo_is_vwap_family)
+            .collect::<Vec<_>>();
+        let tp_grid = [NATGAS_STRICT_TAKE_PROFIT];
+
+        let mut best: Option<SeededComboSearchCandidate> = None;
+        for short_combo in &short_combos {
+            for long_15_combo in &long_15_combos {
+                for long_21_combo in &long_21_combos {
+                    for take_profit in tp_grid {
+                        let Some(candidate) = evaluate_seeded_combo_search_candidate(
+                            candles,
+                            &short_rows,
+                            &long_15_rows,
+                            &long_21_rows,
+                            short_combo,
+                            long_15_combo,
+                            long_21_combo,
+                            take_profit,
+                            NATGAS_STRICT_STOP_LOSS,
+                            NATGAS_STRICT_EXECUTION_COST,
+                            24,
+                        ) else {
+                            continue;
+                        };
+                        let should_replace = best.as_ref().map(|current| {
+                            match candidate.daily_target_hit_rate.partial_cmp(&current.daily_target_hit_rate).unwrap_or(Ordering::Equal) {
+                                Ordering::Greater => true,
+                                Ordering::Less => false,
+                                Ordering::Equal => match candidate.avg_daily_pnl_distance.partial_cmp(&current.avg_daily_pnl_distance).unwrap_or(Ordering::Equal) {
+                                    Ordering::Greater => true,
+                                    Ordering::Less => false,
+                                    Ordering::Equal => match candidate.min_daily_pnl_distance.partial_cmp(&current.min_daily_pnl_distance).unwrap_or(Ordering::Equal) {
+                                        Ordering::Greater => true,
+                                        Ordering::Less => false,
+                                        Ordering::Equal => candidate.win_rate.partial_cmp(&current.win_rate).unwrap_or(Ordering::Equal) == Ordering::Greater,
+                                    },
+                                },
+                            }
+                        }).unwrap_or(true);
+                        if should_replace {
+                            best = Some(candidate);
+                        }
+                    }
+                }
+            }
+        }
+
+        let best = best.expect("best seeded combo candidate for 21h vwap only");
+        println!(
+            "NATGAS_H1_SEEDED_COMBO_DAILY_21H_VWAP_ONLY tp={:.5} best_11h={} [{}] best_15h={} [{}] best_21h={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} min_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best.take_profit,
+            best.short_11h.label,
+            best.short_11h.indicator_refs.join(","),
+            best.long_15h.label,
+            best.long_15h.indicator_refs.join(","),
+            best.long_21h.label,
+            best.long_21h.indicator_refs.join(","),
+            best.trades,
+            best.wins,
+            best.losses,
+            best.win_rate,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.min_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn run_natgas_simple_vwap_baseline_with_take_profit(
+        take_profit: f64,
+        label: &str,
+    ) {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let search_start = 25usize;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+
+        let short_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_rows = build_seeded_slot_masks(candles, &feature_bank, search_start, &short_rules);
+        let long_15_rows =
+            build_seeded_slot_masks(candles, &feature_bank, search_start, &long_15_rules);
+        let long_21_rows =
+            build_seeded_slot_masks(candles, &feature_bank, search_start, &long_21_rules);
+        let (short_11, long_15, long_21) = natgas_simple_vwap_baseline_combos();
+
+        let baseline = evaluate_seeded_combo_search_candidate(
+            candles,
+            &short_rows,
+            &long_15_rows,
+            &long_21_rows,
+            &short_11,
+            &long_15,
+            &long_21,
+            take_profit,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        )
+        .expect("simple vwap baseline candidate");
+
+        println!(
+            "{} tp={:.5} best_11h={} [{}] best_15h={} [{}] best_21h={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} min_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            label,
+            take_profit,
+            baseline.short_11h.label,
+            baseline.short_11h.indicator_refs.join(","),
+            baseline.long_15h.label,
+            baseline.long_15h.indicator_refs.join(","),
+            baseline.long_21h.label,
+            baseline.long_21h.indicator_refs.join(","),
+            baseline.trades,
+            baseline.wins,
+            baseline.losses,
+            baseline.win_rate,
+            baseline.daily_target_hit_rate,
+            baseline.target_hit_days,
+            baseline.total_days,
+            baseline.avg_daily_pnl_distance,
+            baseline.min_daily_pnl_distance,
+            baseline.expectancy_distance,
+            baseline.net_pnl_distance,
+        );
+    }
+
+    fn run_natgas_simple_vwap_baseline() {
+        run_natgas_simple_vwap_baseline_with_take_profit(
+            NATGAS_STRICT_TAKE_PROFIT,
+            "NATGAS_H1_SIMPLE_VWAP_BASELINE",
+        );
+    }
+
+    fn run_natgas_simple_vwap_baseline_tp7() {
+        run_natgas_simple_vwap_baseline_with_take_profit(
+            0.070,
+            "NATGAS_H1_SIMPLE_VWAP_BASELINE_TP7",
+        );
+    }
+
+    fn evaluate_baseline_plus_extra_slot(
+        candles: &[TradingCandlePoint],
+        short_11_rows: &[(usize, u32)],
+        long_15_rows: &[(usize, u32)],
+        long_21_rows: &[(usize, u32)],
+        extra_rows: &[(usize, u32)],
+        short_11: &SeededSlotComboDef,
+        long_15: &SeededSlotComboDef,
+        long_21: &SeededSlotComboDef,
+        extra: &SeededSlotComboDef,
+    ) -> Option<SeededComboSearchCandidate> {
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut trades = 0usize;
+        let mut wins = 0usize;
+        let mut losses = 0usize;
+        let mut net_pnl = 0.0;
+        let groups = [
+            (short_11_rows, short_11),
+            (long_15_rows, long_15),
+            (long_21_rows, long_21),
+            (extra_rows, extra),
+        ];
+        for (rows, combo) in groups {
+            for (index, row_mask) in rows {
+                if (*row_mask & combo.required_mask) != combo.required_mask {
+                    continue;
+                }
+                let Some(day_key) = candles[*index].time.get(..10) else {
+                    continue;
+                };
+                daily_pnl.entry(day_key.to_string()).or_insert(0.0);
+                let (outcome, _) = strategy_entry_outcome_cached(
+                    candles,
+                    *index,
+                    combo.direction,
+                    NATGAS_STRICT_STOP_LOSS,
+                    NATGAS_STRICT_EXECUTION_COST,
+                    24,
+                );
+                let Some(outcome) = outcome else {
+                    continue;
+                };
+                let (exit_kind, pnl, _) =
+                    classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+                *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+                trades += 1;
+                net_pnl += pnl;
+                if exit_kind == StrictTradeExit::TakeProfit {
+                    wins += 1;
+                } else if exit_kind == StrictTradeExit::StopLoss {
+                    losses += 1;
+                }
+            }
+        }
+        if daily_pnl.is_empty() || trades == 0 {
+            return None;
+        }
+        let total_days = daily_pnl.len();
+        let target_hit_days = daily_pnl
+            .values()
+            .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+            .count();
+        let avg_daily_pnl_distance = daily_pnl.values().sum::<f64>() / total_days as f64;
+        let min_daily_pnl_distance = daily_pnl.values().copied().fold(f64::INFINITY, f64::min);
+        Some(SeededComboSearchCandidate {
+            short_11h: short_11.clone(),
+            long_15h: long_15.clone(),
+            long_21h: extra.clone(),
+            take_profit: NATGAS_STRICT_TAKE_PROFIT,
+            trades,
+            wins,
+            losses,
+            win_rate: wins as f64 / trades as f64,
+            daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+            target_hit_days,
+            total_days,
+            avg_daily_pnl_distance,
+            min_daily_pnl_distance,
+            expectancy_distance: net_pnl / trades as f64,
+            net_pnl_distance: net_pnl,
+        })
+    }
+
+    fn run_natgas_simple_vwap_plus_19h_search() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let search_start = 25usize;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+
+        let short_11_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_19_rules = seeded_short_19h_rules();
+        let long_19_rules = seeded_long_19h_rules();
+        let short_11_rows =
+            build_seeded_slot_masks(candles, &feature_bank, search_start, &short_11_rules);
+        let long_15_rows =
+            build_seeded_slot_masks(candles, &feature_bank, search_start, &long_15_rules);
+        let long_21_rows =
+            build_seeded_slot_masks(candles, &feature_bank, search_start, &long_21_rules);
+        let short_19_rows =
+            build_seeded_slot_masks(candles, &feature_bank, search_start, &short_19_rules);
+        let long_19_rows =
+            build_seeded_slot_masks(candles, &feature_bank, search_start, &long_19_rules);
+        let (short_11, long_15, long_21) = natgas_simple_vwap_baseline_combos();
+        let baseline = evaluate_seeded_combo_search_candidate(
+            candles,
+            &short_11_rows,
+            &long_15_rows,
+            &long_21_rows,
+            &short_11,
+            &long_15,
+            &long_21,
+            NATGAS_STRICT_TAKE_PROFIT,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        )
+        .expect("simple baseline");
+
+        let mut best: Option<(SeededComboSearchCandidate, SeededSlotComboDef)> = None;
+        for extra in build_seeded_slot_combos(&short_19_rules)
+            .into_iter()
+            .chain(build_seeded_slot_combos(&long_19_rules).into_iter())
+        {
+            let rows = if extra.direction == "short" {
+                &short_19_rows
+            } else {
+                &long_19_rows
+            };
+            let Some(candidate) = evaluate_baseline_plus_extra_slot(
+                candles,
+                &short_11_rows,
+                &long_15_rows,
+                &long_21_rows,
+                rows,
+                &short_11,
+                &long_15,
+                &long_21,
+                &extra,
+            ) else {
+                continue;
+            };
+            let replace = best
+                .as_ref()
+                .map(|(current, _)| {
+                    match candidate.win_rate.partial_cmp(&current.win_rate).unwrap_or(Ordering::Equal)
+                    {
+                        Ordering::Greater => true,
+                        Ordering::Less => false,
+                        Ordering::Equal => match candidate
+                            .daily_target_hit_rate
+                            .partial_cmp(&current.daily_target_hit_rate)
+                            .unwrap_or(Ordering::Equal)
+                        {
+                            Ordering::Greater => true,
+                            Ordering::Less => false,
+                            Ordering::Equal => candidate
+                                .expectancy_distance
+                                .partial_cmp(&current.expectancy_distance)
+                                .unwrap_or(Ordering::Equal)
+                                == Ordering::Greater,
+                        },
+                    }
+                })
+                .unwrap_or(true);
+            if replace {
+                best = Some((candidate, extra));
+            }
+        }
+
+        let (best, extra) = best.expect("best 19h extension");
+        println!(
+            "NATGAS_H1_SIMPLE_VWAP_PLUS_19H baseline_win_rate={:.4} baseline_daily_target_hit_rate={:.4} baseline_net_pnl={:.6} best_19h={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            baseline.win_rate,
+            baseline.daily_target_hit_rate,
+            baseline.net_pnl_distance,
+            extra.label,
+            extra.indicator_refs.join(","),
+            best.trades,
+            best.wins,
+            best.losses,
+            best.win_rate,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn fallback_action_for_21h(
+        mode: DailyFallbackMode,
+        index: usize,
+        candles: &[TradingCandlePoint],
+        feature_bank: &StrategyIndicatorFeatureBank,
+    ) -> &'static str {
+        match mode {
+            DailyFallbackMode::LongAboveVwapElseShort => {
+                if candles[index].close >= feature_bank.vwap[index] {
+                    "long"
+                } else {
+                    "short"
+                }
+            }
+            DailyFallbackMode::LongAboveEma21ElseShort => {
+                if candles[index].close >= feature_bank.ema21[index] {
+                    "long"
+                } else {
+                    "short"
+                }
+            }
+            DailyFallbackMode::CandleBodyPolarity => {
+                if candles[index].close >= candles[index].open {
+                    "long"
+                } else {
+                    "short"
+                }
+            }
+            DailyFallbackMode::MacdPolarity => {
+                if feature_bank.macd_histogram[index] >= 0.0 {
+                    "long"
+                } else {
+                    "short"
+                }
+            }
+        }
+    }
+
+    fn run_natgas_mandatory_daily_winrate_search() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let search_start = 25usize;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+
+        let short_11_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let short_11_rows =
+            build_seeded_slot_masks(candles, &feature_bank, search_start, &short_11_rules);
+        let long_15_rows =
+            build_seeded_slot_masks(candles, &feature_bank, search_start, &long_15_rules);
+        let short_11_map = short_11_rows.iter().copied().collect::<HashMap<_, _>>();
+        let long_15_map = long_15_rows.iter().copied().collect::<HashMap<_, _>>();
+
+        let short_11_combos = build_seeded_slot_combos(&short_11_rules)
+            .into_iter()
+            .filter(|combo| {
+                combo_label_is_one_of(
+                    combo,
+                    &[
+                        "11h short if bearish body",
+                        "11h short if close < VWAP",
+                        "11h short if close crosses below EMA21",
+                        "11h short if close < VWAP && 11h short if bearish body",
+                        "11h short if bearish body && 11h short if MACD hist < 0",
+                        "11h short if two closes stay below VWAP",
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        let long_15_combos = build_seeded_slot_combos(&long_15_rules)
+            .into_iter()
+            .filter(|combo| {
+                combo_label_is_one_of(
+                    combo,
+                    &[
+                        "15h long if bullish body",
+                        "15h long if close > VWAP",
+                        "15h long if close crosses above EMA21",
+                        "15h long if close > VWAP && 15h long if bullish body",
+                        "15h long if bullish body && 15h long if MACD hist > 0",
+                        "15h long if two closes stay above VWAP",
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        let fallback_modes = [
+            DailyFallbackMode::LongAboveVwapElseShort,
+            DailyFallbackMode::LongAboveEma21ElseShort,
+            DailyFallbackMode::CandleBodyPolarity,
+            DailyFallbackMode::MacdPolarity,
+        ];
+
+        let mut day_slots = BTreeMap::<String, [Option<usize>; 3]>::new();
+        for index in search_start..candles.len().saturating_sub(1) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+            let slot = match hour {
+                11 => Some(0),
+                15 => Some(1),
+                21 => Some(2),
+                _ => None,
+            };
+            let Some(slot) = slot else {
+                continue;
+            };
+            let Some(day_key) = candles[index].time.get(..10) else {
+                continue;
+            };
+            let entry = day_slots
+                .entry(day_key.to_string())
+                .or_insert([None, None, None]);
+            entry[slot] = Some(index);
+        }
+
+        let mut best: Option<(SeededSlotComboDef, SeededSlotComboDef, DailyFallbackMode, SeededComboSearchCandidate)> = None;
+        for short_11 in &short_11_combos {
+            for long_15 in &long_15_combos {
+                for fallback_mode in fallback_modes {
+                    let mut daily_pnl = BTreeMap::<String, f64>::new();
+                    let mut trades = 0usize;
+                    let mut wins = 0usize;
+                    let mut losses = 0usize;
+                    let mut net_pnl = 0.0;
+
+                    for (day_key, slots) in &day_slots {
+                        let mut traded = false;
+                        let mut pnl_day = 0.0;
+
+                        if let Some(index) = slots[0] {
+                            if let Some(mask) = short_11_map.get(&index).copied() {
+                                if (mask & short_11.required_mask) == short_11.required_mask {
+                                    let (outcome, _) = strategy_entry_outcome_cached(
+                                        candles,
+                                        index,
+                                        short_11.direction,
+                                        NATGAS_STRICT_STOP_LOSS,
+                                        NATGAS_STRICT_EXECUTION_COST,
+                                        24,
+                                    );
+                                    if let Some(outcome) = outcome {
+                                        let (exit_kind, pnl, _) = classify_strict_trade_outcome(
+                                            &outcome,
+                                            NATGAS_STRICT_TAKE_PROFIT,
+                                        );
+                                        pnl_day += pnl;
+                                        trades += 1;
+                                        net_pnl += pnl;
+                                        traded = true;
+                                        if exit_kind == StrictTradeExit::TakeProfit {
+                                            wins += 1;
+                                        } else if exit_kind == StrictTradeExit::StopLoss {
+                                            losses += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(index) = slots[1] {
+                            if let Some(mask) = long_15_map.get(&index).copied() {
+                                if (mask & long_15.required_mask) == long_15.required_mask {
+                                    let (outcome, _) = strategy_entry_outcome_cached(
+                                        candles,
+                                        index,
+                                        long_15.direction,
+                                        NATGAS_STRICT_STOP_LOSS,
+                                        NATGAS_STRICT_EXECUTION_COST,
+                                        24,
+                                    );
+                                    if let Some(outcome) = outcome {
+                                        let (exit_kind, pnl, _) = classify_strict_trade_outcome(
+                                            &outcome,
+                                            NATGAS_STRICT_TAKE_PROFIT,
+                                        );
+                                        pnl_day += pnl;
+                                        trades += 1;
+                                        net_pnl += pnl;
+                                        traded = true;
+                                        if exit_kind == StrictTradeExit::TakeProfit {
+                                            wins += 1;
+                                        } else if exit_kind == StrictTradeExit::StopLoss {
+                                            losses += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(index) = slots[2] {
+                            if !traded {
+                                let direction = fallback_action_for_21h(
+                                    fallback_mode,
+                                    index,
+                                    candles,
+                                    &feature_bank,
+                                );
+                                let (outcome, _) = strategy_entry_outcome_cached(
+                                    candles,
+                                    index,
+                                    direction,
+                                    NATGAS_STRICT_STOP_LOSS,
+                                    NATGAS_STRICT_EXECUTION_COST,
+                                    24,
+                                );
+                                if let Some(outcome) = outcome {
+                                    let (exit_kind, pnl, _) = classify_strict_trade_outcome(
+                                        &outcome,
+                                        NATGAS_STRICT_TAKE_PROFIT,
+                                    );
+                                    pnl_day += pnl;
+                                    trades += 1;
+                                    net_pnl += pnl;
+                                    if exit_kind == StrictTradeExit::TakeProfit {
+                                        wins += 1;
+                                    } else if exit_kind == StrictTradeExit::StopLoss {
+                                        losses += 1;
+                                    }
+                                }
+                            }
+                        }
+
+                        daily_pnl.insert(day_key.clone(), pnl_day);
+                    }
+
+                    if trades == 0 || daily_pnl.is_empty() {
+                        continue;
+                    }
+                    let total_days = daily_pnl.len();
+                    let target_hit_days = daily_pnl
+                        .values()
+                        .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+                        .count();
+                    let candidate = SeededComboSearchCandidate {
+                        short_11h: short_11.clone(),
+                        long_15h: long_15.clone(),
+                        long_21h: SeededSlotComboDef {
+                            hour: 21,
+                            direction: "both",
+                            label: fallback_mode.label().to_string(),
+                            indicator_refs: vec![],
+                            required_mask: 0,
+                        },
+                        take_profit: NATGAS_STRICT_TAKE_PROFIT,
+                        trades,
+                        wins,
+                        losses,
+                        win_rate: wins as f64 / trades as f64,
+                        daily_target_hit_rate: target_hit_days as f64 / total_days as f64,
+                        target_hit_days,
+                        total_days,
+                        avg_daily_pnl_distance: daily_pnl.values().sum::<f64>() / total_days as f64,
+                        min_daily_pnl_distance: daily_pnl.values().copied().fold(f64::INFINITY, f64::min),
+                        expectancy_distance: net_pnl / trades as f64,
+                        net_pnl_distance: net_pnl,
+                    };
+
+                    let replace = best
+                        .as_ref()
+                        .map(|(_, _, _, current)| {
+                            match candidate.win_rate.partial_cmp(&current.win_rate).unwrap_or(Ordering::Equal) {
+                                Ordering::Greater => true,
+                                Ordering::Less => false,
+                                Ordering::Equal => match candidate
+                                    .daily_target_hit_rate
+                                    .partial_cmp(&current.daily_target_hit_rate)
+                                    .unwrap_or(Ordering::Equal)
+                                {
+                                    Ordering::Greater => true,
+                                    Ordering::Less => false,
+                                    Ordering::Equal => candidate
+                                        .expectancy_distance
+                                        .partial_cmp(&current.expectancy_distance)
+                                        .unwrap_or(Ordering::Equal)
+                                        == Ordering::Greater,
+                                },
+                            }
+                        })
+                        .unwrap_or(true);
+                    if replace {
+                        best = Some((short_11.clone(), long_15.clone(), fallback_mode, candidate));
+                    }
+                }
+            }
+        }
+
+        let (short_11, long_15, fallback_mode, best) = best.expect("best mandatory daily policy");
+        println!(
+            "NATGAS_H1_MANDATORY_DAILY_WINRATE best_11h={} [{}] best_15h={} [{}] fallback_21h={} trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            short_11.label,
+            short_11.indicator_refs.join(","),
+            long_15.label,
+            long_15.indicator_refs.join(","),
+            fallback_mode.label(),
+            best.trades,
+            best.wins,
+            best.losses,
+            best.win_rate,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn run_save_natgas_simple_vwap_baseline_as_program() {
+        let args = json!({
+            "title": "/stratA_",
+            "goal": "NATGAS_USD H1 session strategy built only from selected special recurrences and sniper contexts, with strict execution accounting.",
+            "intent": "Use NATGAS_USD H1 on OANDA without the old generic baseline layer. Strict execution accounting is mandatory: spread cost 0.6p, and a win only counts when TP is touched. Keep only the selected special modules. Module 1, mirrored anti-edge recurrence: at 08h UTC, if the last three H1 closes are strictly higher than one another, treat the toxic breakout long as invalid and execute its exact mirror instead by opening a SHORT at the next bar open with raw take profit 3.9p and raw stop loss 5.1p. Module 2, 11h sniper short: bearish body, close below VWAP minus 1 sigma, MACD histogram below zero, RSI14 at or below 45, ATR14 and Bollinger width both in squeeze or low-volatility state, and H4 bias bearish, then open a SHORT with raw stop loss 3.9p and raw take profit 5.1p. Module 3, 13h recurrence long: if the previous H1 candle is red, the current H1 candle is green, MACD histogram is above zero, and the close sits in the lower quartile of the previous 24 H1 candles, then open a LONG with raw stop loss 3.9p and raw take profit 5.1p. Module 4, 18h sniper long: bullish body, close still below session VWAP, MACD histogram above zero, RSI14 at or above 55, ATR14 and Bollinger width both expanded or high-volatility, and H4 bias bearish, then open a LONG with raw stop loss 3.9p and raw take profit 5.1p. There is no generic 11h, 15h, or 21h baseline anymore.",
+            "domain": "trading",
+            "template": "strategy_baseline",
+            "program_kind": "compute_program"
+        });
+        let created = crate::forge_agent_runtime::direct_create_program_in_store(&args, "trading")
+            .expect("save /stratA_ direct program");
+        println!(
+            "TRADING_PROGRAM_SAVED title=/stratA_ program_hash={} kind={} status={}",
+            created
+                .get("program_hash")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            created
+                .pointer("/program/program_kind")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            created
+                .pointer("/program/status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+        );
+    }
+
+    #[derive(Clone)]
+    struct StratAUnifiedTrade {
+        entry_time: String,
+        module: &'static str,
+        pnl_distance: f64,
+        tp_hit: bool,
+    }
+
+    fn collect_natgas_strat_a_unified_trades() -> Vec<StratAUnifiedTrade> {
+        let h1_series =
+            canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series =
+            canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let candles = h1_series.candles;
+        let h4_candles = h4_series.candles;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(&candles);
+        let h4_hash = strategy_candles_hash(&h4_candles);
+        let feature_bank = strategy_feature_bank_cached(&candles, &h1_hash, &mut cache_snapshot);
+        let h4_bank = strategy_feature_bank_cached(&h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_bias_by_h1_index = build_h4_bias_by_h1_index(&candles, &h4_candles, &h4_bank);
+
+        let mut prev24_high = vec![f64::NAN; candles.len()];
+        let mut prev24_low = vec![f64::NAN; candles.len()];
+        let mut prev24_width = vec![f64::NAN; candles.len()];
+        for index in 24..candles.len() {
+            let window = &candles[index - 24..index];
+            let high = window
+                .iter()
+                .map(|c| c.high)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let low = window.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
+            prev24_high[index] = high;
+            prev24_low[index] = low;
+            prev24_width[index] = (high - low).abs();
+        }
+
+        let mut trades = Vec::<StratAUnifiedTrade>::new();
+
+        for index in 24..candles.len().saturating_sub(1) {
+            let Some(hour) = strategy_hour_utc(&candles[index].time) else {
+                continue;
+            };
+
+            let mut module: Option<(&'static str, &'static str, f64, f64)> = None;
+
+            if hour == 8
+                && index >= 2
+                && candles[index].close > candles[index - 1].close
+                && candles[index - 1].close > candles[index - 2].close
+            {
+                module = Some((
+                    "08h_mirror_short",
+                    "short",
+                    NATGAS_STRICT_TAKE_PROFIT,
+                    NATGAS_STRICT_STOP_LOSS,
+                ));
+            } else if hour == 11
+                && hour_context_short_11h(index, &candles, &feature_bank, &h4_bias_by_h1_index)
+            {
+                module = Some((
+                    "11h_sniper_short",
+                    "short",
+                    NATGAS_STRICT_STOP_LOSS,
+                    NATGAS_STRICT_TAKE_PROFIT,
+                ));
+            } else if hour == 13
+                && index > 0
+                && bearish_body(&candles[index - 1])
+                && bullish_body(&candles[index])
+                && feature_bank.macd_histogram[index] > 0.0
+                && prev24_width[index].is_finite()
+                && prev24_width[index] > f64::EPSILON
+                && candles[index].close
+                    <= prev24_low[index] + prev24_width[index] * 0.25
+            {
+                module = Some((
+                    "13h_recurrence_long",
+                    "long",
+                    NATGAS_STRICT_STOP_LOSS,
+                    NATGAS_STRICT_TAKE_PROFIT,
+                ));
+            } else if hour == 18
+                && hour_context_long_18h(index, &candles, &feature_bank, &h4_bias_by_h1_index)
+            {
+                module = Some((
+                    "18h_sniper_long",
+                    "long",
+                    NATGAS_STRICT_STOP_LOSS,
+                    NATGAS_STRICT_TAKE_PROFIT,
+                ));
+            }
+
+            let Some((label, direction, stop_loss, take_profit)) = module else {
+                continue;
+            };
+            let Some((tp_hit, pnl, _held)) = simulate_tp_sl_only_exit(
+                &candles,
+                index + 1,
+                direction,
+                stop_loss,
+                take_profit,
+                NATGAS_STRICT_EXECUTION_COST,
+            ) else {
+                continue;
+            };
+
+            trades.push(StratAUnifiedTrade {
+                entry_time: candles[index + 1].time.clone(),
+                module: label,
+                pnl_distance: pnl,
+                tp_hit,
+            });
+        }
+
+        trades
+    }
+
+    fn run_natgas_strat_a_unified_performance() {
+        let trades = collect_natgas_strat_a_unified_trades();
+        let mut daily_pnl = BTreeMap::<String, f64>::new();
+        let mut tp_hits = 0usize;
+        let mut sl_hits = 0usize;
+        let mut net_pnl_distance = 0.0;
+        let mut module_counts = BTreeMap::<&'static str, usize>::new();
+
+        for trade in &trades {
+            let Some(day_key) = trade.entry_time.get(..10) else {
+                continue;
+            };
+            net_pnl_distance += trade.pnl_distance;
+            *module_counts.entry(trade.module).or_insert(0) += 1;
+            if trade.tp_hit {
+                tp_hits += 1;
+            } else {
+                sl_hits += 1;
+            }
+            *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += trade.pnl_distance;
+        }
+
+        let total_days = daily_pnl.len();
+        let total_points = net_pnl_distance / 0.01;
+        let avg_points_per_day = if total_days > 0 {
+            total_points / total_days as f64
+        } else {
+            0.0
+        };
+        let trading_weeks = if total_days > 0 {
+            total_days as f64 / 5.0
+        } else {
+            0.0
+        };
+        let avg_points_per_week = if trading_weeks > 0.0 {
+            total_points / trading_weeks
+        } else {
+            0.0
+        };
+        let trades_len = trades.len();
+
+        println!(
+            "NATGAS_STRAT_A_UNIFIED trades={} tp_hits={} sl_hits={} tp_rate={:.4} sl_rate={:.4} total_days={} total_points={:.2} avg_points_per_day={:.2} avg_points_per_week={:.2} net_pnl_distance={:.6}",
+            trades_len,
+            tp_hits,
+            sl_hits,
+            if trades_len > 0 { tp_hits as f64 / trades_len as f64 } else { 0.0 },
+            if trades_len > 0 { sl_hits as f64 / trades_len as f64 } else { 0.0 },
+            total_days,
+            total_points,
+            avg_points_per_day,
+            avg_points_per_week,
+            net_pnl_distance,
+        );
+        for (label, count) in module_counts {
+            println!("NATGAS_STRAT_A_UNIFIED_MODULE label={} trades={}", label, count);
+        }
+    }
+
+    fn run_natgas_strat_a_compounded_capital_projection() {
+        let trades = collect_natgas_strat_a_unified_trades();
+        let mut capital = 200.0_f64;
+        let mut month_end_capital = BTreeMap::<String, f64>::new();
+        let mut first_month: Option<String> = None;
+        let mut last_included_month: Option<String> = None;
+        let mut included_trades = 0usize;
+
+        for trade in trades {
+            let Some(month_key) = trade.entry_time.get(..7).map(str::to_string) else {
+                continue;
+            };
+            if first_month.is_none() {
+                first_month = Some(month_key.clone());
+            }
+            let first = first_month.as_ref().expect("first month set");
+            let months_since_start = {
+                let fy = first[0..4].parse::<i32>().unwrap_or(0);
+                let fm = first[5..7].parse::<i32>().unwrap_or(1);
+                let cy = month_key[0..4].parse::<i32>().unwrap_or(0);
+                let cm = month_key[5..7].parse::<i32>().unwrap_or(1);
+                (cy - fy) * 12 + (cm - fm)
+            };
+            if months_since_start >= 12 {
+                break;
+            }
+
+            let points = trade.pnl_distance / 0.01;
+            let trade_return = points * 0.03;
+            capital *= 1.0 + trade_return;
+            included_trades += 1;
+            month_end_capital.insert(month_key.clone(), capital);
+            last_included_month = Some(month_key);
+        }
+
+        let first_month_label = first_month.unwrap_or_else(|| "unknown".to_string());
+        let last_month_label = last_included_month.unwrap_or_else(|| "unknown".to_string());
+        println!(
+            "NATGAS_STRAT_A_CAPITAL_PROJECTION start_capital=200.00 first_month={} last_month={} trades={} end_capital={:.2} total_return_pct={:.2}",
+            first_month_label,
+            last_month_label,
+            included_trades,
+            capital,
+            ((capital / 200.0) - 1.0) * 100.0,
+        );
+        for (month, month_capital) in month_end_capital {
+            println!(
+                "NATGAS_STRAT_A_CAPITAL_MONTH month={} capital={:.2}",
+                month,
+                month_capital,
+            );
+        }
+    }
+
+    fn run_natgas_inverse_context_diagnostics() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let train_rows = ((candles.len() as f64) * 0.7).round() as usize;
+        let test_start = train_rows.max(25);
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+
+        let short_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &short_rules);
+        let long_15_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_15_rules);
+        let long_21_rows = build_seeded_slot_masks(candles, &feature_bank, 25, &long_21_rules);
+
+        let short_combo = build_seeded_slot_combos(&short_rules)
+            .into_iter()
+            .find(|combo| combo.label == "11h short if bearish body")
+            .expect("11h short base combo");
+        let long_15_combo = build_seeded_slot_combos(&long_15_rules)
+            .into_iter()
+            .find(|combo| combo.label == "15h long if bullish body")
+            .expect("15h long base combo");
+        let long_21_combo = build_seeded_slot_combos(&long_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h long if close > VWAP")
+            .expect("21h long vwap combo");
+
+        let test_days = build_meta_scheduler_days(
+            candles,
+            &feature_bank,
+            test_start,
+            candles.len().saturating_sub(1),
+            &short_combo,
+            &long_15_combo,
+            &long_21_combo,
+            &short_rows,
+            &long_15_rows,
+            &long_21_rows,
+            NATGAS_STRICT_TAKE_PROFIT,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+        );
+
+        let mut by_context = BTreeMap::<String, InverseContextComparison>::new();
+        let mut by_hour = BTreeMap::<String, InverseContextComparison>::new();
+        for day in &test_days {
+            let mut baseline_daily_pnl = 0.0;
+            for event in day.events.iter().flatten() {
+                if !event.primary_signal {
+                    continue;
+                }
+                let normal_action = base_action_for_hour(event.hour);
+                let inverse_action = inverse_action_for_hour(event.hour);
+                let context_key =
+                    inverse_context_key(event, baseline_daily_pnl, candles, &feature_bank);
+                let hour_key = format!("{}h", event.hour);
+
+                let context_entry = by_context.entry(context_key).or_default();
+                record_inverse_action_stats(&mut context_entry.normal, event, normal_action);
+                record_inverse_action_stats(&mut context_entry.inverse, event, inverse_action);
+
+                let hour_entry = by_hour.entry(hour_key).or_default();
+                record_inverse_action_stats(&mut hour_entry.normal, event, normal_action);
+                record_inverse_action_stats(&mut hour_entry.inverse, event, inverse_action);
+
+                baseline_daily_pnl += action_pnl(event, normal_action);
+            }
+        }
+
+        print_inverse_context_diagnostics("INVERSE_DIAG_VWAP_BASE", &by_context, &by_hour);
+    }
+
+    fn run_natgas_21h_inverse_vwap_search() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let search_start = 25usize;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+
+        let short_11_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let long_21_rules = seeded_long_21h_rules();
+        let short_21_rules = seeded_short_21h_rules();
+
+        let short_11_rows = build_seeded_slot_masks(candles, &feature_bank, search_start, &short_11_rules);
+        let long_15_rows = build_seeded_slot_masks(candles, &feature_bank, search_start, &long_15_rules);
+        let long_21_rows = build_seeded_slot_masks(candles, &feature_bank, search_start, &long_21_rules);
+        let short_21_rows = build_seeded_slot_masks(candles, &feature_bank, search_start, &short_21_rules);
+
+        let short_11_base = build_seeded_slot_combos(&short_11_rules)
+            .into_iter()
+            .find(|combo| combo.label == "11h short if bearish body")
+            .expect("11h short base combo");
+        let long_15_base = build_seeded_slot_combos(&long_15_rules)
+            .into_iter()
+            .find(|combo| combo.label == "15h long if bullish body")
+            .expect("15h long base combo");
+
+        let long_21_combos = build_seeded_slot_combos(&long_21_rules)
+            .into_iter()
+            .filter(combo_is_vwap_inversion_family)
+            .collect::<Vec<_>>();
+        let short_21_combos = build_seeded_slot_combos(&short_21_rules)
+            .into_iter()
+            .filter(combo_is_vwap_inversion_family)
+            .collect::<Vec<_>>();
+
+        let rank_slot = |left: &SeededSlotSearchCandidate, right: &SeededSlotSearchCandidate| {
+            match left.win_rate.partial_cmp(&right.win_rate).unwrap_or(Ordering::Equal) {
+                Ordering::Greater => true,
+                Ordering::Less => false,
+                Ordering::Equal => match left
+                    .expectancy_distance
+                    .partial_cmp(&right.expectancy_distance)
+                    .unwrap_or(Ordering::Equal)
+                {
+                    Ordering::Greater => true,
+                    Ordering::Less => false,
+                    Ordering::Equal => left.trades > right.trades,
+                },
+            }
+        };
+
+        let rank_daily =
+            |left: &SeededComboSearchCandidate, right: &SeededComboSearchCandidate| match left
+                .daily_target_hit_rate
+                .partial_cmp(&right.daily_target_hit_rate)
+                .unwrap_or(Ordering::Equal)
+            {
+                Ordering::Greater => true,
+                Ordering::Less => false,
+                Ordering::Equal => match left
+                    .win_rate
+                    .partial_cmp(&right.win_rate)
+                    .unwrap_or(Ordering::Equal)
+                {
+                    Ordering::Greater => true,
+                    Ordering::Less => false,
+                    Ordering::Equal => match left
+                        .avg_daily_pnl_distance
+                        .partial_cmp(&right.avg_daily_pnl_distance)
+                        .unwrap_or(Ordering::Equal)
+                    {
+                        Ordering::Greater => true,
+                        Ordering::Less => false,
+                        Ordering::Equal => left.trades > right.trades,
+                    },
+                },
+            };
+
+        let mut best_slot_long: Option<SeededSlotSearchCandidate> = None;
+        for combo in &long_21_combos {
+            let Some(candidate) = evaluate_seeded_slot_search_candidate(
+                candles,
+                &long_21_rows,
+                combo,
+                NATGAS_STRICT_TAKE_PROFIT,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                24,
+            ) else {
+                continue;
+            };
+            if candidate.trades < 3 {
+                continue;
+            }
+            if best_slot_long
+                .as_ref()
+                .map(|current| rank_slot(&candidate, current))
+                .unwrap_or(true)
+            {
+                best_slot_long = Some(candidate);
+            }
+        }
+
+        let mut best_slot_short: Option<SeededSlotSearchCandidate> = None;
+        for combo in &short_21_combos {
+            let Some(candidate) = evaluate_seeded_slot_search_candidate(
+                candles,
+                &short_21_rows,
+                combo,
+                NATGAS_STRICT_TAKE_PROFIT,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                24,
+            ) else {
+                continue;
+            };
+            if candidate.trades < 3 {
+                continue;
+            }
+            if best_slot_short
+                .as_ref()
+                .map(|current| rank_slot(&candidate, current))
+                .unwrap_or(true)
+            {
+                best_slot_short = Some(candidate);
+            }
+        }
+
+        let mut best_daily_long: Option<SeededComboSearchCandidate> = None;
+        for combo in &long_21_combos {
+            let Some(candidate) = evaluate_seeded_combo_search_candidate(
+                candles,
+                &short_11_rows,
+                &long_15_rows,
+                &long_21_rows,
+                &short_11_base,
+                &long_15_base,
+                combo,
+                NATGAS_STRICT_TAKE_PROFIT,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                24,
+            ) else {
+                continue;
+            };
+            if best_daily_long
+                .as_ref()
+                .map(|current| rank_daily(&candidate, current))
+                .unwrap_or(true)
+            {
+                best_daily_long = Some(candidate);
+            }
+        }
+
+        let mut best_daily_short: Option<SeededComboSearchCandidate> = None;
+        for combo in &short_21_combos {
+            let Some(candidate) = evaluate_seeded_combo_search_candidate(
+                candles,
+                &short_11_rows,
+                &long_15_rows,
+                &short_21_rows,
+                &short_11_base,
+                &long_15_base,
+                combo,
+                NATGAS_STRICT_TAKE_PROFIT,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                24,
+            ) else {
+                continue;
+            };
+            if best_daily_short
+                .as_ref()
+                .map(|current| rank_daily(&candidate, current))
+                .unwrap_or(true)
+            {
+                best_daily_short = Some(candidate);
+            }
+        }
+
+        let best_slot_long = best_slot_long.expect("best 21h long slot candidate");
+        let best_slot_short = best_slot_short.expect("best 21h short slot candidate");
+        let best_daily_long = best_daily_long.expect("best 21h long daily candidate");
+        let best_daily_short = best_daily_short.expect("best 21h short daily candidate");
+
+        println!(
+            "NATGAS_H1_21H_INVERSE_SEARCH slot_best_long={} [{}] trades={} wins={} losses={} win_rate={:.4} expectancy={:.6} net_pnl={:.6}",
+            best_slot_long.combo.label,
+            best_slot_long.combo.indicator_refs.join(","),
+            best_slot_long.trades,
+            best_slot_long.wins,
+            best_slot_long.losses,
+            best_slot_long.win_rate,
+            best_slot_long.expectancy_distance,
+            best_slot_long.net_pnl_distance,
+        );
+        println!(
+            "NATGAS_H1_21H_INVERSE_SEARCH slot_best_short={} [{}] trades={} wins={} losses={} win_rate={:.4} expectancy={:.6} net_pnl={:.6}",
+            best_slot_short.combo.label,
+            best_slot_short.combo.indicator_refs.join(","),
+            best_slot_short.trades,
+            best_slot_short.wins,
+            best_slot_short.losses,
+            best_slot_short.win_rate,
+            best_slot_short.expectancy_distance,
+            best_slot_short.net_pnl_distance,
+        );
+        println!(
+            "NATGAS_H1_21H_INVERSE_SEARCH daily_best_long={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best_daily_long.long_21h.label,
+            best_daily_long.long_21h.indicator_refs.join(","),
+            best_daily_long.trades,
+            best_daily_long.wins,
+            best_daily_long.losses,
+            best_daily_long.win_rate,
+            best_daily_long.daily_target_hit_rate,
+            best_daily_long.target_hit_days,
+            best_daily_long.total_days,
+            best_daily_long.avg_daily_pnl_distance,
+            best_daily_long.expectancy_distance,
+            best_daily_long.net_pnl_distance,
+        );
+        println!(
+            "NATGAS_H1_21H_INVERSE_SEARCH daily_best_short={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best_daily_short.long_21h.label,
+            best_daily_short.long_21h.indicator_refs.join(","),
+            best_daily_short.trades,
+            best_daily_short.wins,
+            best_daily_short.losses,
+            best_daily_short.win_rate,
+            best_daily_short.daily_target_hit_rate,
+            best_daily_short.target_hit_days,
+            best_daily_short.total_days,
+            best_daily_short.avg_daily_pnl_distance,
+            best_daily_short.expectancy_distance,
+            best_daily_short.net_pnl_distance,
+        );
+    }
+
+    fn run_natgas_11h_15h_refinement_search() {
+        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let candles = &series.candles;
+        let search_start = 25usize;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let feature_bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+
+        let short_11_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let short_21_rules = seeded_short_21h_rules();
+
+        let short_11_rows = build_seeded_slot_masks(candles, &feature_bank, search_start, &short_11_rules);
+        let long_15_rows = build_seeded_slot_masks(candles, &feature_bank, search_start, &long_15_rules);
+        let short_21_rows = build_seeded_slot_masks(candles, &feature_bank, search_start, &short_21_rules);
+
+        let short_11_combos = build_seeded_slot_combos(&short_11_rules);
+        let long_15_combos = build_seeded_slot_combos(&long_15_rules);
+        let short_21_fixed = build_seeded_slot_combos(&short_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h short if close < VWAP && 21h short if RSI14 < 50")
+            .expect("21h short fixed combo");
+
+        let rank_slot = |left: &SeededSlotSearchCandidate, right: &SeededSlotSearchCandidate| {
+            match left.win_rate.partial_cmp(&right.win_rate).unwrap_or(Ordering::Equal) {
+                Ordering::Greater => true,
+                Ordering::Less => false,
+                Ordering::Equal => match left
+                    .expectancy_distance
+                    .partial_cmp(&right.expectancy_distance)
+                    .unwrap_or(Ordering::Equal)
+                {
+                    Ordering::Greater => true,
+                    Ordering::Less => false,
+                    Ordering::Equal => left.trades > right.trades,
+                },
+            }
+        };
+
+        let rank_daily =
+            |left: &SeededComboSearchCandidate, right: &SeededComboSearchCandidate| match left
+                .daily_target_hit_rate
+                .partial_cmp(&right.daily_target_hit_rate)
+                .unwrap_or(Ordering::Equal)
+            {
+                Ordering::Greater => true,
+                Ordering::Less => false,
+                Ordering::Equal => match left
+                    .win_rate
+                    .partial_cmp(&right.win_rate)
+                    .unwrap_or(Ordering::Equal)
+                {
+                    Ordering::Greater => true,
+                    Ordering::Less => false,
+                    Ordering::Equal => match left
+                        .avg_daily_pnl_distance
+                        .partial_cmp(&right.avg_daily_pnl_distance)
+                        .unwrap_or(Ordering::Equal)
+                    {
+                        Ordering::Greater => true,
+                        Ordering::Less => false,
+                        Ordering::Equal => left.trades > right.trades,
+                    },
+                },
+            };
+
+        let mut best_11h: Option<SeededSlotSearchCandidate> = None;
+        for combo in &short_11_combos {
+            let Some(candidate) = evaluate_seeded_slot_search_candidate(
+                candles,
+                &short_11_rows,
+                combo,
+                NATGAS_STRICT_TAKE_PROFIT,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                24,
+            ) else {
+                continue;
+            };
+            if candidate.trades < 12 {
+                continue;
+            }
+            if best_11h
+                .as_ref()
+                .map(|current| rank_slot(&candidate, current))
+                .unwrap_or(true)
+            {
+                best_11h = Some(candidate);
+            }
+        }
+
+        let mut best_15h: Option<SeededSlotSearchCandidate> = None;
+        for combo in &long_15_combos {
+            let Some(candidate) = evaluate_seeded_slot_search_candidate(
+                candles,
+                &long_15_rows,
+                combo,
+                NATGAS_STRICT_TAKE_PROFIT,
+                NATGAS_STRICT_STOP_LOSS,
+                NATGAS_STRICT_EXECUTION_COST,
+                24,
+            ) else {
+                continue;
+            };
+            if candidate.trades < 12 {
+                continue;
+            }
+            if best_15h
+                .as_ref()
+                .map(|current| rank_slot(&candidate, current))
+                .unwrap_or(true)
+            {
+                best_15h = Some(candidate);
+            }
+        }
+
+        let mut best_daily: Option<SeededComboSearchCandidate> = None;
+        for short_11_combo in &short_11_combos {
+            for long_15_combo in &long_15_combos {
+                let Some(candidate) = evaluate_seeded_combo_search_candidate(
+                    candles,
+                    &short_11_rows,
+                    &long_15_rows,
+                    &short_21_rows,
+                    short_11_combo,
+                    long_15_combo,
+                    &short_21_fixed,
+                    NATGAS_STRICT_TAKE_PROFIT,
+                    NATGAS_STRICT_STOP_LOSS,
+                    NATGAS_STRICT_EXECUTION_COST,
+                    24,
+                ) else {
+                    continue;
+                };
+                if best_daily
+                    .as_ref()
+                    .map(|current| rank_daily(&candidate, current))
+                    .unwrap_or(true)
+                {
+                    best_daily = Some(candidate);
+                }
+            }
+        }
+
+        let best_11h = best_11h.expect("best 11h refinement");
+        let best_15h = best_15h.expect("best 15h refinement");
+        let best_daily = best_daily.expect("best daily refinement");
+
+        println!(
+            "NATGAS_H1_11H_15H_REFINEMENT slot_best_11h={} [{}] trades={} wins={} losses={} win_rate={:.4} expectancy={:.6} net_pnl={:.6}",
+            best_11h.combo.label,
+            best_11h.combo.indicator_refs.join(","),
+            best_11h.trades,
+            best_11h.wins,
+            best_11h.losses,
+            best_11h.win_rate,
+            best_11h.expectancy_distance,
+            best_11h.net_pnl_distance,
+        );
+        println!(
+            "NATGAS_H1_11H_15H_REFINEMENT slot_best_15h={} [{}] trades={} wins={} losses={} win_rate={:.4} expectancy={:.6} net_pnl={:.6}",
+            best_15h.combo.label,
+            best_15h.combo.indicator_refs.join(","),
+            best_15h.trades,
+            best_15h.wins,
+            best_15h.losses,
+            best_15h.win_rate,
+            best_15h.expectancy_distance,
+            best_15h.net_pnl_distance,
+        );
+        println!(
+            "NATGAS_H1_11H_15H_REFINEMENT daily_best_11h={} [{}] daily_best_15h={} [{}] fixed_21h={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best_daily.short_11h.label,
+            best_daily.short_11h.indicator_refs.join(","),
+            best_daily.long_15h.label,
+            best_daily.long_15h.indicator_refs.join(","),
+            best_daily.long_21h.label,
+            best_daily.long_21h.indicator_refs.join(","),
+            best_daily.trades,
+            best_daily.wins,
+            best_daily.losses,
+            best_daily.win_rate,
+            best_daily.daily_target_hit_rate,
+            best_daily.target_hit_days,
+            best_daily.total_days,
+            best_daily.avg_daily_pnl_distance,
+            best_daily.expectancy_distance,
+            best_daily.net_pnl_distance,
+        );
+    }
+
+    fn run_natgas_11h_15h_h4_context_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let h1_candles = &h1_series.candles;
+        let h4_candles = &h4_series.candles;
+        let search_start = 25usize;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(h1_candles);
+        let h4_hash = strategy_candles_hash(h4_candles);
+        let h1_bank = strategy_feature_bank_cached(h1_candles, &h1_hash, &mut cache_snapshot);
+        let h4_bank = strategy_feature_bank_cached(h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_by_h1 = build_completed_higher_timeframe_index_by_lower(h1_candles, h4_candles);
+
+        let short_11_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let short_21_rules = seeded_short_21h_rules();
+        let short_11_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &short_11_rules);
+        let long_15_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &long_15_rules);
+        let short_21_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &short_21_rules);
+        let short_11_combos = build_seeded_slot_combos(&short_11_rules);
+        let long_15_combos = build_seeded_slot_combos(&long_15_rules);
+        let short_21_fixed = build_seeded_slot_combos(&short_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h short if close < VWAP && 21h short if RSI14 < 50")
+            .expect("21h short fixed combo");
+
+        let neutral_11 = SeededGateDef {
+            label: "no H4 filter".to_string(),
+            indicator_refs: vec![],
+            allowed_by_index: vec![true; h1_candles.len()],
+        };
+        let h4_11_close_lt_vwap = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_short_close_below_vwap,
+            "H4 close < VWAP",
+            &["/vwap_h4_session_hlc3"],
+        );
+        let h4_11_bearish_body = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_short_bearish_body,
+            "H4 bearish body",
+            &["/candle_h4_body"],
+        );
+        let h4_11_rsi_lt_50 = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_short_rsi_lt_50,
+            "H4 RSI14 < 50",
+            &["/rsi_h4_14_close"],
+        );
+        let h4_11_two_closes_below_vwap = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_short_two_closes_below_vwap,
+            "H4 two closes stay below VWAP",
+            &["/vwap_h4_session_hlc3", "/candle_h4_close"],
+        );
+        let h4_11_three_bar_rollover = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_short_three_bar_vwap_rollover,
+            "H4 three-bar VWAP rollover",
+            &["/vwap_h4_session_hlc3", "/candle_h4_close"],
+        );
+        let short_11_gates = vec![
+            neutral_11.clone(),
+            h4_11_close_lt_vwap.clone(),
+            h4_11_bearish_body.clone(),
+            h4_11_rsi_lt_50.clone(),
+            h4_11_two_closes_below_vwap.clone(),
+            h4_11_three_bar_rollover.clone(),
+            intersect_gate_defs(&h4_11_close_lt_vwap, &h4_11_rsi_lt_50),
+            intersect_gate_defs(&h4_11_close_lt_vwap, &h4_11_bearish_body),
+            intersect_gate_defs(&h4_11_two_closes_below_vwap, &h4_11_rsi_lt_50),
+        ];
+
+        let neutral_15 = SeededGateDef {
+            label: "no H4 filter".to_string(),
+            indicator_refs: vec![],
+            allowed_by_index: vec![true; h1_candles.len()],
+        };
+        let h4_15_close_gt_vwap = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_long_close_above_vwap,
+            "H4 close > VWAP",
+            &["/vwap_h4_session_hlc3"],
+        );
+        let h4_15_bullish_body = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_long_bullish_body,
+            "H4 bullish body",
+            &["/candle_h4_body"],
+        );
+        let h4_15_rsi_gt_50 = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_long_rsi_gt_50,
+            "H4 RSI14 > 50",
+            &["/rsi_h4_14_close"],
+        );
+        let h4_15_two_closes_above_vwap = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_long_two_closes_above_vwap,
+            "H4 two closes stay above VWAP",
+            &["/vwap_h4_session_hlc3", "/candle_h4_close"],
+        );
+        let h4_15_three_bar_reclaim = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_long_three_bar_vwap_reclaim,
+            "H4 three-bar VWAP reclaim",
+            &["/vwap_h4_session_hlc3", "/vwap_h4_ext1_down", "/candle_h4_close"],
+        );
+        let long_15_gates = vec![
+            neutral_15.clone(),
+            h4_15_close_gt_vwap.clone(),
+            h4_15_bullish_body.clone(),
+            h4_15_rsi_gt_50.clone(),
+            h4_15_two_closes_above_vwap.clone(),
+            h4_15_three_bar_reclaim.clone(),
+            intersect_gate_defs(&h4_15_close_gt_vwap, &h4_15_rsi_gt_50),
+            intersect_gate_defs(&h4_15_close_gt_vwap, &h4_15_bullish_body),
+            intersect_gate_defs(&h4_15_two_closes_above_vwap, &h4_15_rsi_gt_50),
+        ];
+
+        let rank_daily =
+            |left: &SeededComboSearchCandidate, right: &SeededComboSearchCandidate| match left
+                .daily_target_hit_rate
+                .partial_cmp(&right.daily_target_hit_rate)
+                .unwrap_or(Ordering::Equal)
+            {
+                Ordering::Greater => true,
+                Ordering::Less => false,
+                Ordering::Equal => match left
+                    .win_rate
+                    .partial_cmp(&right.win_rate)
+                    .unwrap_or(Ordering::Equal)
+                {
+                    Ordering::Greater => true,
+                    Ordering::Less => false,
+                    Ordering::Equal => match left
+                        .avg_daily_pnl_distance
+                        .partial_cmp(&right.avg_daily_pnl_distance)
+                        .unwrap_or(Ordering::Equal)
+                    {
+                        Ordering::Greater => true,
+                        Ordering::Less => false,
+                        Ordering::Equal => left.trades > right.trades,
+                    },
+                },
+            };
+
+        let mut best_daily: Option<(SeededComboSearchCandidate, SeededGateDef, SeededGateDef)> = None;
+        for short_11_combo in &short_11_combos {
+            for long_15_combo in &long_15_combos {
+                for short_11_gate in &short_11_gates {
+                    for long_15_gate in &long_15_gates {
+                        let Some(candidate) = evaluate_seeded_combo_search_candidate_with_gates(
+                            h1_candles,
+                            &short_11_rows,
+                            &long_15_rows,
+                            &short_21_rows,
+                            short_11_combo,
+                            long_15_combo,
+                            &short_21_fixed,
+                            Some(&short_11_gate.allowed_by_index),
+                            Some(&long_15_gate.allowed_by_index),
+                            None,
+                            NATGAS_STRICT_TAKE_PROFIT,
+                            NATGAS_STRICT_STOP_LOSS,
+                            NATGAS_STRICT_EXECUTION_COST,
+                            24,
+                        ) else {
+                            continue;
+                        };
+                        let replace = best_daily
+                            .as_ref()
+                            .map(|(current, _, _)| rank_daily(&candidate, current))
+                            .unwrap_or(true);
+                        if replace {
+                            best_daily = Some((candidate, short_11_gate.clone(), long_15_gate.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        let (best_daily, best_11_gate, best_15_gate) = best_daily.expect("best H4-context daily refinement");
+        println!(
+            "NATGAS_H1_11H_15H_H4_CONTEXT daily_best_11h={} [{}] h4_gate_11h={} [{}] daily_best_15h={} [{}] h4_gate_15h={} [{}] fixed_21h={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best_daily.short_11h.label,
+            best_daily.short_11h.indicator_refs.join(","),
+            best_11_gate.label,
+            best_11_gate.indicator_refs.join(","),
+            best_daily.long_15h.label,
+            best_daily.long_15h.indicator_refs.join(","),
+            best_15_gate.label,
+            best_15_gate.indicator_refs.join(","),
+            best_daily.long_21h.label,
+            best_daily.long_21h.indicator_refs.join(","),
+            best_daily.trades,
+            best_daily.wins,
+            best_daily.losses,
+            best_daily.win_rate,
+            best_daily.daily_target_hit_rate,
+            best_daily.target_hit_days,
+            best_daily.total_days,
+            best_daily.avg_daily_pnl_distance,
+            best_daily.expectancy_distance,
+            best_daily.net_pnl_distance,
+        );
+    }
+
+    fn run_natgas_h4_pullback_reversal_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let h1_candles = &h1_series.candles;
+        let h4_candles = &h4_series.candles;
+        let search_start = 25usize;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(h1_candles);
+        let h4_hash = strategy_candles_hash(h4_candles);
+        let h1_bank = strategy_feature_bank_cached(h1_candles, &h1_hash, &mut cache_snapshot);
+        let h4_bank = strategy_feature_bank_cached(h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_by_h1 = build_completed_higher_timeframe_index_by_lower(h1_candles, h4_candles);
+
+        let short_11_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let short_21_rules = seeded_short_21h_rules();
+        let short_11_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &short_11_rules);
+        let long_15_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &long_15_rules);
+        let short_21_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &short_21_rules);
+        let short_11_combos = build_seeded_slot_combos(&short_11_rules);
+        let long_15_combos = build_seeded_slot_combos(&long_15_rules);
+        let short_21_fixed = build_seeded_slot_combos(&short_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h short if close < VWAP && 21h short if RSI14 < 50")
+            .expect("21h short fixed combo");
+
+        let short_pullback_gate = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_short_trend_pullback_reversal,
+            "H4 bearish pullback candle closes inside impulse body",
+            &[
+                "/candle_h4_body",
+                "/vwap_h4_session_hlc3",
+                "/ema_h4_21_close",
+                "/ema_h4_50_close",
+                "/macd_h4_12_26_9_histogram",
+            ],
+        );
+        let long_pullback_gate = build_higher_timeframe_gate(
+            h1_candles.len(),
+            &h4_by_h1,
+            h4_candles,
+            &h4_bank,
+            seed_long_trend_pullback_reversal,
+            "H4 bullish pullback candle closes inside impulse body",
+            &[
+                "/candle_h4_body",
+                "/vwap_h4_session_hlc3",
+                "/ema_h4_21_close",
+                "/ema_h4_50_close",
+                "/macd_h4_12_26_9_histogram",
+            ],
+        );
+
+        let rank_daily =
+            |left: &SeededComboSearchCandidate, right: &SeededComboSearchCandidate| match left
+                .daily_target_hit_rate
+                .partial_cmp(&right.daily_target_hit_rate)
+                .unwrap_or(Ordering::Equal)
+            {
+                Ordering::Greater => true,
+                Ordering::Less => false,
+                Ordering::Equal => match left
+                    .win_rate
+                    .partial_cmp(&right.win_rate)
+                    .unwrap_or(Ordering::Equal)
+                {
+                    Ordering::Greater => true,
+                    Ordering::Less => false,
+                    Ordering::Equal => match left
+                        .avg_daily_pnl_distance
+                        .partial_cmp(&right.avg_daily_pnl_distance)
+                        .unwrap_or(Ordering::Equal)
+                    {
+                        Ordering::Greater => true,
+                        Ordering::Less => false,
+                        Ordering::Equal => left.trades > right.trades,
+                    },
+                },
+            };
+
+        let mut best_daily: Option<SeededComboSearchCandidate> = None;
+        for short_11_combo in &short_11_combos {
+            for long_15_combo in &long_15_combos {
+                let Some(candidate) = evaluate_seeded_combo_search_candidate_with_gates(
+                    h1_candles,
+                    &short_11_rows,
+                    &long_15_rows,
+                    &short_21_rows,
+                    short_11_combo,
+                    long_15_combo,
+                    &short_21_fixed,
+                    Some(&short_pullback_gate.allowed_by_index),
+                    Some(&long_pullback_gate.allowed_by_index),
+                    None,
+                    NATGAS_STRICT_TAKE_PROFIT,
+                    NATGAS_STRICT_STOP_LOSS,
+                    NATGAS_STRICT_EXECUTION_COST,
+                    24,
+                ) else {
+                    continue;
+                };
+                if best_daily
+                    .as_ref()
+                    .map(|current| rank_daily(&candidate, current))
+                    .unwrap_or(true)
+                {
+                    best_daily = Some(candidate);
+                }
+            }
+        }
+
+        let best_daily = best_daily.expect("best H4 pullback reversal candidate");
+        println!(
+            "NATGAS_H1_H4_PULLBACK_REVERSAL daily_best_11h={} [{}] h4_gate_11h={} [{}] daily_best_15h={} [{}] h4_gate_15h={} [{}] fixed_21h={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best_daily.short_11h.label,
+            best_daily.short_11h.indicator_refs.join(","),
+            short_pullback_gate.label,
+            short_pullback_gate.indicator_refs.join(","),
+            best_daily.long_15h.label,
+            best_daily.long_15h.indicator_refs.join(","),
+            long_pullback_gate.label,
+            long_pullback_gate.indicator_refs.join(","),
+            best_daily.long_21h.label,
+            best_daily.long_21h.indicator_refs.join(","),
+            best_daily.trades,
+            best_daily.wins,
+            best_daily.losses,
+            best_daily.win_rate,
+            best_daily.daily_target_hit_rate,
+            best_daily.target_hit_days,
+            best_daily.total_days,
+            best_daily.avg_daily_pnl_distance,
+            best_daily.expectancy_distance,
+            best_daily.net_pnl_distance,
+        );
+    }
+
+    fn run_natgas_h4_pullback_direct_strategy() {
+        let series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let candles = &series.candles;
+        let start_index = 25usize;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let data_hash = strategy_candles_hash(candles);
+        let bank = strategy_feature_bank_cached(candles, &data_hash, &mut cache_snapshot);
+
+        let evaluate_direction = |direction: &'static str,
+                                  label: &'static str,
+                                  predicate: fn(usize, &[TradingCandlePoint], &StrategyIndicatorFeatureBank) -> bool|
+         -> Option<(usize, usize, usize, f64, f64, f64, f64)> {
+            let mut daily_pnl = BTreeMap::<String, f64>::new();
+            let mut trades = 0usize;
+            let mut wins = 0usize;
+            let mut losses = 0usize;
+            let mut net_pnl = 0.0;
+            for index in start_index..candles.len().saturating_sub(1) {
+                if !predicate(index, candles, &bank) {
+                    continue;
+                }
+                let Some(day_key) = candles[index].time.get(..10) else {
+                    continue;
+                };
+                let (outcome, _) = strategy_entry_outcome_cached(
+                    candles,
+                    index,
+                    direction,
+                    NATGAS_STRICT_STOP_LOSS,
+                    NATGAS_STRICT_EXECUTION_COST,
+                    12,
+                );
+                let Some(outcome) = outcome else {
+                    continue;
+                };
+                let (exit_kind, pnl, _) =
+                    classify_strict_trade_outcome(&outcome, NATGAS_STRICT_TAKE_PROFIT);
+                *daily_pnl.entry(day_key.to_string()).or_insert(0.0) += pnl;
+                trades += 1;
+                net_pnl += pnl;
+                if exit_kind == StrictTradeExit::TakeProfit {
+                    wins += 1;
+                } else if exit_kind == StrictTradeExit::StopLoss {
+                    losses += 1;
+                }
+            }
+            if trades == 0 {
+                return None;
+            }
+            let total_days = daily_pnl.len().max(1);
+            let target_hit_days = daily_pnl
+                .values()
+                .filter(|value| **value >= NATGAS_STRICT_DAILY_TARGET)
+                .count();
+            let avg_daily_pnl = daily_pnl.values().sum::<f64>() / total_days as f64;
+            let expectancy = net_pnl / trades as f64;
+            println!(
+                "NATGAS_H4_PULLBACK_DIRECT direction={} label={} trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+                direction,
+                label,
+                trades,
+                wins,
+                losses,
+                wins as f64 / trades as f64,
+                target_hit_days as f64 / total_days as f64,
+                avg_daily_pnl,
+                expectancy,
+                net_pnl,
+            );
+            Some((
+                trades,
+                wins,
+                losses,
+                target_hit_days as f64 / total_days as f64,
+                avg_daily_pnl,
+                expectancy,
+                net_pnl,
+            ))
+        };
+
+        let _ = evaluate_direction(
+            "short",
+            "H4 bearish pullback candle closes inside impulse body",
+            seed_short_trend_pullback_reversal,
+        );
+        let _ = evaluate_direction(
+            "long",
+            "H4 bullish pullback candle closes inside impulse body",
+            seed_long_trend_pullback_reversal,
+        );
+    }
+
+    fn run_natgas_11h_15h_h4_bias_shortlist_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let h1_candles = &h1_series.candles;
+        let h4_candles = &h4_series.candles;
+        let search_start = 25usize;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(h1_candles);
+        let h4_hash = strategy_candles_hash(h4_candles);
+        let h1_bank = strategy_feature_bank_cached(h1_candles, &h1_hash, &mut cache_snapshot);
+        let h4_bank = strategy_feature_bank_cached(h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_by_h1 = build_completed_higher_timeframe_index_by_lower(h1_candles, h4_candles);
+
+        let short_11_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let short_21_rules = seeded_short_21h_rules();
+        let short_11_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &short_11_rules);
+        let long_15_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &long_15_rules);
+        let short_21_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &short_21_rules);
+
+        let short_11_labels = [
+            "11h short if bearish body",
+            "11h short if close < VWAP",
+            "11h short if close crosses below EMA21",
+            "11h short if two closes stay below VWAP",
+            "11h short if bearish body && 11h short if MACD hist < 0",
+        ];
+        let long_15_labels = [
+            "15h long if bullish body",
+            "15h long if close > VWAP",
+            "15h long if close crosses above EMA21",
+            "15h long if two closes stay above VWAP",
+            "15h long if bullish body && 15h long if MACD hist > 0",
+        ];
+
+        let short_11_combos = build_seeded_slot_combos(&short_11_rules)
+            .into_iter()
+            .filter(|combo| combo_label_is_one_of(combo, &short_11_labels))
+            .collect::<Vec<_>>();
+        let long_15_combos = build_seeded_slot_combos(&long_15_rules)
+            .into_iter()
+            .filter(|combo| combo_label_is_one_of(combo, &long_15_labels))
+            .collect::<Vec<_>>();
+        let short_21_fixed = build_seeded_slot_combos(&short_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h short if close < VWAP && 21h short if RSI14 < 50")
+            .expect("21h short fixed combo");
+
+        let short_11_gates = vec![
+            SeededGateDef {
+                label: "no H4 bias".to_string(),
+                indicator_refs: vec![],
+                allowed_by_index: vec![true; h1_candles.len()],
+            },
+            build_higher_timeframe_gate(
+                h1_candles.len(),
+                &h4_by_h1,
+                h4_candles,
+                &h4_bank,
+                seed_short_close_below_vwap,
+                "H4 close < VWAP",
+                &["/vwap_h4_session_hlc3"],
+            ),
+            build_higher_timeframe_gate(
+                h1_candles.len(),
+                &h4_by_h1,
+                h4_candles,
+                &h4_bank,
+                seed_short_two_closes_below_vwap,
+                "H4 two closes stay below VWAP",
+                &["/vwap_h4_session_hlc3", "/candle_h4_close"],
+            ),
+            build_higher_timeframe_gate(
+                h1_candles.len(),
+                &h4_by_h1,
+                h4_candles,
+                &h4_bank,
+                seed_short_trend_pullback_reversal,
+                "H4 bearish pullback reversal",
+                &["/candle_h4_body", "/vwap_h4_session_hlc3", "/ema_h4_21_close", "/ema_h4_50_close"],
+            ),
+        ];
+        let long_15_gates = vec![
+            SeededGateDef {
+                label: "no H4 bias".to_string(),
+                indicator_refs: vec![],
+                allowed_by_index: vec![true; h1_candles.len()],
+            },
+            build_higher_timeframe_gate(
+                h1_candles.len(),
+                &h4_by_h1,
+                h4_candles,
+                &h4_bank,
+                seed_long_close_above_vwap,
+                "H4 close > VWAP",
+                &["/vwap_h4_session_hlc3"],
+            ),
+            build_higher_timeframe_gate(
+                h1_candles.len(),
+                &h4_by_h1,
+                h4_candles,
+                &h4_bank,
+                seed_long_two_closes_above_vwap,
+                "H4 two closes stay above VWAP",
+                &["/vwap_h4_session_hlc3", "/candle_h4_close"],
+            ),
+            build_higher_timeframe_gate(
+                h1_candles.len(),
+                &h4_by_h1,
+                h4_candles,
+                &h4_bank,
+                seed_long_trend_pullback_reversal,
+                "H4 bullish pullback reversal",
+                &["/candle_h4_body", "/vwap_h4_session_hlc3", "/ema_h4_21_close", "/ema_h4_50_close"],
+            ),
+        ];
+
+        let rank_daily =
+            |left: &SeededComboSearchCandidate, right: &SeededComboSearchCandidate| match left
+                .daily_target_hit_rate
+                .partial_cmp(&right.daily_target_hit_rate)
+                .unwrap_or(Ordering::Equal)
+            {
+                Ordering::Greater => true,
+                Ordering::Less => false,
+                Ordering::Equal => match left
+                    .win_rate
+                    .partial_cmp(&right.win_rate)
+                    .unwrap_or(Ordering::Equal)
+                {
+                    Ordering::Greater => true,
+                    Ordering::Less => false,
+                    Ordering::Equal => match left
+                        .avg_daily_pnl_distance
+                        .partial_cmp(&right.avg_daily_pnl_distance)
+                        .unwrap_or(Ordering::Equal)
+                    {
+                        Ordering::Greater => true,
+                        Ordering::Less => false,
+                        Ordering::Equal => left.trades > right.trades,
+                    },
+                },
+            };
+
+        let mut best_daily: Option<(SeededComboSearchCandidate, SeededGateDef, SeededGateDef)> = None;
+        for short_11_combo in &short_11_combos {
+            for long_15_combo in &long_15_combos {
+                for short_11_gate in &short_11_gates {
+                    for long_15_gate in &long_15_gates {
+                        let Some(candidate) = evaluate_seeded_combo_search_candidate_with_gates(
+                            h1_candles,
+                            &short_11_rows,
+                            &long_15_rows,
+                            &short_21_rows,
+                            short_11_combo,
+                            long_15_combo,
+                            &short_21_fixed,
+                            Some(&short_11_gate.allowed_by_index),
+                            Some(&long_15_gate.allowed_by_index),
+                            None,
+                            NATGAS_STRICT_TAKE_PROFIT,
+                            NATGAS_STRICT_STOP_LOSS,
+                            NATGAS_STRICT_EXECUTION_COST,
+                            24,
+                        ) else {
+                            continue;
+                        };
+                        let replace = best_daily
+                            .as_ref()
+                            .map(|(current, _, _)| rank_daily(&candidate, current))
+                            .unwrap_or(true);
+                        if replace {
+                            best_daily = Some((candidate, short_11_gate.clone(), long_15_gate.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        let (best_daily, best_11_gate, best_15_gate) = best_daily.expect("best H4 bias shortlist");
+        println!(
+            "NATGAS_H1_11H_15H_H4_BIAS daily_best_11h={} [{}] h4_bias_11h={} [{}] daily_best_15h={} [{}] h4_bias_15h={} [{}] fixed_21h={} [{}] trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            best_daily.short_11h.label,
+            best_daily.short_11h.indicator_refs.join(","),
+            best_11_gate.label,
+            best_11_gate.indicator_refs.join(","),
+            best_daily.long_15h.label,
+            best_daily.long_15h.indicator_refs.join(","),
+            best_15_gate.label,
+            best_15_gate.indicator_refs.join(","),
+            best_daily.long_21h.label,
+            best_daily.long_21h.indicator_refs.join(","),
+            best_daily.trades,
+            best_daily.wins,
+            best_daily.losses,
+            best_daily.win_rate,
+            best_daily.daily_target_hit_rate,
+            best_daily.target_hit_days,
+            best_daily.total_days,
+            best_daily.avg_daily_pnl_distance,
+            best_daily.expectancy_distance,
+            best_daily.net_pnl_distance,
+        );
+    }
+
+    fn run_natgas_11h_15h_h4_bias_policy_search() {
+        let h1_series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let h4_series = canonical_chart_series("NATGAS_USD", "H4", 0).expect("NATGAS_USD H4 history");
+        let h1_candles = &h1_series.candles;
+        let h4_candles = &h4_series.candles;
+        let search_start = 25usize;
+        let mut cache_snapshot = StrategyCacheSnapshot::default();
+        let h1_hash = strategy_candles_hash(h1_candles);
+        let h4_hash = strategy_candles_hash(h4_candles);
+        let h1_bank = strategy_feature_bank_cached(h1_candles, &h1_hash, &mut cache_snapshot);
+        let h4_bank = strategy_feature_bank_cached(h4_candles, &h4_hash, &mut cache_snapshot);
+        let h4_bias_by_h1_index = build_h4_bias_by_h1_index(h1_candles, h4_candles, &h4_bank);
+
+        let short_11_rules = seeded_short_11h_rules();
+        let long_15_rules = seeded_long_15h_rules();
+        let short_21_rules = seeded_short_21h_rules();
+        let short_11_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &short_11_rules);
+        let long_15_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &long_15_rules);
+        let short_21_rows = build_seeded_slot_masks(h1_candles, &h1_bank, search_start, &short_21_rules);
+
+        let short_11_all_combos = build_seeded_slot_combos(&short_11_rules);
+        let long_15_all_combos = build_seeded_slot_combos(&long_15_rules);
+        let short_bearish_candidates = combos_from_labels(
+            &short_11_all_combos,
+            &[
+                "11h short if bearish body",
+                "11h short if bearish body && 11h short if MACD hist < 0",
+                "11h short if close < VWAP",
+                "11h short if two closes stay below VWAP",
+                "11h short if close crosses below EMA21",
+            ],
+        );
+        let short_neutral_candidates = combos_from_labels(
+            &short_11_all_combos,
+            &[
+                "11h short if close crosses below EMA21",
+                "11h short if close < VWAP",
+                "11h short if VWAP +1sigma rejection after VWAP break",
+                "11h short if three-bar VWAP rollover confirms lower close",
+                "11h short if bearish body",
+            ],
+        );
+        let short_bullish_candidates = combos_from_labels(
+            &short_11_all_combos,
+            &[
+                "11h short if close crosses below EMA21",
+                "11h short if three-bar VWAP rollover confirms lower close",
+            ],
+        );
+        let long_bearish_candidates = combos_from_labels(
+            &long_15_all_combos,
+            &[
+                "15h long if bullish body",
+                "15h long if close crosses above EMA21",
+                "15h long if bullish body && 15h long if MACD hist > 0",
+                "15h long if VWAP -1sigma reclaim after VWAP break",
+            ],
+        );
+        let long_neutral_candidates = combos_from_labels(
+            &long_15_all_combos,
+            &[
+                "15h long if close > VWAP",
+                "15h long if close crosses above EMA21",
+                "15h long if two closes stay above VWAP",
+                "15h long if VWAP -1sigma reclaim after VWAP break",
+                "15h long if bullish body",
+            ],
+        );
+        let long_bullish_candidates = combos_from_labels(
+            &long_15_all_combos,
+            &[
+                "15h long if bullish body",
+                "15h long if close > VWAP",
+                "15h long if three-bar VWAP reclaim confirms higher close",
+            ],
+        );
+        let short_21_fixed = build_seeded_slot_combos(&short_21_rules)
+            .into_iter()
+            .find(|combo| combo.label == "21h short if close < VWAP && 21h short if RSI14 < 50")
+            .expect("21h short fixed combo");
+
+        let rank_policy =
+            |left: &H4BiasPolicyResult, right: &H4BiasPolicyResult| match left
+                .daily_target_hit_rate
+                .partial_cmp(&right.daily_target_hit_rate)
+                .unwrap_or(Ordering::Equal)
+            {
+                Ordering::Greater => true,
+                Ordering::Less => false,
+                Ordering::Equal => match left
+                    .win_rate
+                    .partial_cmp(&right.win_rate)
+                    .unwrap_or(Ordering::Equal)
+                {
+                    Ordering::Greater => true,
+                    Ordering::Less => false,
+                    Ordering::Equal => match left
+                        .avg_daily_pnl_distance
+                        .partial_cmp(&right.avg_daily_pnl_distance)
+                        .unwrap_or(Ordering::Equal)
+                    {
+                        Ordering::Greater => true,
+                        Ordering::Less => false,
+                        Ordering::Equal => left.trades > right.trades,
+                    },
+                },
+            };
+
+        let short_bearish_top = top_bias_candidates(
+            h1_candles,
+            &short_11_rows,
+            &short_bearish_candidates,
+            &h4_bias_by_h1_index,
+            H4BiasState::Bearish,
+            NATGAS_STRICT_TAKE_PROFIT,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+            3,
+        );
+        let short_neutral_top = top_bias_candidates(
+            h1_candles,
+            &short_11_rows,
+            &short_neutral_candidates,
+            &h4_bias_by_h1_index,
+            H4BiasState::Neutral,
+            NATGAS_STRICT_TAKE_PROFIT,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+            3,
+        );
+        let short_bullish_top = top_bias_candidates(
+            h1_candles,
+            &short_11_rows,
+            &short_bullish_candidates,
+            &h4_bias_by_h1_index,
+            H4BiasState::Bullish,
+            NATGAS_STRICT_TAKE_PROFIT,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+            2,
+        );
+        let long_bearish_top = top_bias_candidates(
+            h1_candles,
+            &long_15_rows,
+            &long_bearish_candidates,
+            &h4_bias_by_h1_index,
+            H4BiasState::Bearish,
+            NATGAS_STRICT_TAKE_PROFIT,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+            3,
+        );
+        let long_neutral_top = top_bias_candidates(
+            h1_candles,
+            &long_15_rows,
+            &long_neutral_candidates,
+            &h4_bias_by_h1_index,
+            H4BiasState::Neutral,
+            NATGAS_STRICT_TAKE_PROFIT,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+            3,
+        );
+        let long_bullish_top = top_bias_candidates(
+            h1_candles,
+            &long_15_rows,
+            &long_bullish_candidates,
+            &h4_bias_by_h1_index,
+            H4BiasState::Bullish,
+            NATGAS_STRICT_TAKE_PROFIT,
+            NATGAS_STRICT_STOP_LOSS,
+            NATGAS_STRICT_EXECUTION_COST,
+            24,
+            2,
+        );
+
+        let mut best: Option<H4BiasPolicyResult> = None;
+        for short_bearish in &short_bearish_top {
+            for short_neutral in &short_neutral_top {
+                for short_bullish in &short_bullish_top {
+                    for long_bearish in &long_bearish_top {
+                        for long_neutral in &long_neutral_top {
+                            for long_bullish in &long_bullish_top {
+                                let short_policy = [
+                                    short_bearish.clone(),
+                                    short_neutral.clone(),
+                                    short_bullish.clone(),
+                                ];
+                                let long_policy = [
+                                    long_bearish.clone(),
+                                    long_neutral.clone(),
+                                    long_bullish.clone(),
+                                ];
+                                let Some(candidate) = evaluate_h4_bias_policy(
+                                    h1_candles,
+                                    &short_11_rows,
+                                    &long_15_rows,
+                                    &short_21_rows,
+                                    &h4_bias_by_h1_index,
+                                    &short_policy,
+                                    &long_policy,
+                                    &short_21_fixed,
+                                    NATGAS_STRICT_TAKE_PROFIT,
+                                    NATGAS_STRICT_STOP_LOSS,
+                                    NATGAS_STRICT_EXECUTION_COST,
+                                    24,
+                                ) else {
+                                    continue;
+                                };
+                                if best
+                                    .as_ref()
+                                    .map(|current| rank_policy(&candidate, current))
+                                    .unwrap_or(true)
+                                {
+                                    best = Some(candidate);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let best = best.expect("best H4 bias policy");
+        let fmt_combo = |combo: &Option<SeededSlotComboDef>| combo
+            .as_ref()
+            .map(|value| value.label.clone())
+            .unwrap_or_else(|| "skip".to_string());
+        println!(
+            "NATGAS_H1_11H_15H_H4_BIAS_POLICY short_bearish={} short_neutral={} short_bullish={} long_bearish={} long_neutral={} long_bullish={} fixed_21h={} trades={} wins={} losses={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} expectancy={:.6} net_pnl={:.6}",
+            fmt_combo(&best.short_policy[H4BiasState::Bearish.slot()]),
+            fmt_combo(&best.short_policy[H4BiasState::Neutral.slot()]),
+            fmt_combo(&best.short_policy[H4BiasState::Bullish.slot()]),
+            fmt_combo(&best.long_policy[H4BiasState::Bearish.slot()]),
+            fmt_combo(&best.long_policy[H4BiasState::Neutral.slot()]),
+            fmt_combo(&best.long_policy[H4BiasState::Bullish.slot()]),
+            short_21_fixed.label,
+            best.trades,
+            best.wins,
+            best.losses,
+            best.win_rate,
+            best.daily_target_hit_rate,
+            best.target_hit_days,
+            best.total_days,
+            best.avg_daily_pnl_distance,
+            best.expectancy_distance,
+            best.net_pnl_distance,
+        );
+    }
+
+    fn natgas_example_spec(granularity: &str, entry_hour: u32) -> TradingStrategySpec {
+        let normalized = granularity.trim().to_uppercase();
+        let metric_candle = format!("/candle_{}", normalized.to_lowercase());
+        let candle_ref = format!("candle{}_{}h", normalized.to_lowercase(), entry_hour);
+        let indicator_ref = format!("range_sma_{}_24", normalized.to_lowercase());
+        normalize_strategy_spec(TradingStrategySpec {
             instrument: Some("NATGAS_USD".to_string()),
-            granularity: Some("H1".to_string()),
+            granularity: Some(normalized.clone()),
             broker: Some("oanda".to_string()),
             point_size: Some(0.01),
             point_size_source: Some("oanda-pipLocation:-2".to_string()),
             point_size_warning: None,
-            entry_hour: Some(21),
+            entry_hour: Some(entry_hour),
+            entry_hours: None,
             entry_timezone: Some("UTC".to_string()),
             direction: Some("both".to_string()),
-            stop_loss_distance: Some(0.045),
-            take_profit_min_distance: Some(0.035),
+            stop_loss_distance: Some(NATGAS_STRICT_STOP_LOSS),
+            take_profit_min_distance: Some(NATGAS_STRICT_TAKE_PROFIT),
             take_profit_max_distance: Some(0.300),
             target_win_rate: Some(0.85),
+            daily_profit_target_distance: None,
             low_volatility_metric: Some("range_sma_percentile".to_string()),
             low_volatility_lookback: Some(24),
             low_volatility_percentile: Some(0.25),
             force_daily_entry: Some(true),
-            spread_cost_distance: Some(0.002),
-            slippage_distance: Some(0.001),
-            max_hold_bars: Some(24),
+            spread_cost_distance: Some(NATGAS_STRICT_EXECUTION_COST),
+            slippage_distance: Some(0.0),
+            max_hold_bars: Some(if normalized == "H4" { 12 } else { 24 }),
             train_test_split: Some(0.7),
-            candle_refs: Some(vec!["candleh1_21h".to_string()]),
-            indicator_refs: Some(vec!["range_sma_h1_24".to_string()]),
+            candle_refs: Some(vec![candle_ref]),
+            indicator_refs: Some(vec![indicator_ref]),
             metric_commands: Some(vec![
                 "/asset".to_string(),
                 "/asset_natgas_usd".to_string(),
-                "/candle_h1".to_string(),
+                metric_candle,
                 "/strategy_paired_long_short".to_string(),
                 "/strategy_tp_grid".to_string(),
             ]),
-            source_text: Some(source_text),
-        });
+            source_text: Some(format!(
+                "/create_ /strategy_ | strategie {normalized} Natural Gas OANDA, entree {entry_hour}h UTC, 1 trade tous les jours de trading ouverts, long+short simultane, SL reel 4.5p avec stop brut 3.9p et spread 0.6p, TP brut 5.1p, objectif 85%"
+            )),
+        })
+    }
+
+    fn natgas_forced_daily_paired_spec(granularity: &str) -> TradingStrategySpec {
+        let normalized = granularity.trim().to_uppercase();
+        normalize_strategy_spec(TradingStrategySpec {
+            instrument: Some("NATGAS_USD".to_string()),
+            granularity: Some(normalized.clone()),
+            broker: Some("oanda".to_string()),
+            point_size: Some(0.01),
+            point_size_source: Some("oanda-pipLocation:-2".to_string()),
+            point_size_warning: None,
+            entry_hour: Some(11),
+            entry_hours: Some(vec![11, 15, 21]),
+            entry_timezone: Some("UTC".to_string()),
+            direction: Some("paired".to_string()),
+            stop_loss_distance: Some(NATGAS_STRICT_STOP_LOSS),
+            take_profit_min_distance: Some(NATGAS_STRICT_TAKE_PROFIT),
+            take_profit_max_distance: Some(0.300),
+            target_win_rate: Some(0.85),
+            daily_profit_target_distance: Some(NATGAS_STRICT_DAILY_TARGET),
+            low_volatility_metric: Some("range_sma_percentile".to_string()),
+            low_volatility_lookback: Some(24),
+            low_volatility_percentile: Some(0.25),
+            force_daily_entry: Some(true),
+            spread_cost_distance: Some(NATGAS_STRICT_EXECUTION_COST),
+            slippage_distance: Some(0.0),
+            max_hold_bars: Some(if normalized == "H4" { 12 } else { 24 }),
+            train_test_split: Some(0.7),
+            candle_refs: Some(vec![
+                format!("candle{}_11h", normalized.to_lowercase()),
+                format!("candle{}_15h", normalized.to_lowercase()),
+                format!("candle{}_21h", normalized.to_lowercase()),
+            ]),
+            indicator_refs: Some(vec![
+                "/ema_h1_21_close".to_string(),
+                "/vwap_h1_session_hlc3".to_string(),
+                "/bollinger_h1_20_2_close_lower_band".to_string(),
+                "/bollinger_h1_20_2_close_upper_band".to_string(),
+                "/macd_h1_12_26_9_histogram".to_string(),
+                "/rsi_h1_14_close".to_string(),
+            ]),
+            metric_commands: Some(vec![
+                "/asset".to_string(),
+                "/asset_natgas_usd".to_string(),
+                "/strategy_paired_long_short".to_string(),
+                "/strategy_tp_grid".to_string(),
+                "/candleh1_11am".to_string(),
+                "/candleh1_3pm".to_string(),
+                "/candleh1_9pm".to_string(),
+                "/bollingerlowerband".to_string(),
+                "/bollingerupperband".to_string(),
+                "/ema21".to_string(),
+                "/macd".to_string(),
+                "/rsi".to_string(),
+                "/vwap".to_string(),
+            ]),
+            source_text: Some(format!(
+                "/create_ /strategy_ | strategie {normalized} Natural Gas OANDA, ordres forces tous les jours a 11h 15h 21h UTC, long+short simultanes sur chaque slot, SL 4.5p, TP min 5p, objectif 7p minimum par jour, utiliser combinaisons slash candles/indicators"
+            )),
+        })
+    }
+
+    fn sample_trading_order_request(approval: Option<TradingLiveApprovalProof>) -> TradingPlaceOrderRequest {
+        TradingPlaceOrderRequest {
+            instrument: Some("NATGAS_USD".to_string()),
+            side: "BUY".to_string(),
+            units: 100.0,
+            order_type: Some("MARKET".to_string()),
+            limit_price: None,
+            take_profit: Some(3.25),
+            stop_loss: Some(2.75),
+            time_in_force: Some("FOK".to_string()),
+            approval,
+        }
+    }
+
+    fn synthetic_hourly_candles(count: usize) -> Vec<TradingCandlePoint> {
+        let mut candles = Vec::with_capacity(count);
+        let mut close = 3.0_f64;
+        for index in 0..count {
+            let hour = index % 24;
+            let day = 1 + (index / 24);
+            let drift = ((index as f64) / 17.0).sin() * 0.06 + ((index as f64) / 29.0).cos() * 0.03;
+            let open = close;
+            close = (close + 0.0025 + drift).max(0.5);
+            let high = open.max(close) + 0.025 + ((index % 5) as f64 * 0.001);
+            let low = open.min(close) - 0.025 - ((index % 7) as f64 * 0.001);
+            candles.push(TradingCandlePoint {
+                time: format!("2025-01-{day:02}T{hour:02}:00:00Z"),
+                open,
+                high,
+                low,
+                close,
+                volume: 1_000 + ((index % 11) as u64 * 37),
+            });
+        }
+        candles
+    }
+
+    fn run_natgas_example_strategy_backtest(granularity: &str, entry_hour: u32) {
+        let spec = natgas_example_spec(granularity, entry_hour);
         let missing = validate_strategy_spec(&spec);
         assert!(missing.is_empty(), "missing metrics: {missing:?}");
-        let series = canonical_chart_series("NATGAS_USD", "H1", 0).expect("NATGAS_USD H1 history");
+        let series = canonical_chart_series("NATGAS_USD", granularity, 0)
+            .unwrap_or_else(|_| panic!("NATGAS_USD {granularity} history"));
         let result = backtest_strategy_spec(&series.candles, &spec).expect("strategy backtest");
         let best = result.best.as_ref().expect("best candidate");
         let plan = &result.compute_plan;
@@ -9565,7 +21499,9 @@ mod strategy_tests {
         assert!(plan.simulation_count > 0);
         assert!(plan.cache_report.hits + plan.cache_report.misses > 0);
         println!(
-            "NATGAS_H1_EXAMPLE rows={} threshold={:.8} entries_plan={} simulations={} best={} tp={:.5} trades={} wins={} win_rate={:.4} target=0.8500 meets_target={} expectancy={:.6} kasm_plan={} dag_nodes={} cache_hits={} cache_misses={} injected={} avoided={} mfe_reduce={} gpu_kernel={}",
+            "NATGAS_{}_{}H rows={} threshold={:.8} entries_plan={} simulations={} best={} filter_id={} filter_label={} formula={} refs={} tp={:.5} trades={} wins={} win_rate={:.4} target=0.8500 meets_target={} expectancy={:.6} kasm_plan={} dag_nodes={} cache_hits={} cache_misses={} injected={} avoided={} mfe_reduce={} gpu_kernel={}",
+            granularity,
+            entry_hour,
             result.rows,
             result.low_volatility_threshold,
             result
@@ -9575,6 +21511,10 @@ mod strategy_tests {
                 .unwrap_or_default(),
             plan.simulation_count,
             best.direction,
+            best.filter_id,
+            best.filter_label,
+            best.display_formula.join(" && "),
+            best.indicator_refs.join(","),
             best.take_profit_distance,
             best.trades,
             best.wins,
@@ -9590,5 +21530,482 @@ mod strategy_tests {
             plan.outcome_cube_key,
             plan.gpu_plan.kernel,
         );
+    }
+
+    fn run_synthetic_manifest_replay(entry_hour: u32) {
+        let spec = natgas_example_spec("H1", entry_hour);
+        let candles = synthetic_hourly_candles(720);
+        let result = backtest_strategy_spec(&candles, &spec).expect("strategy backtest");
+        let manifest = build_trading_scenario_manifest(
+            "forge-tauri-rust-strategy-backtest",
+            &spec,
+            "SYNTH_NATGAS_USD",
+            "H1",
+            candles.len(),
+            &result,
+        );
+        let replay = replay_trading_scenario_manifest_with_candles(&manifest, &candles, &spec)
+            .expect("scenario replay");
+        assert!(replay.ok, "scenario replay drift: expected={:?} actual={:?}", replay.expected, replay.actual);
+        assert_eq!(replay.expected, replay.actual);
+        assert!(!manifest.hashes.config_hash.is_empty());
+        assert!(!manifest.hashes.input_ref_hash.is_empty());
+        assert!(!manifest.hashes.output_hash.is_empty());
+        assert!(!manifest.hashes.proof_hash.is_empty());
+    }
+
+    fn run_natgas_forced_daily_paired_backtest(granularity: &str) {
+        let spec = natgas_forced_daily_paired_spec(granularity);
+        let missing = validate_strategy_spec(&spec);
+        assert!(missing.is_empty(), "missing metrics: {missing:?}");
+        let series = canonical_chart_series("NATGAS_USD", granularity, 0)
+            .unwrap_or_else(|_| panic!("NATGAS_USD {granularity} history"));
+        let result = backtest_strategy_spec(&series.candles, &spec).expect("paired strategy backtest");
+        let best = result.best.as_ref().expect("best paired candidate");
+        let best_daily = result
+            .candidates
+            .iter()
+            .max_by(|left, right| {
+                left.daily_target_hit_rate
+                    .unwrap_or(0.0)
+                    .partial_cmp(&right.daily_target_hit_rate.unwrap_or(0.0))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| {
+                        left.avg_daily_pnl_distance
+                            .unwrap_or(f64::NEG_INFINITY)
+                            .partial_cmp(&right.avg_daily_pnl_distance.unwrap_or(f64::NEG_INFINITY))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+            })
+            .expect("best daily candidate");
+        let plan = &result.compute_plan;
+        println!(
+            "NATGAS_{}_PAIRED_DAILY_11_15_21 rows={} threshold={:.8} entries_plan={} simulations={} best={} filter_id={} filter_label={} formula={} refs={} tp={:.5} trades={} wins={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} min_daily_pnl={:.6} meets_target={} expectancy={:.6} kasm_plan={} dag_nodes={} cache_hits={} cache_misses={} injected={} avoided={} mfe_reduce={} gpu_kernel={}",
+            granularity,
+            result.rows,
+            result.low_volatility_threshold,
+            result.paired_probe.as_ref().map(|probe| probe.entries).unwrap_or_default(),
+            plan.simulation_count,
+            best.direction,
+            best.filter_id,
+            best.filter_label,
+            best.display_formula.join(" && "),
+            best.indicator_refs.join(","),
+            best.take_profit_distance,
+            best.trades,
+            best.wins,
+            best.win_rate.unwrap_or(0.0),
+            best.daily_target_hit_rate.unwrap_or(0.0),
+            best.target_hit_days.unwrap_or(0),
+            best.total_days.unwrap_or(0),
+            best.avg_daily_pnl_distance.unwrap_or(0.0),
+            best.min_daily_pnl_distance.unwrap_or(0.0),
+            best.meets_target,
+            best.expectancy_distance,
+            plan.plan_id,
+            plan.dag_nodes.len(),
+            plan.cache_report.hits,
+            plan.cache_report.misses,
+            plan.cache_report.injected_results,
+            plan.cache_report.avoided_recalculations,
+            plan.outcome_cube_key,
+            plan.gpu_plan.kernel,
+        );
+        println!(
+            "NATGAS_{}_PAIRED_DAILY_TOP_DAILY filter_id={} filter_label={} formula={} refs={} tp={:.5} trades={} wins={} win_rate={:.4} daily_target_hit_rate={:.4} target_hit_days={} total_days={} avg_daily_pnl={:.6} min_daily_pnl={:.6} meets_target={} expectancy={:.6}",
+            granularity,
+            best_daily.filter_id,
+            best_daily.filter_label,
+            best_daily.display_formula.join(" && "),
+            best_daily.indicator_refs.join(","),
+            best_daily.take_profit_distance,
+            best_daily.trades,
+            best_daily.wins,
+            best_daily.win_rate.unwrap_or(0.0),
+            best_daily.daily_target_hit_rate.unwrap_or(0.0),
+            best_daily.target_hit_days.unwrap_or(0),
+            best_daily.total_days.unwrap_or(0),
+            best_daily.avg_daily_pnl_distance.unwrap_or(0.0),
+            best_daily.min_daily_pnl_distance.unwrap_or(0.0),
+            best_daily.meets_target,
+            best_daily.expectancy_distance,
+        );
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_example_strategy_backtest_executes_kasm_plan() {
+        run_natgas_example_strategy_backtest("H1", 21);
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H4.csv"]
+    fn natgas_h4_example_strategy_backtest_executes_kasm_plan() {
+        run_natgas_example_strategy_backtest("H4", 21);
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_11h_strategy_backtest_executes_kasm_plan() {
+        run_natgas_example_strategy_backtest("H1", 11);
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_15h_strategy_backtest_executes_kasm_plan() {
+        run_natgas_example_strategy_backtest("H1", 15);
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_21h_strategy_backtest_executes_kasm_plan() {
+        run_natgas_example_strategy_backtest("H1", 21);
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H4.csv"]
+    fn natgas_h4_11h_strategy_backtest_executes_kasm_plan() {
+        run_natgas_example_strategy_backtest("H4", 11);
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H4.csv"]
+    fn natgas_h4_15h_strategy_backtest_executes_kasm_plan() {
+        run_natgas_example_strategy_backtest("H4", 15);
+    }
+
+    #[test]
+    fn synthetic_h1_manifest_replay_produces_same_hashes() {
+        run_synthetic_manifest_replay(11);
+    }
+
+    #[test]
+    fn live_trading_order_denied_without_approval() {
+        let request = sample_trading_order_request(None);
+        let err = validate_trading_order_approval(
+            &request,
+            "NATGAS_USD",
+            "BUY",
+            "MARKET",
+            "FOK",
+            "oanda|source=secure-store|base=https://api-fxpractice.oanda.com|account=present|key=present",
+            1_710_000_000_000,
+        )
+        .expect_err("missing approval must be rejected");
+        assert!(err.contains("explicit approval"));
+    }
+
+    #[test]
+    fn live_trading_order_accepts_matching_approval_proof() {
+        let approved_at_ms = 1_710_000_000_000_u64;
+        let bucket = trading_approval_bucket(approved_at_ms);
+        let provider_state =
+            "oanda|source=secure-store|base=https://api-fxpractice.oanda.com|account=present|key=present";
+        let action_hash = trading_order_action_hash(
+            "NATGAS_USD",
+            "BUY",
+            100.0,
+            "MARKET",
+            None,
+            Some(2.75),
+            Some(3.25),
+            "FOK",
+            provider_state,
+            &bucket,
+        );
+        let request = sample_trading_order_request(Some(TradingLiveApprovalProof {
+            approved: true,
+            approved_at_ms,
+            timestamp_bucket: bucket.clone(),
+            provider_state: provider_state.to_string(),
+            action_hash,
+        }));
+        let proof = validate_trading_order_approval(
+            &request,
+            "NATGAS_USD",
+            "BUY",
+            "MARKET",
+            "FOK",
+            provider_state,
+            approved_at_ms + 60_000,
+        )
+        .expect("matching approval proof");
+        assert_eq!(proof.0, bucket);
+        assert!(!proof.1.is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H4.csv"]
+    fn natgas_h4_21h_strategy_backtest_executes_kasm_plan() {
+        run_natgas_example_strategy_backtest("H4", 21);
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_forced_daily_paired_strategy_backtest_executes_kasm_plan() {
+        run_natgas_forced_daily_paired_backtest("H1");
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H4.csv"]
+    fn natgas_h4_forced_daily_paired_strategy_backtest_executes_kasm_plan() {
+        run_natgas_forced_daily_paired_backtest("H4");
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_seeded_slot_strategy_search_executes() {
+        run_natgas_seeded_slot_strategy_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_seeded_slot_combo_search_executes() {
+        run_natgas_seeded_slot_combo_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_regime_meta_scheduler_search_executes() {
+        run_natgas_seeded_regime_meta_scheduler_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_monster_meta_scheduler_search_executes() {
+        run_natgas_monster_meta_scheduler_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_monster_binary_slot_scheduler_search_executes() {
+        run_natgas_monster_binary_slot_scheduler_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_loss_cluster_diagnostics_executes() {
+        run_natgas_loss_cluster_diagnostics();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_tuned_day_state_scheduler_search_executes() {
+        run_natgas_tuned_day_state_scheduler_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_seeded_slot_combo_search_21h_vwap_only_executes() {
+        run_natgas_seeded_slot_combo_search_21h_vwap_only();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_simple_vwap_baseline_executes() {
+        run_natgas_simple_vwap_baseline();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_simple_vwap_baseline_tp7_executes() {
+        run_natgas_simple_vwap_baseline_tp7();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_simple_vwap_plus_19h_search_executes() {
+        run_natgas_simple_vwap_plus_19h_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_mandatory_daily_winrate_search_executes() {
+        run_natgas_mandatory_daily_winrate_search();
+    }
+
+    #[test]
+    fn save_natgas_simple_vwap_baseline_as_program_executes() {
+        run_save_natgas_simple_vwap_baseline_as_program();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_trend_lifecycle_analysis_executes() {
+        run_natgas_h1_trend_lifecycle_analysis();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_21h_time_exit_analysis_executes() {
+        run_natgas_21h_trend_follow_time_exit_analysis();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_session_time_reversal_search_executes() {
+        run_natgas_session_reversal_time_exit_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_strat_a_13h_17h_21h_hybrid_executes() {
+        run_natgas_strat_a_13h_17h_21h_hybrid();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_classic_vwap_qualified_hybrid_search_executes() {
+        run_natgas_classic_vwap_qualified_hybrid_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_11h_15h_pullback_rejoin_search_executes() {
+        run_natgas_11h_15h_pullback_rejoin_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and M5.csv"]
+    fn natgas_h1_to_m5_pullback_execution_search_executes() {
+        run_natgas_h1_to_m5_pullback_execution_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_anchored_vwap_touch_search_executes() {
+        run_natgas_h1_anchored_vwap_touch_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_anchored_vwap_ext2_search_executes() {
+        run_natgas_h1_anchored_vwap_ext2_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_anchored_vwap_make_it_worse_executes() {
+        run_natgas_h1_anchored_vwap_make_it_worse();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_h1_anchored_vwap_ext2_rejection_h4_search_executes() {
+        run_natgas_h1_anchored_vwap_ext2_rejection_h4_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_hour_close_behavior_audit_executes() {
+        run_natgas_h1_hour_close_behavior_audit();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_h1_hour_close_context_audit_executes() {
+        run_natgas_h1_hour_close_context_audit();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_h1_hour_recurrence_combo_search_executes() {
+        run_natgas_h1_hour_recurrence_combo_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_h1_high_confidence_signal_refinement_search_executes() {
+        run_natgas_high_confidence_signal_refinement_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_h1_target_bad_ratio_search_executes() {
+        run_natgas_h1_target_bad_ratio_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_inverse_bad_pattern_probe_executes() {
+        run_natgas_h1_inverse_bad_pattern_probe();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_three_higher_closes_exact_mirror_strategy_executes() {
+        run_natgas_h1_three_higher_closes_exact_mirror_strategy();
+    }
+
+    #[test]
+    #[ignore = "writes a direct program into the local Forge store"]
+    fn save_natgas_h1_three_higher_closes_exact_mirror_as_program_executes() {
+        run_save_natgas_h1_three_higher_closes_exact_mirror_as_program();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_strat_a_unified_performance_executes() {
+        run_natgas_strat_a_unified_performance();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_strat_a_compounded_capital_projection_executes() {
+        run_natgas_strat_a_compounded_capital_projection();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_h1_hour_context_strategy_trials_executes() {
+        run_natgas_hour_context_strategy_trials();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_inverse_context_diagnostics_executes() {
+        run_natgas_inverse_context_diagnostics();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_21h_inverse_vwap_search_executes() {
+        run_natgas_21h_inverse_vwap_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv"]
+    fn natgas_h1_11h_15h_refinement_search_executes() {
+        run_natgas_11h_15h_refinement_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_h1_11h_15h_h4_context_search_executes() {
+        run_natgas_11h_15h_h4_context_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_h1_h4_pullback_reversal_search_executes() {
+        run_natgas_h4_pullback_reversal_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H4.csv"]
+    fn natgas_h4_pullback_direct_strategy_executes() {
+        run_natgas_h4_pullback_direct_strategy();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_h1_11h_15h_h4_bias_shortlist_search_executes() {
+        run_natgas_11h_15h_h4_bias_shortlist_search();
+    }
+
+    #[test]
+    #[ignore = "requires local .forge-store/trading/oanda/NATGAS_USD/H1.csv and H4.csv"]
+    fn natgas_h1_11h_15h_h4_bias_policy_search_executes() {
+        run_natgas_11h_15h_h4_bias_policy_search();
     }
 }
