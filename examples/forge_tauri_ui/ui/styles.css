@@ -12183,6 +12183,79 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
 }
 
 /* Market Order panel — scoped under trading-mode proof-panel for specificity */
+.proof-panel.trading-mode .proof-panel-content {
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+.proof-panel.trading-mode .proof-panel-scrollbar {
+  display: none;
+}
+.proof-panel.trading-mode .market-order-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.proof-panel.trading-mode .market-order-pane {
+  flex: 2 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 20px 14px 18px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.proof-panel.trading-mode .market-order-pane::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none;
+}
+.proof-panel.trading-mode .market-strategy-pane {
+  flex: 1 1 0;
+  min-height: 0;
+  position: relative;
+  background: #050504;
+  border-top: 1px solid rgba(238,238,232,0.06);
+  overflow: hidden;
+}
+.proof-panel.trading-mode .market-strategy-pane::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(238,238,232,0.11) 0.6px, transparent 0.6px);
+  background-size: 14px 14px;
+  pointer-events: none;
+  opacity: 0.55;
+}
+.proof-panel.trading-mode .market-strategy-content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  padding: 14px 20px 14px 18px;
+  color: rgba(238,238,232,0.68);
+  font: 500 0.76rem/1.6 "Geist Mono", Consolas, ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  box-sizing: border-box;
+}
+.proof-panel.trading-mode .market-strategy-content::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none;
+}
+.proof-panel.trading-mode .market-strategy-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: rgba(238,238,232,0.26);
+  font: 400 0.7rem Geist, sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
 .proof-panel.trading-mode .proof-panel-content .market-order-shell {
   display: flex;
   flex-direction: column;
