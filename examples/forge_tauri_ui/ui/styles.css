@@ -12157,22 +12157,22 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   border-radius: 0;
   padding: 0;
   background: transparent;
-  color: rgba(238,238,232,0.56);
+  color: rgba(238,238,232,0.42);
   box-shadow: none;
   font-size: 0.82rem;
-  font-weight: 700;
+  font-weight: 400;
   letter-spacing: 0;
   line-height: 1.2;
 }
 
 .proof-panel.trading-mode .proof-panel-tab:hover {
   background: transparent;
-  color: rgba(246,246,242,0.88);
+  color: rgba(246,246,242,0.72);
 }
 
 .proof-panel.trading-mode .proof-panel-tab.is-active {
   background: transparent;
-  color: rgba(248,226,164,0.98);
+  color: rgba(80,210,200,0.82);
   box-shadow: none;
 }
 
