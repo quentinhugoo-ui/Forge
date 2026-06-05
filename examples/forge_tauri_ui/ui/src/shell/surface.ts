@@ -1804,19 +1804,13 @@ const forgeCanvasChatAllInputs = [
 const forgeCanvasChatCommandSquare = forgeCanvasChatAttach?.closest?.(".canvas-chat-command-square") || null;
 
 const CANVAS_CHAT_COMMAND_SQUARE_INSET = 8;
-const CANVAS_CHAT_COMMAND_SQUARE_SIZE = 60;
-// Square is sized to fill chat-bar height with 14px equidistant top/left/bottom gaps.
-// Chat padding is 8 top + 9 bottom = 17. Square insets in padding-box: top 6, bottom 5 → 11.
-// So square size = chat outer height - 17 - 11 = chat outer - 28.
-const CANVAS_CHAT_COMMAND_SQUARE_TOTAL_INSET = 28;
-const CANVAS_CHAT_COMMAND_SQUARE_MIN = 48;
 
 function syncCanvasChatCommandSquareSize() {
   if (!(forgeCanvasChat instanceof HTMLElement)) return;
-  const chatHeight = forgeCanvasChat.offsetHeight || 0;
-  const dynamic = chatHeight > 0 ? Math.max(CANVAS_CHAT_COMMAND_SQUARE_MIN, chatHeight - CANVAS_CHAT_COMMAND_SQUARE_TOTAL_INSET) : CANVAS_CHAT_COMMAND_SQUARE_SIZE;
-  forgeCanvasChat.style.setProperty("--chat-command-square-size", `${dynamic}px`);
-  forgeCanvasChat.style.setProperty("--canvas-chat-command-square-size", `${dynamic}px`);
+  const height = forgeCanvasChat.getBoundingClientRect().height;
+  if (!Number.isFinite(height) || height <= 0) return;
+  const size = Math.max(44, Math.round(height - (CANVAS_CHAT_COMMAND_SQUARE_INSET * 2)));
+  forgeCanvasChat.style.setProperty("--canvas-chat-command-square-size", `${size}px`);
   forgeCanvasChat.style.setProperty("--canvas-chat-command-square-inset", `${CANVAS_CHAT_COMMAND_SQUARE_INSET}px`);
 }
 
