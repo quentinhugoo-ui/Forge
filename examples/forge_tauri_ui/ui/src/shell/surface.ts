@@ -1804,7 +1804,7 @@ const forgeCanvasChatAllInputs = [
 const forgeCanvasChatCommandSquare = forgeCanvasChatAttach?.closest?.(".canvas-chat-command-square") || null;
 
 const CANVAS_CHAT_COMMAND_SQUARE_INSET = 8;
-const CANVAS_CHAT_COMMAND_SQUARE_SIZE = 70;
+const CANVAS_CHAT_COMMAND_SQUARE_SIZE = 60;
 
 function syncCanvasChatCommandSquareSize() {
   if (!(forgeCanvasChat instanceof HTMLElement)) return;
