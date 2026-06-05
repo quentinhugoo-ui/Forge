@@ -9403,7 +9403,7 @@ function renderAlphaRightPanelTabs() {
   }
   const tabs = isTradingPanelActive()
     ? [
-      { id: "orders", label: "Orders" },
+      { id: "orders", label: "Market Order" },
       { id: "bloomberg", label: "Bloomberg" },
     ]
     : isBangerSurfaceActive()
@@ -10048,7 +10048,7 @@ function renderAlphaRightPanel() {
     alphaRightPanelTitle.textContent = bangerActive && alphaRightPanelMode === "plan"
       ? "Projet"
       : tradingActive
-      ? (alphaRightPanelMode === "bloomberg" ? "Bloomberg" : "Orders")
+      ? (alphaRightPanelMode === "bloomberg" ? "Bloomberg" : "Market Order")
       : webExplorerActive
         ? (alphaRightPanelMode === "console" ? "Web console" : "Proof HUD")
       : alphaRightPanelMode === "console"
@@ -27768,6 +27768,7 @@ function providerTerminalStoryState(provider) {
   const installed = providerCliEffectiveInstalled(status);
   const running = providerTerminalIsRunning(provider);
   const opening = providerTerminalIsOpening(provider);
+  const oauthConsole = ["codex", "openrouter"].includes(provider);
   const needsNode = providerStatusNeedsNode(status);
   let stateText = "missing";
   let tone = "error";
@@ -27777,6 +27778,9 @@ function providerTerminalStoryState(provider) {
   } else if (connected) {
     stateText = "ready";
     tone = "success";
+  } else if (oauthConsole && running) {
+    stateText = "auth";
+    tone = "accent";
   } else if (running) {
     stateText = "live";
     tone = "success";
@@ -27894,13 +27898,13 @@ function providerTerminalStoryPreviewLines(provider) {
 function providerTerminalStoryActionText(provider) {
   const { profile, connected, installed, running, opening, needsNode } = providerTerminalStoryState(provider);
   if (provider === "codex") {
-    if (opening || running) return "Forge is routing the OpenAI OAuth console into the embedded terminal.";
-    if (connected) return "Press Open above to reopen the direct Codex OAuth console inside Forge.";
+    if (connected) return "Codex is connected and ready.";
+    if (opening || running) return "Waiting for OpenAI OAuth authorization in the browser.";
     return "Open the embedded OAuth console to launch ChatGPT sign-in, then refresh Forge.";
   }
   if (provider === "openrouter") {
-    if (opening || running) return "Forge is routing the official OpenRouter OAuth console into this provider terminal.";
-    if (connected) return "OpenRouter is connected; use Login again only if you want to rotate or replace the local key.";
+    if (connected) return "OpenRouter is connected and ready.";
+    if (opening || running) return "Waiting for OpenRouter authorization in the browser.";
     return "Press Login above status to open the official OpenRouter OAuth flow, then refresh Forge.";
   }
   if (opening || running) return `Forge is routing the live ${profile.name} session into the embedded terminal.`;
@@ -28642,7 +28646,7 @@ async function startProviderTerminal(provider) {
   setProviderTerminalVisible(provider, true);
   if (providerUsesLiveTerminal(provider)) resetProviderTerminalEmulator(provider);
   renderProviderTerminal(provider, {
-    running: true,
+    running: providerUsesLiveTerminal(provider),
     readyForInput: false,
     phase: "opening",
     message: dom.startMessage,

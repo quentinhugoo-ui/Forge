@@ -1,5 +1,5 @@
 // @ts-nocheck
-import "./controller.js";
+import { createTradingAssetRuntime } from "./controller.js";
 
 (function () {
   "use strict";
@@ -90,6 +90,24 @@ import "./controller.js";
     TRADING_RIGHT_PANEL_TRIGGER_SVG,
     loadLlmInvolvement,
   } = window.ForgeTradingCatalog || {};
+  const tradingAssetRuntime = createTradingAssetRuntime({
+    getBrokerApi: () => window.__forgeTradingBrokerApi || null,
+    assetTokenLabels: ASSET_TOKEN_LABELS,
+  });
+  const {
+    selectedBrokerKind,
+    selectedBrokerLabel,
+    selectedBrokerLogoKind,
+    availableBrokers,
+    brokerInstrumentCode,
+    splitInstrumentTokens,
+    assetTokenLabel,
+    inferAssetClass,
+    humanAssetDisplayName,
+    compareAssetCode,
+    compareAssetSubtitle,
+    normalizeAssetEntry,
+  } = tradingAssetRuntime;
   const chartModeTriggerDefault = els.chartModeTrigger ? {
     innerHTML: els.chartModeTrigger.innerHTML,
     ariaLabel: els.chartModeTrigger.getAttribute("aria-label") || "Add file",
@@ -156,6 +174,11 @@ import "./controller.js";
       limitPrice: "",
       stopLoss: "",
       takeProfit: "",
+      entryOrderEnabled: false,
+      tpValue: "",
+      slValue: "",
+      trailingValue: "",
+      upperBoundValue: "",
     },
     ordersOutput: "No order sent yet.",
     compareInstruments: [],
@@ -558,28 +581,6 @@ import "./controller.js";
     } catch (_) {}
   }
 
-  function brokerApi() {
-    return window.__forgeTradingBrokerApi || null;
-  }
-
-  function selectedBrokerKind() {
-    return brokerApi()?.getActiveBroker?.() || "oanda";
-  }
-
-  function selectedBrokerLabel() {
-    return brokerApi()?.getActiveBrokerLabel?.() || "OANDA";
-  }
-
-  function selectedBrokerLogoKind() {
-    const kind = String(selectedBrokerKind() || "").trim().toLowerCase();
-    if (kind === "oanda") return kind;
-    return "";
-  }
-
-  function availableBrokers() {
-    return brokerApi()?.listBrokers?.() || [{ kind: "oanda", label: "OANDA", active: true }];
-  }
-
   function activeBrokerInstrumentSet() {
     const cacheKey = brokerInstrumentUniverseCacheKey();
     if (state.uiCache.brokerInstrumentSetKey === cacheKey && state.uiCache.brokerInstrumentSetValue instanceof Set) {
@@ -611,90 +612,6 @@ import "./controller.js";
 
   function timeframeLabel(granularity = state.selectedGranularity) {
     return TIMEFRAME_OPTIONS.find((item) => item.value === granularity)?.label || String(granularity || "");
-  }
-
-  function brokerInstrumentCode(raw) {
-    const source = String(raw || "").trim();
-    if (!source) return "";
-    if (selectedBrokerKind() === "oanda") return source.replace(/[^A-Za-z0-9]/g, "");
-    return source;
-  }
-
-  function splitInstrumentTokens(raw) {
-    return String(raw || "")
-      .trim()
-      .split(/[_/:\-\s]+/)
-      .map((token) => token.trim().toUpperCase())
-      .filter(Boolean);
-  }
-
-  function assetTokenLabel(token) {
-    return ASSET_TOKEN_LABELS[String(token || "").toUpperCase()] || String(token || "");
-  }
-
-  function inferAssetClass(raw, provided = "") {
-    const explicit = String(provided || "").trim().toLowerCase();
-    if (explicit) {
-      if (explicit === "metal") return "commodity";
-      if (explicit === "stock" || explicit === "equity_cfd") return "equity";
-      if (explicit === "bond" || explicit === "bund") return "bond";
-      return explicit;
-    }
-    const tokens = splitInstrumentTokens(raw);
-    const [base = "", quote = ""] = tokens;
-    if (["BTC", "ETH", "SOL", "XRP", "LTC"].includes(base)) return "crypto";
-    if (["XAU", "XAG", "XCU", "XPT", "XPD"].includes(base)) return "commodity";
-    if (["NATGAS", "WTI", "BRENT", "SILVER", "CORN", "SOYBN", "WHEAT", "SUGAR", "COTTON", "COCOA"].includes(base)) return "commodity";
-    if (["BUND", "UST", "US10Y", "DE10Y", "DE10YB", "USB10Y", "UK10YB", "FR10YB"].includes(base) || /10YB$/.test(base)) return "bond";
-    if (["AAPL", "TSLA", "NVDA", "AMZN", "MSFT", "META", "GOOG", "NFLX"].includes(base)) return "equity";
-    if (base && quote && ASSET_TOKEN_LABELS[base] && ASSET_TOKEN_LABELS[quote]) return "forex";
-    if (
-      /[0-9]{2,}/.test(base)
-      || /SPX|NAS|DJI|DE40|DE30|UK100|JP225|AU200|EU50|FRA40|FR40|CN50|HK33|CH20|CHINAH|ESPIX|NL25|SG30/i.test(base)
-    ) return "index";
-    return "instrument";
-  }
-
-  function humanAssetDisplayName(raw, provided = "") {
-    const source = String(provided || "").trim();
-    const code = brokerInstrumentCode(raw) || String(raw || "");
-    if (source && source.replace(/\s+/g, "").toUpperCase() !== code.toUpperCase() && !/^[A-Z0-9/_-]+$/.test(source)) {
-      return source;
-    }
-    const tokens = splitInstrumentTokens(raw);
-    if (!tokens.length) return code;
-    if (tokens.length === 1) return assetTokenLabel(tokens[0]);
-    return tokens.map(assetTokenLabel).join(" / ");
-  }
-
-  function compareAssetCode(raw) {
-    const tokens = splitInstrumentTokens(raw);
-    if (tokens.length >= 2) return `${tokens[0]}/${tokens[1]}`;
-    return brokerInstrumentCode(raw) || String(raw || "");
-  }
-
-  function compareAssetSubtitle(asset) {
-    const source = String(asset?.displayName || "").trim();
-    const shortCode = splitInstrumentTokens(asset?.name || "").join(" / ");
-    if (source && source.toUpperCase() !== shortCode.toUpperCase()) return source;
-    const tokens = splitInstrumentTokens(asset?.name || "");
-    if (tokens.length >= 2) return tokens.map(assetTokenLabel).join(" / ");
-    return humanAssetDisplayName(asset?.name || "", source);
-  }
-
-  function normalizeAssetEntry(item = {}) {
-    const name = String(item?.name || item?.instrument || "").trim();
-    if (!name) return null;
-    if (!/[A-Za-z0-9]/.test(name)) return null;
-    return {
-      name,
-      displayName: humanAssetDisplayName(name, item?.displayName || item?.display_name || ""),
-      assetClass: inferAssetClass(name, item?.assetClass || item?.asset_class || ""),
-      pipLocation: item?.pipLocation ?? item?.pip_location ?? null,
-      displayPrecision: item?.displayPrecision ?? item?.display_precision ?? null,
-      tradeUnitsPrecision: item?.tradeUnitsPrecision ?? item?.trade_units_precision ?? null,
-      minimumTradeSize: item?.minimumTradeSize ?? item?.minimum_trade_size ?? null,
-    };
   }
 
   function formatNumber(value, digits = 3) {
@@ -1445,14 +1362,24 @@ import "./controller.js";
   }
 
   async function ensureSelectedHistorySync(options = {}) {
-    if (!hasTauriInvoke()) return;
+    if (!hasTauriInvoke()) return false;
     const instrument = String(options.instrument || state.selectedInstrument || "").trim();
     const granularity = String(options.granularity || state.selectedGranularity || "").trim().toUpperCase();
-    if (!instrument || !granularity) return;
+    if (!instrument || !granularity) return false;
     const syncKey = `${instrument}::${granularity}`;
     if (state.selectedHistorySyncPromise && state.selectedHistorySyncKey === syncKey && !options.force) {
-      await state.selectedHistorySyncPromise;
-      return;
+      return !!(await state.selectedHistorySyncPromise);
+    }
+    const cached = getCachedSeries(instrument, granularity);
+    const expectedRows = expectedHistoryRows(instrument, granularity);
+    if (
+      !options.force
+      && (
+        (cached.length && (!expectedRows || cached.length >= expectedRows))
+        || expectedRows > 0
+      )
+    ) {
+      return false;
     }
     state.selectedHistorySyncKey = syncKey;
     state.selectedHistorySyncPromise = (async () => {
@@ -1468,16 +1395,19 @@ import "./controller.js";
             replace: true,
             assets: response?.assets,
           });
+          return response.files.length > 0;
         }
+        return false;
       } catch (_) {
         // Live market feed still drives the visible chart; selected history sync is best-effort.
+        return false;
       }
     })().finally(() => {
       if (state.selectedHistorySyncKey === syncKey) {
         state.selectedHistorySyncPromise = null;
       }
     });
-    await state.selectedHistorySyncPromise;
+    return !!(await state.selectedHistorySyncPromise);
   }
 
   function previewCandles(count = 240, stepMs = 4 * 3_600_000) {
@@ -1824,19 +1754,14 @@ import "./controller.js";
     return CHART_TAIL_ROWS_BY_GRANULARITY[String(granularity || "").toUpperCase()] || 20000;
   }
 
+  const PREVIEW_STEP_MS = {
+    S5: 5e3, S10: 1e4, S15: 15e3, S30: 3e4,
+    M1: 6e4, M2: 12e4, M4: 24e4, M5: 3e5, M10: 6e5, M15: 9e5, M30: 18e5,
+    H1: 36e5, H2: 72e5, H3: 108e5, H4: 144e5, H6: 216e5, H8: 288e5, H12: 432e5,
+    D: 864e5, W: 6048e5, M: 2592e6,
+  };
   function previewStepMs(granularity = state.selectedGranularity) {
-    const key = String(granularity || "").toUpperCase();
-    if (key === "S10") return 10 * 1000;
-    if (key === "S30") return 30 * 1000;
-    if (key === "M1") return 60 * 1000;
-    if (key === "M5") return 5 * 60 * 1000;
-    if (key === "M15") return 15 * 60 * 1000;
-    if (key === "M30") return 30 * 60 * 1000;
-    if (key === "H1") return 60 * 60 * 1000;
-    if (key === "H4") return 4 * 60 * 60 * 1000;
-    if (key === "D") return 24 * 60 * 60 * 1000;
-    if (key === "W") return 7 * 24 * 60 * 60 * 1000;
-    return 4 * 60 * 60 * 1000;
+    return PREVIEW_STEP_MS[String(granularity || "").toUpperCase()] || 144e5;
   }
 
   function ensureImmediateTradingSnapshot() {
@@ -3310,6 +3235,9 @@ import "./controller.js";
   }
 
   function renderLeftPanel() {
+    if (!state.active || window.__forgeBoomIsActive || document.body?.classList?.contains("banger-fullscreen-mode")) {
+      return;
+    }
     const assets = libraryAssets();
     const pinned = assets.filter((item) => PINNED_ASSETS.includes(item.name));
     const main = assets.filter((item) => !PINNED_ASSETS.includes(item.name));
@@ -4912,6 +4840,67 @@ import "./controller.js";
     return `fnv1a-${(hash >>> 0).toString(16)}`;
   }
 
+  async function sha256Hex(text = "") {
+    const input = String(text || "");
+    if (globalThis.crypto?.subtle && typeof TextEncoder !== "undefined") {
+      const bytes = new TextEncoder().encode(input);
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+      return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+    return simpleStableHash(input);
+  }
+
+  function tradingApprovalBucket(ms = Date.now()) {
+    return `5m:${Math.floor(Number(ms || 0) / 300000)}`;
+  }
+
+  function tradingOrderProviderState() {
+    const config = state.snapshot?.config || {};
+    return [
+      "oanda",
+      `source=${String(config.source || "unknown")}`,
+      `base=${String(config.baseUrl || state.credentials.baseUrl || "")}`,
+      `account=${config.accountIdPresent ? "present" : "missing"}`,
+      `key=${config.apiKeyPresent ? "present" : "missing"}`,
+    ].join("|");
+  }
+
+  async function buildTradingOrderApproval(request) {
+    const approvedAtMs = Date.now();
+    const timestampBucket = tradingApprovalBucket(approvedAtMs);
+    const providerState = tradingOrderProviderState();
+    const actionHash = await sha256Hex(JSON.stringify({
+      instrument: String(request.instrument || ""),
+      side: String(request.side || ""),
+      units: Number(request.units || 0).toFixed(8),
+      orderType: String(request.orderType || ""),
+      limitPrice: request.limitPrice == null ? null : Number(request.limitPrice).toFixed(8),
+      stopLoss: request.stopLoss == null ? null : Number(request.stopLoss).toFixed(8),
+      takeProfit: request.takeProfit == null ? null : Number(request.takeProfit).toFixed(8),
+      timeInForce: String(request.timeInForce || ""),
+      providerState,
+      timestampBucket,
+    }));
+    const summary = [
+      "Approve live OANDA order?",
+      `Instrument: ${request.instrument || ""}`,
+      `Side: ${request.side || ""}`,
+      `Units: ${request.units || 0}`,
+      `Type: ${request.orderType || ""}`,
+      request.limitPrice == null ? "" : `Limit: ${request.limitPrice}`,
+      request.stopLoss == null ? "" : `SL: ${request.stopLoss}`,
+      request.takeProfit == null ? "" : `TP: ${request.takeProfit}`,
+    ].filter(Boolean).join("\n");
+    if (!globalThis.confirm(summary)) return null;
+    return {
+      approved: true,
+      approvedAtMs,
+      timestampBucket,
+      providerState,
+      actionHash,
+    };
+  }
+
   function tradingContextFocusTags(userMessage = "") {
     const normalized = String(userMessage || "").toLowerCase();
     const tags = [];
@@ -6143,7 +6132,7 @@ import "./controller.js";
         },
         pendingOrders: [],
         openTrades: [],
-        candles: previewCandles(240, targetGranularity === "D" ? 24 * 3_600_000 : 4 * 3_600_000),
+        candles: previewCandles(240, previewStepMs(targetGranularity)),
         alerts: state.alerts.slice(),
         alertEvents: [],
       };
@@ -6247,8 +6236,10 @@ import "./controller.js";
         canvasBridge()?.refreshRightPanel?.();
       }
       if (selectedHistoryPromise) {
-        await selectedHistoryPromise;
+        const historySynced = await selectedHistoryPromise;
         if (
+          historySynced
+          &&
           requestedInstrument === state.selectedInstrument
           && requestedGranularity === state.selectedGranularity
         ) {
@@ -6312,7 +6303,7 @@ import "./controller.js";
     seedTradingSurfaceImmediate({ allowEmpty: false });
     void refreshTradingData({
       syncSelectedHistory: true,
-      forceSelectedHistorySync: true,
+      forceSelectedHistorySync: false,
       instrument,
       granularity: state.selectedGranularity,
     });
@@ -6327,7 +6318,7 @@ import "./controller.js";
     seedTradingSurfaceImmediate({ allowEmpty: false });
     void refreshTradingData({
       syncSelectedHistory: true,
-      forceSelectedHistorySync: true,
+      forceSelectedHistorySync: false,
       instrument: state.selectedInstrument,
       granularity,
     });
@@ -6456,16 +6447,23 @@ import "./controller.js";
   }
 
   async function placeOrder() {
+    const request = {
+      instrument: state.orderForm.instrument || state.selectedInstrument,
+      side: state.orderForm.side,
+      units: Number(state.orderForm.units || 0),
+      orderType: state.orderForm.orderType,
+      limitPrice: state.orderForm.limitPrice ? Number(state.orderForm.limitPrice) : null,
+      stopLoss: state.orderForm.stopLoss ? Number(state.orderForm.stopLoss) : null,
+      takeProfit: state.orderForm.takeProfit ? Number(state.orderForm.takeProfit) : null,
+      timeInForce: state.orderForm.orderType === "LIMIT" ? "GTC" : "FOK",
+    };
+    const approval = await buildTradingOrderApproval(request);
+    if (!approval) {
+      state.ordersOutput = "Live trading order cancelled before submission.";
+      return;
+    }
     const response = await invoke("trading_oanda_place_order", {
-      request: {
-        instrument: state.orderForm.instrument || state.selectedInstrument,
-        side: state.orderForm.side,
-        units: Number(state.orderForm.units || 0),
-        orderType: state.orderForm.orderType,
-        limitPrice: state.orderForm.limitPrice ? Number(state.orderForm.limitPrice) : null,
-        stopLoss: state.orderForm.stopLoss ? Number(state.orderForm.stopLoss) : null,
-        takeProfit: state.orderForm.takeProfit ? Number(state.orderForm.takeProfit) : null,
-      },
+      request: { ...request, approval },
     });
     state.ordersOutput = [
       response?.message || "Order sent.",
@@ -6473,6 +6471,8 @@ import "./controller.js";
       `side=${response?.side || state.orderForm.side}`,
       `units=${response?.units ?? state.orderForm.units}`,
       `type=${response?.orderType || state.orderForm.orderType}`,
+      `approval_bucket=${response?.approvalTimestampBucket || approval.timestampBucket}`,
+      `approval_proof=${response?.approvalProofHash || ""}`,
     ].join("\n");
     await refreshTradingData();
   }
@@ -6520,7 +6520,283 @@ import "./controller.js";
     return label;
   }
 
+  function pipSizeFor(instrument) {
+    const sym = String(instrument || "").toUpperCase();
+    if (sym.includes("JPY")) return 0.01;
+    if (sym.startsWith("XAU")) return 0.01;
+    if (sym.startsWith("XAG")) return 0.001;
+    if (sym.includes("BTC") || sym.includes("ETH")) return 1;
+    if (/^(SPX|US30|UK100|DE30|JP225|NAS100|NDX)/.test(sym)) return 1;
+    return 1e-4;
+  }
+  function pricePrecisionFor(instrument) {
+    const sym = String(instrument || "").toUpperCase();
+    if (sym.includes("JPY")) return 3;
+    if (sym.startsWith("XAU")) return 2;
+    if (sym.startsWith("XAG")) return 3;
+    if (sym.includes("BTC") || sym.includes("ETH")) return 1;
+    if (/^(SPX|US30|UK100|DE30|JP225|NAS100|NDX)/.test(sym)) return 1;
+    return 5;
+  }
+  function pipValueInAccount(instrument, units, askPrice, accountCurrency) {
+    const sym = String(instrument || "").toUpperCase();
+    const acc = String(accountCurrency || "").toUpperCase();
+    const pipSize = pipSizeFor(instrument);
+    const u = Number(units) || 0;
+    if (!u || pipSize <= 0) return 0;
+    const parts = sym.split("_");
+    if (parts.length !== 2) return u * pipSize;
+    const base = parts[0], quote = parts[1];
+    if (!acc || quote === acc) return u * pipSize;
+    if (base === acc && askPrice > 0) return u * pipSize / askPrice;
+    return u * pipSize;
+  }
+  function marginRateFor(instrument) {
+    const sym = String(instrument || "").toUpperCase();
+    if (/^(XAU|XAG)/.test(sym)) return 0.05;
+    if (/^(BTC|ETH)/.test(sym)) return 0.10;
+    if (/^(SPX|US30|UK100|DE30|JP225|NAS100|NDX)/.test(sym)) return 0.05;
+    return 0.02;
+  }
+  function marginRequiredApprox(instrument, units, askPrice, accountCurrency) {
+    const sym = String(instrument || "").toUpperCase();
+    const acc = String(accountCurrency || "").toUpperCase();
+    const rate = marginRateFor(instrument);
+    const u = Number(units) || 0;
+    if (!u) return 0;
+    const parts = sym.split("_");
+    if (parts.length !== 2) return u * askPrice * rate;
+    const base = parts[0], quote = parts[1];
+    if (base === acc) return u * rate;
+    if (quote === acc) return u * askPrice * rate;
+    return u * askPrice * rate;
+  }
+  function unitsAvailableApprox(instrument, askPrice, accountCurrency, marginAvailable) {
+    const sym = String(instrument || "").toUpperCase();
+    const acc = String(accountCurrency || "").toUpperCase();
+    const rate = marginRateFor(instrument);
+    const margin = Number(marginAvailable) || 0;
+    if (margin <= 0 || rate <= 0) return 0;
+    const parts = sym.split("_");
+    if (parts.length !== 2) return 0;
+    const base = parts[0], quote = parts[1];
+    let marginPerUnit;
+    if (base === acc) marginPerUnit = rate;
+    else if (quote === acc) marginPerUnit = askPrice * rate;
+    else marginPerUnit = askPrice * rate;
+    if (!marginPerUnit || marginPerUnit <= 0) return 0;
+    return Math.floor(margin / marginPerUnit);
+  }
+  function cycleMarketOrderInstrument(direction) {
+    const list = availableAssets().map((a) => a.name).filter(Boolean);
+    if (!list.length) return;
+    const current = state.orderForm.instrument || state.selectedInstrument;
+    let idx = list.indexOf(current);
+    if (idx < 0) idx = 0;
+    const next = list[(idx + direction + list.length) % list.length];
+    state.orderForm.instrument = next;
+    const c = document.getElementById("alphaProofContent");
+    if (c) renderOrdersPanel(c);
+  }
+  function syncMarketOrderToLegacyFields() {
+    const f = state.orderForm;
+    const instrument = f.instrument || state.selectedInstrument;
+    const pipSize = pipSizeFor(instrument);
+    const price = state.market?.price || state.snapshot?.price;
+    const bid = Number(price?.bid) || 0;
+    const ask = Number(price?.ask) || 0;
+    const side = f.side || "BUY";
+    const entryPrice = f.entryOrderEnabled && f.limitPrice ? Number(f.limitPrice) : side === "BUY" ? ask : bid;
+    f.orderType = f.entryOrderEnabled ? "LIMIT" : "MARKET";
+    const tpDir = side === "BUY" ? 1 : -1;
+    const slDir = side === "BUY" ? -1 : 1;
+    if (f.tpValue) f.takeProfit = String(entryPrice + tpDir * Number(f.tpValue) * pipSize);
+    else f.takeProfit = "";
+    if (f.slValue) f.stopLoss = String(entryPrice + slDir * Number(f.slValue) * pipSize);
+    else f.stopLoss = "";
+  }
+
   function renderOrdersPanel(container) {
+    if (!container) return;
+    container.innerHTML = "";
+    const f = state.orderForm;
+    const instrument = f.instrument || state.selectedInstrument || DEFAULT_INSTRUMENT;
+    const matchInst = (p) => p && String(p.instrument || "").toUpperCase() === String(instrument).toUpperCase();
+    const price = matchInst(state.market?.price) ? state.market.price : matchInst(state.snapshot?.price) ? state.snapshot.price : null;
+    const bid = Number(price?.bid) || 0;
+    const ask = Number(price?.ask) || 0;
+    const pipSize = pipSizeFor(instrument);
+    const precision = pricePrecisionFor(instrument);
+    const spreadPips = pipSize > 0 ? (ask - bid) / pipSize : 0;
+    const side = f.side || "BUY";
+    const entryEnabled = !!f.entryOrderEnabled;
+    const entryPrice = entryEnabled && f.limitPrice ? Number(f.limitPrice) : side === "BUY" ? ask : bid;
+    const account = state.snapshot?.account;
+    const marginAvailable = Number(account?.marginAvailable) || 0;
+    const currency = String(account?.currency || "USD");
+
+    const shell = document.createElement("div");
+    shell.className = "market-order-shell";
+
+    const assetRow = document.createElement("div");
+    assetRow.className = "market-order-asset";
+    const assetName = document.createElement("span");
+    assetName.className = "market-order-asset-name";
+    assetName.textContent = instrument;
+    const flipBtn = document.createElement("button");
+    flipBtn.type = "button";
+    flipBtn.className = "barrel-flip";
+    flipBtn.setAttribute("aria-label", "Cycle instrument");
+    flipBtn.innerHTML = `<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 4.7 6 2.4l2.5 2.3"/><path d="M3.5 7.3 6 9.6l2.5-2.3"/></svg>`;
+    flipBtn.addEventListener("click", () => cycleMarketOrderInstrument(1));
+    assetRow.appendChild(assetName);
+    assetRow.appendChild(flipBtn);
+    shell.appendChild(assetRow);
+
+    const tradeRow = document.createElement("div");
+    tradeRow.className = "market-order-trade";
+    const sellBtn = document.createElement("button");
+    sellBtn.type = "button";
+    sellBtn.className = "market-order-side is-sell" + (side === "SELL" ? " is-selected" : "");
+    sellBtn.innerHTML = `<span class="market-order-side-tag">Sell</span><span class="market-order-side-price">${bid > 0 ? formatNumber(bid, precision) : "—"}</span>`;
+    sellBtn.addEventListener("click", () => { state.orderForm.side = "SELL"; renderOrdersPanel(container); });
+    const spreadEl = document.createElement("span");
+    spreadEl.className = "market-order-spread";
+    spreadEl.textContent = spreadPips > 0 ? formatNumber(spreadPips, 1) : "—";
+    const buyBtn = document.createElement("button");
+    buyBtn.type = "button";
+    buyBtn.className = "market-order-side is-buy" + (side === "BUY" ? " is-selected" : "");
+    buyBtn.innerHTML = `<span class="market-order-side-tag">Buy</span><span class="market-order-side-price">${ask > 0 ? formatNumber(ask, precision) : "—"}</span>`;
+    buyBtn.addEventListener("click", () => { state.orderForm.side = "BUY"; renderOrdersPanel(container); });
+    tradeRow.appendChild(sellBtn);
+    tradeRow.appendChild(spreadEl);
+    tradeRow.appendChild(buyBtn);
+    shell.appendChild(tradeRow);
+
+    const grid = document.createElement("div");
+    grid.className = "market-order-grid";
+    const infoRefs: Record<string, HTMLElement> = {};
+    const mkInfo = (key, label, value) => {
+      const i = document.createElement("div");
+      i.className = "market-order-info";
+      const lab = document.createElement("span");
+      lab.className = "market-order-info-label";
+      lab.textContent = label;
+      i.appendChild(lab);
+      const val = document.createElement("span");
+      val.className = "market-order-info-value";
+      val.textContent = value;
+      i.appendChild(val);
+      infoRefs[key] = val;
+      return i;
+    };
+    const refresh = () => {
+      const u = Math.max(0, Number(state.orderForm.units) || 0);
+      const pVA = pipValueInAccount(instrument, u, ask, currency);
+      const mReq = marginRequiredApprox(instrument, u, ask, currency);
+      const uAv = unitsAvailableApprox(instrument, ask, currency, marginAvailable);
+      const tDir = (state.orderForm.side || "BUY") === "BUY" ? 1 : -1;
+      const sDir = -tDir;
+      const tpP = Number(state.orderForm.tpValue) || 0;
+      const slP = Number(state.orderForm.slValue) || 0;
+      const tpLevel = tpP > 0 ? entryPrice + tDir * tpP * pipSize : 0;
+      const slLevel = slP > 0 ? entryPrice + sDir * slP * pipSize : 0;
+      const tpVal = tpP * pVA;
+      const slVal = slP * pVA;
+      if (infoRefs.unitsAvail) infoRefs.unitsAvail.textContent = uAv > 0 ? formatNumber(uAv, 0) : "—";
+      if (infoRefs.pip) infoRefs.pip.textContent = `${formatNumber(pVA, 2)} ${currency}`;
+      if (infoRefs.tp) infoRefs.tp.textContent = tpP > 0 ? `${formatNumber(tpVal, 2)} ${currency} / ${formatNumber(tpLevel, precision)}` : `0.00 ${currency} / 0.000`;
+      if (infoRefs.sl) infoRefs.sl.textContent = slP > 0 ? `${formatNumber(slVal, 2)} ${currency} / ${formatNumber(slLevel, precision)}` : `0.00 ${currency} / 0.000`;
+      if (infoRefs.marginReq) infoRefs.marginReq.textContent = `${formatNumber(mReq, 2)} ${currency}`;
+      if (infoRefs.marginAvail) infoRefs.marginAvail.textContent = `${formatNumber(marginAvailable, 2)} ${currency}`;
+    };
+    const mkField = (label, value, step, onInput, opts?: any) => {
+      const w = document.createElement("div");
+      w.className = "market-order-field" + (opts?.disabled ? " is-disabled" : "");
+      const lab = document.createElement("div");
+      lab.className = "market-order-field-label";
+      const labText = document.createElement("span");
+      labText.textContent = label;
+      lab.appendChild(labText);
+      if (opts?.labelExtra) lab.appendChild(opts.labelExtra);
+      w.appendChild(lab);
+      const inp = document.createElement("input");
+      inp.className = "market-order-field-input";
+      inp.type = "number";
+      inp.step = step;
+      inp.value = value || "";
+      if (opts?.disabled) inp.disabled = true;
+      inp.addEventListener("input", (e: any) => { onInput?.(e.target.value); refresh(); });
+      w.appendChild(inp);
+      return w;
+    };
+
+    grid.appendChild(mkField("Units (Min 1)", f.units, "1", (v) => { state.orderForm.units = v; }));
+    grid.appendChild(mkInfo("unitsAvail", "Units Available", "—"));
+
+    const entryToggle = document.createElement("button");
+    entryToggle.type = "button";
+    entryToggle.className = "market-order-entry-toggle";
+    entryToggle.dataset.on = entryEnabled ? "true" : "false";
+    entryToggle.innerHTML = `<span class="market-order-entry-pin"></span><span>entry</span>`;
+    entryToggle.addEventListener("click", () => {
+      state.orderForm.entryOrderEnabled = !state.orderForm.entryOrderEnabled;
+      state.orderForm.orderType = state.orderForm.entryOrderEnabled ? "LIMIT" : "MARKET";
+      renderOrdersPanel(container);
+    });
+    grid.appendChild(mkField("Price", f.limitPrice, String(pipSize / 10), (v) => { state.orderForm.limitPrice = v; }, { disabled: !entryEnabled, labelExtra: entryToggle }));
+    grid.appendChild(mkInfo("pip", "PIP", "0.00 " + currency));
+
+    grid.appendChild(mkField("Take Profit (Pips)", f.tpValue, "0.1", (v) => { state.orderForm.tpValue = v; }));
+    grid.appendChild(mkInfo("tp", "Take Profit", "0.00 " + currency + " / 0.000"));
+
+    grid.appendChild(mkField("Stop Loss (Pips)", f.slValue, "0.1", (v) => { state.orderForm.slValue = v; }));
+    grid.appendChild(mkInfo("sl", "Stop Loss", "0.00 " + currency + " / 0.000"));
+
+    grid.appendChild(mkField("Trailing Stop (Pips)", f.trailingValue, "0.1", (v) => { state.orderForm.trailingValue = v; }));
+    grid.appendChild(mkInfo("marginReq", "Margin Required", "0.00 " + currency));
+
+    grid.appendChild(mkField("Upper Bound (Pips)", f.upperBoundValue, "0.1", (v) => { state.orderForm.upperBoundValue = v; }));
+    grid.appendChild(mkInfo("marginAvail", "Margin Available", "0.00 " + currency));
+
+    shell.appendChild(grid);
+    refresh();
+
+    const submitBtn = document.createElement("button");
+    submitBtn.type = "button";
+    submitBtn.className = "market-order-submit";
+    submitBtn.textContent = "Submit";
+    submitBtn.addEventListener("click", () => {
+      syncMarketOrderToLegacyFields();
+      void placeOrder();
+    });
+    shell.appendChild(submitBtn);
+
+    const layout = document.createElement("div");
+    layout.className = "market-order-layout";
+    const orderPane = document.createElement("div");
+    orderPane.className = "market-order-pane";
+    orderPane.appendChild(shell);
+    const stratPane = document.createElement("div");
+    stratPane.className = "market-strategy-pane";
+    const stratContent = document.createElement("div");
+    stratContent.className = "market-strategy-content";
+    const stratText = String((state as any).tradingStrategyText || "").trim();
+    if (stratText) {
+      stratContent.textContent = stratText;
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "market-strategy-empty";
+      empty.textContent = "Strategy";
+      stratContent.appendChild(empty);
+    }
+    stratPane.appendChild(stratContent);
+    layout.appendChild(orderPane);
+    layout.appendChild(stratPane);
+    container.appendChild(layout);
+  }
+
+  function _renderOrdersPanelLegacy(container) {
     if (!container) return;
     container.innerHTML = "";
 
@@ -6743,24 +7019,29 @@ import "./controller.js";
     try {
       if (window.__forgeWebExplorerIsActive?.()) window.__forgeCloseWebExplorer?.();
     } catch (_) {}
+    try {
+      if (window.__forgeBoomIsActive) window.__forgeCloseBoom?.();
+    } catch (_) {}
     state.active = true;
     tradingController?.publishActive?.(true);
-    const activationPatch = window.ForgeTradingState?.activatePatch?.() || {
-      alertFormMode: "create",
-      snapshot: null,
-      market: null,
-      catalog: [],
-      assetCatalog: [],
-      localCatalogPromise: null,
-    };
-    state.alertFormMode = activationPatch.alertFormMode;
+    const hasWarmHistory = state.chartCache.size > 0 || state.candles.length > 0 || state.catalog.length > 0;
+    state.alertFormMode = "create";
     state.alertDraft = makeAlertDraft();
-    state.snapshot = activationPatch.snapshot;
-    state.market = activationPatch.market;
-    state.catalog = activationPatch.catalog.slice();
-    state.assetCatalog = activationPatch.assetCatalog.slice();
-    invalidateAssetUniverseCache({ catalog: true });
-    state.localCatalogPromise = activationPatch.localCatalogPromise;
+    if (!hasWarmHistory) {
+      const activationPatch = window.ForgeTradingState?.activatePatch?.() || {
+        snapshot: null,
+        market: null,
+        catalog: [],
+        assetCatalog: [],
+        localCatalogPromise: null,
+      };
+      state.snapshot = activationPatch.snapshot;
+      state.market = activationPatch.market;
+      state.catalog = activationPatch.catalog.slice();
+      state.assetCatalog = activationPatch.assetCatalog.slice();
+      state.localCatalogPromise = activationPatch.localCatalogPromise;
+      invalidateAssetUniverseCache({ catalog: true });
+    }
     state.uiCache.leftPanelKey = "";
     state.uiCache.headerMenuKey = "";
     state.uiCache.tradingHeaderKey = "";
@@ -6780,9 +7061,6 @@ import "./controller.js";
     renderTimeframeRail();
     seedTradingSurfaceImmediate();
     canvasBridge()?.forceImmediateRender?.();
-    try {
-      if (window.__forgeBoomIsActive) window.__forgeCloseBoom?.();
-    } catch (_) {}
     syncTradingWorkspaceButton();
     startPolling();
     try {
@@ -6790,9 +7068,9 @@ import "./controller.js";
     } catch (_) {}
     void (async () => {
       await refreshTradingData({
-        reloadSnapshot: true,
+        reloadSnapshot: !state.snapshot,
         syncSelectedHistory: true,
-        forceSelectedHistorySync: true,
+        forceSelectedHistorySync: false,
       });
       await ensureUniverseHistorySync();
     })();
