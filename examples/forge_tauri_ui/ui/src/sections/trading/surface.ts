@@ -6779,15 +6779,19 @@ import { createTradingAssetRuntime } from "./controller.js";
     orderPane.appendChild(shell);
     const stratPane = document.createElement("div");
     stratPane.className = "market-strategy-pane";
+    const stratTitle = document.createElement("h3");
+    stratTitle.className = "market-strategy-title";
+    stratTitle.textContent = "Strategy";
+    stratPane.appendChild(stratTitle);
     const stratContent = document.createElement("div");
     stratContent.className = "market-strategy-content";
     const stratText = String((state as any).tradingStrategyText || "").trim();
     if (stratText) {
       stratContent.textContent = stratText;
     } else {
-      const empty = document.createElement("div");
+      const empty = document.createElement("span");
       empty.className = "market-strategy-empty";
-      empty.textContent = "Strategy";
+      empty.textContent = "(to be prompted)";
       stratContent.appendChild(empty);
     }
     stratPane.appendChild(stratContent);

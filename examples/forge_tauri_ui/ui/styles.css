@@ -12199,41 +12199,46 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
 .proof-panel.trading-mode .market-order-pane {
   flex: 2 1 0;
   min-height: 0;
-  overflow-y: auto;
-  padding: 14px 20px 14px 18px;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.proof-panel.trading-mode .market-order-pane::-webkit-scrollbar {
-  width: 0 !important;
-  height: 0 !important;
-  display: none;
+  overflow: hidden;
+  padding: 12px 18px 10px 16px;
 }
 .proof-panel.trading-mode .market-strategy-pane {
   flex: 1 1 0;
   min-height: 0;
   position: relative;
-  background: #050504;
-  border-top: 1px solid rgba(238,238,232,0.06);
+  background: transparent;
+  border-top: 1px solid rgba(238,238,232,0.16);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .proof-panel.trading-mode .market-strategy-pane::before {
   content: "";
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(circle, rgba(238,238,232,0.11) 0.6px, transparent 0.6px);
-  background-size: 14px 14px;
+  background-image: radial-gradient(circle, rgba(0,0,0,0.78) 0.7px, transparent 0.7px);
+  background-size: 12px 12px;
   pointer-events: none;
-  opacity: 0.55;
+}
+.proof-panel.trading-mode .market-strategy-title {
+  position: relative;
+  z-index: 1;
+  padding: 10px 18px 0 16px;
+  font: 700 0.62rem Geist, sans-serif;
+  color: #6e6e67;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin: 0;
+  flex-shrink: 0;
 }
 .proof-panel.trading-mode .market-strategy-content {
   position: relative;
   z-index: 1;
-  width: 100%;
-  height: 100%;
-  padding: 14px 20px 14px 18px;
-  color: rgba(238,238,232,0.68);
-  font: 500 0.76rem/1.6 "Geist Mono", Consolas, ui-monospace, monospace;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 18px 12px 16px;
+  color: rgba(238,238,232,0.72);
+  font: 500 0.76rem/1.55 "Geist Mono", Consolas, ui-monospace, monospace;
   white-space: pre-wrap;
   overflow-y: auto;
   scrollbar-width: none;
@@ -12246,20 +12251,15 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   display: none;
 }
 .proof-panel.trading-mode .market-strategy-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  color: rgba(238,238,232,0.26);
-  font: 400 0.7rem Geist, sans-serif;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  display: block;
+  color: rgba(238,238,232,0.34);
+  font: italic 400 0.74rem Geist, sans-serif;
+  letter-spacing: 0.01em;
 }
 .proof-panel.trading-mode .proof-panel-content .market-order-shell {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 11px;
   font-family: Geist, "Segoe UI", "SF Pro Display", -apple-system, sans-serif;
   color: #ecece6;
 }
@@ -12269,7 +12269,7 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   gap: 8px;
 }
 .proof-panel.trading-mode .market-order-asset-name {
-  font: 600 0.94rem Geist, sans-serif;
+  font: 600 0.9rem Geist, sans-serif;
   color: #ecece6;
   letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
@@ -12287,31 +12287,44 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 14px;
-  padding: 4px 0 2px;
+  gap: 10px;
+  padding: 0;
 }
 .proof-panel.trading-mode .market-order-side {
   appearance: none !important;
   -webkit-appearance: none !important;
   background: transparent !important;
-  border: 0 !important;
-  padding: 2px 0 !important;
+  border: 1px solid rgba(238,238,232,0.11) !important;
+  border-radius: 3px !important;
+  padding: 7px 4px 6px !important;
   cursor: pointer !important;
   font-family: inherit !important;
   display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
-  gap: 5px !important;
+  gap: 2px !important;
   outline: none !important;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+.proof-panel.trading-mode .market-order-side:hover {
+  border-color: rgba(238,238,232,0.22) !important;
+}
+.proof-panel.trading-mode .market-order-side.is-selected.is-sell {
+  border-color: rgba(230,140,140,0.46) !important;
+  background: rgba(230,140,140,0.04) !important;
+}
+.proof-panel.trading-mode .market-order-side.is-selected.is-buy {
+  border-color: rgba(120,210,180,0.46) !important;
+  background: rgba(120,210,180,0.04) !important;
 }
 .proof-panel.trading-mode .market-order-side-tag {
-  font: 500 0.74rem Geist, sans-serif;
+  font: 500 0.66rem Geist, sans-serif;
   color: rgba(238,238,232,0.42);
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
 }
 .proof-panel.trading-mode .market-order-side-price {
-  font: 600 1.42rem Geist, sans-serif;
-  color: rgba(238,238,232,0.78);
+  font: 600 1.12rem Geist, sans-serif;
+  color: rgba(238,238,232,0.86);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   line-height: 1;
@@ -12339,13 +12352,13 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
 .proof-panel.trading-mode .market-order-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  column-gap: 24px;
-  row-gap: 18px;
+  column-gap: 18px;
+  row-gap: 9px;
 }
 .proof-panel.trading-mode .market-order-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 .proof-panel.trading-mode .market-order-field.is-disabled {
@@ -12356,7 +12369,7 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font: 500 0.74rem Geist, sans-serif;
+  font: 500 0.7rem Geist, sans-serif;
   color: rgba(80,210,200,0.74);
   letter-spacing: 0.01em;
   line-height: 1.2;
@@ -12369,8 +12382,8 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   border-bottom: 1px solid rgba(238,238,232,0.18) !important;
   border-radius: 0 !important;
   color: #ecece6 !important;
-  padding: 4px 0 5px !important;
-  font: 500 0.88rem Geist, sans-serif !important;
+  padding: 2px 0 3px !important;
+  font: 500 0.82rem Geist, sans-serif !important;
   font-variant-numeric: tabular-nums !important;
   outline: none !important;
   width: 100% !important;
@@ -12397,19 +12410,22 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
 .proof-panel.trading-mode .market-order-info {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
   min-width: 0;
+  justify-content: center;
 }
 .proof-panel.trading-mode .market-order-info-label {
-  font: 500 0.72rem Geist, sans-serif;
+  font: 500 0.66rem Geist, sans-serif;
   color: rgba(238,238,232,0.42);
   letter-spacing: 0.01em;
+  line-height: 1.2;
 }
 .proof-panel.trading-mode .market-order-info-value {
-  font: 500 0.86rem Geist, sans-serif;
+  font: 500 0.8rem Geist, sans-serif;
   color: #ecece6;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+  line-height: 1.2;
 }
 .proof-panel.trading-mode .market-order-entry-toggle {
   appearance: none !important;
@@ -12465,13 +12481,13 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   border: 0 !important;
   border-radius: 3px !important;
   color: rgba(80,210,200,0.92) !important;
-  padding: 13px 0 !important;
-  font: 600 0.82rem Geist, sans-serif !important;
+  padding: 9px 0 !important;
+  font: 600 0.76rem Geist, sans-serif !important;
   letter-spacing: 0.18em !important;
   text-transform: uppercase !important;
   width: 100% !important;
   cursor: pointer !important;
-  margin-top: 6px !important;
+  margin-top: 3px !important;
   outline: none !important;
   transition: background 140ms ease, color 140ms ease;
 }
