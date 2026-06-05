@@ -12190,6 +12190,11 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
 .proof-panel.trading-mode .proof-panel-scrollbar {
   display: none;
 }
+.canvas-wrap.is-trading-mode .file-tray-actions,
+.canvas-wrap.is-trading-mode #alphaFileTrayActions,
+body.trading-surface .file-tray-actions {
+  display: none !important;
+}
 .proof-panel.trading-mode .market-order-layout {
   display: flex;
   flex-direction: column;
