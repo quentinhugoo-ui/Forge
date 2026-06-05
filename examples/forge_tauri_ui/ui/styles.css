@@ -502,6 +502,7 @@ body.webexplorer-surface .canvas-chat-trading-actions {
 .webexplorer-startscreen {
   position: absolute;
   inset: 0;
+  z-index: 3;
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -514,13 +515,10 @@ body.webexplorer-surface .canvas-chat-trading-actions {
 .webexplorer-startscreen-logo {
   display: block;
   width: clamp(142px, 9.4vw, 182px);
-  color: rgba(168, 168, 168, 0.24);
-  opacity: 0.96;
+  color: rgba(202, 202, 196, 0.58);
+  opacity: 1;
   transform: none;
-  filter:
-    drop-shadow(0 1px 0 rgba(255, 255, 255, 0.045))
-    drop-shadow(0 -1px 0 rgba(0, 0, 0, 0.34))
-    drop-shadow(0 10px 18px rgba(0, 0, 0, 0.08));
+  filter: none;
 }
 
 .webexplorer-startscreen-logo svg {
@@ -1891,8 +1889,7 @@ body.webexplorer-google-connected-mode #webExplorerSurface {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--left-panel-width) minmax(0, 1fr) var(--right-panel-width);
-  transition: grid-template-columns 180ms ease;
+  grid-template-columns: var(--left-panel-width) minmax(0, 1fr);
   position: relative;
 }
 
@@ -9458,6 +9455,7 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+  max-width: min(320px, calc(100vw - 56px));
 }
 
 /* Model picker pinned BELOW the chat bar, mirroring the bar's right
@@ -9574,9 +9572,9 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   /* Fixed outer width = chip never shifts when the label changes.
      Inside, content is centered and the chevrons stay glued to the
      text on both sides regardless of how short the labels are. */
-  width: 240px;
+  width: min(300px, calc(100vw - 56px));
   min-width: 0;
-  max-width: 240px;
+  max-width: 100%;
   height: 20px;
   border: 0;
   border-radius: 0;
@@ -9638,6 +9636,8 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   cursor: pointer;
   border-radius: 2px;
   flex: 0 0 auto;
+  position: relative;
+  z-index: 2;
   transition: color 120ms ease, background 120ms ease;
   user-select: none;
 }
@@ -9669,6 +9669,20 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
   backface-visibility: hidden;
   perspective: 200px;
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvas-chat-model-name {
+  flex: 1 1 auto;
+  max-width: 188px;
+  text-align: right;
+}
+
+.canvas-chat-model-effort {
+  flex: 0 0 auto;
+  max-width: 70px;
 }
 .canvas-chat-model-name.flip-anim,
 .canvas-chat-model-effort.flip-anim {
@@ -12010,40 +12024,26 @@ video.canvas-chat-universal-media::-webkit-media-controls-fullscreen-button {
 }
 
 .proof-panel {
-  position: relative;
-  grid-column: 3;
-  width: var(--right-panel-width);
-  max-width: 100%;
-  height: 100%;
+  position: absolute;
+  top: 48px;
+  right: 8px;
+  bottom: 56px;
+  width: 279px;
   z-index: 35;
-  min-width: 0;
-  margin: 0;
-  align-self: stretch;
-  justify-self: stretch;
   border: 1px solid rgba(238,238,232,0.08);
-  background: rgba(28,28,27,0.98);    /* middle tone — same family as left-panel */
+  background: rgba(28,28,27,0.98);
   box-shadow: -12px 0 28px rgba(0,0,0,0.32);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  border-radius: 4px;
   transform: translateX(0);
   opacity: 1;
   pointer-events: auto;
   transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1), opacity 180ms ease;
 }
 
-.content.proof-open .proof-panel {
-  width: 279px;
-  max-width: calc(100% - 8px);
-  height: calc(100% - 104px);
-  margin: 48px 8px 56px 0;
-  border-radius: 4px;
-}
-
 .content:not(.proof-open) .proof-panel {
-  width: 0;
-  height: 100%;
-  margin: 0;
   transform: translateX(10px);
   opacity: 0;
   pointer-events: none;
@@ -14235,6 +14235,16 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   background: #d97757;
 }
 
+.provider-logo-gemini {
+  --provider-logo-url: url("assets/provider-logos/googlegemini.svg");
+  background: #c7b6ff;
+}
+
+.provider-logo-openrouter {
+  --provider-logo-url: url("assets/provider-logos/openrouter.svg");
+  background: #f4f4ee;
+}
+
 .provider-logo-google {
   --provider-logo-url: none;
   background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath fill='%234285F4' d='M17.64 9.205c0-.638-.057-1.253-.164-1.844H9v3.482h4.844c-.209 1.125-.843 2.078-1.794 2.716v2.258h2.907c1.702-1.567 2.683-3.874 2.683-6.612z'/%3E%3Cpath fill='%2334A853' d='M9 18c2.43 0 4.467-.806 5.957-2.183L12.05 13.56c-.806.54-1.837.859-3.05.859-2.344 0-4.328-1.583-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z'/%3E%3Cpath fill='%23FBBC05' d='M3.964 10.708A5.41 5.41 0 0 1 3.682 9c0-.591.103-1.168.282-1.708V4.96H.957A8.99 8.99 0 0 0 0 9c0 1.447.348 2.824.957 4.04l3.007-2.332z'/%3E%3Cpath fill='%23EA4335' d='M9 3.582c1.321 0 2.508.454 3.44 1.346l2.582-2.582C13.462.892 11.425 0 9 0 5.482 0 2.438 2.017.957 4.96l3.007 2.332C4.672 5.165 6.656 3.582 9 3.582z'/%3E%3C/svg%3E") center / contain no-repeat;
@@ -14663,8 +14673,8 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   cursor: default;
 }
 
-:is(#codexProviderTerminal, #claudeProviderTerminal),
-:is(#codexProviderTerminal, #claudeProviderTerminal) :is(button, input, textarea) {
+:is(#codexProviderTerminal, #openrouterProviderTerminal, #claudeProviderTerminal),
+:is(#codexProviderTerminal, #openrouterProviderTerminal, #claudeProviderTerminal) :is(button, input, textarea) {
   font-family: "Cascadia Mono", Consolas, "SF Mono", monospace;
 }
 
@@ -14682,7 +14692,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   --provider-story-error: #ff8a8a;
 }
 
-:is(#codexProviderTerminal, #claudeProviderTerminal) .provider-terminal-screen {
+:is(#codexProviderTerminal, #openrouterProviderTerminal, #claudeProviderTerminal) .provider-terminal-screen {
   display: flex;
   min-height: clamp(480px, calc(100dvh - 232px), 690px);
   height: clamp(480px, calc(100dvh - 232px), 690px);
@@ -14691,7 +14701,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   position: relative;
 }
 
-:is(#codexProviderTerminal, #claudeProviderTerminal) .provider-terminal-output {
+:is(#codexProviderTerminal, #openrouterProviderTerminal, #claudeProviderTerminal) .provider-terminal-output {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -14707,17 +14717,17 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   -ms-overflow-style: none;
 }
 
-:is(#codexProviderTerminal, #claudeProviderTerminal) .provider-terminal-output::-webkit-scrollbar {
+:is(#codexProviderTerminal, #openrouterProviderTerminal, #claudeProviderTerminal) .provider-terminal-output::-webkit-scrollbar {
   width: 0 !important;
   height: 0 !important;
   display: none;
 }
 
-:is(#codexProviderTerminal, #claudeProviderTerminal).terminal-live .provider-terminal-output {
+:is(#codexProviderTerminal, #openrouterProviderTerminal, #claudeProviderTerminal).terminal-live .provider-terminal-output {
   display: flex;
 }
 
-:is(#codexProviderTerminal, #claudeProviderTerminal).terminal-live .provider-terminal-screen > .provider-terminal-viewport {
+:is(#codexProviderTerminal, #openrouterProviderTerminal, #claudeProviderTerminal).terminal-live .provider-terminal-screen > .provider-terminal-viewport {
   display: block;
   z-index: 2;
 }
@@ -14885,6 +14895,26 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   transform: translateY(1px);
 }
 
+.provider-story-cta-compact {
+  align-self: flex-start;
+  gap: 9px;
+  min-height: 28px;
+  padding: 4px 8px;
+  margin: 0 0 2px;
+  border-color: rgba(49, 200, 178, 0.28);
+  border-radius: 5px;
+  background: rgba(49, 200, 178, 0.055);
+  box-shadow: none;
+  font-size: 0.68rem;
+}
+
+.provider-story-cta-compact:hover,
+.provider-story-cta-compact:focus-visible {
+  border-color: rgba(49, 200, 178, 0.5);
+  background: rgba(49, 200, 178, 0.095);
+  box-shadow: none;
+}
+
 .provider-story-cta-glyph {
   flex: 0 0 32px;
   display: inline-flex;
@@ -14897,6 +14927,15 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   color: #1a73e8;
   font: 700 1rem/1 "Cascadia Mono", Consolas, "SF Mono", monospace;
   letter-spacing: 0;
+}
+
+.provider-story-cta-glyph-compact {
+  flex-basis: 18px;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  color: var(--provider-story-accent, var(--forge-voice-accent));
+  font-size: 0.56rem;
 }
 
 .provider-story-cta-body {
@@ -15454,7 +15493,7 @@ body.real-estate-mode .content.proof-open .proof-panel.agency-mode {
   #oandaProviderTerminal .provider-terminal-output {
     padding: 18px 22px 18px 16px;
   }
-  :is(#codexProviderTerminal, #claudeProviderTerminal) .provider-terminal-output {
+  :is(#codexProviderTerminal, #openrouterProviderTerminal, #claudeProviderTerminal) .provider-terminal-output {
     padding: 18px 22px 18px 16px;
   }
   .oanda-terminal-hero {
