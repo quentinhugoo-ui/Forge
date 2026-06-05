@@ -1804,13 +1804,12 @@ const forgeCanvasChatAllInputs = [
 const forgeCanvasChatCommandSquare = forgeCanvasChatAttach?.closest?.(".canvas-chat-command-square") || null;
 
 const CANVAS_CHAT_COMMAND_SQUARE_INSET = 8;
+const CANVAS_CHAT_COMMAND_SQUARE_SIZE = 102;
 
 function syncCanvasChatCommandSquareSize() {
   if (!(forgeCanvasChat instanceof HTMLElement)) return;
-  const height = forgeCanvasChat.getBoundingClientRect().height;
-  if (!Number.isFinite(height) || height <= 0) return;
-  const size = Math.max(44, Math.round(height - (CANVAS_CHAT_COMMAND_SQUARE_INSET * 2)));
-  forgeCanvasChat.style.setProperty("--canvas-chat-command-square-size", `${size}px`);
+  forgeCanvasChat.style.setProperty("--chat-command-square-size", `${CANVAS_CHAT_COMMAND_SQUARE_SIZE}px`);
+  forgeCanvasChat.style.setProperty("--canvas-chat-command-square-size", `${CANVAS_CHAT_COMMAND_SQUARE_SIZE}px`);
   forgeCanvasChat.style.setProperty("--canvas-chat-command-square-inset", `${CANVAS_CHAT_COMMAND_SQUARE_INSET}px`);
 }
 
@@ -21021,6 +21020,7 @@ function setAlphaCanvasDocument(payload = {}) {
       && Array.isArray(alphaDocState.candles)
       && alphaDocState.candles.length > 0
     );
+  const stableLayout = payload.stableLayout === true && preserveViewport;
   const previousCount = Number(alphaDocState.candleViewCount) || 200;
   const previousEnd = Number(alphaDocState.candleViewEnd);
   const previousZoom = alphaDocPriceZoom(alphaDocState);
@@ -21081,12 +21081,16 @@ function setAlphaCanvasDocument(payload = {}) {
     void refreshAlpha3dPressureModel(true);
   }
   alphaCanvasWrap?.classList.toggle("is-trading-add-split", alphaExtraChartLayout === "split" && alphaExtraCharts.length > 0);
-  resizeAlphaCanvas();
-  scheduleAlphaRender();
-  requestAnimationFrame(() => {
-    resizeAlphaCanvas();
+  if (stableLayout) {
     scheduleAlphaRender({ force: true });
-  });
+  } else {
+    resizeAlphaCanvas();
+    scheduleAlphaRender();
+    requestAnimationFrame(() => {
+      resizeAlphaCanvas();
+      scheduleAlphaRender({ force: true });
+    });
+  }
 }
 
 function setAlphaCanvasExtraCharts(entries = []) {
