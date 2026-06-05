@@ -6634,6 +6634,12 @@ import { createTradingAssetRuntime } from "./controller.js";
     const account = state.snapshot?.account;
     const marginAvailable = Number(account?.marginAvailable) || Number(account?.nav) || Number(account?.balance) || 0;
     const currency = String(account?.currency || "USD");
+    if (!account) {
+      void loadSnapshot({ force: true }).then(() => {
+        const c = document.getElementById("alphaProofContent");
+        if (c) renderOrdersPanel(c);
+      }).catch(() => {});
+    }
 
     const shell = document.createElement("div");
     shell.className = "market-order-shell";
