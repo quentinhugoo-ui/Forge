@@ -7171,6 +7171,11 @@ function drawAlphaUnified(time) {
   if (alphaDocState.candles.length) {
     resetInactiveTradingChartSurface();
     if (typeof syncAlphaCardFade === "function") syncAlphaCardFade(null);
+    const fullBounds = getAlphaChartBounds();
+    drawAlphaCandles(time, fullBounds, false, alphaDocState, {
+      showIndicators: true,
+      showSignals: true,
+    });
     renderAlphaLogLayer();
     return;
   }
@@ -9022,7 +9027,10 @@ function tradingPanelBridge() {
 
 function isTradingPanelActive() {
   try {
-    return !!tradingPanelBridge()?.isActive?.();
+    return !!tradingPanelBridge()?.isActive?.()
+      || alphaTradingHeaderState?.active === true
+      || alphaCanvasWrap?.classList?.contains("is-trading-mode") === true
+      || document.body?.classList?.contains("trading-surface") === true;
   } catch (_) {
     return false;
   }
@@ -9362,7 +9370,7 @@ async function runAlphaConsole() {
 
 function setAlphaRightPanelMode(mode, options = {}) {
   const nextMode = isTradingPanelActive()
-    ? (mode === "orders" ? "orders" : "console")
+    ? (mode === "bloomberg" ? "bloomberg" : "orders")
     : (mode === "console"
       ? "console"
       : mode === "agency-web"
@@ -9395,8 +9403,8 @@ function renderAlphaRightPanelTabs() {
   }
   const tabs = isTradingPanelActive()
     ? [
-      { id: "console", label: "Console" },
       { id: "orders", label: "Orders" },
+      { id: "bloomberg", label: "Bloomberg" },
     ]
     : isBangerSurfaceActive()
       ? [
@@ -10016,6 +10024,8 @@ function renderAlphaRightPanel() {
   const webExplorerActive = typeof isWebExplorerUiActive === "function" && isWebExplorerUiActive();
   const bangerActive = isBangerSurfaceActive();
   if (bangerActive && alphaRightPanelMode === "materials") alphaRightPanelMode = "plan";
+  if (tradingActive && alphaRightPanelMode !== "orders" && alphaRightPanelMode !== "bloomberg") alphaRightPanelMode = "orders";
+  alphaProofPanel?.classList.toggle("trading-mode", tradingActive);
   alphaProofPanel?.classList.toggle("console-mode", alphaRightPanelMode === "console" && !tradingActive && !webExplorerActive);
   alphaProofPanel?.classList.toggle("agency-mode", isRealEstateShellActive() && alphaRightPanelMode === "agency-web" && !tradingActive && !webExplorerActive);
   alphaProofPanel?.classList.toggle("banger-project-mode", bangerActive && alphaRightPanelMode === "plan");
@@ -10038,7 +10048,7 @@ function renderAlphaRightPanel() {
     alphaRightPanelTitle.textContent = bangerActive && alphaRightPanelMode === "plan"
       ? "Projet"
       : tradingActive
-      ? (alphaRightPanelMode === "orders" ? "Order entry" : "Pine / Rust / KASM")
+      ? (alphaRightPanelMode === "bloomberg" ? "Bloomberg" : "Orders")
       : webExplorerActive
         ? (alphaRightPanelMode === "console" ? "Web console" : "Proof HUD")
       : alphaRightPanelMode === "console"
@@ -10061,6 +10071,11 @@ function renderAlphaRightPanel() {
   if (tradingActive && alphaRightPanelMode === "orders") {
     alphaProofContent.innerHTML = "";
     tradingPanelBridge()?.renderOrders?.(alphaProofContent);
+    queueForgeCustomScrollbarSync(alphaProofContent);
+    return;
+  }
+  if (tradingActive && alphaRightPanelMode === "bloomberg") {
+    alphaProofContent.innerHTML = "";
     queueForgeCustomScrollbarSync(alphaProofContent);
     return;
   }
@@ -12048,7 +12063,7 @@ function canvasChatStoredTargetMode() {
   try {
     const value = localStorage.getItem("forge.canvas.chat.target");
     if (value === "both") return "all";
-    return ["codex", "claude", "all"].includes(value) ? value : "codex";
+    return ["codex", "openrouter", "claude", "all"].includes(value) ? value : "codex";
   } catch (_) {
     return "codex";
   }
@@ -12060,7 +12075,7 @@ function canvasChatStoredActiveTargets() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
-    const filtered = parsed.filter((p) => ["codex", "claude"].includes(p));
+    const filtered = parsed.filter((p) => ["codex", "openrouter", "claude"].includes(p));
     return filtered.length ? filtered : null;
   } catch (_) {
     return null;
@@ -12072,12 +12087,14 @@ function selectedClaudeModelRef() {
 }
 
 function canvasChatTargetLabel(mode) {
+  if (mode === "openrouter") return "OpenRouter";
   if (mode === "claude") return "Claude";
   if (mode === "all") return "All";
   return "Codex";
 }
 
 function canvasRuntimeLogoClass(runtime) {
+  if (runtime === "openrouter") return "provider-logo-openrouter";
   if (runtime === "claude") return "provider-logo-claude";
   return "provider-logo-openai";
 }
@@ -12087,7 +12104,7 @@ function canvasRuntimeLogoEl(runtime, className = "") {
 }
 
 function primaryPlanetActionRuntime() {
-  if (["codex", "claude"].includes(forgeCanvasChatTargetMode)) {
+  if (["codex", "openrouter", "claude"].includes(forgeCanvasChatTargetMode)) {
     return forgeCanvasChatTargetMode;
   }
   return activeCanvasChatTargets()[0] || "codex";
@@ -12143,6 +12160,7 @@ const CANVAS_REASONING_EFFORTS = Object.freeze([
 
 const CANVAS_MODEL_PRESETS = Object.freeze({
   codex: ["gpt-5.3-codex", "gpt-5.5", "gpt-5.4"],
+  openrouter: ["anthropic/claude-sonnet-4.6", "openai/gpt-5.3-codex", "google/gemini-3-pro"],
   claude: ["claude-sonnet-4.6", "claude-opus-4.6"],
 });
 
@@ -12153,7 +12171,7 @@ const CANVAS_MODEL_PRESETS = Object.freeze({
  * is active (the click handler enforces ≥1 active, but be defensive).
  */
 function activeCanvasChatTargets() {
-  const order = ["codex", "claude"];
+  const order = ["codex", "openrouter", "claude"];
   const active = order.filter((target) =>
     forgeCanvasChatTargetBtns.some(
       (btn) => btn.dataset.target === target && btn.classList.contains("active"),
@@ -12166,7 +12184,7 @@ function canvasRuntimeListForMode(mode = forgeCanvasChatTargetMode) {
   // In "all" mode, only dispatch to the providers actually toggled on
   // (e.g. codex+claude without gemini); single-provider modes stay as-is.
   if (mode === "all") return activeCanvasChatTargets();
-  return ["codex", "claude"].includes(mode) ? [mode] : ["codex"];
+  return ["codex", "openrouter", "claude"].includes(mode) ? [mode] : ["codex"];
 }
 
 function normalizeCanvasReasoningEffort(value) {
@@ -12177,13 +12195,14 @@ function normalizeCanvasReasoningEffort(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ");
+  if (["low", "faible", "rapide", "quick"].includes(key)) return "low";
   if (["high", "eleve", "elevated"].includes(key)) return "high";
   if (["xhigh", "extra high", "very high", "tres eleve", "tres approfondi", "approfondi"].includes(key)) return "xhigh";
   return "medium";
 }
 
 function canvasReasoningStorageKey(runtime) {
-  const safeRuntime = ["codex", "claude"].includes(runtime) ? runtime : "codex";
+  const safeRuntime = ["codex", "openrouter", "claude"].includes(runtime) ? runtime : "codex";
   return `forge.canvas.reasoning.${safeRuntime}`;
 }
 
@@ -12203,16 +12222,20 @@ function setCanvasReasoningEffort(runtime, effort) {
 
 function canvasReasoningEffortLabel(runtime = "codex") {
   const value = selectedCanvasReasoningEffort(runtime);
-  return CANVAS_REASONING_EFFORTS.find((entry) => entry.value === value)?.label || "Moyen";
+  return effortOptionsForRuntime(runtime).find((entry) => entry.value === value)?.label || "Moyen";
 }
 
 function selectedCanvasModelRef(runtime = "codex") {
+  if (runtime === "openrouter") return storedRuntimeModelRef("forge.openrouter.model") || "anthropic/claude-sonnet-4.6";
   if (runtime === "claude") return selectedClaudeModelRef();
   return selectedOpenAiModelRef?.() || "gpt-5.3-codex";
 }
 
 function setCanvasRuntimeModelRef(runtime, model) {
-  if (runtime === "claude") {
+  if (runtime === "openrouter") {
+    const normalized = String(model || "").trim() || "anthropic/claude-sonnet-4.6";
+    setStoredRuntimeModelRef("forge.openrouter.model", normalized, (value) => String(value || "").trim() || "anthropic/claude-sonnet-4.6");
+  } else if (runtime === "claude") {
     const normalized = normalizeClaudeModelRef(model);
     setStoredRuntimeModelRef("forge.claude.model", normalized, normalizeClaudeModelRef);
     if (claudeProviderModel) claudeProviderModel.value = normalized;
@@ -12231,7 +12254,7 @@ function shortCanvasModelLabel(model) {
   // versioned defaults so the chip stays accurate when the CLI catalog
   // hasn't been fetched yet.
   const fromCatalog = canvasRuntimeLabelForModel(raw);
-  if (fromCatalog) return fromCatalog;
+  if (fromCatalog) return compactCanvasModelLabel(fromCatalog, raw);
   const lower = raw.toLowerCase();
   if (lower === "gpt-5.3-codex") return "GPT 5.3";
   if (lower === "gpt-5.5") return "GPT 5.5";
@@ -12448,7 +12471,7 @@ function cycleRuntimeField(runtime, field, direction = 1) {
     setCanvasRuntimeModelRef(runtime, next);
     hydrateProviderModelPickers();
   } else if (field === "effort") {
-    const opts = effortOptionsForRuntime();
+    const opts = effortOptionsForRuntime(runtime);
     if (!opts.length) return;
     const current = selectedCanvasReasoningEffort(runtime);
     const idx = opts.findIndex((o) => o.value === current);
@@ -12570,6 +12593,20 @@ function canvasRuntimeLabelForModel(model) {
   return "";
 }
 
+function compactCanvasModelLabel(label, model = "") {
+  let text = String(label || "").trim();
+  text = text.replace(/\s+\u00b7\s+\d+(?:k|M)?\s+ctx$/i, "");
+  text = text.replace(/^[^:]{2,28}:\s+/, "");
+  if (text.length <= 30) return text;
+  const raw = String(model || "").trim();
+  const slug = raw.includes("/") ? raw.split("/").pop() : raw;
+  const fromSlug = slug
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase())
+    .trim();
+  return fromSlug || `${text.slice(0, 27).trimEnd()}...`;
+}
+
 function modelOptionsForRuntime(runtime) {
   const cliModels = canvasRuntimeModelCatalog.get(runtime);
   const base = Array.isArray(cliModels) && cliModels.length
@@ -12589,21 +12626,37 @@ function modelOptionsForRuntime(runtime) {
 async function refreshRuntimeModelCatalog(runtime) {
   if (!forgeCanInvoke()) return;
   try {
-    const result = await forgeInvoke("forge_canvas_list_runtime_models", { runtime }, {
-      section: "canvas-assistant",
-      timeoutMs: 8000,
-      dedupeKey: `runtime-models:${runtime}`,
-    });
-    if (Array.isArray(result) && result.length) {
+    const result = runtime === "openrouter"
+      ? await forgeInvoke("openrouter_list_models", {}, {
+        section: "canvas-assistant",
+        timeoutMs: 12000,
+        dedupeKey: "runtime-models:openrouter",
+      })
+      : await forgeInvoke("forge_canvas_list_runtime_models", { runtime }, {
+        section: "canvas-assistant",
+        timeoutMs: 8000,
+        dedupeKey: `runtime-models:${runtime}`,
+      });
+    const entries = runtime === "openrouter"
+      ? (Array.isArray(result?.data) ? result.data : (Array.isArray(result) ? result : []))
+      : result;
+    if (Array.isArray(entries) && entries.length) {
       const models = [];
       const labels = new Map();
-      for (const entry of result) {
+      for (const entry of entries) {
         const id = String(
-          typeof entry === "string" ? entry : (entry?.id || entry?.name || ""),
+          typeof entry === "string" ? entry : (entry?.id || entry?.canonical_slug || entry?.name || ""),
         ).trim();
         if (!id) continue;
         models.push(id);
-        const label = String(entry?.label || "").trim();
+        const rawName = String(entry?.label || entry?.name || "").trim();
+        const context = Number(entry?.context_length || entry?.top_provider?.context_length || 0);
+        const contextLabel = context >= 1000000
+          ? `${Math.round(context / 1000000)}M ctx`
+          : (context >= 1000 ? `${Math.round(context / 1000)}k ctx` : "");
+        const label = runtime === "openrouter" && rawName && contextLabel
+          ? `${rawName} · ${contextLabel}`
+          : rawName;
         if (label) labels.set(id, label);
       }
       if (models.length) {
@@ -12620,12 +12673,20 @@ async function refreshRuntimeModelCatalog(runtime) {
 }
 
 function refreshAllRuntimeModelCatalogs() {
-  for (const runtime of ["codex", "claude"]) {
+  for (const runtime of ["codex", "openrouter", "claude"]) {
     void refreshRuntimeModelCatalog(runtime);
   }
 }
 
-function effortOptionsForRuntime() {
+function effortOptionsForRuntime(runtime = "codex") {
+  if (runtime === "openrouter") {
+    return [
+      { value: "low", label: "Rapide" },
+      { value: "medium", label: "Moyen" },
+      { value: "high", label: "\u00c9lev\u00e9" },
+      { value: "xhigh", label: "Max" },
+    ];
+  }
   return CANVAS_REASONING_EFFORTS.map((e) => ({ value: e.value, label: e.label }));
 }
 
@@ -12695,8 +12756,8 @@ function openCanvasBarrelPicker(runtime) {
   const modelBarrel = picker.querySelector('[data-barrel="model"]');
   const effortBarrel = picker.querySelector('[data-barrel="effort"]');
   if (!modelBarrel || !effortBarrel) return;
-  const models = modelOptionsForRuntime(runtime).map((m) => ({ value: m, label: m }));
-  const efforts = effortOptionsForRuntime();
+  const models = modelOptionsForRuntime(runtime).map((m) => ({ value: m, label: canvasRuntimeLabelForModel(m) || m }));
+  const efforts = effortOptionsForRuntime(runtime);
   const currentModel = selectedCanvasModelRef(runtime);
   const currentEffort = selectedCanvasReasoningEffort(runtime);
   buildBarrelColumn(modelBarrel, models, currentModel);
@@ -12727,7 +12788,7 @@ function renderCanvasModelMenu() {
   // Show ALL three providers in the tabbar regardless of which are
   // currently active in the chat bar — the user may want to configure
   // model/effort for any LLM independently of toggling its activation.
-  const allRuntimes = ["codex", "claude"];
+  const allRuntimes = ["codex", "openrouter", "claude"];
   const activeSet = new Set(canvasRuntimeListForMode());
   const stored = forgeCanvasChatModelMenu.dataset.tab;
   const activeRuntime = allRuntimes.includes(stored)
@@ -12754,7 +12815,7 @@ function renderCanvasModelMenu() {
 
   const effortRow = createUiEl("div", "canvas-model-menu-row");
   effortRow.setAttribute("role", "group");
-  for (const effort of CANVAS_REASONING_EFFORTS) {
+  for (const effort of effortOptionsForRuntime(activeRuntime)) {
     const button = createUiEl("button", "canvas-model-menu-choice", effort.label);
     button.type = "button";
     button.dataset.runtime = activeRuntime;
@@ -12769,8 +12830,7 @@ function renderCanvasModelMenu() {
 
   const modelList = createUiEl("div", "canvas-model-menu-list");
   const selected = selectedCanvasModelRef(activeRuntime);
-  const presets = CANVAS_MODEL_PRESETS[activeRuntime] || [];
-  const models = presets.includes(selected) ? presets : [selected, ...presets];
+  const models = modelOptionsForRuntime(activeRuntime);
   for (const model of models) {
     const button = createUiEl("button", "canvas-model-menu-item");
     button.type = "button";
@@ -12781,7 +12841,7 @@ function renderCanvasModelMenu() {
     button.classList.toggle("active", active);
     button.setAttribute("aria-checked", String(active));
     button.appendChild(createUiEl("span", "canvas-model-menu-item-dot"));
-    button.appendChild(createUiEl("span", "canvas-model-menu-name", model));
+    button.appendChild(createUiEl("span", "canvas-model-menu-name", canvasRuntimeLabelForModel(model) || model));
     modelList.appendChild(button);
   }
   forgeCanvasChatModelMenu.appendChild(modelList);
@@ -12789,7 +12849,7 @@ function renderCanvasModelMenu() {
 
 function setCanvasChatTargetMode(mode, activeOverride = null) {
   const normalized = mode === "both" ? "all" : mode;
-  const next = ["codex", "claude", "all"].includes(normalized) ? normalized : "codex";
+  const next = ["codex", "openrouter", "claude", "all"].includes(normalized) ? normalized : "codex";
   forgeCanvasChatTargetMode = next;
   try {
     localStorage.setItem("forge.canvas.chat.target", next);
@@ -12799,12 +12859,15 @@ function setCanvasChatTargetMode(mode, activeOverride = null) {
   // default to the mode (single provider, or all 3 for "all").
   let activeSet;
   if (Array.isArray(activeOverride) && activeOverride.length) {
-    activeSet = new Set(activeOverride.filter((p) => ["codex", "claude"].includes(p)));
+    activeSet = new Set(activeOverride.filter((p) => ["codex", "openrouter", "claude"].includes(p)));
     if (activeSet.size === 0) activeSet.add("codex");
   } else if (next === "all") {
-    activeSet = new Set(["codex", "claude"]);
+    activeSet = new Set(["codex", "openrouter", "claude"]);
   } else {
     activeSet = new Set([next]);
+  }
+  if (forgeCanvasChatModelMenu) {
+    forgeCanvasChatModelMenu.dataset.tab = next === "all" ? ([...activeSet][0] || "codex") : next;
   }
   // Persist the active combo separately so the next session restores it
   // exactly (the mode string alone can't distinguish codex+gemini from
@@ -12820,15 +12883,17 @@ function setCanvasChatTargetMode(mode, activeOverride = null) {
   }
   const all = next === "all";
   const hasCodex = activeSet.has("codex");
+  const hasOpenRouter = activeSet.has("openrouter");
   const hasGemini = activeSet.has("gemini");
   const hasClaude = activeSet.has("claude");
+  const hasPrimaryInput = hasCodex || hasOpenRouter;
   forgeCanvasChat?.classList.toggle("both-mode", all);
   forgeCanvasChat?.classList.toggle("all-mode", all);
   // Inputs visible iff their provider is active. Hidden inputs collapse
   // out of the flex row so the visible ones split the bar evenly.
   if (forgeCanvasChatInput) {
-    forgeCanvasChatInput.hidden = !hasCodex;
-    forgeCanvasChatInput.disabled = !hasCodex;
+    forgeCanvasChatInput.hidden = !hasPrimaryInput;
+    forgeCanvasChatInput.disabled = !hasPrimaryInput;
   }
   if (forgeCanvasChatGeminiInput) {
     forgeCanvasChatGeminiInput.hidden = !hasGemini;
@@ -12846,12 +12911,13 @@ function setCanvasChatTargetMode(mode, activeOverride = null) {
     forgeCanvasChatPromptDivider.hidden = !(hasCodex && hasGemini);
   }
   if (forgeCanvasChatPromptDividerClaude) {
-    forgeCanvasChatPromptDividerClaude.hidden = !((hasCodex || hasGemini) && hasClaude);
+    forgeCanvasChatPromptDividerClaude.hidden = !((hasPrimaryInput || hasGemini) && hasClaude);
   }
   if (forgeCanvasChatInput) {
+    const primaryLabel = hasOpenRouter && !hasCodex ? "OpenRouter" : canvasChatTargetLabel(next);
     forgeCanvasChatInput.setAttribute("aria-label", isRealEstateShellActive()
-      ? (all ? "Consigne Codex" : `Consigne ${canvasChatTargetLabel(next)}`)
-      : (all ? "Codex prompt" : `${canvasChatTargetLabel(next)} prompt`));
+      ? (all ? "Consigne Codex / OpenRouter" : `Consigne ${primaryLabel}`)
+      : (all ? "Codex / OpenRouter prompt" : `${primaryLabel} prompt`));
   }
   syncCanvasChatModelLabel();
   setCanvasModelMenuOpen(false);
@@ -12943,7 +13009,7 @@ function primaryCanvasChatText() {
 function currentCanvasChatText() {
   const active = new Set(activeCanvasChatTargets());
   const parts = [];
-  if (active.has("codex")) parts.push(codexInputText());
+  if (active.has("codex") || active.has("openrouter")) parts.push(codexInputText());
   if (active.has("gemini")) parts.push(geminiCanvasChatText());
   if (active.has("claude")) parts.push(claudeCanvasChatText());
   return withCanvasCommandPrefix(parts.filter(Boolean).join(" / "));
@@ -12962,10 +13028,14 @@ function canvasChatRuntimeTargets(text, geminiText = "", claudeText = "") {
     const fallback = codexText || geminiSide || claudeSide;
     const all = [
       { runtime: "codex", label: "Codex", modelRef: selectedOpenAiModelRef?.() || "gpt-5.3-codex", reasoningEffort: selectedCanvasReasoningEffort("codex"), text: codexText || fallback },
+      { runtime: "openrouter", label: "OpenRouter", modelRef: selectedCanvasModelRef("openrouter"), reasoningEffort: selectedCanvasReasoningEffort("openrouter"), text: codexText || fallback },
       { runtime: "gemini", label: "Gemini", modelRef: selectedGeminiModelRef(), reasoningEffort: selectedCanvasReasoningEffort("gemini"), text: geminiSide || fallback },
       { runtime: "claude", label: "Claude", modelRef: selectedClaudeModelRef(), reasoningEffort: selectedCanvasReasoningEffort("claude"), text: claudeSide || fallback },
     ];
     return all.filter((entry) => active.has(entry.runtime));
+  }
+  if (forgeCanvasChatTargetMode === "openrouter") {
+    return [{ runtime: "openrouter", label: "OpenRouter", modelRef: selectedCanvasModelRef("openrouter"), reasoningEffort: selectedCanvasReasoningEffort("openrouter"), text }];
   }
   if (forgeCanvasChatTargetMode === "gemini") {
     return [{ runtime: "gemini", label: "Gemini", modelRef: selectedGeminiModelRef(), reasoningEffort: selectedCanvasReasoningEffort("gemini"), text }];
@@ -14020,6 +14090,9 @@ function canvasChatAgentIconDef(role, label) {
   const key = String(label).toLowerCase();
   if (key.includes("gemini")) return { html: CANVAS_CHAT_AGENT_ICONS.gemini, className: "" };
   if (key.includes("claude")) return { html: CANVAS_CHAT_AGENT_ICONS.claude, className: "" };
+  if (key.includes("openrouter")) {
+    return { html: "", className: "provider-logo provider-logo-openrouter" };
+  }
   if (key.includes("codex") || key.includes("openai") || key.includes("gpt")) {
     return { html: "", className: "provider-logo provider-logo-openai" };
   }
@@ -21008,7 +21081,12 @@ function setAlphaCanvasDocument(payload = {}) {
     void refreshAlpha3dPressureModel(true);
   }
   alphaCanvasWrap?.classList.toggle("is-trading-add-split", alphaExtraChartLayout === "split" && alphaExtraCharts.length > 0);
+  resizeAlphaCanvas();
   scheduleAlphaRender();
+  requestAnimationFrame(() => {
+    resizeAlphaCanvas();
+    scheduleAlphaRender({ force: true });
+  });
 }
 
 function setAlphaCanvasExtraCharts(entries = []) {
@@ -21381,6 +21459,7 @@ document
         ? canvasReasoningEffortLabel(runtime)
         : shortCanvasModelLabel(selectedCanvasModelRef(runtime));
       flipLabelTo(labelEl, nextText);
+      setTimeout(() => syncCanvasChatModelLabel(), 340);
     },
     true,
   );
@@ -25500,9 +25579,18 @@ if (typeof forgeTauri?.listen === "function") {
   });
   forgeListen("forge-provider-terminal", (e) => {
     try {
-      ["codex", "claude"].forEach((provider) => handleProviderTerminalEvent(provider, e.payload));
+      ["codex", "openrouter", "claude"].forEach((provider) => handleProviderTerminalEvent(provider, e.payload));
     } catch (err) {
       console.error("forge-provider-terminal listener failed", err);
+    }
+  });
+  forgeListen("forge.openrouter.oauth", (e) => {
+    try {
+      const payload = e?.payload || {};
+      void refreshOpenRouterProviderStatus({ silent: true });
+      void refreshProviderTerminalSnapshot("openrouter");
+    } catch (err) {
+      console.error("forge.openrouter.oauth listener failed", err);
     }
   });
 
@@ -26263,6 +26351,7 @@ const {
 } = providerDom;
 const providerLaunchers = Object.fromEntries(Object.entries({
   codex: "Codex",
+  openrouter: "OpenRouter",
   gemini: "Gemini",
   claude: "Claude",
   oanda: "Oanda",
@@ -26272,7 +26361,7 @@ const providerLaunchers = Object.fromEntries(Object.entries({
   state: document.getElementById(`providerLauncher${suffix}State`),
   meta: document.getElementById(`providerLauncher${suffix}Meta`),
 }]));
-const providerTerminalEls = Object.fromEntries(["codex", "claude"].map((provider) => {
+const providerTerminalEls = Object.fromEntries(["codex", "openrouter", "claude"].map((provider) => {
   const id = (suffix = "") => `${provider}ProviderTerminal${suffix}`;
   return [provider, {
     shell: document.getElementById(id()),
@@ -26289,12 +26378,14 @@ const providerTerminalEls = Object.fromEntries(["codex", "claude"].map((provider
 let openAiProviderWatchTimer = null;
 let openAiProviderLastStatus = null;
 let codexProviderLastStatus = null;
+let openRouterProviderLastStatus = null;
 let geminiProviderLastStatus = null;
 let claudeProviderLastStatus = null;
 let oandaProviderLastStatus = null;
 let voiceProviderLastStatus = null;
 const providerTerminalState = {
   codex: { output: "Ready.", running: false, opening: false },
+  openrouter: { output: "Ready.", running: false, opening: false },
   gemini: { output: "Ready.", running: false, opening: false },
   claude: { output: "Ready.", running: false, opening: false },
 };
@@ -26320,11 +26411,12 @@ let oandaProviderTerminalPersistedPostState = null;
 let oandaProviderTerminalStoredSecrets = { accountId: "", apiKey: "", baseUrl: "" };
 let oandaProviderTerminalMaskedCarry = { accountId: false, apiKey: false, baseUrl: false };
 let oandaProviderTerminalScrollbarDrag = null;
-const providerTerminalFilterCarry = { codex: "", gemini: "", claude: "" };
+const providerTerminalFilterCarry = { codex: "", openrouter: "", gemini: "", claude: "" };
 const providerTerminalInstances = new Map();
-const providerTerminalLiveHydration = { codex: false, gemini: false, claude: false };
+const providerTerminalLiveHydration = { codex: false, openrouter: false, gemini: false, claude: false };
 const providerWorkbenchMetaRows = {
   codex: ["Codex", "provider-logo-openai", () => selectedOpenAiModelRef(), () => codexProviderLastStatus || openAiProviderLastStatus],
+  openrouter: ["OpenRouter", "provider-logo-openrouter", () => selectedCanvasModelRef("openrouter"), () => openRouterProviderLastStatus],
   gemini: ["Gemini", "provider-logo-gemini", () => selectedGeminiModelRef(), () => geminiProviderLastStatus],
   claude: ["Claude", "provider-logo-claude", () => selectedClaudeModelRef(), () => claudeProviderLastStatus],
   oanda: ["OANDA", "provider-logo-oanda", () => oandaProviderBaseUrlLabel(), () => oandaProviderLastStatus],
@@ -26397,6 +26489,10 @@ function normalizeGeminiModelRef(model) {
   });
   const hit = normalized.toLowerCase().match(/^gemini-(\d+)/);
   return hit && Number(hit[1]) >= 3 ? normalized : "gemini-3-pro";
+}
+
+function selectedGeminiModelRef() {
+  return normalizeGeminiModelRef(geminiProviderModel?.value || storedRuntimeModelRef("forge.gemini.model"));
 }
 
 function normalizeClaudeModelRef(model) {
@@ -27593,6 +27689,7 @@ function providerTerminalRawOutput(provider) {
 
 const providerTerminalProfileRows = {
   codex: ["Codex", "OpenAI OAuth Direct", "subscription", "OPENAI OAUTH DIRECT", "Direct OpenAI OAuth console for local Forge sessions", "Reuse local ChatGPT subscription auth, keep Codex direct in Forge, and route tool turns through the embedded OAuth console."],
+  openrouter: ["OpenRouter", "OpenRouter OAuth Direct", "oauth", "OPENROUTER OAUTH DIRECT", "Direct OpenRouter OAuth console for local Forge sessions", "Connect the official OpenRouter OAuth flow, keep the key local, and route any OpenRouter model through Forge."],
   gemini: ["Gemini", "Google OAuth Direct", "subscription", "GOOGLE OAUTH DIRECT", "Direct Google OAuth console for local Forge sessions", "Reuse your Google account auth, keep Gemini direct in Forge, and route tool turns through the embedded OAuth console."],
   claude: ["Claude", "Claude Code CLI", "auth", "ANTHROPIC CLI BRIDGE", "Claude Code login bridge for local Forge sessions", "Open Claude Code inside Forge, finish Claude.ai authentication locally, and keep the linked workspace flow inside the embedded terminal."],
 };
@@ -27614,6 +27711,9 @@ function providerTerminalPixelGlyphs() {
     M: ["██   ██", "███ ███", "██ █ ██", "██   ██", "██   ██"],
     N: ["██   ██", "███  ██", "██ ██ ██", "██  ███", "██   ██"],
     O: [" ████ ", "██  ██", "██  ██", "██  ██", " ████ "],
+    P: ["████ ", "██ ██", "████ ", "██   ", "██   "],
+    R: ["████ ", "██ ██", "████ ", "██ ██", "██  ██"],
+    T: ["█████", "  ██ ", "  ██ ", "  ██ ", "  ██ "],
     U: ["██  ██", "██  ██", "██  ██", "██  ██", " ████ "],
     X: ["██  ██", " ██ ██", "  ███ ", " ██ ██", "██  ██"],
   };
@@ -27641,6 +27741,15 @@ function providerTerminalStoryStatus(provider) {
       modelRef: selectedOpenAiModelRef(),
     };
   }
+  if (provider === "openrouter") {
+    return {
+      ...(openRouterProviderLastStatus || {}),
+      authSource: openRouterProviderLastStatus?.authSource || "OpenRouter OAuth",
+      accountLabel: openRouterProviderLastStatus?.connected ? "OpenRouter key saved locally" : "Not connected",
+      modelRef: selectedCanvasModelRef("openrouter"),
+      installed: true,
+    };
+  }
   if (provider === "claude") {
     return {
       ...(claudeProviderLastStatus || {}),
@@ -27662,14 +27771,14 @@ function providerTerminalStoryState(provider) {
   const needsNode = providerStatusNeedsNode(status);
   let stateText = "missing";
   let tone = "error";
-  if (opening) {
+  if (opening && !connected) {
     stateText = "opening";
     tone = "accent";
-  } else if (running) {
-    stateText = "live";
-    tone = "success";
   } else if (connected) {
     stateText = "ready";
+    tone = "success";
+  } else if (running) {
+    stateText = "live";
     tone = "success";
   } else if (installed) {
     stateText = "auth";
@@ -27729,6 +27838,20 @@ function providerTerminalStoryPreviewLines(provider) {
           { text: "Type open to relaunch the browser or refresh after sign-in completes.", tone: "muted" },
         ];
   }
+  if (provider === "openrouter") {
+    return connected
+      ? [
+          { text: "OpenRouter OAuth is ready for direct model routing in Forge.", tone: "success" },
+          { text: providerCliFriendlyHint(provider, status, {
+            selectedModel: status?.modelRef || providerWorkbenchModel(provider),
+            displayName: providerWorkbenchDisplayName(provider),
+          }), tone: "muted" },
+        ]
+      : [
+          { text: "Launch the official OpenRouter OAuth flow from Forge.", tone: "accent" },
+          { text: "Use Login below, then refresh after the callback stores the key locally.", tone: "muted" },
+        ];
+  }
   if (running || opening) {
     return [
       { text: `Preparing the live ${profile.runtime} session inside Forge.`, tone: "accent" },
@@ -27775,6 +27898,11 @@ function providerTerminalStoryActionText(provider) {
     if (connected) return "Press Open above to reopen the direct Codex OAuth console inside Forge.";
     return "Open the embedded OAuth console to launch ChatGPT sign-in, then refresh Forge.";
   }
+  if (provider === "openrouter") {
+    if (opening || running) return "Forge is routing the official OpenRouter OAuth console into this provider terminal.";
+    if (connected) return "OpenRouter is connected; use Login again only if you want to rotate or replace the local key.";
+    return "Press Login above status to open the official OpenRouter OAuth flow, then refresh Forge.";
+  }
   if (opening || running) return `Forge is routing the live ${profile.name} session into the embedded terminal.`;
   if (connected) return `Press Open above to launch ${profile.name} inside Forge.`;
   if (installed) return `Forge is completing the ${profile.name} connection automatically.`;
@@ -27798,12 +27926,24 @@ function buildProviderStoryMark() {
 // Renders the prominent in-panel CTA that triggers the one-click OAuth
 // browser flow (currently Gemini only — Claude OAuth is not exposed by
 // Anthropic, so we keep the CLI bridge there). Returns an empty string for
-function providerTerminalConnectCta(_provider, _status) {
-  // Provider-specific call-to-action above the status panel. Currently no
-  // provider injects one — kept as an extension point so any future
-  // OAuth-direct flow can render its own CTA without restructuring the
-  // shell template.
-  return "";
+function providerTerminalConnectCta(provider, status) {
+  if (!["codex", "openrouter"].includes(provider)) return "";
+  const connected = !!status?.connected;
+  if (connected) return "";
+  const label = provider === "openrouter" ? "Login OpenRouter" : "Login Codex";
+  const subtitle = provider === "openrouter"
+    ? "official OAuth direct"
+    : "OpenAI OAuth direct";
+  const glyph = provider === "openrouter" ? "OR" : "AI";
+  return `
+    <button class="provider-story-cta provider-story-cta-compact" type="button" data-provider-terminal-action="login" data-provider="${escapeOandaTerminalHtml(provider)}">
+      <span class="provider-story-cta-glyph provider-story-cta-glyph-compact" aria-hidden="true">${escapeOandaTerminalHtml(glyph)}</span>
+      <span class="provider-story-cta-body">
+        <span class="provider-story-cta-title">${escapeOandaTerminalHtml(label)}</span>
+        <span class="provider-story-cta-subtitle">${escapeOandaTerminalHtml(subtitle)}</span>
+      </span>
+    </button>
+  `;
 }
 
 function buildCliProviderTerminalShell(provider) {
@@ -27813,7 +27953,9 @@ function buildCliProviderTerminalShell(provider) {
   )).join("");
   const accountLabel = provider === "codex"
     ? String(status?.accountLabel || "Not connected")
-    : "Claude.ai local login";
+    : provider === "openrouter"
+      ? String(status?.accountLabel || (connected ? "OpenRouter key saved locally" : "Not connected"))
+      : "Claude.ai local login";
   const sourceLabel = providerCliFriendlySource(provider, status);
   const metaValue = String(status?.modelRef || providerWorkbenchModel(provider));
   const previewLines = providerTerminalStoryPreviewLines(provider);
@@ -27949,7 +28091,7 @@ function setProviderTerminalOpening(kind, opening) {
 
 function providerWorkbenchCanOpen(kind) {
   if (kind === "oanda") return true;
-  if (kind === "codex") {
+  if (kind === "codex" || kind === "openrouter") {
     return !!providerWorkbenchStatus(kind)?.connected || providerTerminalIsRunning(kind);
   }
   const status = providerWorkbenchStatus(kind);
@@ -28008,15 +28150,17 @@ async function openProviderWorkbench(kind, options = {}) {
     return;
   }
   if (kind === "codex") return connectCodexProvider(options);
+  if (kind === "openrouter") return connectOpenRouterProvider(options);
   if (kind === "claude") return connectClaudeProvider(options);
   // Any other (or stale) kind falls back to Codex.
   return connectCodexProvider(options);
 }
 
 function syncActiveProviderTerminalShell(kind) {
-  const active = ["codex", "claude", "oanda"].includes(kind) ? kind : "codex";
+  const active = ["codex", "openrouter", "claude", "oanda"].includes(kind) ? kind : "codex";
   [
     ["codex", providerTerminalDom("codex").shell],
+    ["openrouter", providerTerminalDom("openrouter").shell],
     ["gemini", providerTerminalDom("gemini").shell],
     ["claude", providerTerminalDom("claude").shell],
     ["oanda", oandaProviderTerminal],
@@ -28030,11 +28174,11 @@ function syncActiveProviderTerminalShell(kind) {
 }
 
 function setActiveProviderWorkbench(kind, options = {}) {
-  const normalized = ["codex", "claude", "oanda"].includes(kind) ? kind : "codex";
+  const normalized = ["codex", "openrouter", "claude", "oanda"].includes(kind) ? kind : "codex";
   activeProviderWorkbench = normalized;
   try { localStorage.setItem("forge.provider.workbench.active", normalized); } catch (_) {}
   if (isTradingBrokerProvider(normalized)) setActiveTradingBroker(normalized);
-  ["codex", "claude", "oanda"].forEach((name) => {
+  ["codex", "openrouter", "claude", "oanda"].forEach((name) => {
     const button = providerLauncherDom(name).button;
     const on = name === normalized;
     button?.classList.toggle("active", on);
@@ -28089,7 +28233,7 @@ function renderProviderWorkbench() {
     if (providerWorkbenchActiveState) providerWorkbenchActiveState.textContent = stateText;
     if (providerWorkbenchActiveDot) providerWorkbenchActiveDot.dataset.state = stateText;
     if (providerWorkbenchActiveLogo) {
-      providerWorkbenchActiveLogo.classList.remove("provider-logo-openai", "provider-logo-gemini", "provider-logo-claude", "provider-logo-oanda");
+      providerWorkbenchActiveLogo.classList.remove("provider-logo-openai", "provider-logo-openrouter", "provider-logo-gemini", "provider-logo-claude", "provider-logo-oanda");
       providerWorkbenchActiveLogo.classList.add("provider-logo-oanda");
     }
     if (providerWorkbenchHint) {
@@ -28117,7 +28261,7 @@ function renderProviderWorkbench() {
   const authLower = String(status?.authSource || "").toLowerCase().trim();
   const hasGoogleOAuth =
     authLower.startsWith("google oauth") || authLower.startsWith("google login");
-  const launchText = kind === "codex"
+  const launchText = kind === "codex" || kind === "openrouter"
     ? connected ? "Open" : "Connect"
     : kind === "gemini"
       ? hasGoogleOAuth
@@ -28150,7 +28294,7 @@ function renderProviderWorkbench() {
   if (providerWorkbenchActiveState) providerWorkbenchActiveState.textContent = stateText;
   if (providerWorkbenchActiveDot) providerWorkbenchActiveDot.dataset.state = stateText;
   if (providerWorkbenchActiveLogo) {
-    providerWorkbenchActiveLogo.classList.remove("provider-logo-openai", "provider-logo-gemini", "provider-logo-claude", "provider-logo-oanda");
+    providerWorkbenchActiveLogo.classList.remove("provider-logo-openai", "provider-logo-openrouter", "provider-logo-gemini", "provider-logo-claude", "provider-logo-oanda");
     providerWorkbenchActiveLogo.classList.add(providerWorkbenchLogoClass(kind));
   }
   if (providerWorkbenchHint) {
@@ -28182,7 +28326,7 @@ function renderProviderWorkbenchLauncher(kind, stateText, options = {}) {
 
 function mountProviderWorkbenchTerminals() {
   if (!providerTerminalDeck) return;
-  ["gemini", "claude"].forEach((provider) => {
+  ["openrouter", "gemini", "claude"].forEach((provider) => {
     const shell = providerTerminalDom(provider).shell;
     if (shell && shell.parentElement !== providerTerminalDeck) providerTerminalDeck.appendChild(shell);
   });
@@ -28190,6 +28334,7 @@ function mountProviderWorkbenchTerminals() {
 
 const providerTerminalText = {
   codex: ["Open OpenAI OAuth in Forge", "OpenAI OAuth is preparing...", "Type help, open, or refresh for OpenAI OAuth", "Preparing OpenAI OAuth"],
+  openrouter: ["Open OpenRouter OAuth in Forge", "OpenRouter OAuth is preparing...", "Type help, login, or refresh for OpenRouter OAuth", "Preparing OpenRouter OAuth"],
   gemini: ["Start Gemini in Forge", "Gemini is preparing...", "Type a command or answer for Gemini CLI", "Preparing Gemini CLI"],
   claude: ["Start Claude in Forge", "Claude is preparing...", "Type a command or answer for Claude Code CLI", "Preparing Claude Code CLI"],
 };
@@ -28208,6 +28353,14 @@ const PROVIDER_TERMINAL_COMMANDS = {
     resize: "openai_oauth_terminal_resize",
     stop: "openai_oauth_terminal_stop",
     clear: "openai_oauth_terminal_clear",
+  },
+  openrouter: {
+    snapshot: "openrouter_oauth_terminal_snapshot",
+    start: "openrouter_oauth_terminal_start",
+    send_input: "openrouter_oauth_terminal_send_input",
+    resize: "openrouter_oauth_terminal_resize",
+    stop: "openrouter_oauth_terminal_stop",
+    clear: "openrouter_oauth_terminal_clear",
   },
   gemini: {
     snapshot: "gemini_terminal_snapshot",
@@ -28237,9 +28390,13 @@ function providerTerminalXtermGlobals() {
   return { TerminalCtor, FitAddonCtor };
 }
 
+function providerUsesLiveTerminal(provider) {
+  return !["codex", "openrouter"].includes(provider);
+}
+
 function setProviderTerminalLiveMode(provider, live) {
   const dom = providerTerminalDom(provider);
-  dom.shell?.classList.toggle("terminal-live", !!live);
+  dom.shell?.classList.toggle("terminal-live", providerUsesLiveTerminal(provider) && !!live);
 }
 
 function resetProviderTerminalEmulator(provider, text = "") {
@@ -28425,6 +28582,7 @@ function renderProviderTerminal(provider, snapshot = {}, options = {}) {
   if (typeof snapshot.output === "string") {
     filteredSnapshotOutput = setProviderTerminalOutput(provider, snapshot.output);
     const canReplaySnapshot = resetLiveTerminal
+      && providerUsesLiveTerminal(provider)
       && ensureProviderTerminalEmulator(provider)
       && (!running || !providerTerminalLiveHydration[provider]);
     if (canReplaySnapshot) resetProviderTerminalEmulator(provider, filteredSnapshotOutput);
@@ -28444,7 +28602,7 @@ function handleProviderTerminalEvent(provider, payload) {
   if (typeof payload?.outputDelta === "string" && payload.outputDelta) {
     providerTerminalLiveHydration[provider] = true;
     const filteredDelta = appendProviderTerminalOutput(provider, payload.outputDelta);
-    if (filteredDelta && activeProviderWorkbench === provider && ensureProviderTerminalEmulator(provider)) {
+    if (filteredDelta && providerUsesLiveTerminal(provider) && activeProviderWorkbench === provider && ensureProviderTerminalEmulator(provider)) {
       writeProviderTerminalEmulator(provider, filteredDelta);
     }
   }
@@ -28482,7 +28640,7 @@ async function startProviderTerminal(provider) {
   const dom = providerTerminalDom(provider);
   setProviderTerminalOpening(provider, true);
   setProviderTerminalVisible(provider, true);
-  resetProviderTerminalEmulator(provider);
+  if (providerUsesLiveTerminal(provider)) resetProviderTerminalEmulator(provider);
   renderProviderTerminal(provider, {
     running: true,
     readyForInput: false,
@@ -28496,6 +28654,16 @@ async function startProviderTerminal(provider) {
       timeoutMs: 30000,
     });
     renderProviderTerminal(provider, snapshot || {}, { resetLiveTerminal: false });
+  } catch (err) {
+    appendProviderTerminalOutput(provider, `\n[forge] start failed: ${err}\n`);
+    renderProviderTerminal(provider, {
+      running: false,
+      readyForInput: false,
+      phase: "error",
+      message: String(err || "provider terminal failed"),
+      output: providerTerminalCache(provider),
+    });
+    throw err;
   } finally {
     setProviderTerminalOpening(provider, false);
   }
@@ -28508,12 +28676,53 @@ async function sendProviderTerminalInput(provider) {
   dom.input.value = "";
   if (!providerTerminalInstances.get(provider)) appendProviderTerminalOutput(provider, `\n> ${input}\n`);
   try {
-    await forgeInvoke(providerTerminalInvokeName(provider, "send_input"), { input: `${input}\r` }, {
-      section: "provider-terminal",
-      timeoutMs: 5000,
-    });
+    await sendProviderTerminalCommand(provider, input);
   } catch (err) {
     appendProviderTerminalOutput(provider, `\n[forge] input failed: ${err}\n`);
+    void refreshProviderTerminalSnapshot(provider);
+  }
+}
+
+async function sendProviderTerminalCommand(provider, input, options = {}) {
+  if (!forgeCanInvoke()) return null;
+  const command = String(input || "").trim();
+  if (!command) return null;
+  return forgeInvoke(providerTerminalInvokeName(provider, "send_input"), { input: `${command}\r` }, {
+    section: "provider-terminal",
+    timeoutMs: options.timeoutMs || 12000,
+    dedupeKey: options.dedupeKey || undefined,
+  });
+}
+
+async function forceProviderOauthLogin(provider) {
+  if (!["codex", "openrouter"].includes(provider)) return;
+  setActiveProviderWorkbench(provider, { focusTerminal: true });
+  const alreadyRunning = providerTerminalIsRunning(provider);
+  const alreadyOpening = providerTerminalIsOpening(provider);
+  if (!alreadyRunning && !alreadyOpening) {
+    await startProviderTerminal(provider);
+    if (provider === "openrouter") watchOpenRouterProviderLogin();
+    else watchCodexProviderLogin();
+    setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 1200);
+    return;
+  }
+  if (alreadyOpening) {
+    if (provider === "openrouter") watchOpenRouterProviderLogin();
+    else watchCodexProviderLogin();
+    return;
+  }
+  const command = provider === "openrouter" ? "login" : "open";
+  try {
+    const snapshot = await sendProviderTerminalCommand(provider, command, {
+      timeoutMs: 15000,
+      dedupeKey: `${provider}:oauth-login-click:${Date.now()}`,
+    });
+    if (snapshot) renderProviderTerminal(provider, snapshot, { resetLiveTerminal: false });
+    if (provider === "openrouter") watchOpenRouterProviderLogin();
+    else watchCodexProviderLogin();
+    setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 1200);
+  } catch (err) {
+    appendProviderTerminalOutput(provider, `\n[forge] OAuth login failed: ${err}\n`);
     void refreshProviderTerminalSnapshot(provider);
   }
 }
@@ -28646,6 +28855,25 @@ function renderCodexProviderStatus(status, options = {}) {
   renderProviderWorkbench();
 }
 
+function renderOpenRouterProviderStatus(status, options = {}) {
+  const busy = !!options.busy;
+  const normalized = status
+    ? {
+        ...status,
+        installed: true,
+        authSource: status?.authSource || "OpenRouter OAuth",
+        modelRef: selectedCanvasModelRef("openrouter"),
+      }
+    : openRouterProviderLastStatus;
+  const connected = !!normalized?.connected;
+  openRouterProviderLastStatus = normalized || openRouterProviderLastStatus;
+  const launcherMeta = providerLauncherDom("openrouter").meta;
+  if (launcherMeta) launcherMeta.textContent = selectedCanvasModelRef("openrouter");
+  renderProviderWorkbenchLauncher("openrouter", busy ? "checking" : connected ? "ready" : "auth", { muted: !connected });
+  renderCliProviderTerminalShell("openrouter");
+  renderProviderWorkbench();
+}
+
 async function refreshOpenAiProviderStatus(options = {}) {
   if (!forgeCanInvoke()) {
     renderOpenAiProviderStatus({
@@ -28685,6 +28913,47 @@ async function refreshOpenAiProviderStatus(options = {}) {
       authSource: "error",
       modelRef: selectedOpenAiModelRef(),
       message: `Codex status failed: ${err}`,
+    }, options);
+    return null;
+  }
+}
+
+async function refreshOpenRouterProviderStatus(options = {}) {
+  if (!forgeCanInvoke()) {
+    renderOpenRouterProviderStatus({
+      connected: false,
+      installed: true,
+      authSource: "none",
+      modelRef: selectedCanvasModelRef("openrouter"),
+      message: "Open Forge as a Tauri app to connect OpenRouter OAuth.",
+    });
+    return null;
+  }
+  if (!options.silent) renderOpenRouterProviderStatus(openRouterProviderLastStatus, { busy: true });
+  try {
+    const status = await forgeInvoke("openrouter_status", {}, {
+      section: "provider",
+      timeoutMs: 8000,
+      dedupeKey: "openrouter-status",
+    });
+    const normalized = {
+      ...status,
+      installed: true,
+      authSource: "OpenRouter OAuth",
+      modelRef: selectedCanvasModelRef("openrouter"),
+      message: status?.connected
+        ? "OpenRouter OAuth key is stored locally."
+        : "OpenRouter OAuth is not connected yet.",
+    };
+    renderOpenRouterProviderStatus(normalized, options);
+    return normalized;
+  } catch (err) {
+    renderOpenRouterProviderStatus({
+      connected: false,
+      installed: true,
+      authSource: "error",
+      modelRef: selectedCanvasModelRef("openrouter"),
+      message: `OpenRouter status failed: ${err}`,
     }, options);
     return null;
   }
@@ -28736,6 +29005,7 @@ async function refreshCliProviderStatuses(options = {}) {
 
 async function refreshProviderWorkbenchStatuses(options = {}) {
   await refreshOpenAiProviderStatus(options);
+  await refreshOpenRouterProviderStatus(options);
   await refreshCliProviderStatuses(options);
   await refreshOandaProviderStatus(options);
 }
@@ -28759,6 +29029,15 @@ function watchCodexProviderLogin() {
     tries += 1;
     await refreshProviderWorkbenchStatuses({ silent: true });
     if (codexProviderLastStatus?.connected || tries >= 40) clearInterval(timer);
+  }, 3000);
+}
+
+function watchOpenRouterProviderLogin() {
+  let tries = 0;
+  const timer = setInterval(async () => {
+    tries += 1;
+    await refreshProviderWorkbenchStatuses({ silent: true });
+    if (openRouterProviderLastStatus?.connected || tries >= 40) clearInterval(timer);
   }, 3000);
 }
 
@@ -28814,6 +29093,10 @@ async function connectCodexProvider(options = {}) {
     providerWorkbenchHint.textContent = "OpenAI OAuth is opening inside Forge.";
   }
   try {
+    if (providerTerminalIsRunning("codex") || providerTerminalIsOpening("codex")) {
+      await forceProviderOauthLogin("codex");
+      return;
+    }
     await startProviderTerminal("codex");
     watchCodexProviderLogin();
     setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 1200);
@@ -28823,6 +29106,37 @@ async function connectCodexProvider(options = {}) {
       installed: true,
       authSource: "error",
       message: `OpenAI OAuth console failed: ${err}`,
+    });
+  }
+}
+
+async function connectOpenRouterProvider(options = {}) {
+  if (!forgeCanInvoke()) {
+    renderOpenRouterProviderStatus({
+      connected: false,
+      installed: true,
+      authSource: "OpenRouter OAuth",
+      message: "Open Forge as a Tauri app to launch the OpenRouter OAuth console.",
+    });
+    return;
+  }
+  if (!options.background && providerWorkbenchHint) {
+    providerWorkbenchHint.textContent = "OpenRouter OAuth is opening inside Forge.";
+  }
+  try {
+    if (providerTerminalIsRunning("openrouter") || providerTerminalIsOpening("openrouter")) {
+      await forceProviderOauthLogin("openrouter");
+      return;
+    }
+    await startProviderTerminal("openrouter");
+    watchOpenRouterProviderLogin();
+    setTimeout(() => { void refreshProviderWorkbenchStatuses({ silent: true }); }, 1200);
+  } catch (err) {
+    renderOpenRouterProviderStatus({
+      connected: false,
+      installed: true,
+      authSource: "error",
+      message: `OpenRouter OAuth console failed: ${err}`,
     });
   }
 }
@@ -29014,6 +29328,7 @@ if (providerOverlay) providerOverlay.addEventListener("mousedown", (event) => {
 });
 const providerLaunchActions = Object.freeze([
   ["provider-launch-codex", "codex"],
+  ["provider-launch-openrouter", "openrouter"],
   ["provider-launch-claude", "claude"],
   ["provider-launch-oanda", "oanda"],
 ]);
@@ -29030,11 +29345,24 @@ forgeShellRuntime?.registerAction?.("provider-workbench-refresh", createAsyncAct
 forgeShellRuntime?.registerAction?.("provider-refresh-all", createAsyncAction(async () => {
   await Promise.allSettled([
     refreshOpenAiProviderStatus(),
+    refreshOpenRouterProviderStatus(),
     refreshCliProviderStatuses(),
     refreshOandaProviderStatus(),
     refreshVoiceProviderStatus(),
   ]);
 }));
+bindEventAction([providerTerminalDeck], "click", (event) => {
+  const actionEl = event.target instanceof Element
+    ? event.target.closest("[data-provider-terminal-action]")
+    : null;
+  if (!actionEl || !providerTerminalDeck?.contains(actionEl)) return;
+  const action = actionEl.getAttribute("data-provider-terminal-action");
+  const provider = actionEl.getAttribute("data-provider") || activeProviderWorkbench || "codex";
+  if (action !== "login" || !["codex", "openrouter"].includes(provider)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void forceProviderOauthLogin(provider);
+});
 forgeShellRuntime?.registerAction?.("provider-oanda-send", createAsyncAction(() => submitOandaProviderTerminalInput()));
 forgeShellRuntime?.registerAction?.("provider-oanda-reset", () => {
   startOandaProviderTerminal();
