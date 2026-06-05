@@ -6632,7 +6632,7 @@ import { createTradingAssetRuntime } from "./controller.js";
     const entryEnabled = !!f.entryOrderEnabled;
     const entryPrice = entryEnabled && f.limitPrice ? Number(f.limitPrice) : side === "BUY" ? ask : bid;
     const account = state.snapshot?.account;
-    const marginAvailable = Number(account?.marginAvailable) || 0;
+    const marginAvailable = Number(account?.marginAvailable) || Number(account?.nav) || Number(account?.balance) || 0;
     const currency = String(account?.currency || "USD");
 
     const shell = document.createElement("div");
