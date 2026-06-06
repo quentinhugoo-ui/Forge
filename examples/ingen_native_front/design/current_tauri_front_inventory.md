@@ -311,23 +311,26 @@ as of
   because the native front cutover is clear.
 - `src/cutover_audit.rs` now verifies the native shell manifest has no
   Tauri/Dioxus/wasm-bindgen shell dependency, verifies the 18 legacy front
-  blockers are gone and marks the 6 protected backend services that must be
+  blockers are gone and marks the 5 protected backend services that must be
   extracted before full Tauri backend retirement.
+- `banger_native_engine.rs` was extracted from the old Tauri tree into
+  `examples/ingen_native_services/src/banger_native_engine.rs`; the old Tauri
+  tree no longer owns this service.
 - Rollback commit before deletion:
   `9527b7ac Add native Slint front migration`, pushed to `origin/master`.
 - The 18 obsolete global front/runtime paths were deleted on 2026-06-06,
   including the old `ui` tree, `node_modules`, misplaced `native-front`,
   Dioxus `front-rs`, npm manifests and TS config.
 - Latest Stage 11 proof hash:
-  `4e431fb20ae1a870f4806af6e06d027a4fdfcd2046cf7047f32ccb4d577cd027`.
+  `3c7451d9875089732e6a8f2d77dad78eadd6ce4537e18880dbad1d395505b570`.
 - Latest obsolete-front manifest hash:
   `65c4d065dfdb1341dfb22672a5428f572d76b20ad286b1abe3652ee10e46b01d`.
 - Latest cutover audit hash:
-  `9a3b166a2c26a219d8ddec2f3fba32cc46e720c845627a02d486d6755e17f87b`.
+  `bc0c6d4c891b818eca46b5c59ddffbc1bfab272951397aeb4bb1f526115243ea`.
 - Stage 11 deletion readiness is currently `true`: `0` obsolete app-shell
   paths still exist under `examples/forge_tauri_ui/**`.
 - Stage 11 native front cutover is currently `true`.
-- Stage 11 backend extraction readiness is currently `false`: `6` protected
+- Stage 11 backend extraction readiness is currently `false`: `5` protected
   backend services still live under `examples/forge_tauri_ui/src-tauri/src/**`.
 - Full Tauri backend retirement remains blocked until those backend services
   are extracted, moved or explicitly retired.

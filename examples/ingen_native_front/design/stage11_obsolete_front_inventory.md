@@ -44,9 +44,13 @@ runtime or domain logic that must be extracted, moved or deliberately retired:
 - `examples/forge_tauri_ui/src-tauri/src/forge_agent_runtime.rs`
 - `examples/forge_tauri_ui/src-tauri/src/forge_brain_runtime.rs`
 - `examples/forge_tauri_ui/src-tauri/src/collection_os.rs`
-- `examples/forge_tauri_ui/src-tauri/src/banger_native_engine.rs`
 - `examples/forge_tauri_ui/src-tauri/src/trading_core.rs`
 - `examples/forge_tauri_ui/src-tauri/src/real_estate_harvester.rs`
+
+Extracted on 2026-06-06:
+
+- `examples/forge_tauri_ui/src-tauri/src/banger_native_engine.rs` ->
+  `examples/ingen_native_services/src/banger_native_engine.rs`
 
 ## Current Status
 
@@ -57,7 +61,7 @@ Native front cutover is complete:
 - `fullTauriRetirementReady=false`
 - obsolete app-shell paths remaining: `0`
 
-Full Tauri backend retirement is still blocked because the protected backend
+Full Tauri backend retirement is still blocked because `5` protected backend
 paths above still live under `examples/forge_tauri_ui/src-tauri/src/**`.
 
 ## Anti-Regression Rules

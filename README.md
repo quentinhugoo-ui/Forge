@@ -14,6 +14,7 @@ The product direction is simple: shorten the path between intent, memory, proof,
 - Brain and memory: `src/brain.rs`.
 - Godel machine: `src/godel.rs`.
 - Native front: `examples/ingen_native_front/**`.
+- Native/shared services: `examples/ingen_native_services/**`.
 - Former Tauri service tree: `examples/forge_tauri_ui/src-tauri/**`, kept only while protected backend services are extracted.
 - Direct agent CLI: `examples/forge_tauri_ui/src-tauri/src/bin/forge_agent.rs`.
 - Main UI sections: Forge shell, Alpha, WebExplorer peripheral, Banger/3D, trading, and real-estate/real-estate-main.

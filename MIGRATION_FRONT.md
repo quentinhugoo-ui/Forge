@@ -515,7 +515,11 @@ Current state 2026-06-06:
 - State kernel: `src/state.rs`, first deterministic Rust reducer/projection
   pass with replay hash and browser-IPC-free proof.
 - Proof manifest: `src/proof.rs`, available through `cargo run --manifest-path examples\ingen_native_front\Cargo.toml -- --report`.
-- Latest report: Windows, NVIDIA GeForce RTX 3050 6GB Laptop GPU, wgpu Vulkan backend, texture probe true, WRY/WebView2 compile-time capability true, child attach mode `--webview-child-proof`, design parity false, native component target list present, Forge first-viewport static parity `true`, state checkpoint schema `ingen.native_front.state_checkpoint.v1`, state replay hash `74a82d2c844898413cd76b140767432d8ce1932ac2a75a6d3349a3dddc19718b`, event log hash `175aff109eb3f3d938d805716d6e9ba3c5d1fc60affbe1f658a446f07f84797c`, state hash `482e5f3b6f454a0f82822e07f2ca7177a3143f88bb48e6a8492d0efa03accf1b`, `directMutationBlocked=true`, keyboard shortcuts `Control+Tab -> NavigateNext` and `Escape -> CloseModal`, fake direct-service proof hash `909dcdcc6e7082cde082684b2a1f952a44692a834cc4d888e1b594add95f84f8`, fake long-job stream `queued -> running -> done`, proof hash `4e431fb20ae1a870f4806af6e06d027a4fdfcd2046cf7047f32ccb4d577cd027`.
+- Latest report: Windows, NVIDIA GeForce RTX 3050 6GB Laptop GPU, wgpu Vulkan backend, texture probe true, WRY/WebView2 compile-time capability true, child attach mode `--webview-child-proof`, design parity false, native component target list present, Forge first-viewport static parity `true`, state checkpoint schema `ingen.native_front.state_checkpoint.v1`, state replay hash `74a82d2c844898413cd76b140767432d8ce1932ac2a75a6d3349a3dddc19718b`, event log hash `175aff109eb3f3d938d805716d6e9ba3c5d1fc60affbe1f658a446f07f84797c`, state hash `482e5f3b6f454a0f82822e07f2ca7177a3143f88bb48e6a8492d0efa03accf1b`, `directMutationBlocked=true`, keyboard shortcuts `Control+Tab -> NavigateNext` and `Escape -> CloseModal`, fake direct-service proof hash `909dcdcc6e7082cde082684b2a1f952a44692a834cc4d888e1b594add95f84f8`, fake long-job stream `queued -> running -> done`, proof hash `3c7451d9875089732e6a8f2d77dad78eadd6ce4537e18880dbad1d395505b570`.
+- Latest backend extraction pass: `banger_native_engine.rs` moved out of
+  `examples/forge_tauri_ui/src-tauri/src/**` into
+  `examples/ingen_native_services/src/banger_native_engine.rs`; the old Tauri
+  tree no longer owns this service.
 - Latest visual launch: `C:\scan-shared-target\debug\ingen-native-front.exe`
   was launched on 2026-06-06 after `cargo check --tests` and `cargo test --lib`
   passed. The window title is `InGen Native Front - Forge`.
@@ -1553,19 +1557,19 @@ Stage 11 status 2026-06-06:
   `examples/forge_tauri_ui/ui/SECTION_CONTRACT.md`,
   `examples/forge_tauri_ui/ui/SECTION_OWNERSHIP.json`.
 - Latest Stage 11 proof hash:
-  `4e431fb20ae1a870f4806af6e06d027a4fdfcd2046cf7047f32ccb4d577cd027`.
+  `3c7451d9875089732e6a8f2d77dad78eadd6ce4537e18880dbad1d395505b570`.
 - Latest obsolete-front manifest hash:
   `65c4d065dfdb1341dfb22672a5428f572d76b20ad286b1abe3652ee10e46b01d`.
 - Latest cutover audit hash:
-  `9a3b166a2c26a219d8ddec2f3fba32cc46e720c845627a02d486d6755e17f87b`.
+  `bc0c6d4c891b818eca46b5c59ddffbc1bfab272951397aeb4bb1f526115243ea`.
 - `deletion_ready=true`.
 - `cutoverReady=true`.
 - `fullTauriRetirementReady=false`.
 - `0` obsolete app-shell/front-runtime paths still exist.
-- `6` protected backend services still live under the old Tauri tree.
+- `5` protected backend services still live under the old Tauri tree.
 - Native front cutover is complete. Full Tauri backend retirement remains a
   separate runtime extraction wall because the old `src-tauri/src/**` tree still
-  contains Brain/agent, Collection OS, Banger, Trading and Real Estate service
+  contains Brain/agent, Collection OS, Trading and Real Estate service
   code.
 
 Verifier:

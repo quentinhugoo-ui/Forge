@@ -99,6 +99,7 @@ Every code change must reduce architectural drag:
   `MonsterNode::prepare_forge_source`, which returns one manifest containing
   the route, cache-miss fragments, native-ready outputs and proof hash.
 - Native frontend: `examples/ingen_native_front/**`; this is the active product shell for Migration Front.
+- Native/shared services: `examples/ingen_native_services/**`; extracted backend services leave the old Tauri tree here before full retirement.
 - Former Tauri backend services: `examples/forge_tauri_ui/src-tauri/src/**`; keep only protected service code until it is extracted behind direct Rust adapters.
 - Deleted legacy frontend: do not recreate `examples/forge_tauri_ui/ui`, `examples/forge_tauri_ui/front-rs`, `examples/forge_tauri_ui/native-front`, npm manifests, TypeScript config or `node_modules`.
 - Brain runtime pointers and Banger policy: `examples/forge_tauri_ui/src-tauri/src/forge_brain_runtime.rs`
