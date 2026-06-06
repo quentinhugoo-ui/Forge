@@ -1524,27 +1524,50 @@ Stage 11 status 2026-06-06:
 - Obsolete-front manifest delivered.
 - Cutover audit CLI delivered:
   `cargo run --manifest-path examples\ingen_native_front\Cargo.toml -- --cutover-audit`
-  prints the manifest and exits with code `2` while `deletion_ready=false`.
+  prints the manifest and exits with code `0` when the native front cutover is
+  clear.
 - Cutover audit report delivered in
   `examples/ingen_native_front/src/cutover_audit.rs`: it verifies the native
-  shell manifest contains no Tauri/Dioxus/wasm-bindgen shell dependency, lists
-  the 14 legacy front blockers, and marks the 6 protected backend services that
-  must be extracted before deletion.
+  shell manifest contains no Tauri/Dioxus/wasm-bindgen shell dependency,
+  verifies the 18 legacy front blockers are gone, and separately marks the 6
+  protected backend services that must be extracted before full Tauri backend
+  retirement.
+- Rollback commit before deletion:
+  `9527b7ac Add native Slint front migration`, pushed to `origin/master`.
+- Deleted 2026-06-06:
+  `examples/forge_tauri_ui/ui`,
+  `examples/forge_tauri_ui/ui/index.html`,
+  `examples/forge_tauri_ui/ui/src`,
+  `examples/forge_tauri_ui/ui/dist`,
+  `examples/forge_tauri_ui/ui/styles.css`,
+  `examples/forge_tauri_ui/ui/rust-front.html`,
+  `examples/forge_tauri_ui/ui/rust-front-poc.html`,
+  `examples/forge_tauri_ui/front-rs`,
+  `examples/forge_tauri_ui/native-front`,
+  `examples/forge_tauri_ui/node_modules`,
+  `examples/forge_tauri_ui/package.json`,
+  `examples/forge_tauri_ui/package-lock.json`,
+  `examples/forge_tauri_ui/tsconfig.json`,
+  `examples/forge_tauri_ui/scripts/build-ui-runtime.mjs`,
+  `examples/forge_tauri_ui/scripts/forge-front-rs-cutover-audit.mjs`,
+  `examples/forge_tauri_ui/scripts/forge-ui-smoke.mjs`,
+  `examples/forge_tauri_ui/ui/SECTION_CONTRACT.md`,
+  `examples/forge_tauri_ui/ui/SECTION_OWNERSHIP.json`.
 - Latest Stage 11 proof hash:
-  `61aa7c8bc7f42c469225cb10fdf3a354cc30a9e61eb574542c58e5533dd3c26a`.
+  `5b52a28d4c4d037c0290a262ebe828eda0a6ed55b5487eed568eb82438956fdc`.
 - Latest obsolete-front manifest hash:
-  `8ee10c6c714e0c40485b0725195937c01a6ade3cf7d5f81b8559510c18083774`.
+  `65c4d065dfdb1341dfb22672a5428f572d76b20ad286b1abe3652ee10e46b01d`.
 - Latest cutover audit hash:
-  `b9f1b16fe722bc956b831fed07f27eed945c07697632a28ab7f0cdb6d6da2b5e`.
-- `deletion_ready=false`.
-- `14` obsolete app-shell paths still exist.
+  `9a3b166a2c26a219d8ddec2f3fba32cc46e720c845627a02d486d6755e17f87b`.
+- `deletion_ready=true`.
+- `cutoverReady=true`.
+- `fullTauriRetirementReady=false`.
+- `0` obsolete app-shell/front-runtime paths still exist.
 - `6` protected backend services still live under the old Tauri tree.
-- Destructive deletion is intentionally blocked until:
-  - native migration work and valuable old-front work have a rollback commit;
-  - protected backend services still inside `examples/forge_tauri_ui/src-tauri`
-    are extracted, moved or explicitly retired;
-  - the obsolete app-shell paths can be removed in one guarded batch.
-- No old-front deletion was performed in this stage update.
+- Native front cutover is complete. Full Tauri backend retirement remains a
+  separate runtime extraction wall because the old `src-tauri/src/**` tree still
+  contains Brain/agent, Collection OS, Banger, Trading and Real Estate service
+  code.
 
 Verifier:
 

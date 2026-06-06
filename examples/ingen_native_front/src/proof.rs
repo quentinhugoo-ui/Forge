@@ -287,7 +287,7 @@ pub fn build_stage0_report_from(wgpu: WgpuProbe, webview: WebViewProbe) -> Stage
         "Native chat and agent surfaces are now Slint/Rust projections; real provider streaming is still represented by direct service jobs until the full product adapters are connected.".to_string(),
         "Native product sections now have content-addressed Rust manifests and Slint projections; real domain adapters still need to replace fixture summaries before deletion of the old front.".to_string(),
         "Native packaging and security policy now records app-data/log/crash/secrets paths and blocks protected local roots; real installer signing/update automation remains a later release-engineering gate.".to_string(),
-        "Stage 11 deletion is guarded by obsolete-front and cutover-audit manifests; the current worktree still contains modified legacy Tauri/UI paths and protected backend services, so destructive deletion must wait for a rollback commit and extraction decision.".to_string(),
+        "Stage 11 front cutover is guarded by obsolete-front and cutover-audit manifests; protected backend services under the old Tauri tree are tracked as a separate retirement wall.".to_string(),
         "Safe Web CodeAct remains explicitly deferred until the Slint/Rust frontend and obsolete-front deletion stages are complete.".to_string(),
     ];
 
@@ -304,7 +304,8 @@ pub fn build_stage0_report_from(wgpu: WgpuProbe, webview: WebViewProbe) -> Stage
         "trading, real-estate, forge, alpha, banger and webexplorer product panels match the original interaction density".to_string(),
         "fresh native package installs and restarts from the crash-recovery record".to_string(),
         "obsolete Tauri/WebView app-shell paths have either been deleted or are explicitly blocked by the Stage 11 manifest".to_string(),
-        "stage11 cutover audit returns ready only after old app-shell paths are absent and protected backend services have been extracted".to_string(),
+        "stage11 front cutover audit returns ready after old app-shell paths are absent and the native shell manifest has no forbidden shell dependencies".to_string(),
+        "full Tauri backend retirement remains blocked until protected backend services have been extracted or retired".to_string(),
     ];
 
     let promotion_ready =
@@ -571,9 +572,11 @@ mod tests {
             report.cutover_audit.schema,
             "ingen.native_front.stage11_cutover_audit.v1"
         );
-        assert!(!report.cutover_audit.cutover_ready);
-        assert!(report.cutover_audit.rollback_required);
+        assert!(!report.cutover_audit.rollback_required);
+        assert!(report.cutover_audit.cutover_ready);
         assert!(report.cutover_audit.backend_extraction_required);
+        assert!(report.cutover_audit.tauri_backend_retirement_required);
+        assert!(!report.cutover_audit.full_tauri_retirement_ready);
         assert!(report.cutover_audit.proof_hash.len() == 64);
         assert!(report.design.forge_first_viewport.passed);
         assert_eq!(
@@ -600,7 +603,7 @@ mod tests {
         assert!(report
             .limitations
             .iter()
-            .any(|item| item.contains("Stage 11 deletion is guarded")));
+            .any(|item| item.contains("Stage 11 front cutover is guarded")));
     }
 }
 

@@ -315,26 +315,30 @@ as of
   `design/stage11_obsolete_front_inventory.md` records the guarded deletion
   list for the old global Tauri/WebView app shell.
 - `ingen-native-front --obsolete-front-report` prints the manifest without
-  starting the UI; `ingen-native-front --cutover-audit` exits with code `2`
-  while `deletion_ready=false`, so CI can block premature deletion/cutover.
+  starting the UI; `ingen-native-front --cutover-audit` now exits with code `0`
+  because the native front cutover is clear.
 - `src/cutover_audit.rs` now verifies the native shell manifest has no
-  Tauri/Dioxus/wasm-bindgen shell dependency, lists the 14 legacy front
-  blockers and marks the 6 protected backend services that must be extracted
-  before deletion.
+  Tauri/Dioxus/wasm-bindgen shell dependency, verifies the 18 legacy front
+  blockers are gone and marks the 6 protected backend services that must be
+  extracted before full Tauri backend retirement.
+- Rollback commit before deletion:
+  `9527b7ac Add native Slint front migration`, pushed to `origin/master`.
+- The 18 obsolete global front/runtime paths were deleted on 2026-06-06,
+  including the old `ui` tree, `node_modules`, misplaced `native-front`,
+  Dioxus `front-rs`, npm manifests and TS config.
 - Latest Stage 11 proof hash:
-  `61aa7c8bc7f42c469225cb10fdf3a354cc30a9e61eb574542c58e5533dd3c26a`.
+  `5b52a28d4c4d037c0290a262ebe828eda0a6ed55b5487eed568eb82438956fdc`.
 - Latest obsolete-front manifest hash:
-  `8ee10c6c714e0c40485b0725195937c01a6ade3cf7d5f81b8559510c18083774`.
+  `65c4d065dfdb1341dfb22672a5428f572d76b20ad286b1abe3652ee10e46b01d`.
 - Latest cutover audit hash:
-  `b9f1b16fe722bc956b831fed07f27eed945c07697632a28ab7f0cdb6d6da2b5e`.
-- Stage 11 deletion readiness is currently `false`: `14` obsolete app-shell
+  `9a3b166a2c26a219d8ddec2f3fba32cc46e720c845627a02d486d6755e17f87b`.
+- Stage 11 deletion readiness is currently `true`: `0` obsolete app-shell
   paths still exist under `examples/forge_tauri_ui/**`.
+- Stage 11 native front cutover is currently `true`.
 - Stage 11 backend extraction readiness is currently `false`: `6` protected
   backend services still live under `examples/forge_tauri_ui/src-tauri/src/**`.
-- No destructive deletion was performed. The old tree contains many modified
-  and untracked files, and several backend services under
-  `examples/forge_tauri_ui/src-tauri/src/**` still need extraction, movement or
-  explicit retirement before the app-shell cleanup batch can run safely.
+- Full Tauri backend retirement remains blocked until those backend services
+  are extracted, moved or explicitly retired.
 - `SectionStatusDock` renders native service/proof projections for
   WebExplorer, Banger, Trading and Real Estate. It is hidden on the base Forge
   first viewport so that the original first-screen geometry remains the visual

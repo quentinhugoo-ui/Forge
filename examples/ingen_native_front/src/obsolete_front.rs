@@ -83,6 +83,11 @@ pub fn build_obsolete_front_manifest() -> ObsoleteFrontManifest {
 fn obsolete_front_paths() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
         (
+            "examples/forge_tauri_ui/ui",
+            "global-webview-ui-tree",
+            "delete-after-native-cutover",
+        ),
+        (
             "examples/forge_tauri_ui/ui/index.html",
             "html-app-host",
             "delete-after-native-cutover",
@@ -118,6 +123,16 @@ fn obsolete_front_paths() -> Vec<(&'static str, &'static str, &'static str)> {
             "delete-after-native-cutover",
         ),
         (
+            "examples/forge_tauri_ui/native-front",
+            "misplaced-native-front",
+            "delete-after-native-cutover",
+        ),
+        (
+            "examples/forge_tauri_ui/node_modules",
+            "npm-front-dependencies",
+            "delete-after-native-cutover",
+        ),
+        (
             "examples/forge_tauri_ui/package.json",
             "npm-front-build",
             "delete-after-native-cutover",
@@ -125,6 +140,11 @@ fn obsolete_front_paths() -> Vec<(&'static str, &'static str, &'static str)> {
         (
             "examples/forge_tauri_ui/package-lock.json",
             "npm-front-build",
+            "delete-after-native-cutover",
+        ),
+        (
+            "examples/forge_tauri_ui/tsconfig.json",
+            "typescript-front-config",
             "delete-after-native-cutover",
         ),
         (

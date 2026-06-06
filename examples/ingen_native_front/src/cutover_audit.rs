@@ -38,8 +38,11 @@ pub struct CutoverAuditReport {
     pub native_shell_manifest: NativeShellManifestCheck,
     pub rollback_required: bool,
     pub backend_extraction_required: bool,
+    pub tauri_backend_retirement_required: bool,
+    pub full_tauri_retirement_ready: bool,
     pub cutover_ready: bool,
     pub blocking_summary: Vec<String>,
+    pub retirement_summary: Vec<String>,
     pub proof_hash: String,
 }
 
@@ -64,20 +67,12 @@ pub fn build_cutover_audit_report() -> CutoverAuditReport {
         native_shell_manifest_check("examples/ingen_native_front/Cargo.toml");
     let rollback_required = !legacy_front_blockers.is_empty();
     let backend_extraction_required = protected_backend_services.iter().any(|service| service.exists);
+    let tauri_backend_retirement_required = backend_extraction_required;
     let mut blocking_summary = Vec::new();
     if rollback_required {
         blocking_summary.push(format!(
             "{} obsolete app-shell paths still exist",
             legacy_front_blockers.len()
-        ));
-    }
-    if backend_extraction_required {
-        blocking_summary.push(format!(
-            "{} protected backend services still live under the old Tauri tree",
-            protected_backend_services
-                .iter()
-                .filter(|service| service.exists)
-                .count()
         ));
     }
     if !native_shell_manifest.forbidden_dependencies.is_empty() {
@@ -87,12 +82,25 @@ pub fn build_cutover_audit_report() -> CutoverAuditReport {
         ));
     }
     if blocking_summary.is_empty() {
-        blocking_summary.push("native cutover audit is clear".to_string());
+        blocking_summary.push("native front cutover audit is clear".to_string());
+    }
+    let mut retirement_summary = Vec::new();
+    if backend_extraction_required {
+        retirement_summary.push(format!(
+            "{} protected backend services still live under the old Tauri tree",
+            protected_backend_services
+                .iter()
+                .filter(|service| service.exists)
+                .count()
+        ));
+    }
+    if retirement_summary.is_empty() {
+        retirement_summary.push("old Tauri backend tree can be retired".to_string());
     }
     let cutover_ready = obsolete_front.deletion_ready
         && !rollback_required
-        && !backend_extraction_required
         && native_shell_manifest.forbidden_dependencies.is_empty();
+    let full_tauri_retirement_ready = cutover_ready && !tauri_backend_retirement_required;
     let mut report = CutoverAuditReport {
         schema: "ingen.native_front.stage11_cutover_audit.v1".to_string(),
         source: "examples/ingen_native_front/src/cutover_audit.rs".to_string(),
@@ -102,8 +110,11 @@ pub fn build_cutover_audit_report() -> CutoverAuditReport {
         native_shell_manifest,
         rollback_required,
         backend_extraction_required,
+        tauri_backend_retirement_required,
+        full_tauri_retirement_ready,
         cutover_ready,
         blocking_summary,
+        retirement_summary,
         proof_hash: String::new(),
     };
     report.proof_hash = stable_hash(&(
@@ -115,8 +126,11 @@ pub fn build_cutover_audit_report() -> CutoverAuditReport {
         &report.native_shell_manifest,
         report.rollback_required,
         report.backend_extraction_required,
+        report.tauri_backend_retirement_required,
+        report.full_tauri_retirement_ready,
         report.cutover_ready,
         &report.blocking_summary,
+        &report.retirement_summary,
     ));
     report
 }
@@ -205,14 +219,20 @@ mod tests {
     }
 
     #[test]
-    fn cutover_audit_blocks_while_legacy_front_exists() {
+    fn cutover_audit_tracks_front_cutover_and_backend_retirement_separately() {
         let report = build_cutover_audit_report();
 
         assert_eq!(report.schema, "ingen.native_front.stage11_cutover_audit.v1");
-        assert!(!report.cutover_ready);
-        assert!(report.rollback_required);
+        assert_eq!(report.rollback_required, !report.legacy_front_blockers.is_empty());
+        assert_eq!(
+            report.cutover_ready,
+            report.obsolete_front.deletion_ready
+                && !report.rollback_required
+                && report.native_shell_manifest.forbidden_dependencies.is_empty()
+        );
         assert!(report.backend_extraction_required);
-        assert!(!report.legacy_front_blockers.is_empty());
+        assert!(report.tauri_backend_retirement_required);
+        assert!(!report.full_tauri_retirement_ready);
         assert_eq!(report.proof_hash.len(), 64);
     }
 }

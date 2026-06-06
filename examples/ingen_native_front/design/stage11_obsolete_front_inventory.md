@@ -2,9 +2,14 @@
 
 Date: 2026-06-06.
 
-Purpose: delete the global Tauri/WebView application shell only after the native
-Slint/Rust shell is protected by a rollback point and the old backend services
-that still matter are extracted or explicitly kept.
+Purpose: record the deletion of the global Tauri/WebView application shell after
+the native Slint/Rust shell was protected by a rollback point.
+
+Rollback commit before deletion:
+
+```text
+9527b7ac Add native Slint front migration
+```
 
 ## Deletion Candidates
 
@@ -12,18 +17,24 @@ These paths are obsolete for normal product startup:
 
 | Path | Class | Action |
 |---|---|---|
-| `examples/forge_tauri_ui/ui/index.html` | HTML app host | Delete after rollback commit. |
-| `examples/forge_tauri_ui/ui/src` | TypeScript app shell | Delete after rollback commit. |
-| `examples/forge_tauri_ui/ui/dist` | Generated browser runtime | Delete after rollback commit. |
-| `examples/forge_tauri_ui/ui/styles.css` | CSS app shell | Delete after rollback commit. |
-| `examples/forge_tauri_ui/ui/rust-front.html` | Legacy WASM host | Delete after rollback commit. |
-| `examples/forge_tauri_ui/ui/rust-front-poc.html` | Legacy WASM host | Delete after rollback commit. |
-| `examples/forge_tauri_ui/front-rs` | Dioxus/WASM front | Delete after rollback commit. |
-| `examples/forge_tauri_ui/package.json` | npm front build | Delete after rollback commit. |
-| `examples/forge_tauri_ui/package-lock.json` | npm front build | Delete after rollback commit. |
-| `examples/forge_tauri_ui/scripts/build-ui-runtime.mjs` | Browser runtime build | Delete after rollback commit. |
-| `examples/forge_tauri_ui/scripts/forge-ui-smoke.mjs` | Legacy WebView smoke | Delete after rollback commit. |
-| `examples/forge_tauri_ui/scripts/forge-front-rs-cutover-audit.mjs` | Legacy front audit | Delete after rollback commit. |
+| `examples/forge_tauri_ui/ui` | Global WebView UI tree | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/ui/index.html` | HTML app host | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/ui/src` | TypeScript app shell | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/ui/dist` | Generated browser runtime | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/ui/styles.css` | CSS app shell | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/ui/rust-front.html` | Legacy WASM host | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/ui/rust-front-poc.html` | Legacy WASM host | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/front-rs` | Dioxus/WASM front | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/native-front` | Misplaced native front | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/node_modules` | npm front dependencies | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/package.json` | npm front build | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/package-lock.json` | npm front build | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/tsconfig.json` | TypeScript front config | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/scripts/build-ui-runtime.mjs` | Browser runtime build | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/scripts/forge-ui-smoke.mjs` | Legacy WebView smoke | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/scripts/forge-front-rs-cutover-audit.mjs` | Legacy front audit | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/ui/SECTION_CONTRACT.md` | Legacy section doc | Deleted 2026-06-06. |
+| `examples/forge_tauri_ui/ui/SECTION_OWNERSHIP.json` | Legacy section doc | Deleted 2026-06-06. |
 
 ## Protected Backend Paths
 
@@ -37,19 +48,17 @@ runtime or domain logic that must be extracted, moved or deliberately retired:
 - `examples/forge_tauri_ui/src-tauri/src/trading_core.rs`
 - `examples/forge_tauri_ui/src-tauri/src/real_estate_harvester.rs`
 
-## Current Blocker
+## Current Status
 
-Deletion is not safe yet because `examples/forge_tauri_ui/**` contains many
-modified and untracked files in the current worktree. Removing those paths now
-would destroy work that is not isolated in a rollback commit.
+Native front cutover is complete:
 
-Stage 11 must therefore proceed in this order:
+- `obsoleteFront.deletionReady=true`
+- `cutoverReady=true`
+- `fullTauriRetirementReady=false`
+- obsolete app-shell paths remaining: `0`
 
-1. Commit or otherwise preserve the native migration work and any valuable
-   old-front changes.
-2. Extract protected backend services that still matter.
-3. Delete only the obsolete app-shell paths above.
-4. Run the Stage 11 anti-regression audit.
+Full Tauri backend retirement is still blocked because the protected backend
+paths above still live under `examples/forge_tauri_ui/src-tauri/src/**`.
 
 ## Anti-Regression Rules
 
