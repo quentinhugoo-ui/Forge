@@ -2,7 +2,7 @@
 
 Canonical backup: https://github.com/quentinhugoo-ui/Forge.git
 
-Forge is a local agent workbench: a Rust/KASM compute core, a Tauri UI, an MCP surface for agents, and a persistent brain/memory layer wired to the Godel machinery.
+Forge is a local agent workbench: a Rust/KASM compute core, a native Rust/Slint front, a direct agent CLI (BrainCommand in, verified compact projection out), and a persistent brain/memory layer wired to the Godel machinery.
 
 The product direction is simple: shorten the path between intent, memory, proof, compute and action. Do not add pipelines when a shorter verified circuit can exist.
 
@@ -13,18 +13,19 @@ The product direction is simple: shorten the path between intent, memory, proof,
 - Monster compute path: `src/monster.rs`.
 - Brain and memory: `src/brain.rs`.
 - Godel machine: `src/godel.rs`.
-- Tauri workbench: `examples/forge_tauri_ui/**`.
-- MCP binary: `examples/forge_tauri_ui/src-tauri/src/bin/forge_mcp.rs`.
-- Main UI sections: shell/alpha/forge, WebExplorer, Google/provider tools, Banger/3D, trading with Bloomberg native panel, and real-estate/real-estate-main with contacts/fused agency tools.
+- Native front: `examples/ingen_native_front/**`.
+- Former Tauri service tree: `examples/forge_tauri_ui/src-tauri/**`, kept only while protected backend services are extracted.
+- Direct agent CLI: `examples/forge_tauri_ui/src-tauri/src/bin/forge_agent.rs`.
+- Main UI sections: Forge shell, Alpha, WebExplorer peripheral, Banger/3D, trading, and real-estate/real-estate-main.
 - Runtime integrations: Google OAuth, provider terminals, OANDA trading, native WebExplorer, Bloomberg live, Banger GPU lifecycle, real estate harvester.
 
 ## Agent Instructions
 
 Agents should read `AGENTS.md`.
 
-`CLAUDE.md` intentionally imports `AGENTS.md` with `@AGENTS.md` so Claude Code and Codex share one doctrine instead of two divergent copies.
+`CLAUDE.md` points to `AGENTS.md` so Claude Code and Codex share one doctrine instead of two divergent copies.
 
-For the slash commands, sandbox levels, MCP surface and brain/memory runtime, read `FORGE_RUNTIME_ARCHITECTURE.md`.
+For the CodeAct action layer, BrainCommand, Forge language, Monster pipeline and live objectives, read `FORGE_NATIVE_BYTECODE.md`.
 
 The short version:
 
@@ -32,7 +33,7 @@ The short version:
 - preserve unrelated user changes,
 - research current state of the art before non-trivial coding when internet is available,
 - reduce architecture drag with every change,
-- use Forge/MCP discipline for large data, repeated compute and proof artifacts,
+- use Forge direct-CLI discipline (forge_agent / BrainCommand) for large data, repeated compute and proof artifacts,
 - commit and push meaningful work before risky cleanup.
 
 For the exact live architecture and agent rules, `AGENTS.md` wins over this README.
@@ -42,10 +43,11 @@ For the exact live architecture and agent rules, `AGENTS.md` wins over this READ
 ```powershell
 cargo check --lib --tests
 cargo test brain --lib
+cargo check --manifest-path examples\ingen_native_front\Cargo.toml --tests
+cargo test --manifest-path examples\ingen_native_front\Cargo.toml --lib
+cargo run --manifest-path examples\ingen_native_front\Cargo.toml -- --cutover-audit
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml
-cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge_mcp
-node examples\forge_tauri_ui\scripts\forge-surface-manifest.mjs --check
-node examples\forge_tauri_ui\scripts\forge-ui-smoke.mjs
+cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge_agent
 ```
 
 If MSVC is needed on Windows:

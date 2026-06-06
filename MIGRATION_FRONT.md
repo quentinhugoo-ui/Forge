@@ -313,10 +313,10 @@ Important correction after the first Stage 0 window:
 The Stage 0 Slint window is a technical harness, not the product UI.
 ```
 
-It proves native feasibility only. It must never be presented as design parity.
-It must not be used as evidence that the existing Tauri app can be removed. A
-rough Slint harness that does not match the current app is acceptable only as a
-temporary proof tool.
+It proved native feasibility only. It was not accepted as design parity. The
+later Stage 11 cutover deleted the old WebView front after a separate
+obsolete-front audit; the active rule is now to keep the frozen design oracle
+and never recreate the old app shell.
 
 Design source artifact:
 
@@ -325,12 +325,12 @@ examples/ingen_native_front/design/current_tauri_front_inventory.md
 examples/ingen_native_front/design/current_tauri_front_inventory.json
 ```
 
-These files are now the Stage 1 design gate. They record the existing Tauri
+These files are now the frozen design gate. They record the deleted Tauri
 front's source files, tokens, locked dimensions, product surfaces and required
 parity screenshots. If the native app diverges from this inventory, the
 migration is not preserving the product UI.
 
-Native deletion is allowed only after a design parity checkpoint exists:
+The old frontend deletion was completed on 2026-06-06 after these checkpoints:
 
 - palette/tokens mapped from the current front;
 - screenshots and visual notes for the current shell, titlebar, left panel,
@@ -338,14 +338,14 @@ Native deletion is allowed only after a design parity checkpoint exists:
   trading and real-estate surfaces;
 - native counterpart for each surface;
 - manual or automated comparison approved by the user;
-- rollback tag before deleting the old app shell.
+- rollback commit `9527b7ac` pushed before deleting the old app shell.
 
-Hard deletion gate:
+Hard non-recreation gate:
 
 ```text
-No old frontend file may be deleted as part of Migration Front unless the user
-explicitly approves the deletion step after native visual and behavioral parity
-has been demonstrated.
+No old frontend file may be recreated as part of Migration Front. If rollback
+is required, restore from Git history deliberately instead of rebuilding a
+parallel HTML/CSS/TypeScript path.
 ```
 
 ## 9. Repository Layout Target
@@ -457,8 +457,8 @@ Second-wave resolution chosen:
 - Use wgpu 29 directly for a deterministic texture producer and proof hash.
 - Use WRY/WebView2 only as a peripheral capability with a local dark fixture.
 - Emit a compact Stage 0 report with proof hash instead of relying on screenshots or claims.
-- Preserve the current Tauri UI through a design inventory gate before turning
-  the Slint harness into a product shell.
+- Preserve the deleted Tauri/WebView UI only through a frozen design inventory
+  while the Slint harness becomes the product shell.
 
 Current state 2026-06-06:
 
@@ -473,8 +473,8 @@ Current state 2026-06-06:
   `section_title`, `canvas_title` and `canvas_hint` are now projected from the
   Rust state into these components, so section navigation changes the native
   titlebar, sidebar, breadcrumb and canvas copy without using the old DOM
-  importer as the product shell. Exact screenshot parity is still pending and
-  the current Tauri front remains the visual oracle.
+  importer as the product shell. Exact screenshot parity is guarded by the
+  frozen old-front inventory; the live product shell is Slint/Rust.
 - First native click capture: sidebar actions, recent-session rows and the chat
   attach square now route to the Rust `activate_imported_control` callback and
   open a native modal while the final product service bindings are pending.
@@ -506,15 +506,16 @@ Current state 2026-06-06:
   `--bg`, `--surface`, `--surface-soft`, `--line`, `--text`, `--muted`,
   `--accent`, `--forge-voice-accent` and `--forge-terminal-accent-alt`.
 - Design inventory: `design/current_tauri_front_inventory.md` and
-  `design/current_tauri_front_inventory.json`. These lock the current Tauri UI
-  as source of truth for Stage 1 and mark parity as false.
+  `design/current_tauri_front_inventory.json`. These preserve the deleted
+  Tauri/WebView front as a frozen design oracle; they are not a live source
+  tree and must not be used to recreate the old architecture.
 - Runtime probes: `src/wgpu_probe.rs`, `src/webview_probe.rs`.
 - WebView dependency: WRY upgraded from `0.52.1` to `0.55.1` on 2026-06-06 and `cargo check --tests` still passes.
 - Gated child WebView proof harness: `src/webview_child.rs`, enabled only with `--webview-child-proof`; it attaches WRY as child, syncs bounds every 250 ms, and schedules WebView -> parent focus calls.
 - State kernel: `src/state.rs`, first deterministic Rust reducer/projection
   pass with replay hash and browser-IPC-free proof.
 - Proof manifest: `src/proof.rs`, available through `cargo run --manifest-path examples\ingen_native_front\Cargo.toml -- --report`.
-- Latest report: Windows, NVIDIA GeForce RTX 3050 6GB Laptop GPU, wgpu Vulkan backend, texture probe true, WRY/WebView2 compile-time capability true, child attach mode `--webview-child-proof`, design parity false, native component target list present, Forge first-viewport static parity `true`, state checkpoint schema `ingen.native_front.state_checkpoint.v1`, state replay hash `ac7b3426047c09be599ffa6cb2d27f9d6e7bcb9f753e61b6e4e3b9f251baec66`, event log hash `175aff109eb3f3d938d805716d6e9ba3c5d1fc60affbe1f658a446f07f84797c`, state hash `8ce6df218c0d23b29d03f26e309ba9ef29a44e8e452ca27dbc83a4bdf88270ab`, `directMutationBlocked=true`, keyboard shortcuts `Control+Tab -> NavigateNext` and `Escape -> CloseModal`, fake direct-service proof hash `909dcdcc6e7082cde082684b2a1f952a44692a834cc4d888e1b594add95f84f8`, fake long-job stream `queued -> running -> done`, proof hash `fad007ee6547998f2a0b9b4b04dde8877d80b12eac6f1d05a86ebb11aad99b5b`.
+- Latest report: Windows, NVIDIA GeForce RTX 3050 6GB Laptop GPU, wgpu Vulkan backend, texture probe true, WRY/WebView2 compile-time capability true, child attach mode `--webview-child-proof`, design parity false, native component target list present, Forge first-viewport static parity `true`, state checkpoint schema `ingen.native_front.state_checkpoint.v1`, state replay hash `74a82d2c844898413cd76b140767432d8ce1932ac2a75a6d3349a3dddc19718b`, event log hash `175aff109eb3f3d938d805716d6e9ba3c5d1fc60affbe1f658a446f07f84797c`, state hash `482e5f3b6f454a0f82822e07f2ca7177a3143f88bb48e6a8492d0efa03accf1b`, `directMutationBlocked=true`, keyboard shortcuts `Control+Tab -> NavigateNext` and `Escape -> CloseModal`, fake direct-service proof hash `909dcdcc6e7082cde082684b2a1f952a44692a834cc4d888e1b594add95f84f8`, fake long-job stream `queued -> running -> done`, proof hash `4e431fb20ae1a870f4806af6e06d027a4fdfcd2046cf7047f32ccb4d577cd027`.
 - Latest visual launch: `C:\scan-shared-target\debug\ingen-native-front.exe`
   was launched on 2026-06-06 after `cargo check --tests` and `cargo test --lib`
   passed. The window title is `InGen Native Front - Forge`.
@@ -566,8 +567,8 @@ Current state 2026-06-06:
   so the imported InGen titlebar is intended to be the only visible frame.
 - Lifecycle smoke: `C:\scan-shared-target\debug\ingen-native-front.exe --webview-child-proof` stayed alive for 8 seconds with window title `InGen Native Front - Stage 0`, then was stopped. Latest smoke includes bounds sync and programmatic `focus()` / `focus_parent()` scheduling. This proves startup lifecycle only, not visual focus/resize correctness.
 - Promotion status: not ready. Manual launch/focus/resize/lifecycle proof is still required before Stage 0 can be marked done.
-- Design status: not ready. The existing Tauri UI remains the only product UI
-  reference and must remain intact until a full native parity pass is approved.
+- Design status: native shell active. The deleted Tauri/WebView UI remains only
+  as a frozen inventory/screenshot oracle; the live product UI is Slint/Rust.
 - Environment note: `C:` had about 0.09 GB free during the first test run.
   `cargo clean --manifest-path examples\ingen_native_front\Cargo.toml` freed
   3.2 GiB of build artifacts. On the latest Stage 1 run,
@@ -610,9 +611,9 @@ Rollback:
 
 ## 12. Stage 1 - Slint Shell Skeleton
 
-Status: Forge first-viewport visual MVP delivered 2026-06-06. Exact product
-parity is not approved yet, so the old Tauri UI remains intact and remains the
-visual source of truth.
+Status: Forge first-viewport visual MVP delivered 2026-06-06. The old Tauri UI
+has been deleted; its frozen inventory remains the visual source of truth while
+Slint/Rust is the live product shell.
 
 Purpose:
 
@@ -681,19 +682,16 @@ Work:
 - ~~Render section service/proof status natively.~~ Done 2026-06-06:
   `SectionStatusDock` renders section-specific Rust projections for
   WebExplorer/Banger/Trading/Real Estate and exposes a native refresh action.
-- ~~Add Tauri-front-to-Slint importer.~~ Done 2026-06-06:
-  `scripts/import_tauri_front_to_slint.mjs` opens the existing front with
-  Playwright, disables only the redirect gate, closes the right panel for the
-  first-viewport target, keeps CSS/Slint logical coordinates at scale `1`,
-  writes generated Slint plus a source-hash report, and generates click
-  overlays from original HTML buttons for the main section routes.
+- ~~Add Tauri-front-to-Slint importer.~~ Done then retired 2026-06-06:
+  the importer produced the frozen report and was deleted after the old
+  HTML/CSS/TypeScript source front was removed.
 - ~~Generate one Slint layer per original runtime state.~~ Done 2026-06-06 for
   `forge`, `webexplorer`, `banger`, `trading`, `real-estate`; layers toggle
   from `NativeUiState` via `active_section`.
-- ~~Keep exact bitmap snapshots as parity oracle.~~ Done 2026-06-06: the
-  importer still writes rendered PNGs for each original front state, but the
-  active Slint app now uses generated native rectangles/text plus native
-  `TouchArea` overlays, not the bitmap as its displayed UI.
+- ~~Keep exact bitmap snapshots as parity oracle.~~ Done 2026-06-06: frozen
+  render artifacts remain for parity review, but the active Slint app uses
+  native rectangles/text plus native `TouchArea` overlays, not a bitmap as its
+  displayed UI.
 - ~~Import original SVG/icon assets into the Slint layer.~~ Done 2026-06-06:
   the importer now extracts 139 visible SVG vectors from the original DOM and
   emits them as Slint `Image` assets, instead of losing the toolbar/dropzone
@@ -737,8 +735,8 @@ Definition of done:
 
 The app looks structurally like InGen, but sections may still be placeholders.
 Stage 1 Forge first-viewport visual MVP satisfies the emergency visual target
-for the native-front crate. Remaining parity work is tracked by the design
-inventory and must not be used as permission to delete the old Tauri front.
+for the native-front crate. Remaining parity work is tracked by the frozen
+design inventory; the old Tauri/WebView front has already been deleted.
 
 ## 13. Stage 2 - Native State Kernel
 
@@ -858,8 +856,9 @@ Verifier:
 Definition of done:
 
 Native UI talks to Rust services directly through traits, not through a browser
-IPC model. Stage 3 is complete; the old Tauri UI remains only the protected
-visual oracle while product service adapters are completed in later stages.
+IPC model. Stage 3 is complete; the old Tauri/WebView UI remains only as a
+frozen design oracle while product service adapters are completed in later
+stages.
 
 ## 15. Stage 4 - Banger Native Viewport
 
@@ -1554,7 +1553,7 @@ Stage 11 status 2026-06-06:
   `examples/forge_tauri_ui/ui/SECTION_CONTRACT.md`,
   `examples/forge_tauri_ui/ui/SECTION_OWNERSHIP.json`.
 - Latest Stage 11 proof hash:
-  `5b52a28d4c4d037c0290a262ebe828eda0a6ed55b5487eed568eb82438956fdc`.
+  `4e431fb20ae1a870f4806af6e06d027a4fdfcd2046cf7047f32ccb4d577cd027`.
 - Latest obsolete-front manifest hash:
   `65c4d065dfdb1341dfb22672a5428f572d76b20ad286b1abe3652ee10e46b01d`.
 - Latest cutover audit hash:

@@ -1,25 +1,24 @@
-# Current Tauri Front Inventory
+# Frozen Tauri Front Inventory
 
-Purpose: preserve the existing InGen product front while Migration Front moves
-the runtime to Rust + Slint.
+Purpose: preserve the visual contract of the deleted InGen Tauri/WebView front
+while Migration Front runs as Rust + Slint.
 
-This document is a gate, not an archive. The native Slint Stage 0 window is only
-a technical harness until it reproduces this inventory and the user approves the
-visual parity proof.
+This document is now a frozen design oracle, not a live source tree. The old
+`examples/forge_tauri_ui/ui/**` app shell was deleted on 2026-06-06 after the
+native cutover audit passed. Do not recreate it.
 
-## Non Deletion Gate
+## Non Recreation Gate
 
-- Do not delete `examples/forge_tauri_ui/ui/**` during Stage 0 or Stage 1.
-- Do not replace the current Tauri UI as the default product shell before a
-  screenshot parity review has been accepted.
+- Do not recreate `examples/forge_tauri_ui/ui/**`, `front-rs`, `native-front`,
+  npm manifests, TypeScript config or `node_modules`.
 - Do not claim that the Slint harness preserves the design until every locked
   surface below has a native Slint component or a documented native equivalent.
 - WebExplorer can remain WRY/WebView2, but only as a peripheral inside the
   native app, never as the global app shell.
 
-## Source Of Truth Files
+## Deleted Source Files Preserved By Inventory
 
-| Role | Existing file |
+| Role | Deleted file |
 |---|---|
 | Static shell DOM | `examples/forge_tauri_ui/ui/index.html` |
 | Global visual system | `examples/forge_tauri_ui/ui/styles.css` |
@@ -35,7 +34,7 @@ visual parity proof.
 
 ## Locked Global Tokens
 
-These values are copied from the current Tauri visual system and must stay the
+These values are copied from the former Tauri visual system and must stay the
 initial Slint token baseline unless a deliberate redesign is approved.
 
 | Token | Value |
@@ -90,20 +89,12 @@ initial Slint token baseline unless a deliberate redesign is approved.
 
 ## Stage 1 Native Component Targets
 
-- `GeneratedTauriFrontLayer`
 - `AppWindow`
 - `NativeModal`
 
-The immediate emergency target is the original Forge first viewport generated
-from the existing Tauri front, not redrawn by hand. The importer lives at:
-
-```text
-examples/ingen_native_front/scripts/import_tauri_front_to_slint.mjs
-```
-
-It opens `examples/forge_tauri_ui/ui/index.html` with the existing CSS and
-runtime bundles, measures the rendered DOM, writes `ui/app.slint`, and records
-source hashes in:
+The immediate emergency target was the original Forge first viewport. The old
+DOM import pipeline has been retired because the source front is deleted. Its
+last report remains as a frozen audit artifact:
 
 ```text
 examples/ingen_native_front/design/tauri_front_slint_import_report.json
@@ -114,8 +105,9 @@ this first viewport is acceptable.
 
 ## Required Parity Proofs
 
-Each proof needs a screenshot or deterministic render artifact from the current
-Tauri UI and the native Slint version at the same viewport size.
+Each proof needs a screenshot or deterministic render artifact from the frozen
+Tauri-front inventory/oracle and the native Slint version at the same viewport
+size.
 
 | Proof | Required viewport/state |
 |---|---|
@@ -327,7 +319,7 @@ as of
   including the old `ui` tree, `node_modules`, misplaced `native-front`,
   Dioxus `front-rs`, npm manifests and TS config.
 - Latest Stage 11 proof hash:
-  `5b52a28d4c4d037c0290a262ebe828eda0a6ed55b5487eed568eb82438956fdc`.
+  `4e431fb20ae1a870f4806af6e06d027a4fdfcd2046cf7047f32ccb4d577cd027`.
 - Latest obsolete-front manifest hash:
   `65c4d065dfdb1341dfb22672a5428f572d76b20ad286b1abe3652ee10e46b01d`.
 - Latest cutover audit hash:
@@ -344,7 +336,7 @@ as of
   first viewport so that the original first-screen geometry remains the visual
   oracle instead of accepting an accidental redesign.
 - The failed generated DOM layer is no longer the active product shell path.
-  The importer remains a parity/oracle helper only.
+  The importer was deleted after cutover; only its frozen report remains.
 - Latest import proof hash: `6c49354685f467cc5d916c06f1fb47b7d6a440f9583065abcefe4d1cc4ebbd30`.
 - Latest import scale: CSS/Slint logical scale `1`; do not multiply by Windows
   display scale, because Slint already maps logical pixels to the native
@@ -355,9 +347,9 @@ as of
   Exact bitmap screenshots are still generated as the parity oracle, not as the
   displayed UI.
 - Design parity is explicitly `false`.
-- The current Tauri front remains the product reference.
+- The frozen Tauri-front inventory remains the design reference.
 
 Stage 1 is back on the correct migration path: authored, clickable Slint
-components with the current Tauri UI as visual oracle. Promotion to
-deletion/cutover remains blocked until this inventory is verified with parity
-screenshots and accepted by the user.
+components with the frozen Tauri-front inventory as visual oracle. Front
+deletion/cutover is complete; remaining work is backend retirement and deeper
+section parity.

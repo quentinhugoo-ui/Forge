@@ -1,12 +1,13 @@
 {
   "schema": "ingen.native_front.design_inventory.v1",
-  "referenceFront": "examples/forge_tauri_ui/ui",
+  "referenceFront": "frozen deleted examples/forge_tauri_ui/ui front",
   "nativeCrate": "examples/ingen_native_front",
   "parityReady": false,
+  "cutoverReady": true,
   "nonDeletionGate": [
-    "Do not delete examples/forge_tauri_ui/ui during Stage 0 or Stage 1.",
-    "Do not replace the Tauri product shell before accepted screenshot parity review.",
-    "Do not claim native design parity while this manifest reports parityReady=false."
+    "Do not recreate examples/forge_tauri_ui/ui, front-rs, native-front, npm manifests, TypeScript config or node_modules.",
+    "The live product shell is examples/ingen_native_front.",
+    "Use this manifest only as a frozen design oracle."
   ],
   "sourceOfTruth": {
     "shellDom": "examples/forge_tauri_ui/ui/index.html",

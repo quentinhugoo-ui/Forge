@@ -78,7 +78,7 @@ impl NativeSection {
     fn hint(self) -> &'static str {
         match self {
             Self::Shell => "Heavy compute in any domain - data, code, medical imaging, genomics, anything. The LLM stays out of files and math, saving massive tokens.",
-            Self::Alpha => "Canvas placeholder; current Tauri behavior remains the reference.",
+            Self::Alpha => "Canvas placeholder; frozen design behavior remains the reference.",
             Self::Forge => "Heavy compute in any domain - data, code, medical imaging, genomics, anything. The LLM stays out of files and math, saving massive tokens.",
             Self::WebExplorer => "WRY/WebView2 remains a contained web peripheral, not the app shell.",
             Self::RealEstate => "Vertical surface placeholder; runtime parity still pending.",

@@ -174,7 +174,7 @@ pub fn build_stage0_report_from(wgpu: WgpuProbe, webview: WebViewProbe) -> Stage
         app_shell_uses_html_css_js: false,
     };
     let design = DesignProbe {
-        reference_front: "examples/forge_tauri_ui/ui".to_string(),
+        reference_front: "frozen import inventory from the deleted examples/forge_tauri_ui/ui front".to_string(),
         inventory: "examples/ingen_native_front/design/current_tauri_front_inventory.md".to_string(),
         native_tokens: "examples/ingen_native_front/ui/tokens.slint".to_string(),
         locked_dimensions: vec![
@@ -275,17 +275,17 @@ pub fn build_stage0_report_from(wgpu: WgpuProbe, webview: WebViewProbe) -> Stage
     let cutover_audit = build_cutover_audit_report();
 
     let limitations = vec![
-        "Stage 1 visual MVP is structurally native but not screenshot-parity approved; the old Tauri UI remains the design authority.".to_string(),
+        "Stage 1 visual MVP is native Slint/Rust; the deleted Tauri/WebView UI remains only as a frozen design inventory and screenshot oracle.".to_string(),
         "Direct Slint/wgpu texture sharing is gated by Slint's versioned unstable wgpu integration; Stage 4 displays the Banger frame through a Slint image fallback while preserving a texture-binding proof for direct import promotion.".to_string(),
         "WRY/WebView2 child creation, navigation policy and bounds proof are now encoded; manual focus/z-order proof is still required before promotion.".to_string(),
         "WebExplorer is isolated by default with dangerous schemes blocked, devtools/IPC/host objects off and external opens denied until atlas refs exist.".to_string(),
         "Banger now has a native viewport frame in Slint, but full direct external texture import is still blocked until Slint and the Banger renderer share compatible wgpu types.".to_string(),
-        "Native visual parity is not done; the current Tauri front remains the product design reference until the user approves native parity.".to_string(),
+        "Native visual parity is guarded by the frozen Tauri-front inventory; the live product shell is Slint/Rust.".to_string(),
         "Native state kernel is deterministic and replayable; product services now enter through the direct Rust service trait boundary.".to_string(),
         "Direct Rust services are connected to local wgpu/WebView2 capability probes; real Brain/Monster/Banger/WebExplorer/trading/real-estate product adapters are not fully wired yet.".to_string(),
         "Long-job streaming is proven with a background thread and non-blocking channel polling; production async runtimes still need Stage 4+ adapters.".to_string(),
         "Native chat and agent surfaces are now Slint/Rust projections; real provider streaming is still represented by direct service jobs until the full product adapters are connected.".to_string(),
-        "Native product sections now have content-addressed Rust manifests and Slint projections; real domain adapters still need to replace fixture summaries before deletion of the old front.".to_string(),
+        "Native product sections now have content-addressed Rust manifests and Slint projections; real domain adapters still need to replace fixture summaries before full backend retirement.".to_string(),
         "Native packaging and security policy now records app-data/log/crash/secrets paths and blocks protected local roots; real installer signing/update automation remains a later release-engineering gate.".to_string(),
         "Stage 11 front cutover is guarded by obsolete-front and cutover-audit manifests; protected backend services under the old Tauri tree are tracked as a separate retirement wall.".to_string(),
         "Safe Web CodeAct remains explicitly deferred until the Slint/Rust frontend and obsolete-front deletion stages are complete.".to_string(),
@@ -298,7 +298,7 @@ pub fn build_stage0_report_from(wgpu: WgpuProbe, webview: WebViewProbe) -> Stage
         "focus returns from WebView2 to Slint".to_string(),
         "resize keeps Slint, wgpu viewport region and WebView bounds coherent".to_string(),
         "closing the app leaves no stuck process".to_string(),
-        "native shell visually matches the existing Tauri front first viewport".to_string(),
+        "native shell visually matches the frozen Tauri-front first viewport".to_string(),
         "native transcript remains responsive on long sessions".to_string(),
         "provider/model picker and proof cards match the original visual density".to_string(),
         "trading, real-estate, forge, alpha, banger and webexplorer product panels match the original interaction density".to_string(),

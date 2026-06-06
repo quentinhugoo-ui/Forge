@@ -9,7 +9,7 @@ This is the single source of truth for coding agents. Keep it short and current.
 InGen is a compact local agent OS. Forge is its content-addressed compute language, formerly KASM in code :
 
 ```text
-LLM CLI -> BrainCommand/Intent -> Godel verification -> Forge bytecode/Monster compute -> proof/artifact -> Tauri action
+LLM CLI -> BrainCommand/Intent -> Godel verification -> Forge bytecode/Monster compute -> proof/artifact -> native Rust/Slint action
 ```
 
 Prefer shorter circuits. Remove obsolete nodes before adding new ones.
@@ -70,6 +70,21 @@ Every code change must reduce architectural drag:
 6. Verify with the narrowest meaningful command, then broaden if risk requires it.
 7. If docs and code disagree, inspect code and update docs.
 8. If you establish a list of objectives, put the live list in `ROADMAP.md` and remove objectives when they are done.
+9. For every Monster/Forge math round, run a real store-backed `/newcompute_`
+   app-runtime stress test through `forge_brain_run_actcode`, Monster execution,
+   typed buffers, proof/differential status and compute-library reuse. Unit
+   tests can support this gate, but they do not replace it. For broad math
+   changes, the gate is the 20-case real-domain battery covering symbolic CAS,
+   statistics, signal, linear algebra, solvers, sparse/graph, autodiff,
+   optimization, geometry/SDF, physics, crypto/formal, trading, bio, chemistry,
+   epidemiology and data-parallel reductions. Before adding new Forge math
+   words, also run the existing-vocabulary edge battery covering units,
+   transcendentals, interval/uncertainty, sampling, query-time math, graph
+   counts, vector geometry, matrix flatten/top-k, linalg, solvers, trading,
+   bio and chemistry through the same `/newcompute_` path. For universal
+   template/language alignment changes, also run the 20-profession
+   full-template battery so each role fills `forge_validation` and reaches
+   Monster through the real app runtime.
 
 ## Current Architecture
 
@@ -83,8 +98,9 @@ Every code change must reduce architectural drag:
   Google-Web DOM/RAM cartography. Scheduling callers should enter through
   `MonsterNode::prepare_forge_source`, which returns one manifest containing
   the route, cache-miss fragments, native-ready outputs and proof hash.
-- Tauri backend: `examples/forge_tauri_ui/src-tauri/src/**`
-- Tauri UI: `examples/forge_tauri_ui/ui/**`
+- Native frontend: `examples/ingen_native_front/**`; this is the active product shell for Migration Front.
+- Former Tauri backend services: `examples/forge_tauri_ui/src-tauri/src/**`; keep only protected service code until it is extracted behind direct Rust adapters.
+- Deleted legacy frontend: do not recreate `examples/forge_tauri_ui/ui`, `examples/forge_tauri_ui/front-rs`, `examples/forge_tauri_ui/native-front`, npm manifests, TypeScript config or `node_modules`.
 - Brain runtime pointers and Banger policy: `examples/forge_tauri_ui/src-tauri/src/forge_brain_runtime.rs`
 - Canonical runtime/language/Monster architecture and live objectives: `FORGE_NATIVE_BYTECODE.md`.
 - Direct agent CLI: `examples/forge_tauri_ui/src-tauri/src/bin/forge_agent.rs`
@@ -92,9 +108,8 @@ Every code change must reduce architectural drag:
 - Collection OS kernel: `examples/forge_tauri_ui/src-tauri/src/collection_os.rs`
 - InGen Harvester: the general collection execution layer built on Collection OS.
 - Real Estate Harvester: the first vertical sector pack/adapter, not the general collection engine.
-- UI sections: shell, alpha, forge, WebExplorer, real-estate, real-estate-main, trading and banger.
-- UI source is TypeScript under `examples/forge_tauri_ui/ui/src/**`; browser JavaScript under `ui/dist/**/*.js` is generated only.
-- Native section bridge: WebExplorer and Bloomberg live actions must pass through `ui/src/shell/tauri-bridge.ts` / generated `ui/dist/forge-tauri-bridge.js` and `SECTION_OWNERSHIP.json`.
+- UI sections: Forge shell, Alpha, WebExplorer, real-estate, trading and Banger are now native Slint/Rust projections in `examples/ingen_native_front`.
+- WebExplorer and any external web content are WRY/WebView2 peripherals only, never the global app shell.
 - CodeAct action layer: the LLM acts by emitting executable programs, not JSON tool-calls. Primary path is `forge_agent` (BrainCommand verbs `recall/plan/create/run/project/replay/commit/explain`). The old MCP `forge.search`/`forge.execute` external server was removed; discovery is `forge_agent about` plus the persisted projection / skill-candidate / verified-program indexes. Details in `FORGE_NATIVE_BYTECODE.md`.
 - CodeAct splits into two families. Family A (compute, real Monster runs through `forge_brain_run_actcode`, `requiresActiveSection:false`): `/newcompute_`, `/selectcompute_`, `/compute_<name>_` work in **all** sections; `/newcompute_` is the access command to Monster's universal compute template, not a Banger-only template; `/selectcompute_` is the universal selector for already-created Monster computes; `/newobject_` is Banger-only SDF. Family B (UI-directive, no compute — renders panels/events) works in **all** sections: `/web_` fires a native LLM web-research event; `FORGE_PLAN_JSON` renders/updates the right-panel plan; `FORGE_QUESTIONNAIRE_JSON` renders a question panel above the chat bar; `FORGE_SESSION_TITLE_JSON` renames the current session in the left panel and above the canvas. Banger keeps special aliases for 3D/SDF: `FORGE_BANGER_PLAN_JSON`, `FORGE_BANGER_QUESTIONNAIRE_JSON`, and especially `FORGE_BANGER_MATERIAL_RESEARCH_JSON`, which is a Banger-only computational-engineering material/component list for the right panel. The compute executor rejects Family-B prefixes by design. Brain keeps only stable pointers, not the templates. Details in `FORGE_NATIVE_BYTECODE.md`.
 - Monster compute library: SQLite under the Forge store at `brain/computes/compute_library.sqlite`; exact fragment/proof indexes are the authority for compute reuse.
@@ -120,55 +135,40 @@ Core files:
 - `examples/forge_tauri_ui/src-tauri/src/bin/forge_agent.rs`
 - `examples/forge_tauri_ui/src-tauri/src/collection_os.rs`
 
-## UI Discipline
+## Native Front Discipline
 
-The Tauri UI is already large. Do not add a new UI path if an existing section/registry/bridge can carry the feature.
+Migration Front is active and `MIGRATION_FRONT.md` is the source of truth for this work. Do not follow old Roadmap items when they conflict with the native-front cutover.
 
-Use these coordination files before adding new actors:
+The global product shell is Rust + Slint. Do not add a new HTML/CSS/TypeScript app shell, Dioxus/WASM POC, npm frontend or Tauri WebView shell. WebExplorer may use WRY/WebView2 only as a contained external-web peripheral.
 
-- `examples/forge_tauri_ui/ui/src/shell/legacy-section-registry.ts`
-- `examples/forge_tauri_ui/ui/src/shell/tauri-bridge.ts`
-- `examples/forge_tauri_ui/ui/src/shell/boot.ts`
-- `examples/forge_tauri_ui/ui/src/shell/click-router.ts`
-- `examples/forge_tauri_ui/ui/SECTION_OWNERSHIP.json`
-- `examples/forge_tauri_ui/ui/SECTION_CONTRACT.md`
+Use these native coordination files before adding new actors:
 
-No hand-written JavaScript is allowed outside generated `ui/dist/**/*.js`; see `examples/forge_tauri_ui/ui/src/MANUAL_JS_LOCK.md`.
-
-Current heavy UI source files are `ui/src/shell/surface.ts`, `ui/src/sections/trading/surface.ts`, `ui/src/sections/banger/surface.ts`, `ui/styles.css` and Tauri `main.rs`. Shrink them only when extraction removes duplication or a real ownership conflict.
-
-Real-estate shell logic is split into section runtimes:
-
-- `ui/src/sections/real-estate/runtime-context.ts`
-- `ui/src/sections/real-estate/onboarding-runtime.ts`
-- `ui/src/sections/real-estate/language-runtime.ts`
-- `ui/src/sections/real-estate/mode-runtime.ts`
-- `ui/src/sections/real-estate/panel-runtime.ts`
+- `examples/ingen_native_front/ui/app.slint`
+- `examples/ingen_native_front/ui/tokens.slint`
+- `examples/ingen_native_front/src/state.rs`
+- `examples/ingen_native_front/src/services.rs`
+- `examples/ingen_native_front/src/proof.rs`
+- `examples/ingen_native_front/src/cutover_audit.rs`
+- `examples/ingen_native_front/src/obsolete_front.rs`
 
 ## Useful Checks
 
 ```powershell
 cargo check --lib --tests
 cargo test brain --lib
+cargo check --manifest-path examples\ingen_native_front\Cargo.toml --tests
+cargo test --manifest-path examples\ingen_native_front\Cargo.toml --lib
+cargo run --manifest-path examples\ingen_native_front\Cargo.toml -- --cutover-audit
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml
 cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge_agent
-node examples\forge_tauri_ui\scripts\forge-surface-manifest.mjs --check
-node examples\forge_tauri_ui\scripts\forge-ui-smoke.mjs
-node examples\forge_tauri_ui\scripts\forge-ui-section-audit.mjs
 node examples\forge_tauri_ui\scripts\forge-tauri-bus-audit.mjs --strict
-cd examples\forge_tauri_ui; npm.cmd run audit:js-debt
 ```
 
 ## Dependency / Toolchain Maintenance
 
 Nothing updates by itself; updates are always a deliberate, tested decision (pin in `Cargo.lock`, bump on purpose, verify, keep a rollback). Minor/patch bumps are safe via `cargo update`; major/breaking bumps (e.g. Dioxus `0.7 -> 0.8`) are manual, read the release notes first.
 
-- Reminder set **2026-06-02**: later, propose a full refresh of all Forge languages/toolchains (Rust, Dioxus/Leptos + WASM stack, Node/TS for the legacy UI) once the front migration is underway. Do not auto-bump majors; surface a checklist, let the user validate.
-- Decision set **2026-06-02**: drop Tauri for native Dioxus desktop (wry/tao, no IPC — see `MIGRATION_FRONT.md` Étape 9 bis) **once Dioxus desktop is mature enough**. The IPC win only lands in this native path; keeping Tauri is pointless once it does. Gate on these maturity criteria before proposing the switch:
-  - Dioxus **0.8+** native APIs stable (camera/geo/storage/OAuth) and a stable "1.0" core subset;
-  - `dx bundle` packaging at parity (installers, icons, code signing) + a viable auto-updater path;
-  - we can **re-secure WebExplorer** ourselves (webview isolation/CSP/navigation hooks for external web content) — this is the decisive blocker for Forge, not packaging.
-  - How to check: track Dioxus releases (`https://github.com/DioxusLabs/dioxus/releases`), `cargo outdated -w`, and the 0.8 roadmap; re-run the `MIGRATION_FRONT.md` Étape 1 POC measures on the native target. Propose, never auto-switch.
+- Front migration decision set **2026-06-06**: the active front is native Rust + Slint under `examples/ingen_native_front`. The old Tauri/WebView HTML/CSS/TypeScript shell is deleted and must not be reintroduced. Future frontend dependency work is Rust/Slint/wgpu/WRY only unless `MIGRATION_FRONT.md` explicitly changes.
 
 ```powershell
 rustup update                         # update the Rust toolchain itself
@@ -176,7 +176,6 @@ cargo update                          # safe minor/patch bumps within Cargo.toml
 cargo install cargo-outdated cargo-audit   # one-time: install the veille tools
 cargo outdated -w                     # list deps behind latest (workspace)
 cargo audit                           # security advisories (the `npm audit` of Rust)
-cd examples\forge_tauri_ui; npm.cmd outdated; npm.cmd audit   # legacy TS UI side
 ```
 
 ## Git Safety
@@ -190,6 +189,50 @@ git push
 ```
 
 The GitHub `master` branch is a clean snapshot history. The older local history with large files is kept locally as `archive/master-large-history-before-github-20260514`.
+
+## Product Strategy
+
+### Ce que Forge ne vend pas
+
+La couche LLM et l'orchestration agentique générale ne sont pas monétisables. Le marché a décidé que c'est gratuit. Concurrencer Claude Code ou Cursor sur le coding généraliste n'a pas de sens économique.
+
+Ne pas construire de features génériques pour rivaliser avec des outils génériques. Chaque heure de dev sur une feature générique est une heure de moins sur la profondeur qui différencie InGen.
+
+### Les deux vraies valeurs d'InGen
+
+**Valeur 1 — Moteurs de compute (Monster)**
+
+Monster permet à un LLM de lancer des calculs lourds et complexes dans des domaines professionnels variés (ingénierie, physique, cryptographie, finance, biologie computationnelle) sans dépenser des millions de tokens. Le LLM écrit un programme Forge, Monster l'exécute localement sur le GPU de l'utilisateur, retourne un résultat compact avec proof hash. Le LLM reçoit un artefact vérifiable, pas une réponse générée. C'est la rupture par rapport à un LLM seul.
+
+**Valeur 2 — Moteur 3D / ingénierie computationnelle (Banger)**
+
+Pouvoir utiliser un moteur de création 3D et d'ingénierie computationnelle de niveau Blender/Unreal juste en discutant avec un LLM. L'utilisateur décrit, le LLM pilote Banger, le moteur exécute. Aucun outil concurrent ne fait ça nativement.
+
+### Deux produits distincts
+
+**1. InGen — OS agentique gratuit (Freemium)**
+
+Gratuit comme OpenClaw, Hermes, Unreal Engine, n'importe quel navigateur web.
+
+Monster et Banger tournent sur le GPU de l'utilisateur — Forge n'a aucun coût d'infra sur ces usages. Ils sont donc entièrement gratuits. La couche LLM reste à la charge de l'utilisateur (sa clé OpenAI/OpenRouter/Ollama).
+
+- Toujours gratuit : web search, coding, Monster compute local, Banger 3D local, Brain memory.
+- Déclenche l'abonnement : délégation de compute vers RunPod (GPU loué externe) — là seulement il y a un coût réel qui sort du poste de l'utilisateur.
+
+**2. Verticaux — applications clones full-orientées (B2B / SaaS)**
+
+Ce ne sont pas des features ajoutées à InGen. Ce sont des applications séparées, rearchitecturées entièrement autour d'un domaine cible. L'OS kernel est partagé (Brain, Monster, Godel, Collection OS) mais toute la surface produit est reconstruite pour le domaine. Pas de 3D dans le vertical trading. Pas de coding généraliste dans le vertical immo.
+
+- **Forge Trading** : broker OANDA, backtests, alertes, analyse marché. Toute l'archi tourne autour du trading.
+- **Forge Immo** : scoring zones, données DVF, alertes marché immobilier, analyse patrimoniale.
+- D'autres verticaux selon validation marché.
+
+Ces produits sont vendus en B2B direct ou en SaaS avec abonnement mensuel. L'utilisateur paie pour la profondeur métier, pas pour l'orchestration LLM.
+
+### Règle de priorité produit
+
+Pour InGen : prioriser la profondeur de la fusion (web + 3D + compute + coding dans un seul OS fluide).
+Pour les verticaux : prioriser la profondeur métier du domaine. Supprimer tout ce qui n'appartient pas au domaine.
 
 ## Documentation Rule
 
