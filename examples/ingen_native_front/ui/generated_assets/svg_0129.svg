@@ -1,0 +1,6 @@
+<svg viewBox="0 0 64 64" focusable="false" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="rgba(238, 238, 232, 0.88)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path class="dropbox-icon-chevron" d="M32 6v20" fill="none" stroke="rgba(238, 238, 232, 0.88)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+                      <path class="dropbox-icon-chevron" d="m24 18 8 8 8-8" fill="none" stroke="rgba(238, 238, 232, 0.88)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+                      <path d="M8 34v16a4 4 0 0 0 4 4h40a4 4 0 0 0 4-4V34" fill="none" stroke="rgba(238, 238, 232, 0.88)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+                      <path d="M8 34h14l4 6h12l4-6h14" fill="none" stroke="rgba(238, 238, 232, 0.88)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+                    </svg>

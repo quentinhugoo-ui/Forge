@@ -1,0 +1,1197 @@
+// Native Slint product shell for Migration Front.
+// The old Tauri UI remains the visual oracle, but this file is now authored as
+// native Slint components instead of generated DOM geometry.
+import { LineEdit } from "std-widgets.slint";
+
+component NavIcon inherits Rectangle {
+    in property <image> icon;
+    in property <bool> selected: false;
+    callback clicked();
+    width: 30px;
+    height: 30px;
+    border-radius: 4px;
+    background: selected ? #2f2f2d : #00000000;
+    Image {
+        x: 7px;
+        y: 7px;
+        width: 16px;
+        height: 16px;
+        source: root.icon;
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+component ToolTab inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> selected: false;
+    callback clicked();
+    height: 30px;
+    border-radius: 4px;
+    background: selected ? #eeeee81a : #00000000;
+    Image {
+        x: 8px;
+        y: 8px;
+        width: 14px;
+        height: 14px;
+        source: root.icon;
+    }
+    Text {
+        x: 27px;
+        y: 0px;
+        width: parent.width - 30px;
+        height: parent.height;
+        text: root.label;
+        color: selected ? #f4f4ee : #eeeee894;
+        font-size: 12px;
+        font-weight: selected ? 700 : 500;
+        vertical-alignment: center;
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+component SidebarAction inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    callback clicked();
+    height: 30px;
+    background: #00000000;
+    Image {
+        x: 0px;
+        y: 7.5px;
+        width: 15px;
+        height: 15px;
+        source: root.icon;
+    }
+    Text {
+        x: 24px;
+        y: 0px;
+        width: parent.width - 24px;
+        height: parent.height;
+        text: root.label;
+        color: #deded9;
+        font-size: 13px;
+        vertical-alignment: center;
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+component SessionRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    in property <bool> filled: true;
+    callback clicked();
+    height: 34px;
+    border-radius: 6px;
+    background: selected ? #3a3a38 : #00000000;
+    Rectangle {
+        x: 12px;
+        y: 14px;
+        width: 8px;
+        height: 8px;
+        border-radius: 8px;
+        background: filled ? #efc94c : #00000000;
+        border-width: filled ? 0px : 1px;
+        border-color: #8f8f89;
+    }
+    Text {
+        x: 30px;
+        y: 0px;
+        width: parent.width - 54px;
+        height: parent.height;
+        text: root.label;
+        color: selected ? #f0f0ed : #d2d2cc;
+        font-size: 14px;
+        font-weight: 700;
+        vertical-alignment: center;
+    }
+    Text {
+        x: parent.width - 26px;
+        y: 0px;
+        width: 18px;
+        height: parent.height;
+        text: ":";
+        color: #aaa9a4;
+        font-size: 16px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+component ScrollGlyph inherits Rectangle {
+    in property <float> thumb-y: 0;
+    width: 3px;
+    background: #ffffff0f;
+    border-radius: 999px;
+    Rectangle {
+        y: root.thumb-y * 1px;
+        width: 3px;
+        height: 44px;
+        border-radius: 999px;
+        background: #d2d2ce80;
+    }
+}
+
+component TitleBar inherits Rectangle {
+    in property <string> active_section;
+    callback navigate(string);
+    callback close();
+    callback minimize();
+    callback maximize();
+    height: 38px;
+    background: #0e0e0f;
+
+    NavIcon { x: 6px; y: 4px; icon: @image-url("generated_assets/svg_0000.svg"); selected: root.active_section == "forge" || root.active_section == "shell" || root.active_section == "alpha"; clicked => { root.navigate("forge"); } }
+    NavIcon { x: 40px; y: 4px; icon: @image-url("generated_assets/svg_0001.svg"); selected: root.active_section == "webexplorer"; clicked => { root.navigate("webexplorer"); } }
+    NavIcon { x: 72px; y: 4px; icon: @image-url("generated_assets/svg_0002.svg"); selected: false; clicked => { root.navigate("forge"); } }
+    NavIcon { x: 104px; y: 4px; icon: @image-url("generated_assets/svg_0003.svg"); selected: root.active_section == "banger"; clicked => { root.navigate("banger"); } }
+    Text {
+        x: 173px;
+        y: 0px;
+        width: 160px;
+        height: parent.height;
+        text: root.active_section == "webexplorer" ? "Atlas" : root.active_section == "banger" ? "Banger" : root.active_section == "trading" ? "Trading" : root.active_section == "real-estate" ? "Real Estate" : "Forge";
+        color: #e9e9e6;
+        font-size: 13px;
+        vertical-alignment: center;
+    }
+
+    NavIcon { x: parent.width - 176px; y: 4px; icon: @image-url("generated_assets/svg_0004.svg"); selected: root.active_section == "real-estate"; clicked => { root.navigate("real-estate"); } }
+    Rectangle {
+        x: parent.width - 138px;
+        y: 0px;
+        width: 46px;
+        height: parent.height;
+        background: #00000000;
+        Text { text: "-"; color: #dcdcd8; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { clicked => { root.minimize(); } }
+    }
+    Rectangle {
+        x: parent.width - 92px;
+        y: 0px;
+        width: 46px;
+        height: parent.height;
+        background: #00000000;
+        Text { text: "[]"; color: #dcdcd8; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { clicked => { root.maximize(); } }
+    }
+    Rectangle {
+        x: parent.width - 46px;
+        y: 0px;
+        width: 46px;
+        height: parent.height;
+        background: #00000000;
+        Text { text: "x"; color: #dcdcd8; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { clicked => { root.close(); } }
+    }
+}
+
+component LeftPanel inherits Rectangle {
+    in property <string> active_section;
+    callback navigate(string);
+    callback activate_control(string);
+    width: 279px;
+    background: #1c1c1b;
+    border-width: 1px;
+    border-color: #373735;
+    border-radius: 4px;
+
+    Rectangle {
+        x: 22px;
+        y: 25px;
+        width: 247px;
+        height: 40px;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: #eeeee80f;
+        background: #eeeee808;
+        ToolTab { x: 5px; y: 5px; width: 77px; icon: @image-url("generated_assets/svg_0008.svg"); label: "Compute"; selected: root.active_section == "forge" || root.active_section == "shell" || root.active_section == "alpha"; clicked => { root.navigate("forge"); } }
+        ToolTab { x: 87px; y: 5px; width: 74px; icon: @image-url("generated_assets/svg_0009.svg"); label: "Atlas"; selected: root.active_section == "webexplorer"; clicked => { root.navigate("webexplorer"); } }
+        ToolTab { x: 166px; y: 5px; width: 52px; icon: @image-url("generated_assets/svg_0010.svg"); label: "Pool"; selected: root.active_section == "banger"; clicked => { root.navigate("banger"); } }
+        Rectangle {
+            x: 222px;
+            y: 14px;
+            width: 28px;
+            height: 13px;
+            border-radius: 2px;
+            background: #eeeee80d;
+            Text { text: "soon"; color: #eeeee86b; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+        }
+    }
+
+    SidebarAction { x: 27px; y: 102px; width: 230px; icon: @image-url("generated_assets/svg_0011.svg"); label: "New session"; clicked => { root.navigate("forge"); } }
+    SidebarAction { x: 27px; y: 134px; width: 230px; icon: @image-url("generated_assets/svg_0012.svg"); label: "Documents"; clicked => { root.navigate("forge"); } }
+    SidebarAction { x: 27px; y: 166px; width: 230px; icon: @image-url("generated_assets/svg_0013.svg"); label: "My programs"; clicked => { root.navigate("forge"); } }
+
+    Text { x: 17px; y: 226px; width: 240px; height: 22px; text: root.active_section == "trading" ? "Pinned assets" : root.active_section == "webexplorer" ? "Pinned web" : "Pinned"; color: #aaa9a4; font-size: 13px; vertical-alignment: center; }
+    Image { x: 27px; y: 259px; width: 15px; height: 15px; source: @image-url("generated_assets/svg_0014.svg"); }
+    Text { x: 53px; y: 252px; width: 190px; height: 30px; text: root.active_section == "trading" ? "Pinned markets" : root.active_section == "real-estate" ? "Nouvelle session immo" : "New session"; color: #9d9c96; font-size: 14px; vertical-alignment: center; }
+
+    Text { x: 17px; y: 306px; width: 240px; height: 22px; text: "Recents"; color: #d6d6d2; font-size: 13px; vertical-alignment: center; }
+    SessionRow { x: 14px; y: 336px; width: 253px; selected: true; filled: root.active_section == "trading"; label: root.active_section == "trading" ? "NATGAS_USD" : root.active_section == "webexplorer" ? "Web atlas session" : root.active_section == "banger" ? "Banger viewport" : root.active_section == "real-estate" ? "Nouvelle session immo" : "New session"; clicked => { root.navigate(root.active_section); } }
+    SessionRow { x: 14px; y: 374px; width: 253px; filled: true; label: root.active_section == "trading" ? "BTC_USD" : root.active_section == "webexplorer" ? "RAM DOM Atlas" : root.active_section == "banger" ? "Conception objet 3D" : root.active_section == "real-estate" ? "Scoring zone" : "Conception objet 3D"; clicked => { root.navigate(root.active_section); } }
+    SessionRow { x: 14px; y: 412px; width: 253px; filled: true; label: root.active_section == "trading" ? "EUR_USD" : root.active_section == "webexplorer" ? "Research capture" : root.active_section == "banger" ? "Hey gemini" : root.active_section == "real-estate" ? "Alertes marché" : "Hey gemini"; clicked => { root.navigate(root.active_section); } }
+    Rectangle { x: 27px; y: 102px; width: 230px; height: 30px; background: #00000000; TouchArea { clicked => { root.activate_control("New session"); } } }
+    Rectangle { x: 27px; y: 134px; width: 230px; height: 30px; background: #00000000; TouchArea { clicked => { root.activate_control("Documents"); } } }
+    Rectangle { x: 27px; y: 166px; width: 230px; height: 30px; background: #00000000; TouchArea { clicked => { root.activate_control("My programs"); } } }
+    Rectangle { x: 14px; y: 336px; width: 253px; height: 34px; background: #00000000; TouchArea { clicked => { root.activate_control("selected session"); } } }
+    Rectangle { x: 14px; y: 374px; width: 253px; height: 34px; background: #00000000; TouchArea { clicked => { root.activate_control("recent session"); } } }
+    Rectangle { x: 14px; y: 412px; width: 253px; height: 34px; background: #00000000; TouchArea { clicked => { root.activate_control("recent session"); } } }
+    Rectangle {
+        visible: root.active_section == "forge" || root.active_section == "shell";
+        x: 14px;
+        y: 374px;
+        width: 253px;
+        height: 78px;
+        background: #1c1c1b;
+    }
+    ScrollGlyph { x: 263px; y: 322px; height: 170px; thumb-y: 54; }
+
+    Rectangle {
+        x: 20px;
+        y: parent.height - 122px;
+        width: 239px;
+        height: 54px;
+        background: #00000000;
+        border-width: 1px;
+        border-color: #eeeee80f;
+        Text { x: 0px; y: 11px; width: 34px; height: 16px; text: "CPU"; color: #eeeee86b; font-size: 10px; font-weight: 700; vertical-alignment: center; }
+        Text { x: 50px; y: 9px; width: 170px; height: 20px; text: "detection failed"; color: #eeeee8bd; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+        Text { x: 0px; y: 31px; width: 34px; height: 16px; text: "GPU"; color: #eeeee86b; font-size: 10px; font-weight: 700; vertical-alignment: center; }
+        Text { x: 50px; y: 29px; width: 170px; height: 20px; text: "No GPU detected"; color: #eeeee8bd; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+    }
+    Rectangle {
+        x: 16px;
+        y: parent.height - 48px;
+        width: 250px;
+        height: 30px;
+        background: #00000000;
+        Rectangle {
+            x: 0px;
+            y: 5px;
+            width: 20px;
+            height: 20px;
+            border-radius: 20px;
+            background: #efc94c;
+            Text { text: "Q"; color: #1c1c1a; font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        Text { x: 29px; y: 0px; width: 190px; height: 30px; text: "Quentin"; color: #eeeee8bd; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+        Image { x: 234px; y: 10px; width: 10px; height: 10px; source: @image-url("generated_assets/svg_0015.svg"); }
+    }
+}
+
+component WorkspaceHeader inherits Rectangle {
+    in property <string> active_section;
+    in property <string> section_title;
+    callback navigate(string);
+    height: 52px;
+    background: #0e0e0f;
+    Image { x: 24px; y: 15px; width: 18px; height: 18px; source: @image-url("generated_assets/svg_0016.svg"); }
+    Text { x: 74px; y: 0px; width: 130px; height: parent.height; text: root.active_section == "trading" ? "PAPERTRADING" : root.active_section == "real-estate" ? "Forge" : "Choose workspace"; color: #b4b4af80; font-size: 14px; font-weight: 700; vertical-alignment: center; }
+    Text { x: 204px; y: 0px; width: 20px; height: parent.height; text: "/"; color: #eeeee857; font-size: 15px; vertical-alignment: center; }
+    Text { x: 230px; y: 0px; width: 280px; height: parent.height; text: root.section_title; color: root.active_section == "trading" ? #68d0c4f5 : #eeeee894; font-size: 14px; font-weight: 700; vertical-alignment: center; }
+    NavIcon { x: parent.width - 128px; y: 10px; icon: @image-url("generated_assets/svg_0017.svg"); clicked => { root.navigate("forge"); } }
+    NavIcon { x: parent.width - 84px; y: 10px; icon: @image-url("generated_assets/svg_0018.svg"); clicked => { root.navigate("webexplorer"); } }
+    NavIcon { x: parent.width - 40px; y: 10px; icon: @image-url("generated_assets/svg_0019.svg"); clicked => { root.navigate("real-estate"); } }
+}
+
+component DropCanvas inherits Rectangle {
+    in property <string> active_section;
+    in property <string> canvas_title;
+    in property <string> canvas_hint;
+    callback activate_control(string);
+    background: #0e0e0f;
+    Rectangle { x: 328px; y: 86px; width: 22px; height: 22px; background: #00000000; border-width: 1px; border-color: #eeeee857; }
+    Rectangle { x: 898px; y: 86px; width: 22px; height: 22px; background: #00000000; border-width: 1px; border-color: #eeeee857; }
+    Rectangle { x: 328px; y: 416px; width: 22px; height: 22px; background: #00000000; border-width: 1px; border-color: #eeeee857; }
+    Rectangle { x: 898px; y: 416px; width: 22px; height: 22px; background: #00000000; border-width: 1px; border-color: #eeeee857; }
+    Image { x: 592px; y: 178px; width: 64px; height: 64px; source: @image-url("generated_assets/svg_0020.svg"); }
+    Text { x: 468px; y: 260px; width: 314px; height: 32px; text: root.canvas_title; color: #eeeee8f5; font-size: 19px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    Text {
+        x: 394px;
+        y: 296px;
+        width: 460px;
+        height: 44px;
+        text: root.canvas_hint;
+        color: #eeeee885;
+        font-size: 13px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
+    }
+    Rectangle {
+        x: 356px;
+        y: 352px;
+        width: 536px;
+        height: 44px;
+        visible: root.active_section != "shell" && root.active_section != "forge";
+        background: #00000000;
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 126px;
+            height: 34px;
+            border-radius: 4px;
+            background: #eeeee80d;
+            border-width: 1px;
+            border-color: #eeeee812;
+            Text { text: root.active_section == "webexplorer" ? "Open atlas" : root.active_section == "banger" ? "Frame proof" : root.active_section == "trading" ? "Market proof" : root.active_section == "real-estate" ? "Zone proof" : "New compute"; color: #eeeee8d8; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.activate_control("primary section action"); } }
+        }
+        Rectangle {
+            x: 136px;
+            y: 0px;
+            width: 126px;
+            height: 34px;
+            border-radius: 4px;
+            background: #eeeee80d;
+            border-width: 1px;
+            border-color: #eeeee812;
+            Text { text: root.active_section == "webexplorer" ? "Focus web" : root.active_section == "banger" ? "Viewport" : root.active_section == "trading" ? "Backtest" : root.active_section == "real-estate" ? "Resolver" : "Proofs"; color: #eeeee8d8; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.activate_control("secondary section action"); } }
+        }
+        Rectangle {
+            x: 272px;
+            y: 0px;
+            width: 126px;
+            height: 34px;
+            border-radius: 4px;
+            background: #eeeee80d;
+            border-width: 1px;
+            border-color: #eeeee812;
+            Text { text: root.active_section == "webexplorer" ? "Safe action" : root.active_section == "banger" ? "Scene graph" : root.active_section == "trading" ? "Alerts" : root.active_section == "real-estate" ? "Scoring" : "Memory"; color: #eeeee8d8; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.activate_control("tertiary section action"); } }
+        }
+        Rectangle {
+            x: 408px;
+            y: 0px;
+            width: 126px;
+            height: 34px;
+            border-radius: 4px;
+            background: #d9775722;
+            border-width: 1px;
+            border-color: #d9775750;
+            Text { text: "Promote"; color: #f0d2c6; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.activate_control("promotion gate"); } }
+        }
+    }
+    ScrollGlyph { x: parent.width - 22px; y: 68px; height: 112px; thumb-y: 0; }
+}
+
+component StatusLine inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    height: 42px;
+    background: #00000000;
+    Text {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: 14px;
+        text: root.label;
+        color: #eeeee86b;
+        font-size: 10px;
+        font-weight: 700;
+    }
+    Text {
+        x: 0px;
+        y: 17px;
+        width: parent.width;
+        height: 22px;
+        text: root.value;
+        color: #eeeee8c4;
+        font-size: 11px;
+        wrap: word-wrap;
+    }
+}
+
+component SectionStatusDock inherits Rectangle {
+    in property <string> active_section;
+    in property <string> proof_status;
+    in property <string> gpu_status;
+    in property <string> webview_status;
+    in property <string> hardware_status;
+    in property <string> provider_status;
+    in property <string> job_status;
+    in property <string> proof_badge_status;
+    in property <string> brain_status;
+    in property <string> monster_status;
+    in property <string> native_webexplorer_status;
+    in property <string> banger_status;
+    in property <string> trading_status;
+    in property <string> real_estate_status;
+    callback refresh();
+    callback activate_control(string);
+
+    width: 282px;
+    height: 316px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: #eeeee812;
+    background: #1c1c1bcc;
+    visible: root.active_section != "shell" && root.active_section != "forge";
+
+    Text {
+        x: 14px;
+        y: 12px;
+        width: 190px;
+        height: 24px;
+        text: root.active_section == "webexplorer" ? "Web peripheral" : root.active_section == "banger" ? "Banger viewport" : root.active_section == "trading" ? "Market service" : root.active_section == "real-estate" ? "Real estate service" : "Native service";
+        color: #eeeee8f0;
+        font-size: 14px;
+        font-weight: 700;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        x: parent.width - 86px;
+        y: 10px;
+        width: 72px;
+        height: 26px;
+        border-radius: 4px;
+        background: #eeeee80d;
+        border-width: 1px;
+        border-color: #eeeee812;
+        Text { text: "Refresh"; color: #eeeee8d8; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { clicked => { root.refresh(); } }
+    }
+
+    StatusLine {
+        x: 14px;
+        y: 52px;
+        width: parent.width - 28px;
+        label: "PRIMARY";
+        value: root.active_section == "webexplorer" ? root.native_webexplorer_status : root.active_section == "banger" ? root.banger_status : root.active_section == "trading" ? root.trading_status : root.active_section == "real-estate" ? root.real_estate_status : root.brain_status;
+    }
+    StatusLine {
+        x: 14px;
+        y: 102px;
+        width: parent.width - 28px;
+        label: root.active_section == "webexplorer" ? "WEBVIEW" : root.active_section == "banger" ? "GPU" : "PROVIDER";
+        value: root.active_section == "webexplorer" ? root.webview_status : root.active_section == "banger" ? root.gpu_status : root.provider_status;
+    }
+    StatusLine {
+        x: 14px;
+        y: 152px;
+        width: parent.width - 28px;
+        label: "JOBS";
+        value: root.job_status;
+    }
+    StatusLine {
+        x: 14px;
+        y: 202px;
+        width: parent.width - 28px;
+        label: "PROOF";
+        value: root.proof_badge_status;
+    }
+    Rectangle {
+        x: 14px;
+        y: 263px;
+        width: parent.width - 28px;
+        height: 34px;
+        border-radius: 4px;
+        background: #2a2a28;
+        border-width: 1px;
+        border-color: #eeeee812;
+        Text { x: 12px; y: 0px; width: parent.width - 24px; height: parent.height; text: "Open native details"; color: #eeeee8d8; font-size: 12px; vertical-alignment: center; }
+        TouchArea { clicked => { root.activate_control("Native section details"); } }
+    }
+}
+
+component BangerNativeViewport inherits Rectangle {
+    in property <string> active_section;
+    in property <image> frame_image;
+    in property <string> frame_hash;
+    in property <string> bridge_hash;
+    callback activate_control(string);
+    visible: root.active_section == "banger";
+    background: #0e0e0f;
+
+    Rectangle {
+        x: 28px;
+        y: 18px;
+        width: parent.width - 356px;
+        height: parent.height - 182px;
+        background: #090909;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 4px;
+        Image {
+            x: 14px;
+            y: 14px;
+            width: parent.width - 28px;
+            height: parent.height - 28px;
+            source: root.frame_image;
+            image-fit: contain;
+        }
+        Text {
+            x: 18px;
+            y: parent.height - 34px;
+            width: parent.width - 36px;
+            height: 18px;
+            text: "native Banger viewport";
+            color: #eeeee89e;
+            font-size: 11px;
+        }
+    }
+
+    Rectangle {
+        x: 44px;
+        y: parent.height - 142px;
+        width: parent.width - 388px;
+        height: 72px;
+        background: #1c1c1bcc;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 5px;
+        Text {
+            x: 14px;
+            y: 10px;
+            width: parent.width - 28px;
+            height: 18px;
+            text: "frame " + root.frame_hash;
+            color: #31c8b2;
+            font-size: 10px;
+        }
+        Text {
+            x: 14px;
+            y: 36px;
+            width: parent.width - 28px;
+            height: 18px;
+            text: "slint bridge " + root.bridge_hash;
+            color: #eeeee894;
+            font-size: 10px;
+        }
+    }
+
+    Rectangle {
+        x: parent.width - 308px;
+        y: parent.height - 142px;
+        width: 118px;
+        height: 34px;
+        border-radius: 4px;
+        background: #eeeee80d;
+        border-width: 1px;
+        border-color: #eeeee812;
+        Text { text: "Frame proof"; color: #eeeee8d8; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { clicked => { root.activate_control("Banger frame proof"); } }
+    }
+    Rectangle {
+        x: parent.width - 178px;
+        y: parent.height - 142px;
+        width: 118px;
+        height: 34px;
+        border-radius: 4px;
+        background: #eeeee80d;
+        border-width: 1px;
+        border-color: #eeeee812;
+        Text { text: "Scene graph"; color: #eeeee8d8; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { clicked => { root.activate_control("Banger scene graph"); } }
+    }
+}
+
+component AtlasInspector inherits Rectangle {
+    in property <string> active_section;
+    in property <string> tree_lines;
+    in property <string> selected_summary;
+    in property <string> ax_summary;
+    in property <string> layout_summary;
+    in property <string> resource_lines;
+    in property <string> action_candidates;
+    in property <string> blind_spot_lines;
+    in property <string> proof_summary;
+    in property <string> search_summary;
+    callback previous_node();
+    callback next_node();
+    visible: root.active_section == "webexplorer";
+    background: #0e0e0f;
+
+    Rectangle {
+        x: 28px;
+        y: 18px;
+        width: 360px;
+        height: parent.height - 116px;
+        background: #1c1c1bcc;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 5px;
+        Text { x: 14px; y: 12px; width: parent.width - 28px; height: 20px; text: "RAM DOM Atlas"; color: #eeeee8f0; font-size: 14px; font-weight: 700; }
+        Text {
+            x: 14px;
+            y: 42px;
+            width: parent.width - 28px;
+            height: parent.height - 58px;
+            text: root.tree_lines;
+            color: #d7d7d0;
+            font-size: 10px;
+            wrap: word-wrap;
+        }
+    }
+
+    Rectangle {
+        x: 404px;
+        y: 18px;
+        width: parent.width - 728px;
+        height: 132px;
+        background: #1c1c1bcc;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 5px;
+        Text { x: 14px; y: 12px; width: parent.width - 28px; height: 20px; text: "Selected node"; color: #eeeee8f0; font-size: 14px; font-weight: 700; }
+        Text { x: 14px; y: 40px; width: parent.width - 28px; height: 82px; text: root.selected_summary; color: #eeeee8b8; font-size: 10px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: 404px;
+        y: 164px;
+        width: parent.width - 728px;
+        height: 78px;
+        background: #1c1c1bcc;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 5px;
+        Text { x: 14px; y: 10px; width: parent.width - 28px; height: 18px; text: "AX"; color: #31c8b2; font-size: 12px; font-weight: 700; }
+        Text { x: 14px; y: 34px; width: parent.width - 28px; height: 34px; text: root.ax_summary; color: #eeeee8b8; font-size: 10px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: 404px;
+        y: 254px;
+        width: parent.width - 728px;
+        height: 78px;
+        background: #1c1c1bcc;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 5px;
+        Text { x: 14px; y: 10px; width: parent.width - 28px; height: 18px; text: "Layout"; color: #31c8b2; font-size: 12px; font-weight: 700; }
+        Text { x: 14px; y: 34px; width: parent.width - 28px; height: 34px; text: root.layout_summary; color: #eeeee8b8; font-size: 10px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: 404px;
+        y: 344px;
+        width: parent.width - 728px;
+        height: 112px;
+        background: #1c1c1bcc;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 5px;
+        Text { x: 14px; y: 10px; width: parent.width - 28px; height: 18px; text: "Actions"; color: #31c8b2; font-size: 12px; font-weight: 700; }
+        Text { x: 14px; y: 34px; width: parent.width - 28px; height: 68px; text: root.action_candidates; color: #eeeee8b8; font-size: 10px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: parent.width - 306px;
+        y: 18px;
+        width: 278px;
+        height: 116px;
+        background: #1c1c1bcc;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 5px;
+        Text { x: 14px; y: 10px; width: parent.width - 28px; height: 18px; text: "Resources"; color: #eeeee8f0; font-size: 13px; font-weight: 700; }
+        Text { x: 14px; y: 34px; width: parent.width - 28px; height: 72px; text: root.resource_lines; color: #eeeee8a8; font-size: 9px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: parent.width - 306px;
+        y: 148px;
+        width: 278px;
+        height: 146px;
+        background: #1c1c1bcc;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 5px;
+        Text { x: 14px; y: 10px; width: parent.width - 28px; height: 18px; text: "Blind spots"; color: #eeeee8f0; font-size: 13px; font-weight: 700; }
+        Text { x: 14px; y: 34px; width: parent.width - 28px; height: 102px; text: root.blind_spot_lines; color: #eeeee8a8; font-size: 9px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: parent.width - 306px;
+        y: 308px;
+        width: 278px;
+        height: 148px;
+        background: #1c1c1bcc;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 5px;
+        Text { x: 14px; y: 10px; width: parent.width - 28px; height: 18px; text: "Proof"; color: #eeeee8f0; font-size: 13px; font-weight: 700; }
+        Text { x: 14px; y: 34px; width: parent.width - 28px; height: 104px; text: root.proof_summary; color: #eeeee8a8; font-size: 9px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: 404px;
+        y: parent.height - 98px;
+        width: parent.width - 432px;
+        height: 42px;
+        background: #1c1c1bcc;
+        border-width: 1px;
+        border-color: #eeeee812;
+        border-radius: 5px;
+        Text { x: 14px; y: 0px; width: 240px; height: parent.height; text: root.search_summary; color: #eeeee8a8; font-size: 11px; vertical-alignment: center; }
+        Rectangle {
+            x: parent.width - 180px;
+            y: 7px;
+            width: 72px;
+            height: 28px;
+            border-radius: 4px;
+            background: #eeeee80d;
+            border-width: 1px;
+            border-color: #eeeee812;
+            Text { text: "Prev"; color: #eeeee8d8; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.previous_node(); } }
+        }
+        Rectangle {
+            x: parent.width - 98px;
+            y: 7px;
+            width: 72px;
+            height: 28px;
+            border-radius: 4px;
+            background: #eeeee80d;
+            border-width: 1px;
+            border-color: #eeeee812;
+            Text { text: "Next"; color: #eeeee8d8; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.next_node(); } }
+        }
+    }
+}
+
+component AgentSurface inherits Rectangle {
+    in property <string> active_section;
+    in property <string> session_lines;
+    in property <string> transcript_lines;
+    in property <string> plan_cards;
+    in property <string> questionnaire_cards;
+    in property <string> proof_cards;
+    in property <string> agent_surface_status;
+    visible: root.active_section == "forge" || root.active_section == "shell";
+    background: #00000000;
+
+    Rectangle {
+        x: 104px;
+        y: 96px;
+        width: parent.width - 450px;
+        height: parent.height - 258px;
+        background: #00000000;
+        border-color: #2f2f2d;
+        border-width: 1px;
+        border-radius: 3px;
+        opacity: root.transcript_lines == "No native transcript yet." ? 0.0 : 1.0;
+        Text { x: 18px; y: 14px; width: parent.width - 36px; height: 22px; text: "Transcript"; color: #eeeee8d8; font-size: 13px; font-weight: 700; }
+        Text { x: 18px; y: 48px; width: parent.width - 36px; height: parent.height - 64px; text: root.transcript_lines; color: #eeeee8b8; font-size: 12px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: parent.width - 328px;
+        y: 20px;
+        width: 284px;
+        height: 150px;
+        background: #191918e6;
+        border-color: #333331;
+        border-width: 1px;
+        border-radius: 4px;
+        opacity: 0.92;
+        Text { x: 12px; y: 10px; width: parent.width - 24px; height: 20px; text: "Sessions"; color: #eeeee8d8; font-size: 12px; font-weight: 700; }
+        Text { x: 12px; y: 38px; width: parent.width - 24px; height: 98px; text: root.session_lines; color: #eeeee89e; font-size: 11px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: parent.width - 328px;
+        y: 184px;
+        width: 284px;
+        height: 132px;
+        background: #191918e6;
+        border-color: #333331;
+        border-width: 1px;
+        border-radius: 4px;
+        opacity: 0.92;
+        Text { x: 12px; y: 10px; width: parent.width - 24px; height: 18px; text: "Plan"; color: #eeeee8d8; font-size: 12px; font-weight: 700; }
+        Text { x: 12px; y: 36px; width: parent.width - 24px; height: 84px; text: root.plan_cards; color: #eeeee89e; font-size: 10px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: parent.width - 328px;
+        y: 330px;
+        width: 284px;
+        height: 118px;
+        background: #191918e6;
+        border-color: #333331;
+        border-width: 1px;
+        border-radius: 4px;
+        opacity: 0.92;
+        Text { x: 12px; y: 10px; width: parent.width - 24px; height: 18px; text: "Questions"; color: #eeeee8d8; font-size: 12px; font-weight: 700; }
+        Text { x: 12px; y: 36px; width: parent.width - 24px; height: 70px; text: root.questionnaire_cards; color: #eeeee89e; font-size: 10px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: parent.width - 328px;
+        y: 462px;
+        width: 284px;
+        height: 116px;
+        background: #191918e6;
+        border-color: #333331;
+        border-width: 1px;
+        border-radius: 4px;
+        opacity: 0.92;
+        Text { x: 12px; y: 10px; width: parent.width - 24px; height: 18px; text: "Proofs"; color: #eeeee8d8; font-size: 12px; font-weight: 700; }
+        Text { x: 12px; y: 36px; width: parent.width - 24px; height: 48px; text: root.proof_cards; color: #eeeee89e; font-size: 10px; wrap: word-wrap; }
+        Text { x: 12px; y: 88px; width: parent.width - 24px; height: 18px; text: root.agent_surface_status; color: #26d8c388; font-size: 9px; }
+    }
+}
+
+component ProductSectionSurface inherits Rectangle {
+    in property <string> active_section;
+    in property <string> title;
+    in property <string> status;
+    in property <string> metric_lines;
+    in property <string> card_lines;
+    in property <string> action_lines;
+    in property <string> proof_summary;
+    callback activate_control(string);
+    visible: root.active_section == "trading" || root.active_section == "real-estate" || root.active_section == "alpha";
+    background: #0e0e0f;
+
+    Rectangle {
+        x: 92px;
+        y: 54px;
+        width: parent.width - 480px;
+        height: 58px;
+        background: #00000000;
+        Text { x: 0px; y: 0px; width: parent.width; height: 30px; text: root.title; color: #eeeee8f0; font-size: 22px; font-weight: 800; }
+        Text { x: 0px; y: 34px; width: parent.width; height: 20px; text: root.status; color: #eeeee887; font-size: 12px; }
+    }
+
+    Rectangle {
+        x: 92px;
+        y: 146px;
+        width: 252px;
+        height: 160px;
+        background: #1c1c1bcc;
+        border-color: #333331;
+        border-width: 1px;
+        border-radius: 5px;
+        Text { x: 14px; y: 12px; width: parent.width - 28px; height: 20px; text: "Metrics"; color: #eeeee8d8; font-size: 13px; font-weight: 700; }
+        Text { x: 14px; y: 44px; width: parent.width - 28px; height: 100px; text: root.metric_lines; color: #eeeee8a8; font-size: 11px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: 364px;
+        y: 146px;
+        width: parent.width - 780px;
+        height: 260px;
+        background: #1c1c1bcc;
+        border-color: #333331;
+        border-width: 1px;
+        border-radius: 5px;
+        Text { x: 16px; y: 14px; width: parent.width - 32px; height: 22px; text: "Product cards"; color: #eeeee8d8; font-size: 13px; font-weight: 700; }
+        Text { x: 16px; y: 50px; width: parent.width - 32px; height: parent.height - 70px; text: root.card_lines; color: #eeeee8ad; font-size: 12px; wrap: word-wrap; }
+    }
+
+    Rectangle {
+        x: parent.width - 356px;
+        y: 146px;
+        width: 280px;
+        height: 260px;
+        background: #1c1c1bcc;
+        border-color: #333331;
+        border-width: 1px;
+        border-radius: 5px;
+        Text { x: 14px; y: 12px; width: parent.width - 28px; height: 20px; text: "Actions"; color: #eeeee8d8; font-size: 13px; font-weight: 700; }
+        Text { x: 14px; y: 44px; width: parent.width - 28px; height: 112px; text: root.action_lines; color: #eeeee8a8; font-size: 12px; wrap: word-wrap; }
+        Rectangle {
+            x: 14px;
+            y: 174px;
+            width: parent.width - 28px;
+            height: 34px;
+            border-radius: 4px;
+            background: #eeeee80d;
+            border-color: #eeeee812;
+            border-width: 1px;
+            Text { text: "Run native action"; color: #eeeee8d8; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.activate_control("product native action"); } }
+        }
+        Text { x: 14px; y: 224px; width: parent.width - 28px; height: 20px; text: root.proof_summary; color: #26d8c38c; font-size: 9px; }
+    }
+}
+
+component ChatBar inherits Rectangle {
+    in-out property <string> chat_text;
+    callback attach_file();
+    callback send();
+    width: 780px;
+    height: 99px;
+    background: #2a2a28;
+    border-radius: 6px;
+    Rectangle {
+        x: 8px;
+        y: 8px;
+        width: 83px;
+        height: 83px;
+        background: #1c1c1b;
+        border-radius: 4px;
+        Text { x: 12px; y: 55px; width: 18px; height: 18px; text: "+"; color: #f0f0ed; font-size: 22px; vertical-alignment: center; }
+        TouchArea { clicked => { root.attach_file(); } }
+    }
+    Image { x: 127px; y: 71px; width: 14px; height: 14px; source: @image-url("generated_assets/svg_0026.svg"); }
+    Image { x: parent.width - 17px; y: 7px; width: 13px; height: 13px; source: @image-url("generated_assets/svg_0024.svg"); }
+    LineEdit {
+        x: 128px;
+        y: 38px;
+        width: 552px;
+        height: 37px;
+        text <=> root.chat_text;
+        placeholder-text: "Run a Monte C";
+    }
+    Rectangle { x: parent.width - 130px; y: 72px; width: 13px; height: 13px; background: #f4f4ee; }
+    Rectangle { x: parent.width - 106px; y: 72px; width: 13px; height: 13px; background: #f4f4ee; }
+    Rectangle { x: parent.width - 82px; y: 72px; width: 13px; height: 13px; background: #d97757; }
+    Rectangle {
+        x: parent.width - 54px;
+        y: 67px;
+        width: 24px;
+        height: 24px;
+        border-radius: 3px;
+        background: #eeeee814;
+        Image { x: 5px; y: 5px; width: 14px; height: 14px; source: @image-url("generated_assets/svg_0027.svg"); }
+        TouchArea { clicked => { root.send(); } }
+    }
+    Rectangle { x: 248px; y: 87px; width: 24px; height: 3px; border-radius: 2px; background: #0a0a0a40; }
+    Image { x: 357px; y: 126px; width: 11px; height: 11px; source: @image-url("generated_assets/svg_0028.svg"); }
+    Text { x: 388px; y: 121px; width: 180px; height: 20px; text: "GPT 5.3"; color: #eeeee89e; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
+    Text { x: 574px; y: 121px; width: 54px; height: 20px; text: "Moyen"; color: #eeeee89e; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+    Image { x: 621px; y: 126px; width: 11px; height: 11px; source: @image-url("generated_assets/svg_0029.svg"); }
+}
+
+component NativeModal inherits Rectangle {
+    in property <bool> modal_visible;
+    in property <string> modal_title;
+    in property <string> modal_body;
+    callback close_modal();
+    visible: root.modal_visible;
+    background: #00000088;
+    TouchArea { clicked => { root.close_modal(); } }
+    Rectangle {
+        width: 420px;
+        height: 168px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: #232322;
+        border-color: #353534;
+        border-width: 1px;
+        border-radius: 6px;
+        Text { x: 16px; y: 16px; text: root.modal_title; color: #e8ecee; font-size: 16px; font-weight: 700; }
+        Text { x: 16px; y: 48px; width: 388px; text: root.modal_body; color: #9a9a94; font-size: 12px; wrap: word-wrap; }
+        Rectangle {
+            x: 306px;
+            y: 118px;
+            width: 96px;
+            height: 34px;
+            background: #343432;
+            border-radius: 4px;
+            Text { text: "Close"; color: #e8ecee; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.close_modal(); } }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    in property <string> proof_status;
+    in property <string> gpu_status;
+    in property <string> webview_status;
+    in property <string> active_section;
+    in property <string> section_title;
+    in property <string> canvas_title;
+    in property <string> canvas_hint;
+    in property <string> session_lines;
+    in property <string> transcript_lines;
+    in property <string> plan_cards;
+    in property <string> questionnaire_cards;
+    in property <string> proof_cards;
+    in property <string> agent_surface_status;
+    in property <string> product_section_title;
+    in property <string> product_section_status;
+    in property <string> product_section_metrics;
+    in property <string> product_section_cards;
+    in property <string> product_section_actions;
+    in property <string> product_section_proof;
+    in property <string> hardware_status;
+    in property <string> provider_status;
+    in property <string> job_status;
+    in property <string> proof_badge_status;
+    in property <string> brain_status;
+    in property <string> monster_status;
+    in property <string> panel_status;
+    in property <string> native_webexplorer_status;
+    in property <string> banger_status;
+    in property <string> trading_status;
+    in property <string> real_estate_status;
+    in property <image> banger_frame_image;
+    in property <string> banger_frame_hash;
+    in property <string> banger_bridge_hash;
+    in property <string> atlas_tree_lines;
+    in property <string> atlas_selected_summary;
+    in property <string> atlas_ax_summary;
+    in property <string> atlas_layout_summary;
+    in property <string> atlas_resource_lines;
+    in property <string> atlas_action_candidates;
+    in property <string> atlas_blind_spot_lines;
+    in property <string> atlas_proof_summary;
+    in property <string> atlas_search_summary;
+    in property <bool> modal_visible;
+    in property <string> modal_title;
+    in property <string> modal_body;
+    in-out property <string> chat_text;
+    callback refresh_probes();
+    callback navigate(string);
+    callback activate_imported_control(string);
+    callback window_close();
+    callback window_minimize();
+    callback window_toggle_maximize();
+    callback navigate_next();
+    callback send_chat();
+    callback close_modal();
+    callback atlas_previous_node();
+    callback atlas_next_node();
+
+    title: "InGen Native Front - Forge";
+    no-frame: true;
+    preferred-width: 1535px;
+    preferred-height: 786px;
+    min-width: 1180px;
+    min-height: 760px;
+    background: #0e0e0f;
+
+    FocusScope {
+        KeyBinding { keys: @keys(Control+Tab); activated => { root.navigate_next(); } }
+        KeyBinding { keys: @keys(Escape); activated => { root.close_modal(); } }
+    }
+
+    Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height; background: #0e0e0f; }
+    TitleBar {
+        width: parent.width;
+        active_section: root.active_section;
+        navigate(section) => { root.navigate(section); }
+        close => { root.window_close(); }
+        minimize => { root.window_minimize(); }
+        maximize => { root.window_toggle_maximize(); }
+    }
+    LeftPanel {
+        x: 8px;
+        y: 44px;
+        height: root.height - 54px;
+        active_section: root.active_section;
+        navigate(section) => { root.navigate(section); }
+        activate_control(label) => { root.activate_imported_control(label); }
+    }
+    WorkspaceHeader {
+        x: 287px;
+        y: 44px;
+        width: root.width - 287px;
+        active_section: root.active_section;
+        section_title: root.section_title;
+        navigate(section) => { root.navigate(section); }
+    }
+    DropCanvas {
+        x: 287px;
+        y: 96px;
+        width: root.width - 287px;
+        height: root.height - 96px;
+        active_section: root.active_section;
+        canvas_title: root.canvas_title;
+        canvas_hint: root.canvas_hint;
+        activate_control(label) => { root.activate_imported_control(label); }
+    }
+    BangerNativeViewport {
+        x: 287px;
+        y: 96px;
+        width: root.width - 287px;
+        height: root.height - 96px;
+        active_section: root.active_section;
+        frame_image: root.banger_frame_image;
+        frame_hash: root.banger_frame_hash;
+        bridge_hash: root.banger_bridge_hash;
+        activate_control(label) => { root.activate_imported_control(label); }
+    }
+    AtlasInspector {
+        x: 287px;
+        y: 96px;
+        width: root.width - 287px;
+        height: root.height - 96px;
+        active_section: root.active_section;
+        tree_lines: root.atlas_tree_lines;
+        selected_summary: root.atlas_selected_summary;
+        ax_summary: root.atlas_ax_summary;
+        layout_summary: root.atlas_layout_summary;
+        resource_lines: root.atlas_resource_lines;
+        action_candidates: root.atlas_action_candidates;
+        blind_spot_lines: root.atlas_blind_spot_lines;
+        proof_summary: root.atlas_proof_summary;
+        search_summary: root.atlas_search_summary;
+        previous_node => { root.atlas_previous_node(); }
+        next_node => { root.atlas_next_node(); }
+    }
+    AgentSurface {
+        x: 287px;
+        y: 96px;
+        width: root.width - 287px;
+        height: root.height - 96px;
+        active_section: root.active_section;
+        session_lines: root.session_lines;
+        transcript_lines: root.transcript_lines;
+        plan_cards: root.plan_cards;
+        questionnaire_cards: root.questionnaire_cards;
+        proof_cards: root.proof_cards;
+        agent_surface_status: root.agent_surface_status;
+    }
+    ProductSectionSurface {
+        x: 287px;
+        y: 96px;
+        width: root.width - 287px;
+        height: root.height - 96px;
+        active_section: root.active_section;
+        title: root.product_section_title;
+        status: root.product_section_status;
+        metric_lines: root.product_section_metrics;
+        card_lines: root.product_section_cards;
+        action_lines: root.product_section_actions;
+        proof_summary: root.product_section_proof;
+        activate_control(label) => { root.activate_imported_control(label); }
+    }
+    SectionStatusDock {
+        x: root.width - 314px;
+        y: 112px;
+        active_section: root.active_section;
+        proof_status: root.proof_status;
+        gpu_status: root.gpu_status;
+        webview_status: root.webview_status;
+        hardware_status: root.hardware_status;
+        provider_status: root.provider_status;
+        job_status: root.job_status;
+        proof_badge_status: root.proof_badge_status;
+        brain_status: root.brain_status;
+        monster_status: root.monster_status;
+        native_webexplorer_status: root.native_webexplorer_status;
+        banger_status: root.banger_status;
+        trading_status: root.trading_status;
+        real_estate_status: root.real_estate_status;
+        refresh => { root.refresh_probes(); }
+        activate_control(label) => { root.activate_imported_control(label); }
+    }
+    ChatBar {
+        x: (root.width - 780px) / 2 + 143px;
+        y: root.height - 156px;
+        chat_text <=> root.chat_text;
+        attach_file => { root.activate_imported_control("Attach file"); }
+        send => { root.send_chat(); }
+    }
+    NativeModal {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        modal_visible: root.modal_visible;
+        modal_title: root.modal_title;
+        modal_body: root.modal_body;
+        close_modal => { root.close_modal(); }
+    }
+}
