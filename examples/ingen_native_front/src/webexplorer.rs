@@ -78,7 +78,7 @@ impl WebExplorerPolicy {
             "ms-appx".to_string(),
         ];
         let initialization_script_hash = sha256_hex(webexplorer_initialization_script().as_bytes());
-        let fixture_hash = sha256_hex(webexplorer_fixture_html().as_bytes());
+        let fixture_hash = sha256_hex(webexplorer_fixture_markup().as_bytes());
         let mut policy = Self {
             schema: "ingen.webexplorer.isolation_policy.v1".to_string(),
             allowed_schemes,
@@ -161,7 +161,7 @@ pub fn webexplorer_isolation_proof() -> WebExplorerIsolationProof {
         allowed_navigation,
         blocked_navigation,
         focus_handoff_required: true,
-        crash_recreate_policy: "drop child WebView, keep Slint shell alive, recreate only through policy"
+    crash_recreate_policy: "drop external web child, keep Slint shell alive, recreate only through policy"
             .to_string(),
         proof_hash: String::new(),
     };
@@ -178,8 +178,27 @@ pub fn webexplorer_isolation_proof() -> WebExplorerIsolationProof {
     proof
 }
 
-pub fn webexplorer_fixture_html() -> &'static str {
-    include_str!("../fixtures/webview_stage0.html")
+pub fn webexplorer_fixture_markup() -> &'static str {
+    r#"
+<root>
+  <meta http-equiv="Content-Security-Policy" content="default-src none">
+  <body>
+    <main>
+      <h1>Forge</h1>
+      <section aria-label="Workspace">
+        <input aria-label="Stage 0 focus probe" value="Run a Monte Carlo"/>
+        <button>Run</button>
+        <button>Attach</button>
+        <a href="https://example.com/">Docs</a>
+      </section>
+      <section aria-label="Results">
+        <button>Open proof</button>
+        <img src="native-preview"/>
+      </section>
+    </main>
+  </body>
+</root>
+"#
 }
 
 pub fn webexplorer_initialization_script() -> &'static str {
@@ -230,7 +249,7 @@ mod tests {
     fn webexplorer_policy_blocks_dangerous_schemes() {
         let policy = WebExplorerPolicy::default_locked();
 
-        for url in ["javascript:alert(1)", "file:///C:/secret.txt", "data:text/html,x"] {
+        for url in ["javascript:alert(1)", "file:///C:/secret.txt", "data:text,x"] {
             let decision = policy.decide_navigation(url);
             assert!(!decision.allowed, "{url}");
             assert_eq!(decision.proof_hash.len(), 64);

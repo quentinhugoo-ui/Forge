@@ -14,7 +14,7 @@ pub struct NativeAppPaths {
     pub logs_dir: String,
     pub crash_recovery_dir: String,
     pub secrets_dir: String,
-    pub webview_profile_dir: String,
+    pub external_web_profile_dir: String,
     pub proof_hash: String,
 }
 
@@ -24,8 +24,8 @@ pub struct NativeCapabilityPolicy {
     pub schema: String,
     pub protected_roots: Vec<String>,
     pub writable_roots: Vec<String>,
-    pub webview_local_file_access: String,
-    pub webview_profile_isolated: bool,
+    pub external_web_local_file_access: String,
+    pub external_web_profile_isolated: bool,
     pub secrets_in_logs_allowed: bool,
     pub updater_policy: String,
     pub proof_hash: String,
@@ -57,7 +57,7 @@ pub struct PackagingSecurityManifest {
     pub package_target: String,
     pub binary_name: String,
     pub slint_desktop_supported: bool,
-    pub tauri_shell_required: bool,
+    pub obsolete_shell_required: bool,
     pub app_paths: NativeAppPaths,
     pub capability_policy: NativeCapabilityPolicy,
     pub protected_path_decision: LocalPathDecision,
@@ -78,7 +78,7 @@ pub fn build_packaging_security_manifest(replay_state_hash: &str) -> PackagingSe
         package_target: "windows-x86_64-native-slint".to_string(),
         binary_name: "ingen-native-front.exe".to_string(),
         slint_desktop_supported: cfg!(windows),
-        tauri_shell_required: false,
+        obsolete_shell_required: false,
         app_paths,
         capability_policy,
         protected_path_decision,
@@ -91,7 +91,7 @@ pub fn build_packaging_security_manifest(replay_state_hash: &str) -> PackagingSe
         &manifest.package_target,
         &manifest.binary_name,
         manifest.slint_desktop_supported,
-        manifest.tauri_shell_required,
+        manifest.obsolete_shell_required,
         &manifest.app_paths,
         &manifest.capability_policy,
         &manifest.protected_path_decision,
@@ -106,7 +106,7 @@ pub fn native_app_paths() -> NativeAppPaths {
     let logs = app_data.join("logs");
     let crash = app_data.join("crash-recovery");
     let secrets = app_data.join("secrets");
-    let webview_profile = app_data.join("webview-profile");
+    let external_web_profile = app_data.join("external-web-profile");
     let mut paths = NativeAppPaths {
         install_root_policy: "install binaries outside mutable app-data; never store user data next to the exe"
             .to_string(),
@@ -114,7 +114,7 @@ pub fn native_app_paths() -> NativeAppPaths {
         logs_dir: path_string(&logs),
         crash_recovery_dir: path_string(&crash),
         secrets_dir: path_string(&secrets),
-        webview_profile_dir: path_string(&webview_profile),
+        external_web_profile_dir: path_string(&external_web_profile),
         proof_hash: String::new(),
     };
     paths.proof_hash = stable_hash(&(
@@ -123,7 +123,7 @@ pub fn native_app_paths() -> NativeAppPaths {
         &paths.logs_dir,
         &paths.crash_recovery_dir,
         &paths.secrets_dir,
-        &paths.webview_profile_dir,
+        &paths.external_web_profile_dir,
     ));
     paths
 }
@@ -133,15 +133,15 @@ pub fn native_capability_policy(paths: &NativeAppPaths) -> NativeCapabilityPolic
         paths.app_data_dir.clone(),
         paths.logs_dir.clone(),
         paths.crash_recovery_dir.clone(),
-        paths.webview_profile_dir.clone(),
+        paths.external_web_profile_dir.clone(),
     ];
     let mut policy = NativeCapabilityPolicy {
         schema: "ingen.native_front.capability_policy.v1".to_string(),
         protected_roots: vec![PROTECTED_EVE_MAP.to_string()],
         writable_roots,
-        webview_local_file_access: "deny file:// and deny --allow-file-access-from-files; use isolated WebExplorer profile only"
+        external_web_local_file_access: "deny local files; use isolated WebExplorer profile only"
             .to_string(),
-        webview_profile_isolated: true,
+        external_web_profile_isolated: true,
         secrets_in_logs_allowed: false,
         updater_policy: "manual/update-gated; no auto-replacement before signed native package gate"
             .to_string(),
@@ -151,8 +151,8 @@ pub fn native_capability_policy(paths: &NativeAppPaths) -> NativeCapabilityPolic
         &policy.schema,
         &policy.protected_roots,
         &policy.writable_roots,
-        &policy.webview_local_file_access,
-        policy.webview_profile_isolated,
+        &policy.external_web_local_file_access,
+        policy.external_web_profile_isolated,
         policy.secrets_in_logs_allowed,
         &policy.updater_policy,
     ));
@@ -251,7 +251,7 @@ mod tests {
             manifest.schema,
             "ingen.native_front.stage10_packaging_security.v1"
         );
-        assert!(!manifest.tauri_shell_required);
+        assert!(!manifest.obsolete_shell_required);
         assert!(!manifest.protected_path_decision.allowed);
         assert!(manifest
             .protected_path_decision
@@ -270,7 +270,7 @@ mod tests {
         assert!(app_data.allowed);
         assert!(!documents.allowed);
         assert!(!policy.secrets_in_logs_allowed);
-        assert!(policy.webview_profile_isolated);
+        assert!(policy.external_web_profile_isolated);
         assert_eq!(policy.proof_hash.len(), 64);
     }
 

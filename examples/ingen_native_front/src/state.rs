@@ -951,7 +951,7 @@ mod tests {
     #[test]
     fn invalid_section_is_blocked_in_state() {
         let projection = replay_projection(&[NativeUiEvent::Navigate {
-            section: "tauri-hidden-shell".to_string(),
+            section: "retired-hidden-shell".to_string(),
         }]);
 
         assert_eq!(projection.active_section, "forge");

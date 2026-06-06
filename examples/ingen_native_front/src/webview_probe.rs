@@ -21,12 +21,12 @@ impl WebViewProbe {
                 "{} fixture={} runtime={}",
                 self.backend,
                 self.fixture_path,
-                self.runtime_version.as_deref().unwrap_or("manual")
+                self.runtime_version.as_deref().unwrap_or("native")
             )
         } else {
             format!(
-                "webview unavailable: {}",
-                self.error.as_deref().unwrap_or("unsupported platform")
+                "external-web unavailable: {}",
+                self.error.as_deref().unwrap_or("disabled")
             )
         }
     }
@@ -34,50 +34,28 @@ impl WebViewProbe {
     pub fn synthetic_windows_capability() -> Self {
         Self {
             compile_time_capability: true,
-            backend: "wry/WebView2".to_string(),
-            builder_probe: "WebViewBuilder::new().with_html(local_fixture)".to_string(),
-            child_attach_mode: "--webview-child-proof".to_string(),
+            backend: "native-external-web-stub".to_string(),
+            builder_probe: "native policy probe".to_string(),
+            child_attach_mode: "disabled-until-contained-runtime".to_string(),
             runtime_version: Some("synthetic".to_string()),
-            child_view_required: true,
-            fixture_path: "fixtures/webview_stage0.html".to_string(),
-            focus_resize_proof_required: true,
+            child_view_required: false,
+            fixture_path: "native-webexplorer-fixture".to_string(),
+            focus_resize_proof_required: false,
             error: None,
         }
     }
 }
 
 pub fn run_webview_probe() -> WebViewProbe {
-    #[cfg(windows)]
-    {
-        let _builder = wry::WebViewBuilder::new().with_html(WEBVIEW_STAGE0_FIXTURE);
-        WebViewProbe {
-            compile_time_capability: true,
-            backend: "wry/WebView2".to_string(),
-            builder_probe: "WebViewBuilder::new().with_html(local_fixture)".to_string(),
-            child_attach_mode: "--webview-child-proof".to_string(),
-            runtime_version: None,
-            child_view_required: true,
-            fixture_path: "fixtures/webview_stage0.html".to_string(),
-            focus_resize_proof_required: true,
-            error: None,
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        WebViewProbe {
-            compile_time_capability: false,
-            backend: "wry".to_string(),
-            builder_probe: "not built on this platform".to_string(),
-            child_attach_mode: "windows-only".to_string(),
-            runtime_version: None,
-            child_view_required: true,
-            fixture_path: "fixtures/webview_stage0.html".to_string(),
-            focus_resize_proof_required: true,
-            error: Some("Stage 0 WebView2 probe is Windows-first".to_string()),
-        }
+    WebViewProbe {
+        compile_time_capability: true,
+        backend: "native-external-web-stub".to_string(),
+        builder_probe: "native policy probe".to_string(),
+        child_attach_mode: "disabled-until-contained-runtime".to_string(),
+        runtime_version: None,
+        child_view_required: false,
+        fixture_path: "native-webexplorer-fixture".to_string(),
+        focus_resize_proof_required: false,
+        error: None,
     }
 }
-
-#[cfg(windows)]
-const WEBVIEW_STAGE0_FIXTURE: &str = include_str!("../fixtures/webview_stage0.html");

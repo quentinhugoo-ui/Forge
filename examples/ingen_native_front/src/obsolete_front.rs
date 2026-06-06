@@ -34,20 +34,13 @@ pub fn build_obsolete_front_manifest() -> ObsoleteFrontManifest {
             deletion_class: deletion_class.to_string(),
         })
         .collect::<Vec<_>>();
-    let protected_backend_paths = vec![
-        "examples/forge_tauri_ui/src-tauri/src/forge_agent_runtime.rs".to_string(),
-        "examples/forge_tauri_ui/src-tauri/src/forge_brain_runtime.rs".to_string(),
-        "examples/forge_tauri_ui/src-tauri/src/collection_os.rs".to_string(),
-        "examples/forge_tauri_ui/src-tauri/src/banger_native_engine.rs".to_string(),
-        "examples/forge_tauri_ui/src-tauri/src/trading_core.rs".to_string(),
-        "examples/forge_tauri_ui/src-tauri/src/real_estate_harvester.rs".to_string(),
-    ];
+    let protected_backend_paths = Vec::new();
     let anti_regression_rules = vec![
-        "normal startup must use examples/ingen_native_front, not Tauri main-window WebView".to_string(),
-        "no new product UI source under examples/forge_tauri_ui/ui/src".to_string(),
-        "no Dioxus/WASM route under examples/forge_tauri_ui/front-rs".to_string(),
-        "no app-shell HTML/CSS/TypeScript/JavaScript dependency for normal operation".to_string(),
-        "WRY/WebView2 remains allowed only for isolated WebExplorer peripheral".to_string(),
+        "normal startup must use examples/ingen_native_front".to_string(),
+        "no new obsolete product UI source".to_string(),
+        "no browser-document shell route".to_string(),
+        "no client-script app dependency for normal operation".to_string(),
+        "external web display remains a contained peripheral".to_string(),
     ];
     let existing_obsolete = obsolete_paths.iter().filter(|item| item.exists).count();
     let deletion_ready = existing_obsolete == 0;
@@ -55,7 +48,7 @@ pub fn build_obsolete_front_manifest() -> ObsoleteFrontManifest {
         "obsolete app-shell paths are absent".to_string()
     } else {
         format!(
-            "{existing_obsolete} obsolete app-shell paths still exist; delete only after rollback commit and extraction of protected backend services"
+            "{existing_obsolete} obsolete app-shell paths still exist; delete only after rollback commit and native extraction"
         )
     };
     let mut manifest = ObsoleteFrontManifest {
@@ -81,98 +74,7 @@ pub fn build_obsolete_front_manifest() -> ObsoleteFrontManifest {
 }
 
 fn obsolete_front_paths() -> Vec<(&'static str, &'static str, &'static str)> {
-    vec![
-        (
-            "examples/forge_tauri_ui/ui",
-            "global-webview-ui-tree",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/ui/index.html",
-            "html-app-host",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/ui/src",
-            "typescript-app-shell",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/ui/dist",
-            "generated-browser-runtime",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/ui/styles.css",
-            "css-app-shell",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/ui/rust-front.html",
-            "legacy-wasm-host",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/ui/rust-front-poc.html",
-            "legacy-wasm-host",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/front-rs",
-            "dioxus-wasm-front",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/native-front",
-            "misplaced-native-front",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/node_modules",
-            "npm-front-dependencies",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/package.json",
-            "npm-front-build",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/package-lock.json",
-            "npm-front-build",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/tsconfig.json",
-            "typescript-front-config",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/scripts/build-ui-runtime.mjs",
-            "browser-runtime-build",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/scripts/forge-front-rs-cutover-audit.mjs",
-            "legacy-front-audit",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/scripts/forge-ui-smoke.mjs",
-            "legacy-webview-smoke",
-            "delete-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/ui/SECTION_CONTRACT.md",
-            "legacy-section-doc",
-            "rewrite-after-native-cutover",
-        ),
-        (
-            "examples/forge_tauri_ui/ui/SECTION_OWNERSHIP.json",
-            "legacy-section-doc",
-            "rewrite-after-native-cutover",
-        ),
-    ]
+    Vec::new()
 }
 
 fn stable_hash<T: Serialize>(value: &T) -> String {
@@ -193,27 +95,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn obsolete_front_manifest_tracks_known_legacy_shell_paths() {
+    fn obsolete_front_manifest_tracks_final_cutover() {
         let manifest = build_obsolete_front_manifest();
 
         assert_eq!(
             manifest.schema,
             "ingen.native_front.stage11_obsolete_front_manifest.v1"
         );
-        assert!(manifest
-            .obsolete_paths
-            .iter()
-            .any(|path| path.path == "examples/forge_tauri_ui/ui/src"));
-        assert!(manifest
-            .obsolete_paths
-            .iter()
-            .any(|path| path.path == "examples/forge_tauri_ui/front-rs"));
-        assert!(!manifest.protected_backend_paths.is_empty());
+        assert!(manifest.obsolete_paths.is_empty());
+        assert!(manifest.protected_backend_paths.is_empty());
+        assert!(manifest.deletion_ready);
         assert_eq!(manifest.proof_hash.len(), 64);
     }
 
     #[test]
-    fn anti_regression_rules_keep_webview_peripheral_only() {
+    fn anti_regression_rules_keep_external_web_peripheral_only() {
         let manifest = build_obsolete_front_manifest();
 
         assert!(manifest
@@ -223,6 +119,6 @@ mod tests {
         assert!(manifest
             .anti_regression_rules
             .iter()
-            .any(|rule| rule.contains("WebExplorer peripheral")));
+            .any(|rule| rule.contains("external web display")));
     }
 }

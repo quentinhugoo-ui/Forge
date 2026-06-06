@@ -13,7 +13,7 @@ path = "src/lib.rs"
 [dependencies]
 sha2 = "0.10"
 # wgpu trimmed to Vulkan + Metal — DX12 and GLES backends pull a windows
-# crate version that conflicts with tauri's transitive dep, and neither
+# crate version that conflicts with a desktop stack transitive dep, and neither
 # have the StdError impl wgpu-hal expects. Vulkan covers NVIDIA, AMD,
 # Intel on Windows/Linux; Metal covers macOS. We've verified Vulkan is
 # present on the user's Windows laptop via vulkan_available().
@@ -31,53 +31,9 @@ wgpu = ["dep:wgpu", "dep:pollster"]
 cuda = []  # cuda_min uses dynamic loading of nvcuda.dll, no compile-time dep
 
 [[example]]
-name = "monster_bench"
-path = "examples/monster_bench.rs"
-
-[[example]]
-name = "tensor_auto_distill_demo"
-path = "examples/tensor_auto_distill_demo.rs"
-
-[[example]]
-name = "lab_runner"
-path = "examples/lab_runner.rs"
-
-[[example]]
-name = "lab_runner_trading"
-path = "examples/lab_runner_trading.rs"
-
-[[example]]
-name = "lab_runner_immo"
-path = "examples/lab_runner_immo.rs"
-
-[[example]]
-name = "lab_runner_banger"
-path = "examples/lab_runner_banger.rs"
-
-[[example]]
-name = "lab_runner_fbc"
-path = "examples/lab_runner_fbc.rs"
-
-[[example]]
-name = "lab_runner_web"
-path = "examples/lab_runner_web.rs"
-
-# Atlas Cartographie phase A1 — feasibility test (compression sémantique).
-# Pas éphémère : si A1 valide (ratio ≥ 1000:1), il devient le squelette
-# de A2 (Atlas v0 énumération + tri externe + dédup).
-[[example]]
-name = "atlas_a1"
-path = "examples/atlas_a1.rs"
-
-# Posit16 vs f32 vs Rational — décision architecture numérique Ω.3.
-# Renommé depuis omega3_posit_vs_f32_vs_rational en Wave audit 2026-05-02.
-[[example]]
 name = "omega3_numerics_arch_choice"
 path = "examples/omega3_numerics_arch_choice.rs"
 
-[[example]]
-name = "forge_oracle"
-path = "examples/forge_oracle.rs"
 
 [[example]]
 name = "cpu_hash_intrinsics_bench"

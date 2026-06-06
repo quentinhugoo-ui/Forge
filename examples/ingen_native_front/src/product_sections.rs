@@ -77,7 +77,7 @@ pub fn build_product_sections_manifest(
             ],
             vec![
                 "Alpha receives the same native state and proof bus as Forge.".to_string(),
-                "Visual parity remains gated by the Tauri oracle inventory.".to_string(),
+                "Visual parity remains gated by the native component inventory.".to_string(),
             ],
             vec!["open canvas".to_string(), "run local proof".to_string()],
             false,

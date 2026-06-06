@@ -22,7 +22,7 @@
 //!
 //! `Atlas::result_key(func_bytes, input_bytes)` truncates the input
 //! to 12 bytes — fine for scalar `i64` inputs (8 bytes, no aliasing)
-//! but UNSAFE for any caller passing >12-byte inputs (e.g. a Tauri
+//! but UNSAFE for any caller passing >12-byte inputs (e.g. a UI
 //! command handing through CSV bytes, or a Vec<i64> wire payload).
 //! Two distinct inputs sharing the same first 12 bytes silently alias
 //! to the same atlas entry.

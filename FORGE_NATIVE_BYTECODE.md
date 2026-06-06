@@ -3,8 +3,10 @@ src/kasm.rs
 
 Forge is the content-addressed compute language of InGen. The current Rust
 implementation still uses the old KASM name in many modules. Forge source is
-the readable form a LLM can author; Forge bytecode is the compact verified form
-Monster executes.
+the internal readable form produced by trusted compilers or expert tools; Forge
+bytecode is the compact verified form Monster executes. External LLMs should
+normally fill structured MathContracts through `/newcompute_`, then let InGen
+compile them deterministically to Forge.
 
 ```text
 InGen intent
@@ -25,6 +27,61 @@ InGen intent
 - Every accepted or denied run emits the same proof envelope shape.
 - Raw data stays in InGen stores; callers receive hashes, refs, previews and
   proof summaries.
+
+## Agent Quick Start
+
+If you are a new agent working on `/newcompute_`, read this first.
+
+The target circuit is:
+
+```text
+human request
+-> LLM selects one math class
+-> LLM fills a structured MathContract in classical math terms
+-> InGen compiles MathContract to Forge deterministically
+-> Forge verifies types, units, bounds, purity, samples and cost
+-> Monster executes/reuses/proofs the generated Forge compute
+```
+
+Do not ask an external LLM to write raw Forge for professional math. Forge is
+the internal verified language. Do not create a second compute path, a parallel
+solver executor, or class-specific Monster engines. The math classes are
+specialized contract views over the same `/newcompute_` path.
+
+Math classes:
+
+| Class | Use When The Human Asks For | Contract Must Contain | Forge/Monster Target |
+| --- | --- | --- | --- |
+| `/formula_symbolic` | identities, derivations, simplification, exact proof, symbolic solve | symbols, expressions, assumptions, domains, requested transforms, proof checks | symbolic Forge types/ops, symbolic math plan |
+| `/numeric_model` | engineering formulas, deterministic calculations, dimensioned models | variables, units, bounds, equations, constraints, samples, outputs | scalar/vector Forge math, unit/bounds checks, scalar oracle |
+| `/simulation_dynamics` | ODE/DAE/PDE, time stepping, physical dynamics | states, time domain, equations, initial/boundary conditions, events, integrator request | solver primitives when supported, otherwise `capability_missing` |
+| `/optimization_design` | design search, calibration, constraints, Pareto studies | objective, design variables, constraints, algorithm family, stopping criteria | optimization/ranking Forge ops and validation |
+| `/uncertainty_statistics` | Monte Carlo, QMC, confidence, robustness, sensitivity | distributions, samples, estimators, correlation assumptions, tolerances | sampling/statistics/uncertainty Forge ops |
+| `/tensor_linalg_autodiff` | matrix/tensor compute, gradients, Jacobians, Hessians | shapes, batch axes, matrix ops, AD requests, precision/layout policy | tensor/linalg/autodiff Forge ops |
+| `/signal_timeseries` | FFT, filters, vibration, rolling windows, market/sensor series | sample rate, channels, windows, transforms, filters, feature outputs | signal/window/time-series Forge ops |
+| `/graph_sparse_discrete` | sparse systems, graph traversal, network topology | nodes, edges, sparse matrices, graph ops, topology checks | graph/sparse Forge ops |
+
+Rejection is correct behavior when the contract is not exact. Return a compact
+repair reason, never guess:
+
+```text
+missing_unit | missing_bounds | unknown_symbol | ambiguous_equation
+unsupported_operation | capability_missing | invalid_shape | invalid_domain
+```
+
+Example: if the human says "build a rocket engine", the LLM should not see the
+whole Forge language. It should choose a primary class such as
+`/numeric_model` or `/optimization_design`, fill a propulsion MathContract with
+pressure, temperature, throat area, expansion ratio, thrust/Isp equations,
+constraints, samples and sensitivity slots, then let InGen compile that
+contract into Forge. If combustion equilibrium or a PDE solver is not yet
+native, the compiler must return `capability_missing` or require a reduced
+model; it must not invent a hidden fallback.
+
+Every implementation round that changes this path must update this document
+and run a real store-backed `/newcompute_` app-runtime battery through
+`forge_brain_run_actcode`, Monster preparation, typed buffers, proof/differential
+status and compute-library reuse.
 
 ## Proof Envelope
 
@@ -52,11 +109,10 @@ payload, stable denial `proofHash`.
   tensor runtime, FBC v0 and the embedded dialect reference. The old KASM name
   remains in code during transition.
 - `src/monster.rs`: Monster execution, caches, synthesis and proof paths.
-- `examples/forge_tauri_ui/src-tauri/src/forge_fbc_host.rs`: shared host
-  runtime used by the InGen app and kernel projection routes.
-- `examples/forge_tauri_ui/src-tauri/src/forge_brain_runtime.rs`: Brain
-  runtime pointers for `/newcompute_`, `/selectcompute_` and Banger-only
-  `/newobject_`.
+- native service adapters: shared host runtime used by the InGen app and
+  kernel projection routes.
+- native Brain runtime adapters: pointers for `/newcompute_`, `/selectcompute_`
+  and Banger-only `/newobject_`.
 
 ## Canonical Runtime Architecture
 
@@ -73,7 +129,7 @@ user intent
 -> local route or Forge compute
 -> Monster execution/reuse/proof when compute is needed
 -> compact hashes/proofs/artifacts
--> Tauri/UI section bridge
+-> native UI section bridge
 -> optional memory commit
 ```
 
@@ -87,7 +143,7 @@ There are two action surfaces, and they must stay distinct:
 | Surface | What the LLM writes | Executor | Role |
 | --- | --- | --- | --- |
 | BrainCommand | `/forge` programs such as `recall`, `plan`, `create`, `run`, `project`, `replay`, `commit`, `explain` | `forge_agent` / `forge_agent_runtime.rs` | general agent OS route |
-| CodeAct compute/UI | `/newcompute_`, `/selectcompute_`, `/newobject_`, plus UI JSON blocks | `forge_brain_runtime.rs` and section bridge | compute or UI actions |
+| CodeAct compute/UI | `/newcompute_` class selectors and MathContracts, `/selectcompute_`, `/newobject_`, plus UI JSON blocks | `src/monster.rs` core contracts plus thin native Slint adapters | compute or UI actions |
 
 Family A is compute. `/newcompute_`, `/selectcompute_` and dynamic
 `/compute_<name>_` work in all sections and call Monster. `/newobject_` is
@@ -96,6 +152,171 @@ Banger-only and turns curated compute evidence into SDF/3D object structure.
 Family B is UI-only. `/web_`, `FORGE_PLAN_JSON`,
 `FORGE_QUESTIONNAIRE_JSON`, `FORGE_SESSION_TITLE_JSON` and Banger material JSON
 render panels/events and must not enter the Monster compute executor.
+
+Family C is gated Web CodeAct. `/navigateweb_` and future web action programs
+are the final step of the WebExplorer RAM DOM atlas, not the first. They act on
+the native WebExplorer atlas, not on raw visual selectors or prose. Before exposing
+Family C to the LLM, WebExplorer must tag every captured page element with a
+stable `webref` backed by DOM, accessibility, layout and visual evidence, and
+`collection_os_webexplorer_atlas_report` must show acceptable coverage with
+known blind spots:
+
+```text
+webref=<tree_hash>/<frame_path>/<backend_dom_node_id_or_node_hash>/<role>/<label_hash>
+```
+
+The LLM receives a pruned command map, for example buttons, links, search boxes,
+forms, media controls, images, videos, canvas regions, menus, dialogs,
+scrollable regions and ambiguous visual targets. It emits CodeAct with slots
+that reference those tags:
+
+```text
+/navigateweb_
+tree_hash=<current atlas tree hash>
+goal=<short navigation goal>
+action=click|type|select|scroll|focus|copy_text|capture_region|download_resource
+target_ref=<webref from the command map>
+target_kind=button|link|searchbox|textbox|image|video|canvas|menu|dialog|region
+input_text=<optional text, only for text-entry actions>
+expected_state=<url_change|tree_change|text_visible|download|no_navigation>
+confirmation=required|not_required
+```
+
+The executor resolves `target_ref` against the latest atlas, verifies that the
+tree hash or self-healing match is still valid, then performs the smallest
+native action. Self-healing may use backend DOM id, stable node hash, AX
+role/name, visible text, bounds and resource hash, but never lets the LLM run
+arbitrary page JavaScript. Sensitive actions such as login, purchase, payment,
+booking, upload, submit or destructive form changes require explicit human
+confirmation before execution. Every executed action appends an action ledger
+entry with the previous tree hash, target ref, result tree hash, URL delta and
+proof hash.
+
+### NewCompute MathContract Front Door
+
+Target architecture: `/newcompute_` stays the single universal Monster compute
+entrance, but external LLMs should not be required to author raw Forge source.
+Forge is a private, full compute language that most outside models were not
+trained on. The LLM should express the mathematics in a structured classical
+math contract; InGen then compiles that contract deterministically into Forge.
+
+```text
+human asks for a technical result
+-> LLM chooses a math class through /newcompute_
+-> LLM fills the class-specific classical MathContract
+-> InGen validates and compiles MathContract to Forge source
+-> Forge parses/types/units/bounds/checks the generated source
+-> Monster executes/reuses/proofs the Forge compute
+-> LLM classifies the compact result for the caller section
+```
+
+This is not a second compute pipeline. Class commands are contract views over
+the same `/newcompute_` path. Internally, `/numeric_model` means
+`/newcompute_ math_class=numeric_model`; it does not bypass Forge, Monster,
+proof hashes, typed buffers or the compute library.
+
+Non-negotiable rule: no prose-to-Forge interpretation. If a MathContract cannot
+compile exactly, the run is rejected before Monster execution with a mechanical
+reason such as `missing_unit`, `unknown_symbol`, `ambiguous_equation`,
+`unsupported_operation` or `capability_missing`.
+
+The first `/newcompute_` response should be compact and cheap for the LLM to
+read:
+
+```text
+/newcompute_
+choose_math_class:
+  /formula_symbolic
+  /numeric_model
+  /simulation_dynamics
+  /optimization_design
+  /uncertainty_statistics
+  /tensor_linalg_autodiff
+  /signal_timeseries
+  /graph_sparse_discrete
+```
+
+After the LLM chooses a class, InGen returns only that class template, with its
+full slots, allowed classical math vocabulary, Forge compile targets, Monster
+support status and known limits.
+
+Required implementation stages:
+
+1. Done 2026-06-06: Monster core owns the compact `/newcompute_` math-class
+   selector through `MonsterNode::math_capability_manifest`. It lists the
+   eight class commands, required slots, accepted operators, compile status and
+   a stable manifest hash. `ingen_native_services::math_compute_service`
+   exposes this manifest through a thin native adapter instead of recreating a
+   template registry.
+2. Done 2026-06-06: Classical MathContract IR lives in `src/monster.rs` as
+   typed Rust structs: `MonsterMathContract`, `MonsterMathVariable`,
+   `MonsterMathConstant`, `MonsterMathOutputContract` and `MonsterMathSample`.
+   A contract has a stable `contract_hash`; incomplete contracts return exact
+   missing slots before Forge generation.
+3. Done 2026-06-06: `MonsterNode::compile_math_contract`,
+   `prepare_math_contract` and `execute_math_contract` compile class contracts
+   deterministically into real Forge source, then reuse the normal
+   `prepare_forge_source` and `execute_prepared_compute` path. This is not a
+   second compute pipeline.
+4. Done 2026-06-06: The first deterministic compiler slice supports scalar
+   `numeric_model` and scalar executable contract slices for
+   `formula_symbolic`, `optimization_design`, `uncertainty_statistics`,
+   `tensor_linalg_autodiff`, `signal_timeseries` and `graph_sparse_discrete`.
+   It emits `forge_inputs`, `forge_constants`, `forge_functions`,
+   `forge_program`, `forge_outputs`, `forge_constraints`, `forge_samples`,
+   `forge_validation`, `forge_cost` and `artifact_handoff`.
+5. Done 2026-06-06: Monster rejects incomplete or unsupported class contracts
+   mechanically through `missing_slots`, `unsupported_operator`,
+   `ambiguous_expression`, `invalid_generated_forge` or `capability_missing`.
+   Raw Rust internals stay hidden from the LLM.
+6. Done 2026-06-06: The scalar oracle now covers the new scalar replay words
+   used by compiled class contracts, including `optimize`,
+   `constraint_solve`, `least_squares`, `uncertainty`, `p5`, `p50`, `p95`,
+   `mean`, `variance`, `std`, `median`, `quantile`, `grad`, `hessian`,
+   `jvp`, `vjp`, `adjoint`, `rank`, `pareto`, `fft`, `rfft`, `ifft`,
+   `rolling`, `window_hann`, `window_blackman`, `convolution`,
+   `csr_matvec`, `pagerank`, `shortest_path`, `connected_components`,
+   `graph_degree` and `diff` when they appear in scalar smoke contracts.
+7. In progress 2026-06-06: `/simulation_dynamics` contract exposes slots for
+   state variables, time domain, ODE/DAE/PDE form, events,
+   boundary/initial conditions, integrator request, stability policy and
+   residual checks. Until native solver lowerings land, complete contracts
+   normalize to IR and return `capability_missing`, not fake execution.
+8. In progress 2026-06-06: Promote domain-native lowerings beyond scalar
+   smoke contracts: symbolic expression types for true CAS `diff/solve`,
+   vector/array signal contracts for `fft/rfft/rolling`, sparse graph typed
+   outputs, tensor shape-specialized kernels, real optimization feasibility
+   gates and robust Monte Carlo/QMC statistics.
+9. Real app-runtime batteries per class. Each class still needs at least 10
+   store-backed `/newcompute_` tests through the native app UI command layer,
+   Monster preparation, typed buffers, scalar/artifact oracle status and
+   compute library reuse. Current gates are `cargo test --lib math_contract`
+   for Monster core and `cargo test --manifest-path
+   examples\ingen_native_services\Cargo.toml math_compute` for the native
+   service adapter.
+10. Documentation and dictionary sync. After each class lands, this document
+   must list the class purpose, contract slots, allowed math words, Forge
+   compile target, Monster support level, examples, rejection reasons and test
+   gate name.
+
+### MathContract Class Sync
+
+| Class | Current Slice | Required Contract Slots | Allowed Words | Forge Target | Monster Support | Example | Rejections | Test Gate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `/formula_symbolic` | scalar executable contract plus symbolic vocabulary manifest | `goal`, `symbols`, `expressions`, `assumptions`, `domains`, `requested_transforms`, `proof_checks`, `outputs` | `expand`, `canonicalize_expr`, `simplify`, `diff`, `solve`, `math_equiv`, `math_proof` | generated scalar Forge module today; true symbolic typed lowering next | partial | scalar replay for `(x*x)` under formula contract | `missing_slots`, `unsupported_operator`, `ambiguous_expression`, `invalid_generated_forge` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
+| `/numeric_model` | deterministic scalar formula lowering | `goal`, `variables`, `constants`, `units`, `bounds`, `equations`, `constraints`, `samples`, `validation`, `outputs` | scalar arithmetic, declared equations, generated `finite` constraints | `forge_inputs`, constants, program, outputs, constraints, samples, validation, cost | supported for scalar mass-math slice | rocket thrust `mass_flow * exhaust_velocity + pressure_delta` | `missing_slots`, `unsupported_operator`, `ambiguous_expression`, `invalid_generated_forge` | `monster_numeric_math_contract_compiles_prepares_and_executes` |
+| `/optimization_design` | scalar operator contract lowering | `goal`, `objective`, `design_variables`, `constraints`, `algorithm_family`, `stopping_criteria`, `validation`, `outputs` | `optimize`, `constraint_solve`, `least_squares`, `rank`, `pareto`, `grad`, `hessian` | generated Forge scalar program plus validation/cost | partial | `optimize(x*x, x)` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
+| `/uncertainty_statistics` | scalar estimator contract lowering | `goal`, `distributions`, `samples`, `estimators`, `correlation_assumptions`, `tolerances`, `validation`, `outputs` | `sample`, `sobol`, `mean`, `variance`, `std`, `stddev`, `quantile`, `p5`, `p50`, `p95` | generated Forge scalar program plus validation/cost | partial | `p95(uncertainty(x,x,x))` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
+| `/tensor_linalg_autodiff` | scalar AD/tensor vocabulary contract lowering | `goal`, `shapes`, `batch_axes`, `matrix_ops`, `ad_requests`, `precision_policy`, `layout_policy`, `validation`, `outputs` | `matmul`, `dot`, `transpose`, `sum`, `top_k`, `grad`, `jacobian`, `hessian`, `jvp`, `vjp`, `adjoint` | generated Forge scalar program plus validation/cost today; typed tensor kernels next | partial | `grad(x*x)` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
+| `/signal_timeseries` | scalar-safe signal contract front door | `goal`, `sample_rate`, `channels`, `windows`, `transforms`, `filters`, `stationarity_assumptions`, `validation`, `outputs` | `fft`, `rfft`, `ifft`, `convolution`, `fir_filter`, `iir_filter`, `window_hann`, `window_blackman`, `rolling`, `asof_join` | generated scalar Forge program today; array/timeseries lowering next | partial | scalar signal contract replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
+| `/graph_sparse_discrete` | scalar graph/sparse vocabulary contract lowering | `goal`, `nodes`, `edges`, `sparse_matrices`, `graph_ops`, `topology_checks`, `solver_requests`, `validation`, `outputs` | `csr_matvec`, `frontier`, `pagerank`, `shortest_path`, `connected_components`, `degree`, `graph_degree`, `top_k`, `constraint_solve` | generated scalar Forge program today; sparse graph typed output next | partial | `constraint_solve(x,x)` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
+| `/simulation_dynamics` | contract manifest only, solver lowering gated | `goal`, `states`, `time_domain`, `equations`, `initial_conditions`, `boundary_conditions`, `events`, `integrator_request`, `residual_checks` | none promoted yet | none until native solver slice lands | gated, compile returns capability missing | oscillator ODE contract | `capability_missing` | `monster_simulation_math_contract_returns_capability_missing_until_solver_lands` |
+
+Compiled class contracts that reach Forge share the core gate
+`cargo test --lib math_contract`. The native service adapter gate is
+`cargo test --manifest-path examples\ingen_native_services\Cargo.toml
+math_compute`; the Slint UI command layer still needs its full app-runtime
+battery on top.
 
 The LLM should never see hundreds of permanent tools. It sees stable entry
 points, then InGen retrieves a few ranked compute/program/template candidates
@@ -183,6 +404,22 @@ Done:
   ZK/SMT/Lean hooks, typed parse/typecheck/transform/patch/test/trace ops and
   a proof envelope for code modifications. These are sealed proof/artifact
   contracts, not arbitrary code execution.
+- Symbolic math tranche 70: Forge now parses/types/hashes Wolfram-like
+  source-level math contracts without creating a second compute pipeline:
+  `expr<T>`, `polynomial<T>`, `piecewise<T>`, `assumption_set`,
+  `math_domain` and `solution_set`, plus `symbol`, `domain`, `assume`,
+  `to_expr`, `simplify`, `full_simplify`, `canonicalize_expr`, `expand`,
+  `factor`, `collect`, `cancel`, `together`, `apart`, `function_expand`,
+  `trig_reduce`, `series`, `refine`, `diff`, `integrate`, `limit`,
+  `residue`, `solve`, `reduce_equations`, `find_instance`, `math_equiv`,
+  `math_proof` and `expression_hash`. These lower into Forge IR as
+  `symbolic_math` kernel hints and Monster `/newcompute_` plans. Monster now
+  executes the first exact local CAS slice inside that same plan:
+  `cpu_symbolic_exact_linear_polynomial_canonical_v1` canonicalizes exact
+  polynomial expressions, expands bounded integer powers such as `(x+2)^2`,
+  preserves neutral rewrites such as `x + 0 -> x`, computes polynomial
+  derivatives such as `diff((x+2)^2,x) -> 2*x+4`, solves identity/constant/
+  variable equations and emits typed canonical/proof buffers.
 - Banger render tranche 51-60: Forge now parses/types/hashes `sdf`,
   `neural_sdf`, `voxel_page`, `surfel`, `micromesh`, `material_graph`,
   `meshlet_cluster`, `geometry_page`, `lod_node`, `radiance_probe`,
@@ -285,26 +522,106 @@ Done:
 Still to do in the language:
 
 1. Give complex primitives real type/shape semantics, not only acceptance:
-   - ~~signal: convolution, FIR/IIR filters, window tapers, spectrogram,
-     wavelet single DWT step~~ — done (tranche 63-68).
-   - ~~AD/JVP/VJP: grad, jacobian, hessian, hessian_diag, adjoint, jvp, vjp,
-     sensitivity_forward, sensitivity_adjoint~~ — done (tranche 63-68).
-   - ~~sparse ops: csr_matvec, sparse_solve, sparse_reduce, coo_to_csr~~ —
-     done (tranche 63-68).
-   - ~~graph traversal: bfs_step, shortest_path_step, pagerank_step,
-     connected_components_step~~ — done (tranche 63-68).
-   - Still to do: SVD/QR/Cholesky/eigen (return triplet/factorization shape,
-     not just identity), ODE/PDE (step vs. solve shape, time axis),
-     crypto/hash block chaining (CV state vs. digest output, currently fixed
-     `array<u32,8>`).
+   SVD/QR/Cholesky/eigen must return real triplet/factorization shapes, ODE/PDE
+   primitives must distinguish step vs. solve shapes and time axes, and
+   crypto/hash block chaining must model CV state vs. digest output instead of
+   only fixed `array<u32,8>` results.
 2. Add typed result forms for the remaining domain dialects that are not yet
    covered by Monster pages.
-3. ~~Add property/metamorphic test declarations so the LLM can specify
-   invariants beyond one or two samples.~~ Done: `forge_properties`.
-4. ~~Add import/dialect version compatibility checks for content-addressed
-   modules.~~ Done: optional `dialect <major>.<minor>` clause on imports.
-5. Keep the manual dictionary in this file aligned with `src/kasm.rs` after
+3. Keep the manual dictionary in this file aligned with `src/kasm.rs` after
    every language change.
+4. Every Monster/Forge math round must finish with a real app-runtime
+   `/newcompute_` stress test, not only parser/unit tests: the ActCode must
+   enter the universal template, execute through Monster, return typed result
+   buffers plus proof/differential status, record to the compute library and
+   prove fragment reuse on the second run.
+5. Broad math changes must run the 20-case real-domain battery
+   `newcompute_multi_domain_stress_runs_twenty_real_monster_math_variants`.
+   It launches `/newcompute_` twenty times through `forge_brain_run_actcode`
+   and the compute library, covering symbolic CAS, statistics, vibration
+   signal processing, filtering/spectrograms, dense linalg, ODE/PDE solvers,
+   sparse FEM/GraphBLAS, graph traversal/PageRank, autodiff sensitivities,
+   nonlinear optimization, SDF geometry, physics integration, crypto hashes,
+   constant-time proof guards, proof-envelope hashes, trading math, bio
+   sequence alignment, chemistry graph reactions, epidemiological uncertainty
+   and data-parallel reductions. Native tandem DOM/RAM and mesh handoffs are
+   tested separately; this gate is for Monster mass-math execution.
+6. Before adding new Forge math vocabulary, run the existing-vocabulary edge
+   battery
+   `newcompute_existing_vocab_edgecase_battery_runs_real_math_variants`.
+   It launches `/newcompute_` fourteen more times through the same app-runtime
+   path and compute library, covering symbolic proof/canonicalization, checked
+   physical units, transcendental domain bounds, interval/uncertainty
+   quantiles, Sobol/Latin-hypercube sampling, rolling/as-of time-series
+   queries, graph topology counts, vector-frame geometry, matrix
+   flatten/sort/top-k, linalg solve/least-squares, nonlinear solver
+   cross-checks, trading walk-forward/stress-test, bio variant annotation and
+   chemistry SMARTS/valence guards.
+   2026-06-06 round finding: this battery exposed two alignment bugs, now
+   fixed without adding language words:
+   - Monster scalar-family differential production no longer seeds typed
+     result buffers from candidate GPU readback; it uses deterministic
+     manifest/artifact production so scalar CPU/GPU promotion can compare.
+   - Forge `Mat` is now treated as a numeric collection by the shared
+     collection helpers, so existing shape vocabulary like
+     `flatten(matrix) -> top_k(...) -> mean(...)` works in the real template.
+7. Universal-template changes must also run the 20-profession full-template
+   battery
+   `newcompute_professional_persona_battery_runs_twenty_full_templates`.
+   It fills twenty complete `/newcompute_` ActCodes as different professional
+   roles (mathematician, metrology, signal, biomedical, structural, control,
+   FEM, network, inverse problems, optimization, robotics geometry, CFD,
+   crypto, formal methods, compiler, quant trading, bio, medicinal chemistry,
+   epidemiology and data-parallel programming). Each case must fill the
+   universal template, declare `forge_validation`, execute through
+   `forge_brain_run_actcode`, reach Monster, return typed/proof/differential
+   evidence and reuse the compute library. 2026-06-06 round finding: this gate
+   exposed that the parser did not mark `forge_validation` as a section
+   boundary; fixed by adding it to the Forge section dictionary and hashing it
+   into the Monster graph proof. The repeated round also exposed that the
+   app-runtime JSON did not surface the contract back to the LLM; the
+   `monsterPreparedCompute.plan.validationContract` field is now emitted and
+   all `/newcompute_` batteries assert that role, method, oracle, uncertainty,
+   replay, promotion and rollback are visible in the returned compact result.
+8. Scalar numeric correctness changes must run the real value battery
+   `newcompute_real_scalar_math_battery_runs_twenty_value_checked_professions`.
+   It launches twenty fully filled `/newcompute_` templates as aerospace,
+   orbital, structural, fluid, thermal, pharmacokinetic, epidemiology, finance,
+   signal, robotics, optics, chemistry, population genetics, statistics,
+   machine-learning, battery, acoustics, hydrology, materials and astronomy
+   practitioners. Each case must reach `forge_brain_run_actcode`, Monster plan
+   preparation, typed result buffers and a `scalarOracleOutputs` record whose
+   `status` is `sample_value_matched`. 2026-06-06 round finding: the old route
+   proved manifests and typed pages but did not expose the actual scalar sample
+   value; fixed by adding f64 scalar sample-oracle evaluation and `scalarF64`
+   decoding in app-runtime results.
+9. Existing numeric Forge word changes must run
+   `newcompute_existing_numeric_words_battery_runs_twenty_value_checked_cases`.
+   It launches twenty `/newcompute_` templates through the same app-runtime
+   path and value-checks source vocabulary that already exists in Forge:
+   `log2`, `log10`, `cbrt`, `rsqrt`, `fma`, `lerp`, `mix`, `saturate`,
+   `clamp`, `floor`, `ceil`, `round`, `trunc`, `fract`, `sign`, `copysign`,
+   `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp2`, `pow`
+   and safe chained domains. 2026-06-06 round finding: builtin `pow(...)`
+   bounds were still integer-only while operator `^` accepted safe fractional
+   powers; fixed so both public spellings share the same positive-base
+   fractional interval behavior.
+10. Existing Forge function-word changes must run
+   `newcompute_existing_function_words_battery_runs_twenty_value_checked_cases`.
+   It launches twenty complete `/newcompute_` templates through
+   `forge_brain_run_actcode` and Monster, value-checking the existing public
+   function spellings `add`, `sub`, `mul`, `div`, `mod`, `rem`, `neg`,
+   `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `xor`, `not`, `any`,
+   `all`, `where`, `select`, `finite`, `finite_check`, `nan_guard`,
+   `approx_equal`, `erf`, `erfc`, `gamma`, `lgamma` and `beta`.
+   2026-06-06 round finding: Monster could evaluate several of these words,
+   but Forge typing rejected real templates that used `any/all` as variadic
+   scalar condition reducers, `and/or` as multi-condition gates, and
+   `finite_check`/`nan_guard` as guard aliases. Fixed the type layer and kept
+   bool-to-number conversion explicit through `select(condition, 1.0, 0.0)`;
+   no implicit boolean arithmetic is allowed. `mod/rem` now accept numeric
+   scalar expressions under non-zero divisor bounds, and integer
+   `gamma(n)` uses an exact factorial fast path for small positive integers.
 
 ### Monster Objectives
 
@@ -324,10 +641,27 @@ Done:
 - Monster returns typed result buffers and real artifact pages from prepared
   executions, with page bytes, page hashes and buffer hashes for scalar,
   array/tensor, field/SDF, table, graph and native handoff layouts.
+- Monster scalar sample outputs are value-checked on the real `/newcompute_`
+  path. `MonsterComputeGraphPlan.scalar_oracle_outputs` records per-sample f64
+  value, expected value, tolerance, absolute error, status and proof hash.
+  `typed_result_buffers_for_execution` uses the matched scalar oracle as the
+  first f64 bytes for scalar outputs, and Brain exposes both
+  `monsterPreparedCompute.plan.scalarOracleOutputs` and per-buffer `scalarF64`.
+  The scalar oracle currently evaluates real f64 arithmetic, comparisons,
+  explicit boolean gates, user function calls and these public numeric/function
+  words: `add`, `sub`, `mul`, `div`, `mod`, `rem`, `neg`, `finite`,
+  `finite_check`, `nan_guard`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`,
+  `or`, `xor`, `not`, `any`, `all`, `where`/`select`, `approx_equal`,
+  `sqrt`, `rsqrt`, `cbrt`, `abs`, `exp`, `exp2`, `ln`/`log`, `log2`, `log10`,
+  `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`,
+  `tanh`, `erf`, `erfc`, `gamma`, `lgamma`, `beta`, `floor`, `ceil`,
+  `round`, `trunc`, `fract`, `sign`, `saturate`, `min`, `max`, `clamp`,
+  `copysign`, `fma`, `lerp`/`mix` and `pow`.
 - Monster attaches deterministic CPU reference oracles per primitive family:
   statistics, optimization, autodiff, solvers, signal, sparse/graph,
-  geometry/SDF, physics, DOM/RAM and crypto/hash. These are verification
-  oracles and typed page producers, not final high-performance libraries.
+  geometry/SDF, physics, DOM/RAM, trading, bio sequence, chemistry graph and
+  crypto/hash. These are verification oracles and typed page producers, not
+  final high-performance libraries.
 - Monster emits a numeric policy per manifest: f32/f64 mode, deterministic
   reduction policy, NaN/Inf traps, bounds traps, overflow policy and
   reproducible RNG stream hash.
@@ -368,13 +702,36 @@ Done:
   `wgsl.bio_sequence_alignment_annotation.v1` and
   `wgsl.chem_graph_smarts_fingerprint.v1`, then returns typed market,
   portfolio/PnL, packed bio-sequence, bio-annotation/alignment, chemistry graph,
-  reaction and conformer artifact pages with proof hashes.
+  reaction and conformer artifact pages with proof hashes. The mass-math
+  differential path now has deterministic CPU production bytes for these
+  families so GPU/RHI runs can promote against typed CPU buffers instead of
+  falling back to generic manifest-seeded bytes.
 - `/newcompute_` exposes Crypto/ZK and Code/Agent dialect enrichments. Monster
   routes object crypto/proof ops through
   `wgsl.crypto_object_constant_time_proof.v1` and code patch/test/proof ops
   through `wgsl.code_agent_patch_proof_envelope.v1`, then returns typed
   crypto hash/merkle/signature pages, code graph pages and patch/testcase
   pages with proof hashes.
+- `/newcompute_` exposes symbolic math contract enrichments. Monster routes
+  `expr/polynomial/piecewise/assumption/domain/solve/proof` ops through
+  `wgsl.symbolic_math_contract_plan.v1`, preserves them in `primitiveOps`,
+  includes the symbolic IR class in graph proof hashes and returns typed
+  symbolic math DAG, assumption/domain and solution-set artifact pages.
+  `MonsterSymbolicMathPlan` (`forge.monster.symbolic_math_plan.v1`) seals the
+  primitive op set, rewrite/calculus/solve/proof families, assumption policy,
+  e-graph contract policy, exact arithmetic promotion policy and optional
+  dev-oracle policy into the graph proof. It also carries
+  `MonsterSymbolicMathOutput` records for every emitted symbolic/proof output:
+  `source_expr`, `canonical_form`, `result_kind` and per-output proof hash.
+  Typed Monster result pages preserve those canonical forms before deterministic
+  padding. Symbolic result layouts use byte-exact differential comparison, not
+  numeric ppm comparison, because their bytes are canonical DAG/proof payloads
+  even when the Forge element type is `f64`. The store-backed app-runtime stress
+  test `newcompute_store_backed_symbolic_stress_runs_real_monster_math` runs a
+  real `/newcompute_` ActCode through Monster, Vulkan/CPU execution,
+  `MonsterTypedResultBuffer`, compute-library recording and fragment reuse.
+  This keeps Wolfram-like symbolic capability on the same Forge source ->
+  Monster plan -> proof path rather than creating a side CAS pipeline.
 - Monster emits a multi-adapter schedule contract: adapter scoring, memory
   budget policy, chunk sizing, retry, blacklist and deterministic merge policy.
 - Monster persists generated WGSL kernels into the Forge store under
@@ -455,30 +812,32 @@ Done:
   evaluates or invents a relation; it records, classifies and seals what the
   module promised. `monster_carries_forge_property_relations_into_the_compute_graph_plan`
   verifies the property plan and that declaring properties changes the proof.
+- `/newcompute_` exposes the Forge validation contract. `forge_validation`
+  lines declare who authored the mathematical validation (`role`), what style
+  of check is required (`method`), which oracle family backs it (`oracle`), how
+  uncertainty is treated, which compact reference/replay id was used, and the
+  promotion/rollback rules. Monster carries this as `validation_contract`,
+  includes it in compute graph proof hashes and advertises the slot in the
+  universal template. Brain exposes the same contract in
+  `monsterPreparedCompute.plan.validationContract` so the LLM can audit the
+  returned result before deciding `usable_math`, `suspect_math` or
+  `rejected_math`. This is metadata for verified execution and reuse, not a
+  side validator or prose-quality score.
 
 Still to do in Monster:
 
-1. ~~Replace reference/probe kernels with high-performance specialized kernels:
-   Stockham/VkFFT-style FFT/IFFT/RFFT, sparse matrix ops, graph traversal,
-   SVD/QR/Cholesky/eigen, ODE/PDE solvers, AD/JVP/VJP and crypto/hash
-   blocks.~~
-2. ~~Promote CPU reference oracles into production algorithms where needed,
-   using the differential gates as promotion criteria per primitive family.~~
-3. ~~Promote native tandem render artifacts from deterministic handoff pages to
-   production renderer caches: sparse VDB/NanoVDB-style hierarchy, meshlet
-   culling metadata, multi-bounce surfel/radiance caches and material
-   variants.~~
-4. ~~Promote DOM/RAM cartography from deterministic graph/table pages to live
-   browser integration: incremental capture, resumable slices, backpressure and
-   section-owned rendering of graph/table artifacts.~~
-5. Delete or extract every remaining Monster helper that does not feed
+1. Delete or extract every remaining Monster helper that does not feed
     `Forge source -> MonsterPreparedCompute -> execute/reuse/proof`.
+2. Extend symbolic math beyond the first exact local CAS slice on the same
+   path: e-graph saturation, richer assumptions/refinement, exact rational
+   multivariate polynomial normal forms, solve/reduce fragments and optional
+   sealed Wolfram/SymPy dev oracles.
 
 ## Forge Language Reference
 
-This section describes the current state of Forge after the first ten core
-objectives. It is the training reference for agents and developers. Treat it as
-the truth of what exists today, not a promise of the future roadmap.
+This section describes the current state of Forge. It is the implementation
+reference for agents and developers. Treat it as the truth of what exists today,
+not a promise of the future roadmap.
 
 ### Identity
 
@@ -490,7 +849,8 @@ still uses the historical `kasm` name in many files; when reading code,
 
 Forge has two layers:
 
-- Forge source: readable module text authored by a LLM or developer.
+- Forge source: readable module text generated by deterministic MathContract
+  compilers or authored directly by expert Forge developers/tools.
 - Forge bytecode/KASM runtime: compact typed programs, hashes, proofs and
   Monster execution paths.
 
@@ -593,14 +953,15 @@ Types parsed by `ForgeType::parse` and `ForgeScalarTy::parse`:
 
 - `alignment`, `array<T,N>`, `ast`, `atom`, `bar`, `bitvec<N>`, `bond`, `bool`,
   `callgraph`, `cfg`, `column<T>`, `complex`, `complex<T>`, `conformer`, `curve`,
-  `diff`, `dna`, `dom_edge`, `dom_node`, `f32`, `f64`, `feature`, `field`,
+  `diff`, `dna`, `dom_edge`, `dom_node`, `expr`, `expr<T>`, `f32`, `f64`, `feature`, `field`,
   `field<T,R>`, `field<p>`, `gene`, `geometry_page`, `graph<N,E>`, `hash`,
-  `heap_object`, `i1`, `i32`, `i64`, `interval`, `interval<T>`, `light_budget`,
-  `lod_node`, `mat<T,C,R>`, `mat2`, `mat3`, `mat4`, `material_graph`,
+  `heap_object`, `i1`, `i32`, `i64`, `interval`, `interval<T>`, `assumption_set`,
+  `light_budget`, `lod_node`, `mat<T,C,R>`, `mat2`, `mat3`, `mat4`, `material_graph`,
   `memory_map`, `merkle`, `meshlet_cluster`, `micromesh`, `molecule_graph`,
-  `neural_sdf`, `orderbook`, `patch`, `pcg_graph`, `pnl`, `position`, `protein`,
+  `math_domain`, `neural_sdf`, `orderbook`, `patch`, `pcg_graph`, `piecewise`,
+  `piecewise<T>`, `pnl`, `polynomial`, `polynomial<T>`, `position`, `protein`,
   `quote`, `radiance_cache`, `radiance_probe`, `reaction`, `rna`, `sdf`,
-  `shadow_page`, `signature`, `snapshot`, `spatial_cell`, `sparse_field`,
+  `shadow_page`, `signature`, `snapshot`, `solution_set`, `spatial_cell`, `sparse_field`,
   `sparse_field<T,R,hash_grid>`, `sparse_field<T,R,page_table>`,
   `sparse_field<T,R,sparse_grid>`, `surfel`, `symbol`, `table<name:type;...>`,
   `testcase`, `tick`, `trade`,
@@ -629,6 +990,12 @@ Optional language planning sections:
   `homogeneous|translation` take one param and one number. `finite` and `range`
   are verified statically against the inferred bounds; the rest are sealed for
   the Monster property plan.
+- `forge_validation` accepts `validation name: role=<token> method=<token>
+  oracle=<token> uncertainty=<token> reference=<token> replay=<token>
+  promotion=<token> rollback=<token>`. Tokens are compact ASCII ids
+  (`A-Z`, `a-z`, `0-9`, `_`, `-`, `.`, `:`, `/`, `@`) with no free prose. The
+  section is optional but, when present, is parsed by Forge, canonicalized,
+  hashed into the language contract and carried into Monster graph proofs.
 - `forge_imports` accepts an optional `dialect <major>.<minor>` (or `dialect
   <major>`) suffix on `import hash name = sha256:<64 hex>`. An import is
   compatible when it omits the clause, or shares the host major
@@ -639,6 +1006,17 @@ Optional language planning sections:
   `cpu_simd=off|auto|optional|required`, `cuda=off|auto|optional|required`,
   `memory_layout=soa|aos|tile|shared|page|stream` and
   `sparse_layout=sparse_grid|page_table|hash_grid`.
+- Symbolic math contracts are normal `/newcompute_` Forge expressions, not a
+  side pipeline. `expr<T>`, `polynomial<T>`, `piecewise<T>`,
+  `assumption_set`, `math_domain` and `solution_set` lower into the same
+  Forge IR and Monster graph proof as numeric calls. Current tranche seals the
+  typed DAG/proof contract and route (`symbolic_math` /
+  `wgsl.symbolic_math_contract_plan.v1`) and executes a first local exact CAS
+  slice (`cpu_symbolic_exact_linear_polynomial_canonical_v1`) for canonical
+  polynomial forms, bounded power expansion, neutral rewrites, polynomial
+  derivatives, identity/constant/variable solves, equivalence/proof hashes and
+  byte-exact typed symbolic result pages. Later CAS depth must extend this
+  path rather than bypass it.
 - `forge_hostcalls` accepts `hostcall name: sealed hostcall_name
   capability=sha256:<64 hex>`. Source-level Forge accepts only sealed
   non-raw hostcalls such as `read_capability`, `artifact_read_hash`,
@@ -686,8 +1064,8 @@ Constraint and proof words:
 
 Current builtin calls:
 
-- numeric: `add`, `sub`, `mul`, `div`, `mod`, `rem`, `neg`, `finite`, `abs`, `min`, `max`, `clamp`, `saturate`, `floor`, `ceil`, `round`, `trunc`, `fract`, `sign`, `copysign`, `fma`, `lerp`, `mix`, `sqrt`, `rsqrt`, `cbrt`, `pow`, `exp`, `exp2`, `ln`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `erf`, `erfc`, `gamma`, `lgamma`, `beta`;
-- boolean/comparison: `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `xor`, `not`, `any`, `all`, `where`, `select`;
+- numeric: `add`, `sub`, `mul`, `div`, `mod`, `rem`, `neg`, `finite`, `abs`, `min`, `max`, `clamp`, `saturate`, `floor`, `ceil`, `round`, `trunc`, `fract`, `sign`, `copysign`, `fma`, `lerp`, `mix`, `sqrt`, `rsqrt`, `cbrt`, `pow`/`^` including integer powers and safe positive-base fractional powers, `exp`, `exp2`, `ln`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `erf`, `erfc`, `gamma`, `lgamma`, `beta`; `mod`/`rem` accept numeric scalar operands when divisor bounds exclude zero;
+- boolean/comparison: `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `xor`, `not`, `any`, `all`, `where`, `select`; `and`/`or` and scalar `any`/`all` accept one or more boolean conditions, while bool-to-f64 conversion stays explicit through `select`;
 - bit/integer/hash: `shl`, `shr`, `rotl`, `rotr`, `bit_and`, `bit_or`, `bit_xor`, `bit_not`, `popcount`, `clz`, `ctz`, `byte_swap`, `bit_reverse`, `hash32`, `hash64`;
 - vector/matrix/complex: `vec2`, `vec3`, `vec4`, `mat2`, `mat3`, `mat4`, `complex`, `dot`, `length`, `distance`, `normalize`, `cross`, `outer`, `matmul`, `transpose`, `determinant`, `inverse`, `trace`, `eigen_small`, `svd_small`, `qr_small`, `cholesky_small`;
 - collection/shape: `len`, `shape`, `rank`, `size`, `reshape`, `flatten`, `squeeze`, `unsqueeze`, `slice`, `concat`, `split`, `tile`, `repeat`, `broadcast`, `transpose_axes`, `permute`, `index`, `sum`, `rows`, `cols`, `node_count`, `edge_count`, `sample`;
@@ -717,6 +1095,12 @@ Current builtin calls:
   `symbol_table`, `cfg_build`, `callgraph_build`, `transform`,
   `transform_code`, `patch`, `patch_apply`, `run_test`, `compare_trace`,
   `proof_envelope`;
+- symbolic math / CAS contracts: `symbol`, `domain`, `assume`, `to_expr`,
+  `polynomial`, `piecewise`, `simplify`, `full_simplify`,
+  `canonicalize_expr`, `expand`, `factor`, `collect`, `cancel`, `together`,
+  `apart`, `function_expand`, `trig_reduce`, `series`, `refine`, `diff`,
+  `integrate`, `limit`, `residue`, `solve`, `reduce_equations`,
+  `find_instance`, `math_equiv`, `math_proof`, `expression_hash`;
 - bounded control: `fori`, `while_fuel`.
 
 Reserved or rejected names:
@@ -769,6 +1153,28 @@ Bytecode runtime dictionary:
   `F64_ADD=0`, `F64_SUB=1`, `F64_MUL=2`, `F64_DIV=3`, `F64_MIN=4`, `F64_MAX=5`,
   `F64_SQRT=6`, `F64_ABS=7`, `F64_NEG=8`, `F64_FROM_I64=9`, `F64_TO_I64=10`,
   `F64_EXP=11`, `F64_LN=12`, `F64_OP_MAX=12`
+- symbolic math bytecode/IR note:
+  symbolic math is deliberately not added as dozens of scalar KASM opcodes.
+  `expr/polynomial/piecewise/assumption/domain/solution` values are
+  source-level typed artifacts lowered into Forge Compute IR class
+  `symbolic_math`; Monster receives them through `/newcompute_` as
+  `primitiveOps` and routes them to `wgsl.symbolic_math_contract_plan.v1`
+  with proof hashes. Current execution canonicalizes exact polynomial DAG
+  pages and compares symbolic layouts byte-for-byte during differential
+  promotion. Future CAS execution must extend this typed IR/artifact path, not
+  bypass it.
+- validation contract note:
+  `forge_validation` is source-level proof metadata, not a scalar opcode. It is
+  lowered into Forge Compute IR as `validation_contract` strings and folded
+  into Monster graph proof hashes so two mathematically identical programs with
+  different validation/replay/promotion contracts do not share the same proof.
+- physics source-level note:
+  `integrate_force`, `integrate_velocity`, `fluid_advect_step`,
+  `pressure_projection_step` and `constraint_project` are multi-argument Forge
+  primitives whose result keeps the first argument's type, unit and bounded
+  domain for mechanical preflight. This keeps real physics `/newcompute_`
+  modules aligned across type inference, unit inference, bounds, cost and
+  Monster primitive-family routing.
 
 Tensor runtime dictionary:
 
@@ -985,7 +1391,7 @@ Complete public inventory from `src/kasm.rs`:
   `parse_app_section_registry_v0`, `parse_mlir`, `parse_program_v0`,
   `parse_tool_cell_registry_v0`, `parse_wit_component_contract`, `partial_eval_report`,
   `partial_evaluate`, `pdep`, `peephole`, `period_ns`, `pext`, `pipeline`, `point`,
-  `popcnt`, `powi`, `pretty_print`, `produces_value`, `projection`, `promote_numeric`,
+  `popcnt`, `powf`, `powi`, `pretty_print`, `produces_value`, `projection`, `promote_numeric`,
   `proof_hash_hex`, `proof_ledger_entry`, `proof_ledger_projection_json`,
   `proof_projection_json`, `prove_deterministic`, `prove_no_ub`, `prove_pure`,
   `prove_terminating`, `push_bar`, `rank`, `raw`, `reduce_add`, `reduce_mul`,
@@ -999,12 +1405,12 @@ Complete public inventory from `src/kasm.rs`:
   `seed_rewrites`, `seen`, `select_backend`, `select_i64`, `select_where`,
   `semantic_fingerprint`, `semantic_fingerprint_hex`, `sha1`, `shl`, `shr`, `sig`,
   `sigmoid`, `simplified`, `simplify`, `slice_by_time`, `slippage`, `sma_close`,
-  `softmax`, `source_hash_hex`, `spread`, `sqrt`, `static_output`, `stats`,
+  `softmax`, `source_hash_hex`, `spread`, `sqrt`, `square`, `static_output`, `stats`,
   `strict_f32_scalar_ltr`, `structural_hash_hex`, `sub`, `sum_along_last_axis`,
   `summary`, `tanh`, `target`, `ticks_seen`, `to_bits`, `to_byte`, `to_f64`,
   `to_f64_lossy`, `to_kasm_ty`, `tool_cell_output_artifact_json`, `top_asks`,
   `top_bids`, `total_ask_size`, `total_bid_size`, `try_distill_ffn_block`,
-  `try_execute_i64_inline`, `ts_column`, `twap_slice`, `ty`, `tzcnt`,
+  `try_execute_i64_inline`, `timestamp_column`, `twap_slice`, `ty`, `tzcnt`,
   `ui_intent_transition_program`, `ui_projection_handle`, `unit_dim`, `ushr`, `v_abs`,
   `v_add`, `v_and`, `v_bit_flip`, `v_broadcast`, `v_concat`, `v_eq`, `v_get`, `v_len`,
   `v_max`, `v_min`, `v_mul`, `v_neg`, `v_or`, `v_range`, `v_reverse`, `v_sub`, `v_sum`,
@@ -1047,7 +1453,7 @@ Complete public inventory from `src/kasm.rs`:
   `ForgeIrKernelClass::GatherScatter`, `ForgeIrKernelClass::Graph`,
   `ForgeIrKernelClass::Reduction`, `ForgeIrKernelClass::Sampling`,
   `ForgeIrKernelClass::Scalar`, `ForgeIrKernelClass::Scan`,
-  `ForgeIrKernelClass::Selection`, `ForgeIrKernelClass::Table`,
+  `ForgeIrKernelClass::Selection`, `ForgeIrKernelClass::SymbolicMath`, `ForgeIrKernelClass::Table`,
   `ForgeIrKernelClass::Window`, `ForgeIrOp::Binary`, `ForgeIrOp::Call`,
   `ForgeIrOp::Constant`, `ForgeIrOp::Constraint`, `ForgeIrOp::Emit`, `ForgeIrOp::Input`,
   `ForgeIrOp::Let`, `ForgeIrOp::Literal`, `ForgeIrOp::Sample`, `ForgeIrOp::Unary`,
@@ -1086,11 +1492,11 @@ Complete public inventory from `src/kasm.rs`:
   `ForgeTransformKind::Hessian`, `ForgeTransformKind::Jacobian`,
   `ForgeTransformKind::Jit`, `ForgeTransformKind::LeastSquares`,
   `ForgeTransformKind::Optimize`, `ForgeTransformKind::Parallel`,
-  `ForgeTransformKind::Vectorize`, `ForgeType::Array`, `ForgeType::Column`,
+  `ForgeTransformKind::Vectorize`, `ForgeType::Array`, `ForgeType::AssumptionSet`, `ForgeType::Column`,
   `ForgeType::Complex`, `ForgeType::DomEdge`, `ForgeType::DomNode`, `ForgeType::Field`,
-  `ForgeType::Graph`, `ForgeType::HeapObject`, `ForgeType::Interval`, `ForgeType::Mat`,
-  `ForgeType::MemoryMap`, `ForgeType::Scalar`, `ForgeType::Snapshot`,
-  `ForgeType::SparseField`, `ForgeType::Table`, `ForgeType::Taint`, `ForgeType::Tensor`,
+  `ForgeType::Graph`, `ForgeType::HeapObject`, `ForgeType::Interval`, `ForgeType::Mat`, `ForgeType::MathDomain`,
+  `ForgeType::MemoryMap`, `ForgeType::Piecewise`, `ForgeType::Polynomial`, `ForgeType::Scalar`, `ForgeType::Snapshot`,
+  `ForgeType::SolutionSet`, `ForgeType::SparseField`, `ForgeType::SymbolicExpr`, `ForgeType::Table`, `ForgeType::Taint`, `ForgeType::Tensor`,
   `ForgeType::Uncertainty`, `ForgeType::Vec`, `ForgeUnaryOp::Neg`, `ForgeUnaryOp::Not`,
   `ForgeVmError::CapabilityDenied`, `ForgeVmError::FuelExhausted`,
   `ForgeVmError::MemoryLimitExceeded`, `ForgeVmError::MissingEnd`,
@@ -1327,7 +1733,7 @@ Complete public inventory from `src/kasm.rs`:
   `NumericContract.dtype`, `NumericContract.error_budget`,
   `NumericContract.kernel_family`, `NumericContract.quant_grid`,
   `NumericContract.reduction_tree`, `NumericContract.tile_shape`, `OhlcvBar.close`,
-  `OhlcvBar.high`, `OhlcvBar.low`, `OhlcvBar.open`, `OhlcvBar.ts`, `OhlcvBar.volume`,
+  `OhlcvBar.high`, `OhlcvBar.low`, `OhlcvBar.open`, `OhlcvBar.timestamp`, `OhlcvBar.volume`,
   `OhlcvStore::<tuple_or_marker>`, `OrderBook::<tuple_or_marker>`,
   `PartialEvalReport.eliminated_nodes`, `PartialEvalReport.is_static`,
   `PartialEvalReport.original_nodes`, `PartialEvalReport.residual_nodes`,
@@ -1544,6 +1950,10 @@ The interval pass currently proves:
 - `sqrt` input is non-negative;
 - `ln`/`log` input is strictly positive;
 - `pow` with small integer exponent has a bounded interval;
+- `pow` / `^` with finite fractional exponent has a bounded interval when the
+  base is proven non-negative and the exponent domain is safe;
+- structural squares such as `x * x` are proven non-negative even when `x`
+  spans negative and positive values, which keeps norms/RMS formulas valid;
 - `min`, `max`, `clamp`, comparisons, boolean ops and selected builtins have
   conservative intervals;
 - `bounds(expr,[min,max])` holds if the inferred interval is inside the
@@ -1704,7 +2114,7 @@ Monster.
 
 ### What Forge Can Do Today
 
-Forge can currently train a LLM/developer to author verified compute specs for:
+Forge can currently verify generated or expert-authored compute specs for:
 
 - scalar math with safe domains;
 - vector/matrix/complex shape-aware formulas;
@@ -1752,23 +2162,6 @@ Remaining historical enrichment objectives: 10 active items, objectives 61-70.
 Forge must become a compact verified compute language plus domain dialects, not
 a giant Rust/Python clone. Add features in this order, promoting each only when
 it has a verifier, proof hash and rollback path.
-
-### Forge Core
-
-~~1. Scalars: `bool`, `i32`, `i64`, `u32`, `u64`, `f32`, `f64`.~~
-~~2. Vectors/matrices: `vec2`, `vec3`, `vec4`, `mat2`, `mat3`, `mat4`, `complex`.~~
-~~3. Collections: `array<T,N>`, `tensor<T,shape>`, `table`, `column`, `graph`,
-   `field`.~~
-~~4. Dimensioned types and units: `f64 m`, `f64 kg`, `f64 Pa`, `f64 W`,
-   `unit none`.~~
-~~5. Required bounds: min, max and nominal for every free parameter.~~
-~~6. Hashed modules: `module`, `fn`, `const`, `import hash`.~~
-~~7. Pure functions only; no free side effects.~~
-~~8. Bounded loops only: `for`, bounded `while`, no unbounded recursion.~~
-~~9. Assertions: `assert`, `finite`, `bounds`, `approx`, `tolerance`.~~
-~~10. Built-in tests: `case`, `given`, `expect`, deterministic `seed`.~~
-~~11. Cost contract: `max_steps`, `max_memory_mb`, `precision`, `parallelism`.~~
-~~12. Canonical hashes for module, function, fragment, input, output and proof.~~
 
 First landed step: `src/kasm.rs` now exposes source-level `ForgeType`,
 `ForgeScalarTy`, `ForgeScalarValue`, `ForgeExpr`, `ForgeUnitDim`,
@@ -1993,106 +2386,6 @@ exposes the same words through `/newcompute_`, routes them to specialized
 crypto proof and code patch shader profiles and returns typed proof/code
 artifact pages.
 
-The complete current-state training reference is the top-level
-`Forge Language Reference` section above.
-
-### Massive Compute
-
-~~13. Data-parallel combinators: `map`, `reduce`, `scan`, `zip`, `filter`,
-    `gather`, `scatter`.~~
-~~14. Query/time operations: `window`, `rolling`, `groupby`, `join`, `asof_join`.~~
-~~15. Sampling: `sample`, `sobol`, `latin_hypercube`, `monte_carlo`.~~
-~~16. Selection: `pareto`, `rank`, `top_k`, `diversity_select`.~~
-~~16 bis. Universal primitive vocabulary for scalar, bool, transcendental,
-    bit, vector/matrix, array/tensor, data-parallel, sampling, statistics,
-    optimization, autodiff, solvers, signal, sparse/graph, geometry/SDF,
-    physics, contracts, memory/DOM/RAM and crypto/hash.~~
-~~17. Uncertainty: `interval`, `uncertainty`, `p5`, `p50`, `p95`.~~
-
-### Autodiff And Optimization
-
-~~18. `grad`, `jacobian`, `hessian`, `adjoint`.~~
-~~19. `optimize`, `constraint_solve`, `least_squares`.~~
-~~20. Composable transforms: `jit`, `batch`, `vectorize`, `parallel`.~~
-~~21. Halide-style split: `algorithm { ... }` / `schedule { tile; vectorize; gpu; cache; }`.~~
-
-### GPU And Runtime
-
-~~22. WGSL/RHI lowering beyond first-stratum primitive kernels.~~
-~~23. CPU SIMD lowering.~~
-~~24. Optional CUDA lowering.~~
-~~25. Memory layouts: `soa`, `aos`, `tile`, `shared`.~~
-~~26. Sparse fields: sparse grids, page tables, hash-grid.~~
-~~27. Sealed hostcalls only; no raw filesystem, network or secrets.~~
-
-### Memory, DOM And RAM
-
-~~28. Types: `snapshot`, `memory_map`, `heap_object`, `dom_node`, `dom_edge`.~~
-~~29. Graph queries: refs, retainers, leaks, mutation diff.~~
-~~30. Taint tracking: `secret`, `credential`, `public`, `user_data`.~~
-~~31. RAM/DOM reads only through InGen capabilities, never free access.~~
-
-### Trading
-
-~~32. Types: `tick`, `bar`, `quote`, `trade`, `orderbook`, `position`, `pnl`.~~
-~~33. Ops: `vwap`, `ema`, `volatility`, `slippage`, `latency`.~~
-~~34. Deterministic backtests.~~
-~~35. Mandatory anti-lookahead checks.~~
-~~36. Walk-forward, stress tests and transaction costs.~~
-
-### Biology And DNA
-
-~~37. Types: `dna`, `rna`, `protein`, `gene`, `variant`, `feature`, `alignment`.~~
-~~38. Ops: k-mers, transcription, translation, reverse complement.~~
-~~39. Alignment, motifs, mutations and genomic annotations.~~
-
-### Chemistry
-
-~~40. Types: `atom`, `bond`, `molecule_graph`, `reaction`, `conformer`.~~
-~~41. SMILES and SMARTS.~~
-~~42. Fingerprints, similarity and substructure search.~~
-~~43. Valence, charge and aromaticity constraints.~~
-
-### Cryptography
-
-~~44. `bitvec<N>`, `field<p>`, `curve`, `hash`, `merkle`, `signature`.~~
-~~45. `constant_time` mode.~~
-~~46. Reject secret-dependent branches unless proven safe.~~
-~~47. ZK, SMT and Lean hooks for critical proofs.~~
-
-### Code And Agents
-
-~~48. Types: `ast`, `symbol`, `cfg`, `callgraph`, `diff`, `patch`, `testcase`.~~
-~~49. Ops: parse, typecheck, transform, patch, run_test, compare_trace.~~
-~~50. Proof envelope for every code modification.~~
-
-### 3D, Games And Computational Engineering
-
-~~51. Types: `sdf`, `neural_sdf`, `voxel_page`, `surfel`, `micromesh`,
-    `material_graph`.~~
-~~52. SDF ops: union, subtract, smooth blend, gradient, normal, curvature.~~
-~~53. Banger virtual geometry: clusters, pages, hierarchical LOD.~~
-~~54. Banger GI: probes, radiance cache, screen/world traces.~~
-~~55. Virtual shadow maps: shadow pages and cache invalidation.~~
-~~56. Banger physical material graphs.~~
-~~57. Hashed PCG graphs.~~
-~~58. Banger content-addressed spatial streaming.~~
-~~59. Banger dynamic light budgets and proofs.~~
-~~60. Exports: mesh, SDF, shader, proof and preview.~~
-
-### Verification
-
-61. Strict type checker.
-62. Strict unit checker.
-63. Bounds checker.
-64. Deterministic replay.
-65. Metamorphic tests.
-66. CPU/GPU differential tests.
-67. Proof hashes.
-68. Language versioning.
-69. Backward compatibility through dialects.
-70. Automatic rejection of unbounded programs.
-
 ## Delta Path
 
 The delta path is the first native compute-saving bytecode route. It recognizes
@@ -2126,8 +2419,9 @@ compute cache. Banger-specific `/newobject_` consumes curated compute evidence
 only when the caller is doing 3D/SDF work.
 
 `/newcompute_` memoizes fragments inside a compute, not only whole runs. The
-runtime records filled Forge-language slots, atoms, lines and sequence windows
-as content-addressed fragments in the InGen store SQLite library:
+runtime records generated Forge sections, MathContract fragments, atoms, lines
+and sequence windows as content-addressed fragments in the InGen store SQLite
+library:
 
 ```text
 brain/computes/compute_library.sqlite
@@ -2149,10 +2443,12 @@ combinators like Futhark, block/lane GPU kernels like Triton and portable native
 GPU limits like wgpu/RHI. Forge provides typed, content-addressed math;
 Monster lowers it to a compact compute graph and executes/reuses/proves it.
 
-The `/newcompute_` front door is:
+The target `/newcompute_` front door is:
 
 ```text
-LLM fills Monster universal template in Forge
+LLM selects a math class and fills a structured MathContract
+-> deterministic MathContract-to-Forge compiler
+-> generated Forge source
 -> Forge parse/type/unit/bounds/cost checks
 -> Forge IR
 -> MonsterComputeGraphPlan
@@ -2185,10 +2481,17 @@ Current execution state:
 - Executions now return `MonsterTypedResultBuffer` values with real page bytes,
   page hashes and buffer hashes. Compact JSON projections expose refs and
   lengths; the Rust path carries the bytes.
-- Each plan carries a numeric policy, a differential test plan and a
-  multi-adapter schedule policy. Each mass execution now also carries a hashed
-  differential execution gate with CPU/candidate buffer hashes, readback hashes,
-  tolerance, error ppm, promotion status and proof hash.
+- Each plan carries a numeric policy, a differential test plan, a symbolic math
+  plan and a multi-adapter schedule policy. The symbolic plan is inactive for
+  pure numeric modules and active when Forge IR contains `symbolic_math`
+  primitives or symbolic artifacts; its `plan_hash` is part of the graph proof.
+  Active symbolic plans also carry an execution backend/hash and per-output
+  canonical forms that feed `MonsterTypedResultBuffer` pages. Symbolic typed
+  buffers are verified byte-exactly against the CPU production canonical form,
+  because `expr<f64>` pages are symbolic payloads, not floating-point arrays.
+  Each mass execution now also carries a hashed differential execution gate
+  with CPU/candidate buffer hashes, readback hashes, tolerance, error ppm,
+  promotion status and proof hash.
 - Generated WGSL is persisted under
   `brain/computes/kernel_shader_cache/index.jsonl`; the cache key includes
   Forge IR hash, `primitiveOps`, ABI hash, adapter class and shader hash.

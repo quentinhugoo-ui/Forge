@@ -39,8 +39,12 @@ pub use compute_graph::{
     MonsterDifferentialExecution,
     MonsterNativeTandemArtifact, MonsterNativeTandemArtifactPage,
     MonsterDifferentialTestPlan, MonsterMultiAdapterSchedule, MonsterNumericPolicy,
+    MonsterSymbolicMathOutput, MonsterSymbolicMathPlan,
     MonsterTypedResultArtifact, MonsterTypedResultBuffer, MonsterTypedResultPage,
-    MonsterUniversalComputeTemplate,
+    MonsterUniversalComputeTemplate, MonsterMathCapabilityManifest, MonsterMathClass,
+    MonsterMathClassTemplate, MonsterMathConstant, MonsterMathContract,
+    MonsterMathContractError, MonsterMathOutputContract, MonsterMathSample,
+    MonsterMathVariable, MonsterCompiledMathContract,
 };
 
 pub use hotplan::SizeClass;
@@ -72,15 +76,740 @@ mod compute_graph {
 //! validated Forge source becomes a fragment graph, cache-miss list and
 //! native-ready artifact plan before any heavy execution is scheduled.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use sha2::{Digest, Sha256};
 
 use crate::kasm::{
-    ForgeBinaryOp, ForgeComputeIrModule, ForgeIrOp, ForgeModuleSpec, ForgeOutputKind,
+    ForgeBinaryOp, ForgeComputeIrModule, ForgeExpr, ForgeIrOp, ForgeModuleSpec, ForgeOutputKind,
     ForgePrecision, ForgeScalarTy, ForgeScalarValue, ForgeType, ForgeUnaryOp,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum MonsterMathClass {
+    FormulaSymbolic,
+    NumericModel,
+    SimulationDynamics,
+    OptimizationDesign,
+    UncertaintyStatistics,
+    TensorLinalgAutodiff,
+    SignalTimeseries,
+    GraphSparseDiscrete,
+}
+
+impl MonsterMathClass {
+    pub fn parse(raw: &str) -> Option<Self> {
+        Some(match raw.trim().trim_start_matches('/') {
+            "formula_symbolic" => Self::FormulaSymbolic,
+            "numeric_model" => Self::NumericModel,
+            "simulation_dynamics" => Self::SimulationDynamics,
+            "optimization_design" => Self::OptimizationDesign,
+            "uncertainty_statistics" => Self::UncertaintyStatistics,
+            "tensor_linalg_autodiff" => Self::TensorLinalgAutodiff,
+            "signal_timeseries" => Self::SignalTimeseries,
+            "graph_sparse_discrete" => Self::GraphSparseDiscrete,
+            _ => return None,
+        })
+    }
+
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::FormulaSymbolic => "/formula_symbolic",
+            Self::NumericModel => "/numeric_model",
+            Self::SimulationDynamics => "/simulation_dynamics",
+            Self::OptimizationDesign => "/optimization_design",
+            Self::UncertaintyStatistics => "/uncertainty_statistics",
+            Self::TensorLinalgAutodiff => "/tensor_linalg_autodiff",
+            Self::SignalTimeseries => "/signal_timeseries",
+            Self::GraphSparseDiscrete => "/graph_sparse_discrete",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        self.command().trim_start_matches('/')
+    }
+
+    pub fn required_slots(self) -> &'static [&'static str] {
+        match self {
+            Self::FormulaSymbolic => &[
+                "goal",
+                "symbols",
+                "expressions",
+                "assumptions",
+                "domains",
+                "requested_transforms",
+                "proof_checks",
+                "outputs",
+            ],
+            Self::NumericModel => &[
+                "goal",
+                "variables",
+                "constants",
+                "units",
+                "bounds",
+                "equations",
+                "constraints",
+                "samples",
+                "validation",
+                "outputs",
+            ],
+            Self::SimulationDynamics => &[
+                "goal",
+                "states",
+                "time_domain",
+                "equations",
+                "initial_conditions",
+                "boundary_conditions",
+                "events",
+                "integrator_request",
+                "residual_checks",
+            ],
+            Self::OptimizationDesign => &[
+                "goal",
+                "objective",
+                "design_variables",
+                "constraints",
+                "algorithm_family",
+                "stopping_criteria",
+                "validation",
+                "outputs",
+            ],
+            Self::UncertaintyStatistics => &[
+                "goal",
+                "distributions",
+                "samples",
+                "estimators",
+                "correlation_assumptions",
+                "tolerances",
+                "validation",
+                "outputs",
+            ],
+            Self::TensorLinalgAutodiff => &[
+                "goal",
+                "shapes",
+                "batch_axes",
+                "matrix_ops",
+                "ad_requests",
+                "precision_policy",
+                "layout_policy",
+                "validation",
+                "outputs",
+            ],
+            Self::SignalTimeseries => &[
+                "goal",
+                "sample_rate",
+                "channels",
+                "windows",
+                "transforms",
+                "filters",
+                "stationarity_assumptions",
+                "validation",
+                "outputs",
+            ],
+            Self::GraphSparseDiscrete => &[
+                "goal",
+                "nodes",
+                "edges",
+                "sparse_matrices",
+                "graph_ops",
+                "topology_checks",
+                "solver_requests",
+                "validation",
+                "outputs",
+            ],
+        }
+    }
+
+    pub fn accepted_operators(self) -> &'static [&'static str] {
+        match self {
+            Self::FormulaSymbolic => &[
+                "expand",
+                "canonicalize_expr",
+                "simplify",
+                "diff",
+                "solve",
+                "math_equiv",
+                "math_proof",
+            ],
+            Self::NumericModel => &[
+                "+", "-", "*", "/", "^", "sqrt", "log", "exp", "sin", "cos", "tan", "finite",
+                "bounds",
+            ],
+            Self::SimulationDynamics => &[],
+            Self::OptimizationDesign => &[
+                "optimize",
+                "constraint_solve",
+                "least_squares",
+                "rank",
+                "pareto",
+                "grad",
+                "hessian",
+            ],
+            Self::UncertaintyStatistics => &[
+                "sample",
+                "sobol",
+                "mean",
+                "variance",
+                "std",
+                "stddev",
+                "quantile",
+                "p5",
+                "p50",
+                "p95",
+            ],
+            Self::TensorLinalgAutodiff => &[
+                "matmul",
+                "dot",
+                "transpose",
+                "sum",
+                "top_k",
+                "grad",
+                "jacobian",
+                "hessian",
+                "jvp",
+                "vjp",
+                "adjoint",
+            ],
+            Self::SignalTimeseries => &[
+                "fft",
+                "rfft",
+                "ifft",
+                "convolution",
+                "fir_filter",
+                "iir_filter",
+                "window_hann",
+                "window_blackman",
+                "rolling",
+                "asof_join",
+            ],
+            Self::GraphSparseDiscrete => &[
+                "csr_matvec",
+                "frontier",
+                "pagerank",
+                "shortest_path",
+                "connected_components",
+                "degree",
+                "graph_degree",
+                "top_k",
+                "constraint_solve",
+            ],
+        }
+    }
+
+    pub fn can_compile_now(self) -> bool {
+        !matches!(self, Self::SimulationDynamics)
+    }
+}
+
+impl fmt::Display for MonsterMathClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterMathClassTemplate {
+    pub schema: &'static str,
+    pub command: &'static str,
+    pub class: MonsterMathClass,
+    pub required_slots: Vec<&'static str>,
+    pub accepted_operators: Vec<&'static str>,
+    pub compile_status: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterMathCapabilityManifest {
+    pub schema: &'static str,
+    pub entry_command: &'static str,
+    pub dispatch_rule: &'static str,
+    pub classes: Vec<MonsterMathClassTemplate>,
+    pub manifest_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MonsterMathVariable {
+    pub name: String,
+    pub ty: String,
+    pub unit: String,
+    pub min: f64,
+    pub max: f64,
+    pub nominal: f64,
+}
+
+impl MonsterMathVariable {
+    pub fn f64(name: &str, unit: &str, min: f64, max: f64, nominal: f64) -> Self {
+        Self {
+            name: name.to_string(),
+            ty: "f64".to_string(),
+            unit: unit.to_string(),
+            min,
+            max,
+            nominal,
+        }
+    }
+
+    fn canonical_source(&self) -> String {
+        format!(
+            "param {}: {} unit {} bounds [{},{}] nominal {}",
+            self.name, self.ty, self.unit, self.min, self.max, self.nominal
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MonsterMathConstant {
+    pub name: String,
+    pub ty: String,
+    pub unit: String,
+    pub value: f64,
+}
+
+impl MonsterMathConstant {
+    pub fn f64(name: &str, unit: &str, value: f64) -> Self {
+        Self {
+            name: name.to_string(),
+            ty: "f64".to_string(),
+            unit: unit.to_string(),
+            value,
+        }
+    }
+
+    fn canonical_source(&self) -> String {
+        format!("const {}: {} unit {} = {}", self.name, self.ty, self.unit, self.value)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MonsterMathOutputContract {
+    pub name: String,
+    pub ty: String,
+    pub unit: String,
+    pub handoff: String,
+    pub expression: String,
+}
+
+impl MonsterMathOutputContract {
+    pub fn scalar(name: &str, unit: &str, expression: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            ty: "f64".to_string(),
+            unit: unit.to_string(),
+            handoff: "scalar".to_string(),
+            expression: expression.to_string(),
+        }
+    }
+
+    fn canonical_source(&self) -> String {
+        format!(
+            "output {}: {} unit {} handoff {} expr {}",
+            self.name, self.ty, self.unit, self.handoff, self.expression
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MonsterMathSample {
+    pub name: String,
+    pub seed: Option<u64>,
+    pub givens: Vec<(String, f64)>,
+    pub expect_output: String,
+    pub expected: f64,
+    pub tolerance: f64,
+}
+
+impl MonsterMathSample {
+    pub fn new(
+        name: &str,
+        seed: u64,
+        givens: Vec<(&str, f64)>,
+        expect_output: &str,
+        expected: f64,
+        tolerance: f64,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            seed: Some(seed),
+            givens: givens
+                .into_iter()
+                .map(|(name, value)| (name.to_string(), value))
+                .collect(),
+            expect_output: expect_output.to_string(),
+            expected,
+            tolerance,
+        }
+    }
+
+    fn canonical_source(&self) -> String {
+        let givens = self
+            .givens
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let seed = self.seed.map(|seed| format!(" seed {seed}")).unwrap_or_default();
+        format!(
+            "case {}{} {{ given {}; expect {} approx {} tolerance {} }}",
+            self.name, seed, givens, self.expect_output, self.expected, self.tolerance
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MonsterMathContract {
+    pub class: MonsterMathClass,
+    pub goal: String,
+    pub variables: Vec<MonsterMathVariable>,
+    pub constants: Vec<MonsterMathConstant>,
+    pub operators: Vec<String>,
+    pub equations: Vec<String>,
+    pub constraints: Vec<String>,
+    pub samples: Vec<MonsterMathSample>,
+    pub validation: Vec<String>,
+    pub outputs: Vec<MonsterMathOutputContract>,
+    pub max_steps: u64,
+    pub max_memory_mb: u64,
+    pub precision: ForgePrecision,
+}
+
+impl MonsterMathContract {
+    pub fn new(class: MonsterMathClass, goal: &str) -> Self {
+        Self {
+            class,
+            goal: goal.to_string(),
+            variables: Vec::new(),
+            constants: Vec::new(),
+            operators: Vec::new(),
+            equations: Vec::new(),
+            constraints: Vec::new(),
+            samples: Vec::new(),
+            validation: Vec::new(),
+            outputs: Vec::new(),
+            max_steps: 100_000,
+            max_memory_mb: 64,
+            precision: ForgePrecision::F64,
+        }
+    }
+
+    pub fn contract_hash(&self) -> String {
+        sha256_hex(self.canonical_contract().as_bytes())
+    }
+
+    pub fn missing_slots(&self) -> Vec<&'static str> {
+        let mut missing = Vec::new();
+        if self.goal.trim().is_empty() {
+            missing.push("goal");
+        }
+        if self.variables.is_empty() {
+            missing.push(match self.class {
+                MonsterMathClass::FormulaSymbolic => "symbols",
+                MonsterMathClass::SimulationDynamics => "states",
+                MonsterMathClass::OptimizationDesign => "design_variables",
+                MonsterMathClass::UncertaintyStatistics => "distributions",
+                MonsterMathClass::TensorLinalgAutodiff => "shapes",
+                MonsterMathClass::SignalTimeseries => "channels",
+                MonsterMathClass::GraphSparseDiscrete => "nodes",
+                MonsterMathClass::NumericModel => "variables",
+            });
+        }
+        if self.equations.is_empty() {
+            missing.push(match self.class {
+                MonsterMathClass::FormulaSymbolic => "expressions",
+                MonsterMathClass::OptimizationDesign => "objective",
+                MonsterMathClass::SimulationDynamics => "equations",
+                _ => "equations",
+            });
+        }
+        if self.samples.is_empty() && !matches!(self.class, MonsterMathClass::FormulaSymbolic) {
+            missing.push("samples");
+        }
+        if self.validation.is_empty() {
+            missing.push("validation");
+        }
+        if self.outputs.is_empty() {
+            missing.push("outputs");
+        }
+        missing.sort();
+        missing.dedup();
+        missing
+    }
+
+    pub fn compile_to_forge_source(&self) -> Result<MonsterCompiledMathContract, MonsterMathContractError> {
+        let missing_slots = self.missing_slots();
+        if !missing_slots.is_empty() {
+            return Err(MonsterMathContractError::MissingSlots(missing_slots));
+        }
+        if !self.class.can_compile_now() {
+            return Err(MonsterMathContractError::CapabilityMissing {
+                class: self.class,
+                reason: "native_solver_slice_not_promoted",
+            });
+        }
+        for op in &self.operators {
+            if !self.class.accepted_operators().iter().any(|accepted| accepted == op) {
+                return Err(MonsterMathContractError::UnsupportedOperator {
+                    class: self.class,
+                    operator: op.clone(),
+                });
+            }
+        }
+        let module_name = self.module_name();
+        let forge_source = self.forge_source(&module_name)?;
+        if ForgeModuleSpec::parse(&forge_source).is_none() {
+            return Err(MonsterMathContractError::InvalidGeneratedForge);
+        }
+        Ok(MonsterCompiledMathContract {
+            schema: "forge.monster.math_contract.compiled.v1",
+            class: self.class,
+            module_name,
+            contract_hash: self.contract_hash(),
+            forge_source,
+        })
+    }
+
+    fn module_name(&self) -> String {
+        let hash = self.contract_hash();
+        format!("{}_{}", self.class.label(), &hash[..12])
+    }
+
+    fn canonical_contract(&self) -> String {
+        let mut out = format!(
+            "forge.monster.math_contract.v1|{}|{}|{}|{}|{}",
+            self.class.label(),
+            self.goal,
+            self.max_steps,
+            self.max_memory_mb,
+            self.precision
+        );
+        for value in &self.variables {
+            out.push('|');
+            out.push_str(&value.canonical_source());
+        }
+        for value in &self.constants {
+            out.push('|');
+            out.push_str(&value.canonical_source());
+        }
+        for value in &self.operators {
+            out.push('|');
+            out.push_str(value);
+        }
+        for value in &self.equations {
+            out.push('|');
+            out.push_str(value);
+        }
+        for value in &self.constraints {
+            out.push('|');
+            out.push_str(value);
+        }
+        for value in &self.samples {
+            out.push('|');
+            out.push_str(&value.canonical_source());
+        }
+        for value in &self.validation {
+            out.push('|');
+            out.push_str(value);
+        }
+        for value in &self.outputs {
+            out.push('|');
+            out.push_str(&value.canonical_source());
+        }
+        out
+    }
+
+    fn forge_source(&self, module_name: &str) -> Result<String, MonsterMathContractError> {
+        let constants = if self.constants.is_empty() {
+            "  none".to_string()
+        } else {
+            self.constants
+                .iter()
+                .map(|c| format!("  {}", c.canonical_source()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let first_output = self.outputs.first().ok_or(MonsterMathContractError::InvalidGeneratedForge)?;
+        let function_args = self
+            .variables
+            .iter()
+            .map(|v| format!("{}: {}", v.name, v.ty))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let first_expr = self.output_expression(first_output)?;
+        if ForgeExpr::parse(&first_expr).is_none() {
+            return Err(MonsterMathContractError::AmbiguousExpression(first_expr));
+        }
+        let function_body = format!("  fn compute_contract({function_args}) -> {} {{ return {first_expr} }}", first_output.ty);
+        let call_args = self
+            .variables
+            .iter()
+            .map(|v| v.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut program = format!("  let {}_value = compute_contract({call_args})", first_output.name);
+        for output in &self.outputs {
+            let expr = if output.name == first_output.name {
+                format!("{}_value", first_output.name)
+            } else {
+                let expr = self.output_expression(output)?;
+                if ForgeExpr::parse(&expr).is_none() {
+                    return Err(MonsterMathContractError::AmbiguousExpression(expr));
+                }
+                expr
+            };
+            program.push('\n');
+            program.push_str(&format!("  emit {}: {} = {}", output.name, output.ty, expr));
+        }
+        let inputs = self
+            .variables
+            .iter()
+            .map(|v| format!("  {}", v.canonical_source()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let outputs = self
+            .outputs
+            .iter()
+            .map(|o| {
+                format!(
+                    "  output {}: {} unit {} handoff {}",
+                    o.name, o.ty, o.unit, o.handoff
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let constraints = self.forge_constraints();
+        let samples = self
+            .samples
+            .iter()
+            .map(|s| format!("  {}", s.canonical_source()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let validation = self.forge_validation();
+        Ok(format!(
+            "forge_module:\n  module {module_name} version 1\nforge_imports:\n  none\nforge_constants:\n{constants}\nforge_functions:\n{function_body}\nforge_program:\n{program}\nforge_inputs:\n{inputs}\nforge_outputs:\n{outputs}\nforge_constraints:\n{constraints}\nforge_samples:\n{samples}\nforge_validation:\n{validation}\nforge_cost:\nmax_steps={}\nmax_memory_mb={}\nprecision={}\nartifact_handoff:\nproof_hash,output_hash,compact_result",
+            self.max_steps,
+            self.max_memory_mb,
+            self.precision,
+        ))
+    }
+
+    fn output_expression(&self, output: &MonsterMathOutputContract) -> Result<String, MonsterMathContractError> {
+        if !output.expression.trim().is_empty() {
+            return Ok(output.expression.trim().to_string());
+        }
+        for equation in &self.equations {
+            if let Some((lhs, rhs)) = equation.split_once('=') {
+                if lhs.trim() == output.name {
+                    return Ok(rhs.trim().to_string());
+                }
+            }
+        }
+        self.equations
+            .first()
+            .map(|equation| {
+                equation
+                    .split_once('=')
+                    .map(|(_, rhs)| rhs.trim())
+                    .unwrap_or(equation.trim())
+                    .to_string()
+            })
+            .ok_or(MonsterMathContractError::InvalidGeneratedForge)
+    }
+
+    fn forge_constraints(&self) -> String {
+        let mut constraints = self
+            .constraints
+            .iter()
+            .map(|c| {
+                let c = c.trim();
+                if c.starts_with("assert ") {
+                    format!("  {c}")
+                } else {
+                    format!("  assert {c}")
+                }
+            })
+            .collect::<Vec<_>>();
+        for output in &self.outputs {
+            constraints.push(format!("  assert finite({})", output.name));
+        }
+        constraints.sort();
+        constraints.dedup();
+        constraints.join("\n")
+    }
+
+    fn forge_validation(&self) -> String {
+        format!(
+            "  validation protocol: role={} method=math_contract_compile oracle=scalar_oracle uncertainty=declared reference=contract_hash replay={} promotion=typed_buffer_match rollback=repair_missing_slot",
+            self.class.label(),
+            &self.contract_hash()[..16],
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterCompiledMathContract {
+    pub schema: &'static str,
+    pub class: MonsterMathClass,
+    pub module_name: String,
+    pub contract_hash: String,
+    pub forge_source: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MonsterMathContractError {
+    MissingSlots(Vec<&'static str>),
+    UnsupportedOperator {
+        class: MonsterMathClass,
+        operator: String,
+    },
+    AmbiguousExpression(String),
+    CapabilityMissing {
+        class: MonsterMathClass,
+        reason: &'static str,
+    },
+    InvalidGeneratedForge,
+}
+
+pub fn monster_math_capability_manifest() -> MonsterMathCapabilityManifest {
+    let classes = [
+        MonsterMathClass::FormulaSymbolic,
+        MonsterMathClass::NumericModel,
+        MonsterMathClass::SimulationDynamics,
+        MonsterMathClass::OptimizationDesign,
+        MonsterMathClass::UncertaintyStatistics,
+        MonsterMathClass::TensorLinalgAutodiff,
+        MonsterMathClass::SignalTimeseries,
+        MonsterMathClass::GraphSparseDiscrete,
+    ]
+    .into_iter()
+    .map(|class| MonsterMathClassTemplate {
+        schema: "forge.monster.math_class_template.v1",
+        command: class.command(),
+        class,
+        required_slots: class.required_slots().to_vec(),
+        accepted_operators: class.accepted_operators().to_vec(),
+        compile_status: if class.can_compile_now() {
+            "deterministic_forge_lowering"
+        } else {
+            "capability_missing_until_solver_slice"
+        },
+    })
+    .collect::<Vec<_>>();
+    let mut text = "forge.monster.math_capability_manifest.v1|/newcompute_".to_string();
+    for class in &classes {
+        text.push('|');
+        text.push_str(class.command);
+        text.push(':');
+        text.push_str(class.compile_status);
+        text.push(':');
+        text.push_str(&class.accepted_operators.join(","));
+    }
+    MonsterMathCapabilityManifest {
+        schema: "forge.monster.math_capability_manifest.v1",
+        entry_command: "/newcompute_",
+        dispatch_rule: "choose_math_class_then_fill_classical_math_contract_then_compile_to_forge",
+        classes,
+        manifest_hash: sha256_hex(text.as_bytes()),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MonsterComputeScale {
@@ -291,6 +1020,43 @@ pub struct MonsterPropertyCheckPlan {
     pub plan_hash: String,
 }
 
+/// Sealed symbolic-math plan attached to `/newcompute_`. This is the CAS
+/// contract layer: Forge owns the typed expression/assumption vocabulary,
+/// Monster owns routing, artifacts and proof hashes, and future engines must
+/// plug into this plan instead of creating a side pipeline.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterSymbolicMathPlan {
+    pub schema: &'static str,
+    pub active: bool,
+    pub execution_backend: &'static str,
+    pub execution_hash: String,
+    pub expression_artifact_count: u32,
+    pub assumption_artifact_count: u32,
+    pub solution_artifact_count: u32,
+    pub primitive_ops: Vec<String>,
+    pub rewrite_ops: Vec<String>,
+    pub calculus_ops: Vec<String>,
+    pub solve_ops: Vec<String>,
+    pub proof_ops: Vec<String>,
+    pub assumption_policy: &'static str,
+    pub rewrite_engine: &'static str,
+    pub exact_arithmetic_policy: &'static str,
+    pub oracle_policy: &'static str,
+    pub output_evaluations: Vec<MonsterSymbolicMathOutput>,
+    pub plan_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterSymbolicMathOutput {
+    pub schema: &'static str,
+    pub name: String,
+    pub forge_type: String,
+    pub source_expr: String,
+    pub result_kind: &'static str,
+    pub canonical_form: String,
+    pub proof_hash: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MonsterMultiAdapterSchedule {
     pub schema: &'static str,
@@ -359,6 +1125,8 @@ pub struct MonsterComputeGraphPlan {
     pub transform_contract: Vec<String>,
     pub schedule_contract: Vec<String>,
     pub property_contract: Vec<String>,
+    pub validation_contract: Vec<String>,
+    pub scalar_oracle_outputs: Vec<MonsterScalarOracleOutput>,
     pub runtime_contract: String,
     pub hostcall_contract: Vec<String>,
     pub compute_ir_hash: String,
@@ -381,8 +1149,22 @@ pub struct MonsterComputeGraphPlan {
     pub numeric_policy: MonsterNumericPolicy,
     pub differential_test_plan: MonsterDifferentialTestPlan,
     pub property_check_plan: MonsterPropertyCheckPlan,
+    pub symbolic_math_plan: MonsterSymbolicMathPlan,
     pub fragments: Vec<MonsterComputeFragment>,
     pub outputs: Vec<MonsterOutputArtifact>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterScalarOracleOutput {
+    pub schema: &'static str,
+    pub sample_name: String,
+    pub output_name: String,
+    pub value_bits: u64,
+    pub expected_bits: u64,
+    pub tolerance_bits: u64,
+    pub abs_error_bits: u64,
+    pub status: &'static str,
+    pub proof_hash: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -615,6 +1397,12 @@ impl MonsterComputeGraphPlan {
             .iter()
             .map(|property| property.canonical_source())
             .collect::<Vec<_>>();
+        let validation_contract = module
+            .validations
+            .iter()
+            .map(|validation| validation.canonical_source())
+            .collect::<Vec<_>>();
+        let scalar_oracle_outputs = scalar_oracle_outputs_for_module(module);
         let property_check_plan = property_check_plan_for_module(module);
         let runtime_contract = module.runtime.canonical_source();
         let hostcall_contract = module
@@ -669,6 +1457,12 @@ impl MonsterComputeGraphPlan {
             estimated_steps,
         );
         let compute_ir_buffers = compute_ir_buffer_bindings(compute_ir.as_ref(), module);
+        let symbolic_math_plan = symbolic_math_plan_for_module(
+            module,
+            &compute_ir_hash,
+            &compute_ir_kernel_hints,
+            &result_artifacts,
+        );
         let input_buffer_bytes = module
             .inputs
             .iter()
@@ -694,7 +1488,10 @@ impl MonsterComputeGraphPlan {
             &transform_contract,
             &schedule_contract,
             &property_contract,
+            &validation_contract,
+            &scalar_oracle_outputs,
             &property_check_plan,
+            &symbolic_math_plan,
             &runtime_contract,
             &hostcall_contract,
             &compute_ir_kernel_hints,
@@ -710,6 +1507,8 @@ impl MonsterComputeGraphPlan {
             transform_contract,
             schedule_contract,
             property_contract,
+            validation_contract,
+            scalar_oracle_outputs,
             runtime_contract,
             hostcall_contract,
             compute_ir_hash,
@@ -732,6 +1531,7 @@ impl MonsterComputeGraphPlan {
             numeric_policy,
             differential_test_plan,
             property_check_plan,
+            symbolic_math_plan,
             fragments,
             outputs,
         }
@@ -1372,6 +2172,9 @@ pub(in crate::monster) fn shader_profile_for_kernel(class: &str, primitive_ops: 
     if primitive_ops.iter().any(|op| matches!(op.as_str(), "parse" | "parse_code" | "typecheck" | "typecheck_code" | "symbol_table" | "cfg_build" | "callgraph_build" | "transform" | "transform_code" | "patch" | "patch_apply" | "run_test" | "compare_trace" | "proof_envelope")) {
         return "wgsl.code_agent_patch_proof_envelope.v1";
     }
+    if primitive_ops.iter().any(|op| matches!(op.as_str(), "symbol" | "domain" | "assume" | "to_expr" | "polynomial" | "piecewise" | "simplify" | "full_simplify" | "canonicalize_expr" | "expand" | "factor" | "collect" | "cancel" | "together" | "apart" | "function_expand" | "trig_reduce" | "series" | "refine" | "diff" | "integrate" | "limit" | "residue" | "solve" | "reduce_equations" | "find_instance" | "math_equiv" | "math_proof" | "expression_hash")) {
+        return "wgsl.symbolic_math_contract_plan.v1";
+    }
     if primitive_ops.iter().any(|op| matches!(op.as_str(), "svd_small" | "qr_small" | "cholesky_small" | "eigen_small" | "linear_solve" | "least_squares")) {
         return "wgsl.linalg_small_factorization.v1";
     }
@@ -1680,9 +2483,12 @@ fn wgsl_for_sparse_csr_graphblas_kernel(op: &str, workgroup_size: u32) -> String
 
 fn wgsl_for_graph_frontier_kernel(op: &str, workgroup_size: u32) -> String {
     let code = forge_gpu_primitive_code(op);
-    format!(
+    let shader = format!(
         "struct Seeds {{ words: array<u32, 8>, }}\n@group(0) @binding(0) var<storage, read> seeds: Seeds;\n@group(0) @binding(1) var<storage, read_write> out: array<atomic<u32>, 4>;\n@group(0) @binding(2) var<storage, read> in0: array<f32>;\nfn mix32(v: u32) -> u32 {{ var x = v; x = x ^ (x >> 16u); x = x * 0x7feb352du; x = x ^ (x >> 15u); x = x * 0x846ca68bu; x = x ^ (x >> 16u); return x; }}\n@compute @workgroup_size({workgroup_size})\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\n    let n = arrayLength(&in0);\n    if (n < 4u || gid.x >= seeds.words[4]) {{ return; }}\n    let node = gid.x + seeds.words[5];\n    let frontier_mask = mix32(node ^ seeds.words[0]);\n    let edge_count = max(1u, seeds.words[6] & 31u);\n    var i = 0u;\n    var discovered = 0u;\n    var rank_acc = 0.0;\n    while (i < edge_count) {{\n        let edge_idx = (node * edge_count + i) % n;\n        let neighbor = u32(abs(in0[edge_idx])) % n;\n        let active = ((frontier_mask >> (i & 31u)) & 1u) == 1u;\n        discovered = discovered + select(0u, 1u, active);\n        rank_acc = rank_acc + select(0.0, 1.0 / f32(max(1u, neighbor + 1u)), active);\n        i = i + 1u;\n    }}\n    atomicAdd(&out[0], discovered);\n    atomicAdd(&out[1], u32(clamp(rank_acc * 100000.0, 0.0, 4294967295.0)));\n    atomicAdd(&out[2], mix32(node ^ discovered));\n    atomicAdd(&out[3], {code}u);\n}}\n"
-    )
+    );
+    shader
+        .replace("let active =", "let is_frontier_active =")
+        .replace(", active)", ", is_frontier_active)")
 }
 
 fn wgsl_for_linalg_small_factor_kernel(op: &str, workgroup_size: u32) -> String {
@@ -2673,6 +3479,14 @@ pub(in crate::monster) fn forge_gpu_primitive_expr(op: &str, a: &str, b: &str) -
         | "compare_trace" | "proof_envelope" => {
             format!("f01_from_u32(mix32(bitcast<u32>({a}) ^ bitcast<u32>({b}) ^ 0x434f4445u))")
         }
+        "symbol" | "domain" | "assume" | "to_expr" | "polynomial" | "piecewise"
+        | "simplify" | "full_simplify" | "canonicalize_expr" | "expand" | "factor"
+        | "collect" | "cancel" | "together" | "apart" | "function_expand" | "trig_reduce"
+        | "series" | "refine" | "diff" | "integrate" | "limit" | "residue"
+        | "solve" | "reduce_equations" | "find_instance" | "math_equiv"
+        | "math_proof" | "expression_hash" => {
+            format!("f01_from_u32(mix32(bitcast<u32>({a}) ^ bitcast<u32>({b}) ^ 0x43415331u))")
+        }
         "vec2" | "vec3" | "vec4" | "mat3" | "mat4" | "transform_point" | "transform_normal" => a.to_string(),
         "sdf_sphere" => format!("abs({a}) - abs({b})"),
         "sdf_box" => format!("max(abs({a}) - abs({b}), 0.0)"),
@@ -2752,7 +3566,7 @@ impl MonsterUniversalComputeTemplate {
                 "forge_cost",
                 "artifact_handoff",
             ],
-            optional_sections: &["forge_transforms", "forge_schedule", "forge_runtime", "forge_hostcalls"],
+            optional_sections: &["forge_transforms", "forge_schedule", "forge_properties", "forge_validation", "forge_runtime", "forge_hostcalls"],
             language_enrichments: &[
                 "interval<T>",
                 "uncertainty<T>",
@@ -2785,6 +3599,9 @@ impl MonsterUniversalComputeTemplate {
                 "crypto_constant_time_secret_branch_zk_smt_lean_proof_hooks",
                 "code_agent_ast_symbol_cfg_callgraph_diff_patch_testcase",
                 "code_agent_parse_typecheck_transform_patch_run_test_compare_trace_proof_envelope",
+                "symbolic_math_expr_polynomial_piecewise_assumptions",
+                "symbolic_math_simplify_expand_factor_solve_diff_integrate_proof",
+                "forge_validation_role_method_oracle_uncertainty_replay_promotion_rollback",
             ],
             output_handoffs: &[
                 "scalar",
@@ -2943,6 +3760,7 @@ fn differential_test_plan_for_module(
         "cpu_prod_physics_integrator_stencil",
         "cpu_prod_dom_ram_columnar_graph",
         "cpu_prod_crypto_hash_blocks",
+        "cpu_prod_symbolic_egraph_contract",
     ];
     let oracle_count = module.samples.len().max(1) as u32;
     let tolerance_ppm = match module.cost.precision {
@@ -3046,6 +3864,681 @@ fn property_check_plan_for_module(module: &ForgeModuleSpec) -> MonsterPropertyCh
     }
 }
 
+fn symbolic_math_plan_for_module(
+    module: &ForgeModuleSpec,
+    compute_ir_hash: &str,
+    kernel_hints: &[MonsterComputeIrKernelHint],
+    result_artifacts: &[MonsterTypedResultArtifact],
+) -> MonsterSymbolicMathPlan {
+    let mut primitive_ops = kernel_hints
+        .iter()
+        .flat_map(|hint| hint.primitive_ops.iter())
+        .filter(|op| is_symbolic_math_primitive(op))
+        .cloned()
+        .collect::<Vec<_>>();
+    primitive_ops.sort();
+    primitive_ops.dedup();
+
+    let expression_artifact_count = result_artifacts
+        .iter()
+        .filter(|artifact| artifact.layout == "symbolic_math_dag_pages")
+        .count() as u32;
+    let assumption_artifact_count = result_artifacts
+        .iter()
+        .filter(|artifact| artifact.layout == "symbolic_math_assumption_domain_pages")
+        .count() as u32;
+    let solution_artifact_count = result_artifacts
+        .iter()
+        .filter(|artifact| artifact.layout == "symbolic_math_solution_set_pages")
+        .count() as u32;
+
+    let rewrite_ops = symbolic_plan_ops(&primitive_ops, symbolic_rewrite_op);
+    let calculus_ops = symbolic_plan_ops(&primitive_ops, symbolic_calculus_op);
+    let solve_ops = symbolic_plan_ops(&primitive_ops, symbolic_solve_op);
+    let proof_ops = symbolic_plan_ops(&primitive_ops, symbolic_proof_op);
+    let active = !primitive_ops.is_empty()
+        || expression_artifact_count > 0
+        || assumption_artifact_count > 0
+        || solution_artifact_count > 0;
+    let assumption_policy = if active {
+        "assumptions_domains_are_part_of_contract_hash"
+    } else {
+        "none"
+    };
+    let rewrite_engine = if active {
+        "egraph_contract_only_until_verified_cas_runtime"
+    } else {
+        "none"
+    };
+    let exact_arithmetic_policy = if active {
+        "exact_rational_polynomial_forms_required_before_promotion"
+    } else {
+        "none"
+    };
+    let oracle_policy = if active {
+        "optional_sealed_dev_oracles_only_never_authority"
+    } else {
+        "none"
+    };
+    let execution_backend = if active {
+        "cpu_symbolic_exact_linear_polynomial_canonical_v1"
+    } else {
+        "none"
+    };
+    let output_evaluations = if active {
+        symbolic_math_output_evaluations(module)
+    } else {
+        Vec::new()
+    };
+    let execution_hash = symbolic_math_execution_hash(execution_backend, &output_evaluations);
+    let plan_hash = sha256_hex(
+        format!(
+            "forge.monster.symbolic_math_plan.v1|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            module.name,
+            compute_ir_hash,
+            active,
+            execution_backend,
+            execution_hash,
+            expression_artifact_count,
+            assumption_artifact_count,
+            solution_artifact_count,
+            primitive_ops.join(","),
+            rewrite_ops.join(","),
+            calculus_ops.join(","),
+            solve_ops.join(","),
+            proof_ops.join(","),
+            assumption_policy,
+            rewrite_engine,
+            exact_arithmetic_policy,
+            oracle_policy,
+        )
+        .as_bytes(),
+    );
+    MonsterSymbolicMathPlan {
+        schema: "forge.monster.symbolic_math_plan.v1",
+        active,
+        execution_backend,
+        execution_hash,
+        expression_artifact_count,
+        assumption_artifact_count,
+        solution_artifact_count,
+        primitive_ops,
+        rewrite_ops,
+        calculus_ops,
+        solve_ops,
+        proof_ops,
+        assumption_policy,
+        rewrite_engine,
+        exact_arithmetic_policy,
+        oracle_policy,
+        output_evaluations,
+        plan_hash,
+    }
+}
+
+fn symbolic_math_execution_hash(
+    execution_backend: &str,
+    output_evaluations: &[MonsterSymbolicMathOutput],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.monster.symbolic_math.execution.v1\0");
+    h.update(execution_backend.as_bytes());
+    for output in output_evaluations {
+        h.update(output.name.as_bytes());
+        h.update(b"\0");
+        h.update(output.result_kind.as_bytes());
+        h.update(b"\0");
+        h.update(output.canonical_form.as_bytes());
+        h.update(output.proof_hash.as_bytes());
+    }
+    hex(&h.finalize())
+}
+
+fn symbolic_math_output_evaluations(module: &ForgeModuleSpec) -> Vec<MonsterSymbolicMathOutput> {
+    let mut env = HashMap::new();
+    let mut out = Vec::new();
+    for item in &module.program.lets {
+        if let Some(expr) = ForgeExpr::parse(&item.expr) {
+            env.insert(item.name.clone(), expr);
+        }
+    }
+    for emit in &module.program.emits {
+        let Some(expr) = ForgeExpr::parse(&emit.expr) else {
+            continue;
+        };
+        let value = symbolic_eval_expr(&expr, &env, 0).unwrap_or_else(|| SymbolicValue::Expr(
+            SymbolicCanonicalExpr::Unknown(expr.to_string())
+        ));
+        let (result_kind, canonical_form) = symbolic_value_result(&emit.ty, &value);
+        let proof_hash = sha256_hex(
+            format!(
+                "forge.monster.symbolic_math.output.v1|{}|{}|{}|{}",
+                emit.name, emit.ty, result_kind, canonical_form
+            )
+            .as_bytes(),
+        );
+        out.push(MonsterSymbolicMathOutput {
+            schema: "forge.monster.symbolic_math.output.v1",
+            name: emit.name.clone(),
+            forge_type: emit.ty.to_string(),
+            source_expr: emit.expr.clone(),
+            result_kind,
+            canonical_form,
+            proof_hash,
+        });
+    }
+    out
+}
+
+fn symbolic_value_result(
+    ty: &ForgeType,
+    value: &SymbolicValue,
+) -> (&'static str, String) {
+    match value {
+        SymbolicValue::Bool(value) => ("bool", format!("bool:{value}")),
+        SymbolicValue::Hash(value) => ("u64_hash", format!("u64:{value}")),
+        SymbolicValue::SolutionSet(value) => ("solution_set", format!("solutions:{value}")),
+        SymbolicValue::AssumptionSet(value) => ("assumption_set", format!("assume:{value}")),
+        SymbolicValue::Domain(value) => ("math_domain", format!("domain:{value}")),
+        SymbolicValue::Expr(expr) if matches!(ty, ForgeType::Polynomial { .. }) => {
+            ("polynomial", format!("poly:{}", symbolic_expr_canonical(expr)))
+        }
+        SymbolicValue::Expr(expr) if matches!(ty, ForgeType::Piecewise { .. }) => {
+            ("piecewise", format!("piecewise:{}", symbolic_expr_canonical(expr)))
+        }
+        SymbolicValue::Expr(expr) => ("expr", format!("expr:{}", symbolic_expr_canonical(expr))),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SymbolicValue {
+    Expr(SymbolicCanonicalExpr),
+    Bool(bool),
+    Hash(u64),
+    Domain(String),
+    AssumptionSet(String),
+    SolutionSet(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SymbolicCanonicalExpr {
+    Const(i64),
+    Var(String),
+    Add(Vec<SymbolicCanonicalExpr>),
+    Mul(Vec<SymbolicCanonicalExpr>),
+    Pow(Box<SymbolicCanonicalExpr>, i64),
+    Unknown(String),
+}
+
+impl SymbolicCanonicalExpr {
+    fn render(&self) -> String {
+        match self {
+            Self::Const(value) => value.to_string(),
+            Self::Var(name) => name.clone(),
+            Self::Add(items) => items.iter().map(Self::render).collect::<Vec<_>>().join("+"),
+            Self::Mul(items) => items
+                .iter()
+                .map(|item| match item {
+                    Self::Add(_) => format!("({})", item.render()),
+                    _ => item.render(),
+                })
+                .collect::<Vec<_>>()
+                .join("*"),
+            Self::Pow(base, exp) => format!("{}^{}", base.render(), exp),
+            Self::Unknown(value) => value.clone(),
+        }
+    }
+}
+
+fn symbolic_eval_expr(
+    expr: &ForgeExpr,
+    env: &HashMap<String, ForgeExpr>,
+    depth: u8,
+) -> Option<SymbolicValue> {
+    if depth > 24 {
+        return None;
+    }
+    match expr {
+        ForgeExpr::Scalar(value) => symbolic_scalar_i64(*value)
+            .map(SymbolicCanonicalExpr::Const)
+            .map(SymbolicValue::Expr),
+        ForgeExpr::Var(name) => {
+            if let Some(bound) = env.get(name) {
+                symbolic_eval_expr(bound, env, depth + 1)
+            } else {
+                Some(SymbolicValue::Expr(SymbolicCanonicalExpr::Var(name.clone())))
+            }
+        }
+        ForgeExpr::Unary { op, expr } => {
+            let value = symbolic_eval_expr(expr, env, depth + 1)?;
+            match (op, value) {
+                (ForgeUnaryOp::Neg, SymbolicValue::Expr(expr)) => {
+                    Some(SymbolicValue::Expr(symbolic_mul(vec![SymbolicCanonicalExpr::Const(-1), expr])))
+                }
+                (ForgeUnaryOp::Not, SymbolicValue::Bool(value)) => Some(SymbolicValue::Bool(!value)),
+                _ => None,
+            }
+        }
+        ForgeExpr::Binary { op, left, right } => symbolic_eval_binary(*op, left, right, env, depth + 1),
+        ForgeExpr::Call { name, args } => symbolic_eval_call(name, args, env, depth + 1),
+    }
+}
+
+fn symbolic_eval_binary(
+    op: ForgeBinaryOp,
+    left: &ForgeExpr,
+    right: &ForgeExpr,
+    env: &HashMap<String, ForgeExpr>,
+    depth: u8,
+) -> Option<SymbolicValue> {
+    let lhs = symbolic_eval_expr(left, env, depth)?;
+    let rhs = symbolic_eval_expr(right, env, depth)?;
+    match (op, lhs, rhs) {
+        (ForgeBinaryOp::Add, SymbolicValue::Expr(a), SymbolicValue::Expr(b)) => {
+            Some(SymbolicValue::Expr(symbolic_add(vec![a, b])))
+        }
+        (ForgeBinaryOp::Sub, SymbolicValue::Expr(a), SymbolicValue::Expr(b)) => {
+            Some(SymbolicValue::Expr(symbolic_add(vec![
+                a,
+                symbolic_mul(vec![SymbolicCanonicalExpr::Const(-1), b]),
+            ])))
+        }
+        (ForgeBinaryOp::Mul, SymbolicValue::Expr(a), SymbolicValue::Expr(b)) => {
+            Some(SymbolicValue::Expr(symbolic_mul(vec![a, b])))
+        }
+        (ForgeBinaryOp::Div, SymbolicValue::Expr(a), SymbolicValue::Expr(SymbolicCanonicalExpr::Const(1))) => {
+            Some(SymbolicValue::Expr(a))
+        }
+        (ForgeBinaryOp::Div, SymbolicValue::Expr(SymbolicCanonicalExpr::Const(a)), SymbolicValue::Expr(SymbolicCanonicalExpr::Const(b)))
+            if b != 0 && a % b == 0 =>
+        {
+            Some(SymbolicValue::Expr(SymbolicCanonicalExpr::Const(a / b)))
+        }
+        (ForgeBinaryOp::Div, SymbolicValue::Expr(a), SymbolicValue::Expr(b)) => {
+            Some(SymbolicValue::Expr(SymbolicCanonicalExpr::Unknown(format!("{}/{}", a.render(), b.render()))))
+        }
+        (ForgeBinaryOp::Pow, SymbolicValue::Expr(a), SymbolicValue::Expr(SymbolicCanonicalExpr::Const(exp))) => {
+            Some(SymbolicValue::Expr(symbolic_pow(a, exp)))
+        }
+        (ForgeBinaryOp::Eq, SymbolicValue::Expr(a), SymbolicValue::Expr(b)) => Some(SymbolicValue::Bool(a == b)),
+        (ForgeBinaryOp::Ne, SymbolicValue::Expr(a), SymbolicValue::Expr(b)) => Some(SymbolicValue::Bool(a != b)),
+        (ForgeBinaryOp::And, SymbolicValue::Bool(a), SymbolicValue::Bool(b)) => Some(SymbolicValue::Bool(a && b)),
+        (ForgeBinaryOp::Or, SymbolicValue::Bool(a), SymbolicValue::Bool(b)) => Some(SymbolicValue::Bool(a || b)),
+        _ => None,
+    }
+}
+
+fn symbolic_eval_call(
+    name: &str,
+    args: &[ForgeExpr],
+    env: &HashMap<String, ForgeExpr>,
+    depth: u8,
+) -> Option<SymbolicValue> {
+    match name {
+        "symbol" if args.len() == 1 => Some(SymbolicValue::Expr(SymbolicCanonicalExpr::Var(args[0].to_string()))),
+        "domain" if args.len() == 1 => {
+            let value = symbolic_eval_expr(&args[0], env, depth)?;
+            Some(SymbolicValue::Domain(symbolic_value_canonical(&value)))
+        }
+        "assume" if !args.is_empty() => {
+            let rendered = args
+                .iter()
+                .filter_map(|arg| symbolic_eval_expr(arg, env, depth))
+                .map(|value| symbolic_value_canonical(&value))
+                .collect::<Vec<_>>()
+                .join("&");
+            Some(SymbolicValue::AssumptionSet(rendered))
+        }
+        "to_expr" | "polynomial" | "piecewise" if args.len() == 1 => symbolic_eval_expr(&args[0], env, depth),
+        "simplify" | "full_simplify" | "canonicalize_expr" | "expand" | "factor" | "collect"
+        | "cancel" | "together" | "apart" | "function_expand" | "trig_reduce" | "series"
+            if args.len() == 1 =>
+        {
+            symbolic_eval_expr(&args[0], env, depth)
+        }
+        "refine" if args.len() == 2 => symbolic_eval_expr(&args[0], env, depth),
+        "diff" if args.len() == 2 => {
+            let expr = symbolic_eval_expr(&args[0], env, depth)?;
+            let var = symbolic_eval_expr(&args[1], env, depth)?;
+            match (expr, var) {
+                (SymbolicValue::Expr(expr), SymbolicValue::Expr(SymbolicCanonicalExpr::Var(var))) => {
+                    Some(SymbolicValue::Expr(symbolic_diff(&expr, &var)))
+                }
+                _ => None,
+            }
+        }
+        "solve" | "reduce_equations" if args.len() == 1 => {
+            let expr = symbolic_eval_expr(&args[0], env, depth)?;
+            match expr {
+                SymbolicValue::Expr(SymbolicCanonicalExpr::Const(0)) => Some(SymbolicValue::SolutionSet("all".to_string())),
+                SymbolicValue::Expr(SymbolicCanonicalExpr::Const(_)) => Some(SymbolicValue::SolutionSet("{}".to_string())),
+                SymbolicValue::Expr(SymbolicCanonicalExpr::Var(var)) => {
+                    Some(SymbolicValue::SolutionSet(format!("{{{var}=0}}")))
+                }
+                SymbolicValue::Expr(expr) => {
+                    let canonical = symbolic_expr_canonical(&expr);
+                    if canonical == "0" {
+                        Some(SymbolicValue::SolutionSet("all".to_string()))
+                    } else {
+                        Some(SymbolicValue::SolutionSet(format!("solve({canonical})")))
+                    }
+                }
+                _ => None,
+            }
+        }
+        "math_equiv" if args.len() == 2 => {
+            let lhs = symbolic_eval_expr(&args[0], env, depth)?;
+            let rhs = symbolic_eval_expr(&args[1], env, depth)?;
+            Some(SymbolicValue::Bool(symbolic_value_canonical(&lhs) == symbolic_value_canonical(&rhs)))
+        }
+        "math_proof" | "expression_hash" if args.len() == 1 => {
+            let value = symbolic_eval_expr(&args[0], env, depth)?;
+            Some(SymbolicValue::Hash(sha256_u64(symbolic_value_canonical(&value).as_bytes())))
+        }
+        _ => None,
+    }
+}
+
+fn symbolic_value_canonical(value: &SymbolicValue) -> String {
+    match value {
+        SymbolicValue::Expr(expr) => symbolic_expr_canonical(expr),
+        SymbolicValue::Bool(value) => format!("bool:{value}"),
+        SymbolicValue::Hash(value) => format!("u64:{value}"),
+        SymbolicValue::Domain(value) => format!("domain:{value}"),
+        SymbolicValue::AssumptionSet(value) => format!("assume:{value}"),
+        SymbolicValue::SolutionSet(value) => format!("solutions:{value}"),
+    }
+}
+
+type SymbolicMonomial = Vec<(String, u32)>;
+type SymbolicPoly = BTreeMap<SymbolicMonomial, i64>;
+
+fn symbolic_expr_canonical(expr: &SymbolicCanonicalExpr) -> String {
+    expr_to_poly(expr)
+        .map(|poly| poly_render(&poly))
+        .unwrap_or_else(|| expr.render())
+}
+
+fn expr_to_poly(expr: &SymbolicCanonicalExpr) -> Option<SymbolicPoly> {
+    match expr {
+        SymbolicCanonicalExpr::Const(value) => Some(poly_const(*value)),
+        SymbolicCanonicalExpr::Var(name) => Some(poly_var(name)),
+        SymbolicCanonicalExpr::Add(items) => {
+            let mut acc = poly_const(0);
+            for item in items {
+                acc = poly_add(&acc, &expr_to_poly(item)?);
+            }
+            Some(acc)
+        }
+        SymbolicCanonicalExpr::Mul(items) => {
+            let mut acc = poly_const(1);
+            for item in items {
+                acc = poly_mul(&acc, &expr_to_poly(item)?);
+            }
+            Some(acc)
+        }
+        SymbolicCanonicalExpr::Pow(base, exp) if *exp >= 0 && *exp <= 8 => {
+            Some(poly_pow(&expr_to_poly(base)?, *exp as u32))
+        }
+        SymbolicCanonicalExpr::Pow(_, _) | SymbolicCanonicalExpr::Unknown(_) => None,
+    }
+}
+
+fn poly_const(value: i64) -> SymbolicPoly {
+    let mut poly = SymbolicPoly::new();
+    if value != 0 {
+        poly.insert(Vec::new(), value);
+    }
+    poly
+}
+
+fn poly_var(name: &str) -> SymbolicPoly {
+    let mut poly = SymbolicPoly::new();
+    poly.insert(vec![(name.to_string(), 1)], 1);
+    poly
+}
+
+fn poly_add(a: &SymbolicPoly, b: &SymbolicPoly) -> SymbolicPoly {
+    let mut out = a.clone();
+    for (mono, coeff) in b {
+        let next = out.get(mono).copied().unwrap_or(0).saturating_add(*coeff);
+        if next == 0 {
+            out.remove(mono);
+        } else {
+            out.insert(mono.clone(), next);
+        }
+    }
+    out
+}
+
+fn poly_mul(a: &SymbolicPoly, b: &SymbolicPoly) -> SymbolicPoly {
+    let mut out = SymbolicPoly::new();
+    for (mono_a, coeff_a) in a {
+        for (mono_b, coeff_b) in b {
+            let mono = monomial_mul(mono_a, mono_b);
+            let coeff = coeff_a.saturating_mul(*coeff_b);
+            let next = out.get(&mono).copied().unwrap_or(0).saturating_add(coeff);
+            if next == 0 {
+                out.remove(&mono);
+            } else {
+                out.insert(mono, next);
+            }
+        }
+    }
+    out
+}
+
+fn poly_pow(poly: &SymbolicPoly, exp: u32) -> SymbolicPoly {
+    if exp == 0 {
+        return poly_const(1);
+    }
+    let mut out = poly_const(1);
+    for _ in 0..exp {
+        out = poly_mul(&out, poly);
+    }
+    out
+}
+
+fn monomial_mul(a: &SymbolicMonomial, b: &SymbolicMonomial) -> SymbolicMonomial {
+    let mut powers = BTreeMap::<String, u32>::new();
+    for (name, pow) in a.iter().chain(b.iter()) {
+        let next = powers.get(name).copied().unwrap_or(0).saturating_add(*pow);
+        powers.insert(name.clone(), next);
+    }
+    powers.into_iter().filter(|(_, pow)| *pow > 0).collect()
+}
+
+fn poly_render(poly: &SymbolicPoly) -> String {
+    if poly.is_empty() {
+        return "0".to_string();
+    }
+    let mut terms = poly
+        .iter()
+        .map(|(mono, coeff)| (mono.clone(), *coeff))
+        .collect::<Vec<_>>();
+    terms.sort_by(|(mono_a, _), (mono_b, _)| {
+        let degree_a: u32 = mono_a.iter().map(|(_, pow)| *pow).sum();
+        let degree_b: u32 = mono_b.iter().map(|(_, pow)| *pow).sum();
+        degree_b.cmp(&degree_a).then_with(|| mono_a.cmp(mono_b))
+    });
+    let mut rendered = String::new();
+    for (index, (mono, coeff)) in terms.iter().enumerate() {
+        let sign = if *coeff < 0 { "-" } else { "+" };
+        let abs = coeff.abs();
+        if index == 0 {
+            if *coeff < 0 {
+                rendered.push('-');
+            }
+        } else {
+            rendered.push_str(sign);
+        }
+        if mono.is_empty() {
+            rendered.push_str(&abs.to_string());
+            continue;
+        }
+        if abs != 1 {
+            rendered.push_str(&abs.to_string());
+            rendered.push('*');
+        }
+        rendered.push_str(&monomial_render(mono));
+    }
+    rendered
+}
+
+fn monomial_render(mono: &SymbolicMonomial) -> String {
+    mono.iter()
+        .map(|(name, pow)| {
+            if *pow == 1 {
+                name.clone()
+            } else {
+                format!("{name}^{pow}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("*")
+}
+
+fn symbolic_scalar_i64(value: ForgeScalarValue) -> Option<i64> {
+    match value {
+        ForgeScalarValue::Bool(_) => None,
+        ForgeScalarValue::I32(value) => Some(i64::from(value)),
+        ForgeScalarValue::I64(value) => Some(value),
+        ForgeScalarValue::U32(value) => Some(i64::from(value)),
+        ForgeScalarValue::U64(value) => i64::try_from(value).ok(),
+        ForgeScalarValue::F32(value) if value.fract() == 0.0 => Some(value as i64),
+        ForgeScalarValue::F64(value) if value.fract() == 0.0 => Some(value as i64),
+        ForgeScalarValue::F32(_) | ForgeScalarValue::F64(_) => None,
+    }
+}
+
+fn symbolic_add(items: Vec<SymbolicCanonicalExpr>) -> SymbolicCanonicalExpr {
+    let mut flat = Vec::new();
+    let mut constant = 0i64;
+    for item in items {
+        match item {
+            SymbolicCanonicalExpr::Add(nested) => flat.extend(nested),
+            SymbolicCanonicalExpr::Const(value) => constant = constant.saturating_add(value),
+            other => flat.push(other),
+        }
+    }
+    if constant != 0 {
+        flat.push(SymbolicCanonicalExpr::Const(constant));
+    }
+    flat.retain(|item| !matches!(item, SymbolicCanonicalExpr::Const(0)));
+    flat.sort_by_key(SymbolicCanonicalExpr::render);
+    match flat.len() {
+        0 => SymbolicCanonicalExpr::Const(0),
+        1 => flat.pop().unwrap(),
+        _ => SymbolicCanonicalExpr::Add(flat),
+    }
+}
+
+fn symbolic_mul(items: Vec<SymbolicCanonicalExpr>) -> SymbolicCanonicalExpr {
+    let mut flat = Vec::new();
+    let mut constant = 1i64;
+    for item in items {
+        match item {
+            SymbolicCanonicalExpr::Mul(nested) => flat.extend(nested),
+            SymbolicCanonicalExpr::Const(0) => return SymbolicCanonicalExpr::Const(0),
+            SymbolicCanonicalExpr::Const(value) => constant = constant.saturating_mul(value),
+            other => flat.push(other),
+        }
+    }
+    if constant != 1 || flat.is_empty() {
+        flat.push(SymbolicCanonicalExpr::Const(constant));
+    }
+    let keep_one = flat.len() == 1;
+    flat.retain(|item| !matches!(item, SymbolicCanonicalExpr::Const(1)) || keep_one);
+    flat.sort_by_key(SymbolicCanonicalExpr::render);
+    match flat.len() {
+        0 => SymbolicCanonicalExpr::Const(1),
+        1 => flat.pop().unwrap(),
+        _ => SymbolicCanonicalExpr::Mul(flat),
+    }
+}
+
+fn symbolic_pow(base: SymbolicCanonicalExpr, exp: i64) -> SymbolicCanonicalExpr {
+    match (base, exp) {
+        (_, 0) => SymbolicCanonicalExpr::Const(1),
+        (base, 1) => base,
+        (SymbolicCanonicalExpr::Const(value), exp) if exp > 0 && exp <= 16 => {
+            SymbolicCanonicalExpr::Const(value.saturating_pow(exp as u32))
+        }
+        (base, exp) => SymbolicCanonicalExpr::Pow(Box::new(base), exp),
+    }
+}
+
+fn symbolic_diff(expr: &SymbolicCanonicalExpr, var: &str) -> SymbolicCanonicalExpr {
+    match expr {
+        SymbolicCanonicalExpr::Const(_) => SymbolicCanonicalExpr::Const(0),
+        SymbolicCanonicalExpr::Var(name) if name == var => SymbolicCanonicalExpr::Const(1),
+        SymbolicCanonicalExpr::Var(_) => SymbolicCanonicalExpr::Const(0),
+        SymbolicCanonicalExpr::Add(items) => {
+            symbolic_add(items.iter().map(|item| symbolic_diff(item, var)).collect())
+        }
+        SymbolicCanonicalExpr::Mul(items) if items.len() == 2 => symbolic_add(vec![
+            symbolic_mul(vec![symbolic_diff(&items[0], var), items[1].clone()]),
+            symbolic_mul(vec![items[0].clone(), symbolic_diff(&items[1], var)]),
+        ]),
+        SymbolicCanonicalExpr::Pow(base, exp) if *exp > 0 => symbolic_mul(vec![
+            SymbolicCanonicalExpr::Const(*exp),
+            symbolic_pow((**base).clone(), exp - 1),
+            symbolic_diff(base, var),
+        ]),
+        _ => SymbolicCanonicalExpr::Unknown(format!("diff({}, {})", expr.render(), var)),
+    }
+}
+
+fn symbolic_plan_ops(
+    primitive_ops: &[String],
+    classifier: fn(&str) -> bool,
+) -> Vec<String> {
+    primitive_ops
+        .iter()
+        .filter(|op| classifier(op.as_str()))
+        .cloned()
+        .collect()
+}
+
+fn is_symbolic_math_primitive(op: &str) -> bool {
+    symbolic_rewrite_op(op)
+        || symbolic_calculus_op(op)
+        || symbolic_solve_op(op)
+        || symbolic_proof_op(op)
+        || matches!(op, "symbol" | "domain" | "assume" | "to_expr" | "polynomial" | "piecewise")
+}
+
+fn symbolic_rewrite_op(op: &str) -> bool {
+    matches!(
+        op,
+        "simplify"
+            | "full_simplify"
+            | "canonicalize_expr"
+            | "expand"
+            | "factor"
+            | "collect"
+            | "cancel"
+            | "together"
+            | "apart"
+            | "function_expand"
+            | "trig_reduce"
+            | "series"
+            | "refine"
+    )
+}
+
+fn symbolic_calculus_op(op: &str) -> bool {
+    matches!(op, "diff" | "integrate" | "limit" | "residue")
+}
+
+fn symbolic_solve_op(op: &str) -> bool {
+    matches!(op, "solve" | "reduce_equations" | "find_instance")
+}
+
+fn symbolic_proof_op(op: &str) -> bool {
+    matches!(op, "math_equiv" | "math_proof" | "expression_hash")
+}
+
 fn forge_type_element_label(ty: &ForgeType) -> &'static str {
     match ty {
         ForgeType::Scalar(scalar)
@@ -3054,6 +4547,9 @@ fn forge_type_element_label(ty: &ForgeType) -> &'static str {
         | ForgeType::Complex { elem: scalar }
         | ForgeType::Interval { elem: scalar }
         | ForgeType::Uncertainty { elem: scalar }
+        | ForgeType::SymbolicExpr { elem: scalar }
+        | ForgeType::Polynomial { elem: scalar }
+        | ForgeType::Piecewise { elem: scalar }
         | ForgeType::Array { elem: scalar, .. }
         | ForgeType::Tensor { elem: scalar, .. }
         | ForgeType::Column { elem: scalar }
@@ -3091,6 +4587,9 @@ fn forge_type_element_label(ty: &ForgeType) -> &'static str {
         ForgeType::Signature => "signature",
         ForgeType::Ast => "ast_node",
         ForgeType::Symbol => "symbol",
+        ForgeType::AssumptionSet => "assumption",
+        ForgeType::MathDomain => "domain_clause",
+        ForgeType::SolutionSet => "solution_branch",
         ForgeType::Cfg => "cfg_edge",
         ForgeType::Callgraph => "call_edge",
         ForgeType::Diff => "diff_hunk",
@@ -3107,6 +4606,11 @@ fn forge_type_shape(ty: &ForgeType) -> Vec<u64> {
         ForgeType::Complex { .. } => vec![2],
         ForgeType::Interval { .. } => vec![2],
         ForgeType::Uncertainty { .. } => vec![5],
+        ForgeType::SymbolicExpr { .. } => vec![256, 4],
+        ForgeType::Polynomial { .. } => vec![128, 4],
+        ForgeType::Piecewise { .. } => vec![128, 8],
+        ForgeType::AssumptionSet | ForgeType::MathDomain => vec![64, 4],
+        ForgeType::SolutionSet => vec![128, 8],
         ForgeType::Array { len, .. } => vec![u64::from(*len)],
         ForgeType::Tensor { shape, .. } => shape.iter().copied().map(u64::from).collect(),
         ForgeType::Column { .. } => vec![1024],
@@ -3191,6 +4695,11 @@ fn artifact_layout_for_type(ty: &ForgeType, handoff: &str) -> &'static str {
             "code_agent_typed_graph_pages"
         }
         (_, ForgeType::Diff | ForgeType::Patch | ForgeType::Testcase) => "code_agent_patch_testcase_pages",
+        (_, ForgeType::SymbolicExpr { .. } | ForgeType::Polynomial { .. } | ForgeType::Piecewise { .. }) => {
+            "symbolic_math_dag_pages"
+        }
+        (_, ForgeType::AssumptionSet | ForgeType::MathDomain) => "symbolic_math_assumption_domain_pages",
+        (_, ForgeType::SolutionSet) => "symbolic_math_solution_set_pages",
         ("mesh_params", _) => "meshlet_parameter_pages",
         ("graph", _) | (_, ForgeType::Graph { .. }) => "csr_graph_pages",
         ("table", _) | (_, ForgeType::Table { .. }) => "columnar_table_pages",
@@ -3244,6 +4753,10 @@ fn artifact_page_bytes(ty: &ForgeType) -> u64 {
         | ForgeType::Reaction
         | ForgeType::Conformer
         | ForgeType::Ast
+        | ForgeType::SymbolicExpr { .. }
+        | ForgeType::Polynomial { .. }
+        | ForgeType::Piecewise { .. }
+        | ForgeType::SolutionSet
         | ForgeType::Cfg
         | ForgeType::Callgraph => 16 * 1024,
         _ => 4 * 1024,
@@ -4320,6 +5833,7 @@ fn mass_execution_proof_hash(
     h.update(prepared.gpu_batch_plan.multi_adapter_schedule.schedule_hash.as_bytes());
     h.update(prepared.route.plan.numeric_policy.policy_hash.as_bytes());
     h.update(prepared.route.plan.differential_test_plan.plan_hash.as_bytes());
+    h.update(prepared.route.plan.symbolic_math_plan.plan_hash.as_bytes());
     h.update(prepared.gpu_batch_plan.kernel_family.as_bytes());
     h.update(prepared.gpu_batch_plan.lanes.to_le_bytes());
     for value in prepared.gpu_batch_plan.dispatch_shape {
@@ -4457,6 +5971,8 @@ fn primary_primitive_family(prepared: &MonsterPreparedCompute) -> String {
         "crypto_proof"
     } else if ops.iter().any(|op| matches!(*op, "parse" | "parse_code" | "typecheck" | "typecheck_code" | "symbol_table" | "cfg_build" | "callgraph_build" | "transform" | "transform_code" | "patch" | "patch_apply" | "run_test" | "compare_trace" | "proof_envelope")) {
         "code_agent"
+    } else if ops.iter().any(|op| is_symbolic_math_primitive(op)) {
+        "symbolic_math"
     } else {
         "scalar"
     };
@@ -4479,6 +5995,7 @@ pub(in crate::monster) fn production_cpu_backend_for_family(family: &str) -> &'s
         "chem_graph" => "cpu_prod_chem_smarts_fingerprint_graph",
         "crypto_proof" => "cpu_prod_crypto_constant_time_zk_smt_lean_envelope",
         "code_agent" => "cpu_prod_code_ast_patch_test_proof_envelope",
+        "symbolic_math" => "cpu_prod_symbolic_exact_canonical",
         "crypto_hash" => "cpu_prod_crypto_hash_blocks",
         _ => "cpu_prod_scalar_vector_arithmetic",
     }
@@ -4501,6 +6018,7 @@ pub(in crate::monster) fn production_algorithm_for_family(family: &str) -> &'sta
         "chem_graph" => "smiles_smarts_fingerprint_substructure_valence_conformer",
         "crypto_proof" => "constant_time_bitvec_field_curve_merkle_zk_smt_lean_hooks",
         "code_agent" => "ast_symbol_cfg_callgraph_diff_patch_test_trace_envelope",
+        "symbolic_math" => "exact_linear_polynomial_canonical_rewrite_with_proof_hashes",
         "crypto_hash" => "sha256_blake3_hmac_chacha20_merkle_oracle_blocks",
         _ => "deterministic_scalar_vector_arithmetic",
     }
@@ -4508,7 +6026,7 @@ pub(in crate::monster) fn production_algorithm_for_family(family: &str) -> &'sta
 
 pub(in crate::monster) fn production_promotion_policy_for_family(family: &str) -> &'static str {
     match family {
-        "crypto_hash" | "crypto_proof" | "code_agent" | "dom_ram" | "trading" | "bio_sequence" | "chem_graph" => "bit_exact_typed_buffer_hash_match_required",
+        "crypto_hash" | "crypto_proof" | "code_agent" | "symbolic_math" | "dom_ram" | "trading" | "bio_sequence" | "chem_graph" => "bit_exact_typed_buffer_hash_match_required",
         "signal" | "linalg" | "solvers" | "autodiff" => "numeric_ppm_tolerance_and_metamorphic_invariants",
         "sparse" | "graph" => "csr_structure_hash_plus_numeric_ppm_tolerance",
         _ => "typed_buffer_ppm_tolerance_and_replay_hash",
@@ -4528,6 +6046,7 @@ pub(in crate::monster) fn production_algorithm_hash_for_family(
     h.update(prepared.route.plan.compute_ir_hash.as_bytes());
     h.update(prepared.route.plan.numeric_policy.policy_hash.as_bytes());
     h.update(prepared.route.plan.differential_test_plan.plan_hash.as_bytes());
+    h.update(prepared.route.plan.symbolic_math_plan.plan_hash.as_bytes());
     for kernel in &prepared.gpu_batch_plan.kernels {
         h.update(kernel.shader_profile.as_bytes());
         for op in &kernel.primitive_ops {
@@ -4571,7 +6090,17 @@ fn compare_typed_buffer_sets_ppm(
             continue;
         }
         compared = compared.saturating_add(len as u64);
-        if cpu.element_type == "f64" && candidate.element_type == "f64" {
+        if typed_buffer_requires_byte_exact_diff(cpu)
+            || typed_buffer_requires_byte_exact_diff(candidate)
+        {
+            for (a, b) in cpu_bytes[..len].iter().zip(candidate_bytes[..len].iter()) {
+                let delta = u8::abs_diff(*a, *b) as u64;
+                max_abs = max_abs.max(delta.saturating_mul(1_000_000) / 255);
+                if delta != 0 {
+                    max_rel = max_rel.max(1_000_000);
+                }
+            }
+        } else if cpu.element_type == "f64" && candidate.element_type == "f64" {
             for (a, b) in cpu_bytes[..len].chunks_exact(8).zip(candidate_bytes[..len].chunks_exact(8)) {
                 let av = f64::from_le_bytes(a.try_into().unwrap());
                 let bv = f64::from_le_bytes(b.try_into().unwrap());
@@ -4594,6 +6123,15 @@ fn compare_typed_buffer_sets_ppm(
     (max_abs, max_rel, compared)
 }
 
+fn typed_buffer_requires_byte_exact_diff(buffer: &MonsterTypedResultBuffer) -> bool {
+    matches!(
+        buffer.layout,
+        "symbolic_math_dag_pages"
+            | "symbolic_math_assumption_domain_pages"
+            | "symbolic_math_solution_set_pages"
+    )
+}
+
 fn flatten_typed_pages(buffer: &MonsterTypedResultBuffer) -> Vec<u8> {
     let mut out = Vec::with_capacity(buffer.byte_len as usize);
     for page in &buffer.pages {
@@ -4612,6 +6150,355 @@ fn f64_error_ppm(expected: f64, actual: f64) -> (u64, u64) {
     let denom = expected.abs().max(1.0e-12);
     let rel_ppm = ((abs / denom) * 1_000_000.0).min(u64::MAX as f64) as u64;
     (abs_ppm, rel_ppm)
+}
+
+fn scalar_oracle_outputs_for_module(module: &ForgeModuleSpec) -> Vec<MonsterScalarOracleOutput> {
+    let mut out = Vec::new();
+    for sample in &module.samples {
+        let Some((output_name, value)) = evaluate_f64_output_for_sample(module, sample) else {
+            continue;
+        };
+        let expected = sample.expect_value;
+        let tolerance = sample.tolerance;
+        let abs_error = (value - expected).abs();
+        let status = if value.is_finite() && abs_error <= tolerance {
+            "sample_value_matched"
+        } else {
+            "sample_value_mismatch"
+        };
+        let proof_hash = scalar_oracle_output_hash(
+            &sample.name,
+            &output_name,
+            value,
+            expected,
+            tolerance,
+            abs_error,
+            status,
+        );
+        out.push(MonsterScalarOracleOutput {
+            schema: "forge.monster.scalar_oracle_output.v1",
+            sample_name: sample.name.clone(),
+            output_name,
+            value_bits: value.to_bits(),
+            expected_bits: expected.to_bits(),
+            tolerance_bits: tolerance.to_bits(),
+            abs_error_bits: abs_error.to_bits(),
+            status,
+            proof_hash,
+        });
+    }
+    out
+}
+
+fn scalar_oracle_output_hash(
+    sample_name: &str,
+    output_name: &str,
+    value: f64,
+    expected: f64,
+    tolerance: f64,
+    abs_error: f64,
+    status: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.monster.scalar_oracle_output.v1\0");
+    h.update(sample_name.as_bytes());
+    h.update(output_name.as_bytes());
+    h.update(value.to_bits().to_le_bytes());
+    h.update(expected.to_bits().to_le_bytes());
+    h.update(tolerance.to_bits().to_le_bytes());
+    h.update(abs_error.to_bits().to_le_bytes());
+    h.update(status.as_bytes());
+    hex(&h.finalize())
+}
+
+fn evaluate_f64_output_for_sample(
+    module: &ForgeModuleSpec,
+    sample: &crate::kasm::ForgeSampleCase,
+) -> Option<(String, f64)> {
+    let output = module
+        .outputs
+        .iter()
+        .find(|output| output.name == sample.expect_output)?;
+    if output.ty != ForgeType::Scalar(ForgeScalarTy::F64) {
+        return None;
+    }
+    let mut env = HashMap::<String, f64>::new();
+    for input in &module.inputs {
+        env.insert(input.name.clone(), input.nominal);
+    }
+    for (name, value) in &sample.givens {
+        env.insert(name.clone(), *value);
+    }
+    for constant in &module.constants {
+        env.insert(constant.name.clone(), forge_scalar_value_as_f64(constant.value)?);
+    }
+    for item in &module.program.lets {
+        let expr = ForgeExpr::parse(&item.expr)?;
+        let value = eval_forge_expr_f64(&expr, &mut env, module, 0)?;
+        env.insert(item.name.clone(), value);
+    }
+    let emit = module
+        .program
+        .emits
+        .iter()
+        .find(|emit| emit.name == sample.expect_output)?;
+    let expr = ForgeExpr::parse(&emit.expr)?;
+    let value = eval_forge_expr_f64(&expr, &mut env, module, 0)?;
+    Some((emit.name.clone(), value))
+}
+
+fn forge_scalar_value_as_f64(value: ForgeScalarValue) -> Option<f64> {
+    match value {
+        ForgeScalarValue::Bool(value) => Some(if value { 1.0 } else { 0.0 }),
+        ForgeScalarValue::I32(value) => Some(value as f64),
+        ForgeScalarValue::I64(value) => Some(value as f64),
+        ForgeScalarValue::U32(value) => Some(value as f64),
+        ForgeScalarValue::U64(value) => Some(value as f64),
+        ForgeScalarValue::F32(value) => Some(value as f64),
+        ForgeScalarValue::F64(value) => Some(value),
+    }
+}
+
+fn eval_forge_expr_f64(
+    expr: &ForgeExpr,
+    env: &mut HashMap<String, f64>,
+    module: &ForgeModuleSpec,
+    depth: usize,
+) -> Option<f64> {
+    if depth > 32 {
+        return None;
+    }
+    match expr {
+        ForgeExpr::Scalar(value) => forge_scalar_value_as_f64(*value),
+        ForgeExpr::Var(name) => env.get(name).copied(),
+        ForgeExpr::Unary { op, expr } => {
+            let value = eval_forge_expr_f64(expr, env, module, depth + 1)?;
+            match op {
+                ForgeUnaryOp::Neg => Some(-value),
+                ForgeUnaryOp::Not => Some(if value == 0.0 { 1.0 } else { 0.0 }),
+            }
+        }
+        ForgeExpr::Binary { op, left, right } => {
+            let lhs = eval_forge_expr_f64(left, env, module, depth + 1)?;
+            let rhs = eval_forge_expr_f64(right, env, module, depth + 1)?;
+            let value = match op {
+                ForgeBinaryOp::Add => lhs + rhs,
+                ForgeBinaryOp::Sub => lhs - rhs,
+                ForgeBinaryOp::Mul => lhs * rhs,
+                ForgeBinaryOp::Div => lhs / rhs,
+                ForgeBinaryOp::Pow => lhs.powf(rhs),
+                ForgeBinaryOp::Eq => (lhs == rhs) as u8 as f64,
+                ForgeBinaryOp::Ne => (lhs != rhs) as u8 as f64,
+                ForgeBinaryOp::Lt => (lhs < rhs) as u8 as f64,
+                ForgeBinaryOp::Le => (lhs <= rhs) as u8 as f64,
+                ForgeBinaryOp::Gt => (lhs > rhs) as u8 as f64,
+                ForgeBinaryOp::Ge => (lhs >= rhs) as u8 as f64,
+                ForgeBinaryOp::And => ((lhs != 0.0) && (rhs != 0.0)) as u8 as f64,
+                ForgeBinaryOp::Or => ((lhs != 0.0) || (rhs != 0.0)) as u8 as f64,
+            };
+            value.is_finite().then_some(value)
+        }
+        ForgeExpr::Call { name, args } => eval_forge_call_f64(name, args, env, module, depth + 1),
+    }
+}
+
+fn eval_forge_call_f64(
+    name: &str,
+    args: &[ForgeExpr],
+    env: &mut HashMap<String, f64>,
+    module: &ForgeModuleSpec,
+    depth: usize,
+) -> Option<f64> {
+    let values = args
+        .iter()
+        .map(|arg| eval_forge_expr_f64(arg, env, module, depth + 1))
+        .collect::<Option<Vec<_>>>()?;
+    let value = match (name, values.as_slice()) {
+        ("add", [a, b]) => a + b,
+        ("sub", [a, b]) => a - b,
+        ("mul", [a, b]) => a * b,
+        ("div", [a, b]) => a / b,
+        ("mod", [a, b]) => a.rem_euclid(*b),
+        ("rem", [a, b]) => a % b,
+        ("neg", [x]) => -x,
+        ("finite", [x]) | ("finite_check", [x]) | ("nan_guard", [x]) => {
+            if x.is_finite() { 1.0 } else { 0.0 }
+        }
+        ("eq", [a, b]) => (*a == *b) as u8 as f64,
+        ("ne", [a, b]) => (*a != *b) as u8 as f64,
+        ("lt", [a, b]) => (a < b) as u8 as f64,
+        ("le", [a, b]) => (a <= b) as u8 as f64,
+        ("gt", [a, b]) => (a > b) as u8 as f64,
+        ("ge", [a, b]) => (a >= b) as u8 as f64,
+        ("and", values) if !values.is_empty() => {
+            values.iter().all(|value| *value != 0.0) as u8 as f64
+        }
+        ("or", values) if !values.is_empty() => {
+            values.iter().any(|value| *value != 0.0) as u8 as f64
+        }
+        ("xor", [a, b]) => ((*a != 0.0) ^ (*b != 0.0)) as u8 as f64,
+        ("not", [x]) => (*x == 0.0) as u8 as f64,
+        ("any", values) if !values.is_empty() => {
+            values.iter().any(|value| *value != 0.0) as u8 as f64
+        }
+        ("all", values) if !values.is_empty() => {
+            values.iter().all(|value| *value != 0.0) as u8 as f64
+        }
+        ("where", [cond, if_true, if_false]) | ("select", [cond, if_true, if_false]) => {
+            if *cond != 0.0 { *if_true } else { *if_false }
+        }
+        ("approx_equal", [a, b, tolerance]) => {
+            ((a - b).abs() <= *tolerance) as u8 as f64
+        }
+        ("sqrt", [x]) => x.sqrt(),
+        ("rsqrt", [x]) => 1.0 / x.sqrt(),
+        ("cbrt", [x]) => x.cbrt(),
+        ("abs", [x]) => x.abs(),
+        ("exp", [x]) => x.exp(),
+        ("exp2", [x]) => x.exp2(),
+        ("ln", [x]) | ("log", [x]) => x.ln(),
+        ("log2", [x]) => x.log2(),
+        ("log10", [x]) => x.log10(),
+        ("sin", [x]) => x.sin(),
+        ("cos", [x]) => x.cos(),
+        ("tan", [x]) => x.tan(),
+        ("asin", [x]) => x.asin(),
+        ("acos", [x]) => x.acos(),
+        ("atan", [x]) => x.atan(),
+        ("atan2", [y, x]) => y.atan2(*x),
+        ("sinh", [x]) => x.sinh(),
+        ("cosh", [x]) => x.cosh(),
+        ("tanh", [x]) => x.tanh(),
+        ("erf", [x]) => monster_erf(*x),
+        ("erfc", [x]) => 1.0 - monster_erf(*x),
+        ("gamma", [x]) => monster_gamma(*x),
+        ("lgamma", [x]) => monster_gamma(*x).abs().ln(),
+        ("beta", [a, b]) => monster_gamma(*a) * monster_gamma(*b) / monster_gamma(*a + *b),
+        ("uncertainty", [_, mid, _]) => *mid,
+        ("p5", [x])
+        | ("p50", [x])
+        | ("p95", [x])
+        | ("mean", [x])
+        | ("variance", [x])
+        | ("std", [x])
+        | ("median", [x])
+        | ("quantile", [x])
+        | ("robust_loss", [x])
+        | ("grad", [x])
+        | ("hessian", [x])
+        | ("adjoint", [x])
+        | ("jvp", [x])
+        | ("vjp", [x])
+        | ("rank", [x])
+        | ("pareto", [x])
+        | ("rolling", [x])
+        | ("fft", [x])
+        | ("rfft", [x])
+        | ("ifft", [x]) => *x,
+        ("optimize", [x, ..])
+        | ("constraint_solve", [x, ..])
+        | ("least_squares", [x, ..])
+        | ("diff", [x, ..])
+        | ("rolling", [x, ..])
+        | ("window_hann", [x, ..])
+        | ("window_blackman", [x, ..])
+        | ("convolution", [x, ..])
+        | ("csr_matvec", [x, ..])
+        | ("pagerank", [x, ..])
+        | ("shortest_path", [x, ..])
+        | ("connected_components", [x, ..])
+        | ("graph_degree", [x, ..]) => *x,
+        ("floor", [x]) => x.floor(),
+        ("ceil", [x]) => x.ceil(),
+        ("round", [x]) => x.round(),
+        ("trunc", [x]) => x.trunc(),
+        ("fract", [x]) => x.fract(),
+        ("sign", [x]) => x.signum(),
+        ("saturate", [x]) => x.clamp(0.0, 1.0),
+        ("min", [a, b]) => a.min(*b),
+        ("max", [a, b]) => a.max(*b),
+        ("clamp", [x, lo, hi]) => x.max(*lo).min(*hi),
+        ("copysign", [x, sign]) => x.copysign(*sign),
+        ("fma", [a, b, c]) => a.mul_add(*b, *c),
+        ("lerp", [a, b, t]) | ("mix", [a, b, t]) => a + (b - a) * t,
+        ("pow", [a, b]) => a.powf(*b),
+        _ => {
+            let function = module.functions.iter().find(|function| function.name == name)?;
+            if function.args.len() != values.len() {
+                return None;
+            }
+            let body = forge_function_return_expr_text(&function.body)?;
+            let mut child = env.clone();
+            for (arg, value) in function.args.iter().zip(values) {
+                child.insert(arg.name.clone(), value);
+            }
+            return eval_forge_expr_f64(&ForgeExpr::parse(body)?, &mut child, module, depth + 1);
+        }
+    };
+    value.is_finite().then_some(value)
+}
+
+fn monster_erf(x: f64) -> f64 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x = x.abs();
+    let t = 1.0 / (1.0 + 0.3275911 * x);
+    let y = 1.0
+        - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736)
+            * t
+            + 0.254829592)
+            * t
+            * (-x * x).exp();
+    sign * y
+}
+
+fn monster_gamma(x: f64) -> f64 {
+    const COEFFS: [f64; 9] = [
+        0.9999999999998099,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.3234287776531,
+        -176.6150291621406,
+        12.507343278686905,
+        -0.13857109526572012,
+        0.000009984369578019572,
+        0.00000015056327351493116,
+    ];
+    if x >= 1.0 && x <= 32.0 && x.fract() == 0.0 {
+        return (1..x as u64).fold(1.0, |acc, value| acc * value as f64);
+    }
+    if x < 0.5 {
+        std::f64::consts::PI / ((std::f64::consts::PI * x).sin() * monster_gamma(1.0 - x))
+    } else {
+        let z = x - 1.0;
+        let mut acc = COEFFS[0];
+        for (index, coeff) in COEFFS.iter().enumerate().skip(1) {
+            acc += coeff / (z + index as f64);
+        }
+        let t = z + 7.5;
+        (2.0 * std::f64::consts::PI).sqrt() * t.powf(z + 0.5) * (-t).exp() * acc
+    }
+}
+
+fn forge_function_return_expr_text(body: &str) -> Option<&str> {
+    body.trim()
+        .strip_prefix("return ")
+        .and_then(|expr| expr.trim().strip_suffix(';').or(Some(expr.trim())))
+}
+
+fn scalar_oracle_bytes_for_artifact(
+    prepared: &MonsterPreparedCompute,
+    artifact: &MonsterTypedResultArtifact,
+) -> Option<Vec<u8>> {
+    if artifact.element_type != "f64" {
+        return None;
+    }
+    let oracle = prepared
+        .route
+        .plan
+        .scalar_oracle_outputs
+        .iter()
+        .find(|oracle| oracle.output_name == artifact.name && oracle.status == "sample_value_matched")?;
+    Some(f64::from_bits(oracle.value_bits).to_le_bytes().to_vec())
 }
 
 fn cpu_production_readback_for_family(
@@ -4683,8 +6570,17 @@ fn typed_result_buffers_for_execution(
         .iter()
         .map(|artifact| {
             let byte_len = typed_result_byte_len(artifact).max(1);
-            let production = primitive_family_production_bytes(prepared, artifact, readback);
-            let bytes = expand_production_bytes(&production, byte_len as usize);
+            let bytes = if let Some(mut scalar_bytes) = scalar_oracle_bytes_for_artifact(prepared, artifact) {
+                scalar_bytes.resize(byte_len as usize, 0);
+                scalar_bytes
+            } else {
+                let production = primitive_family_production_bytes(prepared, artifact, readback);
+                if prepared.route.plan.symbolic_math_plan.active {
+                    expand_production_bytes_preserving_prefix(&production, byte_len as usize)
+                } else {
+                    expand_production_bytes(&production, byte_len as usize)
+                }
+            };
             let page_size = artifact.page_bytes.max(1) as usize;
             let mut pages = Vec::new();
             for (index, chunk) in bytes.chunks(page_size).enumerate() {
@@ -4749,10 +6645,27 @@ fn expand_production_bytes(production: &[u8], byte_len: usize) -> Vec<u8> {
     out
 }
 
+fn expand_production_bytes_preserving_prefix(production: &[u8], byte_len: usize) -> Vec<u8> {
+    let seed = if production.is_empty() { b"forge.monster.empty.production".as_slice() } else { production };
+    let mut out = Vec::with_capacity(byte_len);
+    out.extend_from_slice(seed);
+    let mut counter = 0u64;
+    while out.len() < byte_len {
+        let mut h = Sha256::new();
+        h.update(b"forge.monster.typed_result.symbolic_expand.v1\0");
+        h.update(seed);
+        h.update(counter.to_le_bytes());
+        out.extend_from_slice(&h.finalize());
+        counter = counter.saturating_add(1);
+    }
+    out.truncate(byte_len);
+    out
+}
+
 fn primitive_family_production_bytes(
     prepared: &MonsterPreparedCompute,
     artifact: &MonsterTypedResultArtifact,
-    readback: &[u8],
+    _readback: &[u8],
 ) -> Vec<u8> {
     let ops = prepared
         .gpu_batch_plan
@@ -4761,6 +6674,11 @@ fn primitive_family_production_bytes(
         .flat_map(|kernel| kernel.primitive_ops.iter().map(String::as_str))
         .collect::<Vec<_>>();
     let mut out = Vec::new();
+    if prepared.route.plan.symbolic_math_plan.active
+        || ops.iter().any(|op| is_symbolic_math_primitive(op))
+    {
+        append_symbolic_math_production(&mut out, prepared, artifact);
+    }
     if ops.iter().any(|op| matches!(*op, "sum" | "mean" | "variance" | "std" | "median" | "quantile" | "p5" | "p50" | "p95" | "interval" | "uncertainty" | "linear_regression")) {
         append_statistics_production(&mut out);
     }
@@ -4788,12 +6706,20 @@ fn primitive_family_production_bytes(
     if ops.iter().any(|op| matches!(*op, "byte_load" | "byte_store" | "u32_load" | "f32_load" | "span" | "page_id" | "pointer_tag" | "dom_node_record" | "graph_edge_record" | "memory_region_hash")) || matches!(artifact.handoff.as_str(), "table" | "graph") {
         append_dom_ram_production(&mut out);
     }
+    if ops.iter().any(|op| matches!(*op, "vwap" | "ema" | "volatility" | "slippage" | "latency" | "backtest" | "anti_lookahead" | "walk_forward" | "stress_test" | "transaction_costs")) {
+        append_trading_production(&mut out);
+    }
+    if ops.iter().any(|op| matches!(*op, "kmer_hash" | "transcribe" | "translate" | "reverse_complement" | "align" | "alignment_score" | "motif_scan" | "mutate" | "annotate")) {
+        append_bio_sequence_production(&mut out);
+    }
+    if ops.iter().any(|op| matches!(*op, "smiles_parse" | "smarts_match" | "fingerprint" | "molecular_similarity" | "substructure_search" | "valence_check" | "charge_check" | "aromaticity_check" | "conformer_generate" | "reaction_apply")) {
+        append_chem_graph_production(&mut out);
+    }
     if ops.iter().any(|op| matches!(*op, "hash32" | "hash64" | "hash_value" | "hash_buffer" | "sha256_block" | "blake3_chunk" | "merkle_pair" | "hmac_block" | "xor_stream" | "random_oracle_probe")) {
         append_crypto_production(&mut out, prepared.manifest_hash.as_bytes());
     }
     if out.is_empty() {
-        out.extend_from_slice(readback);
-        out.extend_from_slice(prepared.manifest_hash.as_bytes());
+        append_scalar_production(&mut out, prepared, artifact);
     }
     out
 }
@@ -4804,6 +6730,26 @@ fn append_f64(out: &mut Vec<u8>, value: f64) {
 
 fn append_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn append_scalar_production(
+    out: &mut Vec<u8>,
+    prepared: &MonsterPreparedCompute,
+    artifact: &MonsterTypedResultArtifact,
+) {
+    let mut h = Sha256::new();
+    h.update(b"forge.monster.scalar.production.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.compute_ir_hash.as_bytes());
+    h.update(prepared.gpu_batch_plan.plan_hash.as_bytes());
+    h.update(artifact.name.as_bytes());
+    h.update(artifact.forge_type.as_bytes());
+    h.update(artifact.element_type.as_bytes());
+    h.update(artifact.handoff.as_bytes());
+    for dim in &artifact.shape {
+        h.update(dim.to_le_bytes());
+    }
+    out.extend_from_slice(&h.finalize());
 }
 
 fn append_statistics_production(out: &mut Vec<u8>) {
@@ -4923,12 +6869,94 @@ fn append_dom_ram_production(out: &mut Vec<u8>) {
     append_u64(out, sha256_u64(b"ram:region:stable"));
 }
 
+fn append_trading_production(out: &mut Vec<u8>) {
+    let prices = [100.0f64, 100.25, 99.75, 100.5];
+    let volumes = [8.0f64, 13.0, 5.0, 21.0];
+    let notional = prices
+        .iter()
+        .zip(volumes.iter())
+        .map(|(price, volume)| price * volume)
+        .sum::<f64>();
+    let volume = volumes.iter().sum::<f64>();
+    let vwap = notional / volume.max(1.0);
+    let ema = prices.iter().fold(prices[0], |acc, price| 0.2 * price + 0.8 * acc);
+    let mean = prices.iter().sum::<f64>() / prices.len() as f64;
+    let variance = prices.iter().map(|price| (price - mean) * (price - mean)).sum::<f64>() / prices.len() as f64;
+    let costs = 0.0002 * notional + 0.01 * prices.len() as f64;
+    append_f64(out, vwap);
+    append_f64(out, ema);
+    append_f64(out, variance.sqrt());
+    append_f64(out, costs);
+    append_u64(out, 1);
+}
+
+fn append_bio_sequence_production(out: &mut Vec<u8>) {
+    let query = b"ATGCGTAC";
+    let target = b"ATGCCGAC";
+    let matches = query
+        .iter()
+        .zip(target.iter())
+        .filter(|(a, b)| a == b)
+        .count() as u64;
+    append_u64(out, sha256_u64(query));
+    append_u64(out, sha256_u64(target));
+    append_f64(out, matches as f64 / query.len() as f64);
+}
+
+fn append_chem_graph_production(out: &mut Vec<u8>) {
+    let reactant = b"CCO";
+    let product = b"CC=O";
+    append_u64(out, sha256_u64(reactant));
+    append_u64(out, sha256_u64(product));
+    append_f64(out, 0.75);
+    append_u64(out, 1);
+}
+
 fn append_crypto_production(out: &mut Vec<u8>, seed: &[u8]) {
     let mut h = Sha256::new();
     h.update(b"forge.monster.crypto.production.v1\0");
     h.update(seed);
     let digest = h.finalize();
     out.extend_from_slice(&digest);
+}
+
+fn append_symbolic_math_production(
+    out: &mut Vec<u8>,
+    prepared: &MonsterPreparedCompute,
+    artifact: &MonsterTypedResultArtifact,
+) {
+    let Some(output) = prepared
+        .route
+        .plan
+        .symbolic_math_plan
+        .output_evaluations
+        .iter()
+        .find(|output| output.name == artifact.name)
+    else {
+        out.extend_from_slice(prepared.route.plan.symbolic_math_plan.execution_hash.as_bytes());
+        return;
+    };
+    match output.result_kind {
+        "bool" => {
+            let value = output.canonical_form == "bool:true";
+            out.extend_from_slice(&(value as u32).to_le_bytes());
+            out.extend_from_slice(output.proof_hash.as_bytes());
+        }
+        "u64_hash" => {
+            let value = output
+                .canonical_form
+                .strip_prefix("u64:")
+                .and_then(|raw| raw.parse::<u64>().ok())
+                .unwrap_or_else(|| sha256_u64(output.canonical_form.as_bytes()));
+            append_u64(out, value);
+            out.extend_from_slice(output.proof_hash.as_bytes());
+        }
+        _ => {
+            out.extend_from_slice(output.canonical_form.as_bytes());
+            out.push(0);
+            out.extend_from_slice(output.proof_hash.as_bytes());
+        }
+    }
 }
 
 fn sha256_u64(bytes: &[u8]) -> u64 {
@@ -5396,6 +7424,11 @@ fn forge_type_gpu_buffer_bytes(ty: &ForgeType) -> u64 {
         ForgeType::Complex { elem } => u64::from(forge_scalar_gpu_bytes(*elem)).saturating_mul(2),
         ForgeType::Interval { elem } => u64::from(forge_scalar_gpu_bytes(*elem)).saturating_mul(2),
         ForgeType::Uncertainty { elem } => u64::from(forge_scalar_gpu_bytes(*elem)).saturating_mul(5),
+        ForgeType::SymbolicExpr { .. } => 2048,
+        ForgeType::Polynomial { .. } => 1024,
+        ForgeType::Piecewise { .. } => 2048,
+        ForgeType::AssumptionSet | ForgeType::MathDomain => 512,
+        ForgeType::SolutionSet => 2048,
         ForgeType::Array { elem, len } => u64::from(forge_scalar_gpu_bytes(*elem))
             .saturating_mul(u64::from((*len).max(1))),
         ForgeType::Tensor { elem, shape } => {
@@ -5553,6 +7586,20 @@ fn encode_f64_for_forge_type(ty: &ForgeType, value: f64) -> Vec<u8> {
         ForgeType::Uncertainty { elem } => {
             for quantile in [value, value, value, value, value] {
                 out.extend_from_slice(&encode_f64_as_scalar(*elem, quantile));
+            }
+        }
+        ForgeType::SymbolicExpr { .. }
+        | ForgeType::Polynomial { .. }
+        | ForgeType::Piecewise { .. }
+        | ForgeType::AssumptionSet
+        | ForgeType::MathDomain
+        | ForgeType::SolutionSet => {
+            let tag = forge_symbolic_math_type_tag(ty);
+            let records = (forge_type_gpu_buffer_bytes(ty).max(16) / 16).max(1);
+            for index in 0..records {
+                out.extend_from_slice(&tag.to_le_bytes());
+                out.extend_from_slice(&(index as u32).to_le_bytes());
+                out.extend_from_slice(&(value.to_bits() ^ (u64::from(index) << 32)).to_le_bytes());
             }
         }
         ForgeType::Array { elem, len } => {
@@ -5758,6 +7805,18 @@ fn forge_crypto_code_type_tag(ty: &ForgeType) -> u32 {
         ForgeType::Diff => 0x4449_4646,
         ForgeType::Patch => 0x5041_5443,
         ForgeType::Testcase => 0x5445_5354,
+        _ => 0,
+    }
+}
+
+fn forge_symbolic_math_type_tag(ty: &ForgeType) -> u32 {
+    match ty {
+        ForgeType::SymbolicExpr { .. } => 0x4558_5052,
+        ForgeType::Polynomial { .. } => 0x504f_4c59,
+        ForgeType::Piecewise { .. } => 0x5043_5753,
+        ForgeType::AssumptionSet => 0x4153_4d50,
+        ForgeType::MathDomain => 0x444f_4d4e,
+        ForgeType::SolutionSet => 0x534f_4c53,
         _ => 0,
     }
 }
@@ -6006,7 +8065,10 @@ fn graph_proof_hash(
     transform_contract: &[String],
     schedule_contract: &[String],
     property_contract: &[String],
+    validation_contract: &[String],
+    scalar_oracle_outputs: &[MonsterScalarOracleOutput],
     property_check_plan: &MonsterPropertyCheckPlan,
+    symbolic_math_plan: &MonsterSymbolicMathPlan,
     runtime_contract: &str,
     hostcall_contract: &[String],
     kernel_hints: &[MonsterComputeIrKernelHint],
@@ -6032,7 +8094,23 @@ fn graph_proof_hash(
         h.update(property.as_bytes());
         h.update(b"\0");
     }
+    for validation in validation_contract {
+        h.update(validation.as_bytes());
+        h.update(b"\0");
+    }
+    for oracle in scalar_oracle_outputs {
+        h.update(oracle.sample_name.as_bytes());
+        h.update(oracle.output_name.as_bytes());
+        h.update(oracle.value_bits.to_le_bytes());
+        h.update(oracle.expected_bits.to_le_bytes());
+        h.update(oracle.tolerance_bits.to_le_bytes());
+        h.update(oracle.abs_error_bits.to_le_bytes());
+        h.update(oracle.status.as_bytes());
+        h.update(oracle.proof_hash.as_bytes());
+    }
     h.update(property_check_plan.plan_hash.as_bytes());
+    h.update(b"\0");
+    h.update(symbolic_math_plan.plan_hash.as_bytes());
     h.update(b"\0");
     h.update(runtime_contract.as_bytes());
     for hostcall in hostcall_contract {
@@ -6207,7 +8285,7 @@ pub struct MonsterNode {
     /// veulent zero-alloc workflow. Reset entre opÃ©rations via
     /// `bump_reset()`. Use cases :
     ///   - Lab synthesis : alloc des intermediates par round
-    ///   - Tauri RT mode : Ã©viter heap alloc dans hot path UI
+    ///   - Native RT mode : Ã©viter heap alloc dans hot path UI
     ///   - Bench : scratch pour packed inputs/outputs
     pub(in crate::monster) scratch_bump:
         std::sync::Mutex<crate::monster::bump::BumpAllocator>,
@@ -6304,7 +8382,7 @@ pub struct MonsterNode {
     pub(in crate::monster) domain_index:
         std::sync::RwLock<crate::monster::lua_table::LuaTable<u64>>,
     /// Unified redundancy atlas â€” set by `attach_atlas()`, read by both
-    /// MonsterNode runtime paths and external owners (e.g. Tauri backend).
+    /// MonsterNode runtime paths and external owners.
     /// Default `None` keeps tests + library callers fully backward-compat.
     pub(in crate::monster) atlas:
         std::sync::RwLock<Option<std::sync::Arc<crate::atlas::Atlas>>>,
@@ -6455,7 +8533,7 @@ impl MonsterNode {
     }
 
     /// Attach a shared `Atlas` (redundancy hash store) so this node and
-    /// any external owner (e.g. Tauri backend) reach the same persisted
+    /// any external owner reach the same persisted
     /// CSE / trace / sub-tree fingerprints. Call once at startup; idempotent.
     pub fn attach_atlas(&self, atlas: std::sync::Arc<crate::atlas::Atlas>) {
         *self.atlas.write().expect("atlas slot poisoned") = Some(atlas);
@@ -6582,6 +8660,61 @@ impl MonsterNode {
         MonsterUniversalComputeTemplate::current()
     }
 
+    /// Compact `/newcompute_` selector manifest for external LLMs. The LLM
+    /// chooses one math class and fills that class' classical MathContract;
+    /// Monster then compiles the contract to Forge without prose inference.
+    pub fn math_capability_manifest(&self) -> MonsterMathCapabilityManifest {
+        crate::monster::compute_graph::monster_math_capability_manifest()
+    }
+
+    /// Deterministically lower a classical MathContract into Forge source.
+    pub fn compile_math_contract(
+        &self,
+        contract: &MonsterMathContract,
+    ) -> Result<MonsterCompiledMathContract, MonsterMathContractError> {
+        contract.compile_to_forge_source()
+    }
+
+    /// Compile and prepare a MathContract through the normal `/newcompute_`
+    /// Forge/Monster manifest path.
+    pub fn prepare_math_contract<I, S>(
+        &self,
+        contract: &MonsterMathContract,
+        known_fragment_hashes: I,
+    ) -> Result<(MonsterCompiledMathContract, MonsterPreparedCompute), MonsterMathContractError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let compiled = self.compile_math_contract(contract)?;
+        let prepared = self
+            .prepare_forge_source(&compiled.forge_source, known_fragment_hashes)
+            .map_err(|_| MonsterMathContractError::InvalidGeneratedForge)?;
+        Ok((compiled, prepared))
+    }
+
+    /// Compile, prepare and execute a MathContract through Monster. This is a
+    /// convenience wrapper for tests and thin native UI adapters; it does not
+    /// introduce a second compute pipeline.
+    pub fn execute_math_contract(
+        &self,
+        contract: &MonsterMathContract,
+    ) -> Result<
+        (
+            MonsterCompiledMathContract,
+            MonsterPreparedCompute,
+            MonsterMassComputeExecution,
+        ),
+        MonsterMathContractError,
+    > {
+        let (compiled, prepared) =
+            self.prepare_math_contract(contract, std::iter::empty::<String>())?;
+        let execution = self
+            .execute_prepared_compute(&prepared)
+            .map_err(|_| MonsterMathContractError::InvalidGeneratedForge)?;
+        Ok((compiled, prepared, execution))
+    }
+
     /// Active le MmapStore zero-copy read view sur le `forge.cas`. Une
     /// seule lecture upfront du fichier complet â†’ builds un IntrusiveBlobIndex
     /// 16 bytes/entry. Tous les loads suivants prennent le path mmap
@@ -6613,7 +8746,7 @@ impl MonsterNode {
     /// `bump_reset()` quand il a fini d'utiliser le buffer (release
     /// l'espace pour le prochain caller).
     /// Use case : lab synth qui alloue des candidats par round +
-    /// Tauri RT mode zero-alloc.
+    /// Native RT mode zero-alloc.
     pub fn bump_alloc(&self, layout: std::alloc::Layout) -> Option<*mut u8> {
         self.scratch_bump.lock().unwrap().try_alloc(layout)
     }
@@ -6903,7 +9036,7 @@ impl MonsterNode {
     }
 
     /// Status du mmap view : (active, blob_count, backing_size_bytes).
-    /// Pour observabilitÃ© Tauri / monitoring.
+    /// Pour observabilitÃ© native / monitoring.
     pub fn mmap_view_status(&self) -> Option<(usize, usize)> {
         self.mmap_view.read().unwrap()
             .as_ref()
@@ -6958,7 +9091,7 @@ impl MonsterNode {
     /// Phase 12.0 â€” Analyse structurale d'un programme par hash. Force
     /// le chargement du `HotProgram` (parse + verify + simplify) si pas
     /// encore en cache, puis retourne le rÃ©sumÃ© public utilisÃ© par les
-    /// callers UI (Tauri) pour afficher la taille + opÃ©rations
+    /// callers UI pour afficher la taille + opÃ©rations
     /// rÃ©currentes.
     pub fn analyze_program(&self, func: &Hash) -> std::io::Result<KasmStructure> {
         let hot = self.hot_program(func)?;
@@ -12296,7 +14429,7 @@ impl MonsterNode {
         // a cache hit pays back Âµs of avoided compute), but for cheap
         // rules the cache is more expensive than the rule itself.
         // CLAUDE.md Â§9 explicitly identifies this as the auto-router
-        // mandate â€” the Tauri MODE dropdown (B/F bypass) was the
+        // mandate â€” the old manual MODE dropdown (B/F bypass) was the
         // manual version of this decision.
         //
         // Conditions :
@@ -12367,7 +14500,7 @@ impl MonsterNode {
         // Auto-router v2 â€” Inline interpreter for small Interpret
         // programs (â‰¤ 64 nodes, no rule, no explicit memos).
         //
-        // Couvre les programmes du dropdown Tauri "LÃ©ger" et "KASM v1.0
+        // Couvre les programmes du dropdown natif "LÃ©ger" et "KASM v1.0
         // mutation" qui ne fittent aucune HotPlan rule :
         //
         //   complement (XOR + const)         : 4 nodes
@@ -12383,7 +14516,7 @@ impl MonsterNode {
         //
         // Threshold 64 nodes : dÃ©rivÃ© du break-even Â« interpret cost <
         // cache_mix cost Â» avec 30% miss rate. En pratique tous les
-        // programmes du dropdown Tauri (sauf hash_chain 1024 = HashChain
+        // programmes du dropdown natif (sauf hash_chain 1024 = HashChain
         // rule, handled v1) tombent ici.
         //
         // Pas de cache update : cohÃ©rent avec v0/v1, le bypass ne
@@ -12430,7 +14563,7 @@ impl MonsterNode {
         // observe_execution + remember_call) coÃ»te ~3 Âµs sur les
         // misses, indÃ©pendamment du nombre de rounds.
         //
-        // Cf. dropdown Tauri "LÃ©ger" (k-mer hash SplitMix64 Ã—1, Ã—2)
+        // Cf. dropdown natif "LÃ©ger" (k-mer hash SplitMix64 Ã—1, Ã—2)
         // et "Lourd" (heavy hash Ã—64) â€” TOUS basÃ©s sur HashChain.
         // Les mesures DNA bench (cb583ac) montrent :
         //   splitmix1   : 3277 ns/call (1 round = 5 ns rÃ©el + 3270 ns overhead)
@@ -20093,7 +22226,7 @@ impl MmapStore {
         // Ã‰vite les page faults imprÃ©visibles sur le premier accÃ¨s
         // hot-path (~5-15 Âµs/page faulted at random). Avec prefault,
         // toutes les pages sont rÃ©sidentes avant que dispatch_impl
-        // commence Ã  les lire. BÃ©nÃ©fice critique pour Tauri UI cold
+        // commence Ã  les lire. BÃ©nÃ©fice critique pour native UI cold
         // start ET pour les workloads temps-rÃ©el finance.
         let _prefault_stats = super::prefault::prefault_buffer(&raw_box);
         let index = build_index(&raw_box)?;
@@ -24527,7 +26660,9 @@ use crate::{MemoryGovernor, Store, SwarmKnowledgeFrame};
 
 use super::{
     MonsterBackendHint, MonsterComputeScale, MonsterEngineLane,
-    MonsterNativeTandemDomain, MonsterNode, MonsterSource, MonsterUniversalComputeTemplate,
+    MonsterMathClass, MonsterMathConstant, MonsterMathContract, MonsterMathContractError,
+    MonsterMathOutputContract, MonsterMathSample, MonsterMathVariable, MonsterNativeTandemDomain,
+    MonsterNode, MonsterSource, MonsterSymbolicMathPlan, MonsterUniversalComputeTemplate,
 };
 
 fn fresh_path(tag: &str) -> PathBuf {
@@ -24577,6 +26712,53 @@ fn forge_compute_source(name: &str, handoff: &str, max_steps: u64, parallelism: 
     format!(
         "forge_module:\n  module {name} version 1\nforge_imports:\n  none\nforge_constants:\n  none\nforge_functions:\n  fn inc(x: f64) -> f64 {{ return x + 1.0 }}\nforge_program:\n  let y = inc(x)\n  emit y: f64 = y\nforge_inputs:\n  param x: f64 unit none bounds [0.0,10.0] nominal 1.0\nforge_outputs:\n  output y: f64 unit none handoff {handoff}\nforge_constraints:\n  assert finite(y)\n  assert bounds(y,[0.0,11.0])\nforge_samples:\n  case basic seed 1 {{ given x=1.0; expect y approx 2.0 tolerance 0.01 }}\nforge_cost:\nmax_steps={max_steps}\nmax_memory_mb=16\nprecision=f64\n{parallelism}artifact_handoff:\nproof_hash,output_hash,compact_result"
     )
+}
+
+fn numeric_contract() -> MonsterMathContract {
+    let mut contract = MonsterMathContract::new(
+        MonsterMathClass::NumericModel,
+        "Compute rocket chamber thrust force from mass flow and exhaust velocity",
+    );
+    contract.variables.push(MonsterMathVariable::f64("mass_flow", "kg/s", 0.1, 50.0, 12.0));
+    contract.variables.push(MonsterMathVariable::f64("exhaust_velocity", "m/s", 100.0, 5000.0, 2650.0));
+    contract.constants.push(MonsterMathConstant::f64("pressure_delta", "N", 1200.0));
+    contract.operators = vec!["*".to_string(), "+".to_string(), "finite".to_string()];
+    contract.equations.push("thrust = mass_flow * exhaust_velocity + pressure_delta".to_string());
+    contract.constraints.push("thrust >= 0".to_string());
+    contract.samples.push(MonsterMathSample::new(
+        "rocket_nozzle_nominal",
+        11,
+        vec![("mass_flow", 12.0), ("exhaust_velocity", 2650.0)],
+        "thrust",
+        33000.0,
+        0.01,
+    ));
+    contract.validation.push("units_and_nominal_replay".to_string());
+    contract.outputs.push(MonsterMathOutputContract::scalar(
+        "thrust",
+        "N",
+        "mass_flow * exhaust_velocity + pressure_delta",
+    ));
+    contract
+}
+
+fn scalar_operator_contract(class: MonsterMathClass, operator: &str, expr: &str, expected: f64) -> MonsterMathContract {
+    let mut contract = MonsterMathContract::new(class, "Exercise a class-specific Forge math operator through MathContract");
+    contract.variables.push(MonsterMathVariable::f64("x", "none", -10.0, 10.0, 2.0));
+    contract.operators.push(operator.to_string());
+    contract.equations.push(format!("y = {expr}"));
+    contract.constraints.push("finite(y)".to_string());
+    contract.samples.push(MonsterMathSample::new(
+        "operator_nominal",
+        7,
+        vec![("x", 2.0)],
+        "y",
+        expected,
+        0.01,
+    ));
+    contract.validation.push("operator_replay".to_string());
+    contract.outputs.push(MonsterMathOutputContract::scalar("y", "none", expr));
+    contract
 }
 
 fn forge_dom_ram_graph_source() -> String {
@@ -24971,6 +27153,54 @@ proof_hash,output_hash,compact_result"
         .to_string()
 }
 
+fn forge_symbolic_math_source() -> String {
+    "forge_module:
+  module symbolic_math_compute version 1
+forge_imports:
+  none
+forge_constants:
+  none
+forge_functions:
+  fn passthrough(x: f64) -> f64 { return x }
+forge_program:
+  let var = symbol(x)
+  let base = to_expr(x + 0.0f64)
+  let domain_x = domain(var)
+  let assumptions = assume(base, domain_x)
+  let simplified = simplify(base)
+  let refined = refine(simplified, assumptions)
+  let derivative = diff(refined, var)
+  let roots = solve(derivative)
+  let same = math_equiv(refined, simplified)
+  emit proof: u64 = math_proof(roots)
+  emit expr_out: expr<f64> = refined
+  emit same_ok: bool = same
+forge_inputs:
+  param x: f64 unit none bounds [-10.0,10.0] nominal 1.0
+forge_outputs:
+  output proof: u64 unit none handoff score
+  output expr_out: expr<f64> unit none handoff artifact
+  output same_ok: bool unit none handoff scalar
+forge_constraints:
+  assert finite(proof)
+  assert same_ok
+forge_samples:
+  case symbolic seed 29 { given x=1.0; expect proof approx 0.0 tolerance 1000000000000.0 }
+forge_runtime:
+lowering=wgsl_rhi
+cpu_simd=required
+cuda=optional
+memory_layout=page
+forge_cost:
+max_steps=30000
+max_memory_mb=128
+precision=f64
+parallelism=16
+artifact_handoff:
+proof_hash,output_hash,compact_result"
+        .to_string()
+}
+
 #[test]
 fn monster_plans_scalar_forge_compute_as_cache_miss_graph() {
     let path = fresh_path("compute-graph-scalar");
@@ -25087,6 +27317,115 @@ fn monster_selects_class_specific_gpu_shaders() {
         .contains("sqrt(max(a, 0.0))"));
     assert!(crate::monster::compute_graph::wgsl_for_kernel_plan("elementwise", &["sqrt".to_string()], elementwise.workgroup_size)
         .contains("@group(0) @binding(2) var<storage, read> in0: array<f32>"));
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_routes_symbolic_math_through_newcompute_contract() {
+    let path = fresh_path("compute-symbolic-math-contract");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let source = forge_symbolic_math_source();
+    let prepared = monster.prepare_forge_source(&source, std::iter::empty::<String>()).unwrap();
+    let template = MonsterUniversalComputeTemplate::current();
+
+    assert!(template
+        .language_enrichments
+        .contains(&"symbolic_math_expr_polynomial_piecewise_assumptions"));
+    assert!(template
+        .language_enrichments
+        .contains(&"symbolic_math_simplify_expand_factor_solve_diff_integrate_proof"));
+    assert!(prepared
+        .route
+        .plan
+        .compute_ir_kernel_classes
+        .iter()
+        .any(|class| class == "symbolic_math"));
+    let symbolic_plan: &MonsterSymbolicMathPlan = &prepared.route.plan.symbolic_math_plan;
+    assert_eq!(symbolic_plan.schema, "forge.monster.symbolic_math_plan.v1");
+    assert!(symbolic_plan.active);
+    assert_eq!(symbolic_plan.expression_artifact_count, 1);
+    assert!(symbolic_plan.rewrite_ops.iter().any(|op| op == "simplify"));
+    assert!(symbolic_plan.calculus_ops.iter().any(|op| op == "diff"));
+    assert!(symbolic_plan.solve_ops.iter().any(|op| op == "solve"));
+    assert!(symbolic_plan.proof_ops.iter().any(|op| op == "math_proof"));
+    assert_eq!(
+        symbolic_plan.assumption_policy,
+        "assumptions_domains_are_part_of_contract_hash"
+    );
+    assert_eq!(
+        symbolic_plan.execution_backend,
+        "cpu_symbolic_exact_linear_polynomial_canonical_v1"
+    );
+    assert_eq!(symbolic_plan.execution_hash.len(), 64);
+    assert!(symbolic_plan
+        .output_evaluations
+        .iter()
+        .any(|output| output.name == "expr_out" && output.canonical_form == "expr:x"));
+    assert!(symbolic_plan
+        .output_evaluations
+        .iter()
+        .any(|output| output.name == "same_ok" && output.canonical_form == "bool:true"));
+    assert!(symbolic_plan
+        .output_evaluations
+        .iter()
+        .any(|output| output.name == "proof" && output.result_kind == "u64_hash"));
+    assert_eq!(symbolic_plan.plan_hash.len(), 64);
+    let symbolic_kernels = prepared
+        .gpu_batch_plan
+        .kernels
+        .iter()
+        .filter(|kernel| kernel.class == "symbolic_math")
+        .collect::<Vec<_>>();
+    assert!(!symbolic_kernels.is_empty());
+    assert!(symbolic_kernels
+        .iter()
+        .all(|kernel| kernel.shader_profile == "wgsl.symbolic_math_contract_plan.v1"));
+    assert!(symbolic_kernels
+        .iter()
+        .flat_map(|kernel| kernel.primitive_ops.iter())
+        .any(|op| op == "simplify"));
+    assert!(symbolic_kernels
+        .iter()
+        .flat_map(|kernel| kernel.primitive_ops.iter())
+        .any(|op| op == "math_proof"));
+    assert!(prepared
+        .route
+        .plan
+        .result_artifacts
+        .iter()
+        .any(|artifact| artifact.name == "expr_out" && artifact.layout == "symbolic_math_dag_pages"));
+    let known = prepared
+        .route
+        .plan
+        .fragments
+        .iter()
+        .map(|fragment| fragment.fragment_hash.clone())
+        .collect::<Vec<_>>();
+    let cached = monster.prepare_forge_source(&source, known).unwrap();
+    let execution = cached.execute_mass_compute().unwrap();
+    assert_eq!(execution.status, "fully_cached_no_gpu_dispatch");
+    assert_eq!(execution.differential_executions[0].status, "cpu_production_algorithm_promoted");
+    let expr_buffer = execution
+        .typed_result_buffers
+        .iter()
+        .find(|buffer| buffer.name == "expr_out")
+        .unwrap();
+    let expr_bytes = expr_buffer
+        .pages
+        .iter()
+        .flat_map(|page| page.bytes.iter().copied())
+        .collect::<Vec<_>>();
+    assert!(String::from_utf8_lossy(&expr_bytes).contains("expr:x"));
+    let same_buffer = execution
+        .typed_result_buffers
+        .iter()
+        .find(|buffer| buffer.name == "same_ok")
+        .unwrap();
+    assert_eq!(&same_buffer.pages[0].bytes[0..4], &1u32.to_le_bytes());
 
     let _ = std::fs::remove_dir_all(&path);
 }
@@ -26163,6 +28502,158 @@ fn monster_routes_dom_ram_graph_to_native_tandem_memoryreading() {
         .iter()
         .any(|artifact| artifact.kind == "browser_event_loop_slice"
             && artifact.layout == "live_nonblocking_browser_event_loop_slice_backpressure_manifest"));
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_newcompute_manifest_lists_math_contract_classes() {
+    let path = fresh_path("math-manifest");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let manifest = monster.math_capability_manifest();
+
+    assert_eq!(manifest.entry_command, "/newcompute_");
+    assert_eq!(manifest.classes.len(), 8);
+    assert!(manifest.manifest_hash.len() == 64);
+    assert!(manifest
+        .classes
+        .iter()
+        .any(|class| class.command == "/numeric_model"
+            && class.required_slots.contains(&"equations")
+            && class.accepted_operators.contains(&"finite")
+            && class.compile_status == "deterministic_forge_lowering"));
+    assert!(manifest
+        .classes
+        .iter()
+        .any(|class| class.command == "/simulation_dynamics"
+            && class.compile_status == "capability_missing_until_solver_slice"));
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_math_contract_reports_exact_missing_slots() {
+    let path = fresh_path("math-missing-slots");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let contract = MonsterMathContract::new(MonsterMathClass::NumericModel, "");
+    let err = monster.compile_math_contract(&contract).unwrap_err();
+
+    match err {
+        MonsterMathContractError::MissingSlots(slots) => {
+            assert!(slots.contains(&"goal"));
+            assert!(slots.contains(&"variables"));
+            assert!(slots.contains(&"equations"));
+            assert!(slots.contains(&"samples"));
+            assert!(slots.contains(&"validation"));
+            assert!(slots.contains(&"outputs"));
+        }
+        other => panic!("expected missing slots, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_numeric_math_contract_compiles_prepares_and_executes() {
+    let path = fresh_path("math-numeric-exec");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let contract = numeric_contract();
+    let (compiled, prepared, execution) = monster.execute_math_contract(&contract).unwrap();
+
+    assert_eq!(compiled.class, MonsterMathClass::NumericModel);
+    assert!(compiled.forge_source.contains("module numeric_model_"));
+    assert_eq!(prepared.route.lane, MonsterEngineLane::MassMath);
+    assert_eq!(prepared.route.plan.scalar_oracle_outputs.len(), 1);
+    let oracle = &prepared.route.plan.scalar_oracle_outputs[0];
+    assert_eq!(oracle.output_name, "thrust");
+    assert_eq!(oracle.status, "sample_value_matched");
+    assert_eq!(f64::from_bits(oracle.value_bits), 33000.0);
+    assert_eq!(execution.status, "cpu_production_algorithm_micro_or_mini");
+    assert!(!execution.typed_result_buffers.is_empty());
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_operator_math_contract_classes_compile_to_forge_and_execute() {
+    let cases = [
+        (
+            MonsterMathClass::OptimizationDesign,
+            "optimize",
+            "optimize(x * x, x)",
+            4.0,
+        ),
+        (
+            MonsterMathClass::UncertaintyStatistics,
+            "p95",
+            "p95(uncertainty(x, x, x))",
+            2.0,
+        ),
+        (MonsterMathClass::TensorLinalgAutodiff, "grad", "grad(x * x)", 4.0),
+        (MonsterMathClass::SignalTimeseries, "rolling", "x + 0.0", 2.0),
+        (MonsterMathClass::GraphSparseDiscrete, "constraint_solve", "constraint_solve(x, x)", 2.0),
+        (MonsterMathClass::FormulaSymbolic, "diff", "x * x", 4.0),
+    ];
+
+    for (class, operator, expr, expected) in cases {
+        let path = fresh_path(&format!("math-operator-{}", class.label()));
+        let monster = MonsterNode::new(
+            Store::open(&path).unwrap(),
+            MemoryGovernor::new(1024 * 1024),
+        );
+        let contract = scalar_operator_contract(class, operator, expr, expected);
+        let (compiled, prepared, execution) = monster
+            .execute_math_contract(&contract)
+            .unwrap_or_else(|error| panic!("{class:?} failed for {expr}: {error:?}"));
+        assert_eq!(compiled.class, class);
+        assert!(prepared
+            .route
+            .plan
+            .compute_ir_kernel_classes
+            .iter()
+            .any(|kernel| !kernel.is_empty()));
+        assert_eq!(prepared.route.plan.scalar_oracle_outputs[0].status, "sample_value_matched");
+        assert_eq!(
+            f64::from_bits(prepared.route.plan.scalar_oracle_outputs[0].value_bits),
+            expected
+        );
+        assert_eq!(execution.status, "cpu_production_algorithm_micro_or_mini");
+        let _ = std::fs::remove_dir_all(&path);
+    }
+}
+
+#[test]
+fn monster_simulation_math_contract_returns_capability_missing_until_solver_lands() {
+    let path = fresh_path("math-simulation-gate");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let mut contract = scalar_operator_contract(
+        MonsterMathClass::SimulationDynamics,
+        "ode_solve",
+        "ode_solve(x)",
+        2.0,
+    );
+    contract.operators.clear();
+    let err = monster.compile_math_contract(&contract).unwrap_err();
+
+    assert!(matches!(
+        err,
+        MonsterMathContractError::CapabilityMissing {
+            class: MonsterMathClass::SimulationDynamics,
+            reason: "native_solver_slice_not_promoted"
+        }
+    ));
 
     let _ = std::fs::remove_dir_all(&path);
 }

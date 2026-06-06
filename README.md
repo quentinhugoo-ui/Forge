@@ -15,8 +15,7 @@ The product direction is simple: shorten the path between intent, memory, proof,
 - Godel machine: `src/godel.rs`.
 - Native front: `examples/ingen_native_front/**`.
 - Native/shared services: `examples/ingen_native_services/**`.
-- Former Tauri service tree: `examples/forge_tauri_ui/src-tauri/**`, kept only while protected backend services are extracted.
-- Direct agent CLI: `examples/forge_tauri_ui/src-tauri/src/bin/forge_agent.rs`.
+- Direct agent/service surface: native Rust crates only.
 - Main UI sections: Forge shell, Alpha, WebExplorer peripheral, Banger/3D, trading, and real-estate/real-estate-main.
 - Runtime integrations: Google OAuth, provider terminals, OANDA trading, native WebExplorer, Bloomberg live, Banger GPU lifecycle, real estate harvester.
 
@@ -47,8 +46,7 @@ cargo test brain --lib
 cargo check --manifest-path examples\ingen_native_front\Cargo.toml --tests
 cargo test --manifest-path examples\ingen_native_front\Cargo.toml --lib
 cargo run --manifest-path examples\ingen_native_front\Cargo.toml -- --cutover-audit
-cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml
-cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge_agent
+cargo check --manifest-path examples\ingen_native_services\Cargo.toml
 ```
 
 If MSVC is needed on Windows:

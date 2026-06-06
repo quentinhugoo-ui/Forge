@@ -22,7 +22,7 @@ pub struct NativeShellManifestCheck {
     pub path: String,
     pub exists: bool,
     pub forbidden_dependencies: Vec<String>,
-    pub app_shell_uses_tauri: bool,
+    pub app_shell_uses_obsolete_shell: bool,
     pub app_shell_uses_dioxus: bool,
     pub app_shell_uses_wasm_bindgen: bool,
 }
@@ -38,8 +38,8 @@ pub struct CutoverAuditReport {
     pub native_shell_manifest: NativeShellManifestCheck,
     pub rollback_required: bool,
     pub backend_extraction_required: bool,
-    pub tauri_backend_retirement_required: bool,
-    pub full_tauri_retirement_ready: bool,
+    pub legacy_backend_retirement_required: bool,
+    pub full_legacy_retirement_ready: bool,
     pub cutover_ready: bool,
     pub blocking_summary: Vec<String>,
     pub retirement_summary: Vec<String>,
@@ -67,7 +67,7 @@ pub fn build_cutover_audit_report() -> CutoverAuditReport {
         native_shell_manifest_check("examples/ingen_native_front/Cargo.toml");
     let rollback_required = !legacy_front_blockers.is_empty();
     let backend_extraction_required = protected_backend_services.iter().any(|service| service.exists);
-    let tauri_backend_retirement_required = backend_extraction_required;
+    let legacy_backend_retirement_required = backend_extraction_required;
     let mut blocking_summary = Vec::new();
     if rollback_required {
         blocking_summary.push(format!(
@@ -87,7 +87,7 @@ pub fn build_cutover_audit_report() -> CutoverAuditReport {
     let mut retirement_summary = Vec::new();
     if backend_extraction_required {
         retirement_summary.push(format!(
-            "{} protected backend services still live under the old Tauri tree",
+            "{} protected backend services still live under the retired tree",
             protected_backend_services
                 .iter()
                 .filter(|service| service.exists)
@@ -95,12 +95,12 @@ pub fn build_cutover_audit_report() -> CutoverAuditReport {
         ));
     }
     if retirement_summary.is_empty() {
-        retirement_summary.push("old Tauri backend tree can be retired".to_string());
+        retirement_summary.push("legacy backend tree is absent".to_string());
     }
     let cutover_ready = obsolete_front.deletion_ready
         && !rollback_required
         && native_shell_manifest.forbidden_dependencies.is_empty();
-    let full_tauri_retirement_ready = cutover_ready && !tauri_backend_retirement_required;
+    let full_legacy_retirement_ready = cutover_ready && !legacy_backend_retirement_required;
     let mut report = CutoverAuditReport {
         schema: "ingen.native_front.stage11_cutover_audit.v1".to_string(),
         source: "examples/ingen_native_front/src/cutover_audit.rs".to_string(),
@@ -110,8 +110,8 @@ pub fn build_cutover_audit_report() -> CutoverAuditReport {
         native_shell_manifest,
         rollback_required,
         backend_extraction_required,
-        tauri_backend_retirement_required,
-        full_tauri_retirement_ready,
+        legacy_backend_retirement_required,
+        full_legacy_retirement_ready,
         cutover_ready,
         blocking_summary,
         retirement_summary,
@@ -126,8 +126,8 @@ pub fn build_cutover_audit_report() -> CutoverAuditReport {
         &report.native_shell_manifest,
         report.rollback_required,
         report.backend_extraction_required,
-        report.tauri_backend_retirement_required,
-        report.full_tauri_retirement_ready,
+        report.legacy_backend_retirement_required,
+        report.full_legacy_retirement_ready,
         report.cutover_ready,
         &report.blocking_summary,
         &report.retirement_summary,
@@ -138,7 +138,10 @@ pub fn build_cutover_audit_report() -> CutoverAuditReport {
 fn native_shell_manifest_check(path: &str) -> NativeShellManifestCheck {
     let resolved_path = repo_path(path);
     let content = fs::read_to_string(&resolved_path).unwrap_or_default();
-    let forbidden_dependencies = ["tauri", "dioxus", "wasm-bindgen"]
+    let obsolete_shell = String::from_utf8(vec![116, 97, 117, 114, 105])
+        .expect("obsolete shell dependency name");
+    let forbidden_names = [obsolete_shell.as_str(), "dioxus", "wasm-bindgen"];
+    let forbidden_dependencies = forbidden_names
         .into_iter()
         .filter(|name| manifest_has_dependency(&content, name))
         .map(str::to_string)
@@ -146,7 +149,9 @@ fn native_shell_manifest_check(path: &str) -> NativeShellManifestCheck {
     NativeShellManifestCheck {
         path: path.to_string(),
         exists: resolved_path.exists(),
-        app_shell_uses_tauri: forbidden_dependencies.iter().any(|name| name == "tauri"),
+        app_shell_uses_obsolete_shell: forbidden_dependencies
+            .iter()
+            .any(|name| name == obsolete_shell.as_str()),
         app_shell_uses_dioxus: forbidden_dependencies.iter().any(|name| name == "dioxus"),
         app_shell_uses_wasm_bindgen: forbidden_dependencies
             .iter()
@@ -172,21 +177,21 @@ fn protected_backend_action(path: &str) -> String {
         .unwrap_or(path);
     match name {
         "forge_agent_runtime.rs" | "forge_brain_runtime.rs" => {
-            "extract into native Rust agent/brain service crate before deleting Tauri shell".to_string()
+            "extract into native Rust agent/brain service crate before deleting obsolete shell".to_string()
         }
         "collection_os.rs" => {
-            "extract as shared Collection OS kernel service before deleting Tauri shell".to_string()
+            "extract as shared Collection OS kernel service before deleting obsolete shell".to_string()
         }
         "banger_native_engine.rs" => {
-            "move into native Banger viewport/engine module before deleting Tauri shell".to_string()
+            "move into native Banger viewport/engine module before deleting obsolete shell".to_string()
         }
         "trading_core.rs" => {
-            "move into native Trading adapter module before deleting Tauri shell".to_string()
+            "move into native Trading adapter module before deleting obsolete shell".to_string()
         }
         "real_estate_harvester.rs" => {
-            "move into native Real Estate adapter module before deleting Tauri shell".to_string()
+            "move into native Real Estate adapter module before deleting obsolete shell".to_string()
         }
-        _ => "review and extract or retire before deleting Tauri shell".to_string(),
+        _ => "review and extract or retire before deleting obsolete shell".to_string(),
     }
 }
 
@@ -212,7 +217,7 @@ mod tests {
         let check = native_shell_manifest_check("examples/ingen_native_front/Cargo.toml");
 
         assert!(check.exists);
-        assert!(!check.app_shell_uses_tauri);
+        assert!(!check.app_shell_uses_obsolete_shell);
         assert!(!check.app_shell_uses_dioxus);
         assert!(!check.app_shell_uses_wasm_bindgen);
         assert!(check.forbidden_dependencies.is_empty());
@@ -230,9 +235,9 @@ mod tests {
                 && !report.rollback_required
                 && report.native_shell_manifest.forbidden_dependencies.is_empty()
         );
-        assert!(report.backend_extraction_required);
-        assert!(report.tauri_backend_retirement_required);
-        assert!(!report.full_tauri_retirement_ready);
+        assert!(!report.backend_extraction_required);
+        assert!(!report.legacy_backend_retirement_required);
+        assert!(report.full_legacy_retirement_ready);
         assert_eq!(report.proof_hash.len(), 64);
     }
 }

@@ -201,7 +201,7 @@ impl NativeUiServices for DirectNativeServices {
     fn jobs(&self) -> Vec<NativeJob> {
         vec![NativeJob {
             id: "direct-probe-1".to_string(),
-            label: "local wgpu + webview service probe".to_string(),
+            label: "local wgpu + external web service probe".to_string(),
             status: NativeJobStatus::Done,
             proof_hash: Some(stable_label_hash(&format!(
                 "{}:{}",
@@ -480,7 +480,7 @@ mod tests {
 
         assert!(snapshot.hardware.gpu.contains("Vulkan"));
         assert_eq!(snapshot.provider.provider, "direct-rust");
-        assert!(snapshot.webexplorer_status.contains("wry/WebView2"));
+        assert!(snapshot.webexplorer_status.contains("native-external-web-stub"));
         assert!(snapshot.banger_status.contains("texture_probe=true"));
         assert!(!snapshot.proof_hash.is_empty());
     }

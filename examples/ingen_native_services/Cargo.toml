@@ -5,8 +5,6 @@ edition = "2021"
 publish = false
 
 [dependencies]
-forge-ipc = { path = "../forge_tauri_ui/forge-ipc" }
 scan = { path = "../..", features = ["cuda", "wgpu"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
-

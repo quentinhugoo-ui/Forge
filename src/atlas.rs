@@ -6,7 +6,7 @@
 //! `(program × input) → result_hash` triples that allow MonsterNode to
 //! return a Hit on dispatch without recomputing — across sessions.
 //!
-//! Both ForgeBackend (Tauri) and MonsterNode (lib core) hold an `Arc<Atlas>`
+//! Both ForgeBackend and MonsterNode (lib core) hold an `Arc<Atlas>`
 //! through `MonsterNode::attach_atlas` so a single source of truth backs
 //! every "déjà vu ?" question.
 //!

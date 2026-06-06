@@ -45,11 +45,11 @@ pub use state::{
 };
 pub use visual_parity::{forge_first_viewport_parity, ForgeFirstViewportParity};
 pub use webexplorer::{
-    webexplorer_fixture_html, webexplorer_initialization_script, webexplorer_isolation_proof,
+    webexplorer_fixture_markup, webexplorer_initialization_script, webexplorer_isolation_proof,
     WebExplorerBounds, WebExplorerIsolationProof, WebExplorerNavigationDecision,
     WebExplorerPolicy,
 };
 pub use webatlas::{
-    atlas_ui_projection, capture_fixture_webatlas, capture_webatlas_from_html, AtlasBounds,
+    atlas_ui_projection, capture_fixture_webatlas, capture_webatlas_from_markup, AtlasBounds,
     AtlasCoverageReport, AtlasManifest, AtlasNode, AtlasResource, AtlasUiProjection,
 };

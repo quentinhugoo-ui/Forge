@@ -20,7 +20,7 @@
 //!
 //! - Zero external deps beyond `sha2` (already a Forge dependency) — the
 //!   ledger key is the canonical persisted hash, not a RAM-only fingerprint.
-//! - The SDF evaluator mirrors `scenes.ts` opcode-for-opcode so the CPU
+//! - The SDF evaluator mirrors the native scene opcodes so the CPU
 //!   physics and the GPU raymarcher agree on the same geometry.
 //! - Multi-level dedup : the planner hashes whole-scene AND per-sub-part,
 //!   so mutating one component re-runs only the act codes that touch it.
@@ -41,12 +41,12 @@ pub mod thermal;
 pub mod voxel;
 
 // ---------------------------------------------------------------------------
-// SDF op model — mirrors examples/forge_tauri_ui/ui/src/sections/banger/scenes.ts
+// SDF op model shared by Banger native scene execution.
 // ---------------------------------------------------------------------------
 
 pub type Vec3 = [f64; 3];
 
-/// One SDF operation. Field semantics match scenes.ts::SdfOp exactly so a
+/// One SDF operation. Field semantics match the native scene op model so a
 /// scene authored on either side round-trips losslessly.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SdfOp {
@@ -62,7 +62,7 @@ pub enum SdfOp {
 }
 
 impl SdfOp {
-    /// Opcode integer, identical to scenes.ts OP_* constants.
+    /// Opcode integer, identical to native OP_* constants.
     pub fn opcode(&self) -> u32 {
         match self {
             SdfOp::Sphere { .. } => 0,
@@ -112,7 +112,7 @@ impl SdfOp {
     }
 }
 
-// ---- SDF primitives (mirror the WGSL in ingen-render.ts) ------------------
+// ---- SDF primitives (mirror the native WGSL renderer) ---------------------
 
 #[inline]
 fn sub(a: Vec3, b: Vec3) -> Vec3 { [a[0]-b[0], a[1]-b[1], a[2]-b[2]] }

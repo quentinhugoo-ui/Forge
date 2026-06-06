@@ -10,11 +10,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not $DoctrineText -or $DoctrineText.Trim().Length -eq 0) {
-    $DoctrineText = "Forge doctrine: when a task involves large files, repeated or expensive computation, scientific/numerical/data/code/document-heavy analysis, custom metrics/programs, or verifiable hash/proof results, use the Forge MCP before reading raw CSV/source/log files or calculating inside the LLM. Prefer capabilities -> run plan_only -> create/run -> logs/read; keep raw data on disk and exchange compact hashes, previews, artifacts and proofs."
+    $DoctrineText = "Forge doctrine: when a task involves large files, repeated or expensive computation, scientific/numerical/data/code/document-heavy analysis, custom metrics/programs, or verifiable hash/proof results, use the Forge direct agent CLI (forge_agent, BrainCommand) before reading raw CSV/source/log files or calculating inside the LLM. Prefer about/discovery -> plan -> safe/approve -> projection/replay; keep raw data on disk and exchange compact hashes, previews, artifacts and proofs."
 }
 
-$StartMarker = "<!-- FORGE_MCP_DOCTRINE_START -->"
-$EndMarker = "<!-- FORGE_MCP_DOCTRINE_END -->"
+$StartMarker = "<!-- FORGE_DOCTRINE_START -->"
+$EndMarker = "<!-- FORGE_DOCTRINE_END -->"
 
 function Add-UniqueTarget([System.Collections.Generic.List[object]]$Targets, [string]$Agent, [string]$PathText, [bool]$CreateIfMissing) {
     if (-not $PathText) { return }
@@ -82,7 +82,6 @@ function Get-ProjectDoctrineTargets([string[]]$Roots) {
             Get-ChildItem -LiteralPath $root -Recurse -Force -File -Filter $name -ErrorAction SilentlyContinue |
                 Where-Object {
                     $_.FullName -notmatch "\\target\\" -and
-                    $_.FullName -notmatch "\\node_modules\\" -and
                     $_.FullName -notmatch "\\\.git\\" -and
                     $_.FullName -notmatch "\\dist\\" -and
                     $_.FullName -notmatch "\\build\\"
@@ -96,6 +95,12 @@ function Get-ProjectDoctrineTargets([string[]]$Roots) {
 }
 
 function Get-PatchedText([string]$CurrentText, [string]$BlockText) {
+    # Strip any legacy MCP-era doctrine block so re-running migrates cleanly.
+    $legacyStart = [regex]::Escape("<!-- FORGE_MCP_DOCTRINE_START -->")
+    $legacyEnd = [regex]::Escape("<!-- FORGE_MCP_DOCTRINE_END -->")
+    $legacyPattern = "(?s)\s*$legacyStart.*?$legacyEnd"
+    $CurrentText = [regex]::Replace($CurrentText, $legacyPattern, "")
+
     $escapedStart = [regex]::Escape($StartMarker)
     $escapedEnd = [regex]::Escape($EndMarker)
     $pattern = "(?s)$escapedStart.*?$escapedEnd"

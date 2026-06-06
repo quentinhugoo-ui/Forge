@@ -126,7 +126,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 (
                     "Promotion blocked".to_string(),
                     format!(
-                        "Native section '{section}' captured the promotion gate, but design parity is still false. The Tauri visual reference remains protected."
+                        "Native section '{section}' captured the promotion gate, but design parity is still false."
                     ),
                 )
             } else if section == "banger" && label.contains("Banger") {

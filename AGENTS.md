@@ -99,18 +99,17 @@ Every code change must reduce architectural drag:
   `MonsterNode::prepare_forge_source`, which returns one manifest containing
   the route, cache-miss fragments, native-ready outputs and proof hash.
 - Native frontend: `examples/ingen_native_front/**`; this is the active product shell for Migration Front.
-- Native/shared services: `examples/ingen_native_services/**`; extracted backend services leave the old Tauri tree here before full retirement.
-- Former Tauri backend services: `examples/forge_tauri_ui/src-tauri/src/**`; keep only protected service code until it is extracted behind direct Rust adapters.
-- Deleted legacy frontend: do not recreate `examples/forge_tauri_ui/ui`, `examples/forge_tauri_ui/front-rs`, `examples/forge_tauri_ui/native-front`, npm manifests, TypeScript config or `node_modules`.
-- Brain runtime pointers and Banger policy: `examples/forge_tauri_ui/src-tauri/src/forge_brain_runtime.rs`
+- Native/shared services: `examples/ingen_native_services/**`; direct Rust adapters live here.
+- Deleted legacy app tree: do not recreate browser-shell source, npm manifests, client-script configs or obsolete front folders.
+- Brain runtime pointers and Banger policy: native Rust service adapters only.
 - Canonical runtime/language/Monster architecture and live objectives: `FORGE_NATIVE_BYTECODE.md`.
-- Direct agent CLI: `examples/forge_tauri_ui/src-tauri/src/bin/forge_agent.rs`
-- Direct agent runtime: `examples/forge_tauri_ui/src-tauri/src/forge_agent_runtime.rs`
-- Collection OS kernel: `examples/forge_tauri_ui/src-tauri/src/collection_os.rs`
+- Direct agent CLI: native Rust direct-command surface.
+- Direct agent runtime: native Rust direct-command surface.
+- Collection OS kernel: shared Rust service surface.
 - InGen Harvester: the general collection execution layer built on Collection OS.
 - Real Estate Harvester: the first vertical sector pack/adapter, not the general collection engine.
 - UI sections: Forge shell, Alpha, WebExplorer, real-estate, trading and Banger are now native Slint/Rust projections in `examples/ingen_native_front`.
-- WebExplorer and any external web content are WRY/WebView2 peripherals only, never the global app shell.
+- WebExplorer and any external web content are contained peripherals only, never the global app shell.
 - CodeAct action layer: the LLM acts by emitting executable programs, not JSON tool-calls. Primary path is `forge_agent` (BrainCommand verbs `recall/plan/create/run/project/replay/commit/explain`). The old MCP `forge.search`/`forge.execute` external server was removed; discovery is `forge_agent about` plus the persisted projection / skill-candidate / verified-program indexes. Details in `FORGE_NATIVE_BYTECODE.md`.
 - CodeAct splits into two families. Family A (compute, real Monster runs through `forge_brain_run_actcode`, `requiresActiveSection:false`): `/newcompute_`, `/selectcompute_`, `/compute_<name>_` work in **all** sections; `/newcompute_` is the access command to Monster's universal compute template, not a Banger-only template; `/selectcompute_` is the universal selector for already-created Monster computes; `/newobject_` is Banger-only SDF. Family B (UI-directive, no compute — renders panels/events) works in **all** sections: `/web_` fires a native LLM web-research event; `FORGE_PLAN_JSON` renders/updates the right-panel plan; `FORGE_QUESTIONNAIRE_JSON` renders a question panel above the chat bar; `FORGE_SESSION_TITLE_JSON` renames the current session in the left panel and above the canvas. Banger keeps special aliases for 3D/SDF: `FORGE_BANGER_PLAN_JSON`, `FORGE_BANGER_QUESTIONNAIRE_JSON`, and especially `FORGE_BANGER_MATERIAL_RESEARCH_JSON`, which is a Banger-only computational-engineering material/component list for the right panel. The compute executor rejects Family-B prefixes by design. Brain keeps only stable pointers, not the templates. Details in `FORGE_NATIVE_BYTECODE.md`.
 - Monster compute library: SQLite under the Forge store at `brain/computes/compute_library.sqlite`; exact fragment/proof indexes are the authority for compute reuse.
@@ -131,16 +130,16 @@ Core files:
 - `src/godel.rs`
 - `src/apply.rs`
 - `src/monster.rs`
-- `examples/forge_tauri_ui/src-tauri/src/forge_brain_runtime.rs`
-- `examples/forge_tauri_ui/src-tauri/src/forge_agent_tools.rs`
-- `examples/forge_tauri_ui/src-tauri/src/bin/forge_agent.rs`
-- `examples/forge_tauri_ui/src-tauri/src/collection_os.rs`
+- `examples/ingen_native_services/src/banger_native_engine.rs`
+- `examples/ingen_native_front/src/services.rs`
+- `examples/ingen_native_front/src/state.rs`
+- `examples/ingen_native_front/src/proof.rs`
 
 ## Native Front Discipline
 
 Migration Front is active and `MIGRATION_FRONT.md` is the source of truth for this work. Do not follow old Roadmap items when they conflict with the native-front cutover.
 
-The global product shell is Rust + Slint. Do not add a new HTML/CSS/TypeScript app shell, Dioxus/WASM POC, npm frontend or Tauri WebView shell. WebExplorer may use WRY/WebView2 only as a contained external-web peripheral.
+The global product shell is Rust + Slint. Do not add a new browser-document app shell, Dioxus/WASM POC, npm frontend or obsolete desktop shell. WebExplorer must remain a contained external-web peripheral.
 
 Use these native coordination files before adding new actors:
 
@@ -160,16 +159,14 @@ cargo test brain --lib
 cargo check --manifest-path examples\ingen_native_front\Cargo.toml --tests
 cargo test --manifest-path examples\ingen_native_front\Cargo.toml --lib
 cargo run --manifest-path examples\ingen_native_front\Cargo.toml -- --cutover-audit
-cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml
-cargo check --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge_agent
-node examples\forge_tauri_ui\scripts\forge-tauri-bus-audit.mjs --strict
+cargo check --manifest-path examples\ingen_native_services\Cargo.toml
 ```
 
 ## Dependency / Toolchain Maintenance
 
 Nothing updates by itself; updates are always a deliberate, tested decision (pin in `Cargo.lock`, bump on purpose, verify, keep a rollback). Minor/patch bumps are safe via `cargo update`; major/breaking bumps (e.g. Dioxus `0.7 -> 0.8`) are manual, read the release notes first.
 
-- Front migration decision set **2026-06-06**: the active front is native Rust + Slint under `examples/ingen_native_front`. The old Tauri/WebView HTML/CSS/TypeScript shell is deleted and must not be reintroduced. Future frontend dependency work is Rust/Slint/wgpu/WRY only unless `MIGRATION_FRONT.md` explicitly changes.
+- Front migration decision set **2026-06-06**: the active front is native Rust + Slint under `examples/ingen_native_front`. The obsolete browser-shell app is deleted and must not be reintroduced. Future frontend dependency work is Rust/Slint/wgpu only unless `MIGRATION_FRONT.md` explicitly changes.
 
 ```powershell
 rustup update                         # update the Rust toolchain itself

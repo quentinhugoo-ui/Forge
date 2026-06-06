@@ -1,4 +1,4 @@
-use crate::webexplorer::webexplorer_fixture_html;
+use crate::webexplorer::webexplorer_fixture_markup;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -89,7 +89,7 @@ pub struct AtlasUiProjection {
 }
 
 pub fn capture_fixture_webatlas() -> AtlasManifest {
-    capture_webatlas_from_html("webexplorer.fixture.stage6", webexplorer_fixture_html())
+    capture_webatlas_from_markup("webexplorer.fixture.stage6", webexplorer_fixture_markup())
 }
 
 pub fn atlas_ui_projection(manifest: &AtlasManifest, selected_index: usize) -> AtlasUiProjection {
@@ -210,9 +210,9 @@ pub fn atlas_ui_projection(manifest: &AtlasManifest, selected_index: usize) -> A
     projection
 }
 
-pub fn capture_webatlas_from_html(source: &str, html: &str) -> AtlasManifest {
-    let raw_hash = sha256_hex(html.as_bytes());
-    let mut nodes = parse_html_nodes(html);
+pub fn capture_webatlas_from_markup(source: &str, markup: &str) -> AtlasManifest {
+    let raw_hash = sha256_hex(markup.as_bytes());
+    let mut nodes = parse_markup_nodes(markup);
     let resources = collect_resources(&nodes);
     attach_resource_refs(&mut nodes, &resources);
     let normalized_hash = hash_json(&(&nodes, &resources));
@@ -247,7 +247,7 @@ fn empty_marker(value: &str) -> &str {
     }
 }
 
-fn parse_html_nodes(html: &str) -> Vec<AtlasNode> {
+fn parse_markup_nodes(markup: &str) -> Vec<AtlasNode> {
     let mut nodes = vec![node(
         "document",
         None,
@@ -258,20 +258,20 @@ fn parse_html_nodes(html: &str) -> Vec<AtlasNode> {
     )];
     let mut stack = vec![0usize];
     let mut cursor = 0usize;
-    let bytes = html.as_bytes();
+    let bytes = markup.as_bytes();
 
-    while cursor < html.len() {
-        let Some(tag_start_rel) = html[cursor..].find('<') else {
-            push_text(&mut nodes, *stack.last().unwrap_or(&0), &html[cursor..]);
+    while cursor < markup.len() {
+        let Some(tag_start_rel) = markup[cursor..].find('<') else {
+            push_text(&mut nodes, *stack.last().unwrap_or(&0), &markup[cursor..]);
             break;
         };
         let tag_start = cursor + tag_start_rel;
-        push_text(&mut nodes, *stack.last().unwrap_or(&0), &html[cursor..tag_start]);
-        let Some(tag_end_rel) = html[tag_start..].find('>') else {
+        push_text(&mut nodes, *stack.last().unwrap_or(&0), &markup[cursor..tag_start]);
+        let Some(tag_end_rel) = markup[tag_start..].find('>') else {
             break;
         };
         let tag_end = tag_start + tag_end_rel;
-        let raw = html[tag_start + 1..tag_end].trim();
+        let raw = markup[tag_start + 1..tag_end].trim();
         cursor = tag_end + 1;
 
         if raw.is_empty() || raw.starts_with('!') || raw.starts_with('?') {
@@ -297,7 +297,7 @@ fn parse_html_nodes(html: &str) -> Vec<AtlasNode> {
         let parent = *stack.last().unwrap_or(&0);
         let depth = stack.len();
         let idx = nodes.len();
-        nodes.push(node(&tag, Some(parent), html_path(&nodes, parent, &tag), attrs, idx, depth));
+        nodes.push(node(&tag, Some(parent), markup_path(&nodes, parent, &tag), attrs, idx, depth));
         nodes[idx].parent = Some(nodes[parent].atlas_ref.clone());
         let child_ref = nodes[idx].atlas_ref.clone();
         nodes[parent].children.push(child_ref);
@@ -348,7 +348,7 @@ fn node(
             height: match tag {
                 "input" | "button" => 32,
                 "h1" => 38,
-                "document" | "html" | "body" | "main" => 220,
+                "document" | "root" | "body" | "main" => 220,
                 _ => 64,
             },
         },
@@ -434,7 +434,7 @@ fn parse_attrs(raw: &str) -> BTreeMap<String, String> {
     attrs
 }
 
-fn html_path(nodes: &[AtlasNode], parent: usize, tag: &str) -> String {
+fn markup_path(nodes: &[AtlasNode], parent: usize, tag: &str) -> String {
     if parent == 0 {
         return format!("/document/{tag}");
     }
@@ -453,7 +453,7 @@ fn role_for(tag: &str, attrs: &BTreeMap<String, String>) -> &'static str {
         "button" => "button",
         "a" => "link",
         "img" => "image",
-        "html" | "body" | "document" => "document",
+        "root" | "body" | "document" => "document",
         _ => "generic",
     }
 }
@@ -657,9 +657,9 @@ mod tests {
     #[test]
     fn atlas_ui_projection_selects_and_hashes_nodes() {
         let manifest = capture_fixture_webatlas();
-        let projection = atlas_ui_projection(&manifest, 12);
+        let projection = atlas_ui_projection(&manifest, 7);
 
-        assert_eq!(projection.selected_index, 12);
+        assert_eq!(projection.selected_index, 7);
         assert!(projection.tree_lines.contains("<input>"));
         assert!(projection.ax_summary.contains("textbox"));
         assert!(projection.action_candidates.contains("button"));

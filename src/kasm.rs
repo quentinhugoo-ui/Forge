@@ -5383,8 +5383,8 @@ mod tests {
         let manifest_paths = [
             repo_file("Cargo.toml"),
             repo_file("Cargo.lock"),
-            repo_file("examples/forge_tauri_ui/src-tauri/Cargo.toml"),
-            repo_file("examples/forge_tauri_ui/src-tauri/Cargo.lock"),
+            repo_file("examples/ingen_native_front/Cargo.toml"),
+            repo_file("examples/ingen_native_services/Cargo.toml"),
         ];
         let banned_deps = ["wasmtime", "wasmer", "llvm-sys", "inkwell", "mlir"];
         for path in &manifest_paths {
@@ -7590,7 +7590,7 @@ impl fmt::Display for OhlcvError {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OhlcvBar {
-    pub ts: Timestamp,
+    pub timestamp: Timestamp,
     pub open: Q3132,
     pub high: Q3132,
     pub low: Q3132,
@@ -7599,7 +7599,7 @@ pub struct OhlcvBar {
 }
 #[derive(Debug, Clone, Default)]
 pub struct OhlcvStore {
-    ts: Vec<i64>,
+    timestamps: Vec<i64>,
     open: Vec<i64>,
     high: Vec<i64>,
     low: Vec<i64>,
@@ -7612,7 +7612,7 @@ impl OhlcvStore {
     }
     pub fn with_capacity(cap: usize) -> Self {
         Self {
-            ts: Vec::with_capacity(cap),
+            timestamps: Vec::with_capacity(cap),
             open: Vec::with_capacity(cap),
             high: Vec::with_capacity(cap),
             low: Vec::with_capacity(cap),
@@ -7621,21 +7621,21 @@ impl OhlcvStore {
         }
     }
     pub fn len(&self) -> usize {
-        self.ts.len()
+        self.timestamps.len()
     }
     pub fn is_empty(&self) -> bool {
-        self.ts.is_empty()
+        self.timestamps.is_empty()
     }
     pub fn push_bar(
         &mut self,
-        ts: Timestamp,
+        timestamp: Timestamp,
         open: Q3132,
         high: Q3132,
         low: Q3132,
         close: Q3132,
         volume: i64,
     ) -> Result<(), OhlcvError> {
-        let idx = self.ts.len();
+        let idx = self.timestamps.len();
         let max_oc = open.max(close);
         let min_oc = open.min(close);
         if high < max_oc {
@@ -7648,7 +7648,7 @@ impl OhlcvStore {
                 idx, reason: "low > min(open, close)",
             });
         }
-        self.ts.push(ts.nanos());
+        self.timestamps.push(timestamp.nanos());
         self.open.push(open.raw());
         self.high.push(high.raw());
         self.low.push(low.raw());
@@ -7657,11 +7657,11 @@ impl OhlcvStore {
         Ok(())
     }
     pub fn bar(&self, idx: usize) -> Result<OhlcvBar, OhlcvError> {
-        if idx >= self.ts.len() {
-            return Err(OhlcvError::BadIndex { idx, len: self.ts.len() });
+        if idx >= self.timestamps.len() {
+            return Err(OhlcvError::BadIndex { idx, len: self.timestamps.len() });
         }
         Ok(OhlcvBar {
-            ts: Timestamp::from_nanos(self.ts[idx]),
+            timestamp: Timestamp::from_nanos(self.timestamps[idx]),
             open: Q3132::from_raw(self.open[idx]),
             high: Q3132::from_raw(self.high[idx]),
             low: Q3132::from_raw(self.low[idx]),
@@ -7669,7 +7669,7 @@ impl OhlcvStore {
             volume: self.volume[idx],
         })
     }
-    pub fn ts_column(&self) -> &[i64] { &self.ts }
+    pub fn timestamp_column(&self) -> &[i64] { &self.timestamps }
     pub fn open_column(&self) -> &[i64] { &self.open }
     pub fn high_column(&self) -> &[i64] { &self.high }
     pub fn low_column(&self) -> &[i64] { &self.low }
@@ -7754,11 +7754,11 @@ impl OhlcvStore {
     }
     pub fn slice_by_time(
         &self,
-        start_ts: Timestamp,
-        end_ts: Timestamp,
+        start_timestamp: Timestamp,
+        end_timestamp: Timestamp,
     ) -> (usize, usize) {
-        let start = self.ts.partition_point(|&t| t < start_ts.nanos());
-        let end = self.ts.partition_point(|&t| t < end_ts.nanos());
+        let start = self.timestamps.partition_point(|&t| t < start_timestamp.nanos());
+        let end = self.timestamps.partition_point(|&t| t < end_timestamp.nanos());
         (start, end)
     }
 }
@@ -7779,7 +7779,7 @@ mod tests {
         s.push_bar(ts_min(1), q(103), q(110), q(102), q(108), 1500).unwrap();
         assert_eq!(s.len(), 2);
         let b = s.bar(1).unwrap();
-        assert_eq!(b.ts, ts_min(1));
+        assert_eq!(b.timestamp, ts_min(1));
         assert_eq!(b.close, q(108));
         assert_eq!(b.volume, 1500);
     }
@@ -11536,7 +11536,7 @@ impl PendingBar {
     }
     fn into_bar(self) -> OhlcvBar {
         OhlcvBar {
-            ts: Timestamp::from_nanos(self.bucket_ts),
+            timestamp: Timestamp::from_nanos(self.bucket_ts),
             open: Q3132::from_raw(self.open),
             high: Q3132::from_raw(self.high),
             low: Q3132::from_raw(self.low),
@@ -11575,12 +11575,12 @@ impl BarResampler {
     }
     pub fn add_tick(
         &mut self,
-        ts: Timestamp,
+        timestamp: Timestamp,
         price: Q3132,
         size: i64,
     ) -> Option<OhlcvBar> {
         self.ticks_seen += 1;
-        let bucket_ts = ts.bucket(self.period_ns).nanos();
+        let bucket_ts = timestamp.bucket(self.period_ns).nanos();
         match self.current {
             None => {
                 self.current = Some(PendingBar::from_first_tick(
@@ -11693,7 +11693,7 @@ mod tests {
         let mut r = BarResampler::new(NANOS_PER_MIN);
         r.add_tick(t_sec(75), q(100), 10);
         let bar = r.flush().unwrap();
-        assert_eq!(bar.ts.nanos(), 60 * 1_000_000_000);
+        assert_eq!(bar.timestamp.nanos(), 60 * 1_000_000_000);
     }
     #[test]
     fn resampler_volume_aggregates_correctly() {
@@ -11712,11 +11712,11 @@ mod tests {
             let ts = Timestamp::from_nanos(i as i64 * 500_000_000);  // 500ms apart
             let price = q(100 + (i % 5) as i32);
             if let Some(bar) = r1s.add_tick(ts, price, 10) {
-                r1m.add_tick(bar.ts, bar.close, bar.volume);
+                r1m.add_tick(bar.timestamp, bar.close, bar.volume);
             }
         }
         if let Some(bar) = r1s.flush() {
-            r1m.add_tick(bar.ts, bar.close, bar.volume);
+            r1m.add_tick(bar.timestamp, bar.close, bar.volume);
         }
         let final_bar = r1m.flush().unwrap();
         assert!(final_bar.volume > 0, "1-min bar agglomerates volume");
@@ -17103,6 +17103,25 @@ impl ForgeBounds {
         }
     }
 
+    pub fn powf(self, exp: f64) -> Option<Self> {
+        if !exp.is_finite() || self.min < 0.0 || (self.contains_zero() && exp < 0.0) {
+            return None;
+        }
+        let a = self.min.powf(exp);
+        let b = self.max.powf(exp);
+        Self::new(a.min(b), a.max(b))
+    }
+
+    pub fn square(self) -> Option<Self> {
+        let a = self.min * self.min;
+        let b = self.max * self.max;
+        if self.contains_zero() {
+            Self::new(0.0, a.max(b))
+        } else {
+            Self::new(a.min(b), a.max(b))
+        }
+    }
+
     pub fn contains_zero(self) -> bool {
         self.min <= 0.0 && self.max >= 0.0
     }
@@ -17197,6 +17216,12 @@ pub enum ForgeType {
     Complex { elem: ForgeScalarTy },
     Interval { elem: ForgeScalarTy },
     Uncertainty { elem: ForgeScalarTy },
+    SymbolicExpr { elem: ForgeScalarTy },
+    Polynomial { elem: ForgeScalarTy },
+    Piecewise { elem: ForgeScalarTy },
+    AssumptionSet,
+    MathDomain,
+    SolutionSet,
     Array { elem: ForgeScalarTy, len: u32 },
     Tensor { elem: ForgeScalarTy, shape: Vec<u32> },
     Column { elem: ForgeScalarTy },
@@ -17275,6 +17300,12 @@ impl ForgeType {
             "complex" => return Some(Self::Complex { elem: ForgeScalarTy::F64 }),
             "interval" => return Some(Self::Interval { elem: ForgeScalarTy::F64 }),
             "uncertainty" => return Some(Self::Uncertainty { elem: ForgeScalarTy::F64 }),
+            "sym" | "expr" => return Some(Self::SymbolicExpr { elem: ForgeScalarTy::F64 }),
+            "polynomial" => return Some(Self::Polynomial { elem: ForgeScalarTy::F64 }),
+            "piecewise" => return Some(Self::Piecewise { elem: ForgeScalarTy::F64 }),
+            "assumption_set" => return Some(Self::AssumptionSet),
+            "math_domain" => return Some(Self::MathDomain),
+            "solution_set" => return Some(Self::SolutionSet),
             "field" => return Some(Self::Field { elem: ForgeScalarTy::F32, rank: 3 }),
             "sparse_field" => return Some(Self::SparseField {
                 elem: ForgeScalarTy::F32,
@@ -17418,6 +17449,27 @@ impl ForgeType {
             }
             return Some(Self::Uncertainty { elem });
         }
+        if let Some(inner) = ty.strip_prefix("expr<").and_then(|v| v.strip_suffix('>')) {
+            let elem = ForgeScalarTy::parse(inner)?;
+            if !elem.is_numeric() {
+                return None;
+            }
+            return Some(Self::SymbolicExpr { elem });
+        }
+        if let Some(inner) = ty.strip_prefix("polynomial<").and_then(|v| v.strip_suffix('>')) {
+            let elem = ForgeScalarTy::parse(inner)?;
+            if !elem.is_numeric() {
+                return None;
+            }
+            return Some(Self::Polynomial { elem });
+        }
+        if let Some(inner) = ty.strip_prefix("piecewise<").and_then(|v| v.strip_suffix('>')) {
+            let elem = ForgeScalarTy::parse(inner)?;
+            if !elem.is_numeric() {
+                return None;
+            }
+            return Some(Self::Piecewise { elem });
+        }
         if let Some(inner) = ty.strip_prefix("vec<").and_then(|v| v.strip_suffix('>')) {
             if let Some((elem, lanes)) = inner.split_once(',') {
                 let elem = ForgeScalarTy::parse(elem)?;
@@ -17486,6 +17538,9 @@ impl ForgeType {
             | Self::Complex { elem: scalar }
             | Self::Interval { elem: scalar }
             | Self::Uncertainty { elem: scalar }
+            | Self::SymbolicExpr { elem: scalar }
+            | Self::Polynomial { elem: scalar }
+            | Self::Piecewise { elem: scalar }
             | Self::Array { elem: scalar, .. }
             | Self::Tensor { elem: scalar, .. }
             | Self::Column { elem: scalar }
@@ -17493,6 +17548,9 @@ impl ForgeType {
             | Self::SparseField { elem: scalar, .. } => Some(*scalar),
             Self::Table { .. }
             | Self::Graph { .. }
+            | Self::AssumptionSet
+            | Self::MathDomain
+            | Self::SolutionSet
             | Self::Snapshot
             | Self::MemoryMap
             | Self::HeapObject
@@ -18263,14 +18321,17 @@ fn infer_builtin_forge_call_ty(name: &str, args: &[ForgeExpr], arg_tys: &[ForgeT
     if let Some(ty) = infer_crypto_code_agent_ty(name, arg_tys) {
         return Some(ty);
     }
+    if let Some(ty) = infer_symbolic_math_ty(name, arg_tys) {
+        return Some(ty);
+    }
     match name {
         "add" if arg_tys.len() == 2 => infer_same_shape_numeric_ty(&arg_tys[0], &arg_tys[1]),
         "sub" if arg_tys.len() == 2 => infer_same_shape_numeric_ty(&arg_tys[0], &arg_tys[1]),
         "mul" if arg_tys.len() == 2 => infer_mul_ty(&arg_tys[0], &arg_tys[1]),
         "div" if arg_tys.len() == 2 => infer_div_ty(&arg_tys[0], &arg_tys[1]),
-        "mod" | "rem" if arg_tys.len() == 2 => infer_same_shape_integer_ty(&arg_tys[0], &arg_tys[1]),
+        "mod" | "rem" if arg_tys.len() == 2 => infer_same_shape_numeric_ty(&arg_tys[0], &arg_tys[1]),
         "neg" if arg_tys.len() == 1 && arg_tys[0].is_numeric_composite() => Some(arg_tys[0].clone()),
-        "finite" if arg_tys.len() == 1 && arg_tys[0].is_numeric_composite() => {
+        "finite" | "finite_check" | "nan_guard" if arg_tys.len() == 1 && arg_tys[0].is_numeric_composite() => {
             Some(ForgeType::Scalar(ForgeScalarTy::Bool))
         }
         "eq" | "ne" if arg_tys.len() == 2 && (type_assignable(&arg_tys[0], &arg_tys[1]) || type_assignable(&arg_tys[1], &arg_tys[0])) => {
@@ -18279,13 +18340,29 @@ fn infer_builtin_forge_call_ty(name: &str, args: &[ForgeExpr], arg_tys: &[ForgeT
         "lt" | "le" | "gt" | "ge" if arg_tys.len() == 2 => {
             infer_same_shape_numeric_ty(&arg_tys[0], &arg_tys[1]).map(|_| ForgeType::Scalar(ForgeScalarTy::Bool))
         }
-        "and" | "or" | "xor" if arg_tys.len() == 2 && arg_tys[0] == ForgeType::Scalar(ForgeScalarTy::Bool) && arg_tys[1] == ForgeType::Scalar(ForgeScalarTy::Bool) => {
+        "and" | "or"
+            if !arg_tys.is_empty()
+                && arg_tys
+                    .iter()
+                    .all(|ty| *ty == ForgeType::Scalar(ForgeScalarTy::Bool)) =>
+        {
+            Some(ForgeType::Scalar(ForgeScalarTy::Bool))
+        }
+        "xor" if arg_tys.len() == 2 && arg_tys[0] == ForgeType::Scalar(ForgeScalarTy::Bool) && arg_tys[1] == ForgeType::Scalar(ForgeScalarTy::Bool) => {
             Some(ForgeType::Scalar(ForgeScalarTy::Bool))
         }
         "not" if arg_tys.len() == 1 && arg_tys[0] == ForgeType::Scalar(ForgeScalarTy::Bool) => {
             Some(ForgeType::Scalar(ForgeScalarTy::Bool))
         }
         "any" | "all" if arg_tys.len() == 1 => infer_bool_reduction_ty(&arg_tys[0]),
+        "any" | "all"
+            if !arg_tys.is_empty()
+                && arg_tys
+                    .iter()
+                    .all(|ty| *ty == ForgeType::Scalar(ForgeScalarTy::Bool)) =>
+        {
+            Some(ForgeType::Scalar(ForgeScalarTy::Bool))
+        }
         "where" | "select" if arg_tys.len() == 3 => infer_select_ty(&arg_tys[0], &arg_tys[1], &arg_tys[2]),
         "vec2" | "vec3" | "vec4" => infer_vector_constructor_ty(name, arg_tys),
         "mat2" | "mat3" | "mat4" => infer_matrix_constructor_ty(name, arg_tys),
@@ -18774,6 +18851,12 @@ fn infer_shape_ty(ty: &ForgeType) -> Option<ForgeType> {
         | ForgeType::Complex { .. }
         | ForgeType::Interval { .. }
         | ForgeType::Uncertainty { .. }
+        | ForgeType::SymbolicExpr { .. }
+        | ForgeType::Polynomial { .. }
+        | ForgeType::Piecewise { .. }
+        | ForgeType::AssumptionSet
+        | ForgeType::MathDomain
+        | ForgeType::SolutionSet
         | ForgeType::Snapshot
         | ForgeType::MemoryMap
         | ForgeType::HeapObject
@@ -19335,6 +19418,7 @@ fn forge_rolling_output_ty(collection: &ForgeType, elem: ForgeScalarTy, width: u
 fn forge_collection_elem_ty(ty: &ForgeType) -> Option<ForgeScalarTy> {
     match ty {
         ForgeType::Vec { elem, .. }
+        | ForgeType::Mat { elem, .. }
         | ForgeType::Array { elem, .. }
         | ForgeType::Tensor { elem, .. }
         | ForgeType::Column { elem }
@@ -19346,6 +19430,7 @@ fn forge_collection_elem_ty(ty: &ForgeType) -> Option<ForgeScalarTy> {
 fn forge_collection_with_elem_like(template: &ForgeType, elem: ForgeScalarTy) -> Option<ForgeType> {
     Some(match template {
         ForgeType::Vec { lanes, .. } => ForgeType::Vec { elem, lanes: *lanes },
+        ForgeType::Mat { cols, rows, .. } => ForgeType::Mat { elem, cols: *cols, rows: *rows },
         ForgeType::Array { len, .. } => ForgeType::Array { elem, len: *len },
         ForgeType::Tensor { shape, .. } => ForgeType::Tensor { elem, shape: shape.clone() },
         ForgeType::Column { .. } => ForgeType::Column { elem },
@@ -19702,6 +19787,76 @@ fn infer_crypto_code_agent_ty(name: &str, arg_tys: &[ForgeType]) -> Option<Forge
     }
 }
 
+fn infer_symbolic_math_ty(name: &str, arg_tys: &[ForgeType]) -> Option<ForgeType> {
+    let bool_ty = ForgeType::Scalar(ForgeScalarTy::Bool);
+    let u64_ty = ForgeType::Scalar(ForgeScalarTy::U64);
+    match name {
+        "symbol" if !arg_tys.is_empty() => Some(ForgeType::Symbol),
+        "domain" if !arg_tys.is_empty() => Some(ForgeType::MathDomain),
+        "assume" if !arg_tys.is_empty() => Some(ForgeType::AssumptionSet),
+        "to_expr" if matches!(arg_tys, [ty] if ty.is_numeric_composite()) => {
+            let elem = arg_tys[0].elem_ty().unwrap_or(ForgeScalarTy::F64);
+            Some(ForgeType::SymbolicExpr { elem })
+        }
+        "polynomial" if matches!(arg_tys, [ForgeType::SymbolicExpr { .. }]) => {
+            symbolic_elem(&arg_tys[0]).map(|elem| ForgeType::Polynomial { elem })
+        }
+        "piecewise" if matches!(arg_tys, [ForgeType::SymbolicExpr { .. } | ForgeType::Polynomial { .. }, ForgeType::AssumptionSet]) => {
+            symbolic_elem(&arg_tys[0]).map(|elem| ForgeType::Piecewise { elem })
+        }
+        "simplify" | "full_simplify" | "canonicalize_expr" | "expand" | "factor"
+        | "collect" | "cancel" | "together" | "apart" | "function_expand"
+        | "trig_reduce" | "series" if !arg_tys.is_empty() && is_symbolic_math_type(&arg_tys[0]) => {
+            Some(arg_tys[0].clone())
+        }
+        "refine" if matches!(arg_tys, [ty, ForgeType::AssumptionSet] if is_symbolic_math_type(ty)) => {
+            Some(arg_tys[0].clone())
+        }
+        "diff" | "integrate" | "limit" | "residue"
+            if matches!(arg_tys, [ty, ForgeType::Symbol | ForgeType::MathDomain] if is_symbolic_math_type(ty)) =>
+        {
+            symbolic_elem(&arg_tys[0]).map(|elem| ForgeType::SymbolicExpr { elem })
+        }
+        "solve" | "reduce_equations" if !arg_tys.is_empty() && is_symbolic_math_type(&arg_tys[0]) => {
+            Some(ForgeType::SolutionSet)
+        }
+        "find_instance" if matches!(arg_tys, [ForgeType::SolutionSet | ForgeType::AssumptionSet | ForgeType::SymbolicExpr { .. }]) => {
+            Some(ForgeType::Table {
+                columns: vec![
+                    ("symbol".to_string(), ForgeScalarTy::U64),
+                    ("value_hash".to_string(), ForgeScalarTy::U64),
+                    ("valid".to_string(), ForgeScalarTy::Bool),
+                ],
+            })
+        }
+        "math_equiv" if matches!(arg_tys, [lhs, rhs] if is_symbolic_math_type(lhs) && is_symbolic_math_type(rhs)) => {
+            Some(bool_ty)
+        }
+        "math_proof" | "expression_hash" if matches!(arg_tys, [ty] if is_symbolic_math_type(ty) || matches!(ty, ForgeType::SolutionSet | ForgeType::AssumptionSet | ForgeType::MathDomain)) => {
+            Some(u64_ty)
+        }
+        _ => None,
+    }
+}
+
+fn is_symbolic_math_type(ty: &ForgeType) -> bool {
+    matches!(
+        ty,
+        ForgeType::SymbolicExpr { .. }
+            | ForgeType::Polynomial { .. }
+            | ForgeType::Piecewise { .. }
+    )
+}
+
+fn symbolic_elem(ty: &ForgeType) -> Option<ForgeScalarTy> {
+    match ty {
+        ForgeType::SymbolicExpr { elem }
+        | ForgeType::Polynomial { elem }
+        | ForgeType::Piecewise { elem } => Some(*elem),
+        _ => None,
+    }
+}
+
 fn infer_sample_ty(source: &ForgeType, selector: &ForgeType) -> Option<ForgeType> {
     match (source, selector) {
         (ForgeType::Field { elem, rank }, ForgeType::Vec { elem: coord_elem, lanes })
@@ -19972,6 +20127,12 @@ fn type_assignable(from: &ForgeType, to: &ForgeType) -> bool {
             ForgeType::SparseField { elem: a, rank: ra, layout: la },
             ForgeType::SparseField { elem: b, rank: rb, layout: lb },
         ) if ra == rb && la == lb => scalar_assignable(*a, *b),
+        (ForgeType::SymbolicExpr { elem: a }, ForgeType::SymbolicExpr { elem: b })
+        | (ForgeType::Polynomial { elem: a }, ForgeType::Polynomial { elem: b })
+        | (ForgeType::Piecewise { elem: a }, ForgeType::Piecewise { elem: b }) => scalar_assignable(*a, *b),
+        (ForgeType::AssumptionSet, ForgeType::AssumptionSet)
+        | (ForgeType::MathDomain, ForgeType::MathDomain)
+        | (ForgeType::SolutionSet, ForgeType::SolutionSet) => true,
         (ForgeType::Snapshot, ForgeType::Snapshot)
         | (ForgeType::MemoryMap, ForgeType::MemoryMap)
         | (ForgeType::HeapObject, ForgeType::HeapObject)
@@ -20227,7 +20388,9 @@ fn infer_builtin_unit_dim(name: &str, args: &[ForgeExpr], units: &[ForgeUnitDim]
         | "smt_check" | "lean_check" | "parse" | "parse_code" | "typecheck"
         | "typecheck_code" | "symbol_table" | "cfg_build" | "callgraph_build"
         | "transform" | "transform_code" | "patch" | "patch_apply" | "run_test"
-        | "compare_trace" | "proof_envelope"
+        | "compare_trace" | "proof_envelope" | "symbol" | "domain" | "assume"
+        | "math_equiv" | "math_proof" | "expression_hash" | "solve"
+        | "reduce_equations" | "find_instance"
             if !units.is_empty() =>
         {
             Some(ForgeUnitDim::dimensionless())
@@ -20240,6 +20403,11 @@ fn infer_builtin_unit_dim(name: &str, args: &[ForgeExpr], units: &[ForgeUnitDim]
             })
         }
         "p5" | "p50" | "p95" if units.len() == 1 => Some(units[0]),
+        "to_expr" | "polynomial" | "piecewise" | "simplify" | "full_simplify"
+        | "canonicalize_expr" | "expand" | "factor" | "collect" | "cancel"
+        | "together" | "apart" | "function_expand" | "trig_reduce" | "series"
+        | "refine" | "diff" | "integrate" | "limit" | "residue"
+            if !units.is_empty() => Some(units[0]),
         "add" | "sub" | "min" | "max" | "mod" | "rem" | "copysign"
             if units.len() == 2 && units[0] == units[1] => Some(units[0]),
         "mul" if units.len() == 2 => units[0].mul_dim(units[1]),
@@ -20249,11 +20417,12 @@ fn infer_builtin_unit_dim(name: &str, args: &[ForgeExpr], units: &[ForgeUnitDim]
         | "sort" | "unique" | "partition" | "compact" | "prefix_sum" | "fft" | "ifft" | "rfft"
         | "window_hann" | "window_blackman" | "wavelet_step" | "coo_to_csr" | "sparse_reduce"
         | "bfs_step" | "shortest_path_step" | "pagerank_step" | "connected_components_step"
-        | "surfel_accumulate" | "integrate_force" | "integrate_velocity" | "fluid_advect_step"
-        | "pressure_projection_step" | "constraint_project" | "unit_cast" | "byte_store"
+        | "surfel_accumulate" | "unit_cast" | "byte_store"
         | "span" | "slice_view" | "grad" | "jacobian" | "hessian" | "hessian_diag" | "adjoint"
         | "jvp" | "vjp" | "sensitivity_forward" | "sensitivity_adjoint" | "optimize"
         | "constraint_solve" if units.len() == 1 => Some(units[0]),
+        "integrate_force" | "integrate_velocity" | "fluid_advect_step" | "pressure_projection_step"
+        | "constraint_project" if !units.is_empty() => Some(units[0]),
         // Signal primitives that take a kernel / taps / window-size in their
         // tail args: the output carries the signal carrier's unit (kernel /
         // tail args are dimensionless coefficients/indices).
@@ -20429,6 +20598,19 @@ fn expr_i8_literal(expr: &ForgeExpr) -> Option<i8> {
     }
 }
 
+fn expr_f64_literal(expr: &ForgeExpr) -> Option<f64> {
+    match expr {
+        ForgeExpr::Scalar(ForgeScalarValue::I32(value)) => Some(*value as f64),
+        ForgeExpr::Scalar(ForgeScalarValue::I64(value)) => Some(*value as f64),
+        ForgeExpr::Scalar(ForgeScalarValue::U32(value)) => Some(*value as f64),
+        ForgeExpr::Scalar(ForgeScalarValue::U64(value)) => Some(*value as f64),
+        ForgeExpr::Scalar(ForgeScalarValue::F32(value)) => Some(*value as f64),
+        ForgeExpr::Scalar(ForgeScalarValue::F64(value)) => Some(*value),
+        _ => None,
+    }
+    .filter(|value| value.is_finite())
+}
+
 fn infer_expr_bounds(
     expr: &ForgeExpr,
     variables: &[(String, ForgeBounds)],
@@ -20470,9 +20652,12 @@ fn infer_binary_bounds(
     match op {
         ForgeBinaryOp::Add => lhs.add(rhs),
         ForgeBinaryOp::Sub => lhs.sub(rhs),
+        ForgeBinaryOp::Mul if left == right => lhs.square(),
         ForgeBinaryOp::Mul => lhs.mul(rhs),
         ForgeBinaryOp::Div => lhs.div(rhs),
-        ForgeBinaryOp::Pow => expr_i8_literal(right).and_then(|exp| lhs.powi(exp)),
+        ForgeBinaryOp::Pow => expr_i8_literal(right)
+            .and_then(|exp| lhs.powi(exp))
+            .or_else(|| expr_f64_literal(right).and_then(|exp| lhs.powf(exp))),
         ForgeBinaryOp::Eq
         | ForgeBinaryOp::Ne
         | ForgeBinaryOp::Lt
@@ -20730,7 +20915,13 @@ fn infer_builtin_bounds(name: &str, args: &[ForgeExpr], bounds: &[ForgeBounds]) 
         "sub" if bounds.len() == 2 => bounds[0].sub(bounds[1]),
         "mul" if bounds.len() == 2 => bounds[0].mul(bounds[1]),
         "div" if bounds.len() == 2 => bounds[0].div(bounds[1]),
-        "mod" | "rem" if bounds.len() == 2 => ForgeBounds::new(0.0, bounds[1].max.abs().max(1.0)),
+        "mod" if bounds.len() == 2 && !bounds[1].contains_zero() => {
+            ForgeBounds::new(0.0, bounds[1].min.abs().max(bounds[1].max.abs()))
+        }
+        "rem" if bounds.len() == 2 && !bounds[1].contains_zero() => {
+            let max_abs = bounds[1].min.abs().max(bounds[1].max.abs());
+            ForgeBounds::new(-max_abs, max_abs)
+        }
         "neg" if bounds.len() == 1 => bounds[0].neg(),
         "abs" if bounds.len() == 1 => bounds[0].abs(),
         "sqrt" if bounds.len() == 1 => bounds[0].sqrt(),
@@ -20740,7 +20931,9 @@ fn infer_builtin_bounds(name: &str, args: &[ForgeExpr], bounds: &[ForgeBounds]) 
         "cbrt" if bounds.len() == 1 => ForgeBounds::new(bounds[0].min.cbrt(), bounds[0].max.cbrt()),
         "ln" | "log" | "log2" | "log10" if bounds.len() == 1 => bounds[0].ln(),
         "exp" | "exp2" if bounds.len() == 1 => bounds[0].exp(),
-        "pow" if bounds.len() == 2 => expr_i8_literal(args.get(1)?).and_then(|exp| bounds[0].powi(exp)),
+        "pow" if bounds.len() == 2 => expr_i8_literal(args.get(1)?)
+            .and_then(|exp| bounds[0].powi(exp))
+            .or_else(|| expr_f64_literal(args.get(1)?).and_then(|exp| bounds[0].powf(exp))),
         "min" if bounds.len() == 2 => bounds[0].min_bounds(bounds[1]),
         "max" if bounds.len() == 2 => bounds[0].max_bounds(bounds[1]),
         "clamp" if bounds.len() == 3 => bounds[0].clamp(bounds[1], bounds[2]),
@@ -20752,6 +20945,10 @@ fn infer_builtin_bounds(name: &str, args: &[ForgeExpr], bounds: &[ForgeBounds]) 
         "lerp" | "mix" if bounds.len() == 3 => ForgeBounds::new(
             bounds[0].min.min(bounds[1].min),
             bounds[0].max.max(bounds[1].max),
+        ),
+        "where" | "select" if bounds.len() == 3 => ForgeBounds::new(
+            bounds[1].min.min(bounds[2].min),
+            bounds[1].max.max(bounds[2].max),
         ),
         "sin" | "cos" if bounds.len() == 1 => ForgeBounds::new(-1.0, 1.0),
         "tan" if bounds.len() == 1 && safe_tan_interval(bounds[0]) => ForgeBounds::new(-1.0e12, 1.0e12),
@@ -20769,10 +20966,16 @@ fn infer_builtin_bounds(name: &str, args: &[ForgeExpr], bounds: &[ForgeBounds]) 
         | "graph_degree" | "argmin" | "argmax" | "page_id" | "pointer_tag" | "snapshot_id"
         | "memory_region_count" | "heap_object_id" | "dom_node_id" | "dom_edge_endpoints"
         | "refs" | "retainers" | "leaks" | "mutation_diff" | "capture_snapshot" | "read_memory_map"
-        | "kmer_hash"
+        | "kmer_hash" | "expression_hash" | "math_proof"
             if !bounds.is_empty() => {
             ForgeBounds::new(0.0, 1.0e12)
         }
+        "math_equiv" if !bounds.is_empty() => ForgeBounds::new(0.0, 1.0),
+        "symbol" | "domain" | "assume" | "to_expr" | "polynomial" | "piecewise"
+        | "simplify" | "full_simplify" | "canonicalize_expr" | "expand" | "factor"
+        | "collect" | "cancel" | "together" | "apart" | "function_expand" | "trig_reduce"
+        | "series" | "refine" | "diff" | "integrate" | "limit" | "residue"
+        | "solve" | "reduce_equations" | "find_instance" if !bounds.is_empty() => Some(bounds[0]),
         "taint_public" if !bounds.is_empty() => ForgeBounds::new(0.0, 0.0),
         "taint_user_data" if !bounds.is_empty() => ForgeBounds::new(1.0, 1.0),
         "taint_credential" if !bounds.is_empty() => ForgeBounds::new(2.0, 2.0),
@@ -20867,9 +21070,9 @@ fn infer_builtin_bounds(name: &str, args: &[ForgeExpr], bounds: &[ForgeBounds]) 
         | "marching_cubes_cell" | "voxel_sample" | "collision_distance" if !bounds.is_empty() => {
             ForgeBounds::new(-1.0e15, 1.0e15)
         }
-        "inertia_tensor" | "stress_tensor_basic" | "strain_basic" | "thermal_flux_step" if !bounds.is_empty() => {
-            ForgeBounds::new(-1.0e15, 1.0e15)
-        }
+        "integrate_force" | "integrate_velocity" | "fluid_advect_step" | "pressure_projection_step"
+        | "constraint_project" | "inertia_tensor" | "stress_tensor_basic" | "strain_basic"
+        | "thermal_flux_step" if !bounds.is_empty() => ForgeBounds::new(-1.0e15, 1.0e15),
         "byte_load" | "u32_load" | "f32_load" | "byte_store" | "hash32" | "hash64" | "hash_value"
         | "hash_buffer" | "proof_emit" | "memory_region_hash" | "sha256_block" | "blake3_chunk"
         | "merkle_pair" | "hmac_block" | "xor_stream" | "random_oracle_probe" if !bounds.is_empty() => {
@@ -20917,10 +21120,13 @@ fn safe_tan_interval(bounds: ForgeBounds) -> bool {
 #[cfg(test)]
 mod forge_type_tests {
     use super::{
-        ForgeArtifactHandoff, ForgeBinaryOp, ForgeConstSpec, ForgeConstraintSpec, ForgeCostSpec,
+        parse_constants_section, parse_imports_section, parse_module_header,
+        parse_optional_section_lines, parse_section_lines, section_body, ForgeArtifactHandoff,
+        ForgeBinaryOp, ForgeConstSpec, ForgeConstraintSpec, ForgeCostSpec,
         ForgeExpr, ForgeFunctionSpec, ForgeImportSpec, ForgeIrOp, ForgeModuleSpec, ForgeOutputKind, ForgeOutputSpec,
-        ForgeParamSpec, ForgePrecision, ForgeProgramSpec, ForgePropertyKind, ForgeSampleCase, ForgeScalarTy,
-        ForgeScalarValue, ForgeSparseLayout, ForgeType, ForgeUnitDim, Ty,
+        ForgeParamSpec, ForgePrecision, ForgeProgramSpec, ForgePropertyKind, ForgePropertySpec,
+        ForgeRuntimeSpec, ForgeSampleCase, ForgeScalarTy, ForgeScalarValue, ForgeScheduleSpec,
+        ForgeSealedHostcallSpec, ForgeSparseLayout, ForgeTransformSpec, ForgeType, ForgeUnitDim, Ty,
         FORGE_DIALECT_VERSION_MAJOR, FORGE_DIALECT_VERSION_MINOR,
     };
 
@@ -21003,6 +21209,45 @@ mod forge_type_tests {
         assert_eq!(
             ForgeExpr::parse("optimize(x, y)").unwrap().infer_ty(&vars, &funcs),
             Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+    }
+
+    #[test]
+    fn forge_accepts_symbolic_math_contract_surface() {
+        let vars = vec![
+            ("x".to_string(), ForgeType::Scalar(ForgeScalarTy::F64)),
+            ("expr".to_string(), ForgeType::SymbolicExpr { elem: ForgeScalarTy::F64 }),
+            ("assumptions".to_string(), ForgeType::AssumptionSet),
+            ("var".to_string(), ForgeType::Symbol),
+        ];
+        let funcs = Vec::new();
+
+        assert_eq!(ForgeType::parse("expr<f64>").unwrap().to_string(), "expr");
+        assert_eq!(ForgeType::parse("polynomial<f32>").unwrap().to_string(), "polynomial<f32>");
+        assert_eq!(ForgeType::parse("assumption_set").unwrap().to_string(), "assumption_set");
+        assert_eq!(
+            ForgeExpr::parse("to_expr(x)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::SymbolicExpr { elem: ForgeScalarTy::F64 })
+        );
+        assert_eq!(
+            ForgeExpr::parse("simplify(expr)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::SymbolicExpr { elem: ForgeScalarTy::F64 })
+        );
+        assert_eq!(
+            ForgeExpr::parse("refine(expr, assumptions)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::SymbolicExpr { elem: ForgeScalarTy::F64 })
+        );
+        assert_eq!(
+            ForgeExpr::parse("diff(expr, var)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::SymbolicExpr { elem: ForgeScalarTy::F64 })
+        );
+        assert_eq!(
+            ForgeExpr::parse("solve(expr)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::SolutionSet)
+        );
+        assert_eq!(
+            ForgeExpr::parse("math_proof(expr)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::U64))
         );
     }
 
@@ -22201,6 +22446,7 @@ artifact_handoff:
         let vars = vec![
             ("scores".to_string(), ForgeType::Array { elem: ForgeScalarTy::F64, len: 8 }),
             ("points".to_string(), ForgeType::Tensor { elem: ForgeScalarTy::F64, shape: vec![8, 3] }),
+            ("matrix".to_string(), ForgeType::Mat { elem: ForgeScalarTy::F64, cols: 4, rows: 4 }),
         ];
         let funcs = Vec::new();
         assert_eq!(
@@ -22218,6 +22464,10 @@ artifact_handoff:
         assert_eq!(
             ForgeExpr::parse("diversity_select(points, 4u64)").unwrap().infer_ty(&vars, &funcs),
             Some(ForgeType::Tensor { elem: ForgeScalarTy::F64, shape: vec![4, 3] })
+        );
+        assert_eq!(
+            ForgeExpr::parse("top_k(flatten(matrix), 4u64)").unwrap().infer_ty(&vars, &funcs),
+            Some(ForgeType::Array { elem: ForgeScalarTy::F64, len: 4 })
         );
         assert!(ForgeExpr::parse("top_k(scores, 9u64)").unwrap().infer_ty(&vars, &funcs).is_none());
         assert!(ForgeExpr::parse("pareto(scores)").unwrap().infer_ty(&vars, &funcs).is_none());
@@ -22358,6 +22608,116 @@ artifact_handoff:
     }
 
     #[test]
+    fn forge_physics_primitives_are_valid_newcompute_source_contract() {
+        let source = r#"
+forge_module:
+  module physics_integrator version 1
+forge_imports:
+  none
+forge_constants:
+  const eps: f64 unit none = 0.000001f64
+  const pi: f64 unit none = 3.141592653589793f64
+forge_functions:
+  fn score(x: f64) -> f64 { return x }
+forge_program:
+  let v = integrate_velocity(velocity, acceleration, dt)
+  let f = integrate_force(applied_force, mass, dt)
+  let heat = thermal_flux_step(temperature, conductivity)
+  let fluid = fluid_advect_step(velocity, dt)
+  let pressure = pressure_projection_step(velocity, dt)
+  emit out: f64 = v + f + heat + fluid + pressure
+forge_inputs:
+  param velocity: f64 unit none bounds [-100.0,100.0] nominal 10.0
+  param acceleration: f64 unit none bounds [-20.0,20.0] nominal -9.81
+  param applied_force: f64 unit none bounds [-1000.0,1000.0] nominal 10.0
+  param mass: f64 unit none bounds [0.1,100.0] nominal 1.0
+  param temperature: f64 unit none bounds [0.0,1000.0] nominal 300.0
+  param conductivity: f64 unit none bounds [0.0,1000.0] nominal 10.0
+  param dt: f64 unit none bounds [0.001,1.0] nominal 0.016
+forge_outputs:
+  output out: f64 unit none handoff scalar
+forge_constraints:
+  assert finite(out)
+forge_samples:
+  case physics seed 112 { given velocity=10.0, acceleration=-9.81, applied_force=10.0, mass=1.0, temperature=300.0, conductivity=10.0, dt=0.016; expect out approx 0.0 tolerance 10000000.0 }
+forge_transforms:
+  transform jit_score: jit(score)
+forge_schedule:
+  schedule gpu_score: target=jit_score algorithm=stress_round tile=64 vectorize=4 gpu=true layout=soa
+forge_properties:
+  none
+forge_runtime:
+  lowering=wgsl_rhi
+  cpu_simd=optional
+  cuda=optional
+  memory_layout=page
+forge_hostcalls:
+  none
+forge_cost:
+  max_steps=400000
+  max_memory_mb=128
+  precision=f64
+  parallelism=128
+artifact_handoff:
+  proof_hash,output_hash,compact_result
+"#;
+        let module = section_body(source, "forge_module").expect("forge_module");
+        let imports = section_body(source, "forge_imports").unwrap_or("none");
+        let constants = section_body(source, "forge_constants").unwrap_or("none");
+        let functions = section_body(source, "forge_functions").expect("forge_functions");
+        let program = section_body(source, "forge_program").expect("forge_program");
+        let inputs = section_body(source, "forge_inputs").expect("forge_inputs");
+        let outputs = section_body(source, "forge_outputs").expect("forge_outputs");
+        let constraints = section_body(source, "forge_constraints").expect("forge_constraints");
+        let samples = section_body(source, "forge_samples").expect("forge_samples");
+        let transforms = section_body(source, "forge_transforms").unwrap_or("none");
+        let schedules = section_body(source, "forge_schedule").unwrap_or("none");
+        let properties = section_body(source, "forge_properties").unwrap_or("none");
+        let runtime = section_body(source, "forge_runtime").unwrap_or("none");
+        let hostcalls = section_body(source, "forge_hostcalls").unwrap_or("none");
+        let cost = section_body(source, "forge_cost").expect("forge_cost");
+        let artifact_handoff = section_body(source, "artifact_handoff").expect("artifact_handoff");
+        let (name, version) = parse_module_header(module).expect("module header");
+        let spec = ForgeModuleSpec {
+            name,
+            version,
+            imports: parse_imports_section(imports).expect("imports"),
+            constants: parse_constants_section(constants).expect("constants"),
+            functions: parse_section_lines(functions, ForgeFunctionSpec::parse).expect("functions"),
+            program: ForgeProgramSpec::parse(program).expect("program"),
+            inputs: parse_section_lines(inputs, ForgeParamSpec::parse).expect("inputs"),
+            outputs: parse_section_lines(outputs, ForgeOutputSpec::parse).expect("outputs"),
+            constraints: parse_section_lines(constraints, ForgeConstraintSpec::parse).expect("constraints"),
+            samples: parse_section_lines(samples, ForgeSampleCase::parse).expect("samples"),
+            transforms: parse_optional_section_lines(transforms, ForgeTransformSpec::parse).expect("transforms"),
+            schedules: parse_optional_section_lines(schedules, ForgeScheduleSpec::parse).expect("schedules"),
+            properties: parse_optional_section_lines(properties, ForgePropertySpec::parse).expect("properties"),
+            validations: Vec::new(),
+            runtime: ForgeRuntimeSpec::parse(runtime).expect("runtime"),
+            hostcalls: parse_optional_section_lines(hostcalls, ForgeSealedHostcallSpec::parse).expect("hostcalls"),
+            cost: ForgeCostSpec::parse(cost).expect("cost"),
+            artifact_handoff: ForgeArtifactHandoff::parse(artifact_handoff).expect("artifact_handoff parse"),
+        };
+        assert!(spec.function_expressions_typecheck(), "function typecheck");
+        assert!(spec.language_transform_schedule_check(), "transform/schedule");
+        assert!(spec.import_dialect_check(), "imports");
+        assert!(spec.property_check(), "properties");
+        assert!(spec.runtime_hostcall_check(), "runtime/hostcalls");
+        assert!(spec.memory_dom_capability_check(), "memory/dom capability");
+        assert!(spec.program_expressions_typecheck(), "program typecheck");
+        assert!(spec.constraint_expressions_typecheck(), "constraint typecheck");
+        assert!(spec.program_units_typecheck(), "program units");
+        assert!(spec.constraint_units_typecheck(), "constraint units");
+        assert!(spec.program_bounds_check(), "program bounds");
+        assert!(spec.constraint_bounds_check(), "constraint bounds");
+        assert!(spec.source_purity_check(), "source purity");
+        assert!(spec.bounded_control_check(), "bounded control");
+        assert!(spec.cost_contract_check(), "cost");
+        assert!(!spec.function_call_graph_has_cycle(), "function call cycle");
+        assert!(ForgeModuleSpec::parse(source).is_some());
+    }
+
+    #[test]
     fn forge_unit_inference_rejects_dimension_mismatch() {
         let source = r#"
 forge_module:
@@ -22414,6 +22774,68 @@ forge_constraints:
   assert pressure_out >= 0
 forge_samples:
   case safe { given force=10.0, area=2.0; expect pressure_out approx 5.0 tolerance 0.01 }
+forge_cost:
+  max_steps=1000
+  max_memory_mb=4
+  precision=f64
+artifact_handoff:
+  proof_hash,output_hash,compact_result
+"#;
+        assert!(ForgeModuleSpec::parse(source).is_some());
+    }
+
+    #[test]
+    fn forge_bounds_accept_signed_square_norm_domains() {
+        let source = r#"
+forge_module:
+  module square_norm_bounds version 1
+forge_constants:
+  none
+forge_functions:
+  fn norm2(x: f64, y: f64) -> f64 { return sqrt(x * x + y * y) }
+forge_program:
+  emit norm_out: f64 = norm2(x, y)
+forge_inputs:
+  param x: f64 unit none bounds [-10.0, 10.0] nominal 3.0
+  param y: f64 unit none bounds [-10.0, 10.0] nominal 4.0
+forge_outputs:
+  output norm_out: f64 unit none handoff scalar
+forge_constraints:
+  assert finite(norm_out)
+  assert bounds(norm_out,[0.0,15.0])
+forge_samples:
+  case norm { given x=3.0, y=4.0; expect norm_out approx 5.0 tolerance 0.000000001 }
+forge_cost:
+  max_steps=1000
+  max_memory_mb=4
+  precision=f64
+artifact_handoff:
+  proof_hash,output_hash,compact_result
+"#;
+        assert!(ForgeModuleSpec::parse(source).is_some());
+    }
+
+    #[test]
+    fn forge_bounds_accept_positive_fractional_power_domains() {
+        let source = r#"
+forge_module:
+  module fractional_power_bounds version 1
+forge_constants:
+  none
+forge_functions:
+  fn manning(radius: f64, slope: f64, roughness: f64) -> f64 { return (1.0f64 / roughness) * (radius ^ 0.6666666666666666f64) * sqrt(slope) }
+forge_program:
+  emit velocity_out: f64 = manning(radius, slope, roughness)
+forge_inputs:
+  param radius: f64 unit none bounds [0.000001, 1000.0] nominal 1.0
+  param slope: f64 unit none bounds [0.0, 1000.0] nominal 4.0
+  param roughness: f64 unit none bounds [0.000001, 10.0] nominal 1.0
+forge_outputs:
+  output velocity_out: f64 unit none handoff scalar
+forge_constraints:
+  assert finite(velocity_out)
+forge_samples:
+  case manning { given radius=1.0, slope=4.0, roughness=1.0; expect velocity_out approx 2.0 tolerance 0.000000001 }
 forge_cost:
   max_steps=1000
   max_memory_mb=4
@@ -22861,6 +23283,8 @@ forge_constraints:
   assert thrust_margin >= 0
 forge_samples:
   case hover_margin { given mass=1.2, thrust=16.0; expect thrust_margin approx 4.227 tolerance 0.01 }
+forge_validation:
+  validation protocol: role=structural_engineer method=validated_numeric oracle=cpu_gpu uncertainty=sensitivity reference=scipy_linalg replay=hover_margin_seed promotion=typed_buffer_match rollback=relaunch_same_compute
 forge_cost:
   max_steps=100000
   max_memory_mb=64
@@ -22874,6 +23298,11 @@ artifact_handoff:
         assert_eq!(spec.functions.len(), 1);
         assert_eq!(spec.inputs.len(), 2);
         assert_eq!(spec.outputs[0].name, "thrust_margin");
+        assert_eq!(spec.validations.len(), 1);
+        assert_eq!(spec.validations[0].role, "structural_engineer");
+        assert!(spec
+            .canonical_source()
+            .contains("forge_validation:\nvalidation protocol"));
         assert_eq!(spec.cost.max_memory_mb, 64);
     }
 
@@ -23444,6 +23873,15 @@ impl fmt::Display for ForgeType {
             Self::Interval { elem } => write!(f, "interval<{elem}>"),
             Self::Uncertainty { elem: ForgeScalarTy::F64 } => f.write_str("uncertainty"),
             Self::Uncertainty { elem } => write!(f, "uncertainty<{elem}>"),
+            Self::SymbolicExpr { elem: ForgeScalarTy::F64 } => f.write_str("expr"),
+            Self::SymbolicExpr { elem } => write!(f, "expr<{elem}>"),
+            Self::Polynomial { elem: ForgeScalarTy::F64 } => f.write_str("polynomial"),
+            Self::Polynomial { elem } => write!(f, "polynomial<{elem}>"),
+            Self::Piecewise { elem: ForgeScalarTy::F64 } => f.write_str("piecewise"),
+            Self::Piecewise { elem } => write!(f, "piecewise<{elem}>"),
+            Self::AssumptionSet => f.write_str("assumption_set"),
+            Self::MathDomain => f.write_str("math_domain"),
+            Self::SolutionSet => f.write_str("solution_set"),
             Self::Array { elem, len } => write!(f, "array<{elem},{len}>"),
             Self::Tensor { elem, shape } => {
                 write!(f, "tensor<{elem},")?;
@@ -24782,6 +25220,110 @@ impl ForgePropertySpec {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ForgeValidationSpec {
+    pub name: String,
+    pub role: String,
+    pub method: String,
+    pub oracle: String,
+    pub uncertainty: String,
+    pub reference: String,
+    pub replay: String,
+    pub promotion: String,
+    pub rollback: String,
+}
+
+impl ForgeValidationSpec {
+    pub fn parse(raw: &str) -> Option<Self> {
+        let rest = raw.trim().strip_prefix("validation ")?;
+        let (name, body) = rest.split_once(':')?;
+        let name = name.trim();
+        if !is_forge_ident(name) {
+            return None;
+        }
+        let mut role = None;
+        let mut method = None;
+        let mut oracle = None;
+        let mut uncertainty = None;
+        let mut reference = None;
+        let mut replay = None;
+        let mut promotion = None;
+        let mut rollback = None;
+        for item in body.split_whitespace() {
+            let (key, value) = item.split_once('=')?;
+            if !valid_forge_validation_token(value) {
+                return None;
+            }
+            match key {
+                "role" => role = Some(value.to_string()),
+                "method" => method = Some(value.to_string()),
+                "oracle" => oracle = Some(value.to_string()),
+                "uncertainty" => uncertainty = Some(value.to_string()),
+                "reference" => reference = Some(value.to_string()),
+                "replay" => replay = Some(value.to_string()),
+                "promotion" => promotion = Some(value.to_string()),
+                "rollback" => rollback = Some(value.to_string()),
+                _ => return None,
+            }
+        }
+        let spec = Self {
+            name: name.to_string(),
+            role: role?,
+            method: method?,
+            oracle: oracle?,
+            uncertainty: uncertainty?,
+            reference: reference?,
+            replay: replay?,
+            promotion: promotion?,
+            rollback: rollback?,
+        };
+        spec.is_valid().then_some(spec)
+    }
+
+    pub fn is_valid(&self) -> bool {
+        [
+            &self.role,
+            &self.method,
+            &self.oracle,
+            &self.uncertainty,
+            &self.reference,
+            &self.replay,
+            &self.promotion,
+            &self.rollback,
+        ]
+        .iter()
+        .all(|value| valid_forge_validation_token(value))
+    }
+
+    pub fn canonical_source(&self) -> String {
+        format!(
+            "validation {}: role={} method={} oracle={} uncertainty={} reference={} replay={} promotion={} rollback={}",
+            self.name,
+            self.role,
+            self.method,
+            self.oracle,
+            self.uncertainty,
+            self.reference,
+            self.replay,
+            self.promotion,
+            self.rollback
+        )
+    }
+
+    pub fn validation_hash_hex(&self) -> String {
+        hash_text_hex("forge.source.validation.v1", &self.canonical_source())
+    }
+}
+
+fn valid_forge_validation_token(raw: &str) -> bool {
+    !raw.is_empty()
+        && raw.len() <= 128
+        && raw.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(ch, '_' | '-' | '.' | ':' | '/' | '@')
+        })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ForgeLoweringTarget {
     Interpreter,
@@ -25059,6 +25601,7 @@ pub enum ForgeIrKernelClass {
     Field,
     Graph,
     Table,
+    SymbolicMath,
     Control,
     FunctionCall,
 }
@@ -25077,6 +25620,7 @@ impl ForgeIrKernelClass {
             Self::Field => "field",
             Self::Graph => "graph",
             Self::Table => "table",
+            Self::SymbolicMath => "symbolic_math",
             Self::Control => "control",
             Self::FunctionCall => "function_call",
         }
@@ -25153,6 +25697,7 @@ pub struct ForgeComputeIrModule {
     pub transform_contract: Vec<String>,
     pub schedule_contract: Vec<String>,
     pub property_contract: Vec<String>,
+    pub validation_contract: Vec<String>,
     pub runtime_contract: String,
     pub hostcall_contract: Vec<String>,
     pub ir_hash: String,
@@ -25195,6 +25740,11 @@ impl ForgeComputeIrModule {
             text.push_str(property);
             text.push('\n');
         }
+        for validation in &self.validation_contract {
+            text.push_str("validation|");
+            text.push_str(validation);
+            text.push('\n');
+        }
         text.push_str("runtime|");
         text.push_str(&self.runtime_contract);
         text.push('\n');
@@ -25233,6 +25783,7 @@ pub struct ForgeModuleSpec {
     pub transforms: Vec<ForgeTransformSpec>,
     pub schedules: Vec<ForgeScheduleSpec>,
     pub properties: Vec<ForgePropertySpec>,
+    pub validations: Vec<ForgeValidationSpec>,
     pub runtime: ForgeRuntimeSpec,
     pub hostcalls: Vec<ForgeSealedHostcallSpec>,
     pub cost: ForgeCostSpec,
@@ -25253,6 +25804,7 @@ impl ForgeModuleSpec {
         let transforms = section_body(raw, "forge_transforms").unwrap_or("none");
         let schedules = section_body(raw, "forge_schedule").unwrap_or("none");
         let properties = section_body(raw, "forge_properties").unwrap_or("none");
+        let validations = section_body(raw, "forge_validation").unwrap_or("none");
         let runtime = section_body(raw, "forge_runtime").unwrap_or("none");
         let hostcalls = section_body(raw, "forge_hostcalls").unwrap_or("none");
         let cost = section_body(raw, "forge_cost")?;
@@ -25269,6 +25821,7 @@ impl ForgeModuleSpec {
         let transforms = parse_optional_section_lines(transforms, ForgeTransformSpec::parse)?;
         let schedules = parse_optional_section_lines(schedules, ForgeScheduleSpec::parse)?;
         let properties = parse_optional_section_lines(properties, ForgePropertySpec::parse)?;
+        let validations = parse_optional_section_lines(validations, ForgeValidationSpec::parse)?;
         let runtime = ForgeRuntimeSpec::parse(runtime)?;
         let hostcalls = parse_optional_section_lines(hostcalls, ForgeSealedHostcallSpec::parse)?;
         let cost = ForgeCostSpec::parse(cost)?;
@@ -25287,6 +25840,7 @@ impl ForgeModuleSpec {
             transforms,
             schedules,
             properties,
+            validations,
             runtime,
             hostcalls,
             cost,
@@ -25317,6 +25871,7 @@ impl ForgeModuleSpec {
         let transform_names = self.transforms.iter().map(|t| t.name.as_str()).collect::<Vec<_>>();
         let schedule_names = self.schedules.iter().map(|s| s.name.as_str()).collect::<Vec<_>>();
         let property_names = self.properties.iter().map(|p| p.name.as_str()).collect::<Vec<_>>();
+        let validation_names = self.validations.iter().map(|v| v.name.as_str()).collect::<Vec<_>>();
         let hostcall_names = self.hostcalls.iter().map(|h| h.name.as_str()).collect::<Vec<_>>();
         if has_duplicates(&input_names)
             || has_duplicates(&import_names)
@@ -25328,6 +25883,7 @@ impl ForgeModuleSpec {
             || has_duplicates(&transform_names)
             || has_duplicates(&schedule_names)
             || has_duplicates(&property_names)
+            || has_duplicates(&validation_names)
             || has_duplicates(&hostcall_names)
             || import_names.iter().any(|name| {
                 const_names.iter().any(|other| other == name)
@@ -25352,6 +25908,7 @@ impl ForgeModuleSpec {
             && self.language_transform_schedule_check()
             && self.import_dialect_check()
             && self.property_check()
+            && self.validation_contract_check()
             && self.runtime_hostcall_check()
             && self.memory_dom_capability_check()
             && self.program_expressions_typecheck()
@@ -25612,6 +26169,10 @@ impl ForgeModuleSpec {
                 _ => true,
             }
         })
+    }
+
+    fn validation_contract_check(&self) -> bool {
+        self.validations.iter().all(ForgeValidationSpec::is_valid)
     }
 
     fn runtime_hostcall_check(&self) -> bool {
@@ -26068,6 +26629,13 @@ impl ForgeModuleSpec {
                 out.push('\n');
             }
         }
+        if !self.validations.is_empty() {
+            out.push_str("forge_validation:\n");
+            for validation in &self.validations {
+                out.push_str(&validation.canonical_source());
+                out.push('\n');
+            }
+        }
         out.push_str("forge_runtime:\n");
         out.push_str(&self.runtime.canonical_source());
         out.push('\n');
@@ -26240,6 +26808,10 @@ impl ForgeModuleSpec {
             out.push_str(&property.canonical_source());
             out.push('\n');
         }
+        for validation in &self.validations {
+            out.push_str(&validation.canonical_source());
+            out.push('\n');
+        }
         out.push_str(&self.runtime.canonical_source());
         out.push('\n');
         for hostcall in &self.hostcalls {
@@ -26363,6 +26935,12 @@ impl<'a> ForgeIrBuilder<'a> {
                 .properties
                 .iter()
                 .map(ForgePropertySpec::canonical_source)
+                .collect(),
+            validation_contract: self
+                .module
+                .validations
+                .iter()
+                .map(ForgeValidationSpec::canonical_source)
                 .collect(),
             runtime_contract: self.module.runtime.canonical_source(),
             hostcall_contract: self
@@ -26748,6 +27326,12 @@ fn call_kernel_class(name: &str) -> ForgeIrKernelClass {
         | "dom_node_record" | "graph_edge_record" | "leaks" | "slippage" | "backtest"
         | "walk_forward" | "stress_test" | "transaction_costs" | "alignment_score"
         | "run_test" => ForgeIrKernelClass::Table,
+        "symbol" | "domain" | "assume" | "to_expr" | "polynomial" | "piecewise"
+        | "simplify" | "full_simplify" | "canonicalize_expr" | "expand" | "factor"
+        | "collect" | "cancel" | "together" | "apart" | "function_expand" | "trig_reduce"
+        | "series" | "refine" | "diff" | "integrate" | "limit" | "residue"
+        | "solve" | "reduce_equations" | "find_instance" | "math_equiv"
+        | "math_proof" | "expression_hash" => ForgeIrKernelClass::SymbolicMath,
         "fori" | "while_fuel" | "root_find" | "bisection" | "newton_root" | "fixed_point"
         | "linear_solve" | "sparse_solve" | "least_squares" | "ode_step_euler" | "ode_step_rk4"
         | "ode_solve" | "pde_stencil_step" | "relaxation_step" | "csr_matvec" | "coo_to_csr"
@@ -26952,6 +27536,11 @@ fn forge_type_static_bytes(ty: &ForgeType) -> Option<u64> {
         ForgeType::Complex { elem } => forge_cost_mul(forge_scalar_static_bytes(*elem), 2),
         ForgeType::Interval { elem } => forge_cost_mul(forge_scalar_static_bytes(*elem), 2),
         ForgeType::Uncertainty { elem } => forge_cost_mul(forge_scalar_static_bytes(*elem), 5),
+        ForgeType::SymbolicExpr { .. } => Some(2048),
+        ForgeType::Polynomial { .. } => Some(1024),
+        ForgeType::Piecewise { .. } => Some(2048),
+        ForgeType::AssumptionSet | ForgeType::MathDomain => Some(512),
+        ForgeType::SolutionSet => Some(2048),
         ForgeType::Array { elem, len } => forge_cost_mul(forge_scalar_static_bytes(*elem), u64::from(*len)),
         ForgeType::Tensor { elem, shape } => {
             let cells = shape
@@ -27037,6 +27626,9 @@ fn forge_type_uses_f64(ty: &ForgeType) -> bool {
         | ForgeType::Complex { elem: scalar }
         | ForgeType::Interval { elem: scalar }
         | ForgeType::Uncertainty { elem: scalar }
+        | ForgeType::SymbolicExpr { elem: scalar }
+        | ForgeType::Polynomial { elem: scalar }
+        | ForgeType::Piecewise { elem: scalar }
         | ForgeType::Array { elem: scalar, .. }
         | ForgeType::Tensor { elem: scalar, .. }
         | ForgeType::Column { elem: scalar }
@@ -27045,6 +27637,9 @@ fn forge_type_uses_f64(ty: &ForgeType) -> bool {
         ForgeType::Table { columns } => columns.iter().any(|(_, ty)| matches!(ty, ForgeScalarTy::F64)),
         ForgeType::Graph { node, edge } => matches!(node, ForgeScalarTy::F64) || matches!(edge, ForgeScalarTy::F64),
         ForgeType::Snapshot
+        | ForgeType::AssumptionSet
+        | ForgeType::MathDomain
+        | ForgeType::SolutionSet
         | ForgeType::MemoryMap
         | ForgeType::HeapObject
         | ForgeType::DomNode
@@ -27240,6 +27835,7 @@ fn is_forge_section_name(value: &str) -> bool {
             | "forge_transforms"
             | "forge_schedule"
             | "forge_properties"
+            | "forge_validation"
             | "forge_runtime"
             | "forge_hostcalls"
             | "forge_cost"
@@ -34837,8 +35433,8 @@ mod tests {
         let ownership = r#"{
           "version": 1,
           "sections": [
-            { "id": "shell", "owner": "Forge shell", "files": ["ui/src/shell/surface.ts"], "lifecycle": "always-active" },
-            { "id": "trading", "owner": "Trading workspace", "files": ["ui/src/sections/trading/surface.ts"], "lifecycle": "open-close", "nativePresentCommands": ["bloomberg_live_native_present"] }
+            { "id": "shell", "owner": "Forge shell", "files": ["examples/ingen_native_front/ui/app.slint"], "lifecycle": "always-active" },
+            { "id": "trading", "owner": "Trading workspace", "files": ["examples/ingen_native_front/src/product_sections.rs"], "lifecycle": "open-close", "nativePresentCommands": ["bloomberg_live_native_present"] }
           ],
           "sensitiveCommands": [
             { "command": "bloomberg_live_native_present", "owner": "trading", "requiresBridge": true },
@@ -34861,8 +35457,8 @@ mod tests {
         let ownership = r#"{
           "version": 1,
           "sections": [
-            { "id": "shell", "owner": "Forge shell", "files": ["ui/src/shell/surface.ts"], "lifecycle": "always-active" },
-            { "id": "banger", "owner": "Banger viewport", "files": ["ui/src/sections/banger/surface.ts"], "lifecycle": "open-close" }
+            { "id": "shell", "owner": "Forge shell", "files": ["examples/ingen_native_front/ui/app.slint"], "lifecycle": "always-active" },
+            { "id": "banger", "owner": "Banger viewport", "files": ["examples/ingen_native_front/src/banger_viewport.rs"], "lifecycle": "open-close" }
           ],
           "sensitiveCommands": [
             { "command": "get_hardware_info", "owner": "shell", "requiresBridge": true }
@@ -34890,15 +35486,35 @@ mod tests {
         let ownership = r#"{
           "version": 1,
           "sections": [
-            { "id": "shell", "owner": "Forge shell", "files": ["ui/src/shell/surface.ts"], "lifecycle": "always-active" },
-            { "id": "trading", "owner": "Trading workspace", "files": ["ui/src/sections/trading/surface.ts"], "lifecycle": "open-close" }
+            { "id": "shell", "owner": "Forge shell", "files": ["examples/ingen_native_front/ui/app.slint"], "lifecycle": "always-active" },
+            { "id": "trading", "owner": "Trading workspace", "files": ["examples/ingen_native_front/src/product_sections.rs"], "lifecycle": "open-close" }
           ],
           "sensitiveCommands": [
             { "command": "get_hardware_info", "owner": "shell", "requiresBridge": true }
           ]
         }"#;
-        let real_estate_registry_json =
-            include_str!("../examples/forge_tauri_ui/source-registry/real-estate-tool-cells.json");
+        let real_estate_registry_json = r#"{
+          "schemaVersion": 1,
+          "defaults": {
+            "engine": "forge-fbc-v0",
+            "permissions": ["read:real_estate_evidence", "write:proof_ledger"],
+            "denied": ["fs:raw", "net:raw", "process:spawn"],
+            "inputSchema": { "kind": "real_estate_tool_cell_input_v0" },
+            "outputSchema": { "kind": "real_estate_tool_cell_output_v0" }
+          },
+          "toolCells": [
+            {
+              "id": "pilotage-agence",
+              "query": "real_estate_agency_pilotage",
+              "focus": ["real_estate", "agency", "scoring", "action"]
+            },
+            {
+              "id": "qualification-bien",
+              "query": "real_estate_property_qualification",
+              "focus": ["real_estate", "property", "evidence"]
+            }
+          ]
+        }"#;
         let app_registry = parse_app_section_registry_v0(ownership).unwrap();
         let real_estate_registry = parse_tool_cell_registry_v0(real_estate_registry_json).unwrap();
         let graph = br#"{"kind":"dataflow_node","id":"score-1","type":"score","label":"Pipeline","recordHash":"hash-score","confidence":0.91}

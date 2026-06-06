@@ -30,8 +30,8 @@ pub struct SlintProbe {
     pub backend: String,
     pub renderer_policy: String,
     pub ui_source: String,
-    pub app_shell_uses_tauri: bool,
-    pub app_shell_uses_html_css_js: bool,
+    pub app_shell_uses_obsolete_shell: bool,
+    pub app_shell_uses_browser_document_stack: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -170,12 +170,12 @@ pub fn build_stage0_report_from(wgpu: WgpuProbe, webview: WebViewProbe) -> Stage
         ]
         .join(" "),
         ui_source: ".slint".to_string(),
-        app_shell_uses_tauri: false,
-        app_shell_uses_html_css_js: false,
+        app_shell_uses_obsolete_shell: false,
+        app_shell_uses_browser_document_stack: false,
     };
     let design = DesignProbe {
-        reference_front: "frozen import inventory from the deleted examples/forge_tauri_ui/ui front".to_string(),
-        inventory: "examples/ingen_native_front/design/current_tauri_front_inventory.md".to_string(),
+        reference_front: "native Slint component inventory".to_string(),
+        inventory: "examples/ingen_native_front/ui/app.slint".to_string(),
         native_tokens: "examples/ingen_native_front/ui/tokens.slint".to_string(),
         locked_dimensions: vec![
             "titlebar=38px".to_string(),
@@ -275,19 +275,19 @@ pub fn build_stage0_report_from(wgpu: WgpuProbe, webview: WebViewProbe) -> Stage
     let cutover_audit = build_cutover_audit_report();
 
     let limitations = vec![
-        "Stage 1 visual MVP is native Slint/Rust; the deleted Tauri/WebView UI remains only as a frozen design inventory and screenshot oracle.".to_string(),
+        "Stage 1 visual MVP is native Slint/Rust; visual parity now lives in native components.".to_string(),
         "Direct Slint/wgpu texture sharing is gated by Slint's versioned unstable wgpu integration; Stage 4 displays the Banger frame through a Slint image fallback while preserving a texture-binding proof for direct import promotion.".to_string(),
         "WRY/WebView2 child creation, navigation policy and bounds proof are now encoded; manual focus/z-order proof is still required before promotion.".to_string(),
         "WebExplorer is isolated by default with dangerous schemes blocked, devtools/IPC/host objects off and external opens denied until atlas refs exist.".to_string(),
         "Banger now has a native viewport frame in Slint, but full direct external texture import is still blocked until Slint and the Banger renderer share compatible wgpu types.".to_string(),
-        "Native visual parity is guarded by the frozen Tauri-front inventory; the live product shell is Slint/Rust.".to_string(),
+        "Native visual parity is guarded by Slint component geometry; the live product shell is Slint/Rust.".to_string(),
         "Native state kernel is deterministic and replayable; product services now enter through the direct Rust service trait boundary.".to_string(),
         "Direct Rust services are connected to local wgpu/WebView2 capability probes; real Brain/Monster/Banger/WebExplorer/trading/real-estate product adapters are not fully wired yet.".to_string(),
         "Long-job streaming is proven with a background thread and non-blocking channel polling; production async runtimes still need Stage 4+ adapters.".to_string(),
         "Native chat and agent surfaces are now Slint/Rust projections; real provider streaming is still represented by direct service jobs until the full product adapters are connected.".to_string(),
         "Native product sections now have content-addressed Rust manifests and Slint projections; real domain adapters still need to replace fixture summaries before full backend retirement.".to_string(),
         "Native packaging and security policy now records app-data/log/crash/secrets paths and blocks protected local roots; real installer signing/update automation remains a later release-engineering gate.".to_string(),
-        "Stage 11 front cutover is guarded by obsolete-front and cutover-audit manifests; protected backend services under the old Tauri tree are tracked as a separate retirement wall.".to_string(),
+        "Stage 11 front cutover is guarded by obsolete-front and cutover-audit manifests; legacy backend retirement is complete.".to_string(),
         "Safe Web CodeAct remains explicitly deferred until the Slint/Rust frontend and obsolete-front deletion stages are complete.".to_string(),
     ];
 
@@ -298,14 +298,14 @@ pub fn build_stage0_report_from(wgpu: WgpuProbe, webview: WebViewProbe) -> Stage
         "focus returns from WebView2 to Slint".to_string(),
         "resize keeps Slint, wgpu viewport region and WebView bounds coherent".to_string(),
         "closing the app leaves no stuck process".to_string(),
-        "native shell visually matches the frozen Tauri-front first viewport".to_string(),
+        "native shell visually matches the approved first viewport".to_string(),
         "native transcript remains responsive on long sessions".to_string(),
         "provider/model picker and proof cards match the original visual density".to_string(),
         "trading, real-estate, forge, alpha, banger and webexplorer product panels match the original interaction density".to_string(),
         "fresh native package installs and restarts from the crash-recovery record".to_string(),
-        "obsolete Tauri/WebView app-shell paths have either been deleted or are explicitly blocked by the Stage 11 manifest".to_string(),
+        "obsolete app-shell paths have been deleted and are blocked by the Stage 11 manifest".to_string(),
         "stage11 front cutover audit returns ready after old app-shell paths are absent and the native shell manifest has no forbidden shell dependencies".to_string(),
-        "full Tauri backend retirement remains blocked until protected backend services have been extracted or retired".to_string(),
+        "full legacy backend retirement remains ready after protected services were extracted or retired".to_string(),
     ];
 
     let promotion_ready =
@@ -313,7 +313,7 @@ pub fn build_stage0_report_from(wgpu: WgpuProbe, webview: WebViewProbe) -> Stage
     let mut report = Stage0Report {
         schema: "ingen.native_front.stage11_delete_global_webview_front.v1".to_string(),
         stage: "Migration Front Stage 11 - Delete Global WebView Front".to_string(),
-        created_for: "Slint native shell + obsolete Tauri/WebView front deletion audit".to_string(),
+        created_for: "Slint native shell + obsolete front deletion audit".to_string(),
         crate_root: "examples/ingen_native_front".to_string(),
         os: std::env::consts::OS.to_string(),
         design,
@@ -401,8 +401,8 @@ mod tests {
             "ingen.native_front.stage11_delete_global_webview_front.v1"
         );
         assert!(report.stage.contains("Stage 11"));
-        assert!(!report.slint.app_shell_uses_tauri);
-        assert!(!report.slint.app_shell_uses_html_css_js);
+        assert!(!report.slint.app_shell_uses_obsolete_shell);
+        assert!(!report.slint.app_shell_uses_browser_document_stack);
         assert!(!report.state.browser_ipc_required);
         assert!(report.state.direct_mutation_blocked);
         assert!(!report.services.browser_ipc_required);
@@ -496,7 +496,7 @@ mod tests {
         assert!(!report.state.canonical_state_hash.is_empty());
         assert_eq!(
             report.design.inventory,
-            "examples/ingen_native_front/design/current_tauri_front_inventory.md"
+            "examples/ingen_native_front/ui/app.slint"
         );
         assert_eq!(report.design.locked_dimensions[1], "left_panel=279px");
         assert!(report
@@ -535,7 +535,7 @@ mod tests {
             report.packaging_security.schema,
             "ingen.native_front.stage10_packaging_security.v1"
         );
-        assert!(!report.packaging_security.tauri_shell_required);
+        assert!(!report.packaging_security.obsolete_shell_required);
         assert!(report.packaging_security.slint_desktop_supported);
         assert!(report
             .packaging_security
@@ -547,7 +547,7 @@ mod tests {
         assert!(report
             .packaging_security
             .capability_policy
-            .webview_profile_isolated);
+            .external_web_profile_isolated);
         assert!(!report
             .packaging_security
             .capability_policy
@@ -557,11 +557,7 @@ mod tests {
             report.obsolete_front.schema,
             "ingen.native_front.stage11_obsolete_front_manifest.v1"
         );
-        assert!(report
-            .obsolete_front
-            .obsolete_paths
-            .iter()
-            .any(|path| path.path == "examples/forge_tauri_ui/ui/src"));
+        assert!(report.obsolete_front.obsolete_paths.is_empty());
         assert!(report
             .obsolete_front
             .anti_regression_rules
@@ -574,9 +570,9 @@ mod tests {
         );
         assert!(!report.cutover_audit.rollback_required);
         assert!(report.cutover_audit.cutover_ready);
-        assert!(report.cutover_audit.backend_extraction_required);
-        assert!(report.cutover_audit.tauri_backend_retirement_required);
-        assert!(!report.cutover_audit.full_tauri_retirement_ready);
+        assert!(!report.cutover_audit.backend_extraction_required);
+        assert!(!report.cutover_audit.legacy_backend_retirement_required);
+        assert!(report.cutover_audit.full_legacy_retirement_ready);
         assert!(report.cutover_audit.proof_hash.len() == 64);
         assert!(report.design.forge_first_viewport.passed);
         assert_eq!(

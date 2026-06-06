@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
@@ -7,12 +7,20 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub use forge_ipc::BangerNativeRenderPrepareRequest;
-
 use scan::{
     MonsterEngineLane, MonsterNativeTandemArtifact, MonsterNativeTandemDomain, MonsterNode,
     MonsterPreparedCompute,
 };
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRenderPrepareRequest {
+    pub scene_id: Option<String>,
+    pub known_fragment_hashes: Option<Vec<String>>,
+    pub target_frame_ms: Option<f32>,
+    pub vram_budget_mb: Option<u32>,
+    pub prefer_mesh_shaders: Option<bool>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -301,9 +309,9 @@ impl BangerNativeEngine {
                 frontier_hypothesis:
                     "Monster emits content-addressed render pages; Banger turns them into sparse residency jobs and render graph passes keyed by proof hashes.",
                 local_gate:
-                    "cargo check --manifest-path examples\\forge_tauri_ui\\src-tauri\\Cargo.toml plus route=NativeTandemRender",
+                    "cargo check --manifest-path examples\\ingen_native_services\\Cargo.toml plus route=NativeTandemRender",
                 rollback_path:
-                    "remove banger_native_engine.rs and the banger_native_prepare_render_handoff Tauri command; src/kasm.rs and src/monster.rs stay untouched",
+                    "remove banger_native_engine.rs native handoff; src/kasm.rs and src/monster.rs stay untouched",
             },
         })
     }
