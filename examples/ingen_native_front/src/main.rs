@@ -4,14 +4,23 @@ use ingen_native_front::{
     atlas_ui_projection, build_cutover_audit_report, build_obsolete_front_manifest,
     banger_frame_image, build_stage0_report, local_service_command, local_service_snapshot,
     product_section_projection, cached_work_motion_lane,
-    render_banger_viewport_frame, spawn_fake_long_job,
+    render_banger_viewport_frame, render_brain_core_lava_rgba, spawn_fake_long_job,
     stage0_report_json, AtlasManifest,
     BangerViewportFrame, NativeAgentCard, NativeAgentCardKind, NativeServiceCommand,
     NativeSessionSummary, NativeStateKernel, NativeUiEvent, ProductSectionsManifest,
-    ServiceSnapshot, ServiceStreamEvent, WebExplorerPolicy, MotionLane,
+    ServiceSnapshot, ServiceStreamEvent, WebExplorerPolicy, MotionLane, BRAIN_CORE_DIM,
+    BRAIN_CORE_FRAME_COUNT,
 };
 use slint::winit_030::WinitWindowAccessor;
-use std::{cell::RefCell, fs, path::PathBuf, rc::Rc, sync::mpsc, time::Duration};
+use std::{
+    cell::RefCell,
+    fs,
+    path::PathBuf,
+    rc::Rc,
+    sync::mpsc,
+    thread,
+    time::Duration,
+};
 
 slint::include_modules!();
 
@@ -80,6 +89,7 @@ fn main() -> Result<(), slint::PlatformError> {
     start_work_motion_lane(&window, Rc::clone(&work_motion_lane));
     start_service_stream_poller(&window, Rc::clone(&state), Rc::clone(&streams));
     start_dev_status_poller(&window);
+    start_brain_core_animation(&window);
 
     let weak = window.as_weak();
     let state_for_refresh = Rc::clone(&state);
@@ -280,6 +290,70 @@ fn main() -> Result<(), slint::PlatformError> {
     } else {
         window.run()
     }
+}
+
+/// Animated "lava lamp" brain core, built as a prebaked seamless motion lane (the same pattern as
+/// the work spinner). A worker thread bakes the whole RGBA frame atlas once — off the UI thread,
+/// so startup never stalls — then the UI builds each `slint::Image` lazily on first display and
+/// cycles them. Because the frames are pre-uploaded textures that just cycle, there is zero
+/// per-frame regeneration and zero GPU readback: it runs at the display refresh like the spinner.
+fn start_brain_core_animation(window: &AppWindow) {
+    // Worker bakes the seamless atlas once and hands the raw frames to the UI thread.
+    let (tx, rx) = mpsc::sync_channel::<Vec<Vec<u8>>>(1);
+    thread::spawn(move || {
+        let frames: Vec<Vec<u8>> = (0..BRAIN_CORE_FRAME_COUNT)
+            .map(|frame| render_brain_core_lava_rgba(frame, BRAIN_CORE_FRAME_COUNT))
+            .collect();
+        let _ = tx.send(frames);
+    });
+
+    // Raw atlas (once received) and the lazily-built, cached Slint images we cycle.
+    let atlas: Rc<RefCell<Option<Vec<Vec<u8>>>>> = Rc::new(RefCell::new(None));
+    let images: Rc<RefCell<Vec<Option<slint::Image>>>> = Rc::new(RefCell::new(Vec::new()));
+    let tick = Rc::new(RefCell::new(0usize));
+
+    let timer = slint::Timer::default();
+    let weak = window.as_weak();
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(33), // ~30 fps cadence; the loop is seamless so this never resets
+        move || {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            if window.get_profile_canvas().as_str() != "brain" {
+                return;
+            }
+            // Pick up the baked atlas the first time it is ready.
+            if atlas.borrow().is_none() {
+                if let Ok(frames) = rx.try_recv() {
+                    images.borrow_mut().resize(frames.len(), None);
+                    *atlas.borrow_mut() = Some(frames);
+                } else {
+                    return; // still baking
+                }
+            }
+            let count = images.borrow().len();
+            if count == 0 {
+                return;
+            }
+            let index = *tick.borrow() % count;
+            *tick.borrow_mut() = index + 1;
+            // Build this frame's image once, then reuse the cached (pre-uploaded) texture.
+            if images.borrow()[index].is_none() {
+                if let Some(frames) = atlas.borrow().as_ref() {
+                    let mut pixels =
+                        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(BRAIN_CORE_DIM, BRAIN_CORE_DIM);
+                    pixels.make_mut_bytes().copy_from_slice(&frames[index]);
+                    images.borrow_mut()[index] = Some(slint::Image::from_rgba8(pixels));
+                }
+            }
+            if let Some(image) = images.borrow()[index].clone() {
+                window.set_brain_motion_image(image);
+            }
+        },
+    );
+    std::mem::forget(timer);
 }
 
 fn start_work_motion_lane(window: &AppWindow, lane: Rc<MotionLane>) {

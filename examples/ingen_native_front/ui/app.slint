@@ -349,6 +349,7 @@ component SessionRow inherits Rectangle {
         frame: root.work_motion_image;
     }
     Image {
+        visible: !root.working;
         x: root.archive_slide + parent.width - 23px;
         y: 7px;
         width: 14px;
@@ -360,6 +361,7 @@ component SessionRow inherits Rectangle {
         animate opacity { duration: 120ms; easing: ease; }
     }
     archive_touch := TouchArea {
+        visible: !root.working;
         x: parent.width - 32px;
         y: 0px;
         width: 32px;
@@ -1696,49 +1698,6 @@ component BrainTab inherits Rectangle {
     }
 }
 
-// One amber metaball lobe — a solid circle orbiting a pivot. Several of these in the same
-// opaque tint fuse into a single crisp morphing silhouette (no internal seams, no blur).
-component BrainLobe inherits Rectangle {
-    in property <length> cx;
-    in property <length> cy;
-    in property <length> diam;
-    in property <length> orbit;
-    in property <float> ang;
-    in property <color> tint;
-    width: root.diam;
-    height: root.diam;
-    border-radius: root.diam / 2;
-    background: root.tint;
-    x: root.cx + root.orbit * Math.cos(root.ang * 1rad) - root.diam / 2;
-    y: root.cy + root.orbit * Math.sin(root.ang * 1rad) - root.diam / 2;
-}
-
-// Living amber core, rendered 100% natively by Slint (GPU-composited, zero readback, no CPU
-// roundtrip). animation-tick() drives it at the display refresh; the lobe spin speeds are
-// mutually irrational so the silhouette never loops, and the tint drifts amber <-> burnt.
-component BrainCoreLive inherits Rectangle {
-    // Continuous, ever-increasing time in milliseconds (never resets).
-    property <float> t: animation-tick() / 1ms;
-    // Hue drift amber <-> burnt-orange on two incommensurate sines (~6s + ~15s): never repeats.
-    property <float> drift: 0.40 + 0.22 * Math.sin((t * 0.00105) * 1rad) + 0.12 * Math.sin((t * 0.00041 + 1.7) * 1rad);
-    property <color> body: #ffbf48.mix(#be4a1d, drift);
-    // Gentle non-periodic breathing of the core.
-    property <float> breathe: 1.0 + 0.04 * Math.sin((t * 0.0007) * 1rad) + 0.02 * Math.sin((t * 0.00031) * 1rad);
-    property <length> s: self.width;
-    property <length> cx: self.width / 2;
-    property <length> cy: self.height / 2;
-
-    // Central body keeps every orbiting lobe fused to one connected mass.
-    BrainLobe { cx: root.cx; cy: root.cy; orbit: 0px; ang: 0; diam: root.s * 0.60 * root.breathe; tint: root.body; }
-    // Orbiting lobes — speeds in rad/ms; ~one turn per 2s = 0.00314, both directions, irrational.
-    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.16; ang: root.t *  0.00314 + 0.0; diam: root.s * 0.40; tint: root.body; }
-    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.20; ang: root.t * -0.00298 + 2.0; diam: root.s * 0.34; tint: root.body; }
-    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.14; ang: root.t *  0.00331 + 4.2; diam: root.s * 0.30; tint: root.body; }
-    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.22; ang: root.t * -0.00275 + 1.0; diam: root.s * 0.32; tint: root.body; }
-    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.18; ang: root.t *  0.00352 + 3.1; diam: root.s * 0.26; tint: root.body; }
-    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.12; ang: root.t * -0.00289 + 5.0; diam: root.s * 0.24; tint: root.body; }
-}
-
 component BrainSurface inherits Rectangle {
     in property <string> mode;
     in property <image> brain_motion_image;
@@ -1785,13 +1744,16 @@ component BrainSurface inherits Rectangle {
         root.selected_component == "affinity" ? @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiMwMDAwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik02IDR2N2E2IDYgMCAwIDAgMTIgMFY0Ii8+PHBhdGggZD0iTTEwIDR2N2EyIDIgMCAwIDAgNCAwVjQiLz48cGF0aCBkPSJNNSA0aDUiLz48cGF0aCBkPSJNMTQgNGg1Ii8+PC9zdmc+") :
         @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiMwMDAwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxjaXJjbGUgY3g9IjEyIiBjeT0iNiIgcj0iMi42Ii8+PHBhdGggZD0iTTkuNCAxMC41aDUuMiIvPjxwYXRoIGQ9Ik05LjcgMTAuNWMwIDItLjkgNC0yIDYuNmg4LjZjLTEuMS0yLjYtMi00LjYtMi02LjYiLz48cGF0aCBkPSJNNy41IDE3LjFoOWwuOCAzLjRINi43WiIvPjwvc3ZnPg==");
 
-    // Cœur ambre vivant (natif Slint, composité GPU, zéro readback) — arrière-plan du terminal,
-    // posé en bas à droite, derrière la barre de chat. Hors du rectangle clippé pour déborder.
-    BrainCoreLive {
+    // Cœur ambre vivant (metaball "lampe à lave" rendu sur thread worker, juste uploadé ici) —
+    // arrière-plan du terminal, en bas à droite derrière la barre de chat. Hors du rectangle
+    // clippé pour pouvoir déborder sous le chat.
+    Image {
         x: root.width * 0.60 - 380px;
         y: root.height - 470px;
         width: 760px; height: 760px;
-        opacity: 0.5;
+        source: root.brain_motion_image;
+        image-fit: contain;
+        opacity: 0.62;
     }
 
     // Tout le canvas EST le terminal : onglets en haut, sortie session en dessous.
@@ -3028,13 +2990,13 @@ component ChatBar inherits Rectangle {
             full-autonomy-touch := TouchArea { clicked => { root.permission_mode = "full-autonomy"; root.permission_mode_open = false; root.permission_mode_selected("Full autonomy"); } }
         }
     }
-    // LLM icon viewboxes: uniform 20x20 containers, 14x14 centered icons
+    // LLM icon viewboxes: uniform 24x24 containers, 16x16 centered icons, bottom-aligned with the send tile
     Rectangle {
-        x: parent.width - 106px; y: 69px;
-        width: 20px; height: 20px; border-radius: 3px;
+        x: parent.width - 118px; y: 67px;
+        width: 24px; height: 24px; border-radius: 3px;
         background: #00000000;
-        Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTA5LjYzOSI+PHBhdGggZmlsbD0iI0YwRjBFRCIgZmlsbC1ydWxlPSJub256ZXJvIiBkPSJNNDEyLjAzNyAyMjEuNzY0YTkwLjgzNCA5MC44MzQgMCAwMDQuNjQ4LTI4LjY3IDkwLjc5IDkwLjc5IDAgMDAtMTIuNDQzLTQ1Ljg3Yy0xNi4zNy0yOC40OTYtNDYuNzM4LTQ2LjA4OS03OS42MDUtNDYuMDg5LTYuNDY2IDAtMTIuOTQzLjY4My0xOS4yNjQgMi4wNGE5MC43NjUgOTAuNzY1IDAgMDAtNjcuODgxLTMwLjUxNWgtLjU3NmMtLjA1OS4wMDItLjE0OS4wMDItLjIxNi4wMDItMzkuODA3IDAtNzUuMTA4IDI1LjY4Ni04Ny4zNDYgNjMuNTU0LTI1LjYyNiA1LjIzOS00Ny43NDggMjEuMzEtNjAuNjgyIDQ0LjAzYTkxLjg3MyA5MS44NzMgMCAwMC0xMi40MDcgNDYuMDc3IDkxLjgzMyA5MS44MzMgMCAwMDIzLjY5NCA2MS41NTMgOTAuODAyIDkwLjgwMiAwIDAwLTQuNjQ5IDI4LjY3IDkwLjgwNCA5MC44MDQgMCAwMDEyLjQ0MiA0NS44N2MxNi4zNjkgMjguNTA0IDQ2Ljc0IDQ2LjA4NyA3OS42MSA0Ni4wODdhOTEuODEgOTEuODEgMCAwMDE5LjI1My0yLjA0IDkwLjc4MyA5MC43ODMgMCAwMDY3Ljg4NyAzMC41MTZoLjU3NmwuMjM0LS4wMDFjMzkuODI5IDAgNzUuMTE5LTI1LjY4NiA4Ny4zNTctNjMuNTg4IDI1LjYyNi01LjI0MiA0Ny43NDgtMjEuMzEyIDYwLjY4Mi00NC4wMzNhOTEuNzE4IDkxLjcxOCAwIDAwMTIuMzgzLTQ2LjAzNSA5MS44MyA5MS44MyAwIDAwLTIzLjY5My02MS41NTNsLS4wMDQtLjAwNXpNMjc1LjEwMiA0MTMuMTYxaC0uMDk0YTY4LjE0NiA2OC4xNDYgMCAwMS00My42MTEtMTUuOCA1Ni45MzYgNTYuOTM2IDAgMDAyLjE1NS0xLjIyMWw3Mi41NC00MS45MDFhMTEuNzk5IDExLjc5OSAwIDAwNS45NjItMTAuMjUxVjI0MS42NTFsMzAuNjYxIDE3LjcwNGMuMzI2LjE2My41NS40NzkuNTk2Ljg0djg0LjY5M2MtLjA0MiAzNy42NTMtMzAuNTU0IDY4LjE5OC02OC4yMSA2OC4yNzNoLjAwMXptLTE0Ni42ODktNjIuNjQ5YTY4LjEyOCA2OC4xMjggMCAwMS05LjE1Mi0zNC4wODVjMC0zLjkwNC4zNDEtNy44MTcgMS4wMDUtMTEuNjYzLjUzOS4zMjMgMS40OC44OTcgMi4xNTUgMS4yODVsNzIuNTQgNDEuOTAxYTExLjgzMiAxMS44MzIgMCAwMDExLjkxOC0uMDAybDg4LjU2My01MS4xMzd2MzUuNDA4YTEuMSAxLjEgMCAwMS0uNDM4Ljk0bC03My4zMyA0Mi4zMzlhNjguNDMgNjguNDMgMCAwMS0zNC4xMSA5LjEyIDY4LjM1OSA2OC4zNTkgMCAwMS01OS4xNS0zNC4xMWwtLjAwMS4wMDR6bS0xOS4wODMtMTU4LjM2YTY4LjA0NCA2OC4wNDQgMCAwMTM1LjUzOC0yOS45MzRjMCAuNjI1LS4wMzYgMS43MzEtLjAzNiAyLjV2ODMuODAxbC0uMDAxLjA3YTExLjc5IDExLjc5IDAgMDA1Ljk1NCAxMC4yNDJsODguNTY0IDUxLjEzLTMwLjY2MSAxNy43MDRhMS4wOTYgMS4wOTYgMCAwMS0xLjAzNC4wOTNsLTczLjMzNy00Mi4zNzVhNjguMzYgNjguMzYgMCAwMS0zNC4wOTUtNTkuMTQzIDY4LjQxMiA2OC40MTIgMCAwMTkuMTEyLTM0LjA4NWwtLjAwNC0uMDAzem0yNTEuOTA3IDU4LjYyMWwtODguNTYzLTUxLjEzNyAzMC42NjEtMTcuNjk3YTEuMDk3IDEuMDk3IDAgMDExLjAzNC0uMDk0bDczLjMzNyA0Mi4zMzljMjEuMTA5IDEyLjE5NSAzNC4xMzIgMzQuNzQ2IDM0LjEzMiA1OS4xMzIgMCAyOC42MDQtMTcuODQ5IDU0LjE5OS00NC42ODYgNjQuMDc4di04Ni4zMDhjLjAwNC0uMDMyLjAwNC0uMDY1LjAwNC0uMDk2IDAtNC4yMTktMi4yNjEtOC4xMTktNS45MTktMTAuMjE3em0zMC41MTgtNDUuOTNjLS41MzktLjMzMS0xLjQ4LS44OTgtMi4xNTUtMS4yODZsLTcyLjU0LTQxLjkwMWExMS44NDIgMTEuODQyIDAgMDAtNS45NTgtMS42MTFjLTIuMDkyIDAtNC4xNS41NTgtNS45NTcgMS42MTFsLTg4LjU2NCA1MS4xMzd2LTM1LjQwOGwtLjAwMS0uMDYxYTEuMSAxLjEgMCAwMS40NC0uODhsNzMuMzMtNDIuMzAzYTY4LjMwMSA2OC4zMDEgMCAwMTM0LjEwOC05LjEyOWMzNy43MDQgMCA2OC4yODEgMzAuNTc3IDY4LjI4MSA2OC4yODFhNjguNjkgNjguNjkgMCAwMS0uOTg0IDExLjU0NXYuMDA1em0tMTkxLjg0MyA2My4xMDlsLTMwLjY2OC0xNy43MDRhMS4wOSAxLjA5IDAgMDEtLjU5Ni0uODR2LTg0LjY5MmMuMDE2LTM3LjY4NSAzMC41OTMtNjguMjM2IDY4LjI4MS02OC4yMzZhNjguMzMyIDY4LjMzMiAwIDAxNDMuNjg5IDE1LjgwNCA2My4wOSA2My4wOSAwIDAwLTIuMTU1IDEuMjIybC03Mi41NCA0MS45YTExLjc5NCAxMS43OTQgMCAwMC01Ljk2MSAxMC4yNDh2LjA2OGwtLjA1IDEwMi4yM3ptMTYuNjU1LTM1LjkxbDM5LjQ0NS0yMi43ODIgMzkuNDQ0IDIyLjc2N3Y0NS41NWwtMzkuNDQ0IDIyLjc2Ny0zOS40NDUtMjIuNzY3di00NS41MzV6Ii8+PC9zdmc+Cg=="); image-fit: contain; opacity: !root.llm_openai_connected ? 0.24 : root.openai_selected ? 1.0 : (llm-openai-touch.has-hover ? 0.9 : 0.62); }
-        Rectangle { x: 5px; y: 18px; width: 10px; height: 1px; background: root.openai_selected ? #eeeee8d8 : #00000000; }
+        Image { x: 4px; y: 4px; width: 16px; height: 16px; source: @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTA5LjYzOSI+PHBhdGggZmlsbD0iI0YwRjBFRCIgZmlsbC1ydWxlPSJub256ZXJvIiBkPSJNNDEyLjAzNyAyMjEuNzY0YTkwLjgzNCA5MC44MzQgMCAwMDQuNjQ4LTI4LjY3IDkwLjc5IDkwLjc5IDAgMDAtMTIuNDQzLTQ1Ljg3Yy0xNi4zNy0yOC40OTYtNDYuNzM4LTQ2LjA4OS03OS42MDUtNDYuMDg5LTYuNDY2IDAtMTIuOTQzLjY4My0xOS4yNjQgMi4wNGE5MC43NjUgOTAuNzY1IDAgMDAtNjcuODgxLTMwLjUxNWgtLjU3NmMtLjA1OS4wMDItLjE0OS4wMDItLjIxNi4wMDItMzkuODA3IDAtNzUuMTA4IDI1LjY4Ni04Ny4zNDYgNjMuNTU0LTI1LjYyNiA1LjIzOS00Ny43NDggMjEuMzEtNjAuNjgyIDQ0LjAzYTkxLjg3MyA5MS44NzMgMCAwMC0xMi40MDcgNDYuMDc3IDkxLjgzMyA5MS44MzMgMCAwMDIzLjY5NCA2MS41NTMgOTAuODAyIDkwLjgwMiAwIDAwLTQuNjQ5IDI4LjY3IDkwLjgwNCA5MC44MDQgMCAwMDEyLjQ0MiA0NS44N2MxNi4zNjkgMjguNTA0IDQ2Ljc0IDQ2LjA4NyA3OS42MSA0Ni4wODdhOTEuODEgOTEuODEgMCAwMDE5LjI1My0yLjA0IDkwLjc4MyA5MC43ODMgMCAwMDY3Ljg4NyAzMC41MTZoLjU3NmwuMjM0LS4wMDFjMzkuODI5IDAgNzUuMTE5LTI1LjY4NiA4Ny4zNTctNjMuNTg4IDI1LjYyNi01LjI0MiA0Ny43NDgtMjEuMzEyIDYwLjY4Mi00NC4wMzNhOTEuNzE4IDkxLjcxOCAwIDAwMTIuMzgzLTQ2LjAzNSA5MS44MyA5MS44MyAwIDAwLTIzLjY5My02MS41NTNsLS4wMDQtLjAwNXpNMjc1LjEwMiA0MTMuMTYxaC0uMDk0YTY4LjE0NiA2OC4xNDYgMCAwMS00My42MTEtMTUuOCA1Ni45MzYgNTYuOTM2IDAgMDAyLjE1NS0xLjIyMWw3Mi41NC00MS45MDFhMTEuNzk5IDExLjc5OSAwIDAwNS45NjItMTAuMjUxVjI0MS42NTFsMzAuNjYxIDE3LjcwNGMuMzI2LjE2My41NS40NzkuNTk2Ljg0djg0LjY5M2MtLjA0MiAzNy42NTMtMzAuNTU0IDY4LjE5OC02OC4yMSA2OC4yNzNoLjAwMXptLTE0Ni42ODktNjIuNjQ5YTY4LjEyOCA2OC4xMjggMCAwMS05LjE1Mi0zNC4wODVjMC0zLjkwNC4zNDEtNy44MTcgMS4wMDUtMTEuNjYzLjUzOS4zMjMgMS40OC44OTcgMi4xNTUgMS4yODVsNzIuNTQgNDEuOTAxYTExLjgzMiAxMS44MzIgMCAwMDExLjkxOC0uMDAybDg4LjU2My01MS4xMzd2MzUuNDA4YTEuMSAxLjEgMCAwMS0uNDM4Ljk0bC03My4zMyA0Mi4zMzlhNjguNDMgNjguNDMgMCAwMS0zNC4xMSA5LjEyIDY4LjM1OSA2OC4zNTkgMCAwMS01OS4xNS0zNC4xMWwtLjAwMS4wMDR6bS0xOS4wODMtMTU4LjM2YTY4LjA0NCA2OC4wNDQgMCAwMTM1LjUzOC0yOS45MzRjMCAuNjI1LS4wMzYgMS43MzEtLjAzNiAyLjV2ODMuODAxbC0uMDAxLjA3YTExLjc5IDExLjc5IDAgMDA1Ljk1NCAxMC4yNDJsODguNTY0IDUxLjEzLTMwLjY2MSAxNy43MDRhMS4wOTYgMS4wOTYgMCAwMS0xLjAzNC4wOTNsLTczLjMzNy00Mi4zNzVhNjguMzYgNjguMzYgMCAwMS0zNC4wOTUtNTkuMTQzIDY4LjQxMiA2OC40MTIgMCAwMTkuMTEyLTM0LjA4NWwtLjAwNC0uMDAzem0yNTEuOTA3IDU4LjYyMWwtODguNTYzLTUxLjEzNyAzMC42NjEtMTcuNjk3YTEuMDk3IDEuMDk3IDAgMDExLjAzNC0uMDk0bDczLjMzNyA0Mi4zMzljMjEuMTA5IDEyLjE5NSAzNC4xMzIgMzQuNzQ2IDM0LjEzMiA1OS4xMzIgMCAyOC42MDQtMTcuODQ5IDU0LjE5OS00NC42ODYgNjQuMDc4di04Ni4zMDhjLjAwNC0uMDMyLjAwNC0uMDY1LjAwNC0uMDk2IDAtNC4yMTktMi4yNjEtOC4xMTktNS45MTktMTAuMjE3em0zMC41MTgtNDUuOTNjLS41MzktLjMzMS0xLjQ4LS44OTgtMi4xNTUtMS4yODZsLTcyLjU0LTQxLjkwMWExMS44NDIgMTEuODQyIDAgMDAtNS45NTgtMS42MTFjLTIuMDkyIDAtNC4xNS41NTgtNS45NTcgMS42MTFsLTg4LjU2NCA1MS4xMzd2LTM1LjQwOGwtLjAwMS0uMDYxYTEuMSAxLjEgMCAwMS40NC0uODhsNzMuMzMtNDIuMzAzYTY4LjMwMSA2OC4zMDEgMCAwMTM0LjEwOC05LjEyOWMzNy43MDQgMCA2OC4yODEgMzAuNTc3IDY4LjI4MSA2OC4yODFhNjguNjkgNjguNjkgMCAwMS0uOTg0IDExLjU0NXYuMDA1em0tMTkxLjg0MyA2My4xMDlsLTMwLjY2OC0xNy43MDRhMS4wOSAxLjA5IDAgMDEtLjU5Ni0uODR2LTg0LjY5MmMuMDE2LTM3LjY4NSAzMC41OTMtNjguMjM2IDY4LjI4MS02OC4yMzZhNjguMzMyIDY4LjMzMiAwIDAxNDMuNjg5IDE1LjgwNCA2My4wOSA2My4wOSAwIDAwLTIuMTU1IDEuMjIybC03Mi41NCA0MS45YTExLjc5NCAxMS43OTQgMCAwMC01Ljk2MSAxMC4yNDh2LjA2OGwtLjA1IDEwMi4yM3ptMTYuNjU1LTM1LjkxbDM5LjQ0NS0yMi43ODIgMzkuNDQ0IDIyLjc2N3Y0NS41NWwtMzkuNDQ0IDIyLjc2Ny0zOS40NDUtMjIuNzY3di00NS41MzV6Ii8+PC9zdmc+Cg=="); image-fit: contain; opacity: !root.llm_openai_connected ? 0.24 : root.openai_selected ? 1.0 : (llm-openai-touch.has-hover ? 0.9 : 0.62); }
+        Rectangle { x: 7px; y: 21px; width: 10px; height: 1px; background: root.openai_selected ? #eeeee8d8 : #00000000; }
         llm-openai-touch := TouchArea {
             clicked => {
                 if (root.llm_openai_connected) {
@@ -3050,11 +3012,11 @@ component ChatBar inherits Rectangle {
         }
     }
     Rectangle {
-        x: parent.width - 82px; y: 69px;
-        width: 20px; height: 20px; border-radius: 3px;
+        x: parent.width - 92px; y: 67px;
+        width: 24px; height: 24px; border-radius: 3px;
         background: #00000000;
-        Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTA5LjY0Ij48cGF0aCBmaWxsPSIjRDc3NjU1IiBmaWxsLXJ1bGU9Im5vbnplcm8iIGQ9Ik0xNDIuMjcgMzE2LjYxOWw3My42NTUtNDEuMzI2IDEuMjM4LTMuNTg5LTEuMjM4LTEuOTk2LTMuNTg5LS4wMDEtMTIuMzEtLjc1OS00Mi4wODQtMS4xMzgtMzYuNDk4LTEuNTE2LTM1LjM2MS0xLjg5Ni04Ljg5Ny0xLjg5NS04LjM0LTEwLjk5NS44NTktNS40ODQgNy40ODItNS4wMyAxMC43MTcuOTM1IDIzLjY4MyAxLjYxNyAzNS41MzcgMi40NTIgMjUuNzgyIDEuNTE3IDM4LjE5MyAzLjk2OGg2LjA2NGwuODYtMi40NTEtMi4wNzMtMS41MTctMS42MTgtMS41MTctMzYuNzc2LTI0LjkyMi0zOS44MS0yNi4zMzgtMjAuODUyLTE1LjE2Ni0xMS4yNzMtNy42ODMtNS42ODctNy4yMDQtMi40NTEtMTUuNzIxIDEwLjIzNy0xMS4yNzMgMTMuNzUuOTM1IDMuNTEzLjkzNiAxMy45MjggMTAuNzE2IDI5Ljc0OSAyMy4wMjcgMzguODQ4IDI4LjYxMiA1LjY4NyA0LjcyNyAyLjI3NS0xLjYxNy4yNzgtMS4xMzgtMi41NTMtNC4yNzEtMjEuMTMtMzguMTkzLTIyLjU0Ni0zOC44NDgtMTAuMDM1LTE2LjEwMS0yLjY1NC05LjY1NWMtLjkzNS0zLjk2OC0xLjYxNy03LjMwNC0xLjYxNy0xMS4zNzRsMTEuNjUyLTE1LjgyMyA2LjQ0NS0yLjA3MyAxNS41NDUgMi4wNzMgNi41NDcgNS42ODcgOS42NTUgMjIuMDkyIDE1LjY0NiAzNC43OCAyNC4yNjUgNDcuMjkxIDcuMTAzIDE0LjAyOCAzLjc5MSAxMi45OTIgMS40MTYgMy45NjggMi40NDktLjAwMXYtMi4yNzVsMS45OTctMjYuNjQxIDMuNjktMzIuNzA3IDMuNTg5LTQyLjA4NCAxLjIzOS0xMS44NTQgNS44NjMtMTQuMjA2IDExLjY1Mi03LjY4MyA5LjA5OSA0LjM0OCA3LjQ4MiAxMC43MTYtMS4wMzYgNi45MjYtNC40NDkgMjguOTE1LTguNzIgNDUuMjk0LTUuNjg3IDMwLjMzMWgzLjMxM2wzLjc5Mi0zLjc5MSAxNS4zNDItMjAuMzcyIDI1Ljc4Mi0zMi4yMjcgMTEuMzc0LTEyLjc4OSAxMy4yNy0xNC4xMjkgOC41MTctNi43MjQgMTYuMS0uMDAxIDExLjg1NCAxNy42MTctNS4zMDcgMTguMTk5LTE2LjU4MSAyMS4wMjktMTMuNzUgMTcuODE5LTE5LjcxNiAyNi41NC0xMi4zMDkgMjEuMjMxIDEuMTM4IDEuNjk0IDIuOTMyLS4yNzggNDQuNTM2LTkuNDc5IDI0LjA2Mi00LjM0NyAyOC43MTQtNC45MjggMTIuOTkyIDYuMDY2IDEuNDE2IDYuMTY3LTUuMTA2IDEyLjYxMy0zMC43MSA3LjU4My0zNi4wMTggNy4yMDQtNTMuNjM2IDEyLjY4OS0uNjU3LjQ4Ljc1OC45MzUgMjQuMTY0IDIuMjc1IDEwLjMzNy41NTZoMjUuMzAxbDQ3LjExNCAzLjUxNCAxMi4zMDkgOC4xMzkgNy4zODEgOS45NTktMS4yMzggNy41ODMtMTguOTU3IDkuNjU1LTI1LjU3OS02LjA2Ni01OS43MDItMTQuMjA1LTIwLjQ3NC01LjEwNi0yLjgzLS4wMDF2MS42OTRsMTcuMDYxIDE2LjY4MiAzMS4yNjYgMjguMjMzIDM5LjE1MiAzNi4zOTcgMS45OTcgOC45OTktNS4wMyA3LjEwMi01LjMwNy0uNzU4LTM0LjQwMS0yNS44ODMtMTMuMjctMTEuNjUxLTMwLjA1My0yNS4zMDItMS45OTYtLjAwMXYyLjY1NGw2LjkyNiAxMC4xMzYgMzYuNTc0IDU0Ljk3NSAxLjg5NSAxNi44NTktMi42NTMgNS40ODUtOS40NzkgMy4zMTEtMTAuNDE0LTEuODk1LTIxLjQwOC0zMC4wNTQtMjIuMDkyLTMzLjg0NC0xNy44MTktMzAuMzMxLTIuMTczIDEuMjM4LTEwLjUxNSAxMTMuMjYxLTQuOTI5IDUuNzg4LTExLjM3NCA0LjM0OC05LjQ3OC03LjIwNC01LjAzLTExLjY1MiA1LjAzLTIzLjAyNyA2LjA2Ni0zMC4wNTIgNC45MjgtMjMuODg2IDQuNDQ5LTI5LjY3NCAyLjY1NC05Ljg1OC0uMTc3LS42NTctMi4xNzMuMjc4LTIyLjM3IDMwLjcxLTM0LjAyMSA0NS45NzctMjYuOTE5IDI4LjgxNS02LjQ0NSAyLjU1My0xMS4xNzMtNS43ODkgMS4wMzctMTAuMzM3IDYuMjQzLTkuMiAzNy4yNTctNDcuMzkyIDIyLjQ3LTI5LjM3MSAxNC41MDgtMTYuOTYxLS4xMDEtMi40NTFoLS44NTlsLTk4Ljk1NCA2NC4yNTEtMTcuNjE4IDIuMjc1LTcuNTgzLTcuMTAzLjkzNi0xMS42NTIgMy41ODktMy43OTEgMjkuNzQ5LTIwLjQ3NC0uMTAxLjEwMi4wMjQuMTAxeiIvPjwvc3ZnPgo="); image-fit: contain; opacity: !root.llm_anthropic_connected ? 0.24 : root.anthropic_selected ? 1.0 : (llm-anthropic-touch.has-hover ? 0.92 : 0.66); }
-        Rectangle { x: 5px; y: 18px; width: 10px; height: 1px; background: root.anthropic_selected ? #d97757dc : #00000000; }
+        Image { x: 4px; y: 4px; width: 16px; height: 16px; source: @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTA5LjY0Ij48cGF0aCBmaWxsPSIjRDc3NjU1IiBmaWxsLXJ1bGU9Im5vbnplcm8iIGQ9Ik0xNDIuMjcgMzE2LjYxOWw3My42NTUtNDEuMzI2IDEuMjM4LTMuNTg5LTEuMjM4LTEuOTk2LTMuNTg5LS4wMDEtMTIuMzEtLjc1OS00Mi4wODQtMS4xMzgtMzYuNDk4LTEuNTE2LTM1LjM2MS0xLjg5Ni04Ljg5Ny0xLjg5NS04LjM0LTEwLjk5NS44NTktNS40ODQgNy40ODItNS4wMyAxMC43MTcuOTM1IDIzLjY4MyAxLjYxNyAzNS41MzcgMi40NTIgMjUuNzgyIDEuNTE3IDM4LjE5MyAzLjk2OGg2LjA2NGwuODYtMi40NTEtMi4wNzMtMS41MTctMS42MTgtMS41MTctMzYuNzc2LTI0LjkyMi0zOS44MS0yNi4zMzgtMjAuODUyLTE1LjE2Ni0xMS4yNzMtNy42ODMtNS42ODctNy4yMDQtMi40NTEtMTUuNzIxIDEwLjIzNy0xMS4yNzMgMTMuNzUuOTM1IDMuNTEzLjkzNiAxMy45MjggMTAuNzE2IDI5Ljc0OSAyMy4wMjcgMzguODQ4IDI4LjYxMiA1LjY4NyA0LjcyNyAyLjI3NS0xLjYxNy4yNzgtMS4xMzgtMi41NTMtNC4yNzEtMjEuMTMtMzguMTkzLTIyLjU0Ni0zOC44NDgtMTAuMDM1LTE2LjEwMS0yLjY1NC05LjY1NWMtLjkzNS0zLjk2OC0xLjYxNy03LjMwNC0xLjYxNy0xMS4zNzRsMTEuNjUyLTE1LjgyMyA2LjQ0NS0yLjA3MyAxNS41NDUgMi4wNzMgNi41NDcgNS42ODcgOS42NTUgMjIuMDkyIDE1LjY0NiAzNC43OCAyNC4yNjUgNDcuMjkxIDcuMTAzIDE0LjAyOCAzLjc5MSAxMi45OTIgMS40MTYgMy45NjggMi40NDktLjAwMXYtMi4yNzVsMS45OTctMjYuNjQxIDMuNjktMzIuNzA3IDMuNTg5LTQyLjA4NCAxLjIzOS0xMS44NTQgNS44NjMtMTQuMjA2IDExLjY1Mi03LjY4MyA5LjA5OSA0LjM0OCA3LjQ4MiAxMC43MTYtMS4wMzYgNi45MjYtNC40NDkgMjguOTE1LTguNzIgNDUuMjk0LTUuNjg3IDMwLjMzMWgzLjMxM2wzLjc5Mi0zLjc5MSAxNS4zNDItMjAuMzcyIDI1Ljc4Mi0zMi4yMjcgMTEuMzc0LTEyLjc4OSAxMy4yNy0xNC4xMjkgOC41MTctNi43MjQgMTYuMS0uMDAxIDExLjg1NCAxNy42MTctNS4zMDcgMTguMTk5LTE2LjU4MSAyMS4wMjktMTMuNzUgMTcuODE5LTE5LjcxNiAyNi41NC0xMi4zMDkgMjEuMjMxIDEuMTM4IDEuNjk0IDIuOTMyLS4yNzggNDQuNTM2LTkuNDc5IDI0LjA2Mi00LjM0NyAyOC43MTQtNC45MjggMTIuOTkyIDYuMDY2IDEuNDE2IDYuMTY3LTUuMTA2IDEyLjYxMy0zMC43MSA3LjU4My0zNi4wMTggNy4yMDQtNTMuNjM2IDEyLjY4OS0uNjU3LjQ4Ljc1OC45MzUgMjQuMTY0IDIuMjc1IDEwLjMzNy41NTZoMjUuMzAxbDQ3LjExNCAzLjUxNCAxMi4zMDkgOC4xMzkgNy4zODEgOS45NTktMS4yMzggNy41ODMtMTguOTU3IDkuNjU1LTI1LjU3OS02LjA2Ni01OS43MDItMTQuMjA1LTIwLjQ3NC01LjEwNi0yLjgzLS4wMDF2MS42OTRsMTcuMDYxIDE2LjY4MiAzMS4yNjYgMjguMjMzIDM5LjE1MiAzNi4zOTcgMS45OTcgOC45OTktNS4wMyA3LjEwMi01LjMwNy0uNzU4LTM0LjQwMS0yNS44ODMtMTMuMjctMTEuNjUxLTMwLjA1My0yNS4zMDItMS45OTYtLjAwMXYyLjY1NGw2LjkyNiAxMC4xMzYgMzYuNTc0IDU0Ljk3NSAxLjg5NSAxNi44NTktMi42NTMgNS40ODUtOS40NzkgMy4zMTEtMTAuNDE0LTEuODk1LTIxLjQwOC0zMC4wNTQtMjIuMDkyLTMzLjg0NC0xNy44MTktMzAuMzMxLTIuMTczIDEuMjM4LTEwLjUxNSAxMTMuMjYxLTQuOTI5IDUuNzg4LTExLjM3NCA0LjM0OC05LjQ3OC03LjIwNC01LjAzLTExLjY1MiA1LjAzLTIzLjAyNyA2LjA2Ni0zMC4wNTIgNC45MjgtMjMuODg2IDQuNDQ5LTI5LjY3NCAyLjY1NC05Ljg1OC0uMTc3LS42NTctMi4xNzMuMjc4LTIyLjM3IDMwLjcxLTM0LjAyMSA0NS45NzctMjYuOTE5IDI4LjgxNS02LjQ0NSAyLjU1My0xMS4xNzMtNS43ODkgMS4wMzctMTAuMzM3IDYuMjQzLTkuMiAzNy4yNTctNDcuMzkyIDIyLjQ3LTI5LjM3MSAxNC41MDgtMTYuOTYxLS4xMDEtMi40NTFoLS44NTlsLTk4Ljk1NCA2NC4yNTEtMTcuNjE4IDIuMjc1LTcuNTgzLTcuMTAzLjkzNi0xMS42NTIgMy41ODktMy43OTEgMjkuNzQ5LTIwLjQ3NC0uMTAxLjEwMi4wMjQuMTAxeiIvPjwvc3ZnPgo="); image-fit: contain; opacity: !root.llm_anthropic_connected ? 0.24 : root.anthropic_selected ? 1.0 : (llm-anthropic-touch.has-hover ? 0.92 : 0.66); }
+        Rectangle { x: 7px; y: 21px; width: 10px; height: 1px; background: root.anthropic_selected ? #d97757dc : #00000000; }
         llm-anthropic-touch := TouchArea {
             clicked => {
                 if (root.llm_anthropic_connected) {
@@ -3070,11 +3032,11 @@ component ChatBar inherits Rectangle {
         }
     }
     Rectangle {
-        x: parent.width - 58px; y: 69px;
-        width: 20px; height: 20px; border-radius: 3px;
+        x: parent.width - 66px; y: 67px;
+        width: 24px; height: 24px; border-radius: 3px;
         background: #00000000;
-        Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48cGF0aCBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZD0iTTM1OC40ODUgNDEuNzVsMTU0LjAyNyA4Ny41NzN2MS44NTZsLTE1NS42MDUgODYuNjM0LjM2Mi00NS4xNjItMTcuNTE0LS42NGMtMjIuNTkyLS41OTgtMzQuMzY4LjA0Mi00OC4zODQgMi4zNDYtMjIuNjk5IDMuNzM0LTQzLjQ3OCAxMi4zMS02Ny4xMzYgMjguODQzbC00Ni4yMDggMzIuMTA3Yy02LjA1OSA0LjE2LTEwLjU2IDcuMTY4LTE0LjUwNyA5LjcwNmwtMTAuOTg3IDYuODctOC40NjkgNC45OTIgOC4yMTMgNC45MDYgMTEuMzA3IDcuMjExYzEwLjE1NSA2LjY5OSAyNC45NiAxNi45ODEgNTcuNjIxIDM5LjgwOCAyMy42OCAxNi41MzMgNDQuNDM4IDI1LjEwOSA2Ny4xMzYgMjguODQzbDYuNC45NmMxNC44MDYgMS45NDEgMjkuMzM0IDIuMDA1IDYwLjI2Ny43MDRsLjQ2OS00Ni4wNTkgMTU0LjAyNyA4Ny41NzN2MS44NTZsLTE1NS42MDUgODYuNjU2LjI5OC0zOS43MjItMTMuNTQ2LjQ2OWMtMjkuNTY4Ljg5Ni00NS41OS4wNDMtNjYuOTQ0LTMuNDU2LTM2LjEzOS01Ljk3My02OS41NDctMTkuNzU1LTEwNC4xMjgtNDMuOTI1bC00Ni4wMzgtMzJhNDY3LjA3MiA0NjcuMDcyIDAgMDAtMTYuMTA2LTEwLjYyNGwtOS45NjMtNS45NzRjLTUuMzgtMy4xLTEwLjc4NS02LjE1Ny0xNi4yMTMtOS4xNzNDNjIuMDM3IDMxNC4yNCAxMi4wMSAzMDEuMTQxIDAgMzAxLjE0MXYtOTAuMTk3bDIuOTg3LjA4NWMxMi4wMzItLjE0OSA2Mi4wOC0xMy4yNjkgODEuMjU4LTIzLjk3OGwyMS42NzUtMTIuMzc0IDkuMzQ0LTUuODQ1YzkuMTMxLTUuOTczIDIyLjg2OS0xNS40ODggNTcuMzAxLTM5LjUzMSAzNC41ODItMjQuMTcgNjcuOTY4LTM3Ljk3MyAxMDQuMTI4LTQzLjkyNSAyNC41NzYtNC4wNTMgNDIuMTEyLTQuNTQ0IDgxLjM2Ni0yLjk0NGwuNDI2LTQwLjY4M3oiIGZpbGw9IiNGMEYwRUQiLz48L3N2Zz4K"); image-fit: contain; opacity: !root.llm_openrouter_connected ? 0.24 : root.openrouter_selected ? 1.0 : (llm-openrouter-touch.has-hover ? 0.9 : 0.62); }
-        Rectangle { x: 5px; y: 18px; width: 10px; height: 1px; background: root.openrouter_selected ? #eeeee8d8 : #00000000; }
+        Image { x: 4px; y: 4px; width: 16px; height: 16px; source: @image-url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48cGF0aCBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZD0iTTM1OC40ODUgNDEuNzVsMTU0LjAyNyA4Ny41NzN2MS44NTZsLTE1NS42MDUgODYuNjM0LjM2Mi00NS4xNjItMTcuNTE0LS42NGMtMjIuNTkyLS41OTgtMzQuMzY4LjA0Mi00OC4zODQgMi4zNDYtMjIuNjk5IDMuNzM0LTQzLjQ3OCAxMi4zMS02Ny4xMzYgMjguODQzbC00Ni4yMDggMzIuMTA3Yy02LjA1OSA0LjE2LTEwLjU2IDcuMTY4LTE0LjUwNyA5LjcwNmwtMTAuOTg3IDYuODctOC40NjkgNC45OTIgOC4yMTMgNC45MDYgMTEuMzA3IDcuMjExYzEwLjE1NSA2LjY5OSAyNC45NiAxNi45ODEgNTcuNjIxIDM5LjgwOCAyMy42OCAxNi41MzMgNDQuNDM4IDI1LjEwOSA2Ny4xMzYgMjguODQzbDYuNC45NmMxNC44MDYgMS45NDEgMjkuMzM0IDIuMDA1IDYwLjI2Ny43MDRsLjQ2OS00Ni4wNTkgMTU0LjAyNyA4Ny41NzN2MS44NTZsLTE1NS42MDUgODYuNjU2LjI5OC0zOS43MjItMTMuNTQ2LjQ2OWMtMjkuNTY4Ljg5Ni00NS41OS4wNDMtNjYuOTQ0LTMuNDU2LTM2LjEzOS01Ljk3My02OS41NDctMTkuNzU1LTEwNC4xMjgtNDMuOTI1bC00Ni4wMzgtMzJhNDY3LjA3MiA0NjcuMDcyIDAgMDAtMTYuMTA2LTEwLjYyNGwtOS45NjMtNS45NzRjLTUuMzgtMy4xLTEwLjc4NS02LjE1Ny0xNi4yMTMtOS4xNzNDNjIuMDM3IDMxNC4yNCAxMi4wMSAzMDEuMTQxIDAgMzAxLjE0MXYtOTAuMTk3bDIuOTg3LjA4NWMxMi4wMzItLjE0OSA2Mi4wOC0xMy4yNjkgODEuMjU4LTIzLjk3OGwyMS42NzUtMTIuMzc0IDkuMzQ0LTUuODQ1YzkuMTMxLTUuOTczIDIyLjg2OS0xNS40ODggNTcuMzAxLTM5LjUzMSAzNC41ODItMjQuMTcgNjcuOTY4LTM3Ljk3MyAxMDQuMTI4LTQzLjkyNSAyNC41NzYtNC4wNTMgNDIuMTEyLTQuNTQ0IDgxLjM2Ni0yLjk0NGwuNDI2LTQwLjY4M3oiIGZpbGw9IiNGMEYwRUQiLz48L3N2Zz4K"); image-fit: contain; opacity: !root.llm_openrouter_connected ? 0.24 : root.openrouter_selected ? 1.0 : (llm-openrouter-touch.has-hover ? 0.9 : 0.62); }
+        Rectangle { x: 7px; y: 21px; width: 10px; height: 1px; background: root.openrouter_selected ? #eeeee8d8 : #00000000; }
         llm-openrouter-touch := TouchArea {
             clicked => {
                 if (root.llm_openrouter_connected) {
@@ -3089,7 +3051,7 @@ component ChatBar inherits Rectangle {
             }
         }
     }
-    // Send button: aligned with upload tile bottom
+    // Send tile: bottom-right corner, mirrors the upload tile's bottom-left placement (8px margins)
     Rectangle {
         x: parent.width - 34px; y: 65px;
         width: 26px; height: 26px; border-radius: 4px;
@@ -3099,7 +3061,7 @@ component ChatBar inherits Rectangle {
         Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: #ffffff12; z: 5; }
         Rectangle { x: 0px; y: 0px; width: 1px; height: parent.height; background: #0000003a; z: 5; }
         Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: #ffffff0a; z: 5; }
-        Image { x: 6px; y: 6px; width: 14px; height: 14px; source: @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgMjQgMjQiPjxwYXRoIGZpbGw9IiMwMDAwMDAiIGQ9Ik0yMCA0djlhNCA0IDAgMCAxLTQgNEg2LjkxNGwyLjUgMi41TDggMjAuOTE0TDMuMDg2IDE2TDggMTEuMDg2TDkuNDE0IDEyLjVsLTIuNSAyLjVIMTZhMiAyIDAgMCAwIDItMlY0aDJaIi8+PC9zdmc+"); image-fit: contain; colorize: #eeeee8cc; }
+        Image { x: 5px; y: 5px; width: 16px; height: 16px; source: @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgMjQgMjQiPjxwYXRoIGZpbGw9IiMwMDAwMDAiIGQ9Ik0yMCA0djlhNCA0IDAgMCAxLTQgNEg2LjkxNGwyLjUgMi41TDggMjAuOTE0TDMuMDg2IDE2TDggMTEuMDg2TDkuNDE0IDEyLjVsLTIuNSAyLjVIMTZhMiAyIDAgMCAwIDItMlY0aDJaIi8+PC9zdmc+"); image-fit: contain; colorize: #eeeee8cc; }
         send-touch := TouchArea { clicked => { root.send(); } }
     }
     Rectangle { x: 206px; y: 83px; width: 24px; height: 3px; border-radius: 2px; background: #0a0a0a40; }

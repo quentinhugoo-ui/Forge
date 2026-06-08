@@ -36,8 +36,9 @@ pub use front_runtime_cache::{
 };
 pub use brain_gpu::BrainGpuRenderer;
 pub use motion_lane::{
-    css_work_loader_rgba_frames, render_brain_core_realtime, MotionLane, MotionLaneManifest,
-    WORK_MOTION_FRAME_COUNT, WORK_MOTION_HEIGHT, WORK_MOTION_WIDTH,
+    css_work_loader_rgba_frames, render_brain_core_lava_rgba, MotionLane, MotionLaneManifest,
+    BRAIN_CORE_DIM, BRAIN_CORE_FRAME_COUNT, WORK_MOTION_FRAME_COUNT, WORK_MOTION_HEIGHT,
+    WORK_MOTION_WIDTH,
 };
 pub use obsolete_front::{
     build_obsolete_front_manifest, ObsoleteFrontManifest, ObsoleteFrontPath,
