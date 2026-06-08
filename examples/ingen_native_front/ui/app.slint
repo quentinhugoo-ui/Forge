@@ -355,6 +355,7 @@ component SessionRow inherits Rectangle {
         height: 14px;
         source: @image-url("data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz48IS0tIFVwbG9hZGVkIHRvOiBTVkcgUmVwbywgd3d3LnN2Z3JlcG8uY29tLCBHZW5lcmF0b3I6IFNWRyBSZXBvIE1peGVyIFRvb2xzIC0tPgo8c3ZnIGZpbGw9IiMwMDAwMDAiIHdpZHRoPSI4MDBweCIgaGVpZ2h0PSI4MDBweCIgdmlld0JveD0iMCAwIDI0IDI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxwYXRoIGQ9Ik0zLDQuNSBMMyw2LjUgQzMsNi43NzYxNDIzNyAzLjIyMzg1NzYzLDcgMy41LDcgTDIwLjUsNyBDMjAuNzc2MTQyNCw3IDIxLDYuNzc2MTQyMzcgMjEsNi41IEwyMSw0LjUgQzIxLDQuMjIzODU3NjMgMjAuNzc2MTQyNCw0IDIwLjUsNCBMMy41LDQgQzMuMjIzODU3NjMsNCAzLDQuMjIzODU3NjMgMyw0LjUgWiBNMjEsNy45MTQ2NDcxNSBMMjEsMTguNSBDMjEsMTkuODgwNzExOSAxOS44ODA3MTE5LDIxIDE4LjUsMjEgTDUuNSwyMSBDNC4xMTkyODgxMywyMSAzLDE5Ljg4MDcxMTkgMywxOC41IEwzLDcuOTE0NjQ3MTUgQzIuNDE3NDAzODEsNy43MDg3Mjg5NCAyLDcuMTUzMTA5NDEgMiw2LjUgTDIsNC41IEMyLDMuNjcxNTcyODggMi42NzE1NzI4OCwzIDMuNSwzIEwyMC41LDMgQzIxLjMyODQyNzEsMyAyMiwzLjY3MTU3Mjg4IDIyLDQuNSBMMjIsNi41IEMyMiw3LjE1MzEwOTQxIDIxLjU4MjU5NjIsNy43MDg3Mjg5NCAyMSw3LjkxNDY0NzE1IEwyMSw3LjkxNDY0NzE1IFogTTIwLDggTDQsOCBMNCwxOC41IEM0LDE5LjMyODQyNzEgNC42NzE1NzI4OCwyMCA1LjUsMjAgTDE4LjUsMjAgQzE5LjMyODQyNzEsMjAgMjAsMTkuMzI4NDI3MSAyMCwxOC41IEwyMCw4IFogTTgsMTEuNSBDOCwxMC42NzE1NzI5IDguNjcxNTcyODgsMTAgOS41LDEwIEwxNC41LDEwIEMxNS4zMjg0MjcxLDEwIDE2LDEwLjY3MTU3MjkgMTYsMTEuNSBDMTYsMTIuMzI4NDI3MSAxNS4zMjg0MjcxLDEzIDE0LjUsMTMgTDkuNSwxMyBDOC42NzE1NzI4OCwxMyA4LDEyLjMyODQyNzEgOCwxMS41IFogTTksMTEuNSBDOSwxMS43NzYxNDI0IDkuMjIzODU3NjMsMTIgOS41LDEyIEwxNC41LDEyIEMxNC43NzYxNDI0LDEyIDE1LDExLjc3NjE0MjQgMTUsMTEuNSBDMTUsMTEuMjIzODU3NiAxNC43NzYxNDI0LDExIDE0LjUsMTEgTDkuNSwxMSBDOS4yMjM4NTc2MywxMSA5LDExLjIyMzg1NzYgOSwxMS41IFoiLz4KPC9zdmc+");
         image-fit: contain;
+        colorize: #ffffff;
         opacity: archive_touch.has-hover || touch.has-hover ? 0.72 : 0.0;
         animate opacity { duration: 120ms; easing: ease; }
     }
@@ -1741,8 +1742,18 @@ component BrainSurface inherits Rectangle {
         root.selected_component == "affinity" ? @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiMwMDAwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik02IDR2N2E2IDYgMCAwIDAgMTIgMFY0Ii8+PHBhdGggZD0iTTEwIDR2N2EyIDIgMCAwIDAgNCAwVjQiLz48cGF0aCBkPSJNNSA0aDUiLz48cGF0aCBkPSJNMTQgNGg1Ii8+PC9zdmc+") :
         @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiMwMDAwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxjaXJjbGUgY3g9IjEyIiBjeT0iNiIgcj0iMi42Ii8+PHBhdGggZD0iTTkuNCAxMC41aDUuMiIvPjxwYXRoIGQ9Ik05LjcgMTAuNWMwIDItLjkgNC0yIDYuNmg4LjZjLTEuMS0yLjYtMi00LjYtMi02LjYiLz48cGF0aCBkPSJNNy41IDE3LjFoOWwuOCAzLjRINi43WiIvPjwvc3ZnPg==");
 
-    // Tout le canvas EST le terminal : onglets en haut, sortie session en dessous,
-    // cœur ambre vivant en filigrane plein écran.
+    // Cœur ambre vivant (loader GPU procédural) — arrière-plan du terminal, posé en bas à droite,
+    // derrière la barre de chat. Hors du rectangle clippé pour pouvoir déborder sous le chat.
+    Image {
+        x: root.width * 0.60 - 380px;
+        y: root.height - 470px;
+        width: 760px; height: 760px;
+        source: root.brain_motion_image;
+        image-fit: contain;
+        opacity: 0.5;
+    }
+
+    // Tout le canvas EST le terminal : onglets en haut, sortie session en dessous.
     Rectangle {
         x: (parent.width - root.content_width) / 2;
         y: 36px;
@@ -1750,16 +1761,6 @@ component BrainSurface inherits Rectangle {
         height: max(430px, parent.height - root.chat_clearance - 36px);
         background: #00000000;
         clip: true;
-
-        // Cœur ambre vivant (motion lane Rust) — filigrane plein canvas
-        Image {
-            x: (parent.width - 560px) / 2;
-            y: 170px;
-            width: 560px; height: 560px;
-            source: root.brain_motion_image;
-            image-fit: contain;
-            opacity: 0.5;
-        }
 
         // -- Barre d'onglets : catégories du brain fusionnées au terminal --
         Text { x: 2px; y: 0px; width: 54px; height: 36px; text: "BRAIN"; color: #3c3c39; font-family: "Geist Mono"; font-size: 10px; font-weight: 700; vertical-alignment: center; }
@@ -3228,6 +3229,8 @@ export component AppWindow inherits Window {
     in property <string> banger_status;
     in property <string> trading_status;
     in property <string> real_estate_status;
+    in property <string> dev_status_text;
+    in property <string> dev_status_phase;
     in property <image> banger_frame_image;
     in property <image> google_logo_image;
     in property <image> work_motion_image;
@@ -3581,6 +3584,19 @@ export component AppWindow inherits Window {
         minimize => { root.window_minimize(); }
         maximize => { root.window_toggle_maximize(); }
         close => { root.window_close(); }
+    }
+    Text {
+        visible: root.dev_status_text != "";
+        x: root.workspace_left + 20px;
+        y: 40px;
+        width: root.width - root.workspace_left - 40px;
+        height: 14px;
+        text: root.dev_status_text;
+        color: root.dev_status_phase == "error" ? #ff5d7a : root.dev_status_phase == "build" ? #ffbf48 : root.dev_status_phase == "live" ? #55e6d3 : #9a9a92;
+        font-family: "Geist Mono";
+        font-size: 9px;
+        horizontal-alignment: right;
+        vertical-alignment: center;
     }
     NativeModal {
         x: 0px;

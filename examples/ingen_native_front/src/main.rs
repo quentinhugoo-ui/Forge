@@ -3,14 +3,15 @@
 use ingen_native_front::{
     atlas_ui_projection, build_cutover_audit_report, build_obsolete_front_manifest,
     banger_frame_image, build_stage0_report, local_service_command, local_service_snapshot,
-    product_section_projection,
-    render_banger_viewport_frame, spawn_fake_long_job, stage0_report_json, AtlasManifest,
-    BangerViewportFrame, NativeAgentCard, NativeAgentCardKind, NativeServiceCommand,
+    product_section_projection, cached_work_motion_lane,
+    render_banger_viewport_frame, render_brain_core_realtime, spawn_fake_long_job,
+    stage0_report_json, AtlasManifest,
+    BangerViewportFrame, BrainGpuRenderer, NativeAgentCard, NativeAgentCardKind, NativeServiceCommand,
     NativeSessionSummary, NativeStateKernel, NativeUiEvent, ProductSectionsManifest,
-    ServiceSnapshot, ServiceStreamEvent, WebExplorerPolicy,
+    ServiceSnapshot, ServiceStreamEvent, WebExplorerPolicy, MotionLane,
 };
 use slint::winit_030::WinitWindowAccessor;
-use std::{cell::RefCell, rc::Rc, sync::mpsc, time::Duration};
+use std::{cell::RefCell, fs, path::PathBuf, rc::Rc, sync::mpsc, time::{Duration, Instant}};
 
 slint::include_modules!();
 
@@ -68,13 +69,18 @@ fn main() -> Result<(), slint::PlatformError> {
     apply_atlas_ui_projection(&window, &atlas_manifest, *atlas_selected_index.borrow());
     apply_state_projection(&window, &state.borrow());
     apply_product_section_projection(&window, &product_sections, window.get_active_section().as_str());
+    let work_motion_lane = Rc::new(cached_work_motion_lane());
+    window.set_work_motion_image(work_motion_lane.frame(0));
     window.set_chat_text("".into());
     let child_proof_mode = std::env::args().any(|arg| arg == "--webview-child-proof");
     if child_proof_mode {
         window.show()?;
     }
     webview_child::maybe_attach_webview_child(&window, WebExplorerPolicy::default_locked());
+    start_work_motion_lane(&window, Rc::clone(&work_motion_lane));
     start_service_stream_poller(&window, Rc::clone(&state), Rc::clone(&streams));
+    start_dev_status_poller(&window);
+    start_brain_core_animation(&window);
 
     let weak = window.as_weak();
     let state_for_refresh = Rc::clone(&state);
@@ -277,6 +283,101 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 }
 
+fn start_work_motion_lane(window: &AppWindow, lane: Rc<MotionLane>) {
+    let timer = slint::Timer::default();
+    let weak = window.as_weak();
+    let frame_duration = lane.frame_duration();
+    let mut tick = 0usize;
+    timer.start(slint::TimerMode::Repeated, frame_duration, move || {
+        if let Some(window) = weak.upgrade() {
+            tick = (tick + 1) % lane.frame_count();
+            window.set_work_motion_image(lane.frame(tick));
+        }
+    });
+    std::mem::forget(timer);
+}
+
+fn start_dev_status_poller(window: &AppWindow) {
+    let status_path = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".codex-tmp")
+        .join("forge-dev-status.txt");
+    let last_status = Rc::new(RefCell::new(String::new()));
+    let timer = slint::Timer::default();
+    let weak = window.as_weak();
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(250),
+        move || {
+            if let Some(window) = weak.upgrade() {
+                poll_dev_status(&window, &status_path, &last_status);
+            }
+        },
+    );
+    std::mem::forget(timer);
+}
+
+fn poll_dev_status(
+    window: &AppWindow,
+    status_path: &PathBuf,
+    last_status: &Rc<RefCell<String>>,
+) {
+    let status = fs::read_to_string(status_path)
+        .ok()
+        .and_then(|text| text.lines().last().map(str::trim).map(str::to_string))
+        .unwrap_or_default();
+    if status == *last_status.borrow() {
+        return;
+    }
+
+    *last_status.borrow_mut() = status.clone();
+    window.set_dev_status_phase(dev_status_phase(&status).into());
+    window.set_dev_status_text(status.into());
+}
+
+fn dev_status_phase(status: &str) -> &str {
+    status
+        .split_once('[')
+        .and_then(|(_, rest)| rest.split_once(']'))
+        .map(|(phase, _)| phase)
+        .unwrap_or("")
+}
+
+/// Drives the Brain page background core. Renders one procedural frame from continuous wall-clock
+/// time (never loops) only while the Brain page is open. GPU renderer is built lazily on first
+/// frame; if no GPU is available we fall back to the CPU path.
+fn start_brain_core_animation(window: &AppWindow) {
+    let timer = slint::Timer::default();
+    let weak = window.as_weak();
+    let start = Instant::now();
+    // None = not yet initialized; Some(None) = no GPU, use CPU; Some(Some(_)) = GPU renderer.
+    let renderer: Rc<RefCell<Option<Option<BrainGpuRenderer>>>> = Rc::new(RefCell::new(None));
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(60),
+        move || {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            // Only burn cycles while the Brain page is actually visible.
+            if window.get_profile_canvas().as_str() != "brain" {
+                return;
+            }
+            let time = start.elapsed().as_secs_f32();
+            let mut slot = renderer.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(BrainGpuRenderer::new());
+            }
+            let image = match slot.as_ref().and_then(|inner| inner.as_ref()) {
+                Some(gpu) => gpu.render(time),
+                None => render_brain_core_realtime(time),
+            };
+            window.set_brain_motion_image(image);
+        },
+    );
+    std::mem::forget(timer);
+}
+
 fn start_service_stream_poller(
     window: &AppWindow,
     state: Rc<RefCell<NativeStateKernel>>,
@@ -448,6 +549,8 @@ fn apply_service_snapshot(state: &mut NativeStateKernel, snapshot: &ServiceSnaps
             "hardware os={} gpu={} proof={}",
             snapshot.hardware.os, snapshot.hardware.gpu, snapshot.hardware.proof_hash
         ),
+        cpu: snapshot.hardware.cpu.clone(),
+        gpu: snapshot.hardware.gpu.clone(),
     });
     state.dispatch(NativeUiEvent::ProviderUpdated {
         provider: snapshot.provider.provider.clone(),
