@@ -22,6 +22,22 @@ $AllowedEmptyNames = @(
     ".keep"
 )
 
+$CriticalDeletionPatterns = @(
+    "src/main.rs",
+    "*/src/main.rs",
+    "src/lib.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "FORGE_NATIVE_BYTECODE.md",
+    "MIGRATION_FRONT.md",
+    "ROADMAP.md",
+    ".githooks/*",
+    "scripts/forge-*.ps1",
+    "scripts/install-forge-git-safety.*"
+)
+
 function Invoke-Git {
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
@@ -47,6 +63,14 @@ function Test-GuardedPath([string]$PathText) {
     return $GuardedExtensions -contains $extension
 }
 
+function Test-CriticalDeletionPath([string]$PathText) {
+    $normalized = $PathText -replace '\\', '/'
+    foreach ($pattern in $CriticalDeletionPatterns) {
+        if ($normalized -like $pattern) { return $true }
+    }
+    return $false
+}
+
 function Assert-InRepo([string]$PathText) {
     $full = [System.IO.Path]::GetFullPath((Join-Path $Root $PathText))
     if (-not $full.StartsWith($Root, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -69,8 +93,22 @@ if (-not $StagedOnly) {
     foreach ($path in $tracked) {
         if (-not (Test-GuardedPath $path)) { continue }
         $full = Assert-InRepo $path
-        if ((Test-Path -LiteralPath $full -PathType Leaf) -and ((Get-Item -LiteralPath $full).Length -eq 0)) {
+        if ((-not (Test-Path -LiteralPath $full -PathType Leaf)) -and (Test-CriticalDeletionPath $path)) {
+            [void]$failures.Add("working-tree missing tracked source: $path")
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+        if ((Get-Item -LiteralPath $full).Length -eq 0) {
             [void]$failures.Add("working-tree zero-byte tracked source: $path")
+        }
+    }
+}
+
+if ($env:FORGE_ALLOW_GUARDED_DELETE -ne "1") {
+    $stagedDeletions = Split-Nul (Invoke-Git "diff" "--cached" "--name-only" "--diff-filter=D" "-z")
+    foreach ($path in $stagedDeletions) {
+        if (Test-CriticalDeletionPath $path) {
+            [void]$failures.Add("staged guarded source deletion: $path")
         }
     }
 }
