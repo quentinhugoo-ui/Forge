@@ -6,7 +6,7 @@
 //! Lazy by construction: the renderer is created on first use (when the Brain page opens) and
 //! only `render()` is called while that page is visible.
 
-pub const BRAIN_GPU_DIM: u32 = 1536;
+pub const BRAIN_GPU_DIM: u32 = 1024;
 
 const BRAIN_CORE_WGSL: &str = r#"
 struct Uniforms { time: f32, _p0: f32, _p1: f32, _p2: f32 };
@@ -56,22 +56,23 @@ const TAU: f32 = 6.2831853;
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let time = u.time;
-    // colorize: amber <-> burnt-orange hue drift, two incommensurate sines (never repeats).
-    let hue = -42.0 + 36.0 * sin(time * 0.047) + 14.0 * sin(time * 0.019 + 1.7);
+    // colorize: amber <-> burnt-orange hue drift, ~6s + ~14s incommensurate sines (never repeats).
+    let hue = -42.0 + 36.0 * sin(time * 1.05) + 14.0 * sin(time * 0.45 + 1.7);
     // Subtle non-periodic breathing of the overall scale.
-    let breathe = 1.0 + 0.040 * sin(time * 0.11) + 0.018 * sin(time * 0.043);
+    let breathe = 1.0 + 0.035 * sin(time * 0.70) + 0.015 * sin(time * 0.31);
     let p = in.uv / breathe;
 
     // Seven polygons: (pivot.x, pivot.y, spin speed rad/s, phase). Index 0 is static
-    // (the CSS rotate(90deg) child); the rest spin both ways at irrational speeds.
+    // (the CSS rotate(90deg) child); the rest spin both ways at full CSS speed (~one turn
+    // per 2s = pi rad/s), with mutually irrational rates so the fused field never repeats.
     var pv = array<vec4<f32>, 7>(
         vec4<f32>( 0.170,  0.170,  0.000, 1.5708),
-        vec4<f32>( 0.000,  0.000, -0.311, 0.000),
-        vec4<f32>( 0.000, -0.068,  0.307, 2.094),
-        vec4<f32>(-0.068,  0.068, -0.323, 4.200),
-        vec4<f32>(-0.068,  0.068, -0.297, 3.140),
-        vec4<f32>( 0.068,  0.068,  0.319, 1.050),
-        vec4<f32>( 0.068,  0.068,  0.289, 5.020),
+        vec4<f32>( 0.000,  0.000, -3.050, 0.000),
+        vec4<f32>( 0.000, -0.068,  3.230, 2.094),
+        vec4<f32>(-0.068,  0.068, -2.910, 4.200),
+        vec4<f32>(-0.068,  0.068, -3.370, 3.140),
+        vec4<f32>( 0.068,  0.068,  3.110, 1.050),
+        vec4<f32>( 0.068,  0.068,  2.790, 5.020),
     );
     // (vertex-orbit radius, lobe radius) per polygon.
     var pr = array<vec2<f32>, 7>(
@@ -101,8 +102,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
 
-    // roundness: the threshold melts non-periodically between more-merged and more-articulated.
-    let thr = 1.16 + 0.10 * sin(time * 0.19) + 0.05 * sin(time * 0.071 + 0.9);
+    // roundness: the threshold melts (~2s + ~5s) between more-merged and more-articulated.
+    let thr = 1.16 + 0.10 * sin(time * 3.10) + 0.05 * sin(time * 1.27 + 0.9);
     // Resolution-independent ~1px antialiased edge: crisp, never a soft glow halo.
     let g = max(fwidth(field), 1e-4);
     let core = smoothstep(thr - g, thr + g, field);

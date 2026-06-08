@@ -354,7 +354,7 @@ fn start_brain_core_animation(window: &AppWindow) {
     let renderer: Rc<RefCell<Option<Option<BrainGpuRenderer>>>> = Rc::new(RefCell::new(None));
     timer.start(
         slint::TimerMode::Repeated,
-        Duration::from_millis(60),
+        Duration::from_millis(16),
         move || {
             let Some(window) = weak.upgrade() else {
                 return;
