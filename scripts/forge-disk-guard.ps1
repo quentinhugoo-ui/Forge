@@ -94,6 +94,19 @@ function Remove-PathContents([string]$PathText, [bool]$OnlyOldTemp) {
     }
 }
 
+function Remove-ExplorerCacheFiles([string]$PathText) {
+    if (-not (Test-Path -LiteralPath $PathText -PathType Container)) { return }
+    Get-ChildItem -LiteralPath $PathText -Force -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^(iconcache|thumbcache)_.+\.db$' } |
+        ForEach-Object {
+            try {
+                Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop
+            } catch {
+                Write-Host "skip locked: $($_.FullName)" -ForegroundColor DarkYellow
+            }
+        }
+}
+
 function Invoke-CleanupCandidate([object]$Candidate) {
     $resolved = Assert-SafeCleanupPath $Candidate.Path
     if (-not $resolved) {
@@ -119,6 +132,8 @@ function Invoke-CleanupCandidate([object]$Candidate) {
                 Write-Host "skip locked: $resolved" -ForegroundColor DarkYellow
                 Remove-PathContents $resolved $false
             }
+        } elseif ($Candidate.Mode -eq "ExplorerCacheFiles") {
+            Remove-ExplorerCacheFiles $resolved
         } else {
             throw "Unknown cleanup mode: $($Candidate.Mode)"
         }
@@ -164,6 +179,22 @@ $candidates = @(
     New-Candidate 3 "Claude app cache" (Join-Path $UserProfile "AppData\Roaming\Claude\Cache") "Contents"
     New-Candidate 3 "Claude code cache" (Join-Path $UserProfile "AppData\Roaming\Claude\Code Cache") "Contents"
     New-Candidate 3 "Claude GPU cache" (Join-Path $UserProfile "AppData\Roaming\Claude\GPUCache") "Contents"
+    New-Candidate 3 "Chrome Profile 1 cache" (Join-Path $UserProfile "AppData\Local\Google\Chrome\User Data\Profile 1\Cache") "Contents"
+    New-Candidate 3 "Chrome Profile 1 code cache" (Join-Path $UserProfile "AppData\Local\Google\Chrome\User Data\Profile 1\Code Cache") "Contents"
+    New-Candidate 3 "Chrome Default code cache" (Join-Path $UserProfile "AppData\Local\Google\Chrome\User Data\Default\Code Cache") "Contents"
+    New-Candidate 3 "Chrome Default service-worker cache" (Join-Path $UserProfile "AppData\Local\Google\Chrome\User Data\Default\Service Worker\CacheStorage") "Contents"
+    New-Candidate 3 "Edge Default cache" (Join-Path $UserProfile "AppData\Local\Microsoft\Edge\User Data\Default\Cache") "Contents"
+    New-Candidate 3 "Edge Default code cache" (Join-Path $UserProfile "AppData\Local\Microsoft\Edge\User Data\Default\Code Cache") "Contents"
+    New-Candidate 3 "Edge Default service-worker cache" (Join-Path $UserProfile "AppData\Local\Microsoft\Edge\User Data\Default\Service Worker\CacheStorage") "Contents"
+    New-Candidate 3 "TradingView cache" (Join-Path $UserProfile "AppData\Local\Packages\31178TradingViewInc.TradingView_q4jpyh43s5mv6\LocalCache\Roaming\TradingView\Cache") "Contents"
+    New-Candidate 3 "TradingView code cache" (Join-Path $UserProfile "AppData\Local\Packages\31178TradingViewInc.TradingView_q4jpyh43s5mv6\LocalCache\Roaming\TradingView\Code Cache") "Contents"
+    New-Candidate 3 "Steam htmlcache" (Join-Path $UserProfile "AppData\Local\Steam\htmlcache") "Contents"
+    New-Candidate 3 "Discord cache" (Join-Path $UserProfile "AppData\Roaming\discord\Cache") "Contents"
+    New-Candidate 3 "Codex app cache" (Join-Path $UserProfile "AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Roaming\Codex\Cache") "Contents"
+    New-Candidate 3 "Codex browser web cache" (Join-Path $UserProfile "AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Roaming\Codex\web\Codex\Default\Partitions\codex-browser-app\Cache") "Contents"
+    New-Candidate 3 "Codex browser partition cache" (Join-Path $UserProfile "AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Roaming\Codex\Partitions\codex-browser-app\Cache") "Contents"
+    New-Candidate 3 "Explorer icon and thumbnail cache files" (Join-Path $UserProfile "AppData\Local\Microsoft\Windows\Explorer") "ExplorerCacheFiles"
+    New-Candidate 3 "Windows Update download cache" "C:\Windows\SoftwareDistribution\Download" "Contents"
     New-Candidate 4 "Claude VM bundles" (Join-Path $UserProfile "AppData\Roaming\Claude\vm_bundles") "Directory"
 )
 
