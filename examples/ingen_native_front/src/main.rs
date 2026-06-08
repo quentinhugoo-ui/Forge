@@ -4,14 +4,14 @@ use ingen_native_front::{
     atlas_ui_projection, build_cutover_audit_report, build_obsolete_front_manifest,
     banger_frame_image, build_stage0_report, local_service_command, local_service_snapshot,
     product_section_projection, cached_work_motion_lane,
-    render_banger_viewport_frame, render_brain_core_realtime, spawn_fake_long_job,
+    render_banger_viewport_frame, spawn_fake_long_job,
     stage0_report_json, AtlasManifest,
-    BangerViewportFrame, BrainGpuRenderer, NativeAgentCard, NativeAgentCardKind, NativeServiceCommand,
+    BangerViewportFrame, NativeAgentCard, NativeAgentCardKind, NativeServiceCommand,
     NativeSessionSummary, NativeStateKernel, NativeUiEvent, ProductSectionsManifest,
     ServiceSnapshot, ServiceStreamEvent, WebExplorerPolicy, MotionLane,
 };
 use slint::winit_030::WinitWindowAccessor;
-use std::{cell::RefCell, fs, path::PathBuf, rc::Rc, sync::mpsc, time::{Duration, Instant}};
+use std::{cell::RefCell, fs, path::PathBuf, rc::Rc, sync::mpsc, time::Duration};
 
 slint::include_modules!();
 
@@ -80,7 +80,6 @@ fn main() -> Result<(), slint::PlatformError> {
     start_work_motion_lane(&window, Rc::clone(&work_motion_lane));
     start_service_stream_poller(&window, Rc::clone(&state), Rc::clone(&streams));
     start_dev_status_poller(&window);
-    start_brain_core_animation(&window);
 
     let weak = window.as_weak();
     let state_for_refresh = Rc::clone(&state);
@@ -341,41 +340,6 @@ fn dev_status_phase(status: &str) -> &str {
         .and_then(|(_, rest)| rest.split_once(']'))
         .map(|(phase, _)| phase)
         .unwrap_or("")
-}
-
-/// Drives the Brain page background core. Renders one procedural frame from continuous wall-clock
-/// time (never loops) only while the Brain page is open. GPU renderer is built lazily on first
-/// frame; if no GPU is available we fall back to the CPU path.
-fn start_brain_core_animation(window: &AppWindow) {
-    let timer = slint::Timer::default();
-    let weak = window.as_weak();
-    let start = Instant::now();
-    // None = not yet initialized; Some(None) = no GPU, use CPU; Some(Some(_)) = GPU renderer.
-    let renderer: Rc<RefCell<Option<Option<BrainGpuRenderer>>>> = Rc::new(RefCell::new(None));
-    timer.start(
-        slint::TimerMode::Repeated,
-        Duration::from_millis(16),
-        move || {
-            let Some(window) = weak.upgrade() else {
-                return;
-            };
-            // Only burn cycles while the Brain page is actually visible.
-            if window.get_profile_canvas().as_str() != "brain" {
-                return;
-            }
-            let time = start.elapsed().as_secs_f32();
-            let mut slot = renderer.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(BrainGpuRenderer::new());
-            }
-            let image = match slot.as_ref().and_then(|inner| inner.as_ref()) {
-                Some(gpu) => gpu.render(time),
-                None => render_brain_core_realtime(time),
-            };
-            window.set_brain_motion_image(image);
-        },
-    );
-    std::mem::forget(timer);
 }
 
 fn start_service_stream_poller(

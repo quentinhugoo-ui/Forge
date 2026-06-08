@@ -271,8 +271,8 @@ component SidebarCanvasDrawer inherits Rectangle {
 
 component WorkMotionIndicator inherits Rectangle {
     in property <image> frame;
-    width: 18px;
-    height: 18px;
+    width: 14px;
+    height: 14px;
     background: #00000000;
     Image {
         width: parent.width;
@@ -344,8 +344,8 @@ component SessionRow inherits Rectangle {
     }
     WorkMotionIndicator {
         visible: root.working && !archive_touch.has-hover;
-        x: root.archive_slide + parent.width - 25px;
-        y: 5px;
+        x: root.archive_slide + parent.width - 23px;
+        y: 7px;
         frame: root.work_motion_image;
     }
     Image {
@@ -1696,6 +1696,49 @@ component BrainTab inherits Rectangle {
     }
 }
 
+// One amber metaball lobe — a solid circle orbiting a pivot. Several of these in the same
+// opaque tint fuse into a single crisp morphing silhouette (no internal seams, no blur).
+component BrainLobe inherits Rectangle {
+    in property <length> cx;
+    in property <length> cy;
+    in property <length> diam;
+    in property <length> orbit;
+    in property <float> ang;
+    in property <color> tint;
+    width: root.diam;
+    height: root.diam;
+    border-radius: root.diam / 2;
+    background: root.tint;
+    x: root.cx + root.orbit * Math.cos(root.ang * 1rad) - root.diam / 2;
+    y: root.cy + root.orbit * Math.sin(root.ang * 1rad) - root.diam / 2;
+}
+
+// Living amber core, rendered 100% natively by Slint (GPU-composited, zero readback, no CPU
+// roundtrip). animation-tick() drives it at the display refresh; the lobe spin speeds are
+// mutually irrational so the silhouette never loops, and the tint drifts amber <-> burnt.
+component BrainCoreLive inherits Rectangle {
+    // Continuous, ever-increasing time in milliseconds (never resets).
+    property <float> t: animation-tick() / 1ms;
+    // Hue drift amber <-> burnt-orange on two incommensurate sines (~6s + ~15s): never repeats.
+    property <float> drift: 0.40 + 0.22 * Math.sin((t * 0.00105) * 1rad) + 0.12 * Math.sin((t * 0.00041 + 1.7) * 1rad);
+    property <color> body: #ffbf48.mix(#be4a1d, drift);
+    // Gentle non-periodic breathing of the core.
+    property <float> breathe: 1.0 + 0.04 * Math.sin((t * 0.0007) * 1rad) + 0.02 * Math.sin((t * 0.00031) * 1rad);
+    property <length> s: self.width;
+    property <length> cx: self.width / 2;
+    property <length> cy: self.height / 2;
+
+    // Central body keeps every orbiting lobe fused to one connected mass.
+    BrainLobe { cx: root.cx; cy: root.cy; orbit: 0px; ang: 0; diam: root.s * 0.60 * root.breathe; tint: root.body; }
+    // Orbiting lobes — speeds in rad/ms; ~one turn per 2s = 0.00314, both directions, irrational.
+    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.16; ang: root.t *  0.00314 + 0.0; diam: root.s * 0.40; tint: root.body; }
+    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.20; ang: root.t * -0.00298 + 2.0; diam: root.s * 0.34; tint: root.body; }
+    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.14; ang: root.t *  0.00331 + 4.2; diam: root.s * 0.30; tint: root.body; }
+    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.22; ang: root.t * -0.00275 + 1.0; diam: root.s * 0.32; tint: root.body; }
+    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.18; ang: root.t *  0.00352 + 3.1; diam: root.s * 0.26; tint: root.body; }
+    BrainLobe { cx: root.cx; cy: root.cy; orbit: root.s * 0.12; ang: root.t * -0.00289 + 5.0; diam: root.s * 0.24; tint: root.body; }
+}
+
 component BrainSurface inherits Rectangle {
     in property <string> mode;
     in property <image> brain_motion_image;
@@ -1742,14 +1785,12 @@ component BrainSurface inherits Rectangle {
         root.selected_component == "affinity" ? @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiMwMDAwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik02IDR2N2E2IDYgMCAwIDAgMTIgMFY0Ii8+PHBhdGggZD0iTTEwIDR2N2EyIDIgMCAwIDAgNCAwVjQiLz48cGF0aCBkPSJNNSA0aDUiLz48cGF0aCBkPSJNMTQgNGg1Ii8+PC9zdmc+") :
         @image-url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiMwMDAwMDAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxjaXJjbGUgY3g9IjEyIiBjeT0iNiIgcj0iMi42Ii8+PHBhdGggZD0iTTkuNCAxMC41aDUuMiIvPjxwYXRoIGQ9Ik05LjcgMTAuNWMwIDItLjkgNC0yIDYuNmg4LjZjLTEuMS0yLjYtMi00LjYtMi02LjYiLz48cGF0aCBkPSJNNy41IDE3LjFoOWwuOCAzLjRINi43WiIvPjwvc3ZnPg==");
 
-    // Cœur ambre vivant (loader GPU procédural) — arrière-plan du terminal, posé en bas à droite,
-    // derrière la barre de chat. Hors du rectangle clippé pour pouvoir déborder sous le chat.
-    Image {
+    // Cœur ambre vivant (natif Slint, composité GPU, zéro readback) — arrière-plan du terminal,
+    // posé en bas à droite, derrière la barre de chat. Hors du rectangle clippé pour déborder.
+    BrainCoreLive {
         x: root.width * 0.60 - 380px;
         y: root.height - 470px;
         width: 760px; height: 760px;
-        source: root.brain_motion_image;
-        image-fit: contain;
         opacity: 0.5;
     }
 
