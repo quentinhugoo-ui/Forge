@@ -4,7 +4,7 @@ import type { ComposerUploadPreview, TranscriptMessage } from "../shared/ipc-con
 import { ComposerSendBurst, type ComposerSendBurstHandle } from "./ComposerSendBurst";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { ProviderLogo } from "./ProviderLogo";
-import { ModuleLogo, type SidebarModuleId } from "./SidebarSlice";
+import { ModuleLogo, MODULE_DRAG_ZONE_EVENT, type ModuleDragZoneDetail, type SidebarModuleId } from "./SidebarSlice";
 import { sidebarShadowStore } from "./sidebar-shadow-store";
 
 const COMPOSER_MAX_INPUT_HEIGHT = 360;
@@ -414,6 +414,58 @@ function isTranscriptVisualAttachment(preview: ComposerUploadPreview): boolean {
   return preview.kind === "image" || preview.kind === "video" || preview.kind === "model3d";
 }
 
+function TranscriptAttachmentEventIcon({ kind }: { kind: ComposerUploadPreview["kind"] }) {
+  if (kind === "video") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="4" y="6" width="11" height="12" rx="2" />
+        <path d="m15 10 5-3v10l-5-3z" />
+      </svg>
+    );
+  }
+  if (kind === "model3d") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+        <path d="M12 12 4 7.5" />
+        <path d="m12 12 8-4.5" />
+        <path d="M12 12v9" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="m7 16 3.3-3.3a1.6 1.6 0 0 1 2.3 0L16 16" />
+      <path d="m14 14 1.2-1.2a1.6 1.6 0 0 1 2.3 0L20 15.3" />
+      <circle cx="9" cy="9" r="1.2" />
+    </svg>
+  );
+}
+
+function visualAttachmentEventLabel(kind: ComposerUploadPreview["kind"]): string {
+  if (kind === "video") return "video added";
+  if (kind === "model3d") return "3D object added";
+  return "image added";
+}
+
+function TranscriptVisualAttachmentEvents({ previews }: { previews: ComposerUploadPreview[] }) {
+  if (previews.length === 0) {
+    return null;
+  }
+  return (
+    <div className="transcriptAttachmentEvents" aria-label="Attached visual files">
+      {previews.map((preview) => (
+        <div className="transcriptAttachmentEvent" key={`${preview.id}-event`}>
+          <TranscriptAttachmentEventIcon kind={preview.kind} />
+          <span>{visualAttachmentEventLabel(preview.kind)}</span>
+          <code>{preview.name}</code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PdfUploadPreview({ preview }: { preview: ComposerUploadPreview }) {
   const frameRef = useRef<HTMLDivElement>(null);
 
@@ -723,7 +775,27 @@ function splitAssistantParagraphs(text: string) {
   return paragraphs.length > 0 ? paragraphs : [text.trim()];
 }
 
+function followTranscriptLatest(container: HTMLElement | null, behavior: ScrollBehavior = "auto") {
+  if (!container) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    const breathingRoom = Number.parseFloat(getComputedStyle(container).getPropertyValue("--transcript-bottom-breathing-room")) || 0;
+    container.scrollTo({ top: container.scrollHeight - container.clientHeight + breathingRoom, behavior });
+  });
+}
+
+function latestTranscriptContainerFor(element: Element | null): HTMLElement | null {
+  const item = element?.closest(".transcriptItem");
+  const container = element?.closest<HTMLElement>(".chatCanvas__messages");
+  if (!item || !container || container.lastElementChild !== item) {
+    return null;
+  }
+  return container;
+}
+
 function AnimatedAssistantText({ message }: { message: TranscriptMessage }) {
+  const textRef = useRef<HTMLDivElement>(null);
   const paragraphs = useMemo(() => splitAssistantParagraphs(message.text), [message.text]);
   const totalCharacters = useMemo(
     () => paragraphs.reduce((total, paragraph) => total + paragraph.length, 0),
@@ -773,11 +845,15 @@ function AnimatedAssistantText({ message }: { message: TranscriptMessage }) {
     void panelsChatBottomStore.dispatch({ kind: "assistant_write_complete", value: message.id });
   }, [animationSettled, message.id, totalCharacters, visibleCharacters]);
 
+  useLayoutEffect(() => {
+    followTranscriptLatest(latestTranscriptContainerFor(textRef.current));
+  }, [visibleCharacters]);
+
   let remainingCharacters = visibleCharacters;
   const writing = visibleCharacters < totalCharacters;
 
   return (
-    <div className="assistantText" aria-label={message.text}>
+    <div className="assistantText" aria-label={message.text} ref={textRef}>
       <div aria-hidden="true">
         {paragraphs.map((paragraph, index) => {
           const shown = Math.max(0, Math.min(paragraph.length, remainingCharacters));
@@ -801,10 +877,19 @@ function AnimatedAssistantText({ message }: { message: TranscriptMessage }) {
   );
 }
 
+function PendingAssistantText() {
+  return (
+    <div className="assistantText assistantText--pending" aria-label="Assistant response pending">
+      <span className="assistantText__pendingCaret" aria-hidden="true" />
+    </div>
+  );
+}
+
 function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
   const [pins, setPins] = useState<PinnedChapter[]>(loadPins);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const latestMessage = messages.at(-1);
 
   useEffect(() => {
     try {
@@ -813,6 +898,10 @@ function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
       // storage unavailable: pins stay in memory for this session only
     }
   }, [pins]);
+
+  useLayoutEffect(() => {
+    followTranscriptLatest(messagesRef.current, "smooth");
+  }, [latestMessage?.id, latestMessage?.text]);
 
   const pinnedIds = new Set(pins.map((pin) => pin.id));
 
@@ -845,15 +934,8 @@ function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
     return null;
   }
 
-  const stagedVisualAttachments =
-    [...messages]
-      .reverse()
-      .find((message) => (message.attachments ?? []).some(isTranscriptVisualAttachment))
-      ?.attachments?.filter(isTranscriptVisualAttachment) ?? [];
-  const chatCanvasClassName = stagedVisualAttachments.length > 0 ? "chatCanvas chatCanvas--media-stage" : "chatCanvas";
-
   return (
-    <div className={chatCanvasClassName}>
+    <div className="chatCanvas">
       {pins.length > 0 ? (
         <div className="chatCanvas__chapters" aria-label="Pinned chapters">
           {pins.map((pin) => (
@@ -864,11 +946,6 @@ function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
           ))}
         </div>
       ) : null}
-      {stagedVisualAttachments.length > 0 ? (
-        <aside className="transcriptMediaStage" aria-label="Canvas media preview">
-          <TranscriptAttachmentStack previews={stagedVisualAttachments} />
-        </aside>
-      ) : null}
       <div className="chatCanvas__messages" ref={messagesRef}>
         {messages.map((message) => {
           const attachments = message.attachments ?? [];
@@ -876,11 +953,9 @@ function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
           if (!message.text.trim() && attachments.length === 0) {
             return null;
           }
-          if (message.role === "user" && !message.text.trim() && visualAttachments.length > 0) {
-            return null;
-          }
           const role = message.role === "user" ? "user" : "assistant";
           const pinned = pinnedIds.has(message.id);
+          const assistantPending = role === "assistant" && message.id.startsWith("assistant-pending-");
           const assistantError = role === "assistant" && message.id.startsWith("assistant-error-");
           const actions = (
             <div className="transcriptActions">
@@ -909,18 +984,32 @@ function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
             <div className={`transcriptItem transcriptItem--${role}`} data-msg-id={message.id} key={message.id}>
               {role === "assistant" ? (
                 <div className="transcriptTextFrame">
-                  <div className={assistantError ? "transcriptPill transcriptPill--assistant transcriptPill--assistantError" : "transcriptPill transcriptPill--assistant"}>
-                    <AnimatedAssistantText message={message} />
+                  <div
+                    className={
+                      assistantPending
+                        ? "transcriptPill transcriptPill--assistant transcriptPill--assistantPending"
+                        : assistantError
+                          ? "transcriptPill transcriptPill--assistant transcriptPill--assistantError"
+                          : "transcriptPill transcriptPill--assistant"
+                    }
+                  >
+                    {assistantPending ? <PendingAssistantText /> : <AnimatedAssistantText message={message} />}
                   </div>
-                  {actions}
+                  {assistantPending ? null : actions}
                 </div>
               ) : (
-                <>
+                <div className="transcriptUserRow">
                   <div className="transcriptUserStack">
-                    {message.text.trim() ? <p className="transcriptPill transcriptPill--user">{message.text}</p> : null}
-                    {actions}
+                    {message.text.trim() ? (
+                      <div className="transcriptUserTextFrame">
+                        <p className="transcriptPill transcriptPill--user">{message.text}</p>
+                        {actions}
+                      </div>
+                    ) : null}
+                    {visualAttachments.length > 0 ? <TranscriptVisualAttachmentEvents previews={visualAttachments} /> : null}
+                    {visualAttachments.length > 0 ? <TranscriptAttachmentStack previews={visualAttachments} /> : null}
                   </div>
-                </>
+                </div>
               )}
             </div>
           );
@@ -945,12 +1034,28 @@ export function PanelsChatBottomSlice({
 }: PanelsChatBottomSliceProps = {}) {
   const { snapshot } = usePanelsChatBottomStore();
   const [draft, setDraft] = useState(snapshot.composer.chatText);
+  const [moduleDropPhase, setModuleDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const composerRef = useRef<HTMLFormElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const burstRef = useRef<ComposerSendBurstHandle>(null);
 
   useEffect(() => {
     void panelsChatBottomStore.refresh();
+  }, []);
+
+  useEffect(() => {
+    const onModuleDragZone = (event: Event) => {
+      const detail = (event as CustomEvent<ModuleDragZoneDetail>).detail;
+      if (detail.phase === "start") {
+        setModuleDropPhase("armed");
+      } else if (detail.phase === "move") {
+        setModuleDropPhase(detail.over ? "over" : "armed");
+      } else {
+        setModuleDropPhase("idle");
+      }
+    };
+    window.addEventListener(MODULE_DRAG_ZONE_EVENT, onModuleDragZone);
+    return () => window.removeEventListener(MODULE_DRAG_ZONE_EVENT, onModuleDragZone);
   }, []);
 
   useEffect(() => {
@@ -982,12 +1087,10 @@ export function PanelsChatBottomSlice({
     if (!value.trim() && uploadPreviews.length === 0) {
       return;
     }
-    // The pixel border laps the composer frame, then explodes; the message is
-    // committed to the canvas at that peak (handled inside fire, or immediately
-    // when reduced motion / no canvas is available).
     const commit = () => void dispatch({ kind: "send_chat", value });
+    const sessionIsNew = !snapshot.transcript.some((message) => message.role === "user" || message.role === "assistant");
     const burst = burstRef.current;
-    if (burst) {
+    if (sessionIsNew && burst) {
       burst.fire(composerRef.current, commit);
     } else {
       commit();
@@ -999,7 +1102,11 @@ export function PanelsChatBottomSlice({
       <TranscriptCanvas messages={canvasMessages} />
       <form
         ref={composerRef}
-        className="composer"
+        className={[
+          "composer",
+          moduleDropPhase !== "idle" ? "composer--moduleDropArmed" : "",
+          moduleDropPhase === "over" ? "composer--moduleDropOver" : ""
+        ].filter(Boolean).join(" ")}
         aria-label="Chat composer"
         onSubmit={(event) => {
           event.preventDefault();

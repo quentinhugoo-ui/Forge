@@ -59,6 +59,7 @@ button {
   --composer-bottom: 33px;
   --bottom-controls-bottom: 12px;
   --chat-canvas-bottom: 150px;
+  --transcript-bottom-breathing-room: 88px;
   --sidebar-motion: 260ms cubic-bezier(0.22, 1, 0.36, 1);
   width: 100vw;
   height: 100vh;
@@ -3053,6 +3054,11 @@ button {
   transition: left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
+.canvasSurfaces--webExplorerOpen ~ .panelsChatBottom .chatCanvas {
+  left: calc(var(--main-left) + 24px);
+  width: max(300px, calc(((100vw - var(--main-left) - 18px) / 2) - 24px));
+}
+
 .chatCanvas::before {
   content: none;
 }
@@ -3109,16 +3115,13 @@ button {
   width: 100%;
   min-height: 0;
   padding-top: 46px;
+  padding-bottom: var(--transcript-bottom-breathing-room);
   overflow-y: auto;
   scrollbar-width: none;
   scroll-behavior: smooth;
-  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black 100%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black 100%);
-}
-
-.chatCanvas--media-stage .chatCanvas__messages {
-  width: min(680px, calc(100% - clamp(430px, 38vw, 740px)));
-  min-width: min(100%, 500px);
+  scroll-padding-bottom: var(--transcript-bottom-breathing-room);
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
 }
 
 .chatCanvas__messages::-webkit-scrollbar {
@@ -3148,7 +3151,7 @@ button {
   margin-top: 34px;
 }
 
-.transcriptItem--user:has(.transcriptAttachments) + .transcriptItem--assistant {
+.transcriptItem--user:has(.transcriptAttachmentStack) + .transcriptItem--assistant {
   margin-top: 12px;
 }
 
@@ -3190,28 +3193,71 @@ button {
   max-width: min(820px, 100%);
 }
 
+.transcriptUserRow {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  width: 100%;
+}
+
+.transcriptUserTextFrame {
+  position: relative;
+  display: grid;
+  justify-items: start;
+  max-width: 100%;
+}
+
 .transcriptUserStack .transcriptPill--user {
   max-width: 100%;
 }
 
-.transcriptMediaStage {
-  position: fixed;
-  top: 118px;
-  right: calc(var(--workspace-right) + clamp(32px, 4vw, 72px));
-  z-index: 3;
+.transcriptAttachmentEvents {
   display: grid;
-  justify-items: center;
-  width: clamp(360px, 34vw, 640px);
-  max-height: calc(100vh - 240px);
-  pointer-events: auto;
-  filter: drop-shadow(0 24px 76px rgba(0, 0, 0, 0.42));
+  gap: 5px;
+  margin-top: 1px;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 10%);
+}
+
+.transcriptAttachmentEvent {
+  display: grid;
+  grid-template-columns: 15px auto minmax(0, auto);
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+  font-family: Geist, Arial, sans-serif;
+  font-size: 12.5px;
+  line-height: 1.2;
+}
+
+.transcriptAttachmentEvent svg {
+  width: 15px;
+  height: 15px;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 16%);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.transcriptAttachmentEvent code {
+  max-width: min(360px, 56vw);
+  overflow: hidden;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 20%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .transcriptAttachmentStack {
   display: grid;
+  justify-self: start;
   justify-items: center;
   gap: 10px;
-  width: 100%;
+  width: min(520px, calc(100% - clamp(140px, 18vw, 320px)));
+  margin-top: 2px;
+  margin-left: clamp(140px, 18vw, 320px);
 }
 
 .transcriptAttachment {
@@ -3241,17 +3287,17 @@ button {
 }
 
 .transcriptAttachment--frame-portrait {
-  width: min(420px, 100%);
+  width: min(360px, 100%);
   aspect-ratio: 3 / 4;
 }
 
 .transcriptAttachment--frame-landscape {
-  width: min(620px, 100%);
+  width: min(520px, 100%);
   aspect-ratio: 16 / 9;
 }
 
 .transcriptAttachment--frame-square {
-  width: min(520px, 100%);
+  width: min(420px, 100%);
   aspect-ratio: 1 / 1;
 }
 
@@ -3337,17 +3383,11 @@ button {
     width: 100%;
   }
 
-  .chatCanvas--media-stage .chatCanvas__messages {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .transcriptMediaStage {
-    position: static;
+  .transcriptAttachmentStack {
     justify-self: start;
+    justify-items: start;
     width: min(420px, 88vw);
-    max-height: none;
-    margin: 8px 0 0;
+    margin-left: 0;
   }
 }
 
@@ -3367,24 +3407,23 @@ button {
   border-left: 2px solid color-mix(in oklab, var(--forge-muted), transparent 46%);
 }
 
-.chatCanvas--media-stage .transcriptItem--user {
-  width: min(620px, 100%);
-}
-
-.chatCanvas--media-stage .transcriptUserStack {
-  max-width: min(560px, 100%);
-}
-
-.chatCanvas--media-stage .transcriptPill,
-.chatCanvas--media-stage .transcriptPill--assistant,
-.chatCanvas--media-stage .transcriptPill--assistantError {
-  max-width: 100%;
+.transcriptPill--assistantPending {
+  min-width: 28px;
+  min-height: 22px;
+  color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 28%);
 }
 
 .assistantText {
   display: block;
   width: 100%;
   white-space: normal;
+}
+
+.assistantText--pending {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  min-height: 22px;
 }
 
 .assistantText > div {
@@ -3405,6 +3444,16 @@ button {
   vertical-align: -0.12em;
   background: currentColor;
   opacity: 0.42;
+  animation: assistantCaret 820ms ease-in-out infinite;
+}
+
+.assistantText__pendingCaret {
+  display: inline-block;
+  width: 2px;
+  height: 1.08em;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.34;
   animation: assistantCaret 820ms ease-in-out infinite;
 }
 
@@ -3455,8 +3504,8 @@ button {
 
 .transcriptTextFrame:hover .transcriptActions,
 .transcriptTextFrame:focus-within .transcriptActions,
-.transcriptUserStack:hover .transcriptActions,
-.transcriptUserStack:focus-within .transcriptActions {
+.transcriptUserTextFrame:hover .transcriptActions,
+.transcriptUserTextFrame:focus-within .transcriptActions {
   display: flex;
 }
 
@@ -3746,6 +3795,42 @@ button {
 .composerWebExplorerLogo--module .sidebarModule__logo {
   width: 15px;
   height: 15px;
+  /* SVG viewports clip by default; fractional device-pixel rounding under
+     Windows display scaling can shave the right edge of the 15px box. */
+  overflow: visible;
+}
+
+.composer--moduleDropArmed {
+  animation: composerModuleDropPulse 1.15s ease-in-out infinite;
+}
+
+.composer--moduleDropOver {
+  animation: none;
+  box-shadow:
+    0 0 0 2px color-mix(in oklab, var(--forge-accent), transparent 8%),
+    0 0 26px color-mix(in oklab, var(--forge-accent), transparent 52%);
+}
+
+@keyframes composerModuleDropPulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--forge-accent), transparent 52%),
+      0 0 10px color-mix(in oklab, var(--forge-accent), transparent 82%);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 2px color-mix(in oklab, var(--forge-accent), transparent 26%),
+      0 0 22px color-mix(in oklab, var(--forge-accent), transparent 62%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer--moduleDropArmed {
+    animation: none;
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--forge-accent), transparent 38%);
+  }
 }
 
 .composer__uploadError {
@@ -4038,6 +4123,10 @@ button {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.canvasSurfaces--webExplorerOpen {
+  pointer-events: none;
+}
+
 .canvasSurfaces__primary {
   display: grid;
   min-width: 0;
@@ -4090,6 +4179,7 @@ button {
 .webExplorerCanvasPane {
   position: relative;
   background: transparent;
+  pointer-events: auto;
 }
 
 .webExplorerChrome {

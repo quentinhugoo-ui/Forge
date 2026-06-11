@@ -78,6 +78,9 @@ export function App() {
   const toggleComposerModule = useCallback((id: SidebarModuleId) => {
     setComposerModuleId((current) => (current === id ? null : id));
   }, []);
+  const dropComposerModule = useCallback((id: SidebarModuleId) => {
+    setComposerModuleId(id);
+  }, []);
   const [parallelPrompts, setParallelPrompts] = useState<string[]>([""]);
   const [brainUserMemory] = useState(() => readBrainUserMemory());
   const [welcomeMessage, setWelcomeMessage] = useState(() => selectWelcomeMessage(brainUserMemory.preferredFirstName));
@@ -595,7 +598,12 @@ export function App() {
         </section>
       ) : null}
 
-      <SidebarSlice open={snapshot.leftPanelOpen} onNewSession={resetNewSessionCanvas} onModuleSelect={toggleComposerModule} />
+      <SidebarSlice
+        open={snapshot.leftPanelOpen}
+        onNewSession={resetNewSessionCanvas}
+        onModuleSelect={toggleComposerModule}
+        onModuleDrop={dropComposerModule}
+      />
       <RightPanelSlice open={snapshot.rightPanelOpen} />
 
       {!isLlmProviderCanvas ? (
