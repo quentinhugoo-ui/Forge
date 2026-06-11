@@ -59,7 +59,7 @@ button {
   --composer-bottom: 33px;
   --bottom-controls-bottom: 12px;
   --chat-canvas-bottom: 150px;
-  --transcript-bottom-breathing-room: 176px;
+  --transcript-bottom-breathing-room: 118px;
   --sidebar-motion: 260ms cubic-bezier(0.22, 1, 0.36, 1);
   width: 100vw;
   height: 100vh;
@@ -3133,17 +3133,13 @@ button {
 }
 
 .transcriptItem--user {
-  width: min(900px, 92%);
+  width: auto;
+  max-width: min(900px, 92%);
 }
 
 .transcriptItem--assistant {
-  width: min(960px, 92%);
-}
-
-.chatCanvas__messages--withVisuals .transcriptItem--user,
-.chatCanvas__messages--withVisuals .transcriptItem--assistant {
-  width: min(640px, calc(100% - clamp(420px, 36vw, 650px)));
-  min-width: min(100%, 420px);
+  width: auto;
+  max-width: min(960px, 92%);
 }
 
 .transcriptItem--user + .transcriptItem--assistant {
@@ -3161,7 +3157,7 @@ button {
 .transcriptFloatMedia {
   float: right;
   width: clamp(360px, 34vw, 620px);
-  margin: 0 clamp(22px, 3vw, 52px) 28px clamp(28px, 5vw, 88px);
+  margin: 2px clamp(22px, 3vw, 52px) 22px clamp(28px, 5vw, 88px);
   pointer-events: auto;
   filter: drop-shadow(0 24px 76px rgba(0, 0, 0, 0.42));
 }
@@ -3172,6 +3168,49 @@ button {
   justify-items: start;
   gap: 4px;
   max-width: 100%;
+}
+
+.transcriptCodeActEvents {
+  display: grid;
+  gap: 5px;
+  margin-top: 3px;
+}
+
+.transcriptCodeActEvent {
+  display: grid;
+  grid-template-columns: 18px auto minmax(0, auto);
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+  color: #aeb4b7;
+  font-size: 13px;
+  font-weight: 520;
+  line-height: 1.2;
+}
+
+.transcriptCodeActEvent__icon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  overflow: visible;
+}
+
+.transcriptCodeActEvent__icon .sidebarModule__logo {
+  width: 18px;
+  height: 18px;
+}
+
+.transcriptCodeActEvent code {
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 18%);
+  font: 11px/1.2 "Geist Mono", ui-monospace, monospace;
+}
+
+.transcriptCodeActEvent span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .transcriptPill {
@@ -3394,23 +3433,17 @@ button {
     width: 100%;
   }
 
-  .chatCanvas__messages--withVisuals .transcriptItem--user,
-  .chatCanvas__messages--withVisuals .transcriptItem--assistant {
-    width: 100%;
-    min-width: 0;
+  .transcriptAttachmentStack {
+    justify-self: start;
+    justify-items: start;
+    width: min(420px, 88vw);
+    margin-left: 0;
   }
 
   .transcriptFloatMedia {
     float: none;
     width: min(420px, 88vw);
     margin: 8px 0 10px;
-  }
-
-  .transcriptAttachmentStack {
-    justify-self: start;
-    justify-items: start;
-    width: min(420px, 88vw);
-    margin-left: 0;
   }
 }
 
@@ -3876,6 +3909,27 @@ button {
   background: color-mix(in oklab, var(--forge-chat-bg), var(--forge-text) 6%);
   outline-style: solid;
   outline-color: color-mix(in oklab, var(--forge-text), transparent 40%);
+}
+
+/* Dims the canvas while a module is dragged so the composer reads as the drop
+   target. Sits between the transcript canvas and the composer by DOM order. */
+.composerDropScrim {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 35%);
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+  pointer-events: none;
+}
+
+.composerDropScrim--active {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composerDropScrim {
+    transition: none;
+  }
 }
 
 .composer__uploadError {

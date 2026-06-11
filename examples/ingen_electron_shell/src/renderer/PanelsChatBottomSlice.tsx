@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import type { Object3D } from "three";
 import type { ComposerUploadPreview, TranscriptMessage } from "../shared/ipc-contract";
 import { ComposerSendBurst, type ComposerSendBurstHandle } from "./ComposerSendBurst";
@@ -766,22 +766,12 @@ function prefersReducedMotion() {
   return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
 
-function splitAssistantParagraphs(text: string) {
-  const paragraphs = text
-    .trim()
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
-  return paragraphs.length > 0 ? paragraphs : [text.trim()];
-}
-
 function followTranscriptLatest(container: HTMLElement | null, behavior: ScrollBehavior = "auto") {
   if (!container) {
     return;
   }
   requestAnimationFrame(() => {
-    const breathingRoom = Number.parseFloat(getComputedStyle(container).getPropertyValue("--transcript-bottom-breathing-room")) || 0;
-    container.scrollTo({ top: container.scrollHeight - container.clientHeight + breathingRoom, behavior });
+    container.scrollTo({ top: container.scrollHeight - container.clientHeight, behavior });
   });
 }
 
@@ -794,13 +784,125 @@ function latestTranscriptContainerFor(element: Element | null): HTMLElement | nu
   return container;
 }
 
+type AssistantMarkdownBlock =
+  | { kind: "heading"; level: number; text: string }
+  | { kind: "list"; ordered: boolean; items: string[] }
+  | { kind: "paragraph"; text: string };
+
+function normalizeAssistantMarkdownText(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/([.!?])\s+(-\s+)/g, "$1\n$2")
+    .replace(/([.!?])\s+(\d+[.)]\s+)/g, "$1\n$2");
+}
+
+function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
+  const lines = normalizeAssistantMarkdownText(text).split("\n");
+  const blocks: AssistantMarkdownBlock[] = [];
+  let paragraph: string[] = [];
+  let list: { ordered: boolean; items: string[] } | null = null;
+
+  const flushParagraph = () => {
+    const body = paragraph.join(" ").replace(/\s+/g, " ").trim();
+    if (body) {
+      blocks.push({ kind: "paragraph", text: body });
+    }
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (list && list.items.length > 0) {
+      blocks.push({ kind: "list", ordered: list.ordered, items: list.items });
+    }
+    list = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    const heading = /^(#{1,4})\s+(.+)$/.exec(line);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "heading", level: heading[1].length, text: heading[2].trim() });
+      continue;
+    }
+    const bullet = /^[-*]\s+(.+)$/.exec(line);
+    const ordered = /^(\d+)[.)]\s+(.+)$/.exec(line);
+    if (bullet || ordered) {
+      flushParagraph();
+      const orderedItem = Boolean(ordered);
+      if (!list || list.ordered !== orderedItem) {
+        flushList();
+        list = { ordered: orderedItem, items: [] };
+      }
+      list.items.push((ordered?.[2] ?? bullet?.[1] ?? "").trim());
+      continue;
+    }
+    flushList();
+    paragraph.push(line);
+  }
+
+  flushParagraph();
+  flushList();
+  return blocks.length > 0 ? blocks : [{ kind: "paragraph", text: text.trim() }];
+}
+
+function assistantInlineNodes(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(\*\*[^*]+?\*\*|`[^`]+?`)/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > cursor) {
+      nodes.push(text.slice(cursor, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith("**")) {
+      nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
+    } else {
+      nodes.push(<code key={`${keyPrefix}-code-${match.index}`}>{token.slice(1, -1)}</code>);
+    }
+    cursor = match.index + token.length;
+  }
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor));
+  }
+  return nodes;
+}
+
+function AssistantMarkdownText({ text, messageId, writing }: { text: string; messageId: string; writing: boolean }) {
+  const blocks = assistantMarkdownBlocks(text);
+  return (
+    <div className="assistantText__body">
+      {blocks.map((block, index) => {
+        if (block.kind === "heading") {
+          const Tag = block.level <= 2 ? "h3" : "h4";
+          return <Tag className="assistantText__heading" key={`${messageId}-heading-${index}`}>{assistantInlineNodes(block.text, `${messageId}-heading-${index}`)}</Tag>;
+        }
+        if (block.kind === "list") {
+          const Tag = block.ordered ? "ol" : "ul";
+          return (
+            <Tag className="assistantText__list" key={`${messageId}-list-${index}`}>
+              {block.items.map((item, itemIndex) => (
+                <li key={`${messageId}-list-${index}-${itemIndex}`}>{assistantInlineNodes(item, `${messageId}-list-${index}-${itemIndex}`)}</li>
+              ))}
+            </Tag>
+          );
+        }
+        return <p className="assistantText__paragraph" key={`${messageId}-paragraph-${index}`}>{assistantInlineNodes(block.text, `${messageId}-paragraph-${index}`)}</p>;
+      })}
+      {writing ? <span className="assistantText__caret" /> : null}
+    </div>
+  );
+}
+
 function AnimatedAssistantText({ message }: { message: TranscriptMessage }) {
   const textRef = useRef<HTMLDivElement>(null);
-  const paragraphs = useMemo(() => splitAssistantParagraphs(message.text), [message.text]);
-  const totalCharacters = useMemo(
-    () => paragraphs.reduce((total, paragraph) => total + paragraph.length, 0),
-    [paragraphs]
-  );
+  const totalCharacters = message.text.length;
   const [visibleCharacters, setVisibleCharacters] = useState(0);
   const [animationSettled, setAnimationSettled] = useState(false);
   const completionReportedRef = useRef(false);
@@ -849,30 +951,12 @@ function AnimatedAssistantText({ message }: { message: TranscriptMessage }) {
     followTranscriptLatest(latestTranscriptContainerFor(textRef.current));
   }, [visibleCharacters]);
 
-  let remainingCharacters = visibleCharacters;
   const writing = visibleCharacters < totalCharacters;
+  const visibleText = message.text.slice(0, visibleCharacters);
 
   return (
     <div className="assistantText" aria-label={message.text} ref={textRef}>
-      <div aria-hidden="true">
-        {paragraphs.map((paragraph, index) => {
-          const shown = Math.max(0, Math.min(paragraph.length, remainingCharacters));
-          remainingCharacters -= paragraph.length;
-          if (shown === 0 && writing) {
-            return null;
-          }
-          const paragraphDone = shown >= paragraph.length;
-          return (
-            <p className="assistantText__paragraph" key={`${message.id}-${index}`}>
-              {paragraph.slice(0, shown)}
-              {!paragraphDone && index === paragraphs.findIndex((candidate, candidateIndex) => {
-                const previous = paragraphs.slice(0, candidateIndex).reduce((total, item) => total + item.length, 0);
-                return visibleCharacters <= previous + candidate.length;
-              }) ? <span className="assistantText__caret" /> : null}
-            </p>
-          );
-        })}
-      </div>
+      <AssistantMarkdownText messageId={message.id} text={visibleText} writing={writing} />
     </div>
   );
 }
@@ -881,6 +965,40 @@ function PendingAssistantText() {
   return (
     <div className="assistantText assistantText--pending" aria-label="Assistant response pending">
       <span className="assistantText__pendingCaret" aria-hidden="true" />
+    </div>
+  );
+}
+
+interface TranscriptCodeActEvent {
+  command: "/gmail_";
+  text: string;
+}
+
+function transcriptCodeActEvents(message: TranscriptMessage): { text: string; events: TranscriptCodeActEvent[] } {
+  const events: TranscriptCodeActEvent[] = [];
+  let text = message.text;
+  const gmailResultIndex = text.indexOf("\n\nJ'ouvre Gmail dans Web Explorer");
+  const gmailSchema = /GMAIL_RESULT[\s\S]*?intent=([^\n]+)[\s\S]*?url="([^"]+)"/.exec(text);
+  if (gmailSchema) {
+    events.push({
+      command: "/gmail_",
+      text: `Gmail ${gmailSchema[1]?.trim() || "event"} event created`
+    });
+    if (gmailResultIndex >= 0) {
+      text = text.slice(0, gmailResultIndex).trim();
+    }
+  }
+  return { text, events };
+}
+
+function TranscriptCodeActEventLine({ event }: { event: TranscriptCodeActEvent }) {
+  return (
+    <div className="transcriptCodeActEvent">
+      <span className="transcriptCodeActEvent__icon" aria-hidden="true">
+        <ModuleLogo id="gmail" />
+      </span>
+      <code>{event.command}</code>
+      <span>{event.text}</span>
     </div>
   );
 }
@@ -933,7 +1051,6 @@ function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
   if (messages.length === 0) {
     return null;
   }
-
   return (
     <div className="chatCanvas">
       {pins.length > 0 ? (
@@ -957,6 +1074,8 @@ function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
           const pinned = pinnedIds.has(message.id);
           const assistantPending = role === "assistant" && message.id.startsWith("assistant-pending-");
           const assistantError = role === "assistant" && message.id.startsWith("assistant-error-");
+          const codeAct = role === "assistant" ? transcriptCodeActEvents(message) : { text: message.text, events: [] };
+          const renderedMessage = role === "assistant" ? { ...message, text: codeAct.text } : message;
           const actions = (
             <div className="transcriptActions">
               <button
@@ -980,7 +1099,7 @@ function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
               </button>
             </div>
           );
-          return (
+          const item = (
             <div className={`transcriptItem transcriptItem--${role}`} data-msg-id={message.id} key={message.id}>
               {role === "assistant" ? (
                 <div className="transcriptTextFrame">
@@ -993,8 +1112,13 @@ function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
                           : "transcriptPill transcriptPill--assistant"
                     }
                   >
-                    {assistantPending ? <PendingAssistantText /> : <AnimatedAssistantText message={message} />}
+                    {assistantPending ? <PendingAssistantText /> : <AnimatedAssistantText message={renderedMessage} />}
                   </div>
+                  {codeAct.events.length > 0 ? (
+                    <div className="transcriptCodeActEvents">
+                      {codeAct.events.map((event) => <TranscriptCodeActEventLine event={event} key={`${message.id}-${event.command}`} />)}
+                    </div>
+                  ) : null}
                   {assistantPending ? null : actions}
                 </div>
               ) : (
@@ -1007,12 +1131,22 @@ function TranscriptCanvas({ messages }: { messages: TranscriptMessage[] }) {
                       </div>
                     ) : null}
                     {visualAttachments.length > 0 ? <TranscriptVisualAttachmentEvents previews={visualAttachments} /> : null}
-                    {visualAttachments.length > 0 ? <TranscriptAttachmentStack previews={visualAttachments} /> : null}
                   </div>
                 </div>
               )}
             </div>
           );
+          if (role === "user" && visualAttachments.length > 0) {
+            return (
+              <Fragment key={message.id}>
+                {item}
+                <div className="transcriptFloatMedia" aria-label="Attached visual media">
+                  <TranscriptAttachmentStack previews={visualAttachments} />
+                </div>
+              </Fragment>
+            );
+          }
+          return item;
         })}
       </div>
     </div>
@@ -1087,7 +1221,7 @@ export function PanelsChatBottomSlice({
     if (!value.trim() && uploadPreviews.length === 0) {
       return;
     }
-    const commit = () => void dispatch({ kind: "send_chat", value });
+    const commit = () => void dispatch({ kind: "send_chat", value, moduleId: composerModule ?? undefined });
     const sessionIsNew = !snapshot.transcript.some((message) => message.role === "user" || message.role === "assistant");
     const burst = burstRef.current;
     if (sessionIsNew && burst) {
@@ -1100,6 +1234,10 @@ export function PanelsChatBottomSlice({
   return (
     <section className="panelsChatBottom" aria-label="Panels chat composer and bottom controls">
       <TranscriptCanvas messages={canvasMessages} />
+      <div
+        className={moduleDropPhase !== "idle" ? "composerDropScrim composerDropScrim--active" : "composerDropScrim"}
+        aria-hidden="true"
+      />
       <form
         ref={composerRef}
         className={[
