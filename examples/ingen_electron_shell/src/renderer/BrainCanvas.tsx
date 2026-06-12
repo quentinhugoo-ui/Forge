@@ -65,6 +65,9 @@ function Glyph({ kind, size = 16 }: { kind: string; size?: number }) {
   if (kind === "image") {
     return <svg {...base}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" /></svg>;
   }
+  if (kind === "questionnaire") {
+    return <svg {...base}><path d="M8 6h13" /><path d="M8 12h13" /><path d="M8 18h13" /><path d="M3 6h.01" /><path d="M3 12h.01" /><path d="M3 18h.01" /></svg>;
+  }
   if (kind === "pencil") {
     return <svg {...base}><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /><path d="m15 5 4 4" /></svg>;
   }
@@ -123,6 +126,7 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
   if (command === "/airbnb_") return <AirbnbIcon />;
   if (command === "/googleweb_") return <GoogleIcon />;
   if (command === "/newobject_") return <CubeIcon />;
+  if (command === "/questionnaire_") return <Glyph kind="questionnaire" />;
   const stroke: Partial<Record<BrainCodeActCommand, string>> = {
     "/searcharchive_": "archive",
     "/sciencebrain_": "flask",
@@ -344,10 +348,33 @@ function PersonalitySpace() {
   );
 }
 
+/* Organic gooey blob (Uiverse, andrew-manzyk): blurred polygons rotating inside
+   an SVG mask, sharpened by a high-contrast filter. Sphere shell removed; the
+   bare effect floats behind the page text as a slow ambient motion. */
+function BrainBlob() {
+  return (
+    <div className="brainBlob" aria-hidden="true">
+      <svg width="100" height="100" viewBox="0 0 100 100">
+        <mask id="brain-blob-mask">
+          <polygon points="30,15 70,20 55,45" fill="#fff" />
+          <polygon points="25,30 60,25 45,60" fill="#fff" />
+          <polygon points="35,40 70,45 50,75" fill="#fff" />
+          <polygon points="20,45 50,35 40,70" fill="#fff" />
+          <polygon points="50,30 80,45 55,65" fill="#fff" />
+          <polygon points="40,50 75,40 60,75" fill="#fff" />
+          <polygon points="30,55 65,55 45,80" fill="#fff" />
+        </mask>
+      </svg>
+      <div className="brainBlob__box" />
+    </div>
+  );
+}
+
 export function BrainCanvas() {
   const [space, setSpace] = useState<BrainSpace>("codeacts");
   return (
     <section className="profileCanvas brainCanvas" aria-label="Brain canvas">
+      <BrainBlob />
       <header className="brainCanvas__head">
         <span className="brainCanvas__mark"><Glyph kind="brain" size={26} /></span>
         <div>

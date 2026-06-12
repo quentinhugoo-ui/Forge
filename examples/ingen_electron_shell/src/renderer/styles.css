@@ -54,11 +54,13 @@ button {
   --workspace-width: calc(100vw - var(--workspace-left) - var(--workspace-right));
   --chat-width: min(780px, calc(var(--workspace-width) - 64px));
   --chat-left: calc(var(--workspace-left) + ((var(--workspace-width) - var(--chat-width)) / 2));
+  --questionnaire-width: min(756px, calc(var(--chat-width) - 8px));
+  --questionnaire-left: calc(var(--chat-left) + ((var(--chat-width) - var(--questionnaire-width)) / 2));
   --bottom-width: min(764px, calc(var(--workspace-width) - 80px));
   --bottom-left: calc(var(--workspace-left) + ((var(--workspace-width) - var(--bottom-width)) / 2));
   --composer-bottom: 33px;
   --bottom-controls-bottom: 12px;
-  --chat-canvas-bottom: 128px;
+  --chat-canvas-bottom: 138px;
   --transcript-bottom-breathing-room: 48px;
   --sidebar-motion: 260ms cubic-bezier(0.22, 1, 0.36, 1);
   width: 100vw;
@@ -78,8 +80,41 @@ button {
    !important to beat the reset's !important). Keep this list explicit. */
 .shell .leftPanel,
 .shell .rightPanel,
-.shell .composer {
+.shell .composer,
+.shell .profileDock__card,
+.shell .permissionModeMenu {
   border-radius: 6px !important;
+}
+
+.shell .composerQuestionnaire {
+  border-radius: 6px 6px 0 0 !important;
+}
+
+.shell .composerQuestionnaire__option,
+.shell .composerQuestionnaire__otherInput,
+.shell .composerQuestionnaire button {
+  border-radius: 6px !important;
+}
+
+.shell .composerQuestionnaire__option:first-child {
+  border-radius: 6px 6px 0 0 !important;
+}
+
+.shell .composerQuestionnaire__option:nth-child(2),
+.shell .composerQuestionnaire__option:nth-child(3) {
+  border-radius: 0 !important;
+}
+
+.shell .composerQuestionnaire__option:last-child {
+  border-radius: 0 0 6px 6px !important;
+}
+
+.shell .composerQuestionnaire__optionIndex {
+  border-radius: 0 !important;
+}
+
+.shell .composerQuestionnaire__dot {
+  border-radius: 999px !important;
 }
 
 .shell .canvasSplitCard,
@@ -865,7 +900,7 @@ button {
   position: absolute;
   right: 8px;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translateY(calc(-50% + 1px));
   color: var(--forge-sidebar-text);
   pointer-events: none;
 }
@@ -1563,18 +1598,56 @@ button {
 
 .parallelSessionMark {
   position: absolute;
-  left: -20px;
-  top: 14px;
+  left: -24px;
+  top: 2px;
   display: inline-grid;
   place-items: center;
-  width: var(--sidebar-session-archive-icon-size);
-  min-width: var(--sidebar-session-archive-icon-size);
-  max-width: var(--sidebar-session-archive-icon-size);
-  height: var(--sidebar-session-archive-icon-size);
-  min-height: var(--sidebar-session-archive-icon-size);
-  max-height: var(--sidebar-session-archive-icon-size);
+  width: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  max-height: 24px;
   color: color-mix(in oklab, var(--forge-text), transparent 16%);
+  cursor: default;
+  pointer-events: auto;
+}
+
+.parallelSessionMark--birth {
+  animation: parallelSessionMarkIn 720ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.parallelSessionMark::after {
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: 0;
+  z-index: 40;
+  max-width: 180px;
+  padding: 4px 6px;
+  border: 1px solid color-mix(in oklab, var(--forge-text), transparent 88%);
+  border-radius: 4px !important;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 8%);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
+  color: color-mix(in oklab, var(--forge-text), transparent 14%);
+  content: attr(data-tooltip);
+  font-family: "Geist", system-ui, sans-serif;
+  font-size: 10.5px;
+  font-weight: 560;
+  line-height: 1;
+  opacity: 0;
+  overflow: hidden;
   pointer-events: none;
+  transform: translate(0, 2px);
+  transition:
+    opacity 120ms ease-out,
+    transform 120ms ease-out;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parallelSessionMark:hover::after {
+  opacity: 0.88;
+  transform: translate(0, 0);
 }
 
 .parallelSessionMark__icon {
@@ -1588,6 +1661,7 @@ button {
   overflow: visible;
   color: currentColor;
   fill: currentColor;
+  transform: translateY(1.5px);
 }
 
 .parallelSessionMark__shape {
@@ -1598,6 +1672,20 @@ button {
 .sessionRow--parallel:hover .parallelSessionMark,
 .sessionRow--parallel.sessionRow--selected .parallelSessionMark {
   color: var(--forge-text);
+}
+
+@keyframes parallelSessionMarkIn {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  72% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .sessionRow__meta {
@@ -1616,11 +1704,46 @@ button {
 }
 
 .sessionRow__archive {
+  position: relative;
   color: color-mix(in oklab, var(--forge-muted), transparent 34%);
   opacity: 0;
   pointer-events: none;
   transform: translateX(2px);
   transition: color 140ms ease-out, opacity 140ms ease-out, transform 140ms ease-out;
+}
+
+.sessionRow__archive::after {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 5px);
+  z-index: 40;
+  max-width: 180px;
+  padding: 4px 6px;
+  border: 1px solid color-mix(in oklab, var(--forge-text), transparent 88%);
+  border-radius: 4px !important;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 8%);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
+  color: color-mix(in oklab, var(--forge-text), transparent 14%);
+  content: attr(data-tooltip);
+  font-family: "Geist", system-ui, sans-serif;
+  font-size: 10.5px;
+  font-weight: 560;
+  line-height: 1;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  transform: translate(0, 2px);
+  transition:
+    opacity 120ms ease-out,
+    transform 120ms ease-out;
+  white-space: nowrap;
+}
+
+.sessionRow__archive:hover::after,
+.sessionRow__archive:focus-visible::after {
+  opacity: 0.88;
+  transform: translate(0, 0);
 }
 
 .sessionRow__workStatus {
@@ -1772,13 +1895,22 @@ button {
 
 .profileDock {
   position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: 8px;
+  left: 6.5px;
+  right: 6.5px;
+  bottom: 6.5px;
+  display: block;
+}
+
+.profileDock__card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  background: transparent;
+  border: 1px solid var(--forge-line);
 }
 
 .navNotif {
@@ -1869,7 +2001,7 @@ button {
   gap: 1px;
   padding: 6px;
   border: 1px solid var(--forge-line);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--forge-panel-bg);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
 }
@@ -2982,6 +3114,7 @@ button {
   .sidebarIcon--modules .modulesIcon__traveler,
   .sidebarIcon--clock .clockIcon__hour,
   .sidebarIcon--clock .clockIcon__minute,
+  .parallelSessionMark,
   .sessionRow,
   .sessionRow__archive,
   .sessionArchiveIcon__lid,
@@ -3005,8 +3138,10 @@ button {
   .sessionRow__archive:focus-visible .sessionArchiveIcon__box,
   .sessionRow__archive:hover .sessionArchiveIcon__line,
   .sessionRow__archive:focus-visible .sessionArchiveIcon__line,
+  .parallelSessionMark,
   .canvasSplitCard:hover .shellIcon,
   .canvasSplitCard:focus-visible .shellIcon {
+    animation: none;
     transform: none;
   }
 
@@ -3027,6 +3162,31 @@ button {
   inset: 96px 0 0 var(--left-panel-offset);
   pointer-events: none;
   z-index: 12;
+  transition: inset var(--sidebar-motion);
+}
+
+.panelsChatBottom--questionnaireOpen {
+  z-index: 31;
+}
+
+.panelsChatBottom--selfDirected {
+  --self-directed-spectrum: linear-gradient(90deg, #34d399, #22d3ee, #38bdf8, #818cf8, #c084fc, #facc15, #fb923c, #ef4444, #f472b6, #34d399);
+}
+
+.questionnaireFocusScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 28;
+  background:
+    radial-gradient(
+      circle at calc(var(--questionnaire-left) + (var(--questionnaire-width) / 2)) calc(100vh - var(--composer-live-height, 82px) - 240px),
+      rgb(255 255 255 / 5%),
+      transparent 24rem
+    ),
+    rgb(0 0 0 / 46%);
+  backdrop-filter: blur(2px) saturate(0.82);
+  pointer-events: none;
+  animation: questionnaireFocusScrimEnter 180ms ease-out both;
   transition: inset var(--sidebar-motion);
 }
 
@@ -3086,6 +3246,459 @@ button {
 .composer__input:focus-visible,
 .composer__input:focus {
   outline: 0;
+}
+
+.composerQuestionnaire {
+  position: fixed;
+  left: var(--questionnaire-left);
+  bottom: calc(var(--composer-bottom) + var(--composer-live-height, 82px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 6px;
+  width: var(--questionnaire-width);
+  height: min(334px, calc(100vh - var(--composer-bottom) - var(--composer-live-height, 82px) - 86px));
+  min-height: 292px;
+  overflow: hidden;
+  padding: 8px 6px 5px;
+  color: #e7edf0;
+  background: var(--forge-sidebar-bg);
+  border: 1px solid color-mix(in oklab, var(--forge-line), #ffffff 5%);
+  border-bottom-color: color-mix(in oklab, var(--forge-line), transparent 8%);
+  box-shadow:
+    0 14px 28px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  pointer-events: auto;
+  z-index: 29;
+  animation: composerQuestionnaireEnter 180ms ease-out both;
+  transform-origin: bottom center;
+  transition: left var(--sidebar-motion), width var(--sidebar-motion), bottom var(--sidebar-motion);
+}
+
+.panelsChatBottom--selfDirected .composerQuestionnaire {
+  background:
+    linear-gradient(color-mix(in oklab, var(--forge-sidebar-bg), #000 5%), color-mix(in oklab, var(--forge-sidebar-bg), #000 5%)) padding-box,
+    var(--self-directed-spectrum) border-box;
+  background-size: auto, 155% 100%;
+  border-color: transparent;
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.34),
+    0 0 26px color-mix(in oklab, #22d3ee, transparent 82%),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  animation:
+    composerQuestionnaireEnter 180ms ease-out both,
+    permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+}
+
+.panelsChatBottom--selfDirected .composerQuestionnaire::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 18%, color-mix(in oklab, #34d399, transparent 78%), transparent 28%),
+    radial-gradient(circle at 82% 12%, color-mix(in oklab, #c084fc, transparent 78%), transparent 30%),
+    radial-gradient(circle at 72% 86%, color-mix(in oklab, #fb923c, transparent 82%), transparent 32%);
+  opacity: 0.78;
+}
+
+.panelsChatBottom--selfDirected .composerQuestionnaire > * {
+  position: relative;
+  z-index: 1;
+}
+
+.panelsChatBottom--selfDirected .composerQuestionnaire__header strong,
+.panelsChatBottom--selfDirected .composerQuestionnaire__promptQuestion {
+  color: transparent;
+  background: var(--self-directed-spectrum);
+  background-size: 155% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+}
+
+.panelsChatBottom--selfDirected .composerQuestionnaire__option::after {
+  background: var(--self-directed-spectrum);
+  background-size: 155% 100%;
+  animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+}
+
+.panelsChatBottom--selfDirected .composerQuestionnaire__option:hover,
+.panelsChatBottom--selfDirected .composerQuestionnaire__option:has(input:checked),
+.panelsChatBottom--selfDirected .composerQuestionnaire__option:has(textarea:focus) {
+  color: color-mix(in oklab, #22d3ee, #facc15 22%);
+  border-color: color-mix(in oklab, #22d3ee, #facc15 22%);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, #22d3ee, #facc15 22%, transparent 58%);
+}
+
+.composerQuestionnaire--untitled {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.composerQuestionnaire--closing {
+  pointer-events: none;
+  animation: composerQuestionnaireExit 320ms cubic-bezier(0.2, 0.85, 0.24, 1) both;
+}
+
+.composerQuestionnaire__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 20px;
+  padding-bottom: 1px;
+}
+
+.composerQuestionnaire--untitled .composerQuestionnaire__header {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  z-index: 1;
+  min-height: 22px;
+  padding: 0;
+}
+
+.composerQuestionnaire__header strong {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: color-mix(in oklab, var(--forge-text), #ffffff 6%);
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composerQuestionnaire__headerSpacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.composerQuestionnaire__pager {
+  display: inline-grid;
+  grid-template-columns: 22px auto 22px;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  color: color-mix(in oklab, var(--forge-muted), #67e8f9 34%);
+}
+
+.composerQuestionnaire__progress {
+  min-width: 26px;
+  color: currentColor;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1;
+  text-align: center;
+}
+
+.composerQuestionnaire__pageStage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.composerQuestionnaire__dot {
+  width: 4px;
+  height: 4px;
+  background: color-mix(in oklab, var(--forge-muted), #38d9c1 42%);
+  box-shadow: none;
+}
+
+.composerQuestionnaire__page {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  will-change: transform, opacity;
+}
+
+.composerQuestionnaire--untitled .composerQuestionnaire__page {
+  padding-top: 0;
+}
+
+.composerQuestionnaire__page--active.composerQuestionnaire__page--forward {
+  animation: questionnairePageInFromRight 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.composerQuestionnaire__page--leaving.composerQuestionnaire__page--forward {
+  animation: questionnairePageOutToLeft 260ms cubic-bezier(0.5, 0, 0.2, 1) both;
+  pointer-events: none;
+}
+
+.composerQuestionnaire__page--active.composerQuestionnaire__page--back {
+  animation: questionnairePageInFromLeft 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.composerQuestionnaire__page--leaving.composerQuestionnaire__page--back {
+  animation: questionnairePageOutToRight 240ms cubic-bezier(0.5, 0, 0.2, 1) both;
+  pointer-events: none;
+}
+
+.composerQuestionnaire--untitled .composerQuestionnaire__prompt {
+  min-height: 22px;
+  padding-right: 104px;
+}
+
+.composerQuestionnaire__prompt {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  color: var(--forge-chat-text);
+  white-space: normal;
+}
+
+.composerQuestionnaire__promptQuestion {
+  color: color-mix(in oklab, var(--forge-chat-text), #ffffff 3%);
+  font-size: 13.5px;
+  font-weight: 720;
+  line-height: 1.18;
+}
+
+.composerQuestionnaire__promptHint {
+  max-width: 74ch;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 12%);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.34;
+}
+
+.composerQuestionnaire__options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  min-height: 0;
+}
+
+.composerQuestionnaire__option {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+  padding: 10px 13px;
+  color: #d9e5e8;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), transparent 28%);
+  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 22%);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease-out,
+    color 140ms ease-out,
+    box-shadow 140ms ease-out;
+}
+
+.composerQuestionnaire__option--colorPreview::before {
+  position: absolute;
+  inset: -34%;
+  background:
+    radial-gradient(circle at 18% 26%, var(--questionnaire-option-color-a) 0 10%, transparent 32%),
+    radial-gradient(circle at 80% 12%, var(--questionnaire-option-color-b) 0 12%, transparent 34%),
+    radial-gradient(circle at 70% 88%, var(--questionnaire-option-color-c) 0 12%, transparent 36%),
+    linear-gradient(115deg, var(--questionnaire-option-color-a), var(--questionnaire-option-color-b) 42%, var(--questionnaire-option-color-d));
+  content: "";
+  filter: blur(28px) saturate(1.2);
+  opacity: 0.28;
+  pointer-events: none;
+  transform: translateZ(0);
+  transition:
+    opacity 180ms ease-out,
+    filter 180ms ease-out;
+}
+
+.composerQuestionnaire__option--colorPreview:hover::before,
+.composerQuestionnaire__option--colorPreview:has(input:checked)::before,
+.composerQuestionnaire__option--colorPreview:has(textarea:focus)::before {
+  filter: blur(24px) saturate(1.34);
+  opacity: 0.42;
+}
+
+.composerQuestionnaire__option::after {
+  position: absolute;
+  inset: -1px;
+  padding: 1px;
+  background: linear-gradient(90deg, #67e8f9, #34d399);
+  border-radius: inherit;
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease-out;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
+.composerQuestionnaire__option:hover,
+.composerQuestionnaire__option:has(input:checked),
+.composerQuestionnaire__option:has(textarea:focus) {
+  color: color-mix(in oklab, #67e8f9, #34d399 42%);
+  border-color: color-mix(in oklab, #67e8f9, #34d399 42%);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, #67e8f9, #34d399 42%, transparent 58%);
+}
+
+.composerQuestionnaire__option:hover::after,
+.composerQuestionnaire__option:has(input:checked)::after,
+.composerQuestionnaire__option:has(textarea:focus)::after {
+  opacity: 1;
+}
+
+.composerQuestionnaire__option:hover .composerQuestionnaire__optionIndex,
+.composerQuestionnaire__option:has(input:checked) .composerQuestionnaire__optionIndex,
+.composerQuestionnaire__option:has(textarea:focus) .composerQuestionnaire__optionIndex,
+.composerQuestionnaire__option:hover .composerQuestionnaire__optionLabel,
+.composerQuestionnaire__option:has(input:checked) .composerQuestionnaire__optionLabel,
+.composerQuestionnaire__option:has(textarea:focus) .composerQuestionnaire__optionLabel,
+.composerQuestionnaire__option:hover .composerQuestionnaire__optionCopy small,
+.composerQuestionnaire__option:has(input:checked) .composerQuestionnaire__optionCopy small,
+.composerQuestionnaire__option:has(textarea:focus) .composerQuestionnaire__optionCopy small,
+.composerQuestionnaire__option:hover .composerQuestionnaire__otherInput,
+.composerQuestionnaire__option:has(input:checked) .composerQuestionnaire__otherInput,
+.composerQuestionnaire__option:has(textarea:focus) .composerQuestionnaire__otherInput {
+  color: currentColor;
+}
+
+.composerQuestionnaire__option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.composerQuestionnaire__optionIndex,
+.composerQuestionnaire__optionCopy {
+  position: relative;
+  z-index: 1;
+}
+
+.composerQuestionnaire__optionIndex {
+  flex: 0 0 18px;
+  width: 18px;
+  padding-top: 3px;
+  color: color-mix(in oklab, var(--forge-muted), #67e8f9 18%);
+  font: 700 12px/1 "Geist Mono", ui-monospace, monospace;
+  text-align: center;
+}
+
+.composerQuestionnaire__optionCopy {
+  display: grid;
+  align-content: start;
+  flex: 1 1 auto;
+  gap: 3px;
+  min-width: 0;
+}
+
+.composerQuestionnaire__optionLabel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: color-mix(in oklab, var(--forge-chat-text), #ffffff 2%);
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1.22;
+  white-space: normal;
+}
+
+.composerQuestionnaire__optionLabel em {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  color: color-mix(in oklab, #67e8f9, #34d399 42%);
+  background:
+    linear-gradient(var(--forge-sidebar-bg), var(--forge-sidebar-bg)) padding-box,
+    linear-gradient(90deg, #67e8f9, #34d399) border-box;
+  border: 1px solid transparent;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 760;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.composerQuestionnaire__optionCopy small {
+  display: block;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 16%);
+  font-size: 10.5px;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.composerQuestionnaire__otherInput {
+  width: 100%;
+  min-height: 30px;
+  resize: none;
+  padding: 0;
+  color: #edf7fa;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.25;
+  cursor: text;
+}
+
+.composerQuestionnaire button:focus-visible {
+  outline: 2px solid var(--forge-focus-ring);
+  outline-offset: 2px;
+}
+
+.composerQuestionnaire__otherInput:focus {
+  outline: 0;
+}
+
+.composerQuestionnaire button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  color: #d9e5e8;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    color 140ms ease-out,
+    background 140ms ease-out,
+    border-color 140ms ease-out;
+}
+
+.composerQuestionnaire button:disabled {
+  cursor: default;
+  opacity: 0.32;
+}
+
+.composerQuestionnaire button:not(:disabled):hover,
+.composerQuestionnaire button:not(:disabled):focus-visible {
+  color: var(--forge-text);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), transparent 26%);
+  border-color: color-mix(in oklab, var(--forge-line), transparent 16%);
+}
+
+.composerQuestionnaire__arrow--primary {
+  color: #41dfbd !important;
 }
 
 .statusDock__head button {
@@ -3302,6 +3915,11 @@ button {
   margin-top: 32px;
 }
 
+.transcriptItem--assistant + .transcriptItem--assistant,
+.transcriptItem--assistantLoop {
+  margin-top: -4px;
+}
+
 .transcriptItem--assistant + .transcriptItem--user {
   margin-top: 34px;
 }
@@ -3372,23 +3990,45 @@ button {
 
 .transcriptCodeActEvent--brainSegment {
   width: min(980px, calc(100% - 8px));
-  padding: 5px 10px;
-  color: #f4fbff;
-  background:
-    linear-gradient(90deg, rgba(20, 184, 166, 0.18), rgba(99, 102, 241, 0.2), rgba(236, 72, 153, 0.18));
-  background-size: 260% 100%;
-  border: 1px solid color-mix(in oklab, #a5f3fc, transparent 62%);
-  border-radius: 8px;
-  box-shadow:
-    0 10px 26px rgba(0, 0, 0, 0.18),
-    inset 0 0 18px rgba(255, 255, 255, 0.035);
-  animation: transcriptBrainSegmentFlow 2.4s ease-in-out infinite alternate;
+  padding: 0;
+  color: #67e8f9;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.transcriptCodeActEvent--brainSegment-changing {
+  animation: transcriptBrainSegmentFlow 1s ease-in-out both;
+}
+
+.transcriptCodeActEvent--brainSegment-changed {
+  color: #67e8f9;
 }
 
 .transcriptCodeActEvent--brainSegment .transcriptCodeActEvent__command,
-.transcriptCodeActEvent--brainSegment .transcriptCodeActEvent__text,
+.transcriptCodeActEvent--brainSegment .transcriptCodeActEvent__text {
+  color: transparent;
+  background: linear-gradient(90deg, #22d3ee, #34d399, #67e8f9, #22d3ee);
+  background-size: 260% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__command,
+.transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__text {
+  animation: transcriptBrainTextFlow 1s ease-in-out both;
+}
+
+.transcriptCodeActEvent--brainSegment-changed .transcriptCodeActEvent__command,
+.transcriptCodeActEvent--brainSegment-changed .transcriptCodeActEvent__text {
+  color: #67e8f9;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+
 .transcriptCodeActEvent--brainSegment .transcriptCodeActEvent__icon {
-  color: #e8fbff;
+  color: #67e8f9;
 }
 
 .transcriptCodeActEvent__command {
@@ -3415,6 +4055,38 @@ button {
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.transcriptCommandSummaryLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  margin: 1px 0 0 2px;
+  color: #85898c;
+  font-size: 13px;
+  font-weight: 520;
+  line-height: 1.25;
+  animation: assistantParagraphInk 160ms ease-out both;
+}
+
+.transcriptCommandSummaryLine__icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: #8d9295;
+}
+
+.transcriptCommandSummaryLine__icon svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.35px;
 }
 
 .transcriptCodeActEvent__icon {
@@ -3476,27 +4148,38 @@ button {
 .transcriptCodeActEvent__icon .brainSegmentIcon {
   color: #e8fbff;
   filter: drop-shadow(0 0 8px rgba(125, 211, 252, 0.38));
+  transform-origin: center;
 }
 
-.transcriptCodeActEvent__icon .brainSegmentIcon__core,
-.transcriptCodeActEvent__icon .brainSegmentIcon__halo {
+.transcriptCodeActEvent__icon .brainSegmentIcon path {
   fill: none;
   stroke: currentColor;
 }
 
-.transcriptCodeActEvent__icon .brainSegmentIcon__halo {
+.transcriptCodeActEvent__icon .brainSegmentIcon--changing {
+  animation: transcriptBrainSegmentPulse 1s ease-in-out both;
+}
+
+.transcriptCodeActEvent__icon .brainSegmentIcon--changing path {
+  animation: transcriptBrainSegmentTrace 1s ease-in-out both;
+}
+
+.transcriptCodeActEvent__icon .brainSegmentIcon--changing .brainSegmentIcon__stem {
+  stroke-dasharray: 13;
+}
+
+.transcriptCodeActEvent__icon .brainSegmentIcon--changing .brainSegmentIcon__side {
   stroke-dasharray: 18;
-  animation: transcriptBrainSegmentTrace 1.6s ease-in-out infinite alternate;
 }
 
-.transcriptCodeActEvent__icon .brainSegmentIcon__dot {
-  fill: currentColor;
-  stroke: none;
-  animation: transcriptBrainSegmentDot 1.6s ease-in-out infinite alternate;
+.transcriptCodeActEvent__icon .brainSegmentIcon--changing .brainSegmentIcon__top,
+.transcriptCodeActEvent__icon .brainSegmentIcon--changing .brainSegmentIcon__low {
+  stroke-dasharray: 18;
 }
 
-.transcriptCodeActEvent__icon .brainSegmentIcon__dot--b {
-  animation-delay: 180ms;
+.transcriptCodeActEvent__icon .brainSegmentIcon--changed {
+  color: #67e8f9;
+  filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.2));
 }
 
 .transcriptCodeActEvent__icon .cubeIconBox {
@@ -4101,9 +4784,28 @@ button {
 
 .transcriptPill--assistantError {
   max-width: 100%;
-  padding-left: 12px;
+  padding-left: 2px;
   color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 16%);
-  border-left: 2px solid color-mix(in oklab, var(--forge-muted), transparent 46%);
+  border-left: 0;
+}
+
+.assistantErrorText {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 24px;
+  color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 14%);
+  font-size: 14px;
+  font-weight: 560;
+  line-height: 1.35;
+}
+
+.assistantErrorIcon {
+  display: block;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 18%);
 }
 
 .transcriptPill--assistantPending {
@@ -4121,8 +4823,43 @@ button {
 .assistantText--pending {
   display: inline-flex;
   align-items: center;
+  gap: 8px;
   width: auto;
   min-height: 22px;
+  color: #85898c;
+}
+
+.assistantThinkingEvent {
+  max-width: 100%;
+  padding: 0 0 0 2px;
+}
+
+.assistantText--pending .loader {
+  background: linear-gradient(#0000 calc(1*100%/6), currentColor 0 calc(3*100%/6), #0000 0),
+            linear-gradient(#0000 calc(2*100%/6), currentColor 0 calc(4*100%/6), #0000 0),
+            linear-gradient(#0000 calc(3*100%/6), currentColor 0 calc(5*100%/6), #0000 0);
+  background-repeat: no-repeat;
+  background-size: 10px 400%;
+}
+
+.assistantThinkingEvent__loaderViewbox {
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 16%);
+}
+
+.assistantThinkingEvent__loaderViewbox .loader {
+  transform: translate(-50%, -50%) scale(0.2666666667);
+}
+
+.assistantThinkingEvent__label {
+  color: #85898c;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.assistantThinkingEvent__label strong {
+  color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 18%);
+  font-weight: 620;
 }
 
 .assistantText__body {
@@ -4186,16 +4923,6 @@ button {
   animation: assistantCaret 820ms ease-in-out infinite;
 }
 
-.assistantText__pendingCaret {
-  display: inline-block;
-  width: 2px;
-  height: 1.08em;
-  border-radius: 999px;
-  background: currentColor;
-  opacity: 0.34;
-  animation: assistantCaret 820ms ease-in-out infinite;
-}
-
 .transcriptPill--flash {
   animation: transcriptFlash 900ms ease-out;
 }
@@ -4247,6 +4974,16 @@ button {
   }
 }
 
+@keyframes assistantThinkingPulse {
+  0%,
+  100% {
+    opacity: 0.52;
+  }
+  50% {
+    opacity: 0.86;
+  }
+}
+
 @keyframes transcriptBrainPulse {
   to {
     transform: scale(1.08);
@@ -4263,42 +5000,147 @@ button {
 }
 
 @keyframes transcriptBrainSegmentFlow {
-  from {
-    background-position: 0% 50%;
-    border-color: color-mix(in oklab, #67e8f9, transparent 64%);
+  0% {
+    opacity: 0.72;
   }
-  to {
+  68% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes transcriptBrainTextFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  62% {
     background-position: 100% 50%;
-    border-color: color-mix(in oklab, #f0abfc, transparent 58%);
+  }
+  100% {
+    background-position: 58% 50%;
+  }
+}
+
+@keyframes transcriptBrainSegmentPulse {
+  0% {
+    transform: scale(1);
+    stroke-width: var(--icon-stroke-width);
+  }
+  50% {
+    transform: scale(1.08);
+    stroke-width: 2.1px;
+  }
+  100% {
+    transform: scale(1);
+    stroke-width: var(--icon-stroke-width);
   }
 }
 
 @keyframes transcriptBrainSegmentTrace {
-  from {
-    opacity: 0.5;
-    stroke-dashoffset: 18;
+  0% {
+    opacity: 0.58;
+    stroke-dashoffset: 0;
   }
-  to {
+  50% {
+    opacity: 1;
+    stroke-dashoffset: 7;
+  }
+  100% {
     opacity: 1;
     stroke-dashoffset: 0;
   }
 }
 
-@keyframes transcriptBrainSegmentDot {
+@keyframes composerQuestionnaireEnter {
   from {
-    opacity: 0.52;
-    transform: scale(0.86);
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
   }
   to {
     opacity: 1;
-    transform: scale(1.12);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes composerQuestionnaireExit {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  52% {
+    opacity: 0.92;
+    transform: translateY(14px) scale(0.992);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(calc(100% + 18px)) scale(0.985);
+  }
+}
+
+@keyframes questionnairePageInFromRight {
+  from {
+    opacity: 0;
+    transform: translateX(34px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes questionnairePageOutToLeft {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-34px);
+  }
+}
+
+@keyframes questionnairePageInFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes questionnairePageOutToRight {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+@keyframes questionnaireFocusScrimEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .transcriptCodeActEvent--brainSegment,
-  .transcriptCodeActEvent__icon .brainSegmentIcon__halo,
-  .transcriptCodeActEvent__icon .brainSegmentIcon__dot {
+  .transcriptCodeActEvent--brainSegment-changing,
+  .transcriptCodeActEvent__icon .brainSegmentIcon--changing,
+  .transcriptCodeActEvent__icon .brainSegmentIcon--changing path,
+  .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__command,
+  .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__text,
+  .questionnaireFocusScrim,
+  .composerQuestionnaire,
+  .composerQuestionnaire__page {
     animation: none;
   }
 }
@@ -4400,7 +5242,7 @@ button {
 }
 
 .composer {
-  --composer-upload-min-size: 56px;
+  --composer-upload-min-size: 66px;
   --composer-input-height: var(--composer-upload-min-size);
   --composer-upload-size: max(var(--composer-upload-min-size), var(--composer-input-height));
   position: fixed;
@@ -4410,7 +5252,7 @@ button {
   grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 88px 26px;
   align-items: stretch;
   width: var(--chat-width);
-  min-height: 72px;
+  min-height: 82px;
   gap: 8px;
   padding: 8px;
   background: var(--forge-chat-bg);
@@ -4421,9 +5263,48 @@ button {
   transition: left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
+.composer--selfDirectedDrafting::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 1px;
+  background: linear-gradient(90deg, #34d399, #22d3ee, #818cf8, #facc15, #fb923c, #f472b6, #34d399);
+  background-size: 180% 100%;
+  border-radius: inherit;
+  opacity: 0.82;
+  pointer-events: none;
+  animation: composerSelfDirectedDraftFlow 3.8s ease-in-out infinite;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
+.composer--selfDirectedDrafting .composer__input {
+  color: color-mix(in oklab, var(--forge-chat-text), #a7f3d0 10%);
+  caret-color: #67e8f9;
+}
+
 .composer > * {
   position: relative;
   z-index: 2;
+}
+
+@keyframes composerSelfDirectedDraftFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 .composerSendBurst {
@@ -4772,10 +5653,10 @@ button {
   grid-row: 1;
   width: 100%;
   min-width: 0;
-  min-height: 56px;
+  min-height: 66px;
   max-height: 360px;
-  height: 56px;
-  padding: 14px 8px 8px;
+  height: 66px;
+  padding: 18px 8px 10px;
   align-self: stretch;
   color: var(--forge-chat-text);
   font: 14px/1.45 "Geist", system-ui, sans-serif;
@@ -4798,9 +5679,9 @@ button {
   grid-auto-columns: minmax(0, 1fr);
   align-self: stretch;
   min-width: 0;
-  min-height: 56px;
+  min-height: 66px;
   gap: 0;
-  padding: 8px 0 7px;
+  padding: 10px 0 8px;
   overflow: hidden;
 }
 
@@ -4818,7 +5699,7 @@ button {
 
 .composerParallelPrompt__slash {
   align-self: start;
-  padding: 7px 10px 0 5px;
+  padding: 8px 10px 0 5px;
   color: color-mix(in oklab, var(--forge-muted), transparent 24%);
   font: 13px/1.38 "Geist Mono", ui-monospace, monospace;
   pointer-events: none;
@@ -4829,8 +5710,8 @@ button {
   width: 100%;
   min-width: 0;
   height: 100%;
-  min-height: 41px;
-  padding: 7px 8px 7px;
+  min-height: 48px;
+  padding: 8px 8px 8px;
   color: var(--forge-chat-text);
   background: transparent;
   border: 0;
@@ -4948,39 +5829,704 @@ button {
   left: var(--chat-left);
   bottom: var(--bottom-controls-bottom);
   display: grid;
-  grid-template-columns: 83px 1px minmax(0, 1fr) 96px 30px;
+  grid-template-columns: 83px 1px minmax(0, 1fr) max-content 30px;
   align-items: center;
   gap: 10px;
   width: var(--chat-width);
   height: 20px;
   padding: 0 8px;
   pointer-events: auto;
+  z-index: 36;
   transition: left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
-.bottomControls > button:first-child {
+.permissionModeControl {
+  --self-directed-spectrum: linear-gradient(90deg, #34d399, #22d3ee, #38bdf8, #818cf8, #c084fc, #facc15, #fb923c, #ef4444, #f472b6, #34d399);
   grid-column: 1 / 4;
   justify-self: start;
+  position: relative;
+  min-width: 0;
+}
+
+.permissionModeTrigger {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 5px;
+  width: auto;
+  min-width: 62px;
+  max-width: 92px;
+  height: 22px !important;
+  padding: 0 8px !important;
+  color: var(--forge-text) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  box-shadow: none;
+  font: 650 11px/1 "Geist", system-ui, sans-serif !important;
+  text-align: center !important;
+  transition:
+    color 140ms ease-out,
+    opacity 140ms ease-out;
+}
+
+.permissionModeTrigger:hover,
+.permissionModeTrigger[aria-expanded="true"] {
+  color: var(--forge-text) !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none;
+}
+
+.permissionModeTrigger svg {
+  flex: 0 0 auto;
+  opacity: 0.62;
+}
+
+.permissionModeTrigger > svg:first-child {
+  opacity: 0.82;
+}
+
+.permissionModeTrigger:hover svg,
+.permissionModeTrigger[aria-expanded="true"] svg {
+  opacity: 0.92;
+}
+
+.permissionModeTrigger:hover > svg:first-child,
+.permissionModeTrigger[aria-expanded="true"] > svg:first-child {
+  opacity: 1;
+}
+
+.permissionModeTrigger--selfDirected {
+  border-color: transparent !important;
+}
+
+.permissionModeTrigger--selfDirected > span {
+  color: transparent;
+  background: var(--self-directed-spectrum);
+  background-size: 155% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+}
+
+.permissionModeTrigger--selfDirected > svg:first-child {
+  color: color-mix(in oklab, #93c5fd, #a7f3d0 38%);
+  opacity: 1;
+  animation: permissionSelfDirectedIconFlow 18s ease-in-out infinite;
+}
+
+.permissionModeMenu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 9px);
+  display: grid;
+  gap: 0;
+  width: 276px;
+  height: 204px;
+  padding: 6px;
+  overflow: hidden;
+  color: var(--forge-text);
+  background: color-mix(in oklab, var(--forge-chat-bg), #000 10%);
+  border: 1px solid color-mix(in oklab, var(--forge-text), transparent 86%);
+  border-radius: 6px;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  transform-origin: bottom left;
+  transition: opacity 160ms ease-out;
+}
+
+.permissionModeMenu--selfDirectedFlow {
+  width: 276px;
+}
+
+.permissionModeMenu--selfDirectedConsole {
+  padding-bottom: 6px;
+}
+
+.permissionModeMenu__eyebrow {
+  order: 0;
+  margin: 0 0 3px;
+  padding: 0 3px;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 10%);
+  font: 620 10px/1.4 "Geist Mono", ui-monospace, monospace;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.permissionModeOption {
+  position: relative;
+  display: grid !important;
+  order: 1;
+  grid-template-columns: 22px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: auto !important;
+  min-height: 40px;
+  padding: 6px 7px !important;
+  color: var(--forge-text) !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  text-align: left !important;
+  white-space: normal !important;
+}
+
+.permissionModeOption--selfDirectedLead {
+  order: 1;
+  z-index: 3;
+  pointer-events: none;
+  animation: permissionSelfDirectedRise 340ms cubic-bezier(0.18, 0.9, 0.22, 1) both;
+}
+
+.permissionModeOption--selfDirectedExit {
+  order: 2;
+  pointer-events: none;
+  animation: permissionModeOptionErase 300ms cubic-bezier(0.18, 0.9, 0.22, 1) both;
+}
+
+.permissionModeOption--selfDirectedExpanded {
+  z-index: 2;
+  align-items: start;
+  height: 174px !important;
+  min-height: 174px;
+  padding-top: 7px !important;
+  padding-bottom: 7px !important;
+  animation: permissionSelfDirectedCardOpen 260ms cubic-bezier(0.18, 0.9, 0.22, 1) both;
+}
+
+.permissionModeMenu--selfDirectedConsole .permissionModeOption--selfDirectedExit {
+  display: none !important;
+}
+
+.permissionModeOption > * {
+  position: relative;
+  z-index: 1;
+}
+
+.permissionModeOption:hover,
+.permissionModeOption:focus-visible {
+  background: color-mix(in oklab, var(--forge-text), transparent 94%) !important;
+}
+
+.permissionModeOption--selected {
+  background: color-mix(in oklab, var(--forge-text), transparent 96%) !important;
+}
+
+.bottomControls .permissionModeOption.permissionModeOption--selfDirected {
+  isolation: isolate;
+  overflow: hidden;
+  color: var(--forge-text) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  box-shadow: none;
+}
+
+.permissionModeOption--selfDirected::before {
+  display: none;
+}
+
+.bottomControls .permissionModeOption.permissionModeOption--selfDirected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  padding: 1px;
+  background: var(--self-directed-spectrum);
+  background-size: 155% 100%;
+  border-radius: inherit !important;
+  opacity: 0.72;
+  pointer-events: none;
+  animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
+.bottomControls .permissionModeOption.permissionModeOption--selfDirected:hover,
+.bottomControls .permissionModeOption.permissionModeOption--selfDirected:focus-visible,
+.bottomControls .permissionModeOption.permissionModeOption--selfDirected.permissionModeOption--selected {
+  background: transparent !important;
+  box-shadow: none;
+}
+
+.bottomControls .permissionModeOption.permissionModeOption--selfDirected:hover::after,
+.bottomControls .permissionModeOption.permissionModeOption--selfDirected:focus-visible::after,
+.bottomControls .permissionModeOption.permissionModeOption--selfDirected.permissionModeOption--selected::after {
+  opacity: 0.92;
+}
+
+.permissionModeOption--selfDirected .permissionModeOption__icon,
+.permissionModeOption--selfDirected.permissionModeOption--selected .permissionModeOption__icon {
+  color: color-mix(in oklab, #93c5fd, #a7f3d0 38%);
+  animation: permissionSelfDirectedIconFlow 18s ease-in-out infinite;
+}
+
+.permissionModeOption--selfDirected .permissionModeOption__label {
+  color: transparent;
+  background: var(--self-directed-spectrum);
+  background-size: 155% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: permissionSelfDirectedTextFlow 18s ease-in-out infinite;
+}
+
+.permissionModeOption--selfDirected .permissionModeOption__detail {
+  color: color-mix(in oklab, var(--forge-muted), #a7f3d0 16%);
+}
+
+.permissionModeOption__icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 18%);
+}
+
+.permissionModeOption--selected .permissionModeOption__icon {
+  color: color-mix(in oklab, var(--forge-text), transparent 6%);
+}
+
+.permissionModeOption__copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.permissionModeOption--selfDirectedExpanded .permissionModeOption__copy {
+  gap: 4px;
+}
+
+.permissionModeOption__label {
+  overflow: hidden;
+  color: color-mix(in oklab, var(--forge-text), transparent 4%);
+  font: 650 12px/1.25 "Geist", system-ui, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permissionModeOption__detail {
+  overflow: hidden;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 8%);
+  font: 10.5px/1.2 "Geist", system-ui, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permissionModeOption__autonomy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  width: calc(100% + 29px);
+  margin-left: -29px;
+  padding-top: 5px;
+  opacity: 0;
+  transform: translateY(-3px);
+  animation: permissionSelfDirectedDetailsOpen 230ms ease-out 80ms both;
+}
+
+.permissionModeOption__autonomyItems {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.permissionModeOption__autonomyItem {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 22px;
+  padding: 1px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0 !important;
+}
+
+.permissionModeOption__autonomyItem svg {
+  justify-self: center;
+  color: color-mix(in oklab, #facc15, #38bdf8 34%);
+}
+
+.permissionModeOption__autonomyItem > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.permissionModeOption__autonomyItem strong {
+  color: color-mix(in oklab, var(--forge-text), transparent 4%);
+  font: 650 10.5px/1.08 "Geist", system-ui, sans-serif;
+}
+
+.permissionModeOption__autonomyItem small {
+  overflow: hidden;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 12%);
+  font: 10px/1.12 "Geist", system-ui, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permissionModeOption__autonomyGuardrail {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 22px;
+  padding: 4px 0 0;
+  color: color-mix(in oklab, var(--forge-muted), #fecaca 24%);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid color-mix(in oklab, #fca5a5, transparent 87%);
+  border-radius: 0 !important;
+  font: 10.5px/1.15 "Geist", system-ui, sans-serif;
+}
+
+.permissionModeOption__autonomyGuardrail svg {
+  justify-self: center;
+  color: color-mix(in oklab, #fecaca, #ef4444 20%);
+}
+
+.permissionModeOption__autonomyGuardrail span {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.permissionModeOption__check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: color-mix(in oklab, var(--forge-text), transparent 16%);
+}
+
+@keyframes permissionSelfDirectedTextFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes permissionSelfDirectedRise {
+  0% {
+    opacity: 0.96;
+    transform: translateY(124px) scale(0.992);
+  }
+  34% {
+    opacity: 1;
+    transform: translateY(82px) scale(0.996);
+  }
+  68% {
+    opacity: 1;
+    transform: translateY(22px) scale(1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes permissionModeOptionErase {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  42% {
+    opacity: 0.32;
+    transform: translateY(2px) scale(0.992);
+    filter: blur(0.2px);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+    filter: blur(0.6px);
+  }
+}
+
+@keyframes permissionSelfDirectedCardOpen {
+  0% {
+    height: 40px;
+    min-height: 40px;
+  }
+  100% {
+    height: 168px;
+    min-height: 168px;
+  }
+}
+
+@keyframes permissionSelfDirectedDetailsOpen {
+  0% {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes permissionSelfDirectedIconFlow {
+  0% {
+    color: #34d399;
+  }
+  12% {
+    color: #22d3ee;
+  }
+  24% {
+    color: #38bdf8;
+  }
+  36% {
+    color: #818cf8;
+  }
+  48% {
+    color: #c084fc;
+  }
+  60% {
+    color: #facc15;
+  }
+  72% {
+    color: #fb923c;
+  }
+  84% {
+    color: #ef4444;
+  }
+  92% {
+    color: #f472b6;
+  }
+  100% {
+    color: #34d399;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .permissionModeTrigger--selfDirected > span {
+    animation: none;
+    background-position: 45% 50%;
+  }
+
+  .permissionModeTrigger--selfDirected > svg:first-child {
+    animation: none;
+    color: color-mix(in oklab, #93c5fd, #a7f3d0 38%);
+  }
+
+  .permissionModeOption--selfDirected .permissionModeOption__label {
+    animation: none;
+    background-position: 45% 50%;
+  }
+
+  .panelsChatBottom--selfDirected .composerQuestionnaire,
+  .panelsChatBottom--selfDirected .composerQuestionnaire__header strong,
+  .panelsChatBottom--selfDirected .composerQuestionnaire__promptQuestion,
+  .panelsChatBottom--selfDirected .composerQuestionnaire__option::after {
+    animation: none;
+    background-position: 45% 50%;
+  }
+
+  .permissionModeOption--selfDirected .permissionModeOption__icon {
+    animation: none;
+    color: color-mix(in oklab, #93c5fd, #a7f3d0 38%);
+  }
+
+  .bottomControls .permissionModeOption.permissionModeOption--selfDirected::after {
+    animation: none;
+    background-position: 45% 50%;
+  }
+
+  .permissionModeOption--selfDirectedLead,
+  .permissionModeOption--selfDirectedExit,
+  .permissionModeOption--selfDirectedExpanded,
+  .permissionModeOption__autonomy {
+    animation: none;
+  }
+
+  .bottomControls__flipButton svg,
+  .bottomControls__flipText {
+    animation: none;
+    transition: none;
+  }
+
+  .permissionModeOption--selfDirectedExit {
+    display: none !important;
+  }
+
+  .bottomControls__flipButton:hover svg,
+  .bottomControls__flipButton:focus-visible svg,
+  .bottomControls__flipButton:active svg {
+    transform: none;
+  }
 }
 
 .bottomControls__models {
   grid-column: 4 / 6;
-  justify-self: stretch;
+  justify-self: end;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(40px, max-content);
+  grid-template-columns: 10px max-content max-content 10px;
   align-items: center;
-  gap: 12px;
+  gap: 2px;
+  width: max-content;
   min-width: 0;
 }
 
+.bottomControls__flipButton {
+  display: grid !important;
+  place-items: center;
+  width: 10px;
+  min-width: 10px;
+  height: 18px !important;
+  min-height: 18px;
+  padding: 0 !important;
+  color: color-mix(in oklab, var(--forge-muted), transparent 8%) !important;
+  cursor: pointer;
+  perspective: 64px;
+}
+
+.bottomControls__flipButton svg {
+  display: block;
+  backface-visibility: hidden;
+  transform-origin: center;
+  transform-style: preserve-3d;
+  transition:
+    color 140ms ease-out,
+    opacity 140ms ease-out,
+    transform 180ms cubic-bezier(0.2, 0.72, 0.2, 1);
+}
+
+.bottomControls__flipButton:hover svg,
+.bottomControls__flipButton:focus-visible svg {
+  color: var(--forge-text);
+  opacity: 1;
+  transform: translateY(-0.5px) rotateX(34deg);
+}
+
+.bottomControls__flipButton:active svg {
+  animation: bottomControlsVerticalFlip 260ms cubic-bezier(0.2, 0.72, 0.2, 1) both;
+}
+
+.bottomControls__modelButton,
+.bottomControls__reasoningButton {
+  display: grid !important;
+  align-items: center;
+  contain: layout paint;
+}
+
+.bottomControls__flipTextViewport {
+  position: relative;
+  display: inline-grid;
+  align-items: center;
+  height: 18px;
+  width: max-content;
+  min-width: max-content;
+  max-width: max-content;
+  overflow: hidden;
+  contain: layout paint;
+  perspective: 92px;
+  line-height: 18px;
+  vertical-align: top;
+}
+
+.bottomControls__modelButton .bottomControls__flipTextViewport {
+  justify-self: start;
+}
+
+.bottomControls__reasoningButton .bottomControls__flipTextViewport {
+  justify-self: end;
+}
+
+.bottomControls__flipText {
+  grid-area: 1 / 1;
+  display: block;
+  min-width: max-content;
+  backface-visibility: hidden;
+  transform-origin: center;
+  transform-style: preserve-3d;
+}
+
+.bottomControls__flipText--leaving {
+  animation: bottomControlsTextFlipOut 240ms cubic-bezier(0.18, 0.74, 0.18, 1) both;
+  will-change: opacity, transform;
+}
+
+.bottomControls__flipText--entering {
+  animation: bottomControlsTextFlipIn 240ms cubic-bezier(0.18, 0.74, 0.18, 1) both;
+  will-change: opacity, transform;
+}
+
+@keyframes bottomControlsVerticalFlip {
+  0% {
+    transform: translateY(0) rotateX(0deg);
+  }
+  46% {
+    opacity: 0.42;
+    transform: translateY(-1px) rotateX(88deg) scaleY(0.72);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotateX(180deg);
+  }
+}
+
+@keyframes bottomControlsTextFlipOut {
+  0% {
+    opacity: 1;
+    transform: translateY(0) rotateX(0deg);
+  }
+  52% {
+    opacity: 0.44;
+    transform: translateY(-7px) rotateX(-72deg) scaleY(0.78);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-13px) rotateX(-104deg) scaleY(0.68);
+  }
+}
+
+@keyframes bottomControlsTextFlipIn {
+  0% {
+    opacity: 0;
+    transform: translateY(13px) rotateX(96deg) scaleY(0.7);
+  }
+  54% {
+    opacity: 0.78;
+    transform: translateY(4px) rotateX(34deg) scaleY(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotateX(0deg) scaleY(1);
+  }
+}
+
 .bottomControls__modelButton {
+  width: max-content;
   min-width: 0;
+  max-width: none;
+  padding: 0 !important;
+  overflow: hidden !important;
+  text-overflow: clip !important;
 }
 
 .bottomControls__reasoningButton {
   justify-self: end;
-  min-width: 40px;
-  max-width: 72px;
+  width: max-content;
+  min-width: 0;
+  max-width: none;
+  margin-left: 13px;
+  padding: 0 !important;
   padding-right: 0 !important;
   text-align: right !important;
   text-overflow: clip !important;
@@ -5024,10 +6570,19 @@ button {
   gap: 18px;
 }
 
+.canvasSurfaces--actionsOpen {
+  z-index: 29;
+  pointer-events: auto;
+}
+
 .canvasSurfaces--parallelOpen:not(.canvasSurfaces--filesOpen):not(.canvasSurfaces--terminalOpen) {
   right: 0;
   grid-template-columns: minmax(0, 1fr);
   pointer-events: none;
+}
+
+.canvasSurfaces--parallelOpen.canvasSurfaces--actionsOpen:not(.canvasSurfaces--filesOpen):not(.canvasSurfaces--terminalOpen) {
+  pointer-events: auto;
 }
 
 .canvasSurfaces--webExplorerOpen {
@@ -5048,6 +6603,10 @@ button {
 
 .canvasSurfaces--split .canvasSurfaces__primary {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.canvasSurfaces--actionsOpen .canvasSurfaces__primary {
+  pointer-events: none;
 }
 
 .canvasSurfaces--split .canvasSurfaceRail {
@@ -5082,11 +6641,55 @@ button {
 }
 
 .parallelCanvasPane {
+  position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: transparent;
   pointer-events: none;
+}
+
+.parallelCanvasClose {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: color-mix(in oklab, var(--forge-muted), transparent 16%);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  opacity: 0.68;
+  pointer-events: auto;
+  transition:
+    color 140ms ease-out,
+    opacity 140ms ease-out,
+    transform 140ms ease-out;
+}
+
+.parallelCanvasClose span {
+  display: block;
+  width: 10px;
+  height: 10px;
+  background: currentColor;
+  mask: url("/shell-assets/window_close_bounded.svg") center / 100% 100% no-repeat;
+  -webkit-mask: url("/shell-assets/window_close_bounded.svg") center / 100% 100% no-repeat;
+}
+
+.parallelCanvasClose:hover,
+.parallelCanvasClose:focus-visible {
+  color: var(--forge-text);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.parallelCanvasClose:focus-visible {
+  outline: 1px solid color-mix(in oklab, var(--forge-focus-ring), transparent 20%);
+  outline-offset: 2px;
 }
 
 .webExplorerCanvasPane {
@@ -5297,6 +6900,10 @@ button {
   overflow: visible;
   padding: 0;
   pointer-events: none;
+}
+
+.canvasSurfaces--actionsOpen .canvasSplitPane {
+  pointer-events: auto;
 }
 
 .canvasPlanetRail {
@@ -5665,6 +7272,145 @@ button {
   opacity: 1;
 }
 
+/* Organic blob behind the Brain page text. The 100px box is scaled up so the
+   blur/contrast gooey filters keep their original proportions. */
+.brainCanvas__head,
+.brainCanvas__tabs,
+.brainCanvas__space {
+  position: relative;
+  z-index: 1;
+}
+
+.brainBlob {
+  --blob-one: #ffbf48;
+  --blob-two: #be4a1d;
+  --blob-time: 14s;
+  position: fixed;
+  right: 26vw;
+  bottom: 20vh;
+  z-index: 0;
+  width: 100px;
+  height: 100px;
+  pointer-events: none;
+  transform: scale(5);
+  animation: brainBlobColorize calc(var(--blob-time) * 3) ease-in-out infinite;
+}
+
+.brainBlob svg {
+  position: absolute;
+}
+
+.brainBlob__box {
+  width: 100px;
+  height: 100px;
+  background: linear-gradient(180deg, var(--blob-one) 30%, var(--blob-two) 70%);
+  mask: url(#brain-blob-mask);
+  -webkit-mask: url(#brain-blob-mask);
+}
+
+.brainBlob svg #brain-blob-mask {
+  filter: contrast(15);
+  animation: brainBlobRoundness calc(var(--blob-time) / 2) linear infinite;
+}
+
+.brainBlob svg #brain-blob-mask polygon {
+  filter: blur(7px);
+}
+
+.brainBlob svg #brain-blob-mask polygon:nth-child(1) {
+  transform-origin: 75% 25%;
+  transform: rotate(90deg);
+}
+
+.brainBlob svg #brain-blob-mask polygon:nth-child(2) {
+  transform-origin: 50% 50%;
+  animation: brainBlobRotation var(--blob-time) linear infinite reverse;
+}
+
+.brainBlob svg #brain-blob-mask polygon:nth-child(3) {
+  transform-origin: 50% 60%;
+  animation: brainBlobRotation var(--blob-time) linear infinite;
+  animation-delay: calc(var(--blob-time) / -3);
+}
+
+.brainBlob svg #brain-blob-mask polygon:nth-child(4) {
+  transform-origin: 40% 40%;
+  animation: brainBlobRotation var(--blob-time) linear infinite reverse;
+}
+
+.brainBlob svg #brain-blob-mask polygon:nth-child(5) {
+  transform-origin: 40% 40%;
+  animation: brainBlobRotation var(--blob-time) linear infinite reverse;
+  animation-delay: calc(var(--blob-time) / -2);
+}
+
+.brainBlob svg #brain-blob-mask polygon:nth-child(6) {
+  transform-origin: 60% 40%;
+  animation: brainBlobRotation var(--blob-time) linear infinite;
+}
+
+.brainBlob svg #brain-blob-mask polygon:nth-child(7) {
+  transform-origin: 60% 40%;
+  animation: brainBlobRotation var(--blob-time) linear infinite;
+  animation-delay: calc(var(--blob-time) / -1.5);
+}
+
+@keyframes brainBlobRotation {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes brainBlobRoundness {
+  0% {
+    filter: contrast(15);
+  }
+  20% {
+    filter: contrast(3);
+  }
+  40% {
+    filter: contrast(3);
+  }
+  60% {
+    filter: contrast(15);
+  }
+  100% {
+    filter: contrast(15);
+  }
+}
+
+@keyframes brainBlobColorize {
+  0% {
+    filter: hue-rotate(0deg);
+  }
+  20% {
+    filter: hue-rotate(-30deg);
+  }
+  40% {
+    filter: hue-rotate(-60deg);
+  }
+  60% {
+    filter: hue-rotate(-90deg);
+  }
+  80% {
+    filter: hue-rotate(-45deg);
+  }
+  100% {
+    filter: hue-rotate(0deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brainBlob,
+  .brainBlob svg #brain-blob-mask,
+  .brainBlob svg #brain-blob-mask polygon {
+    animation: none;
+  }
+}
+
 .canvasSplitCard:hover .shellIcon,
 .canvasSplitCard:focus-visible .shellIcon,
 .canvasSplitCard:hover .canvasSplitIcon,
@@ -5725,26 +7471,65 @@ button {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
   min-height: 30px;
   padding: 5px 10px 0;
 }
 
-.canvasPaneTabs__tab {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 18px;
+.canvasPaneTabs__tabs {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
-  max-width: calc(100% - 38px);
+  flex: 1 1 auto;
+  overflow: visible;
+}
+
+.canvasPaneTabs__tab {
+  display: flex;
+  align-items: center;
+  min-width: 78px;
+  max-width: 178px;
+  flex: 0 1 178px;
   height: 24px;
-  padding: 0 4px 0 8px;
+  padding: 0 2px 0 0;
   color: var(--forge-text);
   background: transparent;
   border: 0;
-  border-bottom: 1px solid color-mix(in oklab, var(--forge-text), transparent 54%);
+  border-bottom: 1px solid transparent;
   border-radius: 0 !important;
+}
+
+.canvasPaneTabs__tab--active {
+  border-bottom-color: color-mix(in oklab, var(--forge-text), transparent 54%);
+}
+
+.canvasPaneTabs__tab--sessionFiles {
+  flex-basis: 208px;
+  max-width: 208px;
+}
+
+.canvasPaneTabs__tabButton {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 100%;
+  padding: 0 4px 0 8px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.canvasPaneTabs__tabButton:hover,
+.canvasPaneTabs__tabButton:focus-visible {
+  color: var(--forge-text);
+  background: var(--forge-overlay-hover);
 }
 
 .canvasPaneTabs__title {
@@ -5775,8 +7560,16 @@ button {
 }
 
 .canvasPaneTabs__close {
+  flex: 0 0 16px;
   width: 16px;
   height: 16px;
+}
+
+.canvasPaneTabs__addWrap {
+  position: static;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
 }
 
 .canvasPaneTabs__add {
@@ -5796,14 +7589,67 @@ button {
 .canvasPaneTabs__menu {
   position: absolute;
   top: 30px;
-  right: 10px;
+  left: 190px;
   z-index: 4;
   display: grid;
-  min-width: 190px;
+  width: 230px;
+  max-height: 78px;
   padding: 5px;
+  overflow: hidden;
   background: color-mix(in oklab, var(--forge-sidebar-bg), #000 10%);
   border: 1px solid var(--forge-line);
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+  transition:
+    left 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 280ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    max-height 360ms cubic-bezier(0.22, 1, 0.36, 1) 230ms,
+    border-color 180ms ease,
+    box-shadow 220ms ease;
+  will-change: left, width, max-height;
+}
+
+.canvasPaneTabs__menu--sessionFiles {
+  left: 10px;
+  width: calc(100% - 20px);
+  max-height: 78px;
+  padding: 0;
+  border-color: color-mix(in oklab, var(--forge-line), var(--forge-text) 12%);
+}
+
+.canvasPaneTabs__menu--sessionFilesExpanded {
+  height: min(560px, calc(100vh - 210px));
+  max-height: min(560px, calc(100vh - 210px));
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--forge-line), #000 22%) transparent;
+}
+
+.canvasPaneTabs__menu--sessionFilesExpanded::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+
+.canvasPaneTabs__menu--sessionFilesExpanded::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.canvasPaneTabs__menu--sessionFilesExpanded::-webkit-scrollbar-thumb {
+  min-height: 30px;
+  background: color-mix(in oklab, var(--forge-line), #000 22%);
+  border: 0;
+}
+
+.canvasPaneTabs__menu--sessionFilesExpanded::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--forge-line), var(--forge-text) 10%);
+}
+
+.canvasPaneTabs__menu--sessionFilesExpanded::-webkit-scrollbar-button,
+.canvasPaneTabs__menu--sessionFilesExpanded::-webkit-scrollbar-button:single-button,
+.canvasPaneTabs__menu--sessionFilesExpanded::-webkit-scrollbar-button:vertical:start,
+.canvasPaneTabs__menu--sessionFilesExpanded::-webkit-scrollbar-button:vertical:end {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .canvasPaneTabs__menu button {
@@ -5832,6 +7678,366 @@ button {
   width: 15px;
   height: 15px;
   color: currentColor;
+}
+
+.canvasSessionFilesMenu,
+.canvasSessionFilesMenu__status {
+  opacity: 0;
+  transform: translateY(-5px);
+  transition:
+    opacity 180ms ease 260ms,
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1) 260ms;
+}
+
+.canvasPaneTabs__menu--sessionFilesExpanded .canvasSessionFilesMenu,
+.canvasPaneTabs__menu--sessionFilesExpanded .canvasSessionFilesMenu__status {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.canvasSessionFilesMenu__status {
+  display: grid;
+  place-items: center;
+  min-height: 112px;
+  padding: 18px 10px 22px;
+  color: var(--forge-muted);
+  font-size: 12px;
+}
+
+.canvasSessionFilesMenu {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(132px, 1fr);
+  align-content: stretch;
+  gap: 0;
+  min-height: calc(100% - 31px);
+  padding: 0;
+}
+
+.canvasPaneTabs__menu .canvasSessionFilesChoice {
+  position: relative;
+  z-index: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-content: stretch;
+  gap: 0;
+  min-height: clamp(128px, 22vh, 180px);
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  color: var(--forge-text);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 12%);
+  border: 0;
+  border-right: 1px solid color-mix(in oklab, var(--forge-line), transparent 24%);
+  border-bottom: 1px solid color-mix(in oklab, var(--forge-line), transparent 24%);
+  transition:
+    background 180ms ease-out,
+    border-color 180ms ease-out,
+    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.canvasPaneTabs__menu .canvasSessionFilesChoice::before {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border: 1px solid color-mix(in oklab, var(--forge-text), transparent 78%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, var(--forge-text), transparent 92%),
+    0 12px 26px rgba(0, 0, 0, 0.24);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+
+.canvasPaneTabs__menu .canvasSessionFilesChoice:hover,
+.canvasPaneTabs__menu .canvasSessionFilesChoice:focus-visible {
+  z-index: 1;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 5%);
+  border-color: color-mix(in oklab, var(--forge-line), var(--forge-text) 14%);
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.28);
+  transform: translateY(-1px) scale(1.012);
+}
+
+.canvasPaneTabs__menu .canvasSessionFilesChoice:hover::before,
+.canvasPaneTabs__menu .canvasSessionFilesChoice:focus-visible::before {
+  opacity: 1;
+}
+
+.canvasSessionFilesChoice__previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 10%);
+  transition:
+    filter 220ms ease-out,
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.canvasSessionFilesChoice:hover .canvasSessionFilesChoice__previews,
+.canvasSessionFilesChoice:focus-visible .canvasSessionFilesChoice__previews {
+  filter: saturate(1.08) contrast(1.04);
+  transform: scale(1.018);
+}
+
+.canvasSessionFilesChoice__preview {
+  position: relative;
+  display: block;
+  min-width: 0;
+  min-height: 64px;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 16%);
+}
+
+.canvasSessionFilesChoice__preview:first-child:last-child {
+  grid-column: 1 / -1;
+  min-height: 100%;
+}
+
+.canvasSessionFilesChoice__preview .canvasFileTile__media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.canvasSessionFilesChoice__preview .canvasFileTile__model,
+.canvasSessionFilesChoice__preview .canvasFileTile__document {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
+.canvasSessionFilesChoice__preview .canvasFileTile__model--sessionChoice {
+  background:
+    radial-gradient(circle at 50% 44%, color-mix(in oklab, var(--forge-text), transparent 90%), transparent 58%),
+    color-mix(in oklab, var(--forge-sidebar-bg), #000 14%);
+}
+
+.canvasSessionFilesChoice__preview .canvasFileTile__visualFallback {
+  height: 100%;
+}
+
+.canvasFileTile__visualFallback {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 100%;
+  padding: 8px;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 18%);
+  background:
+    linear-gradient(135deg, color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 5%), color-mix(in oklab, var(--forge-sidebar-bg), #000 8%));
+}
+
+.canvasFileTile__visualFallback--image {
+  color: color-mix(in oklab, #8ec5ff, var(--forge-text) 30%);
+}
+
+.canvasFileTile__visualFallback--pdf,
+.canvasFileTile__visualFallback--text {
+  color: color-mix(in oklab, #f8d477, var(--forge-text) 22%);
+}
+
+.canvasFileTile__visualFallback--spreadsheet,
+.canvasFileTile__visualFallback--chart {
+  color: color-mix(in oklab, #7ee7bd, var(--forge-text) 20%);
+}
+
+.canvasFileTile__visualFallback--video {
+  color: color-mix(in oklab, #c7a4ff, var(--forge-text) 20%);
+}
+
+.canvasFileTile__visualFallbackIcon {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+}
+
+.canvasFileTile__visualFallbackIcon svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.75;
+}
+
+.canvasFileTile__visualFallbackName {
+  max-width: 100%;
+  overflow: hidden;
+  color: color-mix(in oklab, currentColor, var(--forge-text) 34%);
+  font-size: 9.5px;
+  font-weight: 680;
+  line-height: 1.15;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvasSessionFilesChoice__meta {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 24px;
+  padding: 4px 6px 5px;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 8%);
+  border-top: 1px solid color-mix(in oklab, var(--forge-line), transparent 38%);
+  transition: background 180ms ease-out;
+}
+
+.canvasSessionFilesChoice:hover .canvasSessionFilesChoice__meta,
+.canvasSessionFilesChoice:focus-visible .canvasSessionFilesChoice__meta {
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 2%);
+}
+
+.canvasSessionFilesChoice strong {
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in oklab, var(--forge-text), transparent 4%);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvasSessionFilesChoice__meta > span {
+  color: var(--forge-muted);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.canvasSessionFilesGroup {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in oklab, var(--forge-line), transparent 18%);
+}
+
+.canvasSessionFilesGroup:first-child {
+  border-top: 0;
+  padding-top: 2px;
+}
+
+.canvasSessionFilesGroup__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0 3px;
+}
+
+.canvasSessionFilesGroup__head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--forge-text);
+  font-size: 11.5px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvasSessionFilesGroup__head span {
+  color: var(--forge-muted);
+  font-size: 10px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+}
+
+.canvasSessionFilesGroup__files {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.canvasSessionFileTile {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--forge-surface), transparent 16%);
+  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 20%);
+}
+
+.canvasSessionFileTile__preview {
+  position: relative;
+  min-height: 76px;
+  aspect-ratio: 1.28 / 1;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 8%);
+}
+
+.canvasSessionFileTile__preview .canvasFileTile__media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.canvasSessionFileTile__preview .canvasFileTile__model,
+.canvasSessionFileTile__preview .canvasFileTile__document {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
+.canvasSessionFileTile figcaption {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 5px;
+  color: var(--forge-text);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), transparent 16%);
+  backdrop-filter: blur(8px);
+}
+
+.canvasSessionFileTile figcaption strong {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvasSessionFileTile figcaption span,
+.canvasSessionFileTile figcaption svg {
+  width: 14px;
+  height: 14px;
+  color: var(--forge-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvasPaneTabs__menu,
+  .canvasSessionFilesChoice,
+  .canvasSessionFilesChoice::before,
+  .canvasSessionFilesChoice__previews,
+  .canvasSessionFilesMenu,
+  .canvasSessionFilesMenu__status,
+  .canvasFileTile {
+    animation: none;
+    transition: none;
+  }
 }
 
 .canvasFilesPane__search {
@@ -5950,28 +8156,38 @@ button {
   display: grid;
   column-count: auto;
   place-items: start center;
-  padding: 62px 0 16px;
+  padding: 86px 28px 16px;
   overflow: hidden;
 }
 
 .canvasFilesPane__empty {
   display: grid;
+  gap: 2px;
   place-items: center;
-  width: 100%;
-  min-height: 230px;
-  color: color-mix(in oklab, var(--forge-muted), transparent 42%);
-  opacity: 0.42;
+  width: min(260px, 100%);
+  min-height: 210px;
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 14%);
+  opacity: 0.58;
+  text-align: center;
   pointer-events: none;
 }
 
 .canvasFilesPane__empty svg {
-  width: 108px;
-  height: 108px;
+  width: 104px;
+  height: 104px;
+  color: currentColor;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.25;
+  stroke-width: 0.62;
+}
+
+.canvasFilesPane__empty strong {
+  color: currentColor;
+  font-size: 18px;
+  font-weight: 680;
+  line-height: 1.35;
 }
 
 .canvasFileTile {
@@ -5984,6 +8200,8 @@ button {
   border-radius: 0;
   background: color-mix(in oklab, var(--forge-surface), transparent 20%);
   box-shadow: none;
+  animation: canvasFileTileEnter 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--canvas-file-enter-delay, 0ms);
 }
 
 .canvasFileTile--shape1 {
@@ -6091,6 +8309,24 @@ button {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
+}
+
+@keyframes canvasFileTileEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvasFileTile {
+    animation: none;
+  }
 }
 
 @media (max-width: 980px) {
@@ -6315,6 +8551,7 @@ button {
     --workspace-header-left: max(0px, calc(var(--workspace-left) - 16px));
     --chat-width: min(430px, calc(var(--workspace-width) - 24px));
     --bottom-width: min(430px, calc(var(--workspace-width) - 24px));
+    --composer-bottom: 30px;
   }
 
   .shell.shell--left-collapsed {
@@ -6410,16 +8647,16 @@ button {
   }
 
   .chatCanvas {
-    bottom: 118px;
+    bottom: 124px;
     max-height: 118px;
   }
 
   .composer {
-    --composer-upload-min-size: 54px;
+    --composer-upload-min-size: 60px;
     --composer-input-height: var(--composer-upload-min-size);
     bottom: 30px;
     grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 84px 26px;
-    min-height: 68px;
+    min-height: 74px;
     height: auto;
     padding: 7px;
   }
@@ -6438,9 +8675,9 @@ button {
   }
 
   .composer__input {
-    min-height: 54px;
-    height: 54px;
-    padding: 14px 7px 9px;
+    min-height: 60px;
+    height: 60px;
+    padding: 16px 7px 9px;
   }
 
   .bottomControls {
