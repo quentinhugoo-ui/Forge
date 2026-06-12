@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+﻿import { Fragment, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   closestCenter,
@@ -28,6 +28,8 @@ import type { LlmProviderRuntimeEvent, ProfileCanvas, SidebarSessionItem, Sideba
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
 import { headerShadowStore } from "./header-shadow-store";
 import { panelsChatBottomStore } from "./panels-chat-bottom-store";
+import { BrainCanvas } from "./BrainCanvas";
+import { ModuleLogo } from "./module-logos";
 import { ProfileCoverBanner } from "./ProfileCoverBanner";
 import { ProviderLogo } from "./ProviderLogo";
 
@@ -214,6 +216,52 @@ function ArchiveSessionIcon() {
   );
 }
 
+function parallelLabelCount(label: string): number {
+  const match = label.match(/^Par{1,2}al{1,2}el\s*(?:\((\d+)\)|(\d+))(?:\s*:|\s+\d+\s*:|\s*$)/i);
+  if (!match) {
+    return 0;
+  }
+  const parsed = Number.parseInt(match[1] ?? match[2] ?? "2", 10);
+  return Math.max(2, Math.min(4, Number.isFinite(parsed) ? parsed : 2));
+}
+
+function cleanParallelSessionLabel(label: string): string {
+  const cleaned = label
+    .replace(/^Par{1,2}al{1,2}el\s*\(\d+\)\s*/i, "")
+    .replace(/^Par{1,2}al{1,2}el\s+\d+\s*:\s*/i, "")
+    .replace(/(^|\s+\/\s+)\d+\s*:\s*/g, "$1")
+    .trim();
+  return cleaned || "New session";
+}
+
+function parallelSessionCount(item: SidebarSessionItem): number {
+  const explicitCount = Math.max(0, Math.min(4, Math.round(item.parallelLaneCount ?? 0)));
+  return explicitCount || parallelLabelCount(item.label);
+}
+
+function ParallelSessionIcon({ count }: { count: number }) {
+  const laneCount = Math.max(2, Math.min(4, count));
+  const iconPath =
+    laneCount === 2
+      ? "M19 5h-4.025h.125h-.1zm-6-2h8v12h-2V5h-4v16h-2zM3 21V3h8v18zM9 5H5v14h4zm0 0H5zm10 18v-2h-2v-2h2v-2h2v2h2v2h-2v2z"
+      : laneCount === 3
+        ? "M3 21V3h8v18zm6-16H5v14h4zm4 6V3h8v8zm6-6h-4v4h4zm-6 16v-8h8v8zm6-6h-4v4h4z"
+        : "M3 11V3h8v8zm6-6H5v4h4zm4 6V3h8v8zm6-6h-4v4h4zM3 21v-8h8v8zm6-6H5v4h4zm4 6v-8h8v8zm6-6h-4v4h4z";
+  return (
+    <span className="parallelSessionMark" aria-hidden="true">
+      <svg
+        className="parallelSessionMark__icon"
+        height={SESSION_ARCHIVE_ICON_SIZE}
+        viewBox="2 3 20 20"
+        width={SESSION_ARCHIVE_ICON_SIZE}
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path className="parallelSessionMark__shape" d={iconPath} />
+      </svg>
+    </span>
+  );
+}
+
 function WorkspaceFolderIcon() {
   return (
     <svg className="recentsProject__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -337,6 +385,9 @@ function SessionRow({
   const [archiving, setArchiving] = useState(false);
 
   if (!item.rowVisible) return null;
+  const laneCount = parallelSessionCount(item);
+  const parallel = laneCount > 1;
+  const sessionLabel = parallel ? cleanParallelSessionLabel(item.label) : item.label;
 
   const archive = () => {
     if (archiving) return;
@@ -349,24 +400,31 @@ function SessionRow({
       "sessionRow",
       selected ? "sessionRow--selected" : "",
       item.working ? "sessionRow--working" : "",
+      parallel ? "sessionRow--parallel" : "",
       archiving ? "sessionRow--archiving" : ""
     ].filter(Boolean).join(" ")} role="listitem">
+      {parallel ? <ParallelSessionIcon count={laneCount} /> : null}
       <button
         type="button"
         className="sessionRow__main"
         onClick={onOpen}
-        aria-label={item.working ? `Open ${item.label}, working` : `Open ${item.label}`}
+        aria-label={[
+          "Open",
+          parallel ? `parallel session group with ${laneCount} sessions` : "session",
+          sessionLabel,
+          item.working ? "working" : ""
+        ].filter(Boolean).join(", ")}
       >
-        <span className="sessionRow__label">{item.label}</span>
+        <span className="sessionRow__label">{sessionLabel}</span>
       </button>
       {item.working ? (
-        <span className="sessionRow__workStatus" aria-label={`${item.label} is working`} role="status">
+        <span className="sessionRow__workStatus" aria-label={`${sessionLabel} is working`} role="status">
           <span className="sessionRow__loaderViewbox" aria-hidden="true">
             <span className="loader" />
           </span>
         </span>
       ) : (
-        <button type="button" className="sessionRow__archive" aria-label={`Archive ${item.label}`} onClick={archive}>
+        <button type="button" className="sessionRow__archive" aria-label={`Archive ${sessionLabel}`} onClick={archive}>
           <ArchiveSessionIcon />
         </button>
       )}
@@ -898,6 +956,9 @@ function ProfileCanvasSurface({ canvas }: { canvas: ProfileCanvas }) {
   if (canvas === "llm") {
     return <LlmProviderTerminal />;
   }
+  if (canvas === "brain") {
+    return <BrainCanvas />;
+  }
   if (canvas !== "profile") return null;
   return (
     <section className="profileCanvas" aria-label="Profile canvas">
@@ -937,62 +998,6 @@ async function dispatchSidebarCommand(
   }
 }
 
-const MODULE_LOGO_FRAME = 32;
-// Every logo covers the same optical area of the shared frame regardless of its
-// aspect ratio, so a wide wordmark (Uber Eats) and a tall glyph (Airbnb) read
-// as the same size everywhere the logo is rendered.
-const MODULE_LOGO_AREA = MODULE_LOGO_FRAME * MODULE_LOGO_FRAME * 0.62;
-
-function ModuleLogoFrame({
-  viewBox,
-  children,
-  ...innerSvgProps
-}: { viewBox: string; children: React.ReactNode } & React.SVGProps<SVGSVGElement>) {
-  const [minX, minY, width, height] = viewBox.split(" ").map(Number);
-  void minX;
-  void minY;
-  const scale = Math.min(
-    Math.sqrt(MODULE_LOGO_AREA / (width * height)),
-    MODULE_LOGO_FRAME / width,
-    MODULE_LOGO_FRAME / height
-  );
-  const drawnWidth = width * scale;
-  const drawnHeight = height * scale;
-  return (
-    <svg
-      className="sidebarModule__logo"
-      viewBox={`0 0 ${MODULE_LOGO_FRAME} ${MODULE_LOGO_FRAME}`}
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <svg
-        x={(MODULE_LOGO_FRAME - drawnWidth) / 2}
-        y={(MODULE_LOGO_FRAME - drawnHeight) / 2}
-        width={drawnWidth}
-        height={drawnHeight}
-        viewBox={viewBox}
-        preserveAspectRatio="xMidYMid meet"
-        overflow="visible"
-        {...innerSvgProps}
-      >
-        {children}
-      </svg>
-    </svg>
-  );
-}
-
-function GmailIcon() {
-  return (
-    <ModuleLogoFrame viewBox="0 0 256 193">
-      <path fill="#4285F4" d="M58.182 192.05V93.14L27.507 65.077L0 49.504v125.091c0 9.658 7.825 17.455 17.455 17.455h40.727Z" />
-      <path fill="#34A853" d="M197.818 192.05h40.727c9.659 0 17.455-7.826 17.455-17.455V49.505l-31.156 17.837l-27.026 25.798v98.91Z" />
-      <path fill="#EA4335" d="m58.182 93.14l-4.174-38.647l4.174-36.989L128 69.868l69.818-52.364l4.669 34.992l-4.669 40.644L128 145.504z" />
-      <path fill="#FBBC04" d="M197.818 17.504V93.14L256 49.504V26.231c0-21.585-24.64-33.89-41.89-20.945l-16.292 12.218Z" />
-      <path fill="#C5221F" d="m0 49.504l26.759 20.07L58.182 93.14V17.504L41.89 5.286C24.61-7.66 0 4.646 0 26.23v23.273Z" />
-    </ModuleLogoFrame>
-  );
-}
-
 function ModuleOpenIcon() {
   return (
     <svg className="sidebarAction__open" width={16} height={16} viewBox="0 0 24 24" aria-hidden="true">
@@ -1005,83 +1010,6 @@ function ModuleOpenIcon() {
         d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4m-8-2l8-8m0 0v5m0-5h-5"
       />
     </svg>
-  );
-}
-
-function OutlookIcon() {
-  return (
-    <ModuleLogoFrame viewBox="2 2 28 28">
-      <path fill="#0072c6" d="M19.484 7.937v5.477l1.916 1.205a.489.489 0 0 0 .21 0l8.238-5.554a1.174 1.174 0 0 0-.959-1.128Z" />
-      <path fill="#0072c6" d="m19.484 15.457l1.747 1.2a.522.522 0 0 0 .543 0c-.3.181 8.073-5.378 8.073-5.378v10.066a1.408 1.408 0 0 1-1.49 1.555h-8.874v-7.443Zm-9.044-2.525a1.609 1.609 0 0 0-1.42.838a4.131 4.131 0 0 0-.526 2.218A4.05 4.05 0 0 0 9.02 18.2a1.6 1.6 0 0 0 2.771.022a4.014 4.014 0 0 0 .515-2.2a4.369 4.369 0 0 0-.5-2.281a1.536 1.536 0 0 0-1.366-.809Z" />
-      <path fill="#0072c6" d="M2.153 5.155v21.427L18.453 30V2Zm10.908 14.336a3.231 3.231 0 0 1-2.7 1.361a3.19 3.19 0 0 1-2.64-1.318A5.459 5.459 0 0 1 6.706 16.1a5.868 5.868 0 0 1 1.036-3.616a3.267 3.267 0 0 1 2.744-1.384a3.116 3.116 0 0 1 2.61 1.321a5.639 5.639 0 0 1 1 3.484a5.763 5.763 0 0 1-1.035 3.586Z" />
-    </ModuleLogoFrame>
-  );
-}
-
-function AmazonIcon() {
-  return (
-    <ModuleLogoFrame viewBox="0 0 32 32" fillRule="evenodd">
-      <path fill="#f90" d="M28.312 28.26C25.003 30.7 20.208 32 16.08 32c-5.8 0-11.002-2.14-14.945-5.703-.3-.28-.032-.662.34-.444C5.73 28.33 11 29.82 16.426 29.82a29.73 29.73 0 0 0 11.406-2.332c.56-.238 1.03.367.48.773m1.376-1.575c-.42-.54-2.796-.255-3.86-.13-.325.04-.374-.243-.082-.446 1.9-1.33 4.994-.947 5.356-.5s-.094 3.56-1.87 5.044c-.273.228-.533.107-.4-.196.4-.996 1.294-3.23.87-3.772" />
-      <path fill="#ededed" d="M18.43 13.864c0 1.692.043 3.103-.812 4.605-.7 1.22-1.8 1.973-3.005 1.973-1.667 0-2.644-1.27-2.644-3.145 0-3.7 3.316-4.373 6.462-4.373v.94m4.38 10.584c-.287.257-.702.275-1.026.104-1.44-1.197-1.704-1.753-2.492-2.895-2.382 2.43-4.074 3.157-7.158 3.157-3.658 0-6.498-2.254-6.498-6.767 0-3.524 1.905-5.924 4.63-7.097 2.357-1.038 5.65-1.22 8.165-1.5V8.9c0-1.032.08-2.254-.53-3.145-.525-.8-1.54-1.13-2.437-1.13-1.655 0-3.127.85-3.487 2.608-.073.4-.36.776-.757.794L7 7.555c-.354-.08-.75-.366-.647-.9C7.328 1.54 11.945 0 16.074 0c2.113 0 4.874.562 6.54 2.162 2.113 1.973 1.912 4.605 1.912 7.47V16.4c0 2.034.843 2.925 1.637 4.025.275.4.336.86-.018 1.154a184.26 184.26 0 0 0-3.328 2.883l-.006-.012" />
-    </ModuleLogoFrame>
-  );
-}
-
-function UberEatsIcon() {
-  return (
-    <ModuleLogoFrame viewBox="0 0 510 360">
-      <g>
-        <path
-          fill="#ededed"
-          d="m496 66.7v-22.3h-8.5c-13.5 0-23.5 6.2-29.5 15.9v-15h-24.2v121.1h24.4v-68.8c0-18.8 11.6-30.9 27.6-30.9zm-175.6 28c4.4-18.5 19.6-30.9 37.7-30.9s33.4 12.3 37.5 30.9zm38.2-51.7c-36 0-63.4 28.7-63.4 62.9 0 36.1 28.5 63.2 65.6 63.2 22.5 0 40.9-9.7 53.2-25.9l-17.7-12.8c-9.2 12.1-21.3 17.8-35.6 17.8-20.8 0-37.5-14.7-40.9-34.4h100.4v-7.8c.1-36.2-26-63-61.6-63m-139.6 105.2c-23.7 0-42.6-18.8-42.6-42 0-23.5 19.1-42 42.6-42 23.2 0 42.3 18.5 42.3 42 .1 23.2-19 42-42.3 42m-66.5 18.3h24.2v-15.2c11.1 11.2 26.9 18 44 18 36.3 0 64.8-28.3 64.8-63.2 0-35.1-28.5-63.4-64.8-63.4-17.2 0-32.7 6.9-43.8 18v-60.5h-24.4zm-85.9-19.5c23.5 0 41.6-17.8 41.6-44.2v-102.6h25.4v166.2h-25.2v-15.4c-11.4 11.6-27.1 18.3-44.8 18.3-36.3 0-64.1-25.9-64.1-65.1v-104h25.5v102.6c0 26.9 17.9 44.2 41.6 44.2"
-        />
-      </g>
-      <g transform="translate(-547 190)">
-        <path
-          fill="#06c167"
-          d="m787.3 105.2c0-21-16.8-37.5-38-37.5-20.9 0-38 16.5-38 37.5s17.1 37.5 38 37.5c21.2 0 38-16.5 38-37.5m31-61.4v122.9h-31.6v-11.1c-11 9.1-24.9 14.2-40 14.2-37.4 0-66.6-28.7-66.6-64.6 0-35.8 29.3-64.6 66.6-64.6 15.1 0 29 5.1 40 14.2v-11zm105 95h-23.8c-7.2 0-11.9-3.1-11.9-9.7v-57.5h35.6v-27.8h-35.6v-35h-31.9v35h-24v27.9h24v65.3c0 16.5 11.9 29.6 33.3 29.6h34.2v-27.8zm72 31c36.5 0 57.1-17.1 57.1-40.7 0-16.8-12.2-29.3-37.7-34.7l-27-5.4c-15.6-2.8-20.6-5.7-20.6-11.4 0-7.4 7.5-11.9 21.4-11.9 15.1 0 26.1 4 29.3 17.6h31.6c-1.7-25.6-20.6-42.7-58.8-42.7-33 0-56.2 13.4-56.2 39.3 0 17.9 12.8 29.6 40.3 35.3l30.1 6.8c11.9 2.3 15.1 5.4 15.1 10.2 0 7.7-9 12.5-23.5 12.5-18.2 0-28.7-4-32.7-17.6h-31.9c4.7 25.6 24.1 42.7 63.5 42.7m-442.7-169.6h119.1v28.4h-86.9v40.7h84.6v27.6h-84.6v41.2h86.9v28.4h-119.1z"
-        />
-      </g>
-    </ModuleLogoFrame>
-  );
-}
-
-function AirbnbIcon() {
-  return (
-    <ModuleLogoFrame viewBox="0 0 256 275">
-      <path
-        fill="#FF385C"
-        d="M252.154 194.867c-1.231-3.456-2.67-6.8-4.039-9.898c-2.107-4.766-4.314-9.541-6.449-14.157l-.169-.366c-19.04-41.23-39.475-83.026-60.738-124.222l-.903-1.75c-2.169-4.206-4.411-8.556-6.712-12.83a83.351 83.351 0 0 0-9.875-15.198a45.98 45.98 0 0 0-15.808-12.133a46.072 46.072 0 0 0-38.935.005a45.976 45.976 0 0 0-15.804 12.137a83.712 83.712 0 0 0-9.87 15.195c-2.32 4.313-4.584 8.703-6.773 12.949l-.838 1.625c-21.264 41.2-41.699 82.994-60.738 124.221l-.278.6c-2.098 4.54-4.267 9.236-6.339 13.922c-1.37 3.096-2.806 6.437-4.039 9.902a60.699 60.699 0 0 0-3.274 29.588a58.455 58.455 0 0 0 11.835 27.646a58.603 58.603 0 0 0 24.027 18.129a59.593 59.593 0 0 0 22.481 4.349c2.42 0 4.839-.142 7.243-.422a73.906 73.906 0 0 0 27.645-9.327c11.152-6.265 22.165-15.446 34.196-28.566c12.031 13.12 23.044 22.301 34.196 28.566a73.89 73.89 0 0 0 27.645 9.327a62.62 62.62 0 0 0 7.244.422a59.586 59.586 0 0 0 22.48-4.349a58.609 58.609 0 0 0 24.027-18.13a58.453 58.453 0 0 0 11.836-27.645a60.752 60.752 0 0 0-3.274-29.59ZM128 209.17c-14.893-18.878-24.45-36.409-27.804-51.106a45.195 45.195 0 0 1-.956-16.85a27.533 27.533 0 0 1 4.432-11.52a30.688 30.688 0 0 1 10.772-8.802a30.762 30.762 0 0 1 27.116.002a30.685 30.685 0 0 1 10.77 8.803a27.548 27.548 0 0 1 4.432 11.522a45.21 45.21 0 0 1-.96 16.856C152.444 172.77 142.89 190.296 128 209.17Zm110.032 12.802a40.874 40.874 0 0 1-8.275 19.33a40.977 40.977 0 0 1-16.8 12.677a42.823 42.823 0 0 1-21.088 2.758a55.703 55.703 0 0 1-21.055-7.191c-9.926-5.577-19.974-14.138-31.28-26.696c17.999-22.195 29.239-42.652 33.4-60.873a62.51 62.51 0 0 0 1.197-23.421a44.91 44.91 0 0 0-7.307-18.776a48.223 48.223 0 0 0-17.075-14.405a48.313 48.313 0 0 0-43.495-.002a48.205 48.205 0 0 0-17.075 14.403a44.91 44.91 0 0 0-7.308 18.771a62.535 62.535 0 0 0 1.19 23.412c4.16 18.229 15.4 38.69 33.406 60.892c-11.307 12.557-21.355 21.118-31.281 26.696a55.7 55.7 0 0 1-21.055 7.19a42.827 42.827 0 0 1-21.089-2.758a40.978 40.978 0 0 1-16.8-12.677a40.872 40.872 0 0 1-8.273-19.33a43.049 43.049 0 0 1 2.437-21.231c.983-2.761 2.132-5.471 3.556-8.69c2.015-4.555 4.153-9.185 6.221-13.661l.278-.602C49.394 136.792 69.716 95.23 90.864 54.255l.842-1.631c2.153-4.178 4.38-8.497 6.626-12.67a67.774 67.774 0 0 1 7.758-12.115a28.411 28.411 0 0 1 9.8-7.594a28.462 28.462 0 0 1 34.015 7.59a67.46 67.46 0 0 1 7.76 12.111c2.225 4.136 4.432 8.416 6.567 12.555l.904 1.756c21.147 40.97 41.469 82.531 60.404 123.535l.17.369c2.104 4.552 4.28 9.257 6.328 13.891c1.426 3.224 2.577 5.936 3.557 8.687a43.081 43.081 0 0 1 2.437 21.233Z"
-      />
-    </ModuleLogoFrame>
-  );
-}
-
-function WhatsappIcon() {
-  return (
-    <ModuleLogoFrame viewBox="0 0 24 24">
-      <path
-        fill="#25D366"
-        d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413"
-      />
-    </ModuleLogoFrame>
-  );
-}
-
-function CubeIcon() {
-  return (
-    <ModuleLogoFrame
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.65"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
-      <path d="m3.27 6.96 8.73 5.05 8.73-5.05" />
-      <path d="M12 22.08V12" />
-    </ModuleLogoFrame>
   );
 }
 
@@ -1297,16 +1225,6 @@ function persistHiddenModuleIds(ids: SidebarModuleId[]): void {
   } catch {
     // Best effort: hidden modules are a local UI preference.
   }
-}
-
-export function ModuleLogo({ id }: { id: SidebarModuleId }) {
-  if (id === "gmail") return <GmailIcon />;
-  if (id === "outlook") return <OutlookIcon />;
-  if (id === "amazon") return <AmazonIcon />;
-  if (id === "uber-eats") return <UberEatsIcon />;
-  if (id === "airbnb") return <AirbnbIcon />;
-  if (id === "whatsapp") return <WhatsappIcon />;
-  return <CubeIcon />;
 }
 
 function ModuleButton({
@@ -1586,7 +1504,10 @@ export function SidebarSlice({
                 tool.id === "new-session"
                   ? sidebarShadowStore.command({ kind: "navigate", section: "forge" })
                   : tool.id === "brain"
-                    ? sidebarShadowStore.command({ kind: "open_profile_canvas", canvas: "brain" })
+                    ? sidebarShadowStore.command({
+                        kind: "open_profile_canvas",
+                        canvas: snapshot.profileCanvas === "brain" ? "" : "brain"
+                      })
                     : tool.id === "automations"
                       ? sidebarShadowStore.command({ kind: "activate_control", label: "Automations" })
                       : sidebarShadowStore.command({ kind: "set_active_drawer", drawer: tool.drawer });
