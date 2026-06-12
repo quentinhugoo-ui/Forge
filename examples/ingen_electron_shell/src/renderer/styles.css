@@ -58,7 +58,7 @@ button {
   --bottom-left: calc(var(--workspace-left) + ((var(--workspace-width) - var(--bottom-width)) / 2));
   --composer-bottom: 33px;
   --bottom-controls-bottom: 12px;
-  --chat-canvas-bottom: 150px;
+  --chat-canvas-bottom: 128px;
   --transcript-bottom-breathing-room: 48px;
   --sidebar-motion: 260ms cubic-bezier(0.22, 1, 0.36, 1);
   width: 100vw;
@@ -1564,7 +1564,7 @@ button {
 .parallelSessionMark {
   position: absolute;
   left: -20px;
-  top: 50%;
+  top: 14px;
   display: inline-grid;
   place-items: center;
   width: var(--sidebar-session-archive-icon-size);
@@ -1575,7 +1575,6 @@ button {
   max-height: var(--sidebar-session-archive-icon-size);
   color: color-mix(in oklab, var(--forge-text), transparent 16%);
   pointer-events: none;
-  transform: translateY(-50%);
 }
 
 .parallelSessionMark__icon {
@@ -4401,7 +4400,7 @@ button {
 }
 
 .composer {
-  --composer-upload-min-size: 78px;
+  --composer-upload-min-size: 56px;
   --composer-input-height: var(--composer-upload-min-size);
   --composer-upload-size: max(var(--composer-upload-min-size), var(--composer-input-height));
   position: fixed;
@@ -4411,7 +4410,7 @@ button {
   grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 88px 26px;
   align-items: stretch;
   width: var(--chat-width);
-  min-height: 94px;
+  min-height: 72px;
   gap: 8px;
   padding: 8px;
   background: var(--forge-chat-bg);
@@ -4773,10 +4772,10 @@ button {
   grid-row: 1;
   width: 100%;
   min-width: 0;
-  min-height: 83px;
+  min-height: 56px;
   max-height: 360px;
-  height: 83px;
-  padding: 23px 8px 12px;
+  height: 56px;
+  padding: 14px 8px 8px;
   align-self: stretch;
   color: var(--forge-chat-text);
   font: 14px/1.45 "Geist", system-ui, sans-serif;
@@ -4799,9 +4798,9 @@ button {
   grid-auto-columns: minmax(0, 1fr);
   align-self: stretch;
   min-width: 0;
-  min-height: 83px;
+  min-height: 56px;
   gap: 0;
-  padding: 14px 0 10px;
+  padding: 8px 0 7px;
   overflow: hidden;
 }
 
@@ -4819,7 +4818,7 @@ button {
 
 .composerParallelPrompt__slash {
   align-self: start;
-  padding: 10px 10px 0 5px;
+  padding: 7px 10px 0 5px;
   color: color-mix(in oklab, var(--forge-muted), transparent 24%);
   font: 13px/1.38 "Geist Mono", ui-monospace, monospace;
   pointer-events: none;
@@ -4830,8 +4829,8 @@ button {
   width: 100%;
   min-width: 0;
   height: 100%;
-  min-height: 63px;
-  padding: 10px 8px 8px;
+  min-height: 41px;
+  padding: 7px 8px 7px;
   color: var(--forge-chat-text);
   background: transparent;
   border: 0;
@@ -5456,7 +5455,8 @@ button {
 }
 
 .brainCanvas {
-  padding: 42px max(48px, calc((100% - 720px) / 2)) 72px;
+  /* Same horizontal footprint as the LLM Provider page. */
+  padding: 42px max(34px, calc((100% - 1280px) / 2)) 72px;
 }
 
 .brainCanvas__head {
@@ -5543,8 +5543,9 @@ button {
   margin-top: 12px;
 }
 
-.brainCanvas__rows > * + * {
-  border-top: 1px solid color-mix(in oklab, var(--forge-line), transparent 45%);
+.brainRow,
+.brainSlotRow {
+  border-bottom: 1px solid color-mix(in oklab, var(--forge-line), transparent 45%);
 }
 
 .brainRow {
@@ -5580,6 +5581,9 @@ button {
 }
 
 .brainSegment .brainCanvas__rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(430px, 1fr));
+  column-gap: 56px;
   margin-top: 6px;
 }
 
@@ -5942,10 +5946,32 @@ button {
   scrollbar-color: var(--forge-line) transparent;
 }
 
+.canvasFilesPane__list--empty {
+  display: grid;
+  column-count: auto;
+  place-items: start center;
+  padding: 62px 0 16px;
+  overflow: hidden;
+}
+
 .canvasFilesPane__empty {
-  margin: 8px 0 0;
-  color: var(--forge-muted);
-  font-size: 12px;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 230px;
+  color: color-mix(in oklab, var(--forge-muted), transparent 42%);
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.canvasFilesPane__empty svg {
+  width: 108px;
+  height: 108px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
 }
 
 .canvasFileTile {
@@ -6384,16 +6410,16 @@ button {
   }
 
   .chatCanvas {
-    bottom: 134px;
+    bottom: 118px;
     max-height: 118px;
   }
 
   .composer {
-    --composer-upload-min-size: 64px;
+    --composer-upload-min-size: 54px;
     --composer-input-height: var(--composer-upload-min-size);
     bottom: 30px;
     grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 84px 26px;
-    min-height: 78px;
+    min-height: 68px;
     height: auto;
     padding: 7px;
   }
@@ -6412,9 +6438,9 @@ button {
   }
 
   .composer__input {
-    min-height: 64px;
-    height: 64px;
-    padding: 18px 7px 10px;
+    min-height: 54px;
+    height: 54px;
+    padding: 14px 7px 9px;
   }
 
   .bottomControls {
