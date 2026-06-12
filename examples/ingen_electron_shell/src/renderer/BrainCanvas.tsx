@@ -400,10 +400,7 @@ export function BrainCanvas() {
       <BrainBlob />
       <header className="brainCanvas__head">
         <span className="brainCanvas__mark"><Glyph kind="brain" size={26} /></span>
-        <div>
-          <h1>Brain</h1>
-          <p className="brainCanvas__sub">memory / CodeActs / Godel / personality</p>
-        </div>
+        <h1>Brain</h1>
       </header>
       <div className="brainCanvas__tabs" role="tablist" aria-label="Brain spaces">
         {BRAIN_SPACES.map(({ id, label, glyph }) => (

@@ -4884,7 +4884,6 @@ button {
 
 .assistantText__paragraph {
   margin: 0;
-  animation: assistantParagraphInk 180ms ease-out both;
 }
 
 .assistantText__wordFlash {
@@ -4900,7 +4899,6 @@ button {
   font-weight: 720;
   line-height: 1.26;
   letter-spacing: 0;
-  animation: assistantParagraphInk 180ms ease-out both;
 }
 
 .assistantText__list {
@@ -4908,7 +4906,6 @@ button {
   gap: 7px;
   margin: 0;
   padding-left: 20px;
-  animation: assistantParagraphInk 180ms ease-out both;
 }
 
 .assistantText__list li {
@@ -7229,17 +7226,10 @@ button {
   color: var(--forge-text);
 }
 
-.brainCanvas__sub {
-  margin: 3px 0 0;
-  color: var(--forge-muted);
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 11px;
-}
-
 .brainCanvas__tabs {
   display: flex;
   gap: 24px;
-  margin-top: 30px;
+  margin-top: 12px;
   border-bottom: 1px solid color-mix(in oklab, var(--forge-line), transparent 25%);
 }
 
@@ -7488,8 +7478,12 @@ button {
   width: 520px;
   height: 520px;
   background: linear-gradient(180deg, var(--blob-one) 30%, var(--blob-two) 70%);
-  mask: url(#brain-blob-mask);
-  -webkit-mask: url(#brain-blob-mask);
+  /* Radial layer intersected with the gooey mask: the glow always fades out
+     before the element bounds, so no square edge can ever show. */
+  mask-image: url(#brain-blob-mask), radial-gradient(closest-side, #000 50%, transparent 72%);
+  -webkit-mask-image: url(#brain-blob-mask), radial-gradient(closest-side, #000 50%, transparent 72%);
+  mask-composite: intersect;
+  -webkit-mask-composite: destination-in;
 }
 
 .brainBlob svg #brain-blob-mask {
@@ -7553,10 +7547,10 @@ button {
     filter: contrast(15);
   }
   20% {
-    filter: contrast(3);
+    filter: contrast(7);
   }
   40% {
-    filter: contrast(3);
+    filter: contrast(7);
   }
   60% {
     filter: contrast(15);
