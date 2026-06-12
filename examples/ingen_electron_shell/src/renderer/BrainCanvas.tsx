@@ -350,19 +350,21 @@ function PersonalitySpace() {
 
 /* Organic gooey blob (Uiverse, andrew-manzyk): blurred polygons rotating inside
    an SVG mask, sharpened by a high-contrast filter. Sphere shell removed; the
-   bare effect floats behind the page text as a slow ambient motion. */
+   bare effect floats behind the page text as a slow ambient motion.
+   Rendered at native 520px (no transform scale) so the blur/contrast filters
+   stay sharp, with inner margins so the glow fades before the box edges. */
 function BrainBlob() {
   return (
     <div className="brainBlob" aria-hidden="true">
-      <svg width="100" height="100" viewBox="0 0 100 100">
+      <svg width="520" height="520" viewBox="0 0 520 520">
         <mask id="brain-blob-mask">
-          <polygon points="30,15 70,20 55,45" fill="#fff" />
-          <polygon points="25,30 60,25 45,60" fill="#fff" />
-          <polygon points="35,40 70,45 50,75" fill="#fff" />
-          <polygon points="20,45 50,35 40,70" fill="#fff" />
-          <polygon points="50,30 80,45 55,65" fill="#fff" />
-          <polygon points="40,50 75,40 60,75" fill="#fff" />
-          <polygon points="30,55 65,55 45,80" fill="#fff" />
+          <polygon points="156,78 364,104 286,234" fill="#fff" />
+          <polygon points="130,156 312,130 234,312" fill="#fff" />
+          <polygon points="182,208 364,234 260,390" fill="#fff" />
+          <polygon points="104,234 260,182 208,364" fill="#fff" />
+          <polygon points="260,156 416,234 286,338" fill="#fff" />
+          <polygon points="208,260 390,208 312,390" fill="#fff" />
+          <polygon points="156,286 338,286 234,416" fill="#fff" />
         </mask>
       </svg>
       <div className="brainBlob__box" />

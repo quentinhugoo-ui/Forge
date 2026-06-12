@@ -1336,6 +1336,18 @@ button {
   transition: top var(--sidebar-motion);
 }
 
+.recentsPanel::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  right: 10px;
+  bottom: 0;
+  left: 0;
+  height: 18px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent 0, color-mix(in oklab, var(--forge-sidebar-bg), transparent 24%) 8px, var(--forge-sidebar-bg) 14px, var(--forge-sidebar-bg) 100%);
+}
+
 /* When a sidebar drawer (Pool / Modules / My Assets) is open, push the
    recents list down by the drawer height (148px panel + 2px gap). */
 .leftPanel--drawer-open {
@@ -4149,31 +4161,34 @@ button {
   color: #e8fbff;
   filter: drop-shadow(0 0 8px rgba(125, 211, 252, 0.38));
   transform-origin: center;
+  animation: transcriptBrainSegmentPulse 1.4s ease-in-out infinite;
 }
 
 .transcriptCodeActEvent__icon .brainSegmentIcon path {
   fill: none;
   stroke: currentColor;
+  stroke-dasharray: 26;
+  animation: transcriptBrainSegmentTrace 1.4s ease-in-out infinite;
 }
 
 .transcriptCodeActEvent__icon .brainSegmentIcon--changing {
-  animation: transcriptBrainSegmentPulse 1s ease-in-out both;
+  animation-duration: 1.4s;
 }
 
 .transcriptCodeActEvent__icon .brainSegmentIcon--changing path {
-  animation: transcriptBrainSegmentTrace 1s ease-in-out both;
+  animation-duration: 1.4s;
 }
 
-.transcriptCodeActEvent__icon .brainSegmentIcon--changing .brainSegmentIcon__stem {
+.transcriptCodeActEvent__icon .brainSegmentIcon .brainSegmentIcon__stem {
   stroke-dasharray: 13;
 }
 
-.transcriptCodeActEvent__icon .brainSegmentIcon--changing .brainSegmentIcon__side {
+.transcriptCodeActEvent__icon .brainSegmentIcon .brainSegmentIcon__side {
   stroke-dasharray: 18;
 }
 
-.transcriptCodeActEvent__icon .brainSegmentIcon--changing .brainSegmentIcon__top,
-.transcriptCodeActEvent__icon .brainSegmentIcon--changing .brainSegmentIcon__low {
+.transcriptCodeActEvent__icon .brainSegmentIcon .brainSegmentIcon__top,
+.transcriptCodeActEvent__icon .brainSegmentIcon .brainSegmentIcon__low {
   stroke-dasharray: 18;
 }
 
@@ -4872,6 +4887,12 @@ button {
   animation: assistantParagraphInk 180ms ease-out both;
 }
 
+.assistantText__wordFlash {
+  display: inline-block;
+  transform-origin: 50% 62%;
+  animation: assistantWordFlash 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 .assistantText__heading {
   margin: 6px 0 0;
   color: color-mix(in oklab, var(--forge-text), white 8%);
@@ -4910,6 +4931,114 @@ button {
   color: color-mix(in oklab, var(--forge-text), white 7%);
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 0.91em;
+}
+
+.assistantText__mathToken {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 0 2px;
+  vertical-align: 0.02em;
+}
+
+.assistantText__mathPill {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 7px 2px;
+  border: 1px solid color-mix(in oklab, #67e8f9, transparent 72%);
+  border-radius: 5px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklab, #0f172a, transparent 18%),
+      color-mix(in oklab, var(--forge-line), transparent 44%)
+    );
+  box-shadow: inset 0 1px 0 color-mix(in oklab, #ffffff, transparent 94%);
+  color: color-mix(in oklab, #e7f8ff, var(--forge-text) 32%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 0.91em;
+  font-weight: 560;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.assistantText__mathComputeHint {
+  appearance: none;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 18px;
+  min-width: 18px;
+  height: 20px;
+  margin-left: 5px;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  color: color-mix(in oklab, #67e8f9, var(--forge-text) 26%);
+  cursor: pointer;
+  font: inherit;
+  vertical-align: middle;
+  white-space: nowrap;
+  transition:
+    max-width 190ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 150ms ease-out;
+}
+
+.assistantText__mathComputeHint:focus-visible {
+  outline: 1px solid color-mix(in oklab, #67e8f9, transparent 18%);
+  outline-offset: 2px;
+}
+
+.assistantText__mathToken:hover .assistantText__mathComputeHint,
+.assistantText__mathToken:focus-within .assistantText__mathComputeHint {
+  max-width: 128px;
+  color: color-mix(in oklab, #a7f3d0, #67e8f9 46%);
+}
+
+.assistantText__mathComputeIcon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  color: currentColor;
+}
+
+.assistantText__mathComputeIcon .boundedFill {
+  display: block;
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.assistantText__mathComputeLabel {
+  flex: 0 0 auto;
+  opacity: 0;
+  color: currentColor;
+  font-family: "Geist", system-ui, sans-serif;
+  font-size: 11.5px;
+  font-weight: 620;
+  line-height: 1;
+  transform: translateX(-4px);
+  transition:
+    opacity 140ms ease-out,
+    transform 170ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.assistantText__mathToken:hover .assistantText__mathComputeLabel,
+.assistantText__mathToken:focus-within .assistantText__mathComputeLabel {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistantText__mathComputeHint,
+  .assistantText__mathComputeLabel {
+    transition: none;
+  }
 }
 
 .assistantText__caret {
@@ -4961,6 +5090,27 @@ button {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes assistantWordFlash {
+  0% {
+    opacity: 0;
+    color: color-mix(in oklab, var(--forge-text), transparent 30%);
+    text-shadow: 0 0 0 transparent;
+    transform: translateY(2px) scale(0.992);
+  }
+  34% {
+    opacity: 1;
+    color: color-mix(in oklab, var(--forge-text), white 18%);
+    text-shadow: 0 0 10px color-mix(in oklab, var(--forge-text), transparent 82%);
+    transform: translateY(0) scale(1.006);
+  }
+  100% {
+    opacity: 1;
+    color: inherit;
+    text-shadow: 0 0 0 transparent;
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -5134,10 +5284,11 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .transcriptCodeActEvent--brainSegment-changing,
-  .transcriptCodeActEvent__icon .brainSegmentIcon--changing,
-  .transcriptCodeActEvent__icon .brainSegmentIcon--changing path,
+  .transcriptCodeActEvent__icon .brainSegmentIcon,
+  .transcriptCodeActEvent__icon .brainSegmentIcon path,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__command,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__text,
+  .assistantText__wordFlash,
   .questionnaireFocusScrim,
   .composerQuestionnaire,
   .composerQuestionnaire__page {
@@ -7063,7 +7214,7 @@ button {
 
 .brainCanvas {
   /* Same horizontal footprint as the LLM Provider page. */
-  padding: 42px max(34px, calc((100% - 1280px) / 2)) 72px;
+  padding: 12px max(34px, calc((100% - 1280px) / 2)) 72px;
 }
 
 .brainCanvas__head {
@@ -7286,13 +7437,12 @@ button {
   --blob-two: #be4a1d;
   --blob-time: 14s;
   position: fixed;
-  right: 26vw;
-  bottom: 20vh;
+  right: 10vw;
+  bottom: 2vh;
   z-index: 0;
-  width: 100px;
-  height: 100px;
+  width: 520px;
+  height: 520px;
   pointer-events: none;
-  transform: scale(5);
   animation: brainBlobColorize calc(var(--blob-time) * 3) ease-in-out infinite;
 }
 
@@ -7301,8 +7451,8 @@ button {
 }
 
 .brainBlob__box {
-  width: 100px;
-  height: 100px;
+  width: 520px;
+  height: 520px;
   background: linear-gradient(180deg, var(--blob-one) 30%, var(--blob-two) 70%);
   mask: url(#brain-blob-mask);
   -webkit-mask: url(#brain-blob-mask);
@@ -7314,7 +7464,7 @@ button {
 }
 
 .brainBlob svg #brain-blob-mask polygon {
-  filter: blur(7px);
+  filter: blur(36px);
 }
 
 .brainBlob svg #brain-blob-mask polygon:nth-child(1) {
