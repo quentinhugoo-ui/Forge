@@ -156,9 +156,11 @@ const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
 ];
 
 /* Segmented brain: the general brain is the default; the science and coding
-   brains own the CodeActs specialized for their domain. */
+   brains own the CodeActs specialized for their domain. The activator
+   commands live in the general brain since they are the switches. */
+const BRAIN_ACTIVATOR_COMMANDS: BrainCodeActCommand[] = ["/sciencebrain_", "/codingbrain_"];
+
 const SCIENCE_BRAIN_COMMANDS: BrainCodeActCommand[] = [
-  "/sciencebrain_",
   "/newcompute_",
   "/selectcompute_",
   "/compute_<name>_",
@@ -166,7 +168,6 @@ const SCIENCE_BRAIN_COMMANDS: BrainCodeActCommand[] = [
 ];
 
 const CODING_BRAIN_COMMANDS: BrainCodeActCommand[] = [
-  "/codingbrain_",
   "/workspace_",
   "/frontdesign_",
   "/newmodule_",
@@ -181,10 +182,14 @@ const BRAIN_SEGMENTS: { id: string; label: string; glyph: string; commands?: Bra
 ];
 
 function segmentCodeActs(segment: { commands?: BrainCodeActCommand[] }) {
-  const specialized = new Set([...SCIENCE_BRAIN_COMMANDS, ...CODING_BRAIN_COMMANDS]);
+  const elsewhere = new Set([...SCIENCE_BRAIN_COMMANDS, ...CODING_BRAIN_COMMANDS, ...BRAIN_ACTIVATOR_COMMANDS]);
   return BRAIN_CODEACT_COMMAND_DESCRIPTIONS.filter(({ command }) =>
-    segment.commands ? segment.commands.includes(command) : !specialized.has(command)
+    segment.commands ? segment.commands.includes(command) : !elsewhere.has(command)
   );
+}
+
+function activatorCodeActs() {
+  return BRAIN_CODEACT_COMMAND_DESCRIPTIONS.filter(({ command }) => BRAIN_ACTIVATOR_COMMANDS.includes(command));
 }
 
 function SlotRow({
@@ -217,6 +222,18 @@ function SlotRow({
   );
 }
 
+function CodeActRow({ command, description }: { command: BrainCodeActCommand; description: string }) {
+  return (
+    <div className="brainRow" role="listitem">
+      <span className="brainRow__icon">
+        <CodeActIcon command={command} />
+      </span>
+      <code>{command}</code>
+      <p>{description}</p>
+    </div>
+  );
+}
+
 function CodeActsSpace() {
   return (
     <div className="brainCanvas__space">
@@ -224,25 +241,29 @@ function CodeActsSpace() {
         The agent acts by emitting CodeAct commands — typed contracts projected from the Rust Brain.
         The general brain is always on; the science and coding brains activate on demand.
       </p>
-      {BRAIN_SEGMENTS.map((segment) => (
-        <section className="brainSegment" key={segment.id} aria-label={segment.label}>
-          <h2 className="brainSegment__head">
-            <Glyph kind={segment.glyph} size={14} />
-            {segment.label}
-          </h2>
-          <div className="brainCanvas__rows" role="list">
-            {segmentCodeActs(segment).map(({ command, description }) => (
-              <div className="brainRow" role="listitem" key={command}>
-                <span className="brainRow__icon">
-                  <CodeActIcon command={command} />
-                </span>
-                <code>{command}</code>
-                <p>{description}</p>
+      <div className="brainCanvas__segments">
+        {BRAIN_SEGMENTS.map((segment) => (
+          <section className="brainSegment" key={segment.id} aria-label={segment.label}>
+            <h2 className="brainSegment__head">
+              <Glyph kind={segment.glyph} size={14} />
+              {segment.label}
+            </h2>
+            {segment.id === "general" ? (
+              <div className="brainActivators" role="list" aria-label="brain activators">
+                <p className="brainActivators__label">brain switches</p>
+                {activatorCodeActs().map(({ command, description }) => (
+                  <CodeActRow command={command} description={description} key={command} />
+                ))}
               </div>
-            ))}
-          </div>
-        </section>
-      ))}
+            ) : null}
+            <div className="brainCanvas__rows" role="list">
+              {segmentCodeActs(segment).map(({ command, description }) => (
+                <CodeActRow command={command} description={description} key={command} />
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
