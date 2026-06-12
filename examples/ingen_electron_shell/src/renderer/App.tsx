@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BRAIN_AIRBNB_COMMAND,
+  BRAIN_GMAIL_COMMAND,
+  BRAIN_GMAIL_COM_COMMAND,
+  BRAIN_WORKSPACE_COMMAND,
+  type NativeWebExplorerCodeAct,
   type ComposerUploadPreview,
   type HeaderControl,
   type NativeSection
@@ -43,6 +48,12 @@ function iconClass(control: Pick<HeaderControl, "icon" | "id">): string {
   }
 }
 
+function webExplorerCodeActModule(event: NativeWebExplorerCodeAct): SidebarModuleId | null {
+  if (event.command === BRAIN_AIRBNB_COMMAND) return "airbnb";
+  if (event.command === BRAIN_GMAIL_COMMAND || event.command === BRAIN_GMAIL_COM_COMMAND) return "gmail";
+  return null;
+}
+
 function windowGlyphClass(command: HeaderControl["command"]): string {
   if (command === "window_minimize") return "windowGlyph windowGlyph--min";
   if (command === "window_toggle_maximize") return "windowGlyph windowGlyph--max";
@@ -74,6 +85,8 @@ export function App() {
   const [canvasTerminalOpen, setCanvasTerminalOpen] = useState(false);
   const [canvasPlanetsOpen, setCanvasPlanetsOpen] = useState(false);
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
+  const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
+  const [webExplorerModuleId, setWebExplorerModuleId] = useState<SidebarModuleId | null>(null);
   const [composerModuleId, setComposerModuleId] = useState<SidebarModuleId | null>(null);
   const toggleComposerModule = useCallback((id: SidebarModuleId) => {
     setComposerModuleId((current) => (current === id ? null : id));
@@ -86,14 +99,17 @@ export function App() {
   const [welcomeMessage, setWelcomeMessage] = useState(() => selectWelcomeMessage(brainUserMemory.preferredFirstName));
   const [homeCanvasResetId, setHomeCanvasResetId] = useState(0);
   const [workspaceFolder, setWorkspaceFolder] = useState<string | null>(null);
+  const [workspaceGateActive, setWorkspaceGateActive] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const workspaceNoticeTimerRef = useRef<number | null>(null);
+  const previousActiveSessionIdRef = useRef(panelsChatSnapshot.activeSessionId);
   const chooseWorkspace = useCallback(async () => {
     const result = await globalThis.window?.forgeShell?.chooseWorkspaceFolder?.();
     if (result && !result.canceled && result.folderName) {
       setWorkspaceFolder(result.folderName);
+      setWorkspaceGateActive(false);
     }
   }, []);
   useEffect(() => {
@@ -101,6 +117,7 @@ export function App() {
     void globalThis.window?.forgeShell?.getWorkspaceFolder?.().then((result) => {
       if (active && result && !result.canceled && result.folderName) {
         setWorkspaceFolder(result.folderName);
+        setWorkspaceGateActive(false);
       }
     });
     return () => {
@@ -109,7 +126,11 @@ export function App() {
   }, []);
   const activeProfileCanvas = sidebarSnapshot.profileCanvas || snapshot.profileCanvas;
   const isLlmProviderCanvas = activeProfileCanvas === "llm";
-  const renderPanelsChatBottom = globalThis.location?.port !== "5176" && !isLlmProviderCanvas;
+  const isBrainCanvas = activeProfileCanvas === "brain";
+  // Brain behaves like LLM Provider: a full page replacing the whole canvas,
+  // closable from the workspace-header cross.
+  const isFullPageCanvas = isLlmProviderCanvas || isBrainCanvas;
+  const renderPanelsChatBottom = globalThis.location?.port !== "5176" && !isFullPageCanvas;
   const canvasSurfaceOpen =
     canvasSplitOpen ||
     canvasFilesOpen ||
@@ -128,6 +149,33 @@ export function App() {
     () => panelsChatSnapshot.transcript.some((message) => message.role === "user" || message.role === "assistant"),
     [panelsChatSnapshot.transcript]
   );
+  const restoredParallelPromptCount = useMemo(() => {
+    if (panelsChatSnapshot.parallelLanes.length === 0) {
+      return 1;
+    }
+    const maxLaneIndex = panelsChatSnapshot.parallelLanes.reduce((max, lane) => Math.max(max, lane.index), 0);
+    return Math.min(4, Math.max(2, maxLaneIndex + 1));
+  }, [panelsChatSnapshot.parallelLanes]);
+  useEffect(() => {
+    const previousActiveSessionId = previousActiveSessionIdRef.current;
+    const activeSessionChanged = previousActiveSessionId !== panelsChatSnapshot.activeSessionId;
+    previousActiveSessionIdRef.current = panelsChatSnapshot.activeSessionId;
+
+    if (restoredParallelPromptCount > 1 && (activeSessionChanged || parallelPrompts.length < restoredParallelPromptCount)) {
+      setParallelPrompts((prompts) => Array.from({ length: restoredParallelPromptCount }, (_value, index) => prompts[index] ?? ""));
+      return;
+    }
+    if (
+      restoredParallelPromptCount === 1 &&
+      activeSessionChanged &&
+      panelsChatSnapshot.activeSessionId &&
+      parallelPrompts.length > 1
+    ) {
+      setParallelPrompts([""]);
+      setCanvasWebExplorerOpen(false);
+      setWebExplorerParallelIndex(0);
+    }
+  }, [panelsChatSnapshot.activeSessionId, parallelPrompts.length, restoredParallelPromptCount]);
   const sessionFiles = useMemo<ComposerUploadPreview[]>(() => {
     const seen = new Set<string>();
     const files: ComposerUploadPreview[] = [];
@@ -149,8 +197,22 @@ export function App() {
     canvasFilesOpen || canvasTerminalOpen ? "shell--canvas-files-open" : "",
     parallelPrompts.length > 1 ? "shell--parallel-canvas-open" : "",
     canvasWebExplorerOpen ? "shell--webexplorer-canvas-open" : "",
-    isLlmProviderCanvas ? "shell--llm-provider" : ""
+    isLlmProviderCanvas ? "shell--llm-provider" : "",
+    workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
+
+  useEffect(() => {
+    if (workspaceFolder) {
+      setWorkspaceGateActive(false);
+      return;
+    }
+    const latestAssistant = panelsChatSnapshot.transcript
+      .filter((message) => message.role === "assistant")
+      .at(-1);
+    if (latestAssistant?.text.includes(BRAIN_WORKSPACE_COMMAND)) {
+      setWorkspaceGateActive(true);
+    }
+  }, [panelsChatSnapshot.transcript, workspaceFolder]);
 
   useEffect(() => {
     let mounted = true;
@@ -295,24 +357,50 @@ export function App() {
     setCanvasPlanetsOpen(true);
   }, []);
 
-  const openCanvasWebExplorer = useCallback(() => {
+  const openCanvasWebExplorer = useCallback((parallelSessionIndex = 0) => {
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
     setCanvasTerminalOpen(false);
     setCanvasPlanetsOpen(false);
-    setParallelPrompts([""]);
+    setWebExplorerParallelIndex(parallelSessionIndex);
+    if (parallelPrompts.length <= 1) {
+      setParallelPrompts([""]);
+    }
     setCanvasWebExplorerOpen(true);
-  }, []);
+  }, [parallelPrompts.length]);
 
   const closeCanvasWebExplorer = useCallback(() => {
     setCanvasWebExplorerOpen(false);
+    setWebExplorerParallelIndex(0);
+    setWebExplorerModuleId(null);
   }, []);
 
   useEffect(() => {
-    return globalThis.window?.forgeShell?.onNativeWebExplorerCodeAct?.(() => {
-      openCanvasWebExplorer();
+    return globalThis.window?.forgeShell?.onNativeWebExplorerCodeAct?.((event) => {
+      setWebExplorerModuleId(webExplorerCodeActModule(event));
+      openCanvasWebExplorer(event.parallelSessionIndex ?? 0);
     });
   }, [openCanvasWebExplorer]);
+
+  useEffect(() => {
+    const latestAssistant = panelsChatSnapshot.transcript
+      .filter((message) => message.role === "assistant")
+      .at(-1);
+    if (latestAssistant?.text.includes("AIRBNB_RESULT")) {
+      setWebExplorerModuleId("airbnb");
+      openCanvasWebExplorer(0);
+      return;
+    }
+    if (latestAssistant?.text.includes("GMAIL_RESULT")) {
+      setWebExplorerModuleId("gmail");
+      openCanvasWebExplorer(0);
+      return;
+    }
+    if (latestAssistant?.text.includes("GOOGLEWEB_RESULT")) {
+      setWebExplorerModuleId(null);
+      openCanvasWebExplorer(0);
+    }
+  }, [openCanvasWebExplorer, panelsChatSnapshot.transcript]);
 
   const updateParallelPrompt = useCallback((index: number, value: string) => {
     setParallelPrompts((prompts) => prompts.map((prompt, promptIndex) => (promptIndex === index ? value : prompt)));
@@ -329,14 +417,20 @@ export function App() {
   const dispatch = useCallback(
     async (control: Pick<HeaderControl, "id" | "command" | "route">) => {
       if (control.id === "right-panel") {
-        if (isLlmProviderCanvas) {
+        if (isFullPageCanvas) {
           await closeProfileCanvas();
+        }
+        if (canvasFilesOpen || canvasTerminalOpen) {
+          setCanvasFilesOpen(false);
+          setCanvasTerminalOpen(false);
+          setCanvasSplitOpen(false);
+          return;
         }
         setCanvasSplitOpen((open) => !open);
         return;
       }
       if (control.id === "webexplorer-workspace") {
-        if (isLlmProviderCanvas) {
+        if (isFullPageCanvas) {
           await closeProfileCanvas();
         }
         setCanvasSplitOpen(true);
@@ -344,7 +438,7 @@ export function App() {
         return;
       }
       await headerShadowStore.dispatchControl(control);
-      if (isLlmProviderCanvas) {
+      if (isFullPageCanvas) {
         await Promise.all([sidebarShadowStore.boot(), headerShadowStore.boot()]);
       }
       if (control.command === "open_sessions_canvas") {
@@ -362,7 +456,7 @@ export function App() {
         );
       }
     },
-    [closeProfileCanvas, isLlmProviderCanvas, openCanvasPlanets]
+    [canvasFilesOpen, canvasTerminalOpen, closeProfileCanvas, isFullPageCanvas, openCanvasPlanets]
   );
 
   const dispatchWindowControl = useCallback(
@@ -473,12 +567,12 @@ export function App() {
       </section>
 
       <section className="workspaceHeader" aria-label="Workspace header">
-        {isLlmProviderCanvas ? (
+        {isFullPageCanvas ? (
           <button
             type="button"
             className="workspaceHeader__close"
-            aria-label="Close LLM Provider"
-            title="Close LLM Provider"
+            aria-label={isBrainCanvas ? "Close Brain" : "Close LLM Provider"}
+            title={isBrainCanvas ? "Close Brain" : "Close LLM Provider"}
             onPointerDown={(event) => {
               if (event.button !== 0) {
                 return;
@@ -533,13 +627,13 @@ export function App() {
           </div>
         )}
         <div className="workspaceHeader__crumb">
-          {isLlmProviderCanvas ? (
-            <strong className="workspaceHeader__group workspaceHeader__group--page">LLM Provider</strong>
+          {isFullPageCanvas ? (
+            <strong className="workspaceHeader__group workspaceHeader__group--page">{isBrainCanvas ? "Brain" : "LLM Provider"}</strong>
           ) : (
             <>
               <button
                 type="button"
-                className="workspaceHeader__group workspaceHeader__group--pick"
+                className={workspaceGateActive ? "workspaceHeader__group workspaceHeader__group--pick workspaceHeader__group--required" : "workspaceHeader__group workspaceHeader__group--pick"}
                 onClick={() => void chooseWorkspace()}
               >
                 {workspaceFolder ?? sectionGroup(snapshot.activeSection)}
@@ -557,7 +651,7 @@ export function App() {
               control.id === "plan"
                 ? snapshot.rightPanelOpen
                 : control.id === "right-panel"
-                  ? canvasSplitOpen
+                  ? canvasSplitOpen || canvasFilesOpen || canvasTerminalOpen
                   : control.id === "webexplorer-workspace"
                     ? canvasPlanetsOpen
                   : control.selected;
@@ -577,7 +671,7 @@ export function App() {
                   control.id === "plan"
                     ? snapshot.rightPanelOpen
                     : control.id === "right-panel"
-                      ? canvasSplitOpen
+                      ? canvasSplitOpen || canvasFilesOpen || canvasTerminalOpen
                       : control.id === "webexplorer-workspace"
                         ? canvasPlanetsOpen
                       : undefined
@@ -592,7 +686,11 @@ export function App() {
         </div>
       </section>
 
-      {!isLlmProviderCanvas && !sessionHasStarted ? (
+      {workspaceGateActive ? (
+        <div className="workspaceRequiredVeil" aria-hidden="true" onClick={() => void chooseWorkspace()} />
+      ) : null}
+
+      {!isFullPageCanvas && !sessionHasStarted ? (
         <section className="canvasCover" aria-label="Forge home canvas">
           <ProfileCoverBanner key={`home-canvas-${homeCanvasResetId}`} leftPanelOpen={snapshot.leftPanelOpen} welcomeMessage={welcomeMessage} />
         </section>
@@ -606,7 +704,7 @@ export function App() {
       />
       <RightPanelSlice open={snapshot.rightPanelOpen} />
 
-      {!isLlmProviderCanvas ? (
+      {!isFullPageCanvas ? (
         <CanvasSurfacesSlice
           split={canvasSurfaceOpen}
           actionsOpen={canvasSplitOpen}
@@ -614,6 +712,8 @@ export function App() {
           terminalOpen={canvasTerminalOpen}
           planetsOpen={canvasPlanetsOpen}
           webExplorerOpen={canvasWebExplorerOpen}
+          webExplorerParallelIndex={webExplorerParallelIndex}
+          leftPanelOpen={snapshot.leftPanelOpen}
           parallelPrompts={parallelPrompts}
           sessionFiles={sessionFiles}
           sessionName={activeSessionName}
@@ -633,7 +733,7 @@ export function App() {
           parallelPrompts={parallelPrompts}
           onParallelPromptChange={updateParallelPrompt}
           webExplorerOpen={canvasWebExplorerOpen}
-          composerModule={composerModuleId}
+          composerModule={composerModuleId ?? (canvasWebExplorerOpen ? webExplorerModuleId : null)}
         />
       ) : null}
     </main>
