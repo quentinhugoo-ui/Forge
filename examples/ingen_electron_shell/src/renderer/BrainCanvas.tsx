@@ -3,6 +3,9 @@ import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   BRAIN_RENAME_SESSION_COMMAND,
   type BrainCodeActCommand,
+  type HardwareGpuSnapshot,
+  type HardwareMetric,
+  type HardwareTelemetrySnapshot,
   type SidebarSessionItem
 } from "../shared/ipc-contract";
 import { BrainBlob } from "./brain-blob";
@@ -19,7 +22,7 @@ import { AirbnbIcon, CubeIcon, GmailIcon, GoogleIcon } from "./module-logos";
 import { panelsChatBottomStore } from "./panels-chat-bottom-store";
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
 
-type BrainSpace = "codeacts" | "memory" | "godel" | "personality";
+type BrainSpace = "codeacts" | "memory" | "hardware" | "godel" | "personality";
 
 async function fallbackPhotonCitySuggestionLabels(query: string): Promise<string[]> {
   const url = new URL("https://photon.komoot.io/api/");
@@ -149,6 +152,18 @@ function Glyph({ kind, size = 16 }: { kind: string; size?: number }) {
       </svg>
     );
   }
+  if (kind === "gauge") {
+    return <svg {...base}><path d="M4 14a8 8 0 1 1 16 0" /><path d="M12 14l4-5" /><path d="M5 20h14" /></svg>;
+  }
+  if (kind === "thermometer") {
+    return <svg {...base}><path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0Z" /><path d="M12 8v7" /></svg>;
+  }
+  if (kind === "fan") {
+    return <svg {...base}><path d="M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0" /><path d="M12 10c1.7-4.7 5.7-6.2 7.4-4.5c1.4 1.4.8 4.8-3.2 6.5" /><path d="M13.7 13c3.2 3.8 2.5 7.9.1 8.5c-1.9.5-4.6-1.7-3.6-6" /><path d="M10.3 13C5.4 13.9 2.1 11.4 2.7 9c.5-1.9 3.8-3.1 7.2-.1" /></svg>;
+  }
+  if (kind === "memory") {
+    return <svg {...base}><rect x="5" y="7" width="14" height="10" rx="2" /><path d="M8 3v4M12 3v4M16 3v4M8 17v4M12 17v4M16 17v4M3 10h2M3 14h2M19 10h2M19 14h2" /></svg>;
+  }
   if (kind === "reuse") {
     return <svg {...base}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>;
   }
@@ -219,6 +234,7 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
 const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
   { id: "memory", label: "Memory", glyph: "database" },
   { id: "codeacts", label: "CodeActs", glyph: "codeact" },
+  { id: "hardware", label: "Hardware", glyph: "gauge" },
   { id: "godel", label: "Godel", glyph: "shield-check" },
   { id: "personality", label: "Personality", glyph: "masks" }
 ];
@@ -812,6 +828,188 @@ function MemorySpace() {
   );
 }
 
+const HARDWARE_POLL_MS = 1800;
+
+function metricValue(metric: HardwareMetric): string {
+  if (metric.value === null) return "N/A";
+  if (metric.unit === "text") return String(metric.value);
+  return `${metric.value}${metric.unit === "count" ? "" : ` ${metric.unit}`}`;
+}
+
+function metricPercent(metric: HardwareMetric): number {
+  if (metric.value === null) return 0;
+  if (metric.unit === "%") return Math.max(0, Math.min(100, metric.value));
+  return 0;
+}
+
+function metricClassName(metric: HardwareMetric): string {
+  return ["hardwareMetric", `hardwareMetric--${metric.status}`].join(" ");
+}
+
+function HardwareMetricTile({ glyph, metric }: { glyph: string; metric: HardwareMetric }) {
+  const percent = metricPercent(metric);
+  return (
+    <div className={metricClassName(metric)}>
+      <span className="hardwareMetric__icon">
+        <Glyph kind={glyph} size={17} />
+      </span>
+      <span className="hardwareMetric__body">
+        <span className="hardwareMetric__label">{metric.label}</span>
+        <strong>{metricValue(metric)}</strong>
+      </span>
+      {metric.unit === "%" ? (
+        <span className="hardwareMetric__bar" aria-hidden="true">
+          <i style={{ width: `${percent}%` }} />
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function HardwareGpuPanel({ gpu }: { gpu: HardwareGpuSnapshot }) {
+  return (
+    <section className="hardwareGpuPanel" aria-label={gpu.name}>
+      <header className="hardwareGpuPanel__head">
+        <span>
+          <Glyph kind="gauge" size={16} />
+        </span>
+        <strong>{gpu.name}</strong>
+        <code>{gpu.source}</code>
+      </header>
+      <div className="hardwareGrid">
+        <HardwareMetricTile glyph="gauge" metric={gpu.utilization} />
+        <HardwareMetricTile glyph="memory" metric={gpu.memoryUsed} />
+        <HardwareMetricTile glyph="memory" metric={gpu.memoryTotal} />
+        <HardwareMetricTile glyph="thermometer" metric={gpu.temperature} />
+        <HardwareMetricTile glyph="fan" metric={gpu.fanSpeed} />
+        <HardwareMetricTile glyph="zap" metric={gpu.powerDraw} />
+      </div>
+    </section>
+  );
+}
+
+function HardwareSpace() {
+  const [snapshot, setSnapshot] = useState<HardwareTelemetrySnapshot | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const refresh = () => {
+      void window.forgeShell?.getHardwareTelemetrySnapshot?.()
+        .then((next) => {
+          if (cancelled) return;
+          setSnapshot(next ?? null);
+          setError(next ? "" : "Telemetry unavailable");
+        })
+        .catch((caught) => {
+          if (cancelled) return;
+          setError(caught instanceof Error ? caught.message : "Telemetry unavailable");
+        })
+        .finally(() => {
+          if (!cancelled) {
+            timer = window.setTimeout(refresh, HARDWARE_POLL_MS);
+          }
+        });
+    };
+    refresh();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, []);
+
+  if (!snapshot) {
+    return (
+      <div className="brainCanvas__space">
+        <div className="hardwareDashboard hardwareDashboard--loading" role="status">
+          {error || "Loading telemetry"}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="brainCanvas__space">
+      <div className="hardwareDashboard">
+        <section className="hardwareSummary" aria-label="Hardware summary">
+          <div className="hardwareSummary__identity">
+            <span className="hardwareSummary__mark">
+              <Glyph kind="gauge" size={20} />
+            </span>
+            <span>
+              <strong>{snapshot.hostname}</strong>
+              <code>{snapshot.platform} / {snapshot.arch}</code>
+            </span>
+          </div>
+          <div className="hardwareSummary__proof">
+            <span>{new Date(snapshot.sampledAt).toLocaleTimeString()}</span>
+            <code>{snapshot.proofHash.slice(0, 12)}</code>
+          </div>
+        </section>
+
+        <section className="hardwareGovernor" aria-label="Compute budget">
+          <div>
+            <span>Monster budget</span>
+            <strong>{snapshot.governor.monsterBudgetPercent}%</strong>
+          </div>
+          <div>
+            <span>Banger budget</span>
+            <strong>{snapshot.governor.bangerBudgetPercent}%</strong>
+          </div>
+          <div>
+            <span>Profile</span>
+            <strong>{snapshot.governor.profile}</strong>
+          </div>
+          <div>
+            <span>Fan control</span>
+            <strong>{snapshot.governor.fanControl}</strong>
+          </div>
+        </section>
+
+        <div className="hardwareGrid hardwareGrid--core">
+          <HardwareMetricTile glyph="cpu" metric={snapshot.cpu.utilization} />
+          <HardwareMetricTile glyph="gauge" metric={snapshot.cpu.loadAverage} />
+          <HardwareMetricTile glyph="memory" metric={snapshot.memory.utilization} />
+          <HardwareMetricTile glyph="memory" metric={snapshot.memory.used} />
+          <HardwareMetricTile glyph="thermometer" metric={snapshot.thermal.systemTemperature} />
+          <div className="hardwareMetric hardwareMetric--ok">
+            <span className="hardwareMetric__icon">
+              <Glyph kind="cpu" size={17} />
+            </span>
+            <span className="hardwareMetric__body">
+              <span className="hardwareMetric__label">CPU cores</span>
+              <strong>{snapshot.cpu.cores}</strong>
+            </span>
+          </div>
+        </div>
+
+        <div className="hardwareGpuStack">
+          {snapshot.gpus.map((gpu) => (
+            <HardwareGpuPanel gpu={gpu} key={`${gpu.name}-${gpu.source}`} />
+          ))}
+        </div>
+
+        <section className="hardwareProcessPanel" aria-label="InGen process">
+          <header>
+            <Glyph kind="terminal" size={16} />
+            <strong>InGen process</strong>
+          </header>
+          {snapshot.topProcesses.map((item) => (
+            <div className="hardwareProcessRow" key={item.pid}>
+              <span>{item.name}</span>
+              <code>pid {item.pid}</code>
+              <strong>{item.memoryMb} MB</strong>
+            </div>
+          ))}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function GodelSpace() {
   return (
     <div className="brainCanvas__space">
@@ -901,6 +1099,7 @@ export function BrainCanvas({ onClose }: { onClose?: () => void }) {
       </div>
       {space === "codeacts" ? <CodeActsSpace /> : null}
       {space === "memory" ? <MemorySpace /> : null}
+      {space === "hardware" ? <HardwareSpace /> : null}
       {space === "godel" ? <GodelSpace /> : null}
       {space === "personality" ? <PersonalitySpace /> : null}
     </section>

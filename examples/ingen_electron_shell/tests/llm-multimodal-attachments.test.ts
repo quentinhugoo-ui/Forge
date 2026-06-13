@@ -11,7 +11,6 @@ const moduleLogosSource = readFileSync(join(process.cwd(), "src", "renderer", "m
 const storeSource = readFileSync(join(process.cwd(), "src", "renderer", "panels-chat-bottom-store.ts"), "utf8");
 const sidebarSource = readFileSync(join(process.cwd(), "src", "renderer", "SidebarSlice.tsx"), "utf8");
 const stylesSource = readFileSync(join(process.cwd(), "src", "renderer", "styles.css"), "utf8");
-const indexSource = readFileSync(join(process.cwd(), "index.html"), "utf8");
 const preloadCjsSource = readFileSync(join(process.cwd(), "preload.cjs"), "utf8");
 const brainSource = readFileSync(join(process.cwd(), "..", "..", "src", "brain.rs"), "utf8");
 const contractSource = readFileSync(join(process.cwd(), "contract", "src", "main.rs"), "utf8");
@@ -494,11 +493,11 @@ describe("LLM multimodal attachments", () => {
     expect(contractSource).toContain("BRAIN_MAPS_COMMAND");
     expect(mainSource).toContain("extractMapsCodeAct");
     expect(mainSource).toContain("navigateNativeWebExplorerToMaps");
-    expect(mainSource).toContain("nativeMapsView");
+    expect(mainSource).toContain("nativeMapsView: WebContentsView | null");
+    expect(mainSource).toContain("new WebContentsView");
+    expect(mainSource).toContain("attachNativeMapsView");
+    expect(mainSource).toContain("owner.contentView.addChildView(view)");
     expect(mainSource).toContain('partition: "persist:ingen-maps"');
-    expect(mainSource).toContain("webviewTag: true");
-    expect(mainSource).toContain('window.webContents.on("will-attach-webview"');
-    expect(mainSource).toContain("initialBlankAttach");
     expect(mainSource).toContain('webContents.send("forge:maps-codeact", request)');
     expect(mainSource).toContain('ipcMain.handle("forge:maps-show"');
     expect(mainSource).toContain('parsed.hostname === "earth.google.com"');
@@ -512,13 +511,9 @@ describe("LLM multimodal attachments", () => {
     expect(canvasSource).toContain("GoogleEarthIcon");
     expect(canvasSource).toContain("webExplorerModuleId");
     expect(canvasSource).toContain("canvasSurfaces--nativePager");
-    expect(canvasSource).toContain("ProprietaryEarthWebView");
-    expect(canvasSource).toContain("proprietaryEarthWebView");
+    expect(canvasSource).toContain("nativeMapsSlotRef");
     expect(stylesSource).toContain(".nativeBrowserPager");
     expect(stylesSource).toContain(".canvasSurfaces--nativePager .webExplorerNativeSlot");
-    expect(stylesSource).toContain(".proprietaryEarthWebView");
-    expect(indexSource).toContain("frame-src https://earth.google.com");
-    expect(indexSource).toContain("child-src https://earth.google.com");
     expect(canvasSource).toContain("showNativeMaps");
     expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Use Google Earth"]');
   });

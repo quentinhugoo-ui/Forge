@@ -1,18 +1,18 @@
 {
   "schema": "ingen.electron.final_cutover_audit.v2",
   "date": "2026-06-10",
-  "status": "cutover_complete",
+  "status": "blocked",
   "inputs": {
-    "ipc_manifest_hash": "00563e86065955c89a8b224c49fe0062a99b26ad32461646551da0a80b9ded49"
+    "ipc_manifest_hash": "5a93fe57558c70ffc4c0c5f8d64fd238d8bbd784bb0463a9f5b80bbe493437b9"
   },
   "checks": [
     {
       "id": "electron_product_shell_only",
-      "passed": true,
+      "passed": false,
       "severity": "blocker",
       "evidence": {
         "forbiddenTokenInProductText": false,
-        "removedNativeFront": true,
+        "removedNativeFront": false,
         "shellAssets": true
       }
     },
@@ -128,12 +128,23 @@
       }
     }
   ],
-  "blockers": [],
+  "blockers": [
+    {
+      "id": "electron_product_shell_only",
+      "passed": false,
+      "severity": "blocker",
+      "evidence": {
+        "forbiddenTokenInProductText": false,
+        "removedNativeFront": false,
+        "shellAssets": true
+      }
+    }
+  ],
   "warnings": [],
   "gates_to_run": [
     "npm.cmd run typecheck",
     "npm.cmd test",
     "npm.cmd run build"
   ],
-  "proof_hash": "c5f036b00044ff3397743b124d53835c1bf565c41869b0bc743481e864cdd82c"
+  "proof_hash": "072b26cd17e8480d8304383becff66933fcc536df35be2c764d66932f2ff6dfd"
 }

@@ -430,6 +430,66 @@ export interface SessionFilesSnapshot {
   proofHash: string;
 }
 
+export interface HardwareMetric {
+  label: string;
+  value: number | null;
+  unit: "%" | "GB" | "MB" | "MHz" | "RPM" | "C" | "W" | "count" | "text";
+  status: "ok" | "warning" | "critical" | "unavailable";
+}
+
+export interface HardwareGpuSnapshot {
+  name: string;
+  vendor: "nvidia" | "amd" | "intel" | "apple" | "unknown";
+  source: "nvidia-smi" | "linux-drm" | "system" | "unavailable";
+  utilization: HardwareMetric;
+  memoryUsed: HardwareMetric;
+  memoryTotal: HardwareMetric;
+  temperature: HardwareMetric;
+  fanSpeed: HardwareMetric;
+  powerDraw: HardwareMetric;
+}
+
+export interface HardwareProcessSnapshot {
+  pid: number;
+  name: string;
+  cpuPercent: number;
+  memoryMb: number;
+}
+
+export interface HardwareTelemetrySnapshot {
+  schema: "ingen.hardware.telemetry.snapshot.v1";
+  platform: NodeJS.Platform | "unknown";
+  arch: string;
+  hostname: string;
+  sampledAt: string;
+  cpu: {
+    model: string;
+    cores: number;
+    utilization: HardwareMetric;
+    loadAverage: HardwareMetric;
+  };
+  memory: {
+    used: HardwareMetric;
+    total: HardwareMetric;
+    utilization: HardwareMetric;
+  };
+  thermal: {
+    systemTemperature: HardwareMetric;
+    source: "linux-thermal" | "unavailable";
+  };
+  gpus: HardwareGpuSnapshot[];
+  topProcesses: HardwareProcessSnapshot[];
+  governor: {
+    profile: "quiet" | "balanced" | "performance";
+    monsterBudgetPercent: number;
+    bangerBudgetPercent: number;
+    controlAuthority: "app-budget-only" | "native-driver-ready";
+    fanControl: "locked";
+    notes: string[];
+  };
+  proofHash: string;
+}
+
 export interface ForgeShellApi extends GeneratedForgeShellApi {
   connectLlmProvider: (provider: LlmProviderConnectId) => Promise<LlmProviderConnectResult>;
   resetLlmProvider?: (provider: LlmProviderConnectId) => Promise<LlmProviderConnectResult>;
@@ -438,6 +498,7 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   onPanelsChatBottomSnapshotEvent?: (listener: (event: PanelsChatBottomSnapshotEvent) => void) => () => void;
   chooseWorkspaceFolder?: () => Promise<WorkspaceChoiceResult>;
   getWorkspaceFolder?: () => Promise<WorkspaceChoiceResult>;
+  getHardwareTelemetrySnapshot?: () => Promise<HardwareTelemetrySnapshot>;
   showWorkspaceInExplorer?: () => Promise<WorkspaceActionResult>;
   copyWorkspacePath?: () => Promise<WorkspaceActionResult>;
   copyWorkspaceBranchName?: () => Promise<WorkspaceActionResult>;

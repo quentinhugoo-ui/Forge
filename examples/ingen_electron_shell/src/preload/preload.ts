@@ -87,6 +87,9 @@ const forgeShell: ForgeShellApi = {
   getWorkspaceFolder() {
     return ipcRenderer.invoke("forge:get-workspace-folder");
   },
+  getHardwareTelemetrySnapshot() {
+    return ipcRenderer.invoke("forge:get-hardware-telemetry-snapshot");
+  },
   showWorkspaceInExplorer() {
     return ipcRenderer.invoke("forge:show-workspace-in-explorer");
   },

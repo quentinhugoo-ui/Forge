@@ -68,10 +68,10 @@ const BLOB_MOUSE_FLOAT_OFFSET = 84;
 
 /* Camera the shaders ray-march with; mirrored on the CPU to project the cursor
    onto the blob's z = 0 plane. Keep in sync with the shader `ro`/focal. */
-const BLOB_FOCAL = 1.78;
+const BLOB_FOCAL = 1.3;
 const BLOB_CAM_Z = 2.6;
 const BLOB_CAM_Y = 0.03;
-const BLOB_POINTER_REACH = 0.72;
+const BLOB_POINTER_REACH = 0.78;
 
 /* Live cursor shared between the React component and the render loop. */
 type BlobPointer = { x: number; y: number; over: boolean };
@@ -239,7 +239,8 @@ function createBlobScene(seed: number): BlobScene {
             fling = null;
           } else {
             const ease = 1 - (1 - fp) * (1 - fp);
-            const r = mix(fling.startR, Math.max(0.84, fling.startR + 0.32), ease);
+            /* Cap the flight so the flung piece never crosses the canvas. */
+            const r = mix(fling.startR, Math.min(0.8, Math.max(0.55, fling.startR + 0.3)), ease);
             out[o] = fling.dirX * r;
             out[o + 1] = fling.dirY * r;
             out[o + 2] = 0;
@@ -382,7 +383,7 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
   let colorTwo = vec3<f32>(0.745, 0.290, 0.114);
 
   let ro = vec3<f32>(0.0, 0.03, -2.6);
-  let rd = normalize(vec3<f32>(uv.x, upY, 1.78));
+  let rd = normalize(vec3<f32>(uv.x, upY, 1.3));
 
   /* Bounding-sphere clip: rays that miss the blob volume skip the march. */
   let b = dot(-ro, rd);
@@ -450,9 +451,10 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     }
   }
 
-  let vignette = 1.0 - smoothstep(0.49, 0.55, max(abs(uv.x), abs(uv.y)));
+  /* No viewing frame: the blob's own transparency bounds it, so it can fill
+     the whole canvas without a cropped edge. */
   let rgb = max(hueRotate(color, colorizeAngle(t)), vec3<f32>(0.0));
-  return vec4<f32>(min(rgb, vec3<f32>(1.0)), saturate(alpha * vignette));
+  return vec4<f32>(min(rgb, vec3<f32>(1.0)), saturate(alpha));
 }
 `;
 
@@ -566,7 +568,7 @@ void main() {
   vec3 colorTwo = vec3(0.745, 0.290, 0.114);
 
   vec3 ro = vec3(0.0, 0.03, -2.6);
-  vec3 rd = normalize(vec3(uv.x, upY, 1.78));
+  vec3 rd = normalize(vec3(uv.x, upY, 1.3));
 
   float b = dot(-ro, rd);
   float h2 = dot(ro, ro) - b * b;
@@ -629,9 +631,10 @@ void main() {
     }
   }
 
-  float vignette = 1.0 - smoothstep(0.49, 0.55, max(abs(uv.x), abs(uv.y)));
+  // No viewing frame: the blob's own transparency bounds it, so it can fill
+  // the whole canvas without a cropped edge.
   vec3 rgb = max(hueRotate(color, colorizeAngle(t)), vec3(0.0));
-  outColor = vec4(min(rgb, vec3(1.0)), sat(alpha * vignette));
+  outColor = vec4(min(rgb, vec3(1.0)), sat(alpha));
 }
 `;
 

@@ -1,4 +1,4 @@
-import { app, BrowserView, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserView, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell } from "electron";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
@@ -51,6 +51,10 @@ import {
   type HeaderSurfaceContract,
   type HeaderSurfaceSnapshot,
   type HeaderSnapshot,
+  type HardwareGpuSnapshot,
+  type HardwareMetric,
+  type HardwareProcessSnapshot,
+  type HardwareTelemetrySnapshot,
   type ComposerUploadPreview,
   type IpcError,
   type LlmProviderConnectId,
@@ -204,7 +208,7 @@ let nativeWebExplorerPendingUrl = "";
 let nativeWebExplorerTargetUrl = WEBEXPLORER_DEFAULT_URL;
 let nativeWebExplorerSessionConfigured = false;
 let nativeWebExplorerBoundsKey = "";
-let nativeMapsView: BrowserView | null = null;
+let nativeMapsView: WebContentsView | null = null;
 let nativeMapsOwner: BrowserWindow | null = null;
 let nativeMapsLoadedUrl = "";
 let nativeMapsPendingUrl = "";
@@ -751,6 +755,261 @@ async function isProviderRuntimeEncryptionAvailable(): Promise<boolean> {
 
 function hashJson(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+type CpuTimes = ReturnType<typeof cpus>[number]["times"];
+
+let previousCpuTimes: CpuTimes[] | null = null;
+
+function hardwareMetric(
+  label: string,
+  value: number | null,
+  unit: HardwareMetric["unit"],
+  status: HardwareMetric["status"] = value === null ? "unavailable" : "ok"
+): HardwareMetric {
+  return { label, value, unit, status };
+}
+
+function metricStatusPercent(value: number | null, warning: number, critical: number): HardwareMetric["status"] {
+  if (value === null) return "unavailable";
+  if (value >= critical) return "critical";
+  if (value >= warning) return "warning";
+  return "ok";
+}
+
+function metricStatusTemperature(value: number | null): HardwareMetric["status"] {
+  if (value === null) return "unavailable";
+  if (value >= 90) return "critical";
+  if (value >= 78) return "warning";
+  return "ok";
+}
+
+function roundMetric(value: number | null, digits = 1): number | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  const scale = 10 ** digits;
+  return Math.round(value * scale) / scale;
+}
+
+function cpuUtilizationPercent(): number | null {
+  const current = cpus().map((cpu) => cpu.times);
+  const previous = previousCpuTimes;
+  previousCpuTimes = current;
+  if (!previous || previous.length !== current.length) {
+    return null;
+  }
+  let idleDelta = 0;
+  let totalDelta = 0;
+  for (let index = 0; index < current.length; index += 1) {
+    const now = current[index];
+    const before = previous[index];
+    const idle = Math.max(0, now.idle - before.idle);
+    const total =
+      Math.max(0, now.user - before.user) +
+      Math.max(0, now.nice - before.nice) +
+      Math.max(0, now.sys - before.sys) +
+      Math.max(0, now.irq - before.irq) +
+      idle;
+    idleDelta += idle;
+    totalDelta += total;
+  }
+  if (totalDelta <= 0) {
+    return null;
+  }
+  return roundMetric(Math.max(0, Math.min(100, (1 - idleDelta / totalDelta) * 100)));
+}
+
+function parseNumber(value: string): number | null {
+  const parsed = Number.parseFloat(value.trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function emptyGpu(source: HardwareGpuSnapshot["source"] = "unavailable"): HardwareGpuSnapshot {
+  return {
+    name: "GPU unavailable",
+    vendor: "unknown",
+    source,
+    utilization: hardwareMetric("GPU load", null, "%"),
+    memoryUsed: hardwareMetric("VRAM used", null, "GB"),
+    memoryTotal: hardwareMetric("VRAM total", null, "GB"),
+    temperature: hardwareMetric("GPU temperature", null, "C"),
+    fanSpeed: hardwareMetric("Fan speed", null, "%"),
+    powerDraw: hardwareMetric("Power draw", null, "W")
+  };
+}
+
+function queryNvidiaGpus(): HardwareGpuSnapshot[] {
+  const result = spawnSync(
+    "nvidia-smi",
+    [
+      "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,fan.speed",
+      "--format=csv,noheader,nounits"
+    ],
+    { encoding: "utf8", stdio: "pipe", timeout: 1200, windowsHide: true }
+  );
+  if (result.status !== 0 || !result.stdout.trim()) {
+    return [];
+  }
+  return result.stdout
+    .trim()
+    .split(/\r?\n/)
+    .map((line): HardwareGpuSnapshot => {
+      const [name = "NVIDIA GPU", utilRaw = "", usedRaw = "", totalRaw = "", tempRaw = "", powerRaw = "", fanRaw = ""] = line
+        .split(",")
+        .map((part) => part.trim());
+      const utilization = parseNumber(utilRaw);
+      const memoryUsedGb = parseNumber(usedRaw) === null ? null : (parseNumber(usedRaw) as number) / 1024;
+      const memoryTotalGb = parseNumber(totalRaw) === null ? null : (parseNumber(totalRaw) as number) / 1024;
+      const temperature = parseNumber(tempRaw);
+      const fanSpeed = parseNumber(fanRaw);
+      return {
+        name,
+        vendor: "nvidia",
+        source: "nvidia-smi",
+        utilization: hardwareMetric("GPU load", roundMetric(utilization), "%", metricStatusPercent(utilization, 82, 94)),
+        memoryUsed: hardwareMetric("VRAM used", roundMetric(memoryUsedGb, 2), "GB"),
+        memoryTotal: hardwareMetric("VRAM total", roundMetric(memoryTotalGb, 2), "GB"),
+        temperature: hardwareMetric("GPU temperature", roundMetric(temperature), "C", metricStatusTemperature(temperature)),
+        fanSpeed: hardwareMetric("Fan speed", roundMetric(fanSpeed), "%", metricStatusPercent(fanSpeed, 80, 95)),
+        powerDraw: hardwareMetric("Power draw", roundMetric(parseNumber(powerRaw)), "W")
+      };
+    });
+}
+
+async function readFirstNumericFile(paths: string[], radix: 10 | 16 = 10): Promise<number | null> {
+  for (const filePath of paths) {
+    try {
+      const raw = (await readFile(filePath, "utf8")).trim();
+      const value = radix === 16 ? Number.parseInt(raw.replace(/^0x/i, ""), 16) : Number.parseFloat(raw);
+      if (Number.isFinite(value)) {
+        return value;
+      }
+    } catch {
+      // Try the next hardware probe path.
+    }
+  }
+  return null;
+}
+
+async function queryLinuxDrmGpu(): Promise<HardwareGpuSnapshot[]> {
+  if (process.platform !== "linux") {
+    return [];
+  }
+  try {
+    const { readdir } = await import("node:fs/promises");
+    const entries = await readdir("/sys/class/drm", { withFileTypes: true });
+    const cards = entries.filter((entry) => entry.isSymbolicLink() || entry.isDirectory()).map((entry) => entry.name).filter((name) => /^card\d+$/.test(name));
+    const gpus: HardwareGpuSnapshot[] = [];
+    for (const card of cards.slice(0, 4)) {
+      const base = `/sys/class/drm/${card}/device`;
+      const busy = await readFirstNumericFile([`${base}/gpu_busy_percent`]);
+      const vramTotal = await readFirstNumericFile([`${base}/mem_info_vram_total`]);
+      const vramUsed = await readFirstNumericFile([`${base}/mem_info_vram_used`]);
+      const vendorRaw = await readFirstNumericFile([`${base}/vendor`], 16);
+      const vendor = vendorRaw === 0x1002 ? "amd" : vendorRaw === 0x8086 ? "intel" : "unknown";
+      if (busy === null && vramTotal === null && vramUsed === null) {
+        continue;
+      }
+      gpus.push({
+        name: card,
+        vendor,
+        source: "linux-drm",
+        utilization: hardwareMetric("GPU load", roundMetric(busy), "%", metricStatusPercent(busy, 82, 94)),
+        memoryUsed: hardwareMetric("VRAM used", roundMetric(vramUsed === null ? null : vramUsed / 1024 ** 3, 2), "GB"),
+        memoryTotal: hardwareMetric("VRAM total", roundMetric(vramTotal === null ? null : vramTotal / 1024 ** 3, 2), "GB"),
+        temperature: hardwareMetric("GPU temperature", null, "C"),
+        fanSpeed: hardwareMetric("Fan speed", null, "%"),
+        powerDraw: hardwareMetric("Power draw", null, "W")
+      });
+    }
+    return gpus;
+  } catch {
+    return [];
+  }
+}
+
+async function queryLinuxSystemTemperature(): Promise<number | null> {
+  if (process.platform !== "linux") {
+    return null;
+  }
+  try {
+    const { readdir } = await import("node:fs/promises");
+    const zones = await readdir("/sys/class/thermal", { withFileTypes: true });
+    for (const zone of zones.filter((entry) => /^thermal_zone\d+$/.test(entry.name))) {
+      const value = await readFirstNumericFile([`/sys/class/thermal/${zone.name}/temp`]);
+      if (value !== null) {
+        return value > 1000 ? roundMetric(value / 1000) : roundMetric(value);
+      }
+    }
+  } catch {
+    // Thermal zones are optional on many Linux systems.
+  }
+  return null;
+}
+
+function topProcessSnapshot(): HardwareProcessSnapshot[] {
+  const current = process.cpuUsage();
+  return [
+    {
+      pid: process.pid,
+      name: "InGen Electron main",
+      cpuPercent: roundMetric((current.user + current.system) / 1_000_000, 2) ?? 0,
+      memoryMb: roundMetric(process.memoryUsage().rss / 1024 ** 2, 1) ?? 0
+    }
+  ];
+}
+
+async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
+  const os = await import("node:os");
+  const cpuUsage = cpuUtilizationPercent();
+  const allCpus = cpus();
+  const totalMemoryGb = os.totalmem() / 1024 ** 3;
+  const freeMemoryGb = os.freemem() / 1024 ** 3;
+  const usedMemoryGb = Math.max(0, totalMemoryGb - freeMemoryGb);
+  const memoryPercent = totalMemoryGb > 0 ? (usedMemoryGb / totalMemoryGb) * 100 : null;
+  const nvidiaGpus = queryNvidiaGpus();
+  const drmGpus = nvidiaGpus.length > 0 ? [] : await queryLinuxDrmGpu();
+  const systemTemperature = await queryLinuxSystemTemperature();
+  const snapshot: HardwareTelemetrySnapshot = {
+    schema: "ingen.hardware.telemetry.snapshot.v1",
+    platform: os.platform(),
+    arch: os.arch(),
+    hostname: os.hostname(),
+    sampledAt: new Date().toISOString(),
+    cpu: {
+      model: allCpus[0]?.model ?? "CPU",
+      cores: allCpus.length,
+      utilization: hardwareMetric("CPU load", cpuUsage, "%", metricStatusPercent(cpuUsage, 82, 94)),
+      loadAverage: hardwareMetric("Load average", roundMetric(os.loadavg()[0] ?? null, 2), "count")
+    },
+    memory: {
+      used: hardwareMetric("RAM used", roundMetric(usedMemoryGb, 2), "GB"),
+      total: hardwareMetric("RAM total", roundMetric(totalMemoryGb, 2), "GB"),
+      utilization: hardwareMetric("RAM load", roundMetric(memoryPercent), "%", metricStatusPercent(memoryPercent, 78, 90))
+    },
+    thermal: {
+      systemTemperature: hardwareMetric("System temperature", systemTemperature, "C", metricStatusTemperature(systemTemperature)),
+      source: systemTemperature === null ? "unavailable" : "linux-thermal"
+    },
+    gpus: [...nvidiaGpus, ...drmGpus],
+    topProcesses: topProcessSnapshot(),
+    governor: {
+      profile: "balanced",
+      monsterBudgetPercent: memoryPercent !== null && memoryPercent > 86 ? 35 : 65,
+      bangerBudgetPercent: memoryPercent !== null && memoryPercent > 86 ? 30 : 60,
+      controlAuthority: "app-budget-only",
+      fanControl: "locked",
+      notes: [
+        "Fan and power-profile writes stay locked until an OEM or driver API is explicitly promoted.",
+        "Monster and Banger should consume these budgets before scheduling local GPU work."
+      ]
+    },
+    proofHash: ""
+  };
+  if (snapshot.gpus.length === 0) {
+    snapshot.gpus = [emptyGpu()];
+  }
+  snapshot.proofHash = hashJson({ ...snapshot, proofHash: "" });
+  return snapshot;
 }
 
 function isLlmProviderConnectId(value: unknown): value is LlmProviderConnectId {
@@ -2394,26 +2653,6 @@ function transcriptHasAssistantResponse(transcript: TranscriptMessage[]): boolea
   );
 }
 
-function firstTurnSessionRenameInput(userMessageId: string, transcript: TranscriptMessage[]): OpenAiResponseInputItem[] {
-  if (!isFirstVisibleUserTurn(userMessageId, transcript) || transcriptHasAssistantResponse(transcript)) {
-    return [];
-  }
-  return [{
-    role: "user",
-    content: [{
-      type: "input_text",
-      text: [
-        "SESSION_TITLE_CODEACT_REQUIRED v1",
-        `Avant toute reponse de fond au premier message utilisateur, emets une ligne CodeAct interne exacte: ${BRAIN_RENAME_SESSION_COMMAND} title="titre court pertinent" reason="sujet identifie".`,
-        "N'ecris aucune phrase visible sur le renommage, le titre ou la session.",
-        "Le titre doit etre choisi par toi comme Codex ou Claude: 2 a 5 mots, nominal, naturel, specifique, pas une recopie de la demande utilisateur, pas seulement un nom propre.",
-        "Exemples de bons titres: Histoire de San Francisco, Decouverte de Kagoshima, Climat saisonnier Kagoshima, Recherche Airbnb Lanzarote.",
-        "Ensuite seulement, reponds normalement a la demande sans mentionner le renommage."
-      ].join("\n")
-    }]
-  }];
-}
-
 async function openAiResponseContent(userText: string, attachments: ProviderAttachment[]): Promise<OpenAiResponseContentPart[]> {
   const text = userTextWithAttachmentContext(userText, attachments);
   const content: OpenAiResponseContentPart[] = [
@@ -2463,7 +2702,6 @@ async function openAiResponseConversationInput(
         content: message.content
       } as OpenAiResponseInputItem;
     }),
-    ...firstTurnSessionRenameInput(userMessageId, transcript),
     {
       role: "user",
       content: await openAiResponseContent(userText, attachments)
@@ -3676,7 +3914,7 @@ function brainBootManifest(): string {
     `codeact_commands=${generalBrainCodeActCommands.join(" ")}`,
     `codeact_descriptions=${commandDescriptions}`,
     `codeact_routing_rules=${BRAIN_CODEACT_ROUTING_RULES}`,
-    `rule=Au premier message utilisateur de cette session: identifie le sujet, ecris un titre court pertinent, puis emets ${BRAIN_RENAME_SESSION_COMMAND} title="...".`,
+    `rule=Au premier message utilisateur de cette session: identifie le sujet, choisis un nom de chat court et pertinent, puis emets exactement /"Titre"_renamechat_. L'application utilise le champ entre guillemets pour remplacer "New session".`,
     "rule=Brain is the single source of truth for CodeAct command identities; do not invent or revive commands outside this manifest.",
     "rule=Use Brain memory/search before asking the user to repeat prior local session context.",
     `rule=If local code/files/project work needs a folder and no workspace is active, emit ${BRAIN_WORKSPACE_COMMAND}. This workspace rule does not apply to ${BRAIN_NEWIMAGE_COMMAND} or ${BRAIN_EDITIMAGE_COMMAND}.`
@@ -7011,7 +7249,7 @@ function loadNativeWebExplorerTarget(view: BrowserView, reason: string): void {
     });
 }
 
-function loadNativeMapsTarget(view: BrowserView, reason: string): void {
+function loadNativeMapsTarget(view: WebContentsView, reason: string): void {
   if (view.webContents.isDestroyed()) {
     return;
   }
@@ -7036,7 +7274,7 @@ function loadNativeMapsTarget(view: BrowserView, reason: string): void {
     });
 }
 
-function installNativeWebExplorerViewportFade(view: BrowserView): void {
+function installNativeWebExplorerViewportFade(view: BrowserView | WebContentsView): void {
   if (view.webContents.isDestroyed()) {
     return;
   }
@@ -7166,6 +7404,12 @@ function attachNativeWebExplorerView(owner: BrowserWindow, view: BrowserView): v
   owner.setTopBrowserView(view);
 }
 
+function attachNativeMapsView(owner: BrowserWindow, view: WebContentsView): void {
+  if (!owner.contentView.children.includes(view)) {
+    owner.contentView.addChildView(view);
+  }
+}
+
 function ensureNativeWebExplorerView(owner: BrowserWindow): BrowserView {
   if (nativeWebExplorerView && nativeWebExplorerOwner === owner && !nativeWebExplorerView.webContents.isDestroyed()) {
     attachNativeWebExplorerView(owner, nativeWebExplorerView);
@@ -7236,15 +7480,15 @@ function ensureNativeWebExplorerView(owner: BrowserWindow): BrowserView {
   return view;
 }
 
-function ensureNativeMapsView(owner: BrowserWindow): BrowserView {
+function ensureNativeMapsView(owner: BrowserWindow): WebContentsView {
   if (nativeMapsView && nativeMapsOwner === owner && !nativeMapsView.webContents.isDestroyed()) {
-    attachNativeWebExplorerView(owner, nativeMapsView);
+    attachNativeMapsView(owner, nativeMapsView);
     return nativeMapsView;
   }
   hideNativeMapsView();
   hideNativeWebExplorerView();
   configureNativeMapsSession();
-  const view = new BrowserView({
+  const view = new WebContentsView({
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -7261,7 +7505,7 @@ function ensureNativeMapsView(owner: BrowserWindow): BrowserView {
   nativeMapsLoadedUrl = "";
   nativeMapsPendingUrl = "";
   nativeMapsBoundsKey = "";
-  attachNativeWebExplorerView(owner, view);
+  attachNativeMapsView(owner, view);
   view.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://")) {
       void shell.openExternal(url);
@@ -7336,7 +7580,7 @@ function hideNativeMapsView(): void {
     return;
   }
   try {
-    owner?.removeBrowserView(view);
+    owner?.contentView.removeChildView(view);
   } catch (error) {
     console.warn("Native Maps view detach failed.", error);
   }
@@ -7408,7 +7652,6 @@ function showNativeMaps(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExp
   const expanded = expandNativeMapsBoundsForEarth(normalized, owner);
   view.setBounds(expanded);
   nativeMapsBoundsKey = `${expanded.x}:${expanded.y}:${expanded.width}:${expanded.height}`;
-  owner.setTopBrowserView(view);
   view.webContents.focus();
   console.info("Native Maps shown.", { bounds: expanded, requestedBounds: normalized, url: nativeMapsTargetUrl });
   loadNativeMapsTarget(view, "show");
@@ -8029,6 +8272,21 @@ function installTerminalIpc(): void {
     return workspaceChoiceResult(false);
   });
 
+  ipcMain.handle("forge:get-hardware-telemetry-snapshot", async (event): Promise<HardwareTelemetrySnapshot> => {
+    const snapshot = await hardwareTelemetrySnapshot();
+    if (!validateSender(event)) {
+      return {
+        ...snapshot,
+        governor: {
+          ...snapshot.governor,
+          notes: ["Hardware telemetry rejected by sender validation."]
+        },
+        proofHash: hashJson({ rejected: "bad_sender", sampledAt: snapshot.sampledAt })
+      };
+    }
+    return snapshot;
+  });
+
   ipcMain.handle("forge:choose-workspace-folder", async (event): Promise<WorkspaceChoiceResult> => {
     if (!validateSender(event)) {
       const proofHash = hashJson({ workspace: "choose", reason: "bad_sender" });
@@ -8421,7 +8679,7 @@ function firstTurnRuntimeSessionTitle(userText: string, assistantText: string): 
   if (!subject) {
     return "";
   }
-  const context = [userText, assistantText].join("\n");
+  const context = `${userText}\n${assistantText}`;
   if (/\b(?:vie|biograph|qui\s+est|portrait|ne\s+en|né\s+en|nee\s+en|née\s+en|mort\s+en|inventeur|president|président|ecrivain|écrivain|philosophe|scientifique|homme\s+d['’]etat)\b/i.test(context)) {
     return normalizeSessionTitle(`Biographie de ${subject}`);
   }
@@ -11443,26 +11701,9 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      webviewTag: true,
       backgroundThrottling: false,
       offscreen: false
     }
-  });
-  window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-    const src = typeof params.src === "string" ? params.src : "";
-    const initialBlankAttach = src === "" || src === "about:blank";
-    if (!initialBlankAttach && !isAllowedNativeMapsUrl(src)) {
-      event.preventDefault();
-      return;
-    }
-    const lockedPreferences = webPreferences as Record<string, unknown>;
-    delete lockedPreferences.preload;
-    delete lockedPreferences.preloadURL;
-    lockedPreferences.nodeIntegration = false;
-    lockedPreferences.contextIsolation = true;
-    lockedPreferences.sandbox = true;
-    lockedPreferences.webSecurity = true;
-    lockedPreferences.partition = "persist:ingen-maps";
   });
   primaryWindow = window;
   window.setTitle(labWindow ? "InGen Event Text Lab" : "InGen");
