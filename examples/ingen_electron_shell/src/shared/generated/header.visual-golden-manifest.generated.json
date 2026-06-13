@@ -1,0 +1,215 @@
+{
+  "schema": "ingen.electron.header_visual_golden_manifest.v1",
+  "slice_id": "header",
+  "source": "examples/ingen_electron_shell/scripts/capture-header-goldens.mjs",
+  "status": "captured",
+  "generated_by": "vite+playwright-buffer-screenshot",
+  "captures": [
+    {
+      "viewport": {
+        "id": "desktop",
+        "width": 1535,
+        "height": 786,
+        "deviceScaleFactor": 1
+      },
+      "screenshot": "reference_screenshots/electron/header/header-desktop.png",
+      "screenshot_sha256": "685d5a9c44ceb16d4c830e77e970d2f44ddd8be769c64659fd1acb00a34dad53",
+      "aria_snapshot": "reference_screenshots/electron/header/header-desktop.aria.yml",
+      "aria_sha256": "72b40be24baef2724c4c94f527563d0db3aa92a8151bfdc69300622c9dab07f1",
+      "metrics": {
+        "titlebar": {
+          "width": 1535,
+          "height": 38
+        },
+        "workspaceHeader": {
+          "width": 1248,
+          "height": 52,
+          "left": 287
+        },
+        "shadowLedger": {
+          "width": 1248,
+          "height": 51,
+          "overflowX": false,
+          "overflowY": false
+        },
+        "buttonCount": 11,
+        "buttons": [
+          {
+            "label": "Toggle left panel",
+            "width": 44,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Search sessions",
+            "width": 44,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Open WebExplorer",
+            "width": 44,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Open Banger",
+            "width": 44,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Open Trading",
+            "width": 44,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Minimize",
+            "width": 46,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Maximize",
+            "width": 46,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Close",
+            "width": 46,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Forge workspace",
+            "width": 30,
+            "height": 30,
+            "overflow": false
+          },
+          {
+            "label": "WebExplorer workspace",
+            "width": 30,
+            "height": 30,
+            "overflow": false
+          },
+          {
+            "label": "Toggle right panel",
+            "width": 30,
+            "height": 30,
+            "overflow": false
+          }
+        ],
+        "cls": 0
+      }
+    },
+    {
+      "viewport": {
+        "id": "narrow",
+        "width": 1180,
+        "height": 760,
+        "deviceScaleFactor": 1
+      },
+      "screenshot": "reference_screenshots/electron/header/header-narrow.png",
+      "screenshot_sha256": "399cb5e4370a66c5db887c4fe578b3e2b1dea049e12a6e0994b74fcfd083d2d5",
+      "aria_snapshot": "reference_screenshots/electron/header/header-narrow.aria.yml",
+      "aria_sha256": "72b40be24baef2724c4c94f527563d0db3aa92a8151bfdc69300622c9dab07f1",
+      "metrics": {
+        "titlebar": {
+          "width": 1180,
+          "height": 38
+        },
+        "workspaceHeader": {
+          "width": 893,
+          "height": 52,
+          "left": 287
+        },
+        "shadowLedger": {
+          "width": 893,
+          "height": 155,
+          "overflowX": false,
+          "overflowY": false
+        },
+        "buttonCount": 11,
+        "buttons": [
+          {
+            "label": "Toggle left panel",
+            "width": 44,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Search sessions",
+            "width": 44,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Open WebExplorer",
+            "width": 44,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Open Banger",
+            "width": 44,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Open Trading",
+            "width": 44,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Minimize",
+            "width": 46,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Maximize",
+            "width": 46,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Close",
+            "width": 46,
+            "height": 38,
+            "overflow": false
+          },
+          {
+            "label": "Forge workspace",
+            "width": 30,
+            "height": 30,
+            "overflow": false
+          },
+          {
+            "label": "WebExplorer workspace",
+            "width": 30,
+            "height": 30,
+            "overflow": false
+          },
+          {
+            "label": "Toggle right panel",
+            "width": 30,
+            "height": 30,
+            "overflow": false
+          }
+        ],
+        "cls": 0
+      }
+    }
+  ],
+  "gates": {
+    "expected_button_count": 11,
+    "max_cls": 0,
+    "no_shadow_ledger_overflow": true,
+    "min_icon_button_width": 32,
+    "min_icon_button_height": 32
+  },
+  "proof_hash": "ce76eeeb875dcf6bae637dbc0ef847fed51e07d680ae90acbb341873c645651c"
+}

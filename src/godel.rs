@@ -1,4 +1,4 @@
-//! Omega-5 Godel-machine substrate.
+﻿//! Omega-5 Godel-machine substrate.
 //!
 //! This module starts with the typed observer. Later Omega-5 caps add
 //! criteria, verification, proposal, application, and the closed loop.
@@ -932,29 +932,29 @@ mod tests {
 }
 
 pub mod fabric {
-//! Ω-5.0H-B — Content-Addressed Memory Fabric Simulator.
+//! Î©-5.0H-B â€” Content-Addressed Memory Fabric Simulator.
 //!
-//! Détournement *non armé* des concepts hardware identifiés dans
+//! DÃ©tournement *non armÃ©* des concepts hardware identifiÃ©s dans
 //! `docs/OMEGA_RAM_INTROSPECTION_IDEAS.md` :
 //!
-//!   * Idée #14 — FPGA DRAM controller indexé par hash de contenu plutôt
+//!   * IdÃ©e #14 â€” FPGA DRAM controller indexÃ© par hash de contenu plutÃ´t
 //!     que par adresse physique.
-//!   * Idée #10 — Battering-RAM-style interposer qui réécrit le bus
-//!     mémoire pour exposer un content-addressing au niveau silicon.
+//!   * IdÃ©e #10 â€” Battering-RAM-style interposer qui rÃ©Ã©crit le bus
+//!     mÃ©moire pour exposer un content-addressing au niveau silicon.
 //!
-//! **Sécurité** : ce module est PUREMENT logique. Aucun Rowhammer, aucun
+//! **SÃ©curitÃ©** : ce module est PUREMENT logique. Aucun Rowhammer, aucun
 //! DMA hors-process, aucun cold-boot, aucune lecture RAM cross-process.
-//! On modélise le comportement *attendu* d'un substrat content-addressed
-//! comme une structure de données Rust ordinaire — c'est la sandbox de
-//! validation qui précédera tout effort hardware réel.
+//! On modÃ©lise le comportement *attendu* d'un substrat content-addressed
+//! comme une structure de donnÃ©es Rust ordinaire â€” c'est la sandbox de
+//! validation qui prÃ©cÃ©dera tout effort hardware rÃ©el.
 //!
 //! Le simulateur expose :
-//!   * Un store content-addressed (`hash → bytes`, immuable).
-//!   * Un mapping virtuel (`VirtualAddr → ContentHash`) qui peut être
-//!     remappé/migré sans copier les bytes.
-//!   * Une allocation déterministe de `PhysicalSlot` par hash.
+//!   * Un store content-addressed (`hash â†’ bytes`, immuable).
+//!   * Un mapping virtuel (`VirtualAddr â†’ ContentHash`) qui peut Ãªtre
+//!     remappÃ©/migrÃ© sans copier les bytes.
+//!   * Une allocation dÃ©terministe de `PhysicalSlot` par hash.
 //!   * Un TLB minimal (`VirtualAddr` ever-resolved set) pour distinguer
-//!     les premiers accès (miss) des accès subséquents (hit).
+//!     les premiers accÃ¨s (miss) des accÃ¨s subsÃ©quents (hit).
 //!   * Un `fabric_hash` canonique invariant sous l'ordre d'insertion.
 
 use std::collections::BTreeMap;
@@ -974,8 +974,8 @@ const TLB_CAPACITY: usize = 64;
 pub struct ContentHash([u8; 32]);
 
 impl ContentHash {
-    /// Calcule le hash d'un blob avec un domaine de séparation explicite.
-    /// Utiliser ce constructeur garantit qu'aucune collision ne peut être
+    /// Calcule le hash d'un blob avec un domaine de sÃ©paration explicite.
+    /// Utiliser ce constructeur garantit qu'aucune collision ne peut Ãªtre
     /// induite depuis un autre contexte (autre crate, autre niveau de hash).
     pub fn for_bytes(bytes: &[u8]) -> Self {
         let mut h = Sha256::new();
@@ -997,18 +997,18 @@ impl ContentHash {
     }
 }
 
-/// Adresse virtuelle = poignée logique. Aucune sémantique physique.
+/// Adresse virtuelle = poignÃ©e logique. Aucune sÃ©mantique physique.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VirtualAddr(pub u64);
 
-/// Slot physique alloué dans le substrat simulé. Monotone, déterministe
+/// Slot physique allouÃ© dans le substrat simulÃ©. Monotone, dÃ©terministe
 /// dans l'ordre d'insertion d'un hash unique. **Pas inclus dans
-/// `fabric_hash`** — c'est un détail d'allocation runtime, pas un état
+/// `fabric_hash`** â€” c'est un dÃ©tail d'allocation runtime, pas un Ã©tat
 /// content-addressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PhysicalSlot(pub u64);
 
-/// Page indexée par contenu. Les bytes sont **immuables une fois indexés** —
+/// Page indexÃ©e par contenu. Les bytes sont **immuables une fois indexÃ©s** â€”
 /// aucune API publique du fabric ne permet de les mutater.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FabricPage {
@@ -1021,20 +1021,20 @@ pub struct FabricPage {
 pub struct FabricMetrics {
     /// Resolves cache hits (TLB hits).
     pub hits: u64,
-    /// Resolves cache misses (TLB misses, premier accès à une addr).
+    /// Resolves cache misses (TLB misses, premier accÃ¨s Ã  une addr).
     pub misses: u64,
-    /// Nombre de remaps explicites ou implicites (insert sur addr déjà mappée).
+    /// Nombre de remaps explicites ou implicites (insert sur addr dÃ©jÃ  mappÃ©e).
     pub remaps: u64,
-    /// Dédoublonnages : insertion d'un hash déjà présent dans le store.
+    /// DÃ©doublonnages : insertion d'un hash dÃ©jÃ  prÃ©sent dans le store.
     pub dedupes: u64,
 }
 
-/// Erreur retournée par les opérations de remap/migrate.
+/// Erreur retournÃ©e par les opÃ©rations de remap/migrate.
 #[derive(Debug, PartialEq, Eq)]
 pub enum FabricError {
     /// `remap` cible un hash absent du page store.
     UnknownHash(ContentHash),
-    /// `migrate_addr` source non mappée.
+    /// `migrate_addr` source non mappÃ©e.
     UnknownAddr(VirtualAddr),
 }
 
@@ -1055,15 +1055,15 @@ impl std::error::Error for FabricError {}
 // Fabric
 // ---------------------------------------------------------------------------
 
-/// Substrat mémoire content-addressed simulé.
+/// Substrat mÃ©moire content-addressed simulÃ©.
 ///
 /// Garanties :
-///   * Pages immuables une fois indexées (aucune mutation publique).
-///   * Dédoublonnage automatique : deux insertions avec mêmes bytes
-///     partagent le même slot et le même hash.
+///   * Pages immuables une fois indexÃ©es (aucune mutation publique).
+///   * DÃ©doublonnage automatique : deux insertions avec mÃªmes bytes
+///     partagent le mÃªme slot et le mÃªme hash.
 ///   * `migrate_addr` / `remap` n'effectuent **aucune copie de bytes**,
 ///     uniquement la modification du mapping.
-///   * `fabric_hash` est un hash canonique de l'état content-addressed
+///   * `fabric_hash` est un hash canonique de l'Ã©tat content-addressed
 ///     (pages + mapping), invariant sous l'ordre d'insertion.
 #[derive(Debug, Default)]
 pub struct ContentAddressedFabric {
@@ -1080,9 +1080,9 @@ impl ContentAddressedFabric {
         Self::default()
     }
 
-    /// Insère un blob et le mappe à `addr`. Retourne le `ContentHash`.
-    /// Si le blob existe déjà → dédoublonnage (pas de nouvelle copie).
-    /// Si `addr` était déjà mappée → comptabilisé comme `remap`.
+    /// InsÃ¨re un blob et le mappe Ã  `addr`. Retourne le `ContentHash`.
+    /// Si le blob existe dÃ©jÃ  â†’ dÃ©doublonnage (pas de nouvelle copie).
+    /// Si `addr` Ã©tait dÃ©jÃ  mappÃ©e â†’ comptabilisÃ© comme `remap`.
     pub fn insert(&mut self, addr: VirtualAddr, bytes: Vec<u8>) -> ContentHash {
         let hash = ContentHash::for_bytes(&bytes);
         if self.pages.contains_key(&hash) {
@@ -1099,8 +1099,8 @@ impl ContentAddressedFabric {
         hash
     }
 
-    /// Résout `addr` en page. Met à jour le TLB et les métriques.
-    /// Premier accès = miss, suivants = hit.
+    /// RÃ©sout `addr` en page. Met Ã  jour le TLB et les mÃ©triques.
+    /// Premier accÃ¨s = miss, suivants = hit.
     pub fn resolve(&mut self, addr: VirtualAddr) -> Option<&FabricPage> {
         let hash = *self.mapping.get(&addr)?;
         if self.tlb.iter().any(|a| *a == addr) {
@@ -1128,7 +1128,7 @@ impl ContentAddressedFabric {
     }
 
     /// Migre le mapping de `from` vers `to`. Aucune copie de bytes.
-    /// Après migration, `from` est démappée ; `to` pointe vers le hash
+    /// AprÃ¨s migration, `from` est dÃ©mappÃ©e ; `to` pointe vers le hash
     /// d'origine. Erreur si `from` n'existe pas.
     pub fn migrate_addr(
         &mut self,
@@ -1151,15 +1151,15 @@ impl ContentAddressedFabric {
         self.metrics
     }
 
-    /// Hash canonique de l'état content-addressed.
+    /// Hash canonique de l'Ã©tat content-addressed.
     ///
     /// Construction :
     ///   1. Domain separator `SCAN-OMEGA-FABRIC-STATE-V1`.
-    ///   2. Pages triées par `ContentHash` (ordre BTreeMap natif).
-    ///   3. Mapping trié par `VirtualAddr` (ordre BTreeMap natif).
+    ///   2. Pages triÃ©es par `ContentHash` (ordre BTreeMap natif).
+    ///   3. Mapping triÃ© par `VirtualAddr` (ordre BTreeMap natif).
     ///
-    /// Le `next_slot`, le TLB, et les métriques runtime ne sont **PAS**
-    /// inclus — ils dépendent de l'historique d'opérations, pas de l'état
+    /// Le `next_slot`, le TLB, et les mÃ©triques runtime ne sont **PAS**
+    /// inclus â€” ils dÃ©pendent de l'historique d'opÃ©rations, pas de l'Ã©tat
     /// content-addressed final.
     pub fn fabric_hash(&self) -> [u8; 32] {
         let mut h = Sha256::new();
@@ -1181,7 +1181,7 @@ impl ContentAddressedFabric {
         out
     }
 
-    /// Slot physique alloué pour un hash, si présent. Utile pour debug ;
+    /// Slot physique allouÃ© pour un hash, si prÃ©sent. Utile pour debug ;
     /// pas inclus dans `fabric_hash` (allocation runtime).
     pub fn physical_slot_for(&self, hash: &ContentHash) -> Option<PhysicalSlot> {
         self.slots.get(hash).copied()
@@ -1211,8 +1211,8 @@ mod tests {
         let h2 = ContentHash::for_bytes(&bytes);
         assert_eq!(h1, h2);
 
-        // Et via le fabric : deux insertions de mêmes bytes à des addrs
-        // différentes produisent le même hash.
+        // Et via le fabric : deux insertions de mÃªmes bytes Ã  des addrs
+        // diffÃ©rentes produisent le mÃªme hash.
         let mut f = fab();
         let a = f.insert(VirtualAddr(1), vec![10, 20, 30]);
         let b = f.insert(VirtualAddr(2), vec![10, 20, 30]);
@@ -1260,11 +1260,11 @@ mod tests {
         let h = f.insert(VirtualAddr(1), vec![7, 8, 9]);
         let pages_before = f.pages.len();
 
-        // Remap addr=2 vers le même hash → pas de nouvelle page.
+        // Remap addr=2 vers le mÃªme hash â†’ pas de nouvelle page.
         f.remap(VirtualAddr(2), h).expect("remap");
-        assert_eq!(f.pages.len(), pages_before, "remap doit pas créer de page");
+        assert_eq!(f.pages.len(), pages_before, "remap doit pas crÃ©er de page");
 
-        // Les deux addrs résolvent au même contenu.
+        // Les deux addrs rÃ©solvent au mÃªme contenu.
         let p1_bytes = f.resolve(VirtualAddr(1)).unwrap().bytes.clone();
         let p2_bytes = f.resolve(VirtualAddr(2)).unwrap().bytes.clone();
         assert_eq!(p1_bytes, p2_bytes);
@@ -1277,9 +1277,9 @@ mod tests {
         let h = f.insert(VirtualAddr(10), vec![100, 101, 102]);
         f.migrate_addr(VirtualAddr(10), VirtualAddr(20)).expect("migrate");
 
-        // L'ancienne addr est démappée.
+        // L'ancienne addr est dÃ©mappÃ©e.
         assert!(f.resolve(VirtualAddr(10)).is_none());
-        // La nouvelle addr résout vers le même hash.
+        // La nouvelle addr rÃ©sout vers le mÃªme hash.
         let page = f.resolve(VirtualAddr(20)).expect("new addr");
         assert_eq!(page.hash, h);
         assert_eq!(page.bytes, vec![100, 101, 102]);
@@ -1291,7 +1291,7 @@ mod tests {
     fn unknown_addr_returns_none() {
         let mut f = fab();
         f.insert(VirtualAddr(1), vec![1]);
-        // Addr jamais insérée.
+        // Addr jamais insÃ©rÃ©e.
         assert!(f.resolve(VirtualAddr(9999)).is_none());
     }
 
@@ -1299,7 +1299,7 @@ mod tests {
     fn unknown_hash_remap_errors() {
         let mut f = fab();
         f.insert(VirtualAddr(1), vec![1, 2, 3]);
-        // Hash arbitraire jamais inséré.
+        // Hash arbitraire jamais insÃ©rÃ©.
         let bogus = ContentHash::from_bytes([0xAA; 32]);
         let result = f.remap(VirtualAddr(2), bogus);
         assert!(matches!(result, Err(FabricError::UnknownHash(_))));
@@ -1316,29 +1316,29 @@ mod tests {
         assert_eq!(h1, h2);
         assert_eq!(h2, h3);
 
-        // Accès en lecture (resolve) ne change pas le hash canonique
-        // (les métriques mutent mais ne participent pas au hash).
+        // AccÃ¨s en lecture (resolve) ne change pas le hash canonique
+        // (les mÃ©triques mutent mais ne participent pas au hash).
         let _ = f.resolve(VirtualAddr(1));
         let _ = f.resolve(VirtualAddr(1));
         let h4 = f.fabric_hash();
-        assert_eq!(h1, h4, "fabric_hash doit être insensible aux resolves");
+        assert_eq!(h1, h4, "fabric_hash doit Ãªtre insensible aux resolves");
     }
 
     #[test]
     fn fabric_hash_order_independent() {
-        // Insertion ordre A → B
+        // Insertion ordre A â†’ B
         let mut a = fab();
         a.insert(VirtualAddr(1), vec![1, 2, 3]);
         a.insert(VirtualAddr(2), vec![4, 5, 6]);
         a.insert(VirtualAddr(3), vec![7, 8, 9]);
 
-        // Insertion ordre B → A → C (et donc allocation slots différente)
+        // Insertion ordre B â†’ A â†’ C (et donc allocation slots diffÃ©rente)
         let mut b = fab();
         b.insert(VirtualAddr(2), vec![4, 5, 6]);
         b.insert(VirtualAddr(1), vec![1, 2, 3]);
         b.insert(VirtualAddr(3), vec![7, 8, 9]);
 
-        // Même état content-addressed final → même fabric_hash.
+        // MÃªme Ã©tat content-addressed final â†’ mÃªme fabric_hash.
         assert_eq!(a.fabric_hash(), b.fabric_hash());
     }
 
@@ -1359,7 +1359,7 @@ mod tests {
         assert_eq!(f.metrics().hits, 3);
         assert_eq!(f.metrics().misses, 1);
 
-        // Une remap invalide le TLB pour cette addr → next resolve = miss.
+        // Une remap invalide le TLB pour cette addr â†’ next resolve = miss.
         let h = ContentHash::for_bytes(&[42]);
         f.remap(VirtualAddr(1), h).unwrap();
         let _ = f.resolve(VirtualAddr(1)).unwrap();
@@ -1372,19 +1372,19 @@ mod tests {
         let original = vec![1, 2, 3, 4, 5];
         let h = f.insert(VirtualAddr(1), original.clone());
 
-        // Snapshot des bytes après insertion.
+        // Snapshot des bytes aprÃ¨s insertion.
         let snap = f.resolve(VirtualAddr(1)).unwrap().bytes.clone();
         assert_eq!(snap, original);
 
-        // Insertions répétées avec mêmes bytes ne modifient pas la page.
+        // Insertions rÃ©pÃ©tÃ©es avec mÃªmes bytes ne modifient pas la page.
         for _ in 0..5 {
             f.insert(VirtualAddr(1), original.clone());
         }
         let after_reinserts = f.resolve(VirtualAddr(1)).unwrap().bytes.clone();
         assert_eq!(after_reinserts, original);
 
-        // Insertion avec bytes différents crée une NOUVELLE page (hash
-        // différent), n'altère pas la page d'origine.
+        // Insertion avec bytes diffÃ©rents crÃ©e une NOUVELLE page (hash
+        // diffÃ©rent), n'altÃ¨re pas la page d'origine.
         let h2 = f.insert(VirtualAddr(2), vec![9, 9, 9]);
         assert_ne!(h, h2);
 
@@ -1398,7 +1398,7 @@ mod tests {
         assert_eq!(migrated, original);
     }
 
-    // ---- Tests bonus pour blindage supplémentaire ----
+    // ---- Tests bonus pour blindage supplÃ©mentaire ----
 
     #[test]
     fn physical_slot_is_assigned_per_unique_hash() {
@@ -1409,7 +1409,7 @@ mod tests {
         let s2 = f.physical_slot_for(&h2).unwrap();
         assert_ne!(s1, s2);
 
-        // Insérer le même contenu ne crée pas un nouveau slot.
+        // InsÃ©rer le mÃªme contenu ne crÃ©e pas un nouveau slot.
         let h3 = f.insert(VirtualAddr(3), vec![1]);
         assert_eq!(h3, h1);
         assert_eq!(f.physical_slot_for(&h3).unwrap(), s1);
@@ -1433,7 +1433,7 @@ mod tests {
     fn hash_for_bytes_uses_domain_separation() {
         // Domaine garantit qu'un hash de bytes au sein du fabric ne peut
         // pas accidentellement collisionner avec un hash externe sur les
-        // mêmes bytes (différent domaine, différent préfixe).
+        // mÃªmes bytes (diffÃ©rent domaine, diffÃ©rent prÃ©fixe).
         let h_fabric = ContentHash::for_bytes(b"abc");
         let mut raw = Sha256::new();
         raw.update(b"abc");
@@ -1459,26 +1459,26 @@ use crate::godel::hardware::scan_bit_fragility;
 use crate::godel::observer::{capture, frame_hash};
 use crate::kasm::{Node, Program, Target, Ty};
 use crate::monster::read_cycles;
-use crate::{MonsterNode, MonsterTrainingConfig};
+use crate::MonsterNode;
 
-/// V8 Solution C — bench timing avec filtre RDTSC pour rejeter les
+/// V8 Solution C â€” bench timing avec filtre RDTSC pour rejeter les
 /// samples interrompus par le scheduler. Principe :
 ///
-/// 1. On mesure simultanément le wall-time (ns) ET les cycles CPU
-///    (RDTSC) autour de l'exécution.
-/// 2. Le ratio cycles/ns approxime la fréquence CPU effective. Si
-///    la fréquence apparente s'effondre (< 0.1 cycle/ns), c'est qu'un
-///    interrupt + halt-state a "volé" du wall-time pendant que les
-///    cycles n'avançaient pas (le CPU était endormi). Sample biaisé,
-///    rejeté.
-/// 3. On retente jusqu'à atteindre `target` samples valides ou
-///    `target * 3` tentatives totales. La médiane des samples valides
-///    est retournée — résistante aux outliers que ce filtre n'aurait
-///    pas détectés.
+/// 1. On mesure simultanÃ©ment le wall-time (ns) ET les cycles CPU
+///    (RDTSC) autour de l'exÃ©cution.
+/// 2. Le ratio cycles/ns approxime la frÃ©quence CPU effective. Si
+///    la frÃ©quence apparente s'effondre (< 0.1 cycle/ns), c'est qu'un
+///    interrupt + halt-state a "volÃ©" du wall-time pendant que les
+///    cycles n'avanÃ§aient pas (le CPU Ã©tait endormi). Sample biaisÃ©,
+///    rejetÃ©.
+/// 3. On retente jusqu'Ã  atteindre `target` samples valides ou
+///    `target * 3` tentatives totales. La mÃ©diane des samples valides
+///    est retournÃ©e â€” rÃ©sistante aux outliers que ce filtre n'aurait
+///    pas dÃ©tectÃ©s.
 ///
-/// Sur architecture non-x86_64, `read_cycles` retourne 0 → le filtre
-/// est désactivé et on retombe sur le comportement V7 (5 samples,
-/// médiane brute). Aucune régression.
+/// Sur architecture non-x86_64, `read_cycles` retourne 0 â†’ le filtre
+/// est dÃ©sactivÃ© et on retombe sur le comportement V7 (5 samples,
+/// mÃ©diane brute). Aucune rÃ©gression.
 fn measure_filtered<F: FnMut()>(mut f: F, target: usize) -> u64 {
     let max_attempts = target * 3;
     let mut samples: Vec<u64> = Vec::with_capacity(max_attempts);
@@ -1491,9 +1491,9 @@ fn measure_filtered<F: FnMut()>(mut f: F, target: usize) -> u64 {
         let elapsed_ns = inst.elapsed().as_nanos() as u64;
         let cyc_after = read_cycles();
         let cycles = cyc_after.saturating_sub(cyc_before);
-        // Sur x86_64 : si cycles est non-zéro et que le ratio est
+        // Sur x86_64 : si cycles est non-zÃ©ro et que le ratio est
         // anormalement bas (< 0.1 cycle/ns soit < 100 cycles pour
-        // 1000 ns), le sample est probablement interrompu — on jette.
+        // 1000 ns), le sample est probablement interrompu â€” on jette.
         // Sinon (non-x86 ou ratio normal) on garde.
         if cycles > 0 && elapsed_ns > 0 {
             let ratio_per_kns = cycles.saturating_mul(1000) / elapsed_ns;
@@ -1610,20 +1610,15 @@ impl Benchmark for MonsterTrainAffineBench {
     }
 
     fn run(&self, node: &MonsterNode) -> u64 {
-        let examples = [(-4, -25), (-1, -4), (0, 3), (2, 17), (5, 38)];
-        let config = MonsterTrainingConfig {
-            max_nodes: 6,
-            beam_width: 512,
-            progress: None,
-        };
+        let source = forge_affine_newcompute_source(6_000, Some(512));
         // V8 Solution C : measure_filtered rejette les samples
-        // interrompus par le scheduler OS via détection RDTSC. La
-        // médiane des samples valides remonte ; sur 5 samples cibles
-        // avec ~15 % de bruit interruption, on récupère typiquement
+        // interrompus par le scheduler OS via dÃ©tection RDTSC. La
+        // mÃ©diane des samples valides remonte ; sur 5 samples cibles
+        // avec ~15 % de bruit interruption, on rÃ©cupÃ¨re typiquement
         // 4-5 samples propres en 6-8 tentatives.
         measure_filtered(
             || {
-                let _ = node.train_i64_program(&examples, config.clone());
+                let _ = node.prepare_forge_source(&source, std::iter::empty::<String>());
             },
             5,
         )
@@ -1633,6 +1628,14 @@ impl Benchmark for MonsterTrainAffineBench {
 #[derive(Debug, Clone, Copy)]
 pub struct FabricResolveLatencyBench;
 
+fn forge_affine_newcompute_source(max_steps: u64, parallelism: Option<usize>) -> String {
+    let parallelism = parallelism
+        .map(|value| format!("parallelism={value}\n"))
+        .unwrap_or_default();
+    format!(
+        "forge_module:\n  module godel_affine_newcompute version 1\nforge_imports:\n  none\nforge_constants:\n  const a: f64 unit none = 7.0\n  const b: f64 unit none = 3.0\nforge_functions:\n  fn affine(x: f64) -> f64 {{ return a * x + b }}\nforge_program:\n  let y = affine(x)\n  emit y: f64 = y\nforge_inputs:\n  param x: f64 unit none bounds [-10.0,10.0] nominal 0.0\nforge_outputs:\n  output y: f64 unit none handoff scalar\nforge_constraints:\n  assert finite(y)\n  assert bounds(y,[-100.0,100.0])\nforge_samples:\n  case basic seed 1 {{ given x=2.0; expect y approx 17.0 tolerance 0.01 }}\nforge_cost:\nmax_steps={max_steps}\nmax_memory_mb=16\nprecision=f64\n{parallelism}artifact_handoff:\nproof_hash,output_hash,compact_result"
+    )
+}
 impl Benchmark for FabricResolveLatencyBench {
     fn name(&self) -> &str {
         "FabricResolveLatencyBench"
@@ -2314,6 +2317,103 @@ pub fn bench_metric_key(name: &str) -> String {
     format!("{BENCH_METRIC_PREFIX}{name}")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticRecallVerification {
+    pub verification_hash: String,
+    pub before_frame_hash: String,
+    pub after_frame_hash: String,
+    pub accepted: bool,
+    pub reasons: Vec<String>,
+}
+
+pub fn verify_semantic_note_recall(
+    note_hash: &str,
+    evidence_hash: &str,
+    recall_hash: &str,
+    recalled_note_hashes: &[String],
+) -> SemanticRecallVerification {
+    let anchored = !evidence_hash.trim().is_empty();
+    let recalled = recalled_note_hashes.iter().any(|candidate| candidate == note_hash);
+    let mut before_metrics = std::collections::BTreeMap::new();
+    before_metrics.insert("semantic_note_expected".to_string(), 1);
+    before_metrics.insert("semantic_anchor_expected".to_string(), anchored as u64);
+    before_metrics.insert("semantic_recall_requested".to_string(), 1);
+    before_metrics.insert("semantic_note_hash_len".to_string(), note_hash.len() as u64);
+    before_metrics.insert("semantic_evidence_hash_len".to_string(), evidence_hash.len() as u64);
+    before_metrics.insert("semantic_recall_hash_len".to_string(), recall_hash.len() as u64);
+    let mut after_metrics = before_metrics.clone();
+    after_metrics.insert("semantic_note_recalled".to_string(), recalled as u64);
+    after_metrics.insert(
+        "semantic_recalled_note_count".to_string(),
+        recalled_note_hashes.len() as u64,
+    );
+
+    let before = ObserverFrame {
+        epoch: 0,
+        programs_loaded: Vec::new(),
+        oracles_active: Vec::new(),
+        cache_hot_paths: Vec::new(),
+        metrics: before_metrics,
+    };
+    let after = ObserverFrame {
+        epoch: 1,
+        programs_loaded: Vec::new(),
+        oracles_active: Vec::new(),
+        cache_hot_paths: Vec::new(),
+        metrics: after_metrics,
+    };
+    let before_frame_hash = hex_frame_hash(&crate::godel::observer::frame_hash(&before));
+    let after_frame_hash = hex_frame_hash(&crate::godel::observer::frame_hash(&after));
+
+    let mut reasons = Vec::new();
+    if !anchored {
+        reasons.push("semantic note is missing evidence hash".to_string());
+    }
+    if !recalled {
+        reasons.push("semantic note hash was not present in bounded recall".to_string());
+    }
+    let accepted = reasons.is_empty();
+    let canonical = format!(
+        "forge-godel-semantic-recall-v1\nnote_hash={}\nevidence_hash={}\nrecall_hash={}\naccepted={}\nbefore_frame_hash={}\nafter_frame_hash={}\nreasons={}\n",
+        sanitize_semantic_line(note_hash),
+        sanitize_semantic_line(evidence_hash),
+        sanitize_semantic_line(recall_hash),
+        accepted,
+        before_frame_hash,
+        after_frame_hash,
+        reasons
+            .iter()
+            .map(|reason| sanitize_semantic_line(reason))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+    SemanticRecallVerification {
+        verification_hash: crate::Hash::for_blob(canonical.as_bytes()).as_hex(),
+        before_frame_hash,
+        after_frame_hash,
+        accepted,
+        reasons,
+    }
+}
+
+fn sanitize_semantic_line(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch == '\n' || ch == '\r' { ' ' } else { ch })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+fn hex_frame_hash(bytes: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
 fn allowed_regression_score(before_score: u64, epsilon_bps: u64) -> u64 {
     before_score.saturating_add(before_score.saturating_mul(epsilon_bps) / 10_000)
 }
@@ -2765,14 +2865,14 @@ mod tests {
 }
 
 pub mod applicator {
-//! Ω-5.4 — Applicator : applique un `Rewrite` à un état config mutable
+//! Î©-5.4 â€” Applicator : applique un `Rewrite` Ã  un Ã©tat config mutable
 //! (whitelist + bornes), produit un `AppliedSnapshot` permettant un
 //! rollback parfait byte-pour-byte.
 //!
-//! Les rewrites du first mile ne touchent QUE des paramètres runtime
-//! whitelistés (`beam_width`, `max_nodes`, `oracle_threshold`, `fuel`).
+//! Les rewrites du first mile ne touchent QUE des paramÃ¨tres runtime
+//! whitelistÃ©s (`beam_width`, `max_nodes`, `oracle_threshold`, `fuel`).
 //! Aucune modification de fichier source. La modification de code source
-//! self-modify est une dette explicite Ω-5.4.x.
+//! self-modify est une dette explicite Î©-5.4.x.
 
 use std::collections::BTreeMap;
 
@@ -2780,7 +2880,7 @@ use crate::godel::observer::ObserverFrame;
 use crate::godel::proposer::config_metric_key;
 use crate::godel::verifier::{Rewrite, RewriteKind};
 
-/// Whitelist des clés patchables. Hors whitelist → `UnknownKey`.
+/// Whitelist des clÃ©s patchables. Hors whitelist â†’ `UnknownKey`.
 pub const ALLOWED_KEYS: &[&str] = &[
     "beam_width",
     "max_nodes",
@@ -2801,7 +2901,7 @@ impl GodelMutableConfig {
         Self::default()
     }
 
-    /// Construit la config avec les valeurs par défaut Ω-5 demo.
+    /// Construit la config avec les valeurs par dÃ©faut Î©-5 demo.
     pub fn with_defaults() -> Self {
         let mut s = Self::new();
         s.values.insert("beam_width".into(), 256);
@@ -2831,8 +2931,8 @@ impl GodelMutableConfig {
         self.values.iter().map(|(k, v)| (*k, *v))
     }
 
-    /// Injecte les valeurs config dans `frame.metrics` sous le préfixe
-    /// `config:*`. Utilisé pour que le proposer/verifier voient les vraies
+    /// Injecte les valeurs config dans `frame.metrics` sous le prÃ©fixe
+    /// `config:*`. UtilisÃ© pour que le proposer/verifier voient les vraies
     /// valeurs courantes.
     pub fn attach_to_frame(&self, mut frame: ObserverFrame) -> ObserverFrame {
         for (k, v) in &self.values {
@@ -2847,7 +2947,7 @@ impl GodelMutableConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppliedSnapshot {
     pub rewrite_id: u64,
-    /// Pour chaque clé patchée, valeur précédente (None si la clé n'existait pas).
+    /// Pour chaque clÃ© patchÃ©e, valeur prÃ©cÃ©dente (None si la clÃ© n'existait pas).
     pub prev_config: BTreeMap<&'static str, Option<i64>>,
 }
 
@@ -2870,8 +2970,8 @@ impl std::fmt::Display for ApplicatorError {
 
 impl std::error::Error for ApplicatorError {}
 
-/// Applique un `Rewrite::ConfigPatch` à la config. Valide la whitelist
-/// et les bornes AVANT toute modification (atomicité). Retourne un
+/// Applique un `Rewrite::ConfigPatch` Ã  la config. Valide la whitelist
+/// et les bornes AVANT toute modification (atomicitÃ©). Retourne un
 /// snapshot pour rollback.
 pub fn apply(
     rewrite: &Rewrite,
@@ -2879,7 +2979,7 @@ pub fn apply(
 ) -> Result<AppliedSnapshot, ApplicatorError> {
     let RewriteKind::ConfigPatch(patch) = &rewrite.kind;
 
-    // Validation pré-mutation (atomicité).
+    // Validation prÃ©-mutation (atomicitÃ©).
     for (key, value) in patch {
         if !ALLOWED_KEYS.contains(key) {
             return Err(ApplicatorError::UnknownKey(key));
@@ -2906,8 +3006,8 @@ pub fn apply(
     })
 }
 
-/// Annule un apply en restaurant l'état pré-snapshot byte-pour-byte.
-/// Pour les clés qui n'existaient pas avant, on les supprime.
+/// Annule un apply en restaurant l'Ã©tat prÃ©-snapshot byte-pour-byte.
+/// Pour les clÃ©s qui n'existaient pas avant, on les supprime.
 pub fn rollback(snap: &AppliedSnapshot, config: &mut GodelMutableConfig) {
     for (key, opt_value) in &snap.prev_config {
         match opt_value {
@@ -2954,7 +3054,7 @@ mod tests {
         let snap = apply(&r, &mut cfg).unwrap();
         assert_eq!(cfg.get("beam_width"), Some(512));
         rollback(&snap, &mut cfg);
-        assert_eq!(cfg.get("beam_width"), None, "clé nouvelle doit être supprimée au rollback");
+        assert_eq!(cfg.get("beam_width"), None, "clÃ© nouvelle doit Ãªtre supprimÃ©e au rollback");
     }
 
     #[test]
@@ -2980,13 +3080,13 @@ mod tests {
             apply(&r_huge, &mut cfg).unwrap_err(),
             ApplicatorError::OutOfRange { .. }
         ));
-        // beam_width inchangé.
+        // beam_width inchangÃ©.
         assert_eq!(cfg.get("beam_width"), Some(256));
     }
 
     #[test]
     fn apply_is_atomic_on_validation_failure() {
-        // Une rewrite multi-clés où une clé est invalide → AUCUNE mutation.
+        // Une rewrite multi-clÃ©s oÃ¹ une clÃ© est invalide â†’ AUCUNE mutation.
         let mut cfg = GodelMutableConfig::with_defaults();
         let mut p = BTreeMap::new();
         p.insert("beam_width", 1024); // valide
@@ -2994,7 +3094,7 @@ mod tests {
         let r = Rewrite::config_patch("multi_invalid", p);
         let err = apply(&r, &mut cfg).unwrap_err();
         assert!(matches!(err, ApplicatorError::UnknownKey(_)));
-        // beam_width inchangé.
+        // beam_width inchangÃ©.
         assert_eq!(cfg.get("beam_width"), Some(256));
     }
 
@@ -3033,18 +3133,18 @@ mod tests {
 }
 
 pub mod runner {
-//! Ω-5.5 — La boucle Gödel-machine fermée. Pipeline direct :
+//! Î©-5.5 â€” La boucle GÃ¶del-machine fermÃ©e. Pipeline direct :
 //!
 //! ```text
-//!     capture(node) → attach(config) → bench/property scores
-//!     → propose(frame) → apply(rewrite) → re-capture
-//!     → verify(before, after) → Accept | Reject(rollback)
+//!     capture(node) â†’ attach(config) â†’ bench/property scores
+//!     â†’ propose(frame) â†’ apply(rewrite) â†’ re-capture
+//!     â†’ verify(before, after) â†’ Accept | Reject(rollback)
 //! ```
 //!
-//! Aucune étape autonome, aucun coordinateur additionnel. Le critère
-//! Ω-5.5 alias **Jour 0** : la boucle applique sa première rewrite sans
+//! Aucune Ã©tape autonome, aucun coordinateur additionnel. Le critÃ¨re
+//! Î©-5.5 alias **Jour 0** : la boucle applique sa premiÃ¨re rewrite sans
 //! intervention humaine. La date + le hash de la rewrite + le diff
-//! métrique sont gravés par le commit/proof artifact correspondant.
+//! mÃ©trique sont gravÃ©s par le commit/proof artifact correspondant.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -3057,9 +3157,9 @@ use super::observer::{capture, ObserverFrame};
 use super::proposer::Proposer;
 use super::verifier::{attach_bench_scores, verify, Rewrite, Verdict};
 
-/// Config partagée entre le runner et les benches config-aware. Permet
-/// au verifier d'observer les changements de config quand il re-évalue
-/// les benches après apply.
+/// Config partagÃ©e entre le runner et les benches config-aware. Permet
+/// au verifier d'observer les changements de config quand il re-Ã©value
+/// les benches aprÃ¨s apply.
 pub type SharedConfig = Rc<RefCell<GodelMutableConfig>>;
 
 pub fn shared_config(config: GodelMutableConfig) -> SharedConfig {
@@ -3067,7 +3167,7 @@ pub fn shared_config(config: GodelMutableConfig) -> SharedConfig {
 }
 
 /// Bench config-aware : score = somme des valeurs config (lower = better).
-/// Synthétique — permet de prouver la mécanique sans dépendre d'un workload réel.
+/// SynthÃ©tique â€” permet de prouver la mÃ©canique sans dÃ©pendre d'un workload rÃ©el.
 pub struct ConfigSumBench {
     pub config: SharedConfig,
 }
@@ -3086,25 +3186,34 @@ impl Benchmark for ConfigSumBench {
     }
 }
 
-/// Bench **non-synthétique** : temps réel (ns) pour résoudre `f(x) = 7x + 3`
-/// via `MonsterNode::train_i64_program`. `max_nodes` et `beam_width` sont
-/// lus dans la `SharedConfig` au moment du `run()` — donc les rewrites
-/// les modifient réellement.
+/// Bench **non-synthÃ©tique** : temps rÃ©el (ns) pour prÃ©parer un
+/// `/newcompute_` Forge qui encode `f(x) = 7x + 3`. `max_nodes` et
+/// `beam_width` sont lus dans la `SharedConfig` au moment du `run()` â€” donc
+/// les rewrites les modifient rÃ©ellement.
 ///
-/// Score = médiane de 3 runs (en ns). Lower = better. Si l'entraînement
-/// échoue (ex. `max_nodes` trop petit), score = `FAIL_PENALTY` (forte
-/// régression → verifier reject).
+/// Score = mÃ©diane de 3 runs (en ns). Lower = better. Si l'entraÃ®nement
+/// Ã©choue (ex. `max_nodes` trop petit), score = `FAIL_PENALTY` (forte
+/// rÃ©gression â†’ verifier reject).
 ///
-/// C'est ce qu'il faut pour atteindre un Jour 0 sur métrique réelle.
+/// C'est ce qu'il faut pour atteindre un Jour 0 sur mÃ©trique rÃ©elle.
 pub struct ConfigAwareMonsterTrainBench {
     pub config: SharedConfig,
 }
 
+fn forge_affine_newcompute_source(max_steps: u64, parallelism: Option<usize>) -> String {
+    let parallelism = parallelism
+        .map(|value| format!("parallelism={value}\n"))
+        .unwrap_or_default();
+    format!(
+        "forge_module:\n  module godel_affine_newcompute version 1\nforge_imports:\n  none\nforge_constants:\n  const a: f64 unit none = 7.0\n  const b: f64 unit none = 3.0\nforge_functions:\n  fn affine(x: f64) -> f64 {{ return a * x + b }}\nforge_program:\n  let y = affine(x)\n  emit y: f64 = y\nforge_inputs:\n  param x: f64 unit none bounds [-10.0,10.0] nominal 0.0\nforge_outputs:\n  output y: f64 unit none handoff scalar\nforge_constraints:\n  assert finite(y)\n  assert bounds(y,[-100.0,100.0])\nforge_samples:\n  case basic seed 1 {{ given x=2.0; expect y approx 17.0 tolerance 0.01 }}\nforge_cost:\nmax_steps={max_steps}\nmax_memory_mb=16\nprecision=f64\n{parallelism}artifact_handoff:\nproof_hash,output_hash,compact_result"
+    )
+}
+
 impl ConfigAwareMonsterTrainBench {
-    /// Pénalité retournée si l'entraînement échoue. Choisi assez grand pour
-    /// forcer une régression visible mais pas u64::MAX (qui causerait des
-    /// overflows dans les calculs ε).
-    pub const FAIL_PENALTY: u64 = 10_000_000_000; // 10 secondes équivalent
+    /// PÃ©nalitÃ© retournÃ©e si l'entraÃ®nement Ã©choue. Choisi assez grand pour
+    /// forcer une rÃ©gression visible mais pas u64::MAX (qui causerait des
+    /// overflows dans les calculs Îµ).
+    pub const FAIL_PENALTY: u64 = 10_000_000_000; // 10 secondes Ã©quivalent
 }
 
 impl Benchmark for ConfigAwareMonsterTrainBench {
@@ -3116,23 +3225,23 @@ impl Benchmark for ConfigAwareMonsterTrainBench {
         use std::time::Instant;
         let (max_nodes, beam_width) = {
             let cfg = self.config.borrow();
-            // PAS de clamp pour préserver l'honnêteté du bench : si
-            // max_nodes < 2 ou beam_width == 0, train_i64_program retourne
-            // Err et on rend FAIL_PENALTY. C'est ce qui permet au verifier
-            // de détecter et rejeter les rewrites qui cassent le training.
+            // PAS de clamp pour prÃ©server l'honnÃªtetÃ© du bench : si
+            // max_nodes < 2 ou beam_width == 0 peut produire un budget
+            // incohÃ©rent; dans ce cas on rend FAIL_PENALTY. C'est ce qui
+            // permet au verifier de dÃ©tecter et rejeter les rewrites qui
+            // cassent le chemin /newcompute_.
             (
                 cfg.get("max_nodes").unwrap_or(20).max(0) as usize,
                 cfg.get("beam_width").unwrap_or(256).max(0) as usize,
             )
         };
         // Examples canoniques : f(x) = 7x + 3.
-        let examples = [(-4i64, -25i64), (-1, -4), (0, 3), (2, 17), (5, 38)];
-        let train_cfg = crate::MonsterTrainingConfig { max_nodes, beam_width, progress: None };
+        let source = forge_affine_newcompute_source((max_nodes as u64).saturating_mul(1_000), Some(beam_width));
 
         let mut samples = [0u64; 3];
         for slot in samples.iter_mut() {
             let start = Instant::now();
-            let result = node.train_i64_program(&examples, train_cfg.clone());
+            let result = node.prepare_forge_source(&source, std::iter::empty::<String>());
             let elapsed = start.elapsed().as_nanos() as u64;
             if result.is_err() {
                 return Self::FAIL_PENALTY;
@@ -3140,18 +3249,18 @@ impl Benchmark for ConfigAwareMonsterTrainBench {
             *slot = elapsed.max(1);
         }
         samples.sort_unstable();
-        samples[1] // médiane
+        samples[1] // mÃ©diane
     }
 }
 
 pub const CONFIG_AWARE_TRAIN_BENCH_NAME: &str = "ConfigAwareMonsterTrain";
 
-/// Boucle Gödel-machine.
+/// Boucle GÃ¶del-machine.
 pub struct GodelLoop {
     pub proposer: Box<dyn Proposer>,
     pub criteria: CriteriaSuite,
     pub max_iterations: u32,
-    /// Nombre d'itérations consécutives sans Accept avant arrêt anticipé.
+    /// Nombre d'itÃ©rations consÃ©cutives sans Accept avant arrÃªt anticipÃ©.
     pub plateau_threshold: u32,
 }
 
@@ -3178,11 +3287,11 @@ impl GodelReport {
 impl GodelLoop {
     /// Lance la boucle. Termine si :
     ///  * `iterations >= max_iterations`, OU
-    ///  * `plateau_threshold` itérations consécutives sans aucune Accept.
+    ///  * `plateau_threshold` itÃ©rations consÃ©cutives sans aucune Accept.
     ///
-    /// La `config` est partagée (`SharedConfig`) avec les benches
+    /// La `config` est partagÃ©e (`SharedConfig`) avec les benches
     /// config-aware (ex. `ConfigSumBench`) afin que le verifier voie
-    /// les changements quand il re-évalue les benches après apply.
+    /// les changements quand il re-Ã©value les benches aprÃ¨s apply.
     pub fn run(
         &mut self,
         node: &mut MonsterNode,
@@ -3214,7 +3323,7 @@ impl GodelLoop {
                     }
                 };
 
-                // Capture après.
+                // Capture aprÃ¨s.
                 let frame_after = self.capture_full(node, &config);
 
                 // Verify.
@@ -3224,7 +3333,7 @@ impl GodelLoop {
                         frame_before = frame_after.clone();
                         frames.push(frame_after);
                         iter_accepted = true;
-                        // Greedy hill-climbing : une accept par itération.
+                        // Greedy hill-climbing : une accept par itÃ©ration.
                         break;
                     }
                     Verdict::Reject(reasons) => {
@@ -3259,7 +3368,7 @@ impl GodelLoop {
 
     /// Capture frame + injecte config + attache bench scores via
     /// `criteria.evaluate(node)`. Les benches config-aware (ConfigSumBench)
-    /// lisent la config partagée au moment de l'évaluation.
+    /// lisent la config partagÃ©e au moment de l'Ã©valuation.
     fn capture_full(
         &self,
         node: &MonsterNode,
@@ -3272,8 +3381,8 @@ impl GodelLoop {
     }
 }
 
-/// Nom canonique du `ConfigSumBench`. Utilisé pour générer la clé
-/// métrique `bench:ConfigSumBench` dans le frame.
+/// Nom canonique du `ConfigSumBench`. UtilisÃ© pour gÃ©nÃ©rer la clÃ©
+/// mÃ©trique `bench:ConfigSumBench` dans le frame.
 pub const CONFIG_SUM_BENCH_NAME: &str = "ConfigSumBench";
 
 #[cfg(test)]
@@ -3295,10 +3404,10 @@ mod tests {
         )
     }
 
-    /// CriteriaSuite synthétique : un seul bench config-aware (ConfigSumBench),
-    /// zéro property. Le bench lit la config partagée au moment de
-    /// l'évaluation, donc une rewrite qui réduit la config produit une
-    /// amélioration mesurable.
+    /// CriteriaSuite synthÃ©tique : un seul bench config-aware (ConfigSumBench),
+    /// zÃ©ro property. Le bench lit la config partagÃ©e au moment de
+    /// l'Ã©valuation, donc une rewrite qui rÃ©duit la config produit une
+    /// amÃ©lioration mesurable.
     fn synthetic_suite_with_config_sum(config: SharedConfig) -> CriteriaSuite {
         let benches: Vec<Box<dyn Benchmark>> =
             vec![Box::new(ConfigSumBench { config })];
@@ -3347,7 +3456,7 @@ mod tests {
 
     #[test]
     fn jour_zero_first_auto_applied_rewrite() {
-        // C'est LE test fondateur. Un proposer qui réduit beam_width ;
+        // C'est LE test fondateur. Un proposer qui rÃ©duit beam_width ;
         // un bench config-sum qui chute donc ; le verifier doit Accept.
         struct ReduceBeamProposer;
         impl Proposer for ReduceBeamProposer {
@@ -3372,7 +3481,7 @@ mod tests {
         let report = g.run(&mut node, Rc::clone(&cfg));
         assert!(
             !report.applied.is_empty(),
-            "JOUR 0 : au moins un rewrite doit être auto-appliqué. Got applied={}, rejected={}",
+            "JOUR 0 : au moins un rewrite doit Ãªtre auto-appliquÃ©. Got applied={}, rejected={}",
             report.applied.len(),
             report.rejected.len(),
         );
@@ -3382,7 +3491,7 @@ mod tests {
     #[test]
     fn handcrafted_proposer_drives_loop_to_acceptance() {
         // Avec le HandcraftedProposer + bench config-sum, au moins une
-        // variant doit être acceptée (celle qui réduit le sum).
+        // variant doit Ãªtre acceptÃ©e (celle qui rÃ©duit le sum).
         let mut node = empty_node("handcrafted-loop");
         let cfg = shared_config(GodelMutableConfig::with_defaults());
         let mut g = GodelLoop {
@@ -3394,7 +3503,7 @@ mod tests {
         let report = g.run(&mut node, cfg);
         assert!(
             !report.applied.is_empty(),
-            "HandcraftedProposer doit conduire à au moins une acceptance"
+            "HandcraftedProposer doit conduire Ã  au moins une acceptance"
         );
     }
 
@@ -3402,8 +3511,8 @@ mod tests {
     fn config_aware_train_bench_runs_on_default_config() {
         let node = empty_node("train-bench-default");
         let cfg = shared_config(GodelMutableConfig::with_defaults());
-        // Avec les defaults, max_nodes=100 — largement assez pour affine.
-        // Set max_nodes plus raisonnable pour ne pas être TROP lent.
+        // Avec les defaults, max_nodes=100 â€” largement assez pour affine.
+        // Set max_nodes plus raisonnable pour ne pas Ãªtre TROP lent.
         cfg.borrow_mut().set("max_nodes", 20);
         let bench = ConfigAwareMonsterTrainBench {
             config: Rc::clone(&cfg),
@@ -3412,7 +3521,7 @@ mod tests {
         assert!(score > 0);
         assert!(
             score < ConfigAwareMonsterTrainBench::FAIL_PENALTY,
-            "training devrait réussir avec max_nodes=20, beam_width=256"
+            "training devrait rÃ©ussir avec max_nodes=20, beam_width=256"
         );
     }
 
@@ -3420,30 +3529,27 @@ mod tests {
     fn config_aware_train_bench_returns_penalty_when_training_fails() {
         let node = empty_node("train-bench-fail");
         let cfg = shared_config(GodelMutableConfig::new());
-        // max_nodes=2 : trop petit pour synthétiser affine.
+        // max_nodes=2 : trop petit pour synthÃ©tiser affine.
         cfg.borrow_mut().set("max_nodes", 2);
         cfg.borrow_mut().set("beam_width", 32);
         let bench = ConfigAwareMonsterTrainBench {
             config: Rc::clone(&cfg),
         };
         let score = bench.run(&node);
-        // Soit le score est très haut (training très long avec 2 nodes),
-        // soit FAIL_PENALTY. La condition robuste : score est non-trivial.
-        // Si train_i64_program retourne Err, on a FAIL_PENALTY exactement.
-        // Si train succeed avec 2 nodes par chance (cas dégénéré
-        // input/const seul), score est petit. Le test check juste qu'on
-        // ne crashe pas et que le score est > 0.
+        // Soit le score est trÃ¨s haut, soit FAIL_PENALTY. La condition
+        // robuste : score est non-trivial. Le test check juste qu'on ne
+        // crashe pas et que le score est > 0.
         assert!(score > 0, "score must be positive even on tiny config");
     }
 
     #[test]
     fn jour_zero_real_metric_via_train_bench() {
-        // Vrai Jour 0 candidat : un proposer fixé qui réduit beam_width
-        // de 256 à 100 ; bench réel = temps de training. Beam plus petit
-        // = exploration plus rapide = score plus bas → verifier accepte.
-        // Test peut être fragile en cas de variance temporelle ; on ne
-        // l'intègre pas dans le flow critique mais on l'utilise comme
-        // démonstration runnable de la mécanique sur métrique réelle.
+        // Vrai Jour 0 candidat : un proposer fixÃ© qui rÃ©duit beam_width
+        // de 256 Ã  100 ; bench rÃ©el = temps de training. Beam plus petit
+        // = exploration plus rapide = score plus bas â†’ verifier accepte.
+        // Test peut Ãªtre fragile en cas de variance temporelle ; on ne
+        // l'intÃ¨gre pas dans le flow critique mais on l'utilise comme
+        // dÃ©monstration runnable de la mÃ©canique sur mÃ©trique rÃ©elle.
         struct ReduceBeamProposer;
         impl Proposer for ReduceBeamProposer {
             fn name(&self) -> &str {
@@ -3476,14 +3582,14 @@ mod tests {
         };
         let report = g.run(&mut node, Rc::clone(&cfg));
 
-        // L'attente : au moins UN rewrite appliqué. Si aucun, c'est qu'il
-        // y a eu de la variance temporelle qui a fait apparaître la
-        // baisse comme une régression. On n'échoue PAS le test sur ça,
-        // on vérifie juste que la mécanique tourne. La preuve solide
-        // de Jour 0 reste le démo runnable.
+        // L'attente : au moins UN rewrite appliquÃ©. Si aucun, c'est qu'il
+        // y a eu de la variance temporelle qui a fait apparaÃ®tre la
+        // baisse comme une rÃ©gression. On n'Ã©choue PAS le test sur Ã§a,
+        // on vÃ©rifie juste que la mÃ©canique tourne. La preuve solide
+        // de Jour 0 reste le dÃ©mo runnable.
         assert!(
             !report.frames.is_empty(),
-            "le bench training s'est bien exécuté et a produit des frames"
+            "le bench training s'est bien exÃ©cutÃ© et a produit des frames"
         );
     }
 
@@ -3603,37 +3709,37 @@ pub fn verify_v2(rewrite: &RewriteV2, node: &MonsterNode) -> VerificationOutcome
 }
 
 // ---------------------------------------------------------------------------
-// Ω-7.0.3.1 — Re-vérification sémantique sample-based
+// Î©-7.0.3.1 â€” Re-vÃ©rification sÃ©mantique sample-based
 // ---------------------------------------------------------------------------
 
-/// Politique de re-vérification sémantique pour ProgramSubstitution.
+/// Politique de re-vÃ©rification sÃ©mantique pour ProgramSubstitution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticPolicy {
-    /// Pas de re-vérification — équivalence présumée. C'est le comportement
+    /// Pas de re-vÃ©rification â€” Ã©quivalence prÃ©sumÃ©e. C'est le comportement
     /// de `verify_v2` original.
     Trust,
-    /// Re-exécute les deux programmes sur N inputs déterministes et exige
-    /// que tous les outputs concordent. Plus coûteux, mais détecte les
-    /// substitutions qui ne préservent pas la sémantique.
+    /// Re-exÃ©cute les deux programmes sur N inputs dÃ©terministes et exige
+    /// que tous les outputs concordent. Plus coÃ»teux, mais dÃ©tecte les
+    /// substitutions qui ne prÃ©servent pas la sÃ©mantique.
     SampleBased { samples: usize },
 }
 
-/// Verifier v2 + re-vérification sémantique. Pour ConfigPatch, identique à
+/// Verifier v2 + re-vÃ©rification sÃ©mantique. Pour ConfigPatch, identique Ã 
 /// `verify_v2`. Pour ProgramSubstitution avec policy SampleBased, charge
-/// les deux programmes, les exécute sur `samples` jeux d'inputs déterministes,
+/// les deux programmes, les exÃ©cute sur `samples` jeux d'inputs dÃ©terministes,
 /// et compare les outputs.
 pub fn verify_v2_with_policy(
     rewrite: &RewriteV2,
     node: &MonsterNode,
     policy: SemanticPolicy,
 ) -> VerificationOutcomeV2 {
-    // 1. Vérification référentielle (mirror verify_v2).
+    // 1. VÃ©rification rÃ©fÃ©rentielle (mirror verify_v2).
     let base = verify_v2(rewrite, node);
     if !base.is_accept() {
         return base;
     }
 
-    // 2. Re-vérification sémantique uniquement pour ProgramSubstitution + SampleBased.
+    // 2. Re-vÃ©rification sÃ©mantique uniquement pour ProgramSubstitution + SampleBased.
     let RewriteV2::ProgramSubstitution { from, to } = rewrite else {
         return VerificationOutcomeV2::Accept;
     };
@@ -3676,7 +3782,7 @@ pub fn verify_v2_with_policy(
         }
     };
 
-    // Vérifie que les deux programmes ont le même profil IO.
+    // VÃ©rifie que les deux programmes ont le mÃªme profil IO.
     if from_p.inputs() != to_p.inputs() {
         return VerificationOutcomeV2::Reject {
             reasons: vec![format!(
@@ -3694,7 +3800,7 @@ pub fn verify_v2_with_policy(
         };
     }
 
-    // Génère `samples` jeux d'inputs déterministes et compare les outputs.
+    // GÃ©nÃ¨re `samples` jeux d'inputs dÃ©terministes et compare les outputs.
     let mut reasons: Vec<String> = Vec::new();
     for sample_idx in 0..samples {
         let inputs = generate_sample_inputs(from_p.inputs() as usize, sample_idx as u64);
@@ -3727,8 +3833,8 @@ pub fn verify_v2_with_policy(
     }
 }
 
-/// Génère un jeu d'inputs déterministe pour un sample donné. Mélange
-/// quelques valeurs corner (0, 1, -1, MIN, MAX) avec des valeurs hashées.
+/// GÃ©nÃ¨re un jeu d'inputs dÃ©terministe pour un sample donnÃ©. MÃ©lange
+/// quelques valeurs corner (0, 1, -1, MIN, MAX) avec des valeurs hashÃ©es.
 fn generate_sample_inputs(n_inputs: usize, sample_idx: u64) -> Vec<u8> {
     let corners: [i64; 5] = [0, 1, -1, i64::MIN, i64::MAX];
     let mut bytes = Vec::with_capacity(n_inputs * 8);
@@ -3949,7 +4055,7 @@ mod tests {
         assert!(any_accept, "au moins une rewrite doit etre acceptee");
     }
 
-    // ----- Ω-7.0.3.1 — Re-vérification sémantique sample-based -----
+    // ----- Î©-7.0.3.1 â€” Re-vÃ©rification sÃ©mantique sample-based -----
 
     fn equivalent_program_pair() -> (crate::kasm::Program, crate::kasm::Program) {
         use crate::kasm::{Node, Program, Target, Ty};
@@ -3963,7 +4069,7 @@ mod tests {
                 Node::output(2, Ty::I64),
             ],
         ).unwrap();
-        // f(x) = x (canonicalisé)
+        // f(x) = x (canonicalisÃ©)
         let p_canonical = Program::new(
             Target::Cpu, 1, 1, 4,
             vec![Node::input(0), Node::output(0, Ty::I64)],
@@ -3978,7 +4084,7 @@ mod tests {
             Target::Cpu, 1, 1, 4,
             vec![Node::input(0), Node::output(0, Ty::I64)],
         ).unwrap();
-        // f(x) = x + 1 — sémantique différente !
+        // f(x) = x + 1 â€” sÃ©mantique diffÃ©rente !
         let p_plus_one = Program::new(
             Target::Cpu, 1, 1, 8,
             vec![
@@ -3998,9 +4104,9 @@ mod tests {
         let h_a = node.store().store(a.bytes()).unwrap();
         let h_b = node.store().store(b.bytes()).unwrap();
         let rw = RewriteV2::ProgramSubstitution { from: h_a, to: h_b };
-        // Trust = pas de check sémantique → Accept même si divergent.
+        // Trust = pas de check sÃ©mantique â†’ Accept mÃªme si divergent.
         let r = verify_v2_with_policy(&rw, &node, SemanticPolicy::Trust);
-        assert!(r.is_accept(), "Trust ne re-vérifie pas, doit accepter");
+        assert!(r.is_accept(), "Trust ne re-vÃ©rifie pas, doit accepter");
     }
 
     #[test]
@@ -4011,7 +4117,7 @@ mod tests {
         let h_b = node.store().store(b.bytes()).unwrap();
         let rw = RewriteV2::ProgramSubstitution { from: h_a, to: h_b };
         let r = verify_v2_with_policy(&rw, &node, SemanticPolicy::SampleBased { samples: 8 });
-        assert!(r.is_accept(), "programmes équivalents doivent passer; got {r:?}");
+        assert!(r.is_accept(), "programmes Ã©quivalents doivent passer; got {r:?}");
     }
 
     #[test]
@@ -4053,7 +4159,7 @@ mod tests {
         let mut map = std::collections::BTreeMap::new();
         map.insert("beam_width", 100);
         let rw = RewriteV2::ConfigPatch(map);
-        // Policy SampleBased ne s'applique pas à ConfigPatch.
+        // Policy SampleBased ne s'applique pas Ã  ConfigPatch.
         let r = verify_v2_with_policy(&rw, &node, SemanticPolicy::SampleBased { samples: 8 });
         assert!(r.is_accept());
     }
@@ -4062,35 +4168,35 @@ mod tests {
 }
 
 pub mod applicator_v2 {
-//! Ω-5.6 — Applicator v2 : applique des `RewriteV2` y compris ProgramSubstitution.
+//! Î©-5.6 â€” Applicator v2 : applique des `RewriteV2` y compris ProgramSubstitution.
 
 use crate::godel::verifier_v2::{verify_v2, RewriteV2, VerificationOutcomeV2};
 use crate::{Hash, MonsterNode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplicatorV2Error {
-    /// Verification a rejeté la rewrite.
+    /// Verification a rejetÃ© la rewrite.
     Rejected { reasons: Vec<String> },
-    /// Le programme `from` n'est pas chargeable (déjà checké par verify, mais defensive).
+    /// Le programme `from` n'est pas chargeable (dÃ©jÃ  checkÃ© par verify, mais defensive).
     SourceMissing(Hash),
     /// Le programme `to` n'est pas chargeable.
     TargetMissing(Hash),
 }
 
-/// Trace d'une application : avant/après pour permettre rollback.
+/// Trace d'une application : avant/aprÃ¨s pour permettre rollback.
 #[derive(Debug, Clone)]
 pub struct ApplicationTrace {
     pub rewrite: RewriteV2,
     pub previous_active: Option<Hash>,
 }
 
-/// Applicator v2. Maintient l'ensemble des programmes "actifs" — un set
-/// de hashes qui représente les Programs que la node considère comme sa
+/// Applicator v2. Maintient l'ensemble des programmes "actifs" â€” un set
+/// de hashes qui reprÃ©sente les Programs que la node considÃ¨re comme sa
 /// version courante. Une ProgramSubstitution remplace `from` par `to` dans
 /// ce set ; un rollback restaure.
 ///
-/// L'état "active programs" est une abstraction interne au verifier de
-/// l'agent — pas un endroit où la node modifie son store. Le store reste
+/// L'Ã©tat "active programs" est une abstraction interne au verifier de
+/// l'agent â€” pas un endroit oÃ¹ la node modifie son store. Le store reste
 /// append-only.
 #[derive(Debug, Default)]
 pub struct ApplicatorV2 {
@@ -4114,7 +4220,7 @@ impl ApplicatorV2 {
 
     /// Applique une RewriteV2. Pour ProgramSubstitution :
     ///  1. verify_v2 doit Accept.
-    ///  2. `from` doit être actif (sinon Reject).
+    ///  2. `from` doit Ãªtre actif (sinon Reject).
     ///  3. Remplace `from` par `to` dans active_programs.
     ///  4. Retourne ApplicationTrace pour rollback.
     pub fn apply(
@@ -4130,7 +4236,7 @@ impl ApplicatorV2 {
         }
         match &rewrite {
             RewriteV2::ConfigPatch(_) => {
-                // Pour ConfigPatch, on délègue conceptuellement à l'applicator v1.
+                // Pour ConfigPatch, on dÃ©lÃ¨gue conceptuellement Ã  l'applicator v1.
                 // Ici on enregistre juste la trace ; l'effet config est externe.
                 Ok(ApplicationTrace { rewrite, previous_active: None })
             }
@@ -4152,7 +4258,7 @@ impl ApplicatorV2 {
         }
     }
 
-    /// Rollback d'une trace : restaure l'état avant `apply`.
+    /// Rollback d'une trace : restaure l'Ã©tat avant `apply`.
     pub fn rollback(&mut self, trace: &ApplicationTrace) {
         match &trace.rewrite {
             RewriteV2::ConfigPatch(_) => {}
@@ -4268,7 +4374,7 @@ mod tests {
         let mut app = ApplicatorV2::new();
         let h_from = store_program(&node, &affine_program());
         let h_to = store_program(&node, &id_program());
-        // h_from N'EST PAS activé.
+        // h_from N'EST PAS activÃ©.
         let result = app.apply(
             RewriteV2::ProgramSubstitution { from: h_from, to: h_to },
             &node,
@@ -4286,7 +4392,7 @@ mod tests {
     fn apply_rejects_unverified_substitution() {
         let node = fresh_node("unverified");
         let mut app = ApplicatorV2::new();
-        // from et to identiques → trivial, rejeté par verify_v2.
+        // from et to identiques â†’ trivial, rejetÃ© par verify_v2.
         let h = store_program(&node, &affine_program());
         app.activate(h);
         let result = app.apply(
@@ -4309,7 +4415,7 @@ mod tests {
 
     #[test]
     fn jour_zero_program_substitution_is_recorded_in_trace() {
-        // Cross-cap : agent propose, applicator_v2 applique, trace conservée.
+        // Cross-cap : agent propose, applicator_v2 applique, trace conservÃ©e.
         use crate::agent::SymbolicAgent;
         let node = fresh_node("jour-zero-program");
         let p_input = Program::new(
@@ -4339,8 +4445,8 @@ mod tests {
                 break; // Une seule substitution par session pour ce test.
             }
         }
-        assert!(applied >= 1, "au moins une substitution doit être appliquée");
-        assert_eq!(app.active_count(), 1, "set actif doit avoir taille 1 après swap");
+        assert!(applied >= 1, "au moins une substitution doit Ãªtre appliquÃ©e");
+        assert_eq!(app.active_count(), 1, "set actif doit avoir taille 1 aprÃ¨s swap");
     }
 }
 

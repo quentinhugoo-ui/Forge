@@ -1,59 +1,59 @@
-//! Ω-Φ — Ghost storage : introspection content-addressed.
+﻿//! Î©-Î¦ â€” Ghost storage : introspection content-addressed.
 //!
-//! Φ.μ.7 : aplati de `src/introspection/{mod,snapshot}.rs` à
+//! Î¦.Î¼.7 : aplati de `src/introspection/{mod,snapshot}.rs` Ã 
 //! `src/introspection.rs` (le sous-dossier ne contenait qu'un fichier
-//! réel + un mod.rs de 9 lignes — pure indirection).
+//! rÃ©el + un mod.rs de 9 lignes â€” pure indirection).
 //!
-//! Module qui prépare le terrain pour Ω-Φ.0..Ω-Φ.4 (cf. Git history). Le
-//! premier sous-cap est `LiveSnapshot` — capture content-addressed et
-//! reproductible de l'état logique d'une `MonsterNode`.
+//! Module qui prÃ©pare le terrain pour Î©-Î¦.0..Î©-Î¦.4 (cf. Git history). Le
+//! premier sous-cap est `LiveSnapshot` â€” capture content-addressed et
+//! reproductible de l'Ã©tat logique d'une `MonsterNode`.
 //!
-//! ----- LiveSnapshot (Ω-Φ.0) -----
+//! ----- LiveSnapshot (Î©-Î¦.0) -----
 //!
 //! `MonsterNode::live_snapshot()` content-addressed.
 //!
-//! Capture lecture-seule de l'état logique d'une `MonsterNode` : ensemble
-//! de programmes chargés + oracles actifs + un compteur d'epoch monotone.
-//! Le hash du snapshot est déterministe (sha256 sur la projection canonique
-//! triée+dedupée), donc deux snapshots avec les mêmes contenus → même hash.
+//! Capture lecture-seule de l'Ã©tat logique d'une `MonsterNode` : ensemble
+//! de programmes chargÃ©s + oracles actifs + un compteur d'epoch monotone.
+//! Le hash du snapshot est dÃ©terministe (sha256 sur la projection canonique
+//! triÃ©e+dedupÃ©e), donc deux snapshots avec les mÃªmes contenus â†’ mÃªme hash.
 //!
-//! `validate(snap, node)` re-vérifie que chaque programme du snapshot est
-//! toujours chargeable depuis le store de la node. Ne ré-exécute pas, ne
-//! mute pas — c'est un contrôle d'intégrité référentiel pur.
+//! `validate(snap, node)` re-vÃ©rifie que chaque programme du snapshot est
+//! toujours chargeable depuis le store de la node. Ne rÃ©-exÃ©cute pas, ne
+//! mute pas â€” c'est un contrÃ´le d'intÃ©gritÃ© rÃ©fÃ©rentiel pur.
 //!
 //! ## Doctrine
 //!
-//! - Pure Rust + std + sha2. Aucune dépendance externe.
-//! - Aucune manipulation mémoire OS-spécifique.
-//! - Lecture seule sur la `MonsterNode` — pas de mutation, pas de
-//!   re-construction d'état pendant le snapshot.
-//! - Reconstructible : `validate(snap, node)` doit retourner le même
+//! - Pure Rust + std + sha2. Aucune dÃ©pendance externe.
+//! - Aucune manipulation mÃ©moire OS-spÃ©cifique.
+//! - Lecture seule sur la `MonsterNode` â€” pas de mutation, pas de
+//!   re-construction d'Ã©tat pendant le snapshot.
+//! - Reconstructible : `validate(snap, node)` doit retourner le mÃªme
 //!   nombre de programmes que `snap.programs.len()` si le store contient
-//!   toujours tous les hashes — sinon, l'écart est observable.
+//!   toujours tous les hashes â€” sinon, l'Ã©cart est observable.
 
 use sha2::{Digest, Sha256};
 
 use crate::godel::observer;
 use crate::{Hash, MonsterNode};
 
-/// Snapshot d'état logique d'une `MonsterNode`.
+/// Snapshot d'Ã©tat logique d'une `MonsterNode`.
 ///
-/// Champs triés et dédupés à la capture pour garantir l'invariance du hash
-/// sous l'ordre d'observation (deux nodes avec les mêmes programmes
-/// chargés produisent le même `snapshot_hash`).
+/// Champs triÃ©s et dÃ©dupÃ©s Ã  la capture pour garantir l'invariance du hash
+/// sous l'ordre d'observation (deux nodes avec les mÃªmes programmes
+/// chargÃ©s produisent le mÃªme `snapshot_hash`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSnapshot {
-    /// Hashes content-addressed des programmes chargés.
+    /// Hashes content-addressed des programmes chargÃ©s.
     pub programs: Vec<Hash>,
     /// Hashes des oracles actifs.
     pub oracles: Vec<Hash>,
-    /// Compteur monotone — vient de `observer::ObserverFrame::epoch`.
+    /// Compteur monotone â€” vient de `observer::ObserverFrame::epoch`.
     pub epoch: u64,
 }
 
 impl LiveSnapshot {
-    /// Constructeur direct (utile pour les tests). Trie + dédupe en place
-    /// pour préserver l'invariant de canonicité du hash.
+    /// Constructeur direct (utile pour les tests). Trie + dÃ©dupe en place
+    /// pour prÃ©server l'invariant de canonicitÃ© du hash.
     pub fn new(mut programs: Vec<Hash>, mut oracles: Vec<Hash>, epoch: u64) -> Self {
         programs.sort();
         programs.dedup();
@@ -63,18 +63,18 @@ impl LiveSnapshot {
     }
 }
 
-/// Capture l'état logique d'une `MonsterNode` (lecture seule, non perturbant).
+/// Capture l'Ã©tat logique d'une `MonsterNode` (lecture seule, non perturbant).
 pub fn capture(node: &MonsterNode) -> LiveSnapshot {
     let frame = observer::capture(node);
     LiveSnapshot::new(frame.programs_loaded, frame.oracles_active, frame.epoch)
 }
 
-/// Hash sha-256 déterministe d'un snapshot. Deux snapshots avec les mêmes
-/// `programs` (set), `oracles` (set) et `epoch` produisent le même hash.
+/// Hash sha-256 dÃ©terministe d'un snapshot. Deux snapshots avec les mÃªmes
+/// `programs` (set), `oracles` (set) et `epoch` produisent le mÃªme hash.
 pub fn snapshot_hash(snap: &LiveSnapshot) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(b"scan-omega-phi-0-snapshot-v1");
-    // Programs : len préfixée + chaque hash en bytes triés.
+    // Programs : len prÃ©fixÃ©e + chaque hash en bytes triÃ©s.
     h.update((snap.programs.len() as u64).to_le_bytes());
     for hash in &snap.programs {
         h.update(hash.as_bytes());
@@ -88,13 +88,13 @@ pub fn snapshot_hash(snap: &LiveSnapshot) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// Résultat de la validation d'un snapshot contre une node.
+/// RÃ©sultat de la validation d'un snapshot contre une node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotValidation {
     /// Nombre de programmes du snapshot effectivement chargeables depuis
     /// le store de la node au moment de la validation.
     pub programs_loaded: usize,
-    /// Programmes du snapshot absents du store (référentiellement vides).
+    /// Programmes du snapshot absents du store (rÃ©fÃ©rentiellement vides).
     pub programs_missing: Vec<Hash>,
 }
 
@@ -105,12 +105,12 @@ impl SnapshotValidation {
 }
 
 /// Valide un snapshot contre une `MonsterNode`. Pour chaque hash de
-/// `snap.programs`, tente `node.store().load(hash)`. Ne ré-exécute pas,
-/// ne mute pas l'état de la node.
+/// `snap.programs`, tente `node.store().load(hash)`. Ne rÃ©-exÃ©cute pas,
+/// ne mute pas l'Ã©tat de la node.
 ///
 /// Retourne le nombre de programmes valides + la liste des hashes
 /// manquants. `snapshot.is_intact()` est `true` ssi tous les programmes
-/// du snapshot sont retrouvés dans le store actuel.
+/// du snapshot sont retrouvÃ©s dans le store actuel.
 pub fn validate(snap: &LiveSnapshot, node: &MonsterNode) -> SnapshotValidation {
     let store = node.store();
     let mut loaded = 0usize;
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn snapshot_hash_is_deterministic() {
-        // Deux snapshots avec les mêmes contenus → même hash.
+        // Deux snapshots avec les mÃªmes contenus â†’ mÃªme hash.
         let node = fresh_node("deterministic");
         let snap1 = capture(&node);
         let snap2 = capture(&node);
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn snapshot_hash_is_order_independent() {
-        // Sortie de `LiveSnapshot::new` triée → même hash pour deux ordres.
+        // Sortie de `LiveSnapshot::new` triÃ©e â†’ mÃªme hash pour deux ordres.
         let h1 = Hash::for_blob(b"program-1");
         let h2 = Hash::for_blob(b"program-2");
         let h3 = Hash::for_blob(b"oracle-1");
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn validate_detects_missing_programs() {
-        // Snapshot fabriqué avec des hashes qui n'existent pas dans la node.
+        // Snapshot fabriquÃ© avec des hashes qui n'existent pas dans la node.
         let node = fresh_node("validate-missing");
         let bogus_hash = Hash::for_blob(b"nonexistent program");
         let snap = LiveSnapshot::new(vec![bogus_hash], vec![], 0);
@@ -226,25 +226,29 @@ mod tests {
         assert_eq!(v.programs_loaded, 0);
         assert_eq!(v.programs_missing, vec![bogus_hash]);
     }
-
     #[test]
-    fn snapshot_after_program_train_validates() {
-        // On entraîne un programme dans la node, on capture, on valide.
-        let node = fresh_node("after-train");
-        let examples = [(-4i64, -25i64), (-1, -4), (0, 3), (2, 17), (5, 38)];
-        let cfg = crate::MonsterTrainingConfig {
-            max_nodes: 20,
-            beam_width: 256,
-            progress: None,
-        };
-        let _ = node.train_i64_program(&examples, cfg);
+    fn snapshot_after_program_execution_validates() {
+        let node = fresh_node("after-exec");
+        let program = crate::kasm::Program::new(
+            crate::kasm::Target::Cpu,
+            1,
+            1,
+            4,
+            vec![
+                crate::kasm::Node::input(0),
+                crate::kasm::Node::const_i64(7),
+                crate::kasm::Node::add(0, 1),
+                crate::kasm::Node::output(2, crate::kasm::Ty::I64),
+            ],
+        )
+        .unwrap();
+        let hash = node.store().store(program.bytes()).unwrap();
+        let _ = node.call_bytes(&hash, &5i64.to_le_bytes()).unwrap();
         let snap = capture(&node);
         let v = validate(&snap, &node);
-        // Tout programme listé dans le snapshot doit être chargeable (la
-        // node ne purge rien dans ce test).
         assert!(
             v.is_intact(),
-            "snapshot après train doit valider — missing = {:?}",
+            "snapshot after execution must validate: missing = {:?}",
             v.programs_missing
         );
         assert_eq!(v.programs_loaded, snap.programs.len());

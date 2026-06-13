@@ -1,0 +1,139 @@
+{
+  "schema": "ingen.electron.final_cutover_audit.v2",
+  "date": "2026-06-10",
+  "status": "cutover_complete",
+  "inputs": {
+    "ipc_manifest_hash": "00563e86065955c89a8b224c49fe0062a99b26ad32461646551da0a80b9ded49"
+  },
+  "checks": [
+    {
+      "id": "electron_product_shell_only",
+      "passed": true,
+      "severity": "blocker",
+      "evidence": {
+        "forbiddenTokenInProductText": false,
+        "removedNativeFront": true,
+        "shellAssets": true
+      }
+    },
+    {
+      "id": "typed_ipc_contract_generated",
+      "passed": true,
+      "severity": "blocker",
+      "evidence": {
+        "schema": "ingen.electron.ipc_contract_manifest.v1",
+        "productModes": true
+      }
+    },
+    {
+      "id": "rust_backend_projection_required",
+      "passed": true,
+      "severity": "blocker",
+      "evidence": {
+        "startupRefresh": true,
+        "cachedProjection": true,
+        "backendSchema": true,
+        "forgeCargoBridge": true
+      }
+    },
+    {
+      "id": "electron_launcher_present",
+      "passed": true,
+      "severity": "blocker",
+      "evidence": {
+        "cmd": true,
+        "vbs": true
+      }
+    },
+    {
+      "id": "electron_security_defaults",
+      "passed": true,
+      "severity": "blocker",
+      "evidence": {
+        "contextIsolation": true,
+        "nodeIntegrationFalse": true,
+        "sandbox": true,
+        "webSecurity": true,
+        "windowOpenGuard": true,
+        "navigationGuard": true
+      }
+    },
+    {
+      "id": "strict_context_bridge_ipc",
+      "passed": true,
+      "severity": "blocker",
+      "evidence": {
+        "rawSend": false,
+        "sendSync": false,
+        "methods": [
+          "getHeaderSnapshot",
+          "dispatchHeaderCommand",
+          "getSidebarSnapshot",
+          "dispatchSidebarCommand",
+          "getPanelsChatBottomSnapshot",
+          "dispatchPanelsChatBottomCommand",
+          "getCanvasSurfacesSnapshot",
+          "dispatchCanvasSurfacesCommand",
+          "getRightPanelSnapshot",
+          "dispatchRightPanelCommand"
+        ]
+      }
+    },
+    {
+      "id": "renderer_slice_files_present",
+      "passed": true,
+      "severity": "blocker",
+      "evidence": {
+        "rendererFiles": [
+          "App.tsx",
+          "assets",
+          "brain-blob.tsx",
+          "brain-user-memory-store.ts",
+          "BrainCanvas.tsx",
+          "canvas-surfaces-store.ts",
+          "CanvasSurfacesSlice.tsx",
+          "ComposerSendBurst.tsx",
+          "event-text-lab.css",
+          "event-text-lab.tsx",
+          "forge-api.d.ts",
+          "generated",
+          "header-shadow-store.ts",
+          "header-surface-store.ts",
+          "HeaderSurfaceRouter.tsx",
+          "main.tsx",
+          "module-logos.tsx",
+          "panels-chat-bottom-store.ts",
+          "PanelsChatBottomSlice.tsx",
+          "ProfileCoverBanner.tsx",
+          "ProviderLogo.tsx",
+          "right-panel-store.ts",
+          "RightPanelSlice.tsx",
+          "sidebar-shadow-store.ts",
+          "SidebarSlice.tsx",
+          "styles.css",
+          "vite-env.d.ts",
+          "welcome-message-store.ts"
+        ]
+      }
+    },
+    {
+      "id": "current_frontier_stack_pinned",
+      "passed": true,
+      "severity": "warning",
+      "evidence": {
+        "react": "19.2.7",
+        "electron": "42.3.3",
+        "vite": "8.0.16",
+        "playwright": "1.60.0"
+      }
+    }
+  ],
+  "blockers": [],
+  "warnings": [],
+  "gates_to_run": [
+    "npm.cmd run typecheck",
+    "npm.cmd test",
+    "npm.cmd run build"
+  ],
+  "proof_hash": "c5f036b00044ff3397743b124d53835c1bf565c41869b0bc743481e864cdd82c"
+}

@@ -1,65 +1,150 @@
 # Migration Front
 
-Source de verite de la refonte native InGen.
+Status: Electron product shell is the only live frontend lane.
 
-Date de mise a jour: 2026-06-06.
+This document is the source of truth for frontend work. It is not an archive; historical migration detail belongs in Git history.
 
-## Etat Actuel
+## Product Shell
 
-Migration Front est en phase de coupure finale.
-
-- Shell actif: `examples/ingen_native_front`.
-- Services natifs partages: `examples/ingen_native_services`.
-- UI: Rust + Slint.
-- Rendu: wgpu pour les surfaces moteur.
-- Etat UI: kernel Rust deterministe dans `examples/ingen_native_front/src/state.rs`.
-- Audit de coupure: `cargo run --manifest-path examples\ingen_native_front\Cargo.toml -- --cutover-audit`.
-
-L'ancien arbre applicatif a ete supprime du depot. Les services qui y restaient ont ete extraits, retires ou remplaces par des adaptateurs Rust natifs.
-
-## Objectif Produit
-
-Livrer InGen comme application native compacte:
+The product frontend lives in:
 
 ```text
-Intention utilisateur
--> etat Rust verifiable
--> Slint
--> wgpu / services natifs
--> preuve compacte
+examples/ingen_electron_shell/**
 ```
 
-Le front n'est plus pilote par un shell navigateur. Le chemin normal de lancement est le binaire natif.
+The shell is Electron + React + TypeScript, connected to Rust through strict IPC:
 
-## Regles De Coupure
+```text
+React renderer
+-> preload context bridge
+-> typed IPC contract
+-> Electron main process
+-> Rust backend projection
+-> Forge / Monster / Brain services
+```
 
-- Ne pas recreer d'arbre applicatif obsolete.
-- Ne pas ajouter de shell UI pilote par un moteur navigateur.
-- Ne pas ajouter de runtime npm pour l'app produit.
-- Ne pas ajouter de source applicative basee sur documents navigateur, feuilles de style globales ou scripts client.
-- Toute nouvelle surface UI doit entrer par `examples/ingen_native_front/ui/app.slint`, `tokens.slint`, `state.rs`, `services.rs` ou un module Rust natif explicitement relie.
-- Toute dependance d'affichage externe doit rester un peripherique contenu, jamais le shell global.
+The frontend must not introduce a second product shell. Browser content is a contained peripheral, not the application host.
 
-## Checklist Restante
+## Current Authority
 
-- [x] Shell Rust + Slint actif.
-- [x] Parite visuelle Forge premiere vue portee dans Slint.
-- [x] Etat UI rejouable et hashable.
-- [x] Banger projete par surface native.
-- [x] Services Banger natifs extraits dans `examples/ingen_native_services`.
-- [x] Ancien arbre applicatif supprime.
-- [x] Audit de coupure mis a jour pour la retraite complete.
-- [x] Repasser `cargo check --manifest-path examples\ingen_native_front\Cargo.toml --tests`.
-- [x] Repasser `cargo test --manifest-path examples\ingen_native_front\Cargo.toml --lib`.
-- [x] Repasser `cargo run --manifest-path examples\ingen_native_front\Cargo.toml -- --cutover-audit`.
-- [ ] Commit + push de la coupure finale.
+- Header, sidebars, canvas, right panel, chat bar and bottom controls are Electron renderer surfaces.
+- Backend truth is Rust service projection plus typed IPC snapshots.
+- Banger heavy rendering remains a native child-surface contract.
+- WebExplorer remains a Rust-owned native WebView host.
+- UI JSON directive blocks render through Electron stores and components.
 
-## Definition De Fini
+## Hard Rules
 
-La migration est finie quand:
+- Do not recreate deleted frontend trees.
+- Do not add a parallel browser shell, Tauri shell or ad-hoc web app.
+- Do not bypass preload IPC with raw renderer access.
+- Do not expose raw `ipcRenderer.send`, `sendSync` or Node integration to the renderer.
+- Do not move Banger heavy rendering into DOM canvas as the product authority.
+- Do not make WebExplorer the global app shell.
+- Keep docs smaller after frontend cleanup; no historical migration archive in live docs.
 
-- le binaire natif demarre sans l'ancien arbre;
-- l'audit de coupure retourne pret;
-- les tests du front natif passent;
-- les docs ne decrivent plus l'ancienne architecture comme une cible vivante;
-- le commit de suppression est pousse sur GitHub.
+## Frontend Files
+
+Primary product files:
+
+```text
+examples/ingen_electron_shell/src/main/main.ts
+examples/ingen_electron_shell/src/preload/preload.ts
+examples/ingen_electron_shell/src/shared/ipc-contract.ts
+examples/ingen_electron_shell/contract/src/main.rs
+examples/ingen_electron_shell/src/renderer/App.tsx
+examples/ingen_electron_shell/src/renderer/styles.css
+examples/ingen_electron_shell/src/renderer/SidebarSlice.tsx
+examples/ingen_electron_shell/src/renderer/CanvasSurfacesSlice.tsx
+examples/ingen_electron_shell/src/renderer/RightPanelSlice.tsx
+examples/ingen_electron_shell/src/renderer/PanelsChatBottomSlice.tsx
+examples/ingen_electron_shell/scripts/final-cutover-audit.mjs
+```
+
+Generated IPC files:
+
+```text
+examples/ingen_electron_shell/src/shared/generated/forge-ipc.generated.ts
+examples/ingen_electron_shell/src/shared/generated/forge-ipc.manifest.generated.json
+examples/ingen_electron_shell/src/shared/generated/final-cutover-audit.generated.json
+```
+
+Assets:
+
+```text
+examples/ingen_electron_shell/public/shell-assets/**
+examples/ingen_electron_shell/public/fonts/**
+```
+
+## IPC Contract
+
+The Rust contract generator is canonical for shared IPC types:
+
+```powershell
+cd examples\ingen_electron_shell
+npm.cmd run generate:ipc
+```
+
+Every renderer command must cross the preload bridge through a typed method. One user action maps to one explicit IPC handler.
+
+Security defaults:
+
+- `contextIsolation: true`
+- `nodeIntegration: false`
+- `sandbox: true`
+- `webSecurity: true`
+- guarded window opening
+- guarded navigation
+
+## UI Discipline
+
+- Normal UI text uses Geist.
+- Technical/proof/code text uses Geist Mono.
+- Icon-only buttons need accessible labels and stable dimensions.
+- Header and sidebar controls must not shift layout when their icons change.
+- Sidebars animate with smooth CSS transitions and must respect reduced motion.
+- Half-screen docking must keep canvas, chat bar and bottom controls aligned with sidebar state.
+- Right panel stays visually empty unless a feature explicitly owns its content.
+- Product state belongs in stores backed by typed snapshots, not static fixtures.
+
+## Verification
+
+Minimum frontend gate:
+
+```powershell
+cd examples\ingen_electron_shell
+npm.cmd test
+npm.cmd run build
+```
+
+Cutover audit must report:
+
+```text
+status: cutover_complete
+blockers: 0
+warnings: 0
+```
+
+The audit also checks that the product shell has no dependency on removed frontend paths or names.
+
+## Launch
+
+Visible app:
+
+```powershell
+examples\ingen_electron_shell\run_ingen_electron_shell.vbs
+```
+
+Manual debug:
+
+```powershell
+examples\ingen_electron_shell\run_ingen_electron_shell.cmd
+```
+
+## Live Objectives
+
+1. Keep Electron shell stable as the only product front.
+2. Finish real backend wiring for remaining placeholder-looking surfaces.
+3. Promote Banger native child surface from contract proof to interactive product surface.
+4. Promote WebExplorer native host from policy contract to interactive product peripheral.
+5. Keep visual polish iterative, verified and scoped to the Electron renderer.

@@ -1,0 +1,8 @@
+{
+  "schema": "ingen.electron.ipc_contract_manifest.v1",
+  "source": "examples/ingen_electron_shell/contract/src/main.rs",
+  "generated": "examples/ingen_electron_shell/src/shared/generated/forge-ipc.generated.ts",
+  "generator": "rust:ingen-electron-ipc-contract",
+  "version": 1,
+  "proof_hash": "00563e86065955c89a8b224c49fe0062a99b26ad32461646551da0a80b9ded49"
+}

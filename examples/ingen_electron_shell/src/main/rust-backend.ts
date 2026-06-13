@@ -1,0 +1,256 @@
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+export interface RustBackendSession {
+  sessionId: string;
+  label: string;
+  date: string;
+  section: "forge" | "webexplorer" | "banger" | "trading" | "real-estate" | "alpha" | "shell";
+  pinned: boolean;
+  working: boolean;
+  automated: boolean;
+  archived: boolean;
+}
+
+export interface RustBackendTranscript {
+  id: string;
+  role: "system" | "assistant" | "user";
+  text: string;
+  proofHash: string;
+}
+
+export interface RustBackendProjection {
+  schema: "ingen.native_services.electron_backend_projection.v1";
+  source: string;
+  backend: "rust";
+  generatedAtUnixMs: number;
+  activeSection: RustBackendSession["section"];
+  sectionTitle: string;
+  sessions: RustBackendSession[];
+  transcript: RustBackendTranscript[];
+  nativeStatus: {
+    stateOwner: string;
+    jobs: string;
+    banger: string;
+    webexplorer: string;
+    monster: string;
+    brain: string;
+    provider: string;
+    proof: string;
+  };
+  proofHash: string;
+}
+
+let cachedProjection: RustBackendProjection | null = shadowProjection("startup snapshot; native bridge refresh pending");
+let cachedAt = 0;
+let refreshInFlight: Promise<RustBackendProjection> | null = null;
+const cacheTtlMs = 15_000;
+
+export function cachedRustBackendProjection(): RustBackendProjection | null {
+  return cachedProjection;
+}
+
+export async function refreshRustBackendProjection(shellRoot: string): Promise<RustBackendProjection> {
+  const now = Date.now();
+  if (cachedProjection && now - cachedAt < cacheTtlMs) {
+    return cachedProjection;
+  }
+  if (refreshInFlight) {
+    return refreshInFlight;
+  }
+  refreshInFlight = loadRustBackendProjection(shellRoot).finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+async function loadRustBackendProjection(shellRoot: string): Promise<RustBackendProjection> {
+  const repoRoot = join(shellRoot, "..", "..");
+  const bridgeExe = process.env.FORGE_ELECTRON_BACKEND_EXE;
+  try {
+    const stdout =
+      bridgeExe && existsSync(bridgeExe)
+        ? await runBackendExe(bridgeExe)
+        : process.env.FORGE_ELECTRON_ALLOW_CARGO_BACKEND === "1"
+          ? await runBackendViaForgeCargo(repoRoot)
+          : null;
+    if (!stdout) {
+      return rememberProjection(shadowProjection("native bridge binary unavailable; cargo backend disabled"));
+    }
+    return rememberProjection(parseProjection(stdout));
+  } catch (error) {
+    console.error("Rust backend projection failed; using non-blocking shadow projection.", error);
+    return rememberProjection(shadowProjection("native bridge refresh failed; shadow projection active"));
+  }
+}
+
+async function runBackendExe(exePath: string): Promise<string> {
+  const { stdout } = await execFileAsync(exePath, [], {
+    timeout: 20_000,
+    windowsHide: true,
+    maxBuffer: 1024 * 1024
+  });
+  return stdout;
+}
+
+async function runBackendViaForgeCargo(repoRoot: string): Promise<string> {
+  const powershell = join(
+    process.env.SystemRoot ?? "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe"
+  );
+  const forgeCargo = join(repoRoot, "scripts", "forge-cargo.ps1");
+  const { stdout } = await execFileAsync(
+    powershell,
+    [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      forgeCargo,
+      "run",
+      "--manifest-path",
+      "examples\\ingen_native_services\\Cargo.toml",
+      "--bin",
+      "ingen_electron_backend_bridge"
+    ],
+    {
+      cwd: repoRoot,
+      timeout: 90_000,
+      windowsHide: true,
+      maxBuffer: 4 * 1024 * 1024
+    }
+  );
+  return stdout;
+}
+
+function parseProjection(stdout: string): RustBackendProjection {
+  const line = stdout
+    .trim()
+    .split(/\r?\n/)
+    .reverse()
+    .find((entry) => entry.trim().startsWith("{"));
+  if (!line) {
+    throw new Error("Rust backend did not return a JSON projection.");
+  }
+  const parsed = JSON.parse(line) as Partial<RustBackendProjection>;
+  if (
+    parsed.schema !== "ingen.native_services.electron_backend_projection.v1" ||
+    parsed.backend !== "rust" ||
+    !Array.isArray(parsed.sessions) ||
+    !Array.isArray(parsed.transcript) ||
+    !parsed.nativeStatus ||
+    typeof parsed.proofHash !== "string"
+  ) {
+    throw new Error("Rust backend projection failed validation.");
+  }
+  return parsed as RustBackendProjection;
+}
+
+function rememberProjection(projection: RustBackendProjection): RustBackendProjection {
+  cachedProjection = projection;
+  cachedAt = Date.now();
+  return projection;
+}
+
+function shadowProjection(reason: string): RustBackendProjection {
+  const generatedAtUnixMs = Date.now();
+  const projection: RustBackendProjection = {
+    schema: "ingen.native_services.electron_backend_projection.v1",
+    source: "examples/ingen_native_services/shadow",
+    backend: "rust",
+    generatedAtUnixMs,
+    activeSection: "forge",
+    sectionTitle: "Forge",
+    sessions: [
+      {
+        sessionId: "native-front-migration",
+        label: "Electron cutover",
+        date: "2026-06-09",
+        section: "forge",
+        pinned: true,
+        working: false,
+        automated: false,
+        archived: false
+      },
+      {
+        sessionId: "test-session-example",
+        label: "test session example",
+        date: "2026-06-10",
+        section: "forge",
+        pinned: false,
+        working: true,
+        automated: false,
+        archived: false
+      },
+      {
+        sessionId: "banger-native-surface",
+        label: "Banger native surface",
+        date: "2026-06-09",
+        section: "banger",
+        pinned: false,
+        working: false,
+        automated: true,
+        archived: false
+      },
+      {
+        sessionId: "webexplorer-rust-webview",
+        label: "WebExplorer Rust WebView",
+        date: "2026-06-09",
+        section: "webexplorer",
+        pinned: false,
+        working: false,
+        automated: false,
+        archived: false
+      },
+      {
+        sessionId: "monster-compute-proof",
+        label: "Monster compute proof",
+        date: "2026-06-08",
+        section: "forge",
+        pinned: false,
+        working: false,
+        automated: false,
+        archived: false
+      }
+    ],
+    transcript: [
+      {
+        id: "native-shadow-online",
+        role: "system",
+        text: "Electron shell is responsive while the native backend bridge is unavailable.",
+        proofHash: "native-shadow-online"
+      },
+      {
+        id: "native-shadow-reason",
+        role: "assistant",
+        text: reason,
+        proofHash: "native-shadow-reason"
+      }
+    ],
+    nativeStatus: {
+      stateOwner: "electron-shadow/non-blocking",
+      jobs: "queued=0 running=0 done=0 failed=0",
+      banger: `native bridge pending (${reason})`,
+      webexplorer: "rust-owned-webview-slot=pending",
+      monster: "local-compute=pending",
+      brain: "evidence-aware-memory=pending",
+      provider: "provider=openai ready=false source=shadow",
+      proof: "electron-shadow-projection"
+    },
+    proofHash: ""
+  };
+  projection.proofHash = hashJson(projection);
+  return projection;
+}
+
+function hashJson(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}

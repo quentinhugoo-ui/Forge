@@ -1,4 +1,4 @@
-//! forge_pack_run — the CLI the MCP / Atlas dropdown calls to launch a pack.
+﻿//! forge_pack_run — the CLI the ActCode / Atlas dropdown calls to launch a pack.
 //!
 //! Usage :
 //!   cargo run --example forge_pack_run --release -- --catalog
@@ -11,7 +11,7 @@
 //!         Forge does the thousands of lines of math internally ; the caller
 //!         spends zero tokens reading them.
 //!
-//! The MCP server wraps this : `forge.run_pack(pack_id, geometry)` → report.
+//! The ActCode server wraps this : `forge.run_pack(pack_id, geometry)` → report.
 
 use scan::act_codes::pack::{catalog_json, find, run_pack};
 use scan::act_codes::{ActLedger, SdfOp};
@@ -52,7 +52,7 @@ fn main() -> std::io::Result<()> {
     };
 
     // Thermal pack runs over the solid inner medium ; the others over the
-    // cage shell. (A real MCP call passes the geometry explicitly.)
+    // cage shell. (A real ActCode call passes the geometry explicitly.)
     let ops = if pack.id == "thermal" { drone_inner() } else { drone_cage() };
 
     let ledger_path = std::path::PathBuf::from("examples/forge_drone_design.ledger.jsonl");

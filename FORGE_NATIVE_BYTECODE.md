@@ -8,6 +8,11 @@ bytecode is the compact verified form Monster executes. External LLMs should
 normally fill structured MathContracts through `/newcompute_`, then let InGen
 compile them deterministically to Forge.
 
+Product language rule: users and LLM-facing surfaces talk about **CodeAct
+commands**, **filled templates**, **MathContracts**, **compute contracts** and
+**proofs**. "Program" is reserved for internal Forge/KASM bytecode artifacts,
+Rust type names and low-level verifier implementation details.
+
 ```text
 InGen intent
 -> Forge source
@@ -54,7 +59,7 @@ Math classes:
 | --- | --- | --- | --- |
 | `/formula_symbolic` | identities, derivations, simplification, exact proof, symbolic solve | symbols, expressions, assumptions, domains, requested transforms, proof checks | symbolic Forge types/ops, symbolic math plan |
 | `/numeric_model` | engineering formulas, deterministic calculations, dimensioned models | variables, units, bounds, equations, constraints, samples, outputs | scalar/vector Forge math, unit/bounds checks, scalar oracle |
-| `/simulation_dynamics` | ODE/DAE/PDE, time stepping, physical dynamics | states, time domain, equations, initial/boundary conditions, events, integrator request | solver primitives when supported, otherwise `capability_missing` |
+| `/simulation_dynamics` | ODE/DAE/PDE, time stepping, physical dynamics | states, time domain, equations, initial/boundary conditions, events, integrator request | promoted heat/stencil PDE slice on Monster `MassMath`; unsupported solver words still return `capability_missing` |
 | `/optimization_design` | design search, calibration, constraints, Pareto studies | objective, design variables, constraints, algorithm family, stopping criteria | optimization/ranking Forge ops and validation |
 | `/uncertainty_statistics` | Monte Carlo, QMC, confidence, robustness, sensitivity | distributions, samples, estimators, correlation assumptions, tolerances | sampling/statistics/uncertainty Forge ops |
 | `/tensor_linalg_autodiff` | matrix/tensor compute, gradients, Jacobians, Hessians | shapes, batch axes, matrix ops, AD requests, precision/layout policy | tensor/linalg/autodiff Forge ops |
@@ -124,7 +129,7 @@ InGen should behave like one short circuit:
 ```text
 user intent
 -> LLM CLI inside InGen
--> BrainCommand or CodeAct program
+-> BrainCommand or CodeAct command/template
 -> Godel/policy gate
 -> local route or Forge compute
 -> Monster execution/reuse/proof when compute is needed
@@ -140,24 +145,51 @@ analysis or compute if this route can carry it.
 
 There are two action surfaces, and they must stay distinct:
 
-| Surface | What the LLM writes | Executor | Role |
+| Surface | What the LLM emits | Executor | Role |
 | --- | --- | --- | --- |
-| BrainCommand | `/forge` programs such as `recall`, `plan`, `create`, `run`, `project`, `replay`, `commit`, `explain` | `forge_agent` / `forge_agent_runtime.rs` | general agent OS route |
-| CodeAct compute/UI | `/newcompute_` class selectors and MathContracts, `/selectcompute_`, `/newobject_`, plus UI JSON blocks | `src/monster.rs` core contracts plus thin native Slint adapters | compute or UI actions |
+| BrainCommand | `/forge` commands such as `recall`, `plan`, `create`, `run`, `project`, `replay`, `commit`, `explain` | `forge_agent` / `forge_agent_runtime.rs` | general agent OS route |
+| CodeAct compute/UI | `/newcompute_` class selectors and MathContracts, `/selectcompute_`, `/newobject_`, plus UI JSON blocks | `src/monster.rs` core contracts plus Electron/Rust IPC adapters | compute or UI actions |
 
 Family A is compute. `/newcompute_`, `/selectcompute_` and dynamic
 `/compute_<name>_` work in all sections and call Monster. `/newobject_` is
 Banger-only and turns curated compute evidence into SDF/3D object structure.
 
-Family B is UI-only. `/web_`, `FORGE_PLAN_JSON`,
+Family A2 is code-template generation. `/newmodule_` is the compact entry
+command for verified module templates that save coding tokens without
+pretending InGen reasons by itself. The LLM chooses the module class and fills a
+small strict slot set; Monster expands a stored Rust template, validates
+identifiers and slot values, writes files directly under the selected project
+root, and returns a compact materialization receipt. The first promoted
+template is `/rust_port_adapter_` for Rust Port + Adapter + Service modules. It
+is separate from `/newcompute_`: math computes stay in Forge/Monster, while code
+templates generate repository code that can call Forge/Monster when needed.
+
+Family B is UI-only. `/web_`, `/frontdesign_`, `FORGE_PLAN_JSON`,
 `FORGE_QUESTIONNAIRE_JSON`, `FORGE_SESSION_TITLE_JSON` and Banger material JSON
 render panels/events and must not enter the Monster compute executor.
+`/frontdesign_` exposes the native palette template: semantic surface roles
+for sidebars, canvas, panels, chat, text, accents and states, plus deterministic
+contrast/harmony checks and a rollback label before a palette is promoted. Its
+native-front contract mirrors the `/newcompute_` template style: required and
+optional slots, slot specs, unknown-slot rejection, proof hashes and an accepted
+token projection into Electron design tokens before any renderer surface is
+allowed to use the new colors.
+The low-risk path is `paletteMode:"seeded_tonal_ramp"`: the LLM supplies normal
+hex colors such as `paletteSeed.baseColorHex:"#1E6BFF"` and optional
+`accentColorHex`, `textPolarity` and saturation. The app does not reason about
+design; it deterministically compiles those `#RRGGBB` seeds into the fixed
+surface/text/icon/accent token ramp, then rejects the result if contrast or tone
+group invariants fail.
+The projection also emits deterministic derived runtime tokens for deep/inset
+surfaces, hover/active overlays, scrims, upload preview backgrounds, platform
+window dots, WebExplorer chrome and the Brain motion-lane shader. Generic SVG
+icons must be colorized through `ForgeTokens`; provider and external brand marks
+are the only intentional color-preserving exemptions.
 
-Family C is gated Web CodeAct. `/navigateweb_` and future web action programs
-are the final step of the WebExplorer RAM DOM atlas, not the first. They act on
-the native WebExplorer atlas, not on raw visual selectors or prose. Before exposing
-Family C to the LLM, WebExplorer must tag every captured page element with a
-stable `webref` backed by DOM, accessibility, layout and visual evidence, and
+Gated Web actions are not exposed as Brain CodeAct commands. The WebExplorer
+RAM DOM atlas remains an internal research path: before any future web action is
+promoted back into Brain, WebExplorer must tag every captured page element with
+a stable `webref` backed by DOM, accessibility, layout and visual evidence, and
 `collection_os_webexplorer_atlas_report` must show acceptable coverage with
 known blind spots:
 
@@ -165,32 +197,13 @@ known blind spots:
 webref=<tree_hash>/<frame_path>/<backend_dom_node_id_or_node_hash>/<role>/<label_hash>
 ```
 
-The LLM receives a pruned command map, for example buttons, links, search boxes,
-forms, media controls, images, videos, canvas regions, menus, dialogs,
-scrollable regions and ambiguous visual targets. It emits CodeAct with slots
-that reference those tags:
-
-```text
-/navigateweb_
-tree_hash=<current atlas tree hash>
-goal=<short navigation goal>
-action=click|type|select|scroll|focus|copy_text|capture_region|download_resource
-target_ref=<webref from the command map>
-target_kind=button|link|searchbox|textbox|image|video|canvas|menu|dialog|region
-input_text=<optional text, only for text-entry actions>
-expected_state=<url_change|tree_change|text_visible|download|no_navigation>
-confirmation=required|not_required
-```
-
-The executor resolves `target_ref` against the latest atlas, verifies that the
-tree hash or self-healing match is still valid, then performs the smallest
-native action. Self-healing may use backend DOM id, stable node hash, AX
-role/name, visible text, bounds and resource hash, but never lets the LLM run
-arbitrary page JavaScript. Sensitive actions such as login, purchase, payment,
-booking, upload, submit or destructive form changes require explicit human
-confirmation before execution. Every executed action appends an action ledger
-entry with the previous tree hash, target ref, result tree hash, URL delta and
-proof hash.
+Any future executor must resolve a target ref against the latest atlas, verify
+that the tree hash or self-healing match is still valid, then perform the
+smallest native action. Self-healing may use backend DOM id, stable node hash,
+AX role/name, visible text, bounds and resource hash, but must never let the LLM
+run arbitrary page JavaScript. Sensitive actions such as login, purchase,
+payment, booking, upload, submit or destructive form changes require explicit
+human confirmation before execution.
 
 ### NewCompute MathContract Front Door
 
@@ -220,6 +233,80 @@ compile exactly, the run is rejected before Monster execution with a mechanical
 reason such as `missing_unit`, `unknown_symbol`, `ambiguous_equation`,
 `unsupported_operation` or `capability_missing`.
 
+### Mechanical Workload Floor
+
+Monster does not decide whether a compute is scientifically worth doing. The
+LLM owns that reasoning. Monster only checks the numeric contract envelope.
+
+Every `/newcompute_` math-class template now exposes a required
+`workload_scale` slot. The slot is satisfied by concrete contract cost fields,
+not by prose:
+
+```text
+max_steps
+max_memory_mb
+min_estimated_ops
+samples / sweeps / lanes or equivalent shape scale
+```
+
+Before generated Forge source is accepted, Monster applies the class floor
+mechanically. If the floor is not met, compilation fails with
+`workload_too_small`; Monster does not reroute, explain intent, or decide that
+the LLM should answer directly.
+
+Current floors are intentionally simple and numeric:
+
+| Class | Min Steps | Min Memory | Min Estimated Ops |
+| --- | ---: | ---: | ---: |
+| `/formula_symbolic` | 1,000,000 | 64 MB | 1,000,000 |
+| `/numeric_model` | 1,000,000 | 64 MB | 10,000,000 |
+| `/simulation_dynamics` | 10,000,000 | 512 MB | 100,000,000 |
+| `/optimization_design` | 1,000,000 | 64 MB | 10,000,000 |
+| `/uncertainty_statistics` | 10,000,000 | 128 MB | 100,000,000 |
+| `/tensor_linalg_autodiff` | 10,000,000 | 128 MB | 100,000,000 |
+| `/signal_timeseries` | 1,000,000 | 64 MB | 10,000,000 |
+| `/graph_sparse_discrete` | 1,000,000 | 64 MB | 10,000,000 |
+
+Forge cost syntax also accepts the optional line:
+
+```text
+min_estimated_ops=<positive integer>
+```
+
+This line records the anti-triviality floor in the generated Forge source. It
+is verifier-visible vocabulary, not a reasoning instruction.
+
+`/simulation_dynamics` now has one promoted scientific compute slice:
+heat/stencil PDE over typed Forge tensors. The LLM fills the full simulation
+template, then Monster accepts only contracts that use promoted solver words
+such as `pde_stencil_step`, `relaxation_step`, `ode_step_euler`,
+`ode_step_rk4` or `ode_solve`. A compute-only tensor field uses handoff
+`vector` so it stays on Monster `MassMath`; handoff `field` is reserved for
+native render/tandem artifacts. The promoted heat slice now runs a reduced
+multi-step electro-thermal battery model: explicit heat diffusion, hotspot
+source, convective cooling, Joule heating, reversible entropic heating and an
+Arrhenius side-reaction term, with explicit boundary modes: `periodic`,
+`adiabatic`, `dirichlet_ambient` and `cooling_plate_edge`. It exposes the
+professional diagnostics expected by the LLM projection:
+`temperature_field_next`, `mean_temperature`, `max_temperature`,
+`hotspot_location`, `temperature_gradient_max`, `thermal_runaway_margin`,
+`time_to_threshold_estimate`, `cfl_stability_ratio`,
+`energy_balance_error`, `residual_norm`, Joule/entropic/Arrhenius heat rates,
+threshold crossing time, simulated step count, final simulated time, compact
+time-series samples for max/mean/runaway margin, `sensitivity`, and a CPU
+reference check comparing the f64 reference field against a quantized f32
+candidate through L2, Linf and max-relative errors. Forge currently keeps only
+the units its validator can prove inside the source module; the domain-specific
+units (`K`, `K/m`, `K/s`, `s`) are emitted in `scientific_metrics`.
+
+After execution, `/newcompute_` projects Monster's internal result through
+`MonsterNewComputeLlmResult`, not through test stdout. The projection exposes
+`execution_status`, backend, route lane, GPU counts, lanes, dispatch shape,
+input/output/readback byte counts, scalar oracle diagnostics, typed-buffer
+hashes, scientific metrics, `output_hash`, `proof_hash`, `projection_hash`,
+limitations and a deterministic `compact_text` block for the LLM. Raw buffers
+remain addressed by hash/page metadata.
+
 The first `/newcompute_` response should be compact and cheap for the LLM to
 read:
 
@@ -244,10 +331,12 @@ Required implementation stages:
 
 1. Done 2026-06-06: Monster core owns the compact `/newcompute_` math-class
    selector through `MonsterNode::math_capability_manifest`. It lists the
-   eight class commands, required slots, accepted operators, compile status and
-   a stable manifest hash. `ingen_native_services::math_compute_service`
-   exposes this manifest through a thin native adapter instead of recreating a
-   template registry.
+   eight class commands, required slots, optional slots, accepted classical
+   math/Forge words, Forge targets, compile status, rejection reasons,
+   deterministic translation policy, typed `slot_specs` and a stable manifest
+   hash.
+   `ingen_native_services::math_compute_service` exposes this manifest through
+   a thin native adapter instead of recreating a template registry.
 2. Done 2026-06-06: Classical MathContract IR lives in `src/monster.rs` as
    typed Rust structs: `MonsterMathContract`, `MonsterMathVariable`,
    `MonsterMathConstant`, `MonsterMathOutputContract` and `MonsterMathSample`.
@@ -258,18 +347,57 @@ Required implementation stages:
    deterministically into real Forge source, then reuse the normal
    `prepare_forge_source` and `execute_prepared_compute` path. This is not a
    second compute pipeline.
-4. Done 2026-06-06: The first deterministic compiler slice supports scalar
+4. Done 2026-06-07: The class templates expose the current Forge math
+   vocabulary by math family, not only the tiny executable smoke slice. Each
+   class manifest now carries a broad allowed-word dictionary and a Forge
+   target list so an external LLM can fill classical math slots without knowing
+   Forge internals. Completeness here means vocabulary and deterministic
+   contract shape coverage; domain-native kernels still land behind support
+   gates instead of fake execution. The manifest also carries the visible
+   `classical_aliases` table for each class. This is the bridge from
+   conventional LLM math notation to Forge words: examples include
+   `Power->pow`, `Derivative->diff`, `StdDev->std`, `RFFT->rfft`,
+   `Gradient->grad`, `Jacobian->jacobian` and `PageRank->pagerank_step`.
+   Alias targets are guarded by tests so a template cannot advertise a
+   classical word unless the selected class also accepts the target Forge word.
+5. Done 2026-06-07: Classical notation is normalized mechanically before Forge
+   parsing. Examples: `Power(x,2)` -> `pow(x,2)`, `StdDev(xs)` -> `std(xs)`,
+   `Mean(xs)` -> `mean(xs)`, `Derivative(f,x)` -> `diff(f,x)`, comparison
+   glyphs normalize to ASCII comparison operators, and multiplication glyphs
+   normalize to `*`. If a name does not map exactly to an allowed word for the
+   selected class, Monster rejects the contract with `unsupported_operator`.
+   Classical engineering units are normalized in the same lowering step:
+   `kg/m3` -> `kg/m^3`, `m2` -> `m^2`, unicode squared/cubed glyphs ->
+   `^2`/`^3`, `per` -> `/`, and angular `rad`/`radian` units are treated as
+   dimensionless `none` for scalar Forge contracts.
+6. Done 2026-06-07: Each class template now exposes one typed `slot_specs`
+   entry for every required and optional slot. A slot spec declares
+   `value_kind`, `accepted_content`, `forge_binding` and `validation_rule`.
+   This gives an external LLM a strict fill contract without teaching it raw
+   Forge. Unknown template slots are rejected as `unknown_template_slot` before
+   Forge generation. Native services project the same specs, and the manifest
+   hash includes them so template drift is detectable.
+7. Done 2026-06-07: Monster can now report template-slot satisfaction per
+   contract. `MonsterMathContract::template_slot_statuses` returns one status
+   for each class slot with `required`, `value_kind`, `forge_binding`,
+   `validation_rule`, `satisfied` and `source`. The source is either
+   `template_slot` when the LLM filled the explicit slot, or the typed contract
+   field that semantically satisfies it, such as `contract.variables`,
+   `contract.equations`, `contract.samples` or `contract.outputs`. This lets
+   `/newcompute_` run with old typed contracts while still auditing whether a
+   full template is truly complete.
+8. Done 2026-06-06: The first deterministic compiler slice supports scalar
    `numeric_model` and scalar executable contract slices for
    `formula_symbolic`, `optimization_design`, `uncertainty_statistics`,
    `tensor_linalg_autodiff`, `signal_timeseries` and `graph_sparse_discrete`.
    It emits `forge_inputs`, `forge_constants`, `forge_functions`,
    `forge_program`, `forge_outputs`, `forge_constraints`, `forge_samples`,
    `forge_validation`, `forge_cost` and `artifact_handoff`.
-5. Done 2026-06-06: Monster rejects incomplete or unsupported class contracts
+9. Done 2026-06-06: Monster rejects incomplete or unsupported class contracts
    mechanically through `missing_slots`, `unsupported_operator`,
-   `ambiguous_expression`, `invalid_generated_forge` or `capability_missing`.
-   Raw Rust internals stay hidden from the LLM.
-6. Done 2026-06-06: The scalar oracle now covers the new scalar replay words
+   `unknown_template_slot`, `ambiguous_expression`, `invalid_generated_forge`
+   or `capability_missing`. Raw Rust internals stay hidden from the LLM.
+10. Done 2026-06-06: The scalar oracle now covers the new scalar replay words
    used by compiled class contracts, including `optimize`,
    `constraint_solve`, `least_squares`, `uncertainty`, `p5`, `p50`, `p95`,
    `mean`, `variance`, `std`, `median`, `quantile`, `grad`, `hessian`,
@@ -277,50 +405,294 @@ Required implementation stages:
    `rolling`, `window_hann`, `window_blackman`, `convolution`,
    `csr_matvec`, `pagerank`, `shortest_path`, `connected_components`,
    `graph_degree` and `diff` when they appear in scalar smoke contracts.
-7. In progress 2026-06-06: `/simulation_dynamics` contract exposes slots for
-   state variables, time domain, ODE/DAE/PDE form, events,
-   boundary/initial conditions, integrator request, stability policy and
-   residual checks. Until native solver lowerings land, complete contracts
-   normalize to IR and return `capability_missing`, not fake execution.
-8. In progress 2026-06-06: Promote domain-native lowerings beyond scalar
+11. Done 2026-06-13: `/simulation_dynamics` contract exposes slots for state
+   variables, time domain, ODE/DAE/PDE form, events, boundary/initial
+   conditions, integrator request, stability policy and residual checks. The
+   first promoted native slice is a Forge tensor heat/stencil contract:
+   `tensor<f32,64x64>` state/source fields, `pde_stencil_step`, optional
+   scalar diagnostics through `mean(...)` plus the thermal safety projection
+   (`max_temperature`, hotspot, gradient, runaway margin, threshold time, CFL,
+   energy balance, residual, Joule/entropic/Arrhenius heat rates and
+   sensitivity), Monster `MassMath` routing with handoff `vector`, typed result
+   buffers and proof hash. Unsupported solver words still return
+   `capability_missing`, not fake execution.
+12. In progress 2026-06-06: Promote domain-native lowerings beyond scalar
    smoke contracts: symbolic expression types for true CAS `diff/solve`,
    vector/array signal contracts for `fft/rfft/rolling`, sparse graph typed
    outputs, tensor shape-specialized kernels, real optimization feasibility
    gates and robust Monte Carlo/QMC statistics.
-9. Real app-runtime batteries per class. Each class still needs at least 10
+13. Real app-runtime batteries per class. Each class still needs at least 10
    store-backed `/newcompute_` tests through the native app UI command layer,
    Monster preparation, typed buffers, scalar/artifact oracle status and
    compute library reuse. Current gates are `cargo test --lib math_contract`
    for Monster core and `cargo test --manifest-path
    examples\ingen_native_services\Cargo.toml math_compute` for the native
-   service adapter.
-10. Documentation and dictionary sync. After each class lands, this document
+   service adapter. Vocabulary coverage is guarded by
+   `monster_math_class_templates_cover_existing_forge_math_words`; classical
+   notation normalization is guarded by
+   `monster_numeric_math_contract_normalizes_classical_math_notation`; the
+   external-LLM aerospace scenario is guarded by
+   `monster_external_llm_aerospace_newcompute_template_runs_end_to_end`.
+   Brute-force numeric template fuzzing lives in
+   `tests/monster_math_fuzz.rs`: `monster_newcompute_numeric_math_fuzz_quick`
+   runs in normal CI, while ignored `monster_newcompute_numeric_math_fuzz_soak`
+   accepts `FORGE_MONSTER_MATH_FUZZ_CASES` for long million-case sweeps.
+   The professional full-template battery lives in
+   `tests/monster_math_professional_templates.rs` and runs one filled
+   role-specific MathContract for each math class. Required and optional
+   template slots stay in the Monster contract envelope and contract hash; they
+   are not injected into `forge_validation` until the Forge validation dialect
+   has a typed slot grammar.
+   MathContract preparation is fail-closed: any scalar sample oracle with
+   `sample_value_mismatch` returns `SampleOracleMismatch` before Monster
+   execution, so the LLM receives a rejection instead of a compact wrong
+   result. The current unit normalizer accepts simple engineering syntax
+   (`kg/m3`, `m2`, `rad` as dimensionless) and scaled SI units handled by the
+   unit-scale layer (`MPa`, `kPa`, `cm2`, `g/cm3`, etc.).
+   Scalar MathContracts also run a first interval-certification pass over the
+   output expressions using declared variable bounds and constants. If a sample
+   expectation falls outside the certified interval, Monster returns
+   `CertificationFailed`; unsafe domains such as division by an interval
+   crossing zero are rejected before execution or during Forge validation.
+   After sample-oracle validation, Monster also runs a scalar differential
+   guard comparing the original normalized MathContract expression against the
+   prepared Forge module oracle. A mismatch returns
+   `CodegenDifferentialMismatch`, catching bugs in the classical-math-to-Forge
+   lowering path.
+   Engineering units with simple scale factors are normalized before Forge
+   lowering: values, bounds, constants and sample givens are converted together
+   (`12 MPa` -> `12000000 Pa`, `cm2` -> `m^2` with scale `1e-4`,
+   `g/cm3` -> `kg/m^3` with scale `1000`). This keeps the LLM-facing template
+   natural while the Forge language receives canonical SI-compatible units.
+14. Documentation and dictionary sync. After each class lands, this document
    must list the class purpose, contract slots, allowed math words, Forge
-   compile target, Monster support level, examples, rejection reasons and test
-   gate name.
+   compile target, Monster support level, examples, classical aliases,
+   rejection reasons and test gate name.
+
+Slot spec policy:
+
+- Every required or optional slot returned by a class must have exactly one
+  `slot_specs` entry.
+- `value_kind` tells the LLM what shape to emit: for example
+  `typed_declaration_list`, `classical_math_expression_list`,
+  `sample_oracle_list`, `output_contract_list` or `enum_policy`.
+- `forge_binding` tells Monster where the slot lands: `forge_inputs`,
+  `forge_program`, `forge_constraints`, `forge_samples`, `forge_validation`,
+  `forge_outputs`, `artifact_handoff` or the hashed contract envelope.
+- `validation_rule` tells the LLM and the runtime what must be checked before
+  execution.
+- A slot name not present in the selected class is never accepted. It returns
+  `unknown_template_slot`.
+- `missing_required_template_slots` is the audit surface for real
+  `/newcompute_` batteries. It accepts either explicit `template_slot` payloads
+  or equivalent typed contract fields, but always reports the source.
+
+Classical alias policy:
+
+- The LLM-facing template may use conventional math names and glyphs, but only
+  from the `classical_aliases` list returned by the selected class.
+- Monster canonicalizes aliases before Forge parsing and then validates the
+  canonical Forge word against that class' accepted dictionary.
+- Syntax glyph aliases such as `×`, `÷`, `≤` and `≥` are allowed only as
+  normalization syntax; semantic operations must resolve to explicit Forge
+  words.
+- If an alias or operator is not listed, Monster must reject with
+  `unsupported_operator` rather than guessing.
+- Native services project the same alias list; they must not keep a parallel
+  template registry.
 
 ### MathContract Class Sync
 
 | Class | Current Slice | Required Contract Slots | Allowed Words | Forge Target | Monster Support | Example | Rejections | Test Gate |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `/formula_symbolic` | scalar executable contract plus symbolic vocabulary manifest | `goal`, `symbols`, `expressions`, `assumptions`, `domains`, `requested_transforms`, `proof_checks`, `outputs` | `expand`, `canonicalize_expr`, `simplify`, `diff`, `solve`, `math_equiv`, `math_proof` | generated scalar Forge module today; true symbolic typed lowering next | partial | scalar replay for `(x*x)` under formula contract | `missing_slots`, `unsupported_operator`, `ambiguous_expression`, `invalid_generated_forge` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
-| `/numeric_model` | deterministic scalar formula lowering | `goal`, `variables`, `constants`, `units`, `bounds`, `equations`, `constraints`, `samples`, `validation`, `outputs` | scalar arithmetic, declared equations, generated `finite` constraints | `forge_inputs`, constants, program, outputs, constraints, samples, validation, cost | supported for scalar mass-math slice | rocket thrust `mass_flow * exhaust_velocity + pressure_delta` | `missing_slots`, `unsupported_operator`, `ambiguous_expression`, `invalid_generated_forge` | `monster_numeric_math_contract_compiles_prepares_and_executes` |
-| `/optimization_design` | scalar operator contract lowering | `goal`, `objective`, `design_variables`, `constraints`, `algorithm_family`, `stopping_criteria`, `validation`, `outputs` | `optimize`, `constraint_solve`, `least_squares`, `rank`, `pareto`, `grad`, `hessian` | generated Forge scalar program plus validation/cost | partial | `optimize(x*x, x)` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
-| `/uncertainty_statistics` | scalar estimator contract lowering | `goal`, `distributions`, `samples`, `estimators`, `correlation_assumptions`, `tolerances`, `validation`, `outputs` | `sample`, `sobol`, `mean`, `variance`, `std`, `stddev`, `quantile`, `p5`, `p50`, `p95` | generated Forge scalar program plus validation/cost | partial | `p95(uncertainty(x,x,x))` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
-| `/tensor_linalg_autodiff` | scalar AD/tensor vocabulary contract lowering | `goal`, `shapes`, `batch_axes`, `matrix_ops`, `ad_requests`, `precision_policy`, `layout_policy`, `validation`, `outputs` | `matmul`, `dot`, `transpose`, `sum`, `top_k`, `grad`, `jacobian`, `hessian`, `jvp`, `vjp`, `adjoint` | generated Forge scalar program plus validation/cost today; typed tensor kernels next | partial | `grad(x*x)` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
-| `/signal_timeseries` | scalar-safe signal contract front door | `goal`, `sample_rate`, `channels`, `windows`, `transforms`, `filters`, `stationarity_assumptions`, `validation`, `outputs` | `fft`, `rfft`, `ifft`, `convolution`, `fir_filter`, `iir_filter`, `window_hann`, `window_blackman`, `rolling`, `asof_join` | generated scalar Forge program today; array/timeseries lowering next | partial | scalar signal contract replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
-| `/graph_sparse_discrete` | scalar graph/sparse vocabulary contract lowering | `goal`, `nodes`, `edges`, `sparse_matrices`, `graph_ops`, `topology_checks`, `solver_requests`, `validation`, `outputs` | `csr_matvec`, `frontier`, `pagerank`, `shortest_path`, `connected_components`, `degree`, `graph_degree`, `top_k`, `constraint_solve` | generated scalar Forge program today; sparse graph typed output next | partial | `constraint_solve(x,x)` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute` |
-| `/simulation_dynamics` | contract manifest only, solver lowering gated | `goal`, `states`, `time_domain`, `equations`, `initial_conditions`, `boundary_conditions`, `events`, `integrator_request`, `residual_checks` | none promoted yet | none until native solver slice lands | gated, compile returns capability missing | oscillator ODE contract | `capability_missing` | `monster_simulation_math_contract_returns_capability_missing_until_solver_lands` |
+| `/formula_symbolic` | symbolic template plus scalar executable replay slice | `goal`, `symbols`, `expressions`, `assumptions`, `domains`, `requested_transforms`, `proof_checks`, `outputs` | symbol/domain/assumption words, `to_expr`, polynomial/piecewise builders, simplify/canonicalize/expand/factor/collect/cancel/together/apart, series/refine, `diff`, `integrate`, `limit`, `solve`, `reduce_equations`, `math_equiv`, `math_proof`, `expression_hash`, `pow` | generated scalar Forge module today; true symbolic typed lowering next | partial | scalar replay for `pow(x,2)` under formula contract | `missing_slots`, `unsupported_operator`, `ambiguous_expression`, `invalid_generated_forge` | `monster_operator_math_contract_classes_compile_to_forge_and_execute`, vocabulary gate |
+| `/numeric_model` | deterministic scalar formula lowering | `goal`, `variables`, `constants`, `units`, `bounds`, `equations`, `constraints`, `samples`, `validation`, `outputs` | arithmetic/comparison/bool words, unit/bounds constructors, interval/uncertainty, simple aggregate words `sum`/`mean`/`variance`/`std`/`median`/`quantile`, transcendental and special functions including `sqrt`, `pow`, `exp`, `log`, trig/hyperbolic, `erf`, `gamma`, `clamp`, `finite` | `forge_inputs`, constants, program, outputs, constraints, samples, validation, cost | supported for scalar mass-math slice | rocket thrust `mass_flow * exhaust_velocity + pressure_delta`; classical `Power(x,2)+Sin(x)` normalizes before Forge parse | `missing_slots`, `unsupported_operator`, `ambiguous_expression`, `invalid_generated_forge` | `monster_numeric_math_contract_compiles_prepares_and_executes`, `monster_numeric_math_contract_normalizes_classical_math_notation` |
+| `/simulation_dynamics` | promoted heat/stencil PDE slice plus gated broader dynamics surface | `goal`, `states`, `time_domain`, `equations`, `initial_conditions`, `boundary_conditions`, `events`, `integrator_request`, `residual_checks` | root solve, ODE/PDE/integrator names, `pde_stencil_step`, `relaxation_step`, time-step/state/residual words, `temperature_field_next`, `max_temperature`, hotspot x/y, gradient max, runaway margin, threshold time, CFL, energy balance, residual, Joule/entropic/Arrhenius heat rates, simulated steps/time, boundary modes, compact time-series, CPU reference error and sensitivity diagnostics, force/energy terms, geometry/SDF words including spheres/boxes/cylinders/unions/intersections/smooth blends, marching and mesh extraction vocabulary | `heat_pde_2d_stencil`, `pde_stencil`, `ode_step`, `solver_rk4_stencil_kernel` | supported for promoted tensor stencil/ODE words; unsupported solver slices return `capability_missing` | 64x64 multi-step electro-thermal tensor contract with cooling-plate edge boundary, full final-field buffer hash, scientific diagnostics, time-series and f64-vs-f32 reference errors | `capability_missing`, `unsupported_operator`, `missing_slots`, `invalid_generated_forge` | `monster_simulation_heat_pde_contract_prepares_solver_stencil_slice`, `monster_simulation_heat_pde_contract_executes_gpu_or_multi_adapter`, vocabulary gate |
+| `/optimization_design` | scalar operator contract lowering plus full optimization vocabulary | `goal`, `objective`, `design_variables`, `constraints`, `algorithm_family`, `stopping_criteria`, `validation`, `outputs` | `optimize`, `constraint_solve`, `least_squares`, `argmin`, `argmax`, ranking/top-k/pareto, finite differences, line search, project bounds, penalties, gradient/Newton/BFGS/Adam, linear and sparse solve, `grad`, `jacobian`, `hessian` | generated Forge scalar program plus validation/cost; feasibility kernels next | partial | `optimize(pow(x,2), x)` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute`, vocabulary gate |
+| `/uncertainty_statistics` | scalar estimator contract lowering plus full statistics vocabulary | `goal`, `distributions`, `samples`, `estimators`, `correlation_assumptions`, `tolerances`, `validation`, `outputs` | RNG, sample/QMC/stratified/importance/resample, uniform/normal/lognormal/poisson/bernoulli, mean/variance/std/median/quantile/p5/p50/p95, covariance/correlation/zscore, normalization, moving averages/EWMA, regression, robust loss, Monte Carlo, histogram/bin counts | generated Forge scalar program plus validation/cost; robust typed stochastic buffers next | partial | `p95(uncertainty(x,x,x))` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute`, vocabulary gate |
+| `/tensor_linalg_autodiff` | scalar AD/tensor vocabulary contract lowering | `goal`, `shapes`, `batch_axes`, `matrix_ops`, `ad_requests`, `precision_policy`, `layout_policy`, `validation`, `outputs` | map/reduce/scan/filter/fold/zip/gather/scatter/masked, dot/distance/normalize/cross/outer, matmul/transpose/determinant/inverse/QR/Cholesky/trace/eigen/SVD, reshape/slice/split/tile/broadcast/flatten/concat/sort/unique/prefix/top-k, `grad`, `jacobian`, `hessian`, `jvp`, `vjp`, `adjoint` | generated scalar Forge program plus validation/cost today; typed tensor kernels next | partial | `grad(pow(x,2))` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute`, vocabulary gate |
+| `/signal_timeseries` | scalar-safe signal/time-series front door | `goal`, `sample_rate`, `channels`, `windows`, `transforms`, `filters`, `stationarity_assumptions`, `validation`, `outputs` | windows, joins/as-of joins, rolling/groupby, FFT/IFFT/RFFT, convolution, FIR/IIR filters, Hann/Hamming/Blackman/Kaiser, spectrogram/wavelet, and market/sensor words such as VWAP, EMA, volatility, slippage, latency, backtest, walk-forward, stress test, transaction costs | generated scalar Forge program today; array/time-series lowering next | partial | scalar signal contract replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute`, vocabulary gate |
+| `/graph_sparse_discrete` | scalar graph/sparse/discrete vocabulary contract lowering | `goal`, `nodes`, `edges`, `sparse_matrices`, `graph_ops`, `topology_checks`, `solver_requests`, `validation`, `outputs` | graph counts/neighbors/degree/BFS/shortest path/PageRank/connected components, CSR/COO/sparse matvec/spmv/triangular solve, bit/rotate/popcount, hash/Merkle, finite-field add/mul/inv/pow, zk/proof verify, constraint solve | generated scalar Forge program today; sparse graph typed output next | partial | `constraint_solve(x,x)` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute`, vocabulary gate |
 
 Compiled class contracts that reach Forge share the core gate
 `cargo test --lib math_contract`. The native service adapter gate is
 `cargo test --manifest-path examples\ingen_native_services\Cargo.toml
-math_compute`; the Slint UI command layer still needs its full app-runtime
-battery on top.
+math_compute`; the Electron UI command layer must keep its IPC/runtime battery
+green on top.
 
 The LLM should never see hundreds of permanent tools. It sees stable entry
 points, then InGen retrieves a few ranked compute/program/template candidates
 from indexes when needed.
+
+### Rust Module Template
+
+`/newmodule_` opens a compact code-template selector. The first live class is:
+
+```text
+/rust_port_adapter_
+```
+
+Purpose: generate a Rust Port + Adapter + Service module from a small strict
+slot payload. It is meant for the boilerplate agents constantly write in Rust:
+request/response types, typed errors, backend port trait, service wrapper,
+validation, a `run_*` helper and co-located tests.
+
+Required slots:
+
+```text
+module_name
+domain_object
+request_fields
+response_fields
+backend_trait
+backend_method
+validation_rules
+error_policy
+serde
+async
+test_success
+test_failure
+```
+
+Optional extensible slots:
+
+```text
+metrics
+connectors
+runtime
+error_model
+observability
+dependency_policy
+concurrency
+quality_gates
+module_version
+api_docs
+```
+
+Current supported policy:
+
+- `error_policy = enum`
+- `async = false`
+- `serde = true|false`; when true, derives are emitted behind
+  `cfg_attr(feature = "serde", ...)`, so the generated module still compiles in
+  crates without serde.
+- `validation_rules` supports `field non_empty` for `String` request fields and
+  numeric bounds as `field min <value>` / `field max <value>` for `u64`, `i64`,
+  `usize` and `f64`.
+- `test_success` is parsed as
+  `<request_field> <value> ... returns <response_field> <value> ...`; generated
+  tests assert the exact request values received by the mock backend and the
+  exact response values returned by the service.
+- `test_failure` is parsed as `empty <field> returns Validation`; the generated
+  invalid request empties that exact field and asserts the exact validation
+  error variant.
+- The generated public API includes both `run_<module>(backend, request)` and
+  `run_<module>_with_ref(&backend, request)` so repeated callers can avoid
+  moving or reconstructing the backend on hot paths.
+- `metrics` is a strict comma list of `snake_case:type` pairs, for example
+  `request_count:u64, validation_error_count:u64, backend_error_count:u64,
+  latency_ms:f64`. Supported metric types are `u64`, `i64`, `usize` and
+  `f64`. Monster emits a local `Metrics` cell store plus `MetricsSnapshot`;
+  known counters are updated by the service path: `request_count`,
+  `validation_error_count`, `backend_error_count`.
+- `connectors` is a strict comma list of known module ports. The first live
+  connector is `state_store`. It emits a `connectors` module with
+  `STATE_STORE_PORT`, request/response type names and
+  `NEXT_TEMPLATE = "/rust_state_store_"`. This is the code-side port for the
+  next reusable Rust module template; it does not create a second pipeline.
+- `runtime` is `sync` today, with `async_tower` emitting an optional
+  `tower_service::Service` port behind the `tower` feature and returning the
+  required Cargo metadata.
+- `error_model` is `manual_enum` today; `thiserror_metadata` records the Cargo
+  dependency/feature requirement for teams that want to promote the enum to a
+  derive-based external crate policy.
+- `observability` is `local_snapshot`, `tracing_metadata` or
+  `metrics_metadata`. The std-only path emits local metrics snapshots; metadata
+  modes return Cargo snippets and constants such as `TRACING_TARGET` or
+  `METRICS_NAMESPACE` without forcing a dependency into the default compile
+  path.
+- `dependency_policy` is `std_only` or `common_crates`. The latter returns
+  compact Cargo dependency/feature lines for `serde`, `tower-service`,
+  `tracing`, `metrics` or `thiserror` only when requested by the slots.
+- `concurrency` is `local` or `send_sync`; `send_sync` strengthens generated
+  backend bounds to `B: BackendTrait + Send + Sync`.
+- `quality_gates` is a comma list chosen from `fmt`, `clippy`, `test`, `doc`,
+  `no_unsafe`, `no_panic`, `bench`, `property_tests`. Generated modules expose
+  `FORGE_QUALITY_GATES` and start with `#![forbid(unsafe_code)]`.
+- `module_version` is a stable alphanumeric/dot/dash/underscore string embedded
+  as `FORGE_TEMPLATE_VERSION`.
+- `api_docs = rustdoc_full|minimal`; the promoted path is `rustdoc_full`, which
+  emits module docs and docs for public types/functions.
+
+The extension rule is fixed: the template owns a small number of slots, and
+slots that need an arbitrary count use typed lists inside the slot. The LLM can
+therefore provide ten metrics or one metric without learning Forge internals,
+while Monster still parses a deterministic mini-grammar before generating Rust.
+
+The generator lives in `src/monster.rs` as
+`generate_rust_port_adapter`; the file writer is
+`materialize_generated_rust_module`. Materialization writes `src/<module>.rs`
+directly and returns only compact metadata to the LLM:
+
+```text
+files: path, status(created|unchanged), content_hash, bytes
+integration_snippet: pub mod <module>;
+public_api: run_<module>, run_<module>_with_ref, FORGE_TEMPLATE_COMMAND,
+  FORGE_TEMPLATE_VERSION, FORGE_QUALITY_GATES
+connectors: state_store
+cargo_dependencies: compact Cargo.toml dependency lines requested by slots
+cargo_features: compact Cargo.toml feature lines requested by slots
+quality_gates: exact requested gate list
+module_hash: <sha256>
+```
+
+It rejects absolute paths, `..` path traversal and non-identical overwrites.
+The LLM can request the code when needed, but the default route never spends
+tokens returning hundreds of generated lines.
+
+The gate
+`monster_rust_port_adapter_template_generates_compilable_tested_module` writes
+the generated file to a temporary directory, runs `rustc --test`, then executes
+the generated tests. This keeps `/newmodule_` honest: a template is promoted
+only if the generated module compiles and its own success, validation and
+backend-error tests pass.
+
+The real pipeline gate is
+`tests/newmodule_rust_port_adapter_pipeline.rs`. It simulates an agent receiving
+"we need a user-profile tool in project Y": the LLM reads the `/newmodule_`
+manifest, chooses `/rust_port_adapter_`, fills the compact slots, Monster
+plus a metrics list, `state_store` connector, observability metadata,
+dependency policy, concurrency policy and quality gates, Monster generates and
+materializes `src/user_profile.rs`, the agent applies only
+`pub mod user_profile;` to `src/lib.rs`, then a temporary Cargo project runs
+`cargo test`. The LLM receives the materialization receipt, public API,
+connector list, Cargo snippets and quality gates, not the generated source
+body.
+
+Professional Rust module quality target:
+
+- API follows the Rust API Guidelines floor: documented public items, stable
+  names, explicit constructors, accessors and typed errors.
+- Production code must not use `unsafe`; generated modules include
+  `#![forbid(unsafe_code)]`.
+- The default generated code must compile under `std_only` without external
+  crates. External ecosystem hooks (`serde`, `tower-service`, `tracing`,
+  `metrics`, `thiserror`) are exposed as deterministic Cargo metadata and
+  feature-gated code only when requested.
+- The generated module must carry enough metadata for an external coding agent
+  to integrate it without reading the whole source: module import, public API,
+  connectors, Cargo dependencies/features, quality gates and proof hashes.
+- Gates are `monster_rust_port_adapter_template_generates_compilable_tested_module`
+  for generated source and `tests/newmodule_rust_port_adapter_pipeline.rs` for
+  the real app-style `/newmodule_` materialization path.
+- The app-style pipeline test now includes a stress battery that materializes
+  four professional modules in one temporary Cargo project: finance risk
+  pricing, biological variant annotation, aerospace load solving and chemistry
+  reactor simulation. Each case fills the pro slots, uses many request fields,
+  numeric `min`/`max` validation, multiple metrics, `state_store`, quality
+  gates and observability/runtime variants. The same file also checks
+  fail-closed behavior for unsupported runtime, invalid validation semantics
+  and unknown connectors.
 
 ### State, Brain And Reuse
 
@@ -330,6 +702,28 @@ gets compact refs, hashes, previews and proof summaries.
 ```text
 State objects -> Brain meaning -> Godel verification -> persisted projection evidence
 ```
+
+### Brain Self-Improvement Circuit
+
+Brain improves future CodeAct only through promoted procedural memory:
+
+```text
+recent/archived session evidence
+-> lesson candidate
+-> CodeAct procedure candidate
+-> Godel promotion gate
+-> promoted skill ref
+-> bounded retrieval pack for the next run
+```
+
+The source ledger is the same session history exposed by the native header
+search menu: recent sessions and archived sessions are both valid evidence
+sources. They are not trusted instructions. A promotion must include source
+session ids, evidence/proof hashes, reusable CodeAct steps, avoid rules,
+scope/activation text and a rollback ref. Godel rejects candidates that miss
+evidence, hide secrets/credentials, weaken project rules or try to bypass the
+verifier. Accepted promotions persist under `refs/brain/skill/*` and their
+proof manifests under `refs/brain/skill-promotion/*`.
 
 Monster compute reuse is SQLite-backed:
 
@@ -2418,6 +2812,12 @@ universal compute template, preflight contract, execution path, proof hashes and
 compute cache. Banger-specific `/newobject_` consumes curated compute evidence
 only when the caller is doing 3D/SDF work.
 
+At the product layer, Brain does not "remember programs". Brain remembers
+CodeAct command identities, filled template hashes, MathContract/compute
+contract hashes, Monster route/proof hashes and verified substitutions between
+equivalent command-template artifacts. The compiled Forge program hash is one
+internal field inside that ledger, not the user-facing object.
+
 `/newcompute_` memoizes fragments inside a compute, not only whole runs. The
 runtime records generated Forge sections, MathContract fragments, atoms, lines
 and sequence windows as content-addressed fragments in the InGen store SQLite
@@ -2436,17 +2836,19 @@ absence checks later; they never authorize reuse.
 
 ## Monster Compute Graph
 
-Monster is the execution engine for Forge. The current SOTA target is not a
+Monster is the execution engine for filled CodeAct compute templates after they
+have been validated and compiled to Forge. The current SOTA target is not a
 giant hand-written library of domain programs; it is the same core idea seen in
 modern compute systems: explicit op semantics like StableHLO, bulk array
 combinators like Futhark, block/lane GPU kernels like Triton and portable native
-GPU limits like wgpu/RHI. Forge provides typed, content-addressed math;
-Monster lowers it to a compact compute graph and executes/reuses/proves it.
+GPU limits like wgpu/RHI. Forge provides typed, content-addressed math as the
+internal representation; Monster lowers it to a compact compute graph and
+executes/reuses/proves it.
 
 The target `/newcompute_` front door is:
 
 ```text
-LLM selects a math class and fills a structured MathContract
+LLM emits `/newcompute_` and fills a structured MathContract/template
 -> deterministic MathContract-to-Forge compiler
 -> generated Forge source
 -> Forge parse/type/unit/bounds/cost checks

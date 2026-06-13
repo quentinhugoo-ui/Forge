@@ -202,11 +202,13 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
         None => build_agency_payload(&agency_name, &city),
     };
     let source = resolved.source.clone();
+    let llm_handoff = google_places_llm_handoff_payload(&resolved);
     write_json_response(
         &mut stream,
         200,
         &json!({
             "agency": resolved,
+            "llmHandoff": llm_handoff,
             "meta": {
                 "countryCode": payload.country_code.unwrap_or_else(|| "FR".to_string()),
                 "surface": payload.surface.unwrap_or_else(|| "forge-ui".to_string()),
@@ -216,6 +218,21 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
             }
         }),
     )
+}
+
+fn google_places_llm_handoff_payload(resolved: &AgencyPayload) -> Value {
+    json!({
+        "googlePlacesResult": {
+            "tool": "google_places_search",
+            "mustUse": true,
+            "agencyName": resolved.display_name.clone(),
+            "address": resolved.formatted_address.clone(),
+            "phone": resolved.national_phone_number.clone().unwrap_or_default(),
+            "website": resolved.website_uri.clone(),
+            "source": resolved.source.clone(),
+            "status": if resolved.source.contains("google_places") { "ok" } else { "fallback" }
+        }
+    })
 }
 
 fn find_header_end(bytes: &[u8]) -> Option<usize> {

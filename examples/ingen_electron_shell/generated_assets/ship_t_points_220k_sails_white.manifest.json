@@ -1,0 +1,74 @@
+{
+  "input": "C:/Users/quent/Desktop/ship_t.glb",
+  "totalTargetPoints": 220000,
+  "bodyTargetPoints": 168000,
+  "sailTargetPoints": 52000,
+  "points": 220000,
+  "sailMeshNames": [
+    "Object_7",
+    "Object_35",
+    "Object_38",
+    "Object_39"
+  ],
+  "sailStats": [
+    {
+      "name": "Object_7",
+      "area": 0.145620893181997,
+      "size": [
+        5.3043599128723145,
+        1.479219913482666,
+        0.12385380268096957
+      ]
+    },
+    {
+      "name": "Object_35",
+      "area": 1.4930499805664468,
+      "size": [
+        5.00311017036438,
+        6.01691997051239,
+        0.31457899510860576
+      ]
+    },
+    {
+      "name": "Object_38",
+      "area": 0.7992141415234807,
+      "size": [
+        8.649059772491455,
+        5.53043007850647,
+        0.17580729722976807
+      ]
+    },
+    {
+      "name": "Object_39",
+      "area": 0.2074121093256525,
+      "size": [
+        2.0903860926628113,
+        1.6328201293945312,
+        0.17167329788208044
+      ]
+    }
+  ],
+  "meshCount": 59,
+  "triCount": 862755,
+  "bodyArea": 143.10707989299615,
+  "sailArea": 2.6452971245975485,
+  "glbPath": "C:\\Users\\quent\\Documents\\GitHub\\Forge\\examples\\ingen_electron_shell\\generated_assets\\ship_t_points_220k_sails_white.glb",
+  "plyPath": "C:\\Users\\quent\\Documents\\GitHub\\Forge\\examples\\ingen_electron_shell\\generated_assets\\ship_t_points_220k_sails_white.ply",
+  "bounds": {
+    "min": [
+      -6.263308048248291,
+      0.007576238829642534,
+      -2.1622700691223145
+    ],
+    "max": [
+      4.787590026855469,
+      7.840939998626709,
+      2.1622700691223145
+    ],
+    "size": [
+      11.05089807510376,
+      7.8333637597970665,
+      4.324540138244629
+    ]
+  }
+}

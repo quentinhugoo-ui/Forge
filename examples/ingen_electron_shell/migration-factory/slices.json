@@ -1,0 +1,114 @@
+{
+  "schema": "ingen.electron.migration_factory.slice_registry.v1",
+  "updated": "2026-06-09",
+  "doctrine": {
+    "wall": "developer_experience",
+    "frontier_hypothesis": "A hashed slice registry plus generated React skeletons should replace repeated hand migration while keeping Rust IPC as the canonical state authority.",
+    "rollback": "Delete generated migration_factory.* artifacts and keep existing slice implementations unchanged."
+  },
+  "slices": [
+    {
+      "slice_id": "header",
+      "priority": 1,
+      "factory_mode": "existing_slice",
+      "status": "shadow_existing",
+      "owner": "electron_header_lane",
+      "slint_components": ["TitleBar", "WorkspaceHeader"],
+      "electron": {
+        "component": "src/renderer/App.tsx",
+        "store": "src/renderer/header-shadow-store.ts"
+      },
+      "ipc": {
+        "snapshot": "HeaderSnapshot",
+        "command": "HeaderCommand",
+        "cutover_env": "FORGE_FRONT_SLICE_HEADER"
+      },
+      "quick_gates": ["typecheck", "ipc_contract", "header_cassettes"],
+      "visual_gate": "promotion_only"
+    },
+    {
+      "slice_id": "sidebar_sessions",
+      "priority": 2,
+      "factory_mode": "existing_slice",
+      "status": "shadow_existing",
+      "owner": "electron_sidebar_sessions_lane",
+      "slint_components": ["SidebarAction", "SidebarCanvasDrawer", "SessionRow", "LeftPanel", "SessionsCanvas"],
+      "electron": {
+        "component": "src/renderer/SidebarSlice.tsx",
+        "store": "src/renderer/sidebar-shadow-store.ts"
+      },
+      "ipc": {
+        "snapshot": "SidebarSnapshot",
+        "command": "SidebarCommand",
+        "cutover_env": "FORGE_FRONT_SLICE_SIDEBAR"
+      },
+      "quick_gates": ["typecheck", "ipc_contract", "sidebar_cassettes"],
+      "visual_gate": "promotion_only"
+    },
+    {
+      "slice_id": "canvas_surfaces",
+      "priority": 3,
+      "factory_mode": "existing_slice",
+      "status": "shadow_existing",
+      "owner": "electron_canvas_factory_lane",
+      "slint_components": [
+        "PoolClawProfileSurface",
+        "LlmProvidersSurface",
+        "BrainSurface",
+        "DropCanvas",
+        "BangerNativeViewport",
+        "GoogleWebViewCanvas",
+        "ProductSectionSurface"
+      ],
+      "electron": {
+        "component": "src/renderer/CanvasSurfacesSlice.tsx",
+        "store": "src/renderer/canvas-surfaces-store.ts"
+      },
+      "ipc": {
+        "snapshot": "CanvasSurfacesSnapshot",
+        "command": "CanvasSurfacesCommand",
+        "cutover_env": "FORGE_FRONT_SLICE_CANVAS"
+      },
+      "quick_gates": ["typecheck", "factory_registry", "ipc_contract", "canvas_surface_cassettes"],
+      "visual_gate": "promotion_only"
+    },
+    {
+      "slice_id": "right_panel",
+      "priority": 4,
+      "factory_mode": "existing_slice",
+      "status": "shadow_existing",
+      "owner": "electron_right_panel_factory_lane",
+      "slint_components": ["SectionStatusDock", "PanelGlyph"],
+      "electron": {
+        "component": "src/renderer/RightPanelSlice.tsx",
+        "store": "src/renderer/right-panel-store.ts"
+      },
+      "ipc": {
+        "snapshot": "RightPanelSnapshot",
+        "command": "RightPanelCommand",
+        "cutover_env": "FORGE_FRONT_SLICE_RIGHT_PANEL"
+      },
+      "quick_gates": ["typecheck", "factory_registry", "ipc_contract", "right_panel_cassettes"],
+      "visual_gate": "promotion_only"
+    },
+    {
+      "slice_id": "panels_chat_bottom",
+      "priority": 5,
+      "factory_mode": "existing_slice",
+      "status": "shadow_existing",
+      "owner": "electron_panels_chat_bottom_lane",
+      "slint_components": ["SectionStatusDock", "ChatBar"],
+      "electron": {
+        "component": "src/renderer/PanelsChatBottomSlice.tsx",
+        "store": "src/renderer/panels-chat-bottom-store.ts"
+      },
+      "ipc": {
+        "snapshot": "PanelsChatBottomSnapshot",
+        "command": "PanelsChatBottomCommand",
+        "cutover_env": "FORGE_FRONT_SLICE_PANELS_CHAT_BOTTOM"
+      },
+      "quick_gates": ["typecheck", "ipc_contract", "panels_chat_bottom_cassettes"],
+      "visual_gate": "promotion_only"
+    }
+  ]
+}

@@ -1,0 +1,627 @@
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/Geist-Variable.ttf") format("truetype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/GeistMono-Variable.ttf") format("truetype");
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  background: #101112;
+  color: #f2f4f4;
+  font-family: "Geist", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #101112;
+}
+
+button {
+  font: inherit;
+}
+
+.eventLab {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: auto;
+  background: #101112;
+}
+
+.replayButton {
+  position: fixed;
+  top: 20px;
+  right: 28px;
+  z-index: 10;
+  height: 28px;
+  min-width: 76px;
+  padding: 0 14px;
+  border: 1px solid #303437;
+  border-radius: 6px;
+  color: #c9ced0;
+  background: #17191a;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.replayButton:hover,
+.replayButton:focus-visible {
+  border-color: #464b4e;
+  background: #202325;
+  outline: 0;
+}
+
+.labMark {
+  position: absolute;
+  top: 36px;
+  left: 42px;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  color: #0f1315;
+  background: #edf2ee;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 15px;
+  font-weight: 860;
+}
+
+.transcript {
+  width: min(1040px, calc(100vw - 168px));
+  margin-left: 128px;
+  padding: 42px 44px 80px 0;
+}
+
+.intro,
+.successStep p {
+  margin: 0;
+  color: #f2f4f4;
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+.introLineOne,
+.introLineTwo {
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(0 100% 0 0);
+  animation: typeReveal 520ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.introLineTwo {
+  animation-delay: 380ms;
+}
+
+.labPill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  margin: 0 4px;
+  padding: 1px 8px;
+  border-radius: 5px;
+  color: #f1f3f3;
+  background: #303234;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 18px;
+  vertical-align: 1px;
+}
+
+.newComputeBlock {
+  min-height: 292px;
+}
+
+.successStep {
+  margin-top: 16px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.successStep p + p {
+  margin-top: 4px;
+}
+
+.eventLine {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  margin-top: 16px;
+  margin-bottom: 16px;
+  margin-left: 8px;
+  color: #bec4c6;
+  width: min(920px, calc(100% - 8px));
+}
+
+.eventLineAnimated {
+  opacity: 0;
+  animation: eventEnter 210ms ease-out 830ms forwards;
+}
+
+.commandLabel {
+  position: absolute;
+  left: -138px;
+  width: 124px;
+  text-align: right;
+  color: #8f9497;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 560;
+}
+
+.eventGlyph {
+  --icon-stroke-width: 1.75px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: #a4aaad;
+  overflow: visible;
+}
+
+.eventGlyph svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--icon-stroke-width);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.eventGlyph .boundedFill {
+  fill: currentColor;
+  stroke: none;
+}
+
+.eventText {
+  min-width: 0;
+  overflow: hidden;
+  color: #aeb4b7;
+  font-size: 13px;
+  font-weight: 520;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.newComputeTree {
+  position: relative;
+  height: 194px;
+  margin-top: 6px;
+  margin-left: 16px;
+}
+
+.treeSvg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 33px;
+  height: 181px;
+  overflow: visible;
+}
+
+.treeSvg path {
+  fill: none;
+  stroke: #45494b;
+  stroke-width: 2;
+  stroke-linecap: square;
+  vector-effect: non-scaling-stroke;
+}
+
+.treeTrunk {
+  stroke-dasharray: 181;
+  stroke-dashoffset: 181;
+  animation: drawTrunk 920ms cubic-bezier(0.22, 1, 0.36, 1) 980ms forwards;
+}
+
+.treeBranch {
+  stroke-dasharray: 31;
+  stroke-dashoffset: 31;
+  animation: drawBranch 150ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.templateRows {
+  position: absolute;
+  left: 44px;
+  top: 0;
+  right: 0;
+}
+
+.templateRow {
+  display: grid;
+  grid-template-columns: 232px minmax(360px, 1fr);
+  align-items: center;
+  height: 24px;
+  opacity: 0;
+  transform: translateX(-5px);
+  animation: rowEnter 150ms ease-out forwards;
+}
+
+.templateRow code {
+  color: #aeb4b7;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.templateRow span {
+  min-width: 0;
+  overflow: hidden;
+  color: #b8bec1;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atomicReactIcon {
+  transform-origin: center;
+  animation: none;
+}
+
+.atomicReactLogo {
+  --atomic-lottie-duration: 3708.333ms;
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 1;
+  animation: none;
+}
+
+.atomicReactDot {
+  fill: currentColor;
+  stroke: none;
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(0);
+  animation: atomicLottieDot var(--atomic-lottie-duration) cubic-bezier(0.25, 0, 0.25, 1) forwards;
+}
+
+.atomicReactRing {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+  stroke-width: 405;
+  opacity: 0.95;
+  stroke-dasharray: 0 1;
+  stroke-dashoffset: 0;
+}
+
+.atomicReactRingOne {
+  stroke-linecap: round;
+  animation: atomicLottieRingOne var(--atomic-lottie-duration) cubic-bezier(0.15, 0, 0.15, 1) forwards;
+}
+
+.atomicReactRingTwo {
+  animation: atomicLottieRingTwo var(--atomic-lottie-duration) cubic-bezier(0.15, 0, 0.15, 1) forwards;
+}
+
+.atomicReactRingThree {
+  animation: atomicLottieRingThree var(--atomic-lottie-duration) cubic-bezier(0.15, 0, 0.15, 1) forwards;
+}
+
+.brainIcon {
+  transform-origin: center;
+  animation: brainPulse 1.4s ease-in-out infinite alternate;
+}
+
+.brainIcon path {
+  stroke-dasharray: 26;
+  animation: brainTrace 1.4s ease-in-out infinite alternate;
+}
+
+.brainIcon .brainStem {
+  stroke-dasharray: 13;
+}
+
+.brainIcon .brainTop,
+.brainIcon .brainLow {
+  stroke-dasharray: 18;
+}
+
+.cubeIconBox {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  overflow: visible;
+  perspective: 96px;
+}
+
+.cubeSpinner {
+  position: relative;
+  display: block;
+  width: 10px;
+  height: 10px;
+  transform-style: preserve-3d;
+  animation: cubeSpinner 2.9s infinite ease;
+  --cube-z: 5px;
+}
+
+.cubeSpinner span {
+  position: absolute;
+  inset: 0;
+  border: var(--icon-stroke-width) solid currentColor;
+  background-color: color-mix(in oklab, currentColor 10%, transparent);
+}
+
+.cubeSpinner span:nth-child(1) {
+  transform: translateZ(calc(-1 * var(--cube-z))) rotateY(180deg);
+}
+
+.cubeSpinner span:nth-child(2) {
+  transform: rotateY(-270deg) translateX(50%);
+  transform-origin: top right;
+}
+
+.cubeSpinner span:nth-child(3) {
+  transform: rotateY(270deg) translateX(-50%);
+  transform-origin: center left;
+}
+
+.cubeSpinner span:nth-child(4) {
+  transform: rotateX(90deg) translateY(-50%);
+  transform-origin: top center;
+}
+
+.cubeSpinner span:nth-child(5) {
+  transform: rotateX(-90deg) translateY(50%);
+  transform-origin: bottom center;
+}
+
+.cubeSpinner span:nth-child(6) {
+  transform: translateZ(var(--cube-z));
+}
+
+.calendarIconSwitch {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+}
+
+.calendarIconSwitch .calendarIcon {
+  grid-area: 1 / 1;
+}
+
+.calendarBusyIcon {
+  opacity: 1;
+  transform: scale(1);
+  animation: calendarBusyExit 2.2s ease-in-out forwards;
+}
+
+.calendarDoneIcon {
+  opacity: 0;
+  transform: scale(0.94);
+  animation: calendarDoneEnter 420ms cubic-bezier(0.22, 1, 0.36, 1) 2.05s forwards;
+}
+
+.calendarBusyIcon .calendarDot {
+  fill: currentColor;
+  stroke: none;
+  opacity: 0.35;
+  animation: calendarDot 760ms ease-in-out infinite;
+}
+
+.calendarBusyIcon .calendarDot:nth-of-type(2) {
+  animation-delay: 70ms;
+}
+
+.calendarBusyIcon .calendarDot:nth-of-type(3) {
+  animation-delay: 140ms;
+}
+
+.calendarBusyIcon .calendarDot:nth-of-type(4) {
+  animation-delay: 210ms;
+}
+
+.calendarBusyIcon .calendarDot:nth-of-type(5) {
+  animation-delay: 280ms;
+}
+
+.calendarBusyIcon .calendarDot:nth-of-type(6) {
+  animation-delay: 350ms;
+}
+
+.calendarCheck {
+  stroke-dasharray: 9;
+  stroke-dashoffset: 9;
+  opacity: 0;
+  animation: calendarCheck 420ms ease-in-out 2.12s forwards;
+}
+
+@keyframes typeReveal {
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes eventEnter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes drawTrunk {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes drawBranch {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes rowEnter {
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes brainPulse {
+  to {
+    transform: scale(1.08);
+  }
+}
+
+@keyframes atomicLottieOpacity {
+  0%,
+  93.258% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes atomicLottieDot {
+  0% {
+    transform: scale(0);
+  }
+  7.865%,
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes atomicLottieRingOne {
+  0%,
+  3.371% {
+    stroke-dasharray: 0 1;
+    stroke-dashoffset: -0.05556;
+  }
+  40.449% {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: -0.51389;
+  }
+  100% {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes atomicLottieRingTwo {
+  0%,
+  5.167% {
+    stroke-dasharray: 0 1;
+    stroke-dashoffset: -0.07776;
+  }
+  42.246% {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: -0.5361;
+  }
+  100% {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes atomicLottieRingThree {
+  0%,
+  6.965% {
+    stroke-dasharray: 0 1;
+    stroke-dashoffset: -0.09999;
+  }
+  43.819% {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: -0.55554;
+  }
+  100% {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes brainTrace {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 8;
+  }
+}
+
+@keyframes cubeSpinner {
+  0% {
+    transform: rotate(45deg) rotateX(-25deg) rotateY(25deg);
+  }
+  50% {
+    transform: rotate(45deg) rotateX(-385deg) rotateY(25deg);
+  }
+  100% {
+    transform: rotate(45deg) rotateX(-385deg) rotateY(385deg);
+  }
+}
+
+@keyframes calendarBusyExit {
+  0%,
+  72% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+@keyframes calendarDoneEnter {
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes calendarDot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes calendarCheck {
+  to {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

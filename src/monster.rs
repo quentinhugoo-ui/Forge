@@ -31,6 +31,8 @@ pub use dispatch::{
 };
 
 pub use compute_graph::{
+    generate_rust_port_adapter, materialize_generated_rust_module,
+    monster_code_template_manifest,
     MonsterBackendHint, MonsterComputeFragment, MonsterComputeGraphError,
     MonsterComputeGraphPlan, MonsterComputeScale, MonsterEngineLane,
     MonsterEngineRoute, MonsterFeatureDisposition, MonsterNativeTandemDomain,
@@ -41,10 +43,17 @@ pub use compute_graph::{
     MonsterDifferentialTestPlan, MonsterMultiAdapterSchedule, MonsterNumericPolicy,
     MonsterSymbolicMathOutput, MonsterSymbolicMathPlan,
     MonsterTypedResultArtifact, MonsterTypedResultBuffer, MonsterTypedResultPage,
-    MonsterUniversalComputeTemplate, MonsterMathCapabilityManifest, MonsterMathClass,
+    MonsterUniversalComputeTemplate, MonsterNewComputeLlmResult,
+    MonsterNewComputeLlmScalarOutput, MonsterNewComputeLlmScientificMetric,
+    MonsterNewComputeLlmTypedBuffer,
+    MonsterMathCapabilityManifest, MonsterMathClass,
     MonsterMathClassTemplate, MonsterMathConstant, MonsterMathContract,
     MonsterMathContractError, MonsterMathOutputContract, MonsterMathSample,
-    MonsterMathVariable, MonsterCompiledMathContract,
+    MonsterMathVariable, MonsterCompiledMathContract, MonsterCodeTemplate,
+    MonsterCodeTemplateError, MonsterCodeTemplateKind, MonsterCodeTemplateManifest,
+    MonsterGeneratedCodeFile, MonsterGeneratedRustModule, MonsterMaterializedCodeFile,
+    MonsterMaterializedRustModule, MonsterRustConnector, MonsterRustField, MonsterRustMetric,
+    MonsterRustPortAdapterContract,
 };
 
 pub use hotplan::SizeClass;
@@ -78,6 +87,7 @@ mod compute_graph {
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
+use std::path::{Component, Path};
 
 use sha2::{Digest, Sha256};
 
@@ -96,6 +106,16 @@ pub enum MonsterMathClass {
     TensorLinalgAutodiff,
     SignalTimeseries,
     GraphSparseDiscrete,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MonsterMathWorkloadFloor {
+    pub min_variables: u16,
+    pub min_samples: u16,
+    pub min_outputs: u16,
+    pub min_max_steps: u64,
+    pub min_memory_mb: u64,
+    pub min_estimated_ops: u64,
 }
 
 impl MonsterMathClass {
@@ -134,6 +154,7 @@ impl MonsterMathClass {
         match self {
             Self::FormulaSymbolic => &[
                 "goal",
+                "workload_scale",
                 "symbols",
                 "expressions",
                 "assumptions",
@@ -144,6 +165,7 @@ impl MonsterMathClass {
             ],
             Self::NumericModel => &[
                 "goal",
+                "workload_scale",
                 "variables",
                 "constants",
                 "units",
@@ -156,6 +178,7 @@ impl MonsterMathClass {
             ],
             Self::SimulationDynamics => &[
                 "goal",
+                "workload_scale",
                 "states",
                 "time_domain",
                 "equations",
@@ -167,6 +190,7 @@ impl MonsterMathClass {
             ],
             Self::OptimizationDesign => &[
                 "goal",
+                "workload_scale",
                 "objective",
                 "design_variables",
                 "constraints",
@@ -177,6 +201,7 @@ impl MonsterMathClass {
             ],
             Self::UncertaintyStatistics => &[
                 "goal",
+                "workload_scale",
                 "distributions",
                 "samples",
                 "estimators",
@@ -187,6 +212,7 @@ impl MonsterMathClass {
             ],
             Self::TensorLinalgAutodiff => &[
                 "goal",
+                "workload_scale",
                 "shapes",
                 "batch_axes",
                 "matrix_ops",
@@ -198,6 +224,7 @@ impl MonsterMathClass {
             ],
             Self::SignalTimeseries => &[
                 "goal",
+                "workload_scale",
                 "sample_rate",
                 "channels",
                 "windows",
@@ -209,6 +236,7 @@ impl MonsterMathClass {
             ],
             Self::GraphSparseDiscrete => &[
                 "goal",
+                "workload_scale",
                 "nodes",
                 "edges",
                 "sparse_matrices",
@@ -221,84 +249,356 @@ impl MonsterMathClass {
         }
     }
 
-    pub fn accepted_operators(self) -> &'static [&'static str] {
+    pub fn optional_slots(self) -> &'static [&'static str] {
         match self {
             Self::FormulaSymbolic => &[
-                "expand",
-                "canonicalize_expr",
-                "simplify",
-                "diff",
-                "solve",
-                "math_equiv",
-                "math_proof",
+                "normal_form",
+                "rewrite_budget",
+                "exact_arithmetic",
+                "series_order",
+                "solve_domain",
+                "equivalence_targets",
+                "counterexample_policy",
+                "artifact_handoff",
             ],
             Self::NumericModel => &[
-                "+", "-", "*", "/", "^", "sqrt", "log", "exp", "sin", "cos", "tan", "finite",
-                "bounds",
+                "intermediate_quantities",
+                "dimension_system",
+                "unit_conversions",
+                "parameter_sweeps",
+                "sensitivity",
+                "intervals",
+                "uncertainty",
+                "failure_policy",
+                "artifact_handoff",
             ],
-            Self::SimulationDynamics => &[],
+            Self::SimulationDynamics => &[
+                "parameters",
+                "stability_policy",
+                "adaptive_step",
+                "jacobian_policy",
+                "solver_tolerances",
+                "mesh",
+                "forcing_functions",
+                "checkpointing",
+                "artifact_handoff",
+            ],
             Self::OptimizationDesign => &[
-                "optimize",
-                "constraint_solve",
-                "least_squares",
-                "rank",
-                "pareto",
-                "grad",
-                "hessian",
+                "initial_guess",
+                "variable_scaling",
+                "gradient_policy",
+                "hessian_policy",
+                "multi_start",
+                "pareto_policy",
+                "integer_variables",
+                "robustness_checks",
+                "artifact_handoff",
             ],
             Self::UncertaintyStatistics => &[
-                "sample",
-                "sobol",
-                "mean",
-                "variance",
-                "std",
-                "stddev",
-                "quantile",
-                "p5",
-                "p50",
-                "p95",
+                "rng_seed",
+                "sampling_method",
+                "sample_count",
+                "stratification",
+                "bootstrap_policy",
+                "outlier_policy",
+                "posterior_checks",
+                "sensitivity_indices",
+                "artifact_handoff",
             ],
             Self::TensorLinalgAutodiff => &[
-                "matmul",
-                "dot",
-                "transpose",
-                "sum",
-                "top_k",
-                "grad",
-                "jacobian",
-                "hessian",
-                "jvp",
-                "vjp",
-                "adjoint",
+                "dtypes",
+                "strides",
+                "sparsity",
+                "broadcasting",
+                "checkpointing",
+                "kernel_policy",
+                "ad_mode",
+                "differential_tests",
+                "artifact_handoff",
+            ],
+            Self::SignalTimeseries => &[
+                "time_index",
+                "resampling",
+                "missing_data_policy",
+                "detrending",
+                "feature_extractors",
+                "spectral_resolution",
+                "leakage_policy",
+                "forecast_horizon",
+                "artifact_handoff",
+            ],
+            Self::GraphSparseDiscrete => &[
+                "weights",
+                "directed",
+                "storage_format",
+                "frontier_policy",
+                "component_policy",
+                "integer_domain",
+                "proof_system",
+                "hash_policy",
+                "artifact_handoff",
+            ],
+        }
+    }
+
+    pub fn slot_names(self) -> Vec<&'static str> {
+        self.required_slots()
+            .iter()
+            .chain(self.optional_slots().iter())
+            .copied()
+            .collect()
+    }
+
+    pub fn accepted_operators(self) -> &'static [&'static str] {
+        match self {
+            Self::FormulaSymbolic => FORMULA_SYMBOLIC_WORDS,
+            Self::NumericModel => NUMERIC_MODEL_WORDS,
+            Self::SimulationDynamics => SIMULATION_DYNAMICS_WORDS,
+            Self::OptimizationDesign => OPTIMIZATION_DESIGN_WORDS,
+            Self::UncertaintyStatistics => UNCERTAINTY_STATISTICS_WORDS,
+            Self::TensorLinalgAutodiff => TENSOR_LINALG_AUTODIFF_WORDS,
+            Self::SignalTimeseries => SIGNAL_TIMESERIES_WORDS,
+            Self::GraphSparseDiscrete => GRAPH_SPARSE_DISCRETE_WORDS,
+        }
+    }
+
+    pub fn classical_aliases(self) -> &'static [&'static str] {
+        match self {
+            Self::FormulaSymbolic => &[
+                "Derivative->diff",
+                "Integrate->integrate",
+                "Limit->limit",
+                "Solve->solve",
+                "Simplify->simplify",
+                "FullSimplify->full_simplify",
+                "Expand->expand",
+                "Factor->factor",
+                "Power->pow",
+            ],
+            Self::NumericModel => &[
+                "Power->pow",
+                "Sqrt->sqrt",
+                "Log->log",
+                "Ln->ln",
+                "Exp->exp",
+                "Sin->sin",
+                "Cos->cos",
+                "Tan->tan",
+                "Abs->abs",
+                "StdDev->std",
+                "Mean->mean",
+                "×->*",
+                "÷->/",
+                "≤-><=",
+                "≥->>=",
+            ],
+            Self::SimulationDynamics => &[
+                "RootFind->root_find",
+                "Bisection->bisection",
+                "FixedPoint->fixed_point",
+                "PDEStencil->pde_stencil_step",
+                "RelaxationStep->relaxation_step",
+                "HeatEquationStep->pde_stencil_step",
+                "ODEEuler->ode_step_euler",
+                "ODERK4->ode_step_rk4",
+                "ODESolve->ode_solve",
+            ],
+            Self::OptimizationDesign => &[
+                "Optimize->optimize",
+                "Minimize->optimize",
+                "Maximize->optimize",
+                "ArgMin->argmin",
+                "ArgMax->argmax",
+                "LeastSquares->least_squares",
+                "Gradient->grad",
+                "Jacobian->jacobian",
+                "Hessian->hessian",
+            ],
+            Self::UncertaintyStatistics => &[
+                "Mean->mean",
+                "Average->mean",
+                "Variance->variance",
+                "StdDev->std",
+                "Median->median",
+                "Quantile->quantile",
+                "Covariance->covariance",
+                "Correlation->correlation",
+                "MonteCarlo->monte_carlo",
+            ],
+            Self::TensorLinalgAutodiff => &[
+                "Dot->dot",
+                "Norm->length",
+                "Normalize->normalize",
+                "Transpose->transpose",
+                "Det->determinant",
+                "Inverse->inverse",
+                "Trace->trace",
+                "Gradient->grad",
+                "Jacobian->jacobian",
+                "Hessian->hessian",
+            ],
+            Self::SignalTimeseries => &[
+                "Fourier->fft",
+                "FFT->fft",
+                "InverseFourier->ifft",
+                "IFFT->ifft",
+                "RFFT->rfft",
+                "Convolution->convolution",
+                "MovingAverage->rolling",
+                "EMA->ema",
+                "VWAP->vwap",
+            ],
+            Self::GraphSparseDiscrete => &[
+                "PageRank->pagerank_step",
+                "ShortestPath->shortest_path_step",
+                "ConnectedComponents->connected_components_step",
+                "Degree->graph_degree",
+                "Hash->hash64",
+                "MerkleRoot->merkle_root",
+                "ZKVerify->zk_verify",
+            ],
+        }
+    }
+
+    pub fn forge_targets(self) -> &'static [&'static str] {
+        match self {
+            Self::FormulaSymbolic => &[
+                "symbolic_expr",
+                "polynomial",
+                "piecewise",
+                "assumption_set",
+                "solution_set",
+                "symbolic_math_plan",
+            ],
+            Self::NumericModel => &[
+                "scalar",
+                "vec",
+                "mat",
+                "complex",
+                "interval",
+                "uncertainty",
+                "unit_bounds_checked_program",
+            ],
+            Self::SimulationDynamics => &[
+                "ode_step",
+                "pde_stencil",
+                "heat_pde_2d_stencil",
+                "root_solver",
+                "physics_integrator",
+                "solver_rk4_stencil_kernel",
+            ],
+            Self::OptimizationDesign => &[
+                "objective_program",
+                "constraint_program",
+                "ranking",
+                "pareto",
+                "gradient_hessian",
+            ],
+            Self::UncertaintyStatistics => &[
+                "distribution_sampling",
+                "qmc",
+                "estimators",
+                "correlation",
+                "uncertainty_quantiles",
+            ],
+            Self::TensorLinalgAutodiff => &[
+                "tensor",
+                "array",
+                "linalg",
+                "shape_transform",
+                "autodiff",
+                "data_parallel",
             ],
             Self::SignalTimeseries => &[
                 "fft",
-                "rfft",
-                "ifft",
-                "convolution",
-                "fir_filter",
-                "iir_filter",
-                "window_hann",
-                "window_blackman",
+                "filter",
+                "window",
                 "rolling",
-                "asof_join",
+                "time_join",
+                "trading_timeseries",
             ],
             Self::GraphSparseDiscrete => &[
-                "csr_matvec",
-                "frontier",
-                "pagerank",
-                "shortest_path",
-                "connected_components",
-                "degree",
-                "graph_degree",
-                "top_k",
-                "constraint_solve",
+                "graph",
+                "sparse",
+                "integer_bit",
+                "hash",
+                "finite_field",
+                "proof_discrete",
             ],
         }
     }
 
     pub fn can_compile_now(self) -> bool {
-        !matches!(self, Self::SimulationDynamics)
+        true
+    }
+
+    pub fn workload_floor(self) -> MonsterMathWorkloadFloor {
+        match self {
+            Self::FormulaSymbolic => MonsterMathWorkloadFloor {
+                min_variables: 1,
+                min_samples: 0,
+                min_outputs: 1,
+                min_max_steps: 1_000_000,
+                min_memory_mb: 64,
+                min_estimated_ops: 1_000_000,
+            },
+            Self::NumericModel => MonsterMathWorkloadFloor {
+                min_variables: 1,
+                min_samples: 1,
+                min_outputs: 1,
+                min_max_steps: 1_000_000,
+                min_memory_mb: 64,
+                min_estimated_ops: 10_000_000,
+            },
+            Self::SimulationDynamics => MonsterMathWorkloadFloor {
+                min_variables: 1,
+                min_samples: 1,
+                min_outputs: 1,
+                min_max_steps: 10_000_000,
+                min_memory_mb: 512,
+                min_estimated_ops: 100_000_000,
+            },
+            Self::OptimizationDesign => MonsterMathWorkloadFloor {
+                min_variables: 1,
+                min_samples: 1,
+                min_outputs: 1,
+                min_max_steps: 1_000_000,
+                min_memory_mb: 64,
+                min_estimated_ops: 10_000_000,
+            },
+            Self::UncertaintyStatistics => MonsterMathWorkloadFloor {
+                min_variables: 1,
+                min_samples: 1,
+                min_outputs: 1,
+                min_max_steps: 10_000_000,
+                min_memory_mb: 128,
+                min_estimated_ops: 100_000_000,
+            },
+            Self::TensorLinalgAutodiff => MonsterMathWorkloadFloor {
+                min_variables: 1,
+                min_samples: 1,
+                min_outputs: 1,
+                min_max_steps: 10_000_000,
+                min_memory_mb: 128,
+                min_estimated_ops: 100_000_000,
+            },
+            Self::SignalTimeseries => MonsterMathWorkloadFloor {
+                min_variables: 1,
+                min_samples: 1,
+                min_outputs: 1,
+                min_max_steps: 1_000_000,
+                min_memory_mb: 64,
+                min_estimated_ops: 10_000_000,
+            },
+            Self::GraphSparseDiscrete => MonsterMathWorkloadFloor {
+                min_variables: 1,
+                min_samples: 1,
+                min_outputs: 1,
+                min_max_steps: 1_000_000,
+                min_memory_mb: 64,
+                min_estimated_ops: 10_000_000,
+            },
+        }
     }
 }
 
@@ -308,13 +608,128 @@ impl fmt::Display for MonsterMathClass {
     }
 }
 
+const NUMERIC_MODEL_WORDS: &[&str] = &[
+    "+", "-", "*", "/", "^", "add", "sub", "mul", "div", "mod", "rem", "neg",
+    "finite", "finite_check", "nan_guard", "bounds", "bounds_check", "dimensional_check",
+    "unit_cast", "invariant", "assert", "approx_equal", "eq", "ne", "lt", "le", "gt",
+    "ge", "and", "or", "xor", "not", "any", "all", "where", "select", "vec2", "vec3",
+    "vec4", "mat2", "mat3", "mat4", "complex", "interval", "uncertainty", "p5", "p50",
+    "p95", "sum", "mean", "variance", "std", "median", "quantile", "len", "shape",
+    "size", "index", "min", "max", "clamp", "abs", "saturate", "floor", "ceil",
+    "round", "trunc", "fract", "sign", "copysign", "fma", "lerp", "mix", "sqrt",
+    "rsqrt", "cbrt", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "exp",
+    "exp2", "ln", "log", "log2", "log10", "sinh", "cosh", "tanh", "erf", "erfc",
+    "gamma", "lgamma", "beta", "pow",
+];
+
+const FORMULA_SYMBOLIC_WORDS: &[&str] = &[
+    "symbol", "domain", "assume", "to_expr", "polynomial", "piecewise", "simplify",
+    "full_simplify", "canonicalize_expr", "expand", "factor", "collect", "cancel",
+    "together", "apart", "function_expand", "trig_reduce", "series", "refine", "diff",
+    "integrate", "limit", "residue", "solve", "reduce_equations", "find_instance",
+    "math_equiv", "math_proof", "expression_hash", "pow",
+];
+
+const SIMULATION_DYNAMICS_WORDS: &[&str] = &[
+    "root_find", "bisection", "newton_root", "fixed_point", "ode_step_euler",
+    "ode_step_rk4", "ode_solve", "pde_stencil_step", "relaxation_step", "integrate_force",
+    "integrate_velocity", "fluid_advect_step", "pressure_projection_step",
+    "constraint_project", "thermal_flux_step", "collision_distance", "inertia_tensor",
+    "stress_tensor_basic", "strain_basic", "gradient_field", "normal_from_sdf",
+    "transform_point", "transform_normal", "sdf_sphere", "sdf_box", "sdf_capsule",
+    "sdf_torus", "sdf_union", "sdf_intersection", "sdf_subtract", "sdf_smooth_union",
+    "raymarch_step", "marching_cubes_cell", "voxel_sample", "surfel_accumulate",
+    "mean", "max", "argmax", "finite", "temperature_field_next", "max_temperature",
+    "hotspot_location_x", "hotspot_location_y", "temperature_gradient_max",
+    "thermal_runaway_margin", "time_to_threshold_estimate", "cfl_stability_ratio",
+    "energy_balance_error", "residual_norm", "sensitivity", "joule_heat_rate",
+    "entropic_heat_rate", "arrhenius_heat_rate", "electrothermal_source_rate",
+    "threshold_crossing_time", "simulated_steps", "simulation_final_time",
+];
+
+const OPTIMIZATION_DESIGN_WORDS: &[&str] = &[
+    "gradient_descent_step", "adam_step", "newton_step", "bfgs_step", "line_search",
+    "project_bounds", "constraint_penalty", "optimize", "constraint_solve", "rank",
+    "top_k", "pareto", "pareto_front", "diversity_select", "argmin", "argmax",
+    "finite_diff_check", "least_squares", "linear_solve", "sparse_solve", "grad",
+    "jacobian", "hessian", "hessian_diag",
+];
+
+const UNCERTAINTY_STATISTICS_WORDS: &[&str] = &[
+    "sample", "sobol", "latin_hypercube", "rng_seed", "uncertainty", "interval", "uniform", "normal", "lognormal",
+    "poisson", "bernoulli", "halton", "stratified_sample", "importance_sample",
+    "resample", "p5", "p50", "p95", "sum", "mean", "variance", "std", "stddev", "median", "quantile", "minmax",
+    "covariance", "correlation", "zscore", "normalize_stats", "moving_avg", "ewma",
+    "linear_regression", "robust_loss", "monte_carlo", "histogram", "bin_count",
+];
+
+const TENSOR_LINALG_AUTODIFF_WORDS: &[&str] = &[
+    "map", "reduce", "scan", "filter", "fold", "zip_with", "zip", "gather", "scatter",
+    "take", "scatter_add", "scatter_min", "scatter_max", "masked_load", "masked_store",
+    "atomic_add", "atomic_min", "atomic_max", "dot", "length", "distance", "normalize",
+    "cross", "outer", "matmul", "transpose", "transpose_axes", "permute", "determinant",
+    "inverse", "qr_small", "cholesky_small", "trace", "eigen_small", "svd_small",
+    "reshape", "squeeze", "unsqueeze", "slice", "split", "tile", "repeat", "broadcast",
+    "flatten", "concat", "sort", "unique", "partition", "compact", "argsort",
+    "prefix_sum", "sum", "top_k", "grad", "jacobian", "hessian", "hessian_diag",
+    "adjoint", "jvp", "vjp", "sensitivity_forward", "sensitivity_adjoint",
+];
+
+const SIGNAL_TIMESERIES_WORDS: &[&str] = &[
+    "window", "groupby", "join", "asof_join", "rolling", "fft", "ifft", "rfft",
+    "convolution", "fir_filter", "iir_filter", "window_hann", "window_blackman",
+    "spectrogram", "wavelet_step", "vwap", "ema", "volatility", "slippage", "latency",
+    "backtest", "anti_lookahead", "walk_forward", "stress_test", "transaction_costs",
+];
+
+const GRAPH_SPARSE_DISCRETE_WORDS: &[&str] = &[
+    "rows", "cols", "node_count", "edge_count", "graph_neighbors", "graph_degree",
+    "bfs_step", "shortest_path_step", "pagerank_step", "connected_components_step",
+    "csr_matvec", "coo_to_csr", "sparse_reduce", "sparse_solve", "shl", "shr", "rotl",
+    "rotr", "bit_and", "bit_or", "bit_xor", "bit_not", "popcount", "clz", "ctz",
+    "byte_swap", "bit_reverse", "hash32", "hash64", "hash_value", "hash_buffer",
+    "proof_emit", "constraint_solve", "sha256_block", "blake3_chunk", "merkle_pair", "hmac_block",
+    "xor_stream", "random_oracle_probe", "bitvec_and", "bitvec_xor", "field_add",
+    "field_mul", "curve_mul", "hash_commit", "merkle_root", "merkle_verify",
+    "signature_verify", "constant_time", "secret_branch_check", "zk_prove", "zk_verify",
+    "smt_check", "lean_check",
+];
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterMathSlotSpec {
+    pub name: &'static str,
+    pub required: bool,
+    pub value_kind: &'static str,
+    pub accepted_content: &'static str,
+    pub forge_binding: &'static str,
+    pub validation_rule: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterMathSlotStatus {
+    pub name: String,
+    pub required: bool,
+    pub value_kind: &'static str,
+    pub forge_binding: &'static str,
+    pub validation_rule: &'static str,
+    pub satisfied: bool,
+    pub source: &'static str,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MonsterMathClassTemplate {
     pub schema: &'static str,
     pub command: &'static str,
     pub class: MonsterMathClass,
     pub required_slots: Vec<&'static str>,
+    pub optional_slots: Vec<&'static str>,
+    pub workload_floor: MonsterMathWorkloadFloor,
+    pub slot_specs: Vec<MonsterMathSlotSpec>,
     pub accepted_operators: Vec<&'static str>,
+    pub classical_aliases: Vec<&'static str>,
+    pub forge_targets: Vec<&'static str>,
+    pub rejection_reasons: Vec<&'static str>,
+    pub deterministic_translation: &'static str,
     pub compile_status: &'static str,
 }
 
@@ -350,9 +765,15 @@ impl MonsterMathVariable {
     }
 
     fn canonical_source(&self) -> String {
+        let unit = normalize_classical_math_unit_info(&self.unit);
         format!(
             "param {}: {} unit {} bounds [{},{}] nominal {}",
-            self.name, self.ty, self.unit, self.min, self.max, self.nominal
+            self.name,
+            self.ty,
+            unit.unit,
+            self.min * unit.scale,
+            self.max * unit.scale,
+            self.nominal * unit.scale
         )
     }
 }
@@ -376,7 +797,14 @@ impl MonsterMathConstant {
     }
 
     fn canonical_source(&self) -> String {
-        format!("const {}: {} unit {} = {}", self.name, self.ty, self.unit, self.value)
+        let unit = normalize_classical_math_unit_info(&self.unit);
+        format!(
+            "const {}: {} unit {} = {}",
+            self.name,
+            self.ty,
+            unit.unit,
+            self.value * unit.scale
+        )
     }
 }
 
@@ -401,9 +829,10 @@ impl MonsterMathOutputContract {
     }
 
     fn canonical_source(&self) -> String {
+        let unit = normalize_classical_math_unit_info(&self.unit);
         format!(
             "output {}: {} unit {} handoff {} expr {}",
-            self.name, self.ty, self.unit, self.handoff, self.expression
+            self.name, self.ty, unit.unit, self.handoff, self.expression
         )
     }
 }
@@ -459,6 +888,7 @@ impl MonsterMathSample {
 pub struct MonsterMathContract {
     pub class: MonsterMathClass,
     pub goal: String,
+    pub template_slots: Vec<(String, String)>,
     pub variables: Vec<MonsterMathVariable>,
     pub constants: Vec<MonsterMathConstant>,
     pub operators: Vec<String>,
@@ -474,9 +904,11 @@ pub struct MonsterMathContract {
 
 impl MonsterMathContract {
     pub fn new(class: MonsterMathClass, goal: &str) -> Self {
+        let floor = class.workload_floor();
         Self {
             class,
             goal: goal.to_string(),
+            template_slots: Vec::new(),
             variables: Vec::new(),
             constants: Vec::new(),
             operators: Vec::new(),
@@ -485,9 +917,229 @@ impl MonsterMathContract {
             samples: Vec::new(),
             validation: Vec::new(),
             outputs: Vec::new(),
-            max_steps: 100_000,
-            max_memory_mb: 64,
+            max_steps: floor.min_max_steps,
+            max_memory_mb: floor.min_memory_mb,
             precision: ForgePrecision::F64,
+        }
+    }
+
+    pub fn set_template_slot(&mut self, name: &str, value: impl Into<String>) {
+        let value = value.into();
+        if let Some((_, existing)) = self
+            .template_slots
+            .iter_mut()
+            .find(|(slot, _)| slot == name)
+        {
+            *existing = value;
+        } else {
+            self.template_slots.push((name.to_string(), value));
+        }
+    }
+
+    pub fn template_slot_value(&self, name: &str) -> Option<&str> {
+        self.template_slots
+            .iter()
+            .find_map(|(slot, value)| (slot == name).then_some(value.as_str()))
+    }
+
+    pub fn template_slot_statuses(&self) -> Vec<MonsterMathSlotStatus> {
+        monster_math_slot_specs(self.class)
+            .into_iter()
+            .map(|spec| {
+                let explicit = self
+                    .template_slot_value(spec.name)
+                    .is_some_and(|value| !value.trim().is_empty());
+                let semantic_source = (!explicit)
+                    .then(|| self.template_slot_semantic_source(spec.name))
+                    .flatten();
+                let source = if explicit {
+                    "template_slot"
+                } else {
+                    semantic_source.unwrap_or("missing")
+                };
+                MonsterMathSlotStatus {
+                    name: spec.name.to_string(),
+                    required: spec.required,
+                    value_kind: spec.value_kind,
+                    forge_binding: spec.forge_binding,
+                    validation_rule: spec.validation_rule,
+                    satisfied: explicit || semantic_source.is_some(),
+                    source,
+                }
+            })
+            .collect()
+    }
+
+    pub fn missing_required_template_slots(&self) -> Vec<String> {
+        self.template_slot_statuses()
+            .into_iter()
+            .filter(|slot| slot.required && !slot.satisfied)
+            .map(|slot| slot.name)
+            .collect()
+    }
+
+    fn template_slot_semantic_source(&self, name: &str) -> Option<&'static str> {
+        match name {
+            "goal" if !self.goal.trim().is_empty() => Some("contract.goal"),
+            "workload_scale" if self.meets_cost_floor() => Some("contract.forge_cost"),
+            "variables" | "states" | "symbols" | "design_variables" | "channels" | "nodes"
+                if !self.variables.is_empty() =>
+            {
+                Some("contract.variables")
+            }
+            "constants" | "distributions" | "edges" | "sparse_matrices"
+                if !self.constants.is_empty() =>
+            {
+                Some("contract.constants")
+            }
+            "units"
+                if self
+                    .variables
+                    .iter()
+                    .any(|variable| !variable.unit.trim().is_empty()) =>
+            {
+                Some("contract.variables.units")
+            }
+            "bounds"
+                if self
+                    .variables
+                    .iter()
+                    .all(|variable| variable.min.is_finite() && variable.max.is_finite()) =>
+            {
+                Some("contract.variables.bounds")
+            }
+            "equations" | "expressions" | "objective" | "matrix_ops" | "graph_ops"
+            | "transforms" | "filters" | "estimators"
+                if !self.equations.is_empty() =>
+            {
+                Some("contract.equations")
+            }
+            "constraints" | "assumptions" | "domains" | "initial_conditions"
+            | "boundary_conditions" | "events" | "correlation_assumptions"
+            | "stationarity_assumptions" | "topology_checks" | "residual_checks"
+                if !self.constraints.is_empty() =>
+            {
+                Some("contract.constraints")
+            }
+            "samples" if !self.samples.is_empty() => Some("contract.samples"),
+            "validation" | "proof_checks" | "solver_requests" | "ad_requests"
+                if !self.validation.is_empty() =>
+            {
+                Some("contract.validation")
+            }
+            "outputs" if !self.outputs.is_empty() => Some("contract.outputs"),
+            "precision_policy" if true => Some("contract.precision"),
+            _ => None,
+        }
+    }
+
+    fn estimated_workload_ops(&self) -> u64 {
+        self.max_steps
+            .saturating_mul(self.declared_sweep_count().max(1))
+            .max(1)
+    }
+
+    fn declared_sweep_count(&self) -> u64 {
+        if self.max_steps >= 1_000_000_000 {
+            1_000_000
+        } else if self.max_steps >= 10_000_000 {
+            100_000
+        } else if self.max_steps >= 100_000 {
+            10_000
+        } else {
+            self.samples.len().max(1) as u64
+        }
+    }
+
+    fn meets_cost_floor(&self) -> bool {
+        let floor = self.class.workload_floor();
+        self.max_steps >= floor.min_max_steps
+            && self.max_memory_mb >= floor.min_memory_mb
+            && self.estimated_workload_ops() >= floor.min_estimated_ops
+    }
+
+    fn has_promoted_solver_slice(&self) -> bool {
+        if !matches!(self.class, MonsterMathClass::SimulationDynamics) {
+            return true;
+        }
+        self.operators
+            .iter()
+            .map(|operator| canonical_math_operator(operator))
+            .any(|word| is_promoted_simulation_solver_word(word.as_str()))
+            || self
+                .equations
+                .iter()
+                .map(String::as_str)
+                .chain(self.outputs.iter().map(|output| output.expression.as_str()))
+                .any(|text| {
+                    let normalized = normalize_classical_math_expression(text);
+                    [
+                        "pde_stencil_step",
+                        "relaxation_step",
+                        "ode_step_euler",
+                        "ode_step_rk4",
+                        "ode_solve",
+                    ]
+                    .iter()
+                    .any(|word| normalized.contains(word))
+                })
+    }
+
+    fn workload_floor_reasons(&self) -> Vec<String> {
+        let floor = self.class.workload_floor();
+        let mut reasons = Vec::new();
+        if self.max_steps < floor.min_max_steps {
+            reasons.push(format!(
+                "max_steps {} < class_min {}",
+                self.max_steps, floor.min_max_steps
+            ));
+        }
+        if self.max_memory_mb < floor.min_memory_mb {
+            reasons.push(format!(
+                "max_memory_mb {} < class_min {}",
+                self.max_memory_mb, floor.min_memory_mb
+            ));
+        }
+        if self.estimated_workload_ops() < floor.min_estimated_ops {
+            reasons.push(format!(
+                "estimated_ops {} < class_min {}",
+                self.estimated_workload_ops(),
+                floor.min_estimated_ops
+            ));
+        }
+        if self.variables.len() < floor.min_variables as usize {
+            reasons.push(format!(
+                "declared_inputs {} < class_min {}",
+                self.variables.len(),
+                floor.min_variables
+            ));
+        }
+        if self.samples.len() < floor.min_samples as usize {
+            reasons.push(format!(
+                "samples {} < class_min {}",
+                self.samples.len(),
+                floor.min_samples
+            ));
+        }
+        if self.outputs.len() < floor.min_outputs as usize {
+            reasons.push(format!(
+                "outputs {} < class_min {}",
+                self.outputs.len(),
+                floor.min_outputs
+            ));
+        }
+        reasons
+    }
+
+    fn validate_workload_floor(&self) -> Result<(), MonsterMathContractError> {
+        let reasons = self.workload_floor_reasons();
+        if reasons.is_empty() {
+            Ok(())
+        } else {
+            Err(MonsterMathContractError::WorkloadTooSmall {
+                class: self.class,
+                reasons,
+            })
         }
     }
 
@@ -539,14 +1191,29 @@ impl MonsterMathContract {
         if !missing_slots.is_empty() {
             return Err(MonsterMathContractError::MissingSlots(missing_slots));
         }
-        if !self.class.can_compile_now() {
+        self.validate_workload_floor()?;
+        if !self.class.can_compile_now() || !self.has_promoted_solver_slice() {
             return Err(MonsterMathContractError::CapabilityMissing {
                 class: self.class,
-                reason: "native_solver_slice_not_promoted",
+                reason: "promoted_solver_slice_required",
             });
         }
+        for (slot, _) in &self.template_slots {
+            if !self.class.slot_names().contains(&slot.as_str()) {
+                return Err(MonsterMathContractError::UnknownTemplateSlot {
+                    class: self.class,
+                    slot: slot.clone(),
+                });
+            }
+        }
         for op in &self.operators {
-            if !self.class.accepted_operators().iter().any(|accepted| accepted == op) {
+            let canonical_op = canonical_math_operator(op);
+            if !self
+                .class
+                .accepted_operators()
+                .iter()
+                .any(|accepted| *accepted == canonical_op)
+            {
                 return Err(MonsterMathContractError::UnsupportedOperator {
                     class: self.class,
                     operator: op.clone(),
@@ -557,6 +1224,9 @@ impl MonsterMathContract {
         let forge_source = self.forge_source(&module_name)?;
         if ForgeModuleSpec::parse(&forge_source).is_none() {
             return Err(MonsterMathContractError::InvalidGeneratedForge);
+        }
+        if !matches!(self.class, MonsterMathClass::SimulationDynamics) {
+            self.certify_scalar_intervals()?;
         }
         Ok(MonsterCompiledMathContract {
             schema: "forge.monster.math_contract.compiled.v1",
@@ -584,6 +1254,15 @@ impl MonsterMathContract {
         for value in &self.variables {
             out.push('|');
             out.push_str(&value.canonical_source());
+        }
+        let mut slots = self.template_slots.clone();
+        slots.sort_by(|left, right| left.0.cmp(&right.0));
+        for (slot, value) in slots {
+            out.push('|');
+            out.push_str("slot ");
+            out.push_str(&slot);
+            out.push('=');
+            out.push_str(&value);
         }
         for value in &self.constants {
             out.push('|');
@@ -616,7 +1295,7 @@ impl MonsterMathContract {
         out
     }
 
-    fn forge_source(&self, module_name: &str) -> Result<String, MonsterMathContractError> {
+    pub(crate) fn forge_source(&self, module_name: &str) -> Result<String, MonsterMathContractError> {
         let constants = if self.constants.is_empty() {
             "  none".to_string()
         } else {
@@ -668,9 +1347,10 @@ impl MonsterMathContract {
             .outputs
             .iter()
             .map(|o| {
+                let unit = normalize_classical_math_unit_info(&o.unit);
                 format!(
                     "  output {}: {} unit {} handoff {}",
-                    o.name, o.ty, o.unit, o.handoff
+                    o.name, o.ty, unit.unit, o.handoff
                 )
             })
             .collect::<Vec<_>>()
@@ -679,39 +1359,77 @@ impl MonsterMathContract {
         let samples = self
             .samples
             .iter()
-            .map(|s| format!("  {}", s.canonical_source()))
+            .map(|s| format!("  {}", self.sample_canonical_source(s)))
             .collect::<Vec<_>>()
             .join("\n");
         let validation = self.forge_validation();
         Ok(format!(
-            "forge_module:\n  module {module_name} version 1\nforge_imports:\n  none\nforge_constants:\n{constants}\nforge_functions:\n{function_body}\nforge_program:\n{program}\nforge_inputs:\n{inputs}\nforge_outputs:\n{outputs}\nforge_constraints:\n{constraints}\nforge_samples:\n{samples}\nforge_validation:\n{validation}\nforge_cost:\nmax_steps={}\nmax_memory_mb={}\nprecision={}\nartifact_handoff:\nproof_hash,output_hash,compact_result",
+            "forge_module:\n  module {module_name} version 1\nforge_imports:\n  none\nforge_constants:\n{constants}\nforge_functions:\n{function_body}\nforge_program:\n{program}\nforge_inputs:\n{inputs}\nforge_outputs:\n{outputs}\nforge_constraints:\n{constraints}\nforge_samples:\n{samples}\nforge_validation:\n{validation}\nforge_cost:\nmax_steps={}\nmax_memory_mb={}\nprecision={}\nmin_estimated_ops={}\nartifact_handoff:\nproof_hash,output_hash,compact_result",
             self.max_steps,
             self.max_memory_mb,
             self.precision,
+            self.class.workload_floor().min_estimated_ops,
         ))
     }
 
     fn output_expression(&self, output: &MonsterMathOutputContract) -> Result<String, MonsterMathContractError> {
         if !output.expression.trim().is_empty() {
-            return Ok(output.expression.trim().to_string());
+            return Ok(normalize_classical_math_expression(output.expression.trim()));
         }
         for equation in &self.equations {
             if let Some((lhs, rhs)) = equation.split_once('=') {
                 if lhs.trim() == output.name {
-                    return Ok(rhs.trim().to_string());
+                    return Ok(normalize_classical_math_expression(rhs.trim()));
                 }
             }
         }
         self.equations
             .first()
             .map(|equation| {
-                equation
+                let expr = equation
                     .split_once('=')
                     .map(|(_, rhs)| rhs.trim())
                     .unwrap_or(equation.trim())
-                    .to_string()
+                    .to_string();
+                normalize_classical_math_expression(&expr)
             })
             .ok_or(MonsterMathContractError::InvalidGeneratedForge)
+    }
+
+    fn sample_canonical_source(&self, sample: &MonsterMathSample) -> String {
+        let givens = sample
+            .givens
+            .iter()
+            .map(|(name, value)| {
+                let scale = self
+                    .variables
+                    .iter()
+                    .find(|variable| variable.name == *name)
+                    .map(|variable| normalize_classical_math_unit_info(&variable.unit).scale)
+                    .unwrap_or(1.0);
+                format!("{name}={}", value * scale)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let output_scale = self
+            .outputs
+            .iter()
+            .find(|output| output.name == sample.expect_output)
+            .map(|output| normalize_classical_math_unit_info(&output.unit).scale)
+            .unwrap_or(1.0);
+        let seed = sample
+            .seed
+            .map(|seed| format!(" seed {seed}"))
+            .unwrap_or_default();
+        format!(
+            "case {}{} {{ given {}; expect {} approx {} tolerance {} }}",
+            sample.name,
+            seed,
+            givens,
+            sample.expect_output,
+            sample.expected * output_scale,
+            sample.tolerance * output_scale.abs().max(1.0)
+        )
     }
 
     fn forge_constraints(&self) -> String {
@@ -719,7 +1437,8 @@ impl MonsterMathContract {
             .constraints
             .iter()
             .map(|c| {
-                let c = c.trim();
+                let normalized = normalize_classical_math_expression(c.trim().strip_prefix("assert ").unwrap_or(c.trim()));
+                let c = normalized.as_str();
                 if c.starts_with("assert ") {
                     format!("  {c}")
                 } else {
@@ -728,7 +1447,9 @@ impl MonsterMathContract {
             })
             .collect::<Vec<_>>();
         for output in &self.outputs {
-            constraints.push(format!("  assert finite({})", output.name));
+            if is_scalar_forge_type_name(&output.ty) {
+                constraints.push(format!("  assert finite({})", output.name));
+            }
         }
         constraints.sort();
         constraints.dedup();
@@ -742,6 +1463,562 @@ impl MonsterMathContract {
             &self.contract_hash()[..16],
         )
     }
+
+    fn certify_scalar_intervals(&self) -> Result<(), MonsterMathContractError> {
+        let mut env = BTreeMap::new();
+        for variable in &self.variables {
+            let unit = normalize_classical_math_unit_info(&variable.unit);
+            let interval = MonsterScalarInterval::new(variable.min, variable.max).ok_or_else(|| {
+                MonsterMathContractError::CertificationFailed {
+                    output_name: variable.name.clone(),
+                    reason: "invalid_variable_bounds".to_string(),
+                }
+            })?;
+            env.insert(
+                variable.name.clone(),
+                MonsterScalarInterval::new(interval.lo * unit.scale, interval.hi * unit.scale)
+                    .ok_or_else(|| MonsterMathContractError::CertificationFailed {
+                        output_name: variable.name.clone(),
+                        reason: "invalid_unit_scaled_variable_bounds".to_string(),
+                    })?,
+            );
+        }
+        for constant in &self.constants {
+            let unit = normalize_classical_math_unit_info(&constant.unit);
+            let interval = MonsterScalarInterval::point(constant.value * unit.scale).ok_or_else(|| {
+                MonsterMathContractError::CertificationFailed {
+                    output_name: constant.name.clone(),
+                    reason: "invalid_constant".to_string(),
+                }
+            })?;
+            env.insert(constant.name.clone(), interval);
+        }
+        let module = ForgeModuleSpec::parse(&self.forge_source(&self.module_name())?).ok_or(
+            MonsterMathContractError::InvalidGeneratedForge,
+        )?;
+        for output in &self.outputs {
+            let expr = ForgeExpr::parse(&self.output_expression(output)?)
+                .ok_or_else(|| MonsterMathContractError::AmbiguousExpression(output.expression.clone()))?;
+            let interval = eval_forge_expr_interval(&expr, &env, &module, 0).ok_or_else(|| {
+                MonsterMathContractError::CertificationFailed {
+                    output_name: output.name.clone(),
+                    reason: "interval_evaluation_failed".to_string(),
+                }
+            })?;
+            for sample in self
+                .samples
+                .iter()
+                .filter(|sample| sample.expect_output == output.name)
+            {
+                let output_scale = normalize_classical_math_unit_info(&output.unit).scale;
+                let expected = sample.expected * output_scale;
+                let tolerance = (sample.tolerance * output_scale.abs().max(1.0)).max(1e-12);
+                let widened = interval.widen(tolerance);
+                if !widened.contains(expected) {
+                    return Err(MonsterMathContractError::CertificationFailed {
+                        output_name: output.name.clone(),
+                        reason: format!(
+                            "sample_expected_outside_interval sample={} expected={} interval=[{},{}]",
+                            sample.name, expected, widened.lo, widened.hi
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn verify_prepared_scalar_differential(
+        &self,
+        compiled: &MonsterCompiledMathContract,
+        prepared: &MonsterPreparedCompute,
+    ) -> Result<(), MonsterMathContractError> {
+        let module = ForgeModuleSpec::parse(&compiled.forge_source).ok_or(
+            MonsterMathContractError::InvalidGeneratedForge,
+        )?;
+        for sample in &self.samples {
+            let Some(output) = self
+                .outputs
+                .iter()
+                .find(|output| output.name == sample.expect_output)
+            else {
+                continue;
+            };
+            let expr = ForgeExpr::parse(&self.output_expression(output)?).ok_or_else(|| {
+                MonsterMathContractError::AmbiguousExpression(output.expression.clone())
+            })?;
+            let mut env = HashMap::new();
+            for constant in &self.constants {
+                let scale = normalize_classical_math_unit_info(&constant.unit).scale;
+                env.insert(constant.name.clone(), constant.value * scale);
+            }
+            for (name, value) in &sample.givens {
+                let scale = self
+                    .variables
+                    .iter()
+                    .find(|variable| variable.name == *name)
+                    .map(|variable| normalize_classical_math_unit_info(&variable.unit).scale)
+                    .unwrap_or(1.0);
+                env.insert(name.clone(), *value * scale);
+            }
+            let direct = eval_forge_expr_f64(&expr, &mut env, &module, 0).ok_or_else(|| {
+                MonsterMathContractError::CertificationFailed {
+                    output_name: output.name.clone(),
+                    reason: "direct_contract_differential_eval_failed".to_string(),
+                }
+            })?;
+            let Some(oracle) = prepared
+                .route
+                .plan
+                .scalar_oracle_outputs
+                .iter()
+                .find(|oracle| {
+                    oracle.sample_name == sample.name && oracle.output_name == sample.expect_output
+                })
+            else {
+                continue;
+            };
+            let generated = f64::from_bits(oracle.value_bits);
+            let tolerance = sample.tolerance.max(1e-12);
+            if (direct - generated).abs() > tolerance {
+                return Err(MonsterMathContractError::CodegenDifferentialMismatch {
+                    sample_name: sample.name.clone(),
+                    output_name: sample.expect_output.clone(),
+                    direct_bits: direct.to_bits(),
+                    generated_bits: generated.to_bits(),
+                    tolerance_bits: tolerance.to_bits(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MonsterScalarInterval {
+    lo: f64,
+    hi: f64,
+}
+
+impl MonsterScalarInterval {
+    fn new(a: f64, b: f64) -> Option<Self> {
+        if !a.is_finite() || !b.is_finite() {
+            return None;
+        }
+        Some(Self {
+            lo: a.min(b),
+            hi: a.max(b),
+        })
+    }
+
+    fn point(value: f64) -> Option<Self> {
+        Self::new(value, value)
+    }
+
+    fn contains(self, value: f64) -> bool {
+        value.is_finite() && value >= self.lo && value <= self.hi
+    }
+
+    fn widen(self, amount: f64) -> Self {
+        Self {
+            lo: self.lo - amount.abs(),
+            hi: self.hi + amount.abs(),
+        }
+    }
+
+    fn add(self, rhs: Self) -> Option<Self> {
+        Self::new(self.lo + rhs.lo, self.hi + rhs.hi)
+    }
+
+    fn sub(self, rhs: Self) -> Option<Self> {
+        Self::new(self.lo - rhs.hi, self.hi - rhs.lo)
+    }
+
+    fn mul(self, rhs: Self) -> Option<Self> {
+        let values = [
+            self.lo * rhs.lo,
+            self.lo * rhs.hi,
+            self.hi * rhs.lo,
+            self.hi * rhs.hi,
+        ];
+        finite_minmax(&values)
+    }
+
+    fn div(self, rhs: Self) -> Option<Self> {
+        if rhs.lo <= 0.0 && rhs.hi >= 0.0 {
+            return None;
+        }
+        self.mul(Self::new(1.0 / rhs.hi, 1.0 / rhs.lo)?)
+    }
+
+    fn neg(self) -> Option<Self> {
+        Self::new(-self.hi, -self.lo)
+    }
+
+    fn sqrt(self) -> Option<Self> {
+        if self.lo < 0.0 {
+            return None;
+        }
+        Self::new(self.lo.sqrt(), self.hi.sqrt())
+    }
+
+    fn log(self) -> Option<Self> {
+        if self.lo <= 0.0 {
+            return None;
+        }
+        Self::new(self.lo.ln(), self.hi.ln())
+    }
+
+    fn exp(self) -> Option<Self> {
+        Self::new(self.lo.exp(), self.hi.exp())
+    }
+
+    fn pow(self, rhs: Self) -> Option<Self> {
+        if (rhs.lo - rhs.hi).abs() > f64::EPSILON {
+            return None;
+        }
+        let exponent = rhs.lo;
+        let values = [self.lo.powf(exponent), self.hi.powf(exponent)];
+        let mut interval = finite_minmax(&values)?;
+        if self.lo <= 0.0 && self.hi >= 0.0 && exponent.fract() == 0.0 && (exponent as i64) % 2 == 0 {
+            interval.lo = interval.lo.min(0.0);
+        }
+        Some(interval)
+    }
+
+    fn sin_cos_bound() -> Self {
+        Self { lo: -1.0, hi: 1.0 }
+    }
+
+    fn passthrough_first(args: &[Self]) -> Option<Self> {
+        args.first().copied()
+    }
+}
+
+fn finite_minmax(values: &[f64]) -> Option<MonsterScalarInterval> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for value in values {
+        if !value.is_finite() {
+            return None;
+        }
+        lo = lo.min(*value);
+        hi = hi.max(*value);
+    }
+    MonsterScalarInterval::new(lo, hi)
+}
+
+fn eval_forge_expr_interval(
+    expr: &ForgeExpr,
+    env: &BTreeMap<String, MonsterScalarInterval>,
+    module: &ForgeModuleSpec,
+    depth: usize,
+) -> Option<MonsterScalarInterval> {
+    if depth > 32 {
+        return None;
+    }
+    match expr {
+        ForgeExpr::Scalar(value) => MonsterScalarInterval::point(forge_scalar_value_as_f64(*value)?),
+        ForgeExpr::Var(name) => env.get(name).copied(),
+        ForgeExpr::Unary { op, expr } => {
+            let value = eval_forge_expr_interval(expr, env, module, depth + 1)?;
+            match op {
+                ForgeUnaryOp::Neg => value.neg(),
+                ForgeUnaryOp::Not => MonsterScalarInterval::new(0.0, 1.0),
+            }
+        }
+        ForgeExpr::Binary { op, left, right } => {
+            let lhs = eval_forge_expr_interval(left, env, module, depth + 1)?;
+            let rhs = eval_forge_expr_interval(right, env, module, depth + 1)?;
+            match op {
+                ForgeBinaryOp::Add => lhs.add(rhs),
+                ForgeBinaryOp::Sub => lhs.sub(rhs),
+                ForgeBinaryOp::Mul => lhs.mul(rhs),
+                ForgeBinaryOp::Div => lhs.div(rhs),
+                ForgeBinaryOp::Pow => lhs.pow(rhs),
+                ForgeBinaryOp::Eq
+                | ForgeBinaryOp::Ne
+                | ForgeBinaryOp::Lt
+                | ForgeBinaryOp::Le
+                | ForgeBinaryOp::Gt
+                | ForgeBinaryOp::Ge
+                | ForgeBinaryOp::And
+                | ForgeBinaryOp::Or => MonsterScalarInterval::new(0.0, 1.0),
+            }
+        }
+        ForgeExpr::Call { name, args } => {
+            let arg_intervals = args
+                .iter()
+                .map(|arg| eval_forge_expr_interval(arg, env, module, depth + 1))
+                .collect::<Option<Vec<_>>>()?;
+            eval_forge_call_interval(name, &arg_intervals, env, module, depth + 1)
+        }
+    }
+}
+
+fn eval_forge_call_interval(
+    name: &str,
+    args: &[MonsterScalarInterval],
+    env: &BTreeMap<String, MonsterScalarInterval>,
+    module: &ForgeModuleSpec,
+    depth: usize,
+) -> Option<MonsterScalarInterval> {
+    match name {
+        "sqrt" => args.get(0)?.sqrt(),
+        "ln" | "log" => args.get(0)?.log(),
+        "exp" => args.get(0)?.exp(),
+        "sin" | "cos" => Some(MonsterScalarInterval::sin_cos_bound()),
+        "tan" => None,
+        "abs" => {
+            let x = *args.get(0)?;
+            if x.lo <= 0.0 && x.hi >= 0.0 {
+                MonsterScalarInterval::new(0.0, x.lo.abs().max(x.hi.abs()))
+            } else {
+                MonsterScalarInterval::new(x.lo.abs().min(x.hi.abs()), x.lo.abs().max(x.hi.abs()))
+            }
+        }
+        "min" => MonsterScalarInterval::new(args.get(0)?.lo.min(args.get(1)?.lo), args.get(0)?.hi.min(args.get(1)?.hi)),
+        "max" => MonsterScalarInterval::new(args.get(0)?.lo.max(args.get(1)?.lo), args.get(0)?.hi.max(args.get(1)?.hi)),
+        "pow" => args.get(0)?.pow(*args.get(1)?),
+        "uncertainty" if args.len() >= 3 => Some(args[1]),
+        "p5" | "p50" | "p95" | "mean" | "variance" | "std" | "median" | "quantile"
+        | "robust_loss" | "grad" | "hessian" | "adjoint" | "jvp" | "vjp" | "rank"
+        | "pareto" | "rolling" | "fft" | "rfft" | "ifft" | "optimize"
+        | "constraint_solve" | "least_squares" | "diff" | "window_hann"
+        | "window_blackman" | "convolution" | "csr_matvec" | "pagerank"
+        | "shortest_path" | "connected_components" | "graph_degree" => {
+            MonsterScalarInterval::passthrough_first(args)
+        }
+        _ => {
+            let function = module.functions.iter().find(|function| function.name == name)?;
+            let body = forge_function_return_expr_text(&function.body)?;
+            let mut child = env.clone();
+            for (arg, value) in function.args.iter().zip(args.iter().copied()) {
+                child.insert(arg.name.clone(), value);
+            }
+            eval_forge_expr_interval(&ForgeExpr::parse(body)?, &child, module, depth + 1)
+        }
+    }
+}
+
+fn canonical_math_operator(raw: &str) -> String {
+    let op = raw.trim();
+    match op {
+        "×" => "*".to_string(),
+        "÷" => "/".to_string(),
+        "−" => "-".to_string(),
+        "≤" => "le".to_string(),
+        "≥" => "ge".to_string(),
+        "≠" => "ne".to_string(),
+        _ => canonical_math_identifier(op)
+            .map(str::to_string)
+            .unwrap_or_else(|| op.to_string()),
+    }
+}
+
+fn normalize_classical_math_expression(raw: &str) -> String {
+    let text = raw
+        .replace('×', "*")
+        .replace('∙', "*")
+        .replace('·', "*")
+        .replace('÷', "/")
+        .replace('−', "-")
+        .replace('≤', "<=")
+        .replace('≥', ">=")
+        .replace('≠', "!=")
+        .replace('∧', "&&")
+        .replace('∨', "||");
+    let mut out = String::with_capacity(text.len());
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let ch = chars[i];
+        if ch == '√' {
+            out.push_str("sqrt");
+            i += 1;
+            continue;
+        }
+        if ch == 'π' {
+            out.push_str("pi");
+            i += 1;
+            continue;
+        }
+        if ch.is_ascii_alphabetic() || ch == '_' {
+            let start = i;
+            i += 1;
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let ident = chars[start..i].iter().collect::<String>();
+            let mut j = i;
+            while j < chars.len() && chars[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '(' {
+                if let Some(canonical) = canonical_math_identifier(&ident) {
+                    out.push_str(canonical);
+                } else {
+                    out.push_str(&ident);
+                }
+            } else {
+                out.push_str(&ident);
+            }
+            continue;
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct MonsterUnitNormalization {
+    unit: String,
+    scale: f64,
+}
+
+fn normalize_classical_math_unit_info(raw: &str) -> MonsterUnitNormalization {
+    let unit = raw
+        .trim()
+        .replace('²', "^2")
+        .replace('³', "^3")
+        .replace(" per ", "/");
+    if unit.is_empty() {
+        return MonsterUnitNormalization { unit: "none".to_string(), scale: 1.0 };
+    }
+    if matches!(unit.as_str(), "rad" | "radian" | "radians") {
+        return MonsterUnitNormalization { unit: "none".to_string(), scale: 1.0 };
+    }
+    if let Some((canonical, scale)) = canonical_scaled_unit(&unit) {
+        return MonsterUnitNormalization { unit: canonical.to_string(), scale };
+    }
+    let chars = unit.chars().collect::<Vec<_>>();
+    let mut out = String::with_capacity(unit.len() + 4);
+    for (index, ch) in chars.iter().copied().enumerate() {
+        if ch.is_ascii_digit() {
+            let previous = index.checked_sub(1).and_then(|i| chars.get(i)).copied();
+            if matches!(previous, Some(prev) if prev.is_ascii_alphabetic()) {
+                out.push('^');
+            }
+        }
+        out.push(ch);
+    }
+    if let Some((canonical, scale)) = canonical_scaled_unit(&out) {
+        return MonsterUnitNormalization { unit: canonical.to_string(), scale };
+    }
+    MonsterUnitNormalization { unit: out, scale: 1.0 }
+}
+
+fn canonical_scaled_unit(unit: &str) -> Option<(&'static str, f64)> {
+    Some(match unit {
+        "mm" => ("m", 1e-3),
+        "cm" => ("m", 1e-2),
+        "km" => ("m", 1e3),
+        "ms" => ("s", 1e-3),
+        "min" | "minute" | "minutes" => ("s", 60.0),
+        "h" | "hr" | "hour" | "hours" => ("s", 3600.0),
+        "g" | "gram" | "grams" => ("kg", 1e-3),
+        "tonne" | "tonnes" => ("kg", 1e3),
+        "kN" => ("N", 1e3),
+        "MN" => ("N", 1e6),
+        "Pa" => ("Pa", 1.0),
+        "kPa" => ("Pa", 1e3),
+        "MPa" => ("Pa", 1e6),
+        "GPa" => ("Pa", 1e9),
+        "bar" => ("Pa", 1e5),
+        "mbar" => ("Pa", 100.0),
+        "mm2" | "mm^2" => ("m^2", 1e-6),
+        "cm2" | "cm^2" => ("m^2", 1e-4),
+        "km2" | "km^2" => ("m^2", 1e6),
+        "mm3" | "mm^3" => ("m^3", 1e-9),
+        "cm3" | "cm^3" => ("m^3", 1e-6),
+        "L" | "liter" | "litre" | "liters" | "litres" => ("m^3", 1e-3),
+        "mL" | "milliliter" | "millilitre" | "milliliters" | "millilitres" => ("m^3", 1e-6),
+        "g/cm3" | "g/cm^3" => ("kg/m^3", 1e3),
+        "kg/m3" => ("kg/m^3", 1.0),
+        "N/mm2" | "N/mm^2" => ("Pa", 1e6),
+        "N/cm2" | "N/cm^2" => ("Pa", 1e4),
+        _ => return None,
+    })
+}
+
+fn canonical_math_identifier(raw: &str) -> Option<&'static str> {
+    Some(match raw {
+        "Log" | "logarithm" => "log",
+        "Ln" | "ln" => "ln",
+        "Exp" => "exp",
+        "Sin" => "sin",
+        "Cos" => "cos",
+        "Tan" => "tan",
+        "ArcSin" | "arcsin" => "asin",
+        "ArcCos" | "arccos" => "acos",
+        "ArcTan" | "arctan" => "atan",
+        "Sqrt" | "sqrt" => "sqrt",
+        "Power" | "power" => "pow",
+        "Abs" | "absolute" => "abs",
+        "Min" => "min",
+        "Max" => "max",
+        "Mean" | "average" | "avg" => "mean",
+        "Variance" | "var" => "variance",
+        "StdDev" | "stdev" | "stddev" | "standard_deviation" => "std",
+        "Median" => "median",
+        "Quantile" => "quantile",
+        "Covariance" => "covariance",
+        "Correlation" => "correlation",
+        "Gradient" | "gradient" => "grad",
+        "Jacobian" => "jacobian",
+        "Hessian" => "hessian",
+        "Derivative" | "derivative" => "diff",
+        "Integrate" => "integrate",
+        "Limit" => "limit",
+        "Solve" => "solve",
+        "Simplify" => "simplify",
+        "FullSimplify" => "full_simplify",
+        "Expand" => "expand",
+        "Factor" => "factor",
+        "Fourier" | "FFT" => "fft",
+        "InverseFourier" | "IFFT" => "ifft",
+        "RFFT" => "rfft",
+        "Convolution" => "convolution",
+        "Dot" => "dot",
+        "Norm" | "norm" => "length",
+        "Normalize" => "normalize",
+        "Transpose" => "transpose",
+        "Det" | "det" => "determinant",
+        "Inverse" => "inverse",
+        "Trace" => "trace",
+        "ArgMin" => "argmin",
+        "ArgMax" => "argmax",
+        "Optimize" | "Minimize" | "Maximize" => "optimize",
+        "LeastSquares" => "least_squares",
+        "RootFind" => "root_find",
+        "Bisection" => "bisection",
+        "FixedPoint" => "fixed_point",
+        "PDEStencil" | "HeatEquationStep" => "pde_stencil_step",
+        "RelaxationStep" => "relaxation_step",
+        "ODEEuler" => "ode_step_euler",
+        "ODERK4" => "ode_step_rk4",
+        "ODESolve" => "ode_solve",
+        _ => return None,
+    })
+}
+
+fn is_promoted_simulation_solver_word(word: &str) -> bool {
+    matches!(
+        word,
+        "pde_stencil_step"
+            | "relaxation_step"
+            | "ode_step_euler"
+            | "ode_step_rk4"
+            | "ode_solve"
+    )
+}
+
+fn is_scalar_forge_type_name(ty: &str) -> bool {
+    matches!(
+        ty.trim(),
+        "f32" | "f64" | "i32" | "i64" | "u32" | "u64" | "bool"
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -753,6 +2030,1817 @@ pub struct MonsterCompiledMathContract {
     pub forge_source: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MonsterCodeTemplateKind {
+    RustPortAdapter,
+}
+
+impl MonsterCodeTemplateKind {
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::RustPortAdapter => "/rust_port_adapter_",
+        }
+    }
+
+    pub fn required_slots(self) -> &'static [&'static str] {
+        match self {
+            Self::RustPortAdapter => &[
+                "module_name",
+                "domain_object",
+                "request_fields",
+                "response_fields",
+                "backend_trait",
+                "backend_method",
+                "validation_rules",
+                "error_policy",
+                "serde",
+                "async",
+                "test_success",
+                "test_failure",
+            ],
+        }
+    }
+
+    pub fn optional_slots(self) -> &'static [&'static str] {
+        match self {
+            Self::RustPortAdapter => &[
+                "metrics",
+                "connectors",
+                "runtime",
+                "error_model",
+                "observability",
+                "dependency_policy",
+                "concurrency",
+                "quality_gates",
+                "module_version",
+                "api_docs",
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterCodeTemplate {
+    pub schema: &'static str,
+    pub command: &'static str,
+    pub kind: MonsterCodeTemplateKind,
+    pub required_slots: Vec<&'static str>,
+    pub optional_slots: Vec<&'static str>,
+    pub generated_fragments: Vec<&'static str>,
+    pub validation_policy: &'static str,
+    pub estimated_generated_lines: (u16, u16),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterCodeTemplateManifest {
+    pub schema: &'static str,
+    pub entry_command: &'static str,
+    pub templates: Vec<MonsterCodeTemplate>,
+    pub manifest_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterRustField {
+    pub name: String,
+    pub ty: String,
+}
+
+impl MonsterRustField {
+    pub fn new(name: &str, ty: &str) -> Self {
+        Self {
+            name: name.trim().to_string(),
+            ty: ty.trim().to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterRustMetric {
+    pub name: String,
+    pub ty: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterRustConnector {
+    pub kind: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterRustPortAdapterContract {
+    pub module_name: String,
+    pub domain_object: String,
+    pub request_fields: Vec<MonsterRustField>,
+    pub response_fields: Vec<MonsterRustField>,
+    pub backend_trait: String,
+    pub backend_method: String,
+    pub validation_rules: Vec<String>,
+    pub error_policy: String,
+    pub serde: bool,
+    pub async_api: bool,
+    pub test_success: String,
+    pub test_failure: String,
+    pub metrics: Vec<MonsterRustMetric>,
+    pub connectors: Vec<MonsterRustConnector>,
+    pub runtime: String,
+    pub error_model: String,
+    pub observability: String,
+    pub dependency_policy: String,
+    pub concurrency: String,
+    pub quality_gates: Vec<String>,
+    pub module_version: String,
+    pub api_docs: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MonsterRustSuccessTestSpec {
+    request_values: Vec<(String, String)>,
+    response_values: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MonsterRustFailureTestSpec {
+    empty_field: String,
+}
+
+impl MonsterRustPortAdapterContract {
+    pub fn from_slots(
+        module_name: &str,
+        domain_object: &str,
+        request_fields: &str,
+        response_fields: &str,
+        backend_trait: &str,
+        backend_method: &str,
+        validation_rules: &str,
+        error_policy: &str,
+        serde: bool,
+        async_api: bool,
+        test_success: &str,
+        test_failure: &str,
+    ) -> Result<Self, MonsterCodeTemplateError> {
+        Self::from_slots_with_extensions(
+            module_name,
+            domain_object,
+            request_fields,
+            response_fields,
+            backend_trait,
+            backend_method,
+            validation_rules,
+            error_policy,
+            serde,
+            async_api,
+            test_success,
+            test_failure,
+            "",
+            "",
+        )
+    }
+
+    pub fn from_slots_with_extensions(
+        module_name: &str,
+        domain_object: &str,
+        request_fields: &str,
+        response_fields: &str,
+        backend_trait: &str,
+        backend_method: &str,
+        validation_rules: &str,
+        error_policy: &str,
+        serde: bool,
+        async_api: bool,
+        test_success: &str,
+        test_failure: &str,
+        metrics: &str,
+        connectors: &str,
+    ) -> Result<Self, MonsterCodeTemplateError> {
+        Self::from_slots_pro(
+            module_name,
+            domain_object,
+            request_fields,
+            response_fields,
+            backend_trait,
+            backend_method,
+            validation_rules,
+            error_policy,
+            serde,
+            async_api,
+            test_success,
+            test_failure,
+            metrics,
+            connectors,
+            "sync",
+            "manual_enum",
+            "local_snapshot",
+            "std_only",
+            "local",
+            "fmt,clippy,test,no_unsafe,no_panic",
+            "1",
+            "rustdoc_full",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_slots_pro(
+        module_name: &str,
+        domain_object: &str,
+        request_fields: &str,
+        response_fields: &str,
+        backend_trait: &str,
+        backend_method: &str,
+        validation_rules: &str,
+        error_policy: &str,
+        serde: bool,
+        async_api: bool,
+        test_success: &str,
+        test_failure: &str,
+        metrics: &str,
+        connectors: &str,
+        runtime: &str,
+        error_model: &str,
+        observability: &str,
+        dependency_policy: &str,
+        concurrency: &str,
+        quality_gates: &str,
+        module_version: &str,
+        api_docs: &str,
+    ) -> Result<Self, MonsterCodeTemplateError> {
+        Ok(Self {
+            module_name: module_name.trim().to_string(),
+            domain_object: domain_object.trim().to_string(),
+            request_fields: parse_rust_fields(request_fields)?,
+            response_fields: parse_rust_fields(response_fields)?,
+            backend_trait: backend_trait.trim().to_string(),
+            backend_method: backend_method.trim().to_string(),
+            validation_rules: validation_rules
+                .split(',')
+                .map(str::trim)
+                .filter(|rule| !rule.is_empty())
+                .map(str::to_string)
+                .collect(),
+            error_policy: error_policy.trim().to_string(),
+            serde,
+            async_api,
+            test_success: test_success.trim().to_string(),
+            test_failure: test_failure.trim().to_string(),
+            metrics: parse_rust_metrics(metrics)?,
+            connectors: parse_rust_connectors(connectors)?,
+            runtime: defaulted_slot(runtime, "sync").to_string(),
+            error_model: defaulted_slot(error_model, "manual_enum").to_string(),
+            observability: defaulted_slot(observability, "local_snapshot").to_string(),
+            dependency_policy: defaulted_slot(dependency_policy, "std_only").to_string(),
+            concurrency: defaulted_slot(concurrency, "local").to_string(),
+            quality_gates: parse_comma_words(
+                defaulted_slot(quality_gates, "fmt,clippy,test,no_unsafe,no_panic"),
+                "quality_gates",
+            )?,
+            module_version: defaulted_slot(module_version, "1").to_string(),
+            api_docs: defaulted_slot(api_docs, "rustdoc_full").to_string(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterGeneratedCodeFile {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterGeneratedRustModule {
+    pub schema: &'static str,
+    pub command: &'static str,
+    pub module_name: String,
+    pub files: Vec<MonsterGeneratedCodeFile>,
+    pub integration_snippet: String,
+    pub connectors: Vec<String>,
+    pub cargo_dependencies: Vec<String>,
+    pub cargo_features: Vec<String>,
+    pub quality_gates: Vec<String>,
+    pub module_hash: String,
+    pub estimated_lines: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterMaterializedCodeFile {
+    pub path: String,
+    pub content_hash: String,
+    pub bytes: usize,
+    pub status: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterMaterializedRustModule {
+    pub schema: &'static str,
+    pub command: &'static str,
+    pub module_name: String,
+    pub files: Vec<MonsterMaterializedCodeFile>,
+    pub integration_snippet: String,
+    pub public_api: Vec<String>,
+    pub connectors: Vec<String>,
+    pub cargo_dependencies: Vec<String>,
+    pub cargo_features: Vec<String>,
+    pub quality_gates: Vec<String>,
+    pub module_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MonsterCodeTemplateError {
+    MissingSlot(&'static str),
+    InvalidIdentifier {
+        slot: &'static str,
+        value: String,
+    },
+    InvalidType {
+        field: String,
+        ty: String,
+    },
+    UnsupportedSlotValue {
+        slot: &'static str,
+        value: String,
+    },
+    UnsafePath {
+        path: String,
+    },
+    RefuseOverwrite {
+        path: String,
+    },
+    Io {
+        action: &'static str,
+        path: String,
+        message: String,
+    },
+}
+
+pub fn monster_code_template_manifest() -> MonsterCodeTemplateManifest {
+    let templates = vec![MonsterCodeTemplate {
+        schema: "forge.monster.code_template.v1",
+        command: MonsterCodeTemplateKind::RustPortAdapter.command(),
+        kind: MonsterCodeTemplateKind::RustPortAdapter,
+        required_slots: MonsterCodeTemplateKind::RustPortAdapter
+            .required_slots()
+            .to_vec(),
+        optional_slots: MonsterCodeTemplateKind::RustPortAdapter
+            .optional_slots()
+            .to_vec(),
+        generated_fragments: vec![
+            "rustdoc_module_header",
+            "quality_gate_metadata",
+            "request_response_types",
+            "typed_error_enum",
+            "backend_port_trait",
+            "service_struct",
+            "validation_functions",
+            "cargo_metadata",
+            "metrics_snapshot",
+            "connector_ports",
+            "optional_tower_service_port",
+            "run_helper",
+            "co_located_tests",
+            "integration_snippet",
+        ],
+        validation_policy: "strict_slots_identifiers_types_pro_metadata_compile_test",
+        estimated_generated_lines: (260, 520),
+    }];
+    let mut text = String::from("forge.monster.code_template_manifest.v1:/newmodule_");
+    for template in &templates {
+        text.push(':');
+        text.push_str(template.command);
+        text.push(':');
+        text.push_str(&template.required_slots.join(","));
+        text.push(':');
+        text.push_str(&template.optional_slots.join(","));
+        text.push(':');
+        text.push_str(&template.generated_fragments.join(","));
+        text.push(':');
+        text.push_str(template.validation_policy);
+    }
+    MonsterCodeTemplateManifest {
+        schema: "forge.monster.code_template_manifest.v1",
+        entry_command: "/newmodule_",
+        templates,
+        manifest_hash: sha256_hex(text.as_bytes()),
+    }
+}
+
+pub fn generate_rust_port_adapter(
+    contract: &MonsterRustPortAdapterContract,
+) -> Result<MonsterGeneratedRustModule, MonsterCodeTemplateError> {
+    validate_rust_port_adapter_contract(contract)?;
+    let request_name = format!("{}Request", contract.domain_object);
+    let response_name = format!("{}Response", contract.domain_object);
+    let error_name = format!("{}Error", contract.domain_object);
+    let service_name = format!("{}Service", contract.domain_object);
+    let run_fn = format!("run_{}", contract.module_name);
+    let content = render_rust_port_adapter_module(
+        contract,
+        &request_name,
+        &response_name,
+        &error_name,
+        &service_name,
+        &run_fn,
+    );
+    let integration_snippet = format!("pub mod {};", contract.module_name);
+    let module_hash = sha256_hex(content.as_bytes());
+    let estimated_lines = content.lines().count();
+    let connectors = contract
+        .connectors
+        .iter()
+        .map(|connector| connector.kind.clone())
+        .collect();
+    let cargo_dependencies = render_cargo_dependencies(contract);
+    let cargo_features = render_cargo_features(contract);
+    Ok(MonsterGeneratedRustModule {
+        schema: "forge.monster.generated_rust_module.v1",
+        command: MonsterCodeTemplateKind::RustPortAdapter.command(),
+        module_name: contract.module_name.clone(),
+        files: vec![MonsterGeneratedCodeFile {
+            path: format!("src/{}.rs", contract.module_name),
+            content,
+        }],
+        integration_snippet,
+        connectors,
+        cargo_dependencies,
+        cargo_features,
+        quality_gates: contract.quality_gates.clone(),
+        module_hash,
+        estimated_lines,
+    })
+}
+
+pub fn materialize_generated_rust_module(
+    project_root: &Path,
+    module: &MonsterGeneratedRustModule,
+) -> Result<MonsterMaterializedRustModule, MonsterCodeTemplateError> {
+    std::fs::create_dir_all(project_root).map_err(|error| MonsterCodeTemplateError::Io {
+        action: "create_project_root",
+        path: project_root.display().to_string(),
+        message: error.to_string(),
+    })?;
+    let root = project_root
+        .canonicalize()
+        .map_err(|error| MonsterCodeTemplateError::Io {
+            action: "canonicalize_project_root",
+            path: project_root.display().to_string(),
+            message: error.to_string(),
+        })?;
+    let mut files = Vec::new();
+    for file in &module.files {
+        validate_relative_output_path(&file.path)?;
+        let target = root.join(&file.path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| MonsterCodeTemplateError::Io {
+                action: "create_parent_dir",
+                path: parent.display().to_string(),
+                message: error.to_string(),
+            })?;
+        }
+        let content_hash = sha256_hex(file.content.as_bytes());
+        let status = if target.exists() {
+            let existing =
+                std::fs::read_to_string(&target).map_err(|error| MonsterCodeTemplateError::Io {
+                    action: "read_existing_file",
+                    path: target.display().to_string(),
+                    message: error.to_string(),
+                })?;
+            if existing == file.content {
+                "unchanged"
+            } else {
+                return Err(MonsterCodeTemplateError::RefuseOverwrite {
+                    path: file.path.clone(),
+                });
+            }
+        } else {
+            std::fs::write(&target, &file.content).map_err(|error| MonsterCodeTemplateError::Io {
+                action: "write_generated_file",
+                path: target.display().to_string(),
+                message: error.to_string(),
+            })?;
+            "created"
+        };
+        files.push(MonsterMaterializedCodeFile {
+            path: file.path.clone(),
+            content_hash,
+            bytes: file.content.len(),
+            status,
+        });
+    }
+    Ok(MonsterMaterializedRustModule {
+        schema: "forge.monster.materialized_rust_module.v1",
+        command: module.command,
+        module_name: module.module_name.clone(),
+        files,
+        integration_snippet: module.integration_snippet.clone(),
+        public_api: vec![
+            format!("run_{}", module.module_name),
+            format!("run_{}_with_ref", module.module_name),
+            "FORGE_TEMPLATE_COMMAND".to_string(),
+            "FORGE_TEMPLATE_VERSION".to_string(),
+            "FORGE_QUALITY_GATES".to_string(),
+        ],
+        connectors: module.connectors.clone(),
+        cargo_dependencies: module.cargo_dependencies.clone(),
+        cargo_features: module.cargo_features.clone(),
+        quality_gates: module.quality_gates.clone(),
+        module_hash: module.module_hash.clone(),
+    })
+}
+
+fn validate_relative_output_path(path: &str) -> Result<(), MonsterCodeTemplateError> {
+    let path_ref = Path::new(path);
+    if path_ref.is_absolute() {
+        return Err(MonsterCodeTemplateError::UnsafePath {
+            path: path.to_string(),
+        });
+    }
+    for component in path_ref.components() {
+        if matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        ) {
+            return Err(MonsterCodeTemplateError::UnsafePath {
+                path: path.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn parse_rust_fields(raw: &str) -> Result<Vec<MonsterRustField>, MonsterCodeTemplateError> {
+    let fields = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|field| !field.is_empty())
+        .map(|field| {
+            let (name, ty) = field
+                .split_once(':')
+                .ok_or(MonsterCodeTemplateError::MissingSlot("field_type"))?;
+            Ok(MonsterRustField::new(name, ty))
+        })
+        .collect::<Result<Vec<_>, MonsterCodeTemplateError>>()?;
+    if fields.is_empty() {
+        return Err(MonsterCodeTemplateError::MissingSlot("fields"));
+    }
+    Ok(fields)
+}
+
+fn parse_rust_metrics(raw: &str) -> Result<Vec<MonsterRustMetric>, MonsterCodeTemplateError> {
+    let metrics = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|metric| !metric.is_empty())
+        .map(|metric| {
+            let (name, ty) = metric
+                .split_once(':')
+                .ok_or(MonsterCodeTemplateError::MissingSlot("metric_type"))?;
+            let name = name.trim();
+            let ty = ty.trim();
+            validate_snake_identifier("metrics", name)?;
+            validate_metric_type(name, ty)?;
+            Ok(MonsterRustMetric {
+                name: name.to_string(),
+                ty: ty.to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, MonsterCodeTemplateError>>()?;
+    let mut seen = HashSet::new();
+    for metric in &metrics {
+        if !seen.insert(metric.name.clone()) {
+            return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                slot: "metrics",
+                value: metric.name.clone(),
+            });
+        }
+    }
+    Ok(metrics)
+}
+
+fn parse_rust_connectors(raw: &str) -> Result<Vec<MonsterRustConnector>, MonsterCodeTemplateError> {
+    let connectors = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|connector| !connector.is_empty())
+        .map(|connector| {
+            validate_snake_identifier("connectors", connector)?;
+            if connector != "state_store" {
+                return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                    slot: "connectors",
+                    value: connector.to_string(),
+                });
+            }
+            Ok(MonsterRustConnector {
+                kind: connector.to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, MonsterCodeTemplateError>>()?;
+    let mut seen = HashSet::new();
+    for connector in &connectors {
+        if !seen.insert(connector.kind.clone()) {
+            return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                slot: "connectors",
+                value: connector.kind.clone(),
+            });
+        }
+    }
+    Ok(connectors)
+}
+
+fn defaulted_slot<'a>(raw: &'a str, default: &'a str) -> &'a str {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        default
+    } else {
+        trimmed
+    }
+}
+
+fn parse_comma_words(
+    raw: &str,
+    slot: &'static str,
+) -> Result<Vec<String>, MonsterCodeTemplateError> {
+    let words = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            validate_snake_identifier(slot, word)?;
+            Ok(word.to_string())
+        })
+        .collect::<Result<Vec<_>, MonsterCodeTemplateError>>()?;
+    let mut seen = HashSet::new();
+    for word in &words {
+        if !seen.insert(word.clone()) {
+            return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                slot,
+                value: word.clone(),
+            });
+        }
+    }
+    Ok(words)
+}
+
+fn validate_rust_port_adapter_contract(
+    contract: &MonsterRustPortAdapterContract,
+) -> Result<(), MonsterCodeTemplateError> {
+    validate_snake_identifier("module_name", &contract.module_name)?;
+    validate_pascal_identifier("domain_object", &contract.domain_object)?;
+    validate_pascal_identifier("backend_trait", &contract.backend_trait)?;
+    validate_snake_identifier("backend_method", &contract.backend_method)?;
+    if contract.error_policy != "enum" {
+        return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+            slot: "error_policy",
+            value: contract.error_policy.clone(),
+        });
+    }
+    if contract.async_api && contract.runtime != "async_tower" {
+        return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+            slot: "async",
+            value: "true".to_string(),
+        });
+    }
+    validate_enum_slot("runtime", &contract.runtime, &["sync", "async_tower"])?;
+    validate_enum_slot(
+        "error_model",
+        &contract.error_model,
+        &["manual_enum", "thiserror_metadata"],
+    )?;
+    validate_enum_slot(
+        "observability",
+        &contract.observability,
+        &["local_snapshot", "tracing_metadata", "metrics_metadata"],
+    )?;
+    validate_enum_slot(
+        "dependency_policy",
+        &contract.dependency_policy,
+        &["std_only", "common_crates"],
+    )?;
+    validate_enum_slot("concurrency", &contract.concurrency, &["local", "send_sync"])?;
+    validate_enum_slot("api_docs", &contract.api_docs, &["rustdoc_full", "minimal"])?;
+    validate_module_version(&contract.module_version)?;
+    for gate in &contract.quality_gates {
+        validate_enum_slot(
+            "quality_gates",
+            gate,
+            &[
+                "fmt",
+                "clippy",
+                "test",
+                "doc",
+                "no_unsafe",
+                "no_panic",
+                "bench",
+                "property_tests",
+            ],
+        )?;
+    }
+    for field in contract
+        .request_fields
+        .iter()
+        .chain(contract.response_fields.iter())
+    {
+        validate_snake_identifier("field_name", &field.name)?;
+        validate_rust_field_type(&field.name, &field.ty)?;
+    }
+    for rule in &contract.validation_rules {
+        let parts = rule.split_whitespace().collect::<Vec<_>>();
+        if parts.len() < 2 || parts.len() > 3 {
+            return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                slot: "validation_rules",
+                value: rule.clone(),
+            });
+        }
+        let field = parts[0];
+        let rule_kind = parts[1];
+        let Some(request_field) = contract.request_fields.iter().find(|item| item.name == field) else {
+            return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                slot: "validation_rules",
+                value: rule.clone(),
+            });
+        };
+        match (rule_kind, request_field.ty.as_str(), parts.get(2).copied()) {
+            ("non_empty", "String", None) => {}
+            ("min", "u64" | "i64" | "usize" | "f64", Some(value))
+            | ("max", "u64" | "i64" | "usize" | "f64", Some(value)) => {
+                validate_test_value("validation_rules", field, &request_field.ty, value, rule)?;
+            }
+            _ => {
+                return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                    slot: "validation_rules",
+                    value: rule.clone(),
+                });
+            }
+        }
+    }
+    let mut metric_names = HashSet::new();
+    for metric in &contract.metrics {
+        validate_snake_identifier("metrics", &metric.name)?;
+        validate_metric_type(&metric.name, &metric.ty)?;
+        if !metric_names.insert(metric.name.clone()) {
+            return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                slot: "metrics",
+                value: metric.name.clone(),
+            });
+        }
+    }
+    let mut connector_names = HashSet::new();
+    for connector in &contract.connectors {
+        validate_snake_identifier("connectors", &connector.kind)?;
+        if connector.kind != "state_store" || !connector_names.insert(connector.kind.clone()) {
+            return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                slot: "connectors",
+                value: connector.kind.clone(),
+            });
+        }
+    }
+    if contract.test_success.is_empty() {
+        return Err(MonsterCodeTemplateError::MissingSlot("test_success"));
+    }
+    if contract.test_failure.is_empty() {
+        return Err(MonsterCodeTemplateError::MissingSlot("test_failure"));
+    }
+    parse_success_test_spec(contract)?;
+    parse_failure_test_spec(contract)?;
+    Ok(())
+}
+
+fn validate_snake_identifier(slot: &'static str, value: &str) -> Result<(), MonsterCodeTemplateError> {
+    let mut chars = value.chars();
+    let valid = chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_lowercase())
+        && value
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_lowercase() || ch.is_ascii_digit())
+        && !value.contains("__");
+    if valid {
+        Ok(())
+    } else {
+        Err(MonsterCodeTemplateError::InvalidIdentifier {
+            slot,
+            value: value.to_string(),
+        })
+    }
+}
+
+fn validate_pascal_identifier(slot: &'static str, value: &str) -> Result<(), MonsterCodeTemplateError> {
+    let mut chars = value.chars();
+    let valid = chars
+        .next()
+        .is_some_and(|first| first.is_ascii_uppercase())
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric())
+        && value.len() >= 2;
+    if valid {
+        Ok(())
+    } else {
+        Err(MonsterCodeTemplateError::InvalidIdentifier {
+            slot,
+            value: value.to_string(),
+        })
+    }
+}
+
+fn validate_rust_field_type(field: &str, ty: &str) -> Result<(), MonsterCodeTemplateError> {
+    match ty {
+        "String" | "bool" | "u64" | "i64" | "usize" | "f64" => Ok(()),
+        _ => Err(MonsterCodeTemplateError::InvalidType {
+            field: field.to_string(),
+            ty: ty.to_string(),
+        }),
+    }
+}
+
+fn validate_metric_type(field: &str, ty: &str) -> Result<(), MonsterCodeTemplateError> {
+    match ty {
+        "u64" | "i64" | "usize" | "f64" => Ok(()),
+        _ => Err(MonsterCodeTemplateError::InvalidType {
+            field: field.to_string(),
+            ty: ty.to_string(),
+        }),
+    }
+}
+
+fn validate_enum_slot(
+    slot: &'static str,
+    value: &str,
+    allowed: &[&str],
+) -> Result<(), MonsterCodeTemplateError> {
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+            slot,
+            value: value.to_string(),
+        })
+    }
+}
+
+fn validate_module_version(value: &str) -> Result<(), MonsterCodeTemplateError> {
+    let valid = !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'));
+    if valid {
+        Ok(())
+    } else {
+        Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+            slot: "module_version",
+            value: value.to_string(),
+        })
+    }
+}
+
+fn parse_success_test_spec(
+    contract: &MonsterRustPortAdapterContract,
+) -> Result<MonsterRustSuccessTestSpec, MonsterCodeTemplateError> {
+    let (request_part, response_part) = contract.test_success.split_once(" returns ").ok_or_else(|| {
+        MonsterCodeTemplateError::UnsupportedSlotValue {
+            slot: "test_success",
+            value: contract.test_success.clone(),
+        }
+    })?;
+    let request_values = parse_named_value_pairs("test_success", request_part)?;
+    let response_values = parse_named_value_pairs("test_success", response_part)?;
+    for (field, value) in &request_values {
+        let Some(spec) = contract.request_fields.iter().find(|item| item.name == *field) else {
+            return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                slot: "test_success",
+                value: contract.test_success.clone(),
+            });
+        };
+        validate_test_value("test_success", field, &spec.ty, value, &contract.test_success)?;
+    }
+    for (field, value) in &response_values {
+        let Some(spec) = contract.response_fields.iter().find(|item| item.name == *field) else {
+            return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+                slot: "test_success",
+                value: contract.test_success.clone(),
+            });
+        };
+        validate_test_value("test_success", field, &spec.ty, value, &contract.test_success)?;
+    }
+    Ok(MonsterRustSuccessTestSpec {
+        request_values,
+        response_values,
+    })
+}
+
+fn parse_failure_test_spec(
+    contract: &MonsterRustPortAdapterContract,
+) -> Result<MonsterRustFailureTestSpec, MonsterCodeTemplateError> {
+    let parts = contract.test_failure.split_whitespace().collect::<Vec<_>>();
+    if parts.len() != 4 || parts[0] != "empty" || parts[2] != "returns" || parts[3] != "Validation" {
+        return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+            slot: "test_failure",
+            value: contract.test_failure.clone(),
+        });
+    }
+    let field = parts[1].to_string();
+    let Some(field_spec) = contract.request_fields.iter().find(|item| item.name == field) else {
+        return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+            slot: "test_failure",
+            value: contract.test_failure.clone(),
+        });
+    };
+    if field_spec.ty != "String"
+        || !contract
+            .validation_rules
+            .iter()
+            .any(|rule| rule == &format!("{field} non_empty"))
+    {
+        return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+            slot: "test_failure",
+            value: contract.test_failure.clone(),
+        });
+    }
+    Ok(MonsterRustFailureTestSpec { empty_field: field })
+}
+
+fn parse_named_value_pairs(
+    slot: &'static str,
+    raw: &str,
+) -> Result<Vec<(String, String)>, MonsterCodeTemplateError> {
+    let tokens = raw.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() || tokens.len() % 2 != 0 {
+        return Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+            slot,
+            value: raw.to_string(),
+        });
+    }
+    let mut pairs = Vec::new();
+    for chunk in tokens.chunks_exact(2) {
+        validate_snake_identifier(slot, chunk[0])?;
+        pairs.push((chunk[0].to_string(), chunk[1].to_string()));
+    }
+    Ok(pairs)
+}
+
+fn validate_test_value(
+    slot: &'static str,
+    field: &str,
+    ty: &str,
+    value: &str,
+    original: &str,
+) -> Result<(), MonsterCodeTemplateError> {
+    let valid = match ty {
+        "String" => !value.is_empty(),
+        "bool" => matches!(value, "true" | "false"),
+        "u64" | "usize" => value.parse::<u64>().is_ok(),
+        "i64" => value.parse::<i64>().is_ok(),
+        "f64" => value.parse::<f64>().is_ok(),
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(MonsterCodeTemplateError::UnsupportedSlotValue {
+            slot,
+            value: format!("{field}:{ty}={value} in {original}"),
+        })
+    }
+}
+
+fn render_rust_port_adapter_module(
+    contract: &MonsterRustPortAdapterContract,
+    request_name: &str,
+    response_name: &str,
+    error_name: &str,
+    service_name: &str,
+    run_fn: &str,
+) -> String {
+    let serde_attr = if contract.serde {
+        r#"#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]"#
+    } else {
+        ""
+    };
+    let success = parse_success_test_spec(contract).expect("validated success test spec");
+    let failure = parse_failure_test_spec(contract).expect("validated failure test spec");
+    let request_fields = render_struct_fields(&contract.request_fields);
+    let response_fields = render_struct_fields(&contract.response_fields);
+    let validation = render_validation_rules(contract, error_name);
+    let module_header =
+        render_module_header(contract, request_name, response_name, error_name, service_name);
+    let backend_bound = render_backend_bound(contract);
+    let request_test = render_request_literal_from_pairs(
+        request_name,
+        &contract.request_fields,
+        &success.request_values,
+    );
+    let response_test = render_response_literal_from_pairs(
+        response_name,
+        &contract.response_fields,
+        &success.response_values,
+    );
+    let request_assertions =
+        render_request_assertions(&contract.request_fields, &success.request_values);
+    let response_assertions =
+        render_response_assertions(&contract.response_fields, &success.response_values);
+    let bad_request_test =
+        render_invalid_request_literal(request_name, &contract.request_fields, &failure.empty_field);
+    let metrics_code = render_metrics_code(contract, service_name);
+    let connector_code =
+        render_connector_code(contract, request_name, response_name, service_name);
+    let service_metrics_field = if contract.metrics.is_empty() {
+        String::new()
+    } else {
+        "    metrics: Metrics,\n".to_string()
+    };
+    let service_metrics_init = if contract.metrics.is_empty() {
+        String::new()
+    } else {
+        "            metrics: Metrics::default(),\n".to_string()
+    };
+    let request_metric_increment = render_metric_increment(contract, "request_count", 8);
+    let validation_metric_increment = render_metric_increment(contract, "validation_error_count", 12);
+    let backend_metric_increment = render_metric_increment(contract, "backend_error_count", 16);
+    let validation_block = if validation_metric_increment.is_empty() {
+        "        validate_request(&request)?;".to_string()
+    } else {
+        format!(
+            "        if let Err(error) = validate_request(&request) {{\n{validation_metric_increment}\n            return Err(error);\n        }}"
+        )
+    };
+    let backend_block = if backend_metric_increment.is_empty() {
+        format!(
+            "        self.backend\n            .{}(&request)\n            .map_err({}::Backend)",
+            contract.backend_method, error_name
+        )
+    } else {
+        format!(
+            "        match self.backend.{}(&request) {{\n            Ok(response) => Ok(response),\n            Err(message) => {{\n{backend_metric_increment}\n                Err({error_name}::Backend(message))\n            }}\n        }}",
+            contract.backend_method
+        )
+    };
+    let service_metrics_methods = render_service_metrics_methods(contract);
+    let service_introspection_methods = render_service_introspection_methods();
+    let tower_service_impl =
+        render_tower_service_impl(contract, request_name, response_name, error_name, service_name);
+    let observability_code = render_observability_code(contract, service_name);
+    let metrics_tests = render_metrics_tests(
+        contract,
+        error_name,
+        service_name,
+        &request_test,
+        &bad_request_test,
+    );
+    let connector_tests = render_connector_tests(contract, service_name);
+    format!(
+        r#"{module_header}
+#[derive(Clone, Debug, PartialEq)]
+{serde_attr}
+/// Request payload accepted by [`{service_name}`].
+pub struct {request_name} {{
+{request_fields}
+}}
+
+#[derive(Clone, Debug, PartialEq)]
+{serde_attr}
+/// Response payload returned by [`{service_name}`].
+pub struct {response_name} {{
+{response_fields}
+}}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Typed error returned by this adapter.
+pub enum {error_name} {{
+    Validation {{ field: &'static str, reason: &'static str }},
+    Backend(String),
+}}
+
+impl core::fmt::Display for {error_name} {{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {{
+        match self {{
+            Self::Validation {{ field, reason }} => write!(f, "validation failed for {{field}}: {{reason}}"),
+            Self::Backend(message) => write!(f, "backend error: {{message}}"),
+        }}
+    }}
+}}
+
+impl std::error::Error for {error_name} {{}}
+
+{metrics_code}
+{connector_code}
+{observability_code}
+/// Backend port implemented by the project-specific dependency.
+pub trait {backend_trait} {{
+    fn {backend_method}(&self, request: &{request_name}) -> Result<{response_name}, String>;
+}}
+
+/// Small service wrapper that validates requests before calling the backend port.
+pub struct {service_name}<B> {{
+    backend: B,
+{service_metrics_field}
+}}
+
+impl<B> {service_name}<B>
+where
+    B: {backend_bound},
+{{
+    /// Creates a service around a backend implementation.
+    pub fn new(backend: B) -> Self {{
+        Self {{
+            backend,
+{service_metrics_init}        }}
+    }}
+
+    /// Returns a shared reference to the backend.
+    pub fn backend(&self) -> &B {{
+        &self.backend
+    }}
+
+    /// Consumes the service and returns the backend.
+    pub fn into_backend(self) -> B {{
+        self.backend
+    }}
+
+    /// Validates and executes one request.
+    pub fn execute(&self, request: {request_name}) -> Result<{response_name}, {error_name}> {{
+{request_metric_increment}
+{validation_block}
+{backend_block}
+    }}
+{service_introspection_methods}
+{service_metrics_methods}
+}}
+
+/// One-shot helper that constructs [`{service_name}`] and executes a request.
+pub fn {run_fn}<B>(backend: B, request: {request_name}) -> Result<{response_name}, {error_name}>
+where
+    B: {backend_bound},
+{{
+    {service_name}::new(backend).execute(request)
+}}
+
+/// Borrowed-backend helper for hot paths that should not move the backend.
+pub fn {run_fn}_with_ref<B>(backend: &B, request: {request_name}) -> Result<{response_name}, {error_name}>
+where
+    B: {backend_bound},
+{{
+    validate_request(&request)?;
+    backend
+        .{backend_method}(&request)
+        .map_err({error_name}::Backend)
+}}
+{tower_service_impl}
+
+fn validate_request(request: &{request_name}) -> Result<(), {error_name}> {{
+{validation}
+    Ok(())
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    struct MockBackend {{
+        fail: bool,
+    }}
+
+    impl {backend_trait} for MockBackend {{
+        fn {backend_method}(&self, request: &{request_name}) -> Result<{response_name}, String> {{
+            if self.fail {{
+                return Err("backend unavailable".to_string());
+            }}
+{request_assertions}
+            Ok({response_test})
+        }}
+    }}
+
+    #[test]
+    fn success_case_returns_response() {{
+        let response = {run_fn}(MockBackend {{ fail: false }}, {request_test}).unwrap();
+{response_assertions}
+    }}
+
+    #[test]
+    fn borrowed_backend_helper_returns_response_without_moving_backend() {{
+        let backend = MockBackend {{ fail: false }};
+        let response = {run_fn}_with_ref(&backend, {request_test}).unwrap();
+{response_assertions}
+    }}
+
+    #[test]
+    fn validation_failure_is_rejected_before_backend() {{
+        let error = {run_fn}(MockBackend {{ fail: false }}, {bad_request_test}).unwrap_err();
+        assert_eq!(
+            error,
+            {error_name}::Validation {{
+                field: "{failure_field}",
+                reason: "non_empty",
+            }}
+        );
+    }}
+
+    #[test]
+    fn backend_failure_is_wrapped() {{
+        let error = {run_fn}(MockBackend {{ fail: true }}, {request_test}).unwrap_err();
+        assert_eq!(error, {error_name}::Backend("backend unavailable".to_string()));
+    }}
+{metrics_tests}
+{connector_tests}
+}}
+"#,
+        serde_attr = serde_attr,
+        module_header = module_header,
+        request_name = request_name,
+        request_fields = request_fields,
+        response_name = response_name,
+        response_fields = response_fields,
+        error_name = error_name,
+        backend_trait = contract.backend_trait,
+        backend_bound = backend_bound,
+        backend_method = contract.backend_method,
+        service_name = service_name,
+        run_fn = run_fn,
+        validation = validation,
+        response_test = response_test,
+        request_test = request_test,
+        bad_request_test = bad_request_test,
+        request_assertions = request_assertions,
+        response_assertions = response_assertions,
+        failure_field = failure.empty_field,
+        metrics_code = metrics_code,
+        connector_code = connector_code,
+        service_metrics_field = service_metrics_field,
+        service_metrics_init = service_metrics_init,
+        request_metric_increment = request_metric_increment,
+        validation_block = validation_block,
+        backend_block = backend_block,
+        service_metrics_methods = service_metrics_methods,
+        service_introspection_methods = service_introspection_methods,
+        tower_service_impl = tower_service_impl,
+        observability_code = observability_code,
+        metrics_tests = metrics_tests,
+        connector_tests = connector_tests,
+    )
+}
+
+fn render_module_header(
+    contract: &MonsterRustPortAdapterContract,
+    request_name: &str,
+    response_name: &str,
+    error_name: &str,
+    service_name: &str,
+) -> String {
+    let quality = contract.quality_gates.join(",");
+    format!(
+        r#"//! Generated Forge Rust port-adapter module.
+//!
+//! Template: `/rust_port_adapter_`
+//! Module: `{module}`
+//! Version: `{version}`
+//! Runtime: `{runtime}`
+//! Error model: `{error_model}`
+//! Observability: `{observability}`
+//! Dependency policy: `{dependency_policy}`
+//! Concurrency: `{concurrency}`
+//! Quality gates: `{quality}`
+//! Public types: [`{request_name}`], [`{response_name}`], [`{error_name}`], [`{service_name}`].
+
+#![forbid(unsafe_code)]
+
+/// Forge template command that produced this module.
+pub const FORGE_TEMPLATE_COMMAND: &str = "/rust_port_adapter_";
+/// Forge template version selected by the LLM slot payload.
+pub const FORGE_TEMPLATE_VERSION: &str = "{version}";
+/// Human-readable quality gates requested for this generated module.
+pub const FORGE_QUALITY_GATES: &[&str] = &[{quality_literals}];
+
+"#,
+        module = contract.module_name,
+        version = contract.module_version,
+        runtime = contract.runtime,
+        error_model = contract.error_model,
+        observability = contract.observability,
+        dependency_policy = contract.dependency_policy,
+        concurrency = contract.concurrency,
+        quality = quality,
+        request_name = request_name,
+        response_name = response_name,
+        error_name = error_name,
+        service_name = service_name,
+        quality_literals = contract
+            .quality_gates
+            .iter()
+            .map(|gate| format!("\"{}\"", escape_rust_string(gate)))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+fn render_backend_bound(contract: &MonsterRustPortAdapterContract) -> String {
+    if contract.concurrency == "send_sync" {
+        format!("{} + Send + Sync", contract.backend_trait)
+    } else {
+        contract.backend_trait.clone()
+    }
+}
+
+fn render_service_introspection_methods() -> String {
+    r#"    /// Returns the Forge template command and version used to generate this module.
+    pub fn forge_contract() -> (&'static str, &'static str) {
+        (FORGE_TEMPLATE_COMMAND, FORGE_TEMPLATE_VERSION)
+    }
+"#
+    .to_string()
+}
+
+fn render_observability_code(
+    contract: &MonsterRustPortAdapterContract,
+    service_name: &str,
+) -> String {
+    match contract.observability.as_str() {
+        "tracing_metadata" => format!(
+            r#"/// Optional tracing target for projects that enable the `tracing` feature.
+pub const TRACING_TARGET: &str = "{module}.service";
+
+"#,
+            module = contract.module_name
+        ),
+        "metrics_metadata" => format!(
+            r#"/// Optional metrics namespace for projects that enable the `metrics` feature.
+pub const METRICS_NAMESPACE: &str = "{module}.{service_name}";
+
+"#,
+            module = contract.module_name,
+            service_name = service_name
+        ),
+        _ => String::new(),
+    }
+}
+
+fn render_tower_service_impl(
+    contract: &MonsterRustPortAdapterContract,
+    request_name: &str,
+    response_name: &str,
+    error_name: &str,
+    service_name: &str,
+) -> String {
+    if contract.runtime != "async_tower" {
+        return String::new();
+    }
+    format!(
+        r#"
+#[cfg(feature = "tower")]
+impl<B> tower_service::Service<{request_name}> for {service_name}<B>
+where
+    B: {backend_bound} + Clone + 'static,
+{{
+    type Response = {response_name};
+    type Error = {error_name};
+    type Future = core::pin::Pin<Box<dyn core::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(
+        &mut self,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Result<(), Self::Error>> {{
+        core::task::Poll::Ready(Ok(()))
+    }}
+
+    fn call(&mut self, request: {request_name}) -> Self::Future {{
+        let backend = self.backend.clone();
+        Box::pin(async move {{ {service_name}::new(backend).execute(request) }})
+    }}
+}}
+"#,
+        request_name = request_name,
+        response_name = response_name,
+        error_name = error_name,
+        service_name = service_name,
+        backend_bound = render_backend_bound(contract),
+    )
+}
+
+fn render_cargo_dependencies(contract: &MonsterRustPortAdapterContract) -> Vec<String> {
+    if contract.dependency_policy != "common_crates" {
+        return Vec::new();
+    }
+    let mut deps = Vec::new();
+    if contract.serde {
+        deps.push(r#"serde = { version = "1", features = ["derive"], optional = true }"#.to_string());
+    }
+    if contract.runtime == "async_tower" {
+        deps.push(r#"tower-service = { version = "0.3", optional = true }"#.to_string());
+    }
+    if contract.observability == "tracing_metadata" {
+        deps.push(r#"tracing = { version = "0.1", optional = true }"#.to_string());
+    }
+    if contract.observability == "metrics_metadata" {
+        deps.push(r#"metrics = { version = "0.24", optional = true }"#.to_string());
+    }
+    if contract.error_model == "thiserror_metadata" {
+        deps.push(r#"thiserror = { version = "2", optional = true }"#.to_string());
+    }
+    deps
+}
+
+fn render_cargo_features(contract: &MonsterRustPortAdapterContract) -> Vec<String> {
+    if contract.dependency_policy != "common_crates" {
+        return if contract.serde {
+            vec!["serde = []".to_string()]
+        } else {
+            Vec::new()
+        };
+    }
+    let mut features = Vec::new();
+    if contract.serde {
+        features.push(r#"serde = ["dep:serde"]"#.to_string());
+    }
+    if contract.runtime == "async_tower" {
+        features.push(r#"tower = ["dep:tower-service"]"#.to_string());
+    }
+    if contract.observability == "tracing_metadata" {
+        features.push(r#"tracing = ["dep:tracing"]"#.to_string());
+    }
+    if contract.observability == "metrics_metadata" {
+        features.push(r#"metrics = ["dep:metrics"]"#.to_string());
+    }
+    if contract.error_model == "thiserror_metadata" {
+        features.push(r#"thiserror = ["dep:thiserror"]"#.to_string());
+    }
+    features
+}
+
+fn render_metrics_code(contract: &MonsterRustPortAdapterContract, _service_name: &str) -> String {
+    if contract.metrics.is_empty() {
+        return String::new();
+    }
+    let snapshot_name = "MetricsSnapshot".to_string();
+    let snapshot_fields = contract
+        .metrics
+        .iter()
+        .map(|metric| format!("    pub {}: {},", metric.name, metric.ty))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let cell_fields = contract
+        .metrics
+        .iter()
+        .map(|metric| format!("    {}: std::cell::Cell<{}>,", metric.name, metric.ty))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let defaults = contract
+        .metrics
+        .iter()
+        .map(|metric| {
+            format!(
+                "            {}: std::cell::Cell::new({}),",
+                metric.name,
+                metric_zero_literal(&metric.ty)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let adders = contract
+        .metrics
+        .iter()
+        .map(|metric| {
+            format!(
+                "    fn add_{name}(&self, value: {ty}) {{\n        self.{name}.set(self.{name}.get() + value);\n    }}",
+                name = metric.name,
+                ty = metric.ty
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let snapshot_values = contract
+        .metrics
+        .iter()
+        .map(|metric| format!("            {}: self.{}.get(),", metric.name, metric.name))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"#[derive(Clone, Debug, PartialEq)]
+pub struct {snapshot_name} {{
+{snapshot_fields}
+}}
+
+#[derive(Debug)]
+pub struct Metrics {{
+{cell_fields}
+}}
+
+impl Default for Metrics {{
+    fn default() -> Self {{
+        Self {{
+{defaults}
+        }}
+    }}
+}}
+
+impl Metrics {{
+{adders}
+
+    pub fn snapshot(&self) -> {snapshot_name} {{
+        {snapshot_name} {{
+{snapshot_values}
+        }}
+    }}
+}}
+
+"#
+    )
+}
+
+fn render_connector_code(
+    contract: &MonsterRustPortAdapterContract,
+    request_name: &str,
+    response_name: &str,
+    service_name: &str,
+) -> String {
+    if !contract
+        .connectors
+        .iter()
+        .any(|connector| connector.kind == "state_store")
+    {
+        return String::new();
+    }
+    format!(
+        r#"pub mod connectors {{
+    pub const STATE_STORE_PORT: &str = "{service_name}StateStorePort";
+    pub const REQUEST_TYPE: &str = "{request_name}";
+    pub const RESPONSE_TYPE: &str = "{response_name}";
+    pub const NEXT_TEMPLATE: &str = "/rust_state_store_";
+}}
+
+"#
+    )
+}
+
+fn render_metric_increment(
+    contract: &MonsterRustPortAdapterContract,
+    metric_name: &str,
+    indent: usize,
+) -> String {
+    let Some(metric) = contract.metrics.iter().find(|metric| metric.name == metric_name) else {
+        return String::new();
+    };
+    let spaces = " ".repeat(indent);
+    format!(
+        "{spaces}self.metrics.add_{metric_name}({});",
+        metric_one_literal(&metric.ty)
+    )
+}
+
+fn render_service_metrics_methods(contract: &MonsterRustPortAdapterContract) -> String {
+    if contract.metrics.is_empty() {
+        return String::new();
+    }
+    "    pub fn metrics_snapshot(&self) -> MetricsSnapshot {\n        self.metrics.snapshot()\n    }\n".to_string()
+}
+
+fn render_metrics_tests(
+    contract: &MonsterRustPortAdapterContract,
+    error_name: &str,
+    service_name: &str,
+    request_test: &str,
+    bad_request_test: &str,
+) -> String {
+    if contract.metrics.is_empty() {
+        return String::new();
+    }
+    let request_count_check = render_metric_snapshot_assert(contract, "request_count", "2");
+    let validation_check =
+        render_metric_snapshot_assert(contract, "validation_error_count", "1");
+    let backend_check = render_metric_snapshot_assert(contract, "backend_error_count", "1");
+    format!(
+        r#"
+    #[test]
+    fn metrics_snapshot_counts_requests_validation_and_backend_errors() {{
+        let service = {service_name}::new(MockBackend {{ fail: false }});
+        let _ = service.execute({request_test}).unwrap();
+        let validation_error = service.execute({bad_request_test}).unwrap_err();
+        assert!(matches!(validation_error, {error_name}::Validation {{ .. }}));
+        let snapshot = service.metrics_snapshot();
+{request_count_check}
+{validation_check}
+
+        let failing_service = {service_name}::new(MockBackend {{ fail: true }});
+        let _ = failing_service.execute({request_test}).unwrap_err();
+        let failing_snapshot = failing_service.metrics_snapshot();
+{backend_check}
+    }}
+"#
+    )
+}
+
+fn render_connector_tests(contract: &MonsterRustPortAdapterContract, service_name: &str) -> String {
+    if !contract
+        .connectors
+        .iter()
+        .any(|connector| connector.kind == "state_store")
+    {
+        return String::new();
+    }
+    format!(
+        r#"
+    #[test]
+    fn state_store_connector_exposes_next_template_port() {{
+        assert_eq!(connectors::STATE_STORE_PORT, "{service_name}StateStorePort");
+        assert_eq!(connectors::NEXT_TEMPLATE, "/rust_state_store_");
+    }}
+"#
+    )
+}
+
+fn render_metric_snapshot_assert(
+    contract: &MonsterRustPortAdapterContract,
+    metric_name: &str,
+    expected: &str,
+) -> String {
+    let Some(metric) = contract.metrics.iter().find(|metric| metric.name == metric_name) else {
+        return String::new();
+    };
+    let literal = match metric.ty.as_str() {
+        "f64" => format!("{expected}.0"),
+        _ => expected.to_string(),
+    };
+    let snapshot = if metric_name == "backend_error_count" {
+        "failing_snapshot"
+    } else {
+        "snapshot"
+    };
+    format!("        assert_eq!({snapshot}.{metric_name}, {literal});")
+}
+
+fn metric_zero_literal(ty: &str) -> &'static str {
+    match ty {
+        "f64" => "0.0",
+        _ => "0",
+    }
+}
+
+fn metric_one_literal(ty: &str) -> &'static str {
+    match ty {
+        "f64" => "1.0",
+        _ => "1",
+    }
+}
+
+fn render_struct_fields(fields: &[MonsterRustField]) -> String {
+    fields
+        .iter()
+        .map(|field| format!("    pub {}: {},", field.name, field.ty))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_request_literal_from_pairs(
+    request_name: &str,
+    fields: &[MonsterRustField],
+    values: &[(String, String)],
+) -> String {
+    let fields = fields
+        .iter()
+        .map(|field| {
+            let value = values
+                .iter()
+                .find_map(|(name, value)| (name == &field.name).then_some(value.as_str()))
+                .map(|value| rust_literal_for_type(&field.ty, value))
+                .unwrap_or_else(|| test_value_for_type(&field.ty, true).to_string());
+            format!("    {}: {},", field.name, value)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{request_name} {{\n{fields}\n}}")
+}
+
+fn render_response_literal_from_pairs(
+    response_name: &str,
+    fields: &[MonsterRustField],
+    values: &[(String, String)],
+) -> String {
+    let fields = fields
+        .iter()
+        .map(|field| {
+            let value = values
+                .iter()
+                .find_map(|(name, value)| (name == &field.name).then_some(value.as_str()))
+                .map(|value| rust_literal_for_type(&field.ty, value))
+                .unwrap_or_else(|| test_value_for_type(&field.ty, true).to_string());
+            format!("    {}: {},", field.name, value)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{response_name} {{\n{fields}\n}}")
+}
+
+fn render_request_assertions(fields: &[MonsterRustField], values: &[(String, String)]) -> String {
+    values
+        .iter()
+        .filter_map(|(name, value)| {
+            fields
+                .iter()
+                .find(|field| field.name == *name)
+                .map(|field| {
+                    format!(
+                        "            assert_eq!(request.{}, {});",
+                        field.name,
+                        rust_literal_for_type(&field.ty, value)
+                    )
+                })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_response_assertions(fields: &[MonsterRustField], values: &[(String, String)]) -> String {
+    values
+        .iter()
+        .filter_map(|(name, value)| {
+            fields
+                .iter()
+                .find(|field| field.name == *name)
+                .map(|field| {
+                    format!(
+                        "        assert_eq!(response.{}, {});",
+                        field.name,
+                        rust_literal_for_type(&field.ty, value)
+                    )
+                })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_invalid_request_literal(
+    request_name: &str,
+    fields: &[MonsterRustField],
+    empty_field: &str,
+) -> String {
+    let fields = fields
+        .iter()
+        .map(|field| {
+            let value = if field.name == empty_field {
+                empty_value_for_type(&field.ty).to_string()
+            } else {
+                test_value_for_type(&field.ty, true).to_string()
+            };
+            format!("    {}: {},", field.name, value)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{request_name} {{\n{fields}\n}}")
+}
+
+fn render_validation_rules(contract: &MonsterRustPortAdapterContract, error_name: &str) -> String {
+    let mut lines = Vec::new();
+    for rule in &contract.validation_rules {
+        let parts = rule.split_whitespace().collect::<Vec<_>>();
+        match parts.as_slice() {
+            [field, "non_empty"] => {
+                lines.push(format!(
+                    "    if request.{field}.trim().is_empty() {{\n        return Err({error_name}::Validation {{ field: \"{field}\", reason: \"non_empty\" }});\n    }}"
+                ));
+            }
+            [field, "min", value] => {
+                lines.push(format!(
+                    "    if request.{field} < {value} {{\n        return Err({error_name}::Validation {{ field: \"{field}\", reason: \"min\" }});\n    }}"
+                ));
+            }
+            [field, "max", value] => {
+                lines.push(format!(
+                    "    if request.{field} > {value} {{\n        return Err({error_name}::Validation {{ field: \"{field}\", reason: \"max\" }});\n    }}"
+                ));
+            }
+            _ => {}
+        }
+    }
+    lines.join("\n")
+}
+
+fn rust_literal_for_type(ty: &str, value: &str) -> String {
+    match ty {
+        "String" => format!("\"{}\".to_string()", escape_rust_string(value)),
+        "bool" | "u64" | "usize" | "i64" | "f64" => value.to_string(),
+        _ => "Default::default()".to_string(),
+    }
+}
+
+fn escape_rust_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn test_value_for_type(ty: &str, valid: bool) -> &'static str {
+    match ty {
+        "String" if valid => r#""value".to_string()"#,
+        "String" => r#""".to_string()"#,
+        "bool" => "true",
+        "u64" | "usize" => "42",
+        "i64" => "-42",
+        "f64" => "42.0",
+        _ => "Default::default()",
+    }
+}
+
+fn empty_value_for_type(ty: &str) -> &'static str {
+    match ty {
+        "String" => r#""".to_string()"#,
+        "bool" => "false",
+        "u64" | "usize" => "0",
+        "i64" => "0",
+        "f64" => "0.0",
+        _ => "Default::default()",
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MonsterMathContractError {
     MissingSlots(Vec<&'static str>),
@@ -760,12 +3848,1018 @@ pub enum MonsterMathContractError {
         class: MonsterMathClass,
         operator: String,
     },
+    UnknownTemplateSlot {
+        class: MonsterMathClass,
+        slot: String,
+    },
     AmbiguousExpression(String),
     CapabilityMissing {
         class: MonsterMathClass,
         reason: &'static str,
     },
+    WorkloadTooSmall {
+        class: MonsterMathClass,
+        reasons: Vec<String>,
+    },
+    SampleOracleMismatch {
+        sample_name: String,
+        output_name: String,
+        expected_bits: u64,
+        value_bits: u64,
+        tolerance_bits: u64,
+        abs_error_bits: u64,
+    },
+    CertificationFailed {
+        output_name: String,
+        reason: String,
+    },
+    CodegenDifferentialMismatch {
+        sample_name: String,
+        output_name: String,
+        direct_bits: u64,
+        generated_bits: u64,
+        tolerance_bits: u64,
+    },
     InvalidGeneratedForge,
+}
+
+pub(super) fn reject_math_contract_oracle_mismatches(
+    prepared: &MonsterPreparedCompute,
+) -> Result<(), MonsterMathContractError> {
+    for oracle in &prepared.route.plan.scalar_oracle_outputs {
+        if oracle.status != "sample_value_matched" {
+            return Err(MonsterMathContractError::SampleOracleMismatch {
+                sample_name: oracle.sample_name.clone(),
+                output_name: oracle.output_name.clone(),
+                expected_bits: oracle.expected_bits,
+                value_bits: oracle.value_bits,
+                tolerance_bits: oracle.tolerance_bits,
+                abs_error_bits: oracle.abs_error_bits,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub fn project_newcompute_llm_result(
+    compiled: &MonsterCompiledMathContract,
+    prepared: &MonsterPreparedCompute,
+    execution: &MonsterMassComputeExecution,
+) -> MonsterNewComputeLlmResult {
+    let scalar_outputs = prepared
+        .route
+        .plan
+        .scalar_oracle_outputs
+        .iter()
+        .map(|oracle| MonsterNewComputeLlmScalarOutput {
+            sample_name: oracle.sample_name.clone(),
+            output_name: oracle.output_name.clone(),
+            status: oracle.status.to_string(),
+            value_bits: oracle.value_bits,
+            value_text: format!("{:.12}", f64::from_bits(oracle.value_bits)),
+            expected_bits: oracle.expected_bits,
+            tolerance_bits: oracle.tolerance_bits,
+            abs_error_bits: oracle.abs_error_bits,
+        })
+        .collect::<Vec<_>>();
+    let typed_buffers = execution
+        .typed_result_buffers
+        .iter()
+        .map(|buffer| MonsterNewComputeLlmTypedBuffer {
+            name: buffer.name.clone(),
+            forge_type: buffer.forge_type.clone(),
+            layout: buffer.layout.to_string(),
+            element_type: buffer.element_type.clone(),
+            shape: buffer.shape.clone(),
+            byte_len: buffer.byte_len,
+            page_count: buffer.pages.len() as u64,
+            buffer_hash: buffer.buffer_hash.clone(),
+        })
+        .collect::<Vec<_>>();
+    let scientific_metrics = heat_pde_scientific_metrics(compiled, execution);
+    let mut limitations = Vec::new();
+    if !typed_buffers.is_empty() {
+        limitations.push("raw_typed_buffers_not_inlined; use buffer_hash/pages for retrieval".to_string());
+    }
+    if scalar_outputs.is_empty() {
+        limitations.push("no_scalar_oracle_output; inspect typed buffers or domain artifact".to_string());
+    }
+    if matches!(compiled.class, MonsterMathClass::SimulationDynamics) {
+        limitations.push("simulation_slice_is_promoted_stencil_not_general_multiphysics_solver".to_string());
+        if scientific_metrics.is_empty() {
+            limitations.push("heat_pde_scientific_projection_unavailable; missing declared thermal parameters".to_string());
+        }
+    }
+    let scalar_text = if scalar_outputs.is_empty() {
+        "none".to_string()
+    } else {
+        scalar_outputs
+            .iter()
+            .map(|output| {
+                format!(
+                    "{}:{}:{}",
+                    output.output_name, output.value_text, output.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let buffer_text = if typed_buffers.is_empty() {
+        "none".to_string()
+    } else {
+        typed_buffers
+            .iter()
+            .map(|buffer| {
+                format!(
+                    "{}:{}:{:?}:{}:{}",
+                    buffer.name, buffer.forge_type, buffer.shape, buffer.byte_len, buffer.buffer_hash
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let scientific_text = if scientific_metrics.is_empty() {
+        "none".to_string()
+    } else {
+        scientific_metrics
+            .iter()
+            .map(|metric| {
+                format!(
+                    "{}:{}:{}:{}",
+                    metric.name, metric.value_text, metric.unit, metric.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let compact_text = format!(
+        "NEWCOMPUTE_RESULT schema=forge.monster.newcompute_llm_result.v1\nclass={}\nmodule={}\nstatus={}\nroute_lane={}\nbackend={}\nkernel_family={}\ngpu={}/{} required={}\nlanes_executed={}\ndispatch_shape={:?}\nworkgroup_size={}\ninput_buffer_bytes={}\noutput_buffer_bytes={}\nreadback_bytes={}\nscalar_outputs={}\ntyped_buffers={}\nscientific_metrics={}\noutput_hash={}\nproof_hash={}\nlimitations={}",
+        compiled.class.label(),
+        compiled.module_name,
+        execution.status,
+        prepared.route.lane,
+        execution.backend,
+        execution.kernel_family,
+        execution.used_gpu_count,
+        execution.detected_gpu_count,
+        execution.gpu_required,
+        execution.lanes_executed,
+        execution.dispatch_shape,
+        execution.workgroup_size,
+        prepared.route.plan.input_buffer_bytes,
+        prepared.route.plan.output_buffer_bytes,
+        execution.readback_bytes,
+        scalar_text,
+        buffer_text,
+        scientific_text,
+        execution.output_hash,
+        execution.proof_hash,
+        if limitations.is_empty() { "none".to_string() } else { limitations.join(";") },
+    );
+    let projection_hash = sha256_hex(compact_text.as_bytes());
+    MonsterNewComputeLlmResult {
+        schema: "forge.monster.newcompute_llm_result.v1",
+        class: compiled.class.label().to_string(),
+        module_name: compiled.module_name.clone(),
+        contract_hash: compiled.contract_hash.clone(),
+        manifest_hash: prepared.manifest_hash.clone(),
+        projection_hash,
+        route_lane: prepared.route.lane.to_string(),
+        execution_status: execution.status.to_string(),
+        backend: execution.backend.to_string(),
+        kernel_family: execution.kernel_family.to_string(),
+        detected_gpu_count: execution.detected_gpu_count,
+        used_gpu_count: execution.used_gpu_count,
+        gpu_required: execution.gpu_required,
+        lanes_executed: execution.lanes_executed,
+        dispatch_shape: execution.dispatch_shape,
+        workgroup_size: execution.workgroup_size,
+        input_buffer_bytes: prepared.route.plan.input_buffer_bytes,
+        output_buffer_bytes: prepared.route.plan.output_buffer_bytes,
+        readback_bytes: execution.readback_bytes,
+        output_hash: execution.output_hash.clone(),
+        proof_hash: execution.proof_hash.clone(),
+        scalar_outputs,
+        typed_buffers,
+        scientific_metrics,
+        limitations,
+        compact_text,
+    }
+}
+
+fn heat_pde_scientific_metrics(
+    compiled: &MonsterCompiledMathContract,
+    execution: &MonsterMassComputeExecution,
+) -> Vec<MonsterNewComputeLlmScientificMetric> {
+    if !matches!(compiled.class, MonsterMathClass::SimulationDynamics) {
+        return Vec::new();
+    }
+    let Some(module) = ForgeModuleSpec::parse(&compiled.forge_source) else {
+        return Vec::new();
+    };
+    let has_heat_step = module
+        .program
+        .emits
+        .iter()
+        .any(|emit| emit.expr.contains("pde_stencil_step"))
+        || module
+            .functions
+            .iter()
+            .any(|function| function.body.contains("pde_stencil_step"));
+    if !has_heat_step {
+        return Vec::new();
+    }
+    let Some((width, height)) = heat_tensor_shape(&module) else {
+        return Vec::new();
+    };
+    let n = width.saturating_mul(height);
+    if n == 0 || n > 1_048_576 {
+        return Vec::new();
+    }
+
+    let baseline = module_param(&module, "temperature_field").unwrap_or(313.15);
+    let source_base = module_param(&module, "source_field").unwrap_or(0.05);
+    let dt = module_param(&module, "dt").unwrap_or(0.01).max(1.0e-12);
+    let alpha = module_param(&module, "thermal_diffusivity")
+        .or_else(|| module_const(&module, "thermal_diffusivity"))
+        .unwrap_or(1.2e-5)
+        .max(0.0);
+    let dx = module_param(&module, "dx").unwrap_or(0.004).max(1.0e-12);
+    let dy = module_param(&module, "dy").unwrap_or(0.004).max(1.0e-12);
+    let threshold = module_param(&module, "separator_critical_temperature")
+        .or_else(|| module_const(&module, "separator_critical_temperature"))
+        .unwrap_or(408.0);
+    let ambient = module_param(&module, "ambient_temperature").unwrap_or(300.0);
+    let convection = module_param(&module, "convection_rate").unwrap_or(0.015).max(0.0);
+    let hotspot_x = module_param(&module, "hotspot_center_x")
+        .unwrap_or((width as f64 - 1.0) * 0.58)
+        .clamp(0.0, width.saturating_sub(1) as f64);
+    let hotspot_y = module_param(&module, "hotspot_center_y")
+        .unwrap_or((height as f64 - 1.0) * 0.49)
+        .clamp(0.0, height.saturating_sub(1) as f64);
+    let hotspot_sigma = module_param(&module, "hotspot_sigma_cells").unwrap_or(5.0).max(1.0e-9);
+    let hotspot_amplitude = module_param(&module, "hotspot_amplitude").unwrap_or(62.0);
+    let source_peak = module_param(&module, "source_peak").unwrap_or(0.85);
+    let simulation_steps = module_param(&module, "simulation_steps")
+        .unwrap_or(1.0)
+        .round()
+        .clamp(1.0, 200_000.0) as u64;
+    let current_a = module_param(&module, "current_a").unwrap_or(0.0);
+    let internal_resistance_ohm = module_param(&module, "internal_resistance_ohm").unwrap_or(0.0).max(0.0);
+    let cell_mass_kg = module_param(&module, "cell_mass_kg").unwrap_or(1.0).max(1.0e-12);
+    let heat_capacity_j_kg_k = module_param(&module, "heat_capacity_j_kg_k").unwrap_or(1000.0).max(1.0e-12);
+    let entropic_coeff_v_k = module_param(&module, "entropic_coeff_v_k").unwrap_or(0.0);
+    let activation_energy_j_mol = module_param(&module, "activation_energy_j_mol").unwrap_or(82_000.0).max(0.0);
+    let gas_constant_j_mol_k = module_param(&module, "gas_constant_j_mol_k").unwrap_or(8.314_462_618).max(1.0e-12);
+    let side_reaction_prefactor_w_kg = module_param(&module, "side_reaction_prefactor_w_kg").unwrap_or(0.0).max(0.0);
+    let state_of_charge = module_param(&module, "state_of_charge").unwrap_or(0.5).clamp(0.0, 1.0);
+    let boundary_condition = HeatBoundaryCondition::from_code(
+        module_param(&module, "boundary_condition_code").unwrap_or(0.0),
+    );
+    let cooling_plate_temperature = module_param(&module, "cooling_plate_temperature")
+        .unwrap_or(ambient)
+        .max(1.0);
+
+    let model = HeatPdeModel {
+        width,
+        height,
+        baseline,
+        source_base,
+        dt,
+        alpha,
+        dx,
+        dy,
+        threshold,
+        ambient,
+        convection,
+        hotspot_x,
+        hotspot_y,
+        hotspot_sigma,
+        hotspot_amplitude,
+        source_peak,
+        simulation_steps,
+        current_a,
+        internal_resistance_ohm,
+        cell_mass_kg,
+        heat_capacity_j_kg_k,
+        entropic_coeff_v_k,
+        activation_energy_j_mol,
+        gas_constant_j_mol_k,
+        side_reaction_prefactor_w_kg,
+        state_of_charge,
+        boundary_condition,
+        cooling_plate_temperature,
+    };
+    let snapshot = compute_heat_pde_snapshot(&model);
+    let candidate = compute_heat_pde_snapshot_quantized_f32(&model);
+    let reference_error = heat_reference_error(&snapshot.next_field, &candidate.next_field);
+    let mut bytes = Vec::with_capacity(snapshot.next_field.len().saturating_mul(4));
+    for value in &snapshot.next_field {
+        bytes.extend_from_slice(&(*value as f32).to_le_bytes());
+    }
+    let field_hash = sha256_hex(&bytes);
+    let field_metric = format!(
+        "shape={}x{};byte_len={};buffer_hash={};first16={}",
+        width,
+        height,
+        bytes.len(),
+        field_hash,
+        snapshot
+            .next_field
+            .iter()
+            .take(16)
+            .map(|value| format!("{value:.6}"))
+            .collect::<Vec<_>>()
+            .join("|")
+    );
+    let sensitivity = heat_pde_sensitivity(&model, snapshot.thermal_runaway_margin);
+    vec![
+        sci_metric("temperature_field_next", field_metric, "K", "field_hash_pages_ready"),
+        sci_metric("boundary_condition", snapshot.boundary_condition.to_string(), "mode", "computed"),
+        sci_metric("simulated_steps", snapshot.steps_executed.to_string(), "steps", "computed"),
+        sci_metric("simulation_final_time", format!("{:.9}", snapshot.final_time), "s", "computed"),
+        sci_metric("mean_temperature", format!("{:.9}", snapshot.mean), "K", "computed"),
+        sci_metric("max_temperature", format!("{:.9}", snapshot.max), "K", "computed"),
+        sci_metric(
+            "hotspot_location",
+            format!("x={},y={}", snapshot.hotspot_x, snapshot.hotspot_y),
+            "cell",
+            "computed",
+        ),
+        sci_metric(
+            "temperature_gradient_max",
+            format!("{:.9}", snapshot.gradient_max),
+            "K/m",
+            "computed",
+        ),
+        sci_metric(
+            "thermal_runaway_margin",
+            format!("{:.9}", snapshot.thermal_runaway_margin),
+            "K",
+            "computed",
+        ),
+        sci_metric(
+            "time_to_threshold_estimate",
+            format!("{:.9}", snapshot.time_to_threshold),
+            "s",
+            "computed",
+        ),
+        sci_metric(
+            "cfl_stability_ratio",
+            format!("{:.12}", snapshot.cfl_ratio),
+            "none",
+            if snapshot.cfl_ratio <= 1.0 { "stable" } else { "unstable" },
+        ),
+        sci_metric(
+            "energy_balance_error",
+            format!("{:.12e}", snapshot.energy_balance_error),
+            "none",
+            "computed",
+        ),
+        sci_metric(
+            "residual_norm",
+            format!("{:.12e}", snapshot.residual_norm),
+            "K",
+            "computed",
+        ),
+        sci_metric(
+            "joule_heat_rate",
+            format!("{:.12}", snapshot.joule_heat_rate),
+            "K/s",
+            "computed",
+        ),
+        sci_metric(
+            "entropic_heat_rate",
+            format!("{:.12}", snapshot.entropic_heat_rate),
+            "K/s",
+            "computed",
+        ),
+        sci_metric(
+            "arrhenius_heat_rate",
+            format!("{:.12}", snapshot.arrhenius_heat_rate),
+            "K/s",
+            "computed",
+        ),
+        sci_metric(
+            "threshold_crossing_time",
+            match snapshot.threshold_crossing_time {
+                Some(value) => format!("{value:.9}"),
+                None => "none".to_string(),
+            },
+            "s",
+            if snapshot.threshold_crossing_time.is_some() { "crossed" } else { "not_crossed" },
+        ),
+        sci_metric(
+            "max_temperature_series",
+            compact_heat_series(&snapshot.series, HeatSeriesKind::MaxTemperature),
+            "K",
+            "sampled",
+        ),
+        sci_metric(
+            "mean_temperature_series",
+            compact_heat_series(&snapshot.series, HeatSeriesKind::MeanTemperature),
+            "K",
+            "sampled",
+        ),
+        sci_metric(
+            "runaway_margin_series",
+            compact_heat_series(&snapshot.series, HeatSeriesKind::RunawayMargin),
+            "K",
+            "sampled",
+        ),
+        sci_metric(
+            "cpu_reference_backend",
+            "cpu_f64_reference_vs_f32_quantized_candidate".to_string(),
+            "backend",
+            "computed",
+        ),
+        sci_metric(
+            "reference_field_l2_error",
+            format!("{:.12e}", reference_error.l2),
+            "K",
+            "computed",
+        ),
+        sci_metric(
+            "reference_field_linf_error",
+            format!("{:.12e}", reference_error.linf),
+            "K",
+            "computed",
+        ),
+        sci_metric(
+            "reference_field_max_rel_error",
+            format!("{:.12e}", reference_error.max_rel),
+            "none",
+            "computed",
+        ),
+        sci_metric("sensitivity", sensitivity, "ranked", "computed"),
+        sci_metric(
+            "execution_proof_link",
+            format!("output_hash={};proof_hash={}", execution.output_hash, execution.proof_hash),
+            "hash",
+            "sealed",
+        ),
+    ]
+}
+
+fn sci_metric(
+    name: &str,
+    value_text: String,
+    unit: &str,
+    status: &str,
+) -> MonsterNewComputeLlmScientificMetric {
+    MonsterNewComputeLlmScientificMetric {
+        name: name.to_string(),
+        value_text,
+        unit: unit.to_string(),
+        status: status.to_string(),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct HeatPdeModel {
+    width: usize,
+    height: usize,
+    baseline: f64,
+    source_base: f64,
+    dt: f64,
+    alpha: f64,
+    dx: f64,
+    dy: f64,
+    threshold: f64,
+    ambient: f64,
+    convection: f64,
+    hotspot_x: f64,
+    hotspot_y: f64,
+    hotspot_sigma: f64,
+    hotspot_amplitude: f64,
+    source_peak: f64,
+    simulation_steps: u64,
+    current_a: f64,
+    internal_resistance_ohm: f64,
+    cell_mass_kg: f64,
+    heat_capacity_j_kg_k: f64,
+    entropic_coeff_v_k: f64,
+    activation_energy_j_mol: f64,
+    gas_constant_j_mol_k: f64,
+    side_reaction_prefactor_w_kg: f64,
+    state_of_charge: f64,
+    boundary_condition: HeatBoundaryCondition,
+    cooling_plate_temperature: f64,
+}
+
+struct HeatPdeSnapshot {
+    next_field: Vec<f64>,
+    boundary_condition: HeatBoundaryCondition,
+    steps_executed: u64,
+    final_time: f64,
+    mean: f64,
+    max: f64,
+    hotspot_x: usize,
+    hotspot_y: usize,
+    gradient_max: f64,
+    thermal_runaway_margin: f64,
+    time_to_threshold: f64,
+    cfl_ratio: f64,
+    energy_balance_error: f64,
+    residual_norm: f64,
+    joule_heat_rate: f64,
+    entropic_heat_rate: f64,
+    arrhenius_heat_rate: f64,
+    threshold_crossing_time: Option<f64>,
+    series: Vec<HeatSeriesPoint>,
+}
+
+fn compute_heat_pde_snapshot(model: &HeatPdeModel) -> HeatPdeSnapshot {
+    compute_heat_pde_snapshot_inner(model, false)
+}
+
+fn compute_heat_pde_snapshot_quantized_f32(model: &HeatPdeModel) -> HeatPdeSnapshot {
+    compute_heat_pde_snapshot_inner(model, true)
+}
+
+fn compute_heat_pde_snapshot_inner(model: &HeatPdeModel, quantize_f32: bool) -> HeatPdeSnapshot {
+    let n = model.width * model.height;
+    let mut prev = vec![0.0; n];
+    let mut spatial_source = vec![0.0; n];
+    let sigma2 = model.hotspot_sigma * model.hotspot_sigma;
+    for y in 0..model.height {
+        for x in 0..model.width {
+            let idx = y * model.width + x;
+            let rx = x as f64 - model.hotspot_x;
+            let ry = y as f64 - model.hotspot_y;
+            let profile = (-(rx * rx + ry * ry) / (2.0 * sigma2)).exp();
+            prev[idx] = heat_quantize(model.baseline + model.hotspot_amplitude * profile, quantize_f32);
+            spatial_source[idx] = heat_quantize(model.source_base + model.source_peak * profile, quantize_f32);
+        }
+    }
+    let mut next = vec![0.0; n];
+    let mut rhs_values = vec![0.0; n];
+    let inv_dx2 = 1.0 / (model.dx * model.dx);
+    let inv_dy2 = 1.0 / (model.dy * model.dy);
+    let mut threshold_crossing_time = None;
+    let mut cumulative_expected_delta = 0.0f64;
+    let initial_sum = prev.iter().sum::<f64>();
+    let mut steps_executed = 0u64;
+    let series_stride = (model.simulation_steps / 16).max(1);
+    let mut series = Vec::new();
+    for step in 0..model.simulation_steps {
+        let mut step_max = f64::NEG_INFINITY;
+        let mut step_rhs_sum = 0.0f64;
+        let mut step_sum = 0.0f64;
+        for y in 0..model.height {
+            for x in 0..model.width {
+                let idx = y * model.width + x;
+                let center = prev[idx];
+                let left = heat_neighbor_value(model, &prev, x as isize - 1, y as isize, center);
+                let right = heat_neighbor_value(model, &prev, x as isize + 1, y as isize, center);
+                let down = heat_neighbor_value(model, &prev, x as isize, y as isize - 1, center);
+                let up = heat_neighbor_value(model, &prev, x as isize, y as isize + 1, center);
+                let laplacian = (right - 2.0 * center + left) * inv_dx2
+                    + (up - 2.0 * center + down) * inv_dy2;
+                let heat = electrothermal_heat_rate_k_per_s(model, center);
+                let rhs = model.alpha * laplacian
+                    + spatial_source[idx]
+                    + heat.total
+                    - model.convection * (center - model.ambient);
+                rhs_values[idx] = rhs;
+                step_rhs_sum += rhs;
+                next[idx] = heat_quantize(center + model.dt * rhs, quantize_f32);
+                step_sum += next[idx];
+                step_max = step_max.max(next[idx]);
+            }
+        }
+        steps_executed = step + 1;
+        cumulative_expected_delta += model.dt * step_rhs_sum;
+        if step == 0 || (step + 1) % series_stride == 0 || step + 1 == model.simulation_steps {
+            series.push(HeatSeriesPoint {
+                step: step + 1,
+                time_s: (step + 1) as f64 * model.dt,
+                max_temperature: step_max,
+                mean_temperature: step_sum / n as f64,
+                runaway_margin: model.threshold - step_max,
+            });
+        }
+        if threshold_crossing_time.is_none() && step_max >= model.threshold {
+            threshold_crossing_time = Some((step + 1) as f64 * model.dt);
+        }
+        std::mem::swap(&mut prev, &mut next);
+        if !prev.iter().all(|value| value.is_finite()) {
+            break;
+        }
+    }
+    let mut sum = 0.0;
+    let mut max = f64::NEG_INFINITY;
+    let mut max_idx = 0usize;
+    let mut max_rate = f64::NEG_INFINITY;
+    let mut residual_sum = 0.0;
+    for idx in 0..n {
+        sum += prev[idx];
+        if prev[idx] > max {
+            max = prev[idx];
+            max_idx = idx;
+        }
+        max_rate = max_rate.max(rhs_values[idx]);
+        let residual = prev[idx] - (prev[idx] + model.dt * rhs_values[idx] - model.dt * rhs_values[idx]);
+        residual_sum += residual * residual;
+    }
+    let final_heat = electrothermal_heat_rate_k_per_s(model, max);
+    let gradient_max = heat_gradient_max(&prev, model.width, model.height, model.dx, model.dy);
+    let actual_delta = sum - initial_sum;
+    let energy_balance_error = (actual_delta - cumulative_expected_delta).abs()
+        / actual_delta.abs().max(1.0e-12);
+    let margin = model.threshold - max;
+    let heating_rate = max_rate.max(0.0);
+    let time_to_threshold = if margin <= 0.0 {
+        0.0
+    } else if heating_rate > 0.0 {
+        margin / heating_rate
+    } else {
+        f64::INFINITY
+    };
+    let cfl_raw = model.alpha * model.dt * (inv_dx2 + inv_dy2);
+    HeatPdeSnapshot {
+        next_field: prev,
+        boundary_condition: model.boundary_condition,
+        steps_executed,
+        final_time: steps_executed as f64 * model.dt,
+        mean: sum / n as f64,
+        max,
+        hotspot_x: max_idx % model.width,
+        hotspot_y: max_idx / model.width,
+        gradient_max,
+        thermal_runaway_margin: margin,
+        time_to_threshold,
+        cfl_ratio: cfl_raw / 0.5,
+        energy_balance_error,
+        residual_norm: (residual_sum / n as f64).sqrt(),
+        joule_heat_rate: final_heat.joule,
+        entropic_heat_rate: final_heat.entropic,
+        arrhenius_heat_rate: final_heat.arrhenius,
+        threshold_crossing_time,
+        series,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ElectrothermalHeatRate {
+    joule: f64,
+    entropic: f64,
+    arrhenius: f64,
+    total: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeatBoundaryCondition {
+    Periodic,
+    Adiabatic,
+    DirichletAmbient,
+    CoolingPlateEdge,
+}
+
+impl HeatBoundaryCondition {
+    fn from_code(value: f64) -> Self {
+        match value.round() as i64 {
+            1 => Self::Adiabatic,
+            2 => Self::DirichletAmbient,
+            3 => Self::CoolingPlateEdge,
+            _ => Self::Periodic,
+        }
+    }
+}
+
+impl fmt::Display for HeatBoundaryCondition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            Self::Periodic => "periodic",
+            Self::Adiabatic => "adiabatic_neumann",
+            Self::DirichletAmbient => "dirichlet_ambient",
+            Self::CoolingPlateEdge => "cooling_plate_edge",
+        };
+        f.write_str(text)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct HeatSeriesPoint {
+    step: u64,
+    time_s: f64,
+    max_temperature: f64,
+    mean_temperature: f64,
+    runaway_margin: f64,
+}
+
+#[derive(Clone, Copy)]
+enum HeatSeriesKind {
+    MaxTemperature,
+    MeanTemperature,
+    RunawayMargin,
+}
+
+#[derive(Clone, Copy)]
+struct HeatReferenceError {
+    l2: f64,
+    linf: f64,
+    max_rel: f64,
+}
+
+fn electrothermal_heat_rate_k_per_s(model: &HeatPdeModel, temperature_k: f64) -> ElectrothermalHeatRate {
+    let denom = model.cell_mass_kg * model.heat_capacity_j_kg_k;
+    let joule_w = model.current_a * model.current_a * model.internal_resistance_ohm;
+    let entropic_w = model.current_a.abs() * temperature_k * model.entropic_coeff_v_k;
+    let arrhenius_w = model.side_reaction_prefactor_w_kg
+        * model.cell_mass_kg
+        * (-(model.activation_energy_j_mol / (model.gas_constant_j_mol_k * temperature_k.max(1.0)))).exp()
+        * model.state_of_charge
+        * model.state_of_charge;
+    ElectrothermalHeatRate {
+        joule: joule_w / denom,
+        entropic: entropic_w / denom,
+        arrhenius: arrhenius_w / denom,
+        total: (joule_w + entropic_w + arrhenius_w) / denom,
+    }
+}
+
+fn heat_neighbor_value(
+    model: &HeatPdeModel,
+    field: &[f64],
+    x: isize,
+    y: isize,
+    center: f64,
+) -> f64 {
+    if x >= 0 && y >= 0 && (x as usize) < model.width && (y as usize) < model.height {
+        return field[y as usize * model.width + x as usize];
+    }
+    match model.boundary_condition {
+        HeatBoundaryCondition::Periodic => {
+            let xx = x.rem_euclid(model.width as isize) as usize;
+            let yy = y.rem_euclid(model.height as isize) as usize;
+            field[yy * model.width + xx]
+        }
+        HeatBoundaryCondition::Adiabatic => center,
+        HeatBoundaryCondition::DirichletAmbient => model.ambient,
+        HeatBoundaryCondition::CoolingPlateEdge => model.cooling_plate_temperature,
+    }
+}
+
+fn heat_quantize(value: f64, quantize_f32: bool) -> f64 {
+    if quantize_f32 {
+        (value as f32) as f64
+    } else {
+        value
+    }
+}
+
+fn heat_reference_error(reference: &[f64], candidate: &[f64]) -> HeatReferenceError {
+    let len = reference.len().min(candidate.len()).max(1);
+    let mut sum_sq = 0.0f64;
+    let mut linf = 0.0f64;
+    let mut max_rel = 0.0f64;
+    for (a, b) in reference.iter().zip(candidate.iter()).take(len) {
+        let err = (a - b).abs();
+        sum_sq += err * err;
+        linf = linf.max(err);
+        max_rel = max_rel.max(err / a.abs().max(1.0e-12));
+    }
+    HeatReferenceError {
+        l2: (sum_sq / len as f64).sqrt(),
+        linf,
+        max_rel,
+    }
+}
+
+fn compact_heat_series(series: &[HeatSeriesPoint], kind: HeatSeriesKind) -> String {
+    series
+        .iter()
+        .map(|point| {
+            let value = match kind {
+                HeatSeriesKind::MaxTemperature => point.max_temperature,
+                HeatSeriesKind::MeanTemperature => point.mean_temperature,
+                HeatSeriesKind::RunawayMargin => point.runaway_margin,
+            };
+            format!("{}:{:.3}:{:.6}", point.step, point.time_s, value)
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn heat_gradient_max(field: &[f64], width: usize, height: usize, dx: f64, dy: f64) -> f64 {
+    let mut max_grad = 0.0f64;
+    for y in 0..height {
+        let ym = if y == 0 { height - 1 } else { y - 1 };
+        let yp = if y + 1 == height { 0 } else { y + 1 };
+        for x in 0..width {
+            let xm = if x == 0 { width - 1 } else { x - 1 };
+            let xp = if x + 1 == width { 0 } else { x + 1 };
+            let gx = (field[y * width + xp] - field[y * width + xm]) / (2.0 * dx);
+            let gy = (field[yp * width + x] - field[ym * width + x]) / (2.0 * dy);
+            max_grad = max_grad.max((gx * gx + gy * gy).sqrt());
+        }
+    }
+    max_grad
+}
+
+fn heat_pde_sensitivity(model: &HeatPdeModel, base_margin: f64) -> String {
+    let mut ranked = [
+        ("diffusivity", sensitivity_score(model, base_margin, |m, factor| m.alpha *= factor)),
+        ("source", sensitivity_score(model, base_margin, |m, factor| m.source_peak *= factor)),
+        ("convection", sensitivity_score(model, base_margin, |m, factor| m.convection *= factor)),
+        ("thickness_dxdy", sensitivity_score(model, base_margin, |m, factor| {
+            m.dx *= factor;
+            m.dy *= factor;
+        })),
+        ("hotspot_amplitude", sensitivity_score(model, base_margin, |m, factor| {
+            m.hotspot_amplitude *= factor;
+        })),
+        ("current", sensitivity_score(model, base_margin, |m, factor| {
+            m.current_a *= factor;
+        })),
+        ("internal_resistance", sensitivity_score(model, base_margin, |m, factor| {
+            m.internal_resistance_ohm *= factor;
+        })),
+        ("arrhenius_prefactor", sensitivity_score(model, base_margin, |m, factor| {
+            m.side_reaction_prefactor_w_kg *= factor;
+        })),
+    ];
+    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    ranked
+        .iter()
+        .map(|(name, score)| format!("{name}:{score:.6}"))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn sensitivity_score(
+    model: &HeatPdeModel,
+    base_margin: f64,
+    mutate: impl FnOnce(&mut HeatPdeModel, f64),
+) -> f64 {
+    let mut perturbed = *model;
+    mutate(&mut perturbed, 1.01);
+    let next_margin = compute_heat_pde_snapshot(&perturbed).thermal_runaway_margin;
+    ((next_margin - base_margin) / base_margin.abs().max(1.0e-12)).abs() / 0.01
+}
+
+fn heat_tensor_shape(module: &ForgeModuleSpec) -> Option<(usize, usize)> {
+    for output in &module.outputs {
+        if let ForgeType::Tensor { elem: ForgeScalarTy::F32 | ForgeScalarTy::F64, shape } = &output.ty {
+            if shape.len() == 2 {
+                return Some((shape[0] as usize, shape[1] as usize));
+            }
+        }
+    }
+    for input in &module.inputs {
+        match &input.ty {
+            ForgeType::Tensor { elem: ForgeScalarTy::F32, shape } if shape.len() == 2 => {
+                return Some((shape[0] as usize, shape[1] as usize));
+            }
+            ForgeType::Tensor { elem: ForgeScalarTy::F64, shape } if shape.len() == 2 => {
+                return Some((shape[0] as usize, shape[1] as usize));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn module_param(module: &ForgeModuleSpec, name: &str) -> Option<f64> {
+    module
+        .inputs
+        .iter()
+        .find(|input| input.name == name)
+        .map(|input| input.nominal)
+}
+
+fn module_const(module: &ForgeModuleSpec, name: &str) -> Option<f64> {
+    module
+        .constants
+        .iter()
+        .find(|constant| constant.name == name)
+        .and_then(|constant| forge_scalar_value_as_f64(constant.value))
+}
+
+fn monster_math_slot_specs(class: MonsterMathClass) -> Vec<MonsterMathSlotSpec> {
+    class
+        .required_slots()
+        .iter()
+        .map(|slot| monster_math_slot_spec(slot, true))
+        .chain(
+            class
+                .optional_slots()
+                .iter()
+                .map(|slot| monster_math_slot_spec(slot, false)),
+        )
+        .collect()
+}
+
+fn monster_math_slot_spec(name: &'static str, required: bool) -> MonsterMathSlotSpec {
+    MonsterMathSlotSpec {
+        name,
+        required,
+        value_kind: monster_math_slot_value_kind(name),
+        accepted_content: monster_math_slot_accepted_content(name),
+        forge_binding: monster_math_slot_forge_binding(name),
+        validation_rule: monster_math_slot_validation_rule(name),
+    }
+}
+
+fn monster_math_slot_value_kind(name: &str) -> &'static str {
+    match name {
+        "goal" => "natural_language_goal",
+        "workload_scale" => "mechanical_workload_scale",
+        "variables" | "states" | "symbols" | "design_variables" | "channels" | "nodes" => {
+            "typed_declaration_list"
+        }
+        "constants" | "distributions" | "edges" | "sparse_matrices" => "typed_data_list",
+        "units" => "unit_declaration_list",
+        "bounds" | "time_domain" | "tolerances" | "stopping_criteria" => "bounded_domain",
+        "equations" | "expressions" | "objective" | "matrix_ops" | "graph_ops" | "transforms"
+        | "filters" | "estimators" => "classical_math_expression_list",
+        "constraints" | "assumptions" | "domains" | "initial_conditions"
+        | "boundary_conditions" | "events" | "correlation_assumptions"
+        | "stationarity_assumptions" | "topology_checks" | "residual_checks" => {
+            "assumption_or_constraint_list"
+        }
+        "samples" => "sample_oracle_list",
+        "validation" | "proof_checks" | "solver_requests" | "ad_requests" => "validation_request_list",
+        "outputs" => "output_contract_list",
+        "precision_policy" | "layout_policy" | "algorithm_family" | "integrator_request"
+        | "storage_format" | "memory_layout" | "schedule_hint" | "backend_hint"
+        | "sampling_policy" | "resampling" | "missing_data_policy" | "detrending"
+        | "leakage_policy" | "frontier_policy" | "component_policy" | "hash_policy"
+        | "proof_system" | "integer_domain" => "enum_policy",
+        "parameter_sweeps" | "sensitivity_requests" | "diagnostics" | "batch_axes"
+        | "shape_inference" | "feature_extractors" | "spectral_resolution"
+        | "forecast_horizon" | "weights" | "directed" | "artifact_handoff" => {
+            "structured_option"
+        }
+        _ => "structured_text",
+    }
+}
+
+fn monster_math_slot_accepted_content(name: &str) -> &'static str {
+    match monster_math_slot_value_kind(name) {
+        "natural_language_goal" => "one precise professional objective and success criterion",
+        "mechanical_workload_scale" => {
+            "numeric cost envelope: max_steps, max_memory_mb, min_estimated_ops, lanes/sweeps/samples or shape sizes when available"
+        }
+        "typed_declaration_list" => "names, scalar/vector/tensor types, units, bounds and nominal values when applicable",
+        "typed_data_list" => "named parameters, constants, distributions, graph edges or sparse arrays with units and provenance",
+        "unit_declaration_list" => "unit symbols accepted by Monster's unit normalizer plus explicit dimensionless none",
+        "bounded_domain" => "closed numeric domains, time ranges, tolerances or stopping limits",
+        "classical_math_expression_list" => "classical formulas using only class aliases, accepted operators and declared names",
+        "assumption_or_constraint_list" => "domain assumptions, invariants, inequalities, events or topology constraints",
+        "sample_oracle_list" => "seeded real samples with givens, expected output and tolerance",
+        "validation_request_list" => "oracle checks, interval checks, differential checks, proof checks or residual checks",
+        "output_contract_list" => "named outputs with unit, expression and expected artifact or scalar type",
+        "enum_policy" => "explicit policy token selected by the caller, never prose-only",
+        "structured_option" => "bounded optional configuration with names, limits and handoff target when needed",
+        _ => "structured text with no hidden Forge syntax",
+    }
+}
+
+fn monster_math_slot_forge_binding(name: &str) -> &'static str {
+    match name {
+        "goal" => "contract.goal",
+        "workload_scale" => "forge_cost",
+        "variables" | "states" | "symbols" | "design_variables" | "channels" | "nodes" => {
+            "forge_inputs"
+        }
+        "constants" | "distributions" | "edges" | "sparse_matrices" => "forge_constants",
+        "units" | "bounds" | "time_domain" | "tolerances" | "stopping_criteria" => {
+            "forge_inputs_metadata"
+        }
+        "equations" | "expressions" | "objective" | "matrix_ops" | "graph_ops" | "transforms"
+        | "filters" | "estimators" => "forge_program",
+        "constraints" | "assumptions" | "domains" | "initial_conditions"
+        | "boundary_conditions" | "events" | "correlation_assumptions"
+        | "stationarity_assumptions" | "topology_checks" | "residual_checks" => {
+            "forge_constraints"
+        }
+        "samples" => "forge_samples",
+        "validation" | "proof_checks" | "solver_requests" | "ad_requests" => "forge_validation",
+        "outputs" => "forge_outputs",
+        "artifact_handoff" => "artifact_handoff",
+        _ => "contract.template_slot_envelope",
+    }
+}
+
+fn monster_math_slot_validation_rule(name: &str) -> &'static str {
+    match monster_math_slot_value_kind(name) {
+        "natural_language_goal" => "non_empty_and_domain_specific",
+        "mechanical_workload_scale" => "contract_cost_must_meet_class_floor_before_forge_generation",
+        "typed_declaration_list" => "declared_names_must_be_referenced_by_formulas_or_outputs",
+        "typed_data_list" => "names_must_be_unique_and_units_must_normalize",
+        "unit_declaration_list" => "all_units_must_normalize_or_reject",
+        "bounded_domain" => "bounds_must_be_finite_ordered_and_unit_consistent",
+        "classical_math_expression_list" => "aliases_must_lower_to_class_accepted_forge_words",
+        "assumption_or_constraint_list" => "constraints_must_parse_after_classical_normalization",
+        "sample_oracle_list" => "samples_must_match_oracle_before_execution",
+        "validation_request_list" => "validation_entries_must_be_explicit_and_hashable",
+        "output_contract_list" => "outputs_must_have_unit_expression_and_sample_coverage",
+        "enum_policy" => "policy_must_be_explicit_not_implied",
+        "structured_option" => "optional_payload_must_be_named_and_bounded",
+        _ => "slot_must_be_known_and_hash_stable",
+    }
 }
 
 pub fn monster_math_capability_manifest() -> MonsterMathCapabilityManifest {
@@ -785,7 +4879,22 @@ pub fn monster_math_capability_manifest() -> MonsterMathCapabilityManifest {
         command: class.command(),
         class,
         required_slots: class.required_slots().to_vec(),
+        optional_slots: class.optional_slots().to_vec(),
+        workload_floor: class.workload_floor(),
+        slot_specs: monster_math_slot_specs(class),
         accepted_operators: class.accepted_operators().to_vec(),
+        classical_aliases: class.classical_aliases().to_vec(),
+        forge_targets: class.forge_targets().to_vec(),
+        rejection_reasons: vec![
+            "missing_slots",
+            "unsupported_operator",
+            "unknown_template_slot",
+            "ambiguous_expression",
+            "invalid_generated_forge",
+            "capability_missing",
+            "workload_too_small",
+        ],
+        deterministic_translation: "classical_math_alias_table_then_mechanical_workload_floor_then_forge_parse_type_units_bounds_samples_cost",
         compile_status: if class.can_compile_now() {
             "deterministic_forge_lowering"
         } else {
@@ -801,6 +4910,34 @@ pub fn monster_math_capability_manifest() -> MonsterMathCapabilityManifest {
         text.push_str(class.compile_status);
         text.push(':');
         text.push_str(&class.accepted_operators.join(","));
+        text.push(':');
+        text.push_str(&class.classical_aliases.join(","));
+        text.push(':');
+        text.push_str(&class.optional_slots.join(","));
+        text.push(':');
+        text.push_str(&class.forge_targets.join(","));
+        text.push(':');
+        text.push_str(&format!(
+            "workload_floor=max_steps:{};memory:{};ops:{};inputs:{};samples:{};outputs:{}",
+            class.workload_floor.min_max_steps,
+            class.workload_floor.min_memory_mb,
+            class.workload_floor.min_estimated_ops,
+            class.workload_floor.min_variables,
+            class.workload_floor.min_samples,
+            class.workload_floor.min_outputs
+        ));
+        for slot in &class.slot_specs {
+            text.push(':');
+            text.push_str(slot.name);
+            text.push('=');
+            text.push_str(slot.value_kind);
+            text.push('/');
+            text.push_str(slot.forge_binding);
+            text.push('/');
+            text.push_str(slot.validation_rule);
+            text.push('/');
+            text.push_str(if slot.required { "required" } else { "optional" });
+        }
     }
     MonsterMathCapabilityManifest {
         schema: "forge.monster.math_capability_manifest.v1",
@@ -1345,6 +5482,68 @@ pub struct MonsterMassComputeExecution {
     pub differential_executions: Vec<MonsterDifferentialExecution>,
     pub cpu_oracle_samples: u32,
     pub gpu_required: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterNewComputeLlmScalarOutput {
+    pub sample_name: String,
+    pub output_name: String,
+    pub status: String,
+    pub value_bits: u64,
+    pub value_text: String,
+    pub expected_bits: u64,
+    pub tolerance_bits: u64,
+    pub abs_error_bits: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterNewComputeLlmTypedBuffer {
+    pub name: String,
+    pub forge_type: String,
+    pub layout: String,
+    pub element_type: String,
+    pub shape: Vec<u64>,
+    pub byte_len: u64,
+    pub page_count: u64,
+    pub buffer_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterNewComputeLlmScientificMetric {
+    pub name: String,
+    pub value_text: String,
+    pub unit: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonsterNewComputeLlmResult {
+    pub schema: &'static str,
+    pub class: String,
+    pub module_name: String,
+    pub contract_hash: String,
+    pub manifest_hash: String,
+    pub projection_hash: String,
+    pub route_lane: String,
+    pub execution_status: String,
+    pub backend: String,
+    pub kernel_family: String,
+    pub detected_gpu_count: u32,
+    pub used_gpu_count: u32,
+    pub gpu_required: bool,
+    pub lanes_executed: u64,
+    pub dispatch_shape: [u32; 3],
+    pub workgroup_size: u32,
+    pub input_buffer_bytes: u64,
+    pub output_buffer_bytes: u64,
+    pub readback_bytes: u64,
+    pub output_hash: String,
+    pub proof_hash: String,
+    pub scalar_outputs: Vec<MonsterNewComputeLlmScalarOutput>,
+    pub typed_buffers: Vec<MonsterNewComputeLlmTypedBuffer>,
+    pub scientific_metrics: Vec<MonsterNewComputeLlmScientificMetric>,
+    pub limitations: Vec<String>,
+    pub compact_text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -8690,6 +12889,10 @@ impl MonsterNode {
         let prepared = self
             .prepare_forge_source(&compiled.forge_source, known_fragment_hashes)
             .map_err(|_| MonsterMathContractError::InvalidGeneratedForge)?;
+        crate::monster::compute_graph::reject_math_contract_oracle_mismatches(&prepared)?;
+        if !matches!(contract.class, MonsterMathClass::SimulationDynamics) {
+            contract.verify_prepared_scalar_differential(&compiled, &prepared)?;
+        }
         Ok((compiled, prepared))
     }
 
@@ -8713,6 +12916,30 @@ impl MonsterNode {
             .execute_prepared_compute(&prepared)
             .map_err(|_| MonsterMathContractError::InvalidGeneratedForge)?;
         Ok((compiled, prepared, execution))
+    }
+
+    /// Execute a MathContract and project the result into the compact shape the
+    /// LLM should see after `/newcompute_`: hashes, metrics, scalar diagnostics
+    /// and typed-buffer summaries, not raw buffers or test-only stdout.
+    pub fn execute_math_contract_for_llm(
+        &self,
+        contract: &MonsterMathContract,
+    ) -> Result<MonsterNewComputeLlmResult, MonsterMathContractError> {
+        let (compiled, prepared, execution) = self.execute_math_contract(contract)?;
+        Ok(self.project_newcompute_llm_result(&compiled, &prepared, &execution))
+    }
+
+    pub fn project_newcompute_llm_result(
+        &self,
+        compiled: &MonsterCompiledMathContract,
+        prepared: &MonsterPreparedCompute,
+        execution: &MonsterMassComputeExecution,
+    ) -> MonsterNewComputeLlmResult {
+        crate::monster::compute_graph::project_newcompute_llm_result(
+            compiled,
+            prepared,
+            execution,
+        )
     }
 
     /// Active le MmapStore zero-copy read view sur le `forge.cas`. Une
@@ -26017,6 +30244,201 @@ mod tests {
     use super::*;
 
     #[test]
+    fn monster_newmodule_manifest_exposes_rust_port_adapter_template() {
+        let manifest = crate::monster_code_template_manifest();
+        assert_eq!(manifest.entry_command, "/newmodule_");
+        assert_eq!(manifest.templates.len(), 1);
+        let template = &manifest.templates[0];
+        assert_eq!(template.command, "/rust_port_adapter_");
+        assert!(template.required_slots.contains(&"module_name"));
+        assert!(template.required_slots.contains(&"backend_trait"));
+        assert!(template.required_slots.contains(&"test_failure"));
+        assert!(template.optional_slots.contains(&"metrics"));
+        assert!(template.optional_slots.contains(&"connectors"));
+        assert!(template.optional_slots.contains(&"runtime"));
+        assert!(template.optional_slots.contains(&"quality_gates"));
+        assert!(template.generated_fragments.contains(&"backend_port_trait"));
+        assert!(template.generated_fragments.contains(&"rustdoc_module_header"));
+        assert!(template.generated_fragments.contains(&"quality_gate_metadata"));
+        assert!(template.generated_fragments.contains(&"cargo_metadata"));
+        assert!(template.generated_fragments.contains(&"metrics_snapshot"));
+        assert!(template.generated_fragments.contains(&"connector_ports"));
+        assert!(template.generated_fragments.contains(&"co_located_tests"));
+        assert_eq!(
+            template.validation_policy,
+            "strict_slots_identifiers_types_pro_metadata_compile_test"
+        );
+        assert!(manifest.manifest_hash.len() == 64);
+    }
+
+    #[test]
+    fn monster_rust_port_adapter_template_generates_compilable_tested_module() {
+        let contract = crate::MonsterRustPortAdapterContract::from_slots_with_extensions(
+            "user_profile",
+            "UserProfile",
+            "user_id:String",
+            "user_id:String, display_name:String, plan:String",
+            "UserProfileStore",
+            "load_profile",
+            "user_id non_empty",
+            "enum",
+            true,
+            false,
+            "user_id u_1 returns display_name Alice plan pro",
+            "empty user_id returns Validation",
+            "request_count:u64, validation_error_count:u64, backend_error_count:u64, latency_ms:f64",
+            "state_store",
+        )
+        .unwrap();
+        let generated = crate::generate_rust_port_adapter(&contract).unwrap();
+        assert_eq!(generated.command, "/rust_port_adapter_");
+        assert_eq!(generated.files.len(), 1);
+        assert_eq!(generated.files[0].path, "src/user_profile.rs");
+        assert_eq!(generated.connectors, vec!["state_store".to_string()]);
+        assert!(generated.integration_snippet.contains("pub mod user_profile;"));
+        assert!(generated.estimated_lines >= 180);
+        assert!(generated.files[0].content.contains("pub trait UserProfileStore"));
+        assert!(generated.files[0].content.contains("pub struct UserProfileService"));
+        assert!(generated.files[0].content.contains("pub struct MetricsSnapshot"));
+        assert!(generated.files[0].content.contains("pub mod connectors"));
+        assert!(generated.files[0].content.contains("fn validation_failure_is_rejected_before_backend"));
+
+        let dir = crate::fresh_tmp_path("rust-port-adapter-template", "compile");
+        let receipt = crate::materialize_generated_rust_module(&dir, &generated).unwrap();
+        assert_eq!(receipt.schema, "forge.monster.materialized_rust_module.v1");
+        assert_eq!(receipt.files.len(), 1);
+        assert_eq!(receipt.files[0].path, "src/user_profile.rs");
+        assert_eq!(receipt.files[0].status, "created");
+        assert_eq!(receipt.connectors, vec!["state_store".to_string()]);
+        assert_eq!(
+            receipt.public_api,
+            vec![
+                "run_user_profile".to_string(),
+                "run_user_profile_with_ref".to_string(),
+                "FORGE_TEMPLATE_COMMAND".to_string(),
+                "FORGE_TEMPLATE_VERSION".to_string(),
+                "FORGE_QUALITY_GATES".to_string()
+            ]
+        );
+        let second_receipt = crate::materialize_generated_rust_module(&dir, &generated).unwrap();
+        assert_eq!(second_receipt.files[0].status, "unchanged");
+        let source_path = dir.join("src").join("user_profile.rs");
+        let generated_source = std::fs::read_to_string(&source_path).unwrap();
+        assert!(generated_source.contains("assert_eq!(request.user_id, \"u_1\".to_string())"));
+        assert!(generated_source.contains("assert_eq!(response.display_name, \"Alice\".to_string())"));
+        assert!(generated_source.contains("assert_eq!(response.plan, \"pro\".to_string())"));
+        assert!(generated_source.contains("#![forbid(unsafe_code)]"));
+        assert!(generated_source.contains("FORGE_TEMPLATE_VERSION"));
+        assert!(generated_source.contains("pub fn backend(&self) -> &B"));
+        assert!(generated_source.contains("pub fn run_user_profile_with_ref"));
+        assert!(generated_source.contains("metrics_snapshot"));
+        assert!(generated_source.contains("STATE_STORE_PORT"));
+        assert!(generated_source.contains("NEXT_TEMPLATE"));
+        let exe_path = dir.join(if cfg!(windows) {
+            "user_profile_tests.exe"
+        } else {
+            "user_profile_tests"
+        });
+        let compile = std::process::Command::new("rustc")
+            .arg("--edition=2021")
+            .arg("--test")
+            .arg(&source_path)
+            .arg("-o")
+            .arg(&exe_path)
+            .output()
+            .unwrap();
+        assert!(
+            compile.status.success(),
+            "generated module must compile\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&compile.stdout),
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let run = std::process::Command::new(&exe_path).output().unwrap();
+        assert!(
+            run.status.success(),
+            "generated module tests must pass\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn monster_rust_port_adapter_materialization_refuses_overwrite() {
+        let contract = crate::MonsterRustPortAdapterContract::from_slots(
+            "user_profile",
+            "UserProfile",
+            "user_id:String",
+            "user_id:String, display_name:String",
+            "UserProfileStore",
+            "load_profile",
+            "user_id non_empty",
+            "enum",
+            false,
+            false,
+            "user_id u_1 returns display_name Alice",
+            "empty user_id returns Validation",
+        )
+        .unwrap();
+        let generated = crate::generate_rust_port_adapter(&contract).unwrap();
+        let dir = crate::fresh_tmp_path("rust-port-adapter-template", "overwrite");
+        let target_dir = dir.join("src");
+        std::fs::create_dir_all(&target_dir).unwrap();
+        std::fs::write(target_dir.join("user_profile.rs"), "pub fn handwritten() {}\n").unwrap();
+        let err = crate::materialize_generated_rust_module(&dir, &generated).unwrap_err();
+        match err {
+            crate::MonsterCodeTemplateError::RefuseOverwrite { path } => {
+                assert_eq!(path, "src/user_profile.rs");
+            }
+            other => panic!("expected overwrite refusal, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn monster_rust_port_adapter_async_tower_returns_feature_metadata() {
+        let contract = crate::MonsterRustPortAdapterContract::from_slots_pro(
+            "user_profile",
+            "UserProfile",
+            "user_id:String",
+            "user_id:String, display_name:String",
+            "UserProfileStore",
+            "load_profile",
+            "user_id non_empty",
+            "enum",
+            false,
+            true,
+            "user_id u_1 returns display_name Alice",
+            "empty user_id returns Validation",
+            "",
+            "",
+            "async_tower",
+            "manual_enum",
+            "local_snapshot",
+            "common_crates",
+            "send_sync",
+            "fmt,clippy,test,no_unsafe,no_panic",
+            "1.1.0",
+            "rustdoc_full",
+        )
+        .unwrap();
+        let generated = crate::generate_rust_port_adapter(&contract).unwrap();
+        assert!(generated
+            .cargo_dependencies
+            .iter()
+            .any(|dep| dep.contains("tower-service")));
+        assert!(generated
+            .cargo_features
+            .iter()
+            .any(|feature| feature.contains("tower")));
+        assert!(generated.files[0].content.contains("tower_service::Service"));
+        assert!(generated
+            .files[0]
+            .content
+            .contains("B: UserProfileStore + Send + Sync"));
+    }
+
+    #[test]
     fn swarm_frame_roundtrips_losslessly() {
         let origin = Hash::for_blob(b"node-a");
         let frame = SwarmKnowledgeFrame {
@@ -26655,7 +31077,7 @@ mod tests {
 mod tests {
 use std::path::PathBuf;
 
-use crate::kasm::{Node, Program, Target, Ty};
+use crate::kasm::{ForgeModuleSpec, ForgePrecision, Node, Program, Target, Ty};
 use crate::{MemoryGovernor, Store, SwarmKnowledgeFrame};
 
 use super::{
@@ -26758,6 +31180,90 @@ fn scalar_operator_contract(class: MonsterMathClass, operator: &str, expr: &str,
     ));
     contract.validation.push("operator_replay".to_string());
     contract.outputs.push(MonsterMathOutputContract::scalar("y", "none", expr));
+    contract
+}
+
+fn simulation_heat_pde_contract(max_steps: u64) -> MonsterMathContract {
+    let mut contract = MonsterMathContract::new(
+        MonsterMathClass::SimulationDynamics,
+        "Run an explicit 2D thermal diffusion stencil over a battery-module temperature field",
+    );
+    for slot in MonsterMathClass::SimulationDynamics.required_slots() {
+        contract.set_template_slot(
+            slot,
+            format!(
+                "thermal_pde_real_case slot={slot}; state=64x64 temperature/source fields; boundary=periodic stencil; workload=max_steps={max_steps}"
+            ),
+        );
+    }
+    for slot in MonsterMathClass::SimulationDynamics.optional_slots() {
+        contract.set_template_slot(
+            slot,
+            format!(
+                "thermal_pde_real_case optional_slot={slot}; mesh=64x64; artifact=typed tensor buffer plus proof hash"
+            ),
+        );
+    }
+    contract.max_steps = max_steps;
+    contract.max_memory_mb = 512;
+    contract.precision = ForgePrecision::F32;
+    contract.variables.push(MonsterMathVariable {
+        name: "temperature_field".to_string(),
+        ty: "tensor<f32,64x64>".to_string(),
+        unit: "none".to_string(),
+        min: 250.0,
+        max: 460.0,
+        nominal: 313.15,
+    });
+    contract.variables.push(MonsterMathVariable {
+        name: "source_field".to_string(),
+        ty: "tensor<f32,64x64>".to_string(),
+        unit: "none".to_string(),
+        min: 0.0,
+        max: 1.0,
+        nominal: 0.05,
+    });
+    contract.variables.push(MonsterMathVariable {
+        name: "dt".to_string(),
+        ty: "f32".to_string(),
+        unit: "s".to_string(),
+        min: 0.0001,
+        max: 0.1,
+        nominal: 0.01,
+    });
+    contract.operators = vec![
+        "PDEStencil".to_string(),
+        "mean".to_string(),
+        "finite".to_string(),
+    ];
+    contract.equations.push(
+        "next_temperature_field = PDEStencil(temperature_field, source_field, dt)".to_string(),
+    );
+    contract.samples.push(MonsterMathSample::new(
+        "battery_pack_nominal_field",
+        4096,
+        vec![("temperature_field", 313.15), ("source_field", 0.05), ("dt", 0.01)],
+        "mean_temperature_k",
+        313.15,
+        20.0,
+    ));
+    contract
+        .validation
+        .push("field_tensor_typecheck_kernel_profile_proof_hash".to_string());
+    contract.outputs.push(MonsterMathOutputContract {
+        name: "next_temperature_field".to_string(),
+        ty: "tensor<f32,64x64>".to_string(),
+        unit: "none".to_string(),
+        handoff: "vector".to_string(),
+        expression: "PDEStencil(temperature_field, source_field, dt)".to_string(),
+    });
+    contract.outputs.push(MonsterMathOutputContract {
+        name: "mean_temperature_k".to_string(),
+        ty: "f32".to_string(),
+        unit: "none".to_string(),
+        handoff: "scalar".to_string(),
+        expression: "mean(PDEStencil(temperature_field, source_field, dt))".to_string(),
+    });
     contract
 }
 
@@ -28523,6 +33029,9 @@ fn monster_newcompute_manifest_lists_math_contract_classes() {
         .iter()
         .any(|class| class.command == "/numeric_model"
             && class.required_slots.contains(&"equations")
+            && class.required_slots.contains(&"workload_scale")
+            && class.workload_floor.min_max_steps >= 1_000_000
+            && class.workload_floor.min_estimated_ops >= 10_000_000
             && class.accepted_operators.contains(&"finite")
             && class.compile_status == "deterministic_forge_lowering"));
     assert!(manifest
@@ -28532,6 +33041,177 @@ fn monster_newcompute_manifest_lists_math_contract_classes() {
             && class.compile_status == "capability_missing_until_solver_slice"));
 
     let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_math_class_templates_cover_existing_forge_math_words() {
+    let path = fresh_path("math-template-coverage");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let manifest = monster.math_capability_manifest();
+    let mut covered = manifest
+        .classes
+        .iter()
+        .flat_map(|class| class.accepted_operators.iter().copied())
+        .collect::<Vec<_>>();
+    covered.sort();
+    covered.dedup();
+
+    let required = [
+        "sqrt", "log", "erf", "gamma", "interval", "uncertainty", "simplify", "expand",
+        "diff", "integrate", "solve", "math_proof", "ode_solve", "pde_stencil_step",
+        "integrate_force", "sdf_sphere", "optimize", "constraint_solve", "least_squares",
+        "pareto_front", "sobol", "normal", "monte_carlo", "variance", "quantile",
+        "matmul", "svd_small", "reshape", "grad", "vjp", "fft", "rfft", "rolling",
+        "asof_join", "vwap", "csr_matvec", "pagerank_step", "connected_components_step",
+        "bit_and", "hash64", "field_mul", "zk_verify",
+    ];
+    for word in required {
+        assert!(covered.contains(&word), "missing Forge math word in /newcompute_ templates: {word}");
+    }
+    let syntax_alias_targets = ["*", "/", "<=", ">="];
+    for class in &manifest.classes {
+        let mut slot_names = class
+            .required_slots
+            .iter()
+            .chain(class.optional_slots.iter())
+            .copied()
+            .collect::<Vec<_>>();
+        slot_names.sort();
+        let mut spec_names = class.slot_specs.iter().map(|slot| slot.name).collect::<Vec<_>>();
+        spec_names.sort();
+        assert_eq!(
+            slot_names, spec_names,
+            "slot specs must exactly cover required and optional slots for {}",
+            class.command
+        );
+        assert!(class.slot_specs.iter().all(|slot| !slot.value_kind.is_empty()));
+        assert!(class
+            .slot_specs
+            .iter()
+            .all(|slot| !slot.forge_binding.is_empty()));
+        assert!(class
+            .slot_specs
+            .iter()
+            .all(|slot| !slot.validation_rule.is_empty()));
+        for alias in &class.classical_aliases {
+            let Some((_classical, forge_word)) = alias.split_once("->") else {
+                panic!("malformed classical alias in {}: {alias}", class.command);
+            };
+            assert!(
+                class.accepted_operators.contains(&forge_word)
+                    || syntax_alias_targets.contains(&forge_word),
+                "classical alias {alias} in {} targets a Forge word that is not accepted by the class",
+                class.command
+            );
+        }
+    }
+    assert!(manifest.classes.iter().all(|class| !class.optional_slots.is_empty()));
+    assert!(manifest.classes.iter().all(|class| !class.forge_targets.is_empty()));
+    assert!(manifest.classes.iter().all(|class| !class.classical_aliases.is_empty()));
+    assert!(manifest
+        .classes
+        .iter()
+        .any(|class| class.command == "/numeric_model"
+            && class.classical_aliases.contains(&"Power->pow")
+            && class.classical_aliases.contains(&"StdDev->std")));
+    assert!(manifest
+        .classes
+        .iter()
+        .any(|class| class.command == "/signal_timeseries"
+            && class.classical_aliases.contains(&"RFFT->rfft")));
+    assert!(manifest.classes.iter().all(|class| class
+        .rejection_reasons
+        .contains(&"unsupported_operator")));
+    assert!(manifest.classes.iter().all(|class| class
+        .rejection_reasons
+        .contains(&"unknown_template_slot")));
+    assert!(manifest.classes.iter().all(|class| class
+        .rejection_reasons
+        .contains(&"workload_too_small")));
+    assert!(manifest.classes.iter().all(|class| class
+        .deterministic_translation
+        .contains("mechanical_workload_floor")));
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_math_contract_rejects_trivial_workload_before_forge_generation() {
+    let path = fresh_path("math-trivial-workload");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let mut contract = numeric_contract();
+    contract.max_steps = 10;
+    contract.max_memory_mb = 4;
+
+    let err = monster.compile_math_contract(&contract).unwrap_err();
+    match err {
+        MonsterMathContractError::WorkloadTooSmall { class, reasons } => {
+            assert_eq!(class, MonsterMathClass::NumericModel);
+            assert!(reasons.iter().any(|reason| reason.contains("max_steps")));
+            assert!(reasons.iter().any(|reason| reason.contains("estimated_ops")));
+        }
+        other => panic!("expected workload floor rejection, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_math_contract_rejects_unknown_template_slot() {
+    let path = fresh_path("math-unknown-slot");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let mut contract = numeric_contract();
+    contract.set_template_slot("imaginary_unlisted_slot", "must not be accepted");
+
+    let err = monster.compile_math_contract(&contract).unwrap_err();
+    match err {
+        MonsterMathContractError::UnknownTemplateSlot { class, slot } => {
+            assert_eq!(class, MonsterMathClass::NumericModel);
+            assert_eq!(slot, "imaginary_unlisted_slot");
+        }
+        other => panic!("expected unknown template slot rejection, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_math_contract_reports_template_slot_satisfaction_sources() {
+    let contract = numeric_contract();
+    let statuses = contract.template_slot_statuses();
+    assert!(contract.missing_required_template_slots().is_empty());
+
+    let goal = statuses
+        .iter()
+        .find(|slot| slot.name == "goal")
+        .expect("goal slot status");
+    assert!(goal.satisfied);
+    assert_eq!(goal.source, "contract.goal");
+    assert_eq!(goal.forge_binding, "contract.goal");
+
+    let equations = statuses
+        .iter()
+        .find(|slot| slot.name == "equations")
+        .expect("equations slot status");
+    assert!(equations.satisfied);
+    assert_eq!(equations.source, "contract.equations");
+    assert_eq!(equations.value_kind, "classical_math_expression_list");
+
+    let mut partial = MonsterMathContract::new(MonsterMathClass::NumericModel, "");
+    partial.set_template_slot("goal", "explicit LLM objective");
+    let missing = partial.missing_required_template_slots();
+    assert!(!missing.contains(&"goal".to_string()));
+    assert!(missing.contains(&"variables".to_string()));
+    assert!(missing.contains(&"outputs".to_string()));
 }
 
 #[test]
@@ -28560,6 +33240,199 @@ fn monster_math_contract_reports_exact_missing_slots() {
 }
 
 #[test]
+fn monster_numeric_math_contract_normalizes_classical_math_notation() {
+    let path = fresh_path("math-classical-alias");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let mut contract = MonsterMathContract::new(
+        MonsterMathClass::NumericModel,
+        "Compile classical notation aliases without LLM interpretation",
+    );
+    contract.variables.push(MonsterMathVariable::f64("x", "none", -10.0, 10.0, 2.0));
+    contract.operators = vec!["Power".to_string(), "Sin".to_string(), "×".to_string()];
+    contract.equations.push("y = Power(x, 2.0) + Sin(x) × 0.0".to_string());
+    contract.constraints.push("y ≥ 0".to_string());
+    contract.samples.push(MonsterMathSample::new(
+        "classical_alias_nominal",
+        31,
+        vec![("x", 2.0)],
+        "y",
+        4.0,
+        0.01,
+    ));
+    contract.validation.push("alias_table_replay".to_string());
+    contract.outputs.push(MonsterMathOutputContract::scalar(
+        "y",
+        "none",
+        "Power(x, 2.0) + Sin(x) × 0.0",
+    ));
+
+    let (compiled, prepared, _) = monster.execute_math_contract(&contract).unwrap();
+    assert!(compiled.forge_source.contains("pow(x, 2.0) + sin(x) * 0.0"));
+    assert!(compiled.forge_source.contains("assert y >= 0"));
+    assert_eq!(prepared.route.plan.scalar_oracle_outputs[0].status, "sample_value_matched");
+    assert_eq!(
+        f64::from_bits(prepared.route.plan.scalar_oracle_outputs[0].value_bits),
+        4.0
+    );
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_numeric_math_contract_normalizes_scaled_engineering_units() {
+    let path = fresh_path("math-scaled-units");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let mut contract = MonsterMathContract::new(
+        MonsterMathClass::NumericModel,
+        "Normalize professional scaled units without changing physical meaning",
+    );
+    contract
+        .variables
+        .push(MonsterMathVariable::f64("pressure", "MPa", 2.0, 25.0, 12.0));
+    contract.operators = vec!["finite".to_string()];
+    contract.equations.push("pressure_si = pressure".to_string());
+    contract.samples.push(MonsterMathSample::new(
+        "pressure_mpa_nominal",
+        44,
+        vec![("pressure", 12.0)],
+        "pressure_si",
+        12_000_000.0,
+        0.001,
+    ));
+    contract.validation.push("scaled_unit_replay".to_string());
+    contract.outputs.push(MonsterMathOutputContract::scalar(
+        "pressure_si",
+        "Pa",
+        "pressure",
+    ));
+
+    let (compiled, prepared, _) = monster.execute_math_contract(&contract).unwrap();
+    assert!(compiled.forge_source.contains("param pressure: f64 unit Pa bounds [2000000,25000000] nominal 12000000"));
+    assert!(compiled.forge_source.contains("expect pressure_si approx 12000000"));
+    assert_eq!(prepared.route.plan.scalar_oracle_outputs[0].status, "sample_value_matched");
+    assert_eq!(
+        f64::from_bits(prepared.route.plan.scalar_oracle_outputs[0].value_bits),
+        12_000_000.0
+    );
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_external_llm_aerospace_newcompute_template_runs_end_to_end() {
+    let path = fresh_path("math-aerospace-external-llm");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+
+    let manifest = monster.math_capability_manifest();
+    assert_eq!(manifest.entry_command, "/newcompute_");
+    assert_eq!(manifest.classes.len(), 8);
+    let numeric_template = manifest
+        .classes
+        .iter()
+        .find(|class| class.command == "/numeric_model")
+        .expect("external LLM must receive the specialized numeric template");
+    assert!(numeric_template.required_slots.contains(&"variables"));
+    assert!(numeric_template.required_slots.contains(&"equations"));
+    assert!(numeric_template.optional_slots.contains(&"parameter_sweeps"));
+    assert!(numeric_template.accepted_operators.contains(&"pow"));
+    assert!(numeric_template.accepted_operators.contains(&"sqrt"));
+    assert!(numeric_template.forge_targets.contains(&"unit_bounds_checked_program"));
+    assert!(numeric_template
+        .deterministic_translation
+        .contains("classical_math_alias_table"));
+
+    let mut contract = MonsterMathContract::new(
+        MonsterMathClass::NumericModel,
+        "Aerospace engineer computes steady cruise thrust margin from classical aerodynamic equations",
+    );
+    contract
+        .variables
+        .push(MonsterMathVariable::f64("rho", "kg/m3", 0.05, 1.5, 0.38));
+    contract
+        .variables
+        .push(MonsterMathVariable::f64("velocity", "m/s", 80.0, 320.0, 230.0));
+    contract
+        .variables
+        .push(MonsterMathVariable::f64("wing_area", "m2", 5.0, 200.0, 42.0));
+    contract
+        .variables
+        .push(MonsterMathVariable::f64("drag_coefficient", "none", 0.01, 0.2, 0.032));
+    contract
+        .variables
+        .push(MonsterMathVariable::f64("available_thrust", "N", 1_000.0, 80_000.0, 18_500.0));
+    contract
+        .constants
+        .push(MonsterMathConstant::f64("safety_factor", "none", 1.15));
+    contract.operators = vec![
+        "Power".to_string(),
+        "Sqrt".to_string(),
+        "*".to_string(),
+        "+".to_string(),
+        "-".to_string(),
+        "/".to_string(),
+        "finite".to_string(),
+    ];
+    contract.equations.push(
+        "required_thrust = 0.5 * rho * Power(velocity, 2.0) * wing_area * drag_coefficient * safety_factor"
+            .to_string(),
+    );
+    contract
+        .constraints
+        .push("required_thrust >= 0".to_string());
+    contract.samples.push(MonsterMathSample::new(
+        "transonic_cruise_nominal_margin",
+        43,
+        vec![
+            ("rho", 0.38),
+            ("velocity", 230.0),
+            ("wing_area", 42.0),
+            ("drag_coefficient", 0.032),
+            ("available_thrust", 18_500.0),
+        ],
+        "required_thrust",
+        15534.8256,
+        0.001,
+    ));
+    contract
+        .validation
+        .push("external_llm_newcompute_aerospace_replay".to_string());
+    contract.outputs.push(MonsterMathOutputContract::scalar(
+        "required_thrust",
+        "N",
+        "0.5 * rho * Power(velocity, 2.0) * wing_area * drag_coefficient * safety_factor",
+    ));
+
+    let (compiled, prepared, execution) = monster.execute_math_contract(&contract).unwrap();
+
+    assert_eq!(compiled.class, MonsterMathClass::NumericModel);
+    assert!(compiled.forge_source.contains("unit kg/m^3"));
+    assert!(compiled.forge_source.contains("unit m^2"));
+    assert!(compiled.forge_source.contains("pow(velocity, 2.0)"));
+    assert!(compiled.forge_source.contains("assert required_thrust >= 0"));
+    assert_eq!(prepared.route.lane, MonsterEngineLane::MassMath);
+    assert_eq!(prepared.route.plan.scalar_oracle_outputs.len(), 1);
+    let oracle = &prepared.route.plan.scalar_oracle_outputs[0];
+    assert_eq!(oracle.output_name, "required_thrust");
+    assert_eq!(oracle.status, "sample_value_matched");
+    assert!((f64::from_bits(oracle.value_bits) - 15534.8256).abs() <= 0.001);
+    assert_eq!(execution.status, "cpu_production_algorithm_micro_or_mini");
+    assert!(!execution.typed_result_buffers.is_empty());
+    assert_eq!(execution.proof_hash.len(), 64);
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[cfg(feature = "wgpu")]
+#[test]
 fn monster_numeric_math_contract_compiles_prepares_and_executes() {
     let path = fresh_path("math-numeric-exec");
     let monster = MonsterNode::new(
@@ -28567,7 +33440,17 @@ fn monster_numeric_math_contract_compiles_prepares_and_executes() {
         MemoryGovernor::new(1024 * 1024),
     );
     let contract = numeric_contract();
-    let (compiled, prepared, execution) = monster.execute_math_contract(&contract).unwrap();
+    let compiled = monster.compile_math_contract(&contract).unwrap();
+    let prepared = monster
+        .prepare_math_contract(&contract, std::iter::empty::<String>())
+        .map(|(_, prepared)| prepared)
+        .unwrap_or_else(|error| {
+            panic!(
+                "numeric MathContract prepare failed: {error:?}\nsource:\n{}",
+                compiled.forge_source
+            )
+        });
+    let execution = monster.execute_prepared_compute(&prepared).unwrap();
 
     assert_eq!(compiled.class, MonsterMathClass::NumericModel);
     assert!(compiled.forge_source.contains("module numeric_model_"));
@@ -28579,6 +33462,160 @@ fn monster_numeric_math_contract_compiles_prepares_and_executes() {
     assert_eq!(f64::from_bits(oracle.value_bits), 33000.0);
     assert_eq!(execution.status, "cpu_production_algorithm_micro_or_mini");
     assert!(!execution.typed_result_buffers.is_empty());
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[cfg(feature = "wgpu")]
+#[test]
+fn monster_newcompute_llm_projection_contains_compact_result_metrics() {
+    let path = fresh_path("math-llm-result-projection");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let projection = monster
+        .execute_math_contract_for_llm(&numeric_contract())
+        .unwrap();
+
+    assert_eq!(projection.schema, "forge.monster.newcompute_llm_result.v1");
+    assert_eq!(projection.class, "numeric_model");
+    assert_eq!(projection.scalar_outputs.len(), 1);
+    assert_eq!(projection.scalar_outputs[0].output_name, "thrust");
+    assert_eq!(projection.scalar_outputs[0].value_text, "33000.000000000000");
+    assert!(!projection.typed_buffers.is_empty());
+    assert_eq!(projection.proof_hash.len(), 64);
+    assert_eq!(projection.projection_hash.len(), 64);
+    assert!(projection.compact_text.contains("NEWCOMPUTE_RESULT"));
+    assert!(projection.compact_text.contains("scalar_outputs=thrust:33000.000000000000:sample_value_matched"));
+    assert!(projection.compact_text.contains("proof_hash="));
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_math_contract_rejects_sample_oracle_mismatch_before_execution() {
+    let path = fresh_path("math-oracle-mismatch");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let mut contract = numeric_contract();
+    contract.samples[0] = MonsterMathSample::new(
+        "rocket_wrong_oracle",
+        12,
+        vec![("mass_flow", 12.0), ("exhaust_velocity", 2650.0)],
+        "thrust",
+        12.0,
+        0.01,
+    );
+    let err = monster.execute_math_contract(&contract).unwrap_err();
+    match err {
+        MonsterMathContractError::CertificationFailed {
+            output_name,
+            reason,
+        } => {
+            assert_eq!(output_name, "thrust");
+            assert!(reason.contains("sample_expected_outside_interval"));
+        }
+        other => panic!("expected interval certification failure, got {other:?}"),
+    }
+
+    contract.samples[0] = MonsterMathSample::new(
+        "rocket_wrong_oracle_inside_interval",
+        13,
+        vec![("mass_flow", 12.0), ("exhaust_velocity", 2650.0)],
+        "thrust",
+        40000.0,
+        0.01,
+    );
+    let err = monster.execute_math_contract(&contract).unwrap_err();
+    match err {
+        MonsterMathContractError::SampleOracleMismatch {
+            sample_name,
+            output_name,
+            ..
+        } => {
+            assert_eq!(sample_name, "rocket_wrong_oracle_inside_interval");
+            assert_eq!(output_name, "thrust");
+        }
+        other => panic!("expected sample oracle mismatch after interval pass, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_math_contract_rejects_uncertified_or_invalid_interval_domain() {
+    let path = fresh_path("math-interval-domain");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let mut contract = MonsterMathContract::new(
+        MonsterMathClass::NumericModel,
+        "Reject reciprocal over a variable whose declared bounds include zero",
+    );
+    contract
+        .variables
+        .push(MonsterMathVariable::f64("x", "none", -1.0, 1.0, 0.5));
+    contract.operators = vec!["/".to_string()];
+    contract.equations.push("y = 1.0 / x".to_string());
+    contract.samples.push(MonsterMathSample::new(
+        "reciprocal_nominal_but_domain_unsafe",
+        14,
+        vec![("x", 0.5)],
+        "y",
+        2.0,
+        0.01,
+    ));
+    contract.validation.push("interval_domain_certification".to_string());
+    contract
+        .outputs
+        .push(MonsterMathOutputContract::scalar("y", "none", "1.0 / x"));
+
+    let err = monster.execute_math_contract(&contract).unwrap_err();
+    match err {
+        MonsterMathContractError::CertificationFailed {
+            output_name,
+            reason,
+        } => {
+            assert_eq!(output_name, "y");
+            assert_eq!(reason, "interval_evaluation_failed");
+        }
+        MonsterMathContractError::InvalidGeneratedForge => {}
+        other => panic!("expected interval domain rejection, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn monster_math_contract_detects_codegen_differential_mismatch() {
+    let path = fresh_path("math-codegen-differential");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(1024 * 1024),
+    );
+    let contract = numeric_contract();
+    let (compiled, mut prepared) = monster
+        .prepare_math_contract(&contract, std::iter::empty::<String>())
+        .unwrap();
+    prepared.route.plan.scalar_oracle_outputs[0].value_bits = 123.0f64.to_bits();
+    let err = contract
+        .verify_prepared_scalar_differential(&compiled, &prepared)
+        .unwrap_err();
+    match err {
+        MonsterMathContractError::CodegenDifferentialMismatch {
+            sample_name,
+            output_name,
+            ..
+        } => {
+            assert_eq!(sample_name, "rocket_nozzle_nominal");
+            assert_eq!(output_name, "thrust");
+        }
+        other => panic!("expected codegen differential mismatch, got {other:?}"),
+    }
 
     let _ = std::fs::remove_dir_all(&path);
 }
@@ -28632,28 +33669,70 @@ fn monster_operator_math_contract_classes_compile_to_forge_and_execute() {
 }
 
 #[test]
-fn monster_simulation_math_contract_returns_capability_missing_until_solver_lands() {
-    let path = fresh_path("math-simulation-gate");
+fn monster_simulation_heat_pde_contract_prepares_solver_stencil_slice() {
+    let path = fresh_path("math-simulation-heat-pde");
     let monster = MonsterNode::new(
         Store::open(&path).unwrap(),
-        MemoryGovernor::new(1024 * 1024),
+        MemoryGovernor::new(8 * 1024 * 1024),
     );
-    let mut contract = scalar_operator_contract(
-        MonsterMathClass::SimulationDynamics,
-        "ode_solve",
-        "ode_solve(x)",
-        2.0,
+    let contract = simulation_heat_pde_contract(10_000_000);
+    let debug_source = contract
+        .forge_source("simulation_heat_pde_debug")
+        .unwrap_or_else(|error| panic!("simulation heat PDE source generation failed: {error:?}"));
+    assert!(
+        ForgeModuleSpec::parse(&debug_source).is_some(),
+        "simulation heat PDE generated invalid Forge:\n{debug_source}"
     );
-    contract.operators.clear();
-    let err = monster.compile_math_contract(&contract).unwrap_err();
+    let compiled = monster
+        .compile_math_contract(&contract)
+        .unwrap_or_else(|error| panic!("simulation heat PDE slice must compile: {error:?}"));
+    let prepared = monster
+        .prepare_forge_source(&compiled.forge_source, std::iter::empty::<String>())
+        .unwrap_or_else(|error| {
+            panic!(
+                "simulation heat PDE slice must prepare: {error:?}\nsource:\n{}",
+                compiled.forge_source
+            )
+        });
 
-    assert!(matches!(
-        err,
-        MonsterMathContractError::CapabilityMissing {
-            class: MonsterMathClass::SimulationDynamics,
-            reason: "native_solver_slice_not_promoted"
-        }
-    ));
+    assert_eq!(compiled.class, MonsterMathClass::SimulationDynamics);
+    assert!(compiled.forge_source.contains("tensor<f32,64x64>"));
+    assert!(compiled.forge_source.contains("pde_stencil_step"));
+    assert_eq!(prepared.route.lane, MonsterEngineLane::MassMath);
+    assert!(prepared
+        .route
+        .plan
+        .compute_ir_kernel_hints
+        .iter()
+        .any(|kernel| kernel.primitive_ops.iter().any(|op| op == "pde_stencil_step")));
+    assert!(prepared
+        .route
+        .plan
+        .compute_ir_kernel_classes
+        .iter()
+        .any(|class| class == "function_call"));
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[cfg(feature = "wgpu")]
+#[test]
+fn monster_simulation_heat_pde_contract_executes_gpu_or_multi_adapter() {
+    let path = fresh_path("math-simulation-heat-pde-gpu");
+    let monster = MonsterNode::new(
+        Store::open(&path).unwrap(),
+        MemoryGovernor::new(64 * 1024 * 1024),
+    );
+    let contract = simulation_heat_pde_contract(1_000_000_000);
+    let (_compiled, prepared, execution) = monster
+        .execute_math_contract(&contract)
+        .unwrap_or_else(|error| panic!("simulation heat PDE slice must execute: {error:?}"));
+
+    assert_eq!(prepared.route.lane, MonsterEngineLane::MassMath);
+    assert!(execution.lanes_executed >= 1_000_000);
+    assert!(prepared.route.plan.input_buffer_bytes >= 16_384);
+    assert!(!execution.typed_result_buffers.is_empty());
+    assert_eq!(execution.proof_hash.len(), 64);
 
     let _ = std::fs::remove_dir_all(&path);
 }

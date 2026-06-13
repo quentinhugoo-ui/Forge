@@ -1,0 +1,223 @@
+{
+  "schema": "ingen.electron.panels_chat_bottom_visual_golden_manifest.v1",
+  "slice_id": "panels_chat_bottom",
+  "source": "examples/ingen_electron_shell/scripts/capture-panels-chat-bottom-goldens.mjs",
+  "status": "captured",
+  "generated_by": "vite+playwright-buffer-screenshot",
+  "captures": [
+    {
+      "viewport": {
+        "id": "desktop",
+        "width": 1535,
+        "height": 786,
+        "deviceScaleFactor": 1
+      },
+      "screenshot": "reference_screenshots/electron/panels_chat_bottom/panels-chat-bottom-desktop.png",
+      "screenshot_sha256": "768a555f432662cd6dead424c21434ae92795494eb77933a6fc5515a14e81082",
+      "aria_snapshot": "reference_screenshots/electron/panels_chat_bottom/panels-chat-bottom-desktop.aria.yml",
+      "aria_sha256": "d530315ab2814d6f015818e031c6d99cdd4c1d114f80e0cfeaf9361cd8adef3c",
+      "metrics": {
+        "boxes": {
+          "composer": {
+            "left": 378,
+            "top": 630,
+            "width": 780,
+            "height": 99,
+            "overflowX": false,
+            "overflowY": false
+          },
+          "transcriptRail": {
+            "left": 378,
+            "top": 484,
+            "width": 780,
+            "height": 120,
+            "overflowX": false,
+            "overflowY": false
+          },
+          "statusDock": {
+            "left": 1221,
+            "top": 112,
+            "width": 282,
+            "height": 316,
+            "overflowX": false,
+            "overflowY": false
+          },
+          "bottomControls": {
+            "left": 386,
+            "top": 730,
+            "width": 764,
+            "height": 24,
+            "overflowX": false,
+            "overflowY": false
+          }
+        },
+        "buttonCount": 10,
+        "buttons": [
+          {
+            "label": "Refresh native probes",
+            "width": 72,
+            "height": 26
+          },
+          {
+            "label": "Open native details",
+            "width": 252,
+            "height": 34
+          },
+          {
+            "label": "Attach files",
+            "width": 83,
+            "height": 83
+          },
+          {
+            "label": "Codex",
+            "width": 28,
+            "height": 28
+          },
+          {
+            "label": "Claude",
+            "width": 28,
+            "height": 28
+          },
+          {
+            "label": "OpenRouter",
+            "width": 28,
+            "height": 28
+          },
+          {
+            "label": "Send message",
+            "width": 30,
+            "height": 30
+          },
+          {
+            "label": "ask-permissions",
+            "width": 168,
+            "height": 24
+          },
+          {
+            "label": "Codex",
+            "width": 118,
+            "height": 24
+          },
+          {
+            "label": "Medium",
+            "width": 70,
+            "height": 24
+          }
+        ],
+        "composerInputPresent": true,
+        "horizontalOverflow": false
+      }
+    },
+    {
+      "viewport": {
+        "id": "narrow",
+        "width": 1180,
+        "height": 760,
+        "deviceScaleFactor": 1
+      },
+      "screenshot": "reference_screenshots/electron/panels_chat_bottom/panels-chat-bottom-narrow.png",
+      "screenshot_sha256": "2e0189b1236b20c6989e3322373580016c63f41ec5b0cd6af2c2665f8de8a99b",
+      "aria_snapshot": "reference_screenshots/electron/panels_chat_bottom/panels-chat-bottom-narrow.aria.yml",
+      "aria_sha256": "d530315ab2814d6f015818e031c6d99cdd4c1d114f80e0cfeaf9361cd8adef3c",
+      "metrics": {
+        "boxes": {
+          "composer": {
+            "left": 327,
+            "top": 604,
+            "width": 780,
+            "height": 99,
+            "overflowX": false,
+            "overflowY": false
+          },
+          "transcriptRail": {
+            "left": 327,
+            "top": 458,
+            "width": 780,
+            "height": 120,
+            "overflowX": false,
+            "overflowY": false
+          },
+          "statusDock": {
+            "left": 878,
+            "top": 112,
+            "width": 282,
+            "height": 316,
+            "overflowX": false,
+            "overflowY": false
+          },
+          "bottomControls": {
+            "left": 335,
+            "top": 704,
+            "width": 764,
+            "height": 24,
+            "overflowX": false,
+            "overflowY": false
+          }
+        },
+        "buttonCount": 10,
+        "buttons": [
+          {
+            "label": "Refresh native probes",
+            "width": 72,
+            "height": 26
+          },
+          {
+            "label": "Open native details",
+            "width": 252,
+            "height": 34
+          },
+          {
+            "label": "Attach files",
+            "width": 83,
+            "height": 83
+          },
+          {
+            "label": "Codex",
+            "width": 28,
+            "height": 28
+          },
+          {
+            "label": "Claude",
+            "width": 28,
+            "height": 28
+          },
+          {
+            "label": "OpenRouter",
+            "width": 28,
+            "height": 28
+          },
+          {
+            "label": "Send message",
+            "width": 30,
+            "height": 30
+          },
+          {
+            "label": "ask-permissions",
+            "width": 168,
+            "height": 24
+          },
+          {
+            "label": "Codex",
+            "width": 118,
+            "height": 24
+          },
+          {
+            "label": "Medium",
+            "width": 70,
+            "height": 24
+          }
+        ],
+        "composerInputPresent": true,
+        "horizontalOverflow": false
+      }
+    }
+  ],
+  "gates": {
+    "expected_button_count_min": 8,
+    "composer_input_present": true,
+    "no_horizontal_overflow": true,
+    "min_button_width": 24,
+    "min_button_height": 24
+  },
+  "proof_hash": "6b5987f3559657e960a608e74258e22b7f37d2c64b749eb0421ba3a4920808d4"
+}

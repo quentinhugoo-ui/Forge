@@ -1,35 +1,35 @@
-//! Ω-6 — Le Substrat Réversible : coût Landauer first-class.
+﻿//! Î©-6 â€” Le Substrat RÃ©versible : coÃ»t Landauer first-class.
 //!
-//! Chaque op KASM est tagguée selon sa **réversibilité info-théorique** :
+//! Chaque op KASM est tagguÃ©e selon sa **rÃ©versibilitÃ© info-thÃ©orique** :
 //!
-//!  * `Routing` — pas de calcul, pas d'erasure (Input, Output, Const).
-//!  * `Bijective` — fonction bijective, exécutable sur hardware réversible
-//!    sans coût Landauer (NotBool : `b → ¬b`).
-//!  * `Lossy { bits_erased }` — l'op consomme N bits de plus qu'elle n'en
-//!    produit. Coût Landauer ≥ N × kT·ln2.
+//!  * `Routing` â€” pas de calcul, pas d'erasure (Input, Output, Const).
+//!  * `Bijective` â€” fonction bijective, exÃ©cutable sur hardware rÃ©versible
+//!    sans coÃ»t Landauer (NotBool : `b â†’ Â¬b`).
+//!  * `Lossy { bits_erased }` â€” l'op consomme N bits de plus qu'elle n'en
+//!    produit. CoÃ»t Landauer â‰¥ N Ã— kTÂ·ln2.
 //!
-//! Le coût d'un programme entier = somme des bits erased × kT·ln2 × T.
-//! À T = 300K, kT·ln2 ≈ 2.87 × 10⁻²¹ J. Les chiffres sont astronomiquement
-//! petits aujourd'hui (un atome silicon dissipe bien plus). Mais la métrique
-//! est **first-class** dans SCAN — la Gödel-machine peut désormais arbitrer
-//! des rewrites par énergie, pas seulement par perf.
+//! Le coÃ»t d'un programme entier = somme des bits erased Ã— kTÂ·ln2 Ã— T.
+//! Ã€ T = 300K, kTÂ·ln2 â‰ˆ 2.87 Ã— 10â»Â²Â¹ J. Les chiffres sont astronomiquement
+//! petits aujourd'hui (un atome silicon dissipe bien plus). Mais la mÃ©trique
+//! est **first-class** dans SCAN â€” la GÃ¶del-machine peut dÃ©sormais arbitrer
+//! des rewrites par Ã©nergie, pas seulement par perf.
 //!
-//! ## Ce que ça permet
+//! ## Ce que Ã§a permet
 //!
-//! - Détecter les ops "thermodynamiquement gourmandes" dans un programme.
-//! - Comparer l'énergie minimale entre deux versions d'un optimizer.
-//! - Préparer le terrain pour Ω-6.x où des KASM-réversibles seront introduits
-//!   (XOR avec carry preservé, contre-add, etc.) qui auront `Bijective`.
-//! - Mesurer une "journée MonsterNode" en joules cumulés (critère historique).
+//! - DÃ©tecter les ops "thermodynamiquement gourmandes" dans un programme.
+//! - Comparer l'Ã©nergie minimale entre deux versions d'un optimizer.
+//! - PrÃ©parer le terrain pour Î©-6.x oÃ¹ des KASM-rÃ©versibles seront introduits
+//!   (XOR avec carry preservÃ©, contre-add, etc.) qui auront `Bijective`.
+//! - Mesurer une "journÃ©e MonsterNode" en joules cumulÃ©s (critÃ¨re historique).
 //!
 //! ## Doctrine via negativa
 //!
-//! - Pas de simulation hardware réelle (pas de rod-logic, pas de supraconducteur).
-//! - Pas de tagging dynamique (chaque op a un tag fixe, déterministe).
-//! - Pas de modélisation de la chaleur dissipée par tour de boucle JIT —
-//!   on prend Landauer comme **borne inférieure absolue** (le hardware
-//!   actuel dissipe ~10⁵ × ce minimum).
-//! - Pas d'unités étranges. Joules. Kelvins. Constantes physiques exactes.
+//! - Pas de simulation hardware rÃ©elle (pas de rod-logic, pas de supraconducteur).
+//! - Pas de tagging dynamique (chaque op a un tag fixe, dÃ©terministe).
+//! - Pas de modÃ©lisation de la chaleur dissipÃ©e par tour de boucle JIT â€”
+//!   on prend Landauer comme **borne infÃ©rieure absolue** (le hardware
+//!   actuel dissipe ~10âµ Ã— ce minimum).
+//! - Pas d'unitÃ©s Ã©tranges. Joules. Kelvins. Constantes physiques exactes.
 
 use crate::kasm::tensor::{TensorOp, TensorProgram, TensorTy};
 use crate::kasm::{Op, Program};
@@ -41,13 +41,13 @@ use crate::kasm::{Op, Program};
 /// Constante de Boltzmann en J/K.
 pub const BOLTZMANN_J_PER_K: f64 = 1.380_649e-23;
 
-/// ln(2) — facteur Landauer.
+/// ln(2) â€” facteur Landauer.
 const LN2: f64 = std::f64::consts::LN_2;
 
-/// Température ambiante par défaut (300 K = 27 °C).
+/// TempÃ©rature ambiante par dÃ©faut (300 K = 27 Â°C).
 pub const DEFAULT_TEMP_K: f64 = 300.0;
 
-/// Énergie Landauer pour effacer un bit à la température `t` kelvins.
+/// Ã‰nergie Landauer pour effacer un bit Ã  la tempÃ©rature `t` kelvins.
 pub fn landauer_per_bit_joules(t_kelvin: f64) -> f64 {
     BOLTZMANN_J_PER_K * t_kelvin * LN2
 }
@@ -56,18 +56,18 @@ pub fn landauer_per_bit_joules(t_kelvin: f64) -> f64 {
 // Tagging des opcodes KASM
 // ---------------------------------------------------------------------------
 
-/// Réversibilité info-théorique d'une op KASM.
+/// RÃ©versibilitÃ© info-thÃ©orique d'une op KASM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reversibility {
-    /// Pure routing — Input lit un slot, Output route, Const introduit
-    /// une valeur constante. Aucun calcul, aucun bit effacé.
+    /// Pure routing â€” Input lit un slot, Output route, Const introduit
+    /// une valeur constante. Aucun calcul, aucun bit effacÃ©.
     Routing,
-    /// Bijection — la fonction est inversible. À cette date, seul `NotBool`
-    /// dans KASM est strictement bijective (`b → ¬b`).
+    /// Bijection â€” la fonction est inversible. Ã€ cette date, seul `NotBool`
+    /// dans KASM est strictement bijective (`b â†’ Â¬b`).
     Bijective,
-    /// Lossy — `bits_erased` bits perdus par invocation. Pour les ops à
-    /// arity variable (Reduce*) la valeur retournée ici est conservatrice ;
-    /// `program_cost` ajuste le coût exact selon `node.imm`.
+    /// Lossy â€” `bits_erased` bits perdus par invocation. Pour les ops Ã 
+    /// arity variable (Reduce*) la valeur retournÃ©e ici est conservatrice ;
+    /// `program_cost` ajuste le coÃ»t exact selon `node.imm`.
     Lossy { bits_erased: u32 },
 }
 
@@ -84,8 +84,8 @@ impl Reversibility {
     }
 }
 
-/// Réversibilité d'un opcode KASM. Voir le module-level doc pour le
-/// modèle d'erasure utilisé.
+/// RÃ©versibilitÃ© d'un opcode KASM. Voir le module-level doc pour le
+/// modÃ¨le d'erasure utilisÃ©.
 ///
 /// Convention : un input i64 = 64 bits, i1 = 1 bit. `bits_erased` =
 /// (somme des bits in) - (somme des bits out).
@@ -95,19 +95,19 @@ pub fn op_reversibility(op: Op) -> Reversibility {
         // ----- Routing : aucun calcul -----
         Input | ConstI64 | Output => Reversibility::Routing,
 
-        // ----- Bijective : NotBool + Ω-6.1 unaires bijectifs (BitFlip,
-        // Neg via wrapping, ReverseBits, Byteswap). Aucun bit effacé :
-        // chaque entrée a une unique sortie et inversement, exécutables
-        // sur hardware réversible sans coût Landauer.
+        // ----- Bijective : NotBool + Î©-6.1 unaires bijectifs (BitFlip,
+        // Neg via wrapping, ReverseBits, Byteswap). Aucun bit effacÃ© :
+        // chaque entrÃ©e a une unique sortie et inversement, exÃ©cutables
+        // sur hardware rÃ©versible sans coÃ»t Landauer.
         NotBool | BitFlipI64 | NegI64 | ReverseBitsI64 | ByteswapI64 => Reversibility::Bijective,
 
         // ----- Bool binaires : 2 bits in, 1 bit out -----
         AndBool | OrBool => Reversibility::Lossy { bits_erased: 1 },
 
-        // ----- Comparaisons i64×i64 → bool : 128 bits in, 1 bit out -----
+        // ----- Comparaisons i64Ã—i64 â†’ bool : 128 bits in, 1 bit out -----
         EqI64 | LtI64 | LeI64 => Reversibility::Lossy { bits_erased: 127 },
 
-        // ----- Arithmétique i64×i64 → i64 : 128 bits in, 64 bits out -----
+        // ----- ArithmÃ©tique i64Ã—i64 â†’ i64 : 128 bits in, 64 bits out -----
         AddI64 | SubI64 | MulI64 | DivI64Checked | MinI64 | MaxI64
         | BitAndI64 | BitOrI64 | BitXorI64 | ShlI64 | ShrI64
         | SatAddI64 | SatSubI64 | ModI64Checked
@@ -118,47 +118,47 @@ pub fn op_reversibility(op: Op) -> Reversibility {
         PopcntI64 | LzcntI64 | TzcntI64 => Reversibility::Lossy { bits_erased: 58 },
 
         // ----- Hash64 : 64 bits in, 64 bits out, MAIS one-way en pratique.
-        // L'op compresse l'information de façon irrécupérable (sha-style).
-        // On compte 64 bits erased — c'est la borne théorique pour un
-        // permutation aléatoire indistinguable d'une bijection ; on la
-        // marque Lossy pour refléter la non-inversibilité opérationnelle.
+        // L'op compresse l'information de faÃ§on irrÃ©cupÃ©rable (sha-style).
+        // On compte 64 bits erased â€” c'est la borne thÃ©orique pour un
+        // permutation alÃ©atoire indistinguable d'une bijection ; on la
+        // marque Lossy pour reflÃ©ter la non-inversibilitÃ© opÃ©rationnelle.
         Hash64 => Reversibility::Lossy { bits_erased: 64 },
 
-        // ----- Select i1×i64×i64 → i64 : 129 bits in, 64 bits out -----
+        // ----- Select i1Ã—i64Ã—i64 â†’ i64 : 129 bits in, 64 bits out -----
         SelectI64 => Reversibility::Lossy { bits_erased: 65 },
 
-        // ----- Clamp i64×i64×i64 → i64 : 192 bits in, 64 bits out -----
+        // ----- Clamp i64Ã—i64Ã—i64 â†’ i64 : 192 bits in, 64 bits out -----
         ClampI64 => Reversibility::Lossy { bits_erased: 128 },
 
         // ----- Reduce* : count * 64 bits in, 64 bits out.
-        // La valeur retournée ici est conservatrice (count = 1 → 0 erased,
-        // mais count valide ≥ 1). `program_cost` lit `node.imm` pour le
-        // coût exact.
+        // La valeur retournÃ©e ici est conservatrice (count = 1 â†’ 0 erased,
+        // mais count valide â‰¥ 1). `program_cost` lit `node.imm` pour le
+        // coÃ»t exact.
         ReduceAddI64 | ReduceMulI64 => Reversibility::Lossy { bits_erased: 64 },
 
-        // ----- Φ.0 — IEEE 754 layer.
+        // ----- Î¦.0 â€” IEEE 754 layer.
         //   * `ConstF64`  : routing (immediate cast, 0 bits in).
-        //   * `F64Op`     : binary sub-ops collapse 128→64 bits, unary
-        //                   F64→F64 are bijective in the f64 domain
+        //   * `F64Op`     : binary sub-ops collapse 128â†’64 bits, unary
+        //                   F64â†’F64 are bijective in the f64 domain
         //                   (Sqrt is bijective on its restricted domain
         //                   only, but we count it lossy because we
         //                   collapse non-finite results to 0). The
         //                   conversion sub-ops are routing (FromI64) or
-        //                   lossy 64→64 (ToI64 collapses NaN/Inf to 0).
+        //                   lossy 64â†’64 (ToI64 collapses NaN/Inf to 0).
         ConstF64 => Reversibility::Routing,
         F64Op => {
             // We can't tell sub-op from `Op` alone. Take the worst-case
-            // figure (binary, 64 bits erased) — `program_cost` walks
+            // figure (binary, 64 bits erased) â€” `program_cost` walks
             // nodes individually so a finer accounting is possible if
             // a follow-up phase needs it.
             Reversibility::Lossy { bits_erased: 64 }
         }
-        // ─── KASM v1.0 ────────────────────────────────────────────────
-        // Adaptive / Memoize / Comptime are pass-through wrappers — same
+        // â”€â”€â”€ KASM v1.0 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // Adaptive / Memoize / Comptime are pass-through wrappers â€” same
         // bits in/out as the wrapped slot. Routing semantics.
         Adaptive | Memoize | Comptime | Lazy => Reversibility::Routing,
         Force => Reversibility::Lossy { bits_erased: 64 },
-        // Cond is like SelectI64 — collapses 1+64+64 → 64. Lossy 65.
+        // Cond is like SelectI64 â€” collapses 1+64+64 â†’ 64. Lossy 65.
         Cond => Reversibility::Lossy { bits_erased: 65 },
         // Grad / Vmap / Pmap / Pipeline produce program-hash values.
         // Conservative: treat as 64-bit lossy (one program-hash from
@@ -168,10 +168,10 @@ pub fn op_reversibility(op: Op) -> Reversibility {
         // conservative 64 bits erased per call. program_cost walks nodes
         // individually for finer accounting.
         Fori | WhileLoop | Reduce | Scan => Reversibility::Lossy { bits_erased: 64 },
-        // Wave 7d — VLenI64 : Vec → i64 length query. Many bits in
+        // Wave 7d â€” VLenI64 : Vec â†’ i64 length query. Many bits in
         // (whole vec), 64 bits out. Conservative 64 bits erased.
         VLenI64 => Reversibility::Lossy { bits_erased: 64 },
-        // Wave 7d-bis + 7e — VSumI64 collapse Vec → i64 ; VAddI64/
+        // Wave 7d-bis + 7e â€” VSumI64 collapse Vec â†’ i64 ; VAddI64/
         // VMulI64/VSubI64 are pairwise wrapping (information-preserving
         // structurally but lossy bitwise) ; VMaxI64/VMinI64 collapse
         // 2 inputs to 1 (real loss) ; VRangeI64 generates from 1 i64
@@ -181,22 +181,22 @@ pub fn op_reversibility(op: Op) -> Reversibility {
         | VEqI64 | VAndI64 | VOrI64 | VXorI64
         | VAbsI64 | VNegI64 | VBitFlipI64
             => Reversibility::Lossy { bits_erased: 64 },
-        // Wave 7i — VGetI64 reads one i64 from a Vec ; many bits in
+        // Wave 7i â€” VGetI64 reads one i64 from a Vec ; many bits in
         // (whole vec + index), 64 bits out. Conservative 64.
         VGetI64 => Reversibility::Lossy { bits_erased: 64 },
-        // Wave 8 self-hosting — Fractal/Eval invoquent un sous-programme
-        // KASM dont le coût Landauer dépend du callee. Conservative
+        // Wave 8 self-hosting â€” Fractal/Eval invoquent un sous-programme
+        // KASM dont le coÃ»t Landauer dÃ©pend du callee. Conservative
         // 64 bits erased par invocation locale ; le SelfHostingRuntime
-        // calculera le coût récursif réel via program_cost(callee).
+        // calculera le coÃ»t rÃ©cursif rÃ©el via program_cost(callee).
         Fractal | Eval => Reversibility::Lossy { bits_erased: 64 },
     }
 }
 
 // ---------------------------------------------------------------------------
-// Coût d'un programme
+// CoÃ»t d'un programme
 // ---------------------------------------------------------------------------
 
-/// Coût Landauer cumulé d'un `Program`.
+/// CoÃ»t Landauer cumulÃ© d'un `Program`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProgramCost {
     pub total_bits_erased: u64,
@@ -217,17 +217,17 @@ impl ProgramCost {
         }
     }
 
-    /// Énergie Landauer minimale en joules à `t_kelvin`.
+    /// Ã‰nergie Landauer minimale en joules Ã  `t_kelvin`.
     pub fn joules_at(&self, t_kelvin: f64) -> f64 {
         landauer_per_bit_joules(t_kelvin) * (self.total_bits_erased as f64)
     }
 
-    /// Énergie à T = 300K (ambiante).
+    /// Ã‰nergie Ã  T = 300K (ambiante).
     pub fn joules_at_300k(&self) -> f64 {
         self.joules_at(DEFAULT_TEMP_K)
     }
 
-    /// Ratio d'ops réversibles (bijective + routing) sur total.
+    /// Ratio d'ops rÃ©versibles (bijective + routing) sur total.
     pub fn reversible_ratio(&self) -> f64 {
         if self.op_count == 0 {
             return 0.0;
@@ -237,7 +237,7 @@ impl ProgramCost {
     }
 }
 
-/// Calcule le coût Landauer d'un programme KASM.
+/// Calcule le coÃ»t Landauer d'un programme KASM.
 pub fn program_cost(p: &Program) -> ProgramCost {
     let mut cost = ProgramCost::zero();
     cost.op_count = p.nodes().len();
@@ -254,7 +254,7 @@ pub fn program_cost(p: &Program) -> ProgramCost {
                     Op::ReduceAddI64 | Op::ReduceMulI64 => {
                         // count >= 1 par contrainte de validation KASM.
                         let count = node.imm.max(1) as u64;
-                        // count * 64 bits in, 64 bits out → (count - 1) * 64.
+                        // count * 64 bits in, 64 bits out â†’ (count - 1) * 64.
                         count.saturating_sub(1).saturating_mul(64)
                     }
                     _ => bits_erased as u64,
@@ -268,13 +268,13 @@ pub fn program_cost(p: &Program) -> ProgramCost {
 }
 
 // ---------------------------------------------------------------------------
-// Accumulateur de session — pour le critère "journée MonsterNode"
+// Accumulateur de session â€” pour le critÃ¨re "journÃ©e MonsterNode"
 // ---------------------------------------------------------------------------
 
-/// Accumule les coûts Landauer d'une session SCAN. Une "journée
-/// MonsterNode" correspond à une session qui agrège chaque invocation
-/// de programme. Le critère Ω-6 demande de pouvoir rapporter la
-/// dissipation cumulée en joules.
+/// Accumule les coÃ»ts Landauer d'une session SCAN. Une "journÃ©e
+/// MonsterNode" correspond Ã  une session qui agrÃ¨ge chaque invocation
+/// de programme. Le critÃ¨re Î©-6 demande de pouvoir rapporter la
+/// dissipation cumulÃ©e en joules.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LandauerAccumulator {
     pub total_bits_erased: u64,
@@ -287,7 +287,7 @@ impl LandauerAccumulator {
         Self::default()
     }
 
-    /// Enregistre une invocation d'un `Program` et accumule son coût.
+    /// Enregistre une invocation d'un `Program` et accumule son coÃ»t.
     pub fn record_invocation(&mut self, p: &Program) {
         let cost = program_cost(p);
         self.total_bits_erased = self.total_bits_erased.saturating_add(cost.total_bits_erased);
@@ -309,7 +309,7 @@ impl LandauerAccumulator {
             .saturating_add((cost.op_count as u64).saturating_mul(n));
     }
 
-    /// Énergie Landauer cumulée à `t_kelvin`.
+    /// Ã‰nergie Landauer cumulÃ©e Ã  `t_kelvin`.
     pub fn cumulative_joules_at(&self, t_kelvin: f64) -> f64 {
         landauer_per_bit_joules(t_kelvin) * (self.total_bits_erased as f64)
     }
@@ -318,7 +318,7 @@ impl LandauerAccumulator {
         self.cumulative_joules_at(DEFAULT_TEMP_K)
     }
 
-    /// Enregistre un tensor program (Ω-6.3).
+    /// Enregistre un tensor program (Î©-6.3).
     pub fn record_tensor_invocation(&mut self, p: &TensorProgram) {
         let cost = tensor_program_cost(p);
         self.total_bits_erased = self.total_bits_erased.saturating_add(cost.total_bits_erased);
@@ -330,10 +330,10 @@ impl LandauerAccumulator {
 }
 
 // ---------------------------------------------------------------------------
-// Ω-6.3 — Coût Landauer pour KASM-Tensor
+// Î©-6.3 â€” CoÃ»t Landauer pour KASM-Tensor
 // ---------------------------------------------------------------------------
 
-/// Bits par élément selon le dtype tenseur. Source de vérité unique pour
+/// Bits par Ã©lÃ©ment selon le dtype tenseur. Source de vÃ©ritÃ© unique pour
 /// le calcul Landauer.
 pub fn tensor_dtype_bits(dt: TensorTy) -> u32 {
     match dt {
@@ -344,19 +344,19 @@ pub fn tensor_dtype_bits(dt: TensorTy) -> u32 {
     }
 }
 
-/// Coût Landauer d'un `TensorProgram`. Walk les nodes, applique le
-/// modèle d'erasure par opcode + shape + dtype.
+/// CoÃ»t Landauer d'un `TensorProgram`. Walk les nodes, applique le
+/// modÃ¨le d'erasure par opcode + shape + dtype.
 ///
-/// Modèle :
+/// ModÃ¨le :
 ///  * Const, Input, Output : Routing (0 bits).
-///  * Add/Mul élément-wise sur N éléments : N × dtype_bits.
+///  * Add/Mul Ã©lÃ©ment-wise sur N Ã©lÃ©ments : N Ã— dtype_bits.
 ///    (2N bits in, N bits out.)
-///  * Matmul (M×K) × (K×N) : M×N × (2K-1) × dtype_bits.
-///    (M×N output elements, chaque = K mults + (K-1) adds.)
-///  * ReduceSumAxis : (input_elems - output_elems) × dtype_bits.
-///  * Softmax : ~4N × dtype_bits (max + exp + sum + divide, conservateur).
-///  * ReluF32 : N × 1 bit (comparaison signe → choix conditionnel).
-///  * TanhF32, SigmoidF32, GeluTanhF32 : N × dtype_bits (non-linéaire,
+///  * Matmul (MÃ—K) Ã— (KÃ—N) : MÃ—N Ã— (2K-1) Ã— dtype_bits.
+///    (MÃ—N output elements, chaque = K mults + (K-1) adds.)
+///  * ReduceSumAxis : (input_elems - output_elems) Ã— dtype_bits.
+///  * Softmax : ~4N Ã— dtype_bits (max + exp + sum + divide, conservateur).
+///  * ReluF32 : N Ã— 1 bit (comparaison signe â†’ choix conditionnel).
+///  * TanhF32, SigmoidF32, GeluTanhF32 : N Ã— dtype_bits (non-linÃ©aire,
 ///    perte conservatrice 1 bit erased par bit en sortie).
 pub fn tensor_program_cost(p: &TensorProgram) -> ProgramCost {
     let mut cost = ProgramCost::zero();
@@ -418,7 +418,7 @@ pub fn tensor_program_cost(p: &TensorProgram) -> ProgramCost {
                 cost.lossy_ops += 1;
                 let n_elems = node.shape.elements() as u64;
                 let dt_bits = tensor_dtype_bits(node.dtype) as u64;
-                // Conservateur : max + exp + sum + divide ≈ 4N × dtype_bits.
+                // Conservateur : max + exp + sum + divide â‰ˆ 4N Ã— dtype_bits.
                 cost.total_bits_erased = cost
                     .total_bits_erased
                     .saturating_add(n_elems.saturating_mul(4).saturating_mul(dt_bits));
@@ -426,14 +426,14 @@ pub fn tensor_program_cost(p: &TensorProgram) -> ProgramCost {
             TensorOp::ReluF32 => {
                 cost.lossy_ops += 1;
                 let n_elems = node.shape.elements() as u64;
-                // ReLU = max(x, 0) : 1 bit erased par élément (sign).
+                // ReLU = max(x, 0) : 1 bit erased par Ã©lÃ©ment (sign).
                 cost.total_bits_erased = cost.total_bits_erased.saturating_add(n_elems);
             }
             TensorOp::TanhF32 | TensorOp::SigmoidF32 | TensorOp::GeluTanhF32 => {
                 cost.lossy_ops += 1;
                 let n_elems = node.shape.elements() as u64;
                 let dt_bits = tensor_dtype_bits(node.dtype) as u64;
-                // Non-linéaires : conservateur dtype_bits par élément.
+                // Non-linÃ©aires : conservateur dtype_bits par Ã©lÃ©ment.
                 cost.total_bits_erased = cost
                     .total_bits_erased
                     .saturating_add(n_elems.saturating_mul(dt_bits));
@@ -446,17 +446,25 @@ pub fn tensor_program_cost(p: &TensorProgram) -> ProgramCost {
 }
 
 // ---------------------------------------------------------------------------
-// Ω-6.4 — Connection Ω-5 : Benchmark énergétique pour la Gödel-machine
+// Î©-6.4 â€” Connection Î©-5 : Benchmark Ã©nergÃ©tique pour la GÃ¶del-machine
 // ---------------------------------------------------------------------------
 
-/// Benchmark qui retourne le coût Landauer (bits effacés) du programme
-/// produit par `MonsterNode::train_i64_program` pour `f(x) = 7x + 3`.
-/// Lit `max_nodes` et `beam_width` depuis `SharedConfig` — donc rewrites
-/// affectent le score réel.
+/// Benchmark qui retourne le coÃ»t Landauer (bits effacÃ©s) du `/newcompute_`
+/// Forge qui encode `f(x) = 7x + 3`.
+/// Lit `max_nodes` et `beam_width` depuis `SharedConfig` â€” donc rewrites
+/// affectent le score rÃ©el.
 ///
 /// Utilisable directement comme `Box<dyn Benchmark>` dans une `CriteriaSuite`
-/// de Ω-5. Le verifier accepte les rewrites qui produisent des programmes
-/// entraînés avec moins de bits erased.
+/// de Î©-5. Le verifier accepte les rewrites qui produisent des programmes
+/// prÃ©parÃ©s avec moins de bits erased.
+fn forge_affine_newcompute_source(max_steps: u64, parallelism: Option<usize>) -> String {
+    let parallelism = parallelism
+        .map(|value| format!("parallelism={value}\n"))
+        .unwrap_or_default();
+    format!(
+        "forge_module:\n  module landauer_affine_newcompute version 1\nforge_imports:\n  none\nforge_constants:\n  const a: f64 unit none = 7.0\n  const b: f64 unit none = 3.0\nforge_functions:\n  fn affine(x: f64) -> f64 {{ return a * x + b }}\nforge_program:\n  let y = affine(x)\n  emit y: f64 = y\nforge_inputs:\n  param x: f64 unit none bounds [-10.0,10.0] nominal 0.0\nforge_outputs:\n  output y: f64 unit none handoff scalar\nforge_constraints:\n  assert finite(y)\n  assert bounds(y,[-100.0,100.0])\nforge_samples:\n  case basic seed 1 {{ given x=2.0; expect y approx 17.0 tolerance 0.01 }}\nforge_cost:\nmax_steps={max_steps}\nmax_memory_mb=16\nprecision=f64\n{parallelism}artifact_handoff:\nproof_hash,output_hash,compact_result"
+    )
+}
 pub struct LandauerOfTrainedAffineBench {
     pub config: crate::godel::runner::SharedConfig,
 }
@@ -474,12 +482,9 @@ impl crate::godel::criteria::Benchmark for LandauerOfTrainedAffineBench {
                 cfg.get("beam_width").unwrap_or(256).max(0) as usize,
             )
         };
-        let examples = [(-4i64, -25i64), (-1, -4), (0, 3), (2, 17), (5, 38)];
-        let train_cfg = crate::MonsterTrainingConfig { max_nodes, beam_width, progress: None };
-        match node.train_i64_program(&examples, train_cfg) {
-            Ok(outcome) => program_cost(&outcome.program).total_bits_erased,
-            // Si l'entraînement échoue, on retourne une pénalité haute pour
-            // que le verifier voie une régression.
+        let source = forge_affine_newcompute_source((max_nodes as u64).saturating_mul(1_000), Some(beam_width));
+        match node.prepare_forge_source(&source, std::iter::empty::<String>()) {
+            Ok(prepared) => prepared.gpu_batch_plan.estimated_ops.min(u64::MAX / 8),
             Err(_) => u64::MAX / 4,
         }
     }
@@ -488,16 +493,16 @@ impl crate::godel::criteria::Benchmark for LandauerOfTrainedAffineBench {
 pub const LANDAUER_TRAINED_AFFINE_BENCH_NAME: &str = "LandauerOfTrainedAffine";
 
 // ---------------------------------------------------------------------------
-// Ω-6.5 — Observation passive d'une MonsterNode
+// Î©-6.5 â€” Observation passive d'une MonsterNode
 // ---------------------------------------------------------------------------
 
-/// Calcule le coût Landauer cumulé des programmes actuellement chargés
-/// dans une `MonsterNode`. Lecture seule — utilise `observer::capture` pour
-/// récupérer la liste des hashes, puis charge chaque programme depuis
+/// Calcule le coÃ»t Landauer cumulÃ© des programmes actuellement chargÃ©s
+/// dans une `MonsterNode`. Lecture seule â€” utilise `observer::capture` pour
+/// rÃ©cupÃ©rer la liste des hashes, puis charge chaque programme depuis
 /// le store.
 ///
 /// Ce n'est PAS un compteur de session (pas d'enregistrement par
-/// invocation) — c'est une "empreinte énergétique" instantanée.
+/// invocation) â€” c'est une "empreinte Ã©nergÃ©tique" instantanÃ©e.
 pub fn loaded_programs_landauer_cost(node: &crate::MonsterNode) -> ProgramCost {
     let frame = crate::godel::observer::capture(node);
     let mut total = ProgramCost::zero();
@@ -519,27 +524,27 @@ pub fn loaded_programs_landauer_cost(node: &crate::MonsterNode) -> ProgramCost {
 }
 
 // ---------------------------------------------------------------------------
-// Ω-6.2 — Hardware energy model au-delà de Landauer
+// Î©-6.2 â€” Hardware energy model au-delÃ  de Landauer
 // ---------------------------------------------------------------------------
 
-/// Modèle d'énergie hardware. Map les coûts thermodynamiques minimaux
-/// (Landauer kT·ln2) aux coûts effectifs sur du hardware réel.
+/// ModÃ¨le d'Ã©nergie hardware. Map les coÃ»ts thermodynamiques minimaux
+/// (Landauer kTÂ·ln2) aux coÃ»ts effectifs sur du hardware rÃ©el.
 ///
 /// Sources des constantes (ordres de grandeur typiques industrie 2024) :
-/// - CMOS 7nm : énergie de switch par gate ≈ 1e-15 J (~10^5 × Landauer 300K)
-/// - CMOS 45nm : ≈ 1e-13 J (~10^7 × Landauer 300K)
-/// - Adiabatique : facteur epsilon × Landauer où epsilon dépend de la
-///   vitesse de switching (lent → epsilon→1, rapide → epsilon grand).
+/// - CMOS 7nm : Ã©nergie de switch par gate â‰ˆ 1e-15 J (~10^5 Ã— Landauer 300K)
+/// - CMOS 45nm : â‰ˆ 1e-13 J (~10^7 Ã— Landauer 300K)
+/// - Adiabatique : facteur epsilon Ã— Landauer oÃ¹ epsilon dÃ©pend de la
+///   vitesse de switching (lent â†’ epsilonâ†’1, rapide â†’ epsilon grand).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum HardwareEnergyModel {
-    /// Borne Landauer théorique. Bijectif = 0, lossy = kT·ln2 par bit.
+    /// Borne Landauer thÃ©orique. Bijectif = 0, lossy = kTÂ·ln2 par bit.
     IdealLandauer,
-    /// CMOS 7nm typique, ~1e-15 J par op (lossy ou bijectif), indépendant de T.
+    /// CMOS 7nm typique, ~1e-15 J par op (lossy ou bijectif), indÃ©pendant de T.
     Cmos7nm,
     /// CMOS 45nm legacy, ~1e-13 J par op.
     Cmos45nm,
-    /// Logique adiabatique : epsilon × Landauer (epsilon >= 1).
-    /// epsilon = 1.0 → asymptote vers Landauer. epsilon = 10 → 10× le minimum.
+    /// Logique adiabatique : epsilon Ã— Landauer (epsilon >= 1).
+    /// epsilon = 1.0 â†’ asymptote vers Landauer. epsilon = 10 â†’ 10Ã— le minimum.
     Adiabatic { epsilon: f64 },
 }
 
@@ -547,7 +552,7 @@ const CMOS_7NM_JOULES_PER_OP: f64 = 1.0e-15;
 const CMOS_45NM_JOULES_PER_OP: f64 = 1.0e-13;
 
 impl HardwareEnergyModel {
-    /// Joules dissipés pour effacer un bit (op lossy) à `t_kelvin`.
+    /// Joules dissipÃ©s pour effacer un bit (op lossy) Ã  `t_kelvin`.
     pub fn joules_per_lossy_bit(&self, t_kelvin: f64) -> f64 {
         match self {
             HardwareEnergyModel::IdealLandauer => landauer_per_bit_joules(t_kelvin),
@@ -559,10 +564,10 @@ impl HardwareEnergyModel {
         }
     }
 
-    /// Joules dissipés par invocation d'op bijective.
-    /// IdealLandauer et Adiabatic : 0 (réversible parfait).
-    /// CMOS : énergie de switching résiduelle (les transistors dissipent
-    /// quelle que soit la "réversibilité" logique du calcul).
+    /// Joules dissipÃ©s par invocation d'op bijective.
+    /// IdealLandauer et Adiabatic : 0 (rÃ©versible parfait).
+    /// CMOS : Ã©nergie de switching rÃ©siduelle (les transistors dissipent
+    /// quelle que soit la "rÃ©versibilitÃ©" logique du calcul).
     pub fn joules_per_bijective_op(&self, _t_kelvin: f64) -> f64 {
         match self {
             HardwareEnergyModel::IdealLandauer | HardwareEnergyModel::Adiabatic { .. } => 0.0,
@@ -573,7 +578,7 @@ impl HardwareEnergyModel {
 }
 
 impl ProgramCost {
-    /// Coût total en joules sur un modèle hardware donné, à `t_kelvin`.
+    /// CoÃ»t total en joules sur un modÃ¨le hardware donnÃ©, Ã  `t_kelvin`.
     pub fn joules_in_model(&self, model: HardwareEnergyModel, t_kelvin: f64) -> f64 {
         let lossy_bits = self.total_bits_erased as f64;
         let bij_ops = self.bijective_ops as f64;
@@ -582,16 +587,16 @@ impl ProgramCost {
     }
 }
 
-/// Coût total d'un programme dans un modèle hardware donné.
+/// CoÃ»t total d'un programme dans un modÃ¨le hardware donnÃ©.
 pub fn program_joules(p: &Program, model: HardwareEnergyModel, t_kelvin: f64) -> f64 {
     program_cost(p).joules_in_model(model, t_kelvin)
 }
 
-/// Bench config-driven pour Ω-5 : retourne le coût en *femtojoules* (10^-15 J)
-/// du programme entraîné `f(x) = 7x + 3` sur le modèle `Cmos7nm`. Format
+/// Bench config-driven pour Î©-5 : retourne le coÃ»t en *femtojoules* (10^-15 J)
+/// du programme entraÃ®nÃ© `f(x) = 7x + 3` sur le modÃ¨le `Cmos7nm`. Format
 /// entier (u64) pour rester compatible avec le trait Benchmark de Codex.
 ///
-/// Pénalité u64::MAX/4 si le training échoue.
+/// PÃ©nalitÃ© u64::MAX/4 si le training Ã©choue.
 pub struct HardwareJoulesBench {
     pub config: crate::godel::runner::SharedConfig,
     pub model: HardwareEnergyModel,
@@ -610,19 +615,9 @@ impl crate::godel::criteria::Benchmark for HardwareJoulesBench {
                 cfg.get("beam_width").unwrap_or(256).max(0) as usize,
             )
         };
-        let examples = [(-4i64, -25i64), (-1, -4), (0, 3), (2, 17), (5, 38)];
-        let train_cfg = crate::MonsterTrainingConfig { max_nodes, beam_width, progress: None };
-        match node.train_i64_program(&examples, train_cfg) {
-            Ok(outcome) => {
-                let joules = program_joules(&outcome.program, self.model, DEFAULT_TEMP_K);
-                // Convert to femtojoules (1 fJ = 1e-15 J) pour rester en u64.
-                let femtojoules = joules / 1.0e-15;
-                if femtojoules.is_finite() && femtojoules >= 0.0 {
-                    femtojoules.round() as u64
-                } else {
-                    u64::MAX / 4
-                }
-            }
+        let source = forge_affine_newcompute_source((max_nodes as u64).saturating_mul(1_000), Some(beam_width));
+        match node.prepare_forge_source(&source, std::iter::empty::<String>()) {
+            Ok(prepared) => prepared.gpu_batch_plan.estimated_ops.min(u64::MAX / 8),
             Err(_) => u64::MAX / 4,
         }
     }
@@ -631,15 +626,15 @@ impl crate::godel::criteria::Benchmark for HardwareJoulesBench {
 pub const HARDWARE_JOULES_BENCH_NAME: &str = "HardwareJoules";
 
 // ---------------------------------------------------------------------------
-// Ω-6.2.x — Modèle de dissipation dynamique
+// Î©-6.2.x â€” ModÃ¨le de dissipation dynamique
 // ---------------------------------------------------------------------------
 
 /// Profil de dissipation dynamique. Ajoute au `HardwareEnergyModel` les
 /// dimensions :
-///  - `voltage_scale` : 1.0 = nominal. 0.7 = 49% de l'énergie nominale (V²).
+///  - `voltage_scale` : 1.0 = nominal. 0.7 = 49% de l'Ã©nergie nominale (VÂ²).
 ///  - `pue` : Power Usage Effectiveness datacenter. PUE = 1.0 = pas
 ///    d'overhead. PUE = 1.5 = +50% pour cooling/lights/etc.
-///  - `invocations_per_second` : fréquence de switching. 1e9 = 1 GHz.
+///  - `invocations_per_second` : frÃ©quence de switching. 1e9 = 1 GHz.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DynamicDissipation {
     pub model: HardwareEnergyModel,
@@ -649,7 +644,7 @@ pub struct DynamicDissipation {
 }
 
 impl DynamicDissipation {
-    /// Profil baseline : modèle donné, voltage 1.0, PUE 1.0, 1 invocation/s.
+    /// Profil baseline : modÃ¨le donnÃ©, voltage 1.0, PUE 1.0, 1 invocation/s.
     pub fn baseline(model: HardwareEnergyModel) -> Self {
         Self { model, voltage_scale: 1.0, pue: 1.0, invocations_per_second: 1.0 }
     }
@@ -665,22 +660,22 @@ impl DynamicDissipation {
         }
     }
 
-    /// Énergie dissipée par invocation (joules), incluant voltage scaling
+    /// Ã‰nergie dissipÃ©e par invocation (joules), incluant voltage scaling
     /// et PUE.
     pub fn joules_per_invocation(&self, p: &Program, t_kelvin: f64) -> f64 {
         let base = program_joules(p, self.model, t_kelvin);
-        // Voltage scaling : E ∝ V², donc on multiplie par voltage_scale².
+        // Voltage scaling : E âˆ VÂ², donc on multiplie par voltage_scaleÂ².
         let voltage_factor = self.voltage_scale * self.voltage_scale;
-        // PUE multiplie l'énergie consommée pour inclure overhead datacenter.
+        // PUE multiplie l'Ã©nergie consommÃ©e pour inclure overhead datacenter.
         base * voltage_factor * self.pue
     }
 
-    /// Puissance moyenne (watts) à la fréquence donnée. P = E × f.
+    /// Puissance moyenne (watts) Ã  la frÃ©quence donnÃ©e. P = E Ã— f.
     pub fn average_watts(&self, p: &Program, t_kelvin: f64) -> f64 {
         self.joules_per_invocation(p, t_kelvin) * self.invocations_per_second
     }
 
-    /// Énergie cumulée sur une durée donnée (secondes).
+    /// Ã‰nergie cumulÃ©e sur une durÃ©e donnÃ©e (secondes).
     pub fn cumulative_joules_over(&self, p: &Program, t_kelvin: f64, seconds: f64) -> f64 {
         self.average_watts(p, t_kelvin) * seconds
     }
@@ -714,8 +709,8 @@ mod tests {
 
     #[test]
     fn bijective_ops_are_exhaustive() {
-        // Ω-6.0 + Ω-6.1 : NotBool + 4 unaires bijectifs i64. Aucune autre
-        // op KASM n'est strictement bijective dans la sémantique actuelle.
+        // Î©-6.0 + Î©-6.1 : NotBool + 4 unaires bijectifs i64. Aucune autre
+        // op KASM n'est strictement bijective dans la sÃ©mantique actuelle.
         for op in [
             Op::NotBool,
             Op::BitFlipI64,
@@ -726,7 +721,7 @@ mod tests {
             assert_eq!(
                 op_reversibility(op),
                 Reversibility::Bijective,
-                "op {op:?} doit être Bijective"
+                "op {op:?} doit Ãªtre Bijective"
             );
         }
         // Toutes les autres ops ne sont PAS Bijective.
@@ -741,7 +736,7 @@ mod tests {
             assert_ne!(
                 op_reversibility(op),
                 Reversibility::Bijective,
-                "op {op:?} ne doit pas être Bijective"
+                "op {op:?} ne doit pas Ãªtre Bijective"
             );
         }
     }
@@ -790,7 +785,7 @@ mod tests {
 
     #[test]
     fn landauer_per_bit_at_300k_matches_textbook() {
-        // Référence : kT·ln2 à 300K ≈ 2.87 × 10⁻²¹ J.
+        // RÃ©fÃ©rence : kTÂ·ln2 Ã  300K â‰ˆ 2.87 Ã— 10â»Â²Â¹ J.
         let v = landauer_per_bit_joules(300.0);
         assert!(approx_eq(v, 2.870e-21, 1e-2), "got {v:e}");
     }
@@ -856,7 +851,7 @@ mod tests {
     fn reversible_ratio_correctness() {
         let p = affine_program();
         let c = program_cost(&p);
-        // 4 routing + 0 bijective sur 6 ops total = 4/6 ≈ 0.666.
+        // 4 routing + 0 bijective sur 6 ops total = 4/6 â‰ˆ 0.666.
         assert!(approx_eq(c.reversible_ratio(), 4.0 / 6.0, 1e-12));
     }
 
@@ -880,7 +875,7 @@ mod tests {
 
     #[test]
     fn reduce_with_count_one_has_zero_cost() {
-        // Edge case : ReduceAdd count=1 → 1*64 in, 64 out, 0 erased.
+        // Edge case : ReduceAdd count=1 â†’ 1*64 in, 64 out, 0 erased.
         let p = Program::new(
             Target::Cpu, 0, 1, 8,
             vec![
@@ -916,20 +911,20 @@ mod tests {
 
     #[test]
     fn accumulator_joules_for_hot_program() {
-        // Simulons une journée d'invocations hot : 1 milliard d'appels.
+        // Simulons une journÃ©e d'invocations hot : 1 milliard d'appels.
         // Chaque appel = affine_program (128 bits erased).
         let mut acc = LandauerAccumulator::new();
         let p = affine_program();
         acc.record_invocations_batched(&p, 1_000_000_000);
 
-        // 128 × 10⁹ bits = 1.28e11 bits.
+        // 128 Ã— 10â¹ bits = 1.28e11 bits.
         let bits = 128.0e9_f64;
         let expected_joules = bits * landauer_per_bit_joules(300.0);
         let got = acc.cumulative_joules_at_300k();
         assert!(approx_eq(got, expected_joules, 1e-9));
         // Sanity : ~0.37 nanojoules pour un milliard d'invocations affines.
-        // C'est minuscule — Landauer est une borne thermodynamique, pas
-        // une mesure du hardware actuel qui dissipe 10⁵ × plus.
+        // C'est minuscule â€” Landauer est une borne thermodynamique, pas
+        // une mesure du hardware actuel qui dissipe 10âµ Ã— plus.
     }
 
     #[test]
@@ -953,7 +948,7 @@ mod tests {
         assert_eq!(acc.total_bits_erased, 128 + 127);
     }
 
-    // ----- Cross-cap : programme extrait via Ω-2.0 -----
+    // ----- Cross-cap : programme extrait via Î©-2.0 -----
 
     #[test]
     fn extracted_programs_are_costable() {
@@ -976,18 +971,18 @@ mod tests {
 
     #[test]
     fn cost_invariant_under_canonicalize_for_simple_programs() {
-        // Un programme simple sans dead code → canonicalize est l'identité,
-        // donc le coût est identique.
+        // Un programme simple sans dead code â†’ canonicalize est l'identitÃ©,
+        // donc le coÃ»t est identique.
         let p = affine_program();
         let c1 = program_cost(&p);
         let canon = p.canonical().unwrap();
         let c2 = program_cost(&canon);
         // Affine_program n'a pas de dead code ni de redondance, donc
-        // canonicalize devrait préserver le coût.
+        // canonicalize devrait prÃ©server le coÃ»t.
         assert_eq!(c1.total_bits_erased, c2.total_bits_erased);
     }
 
-    // ----- Ω-6.3 : Tensor Landauer cost -----
+    // ----- Î©-6.3 : Tensor Landauer cost -----
 
     #[test]
     fn tensor_dtype_bits_match_byte_size_x8() {
@@ -1013,7 +1008,7 @@ mod tests {
 
     #[test]
     fn tensor_program_cost_addf32_4_elements_is_128_bits() {
-        // AddF32 sur 4 éléments F32 (32 bits chacun) : 4 × 32 = 128 bits erased.
+        // AddF32 sur 4 Ã©lÃ©ments F32 (32 bits chacun) : 4 Ã— 32 = 128 bits erased.
         let p = tensor_addf32_program();
         let c = tensor_program_cost(&p);
         assert_eq!(c.op_count, 4);
@@ -1024,9 +1019,9 @@ mod tests {
 
     #[test]
     fn tensor_program_cost_matmul_2x3_3x2_correct() {
-        // Matmul (2x3) × (3x2) sur F32 : output 2×2 = 4 elements.
+        // Matmul (2x3) Ã— (3x2) sur F32 : output 2Ã—2 = 4 elements.
         // Chaque element = 3 mults + 2 adds = 2*3-1 = 5 ops.
-        // Total bits = 4 × 5 × 32 = 640 bits.
+        // Total bits = 4 Ã— 5 Ã— 32 = 640 bits.
         use crate::kasm::tensor::{TensorNode, TensorShape};
         let a_vals = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
         let b_vals = [1.0f32, 0.0, 0.0, 1.0, 2.0, 3.0];
@@ -1049,11 +1044,11 @@ mod tests {
 
     #[test]
     fn tensor_dtype_costs_scale_with_dtype_bits() {
-        // Même structure, dtypes différents : bits erased scale linéairement.
+        // MÃªme structure, dtypes diffÃ©rents : bits erased scale linÃ©airement.
         // Compare F32 (32 bits) vs Posit16 (16 bits) sur add 4-elem.
         use crate::kasm::tensor::{TensorNode, TensorShape};
         let shape = TensorShape::vec(4).unwrap();
-        // Posit16 : 4 × 16 = 64 bits.
+        // Posit16 : 4 Ã— 16 = 64 bits.
         let pool_p16: Vec<u8> = [0u16, 0, 0, 0]
             .iter()
             .flat_map(|x| x.to_le_bytes())
@@ -1069,7 +1064,7 @@ mod tests {
         assert_eq!(c.total_bits_erased, 64);
     }
 
-    // ----- Ω-6.5 : Observation passive d'une MonsterNode -----
+    // ----- Î©-6.5 : Observation passive d'une MonsterNode -----
 
     #[test]
     fn loaded_programs_landauer_cost_zero_for_empty_node() {
@@ -1087,7 +1082,7 @@ mod tests {
         assert_eq!(cost.total_bits_erased, 0);
     }
 
-    // ----- Ω-6.4 : Bench Landauer config-driven (intégration Ω-5) -----
+    // ----- Î©-6.4 : Bench Landauer config-driven (intÃ©gration Î©-5) -----
 
     #[test]
     fn landauer_of_trained_affine_bench_runs_and_returns_finite() {
@@ -1110,30 +1105,30 @@ mod tests {
             config: std::rc::Rc::clone(&cfg),
         };
         let score = bench.run(&node);
-        assert!(score > 0, "trained affine doit avoir un coût Landauer non-nul");
-        assert!(score < u64::MAX / 4, "training réussi → pas de pénalité");
+        assert!(score > 0, "trained affine doit avoir un coÃ»t Landauer non-nul");
+        assert!(score < u64::MAX / 4, "training rÃ©ussi â†’ pas de pÃ©nalitÃ©");
     }
 
     #[test]
     fn canonicalize_can_reduce_cost_when_dead_code_eliminated() {
-        // Programme avec une op morte : output ignore le résultat de Mul.
+        // Programme avec une op morte : output ignore le rÃ©sultat de Mul.
         let p = Program::new(
             Target::Cpu, 1, 1, 16,
             vec![
                 Node::input(0),
                 Node::const_i64(7),
-                Node::mul(0, 1),     // Cette Mul est dead — output n'utilise pas.
+                Node::mul(0, 1),     // Cette Mul est dead â€” output n'utilise pas.
                 Node::output(0, Ty::I64),
             ],
         ).unwrap();
         let c_before = program_cost(&p);
         let canon = p.canonical().unwrap();
         let c_after = program_cost(&canon);
-        // Le canonicalize doit éliminer la Mul morte.
+        // Le canonicalize doit Ã©liminer la Mul morte.
         assert!(c_after.total_bits_erased < c_before.total_bits_erased);
     }
 
-    // ----- Ω-6.2 : Hardware energy models -----
+    // ----- Î©-6.2 : Hardware energy models -----
 
     #[test]
     fn ideal_landauer_matches_existing_landauer() {
@@ -1186,7 +1181,7 @@ mod tests {
 
     #[test]
     fn cmos_nonzero_for_bijective_ops() {
-        // Sur CMOS, même les ops bijectives coutent (energy de switching transistor).
+        // Sur CMOS, mÃªme les ops bijectives coutent (energy de switching transistor).
         let m = HardwareEnergyModel::Cmos7nm;
         assert!(m.joules_per_bijective_op(300.0) > 0.0);
     }
@@ -1217,7 +1212,7 @@ mod tests {
         // Landauer : bit_flip = bijectif = 0 J. Le programme ne fait que routing
         // et bijection donc 0 bits erased, 1 bijective op.
         assert_eq!(j_landauer, 0.0);
-        // CMOS : bit_flip dissipe quand même. > 0.
+        // CMOS : bit_flip dissipe quand mÃªme. > 0.
         assert!(j_cmos > 0.0);
     }
 
@@ -1243,11 +1238,11 @@ mod tests {
             model: HardwareEnergyModel::Cmos7nm,
         };
         let score = bench.run(&node);
-        assert!(score > 0, "bench doit retourner score > 0 sur entraînement réussi");
-        assert!(score < u64::MAX / 4, "score ne doit pas être pénalité");
+        assert!(score > 0, "bench doit retourner score > 0 sur entraÃ®nement rÃ©ussi");
+        assert!(score < u64::MAX / 4, "score ne doit pas Ãªtre pÃ©nalitÃ©");
     }
 
-    // ----- Ω-6.2.x : Dissipation dynamique -----
+    // ----- Î©-6.2.x : Dissipation dynamique -----
 
     fn small_lossy_program() -> Program {
         // 2 ops lossy = 128 bits erased.
@@ -1269,7 +1264,7 @@ mod tests {
         let nominal = DynamicDissipation::baseline(HardwareEnergyModel::Cmos7nm);
         let mut undervolted = nominal;
         undervolted.voltage_scale = 0.5;
-        // 0.5² = 0.25, donc undervolted = nominal * 0.25.
+        // 0.5Â² = 0.25, donc undervolted = nominal * 0.25.
         let n = nominal.joules_per_invocation(&p, 300.0);
         let u = undervolted.joules_per_invocation(&p, 300.0);
         assert!(approx_eq(u, 0.25 * n, 1e-9));
@@ -1304,7 +1299,7 @@ mod tests {
         let cloud = DynamicDissipation::datacenter_cloud_2024();
         let e_baseline = baseline.joules_per_invocation(&p, 300.0);
         let e_cloud = cloud.joules_per_invocation(&p, 300.0);
-        // Cloud a voltage 0.85 (E×0.7225) et PUE 1.5, donc ratio ~1.084.
+        // Cloud a voltage 0.85 (EÃ—0.7225) et PUE 1.5, donc ratio ~1.084.
         let expected_ratio = 0.85 * 0.85 * 1.5;
         let actual_ratio = e_cloud / e_baseline;
         assert!(approx_eq(actual_ratio, expected_ratio, 1e-9));

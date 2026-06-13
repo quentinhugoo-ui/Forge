@@ -1,7 +1,10 @@
 target/
+target-fuzz-local/
 .vs/
 .tmp/
 .codex-tmp/
+.codex-targets/
+.codex-tools/
 .chrome-debug/
 .codex/
 .gemini/
@@ -49,6 +52,11 @@ examples/forge_tauri_ui/.tmp-source-discovery/
 examples/forge_tauri_ui/.tmp-source-review/
 examples/forge_tauri_ui/.tmp-source-review-live/
 examples/forge_tauri_ui/src-tauri/.codex-tmp/
+
+# InGen Electron product shell lane
+examples/ingen_electron_shell/node_modules/
+examples/ingen_electron_shell/dist/
+examples/ingen_electron_shell/dist-electron/
 
 # Act-code KASM ledger (regenerable cache)
 examples/*.ledger.jsonl

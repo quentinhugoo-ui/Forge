@@ -1,0 +1,37 @@
+- region "Panels chat composer and bottom controls":
+  - complementary "Native status dock":
+    - strong: Banger viewport
+    - button "Refresh native probes": Refresh
+    - text: PRIMARY
+    - code: banger=texture_probe=true visible=true frame_hash=shadow
+    - text: GPU
+    - code: gpu=wgpu shadow residency
+    - text: JOBS
+    - code: queued=0 running=0 done=0 failed=0
+    - text: PROOF
+    - code: frame-hash=shadow, ui_hash=pending
+    - button "Open native details"
+  - region "Conversation transcript":
+    - article:
+      - strong: Core
+      - code: native-state-sha
+      - paragraph: "Rust NativeStateKernel projection ready: sessions=1 jobs=0 codeact_refs=0"
+    - article:
+      - strong: InGen
+      - code: slint-parity-sha
+      - paragraph: Slint parity slice waiting for typed IPC promotion. Banger and WebExplorer remain native authorities.
+  - form "Chat composer":
+    - button "Attach files":
+      - text: +
+      - code
+    - textbox "Message"
+    - button "Codex": C
+    - button "Claude": C
+    - button "OpenRouter": O
+    - button "Send message"
+  - navigation "Bottom controls":
+    - button "ask-permissions"
+    - button "Codex"
+    - button "Moyen"
+    - code: uploads=0
+    - code: shadow:fallback

@@ -1,0 +1,122 @@
+export interface BrainUserMemorySlot {
+  schema: "ingen.brain.memory.user_identity.v1";
+  scope: "brain.memory.user.identity";
+  stableKey: "user.identity.first_name";
+  preferredFirstName: string;
+  trust: "unset" | "seeded_profile" | "user_confirmed" | "llm_inferred_unverified";
+  evidence: string;
+}
+
+export interface BrainAgentMemorySlot {
+  schema: "ingen.brain.memory.agent_identity.v1";
+  scope: "brain.memory.agent.identity";
+  stableKey: "agent.identity.first_name";
+  preferredFirstName: string;
+  trust: "unset" | "seeded_product" | "user_confirmed";
+  evidence: string;
+}
+
+const USER_STORAGE_KEY = "ingen.brain.memory.user_identity.v1";
+const AGENT_STORAGE_KEY = "ingen.brain.memory.agent_identity.v1";
+
+const fallbackBrainUserMemory: BrainUserMemorySlot = {
+  schema: "ingen.brain.memory.user_identity.v1",
+  scope: "brain.memory.user.identity",
+  stableKey: "user.identity.first_name",
+  preferredFirstName: "",
+  trust: "unset",
+  evidence: "brain_identity_editor:user_first_name_unset"
+};
+
+const fallbackBrainAgentMemory: BrainAgentMemorySlot = {
+  schema: "ingen.brain.memory.agent_identity.v1",
+  scope: "brain.memory.agent.identity",
+  stableKey: "agent.identity.first_name",
+  preferredFirstName: "",
+  trust: "unset",
+  evidence: "brain_identity_editor:agent_first_name_unset"
+};
+
+function isBrainUserMemorySlot(value: unknown): value is BrainUserMemorySlot {
+  const candidate = value as Partial<BrainUserMemorySlot>;
+  return (
+    candidate?.schema === "ingen.brain.memory.user_identity.v1" &&
+    candidate.scope === "brain.memory.user.identity" &&
+    candidate.stableKey === "user.identity.first_name" &&
+    typeof candidate.preferredFirstName === "string"
+  );
+}
+
+function isBrainAgentMemorySlot(value: unknown): value is BrainAgentMemorySlot {
+  const candidate = value as Partial<BrainAgentMemorySlot>;
+  return (
+    candidate?.schema === "ingen.brain.memory.agent_identity.v1" &&
+    candidate.scope === "brain.memory.agent.identity" &&
+    candidate.stableKey === "agent.identity.first_name" &&
+    typeof candidate.preferredFirstName === "string"
+  );
+}
+
+export function readBrainUserMemory(): BrainUserMemorySlot {
+  if (typeof window === "undefined") return fallbackBrainUserMemory;
+  try {
+    const raw = window.localStorage.getItem(USER_STORAGE_KEY);
+    if (!raw) {
+      window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(fallbackBrainUserMemory));
+      return fallbackBrainUserMemory;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    return isBrainUserMemorySlot(parsed) ? parsed : fallbackBrainUserMemory;
+  } catch {
+    return fallbackBrainUserMemory;
+  }
+}
+
+export function writeBrainUserMemory(preferredFirstName: string): BrainUserMemorySlot {
+  const next: BrainUserMemorySlot = {
+    ...fallbackBrainUserMemory,
+    preferredFirstName,
+    trust: "user_confirmed",
+    evidence: "brain_identity_editor:user_first_name"
+  };
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Keep the in-memory edit even if localStorage is temporarily unavailable.
+    }
+  }
+  return next;
+}
+
+export function readBrainAgentMemory(): BrainAgentMemorySlot {
+  if (typeof window === "undefined") return fallbackBrainAgentMemory;
+  try {
+    const raw = window.localStorage.getItem(AGENT_STORAGE_KEY);
+    if (!raw) {
+      window.localStorage.setItem(AGENT_STORAGE_KEY, JSON.stringify(fallbackBrainAgentMemory));
+      return fallbackBrainAgentMemory;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    return isBrainAgentMemorySlot(parsed) ? parsed : fallbackBrainAgentMemory;
+  } catch {
+    return fallbackBrainAgentMemory;
+  }
+}
+
+export function writeBrainAgentMemory(preferredFirstName: string): BrainAgentMemorySlot {
+  const next: BrainAgentMemorySlot = {
+    ...fallbackBrainAgentMemory,
+    preferredFirstName,
+    trust: "user_confirmed",
+    evidence: "brain_identity_editor:agent_first_name"
+  };
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(AGENT_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Keep the in-memory edit even if localStorage is temporarily unavailable.
+    }
+  }
+  return next;
+}

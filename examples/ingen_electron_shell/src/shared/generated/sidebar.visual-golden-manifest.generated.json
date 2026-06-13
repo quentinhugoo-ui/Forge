@@ -1,0 +1,128 @@
+{
+  "schema": "ingen.electron.sidebar_visual_golden_manifest.v1",
+  "slice_id": "sidebar_sessions",
+  "source": "examples/ingen_electron_shell/scripts/capture-sidebar-goldens.mjs",
+  "status": "captured",
+  "generated_by": "vite+playwright-buffer-screenshot",
+  "captures": [
+    {
+      "state": {
+        "id": "sidebar",
+        "query": ""
+      },
+      "viewport": {
+        "id": "desktop",
+        "width": 1535,
+        "height": 786,
+        "deviceScaleFactor": 1
+      },
+      "screenshot": "reference_screenshots/electron/sidebar/sidebar-sidebar.png",
+      "screenshot_sha256": "8bf30ad5dc85f1ff3b0c0f2b6ace5daa4f0a0730c26dc3ea2f0aacd43668afb0",
+      "aria_snapshot": "reference_screenshots/electron/sidebar/sidebar-sidebar.aria.yml",
+      "aria_sha256": "fc2f2351f692a1bda4bda0082140379923eff7a1208cf7fd43cf9c50546ae3a4",
+      "metrics": {
+        "leftPanel": {
+          "width": 277,
+          "height": 732,
+          "overflowX": false
+        },
+        "sessionsCanvasVisible": false,
+        "profileCanvasVisible": false,
+        "sidebarButtonCount": 19,
+        "buttonOverflowCount": 0
+      }
+    },
+    {
+      "state": {
+        "id": "sessions-recents",
+        "query": "?sidebar-state=sessions-recents"
+      },
+      "viewport": {
+        "id": "desktop",
+        "width": 1535,
+        "height": 786,
+        "deviceScaleFactor": 1
+      },
+      "screenshot": "reference_screenshots/electron/sidebar/sidebar-sessions-recents.png",
+      "screenshot_sha256": "a09a43bf3679293633981ba143798ac2d5082e802d1a600026ff3a9c9912868a",
+      "aria_snapshot": "reference_screenshots/electron/sidebar/sidebar-sessions-recents.aria.yml",
+      "aria_sha256": "3d0ccedbff6fe9f60061beded8fd67c60fc176f7aa7d50b0c95b734762bedcc1",
+      "metrics": {
+        "leftPanel": {
+          "width": 277,
+          "height": 732,
+          "overflowX": false
+        },
+        "sessionsCanvasVisible": true,
+        "profileCanvasVisible": false,
+        "sidebarButtonCount": 25,
+        "buttonOverflowCount": 0
+      }
+    },
+    {
+      "state": {
+        "id": "sessions-archived",
+        "query": "?sidebar-state=sessions-archived"
+      },
+      "viewport": {
+        "id": "desktop",
+        "width": 1535,
+        "height": 786,
+        "deviceScaleFactor": 1
+      },
+      "screenshot": "reference_screenshots/electron/sidebar/sidebar-sessions-archived.png",
+      "screenshot_sha256": "afa4e8bf9dd6d42e162a421251a22a73c6ff86a5a5a9ff5b370d8b364bd62689",
+      "aria_snapshot": "reference_screenshots/electron/sidebar/sidebar-sessions-archived.aria.yml",
+      "aria_sha256": "ff03ccebb28d8482da4ed3eaa52531233f738c8296c3fab857266df58ef4c767",
+      "metrics": {
+        "leftPanel": {
+          "width": 277,
+          "height": 732,
+          "overflowX": false
+        },
+        "sessionsCanvasVisible": true,
+        "profileCanvasVisible": false,
+        "sidebarButtonCount": 19,
+        "buttonOverflowCount": 0
+      }
+    },
+    {
+      "state": {
+        "id": "profile",
+        "query": "?sidebar-state=profile"
+      },
+      "viewport": {
+        "id": "desktop",
+        "width": 1535,
+        "height": 786,
+        "deviceScaleFactor": 1
+      },
+      "screenshot": "reference_screenshots/electron/sidebar/sidebar-profile.png",
+      "screenshot_sha256": "4955977aaf7638f52e1f279f30ae63464692407f1fdfc3d88a253dbce005a17b",
+      "aria_snapshot": "reference_screenshots/electron/sidebar/sidebar-profile.aria.yml",
+      "aria_sha256": "f482e7c92faae64b42ca80b07afcfbf29c6ba3de054751f45478ee4e274dbdd7",
+      "metrics": {
+        "leftPanel": {
+          "width": 277,
+          "height": 732,
+          "overflowX": false
+        },
+        "sessionsCanvasVisible": false,
+        "profileCanvasVisible": true,
+        "sidebarButtonCount": 19,
+        "buttonOverflowCount": 0
+      }
+    }
+  ],
+  "gates": {
+    "expected_states": [
+      "sidebar",
+      "sessions-recents",
+      "sessions-archived",
+      "profile"
+    ],
+    "max_button_overflow_count": 0,
+    "left_panel_width": 279
+  },
+  "proof_hash": "28f459c03dba5e4342f7f01275570f31774d57b1cdd050cf9db68dffd717c953"
+}

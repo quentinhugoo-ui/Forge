@@ -1,409 +1,957 @@
-# Banger: Ingénierie Computationnelle & Géométrie Implicite
+# InGen Compute - Pipeline Cible
 
-Ce document définit la vision et l'architecture technique pour transformer le moteur **Banger** d'un simple visualiseur 3D en une plateforme de synthèse générative pilotée par la physique (Computational Engineering).
+InGen doit viser un moteur natif capable de rivaliser avec les moteurs AAA,
+mais avec une difference centrale: Forge rend les calculs content-addressed
+pour eviter de recalculer des fragments identiques a toutes les echelles.
 
-## 1. Le Changement de Paradigme : Du Mesh au SDF
+## Hypothese
 
-L'ingénierie traditionnelle repose sur le **Mesh** (triangles), une représentation *discrète* et *statique*. L'ingénierie computationnelle exige une représentation *continue* et *dynamique* : le **SDF** (Signed Distance Field).
+Unreal/Glacier gagnent par un moteur natif C++ + GPU bas niveau.
 
-### Pourquoi abandonner le Mesh pour la conception ?
-*   **Rigidité Topologique** : Modifier un mesh complexe (ajouter un canal interne, fusionner deux pièces) est instable et produit des erreurs géométriques.
-*   **Coût de Calcul** : L'optimisation de forme sur des millions de triangles est exponentiellement lente.
-*   **Perte de Précision** : Les arrondis et les structures organiques sont approximés par des facettes plates.
-
-### L'Avantage du SDF (Signed Distance Fields)
-Un SDF est une fonction mathématique $f(p) \rightarrow d$ où $p$ est un point dans l'espace et $d$ la distance à la surface la plus proche.
-*   **Opérations Booléennes Parfaites** : L'union, l'intersection et la soustraction sont des opérations mathématiques simples (min/max).
-*   **Fusions Organiques (Smooth Blending)** : On peut fusionner deux formes avec une transition fluide ("veineuse") par simple interpolation.
-*   **Topologie Fluide** : La matière peut se séparer ou se rejoindre sans casser le modèle. La topologie "émerge" de la fonction.
-
-## 2. Le Rôle de Rust et KASM
-
-L'objectif est de remplacer Python par un pipeline **Rust natif + KASM bytecode** pour garantir performance et sécurité.
-
-### KASM comme Langage de Description Physique
-Au lieu d'importer un fichier `FBX` ou `STL`, l'ingénieur (ou l'agent) fournit un programme **KASM**.
-*   **Input** : Contraintes physiques (vecteurs de force, zones de chaleur, ancres mécaniques).
-*   **Logique** : Le bytecode KASM décrit comment la matière doit réagir.
-*   **Output** : Une fonction de distance que le GPU peut évaluer en temps réel.
-
-### Banger comme Solveur de Champ
-Banger (en Rust) devient l'hôte qui exécute ce champ :
-1.  **JIT Compilation** : Le programme KASM est transformé en un Compute Shader (`wgpu`).
-2.  **GPU Evaluation** : Le GPU calcule la forme optimale à 60 FPS.
-3.  **Extraction à la demande** : Le mesh n'est généré qu'à la toute fin, via un algorithme de *Dual Contouring*, pour l'affichage ou l'impression 3D.
-
-## 3. L'Architecture Hybride "KGNF" (KASM-Gaussian-Neural-Field)
-
-Pour atteindre une efficacité indépassable, Banger fusionne cinq technologies de pointe dans une architecture "Neuro-Sémantique" adressée par le contenu.
-
-### A. Le Cerveau : KASM & Espace Latent Multimodal
-*   **Rôle** : Orchestration sémantique et déduplication universelle. 
-*   **Puissance** : Le système lie le langage (intentions), l'image et la matière (SDF). L'IA Frontier navigue dans un espace latent où des concepts abstraits ("agressif", "souple") sont corrélés à des paramètres géométriques réels. Le hachage KASM assure que chaque "idée" physique est mémorisée et dédupliquée.
-
-### B. L'ADN : Neural Fields (INRs)
-*   **Rôle** : Compression de la logique de la matière et des propriétés physiques (densité, élasticité, thermique).
-*   **Puissance** : Au lieu de stocker des gigaoctets de données, l'objet est encodé dans un minuscule réseau de neurones qui génère les paramètres de l'objet à la volée.
-
-### C. La Vue : Gaussian Splatting (3DGS)
-*   **Rôle** : Interface de rendu hyper-réaliste à haute fréquence (200+ FPS).
-*   **Puissance** : Les Gaussiennes servent de "proxy visuel" léger ancré sur le SDF. KASM déduplique les sets de Gaussiennes pour les structures répétitives, permettant d'afficher des scènes d'une complexité infinie avec une consommation RAM minimale.
-
-### D. Le Corps : SDF (Signed Distance Fields)
-*   **Rôle** : "Vérité" mathématique et garantie de fabricabilité.
-*   **Puissance** : Le SDF définit le volume réel et les normales exactes. Il sert de guide aux Gaussiennes et de base au G-Code pour l'impression 3D.
-
-### E. L'Évolution : Rendu Différentiable & Optimisation Topologique
-*   **Rôle** : Boucle de rétroaction entre la physique et la forme.
-*   **Puissance** : En utilisant le gradient des Gaussiennes et du SDF, Banger permet une optimisation de forme en temps réel. La matière "coule" vers la solution optimale dictée par les contraintes physiques fournies par l'IA.
-
-## 4. Fondements Mathématiques de Haute Précision
-
-Banger intègre des structures mathématiques avancées pour garantir la fiabilité et la performance des systèmes complexes.
-
-*   **Topologie Symplectique (Conservation d'Énergie)** : Mathématique des systèmes hamiltoniens garantissant que les mécanismes conçus respectent strictement les lois de conservation. Indispensable pour les turbines et les systèmes de stockage d'énergie ultra-efficients.
-*   **Optimisation Bayésienne (Résilience Réelle)** : Gestion de l'incertitude et des micro-variations des matériaux. Banger ne conçoit pas seulement une pièce idéale, mais une pièce robuste capable de fonctionner malgré les défauts de fabrication ou les changements environnementaux.
-*   **Géométrie Différentielle Discrète (DGD)** : Calcul infinitésimal sur structures non-lisses pour optimiser les trajectoires de machines (CNC/Impression). Élimine les vibrations mécaniques par une synchronisation parfaite entre la courbure mathématique et la dynamique des moteurs.
-*   **Théorie des Groupes de Lie (Précision Cinématique)** : Algèbre des rotations et transformations spatiales. Permet une précision absolue dans l'assemblage et le mouvement des systèmes multi-articulés (robotique complexe).
-
-## 5. Perfection Formelle : Le Niveau "God-Tier"
-
-Pour atteindre un niveau de conception indépassable, Banger utilise des abstractions mathématiques de frontière.
-
-*   **Algèbre Géométrique Conformale (CGA)** : Représentation unifiée des objets géométriques (points, sphères, plans) en 5D pour une logique 3D simplifiée. Permet des rotations et transformations sans singularité, optimisant le code GPU par un facteur 10.
-*   **Théorie des Catégories Appliquée** : Cadre logique pour la composition de contraintes physiques hétérogènes. Garantit que la fusion de plusieurs champs (ex: fluide + structure) reste mathématiquement cohérente et physiquement valide (Universal Physics Compiler).
-*   **Treillis Non-Euclidiens (Géométrie Hyperbolique)** : Conception de micro-structures à surface d'échange infinie pour un volume fini. Idéal pour l'absorption de choc extrême et la dissipation thermique massive (mimétisme des coraux).
-*   **Calcul Stochastique d'Itô** : Modélisation du bruit et des vibrations aléatoires à l'échelle micrométrique. Permet de concevoir des systèmes qui transforment le bruit environnemental en énergie utile (Harvesting) ou en stabilité dynamique.
-
-## 6. Logique Universelle : L'Oracle de la Matière
-
-Le stade ultime de la conception mathématique dans Banger permet de dériver la forme à partir de l'équilibre des forces universelles.
-
-*   **Théorie du Transport Optimal (Monge-Kantorovich)** : Calcul des trajectoires de masse (fluide, chaleur) minimisant la dépense énergétique. Utilisation de la distance de Wasserstein pour concevoir des réseaux d'échange thermiques et fluidiques à l'efficacité thermodynamique maximale.
-*   **Théorie des Motifs (Géométrie de Grothendieck)** : Extraction et transfert de l'essence architecturale entre domaines hétérogènes (ex: application formelle d'une logique structurelle biologique à un fuselage aéronautique).
-*   **Analyse de Persistance Multidimensionnelle** : Extension de la vérification topologique à l'ensemble des paramètres physiques (pression, température, élasticité). Identification préventive des points de singularité et des faiblesses structurelles multi-contraintes.
-*   **Géométrie de Poisson & Symbiose de Champs** : Modélisation mathématique de l'interaction réciproque entre champs physiques (acoustique, thermique, structure). Permet de calculer l'équilibre global d'un système complexe comme un état de symbiose physique parfaite.
-
-## 7. Singularité Mathématique : Le Niveau Oméga
-
-Banger atteint la frontière ultime où la mathématique devient indiscernable de la réalité physique elle-même.
-
-*   **Calcul Fractionnaire (Matière à Mémoire)** : Généralisation des ordres de dérivation pour modéliser la viscoélasticité et la mémoire intrinsèque des matériaux complexes (polymères, tissus biologiques). Permet de concevoir des objets dont la structure physique se souvient et s'adapte à son historique de contraintes.
-*   **Théorie des Faisceaux (Sheaf Theory)** : Cadre assurant la cohérence totale des données multi-échelles. Garantit que toute modification locale (atome) est mathématiquement compatible avec l'intégrité globale du système (structure macro), agissant comme un debugger de réalité.
-*   **Géométrie de l'Information** : Application de la géométrie différentielle aux variétés de probabilités. Optimise l'apprentissage des Neural Fields en suivant des trajectoires géodésiques dans l'espace de la connaissance, réduisant les temps d'entraînement par un facteur 1000.
-*   **Flux de Ricci & Perfection Harmonique** : Processus de déformation de variétés pour lisser les courbures et atteindre l'état d'équilibre géométrique absolu. Banger utilise le flux de Ricci pour sublimer les formes générées par l'IA vers une perfection esthétique et une efficacité structurelle totale.
-
-## 8. Architectures Transcendantes : Le Niveau Infini
-
-Passage de la géométrie descriptive à la physique mimétique rigoureuse.
-
-*   **Calcul Extérieur Discret (DEC - Mimétisme Physique)** : Discrétisation des équations physiques préservant les propriétés topologiques globales (conservation de masse/flux). Banger simule des phénomènes électromagnétiques ou fluidiques (Maxwell/Navier-Stokes) sans erreur d'approximation numérique.
-*   **Réseaux Équivariants de Jauge (Gauge Equivariance)** : IA forçant le respect strict des symétries locales (rotation, translation) via le transport parallèle sur variétés. La solution générée est une "Vérité Invariante" indépendante du référentiel.
-*   **Flux de Willmore & Helfrich (Énergie Minimale)** : Processus d'évolution de surface minimisant l'énergie de courbure. Permet de concevoir des surfaces minimales (gyroscopes, membranes) structurellement indestructibles par la "Moindre Action".
-*   **Inégalités Variationnelles Différentielles (DVI)** : Gestion des phénomènes discontinus (impacts, frottement sec, stick-slip). Banger conçoit des mécanismes compliants et des matériaux granulaires capables de résister aux chocs extrêmes sans crash numérique.
-
-## 9. Architectures de l'Être : Le Niveau Transcendantal
-
-Souveraineté sur l'organisation de la matière complexe et des états de réalité.
-
-*   **Géométrie Non-Commutative (NCG)** : Utilisation de l'algèbre d'opérateurs (Triple Spectral) pour modéliser des milieux fractals ou apériodiques (Quasicristaux). Banger calcule distance et courbure sur des espaces sans grille, garantissant la protection topologique en milieu désordonné.
-*   **Théorie des Jauges Supérieures** : Extension des symétries locales via des n-gerbes et 2-groupes. Banger synthétise des matériaux avec une protection topologique de dimension supérieure, rendant la structure immunisée contre les défauts de surface.
-*   **Géométrie Algébrique Dérivée (DAG)** : Traitement des collisions de contraintes contradictoires comme des "intersections dérivées". Préserve l'information homologique lors des transitions de phase, permettant de maîtriser les états de matière singuliers.
-*   **Transport Optimal Multi-Marginal (MMOT)** : Optimisation simultanée de N phases de matières via les barycentres de Wasserstein. Banger réalise une "Alchimie Multi-Matériaux" où les composants fusionnent de manière mathématiquement fluide et optimale.
-
-## 10. Architecture du Moteur Banger "Frontier"
-
-### Module `BangerField` (Cœur Hybride)
-*   **`SDFKernel`** : Évaluation GPU des fonctions de distance.
-*   **`NeuralJIT`** : Compilation des poids neuronaux KASM en shaders.
-*   **`KASMRegistry`** : Déduplication spatiale et gestion des hashs de connaissance.
-
-### Module `BangerSplat` (Visualisation & Jumeau Numérique)
-*   **`SplatRenderer`** : Rendu rasterisé de Gaussiennes dédupliquées par KASM.
-*   **`DigitalTwinSync`** : Synchronisation en temps réel entre l'objet physique (via capteurs) et son modèle SDF/Splatting. Le virtuel et le réel fusionnent dans un état synchrone.
-*   **`DiffEngine`** : Moteur de rendu différentiable pour la capture et l'optimisation.
-
-### Module `BangerSync` (Pont Fabrication)
-*   **`DirectGCode`** : Génération de trajectoires d'impression directement depuis le champ hybride (Zéro Mesh).
-*   **`PrinterProof`** : Validation physique avant fabrication.
-
-## 11. Le Pont : Conversion Mesh vers SDF
-
-Pour intégrer l'héritage du design classique (Blender, CAO) dans le pipeline computationnel, Banger implémente une passerelle de conversion haute performance.
-
-*   **Réparation Automatique (Winding Numbers)** : La conversion vers le SDF permet de "reboucher" les meshs non-hermétiques (non-manifold) ou présentant des faces inversées, transformant un fichier "sale" en un volume mathématiquement pur.
-*   **Échantillonnage GPU** : Banger utilise le calcul massivement parallèle pour échantillonner les meshs OBJ/FBX et générer des textures 3D de distance ou des approximations fonctionnelles compactes.
-*   **Enrichissement Sémantique** : Une fois converti, un mesh statique devient un objet dynamique. On peut lui appliquer des opérations booléennes fluides, des structures internes (infill) ou des optimisations de forme physiques impossibles dans son format d'origine.
-
-## 12. Applications Pratiques & Cas d'Usage
-
-### A. Sculpture "Sémantique" (Type Blender)
-*   **Absence de Topologie** : Contrairement à Blender où l'on doit gérer les quads et les n-gons, le SDF permet une sculpture "liquide". On peut étirer, trouer ou fusionner des formes sans jamais casser la surface.
-*   **Modélisation par Intention** : On ne déplace pas des points, on compose des intentions : "Ajoute une branche organique ici avec une fusion douce". C'est une approche beaucoup plus naturelle pour un agent ou un artiste.
-
-### B. Fabrication Hybride & Additive (SDF to Machine)
-Le pipeline de Banger dépasse la simple impression 3D pour inclure la **Fabrication Hybride**.
-*   **Slicing & Toolpathing Direct** : Banger génère des trajectoires d'impression (additive) et d'usinage (soustractive) directement depuis le SDF. En définissant le volume "cible" et le volume "brut", le moteur calcule les passes de fraisage pour obtenir des états de surface micrométriques sur des zones critiques.
-*   **Zéro Erreur de Topologie** : Un SDF définit un volume "plein" par nature, éliminant les erreurs de faces inversées ou de trous.
-*   **Compilation de Matière** : Le fichier envoyé à la machine est un programme KASM compact décrivant la logique de la pièce, transformant l'imprimante ou la CNC en un processeur de géométrie.
-
-### C. Rendu Temps Réel & Jeux Vidéo sans Mesh
-*   **Destruction Dynamique** : La destruction d'un environnement se fait par simple soustraction mathématique en temps réel, offrant un réalisme impossible avec les triangles.
-*   **Raymarching** : Utilisation de techniques de rendu par lancer de rayons pour afficher des scènes avec une fidélité mathématique parfaite, éliminant le besoin de "LOD" (Level of Detail) et de textures de normale complexes.
-
-### D. Ingénierie Biomédicale & Bioprinting
-*   **Modélisation Anatomique** : Fidélité extrême pour les tissus mous et les organes complexes, capturée via Neural Fields à partir d'imageries médicales (IRM/Scanner).
-*   **Physique des Corps Mous** : Contrairement aux meshs qui s'étirent et se cassent, le SDF permet une simulation de contraction et de déformation organique fluide et continue.
-*   **Remodelage Tissulaire 4D** : Utilisation de SDF spatio-temporels pour simuler la maturation biologique et la croissance cellulaire post-impression.
-*   **Vascularisation Procédurale** : Utilisation de KASM pour générer des réseaux capillaires et veineux complexes à l'intérieur des volumes SDF, optimisés par le hachage pour une empreinte mémoire minimale.
-*   **Contrôle Neuro-Bio-Synthétique** : Utilisation de KASM comme pont de signal pour stimuler électriquement des tissus nerveux ou musculaires imprimés.
-*   **Bioprinting (SDF -> Cell-Code)** : Impression directe de tissus vivants avec un contrôle au micron sur le dépôt des cellules, indispensable pour la création d'organes fonctionnels et de prothèses personnalisées.
-
-## 13. Matière Souveraine : Logique, Vérification & Survie
-
-*   **Auto-Réparation Programmée (Self-Healing)** : Intégration de réservoirs de matière cicatrisante calculés par le SDF. En cas de rupture structurelle détectée par homologie persistante, le système déclenche une réparation ciblée.
-*   **Stéganographie Physique (Identité Atomique)** : Utilisation du SDF pour injecter des micro-variations de densité ou de géométrie invisibles à l'œil nu (identifiants, clés cryptographiques) au cœur de la structure. L'objet devient son propre passeport numérique infalsifiable.
-*   **Morphogenèse (Croissance Adaptative)** : Utilisation de règles locales (automates cellulaires) encodées dans KASM pour faire "pousser" les objets en fonction de leur environnement.
-*   **Vérification Topologique (Homologie Persistante)** : Preuve mathématique de la santé structurelle du SDF (absence de bulles d'air ou de discontinuités).
-*   **Preuves à Connaissance Nulle (ZK-SNARKs)** : Certification de performance physique sans révéler le code source KASM/SDF.
-*   **Métamatériaux Auxétiques** : Programmation de structures internes via KASM/SDF pour créer des matériaux aux propriétés physiques impossibles dans la nature (ex: expansion latérale sous tension).
-
-## 14. L'Horizon Ultime : Temps, Logique & Atomes
-
-Le stade final de Banger consiste à traiter la matière comme du logiciel pur, régi par le temps et la preuve formelle.
-
-*   **Champs Spatio-Temporels 4D** : Intégration de la dimension temps ($t$) dans les fonctions de distance. Conception d'objets cinématiques qui se déploient, changent de forme ou simulent leur propre usure sur des décennies.
-*   **Sécurité Formelle Neuro-Symbolique** : Couplage des Neural Fields avec des solveurs logiques (SMT Solvers type Z3). Banger garantit mathématiquement le respect de contraintes de sécurité critiques (ex: épaisseur minimale inviolable), éliminant toute "hallucination" géométrique de l'IA.
-*   **SDF Moléculaires & Nano-ingénierie** : Descente de la modélisation au niveau atomique. Banger ne choisit plus un matériau, il conçoit l'alliage optimal en manipulant les champs de potentiels atomiques comme des SDF.
-*   **Espace Latent Hiérarchique (H-SDF)** : Organisation de la connaissance de la matière de l'atome au système complet via KASM. Toute modification locale (micro-structure) se propage instantanément à l'échelle macroscopique sans recalcul global.
-
-## 15. Interaction Systémique : Énergie, Vibrations & Matière Active
-
-*   **Treillis à Récolte d'Énergie (Energy Harvesting)** : Optimisation des micro-structures (lattices) pour capturer les vibrations ou les gradients thermiques environnementaux et les convertir en énergie électrique via des effets piézoélectriques intégrés au SDF.
-*   **Matière Active & Soft Robotics** : Conception d'objets capables de mouvement autonome via des actionneurs internes (matériaux piézoélectriques, polymères à mémoire de forme) simulés et définis directement dans le champ SDF.
-*   **Champs de Proprioception** : Intégration de Neural Fields de tension internes pour permettre au soft-robot de "ressentir" ses propres de déformations en temps réel.
-*   **Couplage Multi-Physique Différentiable** : Intégration de solveurs CFD/thermiques dans la boucle SDF pour une auto-optimisation en temps réel sous contraintes environnementales.
-*   **Géométrie Spectrale** : Conception "accordée" pour éliminer les résonances ou optimiser l'acoustique.
-*   **Tensegrity & Bio-Tension** : Optimisation structurelle basée sur la tension (tendons/câbles) plutôt que la simple compression. Le SDF définit les éléments rigides tandis que le Neural Field calcule les vecteurs de tension optimaux pour une légèreté extrême, imitant les systèmes biologiques.
-*   **Interfaces à Gradient Bio-Inspirées** : Création de transitions de matière continues (os-tendon) pour éliminer les points de rupture mécanique entre les zones rigides et souples.
-
-## 16. Géométrie Fractale, Évolution & Perception
-
-Le stade ultime de Banger permet d'atteindre une complexité infinie et une symbiose totale avec le spectre physique.
-
-*   **Géométrie Fractale & Échelles Infinies (Recursive KASM)** : Utilisation de la récursivité du bytecode KASM pour générer des micro-structures fractales (type éponges de Menger ou structures pulmonaires) sans augmenter la taille des données. Le hachage récursif permet de zoomer du macroscopique au nanométrique avec une fidélité mathématique constante.
-*   **Bio-Mimétisme Évolutif (Latent Evolution)** : Simulation de cycles de sélection naturelle numérique au sein de l'espace latent. L'IA définit les "pressions de survie" (poids, stress, flux) et Banger exécute des millions de mutations SDF/KASM pour faire émerger la solution la plus performante.
-*   **Perception Multispectrale (Invisible Matter)** : Optimisation de la structure géométrique et atomique de l'objet pour interagir avec l'ensemble du spectre électromagnétique (ondes radio, UV, infrarouges). Banger permet de concevoir des objets aux propriétés de furtivité, de filtrage ou de captation d'ondes avancées.
-
-## 17. Production de Médias & Jeux AAA : Le Pipeline sans Données
-
-Banger redéfinit les standards du jeu vidéo AAA en remplaçant le stockage massif de données par l'exécution de logique physique en temps réel.
-
-*   **Architecture Zero-LOD (Continuité Spatiale)** : Grâce à la nature mathématique du SDF, les objets possèdent une résolution infinie. Le moteur élimine les "Level of Detail" (LOD) et le "pop" visuel : on peut zoomer d'une vue planétaire aux pores de la peau d'un personnage sans charger de nouvelles géométries.
-*   **Neural Material Fields (Compression Massive)** : Remplacement des textures 8K (Albedo, Normal, Roughness) par des Neural Fields compacts. La réaction de la surface à la lumière est apprise et générée à la volée, divisant la taille des assets par 100 tout en augmentant la fidélité.
-*   **Physique Volumétrique "Solid-State"** : La destruction n'est plus pré-calculée. Elle devient une simple soustraction mathématique de champ de distance. Les objets étant "pleins" mathématiquement, la structure interne (béton, ferraillage) émerge naturellement lors des impacts.
-*   **Animation par Champs de Déformation** : Élimination du "Skinning" traditionnel. Les muscles et la peau réagissent via des fonctions de déformation continue, garantissant des articulations parfaites sans étirement de triangles.
-*   **World-Building par Graine KASM** : Génération procédurale de mondes infinis via la récursivité KASM. Des galaxies entières, dédupliquées par hachage en RAM, tiennent dans quelques mégaoctets de bytecode.
-
-## 18. INGEN Render — Doctrine Frontier (Migration Active)
-
-Le moteur de rendu actuel du Banger (WebGL2, fragment SDF + raster mesh/grid) plafonne sur 3 murs : tout passe par un fragment fullscreen unique, aucune mémoïsation entre frames, aucune représentation géométrique unifiée. **INGEN Render** remplace ce chemin par un pipeline **WebGPU compute-driven, content-addressed, différentiable** où SDF, splats et voxels coexistent dans un seul tile-pipeline.
-
-### Mur poussé
-- **Cache scène content-addressed** : aucun moteur de jeu commercial ne hashe ses tiles/BRDF/shadow-maps. Banger oui, via KASM.
-- **Unification géométrique** : SDF (analytique) + 3DGS (capturé) + SVDAG (massif dédupliqué) dans un seul BVH.
-- **Différentiabilité native** : le même moteur rend ET fit (bio inverse, topology opt, NeRF-to-game).
-
-### Frontier hypothesis
-> Remplacer le pipeline WebGL2 fragment-SDF du banger par un pipeline WebGPU compute où chaque tuile, chaque BRDF, chaque shadow, chaque eval SDF/MLP est mémoïsé sur clé KASM. Édition viewport ⇒ <1% de la scène change ⇒ >99% du compute servi depuis le cache.
-
-### Les 4 piliers de la géométrie unifiée
-
-| Pilier | Rôle | Représentation | Clé KASM |
-|---|---|---|---|
-| **A. Sparse Voxel DAG** | scènes massives dédupliquées (mondes, terrains, micro-structures fractales) | hiérarchie voxel deduplicated (Kämpe/Sintorn, NanoVDB) | `hash(node_children)` — récursif natif |
-| **B. Neural SDF** | surfaces analytiques infinies, différentiables (CAD, bio, optim inverse) | multires hash-grid + MLP (Instant-NGP / NGLOD) | `hash(weights, grid)` |
-| **C. 3D Gaussian Splatting** | captures réelles haute-fidélité (immobilier scanné, médical, terrain) | clusters de splats (Mip-Splatting + 2DGS + Scaffold-GS) | `hash(cluster_params)` |
-| **D. KASM bytecode SDF** | scènes composables programmables (intent → forme) | ops postfix sur stack GPU | `hash(opcode_sequence)` |
-
-Les 4 cohabitent dans le **même tile-pipeline compute**. Sélection par type d'asset, pas par moteur séparé.
-
-### Cache KASM hiérarchique — le multiplicateur
-
-| Niveau | Clé | Réutilisation typique |
-|---|---|---|
-| Tile framebuffer | `hash(scene, camera, tile_xy)` | 90-99% entre frames |
-| Visibilité BVH | `hash(geometry_cluster)` | 100% si géom inchangée |
-| Shadow map | `hash(light, geometry)` | 100% si lumière statique |
-| BRDF sample | `hash(material, ωi, ωo)` | élevé (importance sampling) |
-| SDF MLP eval | `hash(weights, point_quantized)` | élevé (raymarch voisin) |
-| Splat sort | `hash(cluster, view_dir_quantized)` | élevé entre frames |
-
-### Compute & reconstruction
-- **WebGPU compute pipeline** (Chrome 121+, Safari 18+, Firefox stable) — pas de raster fullscreen-quad legacy, pas de fragment-only SDF.
-- **Hardware ray-query WebGPU** pour visibilité / shadows / refraction.
-- **ReSTIR DI/GI** pour l'éclairage global temps réel sans pré-bake.
-- **Neural Radiance Cache** (NRC) pour amortir la GI à travers les frames.
-- **TAA + upscaler neural** (FSR3 / XeSS-class en WGSL) — rendu à 0.66× reconstruit en 4K natif.
-- **Grille analytique sub-pixel** dans le compute shader (pas de `GridHelper`, pas de texture, pas de FXAA).
-
-### Différentiable par construction
-Même moteur, deux modes :
-- **Forward** : SDF/splat/SVDAG → framebuffer (temps réel).
-- **Backward** : ∂framebuffer/∂params via autograd WGSL (fit microscopie, topology opt, NeRF training).
-
-### Ce qui disparaît (purge progressive)
-- `Three.js` côté banger : disparaît.
-- `GridHelper` / textures icônes 8K / FXAA post-process : disparaissent.
-- Fragment SDF WebGL2 du banger (`VS_SDF`, `FS_SDF`) : remplacé phase 0.
-- Programmes mesh+grid WebGL2 (`VS_MESH`, `FS_MESH`, `VS_LINE`, `FS_LINE`, `meshProg`, `lineProg`) : remplacés phase 2-4.
-- LOD pré-bakés, textures normales 8K, skinning triangulaire : non-implémentés (jamais ajoutés au nouveau moteur).
-
-### Verifiers locaux (obligatoires à chaque phase)
-1. Hash framebuffer reproductible bit-à-bit pour (camera, scene) fixes.
-2. `cache_hit_ratio` par frame exposé dans le HUD banger.
-3. Budget temps mesuré @ 4K natif et @ 1440p→4K upscalé.
-4. Test différentiable : fit d'un SDF cible par descente de gradient en <1s sur un cas simple.
-
-## 19. Roadmap de Migration (Phases Concrètes)
-
-Chaque phase = **une suppression + un ajout**. Pas de phase qui ajoute sans supprimer. Pas de feature gate qui survit la phase suivante. Pas de doc autour de code mort.
-
-| Phase | Supprime | Ajoute | Verifier |
-|---|---|---|---|
-| **0** | rien (scaffold initial) | `ui/src/sections/banger/ingen-render.ts` : WebGPU device + compute SDF raymarcher + ops buffer | compile + render = images existantes |
-| **1** | `VS_SDF`, `FS_SDF`, `sdfProg`, uniforms SDF WebGL2 dans `surface.ts` et `catalog.ts` | brancher INGEN Render comme pass SDF unique | frame parity vs ancien pass |
-| **2** | `makeGrid`, `VS_LINE`, `FS_LINE`, `lineProg`, `gridVAO`, `gridBuffers` | grille analytique sub-pixel dans le compute shader | edges nets @ 4K, 0 aliasing |
-| **3** | aucune (couche ajoutée) | KASM tile cache : `hash(scene, camera, tile)` → tile framebuffer mémoïsé ; HUD `cache_hit_ratio` | hit-ratio >90% en orbite passive |
-| **4** | `makeCube`, `VS_MESH`, `FS_MESH`, `meshProg`, `cubeVAO`, `cubeBuffers` (tout WebGL2 mesh) | pipeline compute unique pour gizmo + axes + cube test (SDF natif) | suppression `getContext("webgl2")` |
-| **5** | rien | SVDAG storage (Rust → buffer KASM-hashé) + traverseur compute WGSL | rendu d'1 SVDAG 10⁹ voxels @ 60fps |
-| **6** | rien | 3DGS loader + cluster sort + render dans le même compute pass | charger 1 splat-set immobilier réel |
-| **7** | rien | Neural SDF (multires hash grid + tiny MLP) eval WGSL | fit cible SDF en <1s |
-| **8** | rien | Hardware ray-query (visibilité + shadows) + ReSTIR DI | shadows nets sans bake |
-| **9** | rien | TAA neural + upscaler 0.66× → 4K | qualité 4K @ coût 1440p |
-| **10** | rien | Differentiable mode (backward WGSL) ; expose `forge.fit_sdf` et `forge.fit_splat` | gradient stable sur cas synthétique |
-
-Le verifier de chaque phase est exécutable localement (script `forge-banger-render-verify.mjs` à étendre par phase). Une phase ne ferme pas si son verifier ne passe pas.
-
-## 20. Atlas d'Act Codes — La Bibliothèque de Calcul d'Ingénierie
-
-Le rendu (sections 18-19) n'est qu'une moitié d'INGEN. L'autre moitié est le **calcul d'ingénierie computationnelle** : transformer un design SDF en artefacts physiques vérifiés, puis faire émerger la forme optimale depuis les résultats mathématiques. Cette section catalogue les Act Codes.
-
-### Le workflow en 3 étapes
-
-1. **LLM ↔ utilisateur (langage naturel).** Si l'utilisateur connaît des concepts d'ingénieur, le LLM les code directement en act code. Sinon, l'étape 2 le couvre via la bibliothèque.
-2. **Décomposition + batterie de calculs.** Le LLM éclate la demande en sous-parties. Chaque sous-partie passe par les act codes pertinents, content-addressed dans le ledger KASM : `hash(sub_sdf, act_id, params) → artifact`. Jamais deux fois le même calcul, à TOUS les niveaux de la computation.
-3. **Retour LLM → SDF.** Le moteur renvoie les artefacts ; le LLM utilise les nombres pour réécrire l'act code SDF de visualisation.
-
-### Statut d'implémentation
-
-- `src/act_codes/mod.rs` — trait `ActCode`, `Artifact`, `ActLedger` content-addressed, évaluateur SDF Rust (mirror exact de `scenes.ts`). **Livré.**
-- `src/act_codes/inertia.rs` — `inertia.mc.v1` (masse, COM, tenseur 3×3 par Monte-Carlo). **Livré.**
-- `src/act_codes/planner.rs` — décomposition en sous-parties indépendantes, recombinaison par théorème de Huygens. **Livré.**
-- `examples/forge_drone_pipeline.rs` — démo end-to-end sur le drone, dedup KASM prouvé (re-run = 0 recompute, mutation 1 composant = 1 recompute). **Livré.**
-
-### A. Calculs fondamentaux (forward analysis)
-
-Chaque ligne = un `ActCode` content-addressed. La colonne « dépend de » est le DAG d'exécution.
-
-| Act code | Calcul mathématique | Algorithme | Dépend de | Statut |
-|---|---|---|---|---|
-| `inertia.mc` | masse, COM, tenseur 3×3 | Monte-Carlo intérieur SDF | — | livré |
-| `volume_fraction` | volume / matière par matériau | MC ou marching cubes voxel | — | trivial |
-| `modal` | fréquences propres + modes | Lanczos sur Laplacien voxelisé | `inertia` | à faire |
-| `thermal_static` | carte température steady-state | Poisson FFT 3D | sources (RPi, moteurs) | à faire |
-| `thermal_transient` | montée en T° vs temps | Crank-Nicolson implicite | `thermal_static` | à faire |
-| `cfd_hover` | downwash, efficacité hover | Lattice-Boltzmann level-set | géométrie cage | lourd |
-| `cfd_forward` | drag latéral à V, cage-effect | LBM + frontière mobile | `cfd_hover` | lourd |
-| `stress_static` | champ de contrainte sous charge | FEM voxel ou MPM | `inertia` | à faire |
-| `stress_impact` | crash chute 2 m | MPM dynamique explicite | `stress_static`, `modal` | lourd |
-| `em_antenna` | diagramme rayonnement WiFi | FDTD Yee 2.4 GHz | géométrie antenne + RPi | moyen |
-| `acoustic` | signature sonore des hélices | FW-H sur le champ CFD | `cfd_hover` | lourd |
-| `printability` | overhangs, volume de support | analyse normales SDF + slicing | — | trivial |
-| `battery_endurance` | autonomie vol | bilan énergie hover×masse | `inertia`, `cfd_hover` | trivial |
-| `cg_envelope` | marge de stabilité statique | COM vs centre de poussée | `inertia`, `cfd_hover` | trivial |
-
-### B. Croisements multi-physiques
-
-Un drone viable n'est pas la somme de calculs isolés, c'est leur **intersection**.
-
-| Croisement | Risque si ignoré | Maths du couplage |
-|---|---|---|
-| **modal × hélices** | mode à 133 Hz (blade-pass 8000 RPM) = flutter mortel | éviter `freq_mode ∈ [f_blade ± 15%]` ∀ RPM |
-| **thermique × CFD** | downwash refroidit le RPi → hotspot dépend du débit | Poisson avec coefficient de convection h(v_air) du CFD |
-| **inertie × CFD** | COM décalé → moment parasite en hover | M = (COP − COM) × T, corrigeable par les hélices |
-| **stress × thermique** | dilatation différentielle ABS/laiton aux interfaces | σ = E·α·ΔT couplé au champ T° |
-| **EM × géométrie RPi** | PCB = ground-plane parasite → portée /10 | FDTD avec le RPi conducteur, distance antenne/PCB critique |
-| **acoustique × cage** | la cage résonne avec le bruit hélice (amplification) | géométrie spectrale : décaler les modes acoustiques |
-| **masse × poussée × autonomie** | triangle de fer : + batterie = + lourd = − autonomie | point fixe non-trivial à résoudre |
-
-### C. Variations à balayer (les millions d'itérations)
-
-| Type de balayage | Dimensions | Itérations | Cible |
-|---|---|---|---|
-| Grid sweep | 1-2 params | 10³–10⁴ | sensibilité locale, knee curves |
-| Latin Hypercube | 12 params | 10⁴–10⁵ | couverture uniforme |
-| Sobol quasi-MC | 12 params | 10⁵–10⁶ | convergence moyennes/variances |
-| Optimisation bayésienne | 12 params, fonction coûteuse | 10²–10³ runs lourds | minimum global, peu d'évals |
-| Évolution (CMA-ES / NSGA-II) | 12 params, multi-objectif | 10⁴–10⁶ | front de Pareto |
-| Indices de Sobol | variance attribution | 10⁶ | quels params dominent quel objectif |
-| Robustesse (Itô / MC) | params ± tolérances fab | 10⁶ / design | designs survivant aux défauts |
-
-**Levier KASM** : sur un Sobol 10⁶, la plupart des designs partagent des sous-parties identiques. Chaque sous-partie hashée → le ledger sert 95-99 % des sous-calculs. On balaye des millions de designs en calculant des milliers de sous-résultats réels.
-
-### D. Algorithmes GPU massivement itératifs
-
-| Algorithme | Itère sur | Échelle |
-|---|---|---|
-| Monte-Carlo intégration | points d'échantillonnage SDF | 10⁶–10⁸ pts/calcul |
-| Lattice-Boltzmann | cellules × pas de temps | 10⁹ cell-steps |
-| FDTD électromagnétique | mailles Yee × pas de temps | 10⁸–10⁹ |
-| MPM (impact) | particules × substeps | 10⁷ particules |
-| Lanczos / power iteration | produits matrice-vecteur creux | N×k |
-| Adjoint backprop | gradient ∂objectif/∂param | 1 passe = N forward |
-
-### E. Inverse Design — La Forme Émerge des Maths
-
-Le cœur de la doctrine : la géométrie n'est plus dessinée, elle **est la solution** d'un problème mathématique. Trois niveaux de puissance croissante.
-
-**Niveau 1 — Optimisation paramétrique (livré).**
-`forge_drone_design.rs` : 12 nombres, hill-climb sur un score scalaire. La forme est une fonction des params.
-
-**Niveau 2 — Optimisation topologique.**
-La forme entière devient une variable continue : un champ de densité ρ(x,y,z) ∈ [0,1]. On résout :
+InGen doit gagner par:
 
 ```text
-minimize   compliance(ρ)              (souplesse sous charge)
-   ρ
-subject to volume(ρ) ≤ V_max          (budget matière)
-           stress(ρ) ≤ σ_yield        (pas de rupture)
-           modes(ρ) ∉ [blade-pass]    (pas de flutter)
+Rust moteur natif
++ Forge langage de calcul/verif
++ Monster execution massive
++ cache multi-echelle par hash
++ shaders Slang
++ RHI Vulkan / DirectX 12 / Metal
++ Banger comme editor/viewport
 ```
 
-SIMP + méthode adjointe calcule `∂compliance/∂ρ` en chaque point, la matière coule vers l'optimum. La forme finale (treillis organiques, nervures) **est** la solution mathématique.
+Forge ne remplace pas le GPU. Forge prepare, deduplique, prouve, bake et
+compile les calculs que le GPU consomme ensuite a tres grande vitesse.
 
-**Niveau 3 — SDF neuronal différentiable (frontière, Phase 10 du §19).**
-Le SDF est un réseau (`sd_neural`, Phase 7). Différentiable de bout en bout → on backprop à travers le rendu ET la physique :
+## Ce Qu On Abandonne
+
+- TypeScript/WebGPU comme coeur du moteur 3D.
+- Banger comme renderer principal porte par le front.
+- L idee d un pipeline SDF pur qui refuserait meshes, voxels, surfels ou splats.
+- Les calculs visuels refaits betement a chaque frame sans hash ni reuse.
+- Les gros catalogues ActCode injectes dans le contexte LLM.
+- Les outputs bruts lourds envoyes au LLM.
+
+TypeScript peut rester pour l UI. WebGPU peut rester pour prototypes ou
+previews. Le moteur profond doit etre natif.
+
+## Contrat Canonique Des Deux Moteurs
+
+InGen a deux moteurs, mais un seul bloc moteur profond:
 
 ```text
-loss = w1·masse + w2·drag + w3·max(0, 133 - f_mode) + w4·max(0, σ - σ_yield)
-∂loss/∂(poids_réseau) via autograd WGSL → gradient descent
+Rust Native Engine + Monster/Forge = Tandem Engine Block
 ```
 
-La forme n'est plus paramétrée : elle est le minimum d'une perte multi-physique.
+Monster a un mode solo utile et deja existant:
 
-### F. Ordre de construction (ROI décroissant)
+```text
+LLM -> /newcompute_ -> module Forge (src/kasm.rs)
+-> MonsterPreparedCompute (src/monster.rs)
+-> execution / reuse / proof
+```
 
-1. `modal` — débloque le croisement flutter (le plus mortel).
-2. `thermal_static` — hotspot RPi, cheap (FFT ms).
-3. `cg_envelope` — réutilise `inertia`+`cfd`, trivial, haute valeur.
-4. `stress_static` — FEM voxel, débloque le crash.
-5. `cfd_hover` — lourd mais débloque drag/autonomie/acoustique.
-6. `pareto` (NSGA-II) — co-optimise sur tous les act codes ci-dessus. Le moment magique : appelle chaque act code par sous-partie, le dedup KASM balaye 10⁶ designs en re-calculant seulement ce qui change.
-7. `topo_opt` — Niveau 2 : la forme émerge des maths.
-8. `differentiable` — Niveau 3, aligné sur la Phase 10 du §19.
+Ce mode solo sert a realiser des computes verifiables, content-addressed et
+reutilisables, sans obliger le rendu ou les webviews a etre presents.
 
-Chaque act code suit le même contrat : `trait ActCode` + tests déterministes + clé ledger content-addressed. Un act code ne ferme pas si son test analytique (cas à solution fermée connue) ne passe pas.
+Le LLM garde le raisonnement: choix du domaine, classe math, objectif et
+remplissage du contrat. Monster garde seulement l'execution et les refus
+mecaniques. Les templates `/newcompute_` imposent donc un slot obligatoire
+`workload_scale`; Monster verifie les nombres declares (`max_steps`,
+`max_memory_mb`, `min_estimated_ops`, samples/sweeps/lanes ou tailles de
+formes) avant de generer Forge. Si le contrat est trop petit, il retourne
+`workload_too_small`. Il ne decide pas que le LLM devrait repondre directement;
+il refuse simplement un faux compute.
 
----
-*Note : Banger ne cherche pas à imiter l'ingénierie humaine, il cherche à extraire les solutions que la physique autorise.*
+Quand Monster travaille en tandem avec le moteur Rust natif, le bloc tandem a
+deux sorties principales et aucune troisieme architecture parallele:
+
+```text
+Tandem Engine Block
+|-- sortie A: native_tandem_render
+|   `-- rendu moteur coeur Unreal-like pour Banger
+|
+`-- sortie B: native_tandem_dom_ram
+    `-- memoryreading, cartographie et balisage RAM/DOM des webviews de l appli
+```
+
+La sortie A prepare les pages, caches et preuves que le moteur Rust consomme
+pour garder le viewport Banger fluide. La sortie B prepare les graphes DOM,
+tables RAM, mutations, labels de haut niveau et preuves que le LLM consomme
+sous forme de projections compactes, sans dump brut et sans bloquer la webview.
+
+Etat reel de `/simulation_dynamics`: la premiere tranche promue n'est pas un
+solveur multiphysique general. C'est un compute scientifique precis:
+simulation electro-thermique 2D multi-step sur champs `tensor<f32,64x64>`,
+avec `pde_stencil_step`, handoff `vector` pour rester dans Monster `MassMath`,
+readback compact, typed result buffers et `proof_hash`. Le template thermique
+doit declarer au minimum le champ de temperature, le champ/source thermique,
+`dt`, nombre de pas, diffusivite, `dx`, `dy`, seuil separateur critique,
+convection, ambiance, profil de hotspot, courant, resistance interne, masse,
+capacite thermique, coefficient entropique, SOC, cinetique Arrhenius,
+condition limite (`periodic`, `adiabatic`, `dirichlet_ambient` ou
+`cooling_plate_edge`) et temperature de plaque froide si presente.
+Monster projette ensuite les diagnostics professionnels: champ final
+`temperature_field_next` sous forme de buffer tensoriel hashable, temps simule,
+temperature moyenne, maximum, hotspot, gradient thermique max, marge avant
+runaway, temps estime avant seuil, ratio CFL, erreur de bilan energetique,
+norme de residu, contributions Joule/entropique/Arrhenius et ranking de
+sensibilite. La projection inclut aussi des series temporelles compactes
+maximum/moyenne/marge runaway et une comparaison numerique
+`cpu_f64_reference_vs_f32_quantized_candidate` avec erreurs L2, Linf et relative
+max. Les unites physiques metier sont rendues dans `scientific_metrics`; le
+coeur Forge garde seulement les unites que son validateur sait prouver
+aujourd'hui.
+
+Le resultat rendu au LLM ne vient pas de `println!` de test. Monster expose une
+projection runtime `MonsterNewComputeLlmResult`, relayee par le service natif:
+statut d'execution, backend, lane, nombre de GPU, lanes executees, forme de
+dispatch, bytes input/output/readback, diagnostics scalaires, buffers types par
+hash, `output_hash`, `proof_hash`, `projection_hash`, limites et bloc
+`compact_text`. Les donnees lourdes restent en buffers hashes.
+
+## Architecture Cible
+
+```text
+InGen
+  |-- Brain / State Kernel
+  |-- Forge language ancien KASM
+  |-- Monster compute
+  |-- Native Rust Engine
+  |-- Forge Compute Graph
+  |-- Multi-scale Hash Cache
+  |-- Render Graph
+  |-- Slang Shader Compiler
+  |-- InGen RHI
+  |-- Vulkan backend
+  |-- DirectX 12 backend
+  |-- Metal backend
+  `-- Banger UI / viewport / editor
+```
+
+Roles simples:
+
+```text
+Brain / State Kernel = memoire, scene, preuves, objets
+Forge = langage des calculs hashables
+Monster = usine de calcul massif
+Rust Engine = moteur natif
+Slang = shaders portables modernes
+RHI = traducteur GPU
+Vulkan/DX12/Metal = acces GPU natif
+Banger = interface intelligente
+```
+
+## Pipeline Cible Resume En Arborescence
+
+```text
+InGen 3D Engine Cible
+|-- 1. Brain / State Kernel
+|   |-- memoire scene
+|   |-- objets
+|   |-- intentions utilisateur
+|   |-- preuves / hashes
+|   `-- contexte LLM
+|
+|-- 2. Scene Graph IA-First
+|   |-- objets nommes
+|   |-- transforms
+|   |-- materiaux
+|   |-- lumieres
+|   |-- cameras
+|   |-- relations
+|   `-- representation choisie
+|
+|-- 3. Forge Compute Graph
+|   |-- langage Forge ancien KASM
+|   |-- calculs decoupes
+|   |-- micro / mini / small / medium / large
+|   |-- hash stable par fragment
+|   |-- verification
+|   `-- preuves
+|
+|-- 4. Monster Compute
+|   |-- prepare un manifeste MonsterPreparedCompute
+|   |-- route mass_math / native_tandem_render / native_tandem_dom_ram
+|   |-- execute les calculs lourds
+|   |-- calcule seulement les cache-miss
+|   |-- stocke resultats hashes
+|   |-- reuse calculs identiques
+|   |-- travaille en arriere-plan
+|   |-- ne bloque pas chaque frame
+|   |-- produit artefacts native-ready
+|   `-- dialogue en tandem avec Rust Engine
+|
+|   Etat reel juin 2026
+|   |-- /newcompute_ ouvre le template universel Monster
+|   |-- le LLM ecrit un module Forge
+|   |-- Monster parse, verifie, hash et prepare MonsterPreparedCompute
+|   |-- Monster extrait primitiveOps depuis l IR Forge
+|   |-- Monster genere des kernels WGSL/RHI pour execution massive
+|   |-- Monster route sur GPU via Rust RHI / wgpu
+|   |-- Monster peut utiliser plusieurs adaptateurs GPU compatibles
+|   |-- Monster produit readback compact, output_hash et proof_hash
+|   |-- /simulation_dynamics execute deja une tranche PDE thermique 2D:
+|   |   tensor<f32,64x64>, pde_stencil_step, multi-step electro-thermal,
+|   |   champ final hashable, mean/max/hotspot/gradient/CFL/energie/residu,
+|   |   Joule/entropique/Arrhenius/threshold/sensibilite,
+|   |   typed buffers et proof hash sur MassMath GPU
+|   `-- les artefacts render/DOM sont les deux sorties du tandem natif
+|
+|-- 5. Representation Hybride
+|   |-- SDF
+|   |   `-- objets LLM / maths / proceduraux
+|   |-- Mesh
+|   |   `-- personnages / rigs / assets classiques
+|   |-- Voxels
+|   |   `-- volumes / terrain / acceleration
+|   |-- Surfels
+|   |   `-- lumiere indirecte / radiance cache
+|   `-- Gaussian Splats
+|       `-- scans photorealistes / decors captures
+|
+|-- 6. Virtual / Fake Geometry
+|   |-- Micro-style
+|   |   `-- vraie geometry virtuelle dense
+|   |-- Crimson-like
+|   |   `-- fake geometry / culling / imposteurs
+|   |-- meshlets
+|   |-- SDF bricks
+|   |-- voxel pages
+|   |-- splat clusters
+|   `-- cache Forge par fragment
+|
+|-- 7. Material Graph
+|   |-- physical materials
+|   |-- eau
+|   |-- verre
+|   |-- metal
+|   |-- peau
+|   |-- vegetation
+|   `-- neural/material cache possible
+|
+|-- 8. Lighting / Radiance Cache
+|   |-- Solaris-style
+|   |-- GI dynamique
+|   |-- surfels
+|   |-- probes
+|   |-- screen traces
+|   |-- world traces
+|   |-- ray tracing
+|   `-- cache lumiere hashe
+|
+|-- 9. Native Rust Engine
+|   |-- boucle frame
+|   |-- ressources GPU
+|   |-- streaming
+|   |-- scheduling
+|   |-- scene runtime
+|   |-- asset runtime
+|   |-- demande calculs a Monster
+|   |-- consomme artefacts native-ready / GPU-ready
+|   `-- garde le temps reel fluide
+|
+|-- 10. Render Graph
+|   |-- visibility
+|   |-- shadows
+|   |-- geometry
+|   |-- materials
+|   |-- lighting
+|   |-- reflections
+|   |-- volumes
+|   |-- post-process
+|   `-- capture LLM interne
+|
+|-- 11. Shader System
+|   |-- Slang
+|   |-- shader source unique
+|   |-- compilation Vulkan
+|   |-- compilation DirectX 12
+|   |-- compilation Metal
+|   `-- neural shaders futur
+|
+|-- 12. InGen RHI
+|   |-- equivalent RHI Unreal
+|   |-- Vulkan backend
+|   |-- DirectX 12 backend
+|   |-- Metal backend
+|   `-- GPU natif bas niveau
+|
+|-- 13. Path Tracing / Neural Rendering
+|   |-- RTX Kit-like
+|   |-- path tracing progressif
+|   |-- ReSTIR
+|   |-- denoising
+|   |-- upscaling
+|   |-- ray reconstruction
+|   `-- neural radiance cache
+|
+|-- 14. Banger UI / Editor
+|   |-- viewport
+|   |-- scene collection
+|   |-- chat LLM
+|   |-- selection objet
+|   |-- preview objet
+|   |-- tools
+|   `-- controle du moteur natif
+|
+`-- 15. CodeAct / LLM Tooling
+    |-- /newcompute_
+    |-- /selectcompute_
+    |-- /newobject_
+    |-- /compute_<name>_
+    |-- futurs /scene_
+    |-- futurs /material_
+    |-- futurs /light_
+    |-- futurs /geometry_
+    |-- futurs /render_
+    |-- futurs /simulate_
+    `-- router compact, pas 500 tools visibles
+```
+
+Phrase cle:
+
+```text
+Unreal = mesh-first + C++ + GPU natif
+InGen = SceneGraph-first + Forge anti-recalcul + Rust natif + GPU bas niveau + LLM natif
+```
+
+Tandem moteur:
+
+```text
+Rust Native Engine = temps reel, GPU, frame loop, streaming
+Forge / Monster = calculs lourds, preuves, cache, artefacts native-ready
+
+Rust demande.
+Forge decrit et hash.
+Monster execute ou reuse.
+Rust consomme.
+GPU rend.
+```
+
+Regle d architecture:
+
+```text
+Rust Native Engine + Monster/Forge forment un seul bloc tandem.
+Ne pas agrandir l architecture avec des moteurs paralleles.
+Ajouter seulement des lanes et des connexions sur ce bloc.
+```
+
+Le bloc tandem porte deux lanes principales:
+
+```text
+Tandem Engine Block
+|-- Lane A: rendu Unreal-like
+|   |-- scene graph
+|   |-- virtual/fake geometry
+|   |-- material graph
+|   |-- radiance cache
+|   |-- render graph
+|   |-- RHI Vulkan/DX12/Metal
+|   `-- Banger viewport/editor
+|
+`-- Lane B: memoryreading RAM/DOM webviews
+    |-- Google Web section
+    |-- native webviews
+    |-- DOM map
+    |-- RAM/DOM high-level reading
+    |-- mutation/state graph
+    |-- proof/hash projections
+    `-- compact LLM context
+```
+
+Interdiction:
+
+```text
+pas de second moteur web
+pas de second moteur DOM
+pas de second moteur rendering
+pas de second moteur compute
+pas de nouvelle architecture pour chaque section
+```
+
+Les futures sections se branchent sur le bloc tandem:
+
+```text
+Banger -> Tandem Engine Block -> Lane A
+Google Web -> Tandem Engine Block -> Lane B
+autres sections -> Tandem Engine Block -> lane existante ou nouvelle lane justifiee
+```
+
+## Pipeline Vise
+
+```text
+1. LLM ou utilisateur demande une scene
+   |
+2. Brain / State Kernel garde intention, objets, preuves
+   |
+3. Scene Graph structure la scene
+   |
+4. Forge Compute Graph decoupe la scene en calculs
+   |
+5. Chaque calcul recoit un hash stable
+   |
+6. Cache lookup: deja calcule ou non ?
+   |
+7. Monster calcule seulement les cache-miss
+   |
+8. Monster produit des artefacts native-ready
+   |
+9. Rust Engine consomme les artefacts sans bloquer la frame
+   |
+10. Slang compile les shaders necessaires
+   |
+11. Render Graph organise les passes
+   |
+12. InGen RHI envoie au GPU via Vulkan/DX12/Metal
+   |
+13. GPU rend l image
+   |
+14. Banger affiche, edite et renvoie contexte au LLM
+```
+
+## Etape 1 - Construire Le Nouveau Moteur
+
+La premiere etape n est pas d ajouter plus de features dans le front actuel.
+Elle est de deplacer le coeur du rendu vers un moteur natif.
+
+```text
+Rust Native Engine
+-> Render Graph
+-> Slang shaders
+-> InGen RHI
+-> Vulkan / DirectX 12 / Metal
+-> GPU natif
+```
+
+Objectif de cette etape:
+
+- ~~sortir TypeScript/WebGPU du role de coeur moteur pour la lane Banger
+  backend~~: Banger dispose maintenant d un service Rust natif direct,
+  consommable par l Electron shell et les surfaces natives sans passer par un
+  renderer browser.
+- garder Banger comme interface/editor,
+- ~~creer une vraie boucle frame native~~: le moteur Rust natif produit des
+  frames `wgpu` offscreen et une boucle frame avec timeline/proof hash.
+- ~~gerer ressources GPU, shaders, passes, buffers et streaming~~: la tranche
+  actuelle couvre residency heap, streaming manifest/proof, render graph
+  schedule proof, shader pipeline proof, RHI report et viewport contract.
+- ~~rendre une scene simple avec hashes/proofs de pipeline~~: le test GPU rend
+  une scene offscreen, prouve texture/frame/render-graph/pipeline/RHI/viewport
+  et verifie un viewport custom redimensionne avec orbit/pan/zoom/modes et
+  `fit_mode=scene`.
+
+Etat reel Banger, 2026-06-06:
+
+- Monster reste intact et prepare les handoffs `native_tandem_render`.
+- `src/kasm.rs` et `src/monster.rs` ne sont pas modifies.
+- Le moteur Rust natif Banger consomme ces handoffs, cree la residency GPU,
+  execute un render graph `wgpu`, produit un render target hashable, un contrat
+  viewport Electron/native-ready et une boucle frame prouvee.
+- Le viewport natif expose maintenant un cadrage verifiable: bounds derives du
+  Hybrid Scene Graph Banger, focus, rayon, padding, FOV, distance camera,
+  `fit_bounds_hash` et `viewport_fit_hash`. Le vieux fit direct par slots est
+  remplace par des noeuds hybrides artifact-derived avec representation,
+  transform, AABB/sphere et proof hash.
+- Le render target Banger porte `TEXTURE_BINDING` en plus de
+  `RENDER_ATTACHMENT` et `COPY_SRC`; chaque frame expose un bridge texture
+  natif avec route d import, fallback et proof hash.
+- InGen RHI expose maintenant une matrice de feature gates dans `rhiReport`:
+  bindless resource arrays, mesh shader path, ray query path, shader
+  precompile cache, compute scale floor et backend parity. Chaque gate contient
+  status, features/limits manquants, fallback route, promotion rule et proof
+  hash.
+- Limite technique restante: la texture n est pas encore promue en surface
+  produit interactive. Le prochain gate doit stabiliser le partage frame/texture
+  avec le meme device/queue et verifier le chemin Electron/native host.
+- Limite Scene Graph restante: le graphe hybride existe et pilote le fit, mais
+  ses noeuds restent derives des artefacts Monster/native. La prochaine
+  promotion doit donner l autorite a de vrais objets editables, transforms
+  parent/enfant et choix de representation scene-first.
+- Limite AAA restante: les gates RHI existent et sont verifies, mais les chemins
+  production ne sont pas encore promus: DX12 n est pas compile dans ce profil
+  Windows, les blobs de pipeline cache ne sont pas persistes, et mesh/ray
+  restent des routes conditionnelles derriere la matrice.
+- Tranche pipeline cache en cours: Banger a maintenant un manifeste
+  content-addressed par adapter/driver/features/shader library et des entrees
+  de pipeline rattachees au `shaderPipeline`. Cette tranche n est pas promue:
+  la verification Cargo passe, mais la persistence de blobs driver
+  `wgpu::PipelineCache` n est pas encore cablee.
+
+Cette etape pose le corps du moteur. Sans elle, le reste reste un prototype.
+
+## Etape 2 - Representation Hybride IA-First
+
+Unreal est mesh-first: le triangle mesh est la base, puis Micro, voxels,
+surfels, materials et caches gravitent autour.
+
+Etat reel, 2026-06-06:
+
+- Banger emet un `hybridSceneGraph` par frame native: noeuds, type de
+  representation (`sdf`, `voxel`, `meshlet`, `surfel`, `material_graph`,
+  `gaussian_splat` ou `native_artifact`), transform, AABB monde, sphere,
+  politique de residency, mix de representations, `bounds_hash`, `graph_hash`
+  et `proof_hash`.
+- Banger expose aussi un manifeste d objets editables:
+  `banger_build_scene_object_manifest`. Il verifie ids uniques, parents
+  existants, absence de cycle, transforms locaux/monde, choix de
+  representation, AABB/sphere, mix de representations et proof hashes.
+- Le viewport fit consomme maintenant les bounds du Hybrid Scene Graph au lieu
+  de recalculer un proxy directement depuis les slots GPU.
+- Verification: `cargo check --manifest-path
+  examples\forge_tauri_ui\src-tauri\Cargo.toml --bin forge-ui` passe, et
+  `cargo test --manifest-path examples\forge_tauri_ui\src-tauri\Cargo.toml
+  --bin forge-ui banger::tests::renders_native_offscreen_frame_artifact_when_gpu_is_available`
+  passe avec assertions sur `hybridSceneGraph`. Les tests
+  `banger_scene_graph::tests` passent aussi sur le target local
+  `.codex-target\banger-scene-tests`.
+
+InGen ne doit pas etre mesh-first ni SDF-only. InGen doit etre:
+
+```text
+Scene Graph first
++ Forge first
++ representation hybride
+```
+
+Le LLM ne manipule pas les vertices, les millions de splats ou les buffers GPU.
+Il manipule une scene structuree:
+
+```text
+object_id
+role
+transform
+material
+representation
+Forge contract
+proof refs
+cache refs
+```
+
+Ensuite le moteur choisit la bonne representation.
+
+```text
+SDF = objets generes par LLM, maths, formes procedurales
+mesh = personnages, rigs, animations, assets classiques
+voxel = volumes, terrain, fog, caches, acceleration
+surfel = lumiere indirecte, radiance cache, GI
+gaussian splat = scans photorealistes, decors captures
+```
+
+Regle simple:
+
+```text
+LLM controle le Scene Graph.
+Forge controle les calculs hashables.
+Rust Engine controle les assets GPU.
+GPU rend l image.
+```
+
+Exemples:
+
+```text
+ocean procedural
+-> SDF / field / shader params
+-> Forge cache spectres et parametres stables
+-> GPU calcule le delta temps reel
+```
+
+```text
+personnage anime
+-> mesh + skeleton + material graph
+-> proxy SDF pour selection/collision/contexte LLM
+-> GPU rend le mesh
+```
+
+```text
+falaise scannee
+-> gaussian splats pour rendu photorealiste
+-> proxy voxel/SDF pour collision et selection
+-> surfels pour lumiere
+```
+
+```text
+foret dense
+-> instances mesh ou voxels
+-> Forge/PCG hash les regles de distribution
+-> renderer reutilise les chunks identiques
+```
+
+Cette etape est le pont entre notre avantage LLM/SDF et la realite AAA:
+
+```text
+SDF pour creer et comprendre.
+Mesh pour animer et produire.
+Voxel pour massifier.
+Surfel pour eclairer.
+Splat pour capturer le reel.
+```
+
+## Etape 3 - InGen Virtual/Fake Geometry
+
+Cette etape est l equivalent conceptuel de Micro, mais adapte a InGen.
+
+Unreal/Micro pousse la virtual geometry dense. Crimson Desert/BlackSpace semble
+pousser une strategie plus agressive de fake geometry, culling, imposteurs et
+reduction de vertices pour les grands mondes.
+
+InGen doit prendre les deux:
+
+```text
+Virtual Geometry quand il faut du vrai detail.
+Fake Geometry quand l illusion suffit.
+Forge cache quand un detail revient plusieurs fois.
+```
+
+Representations gerees:
+
+```text
+meshlets
+SDF bricks
+voxel pages
+splat clusters
+impostors
+billboards
+distance proxies
+procedural instances
+```
+
+Pipeline:
+
+```text
+Scene Graph
+-> choisir representation visible
+-> decouper en clusters/pages/proxies
+-> hasher chaque fragment avec Forge
+-> reutiliser les fragments deja calcules
+-> streamer seulement ce qui est utile a la camera
+-> envoyer au GPU
+```
+
+Objectif:
+
+- afficher des mondes denses,
+- eviter le rendu inutile,
+- supprimer les details invisibles,
+- remplacer les details lointains par des illusions controlees,
+- garder une preuve/hash de chaque fragment reusable.
+
+Equivalent simple:
+
+```text
+Micro         -> vraie geometry virtuelle
+Crimson-like  -> fake geometry agressive
+InGen         -> virtual/fake geometry content-addressed
+```
+
+## Etape 4 - InGen Radiance Cache
+
+Cette etape est l equivalent conceptuel de Solaris.
+
+But:
+
+```text
+calculer la lumiere directe et indirecte
+sans tout recalculer depuis zero a chaque frame
+```
+
+InGen doit utiliser:
+
+```text
+surfels
+probes
+screen traces
+world traces
+SDF traces
+ray tracing
+radiance cache
+shadow cache
+```
+
+Pipeline:
+
+```text
+Scene visible
+-> echantillons de surface / surfels
+-> traces lumiere
+-> cache de radiance par zone
+-> reuse par hash quand scene/lumiere/camera changent peu
+-> rendu final
+```
+
+Objectif:
+
+- lumiere indirecte dynamique,
+- ombres douces,
+- reflets,
+- GI reutilisable,
+- cache multi-frame et multi-scene,
+- preuve/hash des resultats stables.
+
+Equivalent simple:
+
+```text
+Solaris -> InGen Surfel/Radiance Cache
+```
+
+## Etape 5 - Path Tracing Et Neural Rendering
+
+Cette etape est le chemin RTX Kit / Omniverse-like.
+
+Elle ne remplace pas le rendu temps reel. Elle ajoute un mode qualite et des
+techniques de reconstruction.
+
+Blocs vises:
+
+```text
+path tracing progressif
+ray tracing hardware
+ReSTIR / many-light sampling
+denoising temporel
+upscaling
+ray reconstruction
+neural materials
+neural texture compression
+neural radiance cache
+```
+
+Regle:
+
+```text
+temps reel = renderer rapide
+mode qualite = path tracing progressif
+neural = reconstruction/compression/approximation quand verifier possible
+```
+
+Forge intervient pour:
+
+- dedupliquer les samples et caches,
+- garder les preuves de bake,
+- memoriser les radiance caches,
+- comparer les approximations neural/classiques,
+- refuser les chemins non deterministes quand ils ne sont pas bornes.
+
+## La Couche Anti-Recalcul
+
+Le point differentiant d InGen est le cache Forge multi-echelle.
+
+```text
+micro  = formule, bruit, normale, petite fonction SDF
+mini   = materiau, patch de surfels, petit champ
+small  = brique SDF, voxel page, meshlet, splat group
+medium = chunk terrain, foret, radiance cache local
+large  = biome, monde, simulation, scene complete
+```
+
+Chaque fragment a:
+
+```text
+input_hash
+program_hash
+type_hash
+unit_hash
+result_hash
+proof_hash
+cost
+backend
+```
+
+Si le meme fragment revient, InGen reutilise le resultat au lieu de recalculer.
+
+Exemples:
+
+```text
+10 000 rochers partagent le meme bruit fractal
+-> Forge hash identique
+-> Monster calcule une fois
+-> le renderer reutilise 10 000 fois
+```
+
+```text
+ocean anime
+-> Forge bake spectres, champs, parametres stables
+-> GPU calcule seulement le delta temps reel
+```
+
+## Representations 3D
+
+InGen ne doit pas etre prisonnier d une seule representation. Cette section
+est la regle courte de l Etape 2.
+
+```text
+SDF = objets proceduraux et LLM-friendly
+voxel = volumes, terrain, caches, acceleration
+surfel = lumiere indirecte et radiance cache
+mesh = personnages, rigs, assets classiques
+gaussian splat = decors scannes photorealistes
+```
+
+Le LLM manipule le Scene Graph et les contrats Forge, pas les vertices.
+
+## Pipeline Visuel AAA
+
+Le renderer natif doit viser ces blocs:
+
+```text
+Virtual Geometry
+SDF / voxel acceleration
+mesh / splat import
+material graph physique
+many-light sampling
+soft shadows
+radiance cache
+ray tracing / raymarching / path tracing
+temporal accumulation
+denoising
+upscaling
+post-process
+```
+
+Equivalent conceptuel:
+
+```text
+Micro         -> InGen Virtual Geometry
+Solaris       -> InGen Surfel/Radiance Cache
+Substrate     -> InGen Material Graph
+MegaLights    -> InGen Many-Light Sampling
+PCG           -> Forge/LLM Procedural Graph
+RDG/RHI       -> InGen Render Graph + RHI
+RTX Kit       -> Path tracing + neural rendering path
+Crimson-like  -> InGen Fake Geometry / aggressive culling
+```
+
+## Regle Forge
+
+Forge doit etre utilise quand un calcul est:
+
+- repetable,
+- couteux,
+- partageable,
+- verifiable,
+- reutilisable par hash,
+- utile a plusieurs frames, objets ou scenes.
+
+Forge ne doit pas etre utilise pour remplacer l execution pixel par pixel du
+GPU dans les passes temps reel. Le GPU rend; Forge evite que le moteur arrive
+au GPU avec du travail deja connu.
+
+## Regle Banger
+
+Banger devient l editor et le viewport d InGen:
+
+```text
+Banger UI
+-> selection, scene collection, chat, preview, controle LLM
+-> Native Rust Engine pour rendu lourd
+-> Brain/State Kernel pour contexte et preuves
+```
+
+Banger n est plus le moteur profond. Banger est la surface intelligente du
+moteur InGen.
+
+## Apart - Google Web Et Navigation Native
+
+Plus tard, InGen devra aussi porter une section Google Web pour que le LLM
+navigue ultra efficacement dans le navigateur web natif.
+
+Cette direction doit etre prise en compte dans l architecture moteur:
+
+```text
+Google Web section
+-> navigateur web natif
+-> lecture haut niveau RAM / DOM
+-> cartographie DOM
+-> balisage memoire
+-> preuves / hashes
+-> contexte compact pour le LLM
+```
+
+Le tandem Rust Native Engine + Monster doit aussi servir ici:
+
+```text
+Rust Native Engine = observation native, UI, browser surface, frame/state loop
+Monster / Forge = analyse massive, hash, dedup, preuve, cartes RAM/DOM
+```
+
+Objectif:
+
+- lire et structurer le DOM sans dump brut,
+- cartographier les noeuds, relations, mutations et etats visibles,
+- baliser la RAM/DOM a haut niveau,
+- dedupliquer les observations repetitives,
+- fournir au LLM un contexte compact et actionnable,
+- garder les preuves et les hashes des observations.
+
+Cette section n est pas le moteur 3D, mais elle partage la meme doctrine:
+
+```text
+observer beaucoup localement,
+hash ce qui se repete,
+ne donner au LLM que des projections compactes,
+laisser Rust porter le temps reel,
+laisser Monster porter le calcul massif.
+```
+
+## Sources De Direction
+
+- Unreal Engine 5.7: Micro Foliage, MegaLights, Substrate, PCG.
+- NVIDIA RTX Kit: path tracing, neural rendering, RTX Mega Geometry.
+- Slang: shader unique vers Vulkan, DirectX, Metal et autres backends.
+- wgpu/Dawn: preuve qu une abstraction GPU multi-backend est viable, mais InGen
+  doit viser une RHI native plus ambitieuse pour le moteur profond.
+- StableHLO: operations explicites, typage strict, semantique verifiable.
+- Triton: kernels GPU par blocs/lanes, proche du metal sans ecrire CUDA partout.
+- Futhark: `map`, `reduce`, `scan`, `filter` comme base de calcul parallele.
+
+## Monster SOTA Actuel
+
+Monster n est plus un faux planificateur de calcul. Le chemin reel est:
+
+```text
+LLM -> /newcompute_ -> template Monster -> Forge source
+-> Forge IR -> primitiveOps -> GPU batch plan
+-> Rust RHI / wgpu -> dispatch GPU -> readback -> hash/preuve
+```
+
+Ce qui fonctionne:
+
+- calcul massif via `MonsterPreparedCompute::execute_mass_compute`,
+- generation de kernels WGSL depuis les primitives Forge,
+- couverture de lowering pour tout le vocabulaire primitif universel,
+- execution GPU reelle testee avec readback, `output_hash` et `proof_hash`,
+- sharding sur plusieurs GPU compatibles au lieu de supposer un seul GPU,
+- cache/reuse par fragments hashes,
+- exposition de `primitiveOps` dans le JSON `/newcompute_`.
+
+Limite importante:
+
+Les primitives simples executent directement. Les primitives complexes
+(`fft`, `svd`, graphes, sparse solve, AD, PDE/ODE, crypto) ont une premiere
+semantique massive deterministe, mais pas encore des kernels industriels
+specialises. Le pipeline est reel; tous les algorithmes ne sont pas encore au
+niveau Unreal/RTX/compute scientifique.
+
+Objectifs restants pour que Monster soit complet:
+
+1. kernels specialises FFT/IFFT/RFFT, sparse, graphes, SVD/QR/Cholesky/eigen;
+2. solveurs ODE/PDE, autodiff JVP/VJP, reductions deterministes;
+3. vrais buffers resultats types: arrays, tensors, fields, tables, graphs;
+4. tests differentiels CPU/GPU avec cas analytiques par famille primitive;
+5. politique multi-GPU: score adapter, budget memoire, chunking, retry, merge;
+6. cache persistant de kernels par hash IR + primitiveOps + ABI + adapter;
+7. modes numeriques robustes: f32/f64, NaN traps, bounds traps, RNG stable;
+8. artefacts render natifs: SDF bricks, meshlets, voxels, surfels, materials;
+9. artefacts DOM/RAM: graphes/tables de cartographie sans bloquer le navigateur;
+10. suppression ou extraction de tout ancien helper Monster hors pipeline Forge.
+
+## Phrase Finale
+
+InGen ne doit pas etre Unreal en WebGPU.
+
+InGen doit etre:
+
+```text
+un moteur natif Rust + Forge anti-recalcul + GPU bas niveau,
+ou le LLM controle une scene structuree
+et ou chaque calcul reutilisable devient un artefact hashe.
+```

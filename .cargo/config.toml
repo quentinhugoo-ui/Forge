@@ -1,3 +1,2 @@
 [alias]
 ui = "tauri dev -- --bin forge-ui"
-mcp = "run --bin forge_mcp"

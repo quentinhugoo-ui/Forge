@@ -1,6 +1,6 @@
-//! Packs — domain bundles of act codes the LLM launches by name.
+﻿//! Packs — domain bundles of act codes the LLM launches by name.
 //!
-//! The Atlas (the MCP dropdown in the left panel) lists *packs*, not
+//! The Atlas (the ActCode dropdown in the left panel) lists *packs*, not
 //! individual act codes. A pack groups dozens-to-hundreds of math/test
 //! computations that share an engineering domain — structural, thermal,
 //! rigid-body, electromagnetics … When the LLM picks a pack it spends a

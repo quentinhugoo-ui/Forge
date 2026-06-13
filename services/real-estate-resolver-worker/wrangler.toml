@@ -1,0 +1,6 @@
+name = "forge-real-estate-resolver"
+main = "src/worker.js"
+compatibility_date = "2026-05-16"
+
+[observability]
+enabled = true

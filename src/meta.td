@@ -1,8 +1,7 @@
 //===- meta.td — TableGen spec du dialecte `meta` ------------*- tablegen -*-===//
 //
 // Ω-4.6 — Spécification formelle du dialecte `meta` au format TableGen
-// LLVM/MLIR. Pendant strict de `kasm.td` mais pour le L4 méta : Calculus
-// of Constructions minimal.
+// LLVM/MLIR. Dialecte L4 meta : Calculus of Constructions minimal.
 //
 // Cet artifact est consommable par `mlir-tblgen` lorsque la toolchain
 // LLVM/MLIR est disponible. Tant qu'elle ne l'est pas (cf. mur Windows

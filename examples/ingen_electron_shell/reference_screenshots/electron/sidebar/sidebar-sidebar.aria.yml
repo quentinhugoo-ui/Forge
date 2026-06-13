@@ -1,0 +1,114 @@
+- main:
+  - region "InGen top controls":
+    - button "Toggle left panel"
+    - button "Search sessions"
+    - button "Open WebExplorer"
+    - button "Open Banger"
+    - button "Open Trading"
+    - text: CPU
+    - code: local
+    - text: GPU
+    - code: native
+    - button "Minimize"
+    - button "Maximize"
+    - button "Close"
+  - region "Workspace header":
+    - strong: Choose workspace
+    - text: /
+    - strong: Forge
+    - button "Forge workspace"
+    - button "WebExplorer workspace"
+    - button "Toggle right panel"
+  - complementary "Sidebar and sessions":
+    - navigation "Primary sidebar tools":
+      - button "New Session"
+      - button "Pool"
+      - button "Modules"
+      - button "My Assets"
+      - button "Automations"
+      - button "Brain"
+    - region "Recents":
+      - heading "Recents" [level=2]
+      - list:
+        - listitem:
+          - button "Open New session": New session 2026-06-09 / forge
+          - button "Pin New session": "1"
+          - button "Archive New session": x
+        - listitem:
+          - button "Open LLM Act Codes discovery methods": LLM Act Codes discovery methods 2026-06-08 / forge
+          - button "Pin LLM Act Codes discovery methods": +
+          - button "Archive LLM Act Codes discovery methods": x
+        - listitem:
+          - button "Open PoolClaw agent profiles": PoolClaw agent profiles 2026-06-07 / forge
+          - button "Pin PoolClaw agent profiles": +
+          - button "Archive PoolClaw agent profiles": x
+        - listitem:
+          - button "Open Banger create 3D object": Banger create 3D object 2026-06-07 / banger
+          - button "Pin Banger create 3D object": +
+          - button "Archive Banger create 3D object": x
+    - region "Profile menu":
+      - button "Toggle profile menu": Q Quentin v
+  - region "Sidebar shadow manifest":
+    - text: slice
+    - code: sidebar:shadow
+    - text: proof
+    - code: fallback-sidebar
+    - text: focus
+    - code: new-session
+    - text: sessions
+    - code: 4/0
+    - text: canvas
+    - code: workspace
+  - region "Header shadow manifest":
+    - text: slice
+    - code: header:shadow
+    - text: proof
+    - code: fallback
+    - text: focus
+    - code: left-panel
+    - text: Banger
+    - code: native-child-surface
+    - text: WebExplorer
+    - code: rust-owned-webview
+  - region "Header opened surface router":
+    - region "Forge canvas shadow contract":
+      - strong: Forge drop canvas
+      - text: Default Forge canvas remains shadow-only until central-zone migration. shadow
+      - code: fallback
+  - region "Panels chat composer and bottom controls":
+    - complementary "Native status dock":
+      - strong: Banger viewport
+      - button "Refresh native probes": Refresh
+      - text: PRIMARY
+      - code: banger=texture_probe=true visible=true frame_hash=shadow
+      - text: GPU
+      - code: gpu=wgpu shadow residency
+      - text: JOBS
+      - code: queued=0 running=0 done=0 failed=0
+      - text: PROOF
+      - code: frame-hash=shadow, ui_hash=pending
+      - button "Open native details"
+    - region "Conversation transcript":
+      - article:
+        - strong: Core
+        - code: native-state-sha
+        - paragraph: "Rust NativeStateKernel projection ready: sessions=1 jobs=0 codeact_refs=0"
+      - article:
+        - strong: InGen
+        - code: slint-parity-sha
+        - paragraph: Slint parity slice waiting for typed IPC promotion. Banger and WebExplorer remain native authorities.
+    - form "Chat composer":
+      - button "Attach files":
+        - text: +
+        - code
+      - textbox "Message"
+      - button "Codex": C
+      - button "Claude": C
+      - button "OpenRouter": O
+      - button "Send message"
+    - navigation "Bottom controls":
+      - button "ask-permissions"
+      - button "Codex"
+      - button "Moyen"
+      - code: uploads=0
+      - code: shadow:fallback

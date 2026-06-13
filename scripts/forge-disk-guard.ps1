@@ -169,8 +169,8 @@ $candidates = @(
     New-Candidate 1 "Yarn cache" (Join-Path $UserProfile "AppData\Local\Yarn\Cache") "Directory"
     New-Candidate 1 "user cache contents" (Join-Path $UserProfile ".cache") "Contents"
     New-Candidate 1 "Cargo registry cache" (Join-Path $UserProfile ".cargo\registry") "Directory"
-    New-Candidate 2 "Forge codex targets" (Join-Path $Root ".codex-targets") "Directory"
-    New-Candidate 2 "Forge codex temp" (Join-Path $Root ".codex-tmp") "Directory"
+    # The live desktop app uses .codex-targets/.codex-tmp as its presentation
+    # pipeline. Cleaning them while Cargo or the app is alive corrupts hot builds.
     New-Candidate 2 "Forge fuzz target" (Join-Path $Root "target-fuzz-local") "Directory"
     New-Candidate 2 "Native front check target" (Join-Path $Root "examples\ingen_native_front\target-check") "Directory"
     New-Candidate 2 "Native front desktop target" (Join-Path $Root "examples\ingen_native_front\target-desktop") "Directory"

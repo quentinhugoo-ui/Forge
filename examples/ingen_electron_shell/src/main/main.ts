@@ -267,10 +267,11 @@ if (process.platform === "win32") {
   app.setAppUserModelId(eventTextLabMode ? "com.forge.ingen.event-text-lab" : "com.forge.ingen");
 }
 
-const hasSingleInstanceLock = eventTextLabMode || app.requestSingleInstanceLock();
+const bypassSingleInstanceLock = process.env.INGEN_ELECTRON_BYPASS_SINGLE_INSTANCE_LOCK === "1";
+const hasSingleInstanceLock = eventTextLabMode || bypassSingleInstanceLock || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
-} else if (!eventTextLabMode) {
+} else if (!eventTextLabMode && !bypassSingleInstanceLock) {
   app.on("second-instance", () => {
     restorePrimaryWindow();
   });

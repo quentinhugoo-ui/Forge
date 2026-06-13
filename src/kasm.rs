@@ -18431,6 +18431,18 @@ fn infer_builtin_forge_call_ty(name: &str, args: &[ForgeExpr], arg_tys: &[ForgeT
         "sparse_solve" if arg_tys.len() >= 2 => infer_sparse_vector_ty(&arg_tys[1]),
         "ode_step_euler" | "ode_step_rk4" | "ode_solve" | "pde_stencil_step" | "relaxation_step"
             if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
+        "temperature_field_next" if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
+        "max_temperature" | "temperature_gradient_max" | "thermal_runaway_margin"
+        | "time_to_threshold_estimate" | "cfl_stability_ratio" | "energy_balance_error"
+        | "residual_norm" | "sensitivity" | "joule_heat_rate" | "entropic_heat_rate"
+        | "arrhenius_heat_rate" | "electrothermal_source_rate" | "threshold_crossing_time"
+        | "simulation_final_time" if !arg_tys.is_empty() => {
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        }
+        "simulated_steps" if !arg_tys.is_empty() => Some(ForgeType::Scalar(ForgeScalarTy::U64)),
+        "hotspot_location_x" | "hotspot_location_y" if !arg_tys.is_empty() => {
+            Some(ForgeType::Scalar(ForgeScalarTy::U64))
+        }
         "csr_matvec" if arg_tys.len() >= 2 => infer_sparse_vector_ty(&arg_tys[1]),
         "coo_to_csr" if !arg_tys.is_empty() => Some(arg_tys[0].clone()),
         "sparse_reduce" if !arg_tys.is_empty() => infer_sparse_reduce_ty(&arg_tys[0]),
@@ -20422,7 +20434,18 @@ fn infer_builtin_unit_dim(name: &str, args: &[ForgeExpr], units: &[ForgeUnitDim]
         | "jvp" | "vjp" | "sensitivity_forward" | "sensitivity_adjoint" | "optimize"
         | "constraint_solve" if units.len() == 1 => Some(units[0]),
         "integrate_force" | "integrate_velocity" | "fluid_advect_step" | "pressure_projection_step"
-        | "constraint_project" if !units.is_empty() => Some(units[0]),
+        | "constraint_project" | "ode_step_euler" | "ode_step_rk4" | "ode_solve"
+        | "pde_stencil_step" | "relaxation_step" if !units.is_empty() => Some(units[0]),
+        "temperature_field_next" if !units.is_empty() => Some(units[0]),
+        "max_temperature" | "thermal_runaway_margin" if !units.is_empty() => Some(units[0]),
+        "temperature_gradient_max" | "time_to_threshold_estimate" | "cfl_stability_ratio"
+        | "energy_balance_error" | "residual_norm" | "sensitivity"
+        | "hotspot_location_x" | "hotspot_location_y" | "joule_heat_rate"
+        | "entropic_heat_rate" | "arrhenius_heat_rate" | "electrothermal_source_rate"
+        | "threshold_crossing_time" | "simulated_steps" | "simulation_final_time"
+            if !units.is_empty() => {
+            Some(ForgeUnitDim::dimensionless())
+        }
         // Signal primitives that take a kernel / taps / window-size in their
         // tail args: the output carries the signal carrier's unit (kernel /
         // tail args are dimensionless coefficients/indices).
@@ -20485,6 +20508,16 @@ fn infer_builtin_unit_dim(name: &str, args: &[ForgeExpr], units: &[ForgeUnitDim]
         | "newton_root" | "fixed_point" | "linear_solve" | "sparse_solve" | "least_squares"
         | "ode_step_euler" | "ode_step_rk4" | "ode_solve" | "pde_stencil_step" | "relaxation_step"
         | "csr_matvec" if !units.is_empty() => Some(units[0]),
+        "temperature_field_next" if !units.is_empty() => Some(units[0]),
+        "max_temperature" | "thermal_runaway_margin" if !units.is_empty() => Some(units[0]),
+        "temperature_gradient_max" | "time_to_threshold_estimate" | "cfl_stability_ratio"
+        | "energy_balance_error" | "residual_norm" | "sensitivity"
+        | "hotspot_location_x" | "hotspot_location_y" | "joule_heat_rate"
+        | "entropic_heat_rate" | "arrhenius_heat_rate" | "electrothermal_source_rate"
+        | "threshold_crossing_time" | "simulated_steps" | "simulation_final_time"
+            if !units.is_empty() => {
+            Some(ForgeUnitDim::dimensionless())
+        }
         "transform_point" | "transform_normal" | "gradient_field" | "normal_from_sdf"
         | "raymarch_step" | "marching_cubes_cell" if !units.is_empty() => Some(units[0]),
         "sdf_sphere" | "sdf_box" | "sdf_capsule" | "sdf_torus" | "sdf_union"
@@ -21028,6 +21061,18 @@ fn infer_builtin_bounds(name: &str, args: &[ForgeExpr], bounds: &[ForgeBounds]) 
         "shortest_path_step" if bounds.len() == 1 => ForgeBounds::new(0.0, 1.0e15),
         "pagerank_step" if bounds.len() == 1 => ForgeBounds::new(0.0, 1.0),
         "connected_components_step" if bounds.len() == 1 => ForgeBounds::new(0.0, 1.0e12),
+        "ode_step_euler" | "ode_step_rk4" | "ode_solve" | "pde_stencil_step" | "relaxation_step"
+            if !bounds.is_empty() => Some(bounds[0]),
+        "temperature_field_next" if !bounds.is_empty() => Some(bounds[0]),
+        "max_temperature" if !bounds.is_empty() => Some(bounds[0]),
+        "thermal_runaway_margin" | "temperature_gradient_max" | "time_to_threshold_estimate"
+        | "cfl_stability_ratio" | "energy_balance_error" | "residual_norm" | "sensitivity"
+        | "hotspot_location_x" | "hotspot_location_y" | "joule_heat_rate"
+        | "entropic_heat_rate" | "arrhenius_heat_rate" | "electrothermal_source_rate"
+        | "threshold_crossing_time" | "simulated_steps" | "simulation_final_time"
+            if !bounds.is_empty() => {
+            ForgeBounds::new(-1.0e15, 1.0e15)
+        }
         "grad" | "hessian_diag" | "adjoint" | "jvp" | "vjp"
         | "sensitivity_forward" | "sensitivity_adjoint"
             if bounds.len() == 1 => Some(bounds[0]),
@@ -21064,6 +21109,16 @@ fn infer_builtin_bounds(name: &str, args: &[ForgeExpr], bounds: &[ForgeBounds]) 
         | "newton_root" | "fixed_point" | "linear_solve" | "sparse_solve" | "least_squares"
         | "ode_step_euler" | "ode_step_rk4" | "ode_solve" | "pde_stencil_step" | "relaxation_step"
         | "csr_matvec" if !bounds.is_empty() => ForgeBounds::new(-1.0e15, 1.0e15),
+        "temperature_field_next" if !bounds.is_empty() => Some(bounds[0]),
+        "max_temperature" if !bounds.is_empty() => Some(bounds[0]),
+        "thermal_runaway_margin" | "temperature_gradient_max" | "time_to_threshold_estimate"
+        | "cfl_stability_ratio" | "energy_balance_error" | "residual_norm" | "sensitivity"
+        | "hotspot_location_x" | "hotspot_location_y" | "joule_heat_rate"
+        | "entropic_heat_rate" | "arrhenius_heat_rate" | "electrothermal_source_rate"
+        | "threshold_crossing_time" | "simulated_steps" | "simulation_final_time"
+            if !bounds.is_empty() => {
+            ForgeBounds::new(-1.0e15, 1.0e15)
+        }
         "transform_point" | "transform_normal" | "gradient_field" | "normal_from_sdf"
         | "sdf_sphere" | "sdf_box" | "sdf_capsule" | "sdf_torus" | "sdf_union"
         | "sdf_intersection" | "sdf_subtract" | "sdf_smooth_union" | "raymarch_step"
@@ -22542,6 +22597,88 @@ artifact_handoff:
     }
 
     #[test]
+    fn forge_module_accepts_simulation_heat_pde_tensor_slice() {
+        let source = r#"
+forge_module:
+  module heat_pde_tensor_compute version 1
+forge_imports:
+  none
+forge_constants:
+  none
+forge_functions:
+  fn heat_step(temperature_field: tensor<f32,64x64>, source_field: tensor<f32,64x64>, dt: f32) -> tensor<f32,64x64> { return pde_stencil_step(temperature_field, source_field, dt) }
+forge_program:
+  let next_temperature_field = heat_step(temperature_field, source_field, dt)
+  emit next_temperature_field: tensor<f32,64x64> = next_temperature_field
+  emit mean_temperature: f32 = mean(next_temperature_field)
+forge_inputs:
+  param temperature_field: tensor<f32,64x64> unit none bounds [250.0,460.0] nominal 313.15
+  param source_field: tensor<f32,64x64> unit none bounds [0.0,1.0] nominal 0.05
+  param dt: f32 unit s bounds [0.0001,0.1] nominal 0.01
+forge_outputs:
+  output next_temperature_field: tensor<f32,64x64> unit none handoff vector
+  output mean_temperature: f32 unit none handoff scalar
+forge_constraints:
+  assert finite(mean_temperature)
+forge_samples:
+  case nominal { given temperature_field=313.15, source_field=0.05, dt=0.01; expect mean_temperature approx 313.15 tolerance 20.0 }
+forge_cost:
+  max_steps=10000000
+  max_memory_mb=512
+  precision=f32
+  min_estimated_ops=100000000
+artifact_handoff:
+  proof_hash,output_hash,compact_result
+"#;
+        assert!(ForgeModuleSpec::parse(source).is_some());
+        let vars = vec![
+            (
+                "next_temperature_field".to_string(),
+                ForgeType::Tensor { elem: ForgeScalarTy::F32, shape: vec![64, 64] },
+            ),
+            ("dx".to_string(), ForgeType::Scalar(ForgeScalarTy::F64)),
+            ("dy".to_string(), ForgeType::Scalar(ForgeScalarTy::F64)),
+        ];
+        let funcs = Vec::new();
+        assert_eq!(
+            ForgeExpr::parse("temperature_field_next(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Tensor { elem: ForgeScalarTy::F32, shape: vec![64, 64] })
+        );
+        assert_eq!(
+            ForgeExpr::parse("max_temperature(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("hotspot_location_x(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::U64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("temperature_gradient_max(next_temperature_field, dx, dy)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("threshold_crossing_time(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("simulated_steps(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::U64))
+        );
+    }
+
+    #[test]
     fn forge_param_spec_parses_type_unit_bounds_and_nominal() {
         let spec = ForgeParamSpec::parse(
             "param radius: f64 unit m bounds [0.05, 0.35] nominal 0.12",
@@ -23026,17 +23163,22 @@ artifact_handoff:
     #[test]
     fn forge_cost_spec_requires_bounded_execution_contract() {
         let spec = ForgeCostSpec::parse(
-            "max_steps=1000000\nmax_memory_mb=512\nprecision=f64\nparallelism=8",
+            "max_steps=1000000\nmax_memory_mb=512\nprecision=f64\nparallelism=8\nmin_estimated_ops=10000000",
         )
         .unwrap();
         assert_eq!(spec.max_steps, 1_000_000);
         assert_eq!(spec.max_memory_mb, 512);
         assert_eq!(spec.precision, ForgePrecision::F64);
         assert_eq!(spec.parallelism, Some(8));
+        assert_eq!(spec.min_estimated_ops, Some(10_000_000));
         assert!(ForgeCostSpec::parse("max_steps=0\nmax_memory_mb=512\nprecision=f64").is_none());
         assert!(ForgeCostSpec::parse("max_steps=1\nmax_memory_mb=1\nprecision=f64\nparallelism=0").is_none());
         assert!(
             ForgeCostSpec::parse("max_steps=1\nmax_memory_mb=1\nprecision=f64\nparallelism=4097")
+                .is_none()
+        );
+        assert!(
+            ForgeCostSpec::parse("max_steps=1\nmax_memory_mb=1\nprecision=f64\nmin_estimated_ops=0")
                 .is_none()
         );
     }
@@ -24360,6 +24502,7 @@ pub struct ForgeCostSpec {
     pub max_memory_mb: u64,
     pub precision: ForgePrecision,
     pub parallelism: Option<u32>,
+    pub min_estimated_ops: Option<u64>,
 }
 
 impl ForgeCostSpec {
@@ -24368,6 +24511,7 @@ impl ForgeCostSpec {
         let mut max_memory_mb = None;
         let mut precision = None;
         let mut parallelism = None;
+        let mut min_estimated_ops = None;
         for line in raw.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -24379,6 +24523,7 @@ impl ForgeCostSpec {
                 "max_memory_mb" => max_memory_mb = value.trim().parse::<u64>().ok(),
                 "precision" => precision = ForgePrecision::parse(value.trim()),
                 "parallelism" => parallelism = Some(value.trim().parse::<u32>().ok()?),
+                "min_estimated_ops" => min_estimated_ops = Some(value.trim().parse::<u64>().ok()?),
                 _ => return None,
             }
         }
@@ -24387,6 +24532,7 @@ impl ForgeCostSpec {
             max_memory_mb: max_memory_mb?,
             precision: precision?,
             parallelism,
+            min_estimated_ops,
         };
         spec.is_valid().then_some(spec)
     }
@@ -24396,6 +24542,7 @@ impl ForgeCostSpec {
             && self.max_memory_mb > 0
             && self.parallelism.unwrap_or(1) > 0
             && self.parallelism.unwrap_or(1) <= 4096
+            && self.min_estimated_ops.unwrap_or(1) > 0
     }
 }
 
@@ -26653,6 +26800,9 @@ impl ForgeModuleSpec {
         if let Some(parallelism) = self.cost.parallelism {
             out.push_str(&format!("parallelism={parallelism}\n"));
         }
+        if let Some(min_estimated_ops) = self.cost.min_estimated_ops {
+            out.push_str(&format!("min_estimated_ops={min_estimated_ops}\n"));
+        }
         out.push_str("artifact_handoff:\n");
         out.push_str(&self.artifact_handoff.items.join(","));
         out.push('\n');
@@ -27311,7 +27461,13 @@ fn call_kernel_class(name: &str) -> ForgeIrKernelClass {
         | "light_proof" | "export_mesh" | "export_sdf" | "export_shader" | "export_preview"
         | "export_proof" | "inertia_tensor"
         | "stress_tensor_basic" | "strain_basic" | "thermal_flux_step" | "fluid_advect_step"
-        | "pressure_projection_step" | "collision_distance" | "constraint_project" => ForgeIrKernelClass::Field,
+        | "pressure_projection_step" | "collision_distance" | "constraint_project"
+        | "temperature_field_next" | "max_temperature" | "hotspot_location_x"
+        | "hotspot_location_y" | "temperature_gradient_max" | "thermal_runaway_margin"
+        | "time_to_threshold_estimate" | "cfl_stability_ratio" | "energy_balance_error"
+        | "residual_norm" | "sensitivity" | "joule_heat_rate" | "entropic_heat_rate"
+        | "arrhenius_heat_rate" | "electrothermal_source_rate" | "threshold_crossing_time"
+        | "simulated_steps" | "simulation_final_time" => ForgeIrKernelClass::Field,
         "node_count" | "edge_count" | "graph_neighbors" | "graph_degree" | "bfs_step"
         | "shortest_path_step" | "pagerank_step" | "connected_components_step" | "refs"
         | "retainers" | "mutation_diff" | "kmer_hash" | "transcribe" | "translate"

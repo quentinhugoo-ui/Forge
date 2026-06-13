@@ -239,16 +239,23 @@ function parallelSessionCount(item: SidebarSessionItem): number {
   return explicitCount || parallelLabelCount(item.label);
 }
 
-function ParallelSessionIcon({ count }: { count: number }) {
+function ParallelSessionIcon({ count, birthAnimationKey = 0, birth = false }: { count: number; birthAnimationKey?: number; birth?: boolean }) {
   const laneCount = Math.max(2, Math.min(4, count));
+  const tooltip = `${laneCount} parallel sessions`;
   const iconPath =
     laneCount === 2
-      ? "M19 5h-4.025h.125h-.1zm-6-2h8v12h-2V5h-4v16h-2zM3 21V3h8v18zM9 5H5v14h4zm0 0H5zm10 18v-2h-2v-2h2v-2h2v2h2v2h-2v2z"
+      ? "M3 21V3h8v18zm6-16H5v14h4zm4 16V3h8v18zm6-16h-4v14h4z"
       : laneCount === 3
         ? "M3 21V3h8v18zm6-16H5v14h4zm4 6V3h8v8zm6-6h-4v4h4zm-6 16v-8h8v8zm6-6h-4v4h4z"
         : "M3 11V3h8v8zm6-6H5v4h4zm4 6V3h8v8zm6-6h-4v4h4zM3 21v-8h8v8zm6-6H5v4h4zm4 6v-8h8v8zm6-6h-4v4h4z";
   return (
-    <span className="parallelSessionMark" aria-hidden="true">
+    <span
+      key={birth ? `parallel-session-birth-${birthAnimationKey}` : "parallel-session-mark"}
+      className={birth ? "parallelSessionMark parallelSessionMark--birth" : "parallelSessionMark"}
+      role="img"
+      aria-label={tooltip}
+      data-tooltip={tooltip}
+    >
       <svg
         className="parallelSessionMark__icon"
         height={SESSION_ARCHIVE_ICON_SIZE}
@@ -344,9 +351,41 @@ function persistPinnedWorkspaceKey(key: string): void {
   }
 }
 
-function groupSessionsByWorkspace(items: SidebarSessionItem[]): WorkspaceSessionGroup[] {
+function withActiveParallelDraftDisplay(
+  items: SidebarSessionItem[],
+  activeSessionId = "",
+  activeParallelLaneCount = 1
+): SidebarSessionItem[] {
+  const laneCount = Math.max(1, Math.min(4, Math.round(activeParallelLaneCount)));
+  if (laneCount <= 1 || !activeSessionId) {
+    return items;
+  }
+  return items.map((item) => {
+    if (item.sessionId !== activeSessionId || item.parallelGroupId || parallelSessionCount(item) > 1) {
+      return item;
+    }
+    const baseLabel = cleanParallelSessionLabel(item.label);
+    const draftLabels = Array.from({ length: laneCount - 1 }, () => "New session");
+    return {
+      ...item,
+      label: [baseLabel, ...draftLabels].join(" / "),
+      parallelLaneCount: laneCount
+    };
+  });
+}
+
+function groupSessionsByWorkspace(
+  items: SidebarSessionItem[],
+  activeSessionId = "",
+  activeParallelLaneCount = 1
+): WorkspaceSessionGroup[] {
   const groups = new Map<string, { key: string; label: string; items: SidebarSessionItem[] }>();
-  for (const item of items) {
+  const displayItems = withActiveParallelDraftDisplay(
+    items,
+    activeSessionId,
+    activeParallelLaneCount
+  );
+  for (const item of displayItems) {
     if (!item.rowVisible) continue;
     const label = sessionWorkspaceLabel(item);
     const key = label.toLocaleLowerCase();
@@ -374,11 +413,15 @@ function orderWorkspaceGroups(groups: WorkspaceSessionGroup[], pinnedWorkspaceKe
 function SessionRow({
   item,
   selected,
+  parallelBirthAnimationKey,
+  parallelBirthAnimationSessionId,
   onOpen,
   onArchive
 }: {
   item: SidebarSessionItem;
   selected: boolean;
+  parallelBirthAnimationKey: number;
+  parallelBirthAnimationSessionId: string;
   onOpen: () => void;
   onArchive: () => void;
 }) {
@@ -388,6 +431,7 @@ function SessionRow({
   const laneCount = parallelSessionCount(item);
   const parallel = laneCount > 1;
   const sessionLabel = parallel ? cleanParallelSessionLabel(item.label) : item.label;
+  const birth = parallelBirthAnimationKey > 0 && item.sessionId !== "" && item.sessionId === parallelBirthAnimationSessionId;
 
   const archive = () => {
     if (archiving) return;
@@ -403,7 +447,14 @@ function SessionRow({
       parallel ? "sessionRow--parallel" : "",
       archiving ? "sessionRow--archiving" : ""
     ].filter(Boolean).join(" ")} role="listitem">
-      {parallel ? <ParallelSessionIcon count={laneCount} /> : null}
+      {parallel ? (
+        <ParallelSessionIcon
+          key={birth ? `parallel-icon-birth-${parallelBirthAnimationKey}` : "parallel-icon"}
+          count={laneCount}
+          birth={birth}
+          birthAnimationKey={parallelBirthAnimationKey}
+        />
+      ) : null}
       <button
         type="button"
         className="sessionRow__main"
@@ -424,7 +475,13 @@ function SessionRow({
           </span>
         </span>
       ) : (
-        <button type="button" className="sessionRow__archive" aria-label={`Archive ${sessionLabel}`} onClick={archive}>
+        <button
+          type="button"
+          className="sessionRow__archive"
+          aria-label={`Archive ${sessionLabel}`}
+          data-tooltip="Archive session"
+          onClick={archive}
+        >
           <ArchiveSessionIcon />
         </button>
       )}
@@ -555,8 +612,8 @@ const LLM_PROVIDER_META: Record<LlmProviderId, {
     logoProvider: "openai",
     cliLabel: "OAuth Direct",
     command: "OpenAI subscription OAuth",
-    auth: "ChatGPT OAuth",
-    plan: "ChatGPT subscription access"
+    auth: "Using InGen with your ChatGPT plan",
+    plan: ""
   },
   claude: {
     tab: "Claude",
@@ -675,10 +732,23 @@ function LlmTerminalScreen({
         </span>
         <div className="llmTerminal__identity">
           <p><strong>{meta.title}</strong> <span className="llmTerminal__muted">{meta.cliLabel}{meta.version ? ` ${meta.version}` : ""}</span></p>
-          <p><span className="llmTerminal__keyword">{meta.auth}</span> <span className="llmTerminal__muted">/ {meta.plan}</span></p>
+          <p>
+            <span className="llmTerminal__keyword">{meta.auth}</span>
+            {meta.plan ? <span className="llmTerminal__muted"> / {meta.plan}</span> : null}
+          </p>
         </div>
       </div>
-      <p className="llmTerminal__guard"><span className="llmTerminal__dim">guard</span> renderer never stores secrets; native credential path owns the session.</p>
+      {provider === "codex" ? (
+        <div className="llmTerminal__usageNote">
+          <p>Usage limits vary by plan.</p>
+          <p>
+            For more information, including higher-usage options for individuals and Codex credit plans for business users, visit{" "}
+            <a href="https://chatgpt.com/pricing" target="_blank" rel="noreferrer">
+              chatgpt.com/pricing
+            </a>.
+          </p>
+        </div>
+      ) : null}
       <div className="llmTerminal__actions">
         <button
           type="button"
@@ -952,12 +1022,12 @@ function LlmProviderTerminal() {
   );
 }
 
-function ProfileCanvasSurface({ canvas }: { canvas: ProfileCanvas }) {
+function ProfileCanvasSurface({ canvas, onCloseProfileCanvas }: { canvas: ProfileCanvas; onCloseProfileCanvas?: () => void }) {
   if (canvas === "llm") {
     return <LlmProviderTerminal />;
   }
   if (canvas === "brain") {
-    return <BrainCanvas />;
+    return <BrainCanvas onClose={onCloseProfileCanvas} />;
   }
   if (canvas !== "profile") return null;
   return (
@@ -1135,6 +1205,7 @@ const SIDEBAR_MODULES = [
   { id: "uber-eats", label: "uber eats" },
   { id: "airbnb", label: "airbnb" },
   { id: "whatsapp", label: "whatsapp" },
+  { id: "compute", label: "Compute" },
   ...PLACEHOLDER_MODULES.map((index) => ({ id: `module-${index}`, label: "module" }))
 ] as const;
 
@@ -1459,20 +1530,31 @@ function ModulesDrawer({
 
 export function SidebarSlice({
   open,
+  activeParallelLaneCount = 1,
+  parallelBirthAnimationKey = 0,
+  parallelBirthAnimationSessionId = "",
   onNewSession,
   onModuleSelect,
-  onModuleDrop
+  onModuleDrop,
+  onCloseProfileCanvas
 }: {
   open: boolean;
+  activeParallelLaneCount?: number;
+  parallelBirthAnimationKey?: number;
+  parallelBirthAnimationSessionId?: string;
   onNewSession?: () => void;
   onModuleSelect?: (id: SidebarModuleId) => void;
   onModuleDrop?: (id: SidebarModuleId) => void;
+  onCloseProfileCanvas?: () => void;
 }) {
   const { snapshot } = useSidebarShadowStore();
   const [pinnedWorkspaceKey, setPinnedWorkspaceKey] = useState(readPinnedWorkspaceKey);
   const [workspaceMenuKey, setWorkspaceMenuKey] = useState("");
   const visibleRecent = snapshot.recentItems.filter((item) => item.rowVisible);
-  const recentWorkspaceGroups = orderWorkspaceGroups(groupSessionsByWorkspace(visibleRecent), pinnedWorkspaceKey);
+  const recentWorkspaceGroups = orderWorkspaceGroups(
+    groupSessionsByWorkspace(visibleRecent, snapshot.recentSessionId, activeParallelLaneCount),
+    pinnedWorkspaceKey
+  );
   const drawerOpen = snapshot.toolControls.some((tool) => tool.drawer !== "" && tool.selected);
   const togglePinnedWorkspace = (key: string) => {
     const next = pinnedWorkspaceKey === key ? "" : key;
@@ -1599,6 +1681,8 @@ export function SidebarSlice({
                         key={item.sessionId || item.label}
                         item={item}
                         selected={item.sessionId !== "" && item.sessionId === snapshot.recentSessionId}
+                        parallelBirthAnimationKey={parallelBirthAnimationKey}
+                        parallelBirthAnimationSessionId={parallelBirthAnimationSessionId}
                         onOpen={() => {
                           if (item.sessionId) {
                             void dispatchSidebarCommand(
@@ -1685,37 +1769,39 @@ export function SidebarSlice({
               </div>
             ) : null}
 
-            <div className="navNotif" aria-label="Notifications">
-              <button type="button" className="navNotif__btn" aria-label="Messages" onClick={() => void sidebarShadowStore.dispatch(sidebarShadowStore.command({ kind: "activate_control", label: "Messages" }), "nav-dm")}>
-                <NavIcon kind="dm" />
-              </button>
-              <button type="button" className="navNotif__btn" aria-label="Friend requests" onClick={() => void sidebarShadowStore.dispatch(sidebarShadowStore.command({ kind: "activate_control", label: "Friends" }), "nav-friends")}>
-                <NavIcon kind="friends" />
-              </button>
-              <button type="button" className="navNotif__btn" aria-label="Notifications" onClick={() => void sidebarShadowStore.dispatch(sidebarShadowStore.command({ kind: "activate_control", label: "Notifications" }), "nav-bell")}>
-                <NavIcon kind="bell" />
+            <div className="profileDock__card">
+              <div className="navNotif" aria-label="Notifications">
+                <button type="button" className="navNotif__btn" aria-label="Messages" onClick={() => void sidebarShadowStore.dispatch(sidebarShadowStore.command({ kind: "activate_control", label: "Messages" }), "nav-dm")}>
+                  <NavIcon kind="dm" />
+                </button>
+                <button type="button" className="navNotif__btn" aria-label="Friend requests" onClick={() => void sidebarShadowStore.dispatch(sidebarShadowStore.command({ kind: "activate_control", label: "Friends" }), "nav-friends")}>
+                  <NavIcon kind="friends" />
+                </button>
+                <button type="button" className="navNotif__btn" aria-label="Notifications" onClick={() => void sidebarShadowStore.dispatch(sidebarShadowStore.command({ kind: "activate_control", label: "Notifications" }), "nav-bell")}>
+                  <NavIcon kind="bell" />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                className="navAvatarBtn"
+                aria-label="Toggle user menu"
+                aria-expanded={snapshot.profileOpen}
+                aria-haspopup="true"
+                onClick={() => void sidebarShadowStore.dispatch(sidebarShadowStore.command({ kind: "toggle_profile_menu" }), "profile-menu")}
+              >
+                <span className="navAvatarBtn__initials">Q</span>
+                <span className="navAvatarBtn__username">Quentin</span>
+                <NavIcon kind="chevron" />
               </button>
             </div>
-
-            <button
-              type="button"
-              className="navAvatarBtn"
-              aria-label="Toggle user menu"
-              aria-expanded={snapshot.profileOpen}
-              aria-haspopup="true"
-              onClick={() => void sidebarShadowStore.dispatch(sidebarShadowStore.command({ kind: "toggle_profile_menu" }), "profile-menu")}
-            >
-              <span className="navAvatarBtn__initials">Q</span>
-              <span className="navAvatarBtn__username">Quentin</span>
-              <NavIcon kind="chevron" />
-            </button>
           </section>
       </aside>
 
       {snapshot.profileCanvas === "sessions" ? (
         <SessionsCanvas items={snapshot.recentItems} archivedItems={snapshot.archivedItems} mode={snapshot.sessionsMenuMode} />
       ) : null}
-      <ProfileCanvasSurface canvas={snapshot.profileCanvas} />
+      <ProfileCanvasSurface canvas={snapshot.profileCanvas} onCloseProfileCanvas={onCloseProfileCanvas} />
     </>
   );
 }
