@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, ListChecks, Pencil, RefreshCw, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
+import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, FolderPlus, List, ListChecks, MoveRight, Pencil, RefreshCw, Search, Terminal, Trash2, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import type { Camera, Object3D } from "three";
 import type { BrainCodeActCommand, ComposerUploadPreview, PanelsChatBottomCommand, PanelsChatBottomSnapshot, TranscriptMessage } from "../shared/ipc-contract";
 import {
@@ -30,6 +30,22 @@ import {
   BRAIN_WEB_COMMAND
 } from "../shared/ipc-contract";
 import { ComposerSendBurst, type ComposerSendBurstHandle } from "./ComposerSendBurst";
+import {
+  AGENT_COPY_PATH_COMMAND,
+  AGENT_CREATE_DIRECTORY_COMMAND,
+  AGENT_DELETE_EMPTY_DIRECTORY_COMMAND,
+  AGENT_DELETE_TREE_COMMAND,
+  AGENT_LIST_COMMAND,
+  AGENT_MOVE_PATH_COMMAND,
+  AGENT_READONLY_SHELL_COMMAND,
+  AGENT_RENAME_PATH_COMMAND,
+  AGENT_SEARCH_COMMAND,
+  AGENT_SHELL_COMMAND,
+  agentActionEventFromLine,
+  agentActionEventText,
+  agentActionEventCommandFromToken,
+  type AgentActionEventCommand
+} from "./agent-action-events";
 import { BRAIN_AGENT_MEMORY_UPDATED_EVENT, readBrainAgentMemory } from "./brain-user-memory-store";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { ProviderLogo } from "./ProviderLogo";
@@ -1187,7 +1203,7 @@ type AssistantMarkdownBlock =
   | { kind: "event"; event: TranscriptCodeActEvent }
   | { kind: "event_group"; events: TranscriptCodeActEvent[] };
 
-type TranscriptCodeActCommand = BrainCodeActCommand | `/compute_${string}_`;
+type TranscriptCodeActCommand = BrainCodeActCommand | AgentActionEventCommand | `/compute_${string}_`;
 type AssistantTableAlignment = "left" | "center" | "right";
 type AssistantCalloutTone = "info" | "warning" | "success" | "assumption";
 
@@ -1256,6 +1272,10 @@ function isDynamicComputeCommand(value: string): value is `/compute_${string}_` 
 }
 
 function codeActEventText(command: TranscriptCodeActCommand): string {
+  const agentActionText = agentActionEventCommandFromToken(command);
+  if (agentActionText) {
+    return agentActionEventText(agentActionText);
+  }
   if (isDynamicComputeCommand(command)) {
     const label = dynamicComputeLabel(command);
     return `${label || "named"} compute executed`;
@@ -1265,6 +1285,10 @@ function codeActEventText(command: TranscriptCodeActCommand): string {
 
 function readCodeActCommand(value: string): TranscriptCodeActCommand | undefined {
   const trimmed = value.trim().replace(/^["'`]+|["'`,;]+$/g, "");
+  const agentActionCommand = agentActionEventCommandFromToken(trimmed);
+  if (agentActionCommand) {
+    return agentActionCommand;
+  }
   if (BRAIN_CODEACT_COMMAND_SET.has(trimmed)) {
     return trimmed as BrainCodeActCommand;
   }
@@ -1276,6 +1300,10 @@ function readCodeActCommand(value: string): TranscriptCodeActCommand | undefined
 
 function codeActEventFromLine(line: string): TranscriptCodeActEvent | undefined {
   const trimmed = line.trim();
+  const agentActionEvent = agentActionEventFromLine(trimmed);
+  if (agentActionEvent) {
+    return agentActionEvent;
+  }
   const commandAssignment = /(?:^|\s)command\s*=\s*("([^"]+)"|'([^']+)'|([^\s]+))/.exec(trimmed);
   const assignedCommand = commandAssignment ? readCodeActCommand(commandAssignment[2] ?? commandAssignment[3] ?? commandAssignment[4] ?? "") : undefined;
   if (assignedCommand) {
@@ -2550,7 +2578,31 @@ function CalendarCodeActIcon() {
   );
 }
 
+function AgentActionCodeActIcon({ command }: { command: AgentActionEventCommand }) {
+  if (command === AGENT_LIST_COMMAND) return <List />;
+  if (command === AGENT_SEARCH_COMMAND) return <Search />;
+  if (command === AGENT_CREATE_DIRECTORY_COMMAND) return <FolderPlus />;
+  if (command === AGENT_RENAME_PATH_COMMAND) return <Pencil />;
+  if (command === AGENT_MOVE_PATH_COMMAND) return <MoveRight />;
+  if (command === AGENT_COPY_PATH_COMMAND) return <Copy />;
+  if (command === AGENT_DELETE_EMPTY_DIRECTORY_COMMAND || command === AGENT_DELETE_TREE_COMMAND) return <Trash2 />;
+  if (command === AGENT_READONLY_SHELL_COMMAND || command === AGENT_SHELL_COMMAND) return <Terminal />;
+  return <GenericCodeActIcon />;
+}
+
+function isAgentActionCommand(command: TranscriptCodeActCommand): command is AgentActionEventCommand {
+  return Boolean(agentActionEventCommandFromToken(command));
+}
+
+function agentActionTone(command: AgentActionEventCommand): "read" | "write" | "destructive" | "shell" {
+  if (command === AGENT_DELETE_EMPTY_DIRECTORY_COMMAND || command === AGENT_DELETE_TREE_COMMAND) return "destructive";
+  if (command === AGENT_READONLY_SHELL_COMMAND || command === AGENT_SHELL_COMMAND) return "shell";
+  if (command === AGENT_LIST_COMMAND || command === AGENT_SEARCH_COMMAND) return "read";
+  return "write";
+}
+
 function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command: TranscriptCodeActCommand; brainSegmentPhase?: "changing" | "changed" }) {
+  if (isAgentActionCommand(command)) return <AgentActionCodeActIcon command={command} />;
   if (command === BRAIN_GMAIL_COMMAND || command === BRAIN_GMAIL_COM_COMMAND) return <ModuleLogo id="gmail" />;
   if (command === BRAIN_AIRBNB_COMMAND) return <ModuleLogo id="airbnb" />;
   if (command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND) return <BrainSegmentCodeActIcon phase={brainSegmentPhase} />;
@@ -2580,6 +2632,7 @@ function brainSegmentEventText(command: TranscriptCodeActCommand, phase: "changi
 
 function TranscriptCodeActEventLine({ event }: { event: TranscriptCodeActEvent }) {
   const isBrainSegment = isBrainSegmentCommand(event.command);
+  const agentCommand = isAgentActionCommand(event.command) ? event.command : undefined;
   const [brainSegmentPhase, setBrainSegmentPhase] = useState<"changing" | "changed">(isBrainSegment ? "changing" : "changed");
 
   useEffect(() => {
@@ -2593,7 +2646,9 @@ function TranscriptCodeActEventLine({ event }: { event: TranscriptCodeActEvent }
 
   const eventClassName = isBrainSegment
     ? `transcriptCodeActEvent transcriptCodeActEvent--brainSegment transcriptCodeActEvent--brainSegment-${brainSegmentPhase}`
-    : "transcriptCodeActEvent";
+    : agentCommand
+      ? `transcriptCodeActEvent transcriptCodeActEvent--agent transcriptCodeActEvent--agent-${agentActionTone(agentCommand)}`
+      : "transcriptCodeActEvent";
   const text = isBrainSegment ? brainSegmentEventText(event.command, brainSegmentPhase) : event.text;
 
   return (
@@ -3402,6 +3457,7 @@ export function PanelsChatBottomSlice({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const burstRef = useRef<ComposerSendBurstHandle>(null);
   const composerSendBusyRef = useRef(0);
+  const sendEchoBaselineRef = useRef<number | null>(null);
   const [brainAgentName, setBrainAgentName] = useState(() => readBrainAgentMemory().preferredFirstName);
   const [selfDirectedDrafting, setSelfDirectedDrafting] = useState(false);
   const selfDirectedRunRef = useRef<SelfDirectedRunState>({
@@ -3547,20 +3603,43 @@ export function PanelsChatBottomSlice({
   const activeQuestionnaire = useMemo(() => latestQuestionnaireFromMessages(canvasMessages), [canvasMessages]);
   const activeDropPhase = fileDropPhase !== "idle" ? fileDropPhase : moduleDropPhase;
   const composerSendBusy = composerSendBusyCount > 0;
+  // The send spinner runs from Enter until the user's message lands in the
+  // transcript (canvas), not merely until the wave drains or dispatch resolves.
+  const transcriptUserMessageCount = useMemo(() => {
+    let count = snapshot.transcript.reduce((total, message) => total + (message.role === "user" ? 1 : 0), 0);
+    for (const lane of snapshot.parallelLanes) {
+      count += lane.transcript.reduce((total, message) => total + (message.role === "user" ? 1 : 0), 0);
+    }
+    return count;
+  }, [snapshot.transcript, snapshot.parallelLanes]);
+  const transcriptUserMessageCountRef = useRef(transcriptUserMessageCount);
+  useEffect(() => {
+    transcriptUserMessageCountRef.current = transcriptUserMessageCount;
+  }, [transcriptUserMessageCount]);
   const beginComposerSendBusy = useCallback(() => {
     if (composerSendBusyRef.current > 0) {
       return false;
     }
     composerSendBusyRef.current += 1;
     setComposerSendBusyCount(composerSendBusyRef.current);
+    sendEchoBaselineRef.current = transcriptUserMessageCountRef.current;
     return true;
   }, []);
   const endComposerSendBusy = useCallback(() => {
+    sendEchoBaselineRef.current = null;
     composerSendBusyRef.current = Math.max(0, composerSendBusyRef.current - 1);
     setComposerSendBusyCount(composerSendBusyRef.current);
   }, []);
+  // Release the spinner the moment the sent message echoes into the transcript.
+  useEffect(() => {
+    if (sendEchoBaselineRef.current !== null && transcriptUserMessageCount > sendEchoBaselineRef.current) {
+      endComposerSendBusy();
+    }
+  }, [transcriptUserMessageCount, endComposerSendBusy]);
+  // Dispatch failures must still release the spinner even though success now
+  // waits for the transcript echo above.
   const dispatchTrackedComposerSend = useCallback((command: Omit<PanelsChatBottomCommand, "version" | "requestId">) => {
-    void dispatch(command).finally(endComposerSendBusy);
+    void dispatch(command).catch(endComposerSendBusy);
   }, [dispatch, endComposerSendBusy]);
   const attachFiles = () => void dispatch({ kind: "attach_files" });
   const attachDroppedFiles = (filePaths: string[]) => {
