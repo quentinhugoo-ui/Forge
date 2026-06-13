@@ -57,12 +57,24 @@ const BRAIN_BLOB_MAX_FRAMEBUFFER_SIDE = 3000;
 const BRAIN_BLOB_TIME_SCALE = 0.6;
 
 /* Uniform layout shared by both backends: header vec4 (resolution.xy, time,
-   seed), then 10 balls (xyz, radius), then 10 per-ball smooth-min k. */
+   seed), then 10 balls (xyz, radius), then 10 per-ball smooth-min k, then the
+   pointer vec4 (worldX, worldY, strength, _). */
 const BLOB_BALL_COUNT = 10;
 const BLOB_MASS_COUNT = 7;
-const BLOB_UNIFORM_FLOATS = 84;
+const BLOB_UNIFORM_FLOATS = 88;
 const BLOB_BALLS_FLOAT_OFFSET = 4;
 const BLOB_KS_FLOAT_OFFSET = 44;
+const BLOB_MOUSE_FLOAT_OFFSET = 84;
+
+/* Camera the shaders ray-march with; mirrored on the CPU to project the cursor
+   onto the blob's z = 0 plane. Keep in sync with the shader `ro`/focal. */
+const BLOB_FOCAL = 1.78;
+const BLOB_CAM_Z = 2.6;
+const BLOB_CAM_Y = 0.03;
+const BLOB_POINTER_REACH = 0.72;
+
+/* Live cursor shared between the React component and the render loop. */
+type BlobPointer = { x: number; y: number; over: boolean };
 
 const BLOB_TAU = Math.PI * 2;
 /* Loader contract: --time-animation 2s; orbits run at 45% for the soft feel. */
@@ -79,7 +91,7 @@ const BLOB_MASS_PIVOTS: ReadonlyArray<readonly [number, number, number]> = [
 const BLOB_MASS_DIRS = [0, -1, 1, -1, -1, 1, 1] as const;
 const BLOB_MASS_DELAYS = [0, 0, 1 / 3, 0, 1 / 2, 0, 1 / 1.5] as const;
 
-type BlobScene = { timeOffset: number; update(t: number, out: Float32Array): void };
+type BlobScene = { timeOffset: number; update(t: number, out: Float32Array, pointer: BlobPointer | null): void };
 
 function createBlobScene(seed: number): BlobScene {
   const rand = (n: number) => {
@@ -150,9 +162,33 @@ function createBlobScene(seed: number): BlobScene {
     return 0;
   };
 
+  /* Hover-triggered fling: when the cursor first enters the blob a seeded roll
+     decides whether one droplet tears off from the cursor and flicks away. */
+  let prevOver = false;
+  let flingCooldownUntil = -1;
+  let fling: null | { drop: number; start: number; dur: number; dirX: number; dirY: number; startR: number } = null;
+
   return {
     timeOffset: rand(3.3) * 31.7,
-    update(t, out) {
+    update(t, out, pointer) {
+      const over = !!pointer?.over;
+      if (over && !prevOver && t > flingCooldownUntil) {
+        /* Procedural chance and target picked from the seed + entry moment. */
+        const moment = Math.floor(t * 6.0);
+        if (rand(moment * 1.7 + 0.3) < 0.5) {
+          const startR = Math.hypot(pointer!.x, pointer!.y) || 0.0001;
+          fling = {
+            drop: Math.floor(rand(moment * 3.1 + 5.9) * 3) % 3,
+            start: t,
+            dur: mix(1.7, 2.6, rand(moment * 2.3 + 8.4)),
+            dirX: pointer!.x / startR,
+            dirY: pointer!.y / startR,
+            startR
+          };
+          flingCooldownUntil = t + 3.5;
+        }
+      }
+      prevOver = over;
       const kBase = mix(0.18, 0.3, roundness(t));
       mass.forEach((ball, i) => {
         const a = ball.phase + t * ball.speed;
@@ -194,6 +230,23 @@ function createBlobScene(seed: number): BlobScene {
         const home = 1 - ext;
         const bridge = Math.max(stretch, caught);
         out[BLOB_KS_FLOAT_OFFSET + i * 4] = Math.max(0.02, kBase * home + 0.17 * bridge);
+
+        /* Hover fling overrides this droplet: it launches from the cursor,
+           pinches off (tiny k) and flicks outward while shrinking. */
+        if (fling && fling.drop === j) {
+          const fp = (t - fling.start) / fling.dur;
+          if (fp >= 1) {
+            fling = null;
+          } else {
+            const ease = 1 - (1 - fp) * (1 - fp);
+            const r = mix(fling.startR, Math.max(0.84, fling.startR + 0.32), ease);
+            out[o] = fling.dirX * r;
+            out[o + 1] = fling.dirY * r;
+            out[o + 2] = 0;
+            out[o + 3] = droplet.radius * (1 - ease * 0.85);
+            out[BLOB_KS_FLOAT_OFFSET + i * 4] = mix(0.16, 0.02, sstep(0, 0.3, fp));
+          }
+        }
       });
     }
   };
@@ -211,6 +264,7 @@ struct Uniforms {
   seed: f32,
   balls: array<vec4<f32>, 10>,
   ks: array<vec4<f32>, 10>,
+  mouse: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -257,13 +311,26 @@ fn membraneTex(p: vec3<f32>, t: f32) -> f32 {
   return (a + b + c + d) * 0.25;
 }
 
+/* Cursor poke: a local swell of the membrane toward the pointer on the
+   camera-facing side, with a faint ripple. mouse = (worldX, worldY, strength). */
+fn mouseDeform(p: vec3<f32>, t: f32) -> f32 {
+  let s = uniforms.mouse.z;
+  if (s <= 0.001) {
+    return 0.0;
+  }
+  let r = length(p.xy - uniforms.mouse.xy);
+  let g = exp(-r * r / 0.045);
+  let front = smoothstep(0.25, -0.25, p.z);
+  return -s * front * (0.13 * g + 0.025 * g * sin(r * 26.0 - t * 5.0));
+}
+
 fn field(p: vec3<f32>, t: f32) -> f32 {
   var d = 1e5;
   for (var i = 0; i < 10; i = i + 1) {
     let b = uniforms.balls[i];
     d = smin(d, length(p - b.xyz) - b.w, max(uniforms.ks[i].x, 0.0001));
   }
-  return d + wobble(p, t);
+  return d + wobble(p, t) + mouseDeform(p, t);
 }
 
 fn fieldNormal(p: vec3<f32>, t: f32) -> vec3<f32> {
@@ -406,6 +473,7 @@ precision highp float;
 uniform vec4 uHeader;
 uniform vec4 uBalls[10];
 uniform vec4 uKs[10];
+uniform vec4 uMouse;
 out vec4 outColor;
 
 const float TAU = 6.28318530718;
@@ -438,13 +506,24 @@ float membraneTex(vec3 p, float t) {
   return (a + b + c + d) * 0.25;
 }
 
+// Cursor poke: a local swell of the membrane toward the pointer on the
+// camera-facing side, with a faint ripple. uMouse = (worldX, worldY, strength).
+float mouseDeform(vec3 p, float t) {
+  float s = uMouse.z;
+  if (s <= 0.001) { return 0.0; }
+  float r = length(p.xy - uMouse.xy);
+  float g = exp(-r * r / 0.045);
+  float front = smoothstep(0.25, -0.25, p.z);
+  return -s * front * (0.13 * g + 0.025 * g * sin(r * 26.0 - t * 5.0));
+}
+
 float field(vec3 p, float t) {
   float d = 1e5;
   for (int i = 0; i < 10; i++) {
     vec4 b = uBalls[i];
     d = smin(d, length(p - b.xyz) - b.w, max(uKs[i].x, 0.0001));
   }
-  return d + wobble(p, t);
+  return d + wobble(p, t) + mouseDeform(p, t);
 }
 
 vec3 fieldNormal(vec3 p, float t) {
@@ -598,7 +677,7 @@ function pumpBlobFrames(canvas: HTMLCanvasElement, resize: () => void, renderFra
   };
 }
 
-function initBrainBlobWebGpu(canvas: HTMLCanvasElement, onFirstFrame?: () => void): Promise<BrainBlobHandle | null> {
+function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, onFirstFrame?: () => void): Promise<BrainBlobHandle | null> {
   const gpu = (navigator as WebGpuHostNavigator).gpu;
   if (!gpu) return Promise.resolve(null);
 
@@ -650,6 +729,7 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, onFirstFrame?: () => voi
     let configured = false;
     let deviceLost = false;
     let firstFrameSubmitted = false;
+    let pointerStrength = 0;
     void device.lost.then((info) => {
       deviceLost = true;
       console.warn("Brain blob WebGPU device lost.", info);
@@ -667,7 +747,11 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, onFirstFrame?: () => voi
       uniformData[0] = canvas.width;
       uniformData[1] = canvas.height;
       uniformData[2] = t;
-      scene.update(t, uniformData);
+      pointerStrength += ((pointer.over ? 1 : 0) - pointerStrength) * 0.16;
+      uniformData[BLOB_MOUSE_FLOAT_OFFSET] = pointer.x;
+      uniformData[BLOB_MOUSE_FLOAT_OFFSET + 1] = pointer.y;
+      uniformData[BLOB_MOUSE_FLOAT_OFFSET + 2] = pointerStrength;
+      scene.update(t, uniformData, pointer);
       device.queue.writeBuffer(uniformBuffer, 0, uniformData);
 
       const encoder = device.createCommandEncoder({ label: "brain-blob-frame" });
@@ -704,7 +788,7 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, onFirstFrame?: () => voi
   });
 }
 
-function initBrainBlobWebGl(canvas: HTMLCanvasElement, onFirstFrame?: () => void): BrainBlobHandle | null {
+function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onFirstFrame?: () => void): BrainBlobHandle | null {
   const gl = canvas.getContext("webgl2", {
     alpha: true,
     antialias: false,
@@ -743,6 +827,7 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, onFirstFrame?: () => void
   const headerLoc = gl.getUniformLocation(program, "uHeader");
   const ballsLoc = gl.getUniformLocation(program, "uBalls");
   const ksLoc = gl.getUniformLocation(program, "uKs");
+  const mouseLoc = gl.getUniformLocation(program, "uMouse");
 
   const seed = Math.random() * 1000;
   const scene = createBlobScene(seed);
@@ -753,13 +838,18 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, onFirstFrame?: () => void
   gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
   let firstFrameSubmitted = false;
+  let pointerStrength = 0;
   const pump = pumpBlobFrames(canvas, () => fitBlobFramebuffer(canvas), (timeSeconds) => {
     if (gl.isContextLost()) return;
     const t = timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset;
     uniformData[0] = canvas.width;
     uniformData[1] = canvas.height;
     uniformData[2] = t;
-    scene.update(t, uniformData);
+    pointerStrength += ((pointer.over ? 1 : 0) - pointerStrength) * 0.16;
+    uniformData[BLOB_MOUSE_FLOAT_OFFSET] = pointer.x;
+    uniformData[BLOB_MOUSE_FLOAT_OFFSET + 1] = pointer.y;
+    uniformData[BLOB_MOUSE_FLOAT_OFFSET + 2] = pointerStrength;
+    scene.update(t, uniformData, pointer);
 
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 0);
@@ -768,6 +858,7 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, onFirstFrame?: () => void
     gl.uniform4fv(headerLoc, uniformData.subarray(0, 4));
     gl.uniform4fv(ballsLoc, uniformData.subarray(BLOB_BALLS_FLOAT_OFFSET, BLOB_BALLS_FLOAT_OFFSET + BLOB_BALL_COUNT * 4));
     gl.uniform4fv(ksLoc, uniformData.subarray(BLOB_KS_FLOAT_OFFSET, BLOB_KS_FLOAT_OFFSET + BLOB_BALL_COUNT * 4));
+    gl.uniform4fv(mouseLoc, uniformData.subarray(BLOB_MOUSE_FLOAT_OFFSET, BLOB_MOUSE_FLOAT_OFFSET + 4));
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     if (!firstFrameSubmitted) {
       firstFrameSubmitted = true;
@@ -793,16 +884,44 @@ export function BrainBlob() {
     if (!canvas) return undefined;
     let cancelled = false;
     let handle: BrainBlobHandle | null = null;
+
+    /* Container is pointer-events:none, so track the cursor on the window and
+       project it onto the blob's z = 0 plane in world space. */
+    const pointer: BlobPointer = { x: 0, y: 0, over: false };
+    const onPointerMove = (event: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        pointer.over = false;
+        return;
+      }
+      const cssShort = Math.min(rect.width, rect.height);
+      const uvx = (event.clientX - rect.left - rect.width * 0.5) / cssShort;
+      const uvYUp = -(event.clientY - rect.top - rect.height * 0.5) / cssShort;
+      const wx = (BLOB_CAM_Z * uvx) / BLOB_FOCAL;
+      const wy = BLOB_CAM_Y + (BLOB_CAM_Z * uvYUp) / BLOB_FOCAL;
+      pointer.x = wx;
+      pointer.y = wy;
+      const inside =
+        event.clientX >= rect.left && event.clientX <= rect.right &&
+        event.clientY >= rect.top && event.clientY <= rect.bottom;
+      pointer.over = inside && Math.hypot(wx, wy) < BLOB_POINTER_REACH;
+    };
+    const onPointerLeave = () => {
+      pointer.over = false;
+    };
+    window.addEventListener("mousemove", onPointerMove, { passive: true });
+    window.addEventListener("mouseout", onPointerLeave, { passive: true });
+
     const markReady = () => {
       if (!cancelled) setGpuReady(true);
     };
     const fallBackToWebGl = () => {
       if (cancelled) return;
-      handle = initBrainBlobWebGl(canvas, markReady);
+      handle = initBrainBlobWebGl(canvas, pointer, markReady);
       if (!handle) setGpuReady(false);
     };
 
-    void initBrainBlobWebGpu(canvas, markReady)
+    void initBrainBlobWebGpu(canvas, pointer, markReady)
       .then((nextHandle) => {
         if (cancelled) {
           nextHandle?.destroy();
@@ -821,6 +940,8 @@ export function BrainBlob() {
 
     return () => {
       cancelled = true;
+      window.removeEventListener("mousemove", onPointerMove);
+      window.removeEventListener("mouseout", onPointerLeave);
       handle?.destroy();
     };
   }, []);
