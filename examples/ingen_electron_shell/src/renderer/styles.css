@@ -7504,6 +7504,11 @@ ol.assistantText__list li::before {
   inset: 0 24px 0 78px;
 }
 
+.webExplorerNativeSlot--maps,
+.canvasSurfaces--nativePager .webExplorerNativeSlot--maps {
+  inset: 0;
+}
+
 .webExplorerNativeSlot--accepted {
   background: #ffffff;
 }
@@ -7539,6 +7544,10 @@ ol.assistantText__list li::before {
 .parallelCanvasGrid--count3 .parallelCanvasPane:first-child,
 .parallelCanvasGrid--count4 .parallelCanvasPane:nth-child(odd) {
   border-right: 1px solid color-mix(in oklab, var(--forge-line), transparent 18%);
+}
+
+.mapsCanvasGrid--earthActive.parallelCanvasGrid--count2 .parallelCanvasPane:first-child {
+  border-right: 0;
 }
 
 .parallelCanvasGrid--count3 .parallelCanvasPane:nth-child(2),

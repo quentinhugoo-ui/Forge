@@ -1182,7 +1182,7 @@ export function CanvasSurfacesSlice({
                       {hostsMaps && nativeBrowserPage === "maps" ? (
                         <div
                           ref={nativeMapsSlotRef}
-                          className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--accepted" : "webExplorerNativeSlot"}
+                          className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
                         >
                           {nativeMapsAccepted ? null : (
                             <>
@@ -1214,7 +1214,7 @@ export function CanvasSurfacesSlice({
                       </button>
                       <div
                         ref={nativeMapsSlotRef}
-                        className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--accepted" : "webExplorerNativeSlot"}
+                        className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
                       >
                         {nativeMapsAccepted ? null : (
                           <>
@@ -1230,7 +1230,7 @@ export function CanvasSurfacesSlice({
             })}
           </div>
         ) : webExplorerCanvasOpen && mapsCanvasOpen ? (
-          <div className="parallelCanvasGrid parallelCanvasGrid--count2 webExplorerCanvasGrid mapsCanvasGrid">
+          <div className={["parallelCanvasGrid parallelCanvasGrid--count2 webExplorerCanvasGrid mapsCanvasGrid", nativeBrowserPage === "maps" ? "mapsCanvasGrid--earthActive" : ""].filter(Boolean).join(" ")}>
             <section className="parallelCanvasPane" aria-label="Primary canvas" />
             <section className="parallelCanvasPane webExplorerCanvasPane mapsCanvasPane" aria-label="Maps and Airbnb canvas">
               <div className="webExplorerChrome" aria-hidden="true" />
@@ -1246,7 +1246,7 @@ export function CanvasSurfacesSlice({
               {nativeBrowserPage === "maps" ? (
                 <div
                   ref={nativeMapsSlotRef}
-                  className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--accepted" : "webExplorerNativeSlot"}
+                  className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
                 >
                   {nativeMapsAccepted ? null : (
                     <>
@@ -1292,7 +1292,7 @@ export function CanvasSurfacesSlice({
             </section>
           </div>
         ) : mapsCanvasOpen ? (
-          <div className="parallelCanvasGrid parallelCanvasGrid--count2 webExplorerCanvasGrid mapsCanvasGrid">
+          <div className="parallelCanvasGrid parallelCanvasGrid--count2 webExplorerCanvasGrid mapsCanvasGrid mapsCanvasGrid--earthActive">
             <section className="parallelCanvasPane" aria-label="Primary canvas" />
             <section className="parallelCanvasPane webExplorerCanvasPane mapsCanvasPane" aria-label="Maps canvas">
               <div className="webExplorerChrome" aria-hidden="true" />
@@ -1301,7 +1301,7 @@ export function CanvasSurfacesSlice({
               </button>
               <div
                 ref={nativeMapsSlotRef}
-                className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--accepted" : "webExplorerNativeSlot"}
+                className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
               >
                 {nativeMapsAccepted ? null : (
                   <>
