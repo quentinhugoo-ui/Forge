@@ -3970,7 +3970,8 @@ button {
   padding-top: 46px;
   padding-bottom: var(--transcript-bottom-breathing-room);
   overflow-y: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--forge-sidebar-bg) transparent;
   scroll-behavior: smooth;
   scroll-padding-bottom: var(--transcript-bottom-breathing-room);
   mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
@@ -3978,7 +3979,31 @@ button {
 }
 
 .chatCanvas__messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.chatCanvas__messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chatCanvas__messages::-webkit-scrollbar-button,
+.chatCanvas__messages::-webkit-scrollbar-button:single-button,
+.chatCanvas__messages::-webkit-scrollbar-button:vertical:start,
+.chatCanvas__messages::-webkit-scrollbar-button:vertical:end {
   display: none;
+  width: 0;
+  height: 0;
+}
+
+.chatCanvas__messages::-webkit-scrollbar-thumb {
+  background: var(--forge-sidebar-bg);
+  border: 0;
+  border-radius: 0;
+  transition: background 140ms ease-out;
+}
+
+.chatCanvas__messages::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 18%);
 }
 
 .transcriptItem {
@@ -4120,6 +4145,26 @@ button {
 
 .transcriptCodeActEvent--brainSegment .transcriptCodeActEvent__icon {
   color: #67e8f9;
+}
+
+.transcriptCodeActEvent--agent-read .transcriptCodeActEvent__icon,
+.transcriptCodeActEvent--agent-read .transcriptCodeActEvent__command {
+  color: #8fb7ff;
+}
+
+.transcriptCodeActEvent--agent-write .transcriptCodeActEvent__icon,
+.transcriptCodeActEvent--agent-write .transcriptCodeActEvent__command {
+  color: #a7d88b;
+}
+
+.transcriptCodeActEvent--agent-destructive .transcriptCodeActEvent__icon,
+.transcriptCodeActEvent--agent-destructive .transcriptCodeActEvent__command {
+  color: #f39a86;
+}
+
+.transcriptCodeActEvent--agent-shell .transcriptCodeActEvent__icon,
+.transcriptCodeActEvent--agent-shell .transcriptCodeActEvent__command {
+  color: #d3b8ff;
 }
 
 .transcriptCodeActEvent__command {
@@ -6524,6 +6569,29 @@ ol.assistantText__list li::before {
 .composer__send--empty .sendGlyph {
   color: var(--forge-muted);
   opacity: 0.5;
+}
+
+/* Send-button spinner: shown in place of the arrow while the first-send wave
+   dissolves pixel by pixel (composerSendBusy). Uiverse-style ring with a
+   transparent left edge rotating at 1s linear, theme-aware track. */
+.composer__sendSpinner {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border: 1.8px solid color-mix(in oklab, var(--forge-text) 16%, transparent);
+  border-left-color: transparent;
+  border-radius: 50% !important;
+  animation: composerSendSpin 1s linear infinite;
+}
+
+@keyframes composerSendSpin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .bottomControls {
