@@ -137,7 +137,7 @@ function createBlobScene(seed: number): BlobScene {
       cyclePhase: rand(fj * 4.79 + 3.9),
       angle0: rand(fj * 8.7 + 1.3) * BLOB_TAU,
       drift: mix(0.25, 0.55, rand(fj * 2.9 + 7.1)) * (j % 2 === 0 ? -1 : 1),
-      radius: mix(0.11, 0.15, rand(fj * 3.31 + 5.2))
+      radius: mix(0.105, 0.135, rand(fj * 3.31 + 5.2))
     };
   });
 
@@ -176,7 +176,9 @@ function createBlobScene(seed: number): BlobScene {
         const stretch = sstep(0.4, 0.48, cph) * (1 - sstep(0.55, 0.62, cph));
         const caught = sstep(0.78, 0.9, cph) * (1 - sstep(0.97, 1, cph));
         const a = droplet.angle0 + t * droplet.drift;
-        const flight = mix(0.22, 0.56, ext);
+        /* Fly far enough to clear the mass surface so the piece can truly
+           separate, not just bulge on the body. */
+        const flight = mix(0.2, 0.72, ext);
         const cosA = Math.cos(a) * flight;
         const sinA = Math.sin(a) * flight;
         const i = BLOB_MASS_COUNT + j;
@@ -185,9 +187,13 @@ function createBlobScene(seed: number): BlobScene {
         out[o + 1] = droplet.u[1] * cosA + droplet.v[1] * sinA;
         out[o + 2] = droplet.u[2] * cosA + droplet.v[2] * sinA;
         out[o + 3] = droplet.radius * (1 - ext * 0.2);
-        /* Small k mid-flight so the piece truly separates; boosted while the
-           arm stretches out, and again when another arm catches it back. */
-        out[BLOB_KS_FLOAT_OFFSET + i * 4] = Math.min(kBase, 0.16) * (1 + 0.7 * stretch + 0.9 * caught);
+        /* Smooth-min radius profile high -> low -> high: merged into the body
+           at rest, a thinning neck while it tears off, a near-zero k in free
+           flight so the piece fully pinches away, then a neck reforming as an
+           arm catches and re-fuses it. */
+        const home = 1 - ext;
+        const bridge = Math.max(stretch, caught);
+        out[BLOB_KS_FLOAT_OFFSET + i * 4] = Math.max(0.02, kBase * home + 0.17 * bridge);
       });
     }
   };
@@ -356,14 +362,15 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         + vec3<f32>(1.0, 0.96, 0.88) * spec * 0.92;
       alpha = saturate(0.62 + diff * 0.20 - fres * 0.16 + sss * 0.10);
     } else {
-      /* Mushy aura: the blob bleeds warm indirect light into its surroundings
-         (the Lumen bounce that the post bloom widens). */
+      /* Tight contour aura only: the wide warm Lumen bounce now comes from the
+         CSS drop-shadow, so the shader aura stays narrow and does not bridge
+         the gap when a droplet pinches off. */
       color = mix(colorOne, colorTwo, saturate(0.5 - upY * 1.4));
-      alpha = exp(-max(closest, 0.0) / 0.065) * 0.30;
+      alpha = exp(-max(closest, 0.0) / 0.042) * 0.24;
     }
   }
 
-  let vignette = 1.0 - smoothstep(0.45, 0.5, max(abs(uv.x), abs(uv.y)));
+  let vignette = 1.0 - smoothstep(0.49, 0.55, max(abs(uv.x), abs(uv.y)));
   let rgb = max(hueRotate(color, colorizeAngle(t)), vec3<f32>(0.0));
   return vec4<f32>(min(rgb, vec3<f32>(1.0)), saturate(alpha * vignette));
 }
@@ -510,12 +517,14 @@ void main() {
         + vec3(1.0, 0.96, 0.88) * spec * 0.92;
       alpha = sat(0.62 + diff * 0.20 - fres * 0.16 + sss * 0.10);
     } else {
+      // Tight contour aura only; the wide warm bounce comes from CSS so this
+      // narrow aura does not bridge a pinched-off droplet's gap.
       color = mix(colorOne, colorTwo, sat(0.5 - upY * 1.4));
-      alpha = exp(-max(closest, 0.0) / 0.065) * 0.30;
+      alpha = exp(-max(closest, 0.0) / 0.042) * 0.24;
     }
   }
 
-  float vignette = 1.0 - smoothstep(0.45, 0.5, max(abs(uv.x), abs(uv.y)));
+  float vignette = 1.0 - smoothstep(0.49, 0.55, max(abs(uv.x), abs(uv.y)));
   vec3 rgb = max(hueRotate(color, colorizeAngle(t)), vec3(0.0));
   outColor = vec4(min(rgb, vec3(1.0)), sat(alpha * vignette));
 }
