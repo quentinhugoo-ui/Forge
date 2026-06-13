@@ -37,6 +37,10 @@ const FILE_KIND_FILTERS: Array<{ id: FileKindFilter; label: string; kinds?: Comp
   { id: "chart", label: "Graphiques" },
   { id: "file", label: "Autres fichiers" }
 ];
+const NATIVE_MAPS_OVERSCAN_PX = {
+  left: 24,
+  bottom: 24
+};
 
 function TerminalGlyph({ className = "canvasSplitIcon" }: { className?: string }) {
   return (
@@ -930,10 +934,10 @@ export function CanvasSurfacesSlice({
       }
       const rect = slot.getBoundingClientRect();
       const bounds = {
-        x: rect.x,
+        x: rect.x - NATIVE_MAPS_OVERSCAN_PX.left,
         y: rect.y,
-        width: rect.width,
-        height: rect.height
+        width: rect.width + NATIVE_MAPS_OVERSCAN_PX.left,
+        height: rect.height + NATIVE_MAPS_OVERSCAN_PX.bottom
       };
       if (bounds.width < 80 || bounds.height < 80) {
         retryTimer = window.setTimeout(scheduleSync, 80);

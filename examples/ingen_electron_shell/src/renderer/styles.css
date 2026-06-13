@@ -7550,6 +7550,10 @@ ol.assistantText__list li::before {
   border-right: 0;
 }
 
+.canvasSurfaces--mapsOpen .parallelCanvasGrid--count2 .parallelCanvasPane:first-child {
+  border-right: 0 !important;
+}
+
 .parallelCanvasGrid--count3 .parallelCanvasPane:nth-child(2),
 .parallelCanvasGrid--count4 .parallelCanvasPane:nth-child(-n + 2) {
   border-bottom: 1px solid color-mix(in oklab, var(--forge-line), transparent 18%);
