@@ -306,6 +306,51 @@ export interface NativeWebExplorerResult {
   error?: IpcError;
 }
 
+export interface NativeDomRamArtifactSummary {
+  kind: "dom_graph_page" | "ram_region_table" | "browser_event_loop_slice";
+  layout: string;
+  liveCapturePolicy: string;
+  liveBackpressurePolicy: string;
+  liveSectionOwner: string;
+  liveSliceHash: string;
+  byteLength: number;
+  recordCount: number;
+}
+
+export interface NativeDomRamCartographyResult {
+  accepted: boolean;
+  schema: "forge.webexplorer.dom_ram_cartography.v1";
+  target: "google_earth";
+  url: string;
+  lane: "native_tandem_dom_ram";
+  nativeDomain: "dom_ram";
+  engine: "monster_native_tandem";
+  snapshot: {
+    source: "cdp_domsnapshot";
+    documentCount: number;
+    nodeCount: number;
+    layoutCount: number;
+    textBoxCount: number;
+    scrollOffsetX: number;
+    scrollOffsetY: number;
+    captureHash: string;
+  };
+  memory: {
+    source: "electron_webcontents";
+    workingSetSizeKb: number;
+    peakWorkingSetSizeKb: number;
+    privateBytesKb: number;
+    sharedBytesKb: number;
+    processId: number;
+    processType: string;
+    regionTableHash: string;
+  };
+  artifacts: NativeDomRamArtifactSummary[];
+  manifestHash: string;
+  proofHash: string;
+  error?: IpcError;
+}
+
 export interface NativeWebExplorerCodeAct {
   schema: "forge.webexplorer.googleweb.request.v1" | "forge.webexplorer.maps.request.v1" | "forge.webexplorer.gmail.request.v1" | "forge.webexplorer.airbnb.request.v1";
   command: typeof BRAIN_GOOGLEWEB_COMMAND | typeof BRAIN_MAPS_COMMAND | typeof BRAIN_GMAIL_COMMAND | typeof BRAIN_GMAIL_COM_COMMAND | typeof BRAIN_AIRBNB_COMMAND;
@@ -512,6 +557,7 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   updateNativeMapsBounds?: (bounds: NativeWebExplorerBounds) => Promise<NativeWebExplorerResult>;
   hideNativeMaps?: () => Promise<NativeWebExplorerResult>;
   onNativeMapsCodeAct?: (listener: (event: NativeWebExplorerCodeAct) => void) => () => void;
+  captureMapsDomRamCartography?: () => Promise<NativeDomRamCartographyResult>;
   searchCitySuggestions?: (query: string) => Promise<CitySuggestionResult>;
   openGeoEntity?: (query: string) => Promise<NativeWebExplorerResult>;
   showNativeTerminal?: (bounds: NativeTerminalBounds) => Promise<NativeTerminalResult>;

@@ -15,6 +15,7 @@ import { CanvasSurfacesSlice, type CanvasToolPane } from "./CanvasSurfacesSlice"
 import { PanelsChatBottomSlice } from "./PanelsChatBottomSlice";
 import { ProfileCoverBanner } from "./ProfileCoverBanner";
 import { RightPanelSlice } from "./RightPanelSlice";
+import { primaryAssistantGeoEntityLabel } from "./assistant-geo-entities";
 import { readBrainAgentMemory, readBrainUserMemory } from "./brain-user-memory-store";
 import { headerShadowStore, useHeaderShadowStore } from "./header-shadow-store";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
@@ -159,6 +160,12 @@ export function App() {
     canvasWebExplorerOpen ||
     canvasMapsOpen ||
     parallelPrompts.length > 1;
+  const latestAssistantText = useMemo(() => {
+    return panelsChatSnapshot.transcript.filter((message) => message.role === "assistant").at(-1)?.text ?? "";
+  }, [panelsChatSnapshot.transcript]);
+  const latestAssistantGeoEntityLabel = useMemo(() => {
+    return primaryAssistantGeoEntityLabel(latestAssistantText);
+  }, [latestAssistantText]);
   const activeSessionName = useMemo(() => {
     const items = [...sidebarSnapshot.recentItems, ...sidebarSnapshot.archivedItems];
     if (!sidebarSnapshot.recentSessionId) {
@@ -257,13 +264,11 @@ export function App() {
       setWorkspaceGateActive(false);
       return;
     }
-    const latestAssistant = panelsChatSnapshot.transcript
-      .filter((message) => message.role === "assistant")
-      .at(-1);
+    const latestAssistant = latestAssistantText ? { text: latestAssistantText } : undefined;
     if (latestAssistant?.text.includes(BRAIN_WORKSPACE_COMMAND)) {
       setWorkspaceGateActive(true);
     }
-  }, [panelsChatSnapshot.transcript, workspaceFolder]);
+  }, [latestAssistantText, workspaceFolder]);
 
   useEffect(() => {
     let mounted = true;
@@ -586,9 +591,7 @@ export function App() {
   }, [openCanvasMaps]);
 
   useEffect(() => {
-    const latestAssistant = panelsChatSnapshot.transcript
-      .filter((message) => message.role === "assistant")
-      .at(-1);
+    const latestAssistant = latestAssistantText ? { text: latestAssistantText } : undefined;
     if (latestAssistant?.text.includes("AIRBNB_RESULT")) {
       const keepMapsOpen = latestAssistant.text.includes("MAPS_RESULT") || latestAssistant.text.includes(BRAIN_MAPS_COMMAND);
       if (keepMapsOpen && !canvasMapsOpenRef.current) {
@@ -611,7 +614,7 @@ export function App() {
     if (latestAssistant?.text.includes("MAPS_RESULT")) {
       openCanvasMaps(0);
     }
-  }, [openCanvasMaps, openCanvasWebExplorer, panelsChatSnapshot.transcript]);
+  }, [latestAssistantText, openCanvasMaps, openCanvasWebExplorer]);
 
   const updateParallelPrompt = useCallback((index: number, value: string) => {
     setParallelPrompts((prompts) => prompts.map((prompt, promptIndex) => (promptIndex === index ? value : prompt)));
@@ -934,6 +937,7 @@ export function App() {
           mapsOpen={canvasMapsOpen}
           mapsParallelIndex={mapsParallelIndex}
           mapsUrl={mapsWebviewUrl}
+          mapsSearchQuery={latestAssistantGeoEntityLabel}
           leftPanelOpen={snapshot.leftPanelOpen}
           parallelPrompts={parallelPrompts}
           removableParallelIndexes={removableParallelIndexes}

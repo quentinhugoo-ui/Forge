@@ -124,6 +124,9 @@ const forgeShell: ForgeShellApi = {
   hideNativeMaps() {
     return ipcRenderer.invoke("forge:maps-hide");
   },
+  captureMapsDomRamCartography() {
+    return ipcRenderer.invoke("forge:maps-dom-ram-cartography-capture");
+  },
   onNativeMapsCodeAct(listener) {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
       listener(payload as NativeWebExplorerCodeAct);

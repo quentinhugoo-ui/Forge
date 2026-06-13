@@ -34,6 +34,7 @@ import { BRAIN_AGENT_MEMORY_UPDATED_EVENT, readBrainAgentMemory } from "./brain-
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { ProviderLogo } from "./ProviderLogo";
 import { MODULE_DRAG_ZONE_EVENT, type ModuleDragZoneDetail, type SidebarModuleId } from "./SidebarSlice";
+import { assistantGeoEntityLabel } from "./assistant-geo-entities";
 import { ModuleLogo } from "./module-logos";
 import { sidebarShadowStore } from "./sidebar-shadow-store";
 
@@ -2378,10 +2379,6 @@ const ASSISTANT_COUNTRY_ENTITY_STYLE: CSSProperties = {
   ...ASSISTANT_GEO_ENTITY_STYLE,
   color: "color-mix(in oklab, #d8a657, var(--forge-text) 32%)"
 };
-
-function assistantGeoEntityLabel(token: string): string {
-  return token.slice(2, -1).replace(/\s+/g, " ").trim();
-}
 
 function assistantGeoEntityNode(token: string, key: string): ReactNode {
   const label = assistantGeoEntityLabel(token);

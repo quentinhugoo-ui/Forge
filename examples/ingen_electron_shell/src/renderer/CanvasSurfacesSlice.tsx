@@ -1,4 +1,15 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type HTMLAttributes } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DetailedHTMLProps,
+  type HTMLAttributes
+} from "react";
 import type { ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
 import {
   EditImageGlyph,
@@ -27,7 +38,10 @@ interface PaneTabsProps {
 export type CanvasToolPane = "files" | "terminal";
 type FileKindFilter = "all" | "document" | ComposerUploadPreview["kind"];
 type NativeBrowserPage = "maps" | "webexplorer";
-type GoogleEarthWebviewProps = HTMLAttributes<HTMLElement> & {
+type GoogleEarthWebviewElement = HTMLElement & {
+  executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>;
+};
+type GoogleEarthWebviewProps = DetailedHTMLProps<HTMLAttributes<GoogleEarthWebviewElement>, GoogleEarthWebviewElement> & {
   src?: string;
   partition?: string;
   useragent?: string;
@@ -63,10 +77,133 @@ function googleEarthDomUrl(url?: string | null): string {
   return GOOGLE_EARTH_DOM_DEFAULT_URL;
 }
 
-function GoogleEarthDomWebview({ url }: { url?: string | null }) {
+function googleEarthSearchInjectionScript(searchQuery: string): string {
+  return `
+(() => {
+  const query = ${JSON.stringify(searchQuery)};
+  if (!query) return false;
+  const visit = (root, results = []) => {
+    if (!root || typeof root.querySelectorAll !== "function") return results;
+    for (const element of root.querySelectorAll("input, textarea, [contenteditable='true'], button, [role='button']")) {
+      results.push(element);
+    }
+    for (const element of root.querySelectorAll("*")) {
+      if (element.shadowRoot) visit(element.shadowRoot, results);
+    }
+    return results;
+  };
+  const all = visit(document);
+  const controls = all.filter((element) => {
+    const tag = element.tagName?.toLowerCase();
+    return tag === "input" || tag === "textarea" || element.getAttribute("contenteditable") === "true";
+  });
+  const textOf = (element) => [
+    element.getAttribute("aria-label"),
+    element.getAttribute("placeholder"),
+    element.getAttribute("title"),
+    element.getAttribute("role"),
+    element.id,
+    element.className
+  ].filter(Boolean).join(" ").toLowerCase();
+  const searchControl = controls.find((element) => {
+    const text = textOf(element);
+    return text.includes("google earth") || text.includes("search") || text.includes("rechercher") || text.includes("combobox");
+  }) || controls.find((element) => {
+    const tag = element.tagName?.toLowerCase();
+    const type = element.getAttribute("type")?.toLowerCase();
+    return tag === "textarea" || type === "search" || type === "text" || !type;
+  });
+  if (!searchControl) return false;
+  searchControl.focus();
+  const view = searchControl.ownerDocument.defaultView || window;
+  if ("value" in searchControl) {
+    const proto = searchControl instanceof HTMLTextAreaElement ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) {
+      setter.call(searchControl, query);
+    } else {
+      searchControl.value = query;
+    }
+  } else {
+    searchControl.textContent = query;
+  }
+  searchControl.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, data: query, inputType: "insertText" }));
+  searchControl.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  const key = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+  searchControl.dispatchEvent(new KeyboardEvent("keydown", key));
+  searchControl.dispatchEvent(new KeyboardEvent("keypress", key));
+  searchControl.dispatchEvent(new KeyboardEvent("keyup", key));
+  if (searchControl.form) {
+    searchControl.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  }
+  const searchButton = all.find((element) => {
+    const tag = element.tagName?.toLowerCase();
+    if (tag !== "button" && element.getAttribute("role") !== "button") return false;
+    const text = textOf(element);
+    return text.includes("search") || text.includes("rechercher");
+  });
+  searchButton?.click?.();
+  return true;
+})()
+`;
+}
+
+function GoogleEarthDomWebview({ url, searchQuery }: { url?: string | null; searchQuery?: string | null }) {
+  const webviewRef = useRef<GoogleEarthWebviewElement | null>(null);
+  const lastAcceptedSearchRef = useRef("");
+  const pendingSearchRef = useRef("");
+  const normalizedSearchQuery = searchQuery?.replace(/\s+/g, " ").trim() ?? "";
+  const injectSearchQuery = useCallback(() => {
+    const webview = webviewRef.current;
+    const query = pendingSearchRef.current;
+    if (!webview?.executeJavaScript || !query || query === lastAcceptedSearchRef.current) {
+      return;
+    }
+    void webview.executeJavaScript(googleEarthSearchInjectionScript(query), true)
+      .then((accepted) => {
+        if (accepted === true) {
+          lastAcceptedSearchRef.current = query;
+        }
+      })
+      .catch(() => {
+        // Google Earth may still be booting; the scheduled retries below will try again.
+      });
+  }, []);
+
+  useEffect(() => {
+    pendingSearchRef.current = normalizedSearchQuery;
+    if (!normalizedSearchQuery) {
+      return undefined;
+    }
+    const retryTimers = [0, 450, 1200, 2400, 4200].map((delay) => window.setTimeout(injectSearchQuery, delay));
+    return () => {
+      for (const timer of retryTimers) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [injectSearchQuery, normalizedSearchQuery]);
+
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview) {
+      return undefined;
+    }
+    const onReady = () => {
+      lastAcceptedSearchRef.current = "";
+      injectSearchQuery();
+    };
+    webview.addEventListener("dom-ready", onReady);
+    webview.addEventListener("did-finish-load", onReady);
+    return () => {
+      webview.removeEventListener("dom-ready", onReady);
+      webview.removeEventListener("did-finish-load", onReady);
+    };
+  }, [injectSearchQuery]);
+
   return (
     <div className="googleEarthDomFrame" aria-label="Google Earth">
       <webview
+        ref={webviewRef}
         className="googleEarthDomWebview"
         src={googleEarthDomUrl(url)}
         partition="persist:ingen-maps"
@@ -785,6 +922,7 @@ export function CanvasSurfacesSlice({
   mapsOpen,
   mapsParallelIndex = 0,
   mapsUrl,
+  mapsSearchQuery,
   leftPanelOpen,
   parallelPrompts,
   removableParallelIndexes,
@@ -815,6 +953,7 @@ export function CanvasSurfacesSlice({
   mapsOpen: boolean;
   mapsParallelIndex?: number;
   mapsUrl?: string;
+  mapsSearchQuery?: string;
   leftPanelOpen: boolean;
   parallelPrompts: string[];
   removableParallelIndexes: boolean[];
@@ -1104,7 +1243,7 @@ export function CanvasSurfacesSlice({
                       </button>
                       {hostsMaps && nativeBrowserPage === "maps" ? (
                         <>
-                          <GoogleEarthDomWebview url={mapsUrl} />
+                          <GoogleEarthDomWebview url={mapsUrl} searchQuery={mapsSearchQuery} />
                         </>
                       ) : (
                         <div
@@ -1127,7 +1266,7 @@ export function CanvasSurfacesSlice({
                       <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
                         <span aria-hidden="true" />
                       </button>
-                      <GoogleEarthDomWebview url={mapsUrl} />
+                      <GoogleEarthDomWebview url={mapsUrl} searchQuery={mapsSearchQuery} />
                     </>
                   ) : null}
                 </section>
@@ -1150,7 +1289,7 @@ export function CanvasSurfacesSlice({
               </button>
               {nativeBrowserPage === "maps" ? (
                 <>
-                  <GoogleEarthDomWebview url={mapsUrl} />
+                  <GoogleEarthDomWebview url={mapsUrl} searchQuery={mapsSearchQuery} />
                 </>
               ) : (
                 <div
@@ -1196,7 +1335,7 @@ export function CanvasSurfacesSlice({
               <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
                 <span aria-hidden="true" />
               </button>
-              <GoogleEarthDomWebview url={mapsUrl} />
+              <GoogleEarthDomWebview url={mapsUrl} searchQuery={mapsSearchQuery} />
             </section>
           </div>
         ) : null}

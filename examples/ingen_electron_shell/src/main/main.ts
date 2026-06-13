@@ -83,6 +83,8 @@ import {
   type NativeTerminalResult,
   type NativeWebExplorerBounds,
   type NativeWebExplorerCodeAct,
+  type NativeDomRamArtifactSummary,
+  type NativeDomRamCartographyResult,
   type NativeWebExplorerResult,
   type SearchArchiveRequest,
   type SearchArchiveResult,
@@ -215,6 +217,8 @@ let nativeMapsPendingUrl = "";
 let nativeMapsTargetUrl = GOOGLE_EARTH_DEFAULT_URL;
 let nativeMapsSessionConfigured = false;
 let nativeMapsBoundsKey = "";
+let mapsDomWebviewGuest: Electron.WebContents | null = null;
+let mapsDomWebviewGuestUrl = "";
 const NATIVE_MAPS_EARTH_OVERSCAN_PX = {
   minLeft: 420,
   leftRatio: 0.92,
@@ -7244,6 +7248,263 @@ function nativeMapsResult(accepted: boolean, error?: IpcError): NativeWebExplore
   return result;
 }
 
+const DOM_RAM_ARTIFACT_CONTRACTS: Array<Omit<NativeDomRamArtifactSummary, "liveSliceHash" | "byteLength" | "recordCount">> = [
+  {
+    kind: "dom_graph_page",
+    layout: "live_cdp_domsnapshot_csr_graph_incremental_node_edge_u64_records",
+    liveCapturePolicy: "cdp_domsnapshot_incremental_csr_capture_via_idle_slices",
+    liveBackpressurePolicy: "pause_capture_when_longtask_or_owner_queue_depth_exceeds_budget",
+    liveSectionOwner: "webexplorer.dom_ram_cartography"
+  },
+  {
+    kind: "ram_region_table",
+    layout: "live_columnar_ram_region_table_resumable_hash_offset_len_flags",
+    liveCapturePolicy: "columnar_ram_region_incremental_capture_with_resume_cursor",
+    liveBackpressurePolicy: "halve_region_batch_when_event_loop_budget_below_threshold",
+    liveSectionOwner: "webexplorer.dom_ram_cartography"
+  },
+  {
+    kind: "browser_event_loop_slice",
+    layout: "live_nonblocking_browser_event_loop_slice_backpressure_manifest",
+    liveCapturePolicy: "scheduler_posttask_or_idlecallback_budgeted_nonblocking_slice",
+    liveBackpressurePolicy: "yield_before_deadline_and_resume_from_cursor",
+    liveSectionOwner: "webexplorer.dom_ram_cartography"
+  }
+];
+
+function emptyMapsDomRamCartographyResult(error: IpcError): NativeDomRamCartographyResult {
+  const result: NativeDomRamCartographyResult = {
+    accepted: false,
+    schema: "forge.webexplorer.dom_ram_cartography.v1",
+    target: "google_earth",
+    url: nativeMapsTargetUrl,
+    lane: "native_tandem_dom_ram",
+    nativeDomain: "dom_ram",
+    engine: "monster_native_tandem",
+    snapshot: {
+      source: "cdp_domsnapshot",
+      documentCount: 0,
+      nodeCount: 0,
+      layoutCount: 0,
+      textBoxCount: 0,
+      scrollOffsetX: 0,
+      scrollOffsetY: 0,
+      captureHash: hashJson({ empty: true, reason: error.code })
+    },
+    memory: {
+      source: "electron_webcontents",
+      workingSetSizeKb: 0,
+      peakWorkingSetSizeKb: 0,
+      privateBytesKb: 0,
+      sharedBytesKb: 0,
+      processId: 0,
+      processType: "unavailable",
+      regionTableHash: hashJson({ empty: true, reason: error.code })
+    },
+    artifacts: [],
+    manifestHash: "",
+    proofHash: "",
+    error
+  };
+  result.manifestHash = hashJson({ ...result, proofHash: "", manifestHash: "" });
+  result.proofHash = hashJson(result);
+  return result;
+}
+
+function isMapsWebviewAttachment(src: string, partition?: string): boolean {
+  if (partition === "persist:ingen-maps") {
+    return true;
+  }
+  try {
+    const parsed = new URL(src);
+    return parsed.protocol === "https:" && parsed.hostname === "earth.google.com" && parsed.pathname.startsWith("/web");
+  } catch {
+    return false;
+  }
+}
+
+function rememberMapsDomWebviewGuest(webContents: Electron.WebContents, src = ""): void {
+  if (webContents.isDestroyed()) {
+    return;
+  }
+  mapsDomWebviewGuest = webContents;
+  mapsDomWebviewGuestUrl = src || webContents.getURL() || nativeMapsTargetUrl;
+  const updateUrl = () => {
+    if (!webContents.isDestroyed()) {
+      mapsDomWebviewGuestUrl = webContents.getURL() || mapsDomWebviewGuestUrl;
+    }
+  };
+  webContents.on("did-navigate", updateUrl);
+  webContents.on("did-navigate-in-page", updateUrl);
+  webContents.on("did-finish-load", updateUrl);
+  webContents.once("destroyed", () => {
+    if (mapsDomWebviewGuest === webContents) {
+      mapsDomWebviewGuest = null;
+      mapsDomWebviewGuestUrl = "";
+    }
+  });
+}
+
+function mapsCartographyWebContents(): Electron.WebContents | null {
+  if (mapsDomWebviewGuest && !mapsDomWebviewGuest.isDestroyed()) {
+    return mapsDomWebviewGuest;
+  }
+  if (nativeMapsView && !nativeMapsView.webContents.isDestroyed()) {
+    return nativeMapsView.webContents;
+  }
+  return null;
+}
+
+function numberField(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function domSnapshotCounts(snapshot: unknown) {
+  const documents = Array.isArray((snapshot as { documents?: unknown }).documents)
+    ? ((snapshot as { documents: unknown[] }).documents)
+    : [];
+  let nodeCount = 0;
+  let layoutCount = 0;
+  let textBoxCount = 0;
+  let scrollOffsetX = 0;
+  let scrollOffsetY = 0;
+  for (const document of documents) {
+    const doc = document as {
+      nodes?: { nodeName?: unknown[] };
+      layout?: { nodeIndex?: unknown[] };
+      textBoxes?: { layoutIndex?: unknown[] };
+      scrollOffsetX?: unknown;
+      scrollOffsetY?: unknown;
+    };
+    nodeCount += Array.isArray(doc.nodes?.nodeName) ? doc.nodes.nodeName.length : 0;
+    layoutCount += Array.isArray(doc.layout?.nodeIndex) ? doc.layout.nodeIndex.length : 0;
+    textBoxCount += Array.isArray(doc.textBoxes?.layoutIndex) ? doc.textBoxes.layoutIndex.length : 0;
+    scrollOffsetX += numberField(doc.scrollOffsetX);
+    scrollOffsetY += numberField(doc.scrollOffsetY);
+  }
+  return {
+    documentCount: documents.length,
+    nodeCount,
+    layoutCount,
+    textBoxCount,
+    scrollOffsetX,
+    scrollOffsetY
+  };
+}
+
+async function captureMapsDomRamCartography(event: Electron.IpcMainInvokeEvent): Promise<NativeDomRamCartographyResult> {
+  if (!validateSender(event)) {
+    return emptyMapsDomRamCartographyResult({
+      code: "bad_sender",
+      message: "Maps DOM/RAM cartography rejected by sender validation.",
+      proofHash: hashJson(event.senderFrame?.url ?? "")
+    });
+  }
+  const target = mapsCartographyWebContents();
+  if (!target || target.isDestroyed()) {
+    return emptyMapsDomRamCartographyResult({
+      code: "rust_unavailable",
+      message: "Google Earth webview is not attached yet.",
+      proofHash: hashJson({ nativeMapsTargetUrl, mapsDomWebviewGuestUrl })
+    });
+  }
+  const url = target.getURL() || mapsDomWebviewGuestUrl || nativeMapsTargetUrl;
+  if (!isAllowedNativeMapsUrl(url)) {
+    return emptyMapsDomRamCartographyResult({
+      code: "bad_payload",
+      message: "Maps DOM/RAM cartography rejected outside the Google Earth perimeter.",
+      proofHash: hashJson({ url })
+    });
+  }
+
+  const debug = target.debugger;
+  const wasAttached = debug.isAttached();
+  try {
+    if (!wasAttached) {
+      debug.attach("1.3");
+    }
+    await debug.sendCommand("DOMSnapshot.enable");
+    const cdpSnapshot = await debug.sendCommand("DOMSnapshot.captureSnapshot", {
+      computedStyles: ["display", "visibility", "opacity", "pointer-events", "z-index", "transform"],
+      includeDOMRects: true,
+      includePaintOrder: true,
+      includeBlendedBackgroundColors: false,
+      includeTextColorOpacities: false
+    });
+    const counts = domSnapshotCounts(cdpSnapshot);
+    const processId = (target as { getOSProcessId?: () => number }).getOSProcessId?.() ?? 0;
+    const processType = (target as { getProcessType?: () => string }).getProcessType?.() ?? "unknown";
+    const memoryInfo = app.getAppMetrics().find((metric) => metric.pid === processId)?.memory;
+    const captureHash = hashJson({
+      target: "google_earth",
+      lane: "native_tandem_dom_ram",
+      url,
+      cdpSnapshot
+    });
+    const memory = {
+      source: "electron_webcontents" as const,
+      workingSetSizeKb: numberField((memoryInfo as { workingSetSize?: unknown } | undefined)?.workingSetSize),
+      peakWorkingSetSizeKb: numberField((memoryInfo as { peakWorkingSetSize?: unknown } | undefined)?.peakWorkingSetSize),
+      privateBytesKb: numberField((memoryInfo as { privateBytes?: unknown } | undefined)?.privateBytes),
+      sharedBytesKb: numberField((memoryInfo as { sharedBytes?: unknown } | undefined)?.sharedBytes),
+      processId,
+      processType,
+      regionTableHash: hashJson({ url, processId, processType, memoryInfo })
+    };
+    const artifacts = DOM_RAM_ARTIFACT_CONTRACTS.map((contract) => {
+      const recordCount =
+        contract.kind === "dom_graph_page"
+          ? counts.nodeCount
+          : contract.kind === "ram_region_table"
+            ? Math.max(1, Math.ceil(memory.workingSetSizeKb / 4096))
+            : 1;
+      const byteLength =
+        contract.kind === "dom_graph_page"
+          ? Math.max(0, counts.nodeCount * 64)
+          : contract.kind === "ram_region_table"
+            ? Math.max(0, recordCount * 56)
+            : 96;
+      return {
+        ...contract,
+        liveSliceHash: hashJson({ contract, captureHash, memory: memory.regionTableHash, recordCount, byteLength }),
+        byteLength,
+        recordCount
+      };
+    });
+    const result: NativeDomRamCartographyResult = {
+      accepted: true,
+      schema: "forge.webexplorer.dom_ram_cartography.v1",
+      target: "google_earth",
+      url,
+      lane: "native_tandem_dom_ram",
+      nativeDomain: "dom_ram",
+      engine: "monster_native_tandem",
+      snapshot: {
+        source: "cdp_domsnapshot",
+        ...counts,
+        captureHash
+      },
+      memory,
+      artifacts,
+      manifestHash: "",
+      proofHash: ""
+    };
+    result.manifestHash = hashJson({ ...result, proofHash: "", manifestHash: "" });
+    result.proofHash = hashJson(result);
+    return result;
+  } catch (error) {
+    return emptyMapsDomRamCartographyResult({
+      code: "rust_unavailable",
+      message: error instanceof Error ? error.message : String(error),
+      proofHash: hashJson({ url, error: String(error) })
+    });
+  } finally {
+    if (!wasAttached && debug.isAttached()) {
+      debug.detach();
+    }
+  }
+}
+
 function isAllowedNativeWebExplorerUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -7898,6 +8159,9 @@ function installNativeWebExplorerIpc(): void {
     }
     hideNativeMapsView();
     return nativeMapsResult(true);
+  });
+  ipcMain.handle("forge:maps-dom-ram-cartography-capture", async (event): Promise<NativeDomRamCartographyResult> => {
+    return captureMapsDomRamCartography(event);
   });
 }
 
@@ -11909,6 +12173,16 @@ async function createWindow(): Promise<void> {
   window.webContents.on("will-navigate", (event, url) => {
     if (!url.startsWith("ingen://renderer/") && !url.startsWith("ingen://upload-preview/") && !url.startsWith("http://127.0.0.1:")) {
       event.preventDefault();
+    }
+  });
+  (window.webContents as Electron.WebContents & {
+    on(event: "did-attach-webview", listener: (event: Electron.Event, webContents: Electron.WebContents, params: { src?: unknown; partition?: unknown }) => void): Electron.WebContents;
+  }).on("did-attach-webview", (_event: Electron.Event, webContents: Electron.WebContents, params: { src?: unknown; partition?: unknown }) => {
+    const src = typeof params.src === "string" ? params.src : "";
+    const partition = typeof params.partition === "string" ? params.partition : "";
+    if (isMapsWebviewAttachment(src, partition)) {
+      rememberMapsDomWebviewGuest(webContents, src);
+      console.info("Google Earth DOM/RAM cartography guest attached.", { src, partition });
     }
   });
   window.on("closed", () => {

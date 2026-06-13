@@ -103,6 +103,9 @@ const forgeShell = {
   hideNativeMaps() {
     return ipcRenderer.invoke("forge:maps-hide");
   },
+  captureMapsDomRamCartography() {
+    return ipcRenderer.invoke("forge:maps-dom-ram-cartography-capture");
+  },
   onNativeMapsCodeAct(listener) {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on("forge:maps-codeact", handler);
