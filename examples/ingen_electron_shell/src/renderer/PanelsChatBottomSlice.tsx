@@ -2364,14 +2364,14 @@ const ASSISTANT_GEO_ENTITY_STYLE: CSSProperties = {
   maxWidth: "100%",
   padding: "0 1px",
   border: 0,
-  borderBottom: "1px solid color-mix(in oklab, var(--assistant-mark-accent), transparent 38%)",
   background: "transparent",
-  color: "color-mix(in oklab, var(--assistant-mark-accent), var(--forge-text) 24%)",
+  color: "color-mix(in oklab, var(--assistant-mark-accent), var(--forge-text) 36%)",
   font: "inherit",
-  fontWeight: 680,
+  fontWeight: 540,
   lineHeight: "inherit",
   cursor: "pointer",
-  overflowWrap: "anywhere"
+  overflowWrap: "anywhere",
+  transition: "color 160ms ease"
 };
 
 function assistantGeoEntityLabel(token: string): string {
