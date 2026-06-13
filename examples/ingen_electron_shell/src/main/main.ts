@@ -2644,15 +2644,6 @@ function isFirstVisibleUserTurn(userMessageId: string, transcript: TranscriptMes
   return visibleUserMessages.length <= 1;
 }
 
-function transcriptHasAssistantResponse(transcript: TranscriptMessage[]): boolean {
-  return transcript.some((message) =>
-    message.role === "assistant" &&
-    !message.id.startsWith("assistant-pending-") &&
-    !message.id.startsWith("assistant-status-") &&
-    message.text.trim() !== ""
-  );
-}
-
 async function openAiResponseContent(userText: string, attachments: ProviderAttachment[]): Promise<OpenAiResponseContentPart[]> {
   const text = userTextWithAttachmentContext(userText, attachments);
   const content: OpenAiResponseContentPart[] = [
@@ -8589,6 +8580,7 @@ function todayIsoDate(): string {
 }
 
 const PENDING_LLM_SESSION_TITLE = "New session";
+const RENAME_CHAT_CODEACT_SUFFIX = "_renamechat_";
 
 function normalizeSessionTitle(value: string): string {
   const compact = value
@@ -8614,7 +8606,7 @@ function stripSessionTitleNoise(value: string): string {
     }
   }
   compact = compact
-    .replace(/\b(?:je\s+renomme|j['’]utilise|renommage|session|rename_session)[\s\S]*$/iu, "")
+    .replace(/\b(?:je\s+renomme|j['’]utilise|renommage|session|rename_session|renamechat)[\s\S]*$/iu, "")
     .replace(/\b(?:voici|quelques\s+reperes|quelques\s+repères|pour\s+repondre|pour\s+répondre)\b[\s\S]*$/iu, "")
     .trim();
   return normalizeSessionTitle(compact);
@@ -8753,6 +8745,25 @@ interface RenameSessionCodeActRequest {
 
 function parseRenameSessionCodeActLine(line: string): RenameSessionCodeActRequest | undefined {
   const trimmed = line.trim();
+  const compactPrefix = trimmed.endsWith(RENAME_CHAT_CODEACT_SUFFIX)
+    ? trimmed.slice(0, -RENAME_CHAT_CODEACT_SUFFIX.length)
+    : "";
+  const compactMatch = compactPrefix.match(/^\/(["'`])([^"'`\r\n]{1,120})\1$/);
+  if (compactPrefix && compactMatch?.[2]) {
+    const title = polishedSessionTitle(compactMatch[2], "brain_compact_renamechat");
+    if (!title) {
+      return undefined;
+    }
+    const request: RenameSessionCodeActRequest = {
+      schema: "forge.brain.rename_session.request.v1",
+      command: BRAIN_RENAME_SESSION_COMMAND,
+      title,
+      reason: "brain_compact_renamechat",
+      proofHash: ""
+    };
+    request.proofHash = hashJson({ ...request, proofHash: "" });
+    return request;
+  }
   if (!trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND)) {
     return undefined;
   }
@@ -8785,7 +8796,16 @@ function extractRenameSessionCodeAct(text: string): RenameSessionCodeActRequest 
 function removeRenameSessionCodeActLines(text: string): string {
   return text
     .split(/\r?\n/)
-    .filter((line) => !line.trim().startsWith(BRAIN_RENAME_SESSION_COMMAND))
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND)) {
+        return false;
+      }
+      const compactPrefix = trimmed.endsWith(RENAME_CHAT_CODEACT_SUFFIX)
+        ? trimmed.slice(0, -RENAME_CHAT_CODEACT_SUFFIX.length)
+        : "";
+      return !/^\/(["'`])([^"'`\r\n]{1,120})\1$/.test(compactPrefix);
+    })
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -9613,8 +9633,8 @@ function removeRenameSessionChatter(text: string): string {
 function removeLooseRenameSessionChatter(text: string): string {
   return text
     .replace(/^\s*sujet\s+(?:identifi[eé])?\s*:?\s*[^.!?\r\n]+[.!?]?\s*/iu, "")
-    .replace(/(?:^|[\r\n]\s*|(?<=[.!?]\s))je\s+(?:renomme|vais\s+renommer|utilise)[^.!?\r\n]*(?:session|titre|renomm|rename_session)[^.!?\r\n]*[.!?]?\s*/giu, "")
-    .replace(/(?:^|[\r\n]\s*)[^.!?\r\n]*(?:action|codeact)[^.!?\r\n]*(?:renommer|rename_session|session)[^.!?\r\n]*[.!?]?\s*/giu, "")
+    .replace(/(?:^|[\r\n]\s*|(?<=[.!?]\s))je\s+(?:renomme|vais\s+renommer|utilise)[^.!?\r\n]*(?:session|titre|renomm|rename_session|renamechat)[^.!?\r\n]*[.!?]?\s*/giu, "")
+    .replace(/(?:^|[\r\n]\s*)[^.!?\r\n]*(?:action|codeact)[^.!?\r\n]*(?:renommer|rename_session|renamechat|session)[^.!?\r\n]*[.!?]?\s*/giu, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -11047,10 +11067,8 @@ async function submitChatDraftForSessionInner(
   assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, draft, moduleId);
   assistantMessage = await applyGeographicMapsFallback(assistantMessage, draft, moduleId, parallelSessionIndex);
   assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, moduleId, parallelSessionIndex);
-  const assistantTitleSource = assistantMessage.text;
   assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, session);
   assistantMessage = sanitizeAssistantRenameChatter(assistantMessage);
-  assistantMessage = applyFirstTurnRuntimeSessionTitle(assistantMessage, session, draft, assistantTitleSource, message.id, requestTranscriptWithUser);
   assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
   assistantMessage = suppressRepeatedBrainSegmentCodeAct(assistantMessage, panelsChatBottomState.activeBrainSegment);
   const previousBrainSegment = panelsChatBottomState.activeBrainSegment;
