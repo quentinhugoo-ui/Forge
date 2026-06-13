@@ -8224,8 +8224,29 @@ function normalizeSessionTitle(value: string): string {
   return compact.length <= 42 ? compact : `${compact.slice(0, 39).trimEnd()}...`;
 }
 
+function stripSessionTitleNoise(value: string): string {
+  let compact = value
+    .replace(/\s+/g, " ")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/^sujet\s+(?:identifi[eé])\s*:?\s*/i, "")
+    .replace(/^title\s*=\s*/i, "")
+    .trim();
+  const firstQuote = compact.search(/["'`]/);
+  if (firstQuote > 0) {
+    const beforeQuote = compact.slice(0, firstQuote).trim();
+    if (beforeQuote.split(/\s+/).filter(Boolean).length <= 6) {
+      compact = beforeQuote;
+    }
+  }
+  compact = compact
+    .replace(/\b(?:je\s+renomme|j['’]utilise|renommage|session|rename_session)[\s\S]*$/iu, "")
+    .replace(/\b(?:voici|quelques\s+reperes|quelques\s+repères|pour\s+repondre|pour\s+répondre)\b[\s\S]*$/iu, "")
+    .trim();
+  return normalizeSessionTitle(compact);
+}
+
 function polishedSessionTitle(title: string, reason: string): string {
-  const compact = normalizeSessionTitle(title);
+  const compact = stripSessionTitleNoise(title);
   if (!compact) {
     return "";
   }
@@ -8256,9 +8277,10 @@ function polishedSessionTitle(title: string, reason: string): string {
 
 function parseCodeActTemplateFields(body: string): Map<string, string> {
   const fields = new Map<string, string>();
+  const normalizedBody = body.replace(/(["'`])\s*([a-zA-Z_][\w-]*)\s*=/g, "$1 $2=");
   const fieldRegex = /(?:^|\s)([a-zA-Z_][\w-]*)\s*=\s*(?:"([^"\r\n]{0,120})"|'([^'\r\n]{0,120})'|([^\r\n]*?))(?=\s+[a-zA-Z_][\w-]*\s*=|$)/g;
   let match: RegExpExecArray | null;
-  while ((match = fieldRegex.exec(body)) !== null) {
+  while ((match = fieldRegex.exec(normalizedBody)) !== null) {
     const key = match[1]?.trim();
     if (!key) continue;
     const rawValue = (match[2] ?? match[3] ?? match[4] ?? "").trim();
@@ -9134,11 +9156,20 @@ function removeRenameSessionChatter(text: string): string {
     .trim();
 }
 
+function removeLooseRenameSessionChatter(text: string): string {
+  return text
+    .replace(/^\s*sujet\s+(?:identifi[eé])?\s*:?\s*[^.!?\r\n]+[.!?]?\s*/iu, "")
+    .replace(/(?:^|[\r\n]\s*|(?<=[.!?]\s))je\s+(?:renomme|vais\s+renommer|utilise)[^.!?\r\n]*(?:session|titre|renomm|rename_session)[^.!?\r\n]*[.!?]?\s*/giu, "")
+    .replace(/(?:^|[\r\n]\s*)[^.!?\r\n]*(?:action|codeact)[^.!?\r\n]*(?:renommer|rename_session|session)[^.!?\r\n]*[.!?]?\s*/giu, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function sanitizeAssistantRenameChatter(message: TranscriptMessage): TranscriptMessage {
   if (message.role !== "assistant") {
     return message;
   }
-  const text = removeRenameSessionChatter(message.text);
+  const text = removeRenameSessionChatter(removeLooseRenameSessionChatter(message.text));
   if (text === message.text) {
     return message;
   }
