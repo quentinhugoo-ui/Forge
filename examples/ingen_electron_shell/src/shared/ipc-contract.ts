@@ -452,6 +452,7 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   hideNativeMaps?: () => Promise<NativeWebExplorerResult>;
   onNativeMapsCodeAct?: (listener: (event: NativeWebExplorerCodeAct) => void) => () => void;
   searchCitySuggestions?: (query: string) => Promise<CitySuggestionResult>;
+  openGeoEntity?: (query: string) => Promise<NativeWebExplorerResult>;
   showNativeTerminal?: (bounds: NativeTerminalBounds) => Promise<NativeTerminalResult>;
   updateNativeTerminalBounds?: (bounds: NativeTerminalBounds) => Promise<NativeTerminalResult>;
   hideNativeTerminal?: () => Promise<NativeTerminalResult>;

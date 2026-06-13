@@ -80,7 +80,7 @@ export function renderGoogleWebCodeActResult(request: GoogleWebCodeActRequest): 
   ].join("\n");
 }
 
-function buildGoogleWebCodeActRequest(
+export function buildGoogleWebCodeActRequest(
   query: string,
   keywords: string[],
   source: GoogleWebCodeActRequest["source"],

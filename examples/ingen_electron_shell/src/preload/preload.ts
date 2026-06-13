@@ -131,6 +131,9 @@ const forgeShell: ForgeShellApi = {
   searchCitySuggestions(query: string) {
     return ipcRenderer.invoke("forge:search-city-suggestions", query);
   },
+  openGeoEntity(query: string) {
+    return ipcRenderer.invoke("forge:maps-open-geo-entity", query);
+  },
   showNativeTerminal(bounds: NativeTerminalBounds) {
     return ipcRenderer.invoke("forge:terminal-show-native", bounds);
   },
