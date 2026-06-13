@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createAgentActionHostManifest,
+  agentActionHostPromptManifest,
   executeAgentActionRequest,
   type AgentActionHostConfig
 } from "../src/main/agent-action-host";
@@ -41,6 +42,16 @@ describe("agent action host", () => {
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.full");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.readonly");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
+
+    const promptManifest = agentActionHostPromptManifest({
+      workspaceRoot: "C:\\repo",
+      workspaceActive: true,
+      cwd: "C:\\repo",
+      platform: "win32"
+    });
+    expect(promptManifest).toContain("events=fs.list:/agent_list_");
+    expect(promptManifest).toContain("fs.delete_tree:/agent_delete_tree_");
+    expect(promptManifest).toContain("shell.full:/agent_shell_");
   });
 
   it("keeps filesystem operations inside the workspace", async () => {

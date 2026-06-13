@@ -22,6 +22,18 @@ const WINDOWS_DESTRUCTIVE_BLOCK_ROOTS = [
 ];
 const MAX_PREVIEW_CHARS = 24_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
+const AGENT_ACTION_EVENT_HINTS = [
+  "fs.list:/agent_list_",
+  "fs.search:/agent_search_",
+  "fs.create_directory:/agent_create_directory_",
+  "fs.rename:/agent_rename_path_",
+  "fs.move:/agent_move_path_",
+  "fs.copy:/agent_copy_path_",
+  "fs.delete_empty_directory:/agent_delete_empty_directory_",
+  "fs.delete_tree:/agent_delete_tree_",
+  "shell.readonly:/agent_readonly_shell_",
+  "shell.full:/agent_shell_"
+];
 
 export interface AgentActionHostConfig {
   workspaceRoot: string;
@@ -312,6 +324,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `shell=${manifest.permissions.shell}`,
     `protected_roots=${manifest.workspace.protectedRoots.join("|")}`,
     "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
+    `events=${AGENT_ACTION_EVENT_HINTS.join(" ")}`,
     "planned=browser.playwright computer_use mcp",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`

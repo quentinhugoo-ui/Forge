@@ -1,5 +1,20 @@
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Copy, FolderPlus, List, MoveRight, Pencil, Search, Terminal, Trash2 } from "lucide-react";
+import {
+  AGENT_COPY_PATH_COMMAND,
+  AGENT_CREATE_DIRECTORY_COMMAND,
+  AGENT_DELETE_EMPTY_DIRECTORY_COMMAND,
+  AGENT_DELETE_TREE_COMMAND,
+  AGENT_LIST_COMMAND,
+  AGENT_MOVE_PATH_COMMAND,
+  AGENT_READONLY_SHELL_COMMAND,
+  AGENT_RENAME_PATH_COMMAND,
+  AGENT_SEARCH_COMMAND,
+  AGENT_SHELL_COMMAND,
+  agentActionEventText,
+  type AgentActionEventCommand
+} from "./agent-action-events";
 import {
   BRAIN_BRAIN_COMMAND,
   BRAIN_FRONTDESIGN_COMMAND,
@@ -30,7 +45,8 @@ type EventCommand =
   | "FORGE_BANGER_PLAN_JSON"
   | "FORGE_BANGER_QUESTIONNAIRE_JSON"
   | "FORGE_BANGER_MATERIAL_RESEARCH_JSON"
-  | typeof BRAIN_RUST_PORT_ADAPTER_COMMAND;
+  | typeof BRAIN_RUST_PORT_ADAPTER_COMMAND
+  | AgentActionEventCommand;
 
 interface SuccessStep {
   before: string;
@@ -164,6 +180,38 @@ const steps: SuccessStep[] = [
     line2: "The kernel stays intact, and the product does not dilute itself.",
     command: BRAIN_RUST_PORT_ADAPTER_COMMAND,
     eventText: "Rust adapter template prepared"
+  },
+  {
+    before: "Local work becomes",
+    pill: "fs.search",
+    after: ": the agent inspects the computer with bounded evidence.",
+    line2: "Search is visible as a tool event before any file operation follows.",
+    command: AGENT_SEARCH_COMMAND,
+    eventText: agentActionEventText(AGENT_SEARCH_COMMAND)
+  },
+  {
+    before: "Filesystem changes become",
+    pill: "fs.copy",
+    after: ": explicit, traceable operations.",
+    line2: "Moves, copies, renames, and directory creation use the same transcript grammar.",
+    command: AGENT_COPY_PATH_COMMAND,
+    eventText: agentActionEventText(AGENT_COPY_PATH_COMMAND)
+  },
+  {
+    before: "Destructive work becomes",
+    pill: "confirmed",
+    after: ": deletion is visible before the result lands.",
+    line2: "Recursive deletes keep their own event instead of disappearing into prose.",
+    command: AGENT_DELETE_TREE_COMMAND,
+    eventText: agentActionEventText(AGENT_DELETE_TREE_COMMAND)
+  },
+  {
+    before: "System work becomes",
+    pill: "shell.full",
+    after: ": a confirmed command, not hidden magic.",
+    line2: "PowerShell, cmd, batch, and native Windows tools appear as shell events.",
+    command: AGENT_SHELL_COMMAND,
+    eventText: agentActionEventText(AGENT_SHELL_COMMAND)
   }
 ];
 
@@ -264,7 +312,20 @@ function CalendarIcon() {
   );
 }
 
+function AgentActionIcon({ command }: { command: AgentActionEventCommand }) {
+  if (command === AGENT_LIST_COMMAND) return <List />;
+  if (command === AGENT_SEARCH_COMMAND) return <Search />;
+  if (command === AGENT_CREATE_DIRECTORY_COMMAND) return <FolderPlus />;
+  if (command === AGENT_RENAME_PATH_COMMAND) return <Pencil />;
+  if (command === AGENT_MOVE_PATH_COMMAND) return <MoveRight />;
+  if (command === AGENT_COPY_PATH_COMMAND) return <Copy />;
+  if (command === AGENT_DELETE_EMPTY_DIRECTORY_COMMAND || command === AGENT_DELETE_TREE_COMMAND) return <Trash2 />;
+  if (command === AGENT_READONLY_SHELL_COMMAND || command === AGENT_SHELL_COMMAND) return <Terminal />;
+  return <GenericIcon />;
+}
+
 function EventIcon({ command }: { command: EventCommand }) {
+  if (command.startsWith("/agent_")) return <AgentActionIcon command={command as AgentActionEventCommand} />;
   if (command === BRAIN_NEWCOMPUTE_COMMAND) return <NewComputeIcon />;
   if (command === "/compute_atomic_science_") return <AtomicIcon />;
   if (command === BRAIN_BRAIN_COMMAND) return <BrainIcon />;
