@@ -1,9 +1,290 @@
-import { useState } from "react";
-import { BRAIN_CODEACT_COMMAND_DESCRIPTIONS, type BrainCodeActCommand } from "../shared/ipc-contract";
-import { readBrainUserMemory } from "./brain-user-memory-store";
+import { useEffect, useRef, useState } from "react";
+import {
+  BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
+  type BrainCodeActCommand,
+  type SidebarSessionItem
+} from "../shared/ipc-contract";
+import {
+  readBrainAgentMemory,
+  readBrainUserMemory,
+  writeBrainAgentMemory,
+  writeBrainUserMemory
+} from "./brain-user-memory-store";
+import { headerShadowStore } from "./header-shadow-store";
 import { AirbnbIcon, CubeIcon, GmailIcon, GoogleIcon } from "./module-logos";
+import { panelsChatBottomStore } from "./panels-chat-bottom-store";
+import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
 
 type BrainSpace = "codeacts" | "memory" | "godel" | "personality";
+type BrainBlobHandle = { destroy(): void };
+type WebGpuBuffer = { destroy(): void };
+type WebGpuBufferData = ArrayBuffer | ArrayBufferView<ArrayBufferLike>;
+type WebGpuQueue = {
+  writeBuffer(buffer: WebGpuBuffer, bufferOffset: number, data: WebGpuBufferData, dataOffset?: number, size?: number): void;
+  submit(commandBuffers: unknown[]): void;
+};
+type WebGpuDevice = {
+  queue: WebGpuQueue;
+  lost: Promise<unknown>;
+  createBuffer(descriptor: { label?: string; size: number; usage: number }): WebGpuBuffer;
+  createShaderModule(descriptor: { label?: string; code: string }): unknown;
+  createRenderPipeline(descriptor: Record<string, unknown>): unknown;
+  createBindGroup(descriptor: { label?: string; layout: unknown; entries: Array<{ binding: number; resource: unknown }> }): unknown;
+  createCommandEncoder(descriptor?: { label?: string }): {
+    beginRenderPass(descriptor: Record<string, unknown>): {
+      setPipeline(pipeline: unknown): void;
+      setBindGroup(index: number, bindGroup: unknown): void;
+      draw(vertexCount: number, instanceCount: number): void;
+      end(): void;
+    };
+    finish(): unknown;
+  };
+  destroy?: () => void;
+};
+type WebGpuAdapter = { requestDevice(descriptor?: Record<string, unknown>): Promise<WebGpuDevice> };
+type WebGpuRuntime = {
+  requestAdapter(options?: { powerPreference?: "high-performance" | "low-power" }): Promise<WebGpuAdapter | null>;
+  getPreferredCanvasFormat(): string;
+};
+type WebGpuCanvasContext = {
+  configure(config: { device: WebGpuDevice; format: string; alphaMode: "premultiplied" | "opaque" }): void;
+  getCurrentTexture(): { createView(): unknown };
+  unconfigure?: () => void;
+};
+type WebGpuHostNavigator = { gpu?: WebGpuRuntime };
+
+const WEBGPU_BUFFER_USAGE = {
+  COPY_DST: 0x8,
+  UNIFORM: 0x40
+} as const;
+const BRAIN_BLOB_SUPERSAMPLE = 2.2;
+const BRAIN_BLOB_MAX_FRAMEBUFFER_SIDE = 2400;
+
+/* SDF port of the Uiverse "andrew-manzyk" gooey loader: the seven blurred
+   polygons become metaballs orbiting their CSS transform-origins, smooth-min
+   plays the blur+contrast fusion, and the vessel circle carries the gradient
+   fill, the top/bottom border and the halo. Orbits, radii, pivots and phases
+   are jittered by a per-session random seed. */
+const BRAIN_BLOB_SHADER = /* wgsl */ `
+const TAU: f32 = 6.28318530718;
+/* Loader contract: --time-animation 2s; roundness runs at /2, colorize at *3. */
+const TIME_ANIM: f32 = 2.0;
+
+struct Uniforms {
+  resolution: vec2<f32>,
+  time: f32,
+  reducedMotion: f32,
+  seed: f32,
+  pad0: f32,
+  pad1: f32,
+  pad2: f32,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexOut {
+  @builtin(position) position: vec4<f32>,
+};
+
+@vertex
+fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>(3.0, -1.0),
+    vec2<f32>(-1.0, 3.0)
+  );
+  var out: VertexOut;
+  out.position = vec4<f32>(positions[vertexIndex], 0.0, 1.0);
+  return out;
+}
+
+fn saturate(v: f32) -> f32 {
+  return clamp(v, 0.0, 1.0);
+}
+
+fn hash21(p: vec2<f32>) -> f32 {
+  let h = dot(p, vec2<f32>(127.1, 311.7));
+  return fract(sin(h) * 43758.5453123);
+}
+
+fn noise2(p: vec2<f32>) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = hash21(i);
+  let b = hash21(i + vec2<f32>(1.0, 0.0));
+  let c = hash21(i + vec2<f32>(0.0, 1.0));
+  let d = hash21(i + vec2<f32>(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+fn fbm(p0: vec2<f32>) -> f32 {
+  var p = p0;
+  var amp = 0.5;
+  var sum = 0.0;
+  for (var i = 0; i < 5; i = i + 1) {
+    sum += noise2(p) * amp;
+    p = p * 2.03 + vec2<f32>(13.1, 7.7);
+    amp *= 0.52;
+  }
+  return sum;
+}
+
+fn seededRand(n: f32) -> f32 {
+  return fract(sin(n * 12.9898 + uniforms.seed * 78.233) * 43758.5453);
+}
+
+fn smin(a: f32, b: f32, k: f32) -> f32 {
+  let h = saturate(0.5 + 0.5 * (b - a) / k);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+fn smoothIntersection(a: f32, b: f32, k: f32) -> f32 {
+  let h = saturate(0.5 - 0.5 * (b - a) / k);
+  return mix(b, a, h) + k * h * (1.0 - h);
+}
+
+/* CSS roundness keyframes: contrast 15 -> 3 -> 15, i.e. tight fusion that
+   periodically relaxes into a soft gooey mush. */
+fn roundnessMix(t: f32) -> f32 {
+  let phase = fract(t / (TIME_ANIM * 0.5));
+  if (phase < 0.2) {
+    return smoothstep(0.0, 0.2, phase);
+  }
+  if (phase < 0.4) {
+    return 1.0;
+  }
+  if (phase < 0.6) {
+    return 1.0 - smoothstep(0.4, 0.6, phase);
+  }
+  return 0.0;
+}
+
+/* q is in unit-vessel coordinates: the vessel rim is the unit circle. */
+fn blobField(q: vec2<f32>, t: f32, k: f32) -> f32 {
+  var pivots = array<vec2<f32>, 7>(
+    vec2<f32>(0.5, -0.5),
+    vec2<f32>(0.0, 0.0),
+    vec2<f32>(0.0, 0.2),
+    vec2<f32>(-0.2, -0.2),
+    vec2<f32>(-0.2, -0.2),
+    vec2<f32>(0.2, -0.2),
+    vec2<f32>(0.2, -0.2)
+  );
+  var dirs = array<f32, 7>(0.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0);
+  var delayPhase = array<f32, 7>(0.0, 0.0, TAU / 3.0, 0.0, TAU / 2.0, 0.0, TAU / 1.5);
+  let baseSpeed = TAU / TIME_ANIM;
+  var d = 1e5;
+  for (var i = 0; i < 7; i = i + 1) {
+    let fi = f32(i);
+    let speed = dirs[i] * baseSpeed * mix(0.72, 1.28, seededRand(fi * 7.31 + 1.7));
+    let phase = delayPhase[i] + seededRand(fi * 3.97 + 9.2) * TAU;
+    let orbit = mix(0.10, 0.30, seededRand(fi * 5.53 + 4.4));
+    let radius = mix(0.26, 0.42, seededRand(fi * 2.17 + 6.6));
+    let pivot = pivots[i] + (vec2<f32>(seededRand(fi * 9.13 + 2.9), seededRand(fi * 6.71 + 8.1)) - 0.5) * 0.22;
+    let a = phase + t * speed;
+    let center = pivot + vec2<f32>(cos(a), sin(a)) * orbit;
+    d = smin(d, length(q - center) - radius, k);
+  }
+  return d;
+}
+
+fn hueRotate(color: vec3<f32>, angle: f32) -> vec3<f32> {
+  let c = cos(angle);
+  let s = sin(angle);
+  let weights = vec3<f32>(0.213, 0.715, 0.072);
+  return vec3<f32>(
+    dot(color, vec3<f32>(weights.x + c * (1.0 - weights.x) + s * (-weights.x), weights.y + c * (-weights.y) + s * (-weights.y), weights.z + c * (-weights.z) + s * (1.0 - weights.z))),
+    dot(color, vec3<f32>(weights.x + c * (-weights.x) + s * 0.143, weights.y + c * (1.0 - weights.y) + s * 0.140, weights.z + c * (-weights.z) + s * -0.283)),
+    dot(color, vec3<f32>(weights.x + c * (-weights.x) + s * (-(1.0 - weights.x)), weights.y + c * (-weights.y) + s * weights.y, weights.z + c * (1.0 - weights.z) + s * weights.z))
+  );
+}
+
+fn colorizeAngle(time: f32) -> f32 {
+  let phase = fract(time / (TIME_ANIM * 3.0));
+  if (phase < 0.2) {
+    return mix(0.0, -0.5235988, smoothstep(0.0, 0.2, phase));
+  }
+  if (phase < 0.4) {
+    return mix(-0.5235988, -1.0471976, smoothstep(0.2, 0.4, phase));
+  }
+  if (phase < 0.6) {
+    return mix(-1.0471976, -1.5707963, smoothstep(0.4, 0.6, phase));
+  }
+  if (phase < 0.8) {
+    return mix(-1.5707963, -0.7853982, smoothstep(0.6, 0.8, phase));
+  }
+  return mix(-0.7853982, 0.0, smoothstep(0.8, 1.0, phase));
+}
+
+fn over(dst: vec4<f32>, src: vec3<f32>, srcAlpha: f32) -> vec4<f32> {
+  let a = saturate(srcAlpha);
+  return vec4<f32>(src * a + dst.rgb * (1.0 - a), a + dst.a * (1.0 - a));
+}
+
+@fragment
+fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+  let res = max(uniforms.resolution, vec2<f32>(1.0));
+  let shortSide = min(res.x, res.y);
+  let px = 1.0 / shortSide;
+  let uv = (position.xy - 0.5 * res) / shortSide;
+  let t = uniforms.time * (1.0 - uniforms.reducedMotion) + seededRand(3.3) * 31.7;
+
+  let vesselCenter = vec2<f32>(0.0, 0.015);
+  let vesselRadius = 0.555;
+  let q = (uv - vesselCenter) / vesselRadius;
+  let vesselDist = (length(q) - 1.0) * vesselRadius;
+
+  /* Procedural organic warp layered over the rigid loader orbits. */
+  let warp = vec2<f32>(
+    fbm(q * 2.6 + vec2<f32>(t * 0.11, 3.1)),
+    fbm(q * 2.6 + vec2<f32>(7.7, t * 0.09))
+  ) - vec2<f32>(0.5);
+  let k = mix(0.12, 0.34, roundnessMix(t));
+  var fieldDist = blobField(q + warp * 0.10, t, k);
+  fieldDist += (fbm(q * 4.0 + vec2<f32>(t * 0.13, -t * 0.07)) - 0.5) * 0.05;
+  let blobDist = smoothIntersection(fieldDist * vesselRadius, vesselDist + 0.012, 0.02);
+
+  let aa = max(abs(dpdx(blobDist)) + abs(dpdy(blobDist)), px * 1.75);
+  let blobMask = smoothstep(aa, -aa, blobDist);
+  let depth = saturate(-blobDist / (0.22 * vesselRadius));
+
+  let colorOne = vec3<f32>(1.0, 0.749, 0.282);
+  let colorTwo = vec3<f32>(0.745, 0.290, 0.114);
+  /* linear-gradient(180deg, color-one 30%, color-two 70%) across the vessel. */
+  let gradT = smoothstep(-0.4, 0.4, q.y);
+
+  let grain = fbm(q * 5.0 + vec2<f32>(t * 0.05, -t * 0.04));
+  var blobColor = mix(colorOne, colorTwo, gradT) * (0.90 + grain * 0.18 + depth * 0.10);
+  blobColor += vec3<f32>(1.0, 0.93, 0.84) * pow(depth, 2.0) * 0.10;
+
+  /* Vessel ::before: faint gradient fill plus inset top/bottom glows. */
+  let vesselMask = smoothstep(aa, -aa, vesselDist);
+  let insetBand = exp(-max(-vesselDist, 0.0) / 0.06);
+  let vesselAlpha = vesselMask * (mix(0.08, 0.16, gradT) + insetBand * mix(0.18, 0.24, gradT));
+  let vesselColor = mix(colorOne, colorTwo, gradT);
+
+  /* border-top color-one / border-bottom color-two, fading at the sides. */
+  let ringBand = smoothstep(px * 2.4, 0.0, abs(vesselDist));
+  let ringAlpha = ringBand * saturate(abs(q.y)) * 0.85;
+  let ringColor = mix(colorOne, colorTwo, smoothstep(-0.2, 0.2, q.y));
+
+  /* box-shadow halo: 0 0 25px color-three + 0 20px 50px color-four. */
+  let outside = max(vesselDist, 0.0);
+  let dropDist = max(length(uv - vesselCenter - vec2<f32>(0.0, 0.10)) - vesselRadius, 0.0);
+  let glowAlpha = exp(-outside / 0.085) * 0.14 + exp(-dropDist / 0.16) * 0.10;
+  let glowColor = mix(colorOne, colorTwo, smoothstep(-0.6, 0.9, q.y));
+
+  var acc = vec4<f32>(0.0);
+  acc = over(acc, glowColor, glowAlpha * (1.0 - vesselMask));
+  acc = over(acc, vesselColor, vesselAlpha);
+  acc = over(acc, ringColor, ringAlpha);
+  acc = over(acc, blobColor, blobMask * (0.58 + depth * 0.30));
+
+  let rgb = max(hueRotate(acc.rgb / max(acc.a, 0.001), colorizeAngle(t)), vec3<f32>(0.0));
+  return vec4<f32>(min(rgb, vec3<f32>(0.98)), saturate(acc.a));
+}
+`;
 
 /* Stroke glyphs follow the sidebar icon contract: 24-unit viewBox, 1.65 stroke. */
 function Glyph({ kind, size = 16 }: { kind: string; size?: number }) {
@@ -23,6 +304,13 @@ function Glyph({ kind, size = 16 }: { kind: string; size?: number }) {
     return (
       <svg {...base} viewBox="2.25 2.25 15.5 15.5">
         <path d="M9.5 4.5c0-.1-.02-.48-.15-.82a1.22 1.22 0 0 0-.32-.5A.76.76 0 0 0 8.5 3a2.91 2.91 0 0 0-1.76.58C6.28 3.94 6 4.43 6 5a.5.5 0 0 1-.66.47c-.18-.06-.35-.02-.53.12-.2.16-.39.45-.53.83-.28.78-.25 1.73.14 2.3A.5.5 0 0 1 4.5 9h.75a2.25 2.25 0 0 1 2.25 2.25v.34m2-7.09v10m0-7H8.42m2.08 7h.75c.69 0 1.25-.56 1.25-1.25v-1.84M9.5 15.47c-.05.12-.22.45-.55.81-.39.41-.89.72-1.45.72-.81 0-1.43-.4-1.86-.94-.44-.55-.64-1.19-.64-1.56a.5.5 0 0 0-.5-.5c-.13 0-.52-.08-.86-.38C3.31 13.34 3 12.86 3 12c0-.98.12-1.63.32-2.03m7.18-5.47c0-.1.02-.48.15-.82.08-.2.18-.37.32-.5A.76.76 0 0 1 11.5 3c.63 0 1.25.2 1.76.58.46.36.74.85.74 1.42a.5.5 0 0 0 .66.47c.18-.06.35-.02.53.12.2.16.39.45.53.83.28.78.25 1.73-.14 2.3A.5.5 0 0 0 16 9.5c.13 0 .26.03.38.1.12.08.22.2.3.37.2.4.32 1.05.32 2.03 0 .86-.31 1.34-.64 1.62-.34.3-.73.38-.86.38a.5.5 0 0 0-.5.5c0 .37-.2 1.01-.64 1.56-.43.54-1.05.94-1.86.94-.56 0-1.06-.31-1.45-.72a3.63 3.63 0 0 1-.55-.81M6.5 7a.5.5 0 1 0 1 0 .5.5 0 0 0-1 0Zm6 2a.5.5 0 1 0 1 0 .5.5 0 0 0-1 0Zm-6 4a.5.5 0 1 0 1 0 .5.5 0 0 0-1 0Z" strokeWidth="1.65" vectorEffect="non-scaling-stroke" />
+      </svg>
+    );
+  }
+  if (kind === "identity-card") {
+    return (
+      <svg {...base} viewBox="0 0 256 256" fill="currentColor" stroke="none">
+        <path d="M75.19 198.4a8 8 0 0 0 11.21-1.6a52 52 0 0 1 83.2 0a8 8 0 1 0 12.8-9.6a67.88 67.88 0 0 0-27.4-21.69a40 40 0 1 0-53.94 0A67.88 67.88 0 0 0 73.6 187.2a8 8 0 0 0 1.59 11.2ZM128 112a24 24 0 1 1-24 24a24 24 0 0 1 24-24Zm72-88H56a16 16 0 0 0-16 16v176a16 16 0 0 0 16 16h144a16 16 0 0 0 16-16V40a16 16 0 0 0-16-16Zm0 192H56V40h144ZM88 64a8 8 0 0 1 8-8h64a8 8 0 0 1 0 16H96a8 8 0 0 1-8-8Z" />
       </svg>
     );
   }
@@ -112,6 +400,12 @@ function Glyph({ kind, size = 16 }: { kind: string; size?: number }) {
   if (kind === "plug") {
     return <svg {...base}><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" /></svg>;
   }
+  if (kind === "plus") {
+    return <svg {...base}><path d="M12 5v14" /><path d="M5 12h14" /></svg>;
+  }
+  if (kind === "minus") {
+    return <svg {...base}><path d="M5 12h14" /></svg>;
+  }
   if (kind === "flask") {
     return <svg {...base}><path d="M10 2v6.6L4.7 18a2 2 0 0 0 1.8 3h11a2 2 0 0 0 1.8-3L14 8.6V2" /><path d="M8.5 2h7" /><path d="M7 15h10" /></svg>;
   }
@@ -149,8 +443,8 @@ function CodeActIcon({ command }: { command: BrainCodeActCommand }) {
 }
 
 const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
-  { id: "codeacts", label: "CodeActs", glyph: "codeact" },
   { id: "memory", label: "Memory", glyph: "database" },
+  { id: "codeacts", label: "CodeActs", glyph: "codeact" },
   { id: "godel", label: "Godel", glyph: "shield-check" },
   { id: "personality", label: "Personality", glyph: "masks" }
 ];
@@ -159,6 +453,7 @@ const BRAIN_SPACES: { id: BrainSpace; label: string; glyph: string }[] = [
    brains own the CodeActs specialized for their domain. The activator
    commands live in the general brain since they are the switches. */
 const BRAIN_ACTIVATOR_COMMANDS: BrainCodeActCommand[] = ["/sciencebrain_", "/codingbrain_"];
+const GOOGLE_SUITE_COMMANDS: BrainCodeActCommand[] = ["/googleweb_", "/gmail_", "/google_agenda_"];
 
 const SCIENCE_BRAIN_COMMANDS: BrainCodeActCommand[] = [
   "/newcompute_",
@@ -169,7 +464,6 @@ const SCIENCE_BRAIN_COMMANDS: BrainCodeActCommand[] = [
 
 const CODING_BRAIN_COMMANDS: BrainCodeActCommand[] = [
   "/workspace_",
-  "/frontdesign_",
   "/newmodule_",
   "/rust_port_adapter_",
   "/rust_state_store_"
@@ -181,15 +475,143 @@ const BRAIN_SEGMENTS: { id: string; label: string; glyph: string; commands?: Bra
   { id: "coding", label: "coding brain", glyph: "code", commands: CODING_BRAIN_COMMANDS }
 ];
 
+type BrainCodeActDisplay = { command: BrainCodeActCommand; description: string };
+
+const HIDDEN_BRAIN_CODEACT_COMMANDS = new Set<BrainCodeActCommand>(["/gmail_com"]);
+
+const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>> = {
+  "/sciencebrain_": "Switch to science mode for math, engineering, simulation, 3D, or technical analysis.",
+  "/codingbrain_": "Switch to coding mode for software projects, files, bugs, builds, and developer tasks.",
+  "/searcharchive_": "Search past chats and saved sessions when earlier context can help.",
+  "/googleweb_": "Search the web for current public information.",
+  "/gmail_": "Use Gmail to find messages, summarize email, or prepare replies.",
+  "/airbnb_": "Use Airbnb to search for stays by place, dates, guests, and budget.",
+  "/newimage_": "Create a new image from a text description.",
+  "/editimage_": "Edit an existing image, such as changing its style, colors, objects, or layout.",
+  "/google_agenda_": "Use Google Calendar for events, schedules, reminders, and dates.",
+  "/brain_": "Save or update useful memory after the user confirms it is correct.",
+  "/questionnaire_": "Ask a short set of questions when the task needs clearer choices.",
+  "/newcompute_": "Start a new heavy local calculation, such as a simulation or numeric analysis.",
+  "/selectcompute_": "Reuse a saved calculation instead of rebuilding the same work.",
+  "/compute_<name>_": "Run a known saved calculation by name when it matches the request.",
+  "/newobject_": "Create or modify a 3D object, scene, geometry, material, or design asset.",
+  "/workspace_": "Ask the user to choose a local project folder before reading or changing files.",
+  "/frontdesign_": "Change the app display colors or color palettes when the user asks.",
+  "/newmodule_": "Create a small new app module or feature area.",
+  "/rust_port_adapter_": "Add a Rust service bridge when a feature needs native backend access.",
+  "/rust_state_store_": "Create durable local storage for settings, indexes, credentials, or cached data.",
+  "/web_": "Open or control a web page inside the contained browser."
+};
+
+const NEW_COMPUTE_DETAIL_SECTIONS = [
+  {
+    label: "Measured token savings",
+    text: "Local Monster GPU test: about 32,821 tokens saved on one fully slotted Li-ion electrochemical thermal safety compute, compared with carrying the full contract, Forge source, artifact, and proof context in LLM text."
+  },
+  {
+    label: "New Compute templates",
+    text: "Formula symbolic, numeric model, simulation dynamics, optimization design, uncertainty statistics, tensor/linalg/autodiff, signal/time-series, and graph/sparse/discrete."
+  },
+  {
+    label: "What that means",
+    text: "Use the matching template to run symbolic math, numeric engineering models, dynamic simulations, design optimization, uncertainty estimates, tensor or gradient work, signal analysis, or graph/discrete compute."
+  },
+  {
+    label: "Use the results for",
+    text: "Feed compact proof-backed results into 3D objects, simulation scenes, biology/DNA exercises, crypto exercises, trading models, real-estate scoring, logistics plans, or research reports."
+  }
+] as const;
+const BRAIN_SESSION_ARCHIVE_INITIAL_COUNT = 6;
+const BRAIN_SESSION_ARCHIVE_STEP = 8;
+
+function codeActDisplay(command: BrainCodeActCommand, fallbackDescription = ""): BrainCodeActDisplay {
+  return {
+    command,
+    description: BRAIN_CODEACT_UI_DESCRIPTIONS[command] ?? fallbackDescription
+  };
+}
+
 function segmentCodeActs(segment: { commands?: BrainCodeActCommand[] }) {
-  const elsewhere = new Set([...SCIENCE_BRAIN_COMMANDS, ...CODING_BRAIN_COMMANDS, ...BRAIN_ACTIVATOR_COMMANDS]);
+  const elsewhere = new Set([...SCIENCE_BRAIN_COMMANDS, ...CODING_BRAIN_COMMANDS, ...BRAIN_ACTIVATOR_COMMANDS, ...GOOGLE_SUITE_COMMANDS]);
   return BRAIN_CODEACT_COMMAND_DESCRIPTIONS.filter(({ command }) =>
-    segment.commands ? segment.commands.includes(command) : !elsewhere.has(command)
-  );
+    !HIDDEN_BRAIN_CODEACT_COMMANDS.has(command) && (segment.commands ? segment.commands.includes(command) : !elsewhere.has(command))
+  ).map(({ command, description }) => codeActDisplay(command, description));
 }
 
 function activatorCodeActs() {
-  return BRAIN_CODEACT_COMMAND_DESCRIPTIONS.filter(({ command }) => BRAIN_ACTIVATOR_COMMANDS.includes(command));
+  return BRAIN_ACTIVATOR_COMMANDS.map((command) => codeActDisplay(command));
+}
+
+function googleSuiteCodeActs() {
+  return GOOGLE_SUITE_COMMANDS.map((command) => codeActDisplay(command));
+}
+
+function isRestorableBrainSession(item: SidebarSessionItem): boolean {
+  return item.sessionId.startsWith("chat-") || item.sessionId.startsWith("parallel-chat-");
+}
+
+function brainSessionArchiveItems(recentItems: SidebarSessionItem[], archivedItems: SidebarSessionItem[]): SidebarSessionItem[] {
+  const seen = new Set<string>();
+  return [...recentItems, ...archivedItems].filter((item) => {
+    const label = item.label.trim();
+    if (!label || !isRestorableBrainSession(item)) return false;
+    const key = item.sessionId || `${label}:${item.date}:${item.workspaceLabel}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return item.rowVisible || item.archived || item.pinned || item.working;
+  });
+}
+
+function BrainSessionArchiveList({
+  sessions,
+  visibleCount,
+  onShowMore,
+  onOpenSession
+}: {
+  sessions: SidebarSessionItem[];
+  visibleCount: number;
+  onShowMore: () => void;
+  onOpenSession: (session: SidebarSessionItem) => void;
+}) {
+  if (sessions.length === 0) {
+    return (
+      <div className="brainSessionArchiveList brainSessionArchiveList--empty" aria-label="Saved sessions">
+        No saved sessions yet.
+      </div>
+    );
+  }
+  const visibleSessions = sessions.slice(0, visibleCount);
+  const hiddenCount = Math.max(0, sessions.length - visibleSessions.length);
+  return (
+    <>
+      <div className="brainSessionArchiveList" role="list" aria-label="Saved sessions">
+        {visibleSessions.map((session) => (
+          <button
+            type="button"
+            className="brainSessionArchiveItem"
+            role="listitem"
+            key={session.sessionId || `${session.label}-${session.date}`}
+            onClick={() => onOpenSession(session)}
+          >
+            <span className="brainSessionArchiveItem__line">
+              <span className="brainSessionArchiveItem__title">{session.label}</span>
+              <span className="brainSessionArchiveItem__date">{session.date}</span>
+            </span>
+            <span className="brainSessionArchiveItem__meta">
+              <span>{session.workspaceLabel || session.section}</span>
+              {session.archived ? <span>Archived</span> : null}
+            </span>
+          </button>
+        ))}
+      </div>
+      {hiddenCount > 0 ? (
+        <button type="button" className="brainSessionArchiveMore" onClick={onShowMore}>
+          Afficher plus
+          <span>{hiddenCount}</span>
+        </button>
+      ) : null}
+    </>
+  );
 }
 
 function SlotRow({
@@ -204,7 +626,7 @@ function SlotRow({
   icon?: React.ReactNode;
   title: string;
   text: string;
-  status: string;
+  status?: string;
   active?: boolean;
 }) {
   return (
@@ -214,23 +636,88 @@ function SlotRow({
         <strong>{title}</strong>
         <span>{text}</span>
       </span>
-      <span className={active ? "brainStatus brainStatus--active" : "brainStatus"}>
-        <i aria-hidden="true" />
-        {status}
-      </span>
+      {status ? (
+        <span className={active ? "brainStatus brainStatus--active" : "brainStatus"}>
+          <i aria-hidden="true" />
+          {status}
+        </span>
+      ) : null}
     </div>
   );
 }
 
 function CodeActRow({ command, description }: { command: BrainCodeActCommand; description: string }) {
+  const canExpand = command === "/newcompute_";
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = "brain-new-compute-details";
   return (
-    <div className="brainRow" role="listitem">
+    <div className={canExpand ? "brainRow brainRow--expandable" : "brainRow"} role="listitem">
       <span className="brainRow__icon">
         <CodeActIcon command={command} />
       </span>
-      <code>{command}</code>
+      <span className="brainRow__commandLine">
+        <code>{command}</code>
+        {canExpand ? (
+          <button
+            type="button"
+            className="brainRow__expandButton"
+            aria-expanded={expanded}
+            aria-controls={detailsId}
+            aria-label={expanded ? "Hide Codex New Compute details" : "Show Codex New Compute details"}
+            onClick={() => setExpanded((isExpanded) => !isExpanded)}
+          >
+            <Glyph kind={expanded ? "minus" : "plus"} size={14} />
+          </button>
+        ) : null}
+      </span>
       <p>{description}</p>
+      {canExpand && expanded ? (
+        <div className="brainComputeDetails" id={detailsId} role="region" aria-label="Codex New Compute capabilities">
+          <strong>Codex New Compute</strong>
+          <div className="brainComputeDetails__grid">
+            {NEW_COMPUTE_DETAIL_SECTIONS.map((section) => (
+              <span className="brainComputeDetails__item" key={section.label}>
+                <b>{section.label}</b>
+                <span>{section.text}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function BrainMemoryIdentityField({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="brainMemoryIdentityField">
+      <span className="brainMemoryIdentityField__body">
+        <span className="brainMemoryIdentityField__label">{label}</span>
+        <span className="brainMemoryIdentityField__control">
+          <input
+            aria-label={label}
+          className="brainMemoryIdentityField__input"
+          type="text"
+          value={value}
+          size={Math.max(10, Math.min(value.length || 10, 24))}
+          placeholder="Write here"
+          spellCheck={false}
+          onChange={(event) => onChange(event.currentTarget.value)}
+          />
+          <span className="brainMemoryIdentityField__edit" aria-hidden="true">
+            <Glyph kind="pencil" size={10} />
+          </span>
+        </span>
+      </span>
+    </label>
   );
 }
 
@@ -238,8 +725,8 @@ function CodeActsSpace() {
   return (
     <div className="brainCanvas__space">
       <p className="brainCanvas__spaceIntro">
-        The agent acts by emitting CodeAct commands — typed contracts projected from the Rust Brain.
-        The general brain is always on; the science and coding brains activate on demand.
+        CodeActs are autonomous commands the agent runs to move faster and do real work beyond chat.
+        Some control a web browser in a contained, controlled environment; others create 3D objects or run heavy science and analysis locally, replacing work that would otherwise burn hundreds of millions of tokens.
       </p>
       <div className="brainCanvas__segments">
         {BRAIN_SEGMENTS.map((segment) => (
@@ -249,12 +736,19 @@ function CodeActsSpace() {
               {segment.label}
             </h2>
             {segment.id === "general" ? (
-              <div className="brainActivators" role="list" aria-label="brain activators">
-                <p className="brainActivators__label">brain switches</p>
-                {activatorCodeActs().map(({ command, description }) => (
-                  <CodeActRow command={command} description={description} key={command} />
-                ))}
-              </div>
+              <>
+                <div className="brainActivators" role="list" aria-label="brain activators">
+                  {activatorCodeActs().map(({ command, description }) => (
+                    <CodeActRow command={command} description={description} key={command} />
+                  ))}
+                </div>
+                <div className="brainGoogleSuite" role="list" aria-label="Google Suite">
+                  <p className="brainCommandPack__label">Google Suite</p>
+                  {googleSuiteCodeActs().map(({ command, description }) => (
+                    <CodeActRow command={command} description={description} key={command} />
+                  ))}
+                </div>
+              </>
             ) : null}
             <div className="brainCanvas__rows" role="list">
               {segmentCodeActs(segment).map(({ command, description }) => (
@@ -269,39 +763,99 @@ function CodeActsSpace() {
 }
 
 function MemorySpace() {
-  const memory = readBrainUserMemory();
+  const [userMemory, setUserMemory] = useState(() => readBrainUserMemory());
+  const [agentMemory, setAgentMemory] = useState(() => readBrainAgentMemory());
+  const [visibleArchiveCount, setVisibleArchiveCount] = useState(BRAIN_SESSION_ARCHIVE_INITIAL_COUNT);
+  const { snapshot: sidebarSnapshot } = useSidebarShadowStore();
+  const sessions = brainSessionArchiveItems(sidebarSnapshot.recentItems, sidebarSnapshot.archivedItems);
+
+  useEffect(() => {
+    void panelsChatBottomStore.dispatch({
+      kind: "update_brain_identity",
+      userFirstName: userMemory.preferredFirstName,
+      agentFirstName: agentMemory.preferredFirstName
+    });
+  }, [agentMemory.preferredFirstName, userMemory.preferredFirstName]);
+
+  useEffect(() => {
+    setVisibleArchiveCount((current) => Math.min(Math.max(current, BRAIN_SESSION_ARCHIVE_INITIAL_COUNT), Math.max(sessions.length, BRAIN_SESSION_ARCHIVE_INITIAL_COUNT)));
+  }, [sessions.length]);
+
+  const commitUserMemory = (value: string) => {
+    const next = writeBrainUserMemory(value);
+    setUserMemory(next);
+    void panelsChatBottomStore.dispatch({
+      kind: "update_brain_identity",
+      userFirstName: next.preferredFirstName,
+      agentFirstName: agentMemory.preferredFirstName
+    });
+  };
+
+  const commitAgentMemory = (value: string) => {
+    const next = writeBrainAgentMemory(value);
+    setAgentMemory(next);
+    void panelsChatBottomStore.dispatch({
+      kind: "update_brain_identity",
+      userFirstName: userMemory.preferredFirstName,
+      agentFirstName: next.preferredFirstName
+    });
+  };
+
+  const openArchivedSession = async (session: SidebarSessionItem) => {
+    if (session.sessionId) {
+      await sidebarShadowStore.dispatch(
+        sidebarShadowStore.command({ kind: "open_session", sessionId: session.sessionId, section: session.section }),
+        session.sessionId
+      );
+      await panelsChatBottomStore.refresh();
+      await headerShadowStore.boot();
+      return;
+    }
+    await sidebarShadowStore.dispatch(
+      sidebarShadowStore.command({ kind: "navigate", section: session.section }),
+      session.label
+    );
+    await headerShadowStore.boot();
+  };
+
   return (
     <div className="brainCanvas__space">
       <p className="brainCanvas__spaceIntro">
-        Evidence-aware memory. Each slot keeps its scope, trust level and the evidence that wrote it.
+        Memory keeps the names and session history the agent can reuse when it helps the current conversation.
       </p>
       <div className="brainCanvas__rows" role="list">
-        <SlotRow
-          glyph="database"
-          title={memory.preferredFirstName}
-          text="user.identity.first_name — preferred first name, seeded from the local profile."
-          status={memory.trust.replaceAll("_", " ")}
-          active
-        />
-        <SlotRow
-          glyph="archive"
-          title="Session archive"
-          text="Past sessions and decisions, recalled on demand through /searcharchive_."
-          status="indexed"
-          active
-        />
-        <SlotRow
-          glyph="zap"
-          title="Compute library"
-          text="Verified Monster computes saved for reuse through /selectcompute_."
-          status="indexed"
-          active
-        />
-        <SlotRow
-          glyph="brain"
-          title="Next slots"
-          text="New memory is written through /brain_ once evidence is confirmed."
-          status="awaiting evidence"
+        <section className="brainMemoryIdentity" aria-label="Visitor and agent names">
+          <p className="brainMemoryIdentity__label">
+            <Glyph kind="identity-card" size={18} />
+            <span>Identity</span>
+          </p>
+          <div className="brainMemoryIdentity__fields">
+            <BrainMemoryIdentityField
+              label="Your name"
+              value={userMemory.preferredFirstName}
+              onChange={commitUserMemory}
+            />
+            <BrainMemoryIdentityField
+              label="Agent name"
+              value={agentMemory.preferredFirstName}
+              onChange={commitAgentMemory}
+            />
+          </div>
+        </section>
+        <div className="brainSessionArchiveHead" role="listitem">
+          <span className="brainRow__icon">
+            <Glyph kind="archive" size={17} />
+          </span>
+          <span className="brainSessionArchiveHead__body">
+            <strong>Session archive</strong>
+            <span>Saved conversations, decisions, and working context the agent can recall when useful.</span>
+          </span>
+        </div>
+        <BrainSessionArchiveList
+          sessions={sessions}
+          visibleCount={visibleArchiveCount}
+          onShowMore={() => setVisibleArchiveCount((current) => Math.min(sessions.length, current + BRAIN_SESSION_ARCHIVE_STEP))}
+          onOpenSession={openArchivedSession}
         />
       </div>
     </div>
@@ -347,7 +901,7 @@ function PersonalitySpace() {
       <div className="brainCanvas__rows" role="list">
         <SlotRow
           glyph="masks"
-          title={memory.preferredFirstName}
+          title={memory.preferredFirstName.trim() || "No name set"}
           text="Preferred first name, used across welcome messages and session prose."
           status={memory.trust.replaceAll("_", " ")}
           active
@@ -369,36 +923,186 @@ function PersonalitySpace() {
   );
 }
 
-/* Organic gooey blob (Uiverse, andrew-manzyk): blurred polygons rotating inside
-   an SVG mask, sharpened by a high-contrast filter. Sphere shell removed; the
-   bare effect floats behind the page text as a slow ambient motion.
-   Rendered at native 520px (no transform scale) so the blur/contrast filters
-   stay sharp, with inner margins so the glow fades before the box edges. */
+function initBrainBlobWebGpu(canvas: HTMLCanvasElement, onFirstFrame?: () => void): Promise<BrainBlobHandle | null> {
+  const gpu = (navigator as WebGpuHostNavigator).gpu;
+  if (!gpu) return Promise.resolve(null);
+
+  return gpu.requestAdapter({ powerPreference: "high-performance" }).then(async (adapter) => {
+    if (!adapter) return null;
+    const device = await adapter.requestDevice();
+    const context = canvas.getContext("webgpu") as WebGpuCanvasContext | null;
+    if (!context) {
+      device.destroy?.();
+      return null;
+    }
+
+    const format = gpu.getPreferredCanvasFormat();
+    const uniformData = new Float32Array(8);
+    uniformData[4] = Math.random() * 1000;
+    const uniformBuffer = device.createBuffer({
+      label: "brain-blob-uniforms",
+      size: uniformData.byteLength,
+      usage: WEBGPU_BUFFER_USAGE.UNIFORM | WEBGPU_BUFFER_USAGE.COPY_DST
+    });
+    const shader = device.createShaderModule({ label: "brain-blob-shader", code: BRAIN_BLOB_SHADER });
+    const pipeline = device.createRenderPipeline({
+      label: "brain-blob-pipeline",
+      layout: "auto",
+      vertex: { module: shader, entryPoint: "vertexMain" },
+      fragment: {
+        module: shader,
+        entryPoint: "sceneMain",
+        targets: [
+          {
+            format,
+            blend: {
+              color: { operation: "add", srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha" },
+              alpha: { operation: "add", srcFactor: "one", dstFactor: "one-minus-src-alpha" }
+            }
+          }
+        ]
+      },
+      primitive: { topology: "triangle-list" }
+    });
+    const bindGroup = device.createBindGroup({
+      label: "brain-blob-bind-group",
+      layout: (pipeline as { getBindGroupLayout(index: number): unknown }).getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
+    });
+
+    let configured = false;
+    let stopped = false;
+    let deviceLost = false;
+    let firstFrameSubmitted = false;
+    let rafId = 0;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const targetScale = dpr * BRAIN_BLOB_SUPERSAMPLE;
+      const rawWidth = Math.max(1, rect.width * targetScale);
+      const rawHeight = Math.max(1, rect.height * targetScale);
+      const limitScale = Math.min(1, BRAIN_BLOB_MAX_FRAMEBUFFER_SIDE / Math.max(rawWidth, rawHeight));
+      const width = Math.max(1, Math.round(rawWidth * limitScale));
+      const height = Math.max(1, Math.round(rawHeight * limitScale));
+      if (canvas.width === width && canvas.height === height && configured) return;
+      canvas.width = width;
+      canvas.height = height;
+      context.configure({ device, format, alphaMode: "premultiplied" });
+      configured = true;
+    };
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(canvas, { box: "device-pixel-content-box" });
+    resize();
+
+    void device.lost.then((info) => {
+      deviceLost = true;
+      if (!stopped) console.warn("Brain blob WebGPU device lost.", info);
+    });
+
+    const startedAt = performance.now();
+    const tick = () => {
+      if (stopped) return;
+      if (!configured || deviceLost || document.hidden) {
+        rafId = window.requestAnimationFrame(tick);
+        return;
+      }
+      const now = performance.now();
+      uniformData[0] = canvas.width;
+      uniformData[1] = canvas.height;
+      uniformData[2] = (now - startedAt) / 1000;
+      uniformData[3] = reducedMotion ? 1 : 0;
+      device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+      const encoder = device.createCommandEncoder({ label: "brain-blob-frame" });
+      const pass = encoder.beginRenderPass({
+        label: "brain-blob-render-pass",
+        colorAttachments: [
+          {
+            view: context.getCurrentTexture().createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: "clear",
+            storeOp: "store"
+          }
+        ]
+      });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.draw(3, 1);
+      pass.end();
+      device.queue.submit([encoder.finish()]);
+      if (!firstFrameSubmitted) {
+        firstFrameSubmitted = true;
+        onFirstFrame?.();
+      }
+      rafId = window.requestAnimationFrame(tick);
+    };
+    rafId = window.requestAnimationFrame(tick);
+
+    return {
+      destroy() {
+        stopped = true;
+        if (rafId) window.cancelAnimationFrame(rafId);
+        resizeObserver.disconnect();
+        context.unconfigure?.();
+        uniformBuffer.destroy();
+        device.destroy?.();
+      }
+    };
+  });
+}
+
 function BrainBlob() {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [webGpuReady, setWebGpuReady] = useState(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    let cancelled = false;
+    let handle: BrainBlobHandle | null = null;
+
+    void initBrainBlobWebGpu(canvas, () => {
+      if (!cancelled) setWebGpuReady(true);
+    })
+      .then((nextHandle) => {
+        if (cancelled) {
+          nextHandle?.destroy();
+          return;
+        }
+        handle = nextHandle;
+        if (!nextHandle) setWebGpuReady(false);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("Brain lava lamp WebGPU renderer unavailable.", error);
+          setWebGpuReady(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      handle?.destroy();
+    };
+  }, []);
+
   return (
-    <div className="brainBlob" aria-hidden="true">
-      <svg width="520" height="520" viewBox="0 0 520 520">
-        <mask id="brain-blob-mask">
-          <polygon points="156,78 364,104 286,234" fill="#fff" />
-          <polygon points="130,156 312,130 234,312" fill="#fff" />
-          <polygon points="182,208 364,234 260,390" fill="#fff" />
-          <polygon points="104,234 260,182 208,364" fill="#fff" />
-          <polygon points="260,156 416,234 286,338" fill="#fff" />
-          <polygon points="208,260 390,208 312,390" fill="#fff" />
-          <polygon points="156,286 338,286 234,416" fill="#fff" />
-        </mask>
-      </svg>
-      <div className="brainBlob__box" />
+    <div className={webGpuReady ? "brainBlob brainBlob--webgpu" : "brainBlob"} aria-hidden="true">
+      <canvas ref={canvasRef} className="brainBlob__canvas" />
+      <div className="brainBlob__fallback" />
     </div>
   );
 }
 
-export function BrainCanvas() {
-  const [space, setSpace] = useState<BrainSpace>("codeacts");
+export function BrainCanvas({ onClose }: { onClose?: () => void }) {
+  const [space, setSpace] = useState<BrainSpace>("memory");
   return (
     <section className="profileCanvas brainCanvas" aria-label="Brain canvas">
       <BrainBlob />
       <header className="brainCanvas__head">
+        <button type="button" className="brainCanvas__close" aria-label="Close Brain" title="Close Brain" onClick={onClose}>
+          <span aria-hidden="true" />
+        </button>
         <span className="brainCanvas__mark"><Glyph kind="brain" size={26} /></span>
         <h1>Brain</h1>
       </header>
@@ -411,7 +1115,7 @@ export function BrainCanvas() {
             key={id}
             onClick={() => setSpace(id)}
           >
-            <Glyph kind={glyph} size={14} />
+            <Glyph kind={glyph} size={20} />
             {label}
           </button>
         ))}
