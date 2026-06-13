@@ -11123,7 +11123,8 @@ async function createWindow(): Promise<void> {
   });
   window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
     const src = typeof params.src === "string" ? params.src : "";
-    if (!isAllowedNativeMapsUrl(src)) {
+    const initialBlankAttach = src === "" || src === "about:blank";
+    if (!initialBlankAttach && !isAllowedNativeMapsUrl(src)) {
       event.preventDefault();
       return;
     }
