@@ -3296,6 +3296,107 @@ async function resolveMapsCodeActRequest(request: MapsCodeActRequest): Promise<M
   });
 }
 
+function userTextHasLodgingIntent(value: string): boolean {
+  return /\b(airbnb|logement|loger|hebergement|hebergement|hotel|auberge|sejour|reserver|reservation|booking|location|louer|appartement|maison|villa|chambre|nuits?|voyageurs?|vacances)\b/i.test(value);
+}
+
+function cleanInferredMapsTarget(value: string): string {
+  return normalizeBrainHomeLocation(value
+    .replace(/[?.!,;:]+$/g, "")
+    .replace(/\b(?:s'il te plait|s'il vous plait|stp|svp|merci)\b.*$/i, "")
+    .replace(/\b(?:en general|en gros|rapidement)\b.*$/i, "")
+    .trim());
+}
+
+function inferMapsTargetFromUserText(value: string): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (!text || userTextHasLodgingIntent(text)) {
+    return "";
+  }
+  const patterns = [
+    /\b(?:parle|parles|raconte|dis)[-\s]+moi\s+(?:de|d'|sur)\s+(.{2,96})$/i,
+    /\b(?:meteo|météo|temperature|température|climat)\s+(?:a|à|de|d'|sur|pour)\s+(.{2,96})$/i,
+    /\b(?:ou|où)\s+est\s+(.{2,96})$/i,
+    /\b(?:carte|map|maps|google earth|localise|situe)\s+(?:de|d'|a|à|sur|pour)?\s*(.{2,96})$/i
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const target = cleanInferredMapsTarget(match?.[1] ?? "");
+    if (target.length >= 2) {
+      return target;
+    }
+  }
+  return "";
+}
+
+function stripCompetingGeographicCodeActLines(text: string): string {
+  const competingCommands = new Set<string>([BRAIN_AIRBNB_COMMAND, BRAIN_GOOGLEWEB_COMMAND, BRAIN_SCIENCE_COMMAND]);
+  return text
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      for (const command of competingCommands) {
+        if (trimmed === command || trimmed.startsWith(`${command} `)) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function mapsCodeActLineFromResolvedRequest(request: MapsCodeActRequest): string {
+  const target = request.target.replace(/"/g, "'");
+  return `${BRAIN_MAPS_COMMAND} target="${target}" latitude="${request.latitude}" longitude="${request.longitude}"`;
+}
+
+async function applyGeographicMapsFallback(
+  message: TranscriptMessage,
+  userText: string,
+  moduleId: string,
+  parallelSessionIndex: number
+): Promise<TranscriptMessage> {
+  if (message.role !== "assistant" || moduleId === "airbnb" || moduleId === "gmail") {
+    return message;
+  }
+  if (message.text.includes("MAPS_RESULT") || message.text.includes(BRAIN_MAPS_COMMAND)) {
+    return message;
+  }
+  const target = inferMapsTargetFromUserText(userText);
+  if (!target) {
+    return message;
+  }
+  const candidate = createMapsCodeActRequest({
+    command: BRAIN_MAPS_COMMAND,
+    target,
+    query: target,
+    keywords: ["host_geographic_fallback"],
+    source: "explicit_codeact"
+  });
+  const resolved = await resolveMapsCodeActRequest(candidate);
+  if (
+    readValidMapsCoordinate(resolved.latitude, -90, 90) === undefined ||
+    readValidMapsCoordinate(resolved.longitude, -180, 180) === undefined
+  ) {
+    return message;
+  }
+  const visibleText = stripCompetingGeographicCodeActLines(message.text) || assistantCodeActVisibleText(message.text);
+  return {
+    ...message,
+    text: `${visibleText.trim()}\n\n${mapsCodeActLineFromResolvedRequest(resolved)}`,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      hostMapsFallback: {
+        target,
+        parallelSessionIndex,
+        proofHash: resolved.proofHash
+      }
+    })
+  };
+}
+
 function updateBrainIdentityContext(command: PanelsChatBottomCommand): void {
   const nextUserFirstName = normalizeBrainIdentityName(command.userFirstName);
   const nextAgentFirstName = normalizeBrainIdentityName(command.agentFirstName);
@@ -10048,6 +10149,7 @@ async function submitChatDraftForSessionInner(
     // Audit anchor: await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId)
     assistantMessage = await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId, requestTranscriptWithUser);
   }
+  assistantMessage = await applyGeographicMapsFallback(assistantMessage, draft, moduleId, parallelSessionIndex);
   assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, moduleId, parallelSessionIndex);
   assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
   assistantMessage = suppressRepeatedBrainSegmentCodeAct(assistantMessage, panelsChatBottomState.activeBrainSegment);

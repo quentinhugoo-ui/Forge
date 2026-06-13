@@ -470,6 +470,11 @@ describe("LLM multimodal attachments", () => {
     expect(brainSource).toContain("prefer /maps_ over /sciencebrain_, /airbnb_, and /googleweb_");
     expect(mainSource).toContain("de la meteo d'une ville");
     expect(mainSource).toContain("Prefere ${BRAIN_MAPS_COMMAND} a ${BRAIN_SCIENCE_COMMAND}");
+    expect(mainSource).toContain("function inferMapsTargetFromUserText");
+    expect(mainSource).toContain("applyGeographicMapsFallback");
+    expect(mainSource).toContain("parle|parles|raconte|dis");
+    expect(mainSource).toContain("stripCompetingGeographicCodeActLines");
+    expect(mainSource).toContain("host_geographic_fallback");
     expect(brainSource).toContain("Device location must never be read silently");
     expect(contractSource).toContain("BRAIN_MAPS_COMMAND");
     expect(mainSource).toContain("extractMapsCodeAct");
