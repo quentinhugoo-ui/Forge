@@ -4982,96 +4982,100 @@ button {
 
 .assistantText__taskList {
   display: grid;
-  gap: 8px;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .assistantText__taskItem {
+  position: relative;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr);
   align-items: start;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
+  padding: 2px 0 10px;
   color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 8%);
+}
+
+.assistantText__taskItem:last-child {
+  padding-bottom: 0;
 }
 
 .assistantText__taskCheck {
   position: relative;
   display: inline-grid;
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
+  width: 20px;
+  height: 22px;
+  margin-top: -1px;
   place-items: center;
   cursor: default;
 }
 
-.assistantText__taskCheck input {
+.assistantText__taskCheckRail {
+  position: absolute;
+  top: 16px;
+  bottom: -16px;
+  left: 50%;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--forge-line), #5eead4 18%),
+    color-mix(in oklab, var(--forge-line), transparent 72%)
+  );
+  transform: translateX(-50%);
+}
+
+.assistantText__taskItem:last-child .assistantText__taskCheckRail {
   display: none;
 }
 
-.assistantText__taskCheck svg {
-  width: 18px;
-  height: 18px;
-  overflow: visible;
+.assistantText__taskCheckDot {
+  width: 7px;
+  height: 7px;
+  border: 1px solid color-mix(in oklab, var(--forge-muted), transparent 12%);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--forge-bg), #ffffff 5%);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--forge-bg), transparent 3%);
+  transform: scale(1);
+  transition:
+    width 0.22s ease,
+    height 0.22s ease,
+    border-color 0.22s ease,
+    background 0.22s ease,
+    box-shadow 0.22s ease,
+    transform 0.22s ease;
 }
 
-.assistantText__taskCheckBox {
-  fill: transparent;
-  stroke: color-mix(in oklab, var(--forge-muted), transparent 12%);
-  stroke-width: 5;
-  transition: fill 0.18s ease, stroke 0.18s ease, filter 0.18s ease;
+.assistantText__taskCheck--checked .assistantText__taskCheckDot {
+  width: 9px;
+  height: 9px;
+  border-color: color-mix(in oklab, #5eead4, white 14%);
+  background: #5eead4;
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--forge-bg), transparent 2%),
+    0 0 14px color-mix(in oklab, #5eead4, transparent 52%);
+  transform: scale(1.02);
 }
 
-.assistantText__taskCheckPath {
-  fill: none;
-  stroke: #ffffff;
-  stroke-width: 6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 0 0 240 9999999;
-  stroke-dashoffset: 1;
-  scale: -1 1;
-  transform-origin: center;
-  transition: stroke-dasharray 0.5s ease;
-  animation: assistantTaskCheckHi 0.5s;
+.assistantText__taskItem:not(.assistantText__taskItem--checked) .assistantText__taskCheckRail {
+  background: color-mix(in oklab, var(--forge-line), transparent 70%);
 }
 
-.assistantText__taskCheck input:checked ~ svg .assistantText__taskCheckBox {
-  fill: #5eead4;
-  stroke: #5eead4;
-  filter: drop-shadow(0 0 7px color-mix(in oklab, #5eead4, transparent 62%));
+.assistantText__taskText {
+  min-width: 0;
 }
 
-.assistantText__taskCheck input:checked ~ svg .assistantText__taskCheckPath {
-  stroke-dasharray: 0 262 70 9999999;
-  transition-delay: 0s;
-  scale: 1 1;
-  animation: none;
-}
-
-.assistantText__taskItem--checked span {
+.assistantText__taskItem--checked .assistantText__taskText {
   color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 18%);
   text-decoration: line-through;
   text-decoration-color: color-mix(in oklab, #5eead4, transparent 36%);
 }
 
-@keyframes assistantTaskCheckHi {
-  0% {
-    stroke-dashoffset: 20;
-  }
-
-  to {
-    stroke-dashoffset: 1;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .assistantText__taskCheckBox,
-  .assistantText__taskCheckPath {
+  .assistantText__taskCheckDot {
     transition: none;
-    animation: none;
   }
 }
 

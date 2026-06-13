@@ -769,10 +769,12 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantText__table");
     expect(stylesSource).toContain(".assistantText__tableCell--right");
     expect(stylesSource).toContain(".assistantText__taskList");
-    expect(stylesSource).toContain(".assistantText__taskCheckPath");
-    expect(stylesSource).toContain("assistantTaskCheckHi");
+    expect(stylesSource).toContain(".assistantText__taskCheckRail");
+    expect(stylesSource).toContain(".assistantText__taskCheckDot");
+    expect(stylesSource).toContain(".assistantText__taskCheck--checked .assistantText__taskCheckDot");
     expect(stylesSource).toContain("prefers-reduced-motion: reduce");
     expect(stylesSource).toContain(".assistantText__taskItem--checked");
+    expect(stylesSource).toContain(".assistantText__taskText");
     expect(stylesSource).toContain(".assistantText__codeBlock");
     expect(stylesSource).toContain(".assistantText__codeHeader");
     expect(stylesSource).toContain(".assistantText__codeWindowDots");
