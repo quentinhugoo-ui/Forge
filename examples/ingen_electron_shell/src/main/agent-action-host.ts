@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, rmdir, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { cp, mkdir, readdir, readFile, rename, rm, rmdir, stat } from "node:fs/promises";
+import { isAbsolute, parse, relative, resolve } from "node:path";
 import type {
   AgentActionCapability,
   AgentActionHostManifest,
@@ -13,7 +13,15 @@ import type {
 } from "../shared/ipc-contract.js";
 
 const PROTECTED_ROOTS = ["C:\\Users\\quent\\Documents\\EVE\\MAP"];
+const WINDOWS_DESTRUCTIVE_BLOCK_ROOTS = [
+  "C:\\",
+  "C:\\Windows",
+  "C:\\Program Files",
+  "C:\\Program Files (x86)",
+  "C:\\ProgramData"
+];
 const MAX_PREVIEW_CHARS = 24_000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 
 export interface AgentActionHostConfig {
   workspaceRoot: string;
@@ -74,15 +82,55 @@ function sameOrInside(root: string, candidate: string): boolean {
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
-function resolveWorkspacePath(config: AgentActionHostConfig, input = "."): string | IpcError {
-  const candidate = resolve(config.workspaceRoot, input);
-  if (!sameOrInside(config.workspaceRoot, candidate)) {
-    return actionError("bad_payload", "Agent action path is outside the active workspace.", { input, workspace: config.workspaceRoot });
+function pathLabel(config: AgentActionHostConfig, request: AgentActionRequest, resolvedPath: string): string {
+  return request.scope === "computer" ? resolvedPath : relative(config.workspaceRoot, resolvedPath) || ".";
+}
+
+function requiresComputerWriteConfirmation(request: AgentActionRequest): boolean {
+  return request.scope === "computer" && request.confirmed !== true;
+}
+
+function dangerousDeleteTarget(config: AgentActionHostConfig, candidate: string): IpcError | undefined {
+  const canonical = canonicalPath(candidate);
+  const root = canonicalPath(parse(candidate).root || candidate);
+  if (canonical === root || canonical === canonicalPath(config.workspaceRoot)) {
+    return actionError("bad_payload", "Deleting a drive root or workspace root is blocked.", { candidate });
   }
+  const blockRoots = process.platform === "win32" ? WINDOWS_DESTRUCTIVE_BLOCK_ROOTS : ["/", "/bin", "/etc", "/usr", "/var", "/System", "/Library"];
+  for (const blocked of blockRoots) {
+    const blockedRoot = canonicalPath(parse(blocked).root || blocked);
+    const blocksByEqualityOnly = canonicalPath(blocked) === blockedRoot;
+    const blockedMatch = blocksByEqualityOnly ? canonical === canonicalPath(blocked) : sameOrInside(blocked, candidate);
+    if (blockedMatch) {
+      return actionError("bad_payload", "Recursive deletion inside a protected system root is blocked.", { candidate, blocked });
+    }
+  }
+  for (const protectedRoot of PROTECTED_ROOTS) {
+    if (sameOrInside(protectedRoot, candidate) || sameOrInside(candidate, protectedRoot)) {
+      return actionError("bad_payload", "Agent action rejected because it targets a protected root.", { candidate, protectedRoot });
+    }
+  }
+  return undefined;
+}
+
+function protectedPathError(input: string, candidate: string): IpcError | undefined {
   for (const protectedRoot of PROTECTED_ROOTS) {
     if (sameOrInside(protectedRoot, candidate) || sameOrInside(candidate, protectedRoot)) {
       return actionError("bad_payload", "Agent action rejected because it targets a protected root.", { input, protectedRoot });
     }
+  }
+  return undefined;
+}
+
+function resolveActionPath(config: AgentActionHostConfig, request: AgentActionRequest, input = "."): string | IpcError {
+  const scope = request.scope ?? "workspace";
+  const candidate = scope === "computer" ? resolve(config.cwd, input) : resolve(config.workspaceRoot, input);
+  if (scope === "workspace" && !sameOrInside(config.workspaceRoot, candidate)) {
+    return actionError("bad_payload", "Agent action path is outside the active workspace. Use scope:\"computer\" with confirmation for whole-computer actions.", { input, workspace: config.workspaceRoot });
+  }
+  const protectedError = protectedPathError(input, candidate);
+  if (protectedError) {
+    return protectedError;
   }
   return candidate;
 }
@@ -101,23 +149,23 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
   const capabilities: AgentActionCapability[] = [
     {
       id: "fs.list",
-      title: "List workspace files",
+      title: "List files",
       status: "available",
       risk: "read",
       underlyingTools: ["node:fs/readdir", "PowerShell Get-ChildItem", "rg --files"],
       requiresApproval: false,
       writes: false,
-      description: "Enumerate files and directories inside the active workspace only."
+      description: "Enumerate files and directories inside the workspace or, with scope:\"computer\", anywhere except protected roots."
     },
     {
       id: "fs.search",
-      title: "Search workspace content",
+      title: "Search content",
       status: "available",
       risk: "read",
       underlyingTools: ["rg", "node fallback"],
       requiresApproval: false,
       writes: false,
-      description: "Search file contents inside the active workspace with bounded output."
+      description: "Search file contents inside the workspace or, with scope:\"computer\", bounded areas of the computer."
     },
     {
       id: "fs.create_directory",
@@ -125,9 +173,9 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
       status: "available",
       risk: "workspace_write",
       underlyingTools: ["node:fs/mkdir", "PowerShell New-Item"],
-      requiresApproval: false,
+      requiresApproval: true,
       writes: true,
-      description: "Create one non-recursive directory inside the active workspace."
+      description: "Create one directory inside the workspace, or anywhere on the computer when scope:\"computer\" and confirmed:true are set."
     },
     {
       id: "fs.rename",
@@ -135,9 +183,9 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
       status: "available",
       risk: "workspace_write",
       underlyingTools: ["node:fs/rename", "PowerShell Rename-Item"],
-      requiresApproval: false,
+      requiresApproval: true,
       writes: true,
-      description: "Rename one file or directory inside the active workspace."
+      description: "Rename one file or directory inside the workspace, or anywhere on the computer when scope:\"computer\" and confirmed:true are set."
     },
     {
       id: "fs.move",
@@ -145,19 +193,39 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
       status: "available",
       risk: "workspace_write",
       underlyingTools: ["node:fs/rename", "PowerShell Move-Item"],
-      requiresApproval: false,
+      requiresApproval: true,
       writes: true,
-      description: "Move one file or directory between two workspace-contained paths."
+      description: "Move one file or directory inside the workspace, or anywhere on the computer when scope:\"computer\" and confirmed:true are set."
+    },
+    {
+      id: "fs.copy",
+      title: "Copy path",
+      status: "available",
+      risk: "workspace_write",
+      underlyingTools: ["node:fs/cp", "PowerShell Copy-Item"],
+      requiresApproval: true,
+      writes: true,
+      description: "Copy files or directories. Directory copy requires recursive:true; computer scope requires confirmed:true."
     },
     {
       id: "fs.delete_empty_directory",
       title: "Delete empty directory",
       status: "available",
       risk: "destructive",
-      underlyingTools: ["node:fs/rm", "PowerShell Remove-Item"],
+      underlyingTools: ["node:fs/rmdir", "PowerShell Remove-Item"],
       requiresApproval: true,
       writes: true,
-      description: "Delete only an empty directory; recursive delete is blocked in this tranche."
+      description: "Delete only an empty directory; works in workspace or confirmed computer scope."
+    },
+    {
+      id: "fs.delete_tree",
+      title: "Delete tree",
+      status: "available",
+      risk: "destructive",
+      underlyingTools: ["node:fs/rm recursive", "PowerShell Remove-Item -Recurse"],
+      requiresApproval: true,
+      writes: true,
+      description: "Recursively delete a file or directory after confirmed:true and absolute root guards. System/protected roots are blocked."
     },
     {
       id: "shell.readonly",
@@ -168,6 +236,16 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
       requiresApproval: false,
       writes: false,
       description: "Execute a small allowlist of read-only workspace inspection commands."
+    },
+    {
+      id: "shell.full",
+      title: "Run confirmed command",
+      status: "available",
+      risk: "computer_write",
+      underlyingTools: ["PowerShell", "cmd", "bash", "native shell"],
+      requiresApproval: true,
+      writes: true,
+      description: "Execute an arbitrary local command only when confirmed:true is set. This is the escape hatch for settings and system tools."
     },
     {
       id: "browser.playwright",
@@ -209,9 +287,9 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
       protectedRoots: PROTECTED_ROOTS
     },
     permissions: {
-      sandbox: "workspace",
-      recursiveDelete: "blocked",
-      shell: "readonly_allowlist",
+      sandbox: "workspace_or_confirmed_computer",
+      recursiveDelete: "confirmed_with_absolute_path_guard",
+      shell: "readonly_allowlist_or_confirmed_full",
       browser: "contained_webexplorer",
       computerUse: "planned_confirmation_required"
     },
@@ -233,15 +311,15 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `recursive_delete=${manifest.permissions.recursiveDelete}`,
     `shell=${manifest.permissions.shell}`,
     `protected_roots=${manifest.workspace.protectedRoots.join("|")}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.delete_empty_directory shell.readonly",
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
     "planned=browser.playwright computer_use mcp",
-    "rule=Prefer structured filesystem/search actions before shell. Recursive delete, protected roots, external submissions and full computer-use require explicit human confirmation.",
+    "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
 }
 
 async function listAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
-  const resolved = resolveWorkspacePath(config, request.path);
+  const resolved = resolveActionPath(config, request, request.path);
   if (typeof resolved !== "string") {
     return result(config, request, { accepted: false, error: resolved });
   }
@@ -251,10 +329,10 @@ async function listAction(config: AgentActionHostConfig, request: AgentActionReq
     .slice(0, maxResults)
     .map((entry) => ({
       name: entry.name,
-      path: relative(config.workspaceRoot, resolve(resolved, entry.name)) || ".",
+      path: pathLabel(config, request, resolve(resolved, entry.name)),
       kind: pathKind(entry)
     }));
-  return result(config, request, { accepted: true, path: relative(config.workspaceRoot, resolved) || ".", items });
+  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved), items });
 }
 
 function parseRgMatches(root: string, output: string, maxResults: number): AgentActionSearchMatch[] {
@@ -317,7 +395,7 @@ async function searchAction(config: AgentActionHostConfig, request: AgentActionR
       error: actionError("bad_payload", "Search query is required.", request)
     });
   }
-  const resolved = resolveWorkspacePath(config, request.path);
+  const resolved = resolveActionPath(config, request, request.path);
   if (typeof resolved !== "string") {
     return result(config, request, { accepted: false, error: resolved });
   }
@@ -329,10 +407,10 @@ async function searchAction(config: AgentActionHostConfig, request: AgentActionR
     windowsHide: true
   });
   if (rg.error) {
-    const matches = await fallbackSearch(config.workspaceRoot, resolved, query, maxResults);
+    const matches = await fallbackSearch(request.scope === "computer" ? resolved : config.workspaceRoot, resolved, query, maxResults);
     return result(config, request, {
       accepted: true,
-      path: relative(config.workspaceRoot, resolved) || ".",
+      path: pathLabel(config, request, resolved),
       matches,
       stderrPreview: `rg unavailable; used bounded node fallback: ${rg.error.message}`
     });
@@ -340,31 +418,43 @@ async function searchAction(config: AgentActionHostConfig, request: AgentActionR
   if (rg.status !== 0 && !rg.stdout.trim()) {
     return result(config, request, {
       accepted: true,
-      path: relative(config.workspaceRoot, resolved) || ".",
+      path: pathLabel(config, request, resolved),
       matches: [],
       exitCode: rg.status
     });
   }
   return result(config, request, {
     accepted: true,
-    path: relative(config.workspaceRoot, resolved) || ".",
-    matches: parseRgMatches(config.workspaceRoot, rg.stdout, maxResults),
+    path: pathLabel(config, request, resolved),
+    matches: parseRgMatches(request.scope === "computer" ? resolved : config.workspaceRoot, rg.stdout, maxResults),
     exitCode: rg.status
   });
 }
 
 async function createDirectoryAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
-  const resolved = resolveWorkspacePath(config, request.path);
+  if (requiresComputerWriteConfirmation(request)) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Computer-scope directory creation requires confirmed:true.", request)
+    });
+  }
+  const resolved = resolveActionPath(config, request, request.path);
   if (typeof resolved !== "string") {
     return result(config, request, { accepted: false, error: resolved });
   }
   await mkdir(resolved, { recursive: false });
-  return result(config, request, { accepted: true, path: relative(config.workspaceRoot, resolved) || "." });
+  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved) });
 }
 
 async function renameOrMoveAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
-  const from = resolveWorkspacePath(config, request.path);
-  const to = resolveWorkspacePath(config, request.toPath);
+  if (requiresComputerWriteConfirmation(request)) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Computer-scope rename/move requires confirmed:true.", request)
+    });
+  }
+  const from = resolveActionPath(config, request, request.path);
+  const to = resolveActionPath(config, request, request.toPath);
   if (typeof from !== "string") {
     return result(config, request, { accepted: false, error: from });
   }
@@ -374,8 +464,31 @@ async function renameOrMoveAction(config: AgentActionHostConfig, request: AgentA
   await rename(from, to);
   return result(config, request, {
     accepted: true,
-    path: relative(config.workspaceRoot, from) || ".",
-    toPath: relative(config.workspaceRoot, to) || "."
+    path: pathLabel(config, request, from),
+    toPath: pathLabel(config, request, to)
+  });
+}
+
+async function copyAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (requiresComputerWriteConfirmation(request)) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Computer-scope copy requires confirmed:true.", request)
+    });
+  }
+  const from = resolveActionPath(config, request, request.path);
+  const to = resolveActionPath(config, request, request.toPath);
+  if (typeof from !== "string") {
+    return result(config, request, { accepted: false, error: from });
+  }
+  if (typeof to !== "string") {
+    return result(config, request, { accepted: false, error: to });
+  }
+  await cp(from, to, { recursive: request.recursive === true, force: false, errorOnExist: true });
+  return result(config, request, {
+    accepted: true,
+    path: pathLabel(config, request, from),
+    toPath: pathLabel(config, request, to)
   });
 }
 
@@ -386,14 +499,15 @@ async function deleteEmptyDirectoryAction(config: AgentActionHostConfig, request
       error: actionError("bad_payload", "Deleting a directory requires confirmed:true.", request)
     });
   }
-  const resolved = resolveWorkspacePath(config, request.path);
+  const resolved = resolveActionPath(config, request, request.path);
   if (typeof resolved !== "string") {
     return result(config, request, { accepted: false, error: resolved });
   }
-  if (canonicalPath(resolved) === canonicalPath(config.workspaceRoot)) {
+  const deleteGuard = dangerousDeleteTarget(config, resolved);
+  if (deleteGuard) {
     return result(config, request, {
       accepted: false,
-      error: actionError("bad_payload", "Deleting the workspace root is blocked.", request)
+      error: deleteGuard
     });
   }
   const info = await stat(resolved);
@@ -411,7 +525,29 @@ async function deleteEmptyDirectoryAction(config: AgentActionHostConfig, request
     });
   }
   await rmdir(resolved);
-  return result(config, request, { accepted: true, path: relative(config.workspaceRoot, resolved) || "." });
+  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved) });
+}
+
+async function deleteTreeAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true || request.recursive !== true) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Recursive deletion requires confirmed:true and recursive:true.", request)
+    });
+  }
+  const resolved = resolveActionPath(config, request, request.path);
+  if (typeof resolved !== "string") {
+    return result(config, request, { accepted: false, error: resolved });
+  }
+  const deleteGuard = dangerousDeleteTarget(config, resolved);
+  if (deleteGuard) {
+    return result(config, request, {
+      accepted: false,
+      error: deleteGuard
+    });
+  }
+  await rm(resolved, { recursive: true, force: false });
+  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved) });
 }
 
 function readonlyCommandAllowed(command: string, args: string[] = []): boolean {
@@ -462,6 +598,52 @@ function runReadonlyCommandAction(config: AgentActionHostConfig, request: AgentA
   });
 }
 
+function commandTimeout(request: AgentActionRequest): number {
+  return Math.max(100, Math.min(600_000, request.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS));
+}
+
+function runCommandAction(config: AgentActionHostConfig, request: AgentActionRequest): AgentActionResult {
+  const command = request.command?.trim() ?? "";
+  const args = request.args ?? [];
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Arbitrary command execution requires confirmed:true.", { command, args })
+    });
+  }
+  if (!command) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Command is required.", request)
+    });
+  }
+  const child = spawnSync(command, args, {
+    cwd: request.scope === "computer" ? config.cwd : config.workspaceRoot,
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: commandTimeout(request),
+    windowsHide: true
+  });
+  if (child.error) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: [command, ...args].join(" "),
+      error: actionError("rust_unavailable", child.error.message, { command, args })
+    });
+  }
+  return result(config, request, {
+    accepted: child.status === 0,
+    commandLine: [command, ...args].join(" "),
+    exitCode: child.status,
+    stdoutPreview: (child.stdout ?? "").slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: (child.stderr ?? "").slice(0, MAX_PREVIEW_CHARS),
+    error:
+      child.status === 0
+        ? undefined
+        : actionError("rust_unavailable", `Command exited with status ${child.status ?? "unknown"}.`, { command, args, stderr: child.stderr })
+  });
+}
+
 export async function executeAgentActionRequest(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   try {
     switch (request.action) {
@@ -474,10 +656,16 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
       case "rename_path":
       case "move_path":
         return await renameOrMoveAction(config, request);
+      case "copy_path":
+        return await copyAction(config, request);
       case "delete_empty_directory":
         return await deleteEmptyDirectoryAction(config, request);
+      case "delete_tree":
+        return await deleteTreeAction(config, request);
       case "run_readonly_command":
         return runReadonlyCommandAction(config, request);
+      case "run_command":
+        return runCommandAction(config, request);
       default:
         return result(config, request, {
           accepted: false,

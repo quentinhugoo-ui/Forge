@@ -146,7 +146,10 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "list", path: "." })).toBe(true);
     expect(isAgentActionRequest({ action: "search", query: "needle", maxResults: 25 })).toBe(true);
     expect(isAgentActionRequest({ action: "delete_empty_directory", path: "tmp", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "delete_tree", path: "tmp", recursive: true, confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "run_command", scope: "computer", command: "powershell.exe", args: ["-NoProfile"], timeoutMs: 1000, confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "delete_empty_directory", path: "tmp", confirmed: "yes" })).toBe(false);
+    expect(isAgentActionRequest({ action: "list", scope: "galaxy", path: "." })).toBe(false);
     expect(isAgentActionRequest({ action: "raw_shell", command: "powershell.exe" })).toBe(false);
   });
 

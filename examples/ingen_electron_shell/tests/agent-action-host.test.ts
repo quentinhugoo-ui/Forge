@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -34,9 +34,11 @@ describe("agent action host", () => {
     });
 
     expect(manifest.schema).toBe("ingen.agent_action_host.manifest.v1");
-    expect(manifest.permissions.sandbox).toBe("workspace");
-    expect(manifest.permissions.recursiveDelete).toBe("blocked");
+    expect(manifest.permissions.sandbox).toBe("workspace_or_confirmed_computer");
+    expect(manifest.permissions.recursiveDelete).toBe("confirmed_with_absolute_path_guard");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("fs.search");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("fs.delete_tree");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.full");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.readonly");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -53,7 +55,7 @@ describe("agent action host", () => {
     });
   });
 
-  it("creates, renames, moves and deletes only confirmed empty directories", async () => {
+  it("creates, renames, moves and deletes confirmed empty directories", async () => {
     await withTempWorkspace(async (config) => {
       const created = await executeAgentActionRequest(config, {
         action: "create_directory",
@@ -90,6 +92,85 @@ describe("agent action host", () => {
         confirmed: true
       });
       expect(deleted.accepted).toBe(true);
+    });
+  });
+
+  it("copies and recursively deletes confirmed directory trees", async () => {
+    await withTempWorkspace(async (config) => {
+      await mkdir(join(config.workspaceRoot, "source", "deep"), { recursive: true });
+      await writeFile(join(config.workspaceRoot, "source", "deep", "note.txt"), "copied", "utf8");
+
+      const copied = await executeAgentActionRequest(config, {
+        action: "copy_path",
+        path: "source",
+        toPath: "copy",
+        recursive: true
+      });
+      expect(copied.accepted).toBe(true);
+      await expect(readFile(join(config.workspaceRoot, "copy", "deep", "note.txt"), "utf8")).resolves.toBe("copied");
+
+      const unconfirmedDelete = await executeAgentActionRequest(config, {
+        action: "delete_tree",
+        path: "copy",
+        recursive: true
+      });
+      expect(unconfirmedDelete.accepted).toBe(false);
+      expect(unconfirmedDelete.error?.message).toContain("confirmed:true");
+
+      const deleted = await executeAgentActionRequest(config, {
+        action: "delete_tree",
+        path: "copy",
+        recursive: true,
+        confirmed: true
+      });
+      expect(deleted.accepted).toBe(true);
+    });
+  });
+
+  it("allows confirmed computer-scope writes outside the workspace with path guards", async () => {
+    await withTempWorkspace(async (config) => {
+      const outsideRoot = join(tmpdir(), `ingen-agent-action-host-outside-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      try {
+        const rejected = await executeAgentActionRequest(config, {
+          action: "create_directory",
+          scope: "computer",
+          path: outsideRoot
+        });
+        expect(rejected.accepted).toBe(false);
+        expect(rejected.error?.message).toContain("confirmed:true");
+
+        const created = await executeAgentActionRequest(config, {
+          action: "create_directory",
+          scope: "computer",
+          path: outsideRoot,
+          confirmed: true
+        });
+        expect(created.accepted).toBe(true);
+        expect(created.path).toBe(outsideRoot);
+      } finally {
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("runs arbitrary commands only after explicit confirmation", async () => {
+    await withTempWorkspace(async (config) => {
+      const rejected = await executeAgentActionRequest(config, {
+        action: "run_command",
+        command: process.execPath,
+        args: ["-e", "console.log('agent-host')"]
+      });
+      expect(rejected.accepted).toBe(false);
+      expect(rejected.error?.message).toContain("confirmed:true");
+
+      const accepted = await executeAgentActionRequest(config, {
+        action: "run_command",
+        command: process.execPath,
+        args: ["-e", "console.log('agent-host')"],
+        confirmed: true
+      });
+      expect(accepted.accepted).toBe(true);
+      expect(accepted.stdoutPreview).toContain("agent-host");
     });
   });
 

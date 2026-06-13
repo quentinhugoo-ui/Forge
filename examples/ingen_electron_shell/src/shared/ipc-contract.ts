@@ -298,13 +298,16 @@ export type AgentActionCapabilityId =
   | "fs.create_directory"
   | "fs.rename"
   | "fs.move"
+  | "fs.copy"
   | "fs.delete_empty_directory"
+  | "fs.delete_tree"
   | "shell.readonly"
+  | "shell.full"
   | "browser.playwright"
   | "computer_use"
   | "mcp";
 
-export type AgentActionRisk = "read" | "workspace_write" | "destructive" | "external_ui" | "blocked";
+export type AgentActionRisk = "read" | "workspace_write" | "computer_write" | "destructive" | "external_ui" | "blocked";
 
 export interface AgentActionCapability {
   id: AgentActionCapabilityId;
@@ -326,9 +329,9 @@ export interface AgentActionHostManifest {
     protectedRoots: string[];
   };
   permissions: {
-    sandbox: "workspace";
-    recursiveDelete: "blocked";
-    shell: "readonly_allowlist";
+    sandbox: "workspace_or_confirmed_computer";
+    recursiveDelete: "confirmed_with_absolute_path_guard";
+    shell: "readonly_allowlist_or_confirmed_full";
     browser: "contained_webexplorer";
     computerUse: "planned_confirmation_required";
   };
@@ -342,11 +345,17 @@ export type AgentActionKind =
   | "create_directory"
   | "rename_path"
   | "move_path"
+  | "copy_path"
   | "delete_empty_directory"
-  | "run_readonly_command";
+  | "delete_tree"
+  | "run_readonly_command"
+  | "run_command";
+
+export type AgentActionScope = "workspace" | "computer";
 
 export interface AgentActionRequest {
   action: AgentActionKind;
+  scope?: AgentActionScope;
   path?: string;
   toPath?: string;
   query?: string;
@@ -354,6 +363,8 @@ export interface AgentActionRequest {
   args?: string[];
   maxResults?: number;
   confirmed?: boolean;
+  recursive?: boolean;
+  timeoutMs?: number;
 }
 
 export interface AgentActionPathEntry {
@@ -397,10 +408,16 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "create_directory",
     "rename_path",
     "move_path",
+    "copy_path",
     "delete_empty_directory",
-    "run_readonly_command"
+    "delete_tree",
+    "run_readonly_command",
+    "run_command"
   ];
   if (!actions.includes(candidate.action as AgentActionKind)) {
+    return false;
+  }
+  if (candidate.scope !== undefined && candidate.scope !== "workspace" && candidate.scope !== "computer") {
     return false;
   }
   for (const key of ["path", "toPath", "query", "command"] as const) {
@@ -418,6 +435,15 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     return false;
   }
   if (candidate.confirmed !== undefined && typeof candidate.confirmed !== "boolean") {
+    return false;
+  }
+  if (candidate.recursive !== undefined && typeof candidate.recursive !== "boolean") {
+    return false;
+  }
+  if (
+    candidate.timeoutMs !== undefined &&
+    (!Number.isInteger(candidate.timeoutMs) || candidate.timeoutMs < 100 || candidate.timeoutMs > 600_000)
+  ) {
     return false;
   }
   return true;
