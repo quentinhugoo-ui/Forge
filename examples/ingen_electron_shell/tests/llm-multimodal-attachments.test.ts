@@ -801,8 +801,9 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).not.toContain("border-radius: 22px 13px 24px 11px / 16px 24px 15px 22px");
     expect(stylesSource).toContain('content: "\\201C"');
     expect(stylesSource).toContain(".assistantText__callout--warning");
-    expect(stylesSource).toContain("grid-template-columns: minmax(72px, max-content) minmax(0, 1fr)");
+    expect(stylesSource).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(stylesSource).toContain(".assistantText__callout strong::after");
+    expect(stylesSource).toContain("display: none");
     expect(stylesSource).toContain("background: transparent");
     expect(stylesSource).toContain(".assistantText__factGrid");
     expect(stylesSource).toContain("border-block: 1px solid");

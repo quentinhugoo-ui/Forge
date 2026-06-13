@@ -5262,49 +5262,49 @@ button {
 }
 
 .assistantText__callout {
+  --assistant-callout-legacy-columns: minmax(72px, max-content) minmax(0, 1fr);
   display: grid;
-  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr);
-  align-items: baseline;
-  column-gap: 13px;
-  row-gap: 4px;
-  padding: 3px 0;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 5px;
+  padding: 1px 0 1px 12px;
   border: 0;
+  border-left: 1px solid var(--assistant-mark-line);
   background: transparent;
 }
 
 .assistantText__callout--info {
-  --callout-color: var(--assistant-mark-accent);
+  --callout-color: var(--assistant-mark-label);
 }
 
 .assistantText__callout--warning {
-  --callout-color: #fbbf24;
+  --callout-color: var(--assistant-mark-label);
 }
 
 .assistantText__callout--success {
-  --callout-color: var(--assistant-mark-accent-strong);
+  --callout-color: var(--assistant-mark-label);
 }
 
 .assistantText__callout--assumption {
-  --callout-color: #c084fc;
+  --callout-color: var(--assistant-mark-label);
 }
 
 .assistantText__callout strong {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  color: color-mix(in oklab, var(--callout-color), white 12%);
+  gap: 0;
+  color: color-mix(in oklab, var(--callout-color), var(--forge-text) 12%);
   font-size: 11px;
-  font-weight: 760;
+  font-weight: 680;
   letter-spacing: 0;
   line-height: 1.35;
   white-space: nowrap;
 }
 
 .assistantText__callout strong::after {
-  display: block;
-  width: 22px;
-  height: 1px;
-  background: linear-gradient(90deg, color-mix(in oklab, var(--callout-color), transparent 18%), transparent);
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
   content: "";
 }
 
@@ -5318,10 +5318,11 @@ button {
 @media (max-width: 720px) {
   .assistantText__callout {
     grid-template-columns: minmax(0, 1fr);
+    padding-left: 10px;
   }
 
   .assistantText__callout strong::after {
-    width: 34px;
+    width: 0;
   }
 }
 
