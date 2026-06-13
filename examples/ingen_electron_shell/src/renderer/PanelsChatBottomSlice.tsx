@@ -4066,23 +4066,18 @@ export function PanelsChatBottomSlice({
           type="submit"
           className={[
             "composer__send",
-            !canSend && !composerSendBusy ? "composer__send--empty" : "",
-            composerSendBusy ? "composer__send--loading" : ""
+            !canSend && !composerSendBusy ? "composer__send--empty" : ""
           ].filter(Boolean).join(" ")}
           aria-label={composerSendBusy ? "Sending message" : "Send message"}
           aria-busy={composerSendBusy}
           disabled={!canSend || composerSendBusy}
         >
-          {composerSendBusy ? (
-            <span className="loader" aria-hidden="true" />
-          ) : (
-            <svg className="sendGlyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M20 4v9a4 4 0 0 1-4 4H6.914l2.5 2.5L8 20.914L3.086 16L8 11.086L9.414 12.5l-2.5 2.5H16a2 2 0 0 0 2-2V4h2Z"
-              />
-            </svg>
-          )}
+          <svg className="sendGlyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M20 4v9a4 4 0 0 1-4 4H6.914l2.5 2.5L8 20.914L3.086 16L8 11.086L9.414 12.5l-2.5 2.5H16a2 2 0 0 0 2-2V4h2Z"
+            />
+          </svg>
         </button>
       </form>
 

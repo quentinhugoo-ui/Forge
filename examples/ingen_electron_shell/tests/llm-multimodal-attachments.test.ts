@@ -740,24 +740,21 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).not.toContain("Fill the blob so no straight letterbox edge cuts through the feathered mask.");
   });
 
-  it("turns the composer send arrow into the Uiverse loader while a send is pending", () => {
+  it("keeps the composer send button as the base arrow while a send is pending", () => {
     expect(rendererSource).toContain("composerSendBusy");
     expect(rendererSource).toContain("beginComposerSendBusy");
     expect(rendererSource).toContain("dispatchTrackedComposerSend");
     expect(rendererSource).toContain('aria-label={composerSendBusy ? "Sending message" : "Send message"}');
     expect(rendererSource).toContain('aria-busy={composerSendBusy}');
-    expect(rendererSource).toContain('<span className="loader" aria-hidden="true" />');
+    expect(rendererSource).toContain('<svg className="sendGlyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">');
+    expect(rendererSource).not.toContain('<span className="loader" aria-hidden="true" />');
     expect(rendererSource).not.toContain("sendPixelLoader");
     expect(rendererSource).not.toContain("sendPixelLoader__pixel");
-    expect(stylesSource).toContain(".composer__send--loading");
-    expect(stylesSource).toContain("/* From Uiverse.io by Fernando-sv */");
-    expect(stylesSource).toContain("border: 4px solid rgba(0, 0, 0, .1);");
-    expect(stylesSource).toContain("border-left-color: transparent;");
-    expect(stylesSource).toContain("border-radius: 50%;");
-    expect(stylesSource).toContain("width: 36px;");
-    expect(stylesSource).toContain("height: 36px;");
-    expect(stylesSource).toContain("animation: spin89345 1s linear infinite;");
-    expect(stylesSource).toContain("@keyframes spin89345");
+    expect(rendererSource).not.toContain("composer__send--loading");
+    expect(stylesSource).not.toContain(".composer__send--loading");
+    expect(stylesSource).not.toContain("/* From Uiverse.io by Fernando-sv */");
+    expect(stylesSource).not.toContain("animation: spin89345 1s linear infinite;");
+    expect(stylesSource).not.toContain("@keyframes spin89345");
     expect(stylesSource).not.toContain("sendPixelLoader");
     expect(stylesSource).not.toContain("sendPixelTrace");
     expect(composerBurstSource).toContain("onComplete?: () => void");
