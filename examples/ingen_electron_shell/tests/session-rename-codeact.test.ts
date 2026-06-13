@@ -12,10 +12,13 @@ describe("session rename CodeAct", () => {
     expect(brainSource).toContain("brain_rename_session_codeact_template()");
     expect(brainSource).toContain("On the first user message of a session");
     expect(brainSource).toContain('/\\"nomduchat\\"_renamechat_');
+    expect(brainSource).toContain("Never echo this line in the user-visible answer.");
     expect(generatedSource).toContain('export const BRAIN_RENAME_SESSION_COMMAND = "/rename_session_" as const;');
     expect(generatedSource).toContain("BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION");
+    expect(generatedSource).toContain("Never echo this line in the user-visible answer.");
     expect(mainSource).toContain("Au premier message utilisateur de cette session");
     expect(mainSource).toContain('/"Titre"_renamechat_');
+    expect(mainSource).toContain("Ne mentionne jamais cette ligne dans la reponse visible.");
     expect(mainSource).toContain('const RENAME_CHAT_CODEACT_SUFFIX = "_renamechat_"');
     expect(mainSource).toContain("trimmed.endsWith(RENAME_CHAT_CODEACT_SUFFIX)");
     expect(mainSource).toContain("brain_compact_renamechat");

@@ -4064,7 +4064,7 @@ function brainBootManifest(): string {
     `codeact_commands=${generalBrainCodeActCommands.join(" ")}`,
     `codeact_descriptions=${commandDescriptions}`,
     `codeact_routing_rules=${BRAIN_CODEACT_ROUTING_RULES}`,
-    `rule=Au premier message utilisateur de cette session: identifie le sujet, choisis un nom de chat court et pertinent, puis emets exactement /"Titre"_renamechat_. L'application utilise le champ entre guillemets pour remplacer "New session".`,
+    `rule=Au premier message utilisateur de cette session: identifie le sujet, choisis un nom de chat court et pertinent, puis emets exactement /"Titre"_renamechat_. Ne mentionne jamais cette ligne dans la reponse visible. L'application utilise le champ entre guillemets pour remplacer "New session".`,
     "rule=Brain is the single source of truth for CodeAct command identities; do not invent or revive commands outside this manifest.",
     "rule=Use Brain memory/search before asking the user to repeat prior local session context.",
     `rule=If local code/files/project work needs a folder and no workspace is active, emit ${BRAIN_WORKSPACE_COMMAND}. This workspace rule does not apply to ${BRAIN_NEWIMAGE_COMMAND} or ${BRAIN_EDITIMAGE_COMMAND}.`
