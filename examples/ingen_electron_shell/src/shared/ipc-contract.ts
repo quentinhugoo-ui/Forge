@@ -317,6 +317,26 @@ export interface NativeDomRamArtifactSummary {
   recordCount: number;
 }
 
+export interface NativeDomRamUiTreeNode {
+  nodeId: string;
+  parentNodeId: string;
+  depth: number;
+  backendNodeId: number;
+  nodeType: number;
+  nodeName: string;
+  nodeValue: string;
+  attributes: Record<string, string>;
+  layout?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    paintOrder: number;
+    text: string;
+  };
+  visible: boolean;
+}
+
 export interface NativeDomRamCartographyResult {
   accepted: boolean;
   schema: "forge.webexplorer.dom_ram_cartography.v1";
@@ -334,6 +354,12 @@ export interface NativeDomRamCartographyResult {
     scrollOffsetX: number;
     scrollOffsetY: number;
     captureHash: string;
+  };
+  uiTree: {
+    schema: "forge.webexplorer.dom_ram_ui_tree.v1";
+    nodeCount: number;
+    nodes: NativeDomRamUiTreeNode[];
+    treeHash: string;
   };
   memory: {
     source: "electron_webcontents";

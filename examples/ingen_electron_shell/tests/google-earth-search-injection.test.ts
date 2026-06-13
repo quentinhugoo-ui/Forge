@@ -27,6 +27,8 @@ describe("Google Earth search injection", () => {
 
   it("captures Google Earth as a Monster native tandem DOM/RAM cartography target", () => {
     expect(contractSource).toContain('schema: "forge.webexplorer.dom_ram_cartography.v1"');
+    expect(contractSource).toContain("NativeDomRamUiTreeNode");
+    expect(contractSource).toContain('schema: "forge.webexplorer.dom_ram_ui_tree.v1"');
     expect(contractSource).toContain('lane: "native_tandem_dom_ram"');
     expect(contractSource).toContain('nativeDomain: "dom_ram"');
     expect(preloadSource).toContain("captureMapsDomRamCartography()");
@@ -35,6 +37,9 @@ describe("Google Earth search injection", () => {
     expect(mainSource).toContain('partition === "persist:ingen-maps"');
     expect(mainSource).toContain("rememberMapsDomWebviewGuest(webContents, src)");
     expect(mainSource).toContain("DOMSnapshot.captureSnapshot");
+    expect(mainSource).toContain("domSnapshotUiTree(cdpSnapshot)");
+    expect(mainSource).toContain("layoutByNodeIndex");
+    expect(mainSource).toContain("backendNodeId");
     expect(mainSource).toContain("app.getAppMetrics().find((metric) => metric.pid === processId)?.memory");
     expect(mainSource).toContain("DOM_RAM_ARTIFACT_CONTRACTS");
     expect(mainSource).toContain('"live_cdp_domsnapshot_csr_graph_incremental_node_edge_u64_records"');

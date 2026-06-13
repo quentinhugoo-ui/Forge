@@ -85,6 +85,7 @@ import {
   type NativeWebExplorerCodeAct,
   type NativeDomRamArtifactSummary,
   type NativeDomRamCartographyResult,
+  type NativeDomRamUiTreeNode,
   type NativeWebExplorerResult,
   type SearchArchiveRequest,
   type SearchArchiveResult,
@@ -7291,6 +7292,12 @@ function emptyMapsDomRamCartographyResult(error: IpcError): NativeDomRamCartogra
       scrollOffsetY: 0,
       captureHash: hashJson({ empty: true, reason: error.code })
     },
+    uiTree: {
+      schema: "forge.webexplorer.dom_ram_ui_tree.v1",
+      nodeCount: 0,
+      nodes: [],
+      treeHash: hashJson({ empty: true, reason: error.code })
+    },
     memory: {
       source: "electron_webcontents",
       workingSetSizeKb: 0,
@@ -7392,6 +7399,120 @@ function domSnapshotCounts(snapshot: unknown) {
   };
 }
 
+function cdpString(strings: unknown, index: unknown): string {
+  if (!Array.isArray(strings) || typeof index !== "number" || index < 0 || index >= strings.length) {
+    return "";
+  }
+  const value = strings[index];
+  return typeof value === "string" ? value : "";
+}
+
+function compactDomText(value: string, maxLength = 180): string {
+  const clean = value.replace(/\s+/g, " ").trim();
+  return clean.length <= maxLength ? clean : `${clean.slice(0, maxLength - 1)}…`;
+}
+
+function domSnapshotUiTree(snapshot: unknown): NativeDomRamCartographyResult["uiTree"] {
+  const strings = (snapshot as { strings?: unknown }).strings;
+  const documents = Array.isArray((snapshot as { documents?: unknown }).documents)
+    ? ((snapshot as { documents: unknown[] }).documents)
+    : [];
+  const nodes: NativeDomRamUiTreeNode[] = [];
+
+  for (let documentIndex = 0; documentIndex < documents.length; documentIndex += 1) {
+    const document = documents[documentIndex] as {
+      nodes?: {
+        parentIndex?: unknown[];
+        nodeType?: unknown[];
+        nodeName?: unknown[];
+        nodeValue?: unknown[];
+        backendNodeId?: unknown[];
+        attributes?: unknown[];
+      };
+      layout?: {
+        nodeIndex?: unknown[];
+        bounds?: unknown[];
+        text?: unknown[];
+        paintOrders?: unknown[];
+      };
+    };
+    const docNodes = document.nodes ?? {};
+    const parentIndexes = Array.isArray(docNodes.parentIndex) ? docNodes.parentIndex : [];
+    const nodeTypes = Array.isArray(docNodes.nodeType) ? docNodes.nodeType : [];
+    const nodeNames = Array.isArray(docNodes.nodeName) ? docNodes.nodeName : [];
+    const nodeValues = Array.isArray(docNodes.nodeValue) ? docNodes.nodeValue : [];
+    const backendNodeIds = Array.isArray(docNodes.backendNodeId) ? docNodes.backendNodeId : [];
+    const attributes = Array.isArray(docNodes.attributes) ? docNodes.attributes : [];
+    const layoutByNodeIndex = new Map<number, NativeDomRamUiTreeNode["layout"]>();
+    const layout = document.layout;
+    const layoutNodeIndexes = Array.isArray(layout?.nodeIndex) ? layout.nodeIndex : [];
+    const layoutBounds = Array.isArray(layout?.bounds) ? layout.bounds : [];
+    const layoutTexts = Array.isArray(layout?.text) ? layout.text : [];
+    const paintOrders = Array.isArray(layout?.paintOrders) ? layout.paintOrders : [];
+
+    for (let layoutIndex = 0; layoutIndex < layoutNodeIndexes.length; layoutIndex += 1) {
+      const nodeIndex = Number(layoutNodeIndexes[layoutIndex]);
+      if (!Number.isFinite(nodeIndex)) {
+        continue;
+      }
+      const boundsRaw = layoutBounds[layoutIndex];
+      const bounds = Array.isArray(boundsRaw) ? boundsRaw.map(numberField) : [];
+      layoutByNodeIndex.set(nodeIndex, {
+        x: bounds[0] ?? 0,
+        y: bounds[1] ?? 0,
+        width: bounds[2] ?? 0,
+        height: bounds[3] ?? 0,
+        paintOrder: numberField(paintOrders[layoutIndex]),
+        text: compactDomText(cdpString(strings, layoutTexts[layoutIndex]))
+      });
+    }
+
+    const depthByNodeIndex = new Map<number, number>();
+    const depthFor = (nodeIndex: number): number => {
+      if (depthByNodeIndex.has(nodeIndex)) {
+        return depthByNodeIndex.get(nodeIndex) ?? 0;
+      }
+      const parent = Number(parentIndexes[nodeIndex]);
+      const depth = Number.isFinite(parent) && parent >= 0 ? depthFor(parent) + 1 : 0;
+      depthByNodeIndex.set(nodeIndex, depth);
+      return depth;
+    };
+
+    for (let nodeIndex = 0; nodeIndex < nodeNames.length; nodeIndex += 1) {
+      const parentIndex = Number(parentIndexes[nodeIndex]);
+      const attrRaw = Array.isArray(attributes[nodeIndex]) ? (attributes[nodeIndex] as unknown[]) : [];
+      const attrMap: Record<string, string> = {};
+      for (let attrIndex = 0; attrIndex + 1 < attrRaw.length; attrIndex += 2) {
+        const name = cdpString(strings, attrRaw[attrIndex]);
+        if (!name) {
+          continue;
+        }
+        attrMap[name] = compactDomText(cdpString(strings, attrRaw[attrIndex + 1]), 140);
+      }
+      const layoutRecord = layoutByNodeIndex.get(nodeIndex);
+      nodes.push({
+        nodeId: `d${documentIndex}:n${nodeIndex}`,
+        parentNodeId: Number.isFinite(parentIndex) && parentIndex >= 0 ? `d${documentIndex}:n${parentIndex}` : "",
+        depth: depthFor(nodeIndex),
+        backendNodeId: numberField(backendNodeIds[nodeIndex]),
+        nodeType: numberField(nodeTypes[nodeIndex]),
+        nodeName: cdpString(strings, nodeNames[nodeIndex]) || "#unknown",
+        nodeValue: compactDomText(cdpString(strings, nodeValues[nodeIndex])),
+        attributes: attrMap,
+        layout: layoutRecord,
+        visible: Boolean(layoutRecord && layoutRecord.width > 0 && layoutRecord.height > 0)
+      });
+    }
+  }
+
+  return {
+    schema: "forge.webexplorer.dom_ram_ui_tree.v1",
+    nodeCount: nodes.length,
+    nodes,
+    treeHash: hashJson({ schema: "forge.webexplorer.dom_ram_ui_tree.v1", nodes })
+  };
+}
+
 async function captureMapsDomRamCartography(event: Electron.IpcMainInvokeEvent): Promise<NativeDomRamCartographyResult> {
   if (!validateSender(event)) {
     return emptyMapsDomRamCartographyResult({
@@ -7432,6 +7553,7 @@ async function captureMapsDomRamCartography(event: Electron.IpcMainInvokeEvent):
       includeTextColorOpacities: false
     });
     const counts = domSnapshotCounts(cdpSnapshot);
+    const uiTree = domSnapshotUiTree(cdpSnapshot);
     const processId = (target as { getOSProcessId?: () => number }).getOSProcessId?.() ?? 0;
     const processType = (target as { getProcessType?: () => string }).getProcessType?.() ?? "unknown";
     const memoryInfo = app.getAppMetrics().find((metric) => metric.pid === processId)?.memory;
@@ -7484,6 +7606,7 @@ async function captureMapsDomRamCartography(event: Electron.IpcMainInvokeEvent):
         ...counts,
         captureHash
       },
+      uiTree,
       memory,
       artifacts,
       manifestHash: "",
