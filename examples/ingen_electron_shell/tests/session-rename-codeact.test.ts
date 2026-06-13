@@ -30,6 +30,10 @@ describe("session rename CodeAct", () => {
     expect(mainSource).toContain("const normalizedBody = body.replace");
     expect(mainSource).toContain('"$1 $2="');
     expect(mainSource).toContain("function polishedSessionTitle");
+    expect(mainSource).toContain("function firstTurnRuntimeSessionTitle");
+    expect(mainSource).toContain("Biographie de ${subject}");
+    expect(mainSource).toContain("Guide de ${subject}");
+    expect(mainSource).toContain("applyFirstTurnRuntimeSessionTitle(assistantMessage, session, draft, assistantTitleSource, message.id, requestTranscriptWithUser)");
     expect(mainSource).toContain("Decouverte de ${compact}");
     expect(mainSource).toContain("Histoire de ${copiedHistory[1]}");
     expect(mainSource).toContain("renameChatSession(session, request)");
@@ -38,10 +42,10 @@ describe("session rename CodeAct", () => {
     expect(mainSource).toContain("function removeLooseRenameSessionChatter");
     expect(mainSource).toContain("sujet\\s+(?:identifi[eé])?");
     expect(mainSource).toContain("removeRenameSessionChatter(removeLooseRenameSessionChatter(message.text))");
+    expect(mainSource).toContain("removeRenameSessionChatter(removeLooseRenameSessionChatter(removeRenameSessionCodeActLines(message.text)))");
     expect(mainSource).toContain("sanitizeAssistantRenameChatter(assistantMessage)");
     expect(mainSource).toContain("sanitizeAssistantRenameChatter(continuationMessage)");
     expect(mainSource).toContain("sujet\\s*:");
-    expect(mainSource).toContain("removeRenameSessionChatter(removeRenameSessionCodeActLines(message.text))");
     expect(mainSource).not.toContain("renderRenameSessionCodeActResult");
     expect(mainSource).not.toContain("RENAME_SESSION_RESULT");
     expect(mainSource).toContain("executeAssistantRenameSessionCodeAct(assistantMessage, session)");

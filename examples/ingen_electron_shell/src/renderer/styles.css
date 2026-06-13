@@ -898,20 +898,18 @@ button {
 }
 
 .sidebarAction.sidebarAction--selected::before,
-.sidebarAction:not(:hover):not(:focus-visible)::before,
+.sidebarAction:not(:hover):not(:focus-visible)::before {
+  opacity: 0;
+}
+
 .sidebarAction:hover::before,
 .sidebarAction:focus-visible::before {
-  opacity: 0;
+  opacity: 1;
 }
 
 .sidebarAction:focus-visible {
   outline: 2px solid var(--forge-focus-ring);
   outline-offset: -2px;
-}
-
-.sidebarAction:hover,
-.sidebarAction:focus-visible {
-  color: var(--forge-text);
 }
 
 .sidebarAction span:last-child {
@@ -1276,7 +1274,7 @@ button {
 
 .sidebarAction:hover .sidebarIcon,
 .sidebarAction:focus-visible .sidebarIcon {
-  color: var(--forge-text);
+  color: var(--forge-sidebar-text);
 }
 
 .sidebarIcon--plus {
@@ -1972,13 +1970,13 @@ button {
   border: 0;
   border-radius: 6px;
   cursor: pointer;
-  transition: color 140ms ease-out;
+  transition: color 140ms ease-out, background 140ms ease-out;
 }
 
 .navNotif__btn:hover,
 .navNotif__btn:focus-visible {
   color: var(--forge-text);
-  background: transparent;
+  background: var(--forge-overlay-hover);
   outline: 0;
 }
 
@@ -1994,13 +1992,12 @@ button {
   border: 0;
   border-radius: 6px;
   cursor: pointer;
-  transition: color 140ms ease-out;
+  transition: background 140ms ease-out;
 }
 
 .navAvatarBtn:hover,
 .navAvatarBtn:focus-visible {
-  color: var(--forge-text);
-  background: transparent;
+  background: var(--forge-overlay-hover);
   outline: 0;
 }
 
@@ -2027,11 +2024,6 @@ button {
 
 .navAvatarBtn svg {
   color: var(--forge-muted);
-}
-
-.navAvatarBtn:hover svg,
-.navAvatarBtn:focus-visible svg {
-  color: var(--forge-text);
 }
 
 .navGlyph * {
