@@ -3329,6 +3329,11 @@ function inferGeographicTargetFromUserText(value: string): string {
       return target;
     }
   }
+  const simplePlaceIntro = text.match(/^(?:parle|parles|raconte|dis)[-\s]+moi\s+(?:de|d'|sur)\s+([A-ZÀ-Ý][\p{L}\p{M}' -]{1,96})$/iu);
+  const simplePlace = cleanInferredMapsTarget(simplePlaceIntro?.[1] ?? "");
+  if (simplePlace.length >= 2) {
+    return simplePlace;
+  }
   return "";
 }
 
@@ -3360,6 +3365,9 @@ function stripCompetingGeographicCodeActLines(text: string): string {
 
 function mapsCodeActLineFromResolvedRequest(request: MapsCodeActRequest): string {
   const target = request.target.replace(/"/g, "'");
+  if (typeof request.latitude !== "number" || typeof request.longitude !== "number") {
+    return `${BRAIN_MAPS_COMMAND} target="${target}"`;
+  }
   return `${BRAIN_MAPS_COMMAND} target="${target}" latitude="${request.latitude}" longitude="${request.longitude}"`;
 }
 
@@ -3450,12 +3458,6 @@ async function applyGeographicMapsFallback(
     source: "explicit_codeact"
   });
   const resolved = await resolveMapsCodeActRequest(candidate);
-  if (
-    readValidMapsCoordinate(resolved.latitude, -90, 90) === undefined ||
-    readValidMapsCoordinate(resolved.longitude, -180, 180) === undefined
-  ) {
-    return message;
-  }
   const visibleText = stripCompetingGeographicCodeActLines(message.text) || assistantCodeActVisibleText(message.text);
   return {
     ...message,

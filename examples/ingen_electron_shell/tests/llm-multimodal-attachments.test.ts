@@ -484,7 +484,9 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("ecris une phrase naturelle puis active ${BRAIN_MAPS_COMMAND}");
     expect(mainSource).toContain("function inferMapsTargetFromUserText");
     expect(mainSource).toContain("applyGeographicMapsFallback");
+    expect(mainSource).toContain('return `${BRAIN_MAPS_COMMAND} target="${target}"`;');
     expect(mainSource).toContain("parle|parles|raconte|dis");
+    expect(mainSource).toContain("simplePlaceIntro");
     expect(mainSource).toContain("stripCompetingGeographicCodeActLines");
     expect(mainSource).toContain("host_geographic_fallback");
     expect(brainSource).toContain("Device location must never be read silently");
