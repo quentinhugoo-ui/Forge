@@ -137,7 +137,7 @@ function createBlobScene(seed: number): BlobScene {
       cyclePhase: rand(fj * 4.79 + 3.9),
       angle0: rand(fj * 8.7 + 1.3) * BLOB_TAU,
       drift: mix(0.25, 0.55, rand(fj * 2.9 + 7.1)) * (j % 2 === 0 ? -1 : 1),
-      radius: mix(0.07, 0.1, rand(fj * 3.31 + 5.2))
+      radius: mix(0.11, 0.15, rand(fj * 3.31 + 5.2))
     };
   });
 
@@ -176,7 +176,7 @@ function createBlobScene(seed: number): BlobScene {
         const stretch = sstep(0.4, 0.48, cph) * (1 - sstep(0.55, 0.62, cph));
         const caught = sstep(0.78, 0.9, cph) * (1 - sstep(0.97, 1, cph));
         const a = droplet.angle0 + t * droplet.drift;
-        const flight = mix(0.22, 0.62, ext);
+        const flight = mix(0.22, 0.56, ext);
         const cosA = Math.cos(a) * flight;
         const sinA = Math.sin(a) * flight;
         const i = BLOB_MASS_COUNT + j;
