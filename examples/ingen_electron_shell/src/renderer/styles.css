@@ -4899,6 +4899,8 @@ button {
   --assistant-mark-line-soft: color-mix(in oklab, var(--forge-line), transparent 74%);
   --assistant-mark-label: color-mix(in oklab, var(--forge-muted), var(--forge-text) 24%);
   --assistant-mark-text: color-mix(in oklab, var(--forge-text), var(--forge-muted) 6%);
+  --assistant-mark-fill-chat: color-mix(in oklab, var(--forge-chat-bg), var(--forge-text) 3%);
+  --assistant-mark-fill-sidebar: color-mix(in oklab, var(--forge-sidebar-bg), transparent 28%);
   --assistant-mark-radius: 6px;
   display: block;
   width: 100%;
@@ -4980,7 +4982,16 @@ button {
 
 .assistantText__list li {
   margin: 0;
-  padding-left: 2px;
+  padding: 3px 8px 3px 2px;
+  border-radius: var(--assistant-mark-radius);
+}
+
+.assistantText__list li:nth-child(3n + 2) {
+  background: var(--assistant-mark-fill-chat);
+}
+
+.assistantText__list li:nth-child(4n) {
+  background: var(--assistant-mark-fill-sidebar);
 }
 
 .assistantText__list li::marker {
@@ -4996,18 +5007,31 @@ button {
 }
 
 .assistantText__taskItem {
+  --assistant-task-halo: var(--forge-bg);
   position: relative;
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   align-items: start;
   gap: 10px;
   margin: 0;
-  padding: 2px 0 10px;
+  padding: 4px 8px 12px 6px;
+  border-radius: var(--assistant-mark-radius);
+  background: transparent;
   color: var(--assistant-mark-text);
 }
 
 .assistantText__taskItem:last-child {
-  padding-bottom: 0;
+  padding-bottom: 4px;
+}
+
+.assistantText__taskItem:nth-child(3n + 2) {
+  --assistant-task-halo: var(--assistant-mark-fill-chat);
+  background: var(--assistant-mark-fill-chat);
+}
+
+.assistantText__taskItem:nth-child(4n) {
+  --assistant-task-halo: var(--assistant-mark-fill-sidebar);
+  background: var(--assistant-mark-fill-sidebar);
 }
 
 .assistantText__taskCheck {
@@ -5044,7 +5068,7 @@ button {
   border: 1px solid var(--assistant-mark-label);
   border-radius: 999px;
   background: transparent;
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--forge-bg), transparent 3%);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--assistant-task-halo), transparent 3%);
   transform: scale(1);
   transition:
     width 0.22s ease,
@@ -5061,7 +5085,7 @@ button {
   border-color: color-mix(in oklab, var(--assistant-mark-accent-strong), white 14%);
   background: var(--assistant-mark-accent-strong);
   box-shadow:
-    0 0 0 3px color-mix(in oklab, var(--forge-bg), transparent 2%),
+    0 0 0 3px color-mix(in oklab, var(--assistant-task-halo), transparent 2%),
     0 0 14px color-mix(in oklab, var(--assistant-mark-accent-strong), transparent 52%);
   transform: scale(1.02);
 }

@@ -764,10 +764,14 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("AssistantMarkdownText messageId={message.id}");
     expect(stylesSource).toContain("--assistant-mark-accent");
     expect(stylesSource).toContain("--assistant-mark-line");
+    expect(stylesSource).toContain("--assistant-mark-fill-chat");
+    expect(stylesSource).toContain("--assistant-mark-fill-sidebar");
     expect(stylesSource).toContain("--assistant-mark-radius");
     expect(stylesSource).toContain(".assistantText__body");
     expect(stylesSource).toContain(".assistantText__heading");
     expect(stylesSource).toContain(".assistantText__list");
+    expect(stylesSource).toContain(".assistantText__list li:nth-child(3n + 2)");
+    expect(stylesSource).toContain(".assistantText__list li:nth-child(4n)");
     expect(stylesSource).toContain(".assistantText__tableWrap");
     expect(stylesSource).toContain(".assistantText__table");
     expect(stylesSource).toContain(".assistantText__tableCell--right");
@@ -775,6 +779,8 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantText__taskCheckRail");
     expect(stylesSource).toContain(".assistantText__taskCheckDot");
     expect(stylesSource).toContain(".assistantText__taskCheck--checked .assistantText__taskCheckDot");
+    expect(stylesSource).toContain(".assistantText__taskItem:nth-child(3n + 2)");
+    expect(stylesSource).toContain(".assistantText__taskItem:nth-child(4n)");
     expect(stylesSource).toContain("prefers-reduced-motion: reduce");
     expect(stylesSource).toContain(".assistantText__taskItem--checked");
     expect(stylesSource).toContain(".assistantText__taskText");
