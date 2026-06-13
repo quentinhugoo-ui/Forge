@@ -246,6 +246,17 @@ fn wobble(p: vec3<f32>, t: f32) -> f32 {
   ) * 0.011;
 }
 
+/* Soft membrane texture: low-frequency mottling across the skin only. Kept
+   smooth on purpose so the texture itself reads as soft-focus (the blur the
+   user wants on the membrane), while the silhouette stays crisp. */
+fn membraneTex(p: vec3<f32>, t: f32) -> f32 {
+  let a = sin(p.x * 3.1 + p.y * 2.3 + t * 0.18);
+  let b = sin(p.y * 2.7 - p.z * 3.3 - t * 0.14);
+  let c = sin(p.z * 2.9 + p.x * 2.1 + t * 0.11);
+  let d = sin(dot(p, vec3<f32>(1.7, 2.1, 1.9)) + t * 0.12);
+  return (a + b + c + d) * 0.25;
+}
+
 fn field(p: vec3<f32>, t: f32) -> f32 {
   var d = 1e5;
   for (var i = 0; i < 10; i = i + 1) {
@@ -344,22 +355,24 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
       let innerD = field(p - n * 0.16, t);
       let thin = saturate(1.0 + innerD / 0.16);
       let sss = thin * thin;
-      /* Lumen-style indirect light: a cheap ambient-occlusion probe gates a
-         warm global-illumination fill, plus a back light and an emissive
-         molten core so the gel glows from within and the bright hotspots
-         bloom through the post blur. */
+      /* Light Lumen: a cheap ambient-occlusion probe gates a warm
+         global-illumination fill, with a back light and a faint emissive
+         core so the gel glows gently from within. */
       let ao = saturate(1.0 + field(p + n * 0.13, t) / 0.13);
-      let giFill = mix(colorTwo, colorOne, 0.5) * ao * 0.24;
+      let giFill = mix(colorTwo, colorOne, 0.5) * ao * 0.18;
       let l2 = normalize(vec3<f32>(0.5, -0.2, -0.62));
-      let backDiff = saturate(dot(n, l2)) * 0.18;
-      let emissive = mix(colorTwo, vec3<f32>(1.0, 0.78, 0.42), sss) * (0.16 + sss * 0.55);
-      color = base * (0.30 + 0.70 * diff)
+      let backDiff = saturate(dot(n, l2)) * 0.16;
+      let emissive = mix(colorTwo, vec3<f32>(1.0, 0.78, 0.42), sss) * (0.10 + sss * 0.34);
+      /* Soft membrane texture modulating the skin tone only. */
+      let tex = membraneTex(p, t);
+      let membrane = base * (1.0 + tex * 0.10);
+      color = membrane * (0.30 + 0.70 * diff)
         + giFill
         + base * backDiff
-        + mix(colorOne, vec3<f32>(1.0, 0.90, 0.66), 0.6) * sss * 0.42
-        + colorOne * fres * 0.46
+        + mix(colorOne, vec3<f32>(1.0, 0.90, 0.66), 0.6) * sss * 0.38
+        + colorOne * fres * 0.34
         + emissive
-        + vec3<f32>(1.0, 0.96, 0.88) * spec * 0.92;
+        + vec3<f32>(1.0, 0.96, 0.88) * spec * 0.55;
       alpha = saturate(0.62 + diff * 0.20 - fres * 0.16 + sss * 0.10);
     } else {
       /* Tight contour aura only: the wide warm Lumen bounce now comes from the
@@ -413,6 +426,16 @@ float wobble(vec3 p, float t) {
     + sin(p.z * 4.7 + t * 0.8)
     + sin(dot(p, vec3(2.7, 3.1, 2.3)) - t * 0.5)
   ) * 0.011;
+}
+
+// Soft membrane texture: low-frequency mottling on the skin only, kept smooth
+// so the texture reads as soft-focus while the silhouette stays crisp.
+float membraneTex(vec3 p, float t) {
+  float a = sin(p.x * 3.1 + p.y * 2.3 + t * 0.18);
+  float b = sin(p.y * 2.7 - p.z * 3.3 - t * 0.14);
+  float c = sin(p.z * 2.9 + p.x * 2.1 + t * 0.11);
+  float d = sin(dot(p, vec3(1.7, 2.1, 1.9)) + t * 0.12);
+  return (a + b + c + d) * 0.25;
 }
 
 float field(vec3 p, float t) {
@@ -501,20 +524,23 @@ void main() {
       float innerD = field(p - n * 0.16, t);
       float thin = sat(1.0 + innerD / 0.16);
       float sss = thin * thin;
-      // Lumen-style indirect light: cheap AO probe gates a warm GI fill, plus a
-      // back light and an emissive molten core that blooms through the blur.
+      // Light Lumen: cheap AO probe gates a warm GI fill, with a back light and
+      // a faint emissive core so the gel glows gently from within.
       float ao = sat(1.0 + field(p + n * 0.13, t) / 0.13);
-      vec3 giFill = mix(colorTwo, colorOne, 0.5) * ao * 0.24;
+      vec3 giFill = mix(colorTwo, colorOne, 0.5) * ao * 0.18;
       vec3 l2 = normalize(vec3(0.5, -0.2, -0.62));
-      float backDiff = sat(dot(n, l2)) * 0.18;
-      vec3 emissive = mix(colorTwo, vec3(1.0, 0.78, 0.42), sss) * (0.16 + sss * 0.55);
-      color = base * (0.30 + 0.70 * diff)
+      float backDiff = sat(dot(n, l2)) * 0.16;
+      vec3 emissive = mix(colorTwo, vec3(1.0, 0.78, 0.42), sss) * (0.10 + sss * 0.34);
+      // Soft membrane texture modulating the skin tone only.
+      float tex = membraneTex(p, t);
+      vec3 membrane = base * (1.0 + tex * 0.10);
+      color = membrane * (0.30 + 0.70 * diff)
         + giFill
         + base * backDiff
-        + mix(colorOne, vec3(1.0, 0.90, 0.66), 0.6) * sss * 0.42
-        + colorOne * fres * 0.46
+        + mix(colorOne, vec3(1.0, 0.90, 0.66), 0.6) * sss * 0.38
+        + colorOne * fres * 0.34
         + emissive
-        + vec3(1.0, 0.96, 0.88) * spec * 0.92;
+        + vec3(1.0, 0.96, 0.88) * spec * 0.55;
       alpha = sat(0.62 + diff * 0.20 - fres * 0.16 + sss * 0.10);
     } else {
       // Tight contour aura only; the wide warm bounce comes from CSS so this

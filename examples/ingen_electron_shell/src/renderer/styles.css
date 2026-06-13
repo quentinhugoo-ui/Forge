@@ -7350,6 +7350,62 @@ ol.assistantText__list li::before {
   background: transparent;
 }
 
+.nativeBrowserPager {
+  position: absolute;
+  top: 3px;
+  left: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  pointer-events: auto;
+}
+
+.nativeBrowserPager__button {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: rgba(245, 248, 255, 0.82);
+  background: rgba(9, 11, 16, 0.36);
+  box-shadow: 0 7px 18px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  opacity: 0.72;
+  transition:
+    background 140ms ease-out,
+    border-color 140ms ease-out,
+    opacity 140ms ease-out,
+    transform 140ms ease-out;
+}
+
+.nativeBrowserPager__button:hover,
+.nativeBrowserPager__button:focus-visible,
+.nativeBrowserPager__button--active {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(10, 13, 20, 0.72);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.nativeBrowserPager__button:focus-visible {
+  outline: 1px solid color-mix(in oklab, var(--forge-focus-ring), transparent 24%);
+  outline-offset: 2px;
+}
+
+.nativeBrowserPager__button .sidebarModule__logo,
+.nativeBrowserPager__earth,
+.nativeBrowserPager__button .shellIcon {
+  width: 18px;
+  height: 18px;
+}
+
+.nativeBrowserPager__button .shellIcon {
+  display: block;
+}
+
 .webExplorerClose {
   position: absolute;
   top: 2px;
@@ -8556,16 +8612,15 @@ ol.assistantText__list li::before {
   transition: opacity 260ms ease-out;
 }
 
-/* 5% aesthetic softening plus a Lumen-style bloom: the canvas hotspots bleed
-   through the blur while the drop-shadow casts the warm indirect glow the
-   shader already seeds in its aura. */
+/* Keep the silhouette crisp: no blur on the object itself. The membrane's
+   soft texture is blurred inside the shader; here we only add a light
+   Lumen-style warm glow plus a gentle saturation lift. */
 .brainBlob--webgpu .brainBlob__canvas {
   opacity: 1;
   filter:
-    blur(clamp(2.5px, 0.5vw, 6px))
-    saturate(1.16)
-    brightness(1.07)
-    drop-shadow(0 0 34px var(--color-three));
+    saturate(1.1)
+    brightness(1.04)
+    drop-shadow(0 0 20px var(--color-three));
 }
 
 .brainBlob--webgpu .brainBlob__fallback {
