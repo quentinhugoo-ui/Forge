@@ -495,6 +495,8 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("navigateNativeWebExplorerToMaps");
     expect(mainSource).toContain("nativeMapsView");
     expect(mainSource).toContain('partition: "persist:ingen-maps"');
+    expect(mainSource).toContain("webviewTag: true");
+    expect(mainSource).toContain('window.webContents.on("will-attach-webview"');
     expect(mainSource).toContain('webContents.send("forge:maps-codeact", request)');
     expect(mainSource).toContain('ipcMain.handle("forge:maps-show"');
     expect(mainSource).toContain('parsed.hostname === "earth.google.com"');
@@ -508,8 +510,11 @@ describe("LLM multimodal attachments", () => {
     expect(canvasSource).toContain("GoogleEarthIcon");
     expect(canvasSource).toContain("webExplorerModuleId");
     expect(canvasSource).toContain("canvasSurfaces--nativePager");
+    expect(canvasSource).toContain("ProprietaryEarthWebView");
+    expect(canvasSource).toContain("proprietaryEarthWebView");
     expect(stylesSource).toContain(".nativeBrowserPager");
     expect(stylesSource).toContain(".canvasSurfaces--nativePager .webExplorerNativeSlot");
+    expect(stylesSource).toContain(".proprietaryEarthWebView");
     expect(canvasSource).toContain("showNativeMaps");
     expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Use Google Earth"]');
   });

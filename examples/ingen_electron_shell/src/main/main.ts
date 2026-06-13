@@ -11103,9 +11103,25 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      webviewTag: true,
       backgroundThrottling: false,
       offscreen: false
     }
+  });
+  window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    const src = typeof params.src === "string" ? params.src : "";
+    if (!isAllowedNativeMapsUrl(src)) {
+      event.preventDefault();
+      return;
+    }
+    const lockedPreferences = webPreferences as Record<string, unknown>;
+    delete lockedPreferences.preload;
+    delete lockedPreferences.preloadURL;
+    lockedPreferences.nodeIntegration = false;
+    lockedPreferences.contextIsolation = true;
+    lockedPreferences.sandbox = true;
+    lockedPreferences.webSecurity = true;
+    lockedPreferences.partition = "persist:ingen-maps";
   });
   primaryWindow = window;
   window.setTitle(labWindow ? "InGen Event Text Lab" : "InGen");

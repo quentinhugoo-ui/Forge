@@ -7509,6 +7509,35 @@ ol.assistantText__list li::before {
   inset: 0;
 }
 
+.mapsCanvasPane {
+  overflow: visible;
+}
+
+.proprietaryEarthWebView {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: -176px;
+  left: -100%;
+  z-index: 0;
+  display: block;
+  width: 200%;
+  height: calc(100% + 176px);
+  background: #000;
+  border: 0;
+  pointer-events: auto;
+}
+
+.mapsCanvasPane .webExplorerChrome,
+.mapsCanvasPane .nativeBrowserPager,
+.mapsCanvasPane .webExplorerClose {
+  z-index: 4;
+}
+
+.shell--maps-canvas-open .panelsChatBottom {
+  z-index: 24;
+}
+
 .webExplorerNativeSlot--accepted {
   background: #ffffff;
 }
