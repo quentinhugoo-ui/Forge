@@ -3971,7 +3971,7 @@ button {
   padding-bottom: var(--transcript-bottom-breathing-room);
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--forge-sidebar-bg) transparent;
+  scrollbar-color: var(--forge-chat-bg) transparent;
   scroll-behavior: smooth;
   scroll-padding-bottom: var(--transcript-bottom-breathing-room);
   mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
@@ -3996,14 +3996,14 @@ button {
 }
 
 .chatCanvas__messages::-webkit-scrollbar-thumb {
-  background: var(--forge-sidebar-bg);
+  background: var(--forge-chat-bg);
   border: 0;
   border-radius: 1px;
   transition: background 140ms ease-out;
 }
 
 .chatCanvas__messages::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklab, var(--forge-sidebar-bg), var(--forge-text) 18%);
+  background: color-mix(in oklab, var(--forge-chat-bg), var(--forge-text) 18%);
 }
 
 .transcriptItem {
