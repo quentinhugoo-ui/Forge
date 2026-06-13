@@ -37,6 +37,9 @@ describe("Google Earth search injection", () => {
     expect(preloadSource).toContain("captureMapsDomRamCartography()");
     expect(preloadSource).toContain('ipcRenderer.invoke("forge:maps-dom-ram-cartography-capture")');
     expect(mainSource).toContain('on("did-attach-webview"');
+    expect(mainSource).toContain("params?: { src?: unknown; partition?: unknown }");
+    expect(mainSource).toContain("const attachmentParams = params ?? {}");
+    expect(mainSource).toContain("typeof attachmentParams.src");
     expect(mainSource).toContain('partition === "persist:ingen-maps"');
     expect(mainSource).toContain("rememberMapsDomWebviewGuest(webContents, src)");
     expect(mainSource).toContain("DOMSnapshot.captureSnapshot");

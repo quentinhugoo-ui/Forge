@@ -12651,10 +12651,11 @@ async function createWindow(): Promise<void> {
     }
   });
   (window.webContents as Electron.WebContents & {
-    on(event: "did-attach-webview", listener: (event: Electron.Event, webContents: Electron.WebContents, params: { src?: unknown; partition?: unknown }) => void): Electron.WebContents;
-  }).on("did-attach-webview", (_event: Electron.Event, webContents: Electron.WebContents, params: { src?: unknown; partition?: unknown }) => {
-    const src = typeof params.src === "string" ? params.src : "";
-    const partition = typeof params.partition === "string" ? params.partition : "";
+    on(event: "did-attach-webview", listener: (event: Electron.Event, webContents: Electron.WebContents, params?: { src?: unknown; partition?: unknown }) => void): Electron.WebContents;
+  }).on("did-attach-webview", (_event: Electron.Event, webContents: Electron.WebContents, params?: { src?: unknown; partition?: unknown }) => {
+    const attachmentParams = params ?? {};
+    const src = typeof attachmentParams.src === "string" ? attachmentParams.src : "";
+    const partition = typeof attachmentParams.partition === "string" ? attachmentParams.partition : "";
     if (isMapsWebviewAttachment(src, partition)) {
       rememberMapsDomWebviewGuest(webContents, src);
       console.info("Google Earth DOM/RAM cartography guest attached.", { src, partition });
