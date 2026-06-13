@@ -8275,6 +8275,85 @@ function polishedSessionTitle(title: string, reason: string): string {
   return compact;
 }
 
+function sessionTitleSubjectFromUserText(userText: string): string {
+  const compact = userText
+    .replace(/\s+/g, " ")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim();
+  const patterns = [
+    /^(?:parle|parles|parlez)[-\s]+moi\s+de\s+(.+)$/i,
+    /^raconte[-\s]+moi\s+(.+)$/i,
+    /^explique[-\s]+moi\s+(.+)$/i,
+    /^je\s+veux\s+(?:connaitre|connaître|savoir)\s+(?:l['’]histoire\s+de\s+)?(.+)$/i,
+    /^c['’]est\s+quoi\s+(.+)\??$/i,
+    /^qui\s+est\s+(.+)\??$/i,
+    /^vie\s+de\s+(.+)$/i,
+    /^biographie\s+de\s+(.+)$/i
+  ];
+  for (const pattern of patterns) {
+    const match = compact.match(pattern);
+    if (match?.[1]) {
+      return normalizeSessionTitle(match[1].replace(/[.!?]+$/g, ""));
+    }
+  }
+  return normalizeSessionTitle(compact.replace(/[.!?]+$/g, ""));
+}
+
+function firstTurnRuntimeSessionTitle(userText: string, assistantText: string): string {
+  const subject = sessionTitleSubjectFromUserText(userText);
+  if (!subject) {
+    return "";
+  }
+  const context = [userText, assistantText].join("\n");
+  if (/\b(?:vie|biograph|qui\s+est|portrait|ne\s+en|né\s+en|nee\s+en|née\s+en|mort\s+en|inventeur|president|président|ecrivain|écrivain|philosophe|scientifique|homme\s+d['’]etat)\b/i.test(context)) {
+    return normalizeSessionTitle(`Biographie de ${subject}`);
+  }
+  if (/\b(?:histoire|origine|naissance|fondation|chronologie)\b/i.test(context)) {
+    return normalizeSessionTitle(`Histoire de ${subject}`);
+  }
+  if (/\b(?:climat|meteo|météo|temperature|température|saison)\b/i.test(context)) {
+    return normalizeSessionTitle(`Climat de ${subject}`);
+  }
+  if (/\b(?:airbnb|hotel|hôtel|logement|sejour|séjour|voyage|vacances)\b/i.test(context)) {
+    return normalizeSessionTitle(`Voyage a ${subject}`);
+  }
+  return normalizeSessionTitle(`Guide de ${subject}`);
+}
+
+function applyFirstTurnRuntimeSessionTitle(
+  message: TranscriptMessage,
+  session: SidebarSessionItem,
+  userText: string,
+  assistantTitleSource: string,
+  userMessageId: string,
+  transcript: TranscriptMessage[]
+): TranscriptMessage {
+  if (message.role !== "assistant" || !isFirstVisibleUserTurn(userMessageId, transcript)) {
+    return message;
+  }
+  const title = firstTurnRuntimeSessionTitle(userText, assistantTitleSource);
+  if (!title) {
+    return message;
+  }
+  const request: RenameSessionCodeActRequest = {
+    schema: "forge.brain.rename_session.request.v1",
+    command: BRAIN_RENAME_SESSION_COMMAND,
+    title,
+    reason: "runtime_first_turn_title",
+    proofHash: ""
+  };
+  request.proofHash = hashJson({ ...request, proofHash: "" });
+  renameChatSession(session, request);
+  return {
+    ...message,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      runtimeSessionTitle: title,
+      sessionId: session.sessionId
+    })
+  };
+}
+
 function parseCodeActTemplateFields(body: string): Map<string, string> {
   const fields = new Map<string, string>();
   const normalizedBody = body.replace(/(["'`])\s*([a-zA-Z_][\w-]*)\s*=/g, "$1 $2=");
@@ -9193,7 +9272,9 @@ function executeAssistantRenameSessionCodeAct(message: TranscriptMessage, sessio
     return message;
   }
   renameChatSession(session, request);
-  const visibleText = removeRenameSessionChatter(removeRenameSessionCodeActLines(message.text)) || assistantCodeActVisibleText(message.text);
+  const visibleText =
+    removeRenameSessionChatter(removeLooseRenameSessionChatter(removeRenameSessionCodeActLines(message.text))) ||
+    assistantCodeActVisibleText(message.text);
   return {
     ...message,
     text: visibleText,
@@ -10591,8 +10672,10 @@ async function submitChatDraftForSessionInner(
   assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, draft, moduleId);
   assistantMessage = await applyGeographicMapsFallback(assistantMessage, draft, moduleId, parallelSessionIndex);
   assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, moduleId, parallelSessionIndex);
+  const assistantTitleSource = assistantMessage.text;
   assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, session);
   assistantMessage = sanitizeAssistantRenameChatter(assistantMessage);
+  assistantMessage = applyFirstTurnRuntimeSessionTitle(assistantMessage, session, draft, assistantTitleSource, message.id, requestTranscriptWithUser);
   assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
   assistantMessage = suppressRepeatedBrainSegmentCodeAct(assistantMessage, panelsChatBottomState.activeBrainSegment);
   const previousBrainSegment = panelsChatBottomState.activeBrainSegment;
