@@ -7742,12 +7742,20 @@ async function dispatchGoogleEarthKeyboardSearch(
     await debug.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
     await delay(80);
   }
-  await debug.sendCommand("Input.insertText", { text: query });
-  await delay(950);
-  const arrowDown = { key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40 };
-  await debug.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...arrowDown });
-  await debug.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...arrowDown });
-  await delay(140);
+  const control = { modifiers: 2 };
+  const aKey = { key: "a", code: "KeyA", windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 };
+  await debug.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...aKey, ...control });
+  await debug.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...aKey, ...control });
+  await delay(40);
+  const backspace = { key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 };
+  await debug.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...backspace });
+  await debug.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...backspace });
+  await delay(40);
+  clipboard.writeText(query);
+  const vKey = { key: "v", code: "KeyV", windowsVirtualKeyCode: 86, nativeVirtualKeyCode: 86 };
+  await debug.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...vKey, ...control });
+  await debug.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...vKey, ...control });
+  await delay(180);
   const enter = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
   await debug.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...enter });
   await debug.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...enter });
