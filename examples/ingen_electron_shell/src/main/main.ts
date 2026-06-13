@@ -79,6 +79,9 @@ import {
   type TranscriptMessage,
   type WorkspaceActionResult,
   type WorkspaceChoiceResult,
+  type AgentActionHostManifest,
+  type AgentActionRequest,
+  type AgentActionResult,
   type NativeTerminalBounds,
   type NativeTerminalResult,
   type NativeWebExplorerBounds,
@@ -91,12 +94,19 @@ import {
   type SearchArchiveResult,
   type SessionFilesSnapshot,
   isCanvasSurfacesCommand,
+  isAgentActionRequest,
   isHeaderCommand,
   isPanelsChatBottomCommand,
   isRightPanelCommand,
   isNativeSection,
   isSidebarCommand
 } from "../shared/ipc-contract.js";
+import {
+  agentActionHostPromptManifest,
+  createAgentActionHostManifest,
+  executeAgentActionRequest,
+  type AgentActionHostConfig
+} from "./agent-action-host.js";
 import {
   parseSearchArchiveCodeAct,
   renderSearchArchiveResult,
@@ -4078,6 +4088,19 @@ function workspaceContextManifest(): string {
   ].join("\n");
 }
 
+function agentActionHostConfig(): AgentActionHostConfig {
+  return {
+    workspaceRoot: activeWorkspaceDir,
+    workspaceActive: workspaceExplicitlyChosen,
+    cwd: activeWorkspaceDir,
+    platform: process.platform
+  };
+}
+
+function agentActionContextManifest(): string {
+  return agentActionHostPromptManifest(agentActionHostConfig());
+}
+
 function brainSegmentManifest(): string {
   if (panelsChatBottomState.activeBrainSegment === "science") {
     return [
@@ -4137,6 +4160,7 @@ function codexDirectInstructions(reasoning: string, moduleId = ""): string {
     brainBootManifest(),
     brainIdentityMemoryManifest(),
     workspaceContextManifest(),
+    agentActionContextManifest(),
     brainSegmentManifest(),
     selfDirectedModeManifest(),
     webExplorerCodeActInstructions(moduleId)
@@ -4688,6 +4712,7 @@ async function runClaudeCodePrint(
     brainBootManifest(),
     brainIdentityMemoryManifest(),
     workspaceContextManifest(),
+    agentActionContextManifest(),
     brainSegmentManifest(),
     selfDirectedModeManifest(),
     webExplorerCodeActInstructions(moduleId),
@@ -4765,6 +4790,7 @@ async function runOpenRouterChatCompletion(
           brainBootManifest(),
           brainIdentityMemoryManifest(),
           workspaceContextManifest(),
+          agentActionContextManifest(),
           brainSegmentManifest(),
           selfDirectedModeManifest(),
           webExplorerCodeActInstructions(moduleId)
@@ -7296,6 +7322,9 @@ function emptyMapsDomRamCartographyResult(error: IpcError): NativeDomRamCartogra
       schema: "forge.webexplorer.dom_ram_ui_tree.v1",
       nodeCount: 0,
       nodes: [],
+      landmarks: {
+        searchCandidates: []
+      },
       treeHash: hashJson({ empty: true, reason: error.code })
     },
     memory: {
@@ -7412,6 +7441,86 @@ function compactDomText(value: string, maxLength = 180): string {
   return clean.length <= maxLength ? clean : `${clean.slice(0, maxLength - 1)}…`;
 }
 
+function domRamSearchText(node: NativeDomRamUiTreeNode): string {
+  return [
+    node.nodeName,
+    node.nodeValue,
+    node.layout?.text,
+    ...Object.entries(node.attributes).flat()
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function googleEarthSearchBarLandmarks(nodes: NativeDomRamUiTreeNode[]): NativeDomRamCartographyResult["uiTree"]["landmarks"] {
+  const candidates = nodes
+    .map((node) => {
+      const text = domRamSearchText(node);
+      const nodeName = node.nodeName.toLowerCase();
+      const role = node.attributes.role?.toLowerCase() ?? "";
+      const type = node.attributes.type?.toLowerCase() ?? "";
+      const editable =
+        nodeName === "input" ||
+        nodeName === "textarea" ||
+        node.attributes.contenteditable === "true" ||
+        role === "combobox" ||
+        role === "searchbox";
+      let confidence = 0;
+      const reasons: string[] = [];
+      if (editable) {
+        confidence += 0.3;
+        reasons.push("editable control");
+      }
+      if (type === "search" || role === "searchbox") {
+        confidence += 0.18;
+        reasons.push("search role/type");
+      }
+      if (text.includes("google earth")) {
+        confidence += 0.24;
+        reasons.push("Google Earth label");
+      }
+      if (text.includes("rechercher") || text.includes("search")) {
+        confidence += 0.18;
+        reasons.push("search wording");
+      }
+      if (text.includes("combobox")) {
+        confidence += 0.08;
+        reasons.push("combobox marker");
+      }
+      if (node.visible) {
+        confidence += 0.08;
+        reasons.push("visible layout");
+      }
+      if (node.layout && node.layout.y <= 180 && node.layout.width >= 120) {
+        confidence += 0.08;
+        reasons.push("top search-bar geometry");
+      }
+      if (!editable && confidence < 0.4) {
+        confidence = 0;
+      }
+      return {
+        role: "google_earth_search_bar" as const,
+        nodeId: node.nodeId,
+        backendNodeId: node.backendNodeId,
+        confidence: Math.min(1, Number(confidence.toFixed(2))),
+        label:
+          node.attributes["aria-label"] ||
+          node.attributes.placeholder ||
+          node.attributes.title ||
+          node.layout?.text ||
+          node.nodeName,
+        reason: reasons.join(", "),
+        layout: node.layout
+      };
+    })
+    .filter((candidate) => candidate.confidence > 0)
+    .sort((left, right) => right.confidence - left.confidence)
+    .slice(0, 8);
+
+  return {
+    googleEarthSearchBar: candidates[0],
+    searchCandidates: candidates
+  };
+}
+
 function domSnapshotUiTree(snapshot: unknown): NativeDomRamCartographyResult["uiTree"] {
   const strings = (snapshot as { strings?: unknown }).strings;
   const documents = Array.isArray((snapshot as { documents?: unknown }).documents)
@@ -7505,11 +7614,13 @@ function domSnapshotUiTree(snapshot: unknown): NativeDomRamCartographyResult["ui
     }
   }
 
+  const landmarks = googleEarthSearchBarLandmarks(nodes);
   return {
     schema: "forge.webexplorer.dom_ram_ui_tree.v1",
     nodeCount: nodes.length,
     nodes,
-    treeHash: hashJson({ schema: "forge.webexplorer.dom_ram_ui_tree.v1", nodes })
+    landmarks,
+    treeHash: hashJson({ schema: "forge.webexplorer.dom_ram_ui_tree.v1", nodes, landmarks })
   };
 }
 
@@ -8798,6 +8909,37 @@ function installTerminalIpc(): void {
       };
     }
     return workspaceChoiceResult(false);
+  });
+
+  ipcMain.handle("forge:get-agent-action-host-manifest", (event): AgentActionHostManifest => {
+    if (!validateSender(event)) {
+      const manifest = createAgentActionHostManifest(agentActionHostConfig());
+      return {
+        ...manifest,
+        proofHash: hashJson({ manifest: "agent_action_host", reason: "bad_sender", sender: event.senderFrame?.url ?? "" })
+      };
+    }
+    return createAgentActionHostManifest(agentActionHostConfig());
+  });
+
+  ipcMain.handle("forge:execute-agent-action", async (event, request: unknown): Promise<AgentActionResult> => {
+    const fallbackRequest: AgentActionRequest = { action: "list", path: "." };
+    if (!validateSender(event) || !isAgentActionRequest(request)) {
+      const proofHash = hashJson({ request, reason: "bad_sender_or_payload", sender: event.senderFrame?.url ?? "" });
+      return {
+        schema: "ingen.agent_action_host.result.v1",
+        accepted: false,
+        action: isAgentActionRequest(request) ? request.action : fallbackRequest.action,
+        cwd: activeWorkspaceDir,
+        proofHash,
+        error: {
+          code: !validateSender(event) ? "bad_sender" : "bad_payload",
+          message: "Agent action rejected by IPC validation.",
+          proofHash
+        }
+      };
+    }
+    return executeAgentActionRequest(agentActionHostConfig(), request);
   });
 
   ipcMain.handle("forge:choose-workspace-folder", async (event): Promise<WorkspaceChoiceResult> => {

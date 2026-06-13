@@ -337,6 +337,16 @@ export interface NativeDomRamUiTreeNode {
   visible: boolean;
 }
 
+export interface NativeDomRamUiTreeLandmark {
+  role: "google_earth_search_bar";
+  nodeId: string;
+  backendNodeId: number;
+  confidence: number;
+  label: string;
+  reason: string;
+  layout?: NativeDomRamUiTreeNode["layout"];
+}
+
 export interface NativeDomRamCartographyResult {
   accepted: boolean;
   schema: "forge.webexplorer.dom_ram_cartography.v1";
@@ -359,6 +369,10 @@ export interface NativeDomRamCartographyResult {
     schema: "forge.webexplorer.dom_ram_ui_tree.v1";
     nodeCount: number;
     nodes: NativeDomRamUiTreeNode[];
+    landmarks: {
+      googleEarthSearchBar?: NativeDomRamUiTreeLandmark;
+      searchCandidates: NativeDomRamUiTreeLandmark[];
+    };
     treeHash: string;
   };
   memory: {
