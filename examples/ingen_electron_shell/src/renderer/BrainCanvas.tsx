@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
+  BRAIN_RENAME_SESSION_COMMAND,
   type BrainCodeActCommand,
   type SidebarSessionItem
 } from "../shared/ipc-contract";
@@ -250,7 +251,7 @@ const BRAIN_SEGMENTS: { id: string; label: string; glyph: string; commands?: Bra
 
 type BrainCodeActDisplay = { command: BrainCodeActCommand; description: string };
 
-const HIDDEN_BRAIN_CODEACT_COMMANDS = new Set<BrainCodeActCommand>(["/gmail_com"]);
+const HIDDEN_BRAIN_CODEACT_COMMANDS = new Set<BrainCodeActCommand>(["/gmail_com", BRAIN_RENAME_SESSION_COMMAND]);
 
 const BRAIN_CODEACT_UI_DESCRIPTIONS: Partial<Record<BrainCodeActCommand, string>> = {
   "/sciencebrain_": "Switch to science mode for math, engineering, simulation, 3D, or technical analysis.",
@@ -305,7 +306,7 @@ function codeActDisplay(command: BrainCodeActCommand, fallbackDescription = ""):
 }
 
 function segmentCodeActs(segment: { commands?: BrainCodeActCommand[] }) {
-  const elsewhere = new Set([...SCIENCE_BRAIN_COMMANDS, ...CODING_BRAIN_COMMANDS, ...BRAIN_ACTIVATOR_COMMANDS, ...GOOGLE_SUITE_COMMANDS]);
+  const elsewhere = new Set<BrainCodeActCommand>([...SCIENCE_BRAIN_COMMANDS, ...CODING_BRAIN_COMMANDS, ...BRAIN_ACTIVATOR_COMMANDS, ...GOOGLE_SUITE_COMMANDS]);
   return BRAIN_CODEACT_COMMAND_DESCRIPTIONS.filter(({ command }) =>
     !HIDDEN_BRAIN_CODEACT_COMMANDS.has(command) && (segment.commands ? segment.commands.includes(command) : !elsewhere.has(command))
   ).map(({ command, description }) => codeActDisplay(command, description));

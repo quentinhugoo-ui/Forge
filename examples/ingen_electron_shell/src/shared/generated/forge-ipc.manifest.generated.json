@@ -4,5 +4,5 @@
   "generated": "examples/ingen_electron_shell/src/shared/generated/forge-ipc.generated.ts",
   "generator": "rust:ingen-electron-ipc-contract",
   "version": 1,
-  "proof_hash": "78c0bedcb3ba8be4d2aefae2e1d56e270520b470bcbd9674bbde6622f555c2ea"
+  "proof_hash": "53c87f9bb728080130630c66d3a29df252294c735500234fa72e2ef37b0cee0c"
 }

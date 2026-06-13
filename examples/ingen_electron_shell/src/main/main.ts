@@ -21,6 +21,8 @@ import {
   BRAIN_CODEACT_ROUTING_RULES,
   BRAIN_AIRBNB_COMMAND,
   BRAIN_EDITIMAGE_COMMAND,
+  BRAIN_RENAME_SESSION_COMMAND,
+  BRAIN_RENAME_SESSION_RESULT_SCHEMA,
   BRAIN_GMAIL_COMMAND,
   BRAIN_GMAIL_COM_COMMAND,
   BRAIN_GOOGLEWEB_COMMAND,
@@ -93,6 +95,7 @@ import {
   renderSearchArchiveResult,
   searchArchiveSessions,
   stableSearchArchiveHash,
+  archiveSessionProofHash,
   type ChatArchiveAttachment,
   type ChatArchiveMessage,
   type ChatArchiveSession,
@@ -3510,6 +3513,7 @@ function brainBootManifest(): string {
     `codeact_commands=${generalBrainCodeActCommands.join(" ")}`,
     `codeact_descriptions=${commandDescriptions}`,
     `codeact_routing_rules=${BRAIN_CODEACT_ROUTING_RULES}`,
+    `rule=Au premier message utilisateur de cette session: identifie le sujet, ecris un titre court pertinent, puis emets ${BRAIN_RENAME_SESSION_COMMAND} title="...".`,
     "rule=Brain is the single source of truth for CodeAct command identities; do not invent or revive commands outside this manifest.",
     "rule=Use Brain memory/search before asking the user to repeat prior local session context.",
     `rule=If local code/files/project work needs a folder and no workspace is active, emit ${BRAIN_WORKSPACE_COMMAND}. This workspace rule does not apply to ${BRAIN_NEWIMAGE_COMMAND} or ${BRAIN_EDITIMAGE_COMMAND}.`
@@ -8125,6 +8129,75 @@ function sessionLabelFromDraft(draft: string): string {
   return compact.length <= 42 ? compact : `${compact.slice(0, 39).trimEnd()}...`;
 }
 
+function normalizeSessionTitle(value: string): string {
+  const compact = value
+    .replace(/\s+/g, " ")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim();
+  if (!compact) return "";
+  return compact.length <= 42 ? compact : `${compact.slice(0, 39).trimEnd()}...`;
+}
+
+function parseCodeActTemplateFields(body: string): Map<string, string> {
+  const fields = new Map<string, string>();
+  const fieldRegex = /(?:^|\s)([a-zA-Z_][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([\s\S]*?))(?=\s+[a-zA-Z_][\w-]*\s*=|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = fieldRegex.exec(body)) !== null) {
+    const key = match[1]?.trim();
+    if (!key) continue;
+    fields.set(key, (match[2] ?? match[3] ?? match[4] ?? "").trim());
+  }
+  return fields;
+}
+
+interface RenameSessionCodeActRequest {
+  schema: "forge.brain.rename_session.request.v1";
+  command: typeof BRAIN_RENAME_SESSION_COMMAND;
+  title: string;
+  reason: string;
+  proofHash: string;
+}
+
+function parseRenameSessionCodeActLine(line: string): RenameSessionCodeActRequest | undefined {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND)) {
+    return undefined;
+  }
+  const body = trimmed.slice(BRAIN_RENAME_SESSION_COMMAND.length).trim();
+  const fields = parseCodeActTemplateFields(body);
+  const freeform = fields.size === 0 ? body : "";
+  const title = normalizeSessionTitle(fields.get("title") ?? fields.get("name") ?? fields.get("label") ?? freeform);
+  if (!title) {
+    return undefined;
+  }
+  const reason = normalizeSessionTitle(fields.get("reason") ?? "");
+  const request: RenameSessionCodeActRequest = {
+    schema: "forge.brain.rename_session.request.v1",
+    command: BRAIN_RENAME_SESSION_COMMAND,
+    title,
+    reason,
+    proofHash: ""
+  };
+  request.proofHash = hashJson({ ...request, proofHash: "" });
+  return request;
+}
+
+function extractRenameSessionCodeAct(text: string): RenameSessionCodeActRequest | undefined {
+  return text
+    .split(/\r?\n/)
+    .map((line) => parseRenameSessionCodeActLine(line))
+    .find((request): request is RenameSessionCodeActRequest => Boolean(request));
+}
+
+function removeRenameSessionCodeActLines(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith(BRAIN_RENAME_SESSION_COMMAND))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function generateChatSessionId(): string {
   return `chat-${Date.now().toString(36)}-${randomBytes(5).toString("hex")}`;
 }
@@ -8685,6 +8758,19 @@ function archiveTranscriptMessage(session: SidebarSessionItem, message: Transcri
   persistChatArchiveSoon();
 }
 
+function renameChatSession(session: SidebarSessionItem, request: RenameSessionCodeActRequest): void {
+  session.label = request.title;
+  session.date = todayIsoDate();
+  const archiveSession = chatArchiveSessions.get(session.sessionId);
+  if (archiveSession) {
+    archiveSession.title = request.title;
+    archiveSession.date = session.date;
+    archiveSession.updatedAt = new Date().toISOString();
+    archiveSession.proofHash = archiveSessionProofHash(archiveSession);
+    persistChatArchiveSoon();
+  }
+}
+
 function sidebarSessionFromArchive(session: ChatArchiveSession): SidebarSessionItem {
   return {
     sessionId: session.sessionId,
@@ -8854,6 +8940,39 @@ function executeAssistantAirbnbCodeAct(message: TranscriptMessage, parallelSessi
       previousProofHash: message.proofHash,
       assistantCodeAct: request,
       navigation
+    })
+  };
+}
+
+function renderRenameSessionCodeActResult(request: RenameSessionCodeActRequest, session: SidebarSessionItem): string {
+  return [
+    "RENAME_SESSION_RESULT",
+    `schema=${BRAIN_RENAME_SESSION_RESULT_SCHEMA}`,
+    `command=${BRAIN_RENAME_SESSION_COMMAND}`,
+    `session_id=${JSON.stringify(session.sessionId)}`,
+    `title=${JSON.stringify(session.label)}`,
+    `reason=${JSON.stringify(request.reason)}`,
+    `proof_hash=sha256:${request.proofHash}`
+  ].join("\n");
+}
+
+function executeAssistantRenameSessionCodeAct(message: TranscriptMessage, session: SidebarSessionItem): TranscriptMessage {
+  if (message.role !== "assistant") {
+    return message;
+  }
+  const request = extractRenameSessionCodeAct(message.text);
+  if (!request) {
+    return message;
+  }
+  renameChatSession(session, request);
+  const visibleText = removeRenameSessionCodeActLines(message.text) || assistantCodeActVisibleText(message.text);
+  return {
+    ...message,
+    text: [visibleText, renderRenameSessionCodeActResult(request, session)].filter(Boolean).join("\n\n"),
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      assistantCodeAct: request,
+      renamedSessionId: session.sessionId
     })
   };
 }
@@ -10242,6 +10361,7 @@ async function submitChatDraftForSessionInner(
   assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, draft, moduleId);
   assistantMessage = await applyGeographicMapsFallback(assistantMessage, draft, moduleId, parallelSessionIndex);
   assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, moduleId, parallelSessionIndex);
+  assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, session);
   assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
   assistantMessage = suppressRepeatedBrainSegmentCodeAct(assistantMessage, panelsChatBottomState.activeBrainSegment);
   const previousBrainSegment = panelsChatBottomState.activeBrainSegment;
@@ -10269,6 +10389,7 @@ async function submitChatDraftForSessionInner(
       nextTranscript
     );
     continuationMessage = await executeAssistantModuleCodeActs(continuationMessage, moduleId, parallelSessionIndex);
+    continuationMessage = executeAssistantRenameSessionCodeAct(continuationMessage, session);
     continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
     continuationMessage = suppressRepeatedBrainSegmentCodeAct(continuationMessage, panelsChatBottomState.activeBrainSegment);
     continuationMessage = executeAssistantBrainSegmentCodeAct(continuationMessage);
