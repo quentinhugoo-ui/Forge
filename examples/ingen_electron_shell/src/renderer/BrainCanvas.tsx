@@ -829,6 +829,7 @@ function MemorySpace() {
 }
 
 const HARDWARE_POLL_MS = 1800;
+const HARDWARE_REQUEST_TIMEOUT_MS = 2200;
 
 function metricValue(metric: HardwareMetric): string {
   if (metric.value === null) return "N/A";
@@ -844,6 +845,88 @@ function metricPercent(metric: HardwareMetric): number {
 
 function metricClassName(metric: HardwareMetric): string {
   return ["hardwareMetric", `hardwareMetric--${metric.status}`].join(" ");
+}
+
+function hardwareFallbackMetric(label: string, value: number | null, unit: HardwareMetric["unit"]): HardwareMetric {
+  return {
+    label,
+    value,
+    unit,
+    status: value === null ? "unavailable" : "ok"
+  };
+}
+
+function rendererFallbackHardwareSnapshot(reason: string): HardwareTelemetrySnapshot {
+  const cores = typeof navigator.hardwareConcurrency === "number" ? navigator.hardwareConcurrency : 0;
+  const navigatorMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  const memoryGb = typeof navigatorMemory === "number" ? navigatorMemory : null;
+  return {
+    schema: "ingen.hardware.telemetry.snapshot.v1",
+    platform: "unknown",
+    arch: "renderer",
+    hostname: "Renderer fallback",
+    sampledAt: new Date().toISOString(),
+    cpu: {
+      model: "Browser renderer",
+      cores,
+      utilization: hardwareFallbackMetric("CPU load", null, "%"),
+      loadAverage: hardwareFallbackMetric("Load average", null, "count")
+    },
+    memory: {
+      used: hardwareFallbackMetric("RAM used", null, "GB"),
+      total: hardwareFallbackMetric("RAM total", memoryGb, "GB"),
+      utilization: hardwareFallbackMetric("RAM load", null, "%")
+    },
+    thermal: {
+      systemTemperature: hardwareFallbackMetric("System temperature", null, "C"),
+      source: "unavailable"
+    },
+    gpus: [
+      {
+        name: "GPU via IPC unavailable",
+        vendor: "unknown",
+        source: "unavailable",
+        utilization: hardwareFallbackMetric("GPU load", null, "%"),
+        memoryUsed: hardwareFallbackMetric("VRAM used", null, "GB"),
+        memoryTotal: hardwareFallbackMetric("VRAM total", null, "GB"),
+        temperature: hardwareFallbackMetric("GPU temperature", null, "C"),
+        fanSpeed: hardwareFallbackMetric("Fan speed", null, "%"),
+        powerDraw: hardwareFallbackMetric("Power draw", null, "W")
+      }
+    ],
+    topProcesses: [],
+    governor: {
+      profile: "balanced",
+      monsterBudgetPercent: 35,
+      bangerBudgetPercent: 30,
+      controlAuthority: "app-budget-only",
+      fanControl: "locked",
+      notes: [reason]
+    },
+    proofHash: `renderer-fallback-${Date.now().toString(36)}`
+  };
+}
+
+async function requestHardwareTelemetry(): Promise<HardwareTelemetrySnapshot> {
+  const api = window.forgeShell?.getHardwareTelemetrySnapshot;
+  if (!api) {
+    return rendererFallbackHardwareSnapshot("Hardware IPC is not exposed by the current preload.");
+  }
+  let timeoutId: number | undefined;
+  try {
+    return await Promise.race([
+      api(),
+      new Promise<HardwareTelemetrySnapshot>((resolve) => {
+        timeoutId = window.setTimeout(() => {
+          resolve(rendererFallbackHardwareSnapshot("Hardware IPC did not answer before the renderer timeout."));
+        }, HARDWARE_REQUEST_TIMEOUT_MS);
+      })
+    ]);
+  } finally {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
+  }
 }
 
 function HardwareMetricTile({ glyph, metric }: { glyph: string; metric: HardwareMetric }) {
@@ -896,7 +979,7 @@ function HardwareSpace() {
     let cancelled = false;
     let timer: number | undefined;
     const refresh = () => {
-      void window.forgeShell?.getHardwareTelemetrySnapshot?.()
+      void requestHardwareTelemetry()
         .then((next) => {
           if (cancelled) return;
           setSnapshot(next ?? null);
