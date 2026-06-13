@@ -4074,15 +4074,7 @@ export function PanelsChatBottomSlice({
           disabled={!canSend || composerSendBusy}
         >
           {composerSendBusy ? (
-            <span className="sendPixelLoader" aria-hidden="true">
-              {Array.from({ length: 9 }, (_, index) => (
-                <span
-                  className="sendPixelLoader__pixel"
-                  key={`send-pixel-${index}`}
-                  style={{ "--pixel-index": index } as CSSProperties}
-                />
-              ))}
-            </span>
+            <span className="loader" aria-hidden="true" />
           ) : (
             <svg className="sendGlyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path

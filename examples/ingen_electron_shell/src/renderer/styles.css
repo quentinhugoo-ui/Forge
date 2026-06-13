@@ -1812,24 +1812,35 @@ button {
   transform-origin: center;
 }
 
+/* From Uiverse.io by Fernando-sv */
 .loader {
-  width: 45px;
-  height: 40px;
-  background: linear-gradient(#0000 calc(1*100%/6),#fff 0 calc(3*100%/6),#0000 0),
-            linear-gradient(#0000 calc(2*100%/6),#fff 0 calc(4*100%/6),#0000 0),
-            linear-gradient(#0000 calc(3*100%/6),#fff 0 calc(5*100%/6),#0000 0);
-  background-size: 10px 400%;
-  background-repeat: no-repeat;
-  animation: matrix 1s infinite linear;
+  border: 4px solid rgba(0, 0, 0, .1);
+  border-left-color: transparent;
+  border-radius: 50%;
 }
 
-@keyframes matrix {
+.loader {
+  border: 4px solid rgba(0, 0, 0, .1);
+  border-left-color: transparent;
+  width: 36px;
+  height: 36px;
+}
+
+.loader {
+  border: 4px solid rgba(0, 0, 0, .1);
+  border-left-color: transparent;
+  width: 36px;
+  height: 36px;
+  animation: spin89345 1s linear infinite;
+}
+
+@keyframes spin89345 {
   0% {
-    background-position: 0% 100%, 50% 100%, 100% 100%
+    transform: rotate(0deg);
   }
 
   100% {
-    background-position: 0% 0%, 50% 0%, 100% 0%
+    transform: rotate(360deg);
   }
 }
 
@@ -6528,143 +6539,6 @@ ol.assistantText__list li::before {
 .composer__send--empty .sendGlyph {
   color: var(--forge-muted);
   opacity: 0.5;
-}
-
-.sendPixelLoader {
-  position: relative;
-  display: block;
-  width: 18px;
-  height: 18px;
-}
-
-.sendPixelLoader__pixel {
-  --pixel-color: #6fb6cf;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 3px;
-  height: 3px;
-  border-radius: 1px;
-  background: var(--pixel-color);
-  box-shadow: 0 0 4px rgba(111, 182, 207, 0.32);
-  opacity: 0;
-  offset-path: path("M 2.5 2.5 H 15.5 V 15.5 H 2.5 Z");
-  offset-distance: 0%;
-  offset-rotate: 0deg;
-  animation: sendPixelTrace 940ms steps(24, end) infinite;
-  animation-delay: calc(var(--pixel-index) * -82ms);
-}
-
-.sendPixelLoader__pixel:nth-child(2) {
-  --pixel-color: #9a8fd0;
-  box-shadow: 0 0 4px rgba(154, 143, 208, 0.32);
-}
-
-.sendPixelLoader__pixel:nth-child(3) {
-  --pixel-color: #cf8aae;
-  box-shadow: 0 0 4px rgba(207, 138, 174, 0.3);
-}
-
-.sendPixelLoader__pixel:nth-child(4) {
-  --pixel-color: #6dbdca;
-  box-shadow: 0 0 4px rgba(109, 189, 202, 0.3);
-}
-
-.sendPixelLoader__pixel:nth-child(5) {
-  --pixel-color: #d2be68;
-  box-shadow: 0 0 4px rgba(210, 190, 104, 0.3);
-}
-
-.sendPixelLoader__pixel:nth-child(6) {
-  --pixel-color: #cf9368;
-  box-shadow: 0 0 4px rgba(207, 147, 104, 0.3);
-}
-
-.sendPixelLoader__pixel:nth-child(7) {
-  --pixel-color: #70bea0;
-  box-shadow: 0 0 4px rgba(112, 190, 160, 0.3);
-}
-
-.sendPixelLoader__pixel:nth-child(8) {
-  --pixel-color: #8992d0;
-  box-shadow: 0 0 4px rgba(137, 146, 208, 0.31);
-}
-
-.sendPixelLoader__pixel:nth-child(9) {
-  --pixel-color: #cf7272;
-  box-shadow: 0 0 4px rgba(207, 114, 114, 0.28);
-}
-
-@keyframes sendPixelTrace {
-  0%,
-  100% {
-    opacity: 0;
-    offset-distance: 0%;
-    transform: scale(0.72);
-  }
-
-  12% {
-    opacity: 1;
-    transform: scale(1);
-  }
-
-  64% {
-    opacity: 0.66;
-    transform: scale(0.86);
-  }
-
-  96% {
-    opacity: 1;
-    offset-distance: 100%;
-    transform: scale(0.72);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sendPixelLoader__pixel {
-    animation: none;
-  }
-
-  .sendPixelLoader__pixel {
-    opacity: 0.86;
-    transform: none;
-  }
-
-  .sendPixelLoader__pixel:nth-child(1) {
-    offset-distance: 0%;
-  }
-
-  .sendPixelLoader__pixel:nth-child(2) {
-    offset-distance: 12.5%;
-  }
-
-  .sendPixelLoader__pixel:nth-child(3) {
-    offset-distance: 25%;
-  }
-
-  .sendPixelLoader__pixel:nth-child(4) {
-    offset-distance: 37.5%;
-  }
-
-  .sendPixelLoader__pixel:nth-child(5) {
-    offset-distance: 50%;
-  }
-
-  .sendPixelLoader__pixel:nth-child(6) {
-    offset-distance: 62.5%;
-  }
-
-  .sendPixelLoader__pixel:nth-child(7) {
-    offset-distance: 75%;
-  }
-
-  .sendPixelLoader__pixel:nth-child(8) {
-    offset-distance: 87.5%;
-  }
-
-  .sendPixelLoader__pixel:nth-child(9) {
-    offset-distance: 100%;
-  }
 }
 
 .bottomControls {
