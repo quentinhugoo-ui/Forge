@@ -1036,6 +1036,53 @@ async function queryLinuxSystemTemperature(): Promise<number | null> {
   return null;
 }
 
+function queryWindowsSystemTemperature(): number | null {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  const result = spawnSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      "Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue | Select-Object -ExpandProperty CurrentTemperature | ConvertTo-Json -Compress"
+    ],
+    { encoding: "utf8", stdio: "pipe", timeout: 2500, windowsHide: true }
+  );
+  if (result.status !== 0 || !result.stdout.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown;
+    const values = Array.isArray(parsed) ? parsed : [parsed];
+    for (const value of values) {
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+        return roundMetric(value / 10 - 273.15);
+      }
+    }
+  } catch {
+    const parsed = Number.parseFloat(result.stdout.trim());
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return roundMetric(parsed / 10 - 273.15);
+    }
+  }
+  return null;
+}
+
+async function querySystemTemperature(): Promise<{ value: number | null; source: HardwareTelemetrySnapshot["thermal"]["source"] }> {
+  const linuxTemperature = await queryLinuxSystemTemperature();
+  if (linuxTemperature !== null) {
+    return { value: linuxTemperature, source: "linux-thermal" };
+  }
+  const windowsTemperature = queryWindowsSystemTemperature();
+  if (windowsTemperature !== null) {
+    return { value: windowsTemperature, source: "windows-acpi" };
+  }
+  return { value: null, source: "unavailable" };
+}
+
 function topProcessSnapshot(): HardwareProcessSnapshot[] {
   const current = process.cpuUsage();
   return [
@@ -1057,8 +1104,13 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
   const usedMemoryGb = Math.max(0, totalMemoryGb - freeMemoryGb);
   const memoryPercent = totalMemoryGb > 0 ? (usedMemoryGb / totalMemoryGb) * 100 : null;
   const nvidiaGpus = queryNvidiaGpus();
-  const drmGpus = nvidiaGpus.length > 0 ? [] : await queryLinuxDrmGpu();
-  const systemTemperature = await queryLinuxSystemTemperature();
+  const windowsGpus = nvidiaGpus.length > 0 ? [] : queryWindowsVideoControllers();
+  const drmGpus = nvidiaGpus.length > 0 || windowsGpus.length > 0 ? [] : await queryLinuxDrmGpu();
+  const systemTemperature = await querySystemTemperature();
+  const gpuNotes =
+    nvidiaGpus.length === 0 && windowsGpus.length > 0
+      ? ["Windows system fallback identifies adapters through Win32_VideoController; live GPU load, thermals, fan and power require vendor telemetry."]
+      : [];
   const snapshot: HardwareTelemetrySnapshot = {
     schema: "ingen.hardware.telemetry.snapshot.v1",
     platform: os.platform(),
@@ -1077,10 +1129,10 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
       utilization: hardwareMetric("RAM load", roundMetric(memoryPercent), "%", metricStatusPercent(memoryPercent, 78, 90))
     },
     thermal: {
-      systemTemperature: hardwareMetric("System temperature", systemTemperature, "C", metricStatusTemperature(systemTemperature)),
-      source: systemTemperature === null ? "unavailable" : "linux-thermal"
+      systemTemperature: hardwareMetric("System temperature", systemTemperature.value, "C", metricStatusTemperature(systemTemperature.value)),
+      source: systemTemperature.source
     },
-    gpus: [...nvidiaGpus, ...drmGpus],
+    gpus: [...nvidiaGpus, ...windowsGpus, ...drmGpus],
     topProcesses: topProcessSnapshot(),
     governor: {
       profile: "balanced",
@@ -1089,6 +1141,7 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
       controlAuthority: "app-budget-only",
       fanControl: "locked",
       notes: [
+        ...gpuNotes,
         "Fan and power-profile writes stay locked until an OEM or driver API is explicitly promoted.",
         "Monster and Banger should consume these budgets before scheduling local GPU work."
       ]
@@ -8358,21 +8411,6 @@ function installTerminalIpc(): void {
     return workspaceChoiceResult(false);
   });
 
-  ipcMain.handle("forge:get-hardware-telemetry-snapshot", async (event): Promise<HardwareTelemetrySnapshot> => {
-    const snapshot = await hardwareTelemetrySnapshot();
-    if (!validateSender(event)) {
-      return {
-        ...snapshot,
-        governor: {
-          ...snapshot.governor,
-          notes: ["Hardware telemetry rejected by sender validation."]
-        },
-        proofHash: hashJson({ rejected: "bad_sender", sampledAt: snapshot.sampledAt })
-      };
-    }
-    return snapshot;
-  });
-
   ipcMain.handle("forge:choose-workspace-folder", async (event): Promise<WorkspaceChoiceResult> => {
     if (!validateSender(event)) {
       const proofHash = hashJson({ workspace: "choose", reason: "bad_sender" });
@@ -11362,6 +11400,21 @@ function panelsChatBottomCommandResult(
 }
 
 function installIpc(): void {
+  ipcMain.handle("forge:get-hardware-telemetry-snapshot", async (event): Promise<HardwareTelemetrySnapshot> => {
+    const snapshot = await hardwareTelemetrySnapshot();
+    if (!validateSender(event)) {
+      return {
+        ...snapshot,
+        governor: {
+          ...snapshot.governor,
+          notes: ["Hardware telemetry rejected by sender validation."]
+        },
+        proofHash: hashJson({ rejected: "bad_sender", sampledAt: snapshot.sampledAt })
+      };
+    }
+    return snapshot;
+  });
+
   ipcMain.handle("forge:connect-llm-provider", async (event, provider: unknown): Promise<LlmProviderConnectResult> => {
     if (!validateSender(event)) {
       const proofHash = hashJson({ provider, accepted: false, reason: "bad_sender" });

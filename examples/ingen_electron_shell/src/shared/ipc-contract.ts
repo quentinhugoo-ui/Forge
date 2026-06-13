@@ -475,7 +475,7 @@ export interface HardwareTelemetrySnapshot {
   };
   thermal: {
     systemTemperature: HardwareMetric;
-    source: "linux-thermal" | "unavailable";
+    source: "linux-thermal" | "windows-acpi" | "unavailable";
   };
   gpus: HardwareGpuSnapshot[];
   topProcesses: HardwareProcessSnapshot[];

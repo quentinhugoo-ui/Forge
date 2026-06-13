@@ -829,7 +829,7 @@ function MemorySpace() {
 }
 
 const HARDWARE_POLL_MS = 1800;
-const HARDWARE_REQUEST_TIMEOUT_MS = 2200;
+const HARDWARE_REQUEST_TIMEOUT_MS = 6500;
 
 function metricValue(metric: HardwareMetric): string {
   if (metric.value === null) return "N/A";
@@ -1074,6 +1074,14 @@ function HardwareSpace() {
             <HardwareGpuPanel gpu={gpu} key={`${gpu.name}-${gpu.source}`} />
           ))}
         </div>
+
+        {snapshot.governor.notes.length > 0 ? (
+          <section className="hardwareNotes" aria-label="Hardware telemetry notes">
+            {snapshot.governor.notes.map((note) => (
+              <p key={note}>{note}</p>
+            ))}
+          </section>
+        ) : null}
 
         <section className="hardwareProcessPanel" aria-label="InGen process">
           <header>

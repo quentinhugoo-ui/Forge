@@ -4755,8 +4755,7 @@ button {
 
 .transcriptAttachment--video .transcriptAttachment__media {
   min-width: 100%;
-  /* Fill the blob so no straight letterbox edge cuts through the feathered mask. */
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .transcriptAttachment--video .transcriptAttachment__media::-webkit-media-controls,
@@ -8520,6 +8519,7 @@ ol.assistantText__list li::before {
 .hardwareSummary,
 .hardwareGovernor,
 .hardwareGpuPanel,
+.hardwareNotes,
 .hardwareProcessPanel {
   border: 1px solid color-mix(in oklab, var(--forge-line), transparent 38%);
   background: color-mix(in oklab, var(--forge-surface), transparent 62%);
@@ -8721,6 +8721,22 @@ ol.assistantText__list li::before {
   gap: 8px;
   min-width: 0;
   padding: 12px;
+}
+
+.hardwareNotes {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 44%);
+  background: color-mix(in oklab, var(--forge-panel), transparent 78%);
+}
+
+.hardwareNotes p {
+  margin: 0;
+  color: var(--forge-muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .hardwareProcessRow {

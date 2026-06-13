@@ -374,7 +374,7 @@ function TranscriptImageDreamPreview({
           y="0"
           width={box.width}
           height={box.height}
-          preserveAspectRatio="xMidYMid slice"
+          preserveAspectRatio="xMidYMid meet"
           mask={`url(#${maskId})`}
         />
       </svg>
@@ -2947,7 +2947,7 @@ function TranscriptCanvas({
     hadPendingBeforeRender = false;
   } else if (assistantAnimationRef.current.sessionId !== activeSessionId) {
     const previous = assistantAnimationRef.current;
-    const keepDraftResponseLive = previous.sessionId === "" && previous.hadPending;
+    const keepDraftResponseLive = previous.hadPending;
     hadPendingBeforeRender = keepDraftResponseLive ? previous.hadPending : false;
     assistantAnimationRef.current = {
       sessionId: activeSessionId,

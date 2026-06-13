@@ -29,4 +29,9 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("const animationSource = useMemo(() => assistantVisibleAnimationSource(message.text), [message.text]);");
     expect(animationSource).toContain("const visibleText = animationSource.slice(0, visibleCharacters);");
   });
+
+  it("keeps pending-response animation live across session materialization", () => {
+    expect(animationSource).toContain("const keepDraftResponseLive = previous.hadPending");
+    expect(animationSource).not.toContain('previous.sessionId === "" && previous.hadPending');
+  });
 });
