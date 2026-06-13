@@ -50,6 +50,10 @@ describe("Google Earth search injection", () => {
     expect(mainSource).toContain("assistantMapsSearchLabelFromText(message.text)");
     expect(mainSource).toContain("mapsResultTargetFromText(text)");
     expect(mainSource).toContain("injectNativeMapsSearchViaLockedLandmark(label)");
+    expect(mainSource).toContain("googleEarthLockedSearchPrepareFunction()");
+    expect(mainSource).toContain('debug.sendCommand("Input.insertText", { text: query })');
+    expect(mainSource).toContain('key: "ArrowDown"');
+    expect(mainSource).toContain('debug.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown"');
     expect(mainSource).toContain('debug.sendCommand("DOM.resolveNode", { backendNodeId: landmark.backendNodeId })');
     expect(mainSource).toContain('debug.sendCommand("Runtime.callFunctionOn"');
     expect(mainSource).toContain("await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(assistantMessage)");

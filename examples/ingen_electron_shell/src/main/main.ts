@@ -7695,6 +7695,64 @@ function(query) {
 `;
 }
 
+function googleEarthLockedSearchPrepareFunction(): string {
+  return `
+function() {
+  const searchControl = this;
+  if (!searchControl) return { accepted: false, reason: "missing_control" };
+  const view = searchControl.ownerDocument?.defaultView || window;
+  searchControl.focus?.();
+  searchControl.click?.();
+  searchControl.select?.();
+  if ("value" in searchControl) {
+    const proto = searchControl instanceof view.HTMLTextAreaElement ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) {
+      setter.call(searchControl, "");
+    } else {
+      searchControl.value = "";
+    }
+  } else {
+    searchControl.textContent = "";
+  }
+  const inputEvent = typeof view.InputEvent === "function"
+    ? new view.InputEvent("input", { bubbles: true, composed: true, data: null, inputType: "deleteContentBackward" })
+    : new view.Event("input", { bubbles: true, composed: true });
+  searchControl.dispatchEvent(inputEvent);
+  return {
+    accepted: true,
+    tagName: searchControl.tagName || "",
+    ariaLabel: searchControl.getAttribute?.("aria-label") || "",
+    placeholder: searchControl.getAttribute?.("placeholder") || ""
+  };
+}
+`;
+}
+
+async function dispatchGoogleEarthKeyboardSearch(
+  debug: Electron.Debugger,
+  query: string,
+  layout?: NativeDomRamUiTreeNode["layout"]
+): Promise<void> {
+  if (layout && layout.width > 0 && layout.height > 0) {
+    const x = Math.round(layout.x + Math.min(Math.max(layout.width / 2, 24), layout.width - 8));
+    const y = Math.round(layout.y + Math.min(Math.max(layout.height / 2, 10), layout.height - 4));
+    await debug.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", clickCount: 0 });
+    await debug.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+    await debug.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    await delay(80);
+  }
+  await debug.sendCommand("Input.insertText", { text: query });
+  await delay(950);
+  const arrowDown = { key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40 };
+  await debug.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...arrowDown });
+  await debug.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...arrowDown });
+  await delay(140);
+  const enter = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+  await debug.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...enter });
+  await debug.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...enter });
+}
+
 function googleEarthSearchFallbackScript(searchQuery: string): string {
   return `
 (() => {
@@ -7780,14 +7838,15 @@ async function injectNativeMapsSearchViaLockedLandmark(searchQuery: string): Pro
       };
       const objectId = resolved.object?.objectId;
       if (objectId) {
-        const injected = await debug.sendCommand("Runtime.callFunctionOn", {
+        const prepared = await debug.sendCommand("Runtime.callFunctionOn", {
           objectId,
-          functionDeclaration: googleEarthLockedSearchInjectionFunction(),
-          arguments: [{ value: query }],
+          functionDeclaration: googleEarthLockedSearchPrepareFunction(),
+          arguments: [],
           awaitPromise: false,
           returnByValue: true
         }) as { result?: { value?: { accepted?: boolean } } };
-        if (injected.result?.value?.accepted === true) {
+        if (prepared.result?.value?.accepted === true) {
+          await dispatchGoogleEarthKeyboardSearch(debug, query, landmark.layout);
           return true;
         }
       }
