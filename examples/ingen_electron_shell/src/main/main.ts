@@ -7382,11 +7382,11 @@ function rememberMapsDomWebviewGuest(webContents: Electron.WebContents, src = ""
 }
 
 function mapsCartographyWebContents(): Electron.WebContents | null {
-  if (mapsDomWebviewGuest && !mapsDomWebviewGuest.isDestroyed()) {
-    return mapsDomWebviewGuest;
-  }
   if (nativeMapsView && !nativeMapsView.webContents.isDestroyed()) {
     return nativeMapsView.webContents;
+  }
+  if (mapsDomWebviewGuest && !mapsDomWebviewGuest.isDestroyed()) {
+    return mapsDomWebviewGuest;
   }
   return null;
 }
@@ -7630,6 +7630,31 @@ function primaryAssistantGeoEntityLabelFromText(text: string): string {
   ASSISTANT_GEO_ENTITY_PATTERN.lastIndex = 0;
   const match = ASSISTANT_GEO_ENTITY_PATTERN.exec(text);
   return match?.[2]?.replace(/\s+/g, " ").trim() ?? "";
+}
+
+function mapsResultTargetFromText(text: string): string {
+  const match = /(?:^|\n)MAPS_RESULT[\s\S]*?(?:^|\n)target=("[^\n"]*"|'[^\n']*'|[^\n]*)/m.exec(text);
+  const raw = match?.[1]?.trim() ?? "";
+  if (!raw) {
+    return "";
+  }
+  if ((raw.startsWith("\"") && raw.endsWith("\"")) || (raw.startsWith("'") && raw.endsWith("'"))) {
+    try {
+      return JSON.parse(raw.replace(/^'/, "\"").replace(/'$/, "\"")).replace(/\s+/g, " ").trim();
+    } catch {
+      return raw.slice(1, -1).replace(/\s+/g, " ").trim();
+    }
+  }
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+function assistantMapsSearchLabelFromText(text: string): string {
+  return (
+    primaryAssistantGeoEntityLabelFromText(text) ||
+    extractMapsCodeAct(text)?.target ||
+    extractMapsCodeAct(text)?.query ||
+    mapsResultTargetFromText(text)
+  );
 }
 
 function googleEarthLockedSearchInjectionFunction(): string {
@@ -10609,7 +10634,7 @@ async function injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(message: Tran
   if (message.role !== "assistant") {
     return false;
   }
-  const label = primaryAssistantGeoEntityLabelFromText(message.text);
+  const label = assistantMapsSearchLabelFromText(message.text);
   if (!label) {
     return false;
   }

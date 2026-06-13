@@ -43,7 +43,9 @@ describe("Google Earth search injection", () => {
     expect(mainSource).toContain("domSnapshotUiTree(cdpSnapshot)");
     expect(mainSource).toContain("googleEarthSearchBarLandmarks(nodes)");
     expect(mainSource).toContain('role: "google_earth_search_bar"');
-    expect(mainSource).toContain("primaryAssistantGeoEntityLabelFromText(message.text)");
+    expect(mainSource).toContain("primaryAssistantGeoEntityLabelFromText(text)");
+    expect(mainSource).toContain("assistantMapsSearchLabelFromText(message.text)");
+    expect(mainSource).toContain("mapsResultTargetFromText(text)");
     expect(mainSource).toContain("injectNativeMapsSearchViaLockedLandmark(label)");
     expect(mainSource).toContain('debug.sendCommand("DOM.resolveNode", { backendNodeId: landmark.backendNodeId })');
     expect(mainSource).toContain('debug.sendCommand("Runtime.callFunctionOn"');
@@ -51,6 +53,9 @@ describe("Google Earth search injection", () => {
     expect(mainSource).toContain("commitAssistantMessageWithProgressiveSeed(nextTranscript, assistantMessage");
     expect(mainSource).toContain("layoutByNodeIndex");
     expect(mainSource).toContain("backendNodeId");
+    expect(mainSource.indexOf("if (nativeMapsView && !nativeMapsView.webContents.isDestroyed())")).toBeLessThan(
+      mainSource.indexOf("if (mapsDomWebviewGuest && !mapsDomWebviewGuest.isDestroyed())")
+    );
     expect(mainSource).toContain("app.getAppMetrics().find((metric) => metric.pid === processId)?.memory");
     expect(mainSource).toContain("DOM_RAM_ARTIFACT_CONTRACTS");
     expect(mainSource).toContain('"live_cdp_domsnapshot_csr_graph_incremental_node_edge_u64_records"');
