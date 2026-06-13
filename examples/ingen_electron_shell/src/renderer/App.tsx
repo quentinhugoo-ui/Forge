@@ -494,7 +494,7 @@ export function App() {
     }
     setWebExplorerParallelIndex(parallelSessionIndex);
     if (options?.keepMapsOpen && parallelPrompts.length <= 1) {
-      setParallelPrompts(["", ""]);
+      setParallelPrompts([""]);
     } else if (parallelPrompts.length <= 1) {
       setParallelPrompts([""]);
     }
@@ -517,7 +517,7 @@ export function App() {
     setMapsParallelIndex(parallelSessionIndex);
     canvasMapsOpenRef.current = true;
     if (parallelPrompts.length <= 1) {
-      setParallelPrompts(["", ""]);
+      setParallelPrompts([""]);
     }
     setCanvasMapsOpen(true);
   }, [parallelPrompts.length]);
