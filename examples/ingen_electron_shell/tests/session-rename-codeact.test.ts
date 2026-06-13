@@ -14,6 +14,9 @@ describe("session rename CodeAct", () => {
     expect(generatedSource).toContain('export const BRAIN_RENAME_SESSION_COMMAND = "/rename_session_" as const;');
     expect(generatedSource).toContain("BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION");
     expect(mainSource).toContain("Au premier message utilisateur de cette session");
+    expect(mainSource).toContain('const PENDING_LLM_SESSION_TITLE = "New session"');
+    expect(mainSource).toContain("label: PENDING_LLM_SESSION_TITLE");
+    expect(mainSource).not.toContain("function sessionLabelFromDraft");
     expect(mainSource).toContain("extractRenameSessionCodeAct");
     expect(mainSource).toContain("renameChatSession(session, request)");
     expect(mainSource).toContain("archiveSession.title = request.title");

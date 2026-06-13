@@ -8123,11 +8123,7 @@ function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function sessionLabelFromDraft(draft: string): string {
-  const compact = draft.replace(/\s+/g, " ").trim();
-  if (!compact) return "New session";
-  return compact.length <= 42 ? compact : `${compact.slice(0, 39).trimEnd()}...`;
-}
+const PENDING_LLM_SESSION_TITLE = "New session";
 
 function normalizeSessionTitle(value: string): string {
   const compact = value
@@ -8227,7 +8223,7 @@ function ensureBrainBootTranscript(sessionId: string): void {
   panelsChatBottomState.transcript = [message, ...panelsChatBottomState.transcript];
 }
 
-function ensureActiveChatSession(draft: string, options: { markWorking?: boolean } = {}): SidebarSessionItem {
+function ensureActiveChatSession(_draft: string, options: { markWorking?: boolean } = {}): SidebarSessionItem {
   const markWorking = options.markWorking ?? true;
   const existing = localChatSessions.find((session) => session.sessionId === panelsChatBottomState.activeSessionId);
   if (existing) {
@@ -8245,16 +8241,13 @@ function ensureActiveChatSession(draft: string, options: { markWorking?: boolean
       materialized.working = true;
       materialized.date = todayIsoDate();
     }
-    if (materialized.label === "New session") {
-      materialized.label = sessionLabelFromDraft(draft);
-    }
     ensureBrainBootTranscript(materialized.sessionId);
     sidebarState.recentSessionId = materialized.sessionId;
     return materialized;
   }
   const session: SidebarSessionItem = {
     sessionId: generateChatSessionId(),
-    label: sessionLabelFromDraft(draft),
+    label: PENDING_LLM_SESSION_TITLE,
     date: todayIsoDate(),
     section,
     workspaceLabel: activeSessionWorkspaceLabel(section),
@@ -8277,7 +8270,7 @@ function cleanParallelLaneLabel(label: string): string {
     .replace(/^Par{1,2}al{1,2}el\s+\d+\s*:\s*/i, "")
     .replace(/(^|\s+\/\s+)\d+\s*:\s*/g, "$1")
     .trim();
-  return cleaned || "New session";
+  return cleaned || PENDING_LLM_SESSION_TITLE;
 }
 
 function sessionById(sessionId: string): SidebarSessionItem | undefined {
@@ -8300,7 +8293,7 @@ function updateParallelGroupMetadata(groupId: string): void {
   }
 }
 
-function ensureParallelChatLane(index: number, draft: string): { sessionId: string; transcript: TranscriptMessage[]; groupId: string } {
+function ensureParallelChatLane(index: number, _draft: string): { sessionId: string; transcript: TranscriptMessage[]; groupId: string } {
   const existing = parallelChatLanes.get(index);
   if (existing) {
     sidebarState.recentSessionId = existing.groupId;
@@ -8324,7 +8317,7 @@ function ensureParallelChatLane(index: number, draft: string): { sessionId: stri
   const section = headerState.activeSection === "shell" ? "forge" : headerState.activeSection;
   const session: SidebarSessionItem = {
     sessionId: generateChatSessionId(),
-    label: `Parallel ${index + 1}: ${sessionLabelFromDraft(draft)}`,
+    label: `Parallel ${index + 1}: ${PENDING_LLM_SESSION_TITLE}`,
     date: todayIsoDate(),
     section,
     workspaceLabel: activeSessionWorkspaceLabel(section),
