@@ -762,6 +762,9 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("assistantText__heading");
     expect(rendererSource).toContain("assistantText__list");
     expect(rendererSource).toContain("AssistantMarkdownText messageId={message.id}");
+    expect(stylesSource).toContain("--assistant-mark-accent");
+    expect(stylesSource).toContain("--assistant-mark-line");
+    expect(stylesSource).toContain("--assistant-mark-radius");
     expect(stylesSource).toContain(".assistantText__body");
     expect(stylesSource).toContain(".assistantText__heading");
     expect(stylesSource).toContain(".assistantText__list");
@@ -784,7 +787,7 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain("background: transparent");
     expect(stylesSource).toContain(".assistantText__quote");
     expect(stylesSource).toContain(".assistantText__quote::before");
-    expect(stylesSource).toContain("border-left: 1px solid color-mix(in oklab, #67e8f9");
+    expect(stylesSource).toContain("border-left: 1px solid var(--assistant-mark-line)");
     expect(stylesSource).toContain("overflow: visible");
     expect(stylesSource).not.toContain("border-radius: 22px 13px 24px 11px / 16px 24px 15px 22px");
     expect(stylesSource).toContain('content: "\\201C"');
@@ -799,10 +802,10 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantText__divider");
     expect(stylesSource).toContain(".assistantText strong");
     expect(stylesSource).toContain(".assistantText code");
-    expect(stylesSource).toContain("background: color-mix(in oklab, var(--forge-line), transparent 38%)");
+    expect(stylesSource).toContain("border: 1px solid var(--assistant-mark-line-soft)");
     expect(stylesSource).toContain(".assistantText__mathToken");
     expect(stylesSource).toContain(".assistantText__mathPill");
-    expect(stylesSource).toContain("border-radius: 5px");
+    expect(stylesSource).toContain("box-shadow: none");
     expect(stylesSource).toContain(".assistantText__mathComputeHint");
     expect(stylesSource).toContain("appearance: none");
     expect(stylesSource).toContain("cursor: pointer");

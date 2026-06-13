@@ -4893,6 +4893,13 @@ button {
 }
 
 .assistantText {
+  --assistant-mark-accent: #67e8f9;
+  --assistant-mark-accent-strong: #5eead4;
+  --assistant-mark-line: color-mix(in oklab, var(--forge-line), transparent 54%);
+  --assistant-mark-line-soft: color-mix(in oklab, var(--forge-line), transparent 74%);
+  --assistant-mark-label: color-mix(in oklab, var(--forge-muted), var(--forge-text) 24%);
+  --assistant-mark-text: color-mix(in oklab, var(--forge-text), var(--forge-muted) 6%);
+  --assistant-mark-radius: 6px;
   display: block;
   width: 100%;
   white-space: normal;
@@ -4977,7 +4984,7 @@ button {
 }
 
 .assistantText__list li::marker {
-  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 18%);
+  color: var(--assistant-mark-label);
 }
 
 .assistantText__taskList {
@@ -4996,7 +5003,7 @@ button {
   gap: 10px;
   margin: 0;
   padding: 2px 0 10px;
-  color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 8%);
+  color: var(--assistant-mark-text);
 }
 
 .assistantText__taskItem:last-child {
@@ -5021,8 +5028,8 @@ button {
   width: 1px;
   background: linear-gradient(
     180deg,
-    color-mix(in oklab, var(--forge-line), #5eead4 18%),
-    color-mix(in oklab, var(--forge-line), transparent 72%)
+    color-mix(in oklab, var(--assistant-mark-line), var(--assistant-mark-accent-strong) 18%),
+    var(--assistant-mark-line-soft)
   );
   transform: translateX(-50%);
 }
@@ -5034,9 +5041,9 @@ button {
 .assistantText__taskCheckDot {
   width: 7px;
   height: 7px;
-  border: 1px solid color-mix(in oklab, var(--forge-muted), transparent 12%);
+  border: 1px solid var(--assistant-mark-label);
   border-radius: 999px;
-  background: color-mix(in oklab, var(--forge-bg), #ffffff 5%);
+  background: transparent;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--forge-bg), transparent 3%);
   transform: scale(1);
   transition:
@@ -5051,16 +5058,16 @@ button {
 .assistantText__taskCheck--checked .assistantText__taskCheckDot {
   width: 9px;
   height: 9px;
-  border-color: color-mix(in oklab, #5eead4, white 14%);
-  background: #5eead4;
+  border-color: color-mix(in oklab, var(--assistant-mark-accent-strong), white 14%);
+  background: var(--assistant-mark-accent-strong);
   box-shadow:
     0 0 0 3px color-mix(in oklab, var(--forge-bg), transparent 2%),
-    0 0 14px color-mix(in oklab, #5eead4, transparent 52%);
+    0 0 14px color-mix(in oklab, var(--assistant-mark-accent-strong), transparent 52%);
   transform: scale(1.02);
 }
 
 .assistantText__taskItem:not(.assistantText__taskItem--checked) .assistantText__taskCheckRail {
-  background: color-mix(in oklab, var(--forge-line), transparent 70%);
+  background: var(--assistant-mark-line-soft);
 }
 
 .assistantText__taskText {
@@ -5068,9 +5075,9 @@ button {
 }
 
 .assistantText__taskItem--checked .assistantText__taskText {
-  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 18%);
+  color: var(--assistant-mark-label);
   text-decoration: line-through;
-  text-decoration-color: color-mix(in oklab, #5eead4, transparent 36%);
+  text-decoration-color: color-mix(in oklab, var(--assistant-mark-accent-strong), transparent 36%);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5082,9 +5089,9 @@ button {
 .assistantText__tableWrap {
   max-width: 100%;
   overflow-x: auto;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 22%);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--forge-bg), #ffffff 3%);
+  border: 1px solid var(--assistant-mark-line);
+  border-radius: var(--assistant-mark-radius);
+  background: transparent;
 }
 
 .assistantText__table {
@@ -5098,18 +5105,18 @@ button {
 .assistantText__table th,
 .assistantText__table td {
   padding: 9px 11px;
-  border-bottom: 1px solid color-mix(in oklab, var(--forge-line), transparent 36%);
+  border-bottom: 1px solid var(--assistant-mark-line-soft);
   vertical-align: top;
 }
 
 .assistantText__table th {
-  color: color-mix(in oklab, var(--forge-text), white 10%);
+  color: var(--assistant-mark-label);
   font-weight: 720;
-  background: color-mix(in oklab, var(--forge-line), transparent 52%);
+  background: transparent;
 }
 
 .assistantText__table tbody tr:nth-child(even) td {
-  background: color-mix(in oklab, var(--forge-line), transparent 78%);
+  background: transparent;
 }
 
 .assistantText__table tbody tr:last-child td {
@@ -5132,8 +5139,8 @@ button {
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 42%);
-  border-radius: 6px;
+  border: 1px solid var(--assistant-mark-line);
+  border-radius: var(--assistant-mark-radius);
   background: transparent;
   box-shadow: none;
 }
@@ -5144,7 +5151,7 @@ button {
   justify-content: flex-start;
   min-height: 28px;
   padding: 6px 10px;
-  border-bottom: 1px solid color-mix(in oklab, var(--forge-line), transparent 62%);
+  border-bottom: 1px solid var(--assistant-mark-line-soft);
   background: transparent;
 }
 
@@ -5155,7 +5162,7 @@ button {
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 24%);
+  color: var(--assistant-mark-label);
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 10px;
   font-weight: 680;
@@ -5193,7 +5200,7 @@ button {
   padding: 2px 0 2px 18px;
   overflow: visible;
   border: 0;
-  border-left: 1px solid color-mix(in oklab, #67e8f9, var(--forge-line) 58%);
+  border-left: 1px solid var(--assistant-mark-line);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
@@ -5211,7 +5218,7 @@ button {
   border: 0;
   border-radius: 0;
   background: color-mix(in oklab, var(--forge-bg), transparent 5%);
-  color: color-mix(in oklab, #67e8f9, white 8%);
+  color: var(--assistant-mark-accent);
   content: "\201C";
   font-family: Georgia, "Times New Roman", serif;
   font-size: 18px;
@@ -5242,7 +5249,7 @@ button {
 }
 
 .assistantText__callout--info {
-  --callout-color: #67e8f9;
+  --callout-color: var(--assistant-mark-accent);
 }
 
 .assistantText__callout--warning {
@@ -5250,7 +5257,7 @@ button {
 }
 
 .assistantText__callout--success {
-  --callout-color: #5eead4;
+  --callout-color: var(--assistant-mark-accent-strong);
 }
 
 .assistantText__callout--assumption {
@@ -5280,7 +5287,7 @@ button {
 .assistantText__callout p {
   min-width: 0;
   margin: 0;
-  color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 8%);
+  color: var(--assistant-mark-text);
   line-height: 1.5;
 }
 
@@ -5302,7 +5309,7 @@ button {
   margin: 2px 0;
   padding: 3px 0;
   border: 0;
-  border-block: 1px solid color-mix(in oklab, var(--forge-line), transparent 72%);
+  border-block: 1px solid var(--assistant-mark-line-soft);
   background: transparent;
 }
 
@@ -5314,7 +5321,7 @@ button {
   row-gap: 3px;
   min-width: 0;
   padding: 8px 0;
-  border-top: 1px solid color-mix(in oklab, var(--forge-line), transparent 82%);
+  border-top: 1px solid var(--assistant-mark-line-soft);
   background: transparent;
 }
 
@@ -5323,7 +5330,7 @@ button {
 }
 
 .assistantText__fact dt {
-  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 18%);
+  color: var(--assistant-mark-label);
   font-size: 11px;
   font-weight: 700;
   line-height: 1.35;
@@ -5333,7 +5340,7 @@ button {
 .assistantText__fact dd {
   min-width: 0;
   margin: 0;
-  color: color-mix(in oklab, var(--forge-text), white 5%);
+  color: var(--assistant-mark-text);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -5349,7 +5356,7 @@ button {
   }
 
   .assistantText__fact:nth-child(n) {
-    border-top: 1px solid color-mix(in oklab, var(--forge-line), transparent 82%);
+    border-top: 1px solid var(--assistant-mark-line-soft);
   }
 
   .assistantText__fact:first-child {
@@ -5362,7 +5369,7 @@ button {
   height: 1px;
   margin: 2px 0;
   border: 0;
-  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--forge-line), #67e8f9 20%), transparent);
+  background: linear-gradient(90deg, transparent, var(--assistant-mark-line), transparent);
 }
 
 .assistantText strong {
@@ -5371,9 +5378,10 @@ button {
 
 .assistantText code {
   padding: 1px 5px;
-  border-radius: 5px;
-  background: color-mix(in oklab, var(--forge-line), transparent 38%);
-  color: color-mix(in oklab, var(--forge-text), white 7%);
+  border: 1px solid var(--assistant-mark-line-soft);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--assistant-mark-text);
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 0.91em;
 }
@@ -5390,16 +5398,11 @@ button {
   display: inline-block;
   max-width: 100%;
   padding: 2px 7px 2px;
-  border: 1px solid color-mix(in oklab, #67e8f9, transparent 72%);
-  border-radius: 5px;
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in oklab, #0f172a, transparent 18%),
-      color-mix(in oklab, var(--forge-line), transparent 44%)
-    );
-  box-shadow: inset 0 1px 0 color-mix(in oklab, #ffffff, transparent 94%);
-  color: color-mix(in oklab, #e7f8ff, var(--forge-text) 32%);
+  border: 1px solid var(--assistant-mark-line-soft);
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--assistant-mark-text);
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 0.91em;
   font-weight: 560;
@@ -5421,7 +5424,7 @@ button {
   padding: 0;
   overflow: hidden;
   background: transparent;
-  color: color-mix(in oklab, #67e8f9, var(--forge-text) 26%);
+  color: color-mix(in oklab, var(--assistant-mark-accent), var(--forge-text) 26%);
   cursor: pointer;
   font: inherit;
   vertical-align: middle;
@@ -5432,14 +5435,14 @@ button {
 }
 
 .assistantText__mathComputeHint:focus-visible {
-  outline: 1px solid color-mix(in oklab, #67e8f9, transparent 18%);
+  outline: 1px solid color-mix(in oklab, var(--assistant-mark-accent), transparent 18%);
   outline-offset: 2px;
 }
 
 .assistantText__mathToken:hover .assistantText__mathComputeHint,
 .assistantText__mathToken:focus-within .assistantText__mathComputeHint {
   max-width: 128px;
-  color: color-mix(in oklab, #a7f3d0, #67e8f9 46%);
+  color: color-mix(in oklab, var(--assistant-mark-accent-strong), var(--assistant-mark-accent) 46%);
 }
 
 .assistantText__mathComputeIcon {
