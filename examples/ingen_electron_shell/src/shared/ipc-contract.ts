@@ -330,9 +330,9 @@ export interface CitySuggestion {
   label: string;
   city: string;
   country: string;
-  latitude: number;
-  longitude: number;
-  source: "photon";
+  latitude?: number;
+  longitude?: number;
+  source: "google_places" | "photon";
 }
 
 export interface CitySuggestionResult {

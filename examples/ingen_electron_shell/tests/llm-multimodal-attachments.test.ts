@@ -194,10 +194,17 @@ describe("LLM multimodal attachments", () => {
     expect(brainCanvasSource).toContain("const commitLocationMemory = (value: string)");
     expect(brainCanvasSource).toContain("function BrainMemoryLocationField");
     expect(brainCanvasSource).toContain("role=\"combobox\"");
+    expect(brainCanvasSource).toContain('label="Home city"');
+    expect(brainCanvasSource).not.toContain("Lieu de vie");
     expect(brainCanvasSource).toContain("searchCitySuggestions");
+    expect(brainCanvasSource).toContain("fallbackPhotonCitySuggestionLabels");
     expect(brainCanvasSource).not.toContain("HOME_LOCATION_SUGGESTIONS");
     expect(brainCanvasSource).not.toContain("Paris, France");
+    expect(brainCanvasSource).not.toContain("City lookup unavailable");
     expect(preloadCjsSource).toContain("forge:search-city-suggestions");
+    expect(mainSource).toContain("https://places.googleapis.com/v1/places:autocomplete");
+    expect(mainSource).toContain('includedPrimaryTypes: ["(cities)"]');
+    expect(mainSource).toContain("GOOGLE_PLACES_API_KEY");
     expect(mainSource).toContain("https://photon.komoot.io/api/");
     expect(mainSource).toContain('url.searchParams.append("layer", "city")');
     expect(mainSource).toContain('url.searchParams.append("layer", "locality")');

@@ -20,6 +20,45 @@ import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-stor
 
 type BrainSpace = "codeacts" | "memory" | "godel" | "personality";
 
+async function fallbackPhotonCitySuggestionLabels(query: string): Promise<string[]> {
+  const url = new URL("https://photon.komoot.io/api/");
+  url.searchParams.set("q", query);
+  url.searchParams.set("limit", "6");
+  url.searchParams.set("lang", "en");
+  url.searchParams.append("layer", "city");
+  url.searchParams.append("layer", "locality");
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    return [];
+  }
+  const payload = await response.json() as {
+    features?: Array<{
+      properties?: {
+        city?: unknown;
+        country?: unknown;
+        name?: unknown;
+      };
+    }>;
+  };
+  const seen = new Set<string>();
+  return (payload.features ?? [])
+    .map((feature) => {
+      const city = typeof feature.properties?.city === "string" && feature.properties.city.trim()
+        ? feature.properties.city.trim()
+        : typeof feature.properties?.name === "string"
+          ? feature.properties.name.trim()
+          : "";
+      const country = typeof feature.properties?.country === "string" ? feature.properties.country.trim() : "";
+      return city && country ? `${city}, ${country}` : city;
+    })
+    .filter((label) => {
+      if (!label || seen.has(label)) return false;
+      seen.add(label);
+      return true;
+    })
+    .slice(0, 6);
+}
+
 /* Stroke glyphs follow the sidebar icon contract: 24-unit viewBox, 1.65 stroke. */
 function Glyph({ kind, size = 16 }: { kind: string; size?: number }) {
   const base = {
@@ -486,16 +525,14 @@ function BrainMemoryLocationField({
     setStatus("loading");
     const timer = window.setTimeout(() => {
       const searchCitySuggestions = window.forgeShell?.searchCitySuggestions;
-      if (!searchCitySuggestions) {
-        setSuggestions([]);
-        setStatus("error");
-        return;
-      }
-      searchCitySuggestions(query)
-        .then((result) => {
+      const request = searchCitySuggestions
+        ? searchCitySuggestions(query).then((result) => result.suggestions.map((suggestion) => suggestion.label))
+        : fallbackPhotonCitySuggestionLabels(query);
+      request
+        .then((labels) => {
           if (cancelled) return;
-          setSuggestions(result.suggestions.map((suggestion) => suggestion.label));
-          setStatus(result.error ? "error" : "idle");
+          setSuggestions(labels);
+          setStatus("idle");
         })
         .catch(() => {
           if (cancelled) return;
@@ -583,7 +620,7 @@ function BrainMemoryLocationField({
           ) : null}
           {focused && query.length >= 2 && suggestions.length === 0 && status !== "idle" ? (
             <span className="brainMemoryLocationStatus" role="status">
-              {status === "loading" ? "Search..." : "City lookup unavailable"}
+              {status === "loading" ? "..." : "Offline"}
             </span>
           ) : null}
         </span>
@@ -727,7 +764,7 @@ function MemorySpace() {
               onChange={commitAgentMemory}
             />
             <BrainMemoryLocationField
-              label="Lieu de vie"
+              label="Home city"
               value={locationMemory.homeLocation}
               onChange={commitLocationMemory}
             />

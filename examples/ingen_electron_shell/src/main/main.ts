@@ -2965,6 +2965,14 @@ type PhotonFeature = {
   };
 };
 
+type GooglePlaceAutocompleteSuggestion = {
+  placePrediction?: {
+    text?: {
+      text?: unknown;
+    };
+  };
+};
+
 function citySuggestionError(query: string, message: string): CitySuggestionResult {
   const proofHash = hashJson({ citySuggestions: "photon", query, accepted: false, message });
   return {
@@ -2978,6 +2986,70 @@ function citySuggestionError(query: string, message: string): CitySuggestionResu
       proofHash
     }
   };
+}
+
+function googlePlacesApiKey(): string {
+  return (process.env.GOOGLE_PLACES_API_KEY ?? process.env.GOOGLE_MAPS_API_KEY ?? "").trim();
+}
+
+function googlePlaceSuggestionToCitySuggestion(suggestion: GooglePlaceAutocompleteSuggestion): CitySuggestion | null {
+  const label = typeof suggestion.placePrediction?.text?.text === "string"
+    ? suggestion.placePrediction.text.text.replace(/\s+/g, " ").trim()
+    : "";
+  if (!label) {
+    return null;
+  }
+  const [city = label, ...rest] = label.split(",").map((part) => part.trim()).filter(Boolean);
+  return {
+    label,
+    city,
+    country: rest.at(-1) ?? "",
+    source: "google_places"
+  };
+}
+
+async function searchGoogleCitySuggestions(query: string, apiKey: string): Promise<CitySuggestionResult | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3500);
+  try {
+    const response = await net.fetch("https://places.googleapis.com/v1/places:autocomplete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": "suggestions.placePrediction.text.text"
+      },
+      body: JSON.stringify({
+        input: query,
+        includedPrimaryTypes: ["(cities)"],
+        languageCode: "en"
+      }),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json() as { suggestions?: GooglePlaceAutocompleteSuggestion[] };
+    const seen = new Set<string>();
+    const suggestions = (payload.suggestions ?? [])
+      .map(googlePlaceSuggestionToCitySuggestion)
+      .filter((suggestion): suggestion is CitySuggestion => {
+        if (!suggestion || seen.has(suggestion.label)) return false;
+        seen.add(suggestion.label);
+        return true;
+      })
+      .slice(0, 6);
+    return {
+      schema: "ingen.brain.memory.city_suggestions.v1",
+      query,
+      suggestions,
+      proofHash: hashJson({ citySuggestions: "google_places", query, suggestions })
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function photonFeatureToCitySuggestion(feature: PhotonFeature): CitySuggestion | null {
@@ -3015,6 +3087,13 @@ async function searchCitySuggestions(queryValue: unknown): Promise<CitySuggestio
       proofHash: hashJson({ citySuggestions: "photon", query, skipped: "short_query" })
     };
   }
+  const apiKey = googlePlacesApiKey();
+  if (apiKey) {
+    const googleResult = await searchGoogleCitySuggestions(query, apiKey);
+    if (googleResult) {
+      return googleResult;
+    }
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 3500);
   try {
@@ -3034,7 +3113,10 @@ async function searchCitySuggestions(queryValue: unknown): Promise<CitySuggestio
       .map(photonFeatureToCitySuggestion)
       .filter((suggestion): suggestion is CitySuggestion => {
         if (!suggestion) return false;
-        const key = `${suggestion.label}|${suggestion.latitude.toFixed(4)}|${suggestion.longitude.toFixed(4)}`;
+        const coordinateKey = Number.isFinite(suggestion.latitude) && Number.isFinite(suggestion.longitude)
+          ? `${suggestion.latitude?.toFixed(4)}|${suggestion.longitude?.toFixed(4)}`
+          : "no-coordinates";
+        const key = `${suggestion.label}|${coordinateKey}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
