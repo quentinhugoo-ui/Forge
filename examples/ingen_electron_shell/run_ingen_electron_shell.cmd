@@ -36,8 +36,7 @@ C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionP
 if not errorlevel 1 set APP_ALREADY_RUNNING=1
 
 if "%APP_ALREADY_RUNNING%"=="1" (
-  echo InGen is already running. Sending focus request through Electron single-instance lock. >> "%LOG%"
-  goto start_electron
+  echo InGen is already running. Build freshness will still be checked before starting/focusing Electron. >> "%LOG%"
 )
 
 2>nul mkdir "%BUILD_LOCK%"

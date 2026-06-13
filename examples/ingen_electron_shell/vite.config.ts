@@ -13,7 +13,7 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: true,
     target: "es2024",
-    rollupOptions: {
+    rolldownOptions: {
       input: {
         main: resolve(currentDir, "index.html"),
         eventTextLab: resolve(currentDir, "event-text-lab.html")
