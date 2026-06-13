@@ -1024,7 +1024,7 @@ function HardwareSpace() {
             </span>
             <span>
               <strong>{snapshot.hostname}</strong>
-              <code>{snapshot.platform} / {snapshot.arch}</code>
+              <code>CPU {snapshot.cpu.model} / GPU {snapshot.gpus[0]?.name ?? "unavailable"}</code>
             </span>
           </div>
           <div className="hardwareSummary__proof">

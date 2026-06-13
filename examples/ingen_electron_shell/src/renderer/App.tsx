@@ -737,13 +737,6 @@ export function App() {
           })}
         </div>
         <div className="titlebar__drag" aria-hidden="true" />
-        <div className="hardwarePill" aria-label="Hardware status" title={`CPU: ${snapshot.cpuLabel}\nGPU: ${snapshot.gpuLabel}`}>
-          <span>CPU</span>
-          <code>{snapshot.cpuLabel}</code>
-          <i />
-          <span>GPU</span>
-          <code>{snapshot.gpuLabel}</code>
-        </div>
         <div className="titlebar__window">
           {WINDOW_CONTROLS.map((control) => {
             return (
