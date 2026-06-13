@@ -2619,11 +2619,6 @@ function AssistantMarkdownText({
           return (
             <figure className="assistantText__codeBlock" key={`${messageId}-code-${index}`}>
               <figcaption className="assistantText__codeHeader">
-                <span className="assistantText__codeWindowDots" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
                 <span className="assistantText__codeLanguage">{block.language || "code"}</span>
               </figcaption>
               <pre><code>{block.code}</code></pre>

@@ -752,7 +752,7 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("assistantText__taskList");
     expect(rendererSource).toContain("assistantText__codeBlock");
     expect(rendererSource).toContain("assistantText__codeHeader");
-    expect(rendererSource).toContain("assistantText__codeWindowDots");
+    expect(rendererSource).not.toContain("assistantText__codeWindowDots");
     expect(rendererSource).toContain("assistantText__codeLanguage");
     expect(rendererSource).toContain("assistantText__quote");
     expect(rendererSource).toContain("assistantText__callout--");
@@ -777,12 +777,16 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantText__taskText");
     expect(stylesSource).toContain(".assistantText__codeBlock");
     expect(stylesSource).toContain(".assistantText__codeHeader");
-    expect(stylesSource).toContain(".assistantText__codeWindowDots");
+    expect(stylesSource).not.toContain(".assistantText__codeWindowDots");
     expect(stylesSource).toContain(".assistantText__codeLanguage");
-    expect(stylesSource).toContain("border-left: 3px solid");
+    expect(stylesSource).toContain("box-shadow: none");
+    expect(stylesSource).toContain("border-left: 0");
+    expect(stylesSource).toContain("background: transparent");
     expect(stylesSource).toContain(".assistantText__quote");
     expect(stylesSource).toContain(".assistantText__quote::before");
-    expect(stylesSource).toContain("border-radius: 22px 13px 24px 11px / 16px 24px 15px 22px");
+    expect(stylesSource).toContain("border-left: 1px solid color-mix(in oklab, #67e8f9");
+    expect(stylesSource).toContain("overflow: visible");
+    expect(stylesSource).not.toContain("border-radius: 22px 13px 24px 11px / 16px 24px 15px 22px");
     expect(stylesSource).toContain('content: "\\201C"');
     expect(stylesSource).toContain(".assistantText__callout--warning");
     expect(stylesSource).toContain("grid-template-columns: minmax(72px, max-content) minmax(0, 1fr)");
