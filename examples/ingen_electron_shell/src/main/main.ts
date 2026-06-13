@@ -9041,20 +9041,31 @@ function executeAssistantAirbnbCodeAct(message: TranscriptMessage, parallelSessi
 }
 
 function removeRenameSessionChatter(text: string): string {
+  const renameSentence = /(?:^|[\r\n]\s*|(?<=[.!?]\s))(?:je\s+)?(?:renomme|renommage|j['’]ai\s+renomme|titre\s+de\s+session|sujet\s*:)[^.!?\r\n]*(?:session|titre|sujet|renomm)[^.!?\r\n]*[.!?]?\s*/giu;
   return text
-    .split(/\r?\n/)
-    .filter((line) => {
-      const compact = line.trim();
-      if (!compact) {
-        return true;
-      }
-      return !(
-        /renomm/i.test(compact) && /session|titre|sujet/i.test(compact)
-      );
-    })
-    .join("\n")
+    .replace(renameSentence, "")
+    .replace(/^\s*sujet\s*:\s*[^.!?\r\n]+[.!?]?\s*/iu, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function sanitizeAssistantRenameChatter(message: TranscriptMessage): TranscriptMessage {
+  if (message.role !== "assistant") {
+    return message;
+  }
+  const text = removeRenameSessionChatter(message.text);
+  if (text === message.text) {
+    return message;
+  }
+  return {
+    ...message,
+    text,
+    proofHash: hashJson({
+      previousProofHash: message.proofHash,
+      sanitizedRenameChatter: true,
+      text
+    })
+  };
 }
 
 function executeAssistantRenameSessionCodeAct(message: TranscriptMessage, session: SidebarSessionItem): TranscriptMessage {
@@ -10464,6 +10475,7 @@ async function submitChatDraftForSessionInner(
   assistantMessage = await applyGeographicMapsFallback(assistantMessage, draft, moduleId, parallelSessionIndex);
   assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, moduleId, parallelSessionIndex);
   assistantMessage = executeAssistantRenameSessionCodeAct(assistantMessage, session);
+  assistantMessage = sanitizeAssistantRenameChatter(assistantMessage);
   assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
   assistantMessage = suppressRepeatedBrainSegmentCodeAct(assistantMessage, panelsChatBottomState.activeBrainSegment);
   const previousBrainSegment = panelsChatBottomState.activeBrainSegment;
@@ -10492,6 +10504,7 @@ async function submitChatDraftForSessionInner(
     );
     continuationMessage = await executeAssistantModuleCodeActs(continuationMessage, moduleId, parallelSessionIndex);
     continuationMessage = executeAssistantRenameSessionCodeAct(continuationMessage, session);
+    continuationMessage = sanitizeAssistantRenameChatter(continuationMessage);
     continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
     continuationMessage = suppressRepeatedBrainSegmentCodeAct(continuationMessage, panelsChatBottomState.activeBrainSegment);
     continuationMessage = executeAssistantBrainSegmentCodeAct(continuationMessage);

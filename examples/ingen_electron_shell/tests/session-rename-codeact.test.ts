@@ -31,6 +31,10 @@ describe("session rename CodeAct", () => {
     expect(mainSource).toContain("Histoire de ${copiedHistory[1]}");
     expect(mainSource).toContain("renameChatSession(session, request)");
     expect(mainSource).toContain("archiveSession.title = request.title");
+    expect(mainSource).toContain("function sanitizeAssistantRenameChatter");
+    expect(mainSource).toContain("sanitizeAssistantRenameChatter(assistantMessage)");
+    expect(mainSource).toContain("sanitizeAssistantRenameChatter(continuationMessage)");
+    expect(mainSource).toContain("sujet\\s*:");
     expect(mainSource).toContain("removeRenameSessionChatter(removeRenameSessionCodeActLines(message.text))");
     expect(mainSource).not.toContain("renderRenameSessionCodeActResult");
     expect(mainSource).not.toContain("RENAME_SESSION_RESULT");
