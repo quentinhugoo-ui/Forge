@@ -2374,12 +2374,18 @@ const ASSISTANT_GEO_ENTITY_STYLE: CSSProperties = {
   transition: "color 160ms ease"
 };
 
+const ASSISTANT_COUNTRY_ENTITY_STYLE: CSSProperties = {
+  ...ASSISTANT_GEO_ENTITY_STYLE,
+  color: "color-mix(in oklab, #d8a657, var(--forge-text) 32%)"
+};
+
 function assistantGeoEntityLabel(token: string): string {
   return token.slice(2, -1).replace(/\s+/g, " ").trim();
 }
 
 function assistantGeoEntityNode(token: string, key: string): ReactNode {
   const label = assistantGeoEntityLabel(token);
+  const style = token.startsWith("#{") ? ASSISTANT_COUNTRY_ENTITY_STYLE : ASSISTANT_GEO_ENTITY_STYLE;
   if (label.length < 2) {
     return <Fragment key={key}>{token}</Fragment>;
   }
@@ -2387,7 +2393,7 @@ function assistantGeoEntityNode(token: string, key: string): ReactNode {
     <button
       type="button"
       key={key}
-      style={ASSISTANT_GEO_ENTITY_STYLE}
+      style={style}
       aria-label={`Open ${label}`}
       title={`Open ${label}`}
       onClick={() => {
@@ -2425,7 +2431,7 @@ function assistantPlainTextNodes(text: string, keyPrefix: string, onUseMathInCom
 
 function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInCompute?: AssistantMathUseHandler, writing = false): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|@\{[^{}\n]{1,120}\}|\*\*[^*]+?\*\*|`[^`]+?`)/g;
+  const pattern = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|[@#]\{[^{}\n]{1,120}\}|\*\*[^*]+?\*\*|`[^`]+?`)/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
@@ -2436,7 +2442,7 @@ function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInComput
     if (token.startsWith("\\[") || token.startsWith("\\(")) {
       const formula = token.slice(2, -2).trim();
       nodes.push(assistantMathTokenNode(formula, `${keyPrefix}-math-${match.index}`, onUseMathInCompute));
-    } else if (token.startsWith("@{")) {
+    } else if (token.startsWith("@{") || token.startsWith("#{")) {
       nodes.push(assistantGeoEntityNode(token, `${keyPrefix}-geo-${match.index}`));
     } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
