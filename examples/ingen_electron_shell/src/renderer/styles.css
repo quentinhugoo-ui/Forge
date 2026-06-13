@@ -7669,7 +7669,7 @@ ol.assistantText__list li::before {
 .googleEarthDomFrame {
   position: absolute;
   inset: 0;
-  z-index: 0;
+  z-index: 2;
   display: block;
   min-width: 0;
   min-height: 0;
@@ -7746,7 +7746,7 @@ ol.assistantText__list li::before {
   right: 0;
   bottom: calc(-1 * var(--chat-canvas-bottom));
   left: 0;
-  z-index: 0;
+  z-index: 2;
   overflow: hidden;
   pointer-events: auto;
 }

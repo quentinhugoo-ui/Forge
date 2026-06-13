@@ -530,6 +530,7 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".googleEarthDomWebview");
     expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .mapsCanvasPane");
     expect(stylesSource).toContain("bottom: calc(-1 * var(--chat-canvas-bottom))");
+    expect(stylesSource).toContain("z-index: 2");
     expect(stylesSource).toContain(".webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted");
     expect(stylesSource).toContain("background: transparent");
     expect(stylesSource).not.toContain(".mapsEarthBlobFade");
