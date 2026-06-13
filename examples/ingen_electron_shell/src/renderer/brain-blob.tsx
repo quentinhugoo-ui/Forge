@@ -333,26 +333,39 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
       let wrapDiff = saturate((dot(n, l) + 0.65) / 1.65);
       let diff = wrapDiff * wrapDiff;
       let fres = pow(1.0 - saturate(dot(n, -rd)), 2.6);
-      let spec = pow(saturate(dot(n, normalize(l - rd))), 20.0);
+      let spec = pow(saturate(dot(n, normalize(l - rd))), 30.0);
       /* Thickness probe: thin lobes and stretched arms glow translucent. */
       let innerD = field(p - n * 0.16, t);
       let thin = saturate(1.0 + innerD / 0.16);
       let sss = thin * thin;
-      color = base * (0.38 + 0.72 * diff)
-        + mix(colorOne, vec3<f32>(1.0, 0.88, 0.62), 0.5) * sss * 0.38
-        + colorOne * fres * 0.30
-        + vec3<f32>(1.0, 0.95, 0.86) * spec * 0.16;
-      alpha = saturate(0.60 + diff * 0.22 - fres * 0.18 + sss * 0.10);
+      /* Lumen-style indirect light: a cheap ambient-occlusion probe gates a
+         warm global-illumination fill, plus a back light and an emissive
+         molten core so the gel glows from within and the bright hotspots
+         bloom through the post blur. */
+      let ao = saturate(1.0 + field(p + n * 0.13, t) / 0.13);
+      let giFill = mix(colorTwo, colorOne, 0.5) * ao * 0.24;
+      let l2 = normalize(vec3<f32>(0.5, -0.2, -0.62));
+      let backDiff = saturate(dot(n, l2)) * 0.18;
+      let emissive = mix(colorTwo, vec3<f32>(1.0, 0.78, 0.42), sss) * (0.16 + sss * 0.55);
+      color = base * (0.30 + 0.70 * diff)
+        + giFill
+        + base * backDiff
+        + mix(colorOne, vec3<f32>(1.0, 0.90, 0.66), 0.6) * sss * 0.42
+        + colorOne * fres * 0.46
+        + emissive
+        + vec3<f32>(1.0, 0.96, 0.88) * spec * 0.92;
+      alpha = saturate(0.62 + diff * 0.20 - fres * 0.16 + sss * 0.10);
     } else {
-      /* Mushy aura hugging the silhouette. */
+      /* Mushy aura: the blob bleeds warm indirect light into its surroundings
+         (the Lumen bounce that the post bloom widens). */
       color = mix(colorOne, colorTwo, saturate(0.5 - upY * 1.4));
-      alpha = exp(-max(closest, 0.0) / 0.05) * 0.22;
+      alpha = exp(-max(closest, 0.0) / 0.065) * 0.30;
     }
   }
 
   let vignette = 1.0 - smoothstep(0.45, 0.5, max(abs(uv.x), abs(uv.y)));
   let rgb = max(hueRotate(color, colorizeAngle(t)), vec3<f32>(0.0));
-  return vec4<f32>(min(rgb, vec3<f32>(0.98)), saturate(alpha * vignette));
+  return vec4<f32>(min(rgb, vec3<f32>(1.0)), saturate(alpha * vignette));
 }
 `;
 
@@ -477,24 +490,34 @@ void main() {
       float wrapDiff = sat((dot(n, l) + 0.65) / 1.65);
       float diff = wrapDiff * wrapDiff;
       float fres = pow(1.0 - sat(dot(n, -rd)), 2.6);
-      float spec = pow(sat(dot(n, normalize(l - rd))), 20.0);
+      float spec = pow(sat(dot(n, normalize(l - rd))), 30.0);
       float innerD = field(p - n * 0.16, t);
       float thin = sat(1.0 + innerD / 0.16);
       float sss = thin * thin;
-      color = base * (0.38 + 0.72 * diff)
-        + mix(colorOne, vec3(1.0, 0.88, 0.62), 0.5) * sss * 0.38
-        + colorOne * fres * 0.30
-        + vec3(1.0, 0.95, 0.86) * spec * 0.16;
-      alpha = sat(0.60 + diff * 0.22 - fres * 0.18 + sss * 0.10);
+      // Lumen-style indirect light: cheap AO probe gates a warm GI fill, plus a
+      // back light and an emissive molten core that blooms through the blur.
+      float ao = sat(1.0 + field(p + n * 0.13, t) / 0.13);
+      vec3 giFill = mix(colorTwo, colorOne, 0.5) * ao * 0.24;
+      vec3 l2 = normalize(vec3(0.5, -0.2, -0.62));
+      float backDiff = sat(dot(n, l2)) * 0.18;
+      vec3 emissive = mix(colorTwo, vec3(1.0, 0.78, 0.42), sss) * (0.16 + sss * 0.55);
+      color = base * (0.30 + 0.70 * diff)
+        + giFill
+        + base * backDiff
+        + mix(colorOne, vec3(1.0, 0.90, 0.66), 0.6) * sss * 0.42
+        + colorOne * fres * 0.46
+        + emissive
+        + vec3(1.0, 0.96, 0.88) * spec * 0.92;
+      alpha = sat(0.62 + diff * 0.20 - fres * 0.16 + sss * 0.10);
     } else {
       color = mix(colorOne, colorTwo, sat(0.5 - upY * 1.4));
-      alpha = exp(-max(closest, 0.0) / 0.05) * 0.22;
+      alpha = exp(-max(closest, 0.0) / 0.065) * 0.30;
     }
   }
 
   float vignette = 1.0 - smoothstep(0.45, 0.5, max(abs(uv.x), abs(uv.y)));
   vec3 rgb = max(hueRotate(color, colorizeAngle(t)), vec3(0.0));
-  outColor = vec4(min(rgb, vec3(0.98)), sat(alpha * vignette));
+  outColor = vec4(min(rgb, vec3(1.0)), sat(alpha * vignette));
 }
 `;
 

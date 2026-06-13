@@ -8530,7 +8530,7 @@ ol.assistantText__list li::before {
   --brain-blob-gleam-opacity: 0.34;
   position: fixed;
   right: clamp(16px, 5vw, 110px);
-  bottom: clamp(-150px, -12vh, -78px);
+  bottom: clamp(-220px, -17vh, -120px);
   z-index: 0;
   display: grid;
   place-items: center;
@@ -8556,8 +8556,16 @@ ol.assistantText__list li::before {
   transition: opacity 260ms ease-out;
 }
 
+/* 5% aesthetic softening plus a Lumen-style bloom: the canvas hotspots bleed
+   through the blur while the drop-shadow casts the warm indirect glow the
+   shader already seeds in its aura. */
 .brainBlob--webgpu .brainBlob__canvas {
   opacity: 1;
+  filter:
+    blur(clamp(2.5px, 0.5vw, 6px))
+    saturate(1.16)
+    brightness(1.07)
+    drop-shadow(0 0 34px var(--color-three));
 }
 
 .brainBlob--webgpu .brainBlob__fallback {
