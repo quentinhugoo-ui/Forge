@@ -7545,13 +7545,10 @@ function attachNativeWebExplorerView(owner: BrowserWindow, view: BrowserView): v
 
 function attachNativeMapsView(owner: BrowserWindow, view: WebContentsView): void {
   const currentIndex = owner.contentView.children.indexOf(view);
-  if (currentIndex === 0) {
-    return;
-  }
-  if (currentIndex > 0) {
+  if (currentIndex >= 0) {
     owner.contentView.removeChildView(view);
   }
-  owner.contentView.addChildView(view, 0);
+  owner.contentView.addChildView(view);
 }
 
 function ensureNativeWebExplorerView(owner: BrowserWindow): BrowserView {

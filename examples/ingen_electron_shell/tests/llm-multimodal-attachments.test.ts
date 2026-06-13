@@ -496,7 +496,7 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("nativeMapsView: WebContentsView | null");
     expect(mainSource).toContain("new WebContentsView");
     expect(mainSource).toContain("attachNativeMapsView");
-    expect(mainSource).toContain("owner.contentView.addChildView(view, 0)");
+    expect(mainSource).toContain("owner.contentView.addChildView(view);");
     expect(mainSource).toContain("owner.contentView.removeChildView(view)");
     expect(mainSource).toContain('partition: "persist:ingen-maps"');
     expect(mainSource).toContain('webContents.send("forge:maps-codeact", request)');
@@ -526,6 +526,8 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).not.toContain(".mapsEarthBlobFade");
     expect(mainSource).toContain("NATIVE_MAPS_EARTH_OVERSCAN_PX.leftRatio");
     expect(mainSource).toContain("requestedLeftOverscan");
+    expect(mainSource).toContain("owner.contentView.addChildView(view);");
+    expect(mainSource).not.toContain("owner.contentView.addChildView(view, 0)");
     expect(canvasSource).toContain("showNativeMaps");
     expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Use Google Earth"]');
   });
