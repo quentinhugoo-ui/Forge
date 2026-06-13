@@ -3778,19 +3778,24 @@ export function PanelsChatBottomSlice({
         return;
       }
       const sessionIsNew = !snapshot.transcript.some((message) => message.role === "user" || message.role === "assistant");
-      const commit = () => {
+      const commit = (trackDispatchCompletion: boolean) => {
         try {
           for (const prompt of filledParallelPrompts) {
             onParallelPromptChange?.(prompt.index, "");
           }
-          dispatchTrackedComposerSend({
+          const command: Omit<PanelsChatBottomCommand, "version" | "requestId"> = {
             kind: "send_parallel_chat_batch",
             parallelDrafts: filledParallelPrompts.map((prompt) => ({
               parallelSessionIndex: prompt.index,
               value: prompt.value
             })),
             moduleId: composerModule ?? undefined
-          });
+          };
+          if (trackDispatchCompletion) {
+            dispatchTrackedComposerSend(command);
+          } else {
+            void dispatch(command);
+          }
         } catch (error) {
           endComposerSendBusy();
           throw error;
@@ -3798,9 +3803,9 @@ export function PanelsChatBottomSlice({
       };
       const burst = burstRef.current;
       if (sessionIsNew && burst) {
-        burst.fire(composerRef.current, commit);
+        burst.fire(composerRef.current, () => commit(false), endComposerSendBusy);
       } else {
-        commit();
+        commit(true);
       }
       return;
     }
@@ -3814,7 +3819,7 @@ export function PanelsChatBottomSlice({
     if (!beginComposerSendBusy()) {
       return;
     }
-    const commit = () => {
+    const commit = (trackDispatchCompletion: boolean) => {
       try {
         if (parallelMode && parallelPrompts && onParallelPromptChange) {
           onParallelPromptChange(targetParallelIndex, "");
@@ -3822,12 +3827,17 @@ export function PanelsChatBottomSlice({
         if (permissionMode === "self-directed" && targetParallelIndex === 0) {
           startSelfDirectedRun(value);
         }
-        dispatchTrackedComposerSend({
+        const command: Omit<PanelsChatBottomCommand, "version" | "requestId"> = {
           kind: "send_chat",
           value,
           moduleId: composerModule ?? undefined,
           parallelSessionIndex: parallelMode ? targetParallelIndex : undefined
-        });
+        };
+        if (trackDispatchCompletion) {
+          dispatchTrackedComposerSend(command);
+        } else {
+          void dispatch(command);
+        }
       } catch (error) {
         endComposerSendBusy();
         throw error;
@@ -3839,9 +3849,9 @@ export function PanelsChatBottomSlice({
     const sessionIsNew = !targetTranscript.some((message) => message.role === "user" || message.role === "assistant");
     const burst = burstRef.current;
     if (sessionIsNew && burst) {
-      burst.fire(composerRef.current, commit);
+      burst.fire(composerRef.current, () => commit(false), endComposerSendBusy);
     } else {
-      commit();
+      commit(true);
     }
   };
 

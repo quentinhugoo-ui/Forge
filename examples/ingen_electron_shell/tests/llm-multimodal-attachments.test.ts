@@ -6,6 +6,7 @@ const mainSource = readFileSync(join(process.cwd(), "src", "main", "main.ts"), "
 const appSource = readFileSync(join(process.cwd(), "src", "renderer", "App.tsx"), "utf8");
 const brainCanvasSource = readFileSync(join(process.cwd(), "src", "renderer", "BrainCanvas.tsx"), "utf8");
 const canvasSource = readFileSync(join(process.cwd(), "src", "renderer", "CanvasSurfacesSlice.tsx"), "utf8");
+const composerBurstSource = readFileSync(join(process.cwd(), "src", "renderer", "ComposerSendBurst.tsx"), "utf8");
 const rendererSource = readFileSync(join(process.cwd(), "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
 const moduleLogosSource = readFileSync(join(process.cwd(), "src", "renderer", "module-logos.tsx"), "utf8");
 const storeSource = readFileSync(join(process.cwd(), "src", "renderer", "panels-chat-bottom-store.ts"), "utf8");
@@ -740,11 +741,16 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("sendPixelLoader__pixel");
     expect(stylesSource).toContain(".composer__send--loading");
     expect(stylesSource).toContain(".sendPixelLoader");
-    expect(stylesSource).toContain('offset-path: path("M 2 2 H 16 V 16 H 2 Z")');
+    expect(stylesSource).toContain("width: 3px");
+    expect(stylesSource).toContain("--pixel-color: #6fb6cf");
+    expect(stylesSource).toContain('offset-path: path("M 2.5 2.5 H 15.5 V 15.5 H 2.5 Z")');
     expect(stylesSource).toContain("@keyframes sendPixelTrace");
     expect(stylesSource).not.toContain("@keyframes sendPixelSpin");
     expect(stylesSource).toContain("@media (prefers-reduced-motion: reduce)");
     expect(stylesSource).toContain(".sendPixelLoader__pixel:nth-child(9)");
+    expect(composerBurstSource).toContain("onComplete?: () => void");
+    expect(composerBurstSource).toContain("onComplete?.()");
+    expect(rendererSource).toContain("burst.fire(composerRef.current, () => commit(false), endComposerSendBusy)");
   });
 
   it("renders loop-stream assistant work like compact Codex command separators", () => {

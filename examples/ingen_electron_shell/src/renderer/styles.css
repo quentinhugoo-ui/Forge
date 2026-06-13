@@ -6538,17 +6538,17 @@ ol.assistantText__list li::before {
 }
 
 .sendPixelLoader__pixel {
-  --pixel-color: #38bdf8;
+  --pixel-color: #6fb6cf;
   position: absolute;
   top: 0;
   left: 0;
-  width: 4px;
-  height: 4px;
+  width: 3px;
+  height: 3px;
   border-radius: 1px;
   background: var(--pixel-color);
-  box-shadow: 0 0 6px rgba(56, 189, 248, 0.52);
+  box-shadow: 0 0 4px rgba(111, 182, 207, 0.32);
   opacity: 0;
-  offset-path: path("M 2 2 H 16 V 16 H 2 Z");
+  offset-path: path("M 2.5 2.5 H 15.5 V 15.5 H 2.5 Z");
   offset-distance: 0%;
   offset-rotate: 0deg;
   animation: sendPixelTrace 940ms steps(24, end) infinite;
@@ -6556,43 +6556,43 @@ ol.assistantText__list li::before {
 }
 
 .sendPixelLoader__pixel:nth-child(2) {
-  --pixel-color: #a78bfa;
-  box-shadow: 0 0 6px rgba(167, 139, 250, 0.52);
+  --pixel-color: #9a8fd0;
+  box-shadow: 0 0 4px rgba(154, 143, 208, 0.32);
 }
 
 .sendPixelLoader__pixel:nth-child(3) {
-  --pixel-color: #f472b6;
-  box-shadow: 0 0 6px rgba(244, 114, 182, 0.48);
+  --pixel-color: #cf8aae;
+  box-shadow: 0 0 4px rgba(207, 138, 174, 0.3);
 }
 
 .sendPixelLoader__pixel:nth-child(4) {
-  --pixel-color: #22d3ee;
-  box-shadow: 0 0 6px rgba(34, 211, 238, 0.48);
+  --pixel-color: #6dbdca;
+  box-shadow: 0 0 4px rgba(109, 189, 202, 0.3);
 }
 
 .sendPixelLoader__pixel:nth-child(5) {
-  --pixel-color: #facc15;
-  box-shadow: 0 0 6px rgba(250, 204, 21, 0.44);
+  --pixel-color: #d2be68;
+  box-shadow: 0 0 4px rgba(210, 190, 104, 0.3);
 }
 
 .sendPixelLoader__pixel:nth-child(6) {
-  --pixel-color: #fb923c;
-  box-shadow: 0 0 6px rgba(251, 146, 60, 0.48);
+  --pixel-color: #cf9368;
+  box-shadow: 0 0 4px rgba(207, 147, 104, 0.3);
 }
 
 .sendPixelLoader__pixel:nth-child(7) {
-  --pixel-color: #34d399;
-  box-shadow: 0 0 6px rgba(52, 211, 153, 0.48);
+  --pixel-color: #70bea0;
+  box-shadow: 0 0 4px rgba(112, 190, 160, 0.3);
 }
 
 .sendPixelLoader__pixel:nth-child(8) {
-  --pixel-color: #818cf8;
-  box-shadow: 0 0 6px rgba(129, 140, 248, 0.5);
+  --pixel-color: #8992d0;
+  box-shadow: 0 0 4px rgba(137, 146, 208, 0.31);
 }
 
 .sendPixelLoader__pixel:nth-child(9) {
-  --pixel-color: #ef4444;
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.42);
+  --pixel-color: #cf7272;
+  box-shadow: 0 0 4px rgba(207, 114, 114, 0.28);
 }
 
 @keyframes sendPixelTrace {

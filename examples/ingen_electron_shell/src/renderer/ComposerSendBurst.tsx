@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 // pixels. The composer and send button are intentionally not drawn as targets.
 
 export interface ComposerSendBurstHandle {
-  fire: (target: HTMLElement | null, onPeak: () => void) => void;
+  fire: (target: HTMLElement | null, onPeak: () => void, onComplete?: () => void) => void;
 }
 
 const BLOCK = 1.5;
@@ -157,11 +157,12 @@ export const ComposerSendBurst = forwardRef<ComposerSendBurstHandle>(function Co
   useEffect(() => () => window.cancelAnimationFrame(rafRef.current), []);
 
   useImperativeHandle(ref, () => ({
-    fire(target, onPeak) {
+    fire(target, onPeak, onComplete) {
       const canvas = canvasRef.current;
       const targetRect = target?.getBoundingClientRect();
       if (!canvas || !target || !targetRect || targetRect.width <= 0 || targetRect.height <= 0 || prefersReducedMotion()) {
         onPeak();
+        onComplete?.();
         return;
       }
       window.cancelAnimationFrame(rafRef.current);
@@ -178,6 +179,7 @@ export const ComposerSendBurst = forwardRef<ComposerSendBurstHandle>(function Co
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         onPeak();
+        onComplete?.();
         return;
       }
       ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
@@ -199,6 +201,7 @@ export const ComposerSendBurst = forwardRef<ComposerSendBurstHandle>(function Co
         window.cancelAnimationFrame(rafRef.current);
         ctx.clearRect(0, 0, width, height);
         canvas.style.display = "none";
+        onComplete?.();
       };
       const draw = (now: number) => {
         ctx.clearRect(0, 0, width, height);
