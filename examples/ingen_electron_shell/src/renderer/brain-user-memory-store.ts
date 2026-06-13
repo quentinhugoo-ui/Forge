@@ -28,6 +28,7 @@ export interface BrainUserLocationMemorySlot {
 const USER_STORAGE_KEY = "ingen.brain.memory.user_identity.v1";
 const AGENT_STORAGE_KEY = "ingen.brain.memory.agent_identity.v1";
 const USER_LOCATION_STORAGE_KEY = "ingen.brain.memory.user_location.v1";
+export const BRAIN_AGENT_MEMORY_UPDATED_EVENT = "ingen:brain-agent-memory-updated";
 
 const fallbackBrainUserMemory: BrainUserMemorySlot = {
   schema: "ingen.brain.memory.user_identity.v1",
@@ -146,6 +147,7 @@ export function writeBrainAgentMemory(preferredFirstName: string): BrainAgentMem
     } catch {
       // Keep the in-memory edit even if localStorage is temporarily unavailable.
     }
+    window.dispatchEvent(new CustomEvent<BrainAgentMemorySlot>(BRAIN_AGENT_MEMORY_UPDATED_EVENT, { detail: next }));
   }
   return next;
 }

@@ -30,6 +30,7 @@ import {
   BRAIN_WEB_COMMAND
 } from "../shared/ipc-contract";
 import { ComposerSendBurst, type ComposerSendBurstHandle } from "./ComposerSendBurst";
+import { BRAIN_AGENT_MEMORY_UPDATED_EVENT, readBrainAgentMemory } from "./brain-user-memory-store";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { ProviderLogo } from "./ProviderLogo";
 import { MODULE_DRAG_ZONE_EVENT, type ModuleDragZoneDetail, type SidebarModuleId } from "./SidebarSlice";
@@ -3298,6 +3299,7 @@ export function PanelsChatBottomSlice({
   const permissionControlRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const burstRef = useRef<ComposerSendBurstHandle>(null);
+  const [brainAgentName, setBrainAgentName] = useState(() => readBrainAgentMemory().preferredFirstName);
   const [selfDirectedDrafting, setSelfDirectedDrafting] = useState(false);
   const selfDirectedRunRef = useRef<SelfDirectedRunState>({
     active: false,
@@ -3310,6 +3312,29 @@ export function PanelsChatBottomSlice({
 
   useEffect(() => {
     void panelsChatBottomStore.refresh();
+  }, []);
+
+  useEffect(() => {
+    const syncAgentName = () => setBrainAgentName(readBrainAgentMemory().preferredFirstName);
+    const onAgentMemoryUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ preferredFirstName?: unknown }>).detail;
+      if (typeof detail?.preferredFirstName === "string") {
+        setBrainAgentName(detail.preferredFirstName);
+        return;
+      }
+      syncAgentName();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "ingen.brain.memory.agent_identity.v1") {
+        syncAgentName();
+      }
+    };
+    window.addEventListener(BRAIN_AGENT_MEMORY_UPDATED_EVENT, onAgentMemoryUpdated);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(BRAIN_AGENT_MEMORY_UPDATED_EVENT, onAgentMemoryUpdated);
+      window.removeEventListener("storage", onStorage);
+    };
   }, []);
 
   useEffect(() => {
@@ -3737,7 +3762,7 @@ export function PanelsChatBottomSlice({
               <TranscriptCanvas
                 activeSessionId={index === 0 ? snapshot.activeSessionId : lane?.sessionId ?? `parallel-${index}`}
                 messages={laneMessages}
-                agentName={snapshot.composer.modelLabel}
+                agentName={brainAgentName}
                 parallelSessionIndex={index}
                 className="chatCanvas chatCanvas--parallelPane"
                 key={`parallel-transcript-${index}`}
@@ -3752,7 +3777,7 @@ export function PanelsChatBottomSlice({
           key={snapshot.activeSessionId || "draft-session"}
           activeSessionId={snapshot.activeSessionId}
           messages={canvasMessages}
-          agentName={snapshot.composer.modelLabel}
+          agentName={brainAgentName}
           parallelSessionIndex={0}
           onEditImage={stageImageForEdit}
           onUseMathInCompute={useMathInCompute}
