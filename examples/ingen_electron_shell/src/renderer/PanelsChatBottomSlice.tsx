@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, ListChecks, Pencil, RefreshCw, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import type { Camera, Object3D } from "three";
-import type { BrainCodeActCommand, ComposerUploadPreview, PanelsChatBottomSnapshot, TranscriptMessage } from "../shared/ipc-contract";
+import type { BrainCodeActCommand, ComposerUploadPreview, PanelsChatBottomCommand, PanelsChatBottomSnapshot, TranscriptMessage } from "../shared/ipc-contract";
 import {
   BRAIN_BRAIN_COMMAND,
   BRAIN_AIRBNB_COMMAND,
@@ -3343,12 +3343,14 @@ export function PanelsChatBottomSlice({
   const [selfDirectedMenuStage, setSelfDirectedMenuStage] = useState<"idle" | "console">("idle");
   const [moduleDropPhase, setModuleDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const [fileDropPhase, setFileDropPhase] = useState<"idle" | "armed" | "over">("idle");
+  const [composerSendBusyCount, setComposerSendBusyCount] = useState(0);
   const fileDragDepthRef = useRef(0);
   const panelsRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
   const permissionControlRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const burstRef = useRef<ComposerSendBurstHandle>(null);
+  const composerSendBusyRef = useRef(0);
   const [brainAgentName, setBrainAgentName] = useState(() => readBrainAgentMemory().preferredFirstName);
   const [selfDirectedDrafting, setSelfDirectedDrafting] = useState(false);
   const selfDirectedRunRef = useRef<SelfDirectedRunState>({
@@ -3493,6 +3495,22 @@ export function PanelsChatBottomSlice({
   const canvasMessages = snapshot.transcript.filter((message) => message.role !== "system");
   const activeQuestionnaire = useMemo(() => latestQuestionnaireFromMessages(canvasMessages), [canvasMessages]);
   const activeDropPhase = fileDropPhase !== "idle" ? fileDropPhase : moduleDropPhase;
+  const composerSendBusy = composerSendBusyCount > 0;
+  const beginComposerSendBusy = useCallback(() => {
+    if (composerSendBusyRef.current > 0) {
+      return false;
+    }
+    composerSendBusyRef.current += 1;
+    setComposerSendBusyCount(composerSendBusyRef.current);
+    return true;
+  }, []);
+  const endComposerSendBusy = useCallback(() => {
+    composerSendBusyRef.current = Math.max(0, composerSendBusyRef.current - 1);
+    setComposerSendBusyCount(composerSendBusyRef.current);
+  }, []);
+  const dispatchTrackedComposerSend = useCallback((command: Omit<PanelsChatBottomCommand, "version" | "requestId">) => {
+    void dispatch(command).finally(endComposerSendBusy);
+  }, [dispatch, endComposerSendBusy]);
   const attachFiles = () => void dispatch({ kind: "attach_files" });
   const attachDroppedFiles = (filePaths: string[]) => {
     if (filePaths.length === 0) {
@@ -3702,19 +3720,27 @@ export function PanelsChatBottomSlice({
   };
   const sendComposer = (parallelIndex?: number) => {
     if (parallelMode && parallelPrompts && parallelIndex === undefined && filledParallelPrompts.length > 0) {
+      if (!beginComposerSendBusy()) {
+        return;
+      }
       const sessionIsNew = !snapshot.transcript.some((message) => message.role === "user" || message.role === "assistant");
       const commit = () => {
-        for (const prompt of filledParallelPrompts) {
-          onParallelPromptChange?.(prompt.index, "");
+        try {
+          for (const prompt of filledParallelPrompts) {
+            onParallelPromptChange?.(prompt.index, "");
+          }
+          dispatchTrackedComposerSend({
+            kind: "send_parallel_chat_batch",
+            parallelDrafts: filledParallelPrompts.map((prompt) => ({
+              parallelSessionIndex: prompt.index,
+              value: prompt.value
+            })),
+            moduleId: composerModule ?? undefined
+          });
+        } catch (error) {
+          endComposerSendBusy();
+          throw error;
         }
-        void dispatch({
-          kind: "send_parallel_chat_batch",
-          parallelDrafts: filledParallelPrompts.map((prompt) => ({
-            parallelSessionIndex: prompt.index,
-            value: prompt.value
-          })),
-          moduleId: composerModule ?? undefined
-        });
       };
       const burst = burstRef.current;
       if (sessionIsNew && burst) {
@@ -3731,19 +3757,27 @@ export function PanelsChatBottomSlice({
     if (!value.trim() && uploadPreviews.length === 0) {
       return;
     }
+    if (!beginComposerSendBusy()) {
+      return;
+    }
     const commit = () => {
-      if (parallelMode && parallelPrompts && onParallelPromptChange) {
-        onParallelPromptChange(targetParallelIndex, "");
+      try {
+        if (parallelMode && parallelPrompts && onParallelPromptChange) {
+          onParallelPromptChange(targetParallelIndex, "");
+        }
+        if (permissionMode === "self-directed" && targetParallelIndex === 0) {
+          startSelfDirectedRun(value);
+        }
+        dispatchTrackedComposerSend({
+          kind: "send_chat",
+          value,
+          moduleId: composerModule ?? undefined,
+          parallelSessionIndex: parallelMode ? targetParallelIndex : undefined
+        });
+      } catch (error) {
+        endComposerSendBusy();
+        throw error;
       }
-      if (permissionMode === "self-directed" && targetParallelIndex === 0) {
-        startSelfDirectedRun(value);
-      }
-      void dispatch({
-        kind: "send_chat",
-        value,
-        moduleId: composerModule ?? undefined,
-        parallelSessionIndex: parallelMode ? targetParallelIndex : undefined
-      });
     };
     const targetTranscript = targetParallelIndex > 0
       ? snapshot.parallelLanes.find((lane) => lane.index === targetParallelIndex)?.transcript ?? []
@@ -3966,16 +4000,33 @@ export function PanelsChatBottomSlice({
         </div>
         <button
           type="submit"
-          className={canSend ? "composer__send" : "composer__send composer__send--empty"}
-          aria-label="Send message"
-          disabled={!canSend}
+          className={[
+            "composer__send",
+            !canSend && !composerSendBusy ? "composer__send--empty" : "",
+            composerSendBusy ? "composer__send--loading" : ""
+          ].filter(Boolean).join(" ")}
+          aria-label={composerSendBusy ? "Sending message" : "Send message"}
+          aria-busy={composerSendBusy}
+          disabled={!canSend || composerSendBusy}
         >
-          <svg className="sendGlyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M20 4v9a4 4 0 0 1-4 4H6.914l2.5 2.5L8 20.914L3.086 16L8 11.086L9.414 12.5l-2.5 2.5H16a2 2 0 0 0 2-2V4h2Z"
-            />
-          </svg>
+          {composerSendBusy ? (
+            <span className="sendPixelLoader" aria-hidden="true">
+              {Array.from({ length: 9 }, (_, index) => (
+                <span
+                  className="sendPixelLoader__pixel"
+                  key={`send-pixel-${index}`}
+                  style={{ "--pixel-index": index } as CSSProperties}
+                />
+              ))}
+            </span>
+          ) : (
+            <svg className="sendGlyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M20 4v9a4 4 0 0 1-4 4H6.914l2.5 2.5L8 20.914L3.086 16L8 11.086L9.414 12.5l-2.5 2.5H16a2 2 0 0 0 2-2V4h2Z"
+              />
+            </svg>
+          )}
         </button>
       </form>
 

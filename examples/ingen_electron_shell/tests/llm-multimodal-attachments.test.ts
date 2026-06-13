@@ -714,6 +714,23 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantThinkingEvent__label strong");
   });
 
+  it("turns the composer send arrow into a pixel loader while a send is pending", () => {
+    expect(rendererSource).toContain("composerSendBusy");
+    expect(rendererSource).toContain("beginComposerSendBusy");
+    expect(rendererSource).toContain("dispatchTrackedComposerSend");
+    expect(rendererSource).toContain('aria-label={composerSendBusy ? "Sending message" : "Send message"}');
+    expect(rendererSource).toContain('aria-busy={composerSendBusy}');
+    expect(rendererSource).toContain("sendPixelLoader");
+    expect(rendererSource).toContain("sendPixelLoader__pixel");
+    expect(stylesSource).toContain(".composer__send--loading");
+    expect(stylesSource).toContain(".sendPixelLoader");
+    expect(stylesSource).toContain("grid-template-columns: repeat(3, 4px)");
+    expect(stylesSource).toContain("@keyframes sendPixelSpin");
+    expect(stylesSource).toContain("@keyframes sendPixelPulse");
+    expect(stylesSource).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(stylesSource).toContain(".sendPixelLoader__pixel:nth-child(9)");
+  });
+
   it("renders loop-stream assistant work like compact Codex command separators", () => {
     expect(rendererSource).toContain("event_group");
     expect(rendererSource).toContain("function groupAssistantCodeActEvents");

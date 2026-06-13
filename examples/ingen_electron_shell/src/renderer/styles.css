@@ -6488,6 +6488,10 @@ ol.assistantText__list li::before {
   cursor: default;
 }
 
+.composer__send--loading {
+  cursor: progress;
+}
+
 .composer__send:hover,
 .composer__send:active,
 .composer__send:focus-visible {
@@ -6508,6 +6512,106 @@ ol.assistantText__list li::before {
 .composer__send--empty .sendGlyph {
   color: var(--forge-muted);
   opacity: 0.5;
+}
+
+.sendPixelLoader {
+  display: grid;
+  grid-template-columns: repeat(3, 4px);
+  grid-template-rows: repeat(3, 4px);
+  gap: 2px;
+  width: 18px;
+  height: 18px;
+  place-content: center;
+  transform-origin: 50% 50%;
+  animation: sendPixelSpin 860ms steps(8, end) infinite;
+}
+
+.sendPixelLoader__pixel {
+  --pixel-color: #38bdf8;
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--pixel-color);
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.52);
+  opacity: 0.72;
+  transform: scale(0.78);
+  animation: sendPixelPulse 860ms steps(4, end) infinite;
+  animation-delay: calc(var(--pixel-index) * -68ms);
+}
+
+.sendPixelLoader__pixel:nth-child(2) {
+  --pixel-color: #a78bfa;
+  box-shadow: 0 0 6px rgba(167, 139, 250, 0.52);
+}
+
+.sendPixelLoader__pixel:nth-child(3) {
+  --pixel-color: #f472b6;
+  box-shadow: 0 0 6px rgba(244, 114, 182, 0.48);
+}
+
+.sendPixelLoader__pixel:nth-child(4) {
+  --pixel-color: #22d3ee;
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.48);
+}
+
+.sendPixelLoader__pixel:nth-child(5) {
+  --pixel-color: #facc15;
+  box-shadow: 0 0 6px rgba(250, 204, 21, 0.44);
+}
+
+.sendPixelLoader__pixel:nth-child(6) {
+  --pixel-color: #fb923c;
+  box-shadow: 0 0 6px rgba(251, 146, 60, 0.48);
+}
+
+.sendPixelLoader__pixel:nth-child(7) {
+  --pixel-color: #34d399;
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.48);
+}
+
+.sendPixelLoader__pixel:nth-child(8) {
+  --pixel-color: #818cf8;
+  box-shadow: 0 0 6px rgba(129, 140, 248, 0.5);
+}
+
+.sendPixelLoader__pixel:nth-child(9) {
+  --pixel-color: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.42);
+}
+
+@keyframes sendPixelSpin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes sendPixelPulse {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: scale(0.62);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sendPixelLoader,
+  .sendPixelLoader__pixel {
+    animation: none;
+  }
+
+  .sendPixelLoader__pixel {
+    opacity: 0.86;
+    transform: none;
+  }
 }
 
 .bottomControls {
