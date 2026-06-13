@@ -8,6 +8,7 @@ import type {
   PanelsChatBottomCommand,
   PanelsChatBottomSnapshotEvent,
   RightPanelCommand,
+  AgentActionRequest,
   SearchArchiveRequest,
   SidebarCommand,
   NativeTerminalBounds,
@@ -86,6 +87,12 @@ const forgeShell: ForgeShellApi = {
   },
   getWorkspaceFolder() {
     return ipcRenderer.invoke("forge:get-workspace-folder");
+  },
+  getAgentActionHostManifest() {
+    return ipcRenderer.invoke("forge:get-agent-action-host-manifest");
+  },
+  executeAgentAction(request: AgentActionRequest) {
+    return ipcRenderer.invoke("forge:execute-agent-action", request);
   },
   getHardwareTelemetrySnapshot() {
     return ipcRenderer.invoke("forge:get-hardware-telemetry-snapshot");

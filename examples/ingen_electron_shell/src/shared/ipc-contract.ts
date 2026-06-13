@@ -292,6 +292,137 @@ export interface WorkspaceActionResult {
   error?: IpcError;
 }
 
+export type AgentActionCapabilityId =
+  | "fs.list"
+  | "fs.search"
+  | "fs.create_directory"
+  | "fs.rename"
+  | "fs.move"
+  | "fs.delete_empty_directory"
+  | "shell.readonly"
+  | "browser.playwright"
+  | "computer_use"
+  | "mcp";
+
+export type AgentActionRisk = "read" | "workspace_write" | "destructive" | "external_ui" | "blocked";
+
+export interface AgentActionCapability {
+  id: AgentActionCapabilityId;
+  title: string;
+  status: "available" | "planned" | "blocked";
+  risk: AgentActionRisk;
+  underlyingTools: string[];
+  requiresApproval: boolean;
+  writes: boolean;
+  description: string;
+}
+
+export interface AgentActionHostManifest {
+  schema: "ingen.agent_action_host.manifest.v1";
+  workspace: {
+    active: boolean;
+    root: string;
+    cwd: string;
+    protectedRoots: string[];
+  };
+  permissions: {
+    sandbox: "workspace";
+    recursiveDelete: "blocked";
+    shell: "readonly_allowlist";
+    browser: "contained_webexplorer";
+    computerUse: "planned_confirmation_required";
+  };
+  capabilities: AgentActionCapability[];
+  proofHash: string;
+}
+
+export type AgentActionKind =
+  | "list"
+  | "search"
+  | "create_directory"
+  | "rename_path"
+  | "move_path"
+  | "delete_empty_directory"
+  | "run_readonly_command";
+
+export interface AgentActionRequest {
+  action: AgentActionKind;
+  path?: string;
+  toPath?: string;
+  query?: string;
+  command?: string;
+  args?: string[];
+  maxResults?: number;
+  confirmed?: boolean;
+}
+
+export interface AgentActionPathEntry {
+  name: string;
+  path: string;
+  kind: "file" | "directory" | "other";
+}
+
+export interface AgentActionSearchMatch {
+  path: string;
+  line: number;
+  text: string;
+}
+
+export interface AgentActionResult {
+  schema: "ingen.agent_action_host.result.v1";
+  accepted: boolean;
+  action: AgentActionKind;
+  cwd: string;
+  path?: string;
+  toPath?: string;
+  items?: AgentActionPathEntry[];
+  matches?: AgentActionSearchMatch[];
+  commandLine?: string;
+  exitCode?: number | null;
+  stdoutPreview?: string;
+  stderrPreview?: string;
+  value?: string;
+  proofHash: string;
+  error?: IpcError;
+}
+
+export function isAgentActionRequest(value: unknown): value is AgentActionRequest {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Partial<AgentActionRequest>;
+  const actions: AgentActionKind[] = [
+    "list",
+    "search",
+    "create_directory",
+    "rename_path",
+    "move_path",
+    "delete_empty_directory",
+    "run_readonly_command"
+  ];
+  if (!actions.includes(candidate.action as AgentActionKind)) {
+    return false;
+  }
+  for (const key of ["path", "toPath", "query", "command"] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
+      return false;
+    }
+  }
+  if (candidate.args !== undefined && (!Array.isArray(candidate.args) || !candidate.args.every((arg) => typeof arg === "string"))) {
+    return false;
+  }
+  if (
+    candidate.maxResults !== undefined &&
+    (!Number.isInteger(candidate.maxResults) || candidate.maxResults < 1 || candidate.maxResults > 500)
+  ) {
+    return false;
+  }
+  if (candidate.confirmed !== undefined && typeof candidate.confirmed !== "boolean") {
+    return false;
+  }
+  return true;
+}
+
 export interface NativeWebExplorerBounds {
   x: number;
   y: number;
@@ -583,6 +714,8 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   onPanelsChatBottomSnapshotEvent?: (listener: (event: PanelsChatBottomSnapshotEvent) => void) => () => void;
   chooseWorkspaceFolder?: () => Promise<WorkspaceChoiceResult>;
   getWorkspaceFolder?: () => Promise<WorkspaceChoiceResult>;
+  getAgentActionHostManifest?: () => Promise<AgentActionHostManifest>;
+  executeAgentAction?: (request: AgentActionRequest) => Promise<AgentActionResult>;
   getHardwareTelemetrySnapshot?: () => Promise<HardwareTelemetrySnapshot>;
   showWorkspaceInExplorer?: () => Promise<WorkspaceActionResult>;
   copyWorkspacePath?: () => Promise<WorkspaceActionResult>;

@@ -23,6 +23,10 @@ describe("embedded native Windows terminal host", () => {
   it("drives terminal bounds from the renderer slot instead of opening an external launcher", () => {
     expect(preloadSource).toContain("showNativeTerminal(bounds: NativeTerminalBounds)");
     expect(preloadSource).toContain('ipcRenderer.invoke("forge:terminal-show-native", bounds)');
+    expect(preloadSource).toContain("getAgentActionHostManifest()");
+    expect(preloadSource).toContain('ipcRenderer.invoke("forge:get-agent-action-host-manifest")');
+    expect(preloadSource).toContain("executeAgentAction(request: AgentActionRequest)");
+    expect(preloadSource).toContain('ipcRenderer.invoke("forge:execute-agent-action", request)');
     expect(canvasSource).toContain("terminalSlotRef");
     expect(canvasSource).toContain("showNativeTerminal");
     expect(canvasSource).toContain("updateNativeTerminalBounds");

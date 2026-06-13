@@ -16,6 +16,7 @@ import {
   isRightPanelSnapshot,
   isNativeSection,
   isPanelsChatBottomCommand,
+  isAgentActionRequest,
   type ForgeShellApi,
   type HeaderCommand,
   type HeaderSurfaceSnapshot,
@@ -36,6 +37,8 @@ describe("typed header IPC contract", () => {
     expect(RIGHT_PANEL_COMMAND_KIND).toContain("select_tab");
     const searchArchiveMethod: keyof ForgeShellApi = "searchArchive";
     expect(searchArchiveMethod).toBe("searchArchive");
+    const agentActionMethod: keyof ForgeShellApi = "executeAgentAction";
+    expect(agentActionMethod).toBe("executeAgentAction");
   });
 
   it("accepts versioned commands with request ids", () => {
@@ -137,6 +140,14 @@ describe("typed header IPC contract", () => {
         kind: "raw_json"
       })
     ).toBe(false);
+  });
+
+  it("accepts bounded agent action host requests", () => {
+    expect(isAgentActionRequest({ action: "list", path: "." })).toBe(true);
+    expect(isAgentActionRequest({ action: "search", query: "needle", maxResults: 25 })).toBe(true);
+    expect(isAgentActionRequest({ action: "delete_empty_directory", path: "tmp", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "delete_empty_directory", path: "tmp", confirmed: "yes" })).toBe(false);
+    expect(isAgentActionRequest({ action: "raw_shell", command: "powershell.exe" })).toBe(false);
   });
 
   it("accepts typed canvas surface snapshots and rejects loose commands", () => {
