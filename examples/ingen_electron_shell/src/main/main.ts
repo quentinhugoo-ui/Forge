@@ -8725,35 +8725,55 @@ function collapseParallelSessionItems(items: SidebarSessionItem[]): SidebarSessi
     .map((entry) => entry.item);
 }
 
-const ASSISTANT_PATTERN_DEMO_SESSION_ID = "assistant-pattern-gallery-demo";
+const ASSISTANT_PATTERN_DEMO_SESSION_ID = "assistant-writing-patterns-gallery-demo";
 
 function assistantPatternDemoArchiveSession(): ChatArchiveSession {
-  const now = "2026-06-13T02:45:00.000Z";
+  const now = "2026-06-13T03:20:00.000Z";
   const messages: ChatArchiveMessage[] = [
-    { turnId: "pattern-demo-user-table", role: "user", text: "Montre-moi une reponse avec un tableau Markdown.", createdAt: now, attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-table") },
-    { turnId: "pattern-demo-assistant-table", role: "assistant", text: "Tableau climatique aplati comme un LLM peut le renvoyer :\n\n| Saison | Temperature | Ressenti | |---|---:|---| | Hiver | 5-14 C | Doux | | Printemps | 10-24 C | Agreable | | Ete | 24-33 C | Chaud et humide |", createdAt: "2026-06-13T02:45:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-table") },
-    { turnId: "pattern-demo-user-code", role: "user", text: "Montre-moi un bloc de code.", createdAt: "2026-06-13T02:46:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-code") },
-    { turnId: "pattern-demo-assistant-code", role: "assistant", text: "Exemple de code fence :\n\n```rust\nfn seasonal_band(month: u8) -> &'static str {\n    match month {\n        12 | 1 | 2 => \"winter\",\n        6..=8 => \"summer\",\n        _ => \"transition\",\n    }\n}\n```", createdAt: "2026-06-13T02:46:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-code") },
-    { turnId: "pattern-demo-user-checklist", role: "user", text: "Montre-moi une checklist.", createdAt: "2026-06-13T02:47:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-checklist") },
-    { turnId: "pattern-demo-assistant-checklist", role: "assistant", text: "Checklist de preparation :\n\n- [x] Identifier le pattern Markdown\n- [x] Le rendre comme composant visuel\n- [ ] Verifier le rendu dans le canvas", createdAt: "2026-06-13T02:47:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-checklist") },
-    { turnId: "pattern-demo-user-quote", role: "user", text: "Montre-moi une citation.", createdAt: "2026-06-13T02:48:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-quote") },
-    { turnId: "pattern-demo-assistant-quote", role: "assistant", text: "Citation/source a isoler :\n\n> Le rendu doit aider a scanner l'information, pas seulement reproduire le texte brut.\n> Une citation consecutive reste un seul bloc.", createdAt: "2026-06-13T02:48:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-quote") },
-    { turnId: "pattern-demo-user-callout", role: "user", text: "Montre-moi des notes importantes.", createdAt: "2026-06-13T02:49:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-callout") },
-    { turnId: "pattern-demo-assistant-callout", role: "assistant", text: "Note: Ceci devient un callout information.\n\nAttention: cette ligne devient un callout warning.\n\nHypothese: le LLM peut envoyer des hypotheses explicites que le front doit distinguer.", createdAt: "2026-06-13T02:49:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-callout") },
-    { turnId: "pattern-demo-user-facts", role: "user", text: "Montre-moi des paires cle-valeur.", createdAt: "2026-06-13T02:50:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-facts") },
-    { turnId: "pattern-demo-assistant-facts", role: "assistant", text: "Fiche compacte :\n\nVille: Kagoshima\nSaison ideale: automne\nHumidite: elevee en ete\nPoint de vigilance: typhons possibles", createdAt: "2026-06-13T02:50:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-facts") },
-    { turnId: "pattern-demo-user-divider", role: "user", text: "Montre-moi un separateur et une liste numerotee.", createdAt: "2026-06-13T02:51:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-divider") },
-    { turnId: "pattern-demo-assistant-divider", role: "assistant", text: "Avant la synthese.\n\n---\n\n1. Lire le pattern.\n2. Promouvoir en composant.\n3. Garder le texte accessible.", createdAt: "2026-06-13T02:51:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-divider") }
+    { turnId: "pattern-demo-user-summary", role: "user", text: "Montre-moi un resume court.", createdAt: now, attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-summary") },
+    { turnId: "pattern-demo-assistant-summary", role: "assistant", text: "En bref : Kagoshima a des hivers doux, des etes tres humides, et l'automne reste souvent la saison la plus confortable.\n\nA retenir : chaleur + humidite structurent la plupart des conseils.", createdAt: "2026-06-13T03:20:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-summary") },
+    { turnId: "pattern-demo-user-facts", role: "user", text: "Montre-moi des paires cle-valeur.", createdAt: "2026-06-13T03:21:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-facts") },
+    { turnId: "pattern-demo-assistant-facts", role: "assistant", text: "Fiche compacte :\n\nVille: Kagoshima\nSaison ideale: automne\nHumidite: elevee en ete\nPoint de vigilance: typhons possibles", createdAt: "2026-06-13T03:21:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-facts") },
+    { turnId: "pattern-demo-user-steps", role: "user", text: "Montre-moi une procedure.", createdAt: "2026-06-13T03:22:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-steps") },
+    { turnId: "pattern-demo-assistant-steps", role: "assistant", text: "Procedure recommandee :\n\n1. Identifier le pattern dominant.\n2. Verifier si le parser sait deja le reconnaitre.\n3. Le rendre avec la grammaire visuelle commune.\n4. Ajouter une assertion de non-regression.", createdAt: "2026-06-13T03:22:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-steps") },
+    { turnId: "pattern-demo-user-plan", role: "user", text: "Montre-moi un plan d'action.", createdAt: "2026-06-13T03:23:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-plan") },
+    { turnId: "pattern-demo-assistant-plan", role: "assistant", text: "Plan d'action :\n\nObjectif: harmoniser les rendus LLM\nEtape 1: detecter les blocs recurrents\nEtape 2: appliquer les tokens visuels communs\nValidation: test Markdown cible + build renderer\nProchaine action: ouvrir la session galerie et comparer les blocs", createdAt: "2026-06-13T03:23:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-plan") },
+    { turnId: "pattern-demo-user-pros-cons", role: "user", text: "Montre-moi avantages et limites.", createdAt: "2026-06-13T03:24:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-pros-cons") },
+    { turnId: "pattern-demo-assistant-pros-cons", role: "assistant", text: "Avantages :\n\n- Lecture plus rapide\n- Patterns LLM previsibles\n- Moins de blocs bruts fatigants\n\nLimites :\n\n- Certains formats sont ambigus\n- Le parser doit rester conservateur\n- Les longs tableaux doivent rester scrollables", createdAt: "2026-06-13T03:24:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-pros-cons") },
+    { turnId: "pattern-demo-user-callout", role: "user", text: "Montre-moi notes, warnings et hypotheses.", createdAt: "2026-06-13T03:25:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-callout") },
+    { turnId: "pattern-demo-assistant-callout", role: "assistant", text: "Note: Ceci devient une information discrete.\n\nAttention: cette ligne devient un warning.\n\nHypothese: le LLM peut envoyer une supposition que le front doit distinguer.", createdAt: "2026-06-13T03:25:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-callout") },
+    { turnId: "pattern-demo-user-quote", role: "user", text: "Montre-moi une citation/source.", createdAt: "2026-06-13T03:26:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-quote") },
+    { turnId: "pattern-demo-assistant-quote", role: "assistant", text: "Citation/source a isoler :\n\n> Le rendu doit aider a scanner l'information, pas seulement reproduire le texte brut.\n> Une citation consecutive reste un seul bloc.", createdAt: "2026-06-13T03:26:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-quote") },
+    { turnId: "pattern-demo-user-table", role: "user", text: "Montre-moi une reponse avec un tableau Markdown.", createdAt: "2026-06-13T03:27:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-table") },
+    { turnId: "pattern-demo-assistant-table", role: "assistant", text: "Tableau climatique aplati comme un LLM peut le renvoyer :\n\n| Saison | Temperature | Ressenti | |---|---:|---| | Hiver | 5-14 C | Doux | | Printemps | 10-24 C | Agreable | | Ete | 24-33 C | Chaud et humide |", createdAt: "2026-06-13T03:27:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-table") },
+    { turnId: "pattern-demo-user-code", role: "user", text: "Montre-moi un code fence.", createdAt: "2026-06-13T03:28:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-code") },
+    { turnId: "pattern-demo-assistant-code", role: "assistant", text: "Exemple de code fence :\n\n```rust\nfn seasonal_band(month: u8) -> &'static str {\n    match month {\n        12 | 1 | 2 => \"winter\",\n        6..=8 => \"summer\",\n        _ => \"transition\",\n    }\n}\n```", createdAt: "2026-06-13T03:28:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-code") },
+    { turnId: "pattern-demo-user-data", role: "user", text: "Montre-moi du JSON ou YAML.", createdAt: "2026-06-13T03:29:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-data") },
+    { turnId: "pattern-demo-assistant-data", role: "assistant", text: "Exemple de donnees structurees :\n\n```json\n{\n  \"city\": \"Kagoshima\",\n  \"season\": \"autumn\",\n  \"risk\": \"typhoon watch\"\n}\n```", createdAt: "2026-06-13T03:29:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-data") },
+    { turnId: "pattern-demo-user-command", role: "user", text: "Montre-moi une commande terminal.", createdAt: "2026-06-13T03:30:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-command") },
+    { turnId: "pattern-demo-assistant-command", role: "assistant", text: "Commande a copier :\n\n```powershell\nnpm.cmd run build\nnpx.cmd vitest run tests/llm-multimodal-attachments.test.ts -t \"renders assistant markdown\"\n```", createdAt: "2026-06-13T03:30:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-command") },
+    { turnId: "pattern-demo-user-log", role: "user", text: "Montre-moi un log d'erreur.", createdAt: "2026-06-13T03:31:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-log") },
+    { turnId: "pattern-demo-assistant-log", role: "assistant", text: "Erreur a diagnostiquer :\n\n```text\nError: table row has 5 cells but header has 3\n  at parseMarkdownTable (PanelsChatBottomSlice.tsx:1488)\n  at AssistantMarkdownText (PanelsChatBottomSlice.tsx:2552)\n```", createdAt: "2026-06-13T03:31:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-log") },
+    { turnId: "pattern-demo-user-math", role: "user", text: "Montre-moi calculs et formules.", createdAt: "2026-06-13T03:32:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-math") },
+    { turnId: "pattern-demo-assistant-math", role: "assistant", text: "Calcul rapide :\n\nTemperature moyenne: (24 + 33) / 2 = 28.5 C\nHumidite ressentie: 28.5 C + facteur humidite eleve => sensation plus lourde\nROI simplifie: gain / cout = 420 / 120 = 3.5", createdAt: "2026-06-13T03:32:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-math") },
+    { turnId: "pattern-demo-user-decision", role: "user", text: "Montre-moi une decision recommandee.", createdAt: "2026-06-13T03:33:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-decision") },
+    { turnId: "pattern-demo-assistant-decision", role: "assistant", text: "Recommandation : partir en automne.\n\nOption A: automne, meilleur equilibre confort/pluie.\nOption B: printemps, agreable mais humidite montante.\nOption C: ete, a eviter si tu supportes mal la chaleur.\n\nConclusion : je choisirais septembre tardif ou octobre.", createdAt: "2026-06-13T03:33:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-decision") },
+    { turnId: "pattern-demo-user-questions", role: "user", text: "Montre-moi des questions de clarification.", createdAt: "2026-06-13T03:34:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-questions") },
+    { turnId: "pattern-demo-assistant-questions", role: "assistant", text: "Questions utiles :\n\n- Tu veux une reponse touristique ou meteorologique ?\n- Tu preferes des moyennes mensuelles ou saisonnieres ?\n- Tu veux inclure les risques typhon ?", createdAt: "2026-06-13T03:34:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-questions") },
+    { turnId: "pattern-demo-user-checklist", role: "user", text: "Montre-moi une checklist.", createdAt: "2026-06-13T03:35:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-checklist") },
+    { turnId: "pattern-demo-assistant-checklist", role: "assistant", text: "Checklist de preparation :\n\n- [x] Identifier le pattern LLM\n- [x] Appliquer l'identite graphique commune\n- [ ] Verifier le rendu dans la session fictive", createdAt: "2026-06-13T03:35:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-checklist") },
+    { turnId: "pattern-demo-user-divider", role: "user", text: "Montre-moi une synthese separee.", createdAt: "2026-06-13T03:36:00.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-user-divider") },
+    { turnId: "pattern-demo-assistant-divider", role: "assistant", text: "Avant la synthese.\n\n---\n\n1. Lire le pattern.\n2. Promouvoir en composant.\n3. Garder le texte accessible.", createdAt: "2026-06-13T03:36:10.000Z", attachments: [], proofHash: stableSearchArchiveHash("pattern-demo-assistant-divider") }
   ];
   return {
     schema: "forge.brain.chat_session_archive.v1",
     sessionId: ASSISTANT_PATTERN_DEMO_SESSION_ID,
-    title: "Assistant pattern gallery",
+    title: "Assistant writing patterns gallery",
     section: "forge",
     workspaceLabel: "Forge",
     date: "2026-06-13",
     createdAt: now,
-    updatedAt: "2026-06-13T02:51:10.000Z",
+    updatedAt: "2026-06-13T03:36:10.000Z",
     archived: false,
     messages,
     proofHash: stableSearchArchiveHash(messages.map((message) => message.proofHash))
@@ -8767,7 +8787,7 @@ function ensureAssistantPatternDemoSession(): void {
   if (!localChatSessions.some((session) => session.sessionId === ASSISTANT_PATTERN_DEMO_SESSION_ID)) {
     localChatSessions.unshift({
       sessionId: ASSISTANT_PATTERN_DEMO_SESSION_ID,
-      label: "Assistant pattern gallery",
+      label: "Assistant writing patterns gallery",
       date: "2026-06-13",
       section: "forge",
       workspaceLabel: "Forge",

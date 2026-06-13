@@ -820,10 +820,20 @@ describe("LLM multimodal attachments", () => {
   it("seeds a fictive assistant pattern gallery session for visual review", () => {
     expect(mainSource).toContain("ASSISTANT_PATTERN_DEMO_SESSION_ID");
     expect(mainSource).toContain("function assistantPatternDemoArchiveSession");
-    expect(mainSource).toContain("Assistant pattern gallery");
+    expect(mainSource).toContain("assistant-writing-patterns-gallery-demo");
+    expect(mainSource).toContain("Assistant writing patterns gallery");
     expect(mainSource).toContain("ensureAssistantPatternDemoSession()");
+    expect(mainSource).toContain("pattern-demo-assistant-summary");
+    expect(mainSource).toContain("pattern-demo-assistant-plan");
+    expect(mainSource).toContain("pattern-demo-assistant-pros-cons");
     expect(mainSource).toContain("pattern-demo-assistant-table");
     expect(mainSource).toContain("pattern-demo-assistant-code");
+    expect(mainSource).toContain("pattern-demo-assistant-data");
+    expect(mainSource).toContain("pattern-demo-assistant-command");
+    expect(mainSource).toContain("pattern-demo-assistant-log");
+    expect(mainSource).toContain("pattern-demo-assistant-math");
+    expect(mainSource).toContain("pattern-demo-assistant-decision");
+    expect(mainSource).toContain("pattern-demo-assistant-questions");
     expect(mainSource).toContain("pattern-demo-assistant-checklist");
     expect(mainSource).toContain("pattern-demo-assistant-quote");
     expect(mainSource).toContain("pattern-demo-assistant-callout");
