@@ -22,7 +22,6 @@ import {
   BRAIN_AIRBNB_COMMAND,
   BRAIN_EDITIMAGE_COMMAND,
   BRAIN_RENAME_SESSION_COMMAND,
-  BRAIN_RENAME_SESSION_RESULT_SCHEMA,
   BRAIN_GMAIL_COMMAND,
   BRAIN_GMAIL_COM_COMMAND,
   BRAIN_GOOGLEWEB_COMMAND,
@@ -2363,15 +2362,17 @@ function isFirstVisibleUserTurn(userMessageId: string, transcript: TranscriptMes
   return visibleUserMessages.length <= 1;
 }
 
-function transcriptHasSessionRenameResult(transcript: TranscriptMessage[]): boolean {
+function transcriptHasAssistantResponse(transcript: TranscriptMessage[]): boolean {
   return transcript.some((message) =>
     message.role === "assistant" &&
-    message.text.includes(BRAIN_RENAME_SESSION_RESULT_SCHEMA)
+    !message.id.startsWith("assistant-pending-") &&
+    !message.id.startsWith("assistant-status-") &&
+    message.text.trim() !== ""
   );
 }
 
 function firstTurnSessionRenameInput(userMessageId: string, transcript: TranscriptMessage[]): OpenAiResponseInputItem[] {
-  if (!isFirstVisibleUserTurn(userMessageId, transcript) || transcriptHasSessionRenameResult(transcript)) {
+  if (!isFirstVisibleUserTurn(userMessageId, transcript) || transcriptHasAssistantResponse(transcript)) {
     return [];
   }
   return [{
@@ -2380,9 +2381,11 @@ function firstTurnSessionRenameInput(userMessageId: string, transcript: Transcri
       type: "input_text",
       text: [
         "SESSION_TITLE_CODEACT_REQUIRED v1",
-        `Avant toute reponse de fond au premier message utilisateur, ecris une ligne CodeAct exacte et seule: ${BRAIN_RENAME_SESSION_COMMAND} title="titre court pertinent" reason="sujet identifie".`,
-        "Le titre doit etre choisi par toi, 2 a 6 mots, pas une recopie de la demande utilisateur.",
-        "Ensuite seulement, reponds normalement a la demande."
+        `Avant toute reponse de fond au premier message utilisateur, emets une ligne CodeAct interne exacte: ${BRAIN_RENAME_SESSION_COMMAND} title="titre court pertinent" reason="sujet identifie".`,
+        "N'ecris aucune phrase visible sur le renommage, le titre ou la session.",
+        "Le titre doit etre choisi par toi comme Codex ou Claude: 2 a 5 mots, nominal, naturel, specifique, pas une recopie de la demande utilisateur, pas seulement un nom propre.",
+        "Exemples de bons titres: Histoire de San Francisco, Decouverte de Kagoshima, Climat saisonnier Kagoshima, Recherche Airbnb Lanzarote.",
+        "Ensuite seulement, reponds normalement a la demande sans mentionner le renommage."
       ].join("\n")
     }]
   }];
@@ -8175,6 +8178,36 @@ function normalizeSessionTitle(value: string): string {
   return compact.length <= 42 ? compact : `${compact.slice(0, 39).trimEnd()}...`;
 }
 
+function polishedSessionTitle(title: string, reason: string): string {
+  const compact = normalizeSessionTitle(title);
+  if (!compact) {
+    return "";
+  }
+  const copiedHistory = compact.match(/^je\s+veux\s+connaitre\s+l['’]histoire\s+de\s+(.+)$/i);
+  if (copiedHistory?.[1]) {
+    return normalizeSessionTitle(`Histoire de ${copiedHistory[1]}`);
+  }
+  const copiedTalk = compact.match(/^(?:parle|parles|parlez)\s+moi\s+de\s+(.+)$/i);
+  if (copiedTalk?.[1]) {
+    return normalizeSessionTitle(`Decouverte de ${copiedTalk[1]}`);
+  }
+  const words = compact.split(/\s+/).filter(Boolean);
+  const hasTitleShape = /\b(de|du|des|sur|pour|avec|dans|analyse|histoire|decouverte|recherche|climat|creation|debug|refonte|plan)\b/i.test(compact);
+  if (words.length <= 2 && !hasTitleShape) {
+    if (/histoire|histor/i.test(reason)) {
+      return normalizeSessionTitle(`Histoire de ${compact}`);
+    }
+    if (/climat|temperature|meteo|saison/i.test(reason)) {
+      return normalizeSessionTitle(`Climat de ${compact}`);
+    }
+    if (/voyage|vacance|sejour|airbnb|logement|hotel|location/i.test(reason)) {
+      return normalizeSessionTitle(`Voyage a ${compact}`);
+    }
+    return normalizeSessionTitle(`Decouverte de ${compact}`);
+  }
+  return compact;
+}
+
 function parseCodeActTemplateFields(body: string): Map<string, string> {
   const fields = new Map<string, string>();
   const fieldRegex = /(?:^|\s)([a-zA-Z_][\w-]*)\s*=\s*(?:"([^"\r\n]{0,120})"|'([^'\r\n]{0,120})'|([^\r\n]*?))(?=\s+[a-zA-Z_][\w-]*\s*=|$)/g;
@@ -8204,11 +8237,11 @@ function parseRenameSessionCodeActLine(line: string): RenameSessionCodeActReques
   const body = trimmed.slice(BRAIN_RENAME_SESSION_COMMAND.length).trim();
   const fields = parseCodeActTemplateFields(body);
   const freeform = fields.size === 0 ? body : "";
-  const title = normalizeSessionTitle(fields.get("title") ?? fields.get("name") ?? fields.get("label") ?? freeform);
+  const reason = normalizeSessionTitle(fields.get("reason") ?? "");
+  const title = polishedSessionTitle(fields.get("title") ?? fields.get("name") ?? fields.get("label") ?? freeform, reason);
   if (!title) {
     return undefined;
   }
-  const reason = normalizeSessionTitle(fields.get("reason") ?? "");
   const request: RenameSessionCodeActRequest = {
     schema: "forge.brain.rename_session.request.v1",
     command: BRAIN_RENAME_SESSION_COMMAND,
@@ -8979,16 +9012,21 @@ function executeAssistantAirbnbCodeAct(message: TranscriptMessage, parallelSessi
   };
 }
 
-function renderRenameSessionCodeActResult(request: RenameSessionCodeActRequest, session: SidebarSessionItem): string {
-  return [
-    "RENAME_SESSION_RESULT",
-    `schema=${BRAIN_RENAME_SESSION_RESULT_SCHEMA}`,
-    `command=${BRAIN_RENAME_SESSION_COMMAND}`,
-    `session_id=${JSON.stringify(session.sessionId)}`,
-    `title=${JSON.stringify(session.label)}`,
-    `reason=${JSON.stringify(request.reason)}`,
-    `proof_hash=sha256:${request.proofHash}`
-  ].join("\n");
+function removeRenameSessionChatter(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => {
+      const compact = line.trim();
+      if (!compact) {
+        return true;
+      }
+      return !(
+        /renomm/i.test(compact) && /session|titre|sujet/i.test(compact)
+      );
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function executeAssistantRenameSessionCodeAct(message: TranscriptMessage, session: SidebarSessionItem): TranscriptMessage {
@@ -9000,14 +9038,15 @@ function executeAssistantRenameSessionCodeAct(message: TranscriptMessage, sessio
     return message;
   }
   renameChatSession(session, request);
-  const visibleText = removeRenameSessionCodeActLines(message.text) || assistantCodeActVisibleText(message.text);
+  const visibleText = removeRenameSessionChatter(removeRenameSessionCodeActLines(message.text)) || assistantCodeActVisibleText(message.text);
   return {
     ...message,
-    text: [visibleText, renderRenameSessionCodeActResult(request, session)].filter(Boolean).join("\n\n"),
+    text: visibleText,
     proofHash: hashJson({
       previousProofHash: message.proofHash,
       assistantCodeAct: request,
-      renamedSessionId: session.sessionId
+      renamedSessionId: session.sessionId,
+      renamedTitle: session.label
     })
   };
 }
