@@ -6,6 +6,9 @@ use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
+const DEFAULT_RENDER_KEEPALIVE_SECONDS: u64 = 10 * 60;
+const MIN_RENDER_KEEPALIVE_SECONDS: u64 = 60;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ResolveRequest {
@@ -50,6 +53,7 @@ fn main() -> Result<(), String> {
     let listener = TcpListener::bind(("0.0.0.0", port))
         .map_err(|err| format!("bind real estate resolver on {port}: {err}"))?;
     println!("forge-real-estate-resolver listening on 0.0.0.0:{port}");
+    spawn_render_keepalive();
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
@@ -140,11 +144,11 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
     };
     let body = String::from_utf8_lossy(body_bytes).to_string();
 
-    if request_line.starts_with("GET /health ") {
+    if request_line.starts_with("GET /health ") || request_line.starts_with("GET /healthz ") {
         return write_json_response(
             &mut stream,
             200,
-            &json!({ "ok": true, "service": "forge-real-estate-resolver" }),
+            &json!({ "ok": true, "service": "forge-real-estate-resolver", "sleepGuard": render_keepalive_enabled() }),
         );
     }
 
@@ -218,6 +222,83 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
             }
         }),
     )
+}
+
+fn truthy_env(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+fn render_keepalive_enabled() -> bool {
+    if std::env::var("FORGE_RENDER_KEEPALIVE")
+        .map(|value| value.trim().eq_ignore_ascii_case("false") || value.trim() == "0")
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    truthy_env("FORGE_RENDER_KEEPALIVE") || truthy_env("RENDER")
+}
+
+fn render_keepalive_url() -> Option<String> {
+    std::env::var("FORGE_RENDER_KEEPALIVE_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("RENDER_EXTERNAL_URL")
+                .ok()
+                .map(|value| value.trim().trim_end_matches('/').to_string())
+                .filter(|value| !value.is_empty())
+                .map(|base| format!("{base}/health"))
+        })
+}
+
+fn render_keepalive_interval() -> Duration {
+    let seconds = std::env::var("FORGE_RENDER_KEEPALIVE_SECONDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_RENDER_KEEPALIVE_SECONDS)
+        .max(MIN_RENDER_KEEPALIVE_SECONDS);
+    Duration::from_secs(seconds)
+}
+
+fn spawn_render_keepalive() {
+    if !render_keepalive_enabled() {
+        return;
+    }
+    let Some(url) = render_keepalive_url() else {
+        eprintln!("render keepalive enabled but no FORGE_RENDER_KEEPALIVE_URL or RENDER_EXTERNAL_URL is available");
+        return;
+    };
+    let interval = render_keepalive_interval();
+    thread::spawn(move || {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(8))
+            .user_agent("forge-render-keepalive/1.0")
+            .build();
+        let Ok(client) = client else {
+            eprintln!("render keepalive client could not be built");
+            return;
+        };
+        loop {
+            thread::sleep(interval);
+            match client.get(&url).header("x-forge-keepalive", "internal").send() {
+                Ok(response) if response.status().is_success() => {
+                    println!("render keepalive ok {} {}", response.status(), url);
+                }
+                Ok(response) => {
+                    eprintln!("render keepalive non-success {} {}", response.status(), url);
+                }
+                Err(error) => {
+                    eprintln!("render keepalive failed for {url}: {error}");
+                }
+            }
+        }
+    });
 }
 
 fn google_places_llm_handoff_payload(resolved: &AgencyPayload) -> Value {

@@ -1,0 +1,11 @@
+services:
+  - type: cron
+    name: forge-keepalive
+    runtime: node
+    branch: master
+    schedule: "*/10 * * * *"
+    buildCommand: "true"
+    startCommand: "node scripts/render-keepalive.mjs"
+    envVars:
+      - key: FORGE_KEEPALIVE_URL
+        value: https://forge-6cai.onrender.com/health
