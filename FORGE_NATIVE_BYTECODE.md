@@ -283,11 +283,13 @@ such as `pde_stencil_step`, `relaxation_step`, `ode_step_euler`,
 `ode_step_rk4` or `ode_solve`. A compute-only tensor field uses handoff
 `vector` so it stays on Monster `MassMath`; handoff `field` is reserved for
 native render/tandem artifacts. The promoted heat slice now runs a reduced
-multi-step electro-thermal battery model: explicit heat diffusion, hotspot
-source, convective cooling, Joule heating, reversible entropic heating and an
-Arrhenius side-reaction term, with explicit boundary modes: `periodic`,
-`adiabatic`, `dirichlet_ambient` and `cooling_plate_edge`. It exposes the
-professional diagnostics expected by the LLM projection:
+multi-step electro-thermal battery model: explicit anisotropic heat diffusion,
+hotspot source, convective cooling, Joule heating with temperature/SOC
+resistance modifiers, reversible entropic heating, an Arrhenius side-reaction
+term and cooling-plate contact loss, with explicit boundary modes: `periodic`,
+`adiabatic`, `dirichlet_ambient` and `cooling_plate_edge`. It can also consume
+a compact experimental max-temperature series from the filled template. It
+exposes the professional diagnostics expected by the LLM projection:
 `temperature_field_next`, `mean_temperature`, `max_temperature`,
 `hotspot_location`, `temperature_gradient_max`, `thermal_runaway_margin`,
 `time_to_threshold_estimate`, `cfl_stability_ratio`,
@@ -295,9 +297,27 @@ professional diagnostics expected by the LLM projection:
 threshold crossing time, simulated step count, final simulated time, compact
 time-series samples for max/mean/runaway margin, `sensitivity`, and a CPU
 reference check comparing the f64 reference field against a quantized f32
-candidate through L2, Linf and max-relative errors. Forge currently keeps only
-the units its validator can prove inside the source module; the domain-specific
-units (`K`, `K/m`, `K/s`, `s`) are emitted in `scientific_metrics`.
+candidate through L2, Linf and max-relative errors. The thermal validation
+battery also emits `grid_dt_convergence`, `energy_flux_breakdown`,
+`uncertainty_interval`, `analytic_reference_check`, `fem_reference_check`,
+`experimental_reference_check`, `calibration_result`,
+`monte_carlo_uncertainty`, `richardson_convergence`,
+`material_parameter_provenance`, `gpu_execution_audit`,
+`numerical_validity_score`, `engineering_decision_score`,
+`validation_readiness_score` and `validation_battery_thermal`. The analytic
+reference check runs a closed-form sinusoidal pure-heat-equation benchmark
+against the same stencil family. The FEM reference check compares the promoted
+stencil against an independent mass-lumped Q1 heat reference for the same
+case. The experimental check compares the contract-provided reference series
+against the simulated series, calibration runs a reduced source/convection
+grid search, Monte Carlo propagates declared uncertainty through 2048
+deterministic reduced-order samples, and Richardson compares 32x32, 64x64 and
+128x128 grids. Its verdict must distinguish engineering decision support from
+final certification: even with analytic, FEM, experimental-series and UQ
+checks, a real project still needs domain-owned lab data and acceptance
+criteria. Forge currently keeps only the units its validator can prove inside
+the source module; the domain-specific units (`K`, `K/m`, `K/s`, `s`) are
+emitted in `scientific_metrics`.
 
 After execution, `/newcompute_` projects Monster's internal result through
 `MonsterNewComputeLlmResult`, not through test stdout. The projection exposes
@@ -507,7 +527,7 @@ Classical alias policy:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `/formula_symbolic` | symbolic template plus scalar executable replay slice | `goal`, `symbols`, `expressions`, `assumptions`, `domains`, `requested_transforms`, `proof_checks`, `outputs` | symbol/domain/assumption words, `to_expr`, polynomial/piecewise builders, simplify/canonicalize/expand/factor/collect/cancel/together/apart, series/refine, `diff`, `integrate`, `limit`, `solve`, `reduce_equations`, `math_equiv`, `math_proof`, `expression_hash`, `pow` | generated scalar Forge module today; true symbolic typed lowering next | partial | scalar replay for `pow(x,2)` under formula contract | `missing_slots`, `unsupported_operator`, `ambiguous_expression`, `invalid_generated_forge` | `monster_operator_math_contract_classes_compile_to_forge_and_execute`, vocabulary gate |
 | `/numeric_model` | deterministic scalar formula lowering | `goal`, `variables`, `constants`, `units`, `bounds`, `equations`, `constraints`, `samples`, `validation`, `outputs` | arithmetic/comparison/bool words, unit/bounds constructors, interval/uncertainty, simple aggregate words `sum`/`mean`/`variance`/`std`/`median`/`quantile`, transcendental and special functions including `sqrt`, `pow`, `exp`, `log`, trig/hyperbolic, `erf`, `gamma`, `clamp`, `finite` | `forge_inputs`, constants, program, outputs, constraints, samples, validation, cost | supported for scalar mass-math slice | rocket thrust `mass_flow * exhaust_velocity + pressure_delta`; classical `Power(x,2)+Sin(x)` normalizes before Forge parse | `missing_slots`, `unsupported_operator`, `ambiguous_expression`, `invalid_generated_forge` | `monster_numeric_math_contract_compiles_prepares_and_executes`, `monster_numeric_math_contract_normalizes_classical_math_notation` |
-| `/simulation_dynamics` | promoted heat/stencil PDE slice plus gated broader dynamics surface | `goal`, `states`, `time_domain`, `equations`, `initial_conditions`, `boundary_conditions`, `events`, `integrator_request`, `residual_checks` | root solve, ODE/PDE/integrator names, `pde_stencil_step`, `relaxation_step`, time-step/state/residual words, `temperature_field_next`, `max_temperature`, hotspot x/y, gradient max, runaway margin, threshold time, CFL, energy balance, residual, Joule/entropic/Arrhenius heat rates, simulated steps/time, boundary modes, compact time-series, CPU reference error and sensitivity diagnostics, force/energy terms, geometry/SDF words including spheres/boxes/cylinders/unions/intersections/smooth blends, marching and mesh extraction vocabulary | `heat_pde_2d_stencil`, `pde_stencil`, `ode_step`, `solver_rk4_stencil_kernel` | supported for promoted tensor stencil/ODE words; unsupported solver slices return `capability_missing` | 64x64 multi-step electro-thermal tensor contract with cooling-plate edge boundary, full final-field buffer hash, scientific diagnostics, time-series and f64-vs-f32 reference errors | `capability_missing`, `unsupported_operator`, `missing_slots`, `invalid_generated_forge` | `monster_simulation_heat_pde_contract_prepares_solver_stencil_slice`, `monster_simulation_heat_pde_contract_executes_gpu_or_multi_adapter`, vocabulary gate |
+| `/simulation_dynamics` | promoted heat/stencil PDE slice plus gated broader dynamics surface | `goal`, `states`, `time_domain`, `equations`, `initial_conditions`, `boundary_conditions`, `events`, `integrator_request`, `residual_checks` | root solve, ODE/PDE/integrator names, `pde_stencil_step`, `relaxation_step`, time-step/state/residual words, `temperature_field_next`, `max_temperature`, hotspot x/y, gradient max, runaway margin, threshold time, CFL, energy balance, residual, Joule/entropic/Arrhenius heat rates, simulated steps/time, boundary modes, compact time-series, CPU reference error, grid/dt convergence, analytic reference check, FEM reference check, experimental reference check, calibration result, Monte Carlo uncertainty, Richardson convergence, material provenance, GPU audit, numerical and engineering decision scores, energy flux breakdown, uncertainty interval, validation readiness score and sensitivity diagnostics, force/energy terms, geometry/SDF words including spheres/boxes/cylinders/unions/intersections/smooth blends, marching and mesh extraction vocabulary | `heat_pde_2d_stencil`, `pde_stencil`, `ode_step`, `solver_rk4_stencil_kernel` | supported for promoted tensor stencil/ODE words; unsupported solver slices return `capability_missing` | 64x64 multi-step electro-thermal tensor contract with cooling-plate edge boundary, experimental series, full final-field buffer hash, scientific diagnostics, time-series, f64-vs-f32 reference errors, analytic heat reference, FEM reference, calibration, Monte Carlo, Richardson and validation battery verdict | `capability_missing`, `unsupported_operator`, `missing_slots`, `invalid_generated_forge` | `monster_simulation_heat_pde_contract_prepares_solver_stencil_slice`, `monster_simulation_heat_pde_contract_executes_gpu_or_multi_adapter`, vocabulary gate |
 | `/optimization_design` | scalar operator contract lowering plus full optimization vocabulary | `goal`, `objective`, `design_variables`, `constraints`, `algorithm_family`, `stopping_criteria`, `validation`, `outputs` | `optimize`, `constraint_solve`, `least_squares`, `argmin`, `argmax`, ranking/top-k/pareto, finite differences, line search, project bounds, penalties, gradient/Newton/BFGS/Adam, linear and sparse solve, `grad`, `jacobian`, `hessian` | generated Forge scalar program plus validation/cost; feasibility kernels next | partial | `optimize(pow(x,2), x)` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute`, vocabulary gate |
 | `/uncertainty_statistics` | scalar estimator contract lowering plus full statistics vocabulary | `goal`, `distributions`, `samples`, `estimators`, `correlation_assumptions`, `tolerances`, `validation`, `outputs` | RNG, sample/QMC/stratified/importance/resample, uniform/normal/lognormal/poisson/bernoulli, mean/variance/std/median/quantile/p5/p50/p95, covariance/correlation/zscore, normalization, moving averages/EWMA, regression, robust loss, Monte Carlo, histogram/bin counts | generated Forge scalar program plus validation/cost; robust typed stochastic buffers next | partial | `p95(uncertainty(x,x,x))` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute`, vocabulary gate |
 | `/tensor_linalg_autodiff` | scalar AD/tensor vocabulary contract lowering | `goal`, `shapes`, `batch_axes`, `matrix_ops`, `ad_requests`, `precision_policy`, `layout_policy`, `validation`, `outputs` | map/reduce/scan/filter/fold/zip/gather/scatter/masked, dot/distance/normalize/cross/outer, matmul/transpose/determinant/inverse/QR/Cholesky/trace/eigen/SVD, reshape/slice/split/tile/broadcast/flatten/concat/sort/unique/prefix/top-k, `grad`, `jacobian`, `hessian`, `jvp`, `vjp`, `adjoint` | generated scalar Forge program plus validation/cost today; typed tensor kernels next | partial | `grad(pow(x,2))` replay | `unsupported_operator`, `capability_missing` | `monster_operator_math_contract_classes_compile_to_forge_and_execute`, vocabulary gate |

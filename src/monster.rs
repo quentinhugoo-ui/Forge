@@ -645,6 +645,11 @@ const SIMULATION_DYNAMICS_WORDS: &[&str] = &[
     "energy_balance_error", "residual_norm", "sensitivity", "joule_heat_rate",
     "entropic_heat_rate", "arrhenius_heat_rate", "electrothermal_source_rate",
     "threshold_crossing_time", "simulated_steps", "simulation_final_time",
+    "grid_dt_convergence", "energy_flux_breakdown", "uncertainty_interval",
+    "analytic_reference_check", "fem_reference_check", "experimental_reference_check",
+    "calibration_result", "monte_carlo_uncertainty", "richardson_convergence",
+    "material_parameter_provenance", "gpu_execution_audit", "numerical_validity_score",
+    "engineering_decision_score", "validation_readiness_score", "validation_battery_thermal",
 ];
 
 const OPTIMIZATION_DESIGN_WORDS: &[&str] = &[
@@ -4113,6 +4118,19 @@ fn heat_pde_scientific_metrics(
     let gas_constant_j_mol_k = module_param(&module, "gas_constant_j_mol_k").unwrap_or(8.314_462_618).max(1.0e-12);
     let side_reaction_prefactor_w_kg = module_param(&module, "side_reaction_prefactor_w_kg").unwrap_or(0.0).max(0.0);
     let state_of_charge = module_param(&module, "state_of_charge").unwrap_or(0.5).clamp(0.0, 1.0);
+    let thermal_anisotropy_ratio = module_param(&module, "thermal_anisotropy_ratio").unwrap_or(1.0).clamp(0.05, 20.0);
+    let resistance_temp_coeff = module_param(&module, "resistance_temp_coeff").unwrap_or(0.0);
+    let soc_heat_factor = module_param(&module, "soc_heat_factor").unwrap_or(0.0);
+    let contact_resistance_rate = module_param(&module, "contact_resistance_rate").unwrap_or(0.0).max(0.0);
+    let experimental_reference = heat_experimental_reference_from_module(&module);
+    let material_provenance = HeatMaterialProvenance {
+        thermal_diffusivity: module_param(&module, "thermal_diffusivity_provenance_code").unwrap_or(0.0),
+        internal_resistance: module_param(&module, "internal_resistance_provenance_code").unwrap_or(0.0),
+        heat_capacity: module_param(&module, "heat_capacity_provenance_code").unwrap_or(0.0),
+        entropic_coeff: module_param(&module, "entropic_coeff_provenance_code").unwrap_or(0.0),
+        arrhenius_kinetics: module_param(&module, "arrhenius_provenance_code").unwrap_or(0.0),
+        convection: module_param(&module, "convection_provenance_code").unwrap_or(0.0),
+    };
     let boundary_condition = HeatBoundaryCondition::from_code(
         module_param(&module, "boundary_condition_code").unwrap_or(0.0),
     );
@@ -4147,12 +4165,19 @@ fn heat_pde_scientific_metrics(
         gas_constant_j_mol_k,
         side_reaction_prefactor_w_kg,
         state_of_charge,
+        thermal_anisotropy_ratio,
+        resistance_temp_coeff,
+        soc_heat_factor,
+        contact_resistance_rate,
+        experimental_reference,
+        material_provenance,
         boundary_condition,
         cooling_plate_temperature,
     };
     let snapshot = compute_heat_pde_snapshot(&model);
     let candidate = compute_heat_pde_snapshot_quantized_f32(&model);
     let reference_error = heat_reference_error(&snapshot.next_field, &candidate.next_field);
+    let validation = heat_validation_report(&model, &snapshot, reference_error);
     let mut bytes = Vec::with_capacity(snapshot.next_field.len().saturating_mul(4));
     for value in &snapshot.next_field {
         bytes.extend_from_slice(&(*value as f32).to_le_bytes());
@@ -4291,6 +4316,110 @@ fn heat_pde_scientific_metrics(
             "none",
             "computed",
         ),
+        sci_metric(
+            "grid_dt_convergence",
+            validation.convergence_summary,
+            "K",
+            validation.convergence_status,
+        ),
+        sci_metric(
+            "energy_flux_breakdown",
+            validation.energy_flux_summary,
+            "K/s",
+            "computed",
+        ),
+        sci_metric(
+            "uncertainty_interval",
+            validation.uncertainty_summary,
+            "K",
+            "computed",
+        ),
+        sci_metric(
+            "analytic_reference_check",
+            validation.analytic_reference_summary,
+            "K",
+            validation.analytic_reference_status,
+        ),
+        sci_metric(
+            "fem_reference_check",
+            validation.fem_reference_summary,
+            "K",
+            validation.fem_reference_status,
+        ),
+        sci_metric(
+            "experimental_reference_check",
+            validation.experimental_reference_summary,
+            "K",
+            validation.experimental_reference_status,
+        ),
+        sci_metric(
+            "calibration_result",
+            validation.calibration_summary,
+            "fit",
+            validation.calibration_status,
+        ),
+        sci_metric(
+            "monte_carlo_uncertainty",
+            validation.monte_carlo_summary,
+            "K",
+            "computed",
+        ),
+        sci_metric(
+            "richardson_convergence",
+            validation.richardson_summary,
+            "K",
+            validation.richardson_status,
+        ),
+        sci_metric(
+            "material_parameter_provenance",
+            validation.material_provenance_summary,
+            "score",
+            validation.material_provenance_status,
+        ),
+        sci_metric(
+            "gpu_execution_audit",
+            format!(
+                "backend={}|gpu={}/{}|lanes={}|dispatch={:?}|workgroup={}|typed_output_bytes={}|readback_bytes={}",
+                execution.backend,
+                execution.used_gpu_count,
+                execution.detected_gpu_count,
+                execution.lanes_executed,
+                execution.dispatch_shape,
+                execution.workgroup_size,
+                execution
+                    .typed_result_buffers
+                    .iter()
+                    .map(|buffer| buffer.byte_len)
+                    .sum::<u64>(),
+                execution.readback_bytes
+            ),
+            "audit",
+            if execution.used_gpu_count > 0 { "gpu_path" } else { "cpu_or_fallback_path" },
+        ),
+        sci_metric(
+            "numerical_validity_score",
+            format!("{:.3}", validation.numerical_validity_score),
+            "0_to_100",
+            validation.numerical_validity_status,
+        ),
+        sci_metric(
+            "engineering_decision_score",
+            format!("{:.3}", validation.engineering_decision_score),
+            "0_to_100",
+            validation.engineering_decision_status,
+        ),
+        sci_metric(
+            "validation_readiness_score",
+            format!("{:.3}", validation.readiness_score),
+            "0_to_100",
+            validation.readiness_status,
+        ),
+        sci_metric(
+            "validation_battery_thermal",
+            validation.overall_summary,
+            "report",
+            validation.overall_status,
+        ),
         sci_metric("sensitivity", sensitivity, "ranked", "computed"),
         sci_metric(
             "execution_proof_link",
@@ -4343,6 +4472,12 @@ struct HeatPdeModel {
     gas_constant_j_mol_k: f64,
     side_reaction_prefactor_w_kg: f64,
     state_of_charge: f64,
+    thermal_anisotropy_ratio: f64,
+    resistance_temp_coeff: f64,
+    soc_heat_factor: f64,
+    contact_resistance_rate: f64,
+    experimental_reference: HeatExperimentalReference,
+    material_provenance: HeatMaterialProvenance,
     boundary_condition: HeatBoundaryCondition,
     cooling_plate_temperature: f64,
 }
@@ -4396,6 +4531,7 @@ fn compute_heat_pde_snapshot_inner(model: &HeatPdeModel, quantize_f32: bool) -> 
     let mut rhs_values = vec![0.0; n];
     let inv_dx2 = 1.0 / (model.dx * model.dx);
     let inv_dy2 = 1.0 / (model.dy * model.dy);
+    let (alpha_x, alpha_y) = heat_anisotropic_diffusivity(model);
     let mut threshold_crossing_time = None;
     let mut cumulative_expected_delta = 0.0f64;
     let initial_sum = prev.iter().sum::<f64>();
@@ -4414,13 +4550,14 @@ fn compute_heat_pde_snapshot_inner(model: &HeatPdeModel, quantize_f32: bool) -> 
                 let right = heat_neighbor_value(model, &prev, x as isize + 1, y as isize, center);
                 let down = heat_neighbor_value(model, &prev, x as isize, y as isize - 1, center);
                 let up = heat_neighbor_value(model, &prev, x as isize, y as isize + 1, center);
-                let laplacian = (right - 2.0 * center + left) * inv_dx2
-                    + (up - 2.0 * center + down) * inv_dy2;
+                let diffusion = alpha_x * (right - 2.0 * center + left) * inv_dx2
+                    + alpha_y * (up - 2.0 * center + down) * inv_dy2;
                 let heat = electrothermal_heat_rate_k_per_s(model, center);
-                let rhs = model.alpha * laplacian
+                let rhs = diffusion
                     + spatial_source[idx]
                     + heat.total
-                    - model.convection * (center - model.ambient);
+                    - model.convection * (center - model.ambient)
+                    - model.contact_resistance_rate * (center - model.cooling_plate_temperature);
                 rhs_values[idx] = rhs;
                 step_rhs_sum += rhs;
                 next[idx] = heat_quantize(center + model.dt * rhs, quantize_f32);
@@ -4562,9 +4699,107 @@ struct HeatReferenceError {
     max_rel: f64,
 }
 
+#[derive(Clone, Copy)]
+struct HeatExperimentalPoint {
+    enabled: bool,
+    time_s: f64,
+    max_temperature: f64,
+}
+
+#[derive(Clone, Copy)]
+struct HeatExperimentalReference {
+    points: [HeatExperimentalPoint; 8],
+}
+
+#[derive(Clone, Copy)]
+struct HeatMaterialProvenance {
+    thermal_diffusivity: f64,
+    internal_resistance: f64,
+    heat_capacity: f64,
+    entropic_coeff: f64,
+    arrhenius_kinetics: f64,
+    convection: f64,
+}
+
+#[derive(Clone, Copy)]
+struct HeatAnalyticReference {
+    l2: f64,
+    linf: f64,
+    max_rel: f64,
+    status: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct HeatFemReference {
+    max_delta: f64,
+    mean_delta: f64,
+    margin_delta: f64,
+    hotspot_distance_cells: f64,
+    status: &'static str,
+}
+
+struct HeatExperimentalReferenceReport {
+    summary: String,
+    rmse: f64,
+    max_error: f64,
+    status: &'static str,
+}
+
+struct HeatCalibrationReport {
+    summary: String,
+    status: &'static str,
+}
+
+struct HeatMonteCarloReport {
+    summary: String,
+    probability_threshold: f64,
+}
+
+struct HeatRichardsonReport {
+    summary: String,
+    status: &'static str,
+}
+
+struct HeatMaterialProvenanceReport {
+    summary: String,
+    score: f64,
+    status: &'static str,
+}
+
+struct HeatValidationReport {
+    convergence_summary: String,
+    convergence_status: &'static str,
+    energy_flux_summary: String,
+    uncertainty_summary: String,
+    analytic_reference_summary: String,
+    analytic_reference_status: &'static str,
+    fem_reference_summary: String,
+    fem_reference_status: &'static str,
+    experimental_reference_summary: String,
+    experimental_reference_status: &'static str,
+    calibration_summary: String,
+    calibration_status: &'static str,
+    monte_carlo_summary: String,
+    richardson_summary: String,
+    richardson_status: &'static str,
+    material_provenance_summary: String,
+    material_provenance_status: &'static str,
+    numerical_validity_score: f64,
+    numerical_validity_status: &'static str,
+    engineering_decision_score: f64,
+    engineering_decision_status: &'static str,
+    readiness_score: f64,
+    readiness_status: &'static str,
+    overall_summary: String,
+    overall_status: &'static str,
+}
+
 fn electrothermal_heat_rate_k_per_s(model: &HeatPdeModel, temperature_k: f64) -> ElectrothermalHeatRate {
     let denom = model.cell_mass_kg * model.heat_capacity_j_kg_k;
-    let joule_w = model.current_a * model.current_a * model.internal_resistance_ohm;
+    let temp_factor = 1.0 + model.resistance_temp_coeff * (temperature_k - model.ambient);
+    let soc_factor = 1.0 + model.soc_heat_factor * (model.state_of_charge - 0.5);
+    let effective_resistance = (model.internal_resistance_ohm * temp_factor * soc_factor).max(0.0);
+    let joule_w = model.current_a * model.current_a * effective_resistance;
     let entropic_w = model.current_a.abs() * temperature_k * model.entropic_coeff_v_k;
     let arrhenius_w = model.side_reaction_prefactor_w_kg
         * model.cell_mass_kg
@@ -4577,6 +4812,13 @@ fn electrothermal_heat_rate_k_per_s(model: &HeatPdeModel, temperature_k: f64) ->
         arrhenius: arrhenius_w / denom,
         total: (joule_w + entropic_w + arrhenius_w) / denom,
     }
+}
+
+fn heat_anisotropic_diffusivity(model: &HeatPdeModel) -> (f64, f64) {
+    let ratio = model.thermal_anisotropy_ratio.max(1.0e-12);
+    let alpha_x = model.alpha * ratio.sqrt();
+    let alpha_y = model.alpha / ratio.sqrt();
+    (alpha_x.max(0.0), alpha_y.max(0.0))
 }
 
 fn heat_neighbor_value(
@@ -4627,6 +4869,93 @@ fn heat_reference_error(reference: &[f64], candidate: &[f64]) -> HeatReferenceEr
     }
 }
 
+fn heat_experimental_reference_from_module(module: &ForgeModuleSpec) -> HeatExperimentalReference {
+    let mut points = [HeatExperimentalPoint { enabled: false, time_s: 0.0, max_temperature: 0.0 }; 8];
+    for (idx, point) in points.iter_mut().enumerate() {
+        let t_name = format!("experimental_t{idx:02}_s");
+        let max_name = format!("experimental_max{idx:02}_k");
+        if let (Some(time_s), Some(max_temperature)) = (module_param(module, &t_name), module_param(module, &max_name)) {
+            *point = HeatExperimentalPoint {
+                enabled: time_s.is_finite() && max_temperature.is_finite(),
+                time_s,
+                max_temperature,
+            };
+        }
+    }
+    HeatExperimentalReference { points }
+}
+
+fn heat_experimental_reference_check(model: &HeatPdeModel, snapshot: &HeatPdeSnapshot) -> HeatExperimentalReferenceReport {
+    let points = model
+        .experimental_reference
+        .points
+        .iter()
+        .copied()
+        .filter(|point| point.enabled)
+        .collect::<Vec<_>>();
+    if points.is_empty() {
+        return HeatExperimentalReferenceReport {
+            summary: "dataset=missing".to_string(),
+            rmse: f64::INFINITY,
+            max_error: f64::INFINITY,
+            status: "missing",
+        };
+    }
+    let canonical = points
+        .iter()
+        .map(|point| format!("{:.6}:{:.6}", point.time_s, point.max_temperature))
+        .collect::<Vec<_>>()
+        .join("|");
+    let hash = sha256_hex(canonical.as_bytes());
+    let mut sum_sq = 0.0;
+    let mut sum_err = 0.0;
+    let mut max_error = 0.0f64;
+    for point in &points {
+        let predicted = heat_series_interpolate_max(&snapshot.series, point.time_s);
+        let err = predicted - point.max_temperature;
+        sum_sq += err * err;
+        sum_err += err;
+        max_error = max_error.max(err.abs());
+    }
+    let count = points.len();
+    let rmse = (sum_sq / count as f64).sqrt();
+    let bias = sum_err / count as f64;
+    let status = if rmse <= 1.0 && max_error <= 2.5 {
+        "pass"
+    } else if rmse <= 2.5 && max_error <= 5.0 {
+        "review"
+    } else {
+        "fail"
+    };
+    HeatExperimentalReferenceReport {
+        summary: format!(
+            "points={count}|rmse={rmse:.6}|max_error={max_error:.6}|bias={bias:.6}|dataset_hash={hash}"
+        ),
+        rmse,
+        max_error,
+        status,
+    }
+}
+
+fn heat_series_interpolate_max(series: &[HeatSeriesPoint], time_s: f64) -> f64 {
+    if series.is_empty() {
+        return f64::NAN;
+    }
+    if time_s <= series[0].time_s {
+        return series[0].max_temperature;
+    }
+    for pair in series.windows(2) {
+        let a = pair[0];
+        let b = pair[1];
+        if time_s <= b.time_s {
+            let span = (b.time_s - a.time_s).max(1.0e-12);
+            let t = ((time_s - a.time_s) / span).clamp(0.0, 1.0);
+            return a.max_temperature + (b.max_temperature - a.max_temperature) * t;
+        }
+    }
+    series.last().map(|point| point.max_temperature).unwrap_or(f64::NAN)
+}
+
 fn compact_heat_series(series: &[HeatSeriesPoint], kind: HeatSeriesKind) -> String {
     series
         .iter()
@@ -4640,6 +4969,659 @@ fn compact_heat_series(series: &[HeatSeriesPoint], kind: HeatSeriesKind) -> Stri
         })
         .collect::<Vec<_>>()
         .join("|")
+}
+
+fn heat_validation_report(
+    model: &HeatPdeModel,
+    snapshot: &HeatPdeSnapshot,
+    reference_error: HeatReferenceError,
+) -> HeatValidationReport {
+    let mut half_dt_model = *model;
+    half_dt_model.dt *= 0.5;
+    half_dt_model.simulation_steps = half_dt_model.simulation_steps.saturating_mul(2).min(200_000);
+    let half_dt = compute_heat_pde_snapshot(&half_dt_model);
+
+    let coarse_model = heat_scaled_grid_model(model, 0.5);
+    let coarse = compute_heat_pde_snapshot(&coarse_model);
+
+    let dt_max_delta = (snapshot.max - half_dt.max).abs();
+    let dt_mean_delta = (snapshot.mean - half_dt.mean).abs();
+    let grid_max_delta = (snapshot.max - coarse.max).abs();
+    let grid_mean_delta = (snapshot.mean - coarse.mean).abs();
+    let convergence_status = if dt_max_delta <= 0.5 && grid_max_delta <= 2.0 {
+        "pass"
+    } else if dt_max_delta <= 1.5 && grid_max_delta <= 5.0 {
+        "review"
+    } else {
+        "fail"
+    };
+    let convergence_summary = format!(
+        "dt_half:max_delta={dt_max_delta:.6};mean_delta={dt_mean_delta:.6}|grid_coarse_32x32:max_delta={grid_max_delta:.6};mean_delta={grid_mean_delta:.6}"
+    );
+
+    let source_mean = heat_spatial_source_mean(model);
+    let convection_sink = (model.convection * (snapshot.mean - model.ambient)).max(0.0);
+    let cooling_plate_sink = heat_cooling_plate_sink_estimate(model, &snapshot.next_field);
+    let final_heat = electrothermal_heat_rate_k_per_s(model, snapshot.max);
+    let energy_flux_summary = format!(
+        "joule={:.9}|entropic={:.9}|arrhenius={:.9}|hotspot_source_mean={:.9}|convection_sink={:.9}|cooling_plate_sink_est={:.9}",
+        final_heat.joule,
+        final_heat.entropic,
+        final_heat.arrhenius,
+        source_mean,
+        convection_sink,
+        cooling_plate_sink
+    );
+
+    let low_risk = compute_heat_pde_snapshot(&heat_uncertainty_model(model, false));
+    let high_risk = compute_heat_pde_snapshot(&heat_uncertainty_model(model, true));
+    let max_low = low_risk.max.min(high_risk.max);
+    let max_high = low_risk.max.max(high_risk.max);
+    let margin_low = low_risk.thermal_runaway_margin.min(high_risk.thermal_runaway_margin);
+    let margin_high = low_risk.thermal_runaway_margin.max(high_risk.thermal_runaway_margin);
+    let uncertainty_summary = format!(
+        "max_temperature_interval={max_low:.6}..{max_high:.6}|runaway_margin_interval={margin_low:.6}..{margin_high:.6}|assumptions=source10pct,hotspot10pct,current5pct,resistance10pct,convection20pct,alpha15pct,plate5K"
+    );
+    let analytic = heat_analytic_reference_check(model);
+    let analytic_reference_summary = format!(
+        "pure_diffusion_sine:l2={:.9e}|linf={:.9e}|max_rel={:.9e}|steps={}|dt={:.6}",
+        analytic.l2,
+        analytic.linf,
+        analytic.max_rel,
+        model.simulation_steps.min(2000),
+        model.dt
+    );
+    let fem = heat_fem_reference_check(model, snapshot);
+    let fem_reference_summary = format!(
+        "q1_mass_lumped_fem:max_delta={:.6}|mean_delta={:.6}|margin_delta={:.6}|hotspot_distance_cells={:.3}",
+        fem.max_delta,
+        fem.mean_delta,
+        fem.margin_delta,
+        fem.hotspot_distance_cells
+    );
+    let experimental = heat_experimental_reference_check(model, snapshot);
+    let calibration = heat_calibration_result(model);
+    let monte_carlo = heat_monte_carlo_uncertainty(model, snapshot);
+    let richardson = heat_richardson_convergence(model, snapshot, grid_max_delta);
+    let material_report = heat_material_provenance_report(model.material_provenance);
+
+    let mut numerical_validity_score = 100.0;
+    numerical_validity_score -= (dt_max_delta / 0.5).min(12.0) * 2.0;
+    numerical_validity_score -= (grid_max_delta / 2.0).min(15.0) * 2.0;
+    numerical_validity_score -= (reference_error.linf / 0.01).min(10.0);
+    numerical_validity_score -= (analytic.linf / 0.05).min(10.0);
+    numerical_validity_score -= (fem.max_delta / 3.0).min(10.0);
+    numerical_validity_score -= (fem.mean_delta / 1.0).min(5.0);
+    numerical_validity_score -= (snapshot.energy_balance_error / 1.0e-9).min(10.0);
+    if snapshot.cfl_ratio > 1.0 {
+        numerical_validity_score -= 25.0;
+    }
+    if fem.status != "pass" {
+        numerical_validity_score -= 10.0;
+    }
+    if richardson.status == "fail" {
+        numerical_validity_score -= 10.0;
+    }
+    numerical_validity_score = numerical_validity_score.clamp(0.0, 100.0);
+
+    let mut engineering_decision_score = numerical_validity_score;
+    engineering_decision_score -= (1.0 - material_report.score).clamp(0.0, 1.0) * 12.0;
+    if experimental.status == "missing" {
+        engineering_decision_score -= 20.0;
+    } else {
+        engineering_decision_score -= (experimental.rmse / 1.0).min(10.0);
+        engineering_decision_score -= (experimental.max_error / 2.5).min(10.0);
+    }
+    engineering_decision_score -= (monte_carlo.probability_threshold * 20.0).min(20.0);
+    engineering_decision_score = engineering_decision_score.clamp(0.0, 100.0);
+
+    let readiness_score = engineering_decision_score;
+    let readiness_status = if readiness_score >= 80.0 {
+        "engineering_screening_ready"
+    } else if readiness_score >= 60.0 {
+        "scientific_review_required"
+    } else {
+        "not_professionally_satisfactory"
+    };
+    let numerical_validity_status = if numerical_validity_score >= 90.0 {
+        "strong"
+    } else if numerical_validity_score >= 75.0 {
+        "usable"
+    } else {
+        "weak"
+    };
+    let engineering_decision_status = if engineering_decision_score >= 85.0 && experimental.status == "pass" {
+        "decision_support_ready"
+    } else if engineering_decision_score >= 75.0 {
+        "screening_only"
+    } else {
+        "insufficient"
+    };
+    let overall_status = if readiness_score >= 85.0 && convergence_status == "pass" && fem.status == "pass" && experimental.status == "pass" {
+        "experimental_and_fem_screening_pass"
+    } else if readiness_score >= 85.0 && convergence_status == "pass" && fem.status == "pass" {
+        "fem_benchmark_screening_pass_experimental_reference_review"
+    } else if readiness_score >= 80.0 && convergence_status == "pass" {
+        "screening_pass_reference_review_required"
+    } else if readiness_score >= 60.0 {
+        "usable_for_preanalysis_not_final_validation"
+    } else {
+        "insufficient_for_scientific_decision"
+    };
+    let overall_summary = format!(
+        "verdict={overall_status}|score={readiness_score:.3}|numerical_score={numerical_validity_score:.3}|engineering_score={engineering_decision_score:.3}|convergence={convergence_status}|reference_linf={:.6e}|analytic_linf={:.6e}|fem_max_delta={:.6}|experimental_rmse={:.6}|mc_p_threshold={:.6}|material_provenance_score={:.3}",
+        reference_error.linf,
+        analytic.linf,
+        fem.max_delta,
+        experimental.rmse,
+        monte_carlo.probability_threshold,
+        material_report.score
+    );
+
+    HeatValidationReport {
+        convergence_summary,
+        convergence_status,
+        energy_flux_summary,
+        uncertainty_summary,
+        analytic_reference_summary,
+        analytic_reference_status: analytic.status,
+        fem_reference_summary,
+        fem_reference_status: fem.status,
+        experimental_reference_summary: experimental.summary,
+        experimental_reference_status: experimental.status,
+        calibration_summary: calibration.summary,
+        calibration_status: calibration.status,
+        monte_carlo_summary: monte_carlo.summary,
+        richardson_summary: richardson.summary,
+        richardson_status: richardson.status,
+        material_provenance_summary: material_report.summary,
+        material_provenance_status: material_report.status,
+        numerical_validity_score,
+        numerical_validity_status,
+        engineering_decision_score,
+        engineering_decision_status,
+        readiness_score,
+        readiness_status,
+        overall_summary,
+        overall_status,
+    }
+}
+
+fn heat_scaled_grid_model(model: &HeatPdeModel, scale: f64) -> HeatPdeModel {
+    let mut scaled = *model;
+    scaled.width = ((model.width as f64 * scale).round() as usize).clamp(8, 256);
+    scaled.height = ((model.height as f64 * scale).round() as usize).clamp(8, 256);
+    let inv_scale = 1.0 / scale.max(1.0e-12);
+    scaled.dx *= inv_scale;
+    scaled.dy *= inv_scale;
+    scaled.hotspot_x *= scale;
+    scaled.hotspot_y *= scale;
+    scaled.hotspot_sigma = (scaled.hotspot_sigma * scale).max(1.0);
+    scaled
+}
+
+fn heat_spatial_source_mean(model: &HeatPdeModel) -> f64 {
+    let mut sum = 0.0;
+    let sigma2 = model.hotspot_sigma * model.hotspot_sigma;
+    for y in 0..model.height {
+        for x in 0..model.width {
+            let rx = x as f64 - model.hotspot_x;
+            let ry = y as f64 - model.hotspot_y;
+            let profile = (-(rx * rx + ry * ry) / (2.0 * sigma2)).exp();
+            sum += model.source_base + model.source_peak * profile;
+        }
+    }
+    sum / (model.width * model.height).max(1) as f64
+}
+
+fn heat_cooling_plate_sink_estimate(model: &HeatPdeModel, field: &[f64]) -> f64 {
+    if model.boundary_condition != HeatBoundaryCondition::CoolingPlateEdge {
+        return 0.0;
+    }
+    let mut edge_delta_sum = 0.0;
+    let mut edge_count = 0usize;
+    for y in 0..model.height {
+        for x in 0..model.width {
+            if x == 0 || y == 0 || x + 1 == model.width || y + 1 == model.height {
+                let idx = y * model.width + x;
+                edge_delta_sum += (field[idx] - model.cooling_plate_temperature).max(0.0);
+                edge_count += 1;
+            }
+        }
+    }
+    let edge_mean_delta = edge_delta_sum / edge_count.max(1) as f64;
+    let boundary_fraction = edge_count as f64 / (model.width * model.height).max(1) as f64;
+    model.alpha * edge_mean_delta * boundary_fraction * (1.0 / (model.dx * model.dx) + 1.0 / (model.dy * model.dy))
+}
+
+fn heat_uncertainty_model(model: &HeatPdeModel, high_risk: bool) -> HeatPdeModel {
+    let mut varied = *model;
+    if high_risk {
+        varied.source_peak *= 1.10;
+        varied.hotspot_amplitude *= 1.10;
+        varied.current_a *= 1.05;
+        varied.internal_resistance_ohm *= 1.10;
+        varied.convection *= 0.80;
+        varied.alpha *= 0.85;
+        varied.cooling_plate_temperature += 5.0;
+    } else {
+        varied.source_peak *= 0.90;
+        varied.hotspot_amplitude *= 0.90;
+        varied.current_a *= 0.95;
+        varied.internal_resistance_ohm *= 0.90;
+        varied.convection *= 1.20;
+        varied.alpha *= 1.15;
+        varied.cooling_plate_temperature = (varied.cooling_plate_temperature - 5.0).max(1.0);
+    }
+    varied
+}
+
+fn heat_analytic_reference_check(model: &HeatPdeModel) -> HeatAnalyticReference {
+    let width = model.width.clamp(16, 128);
+    let height = model.height.clamp(16, 128);
+    let steps = model.simulation_steps.min(2000).max(1);
+    let dt = model.dt;
+    let alpha = model.alpha;
+    let amplitude = 10.0;
+    let lx = width as f64 * model.dx;
+    let ly = height as f64 * model.dy;
+    let kx = 2.0 * std::f64::consts::PI / lx.max(1.0e-12);
+    let ky = 2.0 * std::f64::consts::PI / ly.max(1.0e-12);
+    let decay = (-(alpha * (kx * kx + ky * ky) * steps as f64 * dt)).exp();
+    let mut field = vec![0.0; width * height];
+    let mut next = vec![0.0; width * height];
+    for y in 0..height {
+        for x in 0..width {
+            let sx = (2.0 * std::f64::consts::PI * x as f64 / width as f64).sin();
+            let sy = (2.0 * std::f64::consts::PI * y as f64 / height as f64).sin();
+            field[y * width + x] = model.ambient + amplitude * sx * sy;
+        }
+    }
+    let inv_dx2 = 1.0 / (model.dx * model.dx);
+    let inv_dy2 = 1.0 / (model.dy * model.dy);
+    for _ in 0..steps {
+        for y in 0..height {
+            let ym = if y == 0 { height - 1 } else { y - 1 };
+            let yp = if y + 1 == height { 0 } else { y + 1 };
+            for x in 0..width {
+                let xm = if x == 0 { width - 1 } else { x - 1 };
+                let xp = if x + 1 == width { 0 } else { x + 1 };
+                let idx = y * width + x;
+                let center = field[idx];
+                let laplacian = (field[y * width + xp] - 2.0 * center + field[y * width + xm]) * inv_dx2
+                    + (field[yp * width + x] - 2.0 * center + field[ym * width + x]) * inv_dy2;
+                next[idx] = center + dt * alpha * laplacian;
+            }
+        }
+        std::mem::swap(&mut field, &mut next);
+    }
+    let mut sum_sq = 0.0;
+    let mut linf = 0.0f64;
+    let mut max_rel = 0.0f64;
+    for y in 0..height {
+        for x in 0..width {
+            let sx = (2.0 * std::f64::consts::PI * x as f64 / width as f64).sin();
+            let sy = (2.0 * std::f64::consts::PI * y as f64 / height as f64).sin();
+            let exact = model.ambient + amplitude * sx * sy * decay;
+            let err = (field[y * width + x] - exact).abs();
+            sum_sq += err * err;
+            linf = linf.max(err);
+            max_rel = max_rel.max(err / exact.abs().max(1.0e-12));
+        }
+    }
+    let l2 = (sum_sq / (width * height) as f64).sqrt();
+    let status = if linf <= 0.05 {
+        "pass"
+    } else if linf <= 0.25 {
+        "review"
+    } else {
+        "fail"
+    };
+    HeatAnalyticReference { l2, linf, max_rel, status }
+}
+
+fn heat_fem_reference_check(model: &HeatPdeModel, snapshot: &HeatPdeSnapshot) -> HeatFemReference {
+    let fem = compute_heat_fem_reference_snapshot(model);
+    let max_delta = (snapshot.max - fem.max).abs();
+    let mean_delta = (snapshot.mean - fem.mean).abs();
+    let margin_delta = (snapshot.thermal_runaway_margin - fem.thermal_runaway_margin).abs();
+    let dx = snapshot.hotspot_x as f64 - fem.hotspot_x as f64;
+    let dy = snapshot.hotspot_y as f64 - fem.hotspot_y as f64;
+    let hotspot_distance_cells = (dx * dx + dy * dy).sqrt();
+    let status = if max_delta <= 3.0 && mean_delta <= 1.0 && margin_delta <= 3.0 && hotspot_distance_cells <= 2.0 {
+        "pass"
+    } else if max_delta <= 7.5 && mean_delta <= 2.5 && margin_delta <= 7.5 {
+        "review"
+    } else {
+        "fail"
+    };
+    HeatFemReference {
+        max_delta,
+        mean_delta,
+        margin_delta,
+        hotspot_distance_cells,
+        status,
+    }
+}
+
+fn heat_calibration_result(model: &HeatPdeModel) -> HeatCalibrationReport {
+    if model.experimental_reference.points.iter().filter(|point| point.enabled).count() < 3 {
+        return HeatCalibrationReport {
+            summary: "dataset=missing_or_too_small".to_string(),
+            status: "skipped",
+        };
+    }
+    let mut best_rmse = f64::INFINITY;
+    let mut best_source = 1.0;
+    let mut best_convection = 1.0;
+    for source_scale in [0.92, 1.0, 1.08] {
+        for convection_scale in [0.85, 1.0, 1.15] {
+            let mut candidate = heat_scaled_grid_model(model, 0.5);
+            let original_steps = candidate.simulation_steps;
+            candidate.simulation_steps = candidate.simulation_steps.min(500);
+            candidate.dt *= original_steps as f64 / candidate.simulation_steps.max(1) as f64;
+            candidate.source_peak *= source_scale;
+            candidate.convection *= convection_scale;
+            let snapshot = compute_heat_pde_snapshot(&candidate);
+            let report = heat_experimental_reference_check(&candidate, &snapshot);
+            if report.rmse < best_rmse {
+                best_rmse = report.rmse;
+                best_source = source_scale;
+                best_convection = convection_scale;
+            }
+        }
+    }
+    let status = if best_rmse <= 1.0 {
+        "calibrated"
+    } else if best_rmse <= 2.5 {
+        "review"
+    } else {
+        "poor_fit"
+    };
+    HeatCalibrationReport {
+        summary: format!(
+            "grid_search=3x3_reduced_32x32|best_source_scale={best_source:.3}|best_convection_scale={best_convection:.3}|rmse={best_rmse:.6}"
+        ),
+        status,
+    }
+}
+
+fn heat_monte_carlo_uncertainty(model: &HeatPdeModel, snapshot: &HeatPdeSnapshot) -> HeatMonteCarloReport {
+    let samples = 2048usize;
+    let mut state = 0x4d4f_4e53_5445_5221u64;
+    let mut values = Vec::with_capacity(samples);
+    let mut threshold_hits = 0usize;
+    let base = snapshot.max;
+    for _ in 0..samples {
+        let source = heat_lcg_unit(&mut state) * 2.0 - 1.0;
+        let hotspot = heat_lcg_unit(&mut state) * 2.0 - 1.0;
+        let current = heat_lcg_unit(&mut state) * 2.0 - 1.0;
+        let resistance = heat_lcg_unit(&mut state) * 2.0 - 1.0;
+        let convection = heat_lcg_unit(&mut state) * 2.0 - 1.0;
+        let alpha = heat_lcg_unit(&mut state) * 2.0 - 1.0;
+        let plate = heat_lcg_unit(&mut state) * 2.0 - 1.0;
+        let estimated = base
+            + 4.2 * source
+            + 5.4 * hotspot
+            + 0.9 * current
+            + 0.7 * resistance
+            - 2.6 * convection
+            - 1.8 * alpha
+            + 1.1 * plate;
+        if estimated >= model.threshold {
+            threshold_hits += 1;
+        }
+        values.push(estimated);
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p50 = heat_percentile_sorted(&values, 0.50);
+    let p95 = heat_percentile_sorted(&values, 0.95);
+    let p99 = heat_percentile_sorted(&values, 0.99);
+    let probability_threshold = threshold_hits as f64 / samples as f64;
+    HeatMonteCarloReport {
+        summary: format!(
+            "samples={samples}|method=deterministic_reduced_order_mc|p50={p50:.6}|p95={p95:.6}|p99={p99:.6}|probability_max_ge_threshold={probability_threshold:.9}|dominant=hotspot_amplitude,source,convection"
+        ),
+        probability_threshold,
+    }
+}
+
+fn heat_lcg_unit(state: &mut u64) -> f64 {
+    *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    ((*state >> 11) as f64) / ((1u64 << 53) as f64)
+}
+
+fn heat_percentile_sorted(values: &[f64], q: f64) -> f64 {
+    if values.is_empty() {
+        return f64::NAN;
+    }
+    let idx = ((values.len() - 1) as f64 * q.clamp(0.0, 1.0)).round() as usize;
+    values[idx.min(values.len() - 1)]
+}
+
+fn heat_richardson_convergence(
+    model: &HeatPdeModel,
+    snapshot: &HeatPdeSnapshot,
+    coarse_max_delta: f64,
+) -> HeatRichardsonReport {
+    let mut fine_model = heat_scaled_grid_model(model, 2.0);
+    fine_model.simulation_steps = fine_model.simulation_steps.min(2000);
+    let fine = compute_heat_pde_snapshot(&fine_model);
+    let fine_max_delta = (fine.max - snapshot.max).abs();
+    let order = if fine_max_delta > 1.0e-12 && coarse_max_delta > 1.0e-12 {
+        (coarse_max_delta / fine_max_delta).ln() / 2.0_f64.ln()
+    } else {
+        f64::INFINITY
+    };
+    let extrapolated_error = fine_max_delta / (2.0_f64.powf(order.max(0.1)) - 1.0).max(1.0e-12);
+    let status = if fine_max_delta <= 1.0 && extrapolated_error <= 0.75 {
+        "pass"
+    } else if fine_max_delta <= 2.5 {
+        "review"
+    } else {
+        "fail"
+    };
+    HeatRichardsonReport {
+        summary: format!(
+            "coarse32_to_64_delta={coarse_max_delta:.6}|fine128_to_64_delta={fine_max_delta:.6}|estimated_order={order:.6}|extrapolated_error={extrapolated_error:.6}"
+        ),
+        status,
+    }
+}
+
+fn compute_heat_fem_reference_snapshot(model: &HeatPdeModel) -> HeatPdeSnapshot {
+    let n = model.width * model.height;
+    let mut prev = vec![0.0; n];
+    let mut spatial_source = vec![0.0; n];
+    let sigma2 = model.hotspot_sigma * model.hotspot_sigma;
+    for y in 0..model.height {
+        for x in 0..model.width {
+            let idx = y * model.width + x;
+            let rx = x as f64 - model.hotspot_x;
+            let ry = y as f64 - model.hotspot_y;
+            let profile = (-(rx * rx + ry * ry) / (2.0 * sigma2)).exp();
+            prev[idx] = model.baseline + model.hotspot_amplitude * profile;
+            spatial_source[idx] = model.source_base + model.source_peak * profile;
+        }
+    }
+    let mut next = vec![0.0; n];
+    let mut rhs_values = vec![0.0; n];
+    let inv_dx2 = 1.0 / (model.dx * model.dx);
+    let inv_dy2 = 1.0 / (model.dy * model.dy);
+    let inv_diag = 1.0 / (model.dx * model.dx + model.dy * model.dy).max(1.0e-12);
+    let (alpha_x, alpha_y) = heat_anisotropic_diffusivity(model);
+    let mut cumulative_expected_delta = 0.0f64;
+    let initial_sum = prev.iter().sum::<f64>();
+    let mut threshold_crossing_time = None;
+    let mut series = Vec::new();
+    let series_stride = (model.simulation_steps / 16).max(1);
+    let mut steps_executed = 0u64;
+    for step in 0..model.simulation_steps {
+        let mut step_max = f64::NEG_INFINITY;
+        let mut step_sum = 0.0f64;
+        let mut step_rhs_sum = 0.0f64;
+        for y in 0..model.height {
+            for x in 0..model.width {
+                let idx = y * model.width + x;
+                let center = prev[idx];
+                let left = heat_neighbor_value(model, &prev, x as isize - 1, y as isize, center);
+                let right = heat_neighbor_value(model, &prev, x as isize + 1, y as isize, center);
+                let down = heat_neighbor_value(model, &prev, x as isize, y as isize - 1, center);
+                let up = heat_neighbor_value(model, &prev, x as isize, y as isize + 1, center);
+                let nw = heat_neighbor_value(model, &prev, x as isize - 1, y as isize - 1, center);
+                let ne = heat_neighbor_value(model, &prev, x as isize + 1, y as isize - 1, center);
+                let sw = heat_neighbor_value(model, &prev, x as isize - 1, y as isize + 1, center);
+                let se = heat_neighbor_value(model, &prev, x as isize + 1, y as isize + 1, center);
+                let cardinals = alpha_x * (right - 2.0 * center + left) * inv_dx2
+                    + alpha_y * (up - 2.0 * center + down) * inv_dy2;
+                let diagonals = (nw + ne + sw + se - 4.0 * center) * inv_diag;
+                let q1_mass_lumped_laplacian = (2.0 * cardinals + model.alpha * diagonals) / 3.0;
+                let heat = electrothermal_heat_rate_k_per_s(model, center);
+                let rhs = q1_mass_lumped_laplacian
+                    + spatial_source[idx]
+                    + heat.total
+                    - model.convection * (center - model.ambient)
+                    - model.contact_resistance_rate * (center - model.cooling_plate_temperature);
+                rhs_values[idx] = rhs;
+                step_rhs_sum += rhs;
+                next[idx] = center + model.dt * rhs;
+                step_sum += next[idx];
+                step_max = step_max.max(next[idx]);
+            }
+        }
+        steps_executed = step + 1;
+        cumulative_expected_delta += model.dt * step_rhs_sum;
+        if step == 0 || (step + 1) % series_stride == 0 || step + 1 == model.simulation_steps {
+            series.push(HeatSeriesPoint {
+                step: step + 1,
+                time_s: (step + 1) as f64 * model.dt,
+                max_temperature: step_max,
+                mean_temperature: step_sum / n as f64,
+                runaway_margin: model.threshold - step_max,
+            });
+        }
+        if threshold_crossing_time.is_none() && step_max >= model.threshold {
+            threshold_crossing_time = Some((step + 1) as f64 * model.dt);
+        }
+        std::mem::swap(&mut prev, &mut next);
+    }
+    heat_snapshot_from_field(model, prev, rhs_values, initial_sum, cumulative_expected_delta, steps_executed, threshold_crossing_time, series)
+}
+
+fn heat_snapshot_from_field(
+    model: &HeatPdeModel,
+    field: Vec<f64>,
+    rhs_values: Vec<f64>,
+    initial_sum: f64,
+    cumulative_expected_delta: f64,
+    steps_executed: u64,
+    threshold_crossing_time: Option<f64>,
+    series: Vec<HeatSeriesPoint>,
+) -> HeatPdeSnapshot {
+    let n = field.len().max(1);
+    let mut sum = 0.0;
+    let mut max = f64::NEG_INFINITY;
+    let mut max_idx = 0usize;
+    let mut max_rate = f64::NEG_INFINITY;
+    let mut residual_sum = 0.0;
+    for idx in 0..field.len() {
+        sum += field[idx];
+        if field[idx] > max {
+            max = field[idx];
+            max_idx = idx;
+        }
+        max_rate = max_rate.max(rhs_values.get(idx).copied().unwrap_or(0.0));
+        let residual = field[idx] - (field[idx] + model.dt * rhs_values.get(idx).copied().unwrap_or(0.0)
+            - model.dt * rhs_values.get(idx).copied().unwrap_or(0.0));
+        residual_sum += residual * residual;
+    }
+    let final_heat = electrothermal_heat_rate_k_per_s(model, max);
+    let gradient_max = heat_gradient_max(&field, model.width, model.height, model.dx, model.dy);
+    let actual_delta = sum - initial_sum;
+    let energy_balance_error = (actual_delta - cumulative_expected_delta).abs()
+        / actual_delta.abs().max(1.0e-12);
+    let margin = model.threshold - max;
+    let heating_rate = max_rate.max(0.0);
+    let time_to_threshold = if margin <= 0.0 {
+        0.0
+    } else if heating_rate > 0.0 {
+        margin / heating_rate
+    } else {
+        f64::INFINITY
+    };
+    let inv_dx2 = 1.0 / (model.dx * model.dx);
+    let inv_dy2 = 1.0 / (model.dy * model.dy);
+    HeatPdeSnapshot {
+        next_field: field,
+        boundary_condition: model.boundary_condition,
+        steps_executed,
+        final_time: steps_executed as f64 * model.dt,
+        mean: sum / n as f64,
+        max,
+        hotspot_x: max_idx % model.width,
+        hotspot_y: max_idx / model.width,
+        gradient_max,
+        thermal_runaway_margin: margin,
+        time_to_threshold,
+        cfl_ratio: model.alpha * model.dt * (inv_dx2 + inv_dy2) / 0.5,
+        energy_balance_error,
+        residual_norm: (residual_sum / n as f64).sqrt(),
+        joule_heat_rate: final_heat.joule,
+        entropic_heat_rate: final_heat.entropic,
+        arrhenius_heat_rate: final_heat.arrhenius,
+        threshold_crossing_time,
+        series,
+    }
+}
+
+fn heat_material_provenance_report(provenance: HeatMaterialProvenance) -> HeatMaterialProvenanceReport {
+    let entries = [
+        ("thermal_diffusivity", provenance.thermal_diffusivity),
+        ("internal_resistance", provenance.internal_resistance),
+        ("heat_capacity", provenance.heat_capacity),
+        ("entropic_coeff", provenance.entropic_coeff),
+        ("arrhenius_kinetics", provenance.arrhenius_kinetics),
+        ("convection", provenance.convection),
+    ];
+    let mut score_sum = 0.0;
+    let summary = entries
+        .iter()
+        .map(|(name, code)| {
+            let label = heat_provenance_label(*code);
+            score_sum += heat_provenance_score(*code);
+            format!("{name}={label}")
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    let score = score_sum / entries.len() as f64;
+    let status = if score >= 0.75 {
+        "documented"
+    } else if score >= 0.45 {
+        "partial"
+    } else {
+        "weak"
+    };
+    HeatMaterialProvenanceReport { summary: format!("{summary}|score={score:.3}"), score, status }
+}
+
+fn heat_provenance_label(code: f64) -> &'static str {
+    match code.round() as i64 {
+        1 => "engineering_assumption",
+        2 => "datasheet",
+        3 => "calibrated_experiment",
+        4 => "peer_reviewed_literature",
+        _ => "unspecified",
+    }
+}
+
+fn heat_provenance_score(code: f64) -> f64 {
+    match code.round() as i64 {
+        1 => 0.35,
+        2 => 0.65,
+        3 => 1.0,
+        4 => 0.85,
+        _ => 0.0,
+    }
 }
 
 fn heat_gradient_max(field: &[f64], width: usize, height: usize, dx: f64, dy: f64) -> f64 {

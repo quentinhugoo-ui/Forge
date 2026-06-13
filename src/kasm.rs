@@ -18436,7 +18436,13 @@ fn infer_builtin_forge_call_ty(name: &str, args: &[ForgeExpr], arg_tys: &[ForgeT
         | "time_to_threshold_estimate" | "cfl_stability_ratio" | "energy_balance_error"
         | "residual_norm" | "sensitivity" | "joule_heat_rate" | "entropic_heat_rate"
         | "arrhenius_heat_rate" | "electrothermal_source_rate" | "threshold_crossing_time"
-        | "simulation_final_time" if !arg_tys.is_empty() => {
+        | "simulation_final_time" | "grid_dt_convergence" | "energy_flux_breakdown"
+        | "uncertainty_interval" | "analytic_reference_check" | "fem_reference_check"
+        | "experimental_reference_check" | "calibration_result" | "monte_carlo_uncertainty"
+        | "richardson_convergence" | "material_parameter_provenance" | "gpu_execution_audit"
+        | "numerical_validity_score" | "engineering_decision_score" | "validation_readiness_score"
+        | "validation_battery_thermal"
+            if !arg_tys.is_empty() => {
             Some(ForgeType::Scalar(ForgeScalarTy::F64))
         }
         "simulated_steps" if !arg_tys.is_empty() => Some(ForgeType::Scalar(ForgeScalarTy::U64)),
@@ -20443,6 +20449,11 @@ fn infer_builtin_unit_dim(name: &str, args: &[ForgeExpr], units: &[ForgeUnitDim]
         | "hotspot_location_x" | "hotspot_location_y" | "joule_heat_rate"
         | "entropic_heat_rate" | "arrhenius_heat_rate" | "electrothermal_source_rate"
         | "threshold_crossing_time" | "simulated_steps" | "simulation_final_time"
+        | "grid_dt_convergence" | "energy_flux_breakdown" | "uncertainty_interval"
+        | "analytic_reference_check" | "fem_reference_check" | "experimental_reference_check"
+        | "calibration_result" | "monte_carlo_uncertainty" | "richardson_convergence"
+        | "material_parameter_provenance" | "gpu_execution_audit" | "numerical_validity_score"
+        | "engineering_decision_score" | "validation_readiness_score" | "validation_battery_thermal"
             if !units.is_empty() => {
             Some(ForgeUnitDim::dimensionless())
         }
@@ -20515,6 +20526,11 @@ fn infer_builtin_unit_dim(name: &str, args: &[ForgeExpr], units: &[ForgeUnitDim]
         | "hotspot_location_x" | "hotspot_location_y" | "joule_heat_rate"
         | "entropic_heat_rate" | "arrhenius_heat_rate" | "electrothermal_source_rate"
         | "threshold_crossing_time" | "simulated_steps" | "simulation_final_time"
+        | "grid_dt_convergence" | "energy_flux_breakdown" | "uncertainty_interval"
+        | "analytic_reference_check" | "fem_reference_check" | "experimental_reference_check"
+        | "calibration_result" | "monte_carlo_uncertainty" | "richardson_convergence"
+        | "material_parameter_provenance" | "gpu_execution_audit" | "numerical_validity_score"
+        | "engineering_decision_score" | "validation_readiness_score" | "validation_battery_thermal"
             if !units.is_empty() => {
             Some(ForgeUnitDim::dimensionless())
         }
@@ -21070,6 +21086,11 @@ fn infer_builtin_bounds(name: &str, args: &[ForgeExpr], bounds: &[ForgeBounds]) 
         | "hotspot_location_x" | "hotspot_location_y" | "joule_heat_rate"
         | "entropic_heat_rate" | "arrhenius_heat_rate" | "electrothermal_source_rate"
         | "threshold_crossing_time" | "simulated_steps" | "simulation_final_time"
+        | "grid_dt_convergence" | "energy_flux_breakdown" | "uncertainty_interval"
+        | "analytic_reference_check" | "fem_reference_check" | "experimental_reference_check"
+        | "calibration_result" | "monte_carlo_uncertainty" | "richardson_convergence"
+        | "material_parameter_provenance" | "gpu_execution_audit" | "numerical_validity_score"
+        | "engineering_decision_score" | "validation_readiness_score" | "validation_battery_thermal"
             if !bounds.is_empty() => {
             ForgeBounds::new(-1.0e15, 1.0e15)
         }
@@ -21116,6 +21137,11 @@ fn infer_builtin_bounds(name: &str, args: &[ForgeExpr], bounds: &[ForgeBounds]) 
         | "hotspot_location_x" | "hotspot_location_y" | "joule_heat_rate"
         | "entropic_heat_rate" | "arrhenius_heat_rate" | "electrothermal_source_rate"
         | "threshold_crossing_time" | "simulated_steps" | "simulation_final_time"
+        | "grid_dt_convergence" | "energy_flux_breakdown" | "uncertainty_interval"
+        | "analytic_reference_check" | "fem_reference_check" | "experimental_reference_check"
+        | "calibration_result" | "monte_carlo_uncertainty" | "richardson_convergence"
+        | "material_parameter_provenance" | "gpu_execution_audit" | "numerical_validity_score"
+        | "engineering_decision_score" | "validation_readiness_score" | "validation_battery_thermal"
             if !bounds.is_empty() => {
             ForgeBounds::new(-1.0e15, 1.0e15)
         }
@@ -22675,6 +22701,54 @@ artifact_handoff:
                 .unwrap()
                 .infer_ty(&vars, &funcs),
             Some(ForgeType::Scalar(ForgeScalarTy::U64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("validation_readiness_score(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("analytic_reference_check(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("fem_reference_check(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("material_parameter_provenance(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("experimental_reference_check(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("monte_carlo_uncertainty(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("engineering_decision_score(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
+        );
+        assert_eq!(
+            ForgeExpr::parse("validation_battery_thermal(next_temperature_field)")
+                .unwrap()
+                .infer_ty(&vars, &funcs),
+            Some(ForgeType::Scalar(ForgeScalarTy::F64))
         );
     }
 
@@ -27467,7 +27541,12 @@ fn call_kernel_class(name: &str) -> ForgeIrKernelClass {
         | "time_to_threshold_estimate" | "cfl_stability_ratio" | "energy_balance_error"
         | "residual_norm" | "sensitivity" | "joule_heat_rate" | "entropic_heat_rate"
         | "arrhenius_heat_rate" | "electrothermal_source_rate" | "threshold_crossing_time"
-        | "simulated_steps" | "simulation_final_time" => ForgeIrKernelClass::Field,
+        | "simulated_steps" | "simulation_final_time" | "grid_dt_convergence"
+        | "energy_flux_breakdown" | "uncertainty_interval" | "analytic_reference_check"
+        | "fem_reference_check" | "experimental_reference_check" | "calibration_result"
+        | "monte_carlo_uncertainty" | "richardson_convergence" | "material_parameter_provenance"
+        | "gpu_execution_audit" | "numerical_validity_score" | "engineering_decision_score"
+        | "validation_readiness_score" | "validation_battery_thermal" => ForgeIrKernelClass::Field,
         "node_count" | "edge_count" | "graph_neighbors" | "graph_degree" | "bfs_step"
         | "shortest_path_step" | "pagerank_step" | "connected_components_step" | "refs"
         | "retainers" | "mutation_diff" | "kmer_hash" | "transcribe" | "translate"

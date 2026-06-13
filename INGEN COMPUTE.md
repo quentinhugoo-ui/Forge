@@ -86,11 +86,15 @@ simulation electro-thermique 2D multi-step sur champs `tensor<f32,64x64>`,
 avec `pde_stencil_step`, handoff `vector` pour rester dans Monster `MassMath`,
 readback compact, typed result buffers et `proof_hash`. Le template thermique
 doit declarer au minimum le champ de temperature, le champ/source thermique,
-`dt`, nombre de pas, diffusivite, `dx`, `dy`, seuil separateur critique,
-convection, ambiance, profil de hotspot, courant, resistance interne, masse,
-capacite thermique, coefficient entropique, SOC, cinetique Arrhenius,
-condition limite (`periodic`, `adiabatic`, `dirichlet_ambient` ou
-`cooling_plate_edge`) et temperature de plaque froide si presente.
+`dt`, nombre de pas, diffusivite, anisotropie thermique, `dx`, `dy`, seuil
+separateur critique, convection, ambiance, profil de hotspot, courant,
+resistance interne, coefficient temperature de resistance, masse, capacite
+thermique, coefficient entropique, SOC, facteur thermique SOC, cinetique
+Arrhenius, resistance de contact thermique, condition limite (`periodic`,
+`adiabatic`, `dirichlet_ambient` ou `cooling_plate_edge`) et temperature de
+plaque froide si presente. Le template peut aussi declarer une serie compacte
+de points experimentaux temps/temperature maximale pour calibrer et valider le
+cas precise.
 Monster projette ensuite les diagnostics professionnels: champ final
 `temperature_field_next` sous forme de buffer tensoriel hashable, temps simule,
 temperature moyenne, maximum, hotspot, gradient thermique max, marge avant
@@ -99,9 +103,25 @@ norme de residu, contributions Joule/entropique/Arrhenius et ranking de
 sensibilite. La projection inclut aussi des series temporelles compactes
 maximum/moyenne/marge runaway et une comparaison numerique
 `cpu_f64_reference_vs_f32_quantized_candidate` avec erreurs L2, Linf et relative
-max. Les unites physiques metier sont rendues dans `scientific_metrics`; le
-coeur Forge garde seulement les unites que son validateur sait prouver
-aujourd'hui.
+max. La batterie de validation thermique ajoute `grid_dt_convergence`,
+`energy_flux_breakdown`, `uncertainty_interval`, `analytic_reference_check`,
+`fem_reference_check`, `experimental_reference_check`, `calibration_result`,
+`monte_carlo_uncertainty`, `richardson_convergence`,
+`material_parameter_provenance`, `gpu_execution_audit`,
+`numerical_validity_score`, `engineering_decision_score`,
+`validation_readiness_score` et `validation_battery_thermal`. Le benchmark
+analytique verifie le stencil sur une solution sinusoidale fermee de l'equation
+de chaleur pure. Le benchmark FEM independant compare le stencil principal a
+une reference Q1 mass-lumped sur le meme cas thermique. Le check experimental
+compare les points fournis dans le template a la serie simulee, la calibration
+fait une recherche reduite source/convection, le Monte Carlo propage les
+incertitudes declarees, et Richardson compare 32x32/64x64/128x128. Le verdict
+doit rester honnete: avec reference analytique, FEM, convergence, incertitude
+et donnees experimentales fournies par le contrat, Monster peut produire un
+screening d'ingenierie decision-support; il ne pretend pas remplacer une
+campagne laboratoire ou une certification finale.
+Les unites physiques metier sont rendues dans `scientific_metrics`; le coeur
+Forge garde seulement les unites que son validateur sait prouver aujourd'hui.
 
 Le resultat rendu au LLM ne vient pas de `println!` de test. Monster expose une
 projection runtime `MonsterNewComputeLlmResult`, relayee par le service natif:
@@ -195,6 +215,8 @@ InGen 3D Engine Cible
 |   |   tensor<f32,64x64>, pde_stencil_step, multi-step electro-thermal,
 |   |   champ final hashable, mean/max/hotspot/gradient/CFL/energie/residu,
 |   |   Joule/entropique/Arrhenius/threshold/sensibilite,
+|   |   reference experimentale, calibration, Monte Carlo, Richardson,
+|   |   audit GPU, scores numerique et decisionnel,
 |   |   typed buffers et proof hash sur MassMath GPU
 |   `-- les artefacts render/DOM sont les deux sorties du tandem natif
 |
