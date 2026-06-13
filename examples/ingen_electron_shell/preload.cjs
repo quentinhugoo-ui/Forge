@@ -57,11 +57,19 @@ const forgeShell = {
     ipcRenderer.on("forge:llm-provider-event", handler);
     return () => ipcRenderer.removeListener("forge:llm-provider-event", handler);
   },
+  onPanelsChatBottomSnapshotEvent(listener) {
+    const handler = (_event, payload) => listener(payload);
+    ipcRenderer.on("forge:panels-chat-bottom-snapshot-event", handler);
+    return () => ipcRenderer.removeListener("forge:panels-chat-bottom-snapshot-event", handler);
+  },
   chooseWorkspaceFolder() {
     return ipcRenderer.invoke("forge:choose-workspace-folder");
   },
   getWorkspaceFolder() {
     return ipcRenderer.invoke("forge:get-workspace-folder");
+  },
+  getHardwareTelemetrySnapshot() {
+    return ipcRenderer.invoke("forge:get-hardware-telemetry-snapshot");
   },
   showWorkspaceInExplorer() {
     return ipcRenderer.invoke("forge:show-workspace-in-explorer");
@@ -102,6 +110,18 @@ const forgeShell = {
   },
   searchCitySuggestions(query) {
     return ipcRenderer.invoke("forge:search-city-suggestions", query);
+  },
+  openGeoEntity(query) {
+    return ipcRenderer.invoke("forge:maps-open-geo-entity", query);
+  },
+  showNativeTerminal(bounds) {
+    return ipcRenderer.invoke("forge:terminal-show-native", bounds);
+  },
+  updateNativeTerminalBounds(bounds) {
+    return ipcRenderer.invoke("forge:terminal-bounds-native", bounds);
+  },
+  hideNativeTerminal() {
+    return ipcRenderer.invoke("forge:terminal-hide-native");
   }
 };
 
