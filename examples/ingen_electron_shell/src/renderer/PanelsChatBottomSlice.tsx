@@ -1200,6 +1200,11 @@ interface AssistantFactItem {
   value: string;
 }
 
+interface AssistantMacroListItem {
+  label: string;
+  body: string;
+}
+
 interface TranscriptCodeActEvent {
   command: TranscriptCodeActCommand;
   text: string;
@@ -1426,6 +1431,38 @@ function factItemFromLine(line: string): AssistantFactItem | null {
     return null;
   }
   return { label, value };
+}
+
+function assistantMacroListItemFromText(text: string): AssistantMacroListItem | null {
+  const match = /^\s*(.+?)\s*[:\uFF1A]\s+(.+)$/.exec(text.trim());
+  if (!match || calloutFromLine(text)) {
+    return null;
+  }
+  const label = match[1]
+    .trim()
+    .replace(/^\*\*(.+)\*\*$/, "$1")
+    .replace(/^__(.+)__$/, "$1")
+    .replace(/^`(.+)`$/, "$1")
+    .trim();
+  const body = match[2].trim();
+  if (!label || !body || label.length > 42 || body.length < 8) {
+    return null;
+  }
+  if (!/^[\p{L}\p{N}][\p{L}\p{N} /_.’'()-]{1,41}$/u.test(label)) {
+    return null;
+  }
+  return { label, body };
+}
+
+function assistantMacroListItems(items: string[]): AssistantMacroListItem[] | null {
+  if (items.length < 2) {
+    return null;
+  }
+  const macroItems = items.map(assistantMacroListItemFromText);
+  if (macroItems.some((item) => !item)) {
+    return null;
+  }
+  return macroItems as AssistantMacroListItem[];
 }
 
 function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
@@ -2561,6 +2598,19 @@ function AssistantMarkdownText({
         }
         if (block.kind === "list") {
           const Tag = block.ordered ? "ol" : "ul";
+          const macroItems = block.ordered ? null : assistantMacroListItems(block.items);
+          if (macroItems) {
+            return (
+              <ul className="assistantText__list assistantText__list--macro" key={`${messageId}-list-${index}`}>
+                {macroItems.map((item, itemIndex) => (
+                  <li key={`${messageId}-list-${index}-${itemIndex}`}>
+                    <span className="assistantText__macroLabel">{assistantInlineNodes(item.label, `${messageId}-list-${index}-${itemIndex}-label`, onUseMathInCompute, writing)}</span>
+                    <span className="assistantText__macroBody">{assistantInlineNodes(item.body, `${messageId}-list-${index}-${itemIndex}-body`, onUseMathInCompute, writing)}</span>
+                  </li>
+                ))}
+              </ul>
+            );
+          }
           return (
             <Tag className="assistantText__list" key={`${messageId}-list-${index}`}>
               {block.items.map((item, itemIndex) => (

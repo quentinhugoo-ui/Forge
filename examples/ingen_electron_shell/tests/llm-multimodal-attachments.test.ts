@@ -767,6 +767,8 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("function quoteTextFromLine");
     expect(rendererSource).toContain("function calloutFromLine");
     expect(rendererSource).toContain("function factItemFromLine");
+    expect(rendererSource).toContain("function assistantMacroListItemFromText");
+    expect(rendererSource).toContain("function assistantMacroListItems");
     expect(rendererSource).toContain("function splitMarkdownTableRow");
     expect(rendererSource).toContain("function markdownTableAlignments");
     expect(rendererSource).toContain('kind: "table"');
@@ -789,6 +791,9 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("assistantText__tableCell--");
     expect(rendererSource).toContain("assistantText__heading");
     expect(rendererSource).toContain("assistantText__list");
+    expect(rendererSource).toContain("assistantText__list--macro");
+    expect(rendererSource).toContain("assistantText__macroLabel");
+    expect(rendererSource).toContain("assistantText__macroBody");
     expect(rendererSource).toContain("AssistantMarkdownText messageId={message.id}");
     expect(stylesSource).toContain("--assistant-mark-accent");
     expect(stylesSource).toContain("--assistant-mark-line");
@@ -798,6 +803,9 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantText__list");
     expect(stylesSource).toContain(".assistantText__list li::before");
     expect(stylesSource).toContain("ol.assistantText__list");
+    expect(stylesSource).toContain(".assistantText__list--macro");
+    expect(stylesSource).toContain(".assistantText__macroLabel");
+    expect(stylesSource).toContain(".assistantText__macroBody");
     expect(stylesSource).not.toContain(".assistantText__list li:nth-child(3n + 2)");
     expect(stylesSource).not.toContain(".assistantText__list li:nth-child(4n)");
     expect(stylesSource).toContain(".assistantText__tableWrap");

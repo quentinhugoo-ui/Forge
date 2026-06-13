@@ -3443,7 +3443,7 @@ async function applyGeographicMapsFallback(
   moduleId: string,
   parallelSessionIndex: number
 ): Promise<TranscriptMessage> {
-  if (message.role !== "assistant" || moduleId === "airbnb" || moduleId === "gmail") {
+  if (message.role !== "assistant" || moduleId === "gmail") {
     return message;
   }
   if (message.text.includes("MAPS_RESULT") || message.text.includes(BRAIN_MAPS_COMMAND)) {
@@ -3593,6 +3593,7 @@ function codexDirectInstructions(reasoning: string, moduleId = ""): string {
     `@forge:direct:v1 p=Codex lang=fr tools=codeact effort=${reasoning}`,
     "style=francais naturel, concis; reponds directement.",
     "Tu es la surface assistant locale d'InGen. N'invente pas de runtime ni de statut technique.",
+    brainBootManifest(),
     brainIdentityMemoryManifest(),
     workspaceContextManifest(),
     brainSegmentManifest(),
@@ -4143,6 +4144,7 @@ async function runClaudeCodePrint(
     .map((message) => `${message.role === "system" ? "Systeme" : message.role === "user" ? "Utilisateur" : "Assistant"}: ${message.content}`)
     .join("\n\n");
   const promptedUserText = [
+    brainBootManifest(),
     brainIdentityMemoryManifest(),
     workspaceContextManifest(),
     brainSegmentManifest(),
@@ -4219,6 +4221,7 @@ async function runOpenRouterChatCompletion(
       content:
         [
           "Tu es la surface assistant locale d'InGen. Reponds dans la langue de l'utilisateur, clairement et sans inventer de runtime.",
+          brainBootManifest(),
           brainIdentityMemoryManifest(),
           workspaceContextManifest(),
           brainSegmentManifest(),
@@ -9070,9 +9073,6 @@ async function executeAssistantModuleCodeActs(
   moduleId: string,
   parallelSessionIndex: number
 ): Promise<TranscriptMessage> {
-  if (moduleId === "airbnb") {
-    return executeAssistantAirbnbCodeAct(message, parallelSessionIndex);
-  }
   if (moduleId === "gmail") {
     return executeAssistantGmailCodeAct(message, parallelSessionIndex);
   }
@@ -9085,6 +9085,9 @@ async function executeAssistantModuleCodeActs(
   next = await executeAssistantMapsCodeAct(next, parallelSessionIndex);
   if (shouldOpenAirbnbAfterMaps && next.text.includes("MAPS_RESULT")) {
     await waitForNativeMapsFirstVisual();
+  }
+  if (moduleId === "airbnb") {
+    return executeAssistantAirbnbCodeAct(next, parallelSessionIndex);
   }
   next = executeAssistantGmailCodeAct(next, parallelSessionIndex);
   next = executeAssistantAirbnbCodeAct(next, parallelSessionIndex);
