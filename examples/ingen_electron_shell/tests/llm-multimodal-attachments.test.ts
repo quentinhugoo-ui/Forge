@@ -780,6 +780,9 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantText__callout strong::after");
     expect(stylesSource).toContain("background: transparent");
     expect(stylesSource).toContain(".assistantText__factGrid");
+    expect(stylesSource).toContain("border-block: 1px solid");
+    expect(stylesSource).toContain("grid-template-columns: minmax(74px, max-content) minmax(0, 1fr)");
+    expect(stylesSource).toContain(".assistantText__fact:nth-child(-n + 2)");
     expect(stylesSource).toContain(".assistantText__divider");
     expect(stylesSource).toContain(".assistantText strong");
     expect(stylesSource).toContain(".assistantText code");

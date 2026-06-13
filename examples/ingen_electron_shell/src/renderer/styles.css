@@ -5332,33 +5332,64 @@ button {
 .assistantText__factGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
-  margin: 0;
-  overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 30%);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--forge-line), transparent 38%);
+  column-gap: 24px;
+  row-gap: 0;
+  margin: 2px 0;
+  padding: 3px 0;
+  border: 0;
+  border-block: 1px solid color-mix(in oklab, var(--forge-line), transparent 72%);
+  background: transparent;
 }
 
 .assistantText__fact {
   display: grid;
-  gap: 3px;
+  grid-template-columns: minmax(74px, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 12px;
+  row-gap: 3px;
   min-width: 0;
-  padding: 9px 10px;
-  background: color-mix(in oklab, var(--forge-bg), #ffffff 3%);
+  padding: 8px 0;
+  border-top: 1px solid color-mix(in oklab, var(--forge-line), transparent 82%);
+  background: transparent;
+}
+
+.assistantText__fact:nth-child(-n + 2) {
+  border-top: 0;
 }
 
 .assistantText__fact dt {
-  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 10%);
+  color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 18%);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .assistantText__fact dd {
   min-width: 0;
   margin: 0;
   color: color-mix(in oklab, var(--forge-text), white 5%);
+  line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .assistantText__factGrid {
+    grid-template-columns: minmax(0, 1fr);
+    column-gap: 0;
+  }
+
+  .assistantText__fact {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .assistantText__fact:nth-child(n) {
+    border-top: 1px solid color-mix(in oklab, var(--forge-line), transparent 82%);
+  }
+
+  .assistantText__fact:first-child {
+    border-top: 0;
+  }
 }
 
 .assistantText__divider {
