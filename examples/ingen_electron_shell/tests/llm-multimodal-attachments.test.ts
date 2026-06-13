@@ -760,6 +760,9 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantText__codeLanguage");
     expect(stylesSource).toContain("border-left: 3px solid");
     expect(stylesSource).toContain(".assistantText__quote");
+    expect(stylesSource).toContain(".assistantText__quote::before");
+    expect(stylesSource).toContain("border-radius: 22px 13px 24px 11px / 16px 24px 15px 22px");
+    expect(stylesSource).toContain('content: "\\201C"');
     expect(stylesSource).toContain(".assistantText__callout--warning");
     expect(stylesSource).toContain(".assistantText__factGrid");
     expect(stylesSource).toContain(".assistantText__divider");

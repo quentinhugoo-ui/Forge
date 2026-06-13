@@ -5218,18 +5218,51 @@ button {
 }
 
 .assistantText__quote {
+  position: relative;
+  isolation: isolate;
   margin: 0;
-  padding: 2px 0 2px 13px;
-  border-left: 2px solid color-mix(in oklab, #67e8f9, var(--forge-line) 35%);
-  color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 18%);
+  padding: 15px 18px 15px 48px;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, #67e8f9, var(--forge-line) 58%);
+  border-radius: 22px 13px 24px 11px / 16px 24px 15px 22px;
+  background:
+    linear-gradient(135deg, color-mix(in oklab, #67e8f9, transparent 91%), transparent 46%),
+    color-mix(in oklab, var(--forge-bg), #ffffff 4%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white, transparent 94%),
+    0 10px 26px color-mix(in oklab, #000, transparent 82%);
+  color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 10%);
+}
+
+.assistantText__quote::before {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 0;
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, #67e8f9, transparent 64%);
+  border-radius: 45% 55% 42% 58% / 55% 42% 58% 45%;
+  background: color-mix(in oklab, #67e8f9, transparent 88%);
+  color: color-mix(in oklab, #67e8f9, white 18%);
+  content: "\201C";
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  text-indent: 1px;
 }
 
 .assistantText__quote p {
+  position: relative;
+  z-index: 1;
   margin: 0;
 }
 
 .assistantText__quote p + p {
-  margin-top: 7px;
+  margin-top: 9px;
 }
 
 .assistantText__callout {
