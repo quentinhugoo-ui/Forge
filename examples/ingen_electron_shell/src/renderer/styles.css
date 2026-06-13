@@ -7454,6 +7454,10 @@ ol.assistantText__list li::before {
   background: transparent;
 }
 
+.canvasSurfaces--nativePager .webExplorerNativeSlot {
+  inset: 0 24px 0 78px;
+}
+
 .webExplorerNativeSlot--accepted {
   background: #ffffff;
 }

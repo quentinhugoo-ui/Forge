@@ -3,6 +3,7 @@ import {
   BRAIN_AIRBNB_COMMAND,
   BRAIN_GMAIL_COMMAND,
   BRAIN_GMAIL_COM_COMMAND,
+  BRAIN_MAPS_COMMAND,
   BRAIN_WORKSPACE_COMMAND,
   type NativeWebExplorerCodeAct,
   type ComposerUploadPreview,
@@ -87,6 +88,7 @@ export function App() {
   const [canvasPlanetsOpen, setCanvasPlanetsOpen] = useState(false);
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
+  const canvasMapsOpenRef = useRef(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
   const [mapsParallelIndex, setMapsParallelIndex] = useState(0);
   const [webExplorerModuleId, setWebExplorerModuleId] = useState<SidebarModuleId | null>(null);
@@ -329,6 +331,7 @@ export function App() {
         setCanvasWebExplorerOpen(false);
       }
       if (canvasMapsOpen) {
+        canvasMapsOpenRef.current = false;
         setCanvasMapsOpen(false);
       }
       if (parallelPrompts.length > 1) {
@@ -364,6 +367,7 @@ export function App() {
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
+    canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setParallelPrompts((prompts) => [...prompts, ""]);
     triggerParallelSidebarBirth();
@@ -416,6 +420,7 @@ export function App() {
       setCanvasWebExplorerOpen(false);
     }
     if (mapsParallelIndex === index) {
+      canvasMapsOpenRef.current = false;
       setCanvasMapsOpen(false);
     }
   }, [mapsParallelIndex, panelsChatSnapshot.parallelLanes, webExplorerParallelIndex]);
@@ -424,6 +429,7 @@ export function App() {
     setCanvasSplitOpen(false);
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setCanvasFilesOpen(true);
     setCanvasActivePane("files");
@@ -433,6 +439,7 @@ export function App() {
     setCanvasSplitOpen(false);
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setCanvasTerminalOpen(true);
     setCanvasActivePane("terminal");
@@ -455,6 +462,7 @@ export function App() {
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setParallelPrompts([""]);
     setWelcomeMessage(selectWelcomeMessage(brainUserMemory.preferredFirstName));
@@ -468,20 +476,26 @@ export function App() {
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasWebExplorerOpen(false);
+    canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setParallelPrompts([""]);
     setCanvasPlanetsOpen(true);
   }, []);
 
-  const openCanvasWebExplorer = useCallback((parallelSessionIndex = 0) => {
+  const openCanvasWebExplorer = useCallback((parallelSessionIndex = 0, options?: { keepMapsOpen?: boolean }) => {
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
     setCanvasTerminalOpen(false);
     setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
-    setCanvasMapsOpen(false);
+    if (!options?.keepMapsOpen) {
+      canvasMapsOpenRef.current = false;
+      setCanvasMapsOpen(false);
+    }
     setWebExplorerParallelIndex(parallelSessionIndex);
-    if (parallelPrompts.length <= 1) {
+    if (options?.keepMapsOpen && parallelPrompts.length <= 1) {
+      setParallelPrompts(["", ""]);
+    } else if (parallelPrompts.length <= 1) {
       setParallelPrompts([""]);
     }
     setCanvasWebExplorerOpen(true);
@@ -501,6 +515,7 @@ export function App() {
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
     setMapsParallelIndex(parallelSessionIndex);
+    canvasMapsOpenRef.current = true;
     if (parallelPrompts.length <= 1) {
       setParallelPrompts(["", ""]);
     }
@@ -508,16 +523,24 @@ export function App() {
   }, [parallelPrompts.length]);
 
   const closeCanvasMaps = useCallback(() => {
+    canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setMapsParallelIndex(0);
   }, []);
 
   useEffect(() => {
     return globalThis.window?.forgeShell?.onNativeWebExplorerCodeAct?.((event) => {
-      setWebExplorerModuleId(webExplorerCodeActModule(event));
-      openCanvasWebExplorer(event.parallelSessionIndex ?? 0);
+      const moduleId = webExplorerCodeActModule(event);
+      const eventKeywords = (event as { keywords?: unknown }).keywords;
+      const hasTravelFallbackKeyword = Array.isArray(eventKeywords) && eventKeywords.includes("host_geographic_travel_fallback");
+      const keepMapsOpen = moduleId === "airbnb" && (canvasMapsOpenRef.current || hasTravelFallbackKeyword);
+      if (keepMapsOpen && !canvasMapsOpenRef.current) {
+        openCanvasMaps(event.parallelSessionIndex ?? 0);
+      }
+      setWebExplorerModuleId(moduleId);
+      openCanvasWebExplorer(event.parallelSessionIndex ?? 0, { keepMapsOpen });
     });
-  }, [openCanvasWebExplorer]);
+  }, [openCanvasMaps, openCanvasWebExplorer]);
 
   useEffect(() => {
     return globalThis.window?.forgeShell?.onNativeMapsCodeAct?.((event) => {
@@ -530,8 +553,12 @@ export function App() {
       .filter((message) => message.role === "assistant")
       .at(-1);
     if (latestAssistant?.text.includes("AIRBNB_RESULT")) {
+      const keepMapsOpen = latestAssistant.text.includes("MAPS_RESULT") || latestAssistant.text.includes(BRAIN_MAPS_COMMAND);
+      if (keepMapsOpen && !canvasMapsOpenRef.current) {
+        openCanvasMaps(0);
+      }
       setWebExplorerModuleId("airbnb");
-      openCanvasWebExplorer(0);
+      openCanvasWebExplorer(0, { keepMapsOpen });
       return;
     }
     if (latestAssistant?.text.includes("GMAIL_RESULT")) {
@@ -866,6 +893,7 @@ export function App() {
           planetsOpen={canvasPlanetsOpen}
           webExplorerOpen={canvasWebExplorerOpen}
           webExplorerParallelIndex={webExplorerParallelIndex}
+          webExplorerModuleId={webExplorerModuleId}
           mapsOpen={canvasMapsOpen}
           mapsParallelIndex={mapsParallelIndex}
           leftPanelOpen={snapshot.leftPanelOpen}

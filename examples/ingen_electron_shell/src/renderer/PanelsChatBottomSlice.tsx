@@ -1214,10 +1214,10 @@ const BRAIN_CODEACT_DESCRIPTION_BY_COMMAND = new Map<string, string>(
 const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_SEARCHARCHIVE_COMMAND, "archive memory search returned bounded context"],
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
-  [BRAIN_MAPS_COMMAND, "Google Earth surface opened"],
+  [BRAIN_MAPS_COMMAND, "Use Google Earth"],
   [BRAIN_GMAIL_COMMAND, "Gmail event prepared"],
   [BRAIN_GMAIL_COM_COMMAND, "Gmail surface opened"],
-  [BRAIN_AIRBNB_COMMAND, "Airbnb surface opened"],
+  [BRAIN_AIRBNB_COMMAND, "Use Airbnb"],
   [BRAIN_NEWIMAGE_COMMAND, "image generation prepared"],
   [BRAIN_EDITIMAGE_COMMAND, "image edit prepared"],
   [BRAIN_QUESTIONNAIRE_COMMAND, "Questionnaire opened"],

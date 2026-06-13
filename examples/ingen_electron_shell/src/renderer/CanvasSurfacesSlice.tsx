@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
 import { EditImageGlyph, IMAGE_EDIT_STAGED_EVENT, ThreeUploadPreview, TranscriptAttachmentEventIcon, UploadPreview } from "./PanelsChatBottomSlice";
+import { ModuleLogo } from "./module-logos";
 import { panelsChatBottomStore } from "./panels-chat-bottom-store";
 
 interface PaneTabsProps {
@@ -19,6 +20,7 @@ interface PaneTabsProps {
 
 export type CanvasToolPane = "files" | "terminal";
 type FileKindFilter = "all" | "document" | ComposerUploadPreview["kind"];
+type NativeBrowserPage = "maps" | "webexplorer";
 interface CanvasSessionFilesTab {
   sessionId: string;
   sessionName: string;
@@ -57,6 +59,60 @@ function GoogleWordmarkMono() {
       <path fill="currentColor" d="M262.02 54.48l7.56 5.04c-2.44 3.61-8.32 9.83-18.48 9.83-12.6 0-22.01-9.74-22.01-22.18 0-13.19 9.49-22.18 20.92-22.18 11.51 0 17.14 9.16 18.98 14.11l1.01 2.52-29.65 12.28c2.27 4.45 5.8 6.72 10.75 6.72 4.96 0 8.4-2.44 10.92-6.14zm-23.27-7.98l19.82-8.23c-1.09-2.77-4.37-4.7-8.23-4.7-4.95 0-11.84 4.37-11.59 12.93z" />
       <path fill="currentColor" d="M35.29 41.41V32H67c.31 1.64.47 3.58.47 5.68 0 7.06-1.93 15.79-8.15 22.01-6.05 6.3-13.78 9.66-24.02 9.66C16.32 69.35.36 53.89.36 34.91.36 15.93 16.32.47 35.3.47c10.5 0 17.98 4.12 23.6 9.49l-6.64 6.64c-4.03-3.78-9.49-6.72-16.97-6.72-13.86 0-24.7 11.17-24.7 25.03 0 13.86 10.84 25.03 24.7 25.03 8.99 0 14.11-3.61 17.39-6.89 2.66-2.66 4.41-6.46 5.1-11.65l-22.49.01z" />
     </svg>
+  );
+}
+
+function GoogleEarthIcon() {
+  return (
+    <svg className="nativeBrowserPager__earth" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="google-earth-ocean" x1="6" y1="5" x2="27" y2="28" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#46a3ff" />
+          <stop offset="1" stopColor="#1a57d6" />
+        </linearGradient>
+      </defs>
+      <circle cx="16" cy="16" r="13.5" fill="url(#google-earth-ocean)" />
+      <path fill="#34A853" d="M5.8 13.7c2.3-5.1 7.1-8.5 12.2-8.2c-1.5 1.4-2.9 3-4.1 4.9c-1.5 2.4-3.6 3.2-8.1 3.3Zm7.3 12.2c-3.5-.7-6.4-3-7.8-6.1c2.3-.4 4.7-.1 7.3.9c2.6 1.1 5.4.9 8.5-.7c-1.6 3.3-4.3 5.7-8 5.9Z" />
+      <path fill="#FBBC04" d="M23.6 7.9c3.1 2.2 5.1 5.8 4.9 9.8c-3-1.6-5.7-2.1-8.1-1.4c-2.1.6-4.1.2-6.2-1.1c2.6-2.2 5.6-4.8 9.4-7.3Z" />
+      <path fill="#EA4335" d="M24.7 23.6c-2.1 2.4-5.2 3.9-8.7 3.9c1.3-1.4 2.4-3.1 3.3-5c1.5-3 4.7-3.4 8.1-2.4a11.7 11.7 0 0 1-2.7 3.5Z" />
+      <path fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="1.6" d="M4.6 18.4c7.4-2.7 14.9-2 22.8 2.1" />
+    </svg>
+  );
+}
+
+function NativeBrowserPager({
+  activePage,
+  onPageChange,
+  webExplorerModuleId
+}: {
+  activePage: NativeBrowserPage;
+  onPageChange: (page: NativeBrowserPage) => void;
+  webExplorerModuleId?: string | null;
+}) {
+  const webLabel = webExplorerModuleId === "airbnb" ? "Airbnb" : "WebExplorer";
+  return (
+    <div className="nativeBrowserPager" aria-label="WebExplorer pages">
+      <button
+        type="button"
+        className={activePage === "maps" ? "nativeBrowserPager__button nativeBrowserPager__button--active" : "nativeBrowserPager__button"}
+        aria-label="Open Google Earth page"
+        aria-pressed={activePage === "maps"}
+        title="Google Earth"
+        onClick={() => onPageChange("maps")}
+      >
+        <GoogleEarthIcon />
+      </button>
+      <button
+        type="button"
+        className={activePage === "webexplorer" ? "nativeBrowserPager__button nativeBrowserPager__button--active" : "nativeBrowserPager__button"}
+        aria-label={`Open ${webLabel} page`}
+        aria-pressed={activePage === "webexplorer"}
+        title={webLabel}
+        onClick={() => onPageChange("webexplorer")}
+      >
+        {webExplorerModuleId === "airbnb" ? <ModuleLogo id="airbnb" /> : <span className="shellIcon shellIcon--google" aria-hidden="true" />}
+      </button>
+    </div>
   );
 }
 
@@ -670,6 +726,7 @@ export function CanvasSurfacesSlice({
   planetsOpen,
   webExplorerOpen,
   webExplorerParallelIndex = 0,
+  webExplorerModuleId = null,
   mapsOpen,
   mapsParallelIndex = 0,
   leftPanelOpen,
@@ -698,6 +755,7 @@ export function CanvasSurfacesSlice({
   planetsOpen: boolean;
   webExplorerOpen: boolean;
   webExplorerParallelIndex?: number;
+  webExplorerModuleId?: string | null;
   mapsOpen: boolean;
   mapsParallelIndex?: number;
   leftPanelOpen: boolean;
@@ -730,6 +788,8 @@ export function CanvasSurfacesSlice({
   const nativeMapsAcceptedRef = useRef(false);
   const nativeMapsLastBoundsRef = useRef("");
   const nativeMapsMotionSyncRef = useRef<((durationMs?: number) => void) | null>(null);
+  const [nativeBrowserPage, setNativeBrowserPage] = useState<NativeBrowserPage>("maps");
+  const previousDualNativeBrowserOpenRef = useRef(false);
   const parallelOpen = parallelPrompts.length > 1;
   const openToolPanes = [
     filesOpen ? "files" : "",
@@ -750,10 +810,11 @@ export function CanvasSurfacesSlice({
   const parallelWebExplorerOpen = split && webExplorerOpen && parallelOpen;
   const mapsCanvasOpen = split && mapsOpen && !parallelOpen;
   const parallelMapsOpen = split && mapsOpen && parallelOpen;
+  const dualNativeBrowserOpen = split && webExplorerOpen && mapsOpen;
   const boundedWebExplorerParallelIndex = Math.max(0, Math.min(webExplorerParallelIndex, parallelPrompts.length - 1));
   const boundedMapsParallelIndex = Math.max(0, Math.min(mapsParallelIndex, parallelPrompts.length - 1));
-  const activeWebExplorerSlotOpen = webExplorerCanvasOpen || parallelWebExplorerOpen;
-  const activeMapsSlotOpen = mapsCanvasOpen || parallelMapsOpen;
+  const activeWebExplorerSlotOpen = (webExplorerCanvasOpen || parallelWebExplorerOpen) && (!dualNativeBrowserOpen || nativeBrowserPage === "webexplorer");
+  const activeMapsSlotOpen = (mapsCanvasOpen || parallelMapsOpen) && (!dualNativeBrowserOpen || nativeBrowserPage === "maps");
   const activeNativeBrowserSlotOpen = activeWebExplorerSlotOpen || activeMapsSlotOpen;
   const surfaceClassName = [
     "canvasSurfaces",
@@ -763,8 +824,25 @@ export function CanvasSurfacesSlice({
     terminalOpen ? "canvasSurfaces--terminalOpen" : "",
     parallelOpen || webExplorerCanvasOpen || mapsCanvasOpen ? "canvasSurfaces--parallelOpen" : "",
     activeNativeBrowserSlotOpen ? "canvasSurfaces--webExplorerOpen" : "",
-    activeMapsSlotOpen ? "canvasSurfaces--mapsOpen" : ""
+    activeMapsSlotOpen ? "canvasSurfaces--mapsOpen" : "",
+    dualNativeBrowserOpen ? "canvasSurfaces--nativePager" : ""
   ].filter(Boolean).join(" ");
+
+  useEffect(() => {
+    const wasDualOpen = previousDualNativeBrowserOpenRef.current;
+    previousDualNativeBrowserOpenRef.current = dualNativeBrowserOpen;
+    if (dualNativeBrowserOpen && !wasDualOpen) {
+      setNativeBrowserPage("maps");
+      return;
+    }
+    if (!dualNativeBrowserOpen) {
+      if (mapsOpen) {
+        setNativeBrowserPage("maps");
+      } else if (webExplorerOpen) {
+        setNativeBrowserPage("webexplorer");
+      }
+    }
+  }, [dualNativeBrowserOpen, mapsOpen, webExplorerOpen]);
 
   useEffect(() => {
     const api = globalThis.window?.forgeShell;
@@ -1090,23 +1168,45 @@ export function CanvasSurfacesSlice({
                   {hostsWebExplorer ? (
                     <>
                       <div className="webExplorerChrome" aria-hidden="true" />
-                      <button type="button" className="webExplorerClose" aria-label="Close Web Explorer" onClick={onWebExplorerClose}>
+                      {hostsMaps ? (
+                        <NativeBrowserPager activePage={nativeBrowserPage} onPageChange={setNativeBrowserPage} webExplorerModuleId={webExplorerModuleId} />
+                      ) : null}
+                      <button
+                        type="button"
+                        className="webExplorerClose"
+                        aria-label={hostsMaps && nativeBrowserPage === "maps" ? "Close Maps" : "Close Web Explorer"}
+                        onClick={hostsMaps && nativeBrowserPage === "maps" ? onMapsClose : onWebExplorerClose}
+                      >
                         <span aria-hidden="true" />
                       </button>
-                      <div
-                        ref={nativeWebExplorerSlotRef}
-                        className={nativeWebExplorerAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--accepted" : "webExplorerNativeSlot"}
-                      >
-                        {nativeWebExplorerAccepted ? null : (
-                          <>
-                            <GoogleWordmarkMono />
-                            <span className="webExplorerNativeStatus">{nativeWebExplorerStatus}</span>
-                          </>
-                        )}
-                      </div>
+                      {hostsMaps && nativeBrowserPage === "maps" ? (
+                        <div
+                          ref={nativeMapsSlotRef}
+                          className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--accepted" : "webExplorerNativeSlot"}
+                        >
+                          {nativeMapsAccepted ? null : (
+                            <>
+                              <GoogleWordmarkMono />
+                              <span className="webExplorerNativeStatus">{nativeMapsStatus}</span>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <div
+                          ref={nativeWebExplorerSlotRef}
+                          className={nativeWebExplorerAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--accepted" : "webExplorerNativeSlot"}
+                        >
+                          {nativeWebExplorerAccepted ? null : (
+                            <>
+                              <GoogleWordmarkMono />
+                              <span className="webExplorerNativeStatus">{nativeWebExplorerStatus}</span>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </>
                   ) : null}
-                  {hostsMaps ? (
+                  {hostsMaps && !hostsWebExplorer ? (
                     <>
                       <div className="webExplorerChrome" aria-hidden="true" />
                       <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
@@ -1128,6 +1228,47 @@ export function CanvasSurfacesSlice({
                 </section>
               );
             })}
+          </div>
+        ) : webExplorerCanvasOpen && mapsCanvasOpen ? (
+          <div className="parallelCanvasGrid parallelCanvasGrid--count2 webExplorerCanvasGrid mapsCanvasGrid">
+            <section className="parallelCanvasPane" aria-label="Primary canvas" />
+            <section className="parallelCanvasPane webExplorerCanvasPane mapsCanvasPane" aria-label="Maps and Airbnb canvas">
+              <div className="webExplorerChrome" aria-hidden="true" />
+              <NativeBrowserPager activePage={nativeBrowserPage} onPageChange={setNativeBrowserPage} webExplorerModuleId={webExplorerModuleId} />
+              <button
+                type="button"
+                className="webExplorerClose"
+                aria-label={nativeBrowserPage === "maps" ? "Close Maps" : "Close Web Explorer"}
+                onClick={nativeBrowserPage === "maps" ? onMapsClose : onWebExplorerClose}
+              >
+                <span aria-hidden="true" />
+              </button>
+              {nativeBrowserPage === "maps" ? (
+                <div
+                  ref={nativeMapsSlotRef}
+                  className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--accepted" : "webExplorerNativeSlot"}
+                >
+                  {nativeMapsAccepted ? null : (
+                    <>
+                      <GoogleWordmarkMono />
+                      <span className="webExplorerNativeStatus">{nativeMapsStatus}</span>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div
+                  ref={nativeWebExplorerSlotRef}
+                  className={nativeWebExplorerAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--accepted" : "webExplorerNativeSlot"}
+                >
+                  {nativeWebExplorerAccepted ? null : (
+                    <>
+                      <GoogleWordmarkMono />
+                      <span className="webExplorerNativeStatus">{nativeWebExplorerStatus}</span>
+                    </>
+                  )}
+                </div>
+              )}
+            </section>
           </div>
         ) : webExplorerCanvasOpen ? (
           <div className="parallelCanvasGrid parallelCanvasGrid--count2 webExplorerCanvasGrid">

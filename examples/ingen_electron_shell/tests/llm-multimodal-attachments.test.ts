@@ -446,8 +446,8 @@ describe("LLM multimodal attachments", () => {
   it("registers Airbnb as a Brain-backed module CodeAct", () => {
     expect(brainSource).toContain('pub const BRAIN_AIRBNB_COMMAND: &str = "/airbnb_"');
     expect(brainSource).toContain("BRAIN_CODEACT_ROUTING_RULES");
-    expect(brainSource).toContain("geographic place plus travel/vacation/stay lexical field means /airbnb_");
-    expect(brainSource).toContain("Use /airbnb_ when a geographic place appears with travel/vacation/stay language");
+    expect(brainSource).toContain("geographic place plus travel/vacation/stay lexical field means /maps_ first, then /airbnb_");
+    expect(brainSource).toContain("Use Airbnb after /maps_ when a geographic place is detected together with travel/vacation/stay language");
     expect(brainSource).toContain("Do not use for city facts, local weather, geography, maps, or routes without travel/vacation/stay intent");
     expect(brainSource).toContain("brain_airbnb_codeact_template()");
     expect(mainSource).toContain('if (moduleId === "airbnb")');
@@ -461,11 +461,14 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("partir|aller");
     expect(mainSource).toContain("applyGeographicTravelAirbnbFallback");
     expect(mainSource).toContain("host_geographic_travel_fallback");
+    expect(mainSource).toContain("hostGeographicTravelFallback");
+    expect(mainSource).toContain("mapsCodeActLineFromTarget");
+    expect(mainSource).toContain("waitForNativeMapsFirstVisual");
     expect(mainSource).toContain("executeAssistantAirbnbCodeAct");
     expect(mainSource).toContain("navigateNativeWebExplorerToAirbnb");
     expect(mainSource).toContain('parsed.hostname === "www.airbnb.com"');
     expect(appSource).toContain('latestAssistant?.text.includes("AIRBNB_RESULT")');
-    expect(rendererSource).toContain('[BRAIN_AIRBNB_COMMAND, "Airbnb surface opened"]');
+    expect(rendererSource).toContain('[BRAIN_AIRBNB_COMMAND, "Use Airbnb"]');
   });
 
   it("registers Maps as a Brain-backed Google Earth CodeAct", () => {
@@ -476,7 +479,7 @@ describe("LLM multimodal attachments", () => {
     expect(brainSource).toContain("geographic place detected alone means /maps_");
     expect(brainSource).toContain("prefer /maps_ over /sciencebrain_, /airbnb_, and /googleweb_");
     expect(mainSource).toContain("lieu geographique detecte seul = ${BRAIN_MAPS_COMMAND}");
-    expect(mainSource).toContain("lieu geographique + champ lexical voyage/vacances/sejour = ${BRAIN_AIRBNB_COMMAND}");
+    expect(mainSource).toContain("lieu geographique + champ lexical voyage/vacances/sejour = ${BRAIN_MAPS_COMMAND} puis ${BRAIN_AIRBNB_COMMAND}");
     expect(mainSource).toContain("la meteo d'une ville");
     expect(mainSource).toContain("ecris une phrase naturelle puis active ${BRAIN_MAPS_COMMAND}");
     expect(mainSource).toContain("function inferMapsTargetFromUserText");
@@ -499,8 +502,14 @@ describe("LLM multimodal attachments", () => {
     expect(appSource).toContain("canvasMapsOpen");
     expect(appSource).toContain("onNativeMapsCodeAct");
     expect(canvasSource).toContain("nativeMapsSlotRef");
+    expect(canvasSource).toContain("NativeBrowserPager");
+    expect(canvasSource).toContain("GoogleEarthIcon");
+    expect(canvasSource).toContain("webExplorerModuleId");
+    expect(canvasSource).toContain("canvasSurfaces--nativePager");
+    expect(stylesSource).toContain(".nativeBrowserPager");
+    expect(stylesSource).toContain(".canvasSurfaces--nativePager .webExplorerNativeSlot");
     expect(canvasSource).toContain("showNativeMaps");
-    expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Google Earth surface opened"]');
+    expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Use Google Earth"]');
   });
 
   it("renders Gmail and Airbnb CodeAct events with their module logos", () => {
