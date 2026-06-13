@@ -1,4 +1,4 @@
-import { createElement, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
 import { EditImageGlyph, IMAGE_EDIT_STAGED_EVENT, ThreeUploadPreview, TranscriptAttachmentEventIcon, UploadPreview } from "./PanelsChatBottomSlice";
 import { ModuleLogo } from "./module-logos";
@@ -27,9 +27,6 @@ interface CanvasSessionFilesTab {
   filesLabel: string;
   active: boolean;
 }
-
-const GOOGLE_EARTH_WEBVIEW_FALLBACK_URL =
-  "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
 
 const FILE_KIND_FILTERS: Array<{ id: FileKindFilter; label: string; kinds?: ComposerUploadPreview["kind"][] }> = [
   { id: "all", label: "Tous les fichiers" },
@@ -80,47 +77,6 @@ function GoogleEarthIcon() {
       <path fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="1.6" d="M4.6 18.4c7.4-2.7 14.9-2 22.8 2.1" />
     </svg>
   );
-}
-
-function isGoogleEarthWebViewUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "https:" && parsed.hostname === "earth.google.com";
-  } catch {
-    return false;
-  }
-}
-
-function ProprietaryEarthWebView({ src }: { src: string }) {
-  const webviewRef = useRef<HTMLElement | null>(null);
-  const safeSrc = isGoogleEarthWebViewUrl(src) ? src : GOOGLE_EARTH_WEBVIEW_FALLBACK_URL;
-
-  useEffect(() => {
-    const webview = webviewRef.current;
-    if (!webview) {
-      return undefined;
-    }
-    const preventUnsafeNavigation = (event: Event) => {
-      const url = (event as Event & { url?: string }).url ?? "";
-      if (url && !isGoogleEarthWebViewUrl(url)) {
-        event.preventDefault();
-      }
-    };
-    webview.addEventListener("will-navigate", preventUnsafeNavigation);
-    webview.addEventListener("new-window", preventUnsafeNavigation);
-    return () => {
-      webview.removeEventListener("will-navigate", preventUnsafeNavigation);
-      webview.removeEventListener("new-window", preventUnsafeNavigation);
-    };
-  }, []);
-
-  return createElement("webview", {
-    ref: webviewRef,
-    className: "proprietaryEarthWebView",
-    src: safeSrc,
-    partition: "persist:ingen-maps",
-    webpreferences: "contextIsolation=yes,nodeIntegration=no,sandbox=yes"
-  } as Record<string, unknown>);
 }
 
 function NativeBrowserPager({
@@ -771,7 +727,6 @@ export function CanvasSurfacesSlice({
   webExplorerParallelIndex = 0,
   webExplorerModuleId = null,
   mapsOpen,
-  mapsWebviewUrl = "",
   mapsParallelIndex = 0,
   leftPanelOpen,
   parallelPrompts,
@@ -801,7 +756,6 @@ export function CanvasSurfacesSlice({
   webExplorerParallelIndex?: number;
   webExplorerModuleId?: string | null;
   mapsOpen: boolean;
-  mapsWebviewUrl?: string;
   mapsParallelIndex?: number;
   leftPanelOpen: boolean;
   parallelPrompts: string[];
@@ -828,8 +782,8 @@ export function CanvasSurfacesSlice({
   const nativeWebExplorerLastBoundsRef = useRef("");
   const nativeWebExplorerMotionSyncRef = useRef<((durationMs?: number) => void) | null>(null);
   const nativeMapsSlotRef = useRef<HTMLDivElement>(null);
-  const [, setNativeMapsAccepted] = useState(false);
-  const [, setNativeMapsStatus] = useState("native maps pending");
+  const [nativeMapsAccepted, setNativeMapsAccepted] = useState(false);
+  const [nativeMapsStatus, setNativeMapsStatus] = useState("native maps pending");
   const nativeMapsAcceptedRef = useRef(false);
   const nativeMapsLastBoundsRef = useRef("");
   const nativeMapsMotionSyncRef = useRef<((durationMs?: number) => void) | null>(null);
@@ -859,9 +813,8 @@ export function CanvasSurfacesSlice({
   const boundedWebExplorerParallelIndex = Math.max(0, Math.min(webExplorerParallelIndex, parallelPrompts.length - 1));
   const boundedMapsParallelIndex = Math.max(0, Math.min(mapsParallelIndex, parallelPrompts.length - 1));
   const activeWebExplorerSlotOpen = (webExplorerCanvasOpen || parallelWebExplorerOpen) && (!dualNativeBrowserOpen || nativeBrowserPage === "webexplorer");
-  const activeEarthWebViewOpen = (mapsCanvasOpen || parallelMapsOpen) && (!dualNativeBrowserOpen || nativeBrowserPage === "maps");
-  const activeMapsSlotOpen = false;
-  const activeNativeBrowserSlotOpen = activeWebExplorerSlotOpen || activeEarthWebViewOpen;
+  const activeMapsSlotOpen = (mapsCanvasOpen || parallelMapsOpen) && (!dualNativeBrowserOpen || nativeBrowserPage === "maps");
+  const activeNativeBrowserSlotOpen = activeWebExplorerSlotOpen || activeMapsSlotOpen;
   const surfaceClassName = [
     "canvasSurfaces",
     "canvasSurfaces--split",
@@ -870,7 +823,7 @@ export function CanvasSurfacesSlice({
     terminalOpen ? "canvasSurfaces--terminalOpen" : "",
     parallelOpen || webExplorerCanvasOpen || mapsCanvasOpen ? "canvasSurfaces--parallelOpen" : "",
     activeNativeBrowserSlotOpen ? "canvasSurfaces--webExplorerOpen" : "",
-    activeEarthWebViewOpen ? "canvasSurfaces--mapsOpen" : "",
+    activeMapsSlotOpen ? "canvasSurfaces--mapsOpen" : "",
     dualNativeBrowserOpen ? "canvasSurfaces--nativePager" : ""
   ].filter(Boolean).join(" ");
 
@@ -1226,7 +1179,17 @@ export function CanvasSurfacesSlice({
                         <span aria-hidden="true" />
                       </button>
                       {hostsMaps && nativeBrowserPage === "maps" ? (
-                        <ProprietaryEarthWebView src={mapsWebviewUrl} />
+                        <div
+                          ref={nativeMapsSlotRef}
+                          className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
+                        >
+                          {nativeMapsAccepted ? null : (
+                            <>
+                              <GoogleWordmarkMono />
+                              <span className="webExplorerNativeStatus">{nativeMapsStatus}</span>
+                            </>
+                          )}
+                        </div>
                       ) : (
                         <div
                           ref={nativeWebExplorerSlotRef}
@@ -1248,7 +1211,17 @@ export function CanvasSurfacesSlice({
                       <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
                         <span aria-hidden="true" />
                       </button>
-                      <ProprietaryEarthWebView src={mapsWebviewUrl} />
+                      <div
+                        ref={nativeMapsSlotRef}
+                        className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
+                      >
+                        {nativeMapsAccepted ? null : (
+                          <>
+                            <GoogleWordmarkMono />
+                            <span className="webExplorerNativeStatus">{nativeMapsStatus}</span>
+                          </>
+                        )}
+                      </div>
                     </>
                   ) : null}
                 </section>
@@ -1270,7 +1243,17 @@ export function CanvasSurfacesSlice({
                 <span aria-hidden="true" />
               </button>
               {nativeBrowserPage === "maps" ? (
-                <ProprietaryEarthWebView src={mapsWebviewUrl} />
+                <div
+                  ref={nativeMapsSlotRef}
+                  className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
+                >
+                  {nativeMapsAccepted ? null : (
+                    <>
+                      <GoogleWordmarkMono />
+                      <span className="webExplorerNativeStatus">{nativeMapsStatus}</span>
+                    </>
+                  )}
+                </div>
               ) : (
                 <div
                   ref={nativeWebExplorerSlotRef}
@@ -1315,7 +1298,17 @@ export function CanvasSurfacesSlice({
               <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
                 <span aria-hidden="true" />
               </button>
-              <ProprietaryEarthWebView src={mapsWebviewUrl} />
+              <div
+                ref={nativeMapsSlotRef}
+                className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
+              >
+                {nativeMapsAccepted ? null : (
+                  <>
+                    <GoogleWordmarkMono />
+                    <span className="webExplorerNativeStatus">{nativeMapsStatus}</span>
+                  </>
+                )}
+              </div>
             </section>
           </div>
         ) : null}

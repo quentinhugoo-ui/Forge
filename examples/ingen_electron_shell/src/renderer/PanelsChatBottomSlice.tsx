@@ -2358,6 +2358,52 @@ function assistantMathTokenNode(formula: string, key: string, onUseMathInCompute
   );
 }
 
+const ASSISTANT_GEO_ENTITY_STYLE: CSSProperties = {
+  appearance: "none",
+  display: "inline",
+  maxWidth: "100%",
+  padding: "0 1px",
+  border: 0,
+  borderBottom: "1px solid color-mix(in oklab, var(--assistant-mark-accent), transparent 38%)",
+  background: "transparent",
+  color: "color-mix(in oklab, var(--assistant-mark-accent), var(--forge-text) 24%)",
+  font: "inherit",
+  fontWeight: 680,
+  lineHeight: "inherit",
+  cursor: "pointer",
+  overflowWrap: "anywhere"
+};
+
+function assistantGeoEntityLabel(token: string): string {
+  return token.slice(2, -1).replace(/\s+/g, " ").trim();
+}
+
+function assistantGeoEntityNode(token: string, key: string): ReactNode {
+  const label = assistantGeoEntityLabel(token);
+  if (label.length < 2) {
+    return <Fragment key={key}>{token}</Fragment>;
+  }
+  return (
+    <button
+      type="button"
+      key={key}
+      style={ASSISTANT_GEO_ENTITY_STYLE}
+      aria-label={`Open ${label}`}
+      title={`Open ${label}`}
+      onClick={() => {
+        const api = window.forgeShell;
+        if (api?.openGeoEntity) {
+          void api.openGeoEntity(label).catch(() => undefined);
+          return;
+        }
+        void api?.searchCitySuggestions?.(label).catch(() => undefined);
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 function assistantPlainTextNodes(text: string, keyPrefix: string, onUseMathInCompute?: AssistantMathUseHandler, writing = false): ReactNode[] {
   const nodes: ReactNode[] = [];
   let cursor = 0;
@@ -2379,7 +2425,7 @@ function assistantPlainTextNodes(text: string, keyPrefix: string, onUseMathInCom
 
 function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInCompute?: AssistantMathUseHandler, writing = false): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\*\*[^*]+?\*\*|`[^`]+?`)/g;
+  const pattern = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|@\{[^{}\n]{1,120}\}|\*\*[^*]+?\*\*|`[^`]+?`)/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
@@ -2390,6 +2436,8 @@ function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInComput
     if (token.startsWith("\\[") || token.startsWith("\\(")) {
       const formula = token.slice(2, -2).trim();
       nodes.push(assistantMathTokenNode(formula, `${keyPrefix}-math-${match.index}`, onUseMathInCompute));
+    } else if (token.startsWith("@{")) {
+      nodes.push(assistantGeoEntityNode(token, `${keyPrefix}-geo-${match.index}`));
     } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
     } else {

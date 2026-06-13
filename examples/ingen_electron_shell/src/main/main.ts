@@ -104,6 +104,7 @@ import {
   upsertArchiveMessage
 } from "./search-archive.js";
 import {
+  buildGoogleWebCodeActRequest,
   extractGoogleWebCodeAct,
   renderGoogleWebCodeActResult,
   type GoogleWebCodeActRequest
@@ -3140,6 +3141,49 @@ async function searchGoogleCitySuggestions(query: string, apiKey: string): Promi
   }
 }
 
+async function searchGoogleGeoEntitySuggestions(query: string, apiKey: string): Promise<CitySuggestionResult | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3500);
+  try {
+    const response = await net.fetch("https://places.googleapis.com/v1/places:autocomplete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": "suggestions.placePrediction.text.text"
+      },
+      body: JSON.stringify({
+        input: query,
+        languageCode: "en"
+      }),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json() as { suggestions?: GooglePlaceAutocompleteSuggestion[] };
+    const seen = new Set<string>();
+    const suggestions = (payload.suggestions ?? [])
+      .map(googlePlaceSuggestionToCitySuggestion)
+      .filter((suggestion): suggestion is CitySuggestion => {
+        if (!suggestion || seen.has(suggestion.label)) return false;
+        seen.add(suggestion.label);
+        return true;
+      })
+      .slice(0, 6);
+    return {
+      schema: "ingen.brain.memory.city_suggestions.v1",
+      query,
+      suggestions,
+      proofHash: hashJson({ geoEntitySuggestions: "google_places", query, suggestions })
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function photonFeatureToCitySuggestion(feature: PhotonFeature): CitySuggestion | null {
   const properties = feature.properties ?? {};
   const coordinates = Array.isArray(feature.geometry?.coordinates) ? feature.geometry?.coordinates : [];
@@ -3340,6 +3384,62 @@ async function geocodeMapsLocation(query: string): Promise<MapsGeocodeResult | n
     }
   }
   return geocodePhotonMapsLocation(normalized);
+}
+
+function readGeoEntityCoordinatePair(value: string): { latitude: number; longitude: number } | null {
+  const match = /^\s*(-?\d{1,2}(?:[\.,]\d+)?)\s*[,; ]\s*(-?\d{1,3}(?:[\.,]\d+)?)\s*$/.exec(value);
+  if (!match) {
+    return null;
+  }
+  const latitude = Number((match[1] ?? "").replace(",", "."));
+  const longitude = Number((match[2] ?? "").replace(",", "."));
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    return null;
+  }
+  return { latitude, longitude };
+}
+
+function normalizeAssistantGeoEntityQuery(queryValue: unknown): string {
+  return normalizeBrainHomeLocation(queryValue)
+    .replace(/^@\{\s*/, "")
+    .replace(/\s*\}$/g, "")
+    .replace(/[.!?,;:]+$/g, "")
+    .trim();
+}
+
+async function resolveAssistantGeoEntityMapsRequest(queryValue: unknown): Promise<MapsCodeActRequest | null> {
+  const query = normalizeAssistantGeoEntityQuery(queryValue);
+  if (query.length < 2) {
+    return null;
+  }
+  const coordinates = readGeoEntityCoordinatePair(query);
+  if (coordinates) {
+    return createMapsCodeActRequest({
+      command: BRAIN_MAPS_COMMAND,
+      target: query,
+      query,
+      keywords: ["assistant_geo_entity", "coordinates"],
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      source: "explicit_codeact"
+    });
+  }
+  const apiKey = googlePlacesApiKey();
+  const placesResult = apiKey ? await searchGoogleGeoEntitySuggestions(query, apiKey) : null;
+  const placeQuery = placesResult?.suggestions[0]?.label || query;
+  const geocode = await geocodeMapsLocation(placeQuery);
+  if (!geocode) {
+    return null;
+  }
+  return createMapsCodeActRequest({
+    command: BRAIN_MAPS_COMMAND,
+    target: geocode.label,
+    query: placeQuery,
+    keywords: ["assistant_geo_entity", geocode.source],
+    latitude: geocode.latitude,
+    longitude: geocode.longitude,
+    source: "explicit_codeact"
+  });
 }
 
 async function resolveMapsCodeActRequest(request: MapsCodeActRequest): Promise<MapsCodeActRequest> {
@@ -6979,6 +7079,23 @@ function navigateNativeWebExplorerToMaps(request: MapsCodeActRequest, parallelSe
   }
   emitNativeMapsCodeAct({ ...request, url: navigationUrl, parallelSessionIndex });
   return nativeMapsResult(true);
+}
+
+async function openAssistantGeoEntityMaps(query: unknown): Promise<NativeWebExplorerResult> {
+  const request = await resolveAssistantGeoEntityMapsRequest(query);
+  if (!request) {
+    const normalized = normalizeAssistantGeoEntityQuery(query);
+    const fallback = buildGoogleWebCodeActRequest(normalized, ["assistant_geo_entity"], "explicit_codeact");
+    if (fallback) {
+      return navigateNativeWebExplorerToGoogle(fallback, 0);
+    }
+    return nativeMapsResult(false, {
+      code: "bad_payload",
+      message: "Maps could not resolve this assistant geo entity.",
+      proofHash: hashJson({ assistantGeoEntity: normalized || query })
+    });
+  }
+  return navigateNativeWebExplorerToMaps(request, 0);
 }
 
 function navigateNativeWebExplorerToGmail(request: GmailCodeActRequest, parallelSessionIndex = 0): NativeWebExplorerResult {
@@ -10957,6 +11074,17 @@ function installIpc(): void {
       return citySuggestionError("", "City lookup rejected by sender validation.");
     }
     return searchCitySuggestions(query);
+  });
+
+  ipcMain.handle("forge:maps-open-geo-entity", async (event, query: unknown): Promise<NativeWebExplorerResult> => {
+    if (!validateSender(event)) {
+      return nativeMapsResult(false, {
+        code: "bad_sender",
+        message: "Maps geo entity navigation rejected by sender validation.",
+        proofHash: hashJson({ query, sender: event.senderFrame?.url ?? "" })
+      });
+    }
+    return openAssistantGeoEntityMaps(query);
   });
 
   ipcMain.handle("forge:get-cutover", (event, slice: string): FrontSliceMode => {

@@ -88,7 +88,6 @@ export function App() {
   const [canvasPlanetsOpen, setCanvasPlanetsOpen] = useState(false);
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
-  const [mapsWebviewUrl, setMapsWebviewUrl] = useState("");
   const canvasMapsOpenRef = useRef(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
   const [mapsParallelIndex, setMapsParallelIndex] = useState(0);
@@ -545,8 +544,6 @@ export function App() {
 
   useEffect(() => {
     return globalThis.window?.forgeShell?.onNativeMapsCodeAct?.((event) => {
-      setMapsWebviewUrl(typeof event.url === "string" ? event.url : "");
-      void globalThis.window?.forgeShell?.hideNativeMaps?.();
       openCanvasMaps(event.parallelSessionIndex ?? 0);
     });
   }, [openCanvasMaps]);
@@ -898,7 +895,6 @@ export function App() {
           webExplorerParallelIndex={webExplorerParallelIndex}
           webExplorerModuleId={webExplorerModuleId}
           mapsOpen={canvasMapsOpen}
-          mapsWebviewUrl={mapsWebviewUrl}
           mapsParallelIndex={mapsParallelIndex}
           leftPanelOpen={snapshot.leftPanelOpen}
           parallelPrompts={parallelPrompts}
