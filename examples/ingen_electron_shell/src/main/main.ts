@@ -209,6 +209,10 @@ let nativeMapsPendingUrl = "";
 let nativeMapsTargetUrl = GOOGLE_EARTH_DEFAULT_URL;
 let nativeMapsSessionConfigured = false;
 let nativeMapsBoundsKey = "";
+const NATIVE_MAPS_EARTH_OVERSCAN_PX = {
+  left: 96,
+  bottom: 96
+};
 let nativeTerminalProcess: ReturnType<typeof spawn> | null = null;
 let nativeTerminalCwd = "";
 let nativeTerminalHwnd = "";
@@ -7006,6 +7010,20 @@ function normalizeNativeWebExplorerBounds(bounds: NativeWebExplorerBounds): Nati
   return { x, y, width, height };
 }
 
+function expandNativeMapsBoundsForEarth(bounds: NativeWebExplorerBounds, owner: BrowserWindow): NativeWebExplorerBounds {
+  const [contentWidth, contentHeight] = owner.getContentSize();
+  const leftOverscan = Math.min(NATIVE_MAPS_EARTH_OVERSCAN_PX.left, Math.max(0, bounds.x));
+  const x = bounds.x - leftOverscan;
+  const width = Math.min(contentWidth - x, bounds.width + leftOverscan);
+  const height = Math.min(contentHeight - bounds.y, bounds.height + NATIVE_MAPS_EARTH_OVERSCAN_PX.bottom);
+  return {
+    x,
+    y: bounds.y,
+    width,
+    height
+  };
+}
+
 function attachNativeWebExplorerView(owner: BrowserWindow, view: BrowserView): void {
   if (!owner.getBrowserViews().includes(view)) {
     owner.addBrowserView(view);
@@ -7252,11 +7270,12 @@ function showNativeMaps(event: Electron.IpcMainInvokeEvent, bounds: NativeWebExp
     });
   }
   const view = ensureNativeMapsView(owner);
-  view.setBounds(normalized);
-  nativeMapsBoundsKey = `${normalized.x}:${normalized.y}:${normalized.width}:${normalized.height}`;
+  const expanded = expandNativeMapsBoundsForEarth(normalized, owner);
+  view.setBounds(expanded);
+  nativeMapsBoundsKey = `${expanded.x}:${expanded.y}:${expanded.width}:${expanded.height}`;
   owner.setTopBrowserView(view);
   view.webContents.focus();
-  console.info("Native Maps shown.", { bounds: normalized, url: nativeMapsTargetUrl });
+  console.info("Native Maps shown.", { bounds: expanded, requestedBounds: normalized, url: nativeMapsTargetUrl });
   loadNativeMapsTarget(view, "show");
   return nativeMapsResult(true);
 }
@@ -7308,12 +7327,21 @@ function updateNativeMapsBounds(event: Electron.IpcMainInvokeEvent, bounds: Nati
       proofHash: hashJson(bounds)
     });
   }
-  const boundsKey = `${normalized.x}:${normalized.y}:${normalized.width}:${normalized.height}`;
+  const owner = senderNativeWindow(event) ?? nativeMapsOwner;
+  if (!owner || owner.isDestroyed()) {
+    return nativeMapsResult(false, {
+      code: "rust_unavailable",
+      message: "Native Maps owner window is unavailable.",
+      proofHash: hashJson({ bounds })
+    });
+  }
+  const expanded = expandNativeMapsBoundsForEarth(normalized, owner);
+  const boundsKey = `${expanded.x}:${expanded.y}:${expanded.width}:${expanded.height}`;
   if (nativeMapsBoundsKey === boundsKey) {
     return nativeMapsResult(true);
   }
   nativeMapsBoundsKey = boundsKey;
-  nativeMapsView.setBounds(normalized);
+  nativeMapsView.setBounds(expanded);
   return nativeMapsResult(true);
 }
 
