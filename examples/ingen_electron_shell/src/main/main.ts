@@ -2351,6 +2351,43 @@ function userTextWithAttachmentContext(userText: string, attachments: ProviderAt
   return [userText.trim(), context ? `Attached local files:\n${context}` : ""].filter(Boolean).join("\n\n");
 }
 
+function isFirstVisibleUserTurn(userMessageId: string, transcript: TranscriptMessage[]): boolean {
+  const visibleUserMessages = transcript.filter((message) =>
+    message.role === "user" &&
+    !isInternalTranscriptMessage(message) &&
+    message.text.trim() !== ""
+  );
+  if (userMessageId) {
+    return visibleUserMessages.length === 1 && visibleUserMessages[0]?.id === userMessageId;
+  }
+  return visibleUserMessages.length <= 1;
+}
+
+function transcriptHasSessionRenameResult(transcript: TranscriptMessage[]): boolean {
+  return transcript.some((message) =>
+    message.role === "assistant" &&
+    message.text.includes(BRAIN_RENAME_SESSION_RESULT_SCHEMA)
+  );
+}
+
+function firstTurnSessionRenameInput(userMessageId: string, transcript: TranscriptMessage[]): OpenAiResponseInputItem[] {
+  if (!isFirstVisibleUserTurn(userMessageId, transcript) || transcriptHasSessionRenameResult(transcript)) {
+    return [];
+  }
+  return [{
+    role: "user",
+    content: [{
+      type: "input_text",
+      text: [
+        "SESSION_TITLE_CODEACT_REQUIRED v1",
+        `Avant toute reponse de fond au premier message utilisateur, ecris une ligne CodeAct exacte et seule: ${BRAIN_RENAME_SESSION_COMMAND} title="titre court pertinent" reason="sujet identifie".`,
+        "Le titre doit etre choisi par toi, 2 a 6 mots, pas une recopie de la demande utilisateur.",
+        "Ensuite seulement, reponds normalement a la demande."
+      ].join("\n")
+    }]
+  }];
+}
+
 async function openAiResponseContent(userText: string, attachments: ProviderAttachment[]): Promise<OpenAiResponseContentPart[]> {
   const text = userTextWithAttachmentContext(userText, attachments);
   const content: OpenAiResponseContentPart[] = [
@@ -2400,6 +2437,7 @@ async function openAiResponseConversationInput(
         content: message.content
       } as OpenAiResponseInputItem;
     }),
+    ...firstTurnSessionRenameInput(userMessageId, transcript),
     {
       role: "user",
       content: await openAiResponseContent(userText, attachments)
@@ -8139,12 +8177,13 @@ function normalizeSessionTitle(value: string): string {
 
 function parseCodeActTemplateFields(body: string): Map<string, string> {
   const fields = new Map<string, string>();
-  const fieldRegex = /(?:^|\s)([a-zA-Z_][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([\s\S]*?))(?=\s+[a-zA-Z_][\w-]*\s*=|$)/g;
+  const fieldRegex = /(?:^|\s)([a-zA-Z_][\w-]*)\s*=\s*(?:"([^"\r\n]{0,120})"|'([^'\r\n]{0,120})'|([^\r\n]*?))(?=\s+[a-zA-Z_][\w-]*\s*=|$)/g;
   let match: RegExpExecArray | null;
   while ((match = fieldRegex.exec(body)) !== null) {
     const key = match[1]?.trim();
     if (!key) continue;
-    fields.set(key, (match[2] ?? match[3] ?? match[4] ?? "").trim());
+    const rawValue = (match[2] ?? match[3] ?? match[4] ?? "").trim();
+    fields.set(key, rawValue.split(/["'`]/)[0]?.trim() ?? "");
   }
   return fields;
 }
