@@ -335,6 +335,25 @@ function brainSessionArchiveItems(recentItems: SidebarSessionItem[], archivedIte
   });
 }
 
+function compactSessionAgeLabel(date: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(date.trim());
+  if (!match) return date;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return date;
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const sessionUtc = Date.UTC(year, month - 1, day);
+  const deltaDays = Math.floor((todayUtc - sessionUtc) / 86_400_000);
+  if (!Number.isFinite(deltaDays)) return date;
+  if (deltaDays <= 0) return "today";
+  if (deltaDays < 7) return `${deltaDays}d ago`;
+  if (deltaDays < 70) return `${Math.floor(deltaDays / 7)}w ago`;
+  if (deltaDays < 365) return `${Math.floor(deltaDays / 30.44)}mo ago`;
+  return `${Math.floor(deltaDays / 365.25)}y ago`;
+}
+
 function BrainSessionArchiveList({
   sessions,
   visibleCount,
@@ -367,8 +386,10 @@ function BrainSessionArchiveList({
             onClick={() => onOpenSession(session)}
           >
             <span className="brainSessionArchiveItem__line">
+              <time className="brainSessionArchiveItem__date" dateTime={session.date} title={session.date}>
+                {compactSessionAgeLabel(session.date)}
+              </time>
               <span className="brainSessionArchiveItem__title">{session.label}</span>
-              <span className="brainSessionArchiveItem__date">{session.date}</span>
             </span>
             <span className="brainSessionArchiveItem__meta">
               <span>{session.workspaceLabel || session.section}</span>

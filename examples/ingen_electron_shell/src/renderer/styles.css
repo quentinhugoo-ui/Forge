@@ -8466,9 +8466,9 @@ ol.assistantText__list li::before {
 
 .brainSessionArchiveItem__line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: baseline;
-  gap: 16px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
   min-width: 0;
 }
 
@@ -8484,10 +8484,16 @@ ol.assistantText__list li::before {
 }
 
 .brainSessionArchiveItem__date {
-  color: color-mix(in oklab, var(--forge-muted), transparent 10%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  color: color-mix(in oklab, var(--forge-muted), transparent 4%);
   font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 9.5px;
-  line-height: 1;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.1;
+  opacity: 0.88;
   white-space: nowrap;
   transition: color 150ms ease-out;
 }
