@@ -190,14 +190,14 @@ export function UploadPreviewGrid({ previews }: { previews: ComposerUploadPrevie
   );
 }
 
-type TranscriptMediaFrame = "portrait" | "landscape" | "nineSixteen" | "square";
+export type TranscriptMediaFrame = "portrait" | "landscape" | "nineSixteen" | "square";
 
 type BlobPoint = {
   x: number;
   y: number;
 };
 
-type BlobBox = {
+export type BlobBox = {
   width: number;
   height: number;
 };
@@ -234,7 +234,7 @@ function seededUnit(seed: string): () => number {
   };
 }
 
-function blobBoxForFrame(frame: TranscriptMediaFrame): BlobBox {
+export function blobBoxForFrame(frame: TranscriptMediaFrame): BlobBox {
   if (frame === "nineSixteen") {
     return { width: 72, height: 128 };
   }
@@ -247,7 +247,7 @@ function blobBoxForFrame(frame: TranscriptMediaFrame): BlobBox {
   return { width: 112, height: 100 };
 }
 
-function dreamBlobBlur(box: BlobBox): number {
+export function dreamBlobBlur(box: BlobBox): number {
   return Math.max(4, Math.min(box.width, box.height) * 0.06);
 }
 
@@ -275,7 +275,7 @@ function fitBlobPointsToBox(points: BlobPoint[], box: BlobBox): BlobPoint[] {
   }));
 }
 
-function blobPathForAttachment(seed: string, frame: TranscriptMediaFrame, box: BlobBox): string {
+export function blobPathForAttachment(seed: string, frame: TranscriptMediaFrame, box: BlobBox): string {
   const random = seededUnit(`${seed}:${frame}`);
   const count = 22;
   const phase = random() * Math.PI * 2;

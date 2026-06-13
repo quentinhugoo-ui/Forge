@@ -6531,28 +6531,28 @@ ol.assistantText__list li::before {
 }
 
 .sendPixelLoader {
-  display: grid;
-  grid-template-columns: repeat(3, 4px);
-  grid-template-rows: repeat(3, 4px);
-  gap: 2px;
+  position: relative;
+  display: block;
   width: 18px;
   height: 18px;
-  place-content: center;
-  transform-origin: 50% 50%;
-  animation: sendPixelSpin 860ms steps(8, end) infinite;
 }
 
 .sendPixelLoader__pixel {
   --pixel-color: #38bdf8;
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 4px;
   height: 4px;
   border-radius: 1px;
   background: var(--pixel-color);
   box-shadow: 0 0 6px rgba(56, 189, 248, 0.52);
-  opacity: 0.72;
-  transform: scale(0.78);
-  animation: sendPixelPulse 860ms steps(4, end) infinite;
-  animation-delay: calc(var(--pixel-index) * -68ms);
+  opacity: 0;
+  offset-path: path("M 2 2 H 16 V 16 H 2 Z");
+  offset-distance: 0%;
+  offset-rotate: 0deg;
+  animation: sendPixelTrace 940ms steps(24, end) infinite;
+  animation-delay: calc(var(--pixel-index) * -82ms);
 }
 
 .sendPixelLoader__pixel:nth-child(2) {
@@ -6595,31 +6595,32 @@ ol.assistantText__list li::before {
   box-shadow: 0 0 6px rgba(239, 68, 68, 0.42);
 }
 
-@keyframes sendPixelSpin {
-  0% {
-    transform: rotate(0deg);
-  }
-
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes sendPixelPulse {
+@keyframes sendPixelTrace {
   0%,
   100% {
-    opacity: 0.42;
-    transform: scale(0.62);
+    opacity: 0;
+    offset-distance: 0%;
+    transform: scale(0.72);
   }
 
-  50% {
+  12% {
     opacity: 1;
     transform: scale(1);
+  }
+
+  64% {
+    opacity: 0.66;
+    transform: scale(0.86);
+  }
+
+  96% {
+    opacity: 1;
+    offset-distance: 100%;
+    transform: scale(0.72);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sendPixelLoader,
   .sendPixelLoader__pixel {
     animation: none;
   }
@@ -6627,6 +6628,42 @@ ol.assistantText__list li::before {
   .sendPixelLoader__pixel {
     opacity: 0.86;
     transform: none;
+  }
+
+  .sendPixelLoader__pixel:nth-child(1) {
+    offset-distance: 0%;
+  }
+
+  .sendPixelLoader__pixel:nth-child(2) {
+    offset-distance: 12.5%;
+  }
+
+  .sendPixelLoader__pixel:nth-child(3) {
+    offset-distance: 25%;
+  }
+
+  .sendPixelLoader__pixel:nth-child(4) {
+    offset-distance: 37.5%;
+  }
+
+  .sendPixelLoader__pixel:nth-child(5) {
+    offset-distance: 50%;
+  }
+
+  .sendPixelLoader__pixel:nth-child(6) {
+    offset-distance: 62.5%;
+  }
+
+  .sendPixelLoader__pixel:nth-child(7) {
+    offset-distance: 75%;
+  }
+
+  .sendPixelLoader__pixel:nth-child(8) {
+    offset-distance: 87.5%;
+  }
+
+  .sendPixelLoader__pixel:nth-child(9) {
+    offset-distance: 100%;
   }
 }
 
@@ -7627,6 +7664,24 @@ ol.assistantText__list li::before {
 .webExplorerNativeSlot--maps,
 .canvasSurfaces--nativePager .webExplorerNativeSlot--maps {
   inset: 0;
+}
+
+.mapsEarthBlobFade {
+  position: absolute;
+  top: 50%;
+  left: calc(-1 * clamp(112px, 11vw, 178px));
+  z-index: 1;
+  display: block;
+  width: clamp(164px, 15vw, 260px);
+  height: min(116%, 760px);
+  overflow: visible;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.mapsEarthBlobFade__aura {
+  fill: rgba(0, 0, 0, 0.92);
+  opacity: 0.88;
 }
 
 .webExplorerNativeSlot--accepted {

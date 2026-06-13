@@ -511,6 +511,10 @@ describe("LLM multimodal attachments", () => {
     expect(appSource).toContain('mapsOwnerSessionIdRef.current = panelsChatSnapshot.activeSessionId || "draft"');
     expect(appSource).toContain("hideNativeMaps");
     expect(canvasSource).toContain("nativeMapsSlotRef");
+    expect(canvasSource).toContain("blobPathForAttachment");
+    expect(canvasSource).toContain("MapsEarthLeftBlobFade");
+    expect(rendererSource).toContain("export function blobPathForAttachment");
+    expect(canvasSource).toContain("transcriptAttachment__dreamAura mapsEarthBlobFade__aura");
     expect(canvasSource).toContain("NativeBrowserPager");
     expect(canvasSource).toContain("GoogleEarthIcon");
     expect(canvasSource).toContain("webExplorerModuleId");
@@ -520,6 +524,8 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".canvasSurfaces--nativePager .webExplorerNativeSlot");
     expect(stylesSource).toContain(".shell--maps-canvas-open .panelsChatBottom");
     expect(stylesSource).toContain(".shell--maps-canvas-open .chatCanvas");
+    expect(stylesSource).toContain(".mapsEarthBlobFade");
+    expect(stylesSource).toContain("left: calc(-1 * clamp");
     expect(canvasSource).toContain("showNativeMaps");
     expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Use Google Earth"]');
   });
@@ -732,9 +738,9 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("sendPixelLoader__pixel");
     expect(stylesSource).toContain(".composer__send--loading");
     expect(stylesSource).toContain(".sendPixelLoader");
-    expect(stylesSource).toContain("grid-template-columns: repeat(3, 4px)");
-    expect(stylesSource).toContain("@keyframes sendPixelSpin");
-    expect(stylesSource).toContain("@keyframes sendPixelPulse");
+    expect(stylesSource).toContain('offset-path: path("M 2 2 H 16 V 16 H 2 Z")');
+    expect(stylesSource).toContain("@keyframes sendPixelTrace");
+    expect(stylesSource).not.toContain("@keyframes sendPixelSpin");
     expect(stylesSource).toContain("@media (prefers-reduced-motion: reduce)");
     expect(stylesSource).toContain(".sendPixelLoader__pixel:nth-child(9)");
   });
