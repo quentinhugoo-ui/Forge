@@ -4064,7 +4064,7 @@ function brainBootManifest(): string {
     `codeact_commands=${generalBrainCodeActCommands.join(" ")}`,
     `codeact_descriptions=${commandDescriptions}`,
     `codeact_routing_rules=${BRAIN_CODEACT_ROUTING_RULES}`,
-    `rule=Au premier message utilisateur de cette session: identifie le sujet, choisis un nom de chat court et pertinent, puis emets exactement /"Titre"_renamechat_. Ne mentionne jamais cette ligne dans la reponse visible. L'application utilise le champ entre guillemets pour remplacer "New session".`,
+    `rule=Au premier message utilisateur de cette session: identifie le sujet, choisis un nom de chat court et pertinent, puis emets exactement une ligne interne seule /"Titre"_renamechat_ avant toute prose visible. Ne colle jamais cette ligne a la reponse visible, ne la mentionne jamais, et ne decris jamais le renommage. L'application utilise le champ entre guillemets pour remplacer "New session".`,
     "rule=Brain is the single source of truth for CodeAct command identities; do not invent or revive commands outside this manifest.",
     "rule=Use Brain memory/search before asking the user to repeat prior local session context.",
     `rule=If local code/files/project work needs a folder and no workspace is active, emit ${BRAIN_WORKSPACE_COMMAND}. This workspace rule does not apply to ${BRAIN_NEWIMAGE_COMMAND} or ${BRAIN_EDITIMAGE_COMMAND}.`
@@ -9487,6 +9487,8 @@ function todayIsoDate(): string {
 
 const PENDING_LLM_SESSION_TITLE = "New session";
 const RENAME_CHAT_CODEACT_SUFFIX = "_renamechat_";
+const COMPACT_RENAME_CHAT_CODEACT_PATTERN = /\/(["'`])([^"'`\r\n]{1,120})\1_renamechat_/;
+const COMPACT_RENAME_CHAT_CODEACT_PATTERN_GLOBAL = /\/(["'`])([^"'`\r\n]{1,120})\1_renamechat_/g;
 
 function normalizeSessionTitle(value: string): string {
   const compact = value
@@ -9651,11 +9653,8 @@ interface RenameSessionCodeActRequest {
 
 function parseRenameSessionCodeActLine(line: string): RenameSessionCodeActRequest | undefined {
   const trimmed = line.trim();
-  const compactPrefix = trimmed.endsWith(RENAME_CHAT_CODEACT_SUFFIX)
-    ? trimmed.slice(0, -RENAME_CHAT_CODEACT_SUFFIX.length)
-    : "";
-  const compactMatch = compactPrefix.match(/^\/(["'`])([^"'`\r\n]{1,120})\1$/);
-  if (compactPrefix && compactMatch?.[2]) {
+  const compactMatch = trimmed.match(COMPACT_RENAME_CHAT_CODEACT_PATTERN);
+  if (compactMatch?.[2]) {
     const title = polishedSessionTitle(compactMatch[2], "brain_compact_renamechat");
     if (!title) {
       return undefined;
@@ -9692,6 +9691,18 @@ function parseRenameSessionCodeActLine(line: string): RenameSessionCodeActReques
   return request;
 }
 
+function stripRenameSessionCodeActFragments(line: string): string {
+  const trimmed = line.trim();
+  if (trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND)) {
+    return "";
+  }
+  return line
+    .replace(COMPACT_RENAME_CHAT_CODEACT_PATTERN_GLOBAL, "")
+    .replace(/^[ \t]+/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trimEnd();
+}
+
 function extractRenameSessionCodeAct(text: string): RenameSessionCodeActRequest | undefined {
   return text
     .split(/\r?\n/)
@@ -9702,16 +9713,8 @@ function extractRenameSessionCodeAct(text: string): RenameSessionCodeActRequest 
 function removeRenameSessionCodeActLines(text: string): string {
   return text
     .split(/\r?\n/)
-    .filter((line) => {
-      const trimmed = line.trim();
-      if (trimmed.startsWith(BRAIN_RENAME_SESSION_COMMAND)) {
-        return false;
-      }
-      const compactPrefix = trimmed.endsWith(RENAME_CHAT_CODEACT_SUFFIX)
-        ? trimmed.slice(0, -RENAME_CHAT_CODEACT_SUFFIX.length)
-        : "";
-      return !/^\/(["'`])([^"'`\r\n]{1,120})\1$/.test(compactPrefix);
-    })
+    .map((line) => stripRenameSessionCodeActFragments(line))
+    .filter((line) => line.trim().length > 0)
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
