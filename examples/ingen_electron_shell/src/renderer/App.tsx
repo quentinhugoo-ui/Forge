@@ -10,11 +10,11 @@ import {
   type NativeSection
 } from "../shared/ipc-contract";
 import tokens from "../shared/generated/design-tokens.generated.json";
-import { CanvasSurfacesSlice } from "./CanvasSurfacesSlice";
+import { CanvasSurfacesSlice, type CanvasToolPane } from "./CanvasSurfacesSlice";
 import { PanelsChatBottomSlice } from "./PanelsChatBottomSlice";
 import { ProfileCoverBanner } from "./ProfileCoverBanner";
 import { RightPanelSlice } from "./RightPanelSlice";
-import { readBrainUserMemory } from "./brain-user-memory-store";
+import { readBrainAgentMemory, readBrainUserMemory } from "./brain-user-memory-store";
 import { headerShadowStore, useHeaderShadowStore } from "./header-shadow-store";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { SidebarSlice, type SidebarModuleId } from "./SidebarSlice";
@@ -83,11 +83,15 @@ export function App() {
   const [canvasSplitOpen, setCanvasSplitOpen] = useState(false);
   const [canvasFilesOpen, setCanvasFilesOpen] = useState(false);
   const [canvasTerminalOpen, setCanvasTerminalOpen] = useState(false);
+  const [canvasActivePane, setCanvasActivePane] = useState<CanvasToolPane | "">("");
   const [canvasPlanetsOpen, setCanvasPlanetsOpen] = useState(false);
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
+  const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
+  const [mapsParallelIndex, setMapsParallelIndex] = useState(0);
   const [webExplorerModuleId, setWebExplorerModuleId] = useState<SidebarModuleId | null>(null);
   const [composerModuleId, setComposerModuleId] = useState<SidebarModuleId | null>(null);
+  const [parallelSidebarBirth, setParallelSidebarBirth] = useState<{ sessionId: string; token: number } | null>(null);
   const toggleComposerModule = useCallback((id: SidebarModuleId) => {
     setComposerModuleId((current) => (current === id ? null : id));
   }, []);
@@ -96,6 +100,7 @@ export function App() {
   }, []);
   const [parallelPrompts, setParallelPrompts] = useState<string[]>([""]);
   const [brainUserMemory] = useState(() => readBrainUserMemory());
+  const [brainAgentMemory] = useState(() => readBrainAgentMemory());
   const [welcomeMessage, setWelcomeMessage] = useState(() => selectWelcomeMessage(brainUserMemory.preferredFirstName));
   const [homeCanvasResetId, setHomeCanvasResetId] = useState(0);
   const [workspaceFolder, setWorkspaceFolder] = useState<string | null>(null);
@@ -104,7 +109,15 @@ export function App() {
   const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const workspaceNoticeTimerRef = useRef<number | null>(null);
+  const parallelSidebarBirthTimerRef = useRef<number | null>(null);
   const previousActiveSessionIdRef = useRef(panelsChatSnapshot.activeSessionId);
+  useEffect(() => {
+    void panelsChatBottomStore.dispatch({
+      kind: "update_brain_identity",
+      userFirstName: brainUserMemory.preferredFirstName,
+      agentFirstName: brainAgentMemory.preferredFirstName
+    });
+  }, [brainAgentMemory.preferredFirstName, brainUserMemory.preferredFirstName]);
   const chooseWorkspace = useCallback(async () => {
     const result = await globalThis.window?.forgeShell?.chooseWorkspaceFolder?.();
     if (result && !result.canceled && result.folderName) {
@@ -137,6 +150,7 @@ export function App() {
     canvasTerminalOpen ||
     canvasPlanetsOpen ||
     canvasWebExplorerOpen ||
+    canvasMapsOpen ||
     parallelPrompts.length > 1;
   const activeSessionName = useMemo(() => {
     const items = [...sidebarSnapshot.recentItems, ...sidebarSnapshot.archivedItems];
@@ -197,7 +211,9 @@ export function App() {
     canvasFilesOpen || canvasTerminalOpen ? "shell--canvas-files-open" : "",
     parallelPrompts.length > 1 ? "shell--parallel-canvas-open" : "",
     canvasWebExplorerOpen ? "shell--webexplorer-canvas-open" : "",
+    canvasMapsOpen ? "shell--maps-canvas-open" : "",
     isLlmProviderCanvas ? "shell--llm-provider" : "",
+    isBrainCanvas ? "shell--brain-canvas" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
 
@@ -259,6 +275,9 @@ export function App() {
       if (workspaceNoticeTimerRef.current !== null) {
         window.clearTimeout(workspaceNoticeTimerRef.current);
       }
+      if (parallelSidebarBirthTimerRef.current !== null) {
+        window.clearTimeout(parallelSidebarBirthTimerRef.current);
+      }
     };
   }, []);
 
@@ -300,48 +319,143 @@ export function App() {
       if (canvasTerminalOpen) {
         setCanvasTerminalOpen(false);
       }
+      if (canvasActivePane) {
+        setCanvasActivePane("");
+      }
       if (canvasPlanetsOpen) {
         setCanvasPlanetsOpen(false);
       }
       if (canvasWebExplorerOpen) {
         setCanvasWebExplorerOpen(false);
       }
+      if (canvasMapsOpen) {
+        setCanvasMapsOpen(false);
+      }
       if (parallelPrompts.length > 1) {
         setParallelPrompts([""]);
       }
     }
-  }, [canvasFilesOpen, canvasPlanetsOpen, canvasSurfaceOpen, canvasTerminalOpen, canvasWebExplorerOpen, parallelPrompts.length]);
+  }, [canvasActivePane, canvasFilesOpen, canvasMapsOpen, canvasPlanetsOpen, canvasSurfaceOpen, canvasTerminalOpen, canvasWebExplorerOpen, parallelPrompts.length]);
+
+  const triggerParallelSidebarBirth = useCallback(() => {
+    const sessionId = panelsChatSnapshot.activeSessionId || sidebarSnapshot.recentSessionId;
+    if (!sessionId) {
+      return;
+    }
+    if (parallelSidebarBirthTimerRef.current !== null) {
+      window.clearTimeout(parallelSidebarBirthTimerRef.current);
+    }
+    setParallelSidebarBirth((current) => ({
+      sessionId,
+      token: (current?.token ?? 0) + 1
+    }));
+    parallelSidebarBirthTimerRef.current = window.setTimeout(() => {
+      setParallelSidebarBirth(null);
+      parallelSidebarBirthTimerRef.current = null;
+    }, 900);
+  }, [panelsChatSnapshot.activeSessionId, sidebarSnapshot.recentSessionId]);
 
   const addParallelCanvas = useCallback(() => {
+    if (parallelPrompts.length >= 4) {
+      return;
+    }
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
+    setCanvasTerminalOpen(false);
+    setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
-    setCanvasWebExplorerOpen(false);
-    setParallelPrompts((prompts) => (prompts.length >= 4 ? prompts : [...prompts, ""]));
-  }, []);
+    setCanvasMapsOpen(false);
+    setParallelPrompts((prompts) => [...prompts, ""]);
+    triggerParallelSidebarBirth();
+  }, [parallelPrompts.length, triggerParallelSidebarBirth]);
+
+  const removableParallelIndexes = useMemo(() => {
+    const laneHasStarted = (index: number) => {
+      const messages = index === 0
+        ? panelsChatSnapshot.transcript
+        : panelsChatSnapshot.parallelLanes.find((lane) => lane.index === index)?.transcript ?? [];
+      return messages.some((message) => message.role === "user" || message.role === "assistant");
+    };
+
+    return parallelPrompts.map((prompt, index) => {
+      if (index === 0 || parallelPrompts.length <= 1) {
+        return false;
+      }
+      for (let cursor = index; cursor < parallelPrompts.length; cursor += 1) {
+        if ((parallelPrompts[cursor] ?? "").trim() || laneHasStarted(cursor)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [panelsChatSnapshot.parallelLanes, panelsChatSnapshot.transcript, parallelPrompts]);
+
+  const removeParallelCanvas = useCallback((index: number) => {
+    if (index <= 0) {
+      return;
+    }
+    const laneHasStarted = (laneIndex: number) => {
+      const messages = panelsChatSnapshot.parallelLanes.find((lane) => lane.index === laneIndex)?.transcript ?? [];
+      return messages.some((message) => message.role === "user" || message.role === "assistant");
+    };
+    setParallelPrompts((prompts) => {
+      if (index >= prompts.length) {
+        return prompts;
+      }
+      for (let cursor = index; cursor < prompts.length; cursor += 1) {
+        if ((prompts[cursor] ?? "").trim() || laneHasStarted(cursor)) {
+          return prompts;
+        }
+      }
+      const nextPrompts = prompts.filter((_prompt, promptIndex) => promptIndex !== index);
+      return nextPrompts.length > 1 ? nextPrompts : [""];
+    });
+    setWebExplorerParallelIndex((current) => (current > index ? current - 1 : current === index ? Math.max(0, index - 1) : current));
+    setMapsParallelIndex((current) => (current > index ? current - 1 : current === index ? Math.max(0, index - 1) : current));
+    if (webExplorerParallelIndex === index) {
+      setCanvasWebExplorerOpen(false);
+    }
+    if (mapsParallelIndex === index) {
+      setCanvasMapsOpen(false);
+    }
+  }, [mapsParallelIndex, panelsChatSnapshot.parallelLanes, webExplorerParallelIndex]);
 
   const openCanvasFiles = useCallback(() => {
     setCanvasSplitOpen(false);
-    setCanvasTerminalOpen(false);
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    setCanvasMapsOpen(false);
     setCanvasFilesOpen(true);
+    setCanvasActivePane("files");
   }, []);
 
   const openCanvasTerminal = useCallback(() => {
     setCanvasSplitOpen(false);
-    setCanvasFilesOpen(false);
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    setCanvasMapsOpen(false);
     setCanvasTerminalOpen(true);
+    setCanvasActivePane("terminal");
   }, []);
+
+  const closeCanvasFiles = useCallback(() => {
+    setCanvasFilesOpen(false);
+    setCanvasActivePane((pane) => (pane === "files" ? (canvasTerminalOpen ? "terminal" : "") : pane));
+  }, [canvasTerminalOpen]);
+
+  const closeCanvasTerminal = useCallback(() => {
+    setCanvasTerminalOpen(false);
+    setCanvasActivePane((pane) => (pane === "terminal" ? (canvasFilesOpen ? "files" : "") : pane));
+  }, [canvasFilesOpen]);
 
   const resetNewSessionCanvas = useCallback(() => {
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
     setCanvasTerminalOpen(false);
+    setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
+    setCanvasMapsOpen(false);
     setParallelPrompts([""]);
     setWelcomeMessage(selectWelcomeMessage(brainUserMemory.preferredFirstName));
     setHomeCanvasResetId((id) => id + 1);
@@ -352,7 +466,9 @@ export function App() {
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
     setCanvasTerminalOpen(false);
+    setCanvasActivePane("");
     setCanvasWebExplorerOpen(false);
+    setCanvasMapsOpen(false);
     setParallelPrompts([""]);
     setCanvasPlanetsOpen(true);
   }, []);
@@ -361,7 +477,9 @@ export function App() {
     setCanvasSplitOpen(false);
     setCanvasFilesOpen(false);
     setCanvasTerminalOpen(false);
+    setCanvasActivePane("");
     setCanvasPlanetsOpen(false);
+    setCanvasMapsOpen(false);
     setWebExplorerParallelIndex(parallelSessionIndex);
     if (parallelPrompts.length <= 1) {
       setParallelPrompts([""]);
@@ -375,12 +493,37 @@ export function App() {
     setWebExplorerModuleId(null);
   }, []);
 
+  const openCanvasMaps = useCallback((parallelSessionIndex = 0) => {
+    setCanvasSplitOpen(false);
+    setCanvasFilesOpen(false);
+    setCanvasTerminalOpen(false);
+    setCanvasActivePane("");
+    setCanvasPlanetsOpen(false);
+    setCanvasWebExplorerOpen(false);
+    setMapsParallelIndex(parallelSessionIndex);
+    if (parallelPrompts.length <= 1) {
+      setParallelPrompts(["", ""]);
+    }
+    setCanvasMapsOpen(true);
+  }, [parallelPrompts.length]);
+
+  const closeCanvasMaps = useCallback(() => {
+    setCanvasMapsOpen(false);
+    setMapsParallelIndex(0);
+  }, []);
+
   useEffect(() => {
     return globalThis.window?.forgeShell?.onNativeWebExplorerCodeAct?.((event) => {
       setWebExplorerModuleId(webExplorerCodeActModule(event));
       openCanvasWebExplorer(event.parallelSessionIndex ?? 0);
     });
   }, [openCanvasWebExplorer]);
+
+  useEffect(() => {
+    return globalThis.window?.forgeShell?.onNativeMapsCodeAct?.((event) => {
+      openCanvasMaps(event.parallelSessionIndex ?? 0);
+    });
+  }, [openCanvasMaps]);
 
   useEffect(() => {
     const latestAssistant = panelsChatSnapshot.transcript
@@ -399,8 +542,12 @@ export function App() {
     if (latestAssistant?.text.includes("GOOGLEWEB_RESULT")) {
       setWebExplorerModuleId(null);
       openCanvasWebExplorer(0);
+      return;
     }
-  }, [openCanvasWebExplorer, panelsChatSnapshot.transcript]);
+    if (latestAssistant?.text.includes("MAPS_RESULT")) {
+      openCanvasMaps(0);
+    }
+  }, [openCanvasMaps, openCanvasWebExplorer, panelsChatSnapshot.transcript]);
 
   const updateParallelPrompt = useCallback((index: number, value: string) => {
     setParallelPrompts((prompts) => prompts.map((prompt, promptIndex) => (promptIndex === index ? value : prompt)));
@@ -423,6 +570,7 @@ export function App() {
         if (canvasFilesOpen || canvasTerminalOpen) {
           setCanvasFilesOpen(false);
           setCanvasTerminalOpen(false);
+          setCanvasActivePane("");
           setCanvasSplitOpen(false);
           return;
         }
@@ -567,7 +715,7 @@ export function App() {
       </section>
 
       <section className="workspaceHeader" aria-label="Workspace header">
-        {isFullPageCanvas ? (
+        {isFullPageCanvas && !isBrainCanvas ? (
           <button
             type="button"
             className="workspaceHeader__close"
@@ -698,9 +846,13 @@ export function App() {
 
       <SidebarSlice
         open={snapshot.leftPanelOpen}
+        activeParallelLaneCount={parallelPrompts.length}
+        parallelBirthAnimationSessionId={parallelSidebarBirth?.sessionId ?? ""}
+        parallelBirthAnimationKey={parallelSidebarBirth?.token ?? 0}
         onNewSession={resetNewSessionCanvas}
         onModuleSelect={toggleComposerModule}
         onModuleDrop={dropComposerModule}
+        onCloseProfileCanvas={() => void closeProfileCanvas()}
       />
       <RightPanelSlice open={snapshot.rightPanelOpen} />
 
@@ -710,22 +862,29 @@ export function App() {
           actionsOpen={canvasSplitOpen}
           filesOpen={canvasFilesOpen}
           terminalOpen={canvasTerminalOpen}
+          activePane={canvasActivePane}
           planetsOpen={canvasPlanetsOpen}
           webExplorerOpen={canvasWebExplorerOpen}
           webExplorerParallelIndex={webExplorerParallelIndex}
+          mapsOpen={canvasMapsOpen}
+          mapsParallelIndex={mapsParallelIndex}
           leftPanelOpen={snapshot.leftPanelOpen}
           parallelPrompts={parallelPrompts}
+          removableParallelIndexes={removableParallelIndexes}
           sessionFiles={sessionFiles}
           sessionName={activeSessionName}
           onFilesOpen={openCanvasFiles}
-          onFilesClose={() => setCanvasFilesOpen(false)}
+          onFilesClose={closeCanvasFiles}
           onTerminalOpen={openCanvasTerminal}
-          onTerminalClose={() => setCanvasTerminalOpen(false)}
+          onTerminalClose={closeCanvasTerminal}
+          onActivePaneChange={setCanvasActivePane}
           onPlanetsOpen={openCanvasPlanets}
           onPlanetsClose={() => setCanvasPlanetsOpen(false)}
           onWebExplorerOpen={openCanvasWebExplorer}
           onWebExplorerClose={closeCanvasWebExplorer}
+          onMapsClose={closeCanvasMaps}
           onParallelAdd={addParallelCanvas}
+          onParallelRemove={removeParallelCanvas}
         />
       ) : null}
       {renderPanelsChatBottom ? (
@@ -734,6 +893,7 @@ export function App() {
           onParallelPromptChange={updateParallelPrompt}
           webExplorerOpen={canvasWebExplorerOpen}
           composerModule={composerModuleId ?? (canvasWebExplorerOpen ? webExplorerModuleId : null)}
+          onComposerModuleChange={setComposerModuleId}
         />
       ) : null}
     </main>

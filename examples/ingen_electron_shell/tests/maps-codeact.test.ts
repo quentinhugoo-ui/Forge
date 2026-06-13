@@ -1,0 +1,56 @@
+import { describe, expect, it } from "vitest";
+import {
+  extractMapsCodeAct,
+  GOOGLE_EARTH_DEFAULT_URL,
+  MAPS_COMMAND,
+  parseMapsCodeAct,
+  renderMapsCodeActResult
+} from "../src/main/maps-codeact";
+
+describe("Maps CodeAct", () => {
+  it("opens the requested Google Earth view for a bare /maps_ command", () => {
+    const request = parseMapsCodeAct("/maps_");
+
+    expect(request).toMatchObject({
+      schema: "forge.webexplorer.maps.request.v1",
+      command: MAPS_COMMAND,
+      target: "default_google_earth_view",
+      url: GOOGLE_EARTH_DEFAULT_URL,
+      source: "explicit_codeact"
+    });
+    expect(request?.proofHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("builds a Google Earth URL from explicit WGS84 coordinates", () => {
+    const request = parseMapsCodeAct('/maps_ target="Paris" latitude="48.8566" longitude="2.3522"');
+
+    expect(request?.target).toBe("Paris");
+    expect(request?.latitude).toBe(48.8566);
+    expect(request?.longitude).toBe(2.3522);
+    expect(request?.url).toContain("https://earth.google.com/web/@48.85660000,2.35220000,0a");
+  });
+
+  it("extracts /maps_ only when explicitly emitted by the assistant", () => {
+    expect(extractMapsCodeAct("Ouvre une carte de la Terre")).toBeUndefined();
+
+    const request = extractMapsCodeAct([
+      "J'ouvre Google Earth.",
+      '/maps_ target="default_google_earth_view"'
+    ].join("\n"));
+
+    expect(request?.command).toBe(MAPS_COMMAND);
+    expect(request?.url).toBe(GOOGLE_EARTH_DEFAULT_URL);
+  });
+
+  it("renders machine metadata without inventing device-location coordinates", () => {
+    const request = parseMapsCodeAct("/maps_");
+    expect(request).toBeDefined();
+
+    const rendered = renderMapsCodeActResult(request!);
+    expect(rendered).toContain("MAPS_RESULT");
+    expect(rendered).toContain("forge.webexplorer.maps.result.v1");
+    expect(rendered).toContain("latitude=");
+    expect(rendered).toContain("longitude=");
+    expect(rendered).not.toContain("current_location");
+  });
+});

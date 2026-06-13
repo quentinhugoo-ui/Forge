@@ -1,6 +1,7 @@
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, ListChecks, Pencil, RefreshCw, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import type { Camera, Object3D } from "three";
-import type { BrainCodeActCommand, ComposerUploadPreview, TranscriptMessage } from "../shared/ipc-contract";
+import type { BrainCodeActCommand, ComposerUploadPreview, PanelsChatBottomSnapshot, TranscriptMessage } from "../shared/ipc-contract";
 import {
   BRAIN_BRAIN_COMMAND,
   BRAIN_AIRBNB_COMMAND,
@@ -10,6 +11,7 @@ import {
   BRAIN_GMAIL_COMMAND,
   BRAIN_GMAIL_COM_COMMAND,
   BRAIN_GOOGLEWEB_COMMAND,
+  BRAIN_MAPS_COMMAND,
   BRAIN_GOOGLE_AGENDA_COMMAND,
   BRAIN_NAMED_COMPUTE_COMMAND,
   BRAIN_NEWCOMPUTE_COMMAND,
@@ -19,6 +21,7 @@ import {
   BRAIN_NEWIMAGE_COMMAND,
   BRAIN_NEWMODULE_COMMAND,
   BRAIN_NEWOBJECT_COMMAND,
+  BRAIN_QUESTIONNAIRE_COMMAND,
   BRAIN_RUST_PORT_ADAPTER_COMMAND,
   BRAIN_RUST_STATE_STORE_COMMAND,
   BRAIN_SEARCHARCHIVE_COMMAND,
@@ -57,6 +60,47 @@ function droppedFilePaths(dataTransfer: DataTransfer | null): string[] {
 
 function targetInsideComposer(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest(".composer"));
+}
+
+function useVisibleAutoplayVideo(videoRef: RefObject<HTMLVideoElement | null>, sourceKey: string) {
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) {
+      return undefined;
+    }
+
+    let visible = true;
+    const syncPlayback = () => {
+      if (document.hidden || !visible) {
+        video.pause();
+        return;
+      }
+      void video.play().catch(() => undefined);
+    };
+    const observer = typeof IntersectionObserver === "undefined"
+      ? null
+      : new IntersectionObserver(
+        ([entry]) => {
+          visible = Boolean(entry?.isIntersecting && entry.intersectionRatio > 0);
+          syncPlayback();
+        },
+        { threshold: [0, 0.01] }
+      );
+
+    observer?.observe(video);
+    document.addEventListener("visibilitychange", syncPlayback);
+    video.addEventListener("loadedmetadata", syncPlayback);
+    video.addEventListener("canplay", syncPlayback);
+    syncPlayback();
+
+    return () => {
+      observer?.disconnect();
+      document.removeEventListener("visibilitychange", syncPlayback);
+      video.removeEventListener("loadedmetadata", syncPlayback);
+      video.removeEventListener("canplay", syncPlayback);
+      video.pause();
+    };
+  }, [sourceKey, videoRef]);
 }
 
 function emitChatKeyColor(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -108,24 +152,7 @@ export function UploadPreview({ preview }: { preview?: ComposerUploadPreview }) 
 
 function VideoUploadPreview({ preview }: { preview: ComposerUploadPreview }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) {
-      return;
-    }
-    const playPreview = () => {
-      void video.play().catch(() => undefined);
-    };
-    playPreview();
-    video.addEventListener("loadedmetadata", playPreview);
-    video.addEventListener("canplay", playPreview);
-    return () => {
-      video.removeEventListener("loadedmetadata", playPreview);
-      video.removeEventListener("canplay", playPreview);
-      video.pause();
-    };
-  }, [preview.url]);
+  useVisibleAutoplayVideo(videoRef, preview.url);
 
   return (
     <video
@@ -397,24 +424,7 @@ function TranscriptVideoAttachmentPreview({
   onMeasure?: (width: number, height: number) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) {
-      return;
-    }
-    const playPreview = () => {
-      void video.play().catch(() => undefined);
-    };
-    playPreview();
-    video.addEventListener("loadedmetadata", playPreview);
-    video.addEventListener("canplay", playPreview);
-    return () => {
-      video.removeEventListener("loadedmetadata", playPreview);
-      video.removeEventListener("canplay", playPreview);
-      video.pause();
-    };
-  }, [preview.url]);
+  useVisibleAutoplayVideo(videoRef, preview.url);
 
   return (
     <video
@@ -754,7 +764,7 @@ type ThreePreviewRenderer = {
   init?: () => Promise<unknown>;
 };
 
-function ThreeUploadPreview({
+export function ThreeUploadPreview({
   preview,
   rendererMode = "webgl"
 }: {
@@ -838,26 +848,75 @@ function ThreeUploadPreview({
           metalness: 0.16,
           roughness: 0.44
         });
+      let needsResize = true;
+      let lastWidth = 0;
+      let lastHeight = 0;
+      let viewportVisible = typeof IntersectionObserver === "undefined";
+      let renderActive = false;
       const resize = () => {
         const width = Math.max(1, Math.floor(host.clientWidth));
         const height = Math.max(1, Math.floor(host.clientHeight));
+        if (width === lastWidth && height === lastHeight && !needsResize) {
+          return;
+        }
+        lastWidth = width;
+        lastHeight = height;
+        needsResize = false;
         renderer.setSize(width, height, false);
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
       };
+      const scheduleRender = () => {
+        if (frameId === 0 && !disposed && renderActive) {
+          frameId = window.requestAnimationFrame(renderScene);
+        }
+      };
+      const stopRender = () => {
+        if (frameId !== 0) {
+          window.cancelAnimationFrame(frameId);
+          frameId = 0;
+        }
+      };
+      const setViewportVisible = (active: boolean) => {
+        viewportVisible = active;
+        renderActive = viewportVisible && !document.hidden;
+        if (renderActive) {
+          scheduleRender();
+        } else {
+          stopRender();
+        }
+      };
       const renderScene = (time = 0) => {
+        frameId = 0;
         if (disposed) {
           return;
         }
-        resize();
+        if (!renderActive) {
+          return;
+        }
+        if (needsResize) {
+          resize();
+        }
         modelRoot.rotation.y = 0.72 + time * 0.00034;
         modelRoot.rotation.x = -0.18;
         camera.lookAt(0, 0, 0);
         renderer.render(scene, camera);
-        frameId = window.requestAnimationFrame(renderScene);
+        scheduleRender();
       };
-      const resizeObserver = new ResizeObserver(resize);
+      const resizeObserver = new ResizeObserver(() => {
+        needsResize = true;
+        scheduleRender();
+      });
       resizeObserver.observe(host);
+      const visibilityObserver = typeof IntersectionObserver === "undefined"
+        ? null
+        : new IntersectionObserver(
+          ([entry]) => setViewportVisible(Boolean(entry?.isIntersecting && entry.intersectionRatio > 0)),
+          { threshold: [0, 0.01] }
+        );
+      visibilityObserver?.observe(host);
+      const onVisibilityChange = () => setViewportVisible(viewportVisible);
+      document.addEventListener("visibilitychange", onVisibilityChange);
       const frameModel = (object: Object3D) => {
         const box = new THREE.Box3().setFromObject(object);
         const center = box.getCenter(new THREE.Vector3());
@@ -885,8 +944,10 @@ function ThreeUploadPreview({
         });
       };
       cleanupRenderer = () => {
-        window.cancelAnimationFrame(frameId);
+        stopRender();
         resizeObserver.disconnect();
+        visibilityObserver?.disconnect();
+        document.removeEventListener("visibilitychange", onVisibilityChange);
         disposeObject(scene);
         renderer.dispose();
       };
@@ -962,7 +1023,7 @@ function ThreeUploadPreview({
         return;
       }
 
-      frameId = window.requestAnimationFrame(renderScene);
+      setViewportVisible(viewportVisible);
     })();
 
     return () => {
@@ -1027,6 +1088,37 @@ function CopyGlyph() {
   );
 }
 
+function copyTextToClipboard(text: string): Promise<boolean> {
+  const clipboard = globalThis.navigator?.clipboard;
+  if (clipboard?.writeText) {
+    return clipboard.writeText(text).then(
+      () => true,
+      () => false
+    );
+  }
+  const documentRef = globalThis.document;
+  if (!documentRef?.body) {
+    return Promise.resolve(false);
+  }
+  const textarea = documentRef.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  documentRef.body.appendChild(textarea);
+  textarea.select();
+  let copied = false;
+  try {
+    copied = documentRef.execCommand("copy");
+  } catch {
+    copied = false;
+  } finally {
+    textarea.remove();
+  }
+  return Promise.resolve(copied);
+}
+
 function PinGlyph({ filled }: { filled: boolean }) {
   return (
     <svg width={14} height={14} viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1073,10 +1165,30 @@ function latestTranscriptContainerFor(element: Element | null): HTMLElement | nu
 type AssistantMarkdownBlock =
   | { kind: "heading"; level: number; text: string }
   | { kind: "list"; ordered: boolean; items: string[] }
+  | { kind: "task_list"; items: AssistantTaskListItem[] }
   | { kind: "paragraph"; text: string }
-  | { kind: "event"; event: TranscriptCodeActEvent };
+  | { kind: "table"; headers: string[]; alignments: AssistantTableAlignment[]; rows: string[][] }
+  | { kind: "code"; language: string; code: string }
+  | { kind: "quote"; text: string }
+  | { kind: "callout"; tone: AssistantCalloutTone; title: string; body: string }
+  | { kind: "facts"; items: AssistantFactItem[] }
+  | { kind: "divider" }
+  | { kind: "event"; event: TranscriptCodeActEvent }
+  | { kind: "event_group"; events: TranscriptCodeActEvent[] };
 
 type TranscriptCodeActCommand = BrainCodeActCommand | `/compute_${string}_`;
+type AssistantTableAlignment = "left" | "center" | "right";
+type AssistantCalloutTone = "info" | "warning" | "success" | "assumption";
+
+interface AssistantTaskListItem {
+  checked: boolean;
+  text: string;
+}
+
+interface AssistantFactItem {
+  label: string;
+  value: string;
+}
 
 interface TranscriptCodeActEvent {
   command: TranscriptCodeActCommand;
@@ -1092,13 +1204,15 @@ const BRAIN_CODEACT_DESCRIPTION_BY_COMMAND = new Map<string, string>(
 const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_SEARCHARCHIVE_COMMAND, "archive memory search returned bounded context"],
   [BRAIN_GOOGLEWEB_COMMAND, "native Google WebExplorer search event created"],
+  [BRAIN_MAPS_COMMAND, "Google Earth surface opened"],
   [BRAIN_GMAIL_COMMAND, "Gmail event prepared"],
   [BRAIN_GMAIL_COM_COMMAND, "Gmail surface opened"],
   [BRAIN_AIRBNB_COMMAND, "Airbnb surface opened"],
   [BRAIN_NEWIMAGE_COMMAND, "image generation prepared"],
   [BRAIN_EDITIMAGE_COMMAND, "image edit prepared"],
-  [BRAIN_SCIENCE_COMMAND, "Science / Engineering / 3D Brain loaded"],
-  [BRAIN_CODING_COMMAND, "Coding Brain loaded"],
+  [BRAIN_QUESTIONNAIRE_COMMAND, "Questionnaire opened"],
+  [BRAIN_SCIENCE_COMMAND, "Changed from General Brain to Science Brain"],
+  [BRAIN_CODING_COMMAND, "Changed from General Brain to Coding Brain"],
   [BRAIN_WORKSPACE_COMMAND, "workspace folder required"],
   [BRAIN_NEWCOMPUTE_COMMAND, "opens the Monster template selector"],
   [BRAIN_SELECTCOMPUTE_COMMAND, "saved compute reused from the library"],
@@ -1174,8 +1288,134 @@ function isCodeActResultHeader(line: string): boolean {
 function normalizeAssistantMarkdownText(text: string): string {
   return text
     .replace(/\r\n/g, "\n")
+    .replace(/\|\s+\|(?=\s*:?---)/g, "|\n|")
+    .replace(/\|\s+\|(?=\s*[^|\n]+\s*\|)/g, "|\n|")
     .replace(/([.!?])\s+(-\s+)/g, "$1\n$2")
     .replace(/([.!?])\s+(\d+[.)]\s+)/g, "$1\n$2");
+}
+
+function splitMarkdownTableRow(line: string): string[] | null {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) {
+    return null;
+  }
+  const body = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  const cells: string[] = [];
+  let current = "";
+  let escaped = false;
+  for (const char of body) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "|") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells.length >= 2 ? cells : null;
+}
+
+function markdownTableAlignments(line: string, expectedColumns: number): AssistantTableAlignment[] | null {
+  const cells = splitMarkdownTableRow(line);
+  if (!cells || cells.length !== expectedColumns) {
+    return null;
+  }
+  const alignments: AssistantTableAlignment[] = [];
+  for (const cell of cells) {
+    const marker = cell.replace(/\s+/g, "");
+    if (!/^:?-{3,}:?$/.test(marker)) {
+      return null;
+    }
+    if (marker.startsWith(":") && marker.endsWith(":")) {
+      alignments.push("center");
+    } else if (marker.endsWith(":")) {
+      alignments.push("right");
+    } else {
+      alignments.push("left");
+    }
+  }
+  return alignments;
+}
+
+function fitMarkdownTableRow(cells: string[], width: number): string[] {
+  return Array.from({ length: width }, (_value, index) => cells[index] ?? "");
+}
+
+function markdownFenceInfo(line: string): { marker: string; language: string } | null {
+  const match = /^(```+|~~~+)\s*([a-zA-Z0-9_+.-]*)\s*$/.exec(line.trim());
+  if (!match) {
+    return null;
+  }
+  return {
+    marker: match[1],
+    language: match[2] || ""
+  };
+}
+
+function isMarkdownFenceClose(line: string, marker: string): boolean {
+  return line.trim().startsWith(marker);
+}
+
+function markdownDividerLine(line: string): boolean {
+  return /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line);
+}
+
+function taskListItemFromLine(line: string): AssistantTaskListItem | null {
+  const match = /^[-*]\s+\[([ xX])\]\s+(.+)$/.exec(line.trim());
+  if (!match) {
+    return null;
+  }
+  return {
+    checked: match[1].toLowerCase() === "x",
+    text: match[2].trim()
+  };
+}
+
+function quoteTextFromLine(line: string): string | null {
+  const match = /^>\s?(.*)$/.exec(line.trim());
+  return match ? match[1].trim() : null;
+}
+
+function calloutFromLine(line: string): { tone: AssistantCalloutTone; title: string; body: string } | null {
+  const match = /^(note|info|important|warning|attention|danger|hypoth[eè]se|assumption|source|résumé|resume|summary|conseil|tip)\s*[:：]\s*(.*)$/i.exec(line.trim());
+  if (!match) {
+    return null;
+  }
+  const label = match[1].normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const tone: AssistantCalloutTone =
+    label === "warning" || label === "attention" || label === "danger"
+      ? "warning"
+      : label === "hypothese" || label === "assumption"
+        ? "assumption"
+        : label === "resume" || label === "summary" || label === "tip" || label === "conseil"
+          ? "success"
+          : "info";
+  const title = label === "hypothese"
+    ? "Hypothese"
+    : match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+  return { tone, title, body: match[2].trim() };
+}
+
+function factItemFromLine(line: string): AssistantFactItem | null {
+  const match = /^([A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9 /_.-]{1,38})\s*:\s+(.+)$/.exec(line.trim());
+  if (!match || calloutFromLine(line)) {
+    return null;
+  }
+  const label = match[1].trim();
+  const value = match[2].trim();
+  if (!label || !value || value.length > 220) {
+    return null;
+  }
+  return { label, value };
 }
 
 function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
@@ -1200,7 +1440,8 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
     list = null;
   };
 
-  for (const rawLine of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex];
     const line = rawLine.trim();
     if (!line) {
       flushParagraph();
@@ -1218,13 +1459,120 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
     if (skippingCodeActMetadata) {
       continue;
     }
+    const fence = markdownFenceInfo(line);
+    if (fence) {
+      flushParagraph();
+      flushList();
+      const codeLines: string[] = [];
+      lineIndex += 1;
+      while (lineIndex < lines.length && !isMarkdownFenceClose(lines[lineIndex], fence.marker)) {
+        codeLines.push(lines[lineIndex]);
+        lineIndex += 1;
+      }
+      blocks.push({ kind: "code", language: fence.language, code: codeLines.join("\n").replace(/\n+$/g, "") });
+      continue;
+    }
+    if (markdownDividerLine(rawLine)) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "divider" });
+      continue;
+    }
     const event = codeActEventFromLine(line);
     if (event) {
       flushParagraph();
       flushList();
       blocks.push({ kind: "event", event });
+      if (event.command === BRAIN_QUESTIONNAIRE_COMMAND) {
+        sawCodeActMetadata = true;
+        break;
+      }
       skippingCodeActMetadata = true;
       sawCodeActMetadata = true;
+      continue;
+    }
+    const quoteLine = quoteTextFromLine(rawLine);
+    if (quoteLine !== null) {
+      flushParagraph();
+      flushList();
+      const quoteLines = [quoteLine];
+      while (lineIndex + 1 < lines.length) {
+        const nextQuote = quoteTextFromLine(lines[lineIndex + 1]);
+        if (nextQuote === null) {
+          break;
+        }
+        quoteLines.push(nextQuote);
+        lineIndex += 1;
+      }
+      blocks.push({ kind: "quote", text: quoteLines.join("\n").trim() });
+      continue;
+    }
+    const callout = calloutFromLine(line);
+    if (callout) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "callout", ...callout });
+      continue;
+    }
+    const tableHeaders = splitMarkdownTableRow(line);
+    const tableAlignments = tableHeaders
+      ? markdownTableAlignments(lines[lineIndex + 1] ?? "", tableHeaders.length)
+      : null;
+    if (tableHeaders && tableAlignments) {
+      flushParagraph();
+      flushList();
+      const rows: string[][] = [];
+      lineIndex += 2;
+      while (lineIndex < lines.length) {
+        const rowLine = lines[lineIndex].trim();
+        const rowCells = rowLine ? splitMarkdownTableRow(rowLine) : null;
+        if (!rowCells) {
+          lineIndex -= 1;
+          break;
+        }
+        rows.push(fitMarkdownTableRow(rowCells, tableHeaders.length));
+        lineIndex += 1;
+      }
+      blocks.push({
+        kind: "table",
+        headers: tableHeaders,
+        alignments: tableAlignments,
+        rows
+      });
+      continue;
+    }
+    const taskItem = taskListItemFromLine(line);
+    if (taskItem) {
+      flushParagraph();
+      flushList();
+      const items = [taskItem];
+      while (lineIndex + 1 < lines.length) {
+        const nextTaskItem = taskListItemFromLine(lines[lineIndex + 1]);
+        if (!nextTaskItem) {
+          break;
+        }
+        items.push(nextTaskItem);
+        lineIndex += 1;
+      }
+      blocks.push({ kind: "task_list", items });
+      continue;
+    }
+    const factItem = factItemFromLine(line);
+    const nextFactItem = factItemFromLine(lines[lineIndex + 1] ?? "");
+    if (factItem && nextFactItem) {
+      flushParagraph();
+      flushList();
+      const items = [factItem, nextFactItem];
+      lineIndex += 1;
+      while (lineIndex + 1 < lines.length) {
+        const followingFactItem = factItemFromLine(lines[lineIndex + 1]);
+        if (!followingFactItem) {
+          break;
+        }
+        items.push(followingFactItem);
+        lineIndex += 1;
+      }
+      blocks.push({ kind: "facts", items });
       continue;
     }
     const heading = /^(#{1,4})\s+(.+)$/.exec(line);
@@ -1253,7 +1601,40 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
   flushParagraph();
   flushList();
   const fallbackBlock: AssistantMarkdownBlock = { kind: "paragraph", text: text.trim() };
-  return blocks.length > 0 ? blocks : sawCodeActMetadata ? [] : [fallbackBlock];
+  const renderedBlocks = blocks.length > 0 ? blocks : sawCodeActMetadata ? [] : [fallbackBlock];
+  return groupAssistantCodeActEvents(renderedBlocks);
+}
+
+function shouldGroupAsCodexCommandEvent(event: TranscriptCodeActEvent): boolean {
+  return !isBrainSegmentCommand(event.command);
+}
+
+function groupAssistantCodeActEvents(blocks: AssistantMarkdownBlock[]): AssistantMarkdownBlock[] {
+  const grouped: AssistantMarkdownBlock[] = [];
+  let pendingEvents: TranscriptCodeActEvent[] = [];
+
+  const flushEvents = () => {
+    if (pendingEvents.length === 0) {
+      return;
+    }
+    if (pendingEvents.length === 1) {
+      grouped.push({ kind: "event", event: pendingEvents[0] });
+    } else {
+      grouped.push({ kind: "event_group", events: pendingEvents });
+    }
+    pendingEvents = [];
+  };
+
+  for (const block of blocks) {
+    if (block.kind === "event" && shouldGroupAsCodexCommandEvent(block.event)) {
+      pendingEvents.push(block.event);
+      continue;
+    }
+    flushEvents();
+    grouped.push(block);
+  }
+  flushEvents();
+  return grouped;
 }
 
 function assistantVisibleAnimationSource(text: string): string {
@@ -1280,8 +1661,12 @@ function assistantVisibleAnimationSource(text: string): string {
     if (skippingCodeActMetadata) {
       continue;
     }
-    if (codeActEventFromLine(line)) {
+    const event = codeActEventFromLine(line);
+    if (event) {
       lastVisibleEnd = lineEnd;
+      if (event.command === BRAIN_QUESTIONNAIRE_COMMAND) {
+        break;
+      }
       skippingCodeActMetadata = true;
       continue;
     }
@@ -1291,17 +1676,674 @@ function assistantVisibleAnimationSource(text: string): string {
   return normalized.slice(0, lastVisibleEnd || normalized.trimEnd().length);
 }
 
-function assistantInlineNodes(text: string, keyPrefix: string): ReactNode[] {
+function assistantRevealBreakpoints(text: string): number[] {
+  const breakpoints: number[] = [];
+  const pattern = /\S+\s*|\s+/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (/\S/.test(match[0])) {
+      breakpoints.push(match.index + match[0].length);
+    }
+  }
+  if (text.length > 0 && breakpoints[breakpoints.length - 1] !== text.length) {
+    breakpoints.push(text.length);
+  }
+  return breakpoints;
+}
+
+interface TranscriptQuestionnaire {
+  title: string;
+  intro: string;
+  pages: TranscriptQuestionnairePage[];
+  sourceMessageId: string;
+}
+
+interface TranscriptQuestionnairePage {
+  question: string;
+  options: [string, string, string];
+}
+
+interface TranscriptQuestionnaireOptionCopy {
+  label: string;
+  detail: string;
+  tags: string[];
+  colors: string[];
+}
+
+interface ParsedQuestionnaireQuestion {
+  question: string;
+  inlineOptions: string[];
+}
+
+interface QuestionnaireAnswer {
+  kind: "option" | "other";
+  value: string;
+  otherText: string;
+}
+
+function unquoteCodeActSlotValue(value: string): string {
+  const trimmed = value.trim();
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function readQuestionnaireSlots(block: string): Map<string, string> {
+  const slots = new Map<string, string>();
+  const assignmentPattern = /\b(title|intro|questions|q\d+(?:_(?:options|option[123]|a|b|c))?|mode|output)\s*=\s*("[^"]*"|'[^']*'|[^\s]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = assignmentPattern.exec(block)) !== null) {
+    slots.set(match[1], unquoteCodeActSlotValue(match[2] ?? ""));
+  }
+  for (const rawLine of block.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const colon = /^(title|intro|questions|q\d+(?:_(?:options|option[123]|a|b|c))?)\s*:\s*(.+)$/.exec(line);
+    if (colon && !slots.has(colon[1])) {
+      slots.set(colon[1], unquoteCodeActSlotValue(colon[2] ?? ""));
+    }
+  }
+  return slots;
+}
+
+function splitQuestionnaireOptions(value: string, allowComma = false): string[] {
+  const separator = allowComma ? /\s*\|\s*|\s*;\s*|\s*,\s*/ : /\s*\|\s*|\s*;\s*/;
+  return value
+    .split(separator)
+    .map((option) => option.trim())
+    .map((option) => option.replace(/[?.!]+$/g, "").trim())
+    .filter(Boolean)
+    .filter((option) => !/^other$/i.test(option) && !/^autre$/i.test(option));
+}
+
+const QUESTIONNAIRE_TAGS: Array<[RegExp, string]> = [
+  [/\b(recommended|recommandee?|conseillee?|best|meilleur)\b/i, "Recommended"],
+  [/\b(fast|rapide|quick|vite|prototype rapide)\b/i, "Fast"],
+  [/\b(quality|qualite|premium|superior|superieur|high[- ]?end)\b/i, "Quality"],
+  [/\b(ambitious|ambitieux|ambitieuse|advanced|avance|longer|plus long)\b/i, "Ambitious"],
+  [/\b(cheap|cheaper|budget|moins cher|economique)\b/i, "Cheaper"],
+  [/\b(safe|safer|sur|robuste|low[- ]?risk|faible risque)\b/i, "Safer"],
+  [/\b(risky|riskier|risque|experimental|experimentale?)\b/i, "Riskier"]
+];
+
+function normalizedQuestionnaireTagSource(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function isQuestionnaireKnownTag(value: string): boolean {
+  const normalized = normalizedQuestionnaireTagSource(value);
+  return QUESTIONNAIRE_TAGS.some(([pattern]) => pattern.test(normalized));
+}
+
+function supportsQuestionnaireColor(value: string): boolean {
+  const candidate = value.trim();
+  if (!candidate || candidate.length > 96 || /[;{}<>]/.test(candidate)) {
+    return false;
+  }
+  if (/^(currentcolor|transparent)$/i.test(candidate)) {
+    return false;
+  }
+  if (/^#[0-9a-f]{3,8}$/i.test(candidate)) {
+    return true;
+  }
+  if (!/^(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\(/i.test(candidate)) {
+    return false;
+  }
+  return typeof CSS !== "undefined" && typeof CSS.supports === "function"
+    ? CSS.supports("color", candidate)
+    : false;
+}
+
+function splitQuestionnaireColorList(value: string): string[] {
+  const colors: string[] = [];
+  let current = "";
+  let depth = 0;
+  for (const char of value) {
+    if (char === "(") depth += 1;
+    if (char === ")") depth = Math.max(0, depth - 1);
+    if ((char === "," || char === ";") && depth === 0) {
+      const color = current.trim();
+      if (supportsQuestionnaireColor(color)) {
+        colors.push(color);
+      }
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  const color = current.trim();
+  if (supportsQuestionnaireColor(color)) {
+    colors.push(color);
+  }
+  return colors.slice(0, 4);
+}
+
+function extractQuestionnaireColors(option: string): { colors: string[]; text: string } {
+  let colors: string[] = [];
+  let text = option.replace(/\bcolors\s*:\s*([^)\]|]+?)(?=\s*(?:\)|\]|\||$)|\s+(?:\u2014|\u2013|-)\s+)/gi, (match, value: string) => {
+    colors = splitQuestionnaireColorList(value);
+    return colors.length > 0 ? " " : match;
+  });
+  text = text.replace(/\bcolor\s*:\s*(#[0-9a-f]{3,8}|(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\([^)]*\))/gi, (match, value: string) => {
+    const parsed = splitQuestionnaireColorList(value);
+    if (parsed.length === 0) {
+      return match;
+    }
+    if (colors.length === 0) {
+      colors = parsed;
+    }
+    return " ";
+  });
+  return { colors, text: text.replace(/\s+/g, " ").trim() };
+}
+
+function questionnaireOptionTags(option: string): string[] {
+  const tagSource = normalizedQuestionnaireTagSource(option.split(/\s+(?:\u2014|\u2013|-)\s+|:\s+/, 1)[0] ?? option);
+  const tags: string[] = [];
+  for (const [pattern, label] of QUESTIONNAIRE_TAGS) {
+    if (pattern.test(tagSource) && !tags.includes(label)) {
+      tags.push(label);
+    }
+  }
+  return tags;
+}
+
+function stripQuestionnaireOptionTags(option: string): string {
+  return option
+    .replace(/\s*\(([^)]{1,32})\)\s*/g, (match, tag: string) => isQuestionnaireKnownTag(tag) ? " " : match)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function questionnaireOptionCopy(option: string): TranscriptQuestionnaireOptionCopy {
+  const cleaned = option.trim();
+  const colorExtraction = extractQuestionnaireColors(cleaned);
+  const tags = questionnaireOptionTags(colorExtraction.text);
+  const normalized = stripQuestionnaireOptionTags(colorExtraction.text);
+  const split = /\s+(?:\u2014|\u2013|-)\s+/.exec(normalized) ?? /:\s+/.exec(normalized);
+  if (!split) {
+    return {
+      label: normalized,
+      detail: tags.includes("Recommended") ? "Option recommand\u00e9e pour avancer avec une bonne base." : "",
+      tags,
+      colors: colorExtraction.colors
+    };
+  }
+  const label = normalized.slice(0, split.index).trim();
+  const detail = normalized.slice(split.index + split[0].length).trim();
+  return {
+    label: label || normalized,
+    detail,
+    tags,
+    colors: colorExtraction.colors
+  };
+}
+
+function questionnaireColorPreviewStyle(colors: string[]): CSSProperties | undefined {
+  if (colors.length === 0) {
+    return undefined;
+  }
+  const [first, second = first, third = second, fourth = first] = colors;
+  return {
+    "--questionnaire-option-color-a": first,
+    "--questionnaire-option-color-b": second,
+    "--questionnaire-option-color-c": third,
+    "--questionnaire-option-color-d": fourth
+  } as CSSProperties;
+}
+
+function parsedQuestionnaireQuestion(value: string): ParsedQuestionnaireQuestion {
+  const trimmed = value.trim();
+  const colonIndex = trimmed.indexOf(":");
+  if (colonIndex <= 0) {
+    return { question: trimmed, inlineOptions: [] };
+  }
+  const head = trimmed.slice(0, colonIndex).trim();
+  const tail = trimmed.slice(colonIndex + 1).trim();
+  const inlineOptions = splitQuestionnaireOptions(tail, true);
+  if (!head || inlineOptions.length < 2) {
+    return { question: trimmed, inlineOptions: [] };
+  }
+  return {
+    question: head.endsWith("?") ? head : `${head} ?`,
+    inlineOptions
+  };
+}
+
+function questionnaireOptionsFor(slots: Map<string, string>, questionKey: string, inlineOptions: string[] = []): [string, string, string] {
+  const explicitOptions = splitQuestionnaireOptions(slots.get(`${questionKey}_options`) ?? "");
+  const individualOptions = [
+    slots.get(`${questionKey}_option1`) ?? slots.get(`${questionKey}_a`) ?? "",
+    slots.get(`${questionKey}_option2`) ?? slots.get(`${questionKey}_b`) ?? "",
+    slots.get(`${questionKey}_option3`) ?? slots.get(`${questionKey}_c`) ?? ""
+  ].map((option) => option.trim()).filter(Boolean);
+  const options = (explicitOptions.length > 0 ? explicitOptions : individualOptions.length > 0 ? individualOptions : inlineOptions).slice(0, 3);
+  const fallbackOptions = [
+    "Base \u00e9quilibr\u00e9e (Recommended) - bon point de d\u00e9part, complexit\u00e9 ma\u00eetris\u00e9e",
+    "Version qualit\u00e9 sup\u00e9rieure - meilleur r\u00e9sultat, plus longue ou plus co\u00fbteuse",
+    "Prototype rapide - valide l'id\u00e9e vite, avec moins de finition"
+  ];
+  while (options.length < 3) {
+    options.push(fallbackOptions[options.length]);
+  }
+  return [options[0], options[1], options[2]];
+}
+
+function parseQuestionnaireFromMessage(message: TranscriptMessage): TranscriptQuestionnaire | null {
+  if (message.role !== "assistant" || !message.text.includes(BRAIN_QUESTIONNAIRE_COMMAND)) {
+    return null;
+  }
+  const lines = message.text.replace(/\r\n/g, "\n").split("\n");
+  const commandIndex = lines.findIndex((line) => line.includes(BRAIN_QUESTIONNAIRE_COMMAND));
+  if (commandIndex < 0) {
+    return null;
+  }
+  const blockLines: string[] = [];
+  for (let index = commandIndex; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (index > commandIndex && (!line.trim() || isCodeActResultHeader(line))) {
+      break;
+    }
+    blockLines.push(line);
+  }
+  const slots = readQuestionnaireSlots(blockLines.join("\n"));
+  const numberedQuestions = [...slots.entries()]
+    .filter(([name, value]) => /^q\d+$/.test(name) && value.trim().length > 0)
+    .sort(([left], [right]) => Number(left.slice(1)) - Number(right.slice(1)))
+    .map(([, value]) => value.trim());
+  const joinedQuestions = (slots.get("questions") ?? "")
+    .split(/\s+\|\s+|\s*;\s*/)
+    .map((question) => question.trim())
+    .filter(Boolean);
+  const questions = numberedQuestions.length > 0 ? numberedQuestions : joinedQuestions;
+  if (questions.length === 0) {
+    return null;
+  }
+  const pages = questions.slice(0, 5).map((rawQuestion, index) => {
+    const questionKey = `q${index + 1}`;
+    const parsedQuestion = parsedQuestionnaireQuestion(rawQuestion);
+    return {
+      question: parsedQuestion.question,
+      options: questionnaireOptionsFor(slots, questionKey, parsedQuestion.inlineOptions)
+    };
+  });
+  return {
+    title: slots.get("title")?.trim() || "",
+    intro: slots.get("intro")?.trim() || "",
+    pages,
+    sourceMessageId: message.id
+  };
+}
+
+function latestQuestionnaireFromMessages(messages: TranscriptMessage[]): TranscriptQuestionnaire | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") {
+      return null;
+    }
+    const questionnaire = parseQuestionnaireFromMessage(messages[index]);
+    if (questionnaire) {
+      return questionnaire;
+    }
+  }
+  return null;
+}
+
+function ComposerQuestionnaire({
+  questionnaire,
+  onCommitAnswers
+}: {
+  questionnaire: TranscriptQuestionnaire;
+  onCommitAnswers: (text: string) => void;
+}) {
+  const titleId = useId();
+  const promptId = useId();
+  const [pageIndex, setPageIndex] = useState(0);
+  const [leavingPageIndex, setLeavingPageIndex] = useState<number | null>(null);
+  const [pageMotionDirection, setPageMotionDirection] = useState<"forward" | "back">("forward");
+  const [isClosing, setIsClosing] = useState(false);
+  const [answers, setAnswers] = useState<Record<number, QuestionnaireAnswer>>({});
+  const pageTransitionTimerRef = useRef<number | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const page = questionnaire.pages[Math.min(pageIndex, Math.max(0, questionnaire.pages.length - 1))];
+  const currentAnswer = answers[pageIndex];
+  const isLastPage = pageIndex >= questionnaire.pages.length - 1;
+  const questionnaireTitle = questionnaire.title.trim();
+  const currentAnswerComplete = Boolean(
+    currentAnswer?.kind === "option" ||
+    (currentAnswer?.kind === "other" && currentAnswer.otherText.trim())
+  );
+
+  useEffect(() => {
+    setPageIndex(0);
+    setLeavingPageIndex(null);
+    setPageMotionDirection("forward");
+    setIsClosing(false);
+    setAnswers({});
+  }, [questionnaire.sourceMessageId]);
+
+  useEffect(() => {
+    return () => {
+      if (pageTransitionTimerRef.current !== null) {
+        window.clearTimeout(pageTransitionTimerRef.current);
+      }
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
+
+  if (!page) {
+    return null;
+  }
+
+  const goToPage = (nextPageIndex: number) => {
+    const clampedNextPageIndex = Math.max(0, Math.min(questionnaire.pages.length - 1, nextPageIndex));
+    if (clampedNextPageIndex === pageIndex || isClosing) {
+      return;
+    }
+    if (pageTransitionTimerRef.current !== null) {
+      window.clearTimeout(pageTransitionTimerRef.current);
+    }
+    setPageMotionDirection(clampedNextPageIndex > pageIndex ? "forward" : "back");
+    setLeavingPageIndex(pageIndex);
+    setPageIndex(clampedNextPageIndex);
+    pageTransitionTimerRef.current = window.setTimeout(() => {
+      setLeavingPageIndex(null);
+      pageTransitionTimerRef.current = null;
+    }, 260);
+  };
+  const commitAnswersWith = (nextAnswers: Record<number, QuestionnaireAnswer>) => {
+    const lines = questionnaire.pages
+      .map((candidate, index) => {
+        const answer = nextAnswers[index];
+        const value = answer?.kind === "other" ? answer.otherText.trim() : answer?.value.trim() ?? "";
+        return value ? `- ${candidate.question}: ${value}` : "";
+      })
+      .filter(Boolean);
+    if (lines.length === 0 || isClosing) {
+      return;
+    }
+    setIsClosing(true);
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+    }
+    closeTimerRef.current = window.setTimeout(() => {
+      onCommitAnswers(`Questionnaire answers:\n${lines.join("\n")}`);
+      closeTimerRef.current = null;
+    }, 320);
+  };
+  const chooseOption = (value: string) => {
+    setAnswers((current) => {
+      const nextAnswers = {
+        ...current,
+        [pageIndex]: { kind: "option" as const, value, otherText: current[pageIndex]?.otherText ?? "" }
+      };
+      if (isLastPage) {
+        commitAnswersWith(nextAnswers);
+      } else {
+        window.setTimeout(() => goToPage(pageIndex + 1), 120);
+      }
+      return nextAnswers;
+    });
+  };
+  const chooseOther = (otherText = currentAnswer?.otherText ?? "") => {
+    setAnswers((current) => ({
+      ...current,
+      [pageIndex]: { kind: "other", value: "Autre", otherText }
+    }));
+  };
+  const commitAnswers = () => {
+    commitAnswersWith(answers);
+  };
+  const renderQuestionnairePage = (
+    candidatePage: TranscriptQuestionnairePage,
+    candidatePageIndex: number,
+    motionState: "active" | "leaving"
+  ) => {
+    const candidateAnswer = answers[candidatePageIndex];
+    return (
+      <div
+        className={[
+          "composerQuestionnaire__page",
+          `composerQuestionnaire__page--${motionState}`,
+          `composerQuestionnaire__page--${pageMotionDirection}`
+        ].join(" ")}
+        key={`${questionnaire.sourceMessageId}-${candidatePageIndex}-${motionState}`}
+        role={motionState === "active" ? "group" : undefined}
+        aria-labelledby={motionState === "active" ? promptId : undefined}
+        aria-hidden={motionState === "leaving" ? "true" : undefined}
+      >
+        <div className="composerQuestionnaire__prompt">
+          <span className="composerQuestionnaire__promptQuestion" id={motionState === "active" ? promptId : undefined}>
+            {candidatePage.question}
+          </span>
+          {questionnaire.intro ? (
+            <span className="composerQuestionnaire__promptHint">{questionnaire.intro}</span>
+          ) : null}
+        </div>
+        <div className="composerQuestionnaire__options">
+          {candidatePage.options.map((option, optionIndex) => {
+            const optionCopy = questionnaireOptionCopy(option);
+            return (
+              <label
+                className={[
+                  "composerQuestionnaire__option",
+                  optionCopy.colors.length > 0 ? "composerQuestionnaire__option--colorPreview" : ""
+                ].filter(Boolean).join(" ")}
+                key={`${questionnaire.sourceMessageId}-${candidatePageIndex}-${optionIndex}`}
+                style={questionnaireColorPreviewStyle(optionCopy.colors)}
+              >
+                <input
+                  checked={candidateAnswer?.kind === "option" && candidateAnswer.value === option}
+                  disabled={motionState === "leaving" || isClosing}
+                  name={`${questionnaire.sourceMessageId}-page-${candidatePageIndex}`}
+                  type="radio"
+                  value={option}
+                  onChange={() => chooseOption(option)}
+                />
+                <span className="composerQuestionnaire__optionIndex" aria-hidden="true">{optionIndex + 1}</span>
+                <span className="composerQuestionnaire__optionCopy">
+                  <span className="composerQuestionnaire__optionLabel">
+                    {optionCopy.label}
+                    {optionCopy.tags.map((tag) => <em key={`${option}-${tag}`}>{tag}</em>)}
+                  </span>
+                  {optionCopy.detail ? <small>{optionCopy.detail}</small> : null}
+                </span>
+              </label>
+            );
+          })}
+          <label className="composerQuestionnaire__option composerQuestionnaire__option--other">
+            <input
+              checked={candidateAnswer?.kind === "other"}
+              disabled={motionState === "leaving" || isClosing}
+              name={`${questionnaire.sourceMessageId}-page-${candidatePageIndex}`}
+              type="radio"
+              value="Autre"
+              onChange={() => chooseOther()}
+            />
+            <span className="composerQuestionnaire__optionIndex" aria-hidden="true">4</span>
+            <span className="composerQuestionnaire__optionCopy">
+              <span className="composerQuestionnaire__optionLabel">Autre</span>
+              <textarea
+                className="composerQuestionnaire__otherInput"
+                aria-label="Autre"
+                disabled={motionState === "leaving" || isClosing}
+                placeholder={"Pr\u00e9cise ta r\u00e9ponse..."}
+                rows={2}
+                value={candidateAnswer?.kind === "other" ? candidateAnswer.otherText : ""}
+                onChange={(event) => chooseOther(event.currentTarget.value)}
+                onClick={(event) => event.stopPropagation()}
+                onFocus={() => chooseOther(candidateAnswer?.kind === "other" ? candidateAnswer.otherText : "")}
+              />
+            </span>
+          </label>
+        </div>
+      </div>
+    );
+  };
+  const leavingPage = leavingPageIndex === null ? null : questionnaire.pages[leavingPageIndex] ?? null;
+
+  return (
+    <section
+      className={[
+        "composerQuestionnaire",
+        isClosing ? "composerQuestionnaire--closing" : "",
+        questionnaireTitle ? "composerQuestionnaire--titled" : "composerQuestionnaire--untitled"
+      ].filter(Boolean).join(" ")}
+      aria-label={questionnaireTitle || "Questionnaire"}
+      aria-labelledby={questionnaireTitle ? titleId : undefined}
+      key={questionnaire.sourceMessageId}
+      role="form"
+    >
+      <div className="composerQuestionnaire__header">
+        {questionnaireTitle ? (
+          <>
+            <span className="composerQuestionnaire__dot" aria-hidden="true" />
+            <strong id={titleId}>{questionnaireTitle}</strong>
+          </>
+        ) : (
+          <span className="composerQuestionnaire__headerSpacer" aria-hidden="true" />
+        )}
+        <div className="composerQuestionnaire__pager" aria-label="Pagination du questionnaire">
+          <button
+            type="button"
+            className="composerQuestionnaire__arrow"
+            aria-label="Question précédente"
+            title="Précédent"
+            disabled={pageIndex === 0 || isClosing}
+            onClick={() => goToPage(pageIndex - 1)}
+          >
+            <ChevronLeft aria-hidden="true" size={15} strokeWidth={1.9} />
+          </button>
+          <span className="composerQuestionnaire__progress">
+            {pageIndex + 1}/{questionnaire.pages.length}
+          </span>
+          {isLastPage ? (
+            <button
+              type="button"
+              className="composerQuestionnaire__arrow composerQuestionnaire__arrow--primary"
+              aria-label="Envoyer les réponses"
+              title="Envoyer"
+              disabled={!currentAnswerComplete || isClosing}
+              onClick={commitAnswers}
+            >
+              <ChevronRight aria-hidden="true" size={15} strokeWidth={1.9} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="composerQuestionnaire__arrow composerQuestionnaire__arrow--primary"
+              aria-label="Question suivante"
+              title="Suivant"
+              disabled={!currentAnswerComplete || isClosing}
+              onClick={() => goToPage(pageIndex + 1)}
+            >
+              <ChevronRight aria-hidden="true" size={15} strokeWidth={1.9} />
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="composerQuestionnaire__pageStage">
+        {leavingPage && leavingPageIndex !== null ? renderQuestionnairePage(leavingPage, leavingPageIndex, "leaving") : null}
+        {renderQuestionnairePage(page, pageIndex, "active")}
+      </div>
+    </section>
+  );
+}
+
+function assistantMathLabel(value: string): string {
+  return value
+    .replace(/\\quad/g, "  ")
+    .replace(/\\dots/g, "...")
+    .replace(/\\cdot/g, "·")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+type AssistantMathUseHandler = (formula: string) => void;
+
+const TEXTUAL_MATH_ATOM_SOURCE = String.raw`(?:\d+(?:\.\d+)?|(?:sin|cos|tan|log|ln|sqrt)\([^()\n]{1,30}\)|[A-Za-z](?:_\{?[-+A-Za-z0-9]+\}?|\^\{?[-+A-Za-z0-9]+\}?|\([^()\n]{1,30}\))?)`;
+const TEXTUAL_MATH_OPERATOR_SOURCE = String.raw`(?:\s*(?:[+\-*/^=,]|<=|>=|≤|≥|≈|≃|≠|!=)\s*|\s*[(){}\[\]]\s*)`;
+const TEXTUAL_MATH_EQUATION_SOURCE = String.raw`\b${TEXTUAL_MATH_ATOM_SOURCE}\s*(?:=|≈|≃|≤|≥|!=|≠|<=|>=)\s*${TEXTUAL_MATH_ATOM_SOURCE}(?:${TEXTUAL_MATH_OPERATOR_SOURCE}${TEXTUAL_MATH_ATOM_SOURCE}){0,12}`;
+const TEXTUAL_MATH_SEQUENCE_SOURCE = String.raw`\b\d+(?:\s*,\s*\d+){3,}\b`;
+const TEXTUAL_MATH_PATTERN = new RegExp(`${TEXTUAL_MATH_SEQUENCE_SOURCE}|${TEXTUAL_MATH_EQUATION_SOURCE}`, "g");
+
+function assistantWordFlashNodes(text: string, keyPrefix: string, writing: boolean): ReactNode[] {
+  if (!writing) {
+    return [text];
+  }
   const nodes: ReactNode[] = [];
-  const pattern = /(\*\*[^*]+?\*\*|`[^`]+?`)/g;
+  const chunks = text.match(/\s+|\S+/g) ?? [];
+  let offset = 0;
+  for (const chunk of chunks) {
+    const key = `${keyPrefix}-word-${offset}`;
+    offset += chunk.length;
+    if (/^\s+$/.test(chunk)) {
+      nodes.push(chunk);
+    } else {
+      nodes.push(
+        <span className="assistantText__wordFlash" key={key}>
+          {chunk}
+        </span>
+      );
+    }
+  }
+  return nodes;
+}
+
+function assistantMathTokenNode(formula: string, key: string, onUseMathInCompute?: AssistantMathUseHandler): ReactNode {
+  return (
+    <span className="assistantText__mathToken" key={key}>
+      <span className="assistantText__mathPill">{assistantMathLabel(formula)}</span>
+      <button
+        type="button"
+        className="assistantText__mathComputeHint"
+        aria-label="Use this math in Compute"
+        title="Use this math in Compute"
+        onClick={() => onUseMathInCompute?.(formula)}
+      >
+        <span className="assistantText__mathComputeIcon" aria-hidden="true">
+          <NewComputeCodeActIcon />
+        </span>
+        <span className="assistantText__mathComputeLabel">Use in Compute</span>
+      </button>
+    </span>
+  );
+}
+
+function assistantPlainTextNodes(text: string, keyPrefix: string, onUseMathInCompute?: AssistantMathUseHandler, writing = false): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  TEXTUAL_MATH_PATTERN.lastIndex = 0;
+  while ((match = TEXTUAL_MATH_PATTERN.exec(text)) !== null) {
+    if (match.index > cursor) {
+      nodes.push(...assistantWordFlashNodes(text.slice(cursor, match.index), `${keyPrefix}-plain-${cursor}`, writing));
+    }
+    const formula = match[0].trim();
+    nodes.push(assistantMathTokenNode(formula, `${keyPrefix}-text-math-${match.index}`, onUseMathInCompute));
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) {
+    nodes.push(...assistantWordFlashNodes(text.slice(cursor), `${keyPrefix}-plain-${cursor}`, writing));
+  }
+  return nodes;
+}
+
+function assistantInlineNodes(text: string, keyPrefix: string, onUseMathInCompute?: AssistantMathUseHandler, writing = false): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\*\*[^*]+?\*\*|`[^`]+?`)/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
     if (match.index > cursor) {
-      nodes.push(text.slice(cursor, match.index));
+      nodes.push(...assistantPlainTextNodes(text.slice(cursor, match.index), `${keyPrefix}-plain-${cursor}`, onUseMathInCompute, writing));
     }
     const token = match[0];
-    if (token.startsWith("**")) {
+    if (token.startsWith("\\[") || token.startsWith("\\(")) {
+      const formula = token.slice(2, -2).trim();
+      nodes.push(assistantMathTokenNode(formula, `${keyPrefix}-math-${match.index}`, onUseMathInCompute));
+    } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
     } else {
       nodes.push(<code key={`${keyPrefix}-code-${match.index}`}>{token.slice(1, -1)}</code>);
@@ -1309,7 +2351,7 @@ function assistantInlineNodes(text: string, keyPrefix: string): ReactNode[] {
     cursor = match.index + token.length;
   }
   if (cursor < text.length) {
-    nodes.push(text.slice(cursor));
+    nodes.push(...assistantPlainTextNodes(text.slice(cursor), `${keyPrefix}-plain-${cursor}`, onUseMathInCompute, writing));
   }
   return nodes;
 }
@@ -1347,14 +2389,18 @@ function BrainCodeActIcon() {
   );
 }
 
-function BrainSegmentCodeActIcon() {
+function BrainSegmentCodeActIcon({ phase }: { phase: "changing" | "changed" }) {
   return (
-    <svg className="brainSegmentIcon" viewBox="0 0 24 24" aria-hidden="true">
-      <path className="brainSegmentIcon__core" d="M12 18V5M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4" />
-      <path className="brainSegmentIcon__halo" d="M5.2 15.2c2.7 3.3 10.9 3.3 13.6 0" />
-      <path className="brainSegmentIcon__halo" d="M5.2 8.8c2.7-3.3 10.9-3.3 13.6 0" />
-      <circle className="brainSegmentIcon__dot brainSegmentIcon__dot--a" cx="5.2" cy="12" r="1.4" />
-      <circle className="brainSegmentIcon__dot brainSegmentIcon__dot--b" cx="18.8" cy="12" r="1.4" />
+    <svg className={`brainSegmentIcon brainSegmentIcon--${phase}`} viewBox="0 0 24 24" aria-hidden="true">
+      <path className="brainSegmentIcon__stem" d="M12 18V5" />
+      <path className="brainSegmentIcon__side" d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4" />
+      <path className="brainSegmentIcon__top" d="M12 5A3 3 0 1 1 17.598 6.5" />
+      <path className="brainSegmentIcon__top" d="M12 5A3 3 0 1 0 6.402 6.5" />
+      <path d="M17.997 5.125a4 4 0 0 1 2.526 5.77" />
+      <path className="brainSegmentIcon__low" d="M18 18a4 4 0 0 0 2-7.464" />
+      <path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517" />
+      <path className="brainSegmentIcon__low" d="M6 18a4 4 0 0 1-2-7.464" />
+      <path d="M6.003 5.125a4 4 0 0 0-2.526 5.77" />
     </svg>
   );
 }
@@ -1406,10 +2452,10 @@ function CalendarCodeActIcon() {
   );
 }
 
-function CodeActEventIcon({ command }: { command: TranscriptCodeActCommand }) {
+function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command: TranscriptCodeActCommand; brainSegmentPhase?: "changing" | "changed" }) {
   if (command === BRAIN_GMAIL_COMMAND || command === BRAIN_GMAIL_COM_COMMAND) return <ModuleLogo id="gmail" />;
   if (command === BRAIN_AIRBNB_COMMAND) return <ModuleLogo id="airbnb" />;
-  if (command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND) return <BrainSegmentCodeActIcon />;
+  if (command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND) return <BrainSegmentCodeActIcon phase={brainSegmentPhase} />;
   if (command === BRAIN_NEWIMAGE_COMMAND || command === BRAIN_EDITIMAGE_COMMAND) return <EditImageGlyph />;
   if (command === BRAIN_NEWCOMPUTE_COMMAND) return <NewComputeCodeActIcon />;
   if (command === BRAIN_BRAIN_COMMAND) return <BrainCodeActIcon />;
@@ -1423,93 +2469,270 @@ function isBrainSegmentCommand(command: TranscriptCodeActCommand): boolean {
   return command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND;
 }
 
+function brainSegmentName(command: TranscriptCodeActCommand): string {
+  return command === BRAIN_CODING_COMMAND ? "Coding Brain" : "Science Brain";
+}
+
+function brainSegmentEventText(command: TranscriptCodeActCommand, phase: "changing" | "changed"): string {
+  const target = brainSegmentName(command);
+  return phase === "changing"
+    ? `Changing from General Brain to ${target}`
+    : `Changed from General Brain to ${target}`;
+}
+
 function TranscriptCodeActEventLine({ event }: { event: TranscriptCodeActEvent }) {
+  const isBrainSegment = isBrainSegmentCommand(event.command);
+  const [brainSegmentPhase, setBrainSegmentPhase] = useState<"changing" | "changed">(isBrainSegment ? "changing" : "changed");
+
+  useEffect(() => {
+    if (!isBrainSegment) {
+      return;
+    }
+    setBrainSegmentPhase("changing");
+    const timeout = window.setTimeout(() => setBrainSegmentPhase("changed"), 1000);
+    return () => window.clearTimeout(timeout);
+  }, [event.command, isBrainSegment]);
+
+  const eventClassName = isBrainSegment
+    ? `transcriptCodeActEvent transcriptCodeActEvent--brainSegment transcriptCodeActEvent--brainSegment-${brainSegmentPhase}`
+    : "transcriptCodeActEvent";
+  const text = isBrainSegment ? brainSegmentEventText(event.command, brainSegmentPhase) : event.text;
+
   return (
-    <div className={isBrainSegmentCommand(event.command) ? "transcriptCodeActEvent transcriptCodeActEvent--brainSegment" : "transcriptCodeActEvent"}>
+    <div className={eventClassName}>
       <code className="transcriptCodeActEvent__command">{event.command}</code>
       <span className="transcriptCodeActEvent__icon" aria-hidden="true">
-        <CodeActEventIcon command={event.command} />
+        <CodeActEventIcon command={event.command} brainSegmentPhase={brainSegmentPhase} />
       </span>
-      <span className="transcriptCodeActEvent__text">{event.text}</span>
+      <span className="transcriptCodeActEvent__text">{text}</span>
     </div>
   );
 }
 
-function AssistantMarkdownText({ text, messageId, writing }: { text: string; messageId: string; writing: boolean }) {
+function TranscriptCommandSummaryLine({ count }: { count: number }) {
+  return (
+    <div className="transcriptCommandSummaryLine" role="status">
+      <span className="transcriptCommandSummaryLine__icon" aria-hidden="true">
+        <svg viewBox="0 0 16 16">
+          <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+          <path d="m5.2 6.1 2.1 1.9-2.1 1.9" />
+          <path d="M8.7 10h2.4" />
+        </svg>
+      </span>
+      <span>{count} {count > 1 ? "commandes exécutées" : "commande exécutée"}</span>
+    </div>
+  );
+}
+
+function AssistantMarkdownText({
+  text,
+  messageId,
+  writing,
+  onUseMathInCompute
+}: {
+  text: string;
+  messageId: string;
+  writing: boolean;
+  onUseMathInCompute?: AssistantMathUseHandler;
+}) {
   const blocks = assistantMarkdownBlocks(text);
   return (
     <div className="assistantText__body">
       {blocks.map((block, index) => {
+        if (block.kind === "event_group") {
+          return <TranscriptCommandSummaryLine count={block.events.length} key={`${messageId}-event-group-${index}`} />;
+        }
         if (block.kind === "event") {
           return <TranscriptCodeActEventLine event={block.event} key={`${messageId}-event-${index}-${block.event.command}`} />;
         }
         if (block.kind === "heading") {
           const Tag = block.level <= 2 ? "h3" : "h4";
-          return <Tag className="assistantText__heading" key={`${messageId}-heading-${index}`}>{assistantInlineNodes(block.text, `${messageId}-heading-${index}`)}</Tag>;
+          return <Tag className="assistantText__heading" key={`${messageId}-heading-${index}`}>{assistantInlineNodes(block.text, `${messageId}-heading-${index}`, onUseMathInCompute, writing)}</Tag>;
         }
         if (block.kind === "list") {
           const Tag = block.ordered ? "ol" : "ul";
           return (
             <Tag className="assistantText__list" key={`${messageId}-list-${index}`}>
               {block.items.map((item, itemIndex) => (
-                <li key={`${messageId}-list-${index}-${itemIndex}`}>{assistantInlineNodes(item, `${messageId}-list-${index}-${itemIndex}`)}</li>
+                <li key={`${messageId}-list-${index}-${itemIndex}`}>{assistantInlineNodes(item, `${messageId}-list-${index}-${itemIndex}`, onUseMathInCompute, writing)}</li>
               ))}
             </Tag>
           );
         }
-        return <p className="assistantText__paragraph" key={`${messageId}-paragraph-${index}`}>{assistantInlineNodes(block.text, `${messageId}-paragraph-${index}`)}</p>;
+        if (block.kind === "task_list") {
+          return (
+            <ul className="assistantText__taskList" key={`${messageId}-task-list-${index}`}>
+              {block.items.map((item, itemIndex) => (
+                <li className={item.checked ? "assistantText__taskItem assistantText__taskItem--checked" : "assistantText__taskItem"} key={`${messageId}-task-${index}-${itemIndex}`}>
+                  <input type="checkbox" checked={item.checked} readOnly tabIndex={-1} aria-label={item.checked ? "Task complete" : "Task open"} />
+                  <span>{assistantInlineNodes(item.text, `${messageId}-task-${index}-${itemIndex}`, onUseMathInCompute, writing)}</span>
+                </li>
+              ))}
+            </ul>
+          );
+        }
+        if (block.kind === "table") {
+          return (
+            <div className="assistantText__tableWrap" key={`${messageId}-table-${index}`}>
+              <table className="assistantText__table">
+                <thead>
+                  <tr>
+                    {block.headers.map((header, cellIndex) => (
+                      <th
+                        className={`assistantText__tableCell assistantText__tableCell--${block.alignments[cellIndex] ?? "left"}`}
+                        key={`${messageId}-table-${index}-header-${cellIndex}`}
+                        scope="col"
+                      >
+                        {assistantInlineNodes(header, `${messageId}-table-${index}-header-${cellIndex}`, onUseMathInCompute, writing)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={`${messageId}-table-${index}-row-${rowIndex}`}>
+                      {row.map((cell, cellIndex) => (
+                        <td
+                          className={`assistantText__tableCell assistantText__tableCell--${block.alignments[cellIndex] ?? "left"}`}
+                          key={`${messageId}-table-${index}-row-${rowIndex}-cell-${cellIndex}`}
+                        >
+                          {assistantInlineNodes(cell, `${messageId}-table-${index}-row-${rowIndex}-cell-${cellIndex}`, onUseMathInCompute, writing)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        if (block.kind === "code") {
+          return (
+            <figure className="assistantText__codeBlock" key={`${messageId}-code-${index}`}>
+              {block.language ? <figcaption>{block.language}</figcaption> : null}
+              <pre><code>{block.code}</code></pre>
+            </figure>
+          );
+        }
+        if (block.kind === "quote") {
+          return (
+            <blockquote className="assistantText__quote" key={`${messageId}-quote-${index}`}>
+              {block.text.split("\n").map((line, lineIndex) => (
+                <p key={`${messageId}-quote-${index}-${lineIndex}`}>{assistantInlineNodes(line, `${messageId}-quote-${index}-${lineIndex}`, onUseMathInCompute, writing)}</p>
+              ))}
+            </blockquote>
+          );
+        }
+        if (block.kind === "callout") {
+          return (
+            <aside className={`assistantText__callout assistantText__callout--${block.tone}`} key={`${messageId}-callout-${index}`} role="note">
+              <strong>{block.title}</strong>
+              {block.body ? <p>{assistantInlineNodes(block.body, `${messageId}-callout-${index}`, onUseMathInCompute, writing)}</p> : null}
+            </aside>
+          );
+        }
+        if (block.kind === "facts") {
+          return (
+            <dl className="assistantText__factGrid" key={`${messageId}-facts-${index}`}>
+              {block.items.map((item, itemIndex) => (
+                <div className="assistantText__fact" key={`${messageId}-fact-${index}-${itemIndex}`}>
+                  <dt>{item.label}</dt>
+                  <dd>{assistantInlineNodes(item.value, `${messageId}-fact-${index}-${itemIndex}`, onUseMathInCompute, writing)}</dd>
+                </div>
+              ))}
+            </dl>
+          );
+        }
+        if (block.kind === "divider") {
+          return <hr className="assistantText__divider" key={`${messageId}-divider-${index}`} />;
+        }
+        return <p className="assistantText__paragraph" key={`${messageId}-paragraph-${index}`}>{assistantInlineNodes(block.text, `${messageId}-paragraph-${index}`, onUseMathInCompute, writing)}</p>;
       })}
       {writing ? <span className="assistantText__caret" /> : null}
     </div>
   );
 }
 
-function StaticAssistantText({ message }: { message: TranscriptMessage }) {
+function StaticAssistantText({ message, onUseMathInCompute }: { message: TranscriptMessage; onUseMathInCompute?: AssistantMathUseHandler }) {
   return (
     <div className="assistantText" aria-label={message.text}>
-      <AssistantMarkdownText messageId={message.id} text={message.text} writing={false} />
+      <AssistantMarkdownText messageId={message.id} text={message.text} writing={false} onUseMathInCompute={onUseMathInCompute} />
     </div>
   );
 }
 
-function AnimatedAssistantText({ message, onAnimationComplete }: { message: TranscriptMessage; onAnimationComplete?: (messageId: string) => void }) {
+function AnimatedAssistantText({
+  message,
+  onAnimationComplete,
+  onUseMathInCompute
+}: {
+  message: TranscriptMessage;
+  onAnimationComplete?: (messageId: string) => void;
+  onUseMathInCompute?: AssistantMathUseHandler;
+}) {
   const textRef = useRef<HTMLDivElement>(null);
   const animationSource = useMemo(() => assistantVisibleAnimationSource(message.text), [message.text]);
+  const revealBreakpoints = useMemo(() => assistantRevealBreakpoints(animationSource), [animationSource]);
   const totalCharacters = animationSource.length;
+  const totalRevealSteps = revealBreakpoints.length;
   const [visibleCharacters, setVisibleCharacters] = useState(0);
   const [animationSettled, setAnimationSettled] = useState(false);
   const completionReportedRef = useRef(false);
+  const visibleCharactersRef = useRef(0);
 
   useEffect(() => {
     completionReportedRef.current = false;
     setAnimationSettled(false);
+    visibleCharactersRef.current = 0;
     setVisibleCharacters(0);
-    if (totalCharacters === 0 || prefersReducedMotion()) {
+  }, [message.id]);
+
+  useEffect(() => {
+    if (totalCharacters === 0 || totalRevealSteps === 0 || prefersReducedMotion()) {
+      visibleCharactersRef.current = totalCharacters;
       setVisibleCharacters(totalCharacters);
       setAnimationSettled(true);
       return;
     }
 
     let frame = 0;
-    const startedAt = performance.now();
-    const duration = Math.min(4200, Math.max(720, totalCharacters * 18));
-
-    setVisibleCharacters(0);
+    let lastTickAt = performance.now();
 
     const tick = (now: number) => {
-      const progress = Math.min(1, (now - startedAt) / duration);
-      const eased = 1 - Math.pow(1 - progress, 2.4);
-      setVisibleCharacters(Math.min(totalCharacters, Math.ceil(totalCharacters * eased)));
-      if (progress < 1) {
+      const elapsed = now - lastTickAt;
+      const current = visibleCharactersRef.current;
+      const cadence = totalCharacters - current > 900 ? 62 : 78;
+      if (elapsed < cadence) {
+        frame = requestAnimationFrame(tick);
+        return;
+      }
+      lastTickAt = now;
+      const currentStep = revealBreakpoints.findIndex((point) => point > current);
+      const nextIndex = currentStep === -1 ? totalRevealSteps - 1 : currentStep;
+      const stepBudget = Math.max(1, Math.min(2, Math.floor(elapsed / cadence)));
+      const targetIndex = Math.min(totalRevealSteps - 1, nextIndex + stepBudget - 1);
+      const nextVisibleCharacters = Math.max(current + 1, revealBreakpoints[targetIndex] ?? totalCharacters);
+      if (nextVisibleCharacters !== current) {
+        visibleCharactersRef.current = nextVisibleCharacters;
+        setVisibleCharacters(nextVisibleCharacters);
+      }
+      if (nextVisibleCharacters < totalCharacters) {
         frame = requestAnimationFrame(tick);
       } else {
         setAnimationSettled(true);
       }
     };
 
+    if (visibleCharactersRef.current >= totalCharacters) {
+      setVisibleCharacters(totalCharacters);
+      setAnimationSettled(true);
+      return;
+    }
+
+    setAnimationSettled(false);
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [animationSource, message.id, totalCharacters]);
+  }, [animationSource, message.id, revealBreakpoints, totalCharacters, totalRevealSteps]);
 
   useEffect(() => {
     if (completionReportedRef.current || totalCharacters === 0 || !animationSettled || visibleCharacters < totalCharacters) {
@@ -1521,7 +2744,7 @@ function AnimatedAssistantText({ message, onAnimationComplete }: { message: Tran
     void panelsChatBottomStore.dispatch({ kind: "assistant_write_complete", value: message.id });
   }, [animationSettled, message.id, onAnimationComplete, totalCharacters, visibleCharacters]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     followTranscriptLatest(latestTranscriptContainerFor(textRef.current));
   }, [visibleCharacters]);
 
@@ -1530,15 +2753,39 @@ function AnimatedAssistantText({ message, onAnimationComplete }: { message: Tran
 
   return (
     <div className="assistantText" aria-label={message.text} ref={textRef}>
-      <AssistantMarkdownText messageId={message.id} text={visibleText} writing={writing} />
+      <AssistantMarkdownText messageId={message.id} text={visibleText} writing={writing} onUseMathInCompute={onUseMathInCompute} />
     </div>
   );
 }
 
-function PendingAssistantText() {
+function PendingAssistantText({ agentName }: { agentName: string }) {
+  const label = agentName.trim() || "Agent";
   return (
-    <div className="assistantText assistantText--pending" aria-label="Assistant response pending">
-      <span className="assistantText__pendingCaret" aria-hidden="true" />
+    <div className="assistantText assistantText--pending assistantThinkingEvent" aria-label={`${label} is thinking`} role="status">
+      <span className="sessionRow__loaderViewbox assistantThinkingEvent__loaderViewbox" aria-hidden="true">
+        <span className="loader" />
+      </span>
+      <span className="assistantThinkingEvent__label">
+        <strong>{label}</strong> is thinking
+      </span>
+    </div>
+  );
+}
+
+function ProviderUnavailableIcon() {
+  return (
+    <svg className="assistantErrorIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="16" r="2" fill="currentColor" />
+      <path fill="currentColor" d="M16.4 11.6A7.1 7.1 0 0 0 12 9.1l3.4 3.4zM19 8.4A12.2 14 0 0 0 8.2 4.2L10 6a9.9 9.9 0 0 1 7.4 3.7zM3.5 2L2 3.4l2.2 2.2A13.1 13.1 0 0 0 1 8.4l1.5 1.3a10.7 10.7 0 0 1 3.2-2.6L8 9.3a7.3 7.3 0 0 0-3.3 2.3L6.1 13a5.2 5.2 0 0 1 3.6-2l6.8 7l1.5-1.5z" />
+    </svg>
+  );
+}
+
+function AssistantErrorText({ message }: { message: TranscriptMessage }) {
+  return (
+    <div className="assistantErrorText" role="status" aria-label={message.text}>
+      <ProviderUnavailableIcon />
+      <span>{message.text}</span>
     </div>
   );
 }
@@ -1546,19 +2793,26 @@ function PendingAssistantText() {
 function TranscriptCanvas({
   activeSessionId,
   messages,
+  agentName,
+  parallelSessionIndex = 0,
   className = "chatCanvas",
-  onEditImage
+  onEditImage,
+  onUseMathInCompute
 }: {
   activeSessionId: string;
   messages: TranscriptMessage[];
+  agentName: string;
+  parallelSessionIndex?: number;
   className?: string;
   onEditImage?: (preview: ComposerUploadPreview) => void;
+  onUseMathInCompute?: AssistantMathUseHandler;
 }) {
   const storageKey = useMemo(() => pinsStorageKey(activeSessionId), [activeSessionId]);
   const [pins, setPins] = useState<PinnedChapter[]>(() => loadPins(storageKey));
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
-  const assistantAnimationRef = useRef<{ sessionId: string; known: Set<string>; active: Set<string>; hadPending: boolean } | null>(null);
+  const assistantAnimationRef = useRef<{ sessionId: string; known: Set<string>; active: Set<string>; queue: string[]; hadPending: boolean } | null>(null);
+  const [, setAssistantAnimationQueueVersion] = useState(0);
   const latestMessage = messages.at(-1);
   const messageIds = useMemo(() => new Set(messages.map((message) => message.id)), [messages]);
   const assistantMessageIds = useMemo(
@@ -1570,29 +2824,50 @@ function TranscriptCanvas({
   const latestAssistantMessageId = assistantMessageIds.at(-1) ?? "";
   const hasPendingAssistant = messages.some((message) => message.role === "assistant" && message.id.startsWith("assistant-pending-"));
   const visiblePins = useMemo(() => pins.filter((pin) => messageIds.has(pin.id)), [messageIds, pins]);
+  let hadPendingBeforeRender = assistantAnimationRef.current?.hadPending ?? false;
 
   if (assistantAnimationRef.current === null) {
     assistantAnimationRef.current = {
       sessionId: activeSessionId,
       known: new Set(assistantMessageIds),
       active: new Set(),
+      queue: [],
       hadPending: hasPendingAssistant
     };
+    hadPendingBeforeRender = false;
   } else if (assistantAnimationRef.current.sessionId !== activeSessionId) {
     const previous = assistantAnimationRef.current;
     const keepDraftResponseLive = previous.sessionId === "" && previous.hadPending;
+    hadPendingBeforeRender = keepDraftResponseLive ? previous.hadPending : false;
     assistantAnimationRef.current = {
       sessionId: activeSessionId,
       known: keepDraftResponseLive ? previous.known : new Set(assistantMessageIds),
       active: keepDraftResponseLive ? previous.active : new Set(),
+      queue: keepDraftResponseLive ? previous.queue.filter((id) => previous.active.has(id)) : [],
       hadPending: hasPendingAssistant
     };
   } else {
+    hadPendingBeforeRender = assistantAnimationRef.current.hadPending;
     assistantAnimationRef.current.hadPending = hasPendingAssistant;
   }
+  if (assistantAnimationRef.current) {
+    assistantAnimationRef.current.queue = assistantAnimationRef.current.queue.filter((id) => messageIds.has(id));
+    for (const id of [...assistantAnimationRef.current.active]) {
+      if (!messageIds.has(id)) {
+        assistantAnimationRef.current.active.delete(id);
+      }
+    }
+  }
+  const pendingResolvedThisRender = hadPendingBeforeRender && !hasPendingAssistant;
 
   const completeAssistantAnimation = useCallback((messageId: string) => {
-    assistantAnimationRef.current?.active.delete(messageId);
+    const animationState = assistantAnimationRef.current;
+    if (!animationState) {
+      return;
+    }
+    animationState.active.delete(messageId);
+    animationState.queue = animationState.queue.filter((id) => id !== messageId);
+    setAssistantAnimationQueueVersion((version) => version + 1);
   }, []);
 
   useEffect(() => {
@@ -1603,7 +2878,7 @@ function TranscriptCanvas({
     savePins(storageKey, visiblePins);
   }, [storageKey, visiblePins]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     followTranscriptLatest(messagesRef.current, "smooth");
   }, [latestMessage?.id, latestMessage?.text]);
 
@@ -1618,9 +2893,31 @@ function TranscriptCanvas({
   };
 
   const copyMessage = (message: TranscriptMessage) => {
-    void globalThis.navigator?.clipboard?.writeText(message.text);
-    setCopiedId(message.id);
-    globalThis.setTimeout(() => setCopiedId((id) => (id === message.id ? null : id)), 1200);
+    void copyTextToClipboard(message.text).then((copied) => {
+      if (!copied) {
+        return;
+      }
+      setCopiedId(message.id);
+      globalThis.setTimeout(() => setCopiedId((id) => (id === message.id ? null : id)), 1200);
+    });
+  };
+
+  const requestDifferentAnswer = (message: TranscriptMessage, messageIndex: number) => {
+    const previousUserMessage = messages
+      .slice(0, messageIndex)
+      .reverse()
+      .find((candidate) => candidate.role === "user" && candidate.text.trim().length > 0);
+    const regeneratePrompt = "Generate a different answer to the previous user request.";
+    if (!previousUserMessage) {
+      return;
+    }
+    void panelsChatBottomStore.dispatch({
+      kind: "send_chat",
+      value: regeneratePrompt,
+      internalPrompt: true,
+      replaceAssistantMessageId: message.id,
+      parallelSessionIndex
+    });
   };
 
   const jumpToChapter = (id: string) => {
@@ -1654,7 +2951,9 @@ function TranscriptCanvas({
         {messages.map((message, index) => {
           const attachments = message.attachments ?? [];
           const visualAttachments = attachments.filter(isTranscriptVisualAttachment);
-          if (!message.text.trim() && attachments.length === 0) {
+          const role = message.role === "user" ? "user" : "assistant";
+          const assistantPending = role === "assistant" && message.id.startsWith("assistant-pending-");
+          if (!assistantPending && !message.text.trim() && attachments.length === 0) {
             return null;
           }
           const previousMessage = messages[index - 1];
@@ -1662,24 +2961,30 @@ function TranscriptCanvas({
             message.role !== "user" &&
             previousMessage?.role === "user" &&
             (previousMessage.attachments ?? []).some(isTranscriptVisualAttachment);
-          const role = message.role === "user" ? "user" : "assistant";
+          const followsAssistantMessage = message.role !== "user" && previousMessage?.role === "assistant";
           const pinned = pinnedIds.has(message.id);
-          const assistantPending = role === "assistant" && message.id.startsWith("assistant-pending-");
           const assistantError = role === "assistant" && message.id.startsWith("assistant-error-");
           const assistantCanAnimate = role === "assistant" && !assistantPending && !assistantError;
           let assistantShouldAnimate = false;
+          let assistantQueued = false;
           if (assistantCanAnimate && assistantAnimationRef.current) {
             const animationState = assistantAnimationRef.current;
             if (animationState.active.has(message.id)) {
-              assistantShouldAnimate = true;
-            } else if (!animationState.known.has(message.id) && message.id === latestAssistantMessageId) {
+              assistantShouldAnimate = animationState.queue[0] === message.id;
+              assistantQueued = !assistantShouldAnimate;
+            } else if (!animationState.known.has(message.id) && (message.id === latestAssistantMessageId || pendingResolvedThisRender)) {
               animationState.known.add(message.id);
               animationState.active.add(message.id);
-              assistantShouldAnimate = true;
+              if (!animationState.queue.includes(message.id)) {
+                animationState.queue.push(message.id);
+              }
+              assistantShouldAnimate = animationState.queue[0] === message.id;
+              assistantQueued = !assistantShouldAnimate;
             } else {
               animationState.known.add(message.id);
             }
           }
+          const assistantAwaitingAnimation = assistantPending || assistantQueued;
           const renderedMessage = message;
           const actions = (
             <div className="transcriptActions">
@@ -1702,11 +3007,22 @@ function TranscriptCanvas({
               >
                 <PinGlyph filled={pinned} />
               </button>
+              {role === "assistant" && !assistantPending && !assistantError ? (
+                <button
+                  type="button"
+                  className="transcriptActionBtn"
+                  aria-label="Generate a different answer"
+                  title="Different answer"
+                  onClick={() => requestDifferentAnswer(message, index)}
+                >
+                  <RefreshCw aria-hidden="true" size={13} strokeWidth={1.8} />
+                </button>
+              ) : null}
             </div>
           );
           const item = (
             <div
-              className={`transcriptItem transcriptItem--${role}${followsVisualUserMessage ? " transcriptItem--afterVisualMedia" : ""}`}
+              className={`transcriptItem transcriptItem--${role}${followsVisualUserMessage ? " transcriptItem--afterVisualMedia" : ""}${followsAssistantMessage ? " transcriptItem--assistantLoop" : ""}`}
               data-msg-id={message.id}
               key={message.id}
             >
@@ -1716,20 +3032,24 @@ function TranscriptCanvas({
                     className={
                       assistantPending
                         ? "transcriptPill transcriptPill--assistant transcriptPill--assistantPending"
-                        : assistantError
+                        : assistantQueued
+                          ? "transcriptPill transcriptPill--assistant transcriptPill--assistantPending"
+                          : assistantError
                           ? "transcriptPill transcriptPill--assistant transcriptPill--assistantError"
                           : "transcriptPill transcriptPill--assistant"
                     }
                   >
-                    {assistantPending ? (
-                      <PendingAssistantText />
+                    {assistantAwaitingAnimation ? (
+                      <PendingAssistantText agentName={agentName} />
+                    ) : assistantError ? (
+                      <AssistantErrorText message={renderedMessage} />
                     ) : assistantShouldAnimate ? (
-                      <AnimatedAssistantText message={renderedMessage} onAnimationComplete={completeAssistantAnimation} />
+                      <AnimatedAssistantText message={renderedMessage} onAnimationComplete={completeAssistantAnimation} onUseMathInCompute={onUseMathInCompute} />
                     ) : (
-                      <StaticAssistantText message={renderedMessage} />
+                      <StaticAssistantText message={renderedMessage} onUseMathInCompute={onUseMathInCompute} />
                     )}
                   </div>
-                  {assistantPending ? null : actions}
+                  {assistantAwaitingAnimation ? null : actions}
                 </div>
               ) : (
                 <>
@@ -1765,23 +3085,217 @@ interface PanelsChatBottomSliceProps {
   onParallelPromptChange?: (index: number, value: string) => void;
   webExplorerOpen?: boolean;
   composerModule?: SidebarModuleId | null;
+  onComposerModuleChange?: (id: SidebarModuleId | null) => void;
+}
+
+type PermissionMode = PanelsChatBottomSnapshot["composer"]["permissionMode"];
+
+const PERMISSION_MODE_CHOICES: Array<{
+  value: PermissionMode;
+  label: string;
+  detail: string;
+  shortLabel: string;
+}> = [
+  {
+    value: "ask-permissions",
+    label: "Ask Permission",
+    detail: "Approval required before tools run.",
+    shortLabel: "Ask"
+  },
+  {
+    value: "auto-accept-edits",
+    label: "Auto Edit",
+    detail: "Can edit files; asks for risky actions.",
+    shortLabel: "Edit"
+  },
+  {
+    value: "full-autonomy",
+    label: "Autonomous",
+    detail: "Can browse web and read local files.",
+    shortLabel: "Auto"
+  },
+  {
+    value: "self-directed",
+    label: "Self-Directed",
+    detail: "Creates its own goals and tasks.",
+    shortLabel: "Self"
+  }
+];
+
+const SELF_DIRECTED_LOOP_SAFETY_FUSE = 24;
+const SELF_DIRECTED_DRAFT_STEP_MS = 14;
+const SELF_DIRECTED_DRAFT_SEND_DELAY_MS = 460;
+
+interface SelfDirectedRunState {
+  active: boolean;
+  goal: string;
+  cycles: number;
+  seenAssistantIds: Set<string>;
+  typingTimer: number | null;
+  sendTimer: number | null;
+}
+
+function compactSelfDirectedText(value: string, maxLength = 460): string {
+  const compacted = value.replace(/\s+/g, " ").trim();
+  if (compacted.length <= maxLength) {
+    return compacted;
+  }
+  return `${compacted.slice(0, maxLength - 1).trim()}...`;
+}
+
+function selfDirectedContinuationPrompt({
+  cycle,
+  goal,
+  previousAssistantText,
+  goalReached = false
+}: {
+  cycle: number;
+  goal: string;
+  previousAssistantText: string;
+  goalReached?: boolean;
+}): string {
+  if (goalReached) {
+    return [
+      "SELF_DIRECTED_PROJECT_EXPANSION v1",
+      `cycle=${cycle}`,
+      `prior_goal="${compactSelfDirectedText(goal).replace(/"/g, "'")}"`,
+      `completion_evidence="${compactSelfDirectedText(previousAssistantText, 360).replace(/"/g, "'")}"`,
+      "role=agent_authored_prompt_visible_in_composer",
+      "instruction=Invent the next stronger project direction yourself. Extend the result, raise quality, add missing professional depth, and start a new loop stream. If the new direction is ambiguous, open /questionnaire_; otherwise begin with the next concrete action and CodeAct event."
+    ].join("\n");
+  }
+  return [
+    "SELF_DIRECTED_CONTINUATION v1",
+    `cycle=${cycle}`,
+    `goal="${compactSelfDirectedText(goal).replace(/"/g, "'")}"`,
+    `previous_assistant_summary="${compactSelfDirectedText(previousAssistantText, 360).replace(/"/g, "'")}"`,
+    "role=agent_authored_prompt_visible_in_composer",
+    "policy=work autonomously inside InGen; research the web when current knowledge may be stale; choose or switch Brain when useful; emit CodeAct commands instead of prose when an action is needed.",
+    `brain_switches=${BRAIN_CODING_COMMAND} ${BRAIN_SCIENCE_COMMAND}`,
+    `codeact_floor=${BRAIN_GOOGLEWEB_COMMAND} ${BRAIN_NEWCOMPUTE_COMMAND} ${BRAIN_SELECTCOMPUTE_COMMAND} ${BRAIN_NEWMODULE_COMMAND} ${BRAIN_NEWOBJECT_COMMAND} ${BRAIN_FRONTDESIGN_COMMAND}`,
+    "guardrails=no payment, no destructive delete, no credential action and no irreversible external submit without explicit human confirmation.",
+    "loop_stream=Write one short paragraph that states the next action and tool, then emit the CodeAct/event below it.",
+    "stop_condition=Use the final questionnaire answer as the definition of done. When satisfied, include SELF_DIRECTED_GOAL_REACHED reason=\"...\" next_prompt=\"...\" so the UI can inject a stronger next prompt.",
+    "instruction=Continue the project from the user's direction. Pick the next concrete goal yourself, do the useful research or CodeAct, then either produce the next artifact or prepare the next autonomous prompt."
+  ].join("\n");
+}
+
+function selfDirectedQuestionnaireAnswersPrompt(value: string): string {
+  return [
+    "SELF_DIRECTED_QUESTIONNAIRE_ANSWERS v1",
+    "role=user_clarified_goal",
+    "instruction=The questionnaire is complete. Start autonomous loop stream work now. Use paragraph -> CodeAct event rhythm. Use the final answer as the stop condition.",
+    "",
+    value
+  ].join("\n");
+}
+
+function selfDirectedAssistantReachedGoal(text: string): boolean {
+  return /\bSELF_DIRECTED_GOAL_REACHED\b/.test(text);
+}
+
+function PermissionModeIcon({ mode }: { mode: PermissionMode }) {
+  if (mode === "self-directed") {
+    return <Sparkles aria-hidden="true" size={16} strokeWidth={1.8} />;
+  }
+  if (mode === "full-autonomy") {
+    return <ShieldAlert aria-hidden="true" size={16} strokeWidth={1.8} />;
+  }
+  if (mode === "auto-accept-edits") {
+    return <Pencil aria-hidden="true" size={16} strokeWidth={1.8} />;
+  }
+  return <ShieldCheck aria-hidden="true" size={16} strokeWidth={1.8} />;
+}
+
+function permissionModeShortLabel(mode: PermissionMode): string {
+  if (mode === "self-directed") {
+    return "Self";
+  }
+  if (mode === "full-autonomy") {
+    return "Auto";
+  }
+  if (mode === "auto-accept-edits") {
+    return "Edit";
+  }
+  return "Ask";
+}
+
+function BottomControlsFlipText({ value }: { value: string }) {
+  const [flip, setFlip] = useState({ current: value, previous: "", serial: 0 });
+
+  useEffect(() => {
+    setFlip((currentFlip) => {
+      if (currentFlip.current === value) {
+        return currentFlip;
+      }
+      return {
+        current: value,
+        previous: currentFlip.current,
+        serial: currentFlip.serial + 1
+      };
+    });
+  }, [value]);
+
+  useEffect(() => {
+    if (!flip.previous) {
+      return undefined;
+    }
+    const timeout = window.setTimeout(() => {
+      setFlip((currentFlip) => currentFlip.serial === flip.serial ? { ...currentFlip, previous: "" } : currentFlip);
+    }, 260);
+    return () => window.clearTimeout(timeout);
+  }, [flip.previous, flip.serial]);
+
+  return (
+    <span className="bottomControls__flipTextViewport" aria-hidden="true">
+      {flip.previous ? (
+        <span className="bottomControls__flipText bottomControls__flipText--leaving" key={`previous-${flip.serial}`}>
+          {flip.previous}
+        </span>
+      ) : null}
+      <span
+        className={[
+          "bottomControls__flipText",
+          flip.previous ? "bottomControls__flipText--entering" : ""
+        ].filter(Boolean).join(" ")}
+        key={`current-${flip.serial}`}
+      >
+        {flip.current}
+      </span>
+    </span>
+  );
 }
 
 export function PanelsChatBottomSlice({
   parallelPrompts,
   onParallelPromptChange,
   webExplorerOpen = false,
-  composerModule = null
+  composerModule = null,
+  onComposerModuleChange
 }: PanelsChatBottomSliceProps = {}) {
   const { snapshot } = usePanelsChatBottomStore();
+  const permissionMenuId = useId();
   const [draft, setDraft] = useState(snapshot.composer.chatText);
   const [focusedParallelIndex, setFocusedParallelIndex] = useState(0);
+  const [permissionMenuOpen, setPermissionMenuOpen] = useState(false);
+  const [selfDirectedMenuStage, setSelfDirectedMenuStage] = useState<"idle" | "console">("idle");
   const [moduleDropPhase, setModuleDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const [fileDropPhase, setFileDropPhase] = useState<"idle" | "armed" | "over">("idle");
   const fileDragDepthRef = useRef(0);
+  const panelsRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
+  const permissionControlRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const burstRef = useRef<ComposerSendBurstHandle>(null);
+  const [selfDirectedDrafting, setSelfDirectedDrafting] = useState(false);
+  const selfDirectedRunRef = useRef<SelfDirectedRunState>({
+    active: false,
+    goal: "",
+    cycles: 0,
+    seenAssistantIds: new Set(),
+    typingTimer: null,
+    sendTimer: null
+  });
 
   useEffect(() => {
     void panelsChatBottomStore.refresh();
@@ -1803,8 +3317,35 @@ export function PanelsChatBottomSlice({
   }, []);
 
   useEffect(() => {
-    setDraft(snapshot.composer.chatText);
-  }, [snapshot.composer.chatText]);
+    if (!selfDirectedDrafting) {
+      setDraft(snapshot.composer.chatText);
+    }
+  }, [selfDirectedDrafting, snapshot.composer.chatText]);
+
+  useEffect(() => {
+    if (!permissionMenuOpen) {
+      setSelfDirectedMenuStage("idle");
+      return;
+    }
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && permissionControlRef.current?.contains(target)) {
+        return;
+      }
+      setPermissionMenuOpen(false);
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPermissionMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", closeOnOutsidePointer);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutsidePointer);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [permissionMenuOpen]);
 
   useEffect(() => {
     const focusComposer = () => inputRef.current?.focus();
@@ -1841,10 +3382,30 @@ export function PanelsChatBottomSlice({
     composerRef.current?.style.setProperty("--composer-input-height", `${inputHeight}px`);
   }, [draft]);
 
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    const panels = panelsRef.current;
+    if (!composer || !panels) {
+      return;
+    }
+    const syncComposerHeight = () => {
+      panels.style.setProperty("--composer-live-height", `${composer.offsetHeight}px`);
+    };
+    syncComposerHeight();
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver(syncComposerHeight);
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, []);
+
   const dispatch = panelsChatBottomStore.dispatch;
   const providers = snapshot.composer.providers;
   const uploadPreviews = snapshot.composer.uploadPreviews;
+  const permissionMode = snapshot.composer.permissionMode;
   const canvasMessages = snapshot.transcript.filter((message) => message.role !== "system");
+  const activeQuestionnaire = useMemo(() => latestQuestionnaireFromMessages(canvasMessages), [canvasMessages]);
   const activeDropPhase = fileDropPhase !== "idle" ? fileDropPhase : moduleDropPhase;
   const attachFiles = () => void dispatch({ kind: "attach_files" });
   const attachDroppedFiles = (filePaths: string[]) => {
@@ -1859,8 +3420,122 @@ export function PanelsChatBottomSlice({
       inputRef.current?.focus();
     });
   }, [dispatch]);
+  const clearSelfDirectedTimers = useCallback(() => {
+    const run = selfDirectedRunRef.current;
+    if (run.typingTimer !== null) {
+      window.clearTimeout(run.typingTimer);
+      run.typingTimer = null;
+    }
+    if (run.sendTimer !== null) {
+      window.clearTimeout(run.sendTimer);
+      run.sendTimer = null;
+    }
+  }, []);
+  const cancelSelfDirectedDraft = useCallback(() => {
+    clearSelfDirectedTimers();
+    selfDirectedRunRef.current.active = false;
+    setSelfDirectedDrafting(false);
+  }, [clearSelfDirectedTimers]);
+  const startSelfDirectedRun = useCallback((goal: string) => {
+    clearSelfDirectedTimers();
+    selfDirectedRunRef.current = {
+      active: true,
+      goal: goal.trim() || "Continue le projet en autonomie.",
+      cycles: 0,
+      seenAssistantIds: new Set(),
+      typingTimer: null,
+      sendTimer: null
+    };
+  }, [clearSelfDirectedTimers]);
+  const typeSelfDirectedDraft = useCallback((value: string) => {
+    const run = selfDirectedRunRef.current;
+    clearSelfDirectedTimers();
+    setSelfDirectedDrafting(true);
+    setDraft("");
+    inputRef.current?.focus();
+
+    const commit = () => {
+      run.sendTimer = window.setTimeout(() => {
+        run.sendTimer = null;
+        setSelfDirectedDrafting(false);
+        setDraft("");
+        void dispatch({
+          kind: "send_chat",
+          value,
+          moduleId: composerModule ?? undefined
+        });
+      }, prefersReducedMotion() ? 80 : SELF_DIRECTED_DRAFT_SEND_DELAY_MS);
+    };
+
+    if (prefersReducedMotion()) {
+      setDraft(value);
+      commit();
+      return;
+    }
+
+    let cursor = 0;
+    const tick = () => {
+      cursor = Math.min(value.length, cursor + Math.max(1, Math.ceil(value.length / 180)));
+      setDraft(value.slice(0, cursor));
+      if (cursor >= value.length) {
+        run.typingTimer = null;
+        commit();
+        return;
+      }
+      run.typingTimer = window.setTimeout(tick, SELF_DIRECTED_DRAFT_STEP_MS);
+    };
+    tick();
+  }, [clearSelfDirectedTimers, composerModule, dispatch]);
+  const commitQuestionnaireAnswers = useCallback((value: string, parallelSessionIndex = 0) => {
+    const nextValue =
+      permissionMode === "self-directed" && parallelSessionIndex === 0
+        ? selfDirectedQuestionnaireAnswersPrompt(value)
+        : value;
+    if (permissionMode === "self-directed" && parallelSessionIndex === 0) {
+      startSelfDirectedRun(nextValue);
+    }
+    setDraft("");
+    void dispatch({
+      kind: "send_chat",
+      value: nextValue,
+      moduleId: composerModule ?? undefined,
+      parallelSessionIndex: parallelSessionIndex > 0 ? parallelSessionIndex : undefined
+    });
+    inputRef.current?.focus();
+  }, [composerModule, dispatch, permissionMode, startSelfDirectedRun]);
   const parallelMode = Boolean(parallelPrompts && parallelPrompts.length > 1 && onParallelPromptChange);
   const focusedParallelPrompt = parallelMode && parallelPrompts ? parallelPrompts[focusedParallelIndex]?.trim() ?? "" : "";
+  const focusedParallelQuestionnaire = useMemo(() => {
+    if (!parallelMode || focusedParallelIndex <= 0) {
+      return null;
+    }
+    const lane = snapshot.parallelLanes.find((candidate) => candidate.index === focusedParallelIndex);
+    const laneMessages = lane?.transcript.filter((message) => message.role !== "system") ?? [];
+    return latestQuestionnaireFromMessages(laneMessages);
+  }, [focusedParallelIndex, parallelMode, snapshot.parallelLanes]);
+  const composerQuestionnaire = focusedParallelQuestionnaire
+    ? { questionnaire: focusedParallelQuestionnaire, parallelSessionIndex: focusedParallelIndex }
+    : activeQuestionnaire
+      ? { questionnaire: activeQuestionnaire, parallelSessionIndex: 0 }
+      : null;
+  const useMathInCompute = useCallback((formula: string) => {
+    const math = formula.trim();
+    if (!math || parallelMode) {
+      return;
+    }
+    if (selfDirectedDrafting) {
+      cancelSelfDirectedDraft();
+    }
+    onComposerModuleChange?.("compute");
+    setDraft((current) => {
+      const nextDraft = current.trim()
+        ? `${current.trimEnd()}\n${math}`
+        : math;
+      void dispatch({ kind: "chat_text_edited", value: nextDraft });
+      return nextDraft;
+    });
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [cancelSelfDirectedDraft, dispatch, onComposerModuleChange, parallelMode, selfDirectedDrafting]);
   const firstFilledParallelIndex = parallelMode && parallelPrompts ? parallelPrompts.findIndex((prompt) => prompt.trim().length > 0) : -1;
   const filledParallelPrompts = parallelMode && parallelPrompts
     ? parallelPrompts
@@ -1871,6 +3546,63 @@ export function PanelsChatBottomSlice({
     ? filledParallelPrompts.map((prompt) => prompt.value).join("\n")
     : draft;
   const canSend = Boolean(submitText.trim() || uploadPreviews.length > 0);
+  const openSelfDirectedDetails = () => {
+    setSelfDirectedMenuStage("console");
+  };
+  const selectPermissionMode = (mode: PermissionMode) => {
+    if (mode === "self-directed" && selfDirectedMenuStage === "idle") {
+      openSelfDirectedDetails();
+      return;
+    }
+    setPermissionMenuOpen(false);
+    if (mode !== permissionMode) {
+      void dispatch({ kind: "permission_mode_selected", value: mode });
+    }
+  };
+  useEffect(() => {
+    if (permissionMode !== "self-directed") {
+      cancelSelfDirectedDraft();
+    }
+  }, [cancelSelfDirectedDraft, permissionMode]);
+  useEffect(() => () => clearSelfDirectedTimers(), [clearSelfDirectedTimers]);
+  useEffect(() => {
+    if (
+      permissionMode !== "self-directed" ||
+      parallelMode ||
+      composerQuestionnaire ||
+      selfDirectedDrafting ||
+      draft.trim() ||
+      uploadPreviews.length > 0
+    ) {
+      return;
+    }
+    const run = selfDirectedRunRef.current;
+    if (!run.active || run.cycles >= SELF_DIRECTED_LOOP_SAFETY_FUSE) {
+      return;
+    }
+    const lastAssistant = [...snapshot.transcript].reverse().find((message) => message.role === "assistant" && message.text.trim().length > 0);
+    if (!lastAssistant || run.seenAssistantIds.has(lastAssistant.id)) {
+      return;
+    }
+    run.seenAssistantIds.add(lastAssistant.id);
+    run.cycles += 1;
+    const lastUserGoal = [...snapshot.transcript].reverse().find((message) => message.role === "user" && message.text.trim().length > 0)?.text;
+    typeSelfDirectedDraft(selfDirectedContinuationPrompt({
+      cycle: run.cycles,
+      goal: run.goal || lastUserGoal || "Continue le projet en autonomie.",
+      previousAssistantText: lastAssistant.text,
+      goalReached: selfDirectedAssistantReachedGoal(lastAssistant.text)
+    }));
+  }, [
+    composerQuestionnaire,
+    draft,
+    parallelMode,
+    permissionMode,
+    selfDirectedDrafting,
+    snapshot.transcript,
+    typeSelfDirectedDraft,
+    uploadPreviews.length
+  ]);
   const commitParallelPrompt = (targetParallelIndex: number, value: string) => {
     if (parallelMode && onParallelPromptChange) {
       onParallelPromptChange(targetParallelIndex, "");
@@ -1885,7 +3617,6 @@ export function PanelsChatBottomSlice({
   const sendComposer = (parallelIndex?: number) => {
     if (parallelMode && parallelPrompts && parallelIndex === undefined && filledParallelPrompts.length > 0) {
       const sessionIsNew = !snapshot.transcript.some((message) => message.role === "user" || message.role === "assistant");
-      const burst = burstRef.current;
       const commit = () => {
         for (const prompt of filledParallelPrompts) {
           onParallelPromptChange?.(prompt.index, "");
@@ -1899,6 +3630,7 @@ export function PanelsChatBottomSlice({
           moduleId: composerModule ?? undefined
         });
       };
+      const burst = burstRef.current;
       if (sessionIsNew && burst) {
         burst.fire(composerRef.current, commit);
       } else {
@@ -1916,6 +3648,9 @@ export function PanelsChatBottomSlice({
     const commit = () => {
       if (parallelMode && parallelPrompts && onParallelPromptChange) {
         onParallelPromptChange(targetParallelIndex, "");
+      }
+      if (permissionMode === "self-directed" && targetParallelIndex === 0) {
+        startSelfDirectedRun(value);
       }
       void dispatch({
         kind: "send_chat",
@@ -1938,7 +3673,12 @@ export function PanelsChatBottomSlice({
 
   return (
     <section
-      className="panelsChatBottom"
+      ref={panelsRef}
+      className={[
+        "panelsChatBottom",
+        composerQuestionnaire ? "panelsChatBottom--questionnaireOpen" : "",
+        permissionMode === "self-directed" ? "panelsChatBottom--selfDirected" : ""
+      ].filter(Boolean).join(" ")}
       aria-label="Panels chat composer and bottom controls"
       onDragEnter={(event) => {
         if (!hasDraggedFiles(event.dataTransfer)) {
@@ -1986,9 +3726,12 @@ export function PanelsChatBottomSlice({
               <TranscriptCanvas
                 activeSessionId={index === 0 ? snapshot.activeSessionId : lane?.sessionId ?? `parallel-${index}`}
                 messages={laneMessages}
+                agentName={snapshot.composer.modelLabel}
+                parallelSessionIndex={index}
                 className="chatCanvas chatCanvas--parallelPane"
                 key={`parallel-transcript-${index}`}
                 onEditImage={stageImageForEdit}
+                onUseMathInCompute={useMathInCompute}
               />
             );
           })}
@@ -1998,20 +3741,33 @@ export function PanelsChatBottomSlice({
           key={snapshot.activeSessionId || "draft-session"}
           activeSessionId={snapshot.activeSessionId}
           messages={canvasMessages}
+          agentName={snapshot.composer.modelLabel}
+          parallelSessionIndex={0}
           onEditImage={stageImageForEdit}
+          onUseMathInCompute={useMathInCompute}
         />
       )}
       <div
         className={activeDropPhase !== "idle" ? "composerDropScrim composerDropScrim--active" : "composerDropScrim"}
         aria-hidden="true"
       />
+      {composerQuestionnaire ? (
+        <div className="questionnaireFocusScrim" aria-hidden="true" />
+      ) : null}
+      {composerQuestionnaire ? (
+        <ComposerQuestionnaire
+          questionnaire={composerQuestionnaire.questionnaire}
+          onCommitAnswers={(value) => commitQuestionnaireAnswers(value, composerQuestionnaire.parallelSessionIndex)}
+        />
+      ) : null}
       <form
         ref={composerRef}
         className={[
           "composer",
           activeDropPhase !== "idle" ? "composer--moduleDropArmed" : "",
           activeDropPhase === "over" ? "composer--moduleDropOver" : "",
-          fileDropPhase !== "idle" ? "composer--fileDropArmed" : ""
+          fileDropPhase !== "idle" ? "composer--fileDropArmed" : "",
+          selfDirectedDrafting ? "composer--selfDirectedDrafting" : ""
         ].filter(Boolean).join(" ")}
         aria-label="Chat composer"
         onSubmit={(event) => {
@@ -2090,6 +3846,9 @@ export function PanelsChatBottomSlice({
             rows={1}
             spellCheck={false}
             onChange={(event) => {
+              if (selfDirectedDrafting) {
+                cancelSelfDirectedDraft();
+              }
               setDraft(event.currentTarget.value);
               void dispatch({ kind: "chat_text_edited", value: event.currentTarget.value });
             }}
@@ -2135,38 +3894,151 @@ export function PanelsChatBottomSlice({
       </form>
 
       <nav className="bottomControls" aria-label="Bottom controls">
-        <button
-          type="button"
-          onClick={() =>
-            void dispatch({
-              kind: "permission_mode_selected",
-              value:
-                snapshot.composer.permissionMode === "ask-permissions"
-                  ? "auto-accept-edits"
-                  : snapshot.composer.permissionMode === "auto-accept-edits"
-                    ? "full-autonomy"
-                    : "ask-permissions"
-            })
-          }
-        >
-          {snapshot.composer.permissionMode}
-        </button>
+        <div className="permissionModeControl" ref={permissionControlRef}>
+          <button
+            type="button"
+            className={[
+              "permissionModeTrigger",
+              permissionMode === "self-directed" ? "permissionModeTrigger--selfDirected" : ""
+            ].filter(Boolean).join(" ")}
+            aria-haspopup="menu"
+            aria-expanded={permissionMenuOpen}
+            aria-controls={permissionMenuOpen ? permissionMenuId : undefined}
+            title="Permission mode"
+            onClick={() => setPermissionMenuOpen((open) => !open)}
+          >
+            <PermissionModeIcon mode={permissionMode} />
+            <span>{permissionModeShortLabel(permissionMode)}</span>
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+              <path d="M2.2 3.6 5 6.4l2.8-2.8" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          {permissionMenuOpen ? (
+            <div
+              className={[
+                "permissionModeMenu",
+                selfDirectedMenuStage !== "idle" ? "permissionModeMenu--selfDirectedFlow" : "",
+                selfDirectedMenuStage === "console" ? "permissionModeMenu--selfDirectedConsole" : ""
+              ].filter(Boolean).join(" ")}
+              id={permissionMenuId}
+              role="menu"
+              aria-label="Permission mode"
+            >
+              <p className="permissionModeMenu__eyebrow">Mode</p>
+              {(selfDirectedMenuStage === "idle"
+                ? PERMISSION_MODE_CHOICES
+                : [
+                  PERMISSION_MODE_CHOICES.find((option) => option.value === "self-directed"),
+                  ...PERMISSION_MODE_CHOICES.filter((option) => option.value !== "self-directed")
+                ].filter((option): option is typeof PERMISSION_MODE_CHOICES[number] => Boolean(option))
+              ).map((option) => {
+                const selected = permissionMode === option.value;
+                const special = option.value === "self-directed";
+                const hiddenBySelfDirectedFlow = selfDirectedMenuStage !== "idle" && !special;
+                return (
+                  <button
+                    type="button"
+                    className={[
+                      "permissionModeOption",
+                      selected ? "permissionModeOption--selected" : "",
+                      special ? "permissionModeOption--selfDirected" : "",
+                      special && selfDirectedMenuStage === "console" ? "permissionModeOption--selfDirectedExpanded" : "",
+                      hiddenBySelfDirectedFlow ? "permissionModeOption--selfDirectedExit" : ""
+                    ].filter(Boolean).join(" ")}
+                    key={option.value}
+                    role="menuitemradio"
+                    aria-checked={selected}
+                    aria-hidden={hiddenBySelfDirectedFlow ? true : undefined}
+                    tabIndex={hiddenBySelfDirectedFlow ? -1 : undefined}
+                    onClick={() => selectPermissionMode(option.value)}
+                  >
+                    <span className="permissionModeOption__icon" aria-hidden="true">
+                      <PermissionModeIcon mode={option.value} />
+                    </span>
+                    <span className="permissionModeOption__copy">
+                      <span className="permissionModeOption__label">{option.label}</span>
+                      <span className="permissionModeOption__detail">{option.detail}</span>
+                      {special && selfDirectedMenuStage === "console" ? (
+                        <span className="permissionModeOption__autonomy" aria-label="Self-Directed autonomy behavior">
+                          <span className="permissionModeOption__autonomyItems">
+                            <span className="permissionModeOption__autonomyItem">
+                              <ListChecks aria-hidden="true" size={14} strokeWidth={1.8} />
+                              <span>
+                                <strong>Plans</strong>
+                                <small>Chooses useful next goals.</small>
+                              </span>
+                            </span>
+                            <span className="permissionModeOption__autonomyItem">
+                              <Sparkles aria-hidden="true" size={14} strokeWidth={1.8} />
+                              <span>
+                                <strong>Prompts</strong>
+                                <small>Writes its own prompts.</small>
+                              </span>
+                            </span>
+                            <span className="permissionModeOption__autonomyItem">
+                              <RefreshCw aria-hidden="true" size={14} strokeWidth={1.8} />
+                              <span>
+                                <strong>Continues</strong>
+                                <small>Creates follow-up tasks.</small>
+                              </span>
+                            </span>
+                          </span>
+                          <span className="permissionModeOption__autonomyGuardrail">
+                            <Ban aria-hidden="true" size={13} strokeWidth={1.9} />
+                            <span>No payments. No destructive deletes.</span>
+                          </span>
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="permissionModeOption__check" aria-hidden="true">
+                      {selected ? (
+                        <svg width="12" height="12" viewBox="0 0 12 12">
+                          <path d="m2.4 6.2 2.2 2.2 5-5.2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
         <div className="bottomControls__models">
+          <button
+            type="button"
+            className="bottomControls__flipButton bottomControls__flipButton--model"
+            title={`flip model ${snapshot.composer.modelLabel}`}
+            aria-label={`Flip model from ${snapshot.composer.modelLabel}`}
+            onClick={() => void dispatch({ kind: "cycle_llm_model", provider: snapshot.composer.selectedProvider, direction: 1 })}
+          >
+            <ChevronsUpDown aria-hidden="true" size={9} strokeWidth={2.1} />
+          </button>
           <button
             type="button"
             className="bottomControls__modelButton"
             title={snapshot.composer.modelLabel}
+            aria-label={`Current model ${snapshot.composer.modelLabel}. Flip model.`}
             onClick={() => void dispatch({ kind: "cycle_llm_model", provider: snapshot.composer.selectedProvider, direction: 1 })}
           >
-            {snapshot.composer.modelLabel}
+            <BottomControlsFlipText value={snapshot.composer.modelLabel} />
           </button>
           <button
             type="button"
             className="bottomControls__reasoningButton"
             title={`reasoning ${snapshot.composer.reasoningLabel}`}
+            aria-label={`Current reasoning power ${snapshot.composer.reasoningLabel}. Flip reasoning power.`}
             onClick={() => void dispatch({ kind: "cycle_llm_reasoning", direction: 1 })}
           >
-            {snapshot.composer.reasoningLabel}
+            <BottomControlsFlipText value={snapshot.composer.reasoningLabel} />
+          </button>
+          <button
+            type="button"
+            className="bottomControls__flipButton bottomControls__flipButton--reasoning"
+            title={`flip reasoning ${snapshot.composer.reasoningLabel}`}
+            aria-label={`Flip reasoning power from ${snapshot.composer.reasoningLabel}`}
+            onClick={() => void dispatch({ kind: "cycle_llm_reasoning", direction: 1 })}
+          >
+            <ChevronsUpDown aria-hidden="true" size={9} strokeWidth={2.1} />
           </button>
         </div>
       </nav>
