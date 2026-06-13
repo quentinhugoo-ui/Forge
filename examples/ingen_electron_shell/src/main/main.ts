@@ -216,8 +216,9 @@ let nativeMapsTargetUrl = GOOGLE_EARTH_DEFAULT_URL;
 let nativeMapsSessionConfigured = false;
 let nativeMapsBoundsKey = "";
 const NATIVE_MAPS_EARTH_OVERSCAN_PX = {
-  left: 96,
-  bottom: 96
+  minLeft: 420,
+  leftRatio: 0.92,
+  bottom: 180
 };
 let nativeTerminalProcess: ReturnType<typeof spawn> | null = null;
 let nativeTerminalCwd = "";
@@ -7519,7 +7520,11 @@ function normalizeNativeWebExplorerBounds(bounds: NativeWebExplorerBounds): Nati
 
 function expandNativeMapsBoundsForEarth(bounds: NativeWebExplorerBounds, owner: BrowserWindow): NativeWebExplorerBounds {
   const [contentWidth, contentHeight] = owner.getContentSize();
-  const leftOverscan = Math.min(NATIVE_MAPS_EARTH_OVERSCAN_PX.left, Math.max(0, bounds.x));
+  const requestedLeftOverscan = Math.max(
+    NATIVE_MAPS_EARTH_OVERSCAN_PX.minLeft,
+    Math.round(bounds.width * NATIVE_MAPS_EARTH_OVERSCAN_PX.leftRatio)
+  );
+  const leftOverscan = Math.min(requestedLeftOverscan, Math.max(0, bounds.x));
   const x = bounds.x - leftOverscan;
   const width = Math.min(contentWidth - x, bounds.width + leftOverscan);
   const height = Math.min(contentHeight - bounds.y, bounds.height + NATIVE_MAPS_EARTH_OVERSCAN_PX.bottom);

@@ -1,9 +1,6 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
 import {
-  blobBoxForFrame,
-  blobPathForAttachment,
-  dreamBlobBlur,
   EditImageGlyph,
   IMAGE_EDIT_STAGED_EVENT,
   ThreeUploadPreview,
@@ -84,30 +81,6 @@ function GoogleEarthIcon() {
       <path fill="#FBBC04" d="M23.6 7.9c3.1 2.2 5.1 5.8 4.9 9.8c-3-1.6-5.7-2.1-8.1-1.4c-2.1.6-4.1.2-6.2-1.1c2.6-2.2 5.6-4.8 9.4-7.3Z" />
       <path fill="#EA4335" d="M24.7 23.6c-2.1 2.4-5.2 3.9-8.7 3.9c1.3-1.4 2.4-3.1 3.3-5c1.5-3 4.7-3.4 8.1-2.4a11.7 11.7 0 0 1-2.7 3.5Z" />
       <path fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="1.6" d="M4.6 18.4c7.4-2.7 14.9-2 22.8 2.1" />
-    </svg>
-  );
-}
-
-function MapsEarthLeftBlobFade() {
-  const reactId = useId();
-  const blurId = `maps-earth-edge-blur-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  const box = useMemo(() => blobBoxForFrame("landscape"), []);
-  const blobPath = useMemo(() => blobPathForAttachment("google-earth-left-edge", "landscape", box), [box]);
-  const blur = dreamBlobBlur(box);
-
-  return (
-    <svg
-      className="mapsEarthBlobFade"
-      viewBox={`0 0 ${box.width} ${box.height}`}
-      preserveAspectRatio="none"
-      aria-hidden="true"
-    >
-      <defs>
-        <filter id={blurId} x="-35%" y="-35%" width="170%" height="170%" colorInterpolationFilters="sRGB">
-          <feGaussianBlur stdDeviation={blur.toFixed(2)} />
-        </filter>
-      </defs>
-      <path className="transcriptAttachment__dreamAura mapsEarthBlobFade__aura" d={blobPath} filter={`url(#${blurId})`} />
     </svg>
   );
 }
@@ -1224,7 +1197,6 @@ export function CanvasSurfacesSlice({
                               </>
                             )}
                           </div>
-                          <MapsEarthLeftBlobFade />
                         </>
                       ) : (
                         <div
@@ -1258,7 +1230,6 @@ export function CanvasSurfacesSlice({
                           </>
                         )}
                       </div>
-                      <MapsEarthLeftBlobFade />
                     </>
                   ) : null}
                 </section>
@@ -1292,7 +1263,6 @@ export function CanvasSurfacesSlice({
                       </>
                     )}
                   </div>
-                  <MapsEarthLeftBlobFade />
                 </>
               ) : (
                 <div
@@ -1349,7 +1319,6 @@ export function CanvasSurfacesSlice({
                   </>
                 )}
               </div>
-              <MapsEarthLeftBlobFade />
             </section>
           </div>
         ) : null}

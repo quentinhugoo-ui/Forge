@@ -7666,24 +7666,6 @@ ol.assistantText__list li::before {
   inset: 0;
 }
 
-.mapsEarthBlobFade {
-  position: absolute;
-  top: 50%;
-  left: calc(-1 * clamp(112px, 11vw, 178px));
-  z-index: 1;
-  display: block;
-  width: clamp(164px, 15vw, 260px);
-  height: min(116%, 760px);
-  overflow: visible;
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.mapsEarthBlobFade__aura {
-  fill: rgba(0, 0, 0, 0.92);
-  opacity: 0.88;
-}
-
 .webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted,
 .canvasSurfaces--nativePager .webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted {
   background: transparent;
