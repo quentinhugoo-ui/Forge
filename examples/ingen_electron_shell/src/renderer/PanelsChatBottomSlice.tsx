@@ -1088,6 +1088,18 @@ function CopyGlyph() {
   );
 }
 
+function AssistantTaskCheck({ checked }: { checked: boolean }) {
+  return (
+    <span className="assistantText__taskCheck" aria-hidden="true">
+      <input type="checkbox" checked={checked} readOnly tabIndex={-1} />
+      <svg viewBox="0 0 64 64" focusable="false">
+        <rect className="assistantText__taskCheckBox" x="10" y="10" width="44" height="44" rx="8" />
+        <path className="assistantText__taskCheckPath" pathLength={240} d="M18 33.5 28.5 44 47 22" />
+      </svg>
+    </span>
+  );
+}
+
 function copyTextToClipboard(text: string): Promise<boolean> {
   const clipboard = globalThis.navigator?.clipboard;
   if (clipboard?.writeText) {
@@ -2564,7 +2576,7 @@ function AssistantMarkdownText({
             <ul className="assistantText__taskList" key={`${messageId}-task-list-${index}`}>
               {block.items.map((item, itemIndex) => (
                 <li className={item.checked ? "assistantText__taskItem assistantText__taskItem--checked" : "assistantText__taskItem"} key={`${messageId}-task-${index}-${itemIndex}`}>
-                  <input type="checkbox" checked={item.checked} readOnly tabIndex={-1} aria-label={item.checked ? "Task complete" : "Task open"} />
+                  <AssistantTaskCheck checked={item.checked} />
                   <span>{assistantInlineNodes(item.text, `${messageId}-task-${index}-${itemIndex}`, onUseMathInCompute, writing)}</span>
                 </li>
               ))}

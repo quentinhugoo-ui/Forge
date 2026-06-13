@@ -716,6 +716,7 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("type AssistantCalloutTone");
     expect(rendererSource).toContain("function markdownFenceInfo");
     expect(rendererSource).toContain("function taskListItemFromLine");
+    expect(rendererSource).toContain("function AssistantTaskCheck");
     expect(rendererSource).toContain("function quoteTextFromLine");
     expect(rendererSource).toContain("function calloutFromLine");
     expect(rendererSource).toContain("function factItemFromLine");
@@ -746,6 +747,9 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantText__table");
     expect(stylesSource).toContain(".assistantText__tableCell--right");
     expect(stylesSource).toContain(".assistantText__taskList");
+    expect(stylesSource).toContain(".assistantText__taskCheckPath");
+    expect(stylesSource).toContain("assistantTaskCheckHi");
+    expect(stylesSource).toContain("prefers-reduced-motion: reduce");
     expect(stylesSource).toContain(".assistantText__taskItem--checked");
     expect(stylesSource).toContain(".assistantText__codeBlock");
     expect(stylesSource).toContain(".assistantText__quote");

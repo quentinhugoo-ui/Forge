@@ -4997,17 +4997,82 @@ button {
   color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 8%);
 }
 
-.assistantText__taskItem input {
-  width: 15px;
-  height: 15px;
-  margin: 2px 0 0;
-  accent-color: #5eead4;
+.assistantText__taskCheck {
+  position: relative;
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  place-items: center;
+  cursor: default;
+}
+
+.assistantText__taskCheck input {
+  display: none;
+}
+
+.assistantText__taskCheck svg {
+  width: 18px;
+  height: 18px;
+  overflow: visible;
+}
+
+.assistantText__taskCheckBox {
+  fill: transparent;
+  stroke: color-mix(in oklab, var(--forge-muted), transparent 12%);
+  stroke-width: 5;
+  transition: fill 0.18s ease, stroke 0.18s ease, filter 0.18s ease;
+}
+
+.assistantText__taskCheckPath {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 0 0 240 9999999;
+  stroke-dashoffset: 1;
+  scale: -1 1;
+  transform-origin: center;
+  transition: stroke-dasharray 0.5s ease;
+  animation: assistantTaskCheckHi 0.5s;
+}
+
+.assistantText__taskCheck input:checked ~ svg .assistantText__taskCheckBox {
+  fill: #5eead4;
+  stroke: #5eead4;
+  filter: drop-shadow(0 0 7px color-mix(in oklab, #5eead4, transparent 62%));
+}
+
+.assistantText__taskCheck input:checked ~ svg .assistantText__taskCheckPath {
+  stroke-dasharray: 0 262 70 9999999;
+  transition-delay: 0s;
+  scale: 1 1;
+  animation: none;
 }
 
 .assistantText__taskItem--checked span {
   color: color-mix(in oklab, var(--forge-muted), var(--forge-text) 18%);
   text-decoration: line-through;
   text-decoration-color: color-mix(in oklab, #5eead4, transparent 36%);
+}
+
+@keyframes assistantTaskCheckHi {
+  0% {
+    stroke-dashoffset: 20;
+  }
+
+  to {
+    stroke-dashoffset: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistantText__taskCheckBox,
+  .assistantText__taskCheckPath {
+    transition: none;
+    animation: none;
+  }
 }
 
 .assistantText__tableWrap {
