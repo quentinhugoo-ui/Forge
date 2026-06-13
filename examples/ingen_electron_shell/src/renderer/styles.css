@@ -8494,8 +8494,8 @@ button {
   z-index: 0;
   display: grid;
   place-items: center;
-  width: clamp(600px, 56vw, 920px);
-  height: clamp(600px, 76vh, 920px);
+  width: clamp(720px, 64vw, 1100px);
+  height: clamp(720px, 86vh, 1100px);
   pointer-events: none;
   opacity: 0.96;
   overflow: visible;

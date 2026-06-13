@@ -106,8 +106,10 @@ import {
   type GoogleWebCodeActRequest
 } from "./google-web-codeact.js";
 import {
+  createMapsCodeActRequest,
   extractMapsCodeAct,
   GOOGLE_EARTH_DEFAULT_URL,
+  MAPS_DEFAULT_TARGET,
   renderMapsCodeActResult,
   type MapsCodeActRequest
 } from "./maps-codeact.js";
@@ -2973,6 +2975,26 @@ type GooglePlaceAutocompleteSuggestion = {
   };
 };
 
+type MapsGeocodeResult = {
+  label: string;
+  latitude: number;
+  longitude: number;
+  source: "google_geocoding" | "photon";
+};
+
+type GoogleGeocodeResponse = {
+  status?: unknown;
+  results?: Array<{
+    formatted_address?: unknown;
+    geometry?: {
+      location?: {
+        lat?: unknown;
+        lng?: unknown;
+      };
+    };
+  }>;
+};
+
 function citySuggestionError(query: string, message: string): CitySuggestionResult {
   const proofHash = hashJson({ citySuggestions: "photon", query, accepted: false, message });
   return {
@@ -3136,6 +3158,142 @@ async function searchCitySuggestions(queryValue: unknown): Promise<CitySuggestio
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function readValidMapsCoordinate(value: unknown, min: number, max: number): number | undefined {
+  const parsed = typeof value === "number" ? value : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : undefined;
+}
+
+function mapsCodeActNeedsGeocode(request: MapsCodeActRequest): boolean {
+  return (
+    readValidMapsCoordinate(request.latitude, -90, 90) === undefined ||
+    readValidMapsCoordinate(request.longitude, -180, 180) === undefined
+  );
+}
+
+function mapsGeocodeQueryForRequest(request: MapsCodeActRequest): string {
+  if (!mapsCodeActNeedsGeocode(request)) {
+    return "";
+  }
+  const target = normalizeBrainHomeLocation(request.target);
+  if (target && target !== MAPS_DEFAULT_TARGET) {
+    return target;
+  }
+  return normalizeBrainHomeLocation(brainIdentityContext.userHomeLocation);
+}
+
+function photonSuggestionToMapsGeocode(suggestion: CitySuggestion): MapsGeocodeResult | null {
+  const latitude = readValidMapsCoordinate(suggestion.latitude, -90, 90);
+  const longitude = readValidMapsCoordinate(suggestion.longitude, -180, 180);
+  if (latitude === undefined || longitude === undefined) {
+    return null;
+  }
+  return {
+    label: suggestion.label || [suggestion.city, suggestion.country].filter(Boolean).join(", "),
+    latitude,
+    longitude,
+    source: "photon"
+  };
+}
+
+async function geocodeGoogleMapsLocation(query: string, apiKey: string): Promise<MapsGeocodeResult | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3500);
+  try {
+    const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+    url.searchParams.set("address", query);
+    url.searchParams.set("language", "en");
+    url.searchParams.set("key", apiKey);
+    const response = await net.fetch(url.toString(), { signal: controller.signal });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json() as GoogleGeocodeResponse;
+    if (payload.status !== "OK") {
+      return null;
+    }
+    const first = payload.results?.[0];
+    const latitude = readValidMapsCoordinate(first?.geometry?.location?.lat, -90, 90);
+    const longitude = readValidMapsCoordinate(first?.geometry?.location?.lng, -180, 180);
+    if (latitude === undefined || longitude === undefined) {
+      return null;
+    }
+    const label = typeof first?.formatted_address === "string" && first.formatted_address.trim()
+      ? first.formatted_address.replace(/\s+/g, " ").trim()
+      : query;
+    return {
+      label,
+      latitude,
+      longitude,
+      source: "google_geocoding"
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function geocodePhotonMapsLocation(query: string): Promise<MapsGeocodeResult | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3500);
+  try {
+    const url = new URL("https://photon.komoot.io/api/");
+    url.searchParams.set("q", query);
+    url.searchParams.set("limit", "1");
+    url.searchParams.set("lang", "fr");
+    url.searchParams.append("layer", "city");
+    url.searchParams.append("layer", "locality");
+    const response = await net.fetch(url.toString(), { signal: controller.signal });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json() as { features?: PhotonFeature[] };
+    return (payload.features ?? [])
+      .map(photonFeatureToCitySuggestion)
+      .map((item) => item ? photonSuggestionToMapsGeocode(item) : null)
+      .find((item): item is MapsGeocodeResult => Boolean(item)) ?? null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function geocodeMapsLocation(query: string): Promise<MapsGeocodeResult | null> {
+  const normalized = normalizeBrainHomeLocation(query);
+  if (normalized.length < 2) {
+    return null;
+  }
+  const apiKey = googlePlacesApiKey();
+  if (apiKey) {
+    const googleResult = await geocodeGoogleMapsLocation(normalized, apiKey);
+    if (googleResult) {
+      return googleResult;
+    }
+  }
+  return geocodePhotonMapsLocation(normalized);
+}
+
+async function resolveMapsCodeActRequest(request: MapsCodeActRequest): Promise<MapsCodeActRequest> {
+  const query = mapsGeocodeQueryForRequest(request);
+  if (!query) {
+    return request;
+  }
+  const geocode = await geocodeMapsLocation(query);
+  if (!geocode) {
+    return request;
+  }
+  return createMapsCodeActRequest({
+    command: request.command,
+    target: query,
+    query,
+    keywords: [...request.keywords, "brain_home_location", geocode.source],
+    latitude: geocode.latitude,
+    longitude: geocode.longitude,
+    source: request.source
+  });
 }
 
 function updateBrainIdentityContext(command: PanelsChatBottomCommand): void {
@@ -8457,7 +8615,7 @@ function executeAssistantGoogleWebCodeAct(message: TranscriptMessage, parallelSe
   };
 }
 
-function executeAssistantMapsCodeAct(message: TranscriptMessage, parallelSessionIndex = 0): TranscriptMessage {
+async function executeAssistantMapsCodeAct(message: TranscriptMessage, parallelSessionIndex = 0): Promise<TranscriptMessage> {
   if (message.role !== "assistant") {
     return message;
   }
@@ -8465,14 +8623,15 @@ function executeAssistantMapsCodeAct(message: TranscriptMessage, parallelSession
   if (!request) {
     return message;
   }
-  const navigation = navigateNativeWebExplorerToMaps(request, parallelSessionIndex);
-  const executionText = renderMapsCodeActResult(request);
+  const resolvedRequest = await resolveMapsCodeActRequest(request);
+  const navigation = navigateNativeWebExplorerToMaps(resolvedRequest, parallelSessionIndex);
+  const executionText = renderMapsCodeActResult(resolvedRequest);
   return {
     ...message,
     text: `${message.text.trim()}\n\n${executionText}`,
     proofHash: hashJson({
       previousProofHash: message.proofHash,
-      assistantCodeAct: request,
+      assistantCodeAct: resolvedRequest,
       navigation
     })
   };
@@ -8611,11 +8770,11 @@ function brainSegmentContinuationUserText(userText: string, segment: ActiveBrain
   ].join("\n");
 }
 
-function executeAssistantModuleCodeActs(
+async function executeAssistantModuleCodeActs(
   message: TranscriptMessage,
   moduleId: string,
   parallelSessionIndex: number
-): TranscriptMessage {
+): Promise<TranscriptMessage> {
   if (moduleId === "airbnb") {
     return executeAssistantAirbnbCodeAct(message, parallelSessionIndex);
   }
@@ -8623,7 +8782,7 @@ function executeAssistantModuleCodeActs(
     return executeAssistantGmailCodeAct(message, parallelSessionIndex);
   }
   let next = executeAssistantGoogleWebCodeAct(message, parallelSessionIndex);
-  next = executeAssistantMapsCodeAct(next, parallelSessionIndex);
+  next = await executeAssistantMapsCodeAct(next, parallelSessionIndex);
   next = executeAssistantGmailCodeAct(next, parallelSessionIndex);
   next = executeAssistantAirbnbCodeAct(next, parallelSessionIndex);
   return next;
@@ -9889,7 +10048,7 @@ async function submitChatDraftForSessionInner(
     // Audit anchor: await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId)
     assistantMessage = await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId, requestTranscriptWithUser);
   }
-  assistantMessage = executeAssistantModuleCodeActs(assistantMessage, moduleId, parallelSessionIndex);
+  assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, moduleId, parallelSessionIndex);
   assistantMessage = enforceQuestionnaireLoopPause(assistantMessage);
   assistantMessage = suppressRepeatedBrainSegmentCodeAct(assistantMessage, panelsChatBottomState.activeBrainSegment);
   const previousBrainSegment = panelsChatBottomState.activeBrainSegment;
@@ -9916,7 +10075,7 @@ async function submitChatDraftForSessionInner(
       moduleId,
       nextTranscript
     );
-    continuationMessage = executeAssistantModuleCodeActs(continuationMessage, moduleId, parallelSessionIndex);
+    continuationMessage = await executeAssistantModuleCodeActs(continuationMessage, moduleId, parallelSessionIndex);
     continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
     continuationMessage = suppressRepeatedBrainSegmentCodeAct(continuationMessage, panelsChatBottomState.activeBrainSegment);
     continuationMessage = executeAssistantBrainSegmentCodeAct(continuationMessage);

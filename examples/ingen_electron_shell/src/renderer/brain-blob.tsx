@@ -52,6 +52,9 @@ const WEBGPU_BUFFER_USAGE = {
 } as const;
 const BRAIN_BLOB_SUPERSAMPLE = 2.2;
 const BRAIN_BLOB_MAX_FRAMEBUFFER_SIDE = 3000;
+/* Global animation pacing: < 1 slows every motion (orbits, droplets, wobble,
+   colorize) uniformly, since both backends derive everything from this t. */
+const BRAIN_BLOB_TIME_SCALE = 0.6;
 
 /* Uniform layout shared by both backends: header vec4 (resolution.xy, time,
    seed), then 10 balls (xyz, radius), then 10 per-ball smooth-min k. */
@@ -173,7 +176,7 @@ function createBlobScene(seed: number): BlobScene {
         const stretch = sstep(0.4, 0.48, cph) * (1 - sstep(0.55, 0.62, cph));
         const caught = sstep(0.78, 0.9, cph) * (1 - sstep(0.97, 1, cph));
         const a = droplet.angle0 + t * droplet.drift;
-        const flight = mix(0.24, 0.78, ext);
+        const flight = mix(0.22, 0.62, ext);
         const cosA = Math.cos(a) * flight;
         const sinA = Math.sin(a) * flight;
         const i = BLOB_MASS_COUNT + j;
@@ -295,7 +298,7 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
   let colorTwo = vec3<f32>(0.745, 0.290, 0.114);
 
   let ro = vec3<f32>(0.0, 0.03, -2.6);
-  let rd = normalize(vec3<f32>(uv.x, upY, 1.45));
+  let rd = normalize(vec3<f32>(uv.x, upY, 1.78));
 
   /* Bounding-sphere clip: rays that miss the blob volume skip the march. */
   let b = dot(-ro, rd);
@@ -441,7 +444,7 @@ void main() {
   vec3 colorTwo = vec3(0.745, 0.290, 0.114);
 
   vec3 ro = vec3(0.0, 0.03, -2.6);
-  vec3 rd = normalize(vec3(uv.x, upY, 1.45));
+  vec3 rd = normalize(vec3(uv.x, upY, 1.78));
 
   float b = dot(-ro, rd);
   float h2 = dot(ro, ro) - b * b;
@@ -602,7 +605,7 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, onFirstFrame?: () => voi
     };
     const pump = pumpBlobFrames(canvas, resize, (timeSeconds) => {
       if (!configured || deviceLost) return;
-      const t = timeSeconds + scene.timeOffset;
+      const t = timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset;
       uniformData[0] = canvas.width;
       uniformData[1] = canvas.height;
       uniformData[2] = t;
@@ -694,7 +697,7 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, onFirstFrame?: () => void
   let firstFrameSubmitted = false;
   const pump = pumpBlobFrames(canvas, () => fitBlobFramebuffer(canvas), (timeSeconds) => {
     if (gl.isContextLost()) return;
-    const t = timeSeconds + scene.timeOffset;
+    const t = timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset;
     uniformData[0] = canvas.width;
     uniformData[1] = canvas.height;
     uniformData[2] = t;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createMapsCodeActRequest,
   extractMapsCodeAct,
   GOOGLE_EARTH_DEFAULT_URL,
   MAPS_COMMAND,
@@ -28,6 +29,22 @@ describe("Maps CodeAct", () => {
     expect(request?.latitude).toBe(48.8566);
     expect(request?.longitude).toBe(2.3522);
     expect(request?.url).toContain("https://earth.google.com/web/@48.85660000,2.35220000,0a");
+  });
+
+  it("can rebuild a bare Maps request around Brain home-city coordinates", () => {
+    const request = createMapsCodeActRequest({
+      command: MAPS_COMMAND,
+      target: "Marcq-en-Baroeul, France",
+      query: "Marcq-en-Baroeul, France",
+      keywords: ["brain_home_location", "google_geocoding"],
+      latitude: 50.6767,
+      longitude: 3.0946,
+      source: "explicit_codeact"
+    });
+
+    expect(request.target).toBe("Marcq-en-Baroeul, France");
+    expect(request.url).toContain("https://earth.google.com/web/@50.67670000,3.09460000,0a");
+    expect(request.proofHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("extracts /maps_ only when explicitly emitted by the assistant", () => {

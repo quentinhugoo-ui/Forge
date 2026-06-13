@@ -6,6 +6,7 @@ import {
 
 export const MAPS_COMMAND = BRAIN_MAPS_COMMAND;
 export const MAPS_RESULT_SCHEMA = BRAIN_MAPS_RESULT_SCHEMA;
+export const MAPS_DEFAULT_TARGET = "default_google_earth_view";
 export const GOOGLE_EARTH_DEFAULT_URL =
   "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
 
@@ -34,12 +35,12 @@ export function parseMapsCodeAct(input: string): MapsCodeActRequest | undefined 
   }
   const fields = parseTemplateFields(trimmed.slice(MAPS_COMMAND.length).trim());
   const target = clampText(
-    fields.get("target") ?? fields.get("query") ?? fields.get("q") ?? "default_google_earth_view",
+    fields.get("target") ?? fields.get("query") ?? fields.get("q") ?? MAPS_DEFAULT_TARGET,
     MAX_TARGET_CHARS
   );
   const latitude = readCoordinate(fields.get("latitude") ?? fields.get("lat"), -90, 90);
   const longitude = readCoordinate(fields.get("longitude") ?? fields.get("lon") ?? fields.get("lng"), -180, 180);
-  return buildMapsCodeActRequest({
+  return createMapsCodeActRequest({
     command: MAPS_COMMAND,
     target,
     query: target,
@@ -76,18 +77,18 @@ export function renderMapsCodeActResult(request: MapsCodeActRequest): string {
   ].join("\n");
 }
 
-function buildMapsCodeActRequest(params: Omit<MapsCodeActRequest, "schema" | "url" | "proofHash">): MapsCodeActRequest {
+export function createMapsCodeActRequest(params: Omit<MapsCodeActRequest, "schema" | "url" | "proofHash">): MapsCodeActRequest {
   const request: MapsCodeActRequest = {
     schema: "forge.webexplorer.maps.request.v1",
     ...params,
-    url: earthUrl(params.latitude, params.longitude),
+    url: googleEarthUrl(params.latitude, params.longitude),
     proofHash: ""
   };
   request.proofHash = stableHash({ ...request, proofHash: "" });
   return request;
 }
 
-function earthUrl(latitude?: number, longitude?: number): string {
+export function googleEarthUrl(latitude?: number, longitude?: number): string {
   if (typeof latitude !== "number" || typeof longitude !== "number") {
     return GOOGLE_EARTH_DEFAULT_URL;
   }
