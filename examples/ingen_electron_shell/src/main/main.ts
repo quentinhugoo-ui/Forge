@@ -230,6 +230,14 @@ let nativeMapsSessionConfigured = false;
 let nativeMapsBoundsKey = "";
 let mapsDomWebviewGuest: Electron.WebContents | null = null;
 let mapsDomWebviewGuestUrl = "";
+type GoogleEarthSearchLock = {
+  webContentsId: number;
+  url: string;
+  backendNodeId: number;
+  layout?: NativeDomRamUiTreeNode["layout"];
+  lockedAt: number;
+};
+let googleEarthSearchLock: GoogleEarthSearchLock | null = null;
 const NATIVE_MAPS_EARTH_OVERSCAN_PX = {
   minLeft: 420,
   leftRatio: 0.92,
@@ -7368,6 +7376,7 @@ function rememberMapsDomWebviewGuest(webContents: Electron.WebContents, src = ""
   const updateUrl = () => {
     if (!webContents.isDestroyed()) {
       mapsDomWebviewGuestUrl = webContents.getURL() || mapsDomWebviewGuestUrl;
+      clearGoogleEarthSearchLock(webContents);
     }
   };
   webContents.on("did-navigate", updateUrl);
@@ -7378,6 +7387,7 @@ function rememberMapsDomWebviewGuest(webContents: Electron.WebContents, src = ""
       mapsDomWebviewGuest = null;
       mapsDomWebviewGuestUrl = "";
     }
+    clearGoogleEarthSearchLock(webContents);
   });
 }
 
@@ -7389,6 +7399,32 @@ function mapsCartographyWebContents(): Electron.WebContents | null {
     return mapsDomWebviewGuest;
   }
   return null;
+}
+
+function cachedGoogleEarthSearchLockFor(webContents: Electron.WebContents): GoogleEarthSearchLock | null {
+  if (!googleEarthSearchLock || googleEarthSearchLock.webContentsId !== webContents.id || webContents.isDestroyed()) {
+    return null;
+  }
+  return googleEarthSearchLock;
+}
+
+function rememberGoogleEarthSearchLock(webContents: Electron.WebContents, landmark: NativeDomRamCartographyResult["uiTree"]["landmarks"]["googleEarthSearchBar"]): void {
+  if (!landmark?.backendNodeId || webContents.isDestroyed()) {
+    return;
+  }
+  googleEarthSearchLock = {
+    webContentsId: webContents.id,
+    url: webContents.getURL() || nativeMapsTargetUrl,
+    backendNodeId: landmark.backendNodeId,
+    layout: landmark.layout,
+    lockedAt: Date.now()
+  };
+}
+
+function clearGoogleEarthSearchLock(webContents?: Electron.WebContents): void {
+  if (!webContents || googleEarthSearchLock?.webContentsId === webContents.id) {
+    googleEarthSearchLock = null;
+  }
 }
 
 function numberField(value: unknown): number {
@@ -7820,6 +7856,33 @@ async function captureMapsDomRamUiTreeForTarget(target: Electron.WebContents): P
   }
 }
 
+async function dispatchGoogleEarthSearchFromLock(
+  debug: Electron.Debugger,
+  query: string,
+  lock: Pick<GoogleEarthSearchLock, "backendNodeId" | "layout">
+): Promise<boolean> {
+  await debug.sendCommand("DOM.enable");
+  const resolved = await debug.sendCommand("DOM.resolveNode", { backendNodeId: lock.backendNodeId }) as {
+    object?: { objectId?: string };
+  };
+  const objectId = resolved.object?.objectId;
+  if (!objectId) {
+    return false;
+  }
+  const prepared = await debug.sendCommand("Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: googleEarthLockedSearchPrepareFunction(),
+    arguments: [],
+    awaitPromise: false,
+    returnByValue: true
+  }) as { result?: { value?: { accepted?: boolean } } };
+  if (prepared.result?.value?.accepted !== true) {
+    return false;
+  }
+  await dispatchGoogleEarthKeyboardSearch(debug, query, lock.layout);
+  return true;
+}
+
 async function injectNativeMapsSearchViaLockedLandmark(searchQuery: string): Promise<boolean> {
   const query = normalizeAssistantGeoEntityQuery(searchQuery);
   const target = mapsCartographyWebContents();
@@ -7834,29 +7897,28 @@ async function injectNativeMapsSearchViaLockedLandmark(searchQuery: string): Pro
   const debug = target.debugger;
   const wasAttached = debug.isAttached();
   try {
+    if (!wasAttached) {
+      debug.attach("1.3");
+    }
+    const cachedLock = cachedGoogleEarthSearchLockFor(target);
+    if (cachedLock) {
+      let cachedAccepted = false;
+      try {
+        cachedAccepted = await dispatchGoogleEarthSearchFromLock(debug, query, cachedLock);
+      } catch {
+        cachedAccepted = false;
+      }
+      if (cachedAccepted) {
+        return true;
+      }
+      clearGoogleEarthSearchLock(target);
+    }
     const uiTree = await captureMapsDomRamUiTreeForTarget(target);
     const landmark = uiTree?.landmarks.googleEarthSearchBar;
     if (landmark?.backendNodeId) {
-      if (!wasAttached) {
-        debug.attach("1.3");
-      }
-      await debug.sendCommand("DOM.enable");
-      const resolved = await debug.sendCommand("DOM.resolveNode", { backendNodeId: landmark.backendNodeId }) as {
-        object?: { objectId?: string };
-      };
-      const objectId = resolved.object?.objectId;
-      if (objectId) {
-        const prepared = await debug.sendCommand("Runtime.callFunctionOn", {
-          objectId,
-          functionDeclaration: googleEarthLockedSearchPrepareFunction(),
-          arguments: [],
-          awaitPromise: false,
-          returnByValue: true
-        }) as { result?: { value?: { accepted?: boolean } } };
-        if (prepared.result?.value?.accepted === true) {
-          await dispatchGoogleEarthKeyboardSearch(debug, query, landmark.layout);
-          return true;
-        }
+      if (await dispatchGoogleEarthSearchFromLock(debug, query, landmark)) {
+        rememberGoogleEarthSearchLock(target, landmark);
+        return true;
       }
     }
   } catch {
@@ -8404,12 +8466,14 @@ function ensureNativeMapsView(owner: BrowserWindow): WebContentsView {
     }
   });
   view.webContents.on("did-start-loading", () => {
+    clearGoogleEarthSearchLock(view.webContents);
     console.info("Native Maps loading.", nativeMapsTargetUrl);
   });
   view.webContents.on("did-finish-load", () => {
     if (!view.webContents.isDestroyed()) {
       nativeMapsLoadedUrl = view.webContents.getURL();
       nativeMapsPendingUrl = "";
+      clearGoogleEarthSearchLock(view.webContents);
       installNativeWebExplorerViewportFade(view);
       console.info("Native Maps loaded.", view.webContents.getURL());
     }
@@ -8429,6 +8493,7 @@ function ensureNativeMapsView(owner: BrowserWindow): WebContentsView {
       nativeMapsLoadedUrl = "";
       nativeMapsPendingUrl = "";
     }
+    clearGoogleEarthSearchLock(view.webContents);
   });
   return view;
 }

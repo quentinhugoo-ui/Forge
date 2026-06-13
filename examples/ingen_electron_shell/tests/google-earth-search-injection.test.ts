@@ -50,13 +50,20 @@ describe("Google Earth search injection", () => {
     expect(mainSource).toContain("assistantMapsSearchLabelFromText(message.text)");
     expect(mainSource).toContain("mapsResultTargetFromText(text)");
     expect(mainSource).toContain("injectNativeMapsSearchViaLockedLandmark(label)");
+    expect(mainSource).toContain("cachedGoogleEarthSearchLockFor(target)");
+    expect(mainSource).toContain("rememberGoogleEarthSearchLock(target, landmark)");
+    expect(mainSource).toContain("clearGoogleEarthSearchLock(target)");
+    expect(mainSource).toContain("dispatchGoogleEarthSearchFromLock(debug, query, cachedLock)");
     expect(mainSource).toContain("googleEarthLockedSearchPrepareFunction()");
     expect(mainSource).toContain("clipboard.writeText(query)");
     expect(mainSource).toContain('key: "v", code: "KeyV"');
     expect(mainSource).not.toContain('key: "ArrowDown"');
     expect(mainSource).toContain('debug.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown"');
-    expect(mainSource).toContain('debug.sendCommand("DOM.resolveNode", { backendNodeId: landmark.backendNodeId })');
+    expect(mainSource).toContain('debug.sendCommand("DOM.resolveNode", { backendNodeId: lock.backendNodeId })');
     expect(mainSource).toContain('debug.sendCommand("Runtime.callFunctionOn"');
+    expect(mainSource.indexOf("cachedGoogleEarthSearchLockFor(target)")).toBeLessThan(
+      mainSource.indexOf("captureMapsDomRamUiTreeForTarget(target)")
+    );
     expect(mainSource).toContain("await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(assistantMessage)");
     expect(mainSource).toContain("commitAssistantMessageWithProgressiveSeed(nextTranscript, assistantMessage");
     expect(mainSource).toContain("layoutByNodeIndex");
