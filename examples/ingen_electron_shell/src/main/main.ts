@@ -7624,6 +7624,164 @@ function domSnapshotUiTree(snapshot: unknown): NativeDomRamCartographyResult["ui
   };
 }
 
+const ASSISTANT_GEO_ENTITY_PATTERN = /([@#])\{([^{}\n]{1,120})\}/g;
+
+function primaryAssistantGeoEntityLabelFromText(text: string): string {
+  ASSISTANT_GEO_ENTITY_PATTERN.lastIndex = 0;
+  const match = ASSISTANT_GEO_ENTITY_PATTERN.exec(text);
+  return match?.[2]?.replace(/\s+/g, " ").trim() ?? "";
+}
+
+function googleEarthLockedSearchInjectionFunction(): string {
+  return `
+function(query) {
+  const searchControl = this;
+  if (!searchControl || !query) return { accepted: false, reason: "missing_control_or_query" };
+  const view = searchControl.ownerDocument?.defaultView || window;
+  const inputEvent = typeof view.InputEvent === "function"
+    ? new view.InputEvent("input", { bubbles: true, composed: true, data: query, inputType: "insertText" })
+    : new view.Event("input", { bubbles: true, composed: true });
+  searchControl.focus?.();
+  if ("value" in searchControl) {
+    const proto = searchControl instanceof view.HTMLTextAreaElement ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) {
+      setter.call(searchControl, query);
+    } else {
+      searchControl.value = query;
+    }
+  } else {
+    searchControl.textContent = query;
+  }
+  searchControl.dispatchEvent(inputEvent);
+  searchControl.dispatchEvent(new view.Event("change", { bubbles: true, composed: true }));
+  const key = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+  searchControl.dispatchEvent(new view.KeyboardEvent("keydown", key));
+  searchControl.dispatchEvent(new view.KeyboardEvent("keypress", key));
+  searchControl.dispatchEvent(new view.KeyboardEvent("keyup", key));
+  searchControl.form?.dispatchEvent?.(new view.Event("submit", { bubbles: true, cancelable: true }));
+  return {
+    accepted: true,
+    tagName: searchControl.tagName || "",
+    ariaLabel: searchControl.getAttribute?.("aria-label") || "",
+    placeholder: searchControl.getAttribute?.("placeholder") || ""
+  };
+}
+`;
+}
+
+function googleEarthSearchFallbackScript(searchQuery: string): string {
+  return `
+(() => {
+  const query = ${JSON.stringify(searchQuery)};
+  if (!query) return false;
+  const visit = (root, results = []) => {
+    if (!root || typeof root.querySelectorAll !== "function") return results;
+    for (const element of root.querySelectorAll("input, textarea, [contenteditable='true'], [role='combobox'], [role='searchbox']")) {
+      results.push(element);
+    }
+    for (const element of root.querySelectorAll("*")) {
+      if (element.shadowRoot) visit(element.shadowRoot, results);
+    }
+    return results;
+  };
+  const all = visit(document);
+  const textOf = (element) => [
+    element.getAttribute("aria-label"),
+    element.getAttribute("placeholder"),
+    element.getAttribute("title"),
+    element.getAttribute("role"),
+    element.id,
+    element.className
+  ].filter(Boolean).join(" ").toLowerCase();
+  const searchControl = all.find((element) => {
+    const text = textOf(element);
+    return text.includes("google earth") || text.includes("search") || text.includes("rechercher") || text.includes("combobox");
+  }) || all[0];
+  if (!searchControl) return false;
+  return (${googleEarthLockedSearchInjectionFunction()}).call(searchControl, query).accepted === true;
+})()
+`;
+}
+
+async function captureMapsDomRamUiTreeForTarget(target: Electron.WebContents): Promise<NativeDomRamCartographyResult["uiTree"] | null> {
+  const debug = target.debugger;
+  const wasAttached = debug.isAttached();
+  try {
+    if (!wasAttached) {
+      debug.attach("1.3");
+    }
+    await debug.sendCommand("DOMSnapshot.enable");
+    const cdpSnapshot = await debug.sendCommand("DOMSnapshot.captureSnapshot", {
+      computedStyles: ["display", "visibility", "opacity", "pointer-events", "z-index", "transform"],
+      includeDOMRects: true,
+      includePaintOrder: true,
+      includeBlendedBackgroundColors: false,
+      includeTextColorOpacities: false
+    });
+    return domSnapshotUiTree(cdpSnapshot);
+  } catch {
+    return null;
+  } finally {
+    if (!wasAttached && debug.isAttached()) {
+      debug.detach();
+    }
+  }
+}
+
+async function injectNativeMapsSearchViaLockedLandmark(searchQuery: string): Promise<boolean> {
+  const query = normalizeAssistantGeoEntityQuery(searchQuery);
+  const target = mapsCartographyWebContents();
+  if (!query || !target || target.isDestroyed()) {
+    return false;
+  }
+  const url = target.getURL() || mapsDomWebviewGuestUrl || nativeMapsTargetUrl;
+  if (!isAllowedNativeMapsUrl(url)) {
+    return false;
+  }
+
+  const debug = target.debugger;
+  const wasAttached = debug.isAttached();
+  try {
+    const uiTree = await captureMapsDomRamUiTreeForTarget(target);
+    const landmark = uiTree?.landmarks.googleEarthSearchBar;
+    if (landmark?.backendNodeId) {
+      if (!wasAttached) {
+        debug.attach("1.3");
+      }
+      await debug.sendCommand("DOM.enable");
+      const resolved = await debug.sendCommand("DOM.resolveNode", { backendNodeId: landmark.backendNodeId }) as {
+        object?: { objectId?: string };
+      };
+      const objectId = resolved.object?.objectId;
+      if (objectId) {
+        const injected = await debug.sendCommand("Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: googleEarthLockedSearchInjectionFunction(),
+          arguments: [{ value: query }],
+          awaitPromise: false,
+          returnByValue: true
+        }) as { result?: { value?: { accepted?: boolean } } };
+        if (injected.result?.value?.accepted === true) {
+          return true;
+        }
+      }
+    }
+  } catch {
+    // Fall back to a conservative in-page locator below.
+  } finally {
+    if (!wasAttached && debug.isAttached()) {
+      debug.detach();
+    }
+  }
+
+  try {
+    return await target.executeJavaScript(googleEarthSearchFallbackScript(query), true) === true;
+  } catch {
+    return false;
+  }
+}
+
 async function captureMapsDomRamCartography(event: Electron.IpcMainInvokeEvent): Promise<NativeDomRamCartographyResult> {
   if (!validateSender(event)) {
     return emptyMapsDomRamCartographyResult({
@@ -10441,6 +10599,31 @@ function waitForNativeMapsFirstVisual(): Promise<void> {
   });
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(message: TranscriptMessage): Promise<boolean> {
+  if (message.role !== "assistant") {
+    return false;
+  }
+  const label = primaryAssistantGeoEntityLabelFromText(message.text);
+  if (!label) {
+    return false;
+  }
+  for (const retryDelay of [0, 250, 650, 1200, 2000]) {
+    if (retryDelay > 0) {
+      await delay(retryDelay);
+    }
+    if (await injectNativeMapsSearchViaLockedLandmark(label)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function executeAssistantModuleCodeActs(
   message: TranscriptMessage,
   moduleId: string,
@@ -11746,6 +11929,7 @@ async function submitChatDraftForSessionInner(
       proofHash: hashJson({ replaceAssistantMessageId, text: assistantMessage.text, previousProofHash: assistantMessage.proofHash })
     };
   }
+  await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(assistantMessage);
   nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, assistantMessage, requestSessionId, commitTranscript);
   // Audit anchor: archiveTranscriptMessage(activeSession, assistantMessage)
   archiveTranscriptMessage(session, assistantMessage);
@@ -11765,6 +11949,7 @@ async function submitChatDraftForSessionInner(
     continuationMessage = suppressRepeatedBrainSegmentCodeAct(continuationMessage, panelsChatBottomState.activeBrainSegment);
     continuationMessage = executeAssistantBrainSegmentCodeAct(continuationMessage);
     continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
+    await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(continuationMessage);
     nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, continuationMessage, requestSessionId, commitTranscript);
     archiveTranscriptMessage(session, continuationMessage);
   }

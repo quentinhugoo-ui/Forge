@@ -43,6 +43,12 @@ describe("Google Earth search injection", () => {
     expect(mainSource).toContain("domSnapshotUiTree(cdpSnapshot)");
     expect(mainSource).toContain("googleEarthSearchBarLandmarks(nodes)");
     expect(mainSource).toContain('role: "google_earth_search_bar"');
+    expect(mainSource).toContain("primaryAssistantGeoEntityLabelFromText(message.text)");
+    expect(mainSource).toContain("injectNativeMapsSearchViaLockedLandmark(label)");
+    expect(mainSource).toContain('debug.sendCommand("DOM.resolveNode", { backendNodeId: landmark.backendNodeId })');
+    expect(mainSource).toContain('debug.sendCommand("Runtime.callFunctionOn"');
+    expect(mainSource).toContain("await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(assistantMessage)");
+    expect(mainSource).toContain("commitAssistantMessageWithProgressiveSeed(nextTranscript, assistantMessage");
     expect(mainSource).toContain("layoutByNodeIndex");
     expect(mainSource).toContain("backendNodeId");
     expect(mainSource).toContain("app.getAppMetrics().find((metric) => metric.pid === processId)?.memory");
