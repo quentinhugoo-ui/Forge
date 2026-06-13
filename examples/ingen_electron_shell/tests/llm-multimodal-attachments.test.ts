@@ -496,7 +496,8 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("nativeMapsView: WebContentsView | null");
     expect(mainSource).toContain("new WebContentsView");
     expect(mainSource).toContain("attachNativeMapsView");
-    expect(mainSource).toContain("owner.contentView.addChildView(view)");
+    expect(mainSource).toContain("owner.contentView.addChildView(view, 0)");
+    expect(mainSource).toContain("owner.contentView.removeChildView(view)");
     expect(mainSource).toContain('partition: "persist:ingen-maps"');
     expect(mainSource).toContain('webContents.send("forge:maps-codeact", request)');
     expect(mainSource).toContain('ipcMain.handle("forge:maps-show"');
@@ -506,6 +507,9 @@ describe("LLM multimodal attachments", () => {
     expect(appSource).toContain('latestAssistant?.text.includes("MAPS_RESULT")');
     expect(appSource).toContain("canvasMapsOpen");
     expect(appSource).toContain("onNativeMapsCodeAct");
+    expect(appSource).toContain("mapsOwnerSessionIdRef");
+    expect(appSource).toContain('mapsOwnerSessionIdRef.current = panelsChatSnapshot.activeSessionId || "draft"');
+    expect(appSource).toContain("hideNativeMaps");
     expect(canvasSource).toContain("nativeMapsSlotRef");
     expect(canvasSource).toContain("NativeBrowserPager");
     expect(canvasSource).toContain("GoogleEarthIcon");
@@ -514,6 +518,8 @@ describe("LLM multimodal attachments", () => {
     expect(canvasSource).toContain("nativeMapsSlotRef");
     expect(stylesSource).toContain(".nativeBrowserPager");
     expect(stylesSource).toContain(".canvasSurfaces--nativePager .webExplorerNativeSlot");
+    expect(stylesSource).toContain(".shell--maps-canvas-open .panelsChatBottom");
+    expect(stylesSource).toContain(".shell--maps-canvas-open .chatCanvas");
     expect(canvasSource).toContain("showNativeMaps");
     expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Use Google Earth"]');
   });

@@ -113,6 +113,7 @@ export function App() {
   const workspaceNoticeTimerRef = useRef<number | null>(null);
   const parallelSidebarBirthTimerRef = useRef<number | null>(null);
   const previousActiveSessionIdRef = useRef(panelsChatSnapshot.activeSessionId);
+  const mapsOwnerSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
     void panelsChatBottomStore.dispatch({
       kind: "update_brain_identity",
@@ -161,6 +162,23 @@ export function App() {
     }
     return items.find((item) => item.sessionId !== "" && item.sessionId === sidebarSnapshot.recentSessionId)?.label || "New session";
   }, [sidebarSnapshot.archivedItems, sidebarSnapshot.recentItems, sidebarSnapshot.recentSessionId]);
+  useEffect(() => {
+    if (canvasMapsOpen) {
+      return;
+    }
+    mapsOwnerSessionIdRef.current = null;
+    void globalThis.window?.forgeShell?.hideNativeMaps?.();
+  }, [canvasMapsOpen]);
+  useEffect(() => {
+    if (!isFullPageCanvas || !canvasMapsOpen) {
+      return;
+    }
+    mapsOwnerSessionIdRef.current = null;
+    canvasMapsOpenRef.current = false;
+    setCanvasMapsOpen(false);
+    setMapsParallelIndex(0);
+    void globalThis.window?.forgeShell?.hideNativeMaps?.();
+  }, [canvasMapsOpen, isFullPageCanvas]);
   const sessionHasStarted = useMemo(
     () => panelsChatSnapshot.transcript.some((message) => message.role === "user" || message.role === "assistant"),
     [panelsChatSnapshot.transcript]
@@ -176,6 +194,17 @@ export function App() {
     const previousActiveSessionId = previousActiveSessionIdRef.current;
     const activeSessionChanged = previousActiveSessionId !== panelsChatSnapshot.activeSessionId;
     previousActiveSessionIdRef.current = panelsChatSnapshot.activeSessionId;
+    if (
+      activeSessionChanged &&
+      canvasMapsOpen &&
+      mapsOwnerSessionIdRef.current !== (panelsChatSnapshot.activeSessionId || "draft")
+    ) {
+      mapsOwnerSessionIdRef.current = null;
+      canvasMapsOpenRef.current = false;
+      setCanvasMapsOpen(false);
+      setMapsParallelIndex(0);
+      void globalThis.window?.forgeShell?.hideNativeMaps?.();
+    }
 
     if (restoredParallelPromptCount > 1 && (activeSessionChanged || parallelPrompts.length < restoredParallelPromptCount)) {
       setParallelPrompts((prompts) => Array.from({ length: restoredParallelPromptCount }, (_value, index) => prompts[index] ?? ""));
@@ -191,7 +220,7 @@ export function App() {
       setCanvasWebExplorerOpen(false);
       setWebExplorerParallelIndex(0);
     }
-  }, [panelsChatSnapshot.activeSessionId, parallelPrompts.length, restoredParallelPromptCount]);
+  }, [canvasMapsOpen, panelsChatSnapshot.activeSessionId, parallelPrompts.length, restoredParallelPromptCount]);
   const sessionFiles = useMemo<ComposerUploadPreview[]>(() => {
     const seen = new Set<string>();
     const files: ComposerUploadPreview[] = [];
@@ -515,17 +544,20 @@ export function App() {
     setCanvasPlanetsOpen(false);
     setCanvasWebExplorerOpen(false);
     setMapsParallelIndex(parallelSessionIndex);
+    mapsOwnerSessionIdRef.current = panelsChatSnapshot.activeSessionId || "draft";
     canvasMapsOpenRef.current = true;
     if (parallelPrompts.length <= 1) {
       setParallelPrompts([""]);
     }
     setCanvasMapsOpen(true);
-  }, [parallelPrompts.length]);
+  }, [panelsChatSnapshot.activeSessionId, parallelPrompts.length]);
 
   const closeCanvasMaps = useCallback(() => {
+    mapsOwnerSessionIdRef.current = null;
     canvasMapsOpenRef.current = false;
     setCanvasMapsOpen(false);
     setMapsParallelIndex(0);
+    void globalThis.window?.forgeShell?.hideNativeMaps?.();
   }, []);
 
   useEffect(() => {

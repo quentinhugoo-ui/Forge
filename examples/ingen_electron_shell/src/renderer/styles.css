@@ -3247,6 +3247,10 @@ button {
   transition: inset var(--sidebar-motion);
 }
 
+.shell--maps-canvas-open .panelsChatBottom {
+  z-index: 30;
+}
+
 .panelsChatBottom--questionnaireOpen {
   z-index: 31;
 }
@@ -3838,6 +3842,11 @@ button {
   gap: 8px;
   pointer-events: auto;
   transition: left var(--sidebar-motion), width var(--sidebar-motion);
+}
+
+.shell--maps-canvas-open .chatCanvas,
+.shell--maps-canvas-open .parallelTranscriptGrid {
+  z-index: 30;
 }
 
 .canvasSurfaces--webExplorerOpen ~ .panelsChatBottom .chatCanvas {

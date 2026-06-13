@@ -760,6 +760,7 @@ function hashJson(value: unknown): string {
 type CpuTimes = ReturnType<typeof cpus>[number]["times"];
 
 let previousCpuTimes: CpuTimes[] | null = null;
+const NVIDIA_SMI_TIMEOUT_MS = 4500;
 
 function hardwareMetric(
   label: string,
@@ -823,6 +824,40 @@ function parseNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function nvidiaSmiCandidates(): string[] {
+  const candidates = ["nvidia-smi"];
+  if (process.platform === "win32") {
+    const programRoots = [
+      process.env.ProgramW6432,
+      process.env.ProgramFiles,
+      process.env["ProgramFiles(x86)"]
+    ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+    for (const root of programRoots) {
+      candidates.push(join(root, "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe"));
+    }
+    candidates.push("C:\\Windows\\System32\\nvidia-smi.exe");
+  }
+  return Array.from(new Set(candidates));
+}
+
+function runNvidiaSmiQuery(args: string[]): string {
+  for (const candidate of nvidiaSmiCandidates()) {
+    if (/^[A-Za-z]:\\/.test(candidate) && !existsSync(candidate)) {
+      continue;
+    }
+    const result = spawnSync(candidate, args, {
+      encoding: "utf8",
+      stdio: "pipe",
+      timeout: NVIDIA_SMI_TIMEOUT_MS,
+      windowsHide: true
+    });
+    if (result.status === 0 && result.stdout.trim()) {
+      return result.stdout;
+    }
+  }
+  return "";
+}
+
 function emptyGpu(source: HardwareGpuSnapshot["source"] = "unavailable"): HardwareGpuSnapshot {
   return {
     name: "GPU unavailable",
@@ -838,18 +873,14 @@ function emptyGpu(source: HardwareGpuSnapshot["source"] = "unavailable"): Hardwa
 }
 
 function queryNvidiaGpus(): HardwareGpuSnapshot[] {
-  const result = spawnSync(
-    "nvidia-smi",
-    [
+  const stdout = runNvidiaSmiQuery([
       "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,fan.speed",
       "--format=csv,noheader,nounits"
-    ],
-    { encoding: "utf8", stdio: "pipe", timeout: 1200, windowsHide: true }
-  );
-  if (result.status !== 0 || !result.stdout.trim()) {
+    ]);
+  if (!stdout.trim()) {
     return [];
   }
-  return result.stdout
+  return stdout
     .trim()
     .split(/\r?\n/)
     .map((line): HardwareGpuSnapshot => {
@@ -857,8 +888,10 @@ function queryNvidiaGpus(): HardwareGpuSnapshot[] {
         .split(",")
         .map((part) => part.trim());
       const utilization = parseNumber(utilRaw);
-      const memoryUsedGb = parseNumber(usedRaw) === null ? null : (parseNumber(usedRaw) as number) / 1024;
-      const memoryTotalGb = parseNumber(totalRaw) === null ? null : (parseNumber(totalRaw) as number) / 1024;
+      const memoryUsed = parseNumber(usedRaw);
+      const memoryTotal = parseNumber(totalRaw);
+      const memoryUsedGb = memoryUsed === null ? null : memoryUsed / 1024;
+      const memoryTotalGb = memoryTotal === null ? null : memoryTotal / 1024;
       const temperature = parseNumber(tempRaw);
       const fanSpeed = parseNumber(fanRaw);
       return {
@@ -873,6 +906,63 @@ function queryNvidiaGpus(): HardwareGpuSnapshot[] {
         powerDraw: hardwareMetric("Power draw", roundMetric(parseNumber(powerRaw)), "W")
       };
     });
+}
+
+function vendorFromGpuName(name: string): HardwareGpuSnapshot["vendor"] {
+  const normalized = name.toLowerCase();
+  if (normalized.includes("nvidia")) return "nvidia";
+  if (normalized.includes("amd") || normalized.includes("radeon")) return "amd";
+  if (normalized.includes("intel")) return "intel";
+  if (normalized.includes("apple")) return "apple";
+  return "unknown";
+}
+
+function queryWindowsVideoControllers(): HardwareGpuSnapshot[] {
+  if (process.platform !== "win32") {
+    return [];
+  }
+  const result = spawnSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      "Get-CimInstance Win32_VideoController | Select-Object Name,AdapterCompatibility,AdapterRAM | ConvertTo-Json -Compress"
+    ],
+    { encoding: "utf8", stdio: "pipe", timeout: 3500, windowsHide: true }
+  );
+  if (result.status !== 0 || !result.stdout.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown;
+    const controllers = Array.isArray(parsed) ? parsed : [parsed];
+    return controllers
+      .map((controller): HardwareGpuSnapshot | null => {
+        if (!controller || typeof controller !== "object") {
+          return null;
+        }
+        const record = controller as { Name?: unknown; AdapterRAM?: unknown };
+        const name = typeof record.Name === "string" && record.Name.trim() ? record.Name.trim() : "Windows GPU";
+        const adapterRam = typeof record.AdapterRAM === "number" && Number.isFinite(record.AdapterRAM) ? record.AdapterRAM : null;
+        const memoryTotalGb = adapterRam === null || adapterRam <= 0 ? null : adapterRam / 1024 ** 3;
+        return {
+          name,
+          vendor: vendorFromGpuName(name),
+          source: "system",
+          utilization: hardwareMetric("GPU load", null, "%"),
+          memoryUsed: hardwareMetric("VRAM used", null, "GB"),
+          memoryTotal: hardwareMetric("VRAM total", roundMetric(memoryTotalGb, 2), "GB"),
+          temperature: hardwareMetric("GPU temperature", null, "C"),
+          fanSpeed: hardwareMetric("Fan speed", null, "%"),
+          powerDraw: hardwareMetric("Power draw", null, "W")
+        };
+      })
+      .filter((gpu): gpu is HardwareGpuSnapshot => gpu !== null);
+  } catch {
+    return [];
+  }
 }
 
 async function readFirstNumericFile(paths: string[], radix: 10 | 16 = 10): Promise<number | null> {
@@ -7396,9 +7486,14 @@ function attachNativeWebExplorerView(owner: BrowserWindow, view: BrowserView): v
 }
 
 function attachNativeMapsView(owner: BrowserWindow, view: WebContentsView): void {
-  if (!owner.contentView.children.includes(view)) {
-    owner.contentView.addChildView(view);
+  const currentIndex = owner.contentView.children.indexOf(view);
+  if (currentIndex === 0) {
+    return;
   }
+  if (currentIndex > 0) {
+    owner.contentView.removeChildView(view);
+  }
+  owner.contentView.addChildView(view, 0);
 }
 
 function ensureNativeWebExplorerView(owner: BrowserWindow): BrowserView {
