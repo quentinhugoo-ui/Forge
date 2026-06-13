@@ -496,6 +496,7 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("navigateNativeWebExplorerToMaps");
     expect(mainSource).toContain("nativeMapsView: WebContentsView | null");
     expect(mainSource).toContain("new WebContentsView");
+    expect(mainSource).toContain("webviewTag: true");
     expect(mainSource).toContain("attachNativeMapsView");
     expect(mainSource).toContain("owner.contentView.addChildView(view);");
     expect(mainSource).toContain("owner.contentView.removeChildView(view)");
@@ -508,20 +509,27 @@ describe("LLM multimodal attachments", () => {
     expect(appSource).toContain('latestAssistant?.text.includes("MAPS_RESULT")');
     expect(appSource).toContain("canvasMapsOpen");
     expect(appSource).toContain("onNativeMapsCodeAct");
+    expect(appSource).toContain("setMapsWebviewUrl(event.url");
+    expect(appSource).toContain("mapsUrl={mapsWebviewUrl}");
     expect(appSource).toContain("mapsOwnerSessionIdRef");
     expect(appSource).toContain('mapsOwnerSessionIdRef.current = panelsChatSnapshot.activeSessionId || "draft"');
     expect(appSource).toContain("hideNativeMaps");
-    expect(canvasSource).toContain("nativeMapsSlotRef");
+    expect(canvasSource).toContain("GoogleEarthDomWebview");
+    expect(canvasSource).toContain("<webview");
+    expect(canvasSource).toContain("googleEarthDomUrl");
     expect(rendererSource).toContain("export function blobPathForAttachment");
     expect(canvasSource).toContain("NativeBrowserPager");
     expect(canvasSource).toContain("GoogleEarthIcon");
     expect(canvasSource).toContain("webExplorerModuleId");
     expect(canvasSource).toContain("canvasSurfaces--nativePager");
-    expect(canvasSource).toContain("nativeMapsSlotRef");
     expect(stylesSource).toContain(".nativeBrowserPager");
     expect(stylesSource).toContain(".canvasSurfaces--nativePager .webExplorerNativeSlot");
     expect(stylesSource).toContain(".shell--maps-canvas-open .panelsChatBottom");
     expect(stylesSource).toContain(".shell--maps-canvas-open .chatCanvas");
+    expect(stylesSource).toContain(".googleEarthDomFrame");
+    expect(stylesSource).toContain(".googleEarthDomWebview");
+    expect(stylesSource).toContain(".mapsCanvasGrid--earthActive .mapsCanvasPane");
+    expect(stylesSource).toContain("bottom: calc(-1 * var(--chat-canvas-bottom))");
     expect(stylesSource).toContain(".webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted");
     expect(stylesSource).toContain("background: transparent");
     expect(stylesSource).not.toContain(".mapsEarthBlobFade");
@@ -529,7 +537,7 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("requestedLeftOverscan");
     expect(mainSource).toContain("owner.contentView.addChildView(view);");
     expect(mainSource).not.toContain("owner.contentView.addChildView(view, 0)");
-    expect(canvasSource).toContain("showNativeMaps");
+    expect(canvasSource).not.toContain("showNativeMaps");
     expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Use Google Earth"]');
   });
 

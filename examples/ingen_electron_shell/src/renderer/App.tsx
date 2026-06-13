@@ -67,6 +67,9 @@ const WINDOW_CONTROLS = [
   { id: "window-close", label: "Close", command: "window_close" }
 ] as const;
 
+const GOOGLE_EARTH_DOM_DEFAULT_URL =
+  "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
+
 function sectionGroup(section: NativeSection): string {
   if (section === "trading") {
     return "PAPERTRADING";
@@ -91,6 +94,7 @@ export function App() {
   const canvasMapsOpenRef = useRef(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
   const [mapsParallelIndex, setMapsParallelIndex] = useState(0);
+  const [mapsWebviewUrl, setMapsWebviewUrl] = useState(GOOGLE_EARTH_DOM_DEFAULT_URL);
   const [webExplorerModuleId, setWebExplorerModuleId] = useState<SidebarModuleId | null>(null);
   const [composerModuleId, setComposerModuleId] = useState<SidebarModuleId | null>(null);
   const [parallelSidebarBirth, setParallelSidebarBirth] = useState<{ sessionId: string; token: number } | null>(null);
@@ -576,6 +580,7 @@ export function App() {
 
   useEffect(() => {
     return globalThis.window?.forgeShell?.onNativeMapsCodeAct?.((event) => {
+      setMapsWebviewUrl(event.url || GOOGLE_EARTH_DOM_DEFAULT_URL);
       openCanvasMaps(event.parallelSessionIndex ?? 0);
     });
   }, [openCanvasMaps]);
@@ -928,6 +933,7 @@ export function App() {
           webExplorerModuleId={webExplorerModuleId}
           mapsOpen={canvasMapsOpen}
           mapsParallelIndex={mapsParallelIndex}
+          mapsUrl={mapsWebviewUrl}
           leftPanelOpen={snapshot.leftPanelOpen}
           parallelPrompts={parallelPrompts}
           removableParallelIndexes={removableParallelIndexes}

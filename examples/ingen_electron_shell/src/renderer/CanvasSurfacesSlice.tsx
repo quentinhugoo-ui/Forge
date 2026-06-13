@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type HTMLAttributes } from "react";
 import type { ComposerUploadPreview, SessionFilesGroup } from "../shared/ipc-contract";
 import {
   EditImageGlyph,
@@ -27,6 +27,56 @@ interface PaneTabsProps {
 export type CanvasToolPane = "files" | "terminal";
 type FileKindFilter = "all" | "document" | ComposerUploadPreview["kind"];
 type NativeBrowserPage = "maps" | "webexplorer";
+type GoogleEarthWebviewProps = HTMLAttributes<HTMLElement> & {
+  src?: string;
+  partition?: string;
+  useragent?: string;
+  webpreferences?: string;
+};
+
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      webview: GoogleEarthWebviewProps;
+    }
+  }
+}
+
+const GOOGLE_EARTH_DOM_DEFAULT_URL =
+  "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
+
+const GOOGLE_EARTH_DOM_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
+
+function googleEarthDomUrl(url?: string | null): string {
+  if (!url) {
+    return GOOGLE_EARTH_DOM_DEFAULT_URL;
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "https:" && parsed.hostname === "earth.google.com" && parsed.pathname.startsWith("/web")) {
+      return parsed.toString();
+    }
+  } catch {
+    // Fall through to the default Google Earth view.
+  }
+  return GOOGLE_EARTH_DOM_DEFAULT_URL;
+}
+
+function GoogleEarthDomWebview({ url }: { url?: string | null }) {
+  return (
+    <div className="googleEarthDomFrame" aria-label="Google Earth">
+      <webview
+        className="googleEarthDomWebview"
+        src={googleEarthDomUrl(url)}
+        partition="persist:ingen-maps"
+        useragent={GOOGLE_EARTH_DOM_USER_AGENT}
+        webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes,webSecurity=yes"
+      />
+    </div>
+  );
+}
+
 interface CanvasSessionFilesTab {
   sessionId: string;
   sessionName: string;
@@ -734,6 +784,7 @@ export function CanvasSurfacesSlice({
   webExplorerModuleId = null,
   mapsOpen,
   mapsParallelIndex = 0,
+  mapsUrl,
   leftPanelOpen,
   parallelPrompts,
   removableParallelIndexes,
@@ -763,6 +814,7 @@ export function CanvasSurfacesSlice({
   webExplorerModuleId?: string | null;
   mapsOpen: boolean;
   mapsParallelIndex?: number;
+  mapsUrl?: string;
   leftPanelOpen: boolean;
   parallelPrompts: string[];
   removableParallelIndexes: boolean[];
@@ -787,12 +839,6 @@ export function CanvasSurfacesSlice({
   const nativeWebExplorerAcceptedRef = useRef(false);
   const nativeWebExplorerLastBoundsRef = useRef("");
   const nativeWebExplorerMotionSyncRef = useRef<((durationMs?: number) => void) | null>(null);
-  const nativeMapsSlotRef = useRef<HTMLDivElement>(null);
-  const [nativeMapsAccepted, setNativeMapsAccepted] = useState(false);
-  const [nativeMapsStatus, setNativeMapsStatus] = useState("native maps pending");
-  const nativeMapsAcceptedRef = useRef(false);
-  const nativeMapsLastBoundsRef = useRef("");
-  const nativeMapsMotionSyncRef = useRef<((durationMs?: number) => void) | null>(null);
   const [nativeBrowserPage, setNativeBrowserPage] = useState<NativeBrowserPage>("maps");
   const previousDualNativeBrowserOpenRef = useRef(false);
   const parallelOpen = parallelPrompts.length > 1;
@@ -864,12 +910,9 @@ export function CanvasSurfacesSlice({
   useEffect(() => {
     const api = globalThis.window?.forgeShell;
     if (activeMapsSlotOpen) {
+      void api?.hideNativeMaps?.();
       return;
     }
-    nativeMapsAcceptedRef.current = false;
-    nativeMapsLastBoundsRef.current = "";
-    setNativeMapsAccepted(false);
-    setNativeMapsStatus("native maps closed");
     void api?.hideNativeMaps?.();
   }, [activeMapsSlotOpen]);
 
@@ -1000,131 +1043,6 @@ export function CanvasSurfacesSlice({
   }, [activeWebExplorerSlotOpen, webExplorerParallelIndex, parallelPrompts.length]);
 
   useLayoutEffect(() => {
-    const api = globalThis.window?.forgeShell;
-    if (!activeMapsSlotOpen) {
-      return undefined;
-    }
-    if (!api?.showNativeMaps || !api.updateNativeMapsBounds) {
-      setNativeMapsAccepted(false);
-      setNativeMapsStatus("native maps bridge unavailable");
-      return undefined;
-    }
-    const showNativeMaps = api.showNativeMaps;
-    const updateNativeMapsBounds = api.updateNativeMapsBounds;
-
-    let animationFrame = 0;
-    let motionFrame = 0;
-    let motionSyncUntil = 0;
-    const settleTimers: number[] = [];
-    let retryTimer = 0;
-    let firstSync = true;
-    const syncNativeMapsBounds = (bounds: { x: number; y: number; width: number; height: number }) => {
-      const roundedBounds = {
-        x: Math.round(bounds.x),
-        y: Math.round(bounds.y),
-        width: Math.round(bounds.width),
-        height: Math.round(bounds.height)
-      };
-      const boundsKey = `${roundedBounds.x}:${roundedBounds.y}:${roundedBounds.width}:${roundedBounds.height}`;
-      if (nativeMapsLastBoundsRef.current === boundsKey && !firstSync) {
-        return;
-      }
-      nativeMapsLastBoundsRef.current = boundsKey;
-      const command = firstSync ? showNativeMaps : updateNativeMapsBounds;
-      firstSync = false;
-      void command(roundedBounds).then((result) => {
-         if (result?.accepted === false) {
-           nativeMapsAcceptedRef.current = false;
-           setNativeMapsAccepted(false);
-           setNativeMapsStatus(result.error?.message ?? "native maps rejected");
-        } else if (result?.accepted === true) {
-          if (!nativeMapsAcceptedRef.current) {
-            nativeMapsAcceptedRef.current = true;
-            setNativeMapsAccepted(true);
-            setNativeMapsStatus(`native maps accepted ${result.url}`);
-          }
-        }
-      }).catch((error: unknown) => {
-        nativeMapsAcceptedRef.current = false;
-        setNativeMapsAccepted(false);
-        setNativeMapsStatus(error instanceof Error ? error.message : String(error));
-      });
-    };
-    const syncBounds = () => {
-      animationFrame = 0;
-      const slot = nativeMapsSlotRef.current;
-      if (!slot) {
-        retryTimer = window.setTimeout(scheduleSync, 50);
-        setNativeMapsStatus("native maps waiting for slot");
-        return;
-      }
-      const rect = slot.getBoundingClientRect();
-      const bounds = {
-        x: rect.x,
-        y: rect.y,
-        width: rect.width,
-        height: rect.height
-      };
-      if (bounds.width < 80 || bounds.height < 80) {
-        retryTimer = window.setTimeout(scheduleSync, 80);
-        setNativeMapsStatus(`native maps waiting for bounds ${Math.round(bounds.width)}x${Math.round(bounds.height)}`);
-        return;
-      }
-      syncNativeMapsBounds(bounds);
-    };
-    const scheduleSync = () => {
-      if (animationFrame === 0) {
-        animationFrame = window.requestAnimationFrame(syncBounds);
-      }
-    };
-    const tickMotionSync = (now: number) => {
-      motionFrame = 0;
-      scheduleSync();
-      if (now < motionSyncUntil) {
-        motionFrame = window.requestAnimationFrame(tickMotionSync);
-      }
-    };
-    const runMotionSync = (durationMs = 360) => {
-      motionSyncUntil = Math.max(motionSyncUntil, window.performance.now() + durationMs);
-      if (motionFrame === 0) {
-        motionFrame = window.requestAnimationFrame(tickMotionSync);
-      }
-    };
-    nativeMapsMotionSyncRef.current = runMotionSync;
-    const observer = new ResizeObserver(scheduleSync);
-    const observedSlot = nativeMapsSlotRef.current;
-    if (observedSlot) {
-      observer.observe(observedSlot);
-    }
-    window.addEventListener("resize", scheduleSync);
-    scheduleSync();
-    runMotionSync(420);
-    for (const delay of [50, 80, 180, 360, 720, 1200]) {
-      settleTimers.push(window.setTimeout(scheduleSync, delay));
-    }
-
-    return () => {
-      if (animationFrame !== 0) {
-        window.cancelAnimationFrame(animationFrame);
-      }
-      if (motionFrame !== 0) {
-        window.cancelAnimationFrame(motionFrame);
-      }
-      for (const timer of settleTimers) {
-        window.clearTimeout(timer);
-      }
-      if (retryTimer !== 0) {
-        window.clearTimeout(retryTimer);
-      }
-      if (nativeMapsMotionSyncRef.current === runMotionSync) {
-        nativeMapsMotionSyncRef.current = null;
-      }
-      observer.disconnect();
-      window.removeEventListener("resize", scheduleSync);
-    };
-  }, [activeMapsSlotOpen, mapsParallelIndex, parallelPrompts.length]);
-
-  useLayoutEffect(() => {
     if (!activeWebExplorerSlotOpen) {
       return;
     }
@@ -1135,7 +1053,7 @@ export function CanvasSurfacesSlice({
     if (!activeMapsSlotOpen) {
       return;
     }
-    nativeMapsMotionSyncRef.current?.(420);
+    void globalThis.window?.forgeShell?.hideNativeMaps?.();
   }, [activeMapsSlotOpen, leftPanelOpen]);
 
   if (!split) return null;
@@ -1186,17 +1104,7 @@ export function CanvasSurfacesSlice({
                       </button>
                       {hostsMaps && nativeBrowserPage === "maps" ? (
                         <>
-                          <div
-                            ref={nativeMapsSlotRef}
-                            className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
-                          >
-                            {nativeMapsAccepted ? null : (
-                              <>
-                                <GoogleWordmarkMono />
-                                <span className="webExplorerNativeStatus">{nativeMapsStatus}</span>
-                              </>
-                            )}
-                          </div>
+                          <GoogleEarthDomWebview url={mapsUrl} />
                         </>
                       ) : (
                         <div
@@ -1219,17 +1127,7 @@ export function CanvasSurfacesSlice({
                       <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
                         <span aria-hidden="true" />
                       </button>
-                      <div
-                        ref={nativeMapsSlotRef}
-                        className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
-                      >
-                        {nativeMapsAccepted ? null : (
-                          <>
-                            <GoogleWordmarkMono />
-                            <span className="webExplorerNativeStatus">{nativeMapsStatus}</span>
-                          </>
-                        )}
-                      </div>
+                      <GoogleEarthDomWebview url={mapsUrl} />
                     </>
                   ) : null}
                 </section>
@@ -1252,17 +1150,7 @@ export function CanvasSurfacesSlice({
               </button>
               {nativeBrowserPage === "maps" ? (
                 <>
-                  <div
-                    ref={nativeMapsSlotRef}
-                    className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
-                  >
-                    {nativeMapsAccepted ? null : (
-                      <>
-                        <GoogleWordmarkMono />
-                        <span className="webExplorerNativeStatus">{nativeMapsStatus}</span>
-                      </>
-                    )}
-                  </div>
+                  <GoogleEarthDomWebview url={mapsUrl} />
                 </>
               ) : (
                 <div
@@ -1308,17 +1196,7 @@ export function CanvasSurfacesSlice({
               <button type="button" className="webExplorerClose" aria-label="Close Maps" onClick={onMapsClose}>
                 <span aria-hidden="true" />
               </button>
-              <div
-                ref={nativeMapsSlotRef}
-                className={nativeMapsAccepted ? "webExplorerNativeSlot webExplorerNativeSlot--maps webExplorerNativeSlot--accepted" : "webExplorerNativeSlot webExplorerNativeSlot--maps"}
-              >
-                {nativeMapsAccepted ? null : (
-                  <>
-                    <GoogleWordmarkMono />
-                    <span className="webExplorerNativeStatus">{nativeMapsStatus}</span>
-                  </>
-                )}
-              </div>
+              <GoogleEarthDomWebview url={mapsUrl} />
             </section>
           </div>
         ) : null}

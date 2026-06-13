@@ -11869,6 +11869,7 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      webviewTag: true,
       backgroundThrottling: false,
       offscreen: false
     }
