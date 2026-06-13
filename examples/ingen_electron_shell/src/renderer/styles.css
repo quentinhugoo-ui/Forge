@@ -7684,6 +7684,11 @@ ol.assistantText__list li::before {
   opacity: 0.88;
 }
 
+.webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted,
+.canvasSurfaces--nativePager .webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted {
+  background: transparent;
+}
+
 .webExplorerNativeSlot--accepted {
   background: #ffffff;
 }

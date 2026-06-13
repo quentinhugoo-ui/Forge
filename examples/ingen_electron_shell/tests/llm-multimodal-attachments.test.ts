@@ -526,6 +526,8 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".shell--maps-canvas-open .chatCanvas");
     expect(stylesSource).toContain(".mapsEarthBlobFade");
     expect(stylesSource).toContain("left: calc(-1 * clamp");
+    expect(stylesSource).toContain(".webExplorerNativeSlot--maps.webExplorerNativeSlot--accepted");
+    expect(stylesSource).toContain("background: transparent");
     expect(canvasSource).toContain("showNativeMaps");
     expect(rendererSource).toContain('[BRAIN_MAPS_COMMAND, "Use Google Earth"]');
   });
