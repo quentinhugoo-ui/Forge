@@ -61,10 +61,11 @@ const BRAIN_BLOB_SUPERSAMPLE = 2.2;
 const BRAIN_BLOB_MAX_FRAMEBUFFER_SIDE = 2400;
 
 /* SDF port of the Uiverse "andrew-manzyk" gooey loader: the seven blurred
-   polygons become metaballs orbiting their CSS transform-origins, smooth-min
-   plays the blur+contrast fusion, and the vessel circle carries the gradient
-   fill, the top/bottom border and the halo. Orbits, radii, pivots and phases
-   are jittered by a per-session random seed. */
+   polygons become free-floating metaballs orbiting their CSS transform-origins,
+   smooth-min plays the blur+contrast fusion. No containing circle: the goo is
+   soft-bodied, with slow orbits, breathing radii, jelly domain warp and mushy
+   translucent edges. Orbits, radii, pivots and phases are jittered by a
+   per-session random seed. */
 const BRAIN_BLOB_SHADER = /* wgsl */ `
 const TAU: f32 = 6.28318530718;
 /* Loader contract: --time-animation 2s; roundness runs at /2, colorize at *3. */
@@ -139,15 +140,11 @@ fn smin(a: f32, b: f32, k: f32) -> f32 {
   return mix(b, a, h) - k * h * (1.0 - h);
 }
 
-fn smoothIntersection(a: f32, b: f32, k: f32) -> f32 {
-  let h = saturate(0.5 - 0.5 * (b - a) / k);
-  return mix(b, a, h) + k * h * (1.0 - h);
-}
-
 /* CSS roundness keyframes: contrast 15 -> 3 -> 15, i.e. tight fusion that
-   periodically relaxes into a soft gooey mush. */
+   periodically relaxes into a soft gooey mush. Slowed down so the breathing
+   reads as squish, not flicker. */
 fn roundnessMix(t: f32) -> f32 {
-  let phase = fract(t / (TIME_ANIM * 0.5));
+  let phase = fract(t / (TIME_ANIM * 2.0));
   if (phase < 0.2) {
     return smoothstep(0.0, 0.2, phase);
   }
@@ -160,30 +157,33 @@ fn roundnessMix(t: f32) -> f32 {
   return 0.0;
 }
 
-/* q is in unit-vessel coordinates: the vessel rim is the unit circle. */
+/* Free-floating gooey mass: slow orbits, vertical bobbing and breathing
+   radii give the squishy soft-body feel. */
 fn blobField(q: vec2<f32>, t: f32, k: f32) -> f32 {
   var pivots = array<vec2<f32>, 7>(
-    vec2<f32>(0.5, -0.5),
+    vec2<f32>(0.30, -0.30),
     vec2<f32>(0.0, 0.0),
-    vec2<f32>(0.0, 0.2),
-    vec2<f32>(-0.2, -0.2),
-    vec2<f32>(-0.2, -0.2),
-    vec2<f32>(0.2, -0.2),
-    vec2<f32>(0.2, -0.2)
+    vec2<f32>(0.0, 0.12),
+    vec2<f32>(-0.12, -0.12),
+    vec2<f32>(-0.12, -0.12),
+    vec2<f32>(0.12, -0.12),
+    vec2<f32>(0.12, -0.12)
   );
   var dirs = array<f32, 7>(0.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0);
   var delayPhase = array<f32, 7>(0.0, 0.0, TAU / 3.0, 0.0, TAU / 2.0, 0.0, TAU / 1.5);
-  let baseSpeed = TAU / TIME_ANIM;
+  let baseSpeed = (TAU / TIME_ANIM) * 0.45;
   var d = 1e5;
   for (var i = 0; i < 7; i = i + 1) {
     let fi = f32(i);
     let speed = dirs[i] * baseSpeed * mix(0.72, 1.28, seededRand(fi * 7.31 + 1.7));
     let phase = delayPhase[i] + seededRand(fi * 3.97 + 9.2) * TAU;
-    let orbit = mix(0.10, 0.30, seededRand(fi * 5.53 + 4.4));
-    let radius = mix(0.26, 0.42, seededRand(fi * 2.17 + 6.6));
+    let orbit = mix(0.08, 0.20, seededRand(fi * 5.53 + 4.4));
+    let breath = 1.0 + sin(t * mix(0.5, 1.1, seededRand(fi * 4.41 + 3.3)) + phase * 2.0) * 0.14;
+    let radius = mix(0.26, 0.42, seededRand(fi * 2.17 + 6.6)) * breath;
     let pivot = pivots[i] + (vec2<f32>(seededRand(fi * 9.13 + 2.9), seededRand(fi * 6.71 + 8.1)) - 0.5) * 0.22;
+    let bob = vec2<f32>(0.0, sin(t * mix(0.4, 0.9, seededRand(fi * 8.21 + 5.5)) + phase) * 0.05);
     let a = phase + t * speed;
-    let center = pivot + vec2<f32>(cos(a), sin(a)) * orbit;
+    let center = pivot + bob + vec2<f32>(cos(a), sin(a)) * orbit;
     d = smin(d, length(q - center) - radius, k);
   }
   return d;
@@ -230,59 +230,55 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
   let uv = (position.xy - 0.5 * res) / shortSide;
   let t = uniforms.time * (1.0 - uniforms.reducedMotion) + seededRand(3.3) * 31.7;
 
-  let vesselCenter = vec2<f32>(0.0, 0.015);
-  let vesselRadius = 0.555;
-  let q = (uv - vesselCenter) / vesselRadius;
-  let vesselDist = (length(q) - 1.0) * vesselRadius;
+  let frameScale = 0.52;
+  let q = (uv - vec2<f32>(0.0, 0.015)) / frameScale;
 
-  /* Procedural organic warp layered over the rigid loader orbits. */
-  let warp = vec2<f32>(
-    fbm(q * 2.6 + vec2<f32>(t * 0.11, 3.1)),
-    fbm(q * 2.6 + vec2<f32>(7.7, t * 0.09))
-  ) - vec2<f32>(0.5);
-  let k = mix(0.12, 0.34, roundnessMix(t));
-  var fieldDist = blobField(q + warp * 0.10, t, k);
-  fieldDist += (fbm(q * 4.0 + vec2<f32>(t * 0.13, -t * 0.07)) - 0.5) * 0.05;
-  let blobDist = smoothIntersection(fieldDist * vesselRadius, vesselDist + 0.012, 0.02);
+  /* Jelly domain warp: big slow folds plus a finer tremble. */
+  let warp = (vec2<f32>(
+    fbm(q * 1.6 + vec2<f32>(t * 0.09, 3.1)),
+    fbm(q * 1.6 + vec2<f32>(7.7, t * 0.07))
+  ) - vec2<f32>(0.5)) * 0.34
+  + (vec2<f32>(
+    fbm(q * 3.4 + vec2<f32>(-t * 0.13, 11.3)),
+    fbm(q * 3.4 + vec2<f32>(5.9, t * 0.11))
+  ) - vec2<f32>(0.5)) * 0.10;
+
+  let k = mix(0.24, 0.46, roundnessMix(t));
+  var fieldDist = blobField(q + warp, t, k);
+  fieldDist += (fbm(q * 2.6 + vec2<f32>(t * 0.10, -t * 0.06)) - 0.5) * 0.10;
+  /* Wide organic fade near the canvas border so the goo never meets a hard
+     edge; this is a mushy ramp, not a containing circle. */
+  fieldDist += smoothstep(0.62, 0.98, length(q)) * 1.0;
+  let blobDist = fieldDist * frameScale;
 
   let aa = max(abs(dpdx(blobDist)) + abs(dpdy(blobDist)), px * 1.75);
-  let blobMask = smoothstep(aa, -aa, blobDist);
-  let depth = saturate(-blobDist / (0.22 * vesselRadius));
+  let crisp = smoothstep(aa, -aa, blobDist);
+  let mush = 1.0 - smoothstep(-0.035, 0.075, blobDist);
+  let body = saturate(crisp * 0.62 + mush * 0.38);
+  let depth = saturate(-blobDist / 0.17);
 
   let colorOne = vec3<f32>(1.0, 0.749, 0.282);
   let colorTwo = vec3<f32>(0.745, 0.290, 0.114);
-  /* linear-gradient(180deg, color-one 30%, color-two 70%) across the vessel. */
-  let gradT = smoothstep(-0.4, 0.4, q.y);
+  /* linear-gradient(180deg, color-one 30%, color-two 70%), bent by the warp. */
+  let gradT = smoothstep(-0.7, 0.7, q.y + warp.y * 0.8);
 
-  let grain = fbm(q * 5.0 + vec2<f32>(t * 0.05, -t * 0.04));
-  var blobColor = mix(colorOne, colorTwo, gradT) * (0.90 + grain * 0.18 + depth * 0.10);
-  blobColor += vec3<f32>(1.0, 0.93, 0.84) * pow(depth, 2.0) * 0.10;
+  let grain = fbm(q * 3.2 + vec2<f32>(t * 0.05, -t * 0.04));
+  var blobColor = mix(colorOne, colorTwo, gradT) * (0.88 + grain * 0.16 + depth * 0.12);
+  /* Subsurface band between rim and core: backlit-gel translucency. */
+  blobColor += vec3<f32>(1.0, 0.90, 0.78) * (1.0 - depth) * depth * 0.30;
+  blobColor += vec3<f32>(1.0, 0.93, 0.84) * pow(depth, 3.0) * 0.08;
 
-  /* Vessel ::before: faint gradient fill plus inset top/bottom glows. */
-  let vesselMask = smoothstep(aa, -aa, vesselDist);
-  let insetBand = exp(-max(-vesselDist, 0.0) / 0.06);
-  let vesselAlpha = vesselMask * (mix(0.08, 0.16, gradT) + insetBand * mix(0.18, 0.24, gradT));
-  let vesselColor = mix(colorOne, colorTwo, gradT);
-
-  /* border-top color-one / border-bottom color-two, fading at the sides. */
-  let ringBand = smoothstep(px * 2.4, 0.0, abs(vesselDist));
-  let ringAlpha = ringBand * saturate(abs(q.y)) * 0.85;
-  let ringColor = mix(colorOne, colorTwo, smoothstep(-0.2, 0.2, q.y));
-
-  /* box-shadow halo: 0 0 25px color-three + 0 20px 50px color-four. */
-  let outside = max(vesselDist, 0.0);
-  let dropDist = max(length(uv - vesselCenter - vec2<f32>(0.0, 0.10)) - vesselRadius, 0.0);
-  let glowAlpha = exp(-outside / 0.085) * 0.14 + exp(-dropDist / 0.16) * 0.10;
-  let glowColor = mix(colorOne, colorTwo, smoothstep(-0.6, 0.9, q.y));
+  /* Soft aura hugging the goo contour, replacing the old circular halo. */
+  let glowAlpha = exp(-max(blobDist, 0.0) / 0.11) * 0.16;
+  let glowColor = mix(colorOne, colorTwo, gradT);
 
   var acc = vec4<f32>(0.0);
-  acc = over(acc, glowColor, glowAlpha * (1.0 - vesselMask));
-  acc = over(acc, vesselColor, vesselAlpha);
-  acc = over(acc, ringColor, ringAlpha);
-  acc = over(acc, blobColor, blobMask * (0.58 + depth * 0.30));
+  acc = over(acc, glowColor, glowAlpha * (1.0 - body));
+  acc = over(acc, blobColor, body * (0.46 + depth * 0.34));
 
+  let vignette = 1.0 - smoothstep(0.40, 0.495, max(abs(uv.x), abs(uv.y)));
   let rgb = max(hueRotate(acc.rgb / max(acc.a, 0.001), colorizeAngle(t)), vec3<f32>(0.0));
-  return vec4<f32>(min(rgb, vec3<f32>(0.98)), saturate(acc.a));
+  return vec4<f32>(min(rgb, vec3<f32>(0.98)), saturate(acc.a * vignette));
 }
 `;
 
