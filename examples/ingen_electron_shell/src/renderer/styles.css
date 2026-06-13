@@ -5267,12 +5267,13 @@ button {
 
 .assistantText__callout {
   display: grid;
-  gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in oklab, var(--callout-color), transparent 56%);
-  border-left-width: 3px;
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--callout-color), var(--forge-bg) 88%);
+  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 13px;
+  row-gap: 4px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
 }
 
 .assistantText__callout--info {
@@ -5292,14 +5293,40 @@ button {
 }
 
 .assistantText__callout strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: color-mix(in oklab, var(--callout-color), white 12%);
-  font-size: 12px;
-  font-weight: 730;
+  font-size: 11px;
+  font-weight: 760;
   letter-spacing: 0;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.assistantText__callout strong::after {
+  display: block;
+  width: 22px;
+  height: 1px;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--callout-color), transparent 18%), transparent);
+  content: "";
 }
 
 .assistantText__callout p {
+  min-width: 0;
   margin: 0;
+  color: color-mix(in oklab, var(--forge-text), var(--forge-muted) 8%);
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .assistantText__callout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .assistantText__callout strong::after {
+    width: 34px;
+  }
 }
 
 .assistantText__factGrid {
@@ -8009,7 +8036,7 @@ button {
 .brainMemoryIdentity {
   margin-top: 0;
   margin-bottom: 12px;
-  max-width: 520px;
+  max-width: 640px;
   padding: 8px 10px;
 }
 
@@ -8028,7 +8055,7 @@ button {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -8054,6 +8081,7 @@ button {
 }
 
 .brainMemoryIdentityField__control {
+  position: relative;
   display: inline-grid;
   grid-template-columns: minmax(0, auto) 10px;
   align-items: center;
@@ -8061,6 +8089,10 @@ button {
   gap: 3px;
   width: fit-content;
   max-width: 100%;
+}
+
+.brainMemoryIdentityField__control--location {
+  width: min(100%, 28ch);
 }
 
 .brainMemoryIdentityField__input {
@@ -8079,6 +8111,11 @@ button {
   line-height: 22px;
   text-shadow: 0 0 10px color-mix(in oklab, #ffbf48, transparent 86%);
   caret-color: var(--forge-accent);
+}
+
+.brainMemoryIdentityField--location .brainMemoryIdentityField__input {
+  width: 100%;
+  min-width: 10ch;
 }
 
 .brainMemoryIdentityField__edit {
@@ -8118,6 +8155,63 @@ button {
 .brainMemoryIdentityField__input {
   color: #f1d596;
   text-shadow: 0 0 10px color-mix(in oklab, #ffbf48, transparent 86%);
+}
+
+.brainMemoryLocationSuggestions {
+  position: absolute;
+  z-index: 6;
+  top: calc(100% + 7px);
+  left: 0;
+  display: grid;
+  width: min(260px, calc(100vw - 56px));
+  max-height: 184px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid color-mix(in oklab, var(--forge-line), #f1d596 22%);
+  border-radius: 7px;
+  background: color-mix(in oklab, var(--forge-panel), #050608 18%);
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.38);
+}
+
+.brainMemoryLocationSuggestions__option {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--forge-ink);
+  background: transparent;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+
+.brainMemoryLocationSuggestions__option:hover,
+.brainMemoryLocationSuggestions__option--active {
+  color: #fff5d6;
+  background: color-mix(in oklab, #f1d596, transparent 88%);
+}
+
+.brainMemoryLocationStatus {
+  position: absolute;
+  z-index: 6;
+  top: calc(100% + 7px);
+  left: 0;
+  display: block;
+  width: min(220px, calc(100vw - 56px));
+  padding: 7px 9px;
+  border: 1px solid color-mix(in oklab, var(--forge-line), #f1d596 16%);
+  border-radius: 7px;
+  color: var(--forge-muted);
+  background: color-mix(in oklab, var(--forge-panel), #050608 18%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
 }
 
 .brainActivators .brainRow:last-child,

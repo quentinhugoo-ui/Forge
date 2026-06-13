@@ -120,6 +120,9 @@ const forgeShell: ForgeShellApi = {
     ipcRenderer.on("forge:maps-codeact", handler);
     return () => ipcRenderer.removeListener("forge:maps-codeact", handler);
   },
+  searchCitySuggestions(query: string) {
+    return ipcRenderer.invoke("forge:search-city-suggestions", query);
+  },
   showNativeTerminal(bounds: NativeTerminalBounds) {
     return ipcRenderer.invoke("forge:terminal-show-native", bounds);
   },

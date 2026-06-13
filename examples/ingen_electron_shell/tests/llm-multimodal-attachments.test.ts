@@ -170,18 +170,20 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain('return join(app.getPath("userData"), "brain", "identity-memory.json")');
     expect(mainSource).toContain("restoreBrainIdentityContextFromDisk()");
     expect(mainSource).toContain("persistBrainIdentityContext()");
-    expect(mainSource).toContain('if (!user && !assistant) return "";');
-    expect(mainSource).toContain("BRAIN_IDENTITY_MEMORY v1 user_first_name=${JSON.stringify(user)} assistant_first_name=${JSON.stringify(assistant)} rule=If asked your name or first name, answer assistant_first_name. Use user_first_name for the user. Invent no missing names.");
+    expect(mainSource).toContain('if (!user && !assistant && !homeLocation) return "";');
+    expect(mainSource).toContain("user_home_location=${JSON.stringify(homeLocation)}");
+    expect(mainSource).toContain("Never treat user_home_location as live device geolocation.");
     expect(mainSource).not.toContain("si_demande_nom_ou_prenom");
     expect(mainSource).not.toContain("source=Brain Memory > Identity editor; these fields are durable user-confirmed Brain memory.");
     expect(mainSource).not.toContain("When the user asks your name, what you are called, comment tu t'appelles");
     expect(mainSource).toContain("brainIdentityMemoryManifest()");
     expect(mainSource).toContain("updateBrainIdentityContext(command);\n  const parallelSessionIndex");
     expect(mainSource).toContain("updateBrainIdentityContext(command);\n  const lane = ensureParallelChatLane");
-    expect(storeSource).toContain('import { readBrainAgentMemory, readBrainUserMemory } from "./brain-user-memory-store";');
+    expect(storeSource).toContain('import { readBrainAgentMemory, readBrainUserLocationMemory, readBrainUserMemory } from "./brain-user-memory-store";');
     expect(storeSource).toContain('if (command.kind === "send_chat" || command.kind === "send_parallel_chat_batch")');
     expect(storeSource).toContain("userFirstName: userMemory.preferredFirstName");
     expect(storeSource).toContain("agentFirstName: agentMemory.preferredFirstName");
+    expect(storeSource).toContain("userHomeLocation: locationMemory.homeLocation");
     expect(mainSource).toContain("const generalBrainCodeActCommands = BRAIN_CODEACT_COMMANDS.filter");
     expect(mainSource).toContain("command !== BRAIN_QUESTIONNAIRE_COMMAND");
     expect(mainSource).toContain("codeact_commands=${generalBrainCodeActCommands.join");
@@ -189,6 +191,16 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("brainBootManifest()");
     expect(brainCanvasSource).toContain("const commitUserMemory = (value: string)");
     expect(brainCanvasSource).toContain("const commitAgentMemory = (value: string)");
+    expect(brainCanvasSource).toContain("const commitLocationMemory = (value: string)");
+    expect(brainCanvasSource).toContain("function BrainMemoryLocationField");
+    expect(brainCanvasSource).toContain("role=\"combobox\"");
+    expect(brainCanvasSource).toContain("searchCitySuggestions");
+    expect(brainCanvasSource).not.toContain("HOME_LOCATION_SUGGESTIONS");
+    expect(brainCanvasSource).not.toContain("Paris, France");
+    expect(preloadCjsSource).toContain("forge:search-city-suggestions");
+    expect(mainSource).toContain("https://photon.komoot.io/api/");
+    expect(mainSource).toContain('url.searchParams.append("layer", "city")');
+    expect(mainSource).toContain('url.searchParams.append("layer", "locality")');
   });
 
   it("continues automatically after a Brain segment CodeAct is activated", () => {
@@ -764,6 +776,9 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain("border-radius: 22px 13px 24px 11px / 16px 24px 15px 22px");
     expect(stylesSource).toContain('content: "\\201C"');
     expect(stylesSource).toContain(".assistantText__callout--warning");
+    expect(stylesSource).toContain("grid-template-columns: minmax(72px, max-content) minmax(0, 1fr)");
+    expect(stylesSource).toContain(".assistantText__callout strong::after");
+    expect(stylesSource).toContain("background: transparent");
     expect(stylesSource).toContain(".assistantText__factGrid");
     expect(stylesSource).toContain(".assistantText__divider");
     expect(stylesSource).toContain(".assistantText strong");

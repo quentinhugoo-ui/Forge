@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   type BrainCodeActCommand,
@@ -7,8 +7,10 @@ import {
 import { BrainBlob } from "./brain-blob";
 import {
   readBrainAgentMemory,
+  readBrainUserLocationMemory,
   readBrainUserMemory,
   writeBrainAgentMemory,
+  writeBrainUserLocationMemory,
   writeBrainUserMemory
 } from "./brain-user-memory-store";
 import { headerShadowStore } from "./header-shadow-store";
@@ -453,6 +455,143 @@ function BrainMemoryIdentityField({
   );
 }
 
+function BrainMemoryLocationField({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const listboxId = useId();
+  const [focused, setFocused] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
+  const query = value.trim();
+  const expanded = focused && suggestions.length > 0;
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [value]);
+
+  useEffect(() => {
+    if (!focused || query.length < 2) {
+      setSuggestions([]);
+      setStatus("idle");
+      return undefined;
+    }
+    let cancelled = false;
+    setStatus("loading");
+    const timer = window.setTimeout(() => {
+      const searchCitySuggestions = window.forgeShell?.searchCitySuggestions;
+      if (!searchCitySuggestions) {
+        setSuggestions([]);
+        setStatus("error");
+        return;
+      }
+      searchCitySuggestions(query)
+        .then((result) => {
+          if (cancelled) return;
+          setSuggestions(result.suggestions.map((suggestion) => suggestion.label));
+          setStatus(result.error ? "error" : "idle");
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setSuggestions([]);
+          setStatus("error");
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [focused, query]);
+
+  const chooseSuggestion = (suggestion: string) => {
+    onChange(suggestion);
+    setFocused(false);
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (!expanded) {
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.min(suggestions.length - 1, current + 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.max(0, current - 1));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      chooseSuggestion(suggestions[activeIndex] ?? suggestions[0]);
+    } else if (event.key === "Escape") {
+      setFocused(false);
+    }
+  };
+
+  return (
+    <label className="brainMemoryIdentityField brainMemoryIdentityField--location">
+      <span className="brainMemoryIdentityField__body">
+        <span className="brainMemoryIdentityField__label">{label}</span>
+        <span className="brainMemoryIdentityField__control brainMemoryIdentityField__control--location">
+          <input
+            aria-activedescendant={expanded ? `${listboxId}-${activeIndex}` : undefined}
+            aria-autocomplete="list"
+            aria-controls={expanded ? listboxId : undefined}
+            aria-expanded={expanded}
+            aria-label={label}
+            className="brainMemoryIdentityField__input"
+            role="combobox"
+            type="text"
+            value={value}
+            size={Math.max(14, Math.min(value.length || 14, 34))}
+            placeholder="City"
+            spellCheck={false}
+            onBlur={() => window.setTimeout(() => setFocused(false), 120)}
+            onChange={(event) => onChange(event.currentTarget.value)}
+            onFocus={() => setFocused(true)}
+            onKeyDown={onKeyDown}
+          />
+          <span className="brainMemoryIdentityField__edit" aria-hidden="true">
+            <Glyph kind="pencil" size={10} />
+          </span>
+          {expanded ? (
+            <span className="brainMemoryLocationSuggestions" id={listboxId} role="listbox">
+              {suggestions.map((suggestion, index) => (
+                <button
+                  type="button"
+                  className={[
+                    "brainMemoryLocationSuggestions__option",
+                    index === activeIndex ? "brainMemoryLocationSuggestions__option--active" : ""
+                  ].filter(Boolean).join(" ")}
+                  id={`${listboxId}-${index}`}
+                  key={suggestion}
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    chooseSuggestion(suggestion);
+                  }}
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </span>
+          ) : null}
+          {focused && query.length >= 2 && suggestions.length === 0 && status !== "idle" ? (
+            <span className="brainMemoryLocationStatus" role="status">
+              {status === "loading" ? "Search..." : "City lookup unavailable"}
+            </span>
+          ) : null}
+        </span>
+      </span>
+    </label>
+  );
+}
+
 function CodeActsSpace() {
   return (
     <div className="brainCanvas__space">
@@ -497,6 +636,7 @@ function CodeActsSpace() {
 function MemorySpace() {
   const [userMemory, setUserMemory] = useState(() => readBrainUserMemory());
   const [agentMemory, setAgentMemory] = useState(() => readBrainAgentMemory());
+  const [locationMemory, setLocationMemory] = useState(() => readBrainUserLocationMemory());
   const [visibleArchiveCount, setVisibleArchiveCount] = useState(BRAIN_SESSION_ARCHIVE_INITIAL_COUNT);
   const { snapshot: sidebarSnapshot } = useSidebarShadowStore();
   const sessions = brainSessionArchiveItems(sidebarSnapshot.recentItems, sidebarSnapshot.archivedItems);
@@ -505,9 +645,10 @@ function MemorySpace() {
     void panelsChatBottomStore.dispatch({
       kind: "update_brain_identity",
       userFirstName: userMemory.preferredFirstName,
-      agentFirstName: agentMemory.preferredFirstName
+      agentFirstName: agentMemory.preferredFirstName,
+      userHomeLocation: locationMemory.homeLocation
     });
-  }, [agentMemory.preferredFirstName, userMemory.preferredFirstName]);
+  }, [agentMemory.preferredFirstName, locationMemory.homeLocation, userMemory.preferredFirstName]);
 
   useEffect(() => {
     setVisibleArchiveCount((current) => Math.min(Math.max(current, BRAIN_SESSION_ARCHIVE_INITIAL_COUNT), Math.max(sessions.length, BRAIN_SESSION_ARCHIVE_INITIAL_COUNT)));
@@ -519,7 +660,8 @@ function MemorySpace() {
     void panelsChatBottomStore.dispatch({
       kind: "update_brain_identity",
       userFirstName: next.preferredFirstName,
-      agentFirstName: agentMemory.preferredFirstName
+      agentFirstName: agentMemory.preferredFirstName,
+      userHomeLocation: locationMemory.homeLocation
     });
   };
 
@@ -529,7 +671,19 @@ function MemorySpace() {
     void panelsChatBottomStore.dispatch({
       kind: "update_brain_identity",
       userFirstName: userMemory.preferredFirstName,
-      agentFirstName: next.preferredFirstName
+      agentFirstName: next.preferredFirstName,
+      userHomeLocation: locationMemory.homeLocation
+    });
+  };
+
+  const commitLocationMemory = (value: string) => {
+    const next = writeBrainUserLocationMemory(value);
+    setLocationMemory(next);
+    void panelsChatBottomStore.dispatch({
+      kind: "update_brain_identity",
+      userFirstName: userMemory.preferredFirstName,
+      agentFirstName: agentMemory.preferredFirstName,
+      userHomeLocation: next.homeLocation
     });
   };
 
@@ -571,6 +725,11 @@ function MemorySpace() {
               label="Agent name"
               value={agentMemory.preferredFirstName}
               onChange={commitAgentMemory}
+            />
+            <BrainMemoryLocationField
+              label="Lieu de vie"
+              value={locationMemory.homeLocation}
+              onChange={commitLocationMemory}
             />
           </div>
         </section>

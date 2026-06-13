@@ -719,6 +719,7 @@ export type PanelsChatBottomCommand = PanelsChatBottomCommandBase & {
   replaceAssistantMessageId?: string;
   userFirstName?: string;
   agentFirstName?: string;
+  userHomeLocation?: string;
 };
 
 export type CanvasSurfacesCommand = CanvasSurfacesCommandBase & {

@@ -42,6 +42,8 @@ import {
   type CanvasSurfacesCommand,
   type CanvasSurfacesCommandResult,
   type CanvasSurfacesSnapshot,
+  type CitySuggestion,
+  type CitySuggestionResult,
   type FrontSliceMode,
   type HeaderCommand,
   type HeaderCommandResult,
@@ -2896,11 +2898,13 @@ function webExplorerCodeActInstructions(moduleId = ""): string {
 interface BrainIdentityContext {
   userFirstName: string;
   agentFirstName: string;
+  userHomeLocation: string;
 }
 
 const brainIdentityContext: BrainIdentityContext = {
   userFirstName: "",
-  agentFirstName: ""
+  agentFirstName: "",
+  userHomeLocation: ""
 };
 
 function brainIdentityStorePath(): string {
@@ -2913,12 +2917,19 @@ function normalizeBrainIdentityName(value: unknown): string {
   return Array.from(compact).slice(0, 48).join("");
 }
 
+function normalizeBrainHomeLocation(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const compact = value.replace(/\s+/g, " ").trim();
+  return Array.from(compact).slice(0, 96).join("");
+}
+
 async function restoreBrainIdentityContextFromDisk(): Promise<void> {
   try {
     const raw = await readFile(brainIdentityStorePath(), "utf8");
     const parsed = JSON.parse(raw) as Partial<BrainIdentityContext>;
     brainIdentityContext.userFirstName = normalizeBrainIdentityName(parsed.userFirstName);
     brainIdentityContext.agentFirstName = normalizeBrainIdentityName(parsed.agentFirstName);
+    brainIdentityContext.userHomeLocation = normalizeBrainHomeLocation(parsed.userHomeLocation);
   } catch {
     // No persisted identity yet; keep first-install fields blank.
   }
@@ -2937,18 +2948,125 @@ async function persistBrainIdentityContext(): Promise<void> {
 function brainIdentityMemoryManifest(): string {
   const user = brainIdentityContext.userFirstName;
   const assistant = brainIdentityContext.agentFirstName;
-  if (!user && !assistant) return "";
-  return `BRAIN_IDENTITY_MEMORY v1 user_first_name=${JSON.stringify(user)} assistant_first_name=${JSON.stringify(assistant)} rule=If asked your name or first name, answer assistant_first_name. Use user_first_name for the user. Invent no missing names.`;
+  const homeLocation = brainIdentityContext.userHomeLocation;
+  if (!user && !assistant && !homeLocation) return "";
+  return `BRAIN_IDENTITY_MEMORY v1 user_first_name=${JSON.stringify(user)} assistant_first_name=${JSON.stringify(assistant)} user_home_location=${JSON.stringify(homeLocation)} rule=If asked your name or first name, answer assistant_first_name. Use user_first_name for the user. Use user_home_location as user-confirmed living place only when location context is useful. Never invent missing identity or location fields. Never treat user_home_location as live device geolocation.`;
+}
+
+type PhotonFeature = {
+  geometry?: {
+    coordinates?: unknown;
+  };
+  properties?: {
+    name?: unknown;
+    city?: unknown;
+    country?: unknown;
+    state?: unknown;
+  };
+};
+
+function citySuggestionError(query: string, message: string): CitySuggestionResult {
+  const proofHash = hashJson({ citySuggestions: "photon", query, accepted: false, message });
+  return {
+    schema: "ingen.brain.memory.city_suggestions.v1",
+    query,
+    suggestions: [],
+    proofHash,
+    error: {
+      code: "bad_payload",
+      message,
+      proofHash
+    }
+  };
+}
+
+function photonFeatureToCitySuggestion(feature: PhotonFeature): CitySuggestion | null {
+  const properties = feature.properties ?? {};
+  const coordinates = Array.isArray(feature.geometry?.coordinates) ? feature.geometry?.coordinates : [];
+  const longitude = typeof coordinates[0] === "number" ? coordinates[0] : Number.NaN;
+  const latitude = typeof coordinates[1] === "number" ? coordinates[1] : Number.NaN;
+  const city = typeof properties.city === "string" && properties.city.trim()
+    ? properties.city.trim()
+    : typeof properties.name === "string" && properties.name.trim()
+      ? properties.name.trim()
+      : "";
+  const country = typeof properties.country === "string" ? properties.country.trim() : "";
+  if (!city || !country || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+  const label = `${city}, ${country}`;
+  return {
+    label,
+    city,
+    country,
+    latitude,
+    longitude,
+    source: "photon"
+  };
+}
+
+async function searchCitySuggestions(queryValue: unknown): Promise<CitySuggestionResult> {
+  const query = normalizeBrainHomeLocation(queryValue);
+  if (query.length < 2) {
+    return {
+      schema: "ingen.brain.memory.city_suggestions.v1",
+      query,
+      suggestions: [],
+      proofHash: hashJson({ citySuggestions: "photon", query, skipped: "short_query" })
+    };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3500);
+  try {
+    const url = new URL("https://photon.komoot.io/api/");
+    url.searchParams.set("q", query);
+    url.searchParams.set("limit", "6");
+    url.searchParams.set("lang", "fr");
+    url.searchParams.append("layer", "city");
+    url.searchParams.append("layer", "locality");
+    const response = await net.fetch(url.toString(), { signal: controller.signal });
+    if (!response.ok) {
+      return citySuggestionError(query, `Photon city lookup failed with HTTP ${response.status}.`);
+    }
+    const payload = await response.json() as { features?: PhotonFeature[] };
+    const seen = new Set<string>();
+    const suggestions = (payload.features ?? [])
+      .map(photonFeatureToCitySuggestion)
+      .filter((suggestion): suggestion is CitySuggestion => {
+        if (!suggestion) return false;
+        const key = `${suggestion.label}|${suggestion.latitude.toFixed(4)}|${suggestion.longitude.toFixed(4)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 6);
+    return {
+      schema: "ingen.brain.memory.city_suggestions.v1",
+      query,
+      suggestions,
+      proofHash: hashJson({ citySuggestions: "photon", query, suggestions })
+    };
+  } catch (error) {
+    const message = error instanceof Error && error.name === "AbortError"
+      ? "Photon city lookup timed out."
+      : "Photon city lookup is unavailable.";
+    return citySuggestionError(query, message);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function updateBrainIdentityContext(command: PanelsChatBottomCommand): void {
   const nextUserFirstName = normalizeBrainIdentityName(command.userFirstName);
   const nextAgentFirstName = normalizeBrainIdentityName(command.agentFirstName);
+  const nextUserHomeLocation = normalizeBrainHomeLocation(command.userHomeLocation);
   const unchanged =
     brainIdentityContext.userFirstName === nextUserFirstName &&
-    brainIdentityContext.agentFirstName === nextAgentFirstName;
+    brainIdentityContext.agentFirstName === nextAgentFirstName &&
+    brainIdentityContext.userHomeLocation === nextUserHomeLocation;
   brainIdentityContext.userFirstName = nextUserFirstName;
   brainIdentityContext.agentFirstName = nextAgentFirstName;
+  brainIdentityContext.userHomeLocation = nextUserHomeLocation;
   if (unchanged) return;
   void persistBrainIdentityContext();
   if (
@@ -9943,6 +10061,13 @@ function installIpc(): void {
     }
     await loadChatArchive();
     return sessionFilesSnapshot();
+  });
+
+  ipcMain.handle("forge:search-city-suggestions", async (event, query: unknown): Promise<CitySuggestionResult> => {
+    if (!validateSender(event)) {
+      return citySuggestionError("", "City lookup rejected by sender validation.");
+    }
+    return searchCitySuggestions(query);
   });
 
   ipcMain.handle("forge:get-cutover", (event, slice: string): FrontSliceMode => {

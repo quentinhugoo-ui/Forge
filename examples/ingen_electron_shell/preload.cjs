@@ -99,6 +99,9 @@ const forgeShell = {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on("forge:maps-codeact", handler);
     return () => ipcRenderer.removeListener("forge:maps-codeact", handler);
+  },
+  searchCitySuggestions(query) {
+    return ipcRenderer.invoke("forge:search-city-suggestions", query);
   }
 };
 

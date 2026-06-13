@@ -10,7 +10,7 @@ import {
   type PanelsChatBottomSnapshot,
   type TranscriptMessage
 } from "../shared/ipc-contract";
-import { readBrainAgentMemory, readBrainUserMemory } from "./brain-user-memory-store";
+import { readBrainAgentMemory, readBrainUserLocationMemory, readBrainUserMemory } from "./brain-user-memory-store";
 import { sidebarShadowStore } from "./sidebar-shadow-store";
 
 export interface PanelsChatBottomShadowManifest {
@@ -363,10 +363,12 @@ export function createPanelsChatBottomStore(api = browserApi()) {
     if (command.kind === "send_chat" || command.kind === "send_parallel_chat_batch") {
       const userMemory = readBrainUserMemory();
       const agentMemory = readBrainAgentMemory();
+      const locationMemory = readBrainUserLocationMemory();
       outgoingCommand = {
         ...outgoingCommand,
         userFirstName: userMemory.preferredFirstName,
-        agentFirstName: agentMemory.preferredFirstName
+        agentFirstName: agentMemory.preferredFirstName,
+        userHomeLocation: locationMemory.homeLocation
       };
     }
     if (optimisticChatInFlight) {

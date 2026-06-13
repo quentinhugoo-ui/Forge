@@ -16,8 +16,18 @@ export interface BrainAgentMemorySlot {
   evidence: string;
 }
 
+export interface BrainUserLocationMemorySlot {
+  schema: "ingen.brain.memory.user_location.v1";
+  scope: "brain.memory.user.location";
+  stableKey: "user.location.home";
+  homeLocation: string;
+  trust: "unset" | "user_confirmed" | "llm_inferred_unverified";
+  evidence: string;
+}
+
 const USER_STORAGE_KEY = "ingen.brain.memory.user_identity.v1";
 const AGENT_STORAGE_KEY = "ingen.brain.memory.agent_identity.v1";
+const USER_LOCATION_STORAGE_KEY = "ingen.brain.memory.user_location.v1";
 
 const fallbackBrainUserMemory: BrainUserMemorySlot = {
   schema: "ingen.brain.memory.user_identity.v1",
@@ -37,6 +47,15 @@ const fallbackBrainAgentMemory: BrainAgentMemorySlot = {
   evidence: "brain_identity_editor:agent_first_name_unset"
 };
 
+const fallbackBrainUserLocationMemory: BrainUserLocationMemorySlot = {
+  schema: "ingen.brain.memory.user_location.v1",
+  scope: "brain.memory.user.location",
+  stableKey: "user.location.home",
+  homeLocation: "",
+  trust: "unset",
+  evidence: "brain_memory_editor:user_home_location_unset"
+};
+
 function isBrainUserMemorySlot(value: unknown): value is BrainUserMemorySlot {
   const candidate = value as Partial<BrainUserMemorySlot>;
   return (
@@ -54,6 +73,16 @@ function isBrainAgentMemorySlot(value: unknown): value is BrainAgentMemorySlot {
     candidate.scope === "brain.memory.agent.identity" &&
     candidate.stableKey === "agent.identity.first_name" &&
     typeof candidate.preferredFirstName === "string"
+  );
+}
+
+function isBrainUserLocationMemorySlot(value: unknown): value is BrainUserLocationMemorySlot {
+  const candidate = value as Partial<BrainUserLocationMemorySlot>;
+  return (
+    candidate?.schema === "ingen.brain.memory.user_location.v1" &&
+    candidate.scope === "brain.memory.user.location" &&
+    candidate.stableKey === "user.location.home" &&
+    typeof candidate.homeLocation === "string"
   );
 }
 
@@ -114,6 +143,38 @@ export function writeBrainAgentMemory(preferredFirstName: string): BrainAgentMem
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(AGENT_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Keep the in-memory edit even if localStorage is temporarily unavailable.
+    }
+  }
+  return next;
+}
+
+export function readBrainUserLocationMemory(): BrainUserLocationMemorySlot {
+  if (typeof window === "undefined") return fallbackBrainUserLocationMemory;
+  try {
+    const raw = window.localStorage.getItem(USER_LOCATION_STORAGE_KEY);
+    if (!raw) {
+      window.localStorage.setItem(USER_LOCATION_STORAGE_KEY, JSON.stringify(fallbackBrainUserLocationMemory));
+      return fallbackBrainUserLocationMemory;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    return isBrainUserLocationMemorySlot(parsed) ? parsed : fallbackBrainUserLocationMemory;
+  } catch {
+    return fallbackBrainUserLocationMemory;
+  }
+}
+
+export function writeBrainUserLocationMemory(homeLocation: string): BrainUserLocationMemorySlot {
+  const next: BrainUserLocationMemorySlot = {
+    ...fallbackBrainUserLocationMemory,
+    homeLocation,
+    trust: "user_confirmed",
+    evidence: "brain_memory_editor:user_home_location"
+  };
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(USER_LOCATION_STORAGE_KEY, JSON.stringify(next));
     } catch {
       // Keep the in-memory edit even if localStorage is temporarily unavailable.
     }

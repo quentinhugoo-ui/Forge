@@ -326,6 +326,23 @@ export interface NativeTerminalResult {
   error?: IpcError;
 }
 
+export interface CitySuggestion {
+  label: string;
+  city: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+  source: "photon";
+}
+
+export interface CitySuggestionResult {
+  schema: "ingen.brain.memory.city_suggestions.v1";
+  query: string;
+  suggestions: CitySuggestion[];
+  proofHash: string;
+  error?: IpcError;
+}
+
 export type SearchArchiveScope = "recent" | "archived" | "all";
 export type SearchArchiveSourceType = "session_message" | "attachment";
 
@@ -421,6 +438,7 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   updateNativeMapsBounds?: (bounds: NativeWebExplorerBounds) => Promise<NativeWebExplorerResult>;
   hideNativeMaps?: () => Promise<NativeWebExplorerResult>;
   onNativeMapsCodeAct?: (listener: (event: NativeWebExplorerCodeAct) => void) => () => void;
+  searchCitySuggestions?: (query: string) => Promise<CitySuggestionResult>;
   showNativeTerminal?: (bounds: NativeTerminalBounds) => Promise<NativeTerminalResult>;
   updateNativeTerminalBounds?: (bounds: NativeTerminalBounds) => Promise<NativeTerminalResult>;
   hideNativeTerminal?: () => Promise<NativeTerminalResult>;
