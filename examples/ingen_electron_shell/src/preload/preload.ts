@@ -6,6 +6,7 @@ import type {
   HeaderCommand,
   LlmProviderConnectId,
   PanelsChatBottomCommand,
+  PanelsChatBottomSnapshotEvent,
   RightPanelCommand,
   SearchArchiveRequest,
   SidebarCommand,
@@ -72,6 +73,13 @@ const forgeShell: ForgeShellApi = {
     };
     ipcRenderer.on("forge:llm-provider-event", handler);
     return () => ipcRenderer.removeListener("forge:llm-provider-event", handler);
+  },
+  onPanelsChatBottomSnapshotEvent(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      listener(payload as PanelsChatBottomSnapshotEvent);
+    };
+    ipcRenderer.on("forge:panels-chat-bottom-snapshot-event", handler);
+    return () => ipcRenderer.removeListener("forge:panels-chat-bottom-snapshot-event", handler);
   },
   chooseWorkspaceFolder() {
     return ipcRenderer.invoke("forge:choose-workspace-folder");

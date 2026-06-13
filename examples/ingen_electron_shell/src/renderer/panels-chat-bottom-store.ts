@@ -121,6 +121,17 @@ function mergeInFlightPendingTranscript(
   currentMessages: TranscriptMessage[]
 ): TranscriptMessage[] {
   const existingIds = new Set(incomingMessages.map((message) => message.id));
+  const currentIds = new Set(currentMessages.map((message) => message.id));
+  const incomingHasFreshAssistantResponse = incomingMessages.some(
+    (message) =>
+      message.role === "assistant" &&
+      !message.id.startsWith("assistant-pending-") &&
+      message.text.trim().length > 0 &&
+      !currentIds.has(message.id)
+  );
+  if (incomingHasFreshAssistantResponse) {
+    return incomingMessages;
+  }
   const pendingMessages = currentMessages.filter((message) =>
     message.role === "assistant" &&
     message.id.startsWith("assistant-pending-") &&
@@ -408,6 +419,11 @@ export function createPanelsChatBottomStore(api = browserApi()) {
 
   api?.onLlmProviderEvent?.((event) => {
     if (event.events.includes("ready") || event.models.length > 0 || event.reasoning.length > 0) {
+      void refresh();
+    }
+  });
+  api?.onPanelsChatBottomSnapshotEvent?.((event) => {
+    if (event.kind === "snapshot_updated") {
       void refresh();
     }
   });

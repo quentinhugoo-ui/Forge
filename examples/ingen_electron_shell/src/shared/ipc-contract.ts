@@ -229,6 +229,13 @@ export interface LlmProviderRuntimeEvent {
 
 export type LlmProviderRuntimeSnapshot = Record<LlmProviderConnectId, LlmProviderRuntimeEvent>;
 
+export interface PanelsChatBottomSnapshotEvent {
+  kind: "snapshot_updated";
+  reason: "transcript_committed" | "assistant_progressive_seed";
+  sessionId: string;
+  proofHash: string;
+}
+
 export type TerminalRuntimeEvent =
   | {
       kind: "ready";
@@ -428,6 +435,7 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   resetLlmProvider?: (provider: LlmProviderConnectId) => Promise<LlmProviderConnectResult>;
   getLlmProviderRuntimeSnapshot?: () => Promise<LlmProviderRuntimeSnapshot>;
   onLlmProviderEvent?: (listener: (event: LlmProviderRuntimeEvent) => void) => () => void;
+  onPanelsChatBottomSnapshotEvent?: (listener: (event: PanelsChatBottomSnapshotEvent) => void) => () => void;
   chooseWorkspaceFolder?: () => Promise<WorkspaceChoiceResult>;
   getWorkspaceFolder?: () => Promise<WorkspaceChoiceResult>;
   showWorkspaceInExplorer?: () => Promise<WorkspaceActionResult>;

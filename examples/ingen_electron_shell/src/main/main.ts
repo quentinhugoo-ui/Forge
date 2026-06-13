@@ -57,6 +57,7 @@ import {
   type LlmProviderConnectResult,
   type LlmProviderRuntimeEvent,
   type LlmProviderRuntimeSnapshot,
+  type PanelsChatBottomSnapshotEvent,
   type PanelsChatBottomCommand,
   type PanelsChatBottomCommandResult,
   type PanelsChatBottomSnapshot,
@@ -1147,6 +1148,23 @@ function emitLlmProviderRuntimeEvent(event: LlmProviderRuntimeEvent): void {
     return;
   }
   window.webContents.send("forge:llm-provider-event", event);
+}
+
+function emitPanelsChatBottomSnapshotEvent(
+  reason: PanelsChatBottomSnapshotEvent["reason"],
+  sessionId: string
+): void {
+  const window = primaryWindow;
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+  const event: PanelsChatBottomSnapshotEvent = {
+    kind: "snapshot_updated",
+    reason,
+    sessionId,
+    proofHash: hashJson({ channel: "panels_chat_bottom", reason, sessionId, at: Date.now() })
+  };
+  window.webContents.send("forge:panels-chat-bottom-snapshot-event", event);
 }
 
 function runtimeEventFromProviderProfile(profile: ProviderRuntimeProfile, prefix?: string): LlmProviderRuntimeEvent {
@@ -8554,8 +8572,75 @@ function transcriptWithMessage(messages: TranscriptMessage[], message: Transcrip
   return [...messages, message];
 }
 
+function transcriptWithReplacedMessage(messages: TranscriptMessage[], message: TranscriptMessage): TranscriptMessage[] {
+  const existingIndex = messages.findIndex((existing) => existing.id === message.id);
+  if (existingIndex === -1) {
+    return [...messages, message];
+  }
+  const nextMessages = [...messages];
+  nextMessages[existingIndex] = message;
+  return nextMessages;
+}
+
 function transcriptWithoutMessage(messages: TranscriptMessage[], messageId: string): TranscriptMessage[] {
   return messageId ? messages.filter((message) => message.id !== messageId) : messages;
+}
+
+const ASSISTANT_PROGRESSIVE_SEED_MIN_CHARS = 1200;
+const ASSISTANT_PROGRESSIVE_SEED_TARGET_CHARS = 360;
+const ASSISTANT_PROGRESSIVE_SEED_DELAY_MS = 180;
+
+function assistantProgressiveSeedText(text: string): string {
+  if (text.length <= ASSISTANT_PROGRESSIVE_SEED_TARGET_CHARS) {
+    return text;
+  }
+  const softLimit = Math.min(text.length, ASSISTANT_PROGRESSIVE_SEED_TARGET_CHARS);
+  const hardLimit = Math.min(text.length, ASSISTANT_PROGRESSIVE_SEED_TARGET_CHARS + 180);
+  const forwardBreak = text.slice(softLimit, hardLimit).search(/(\n\n|\n|[.!?]\s|\s)/);
+  if (forwardBreak >= 0) {
+    return text.slice(0, softLimit + forwardBreak + 1);
+  }
+  const backwardBreak = text.slice(0, softLimit).search(/(\n\n|\n|[.!?]\s|\s)(?![\s\S]*(\n\n|\n|[.!?]\s|\s))/);
+  if (backwardBreak >= 0 && backwardBreak > ASSISTANT_PROGRESSIVE_SEED_TARGET_CHARS / 2) {
+    return text.slice(0, backwardBreak + 1);
+  }
+  return text.slice(0, softLimit);
+}
+
+function delayAssistantProgressiveSeed(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+async function commitAssistantMessageWithProgressiveSeed(
+  baseTranscript: TranscriptMessage[],
+  assistantMessage: TranscriptMessage,
+  sessionId: string,
+  commitTranscript: (transcript: TranscriptMessage[]) => void
+): Promise<TranscriptMessage[]> {
+  const text = assistantMessage.text;
+  if (text.length < ASSISTANT_PROGRESSIVE_SEED_MIN_CHARS) {
+    const finalTranscript = transcriptWithMessage(baseTranscript, assistantMessage);
+    commitTranscript(finalTranscript);
+    return finalTranscript;
+  }
+  const seedText = assistantProgressiveSeedText(text);
+  if (!seedText.trim() || seedText.length >= text.length) {
+    const finalTranscript = transcriptWithMessage(baseTranscript, assistantMessage);
+    commitTranscript(finalTranscript);
+    return finalTranscript;
+  }
+  const seedMessage: TranscriptMessage = {
+    ...assistantMessage,
+    text: seedText,
+    proofHash: hashJson({ progressiveSeedFor: assistantMessage.id, fullProofHash: assistantMessage.proofHash, text: seedText })
+  };
+  const seedTranscript = transcriptWithMessage(baseTranscript, seedMessage);
+  commitTranscript(seedTranscript);
+  emitPanelsChatBottomSnapshotEvent("assistant_progressive_seed", sessionId);
+  await delayAssistantProgressiveSeed(ASSISTANT_PROGRESSIVE_SEED_DELAY_MS);
+  const finalTranscript = transcriptWithReplacedMessage(seedTranscript, assistantMessage);
+  commitTranscript(finalTranscript);
+  return finalTranscript;
 }
 
 function messageOpensQuestionnaire(message: TranscriptMessage): boolean {
@@ -10374,6 +10459,7 @@ async function submitPanelsChatDraft(
     replaceAssistantMessageId,
     (nextTranscript) => {
       panelsChatBottomState.transcript = nextTranscript;
+      emitPanelsChatBottomSnapshotEvent("transcript_committed", activeSession.sessionId);
     }
   );
 }
@@ -10489,8 +10575,7 @@ async function submitChatDraftForSessionInner(
       proofHash: hashJson({ replaceAssistantMessageId, text: assistantMessage.text, previousProofHash: assistantMessage.proofHash })
     };
   }
-  nextTranscript = transcriptWithMessage(nextTranscript, assistantMessage);
-  commitTranscript(nextTranscript);
+  nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, assistantMessage, requestSessionId, commitTranscript);
   // Audit anchor: archiveTranscriptMessage(activeSession, assistantMessage)
   archiveTranscriptMessage(session, assistantMessage);
   if (!searchArchiveRequest && activatedBrainSegment && activatedBrainSegment !== previousBrainSegment) {
@@ -10509,8 +10594,7 @@ async function submitChatDraftForSessionInner(
     continuationMessage = suppressRepeatedBrainSegmentCodeAct(continuationMessage, panelsChatBottomState.activeBrainSegment);
     continuationMessage = executeAssistantBrainSegmentCodeAct(continuationMessage);
     continuationMessage = enforceQuestionnaireLoopPause(continuationMessage);
-    nextTranscript = transcriptWithMessage(nextTranscript, continuationMessage);
-    commitTranscript(nextTranscript);
+    nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, continuationMessage, requestSessionId, commitTranscript);
     archiveTranscriptMessage(session, continuationMessage);
   }
 }
@@ -10539,6 +10623,7 @@ async function submitParallelPanelsChatDraft(
     typeof command.replaceAssistantMessageId === "string" ? command.replaceAssistantMessageId.trim() : "",
     (nextTranscript) => {
       lane.transcript = nextTranscript;
+      emitPanelsChatBottomSnapshotEvent("transcript_committed", lane.sessionId);
     }
   );
 }
