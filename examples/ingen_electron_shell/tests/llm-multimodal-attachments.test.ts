@@ -732,6 +732,9 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("assistantText__tableWrap");
     expect(rendererSource).toContain("assistantText__taskList");
     expect(rendererSource).toContain("assistantText__codeBlock");
+    expect(rendererSource).toContain("assistantText__codeHeader");
+    expect(rendererSource).toContain("assistantText__codeWindowDots");
+    expect(rendererSource).toContain("assistantText__codeLanguage");
     expect(rendererSource).toContain("assistantText__quote");
     expect(rendererSource).toContain("assistantText__callout--");
     expect(rendererSource).toContain("assistantText__factGrid");
@@ -752,6 +755,10 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain("prefers-reduced-motion: reduce");
     expect(stylesSource).toContain(".assistantText__taskItem--checked");
     expect(stylesSource).toContain(".assistantText__codeBlock");
+    expect(stylesSource).toContain(".assistantText__codeHeader");
+    expect(stylesSource).toContain(".assistantText__codeWindowDots");
+    expect(stylesSource).toContain(".assistantText__codeLanguage");
+    expect(stylesSource).toContain("border-left: 3px solid");
     expect(stylesSource).toContain(".assistantText__quote");
     expect(stylesSource).toContain(".assistantText__callout--warning");
     expect(stylesSource).toContain(".assistantText__factGrid");

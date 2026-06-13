@@ -5128,30 +5128,85 @@ button {
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 26%);
+  border: 1px solid color-mix(in oklab, #67e8f9, var(--forge-line) 64%);
   border-radius: 8px;
-  background: color-mix(in oklab, #090b0d, var(--forge-bg) 24%);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, #15181d, transparent 10%), color-mix(in oklab, #07090c, transparent 2%)),
+    color-mix(in oklab, var(--forge-bg), #000 22%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white, transparent 94%),
+    0 12px 30px color-mix(in oklab, #000, transparent 74%);
 }
 
-.assistantText__codeBlock figcaption {
+.assistantText__codeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 31px;
   padding: 7px 10px;
-  border-bottom: 1px solid color-mix(in oklab, var(--forge-line), transparent 36%);
-  color: color-mix(in oklab, #67e8f9, var(--forge-muted) 42%);
+  border-bottom: 1px solid color-mix(in oklab, #67e8f9, transparent 78%);
+  background:
+    linear-gradient(90deg, color-mix(in oklab, #67e8f9, transparent 91%), transparent 58%),
+    color-mix(in oklab, #11151a, transparent 8%);
+}
+
+.assistantText__codeWindowDots {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.assistantText__codeWindowDots i {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--forge-muted), transparent 4%);
+  box-shadow: 0 0 0 1px color-mix(in oklab, #000, transparent 72%);
+}
+
+.assistantText__codeWindowDots i:nth-child(1) {
+  background: #fb7185;
+}
+
+.assistantText__codeWindowDots i:nth-child(2) {
+  background: #fbbf24;
+}
+
+.assistantText__codeWindowDots i:nth-child(3) {
+  background: #5eead4;
+}
+
+.assistantText__codeLanguage {
+  max-width: 52%;
+  padding: 2px 7px;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, #67e8f9, transparent 70%);
+  border-radius: 999px;
+  background: color-mix(in oklab, #67e8f9, transparent 88%);
+  color: color-mix(in oklab, #d7fff8, var(--forge-text) 18%);
   font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 11px;
-  font-weight: 650;
+  font-size: 10.5px;
+  font-weight: 720;
+  line-height: 1.2;
+  text-overflow: ellipsis;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .assistantText__codeBlock pre {
   max-width: 100%;
   margin: 0;
-  padding: 11px 12px;
+  padding: 12px 13px 12px 15px;
   overflow-x: auto;
+  border-left: 3px solid color-mix(in oklab, #5eead4, transparent 18%);
   color: color-mix(in oklab, var(--forge-text), #d7fff8 8%);
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 12.5px;
   line-height: 1.48;
+  tab-size: 2;
 }
 
 .assistantText__codeBlock code {
