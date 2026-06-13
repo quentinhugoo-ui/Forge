@@ -934,10 +934,10 @@ export function CanvasSurfacesSlice({
       }
       const rect = slot.getBoundingClientRect();
       const bounds = {
-        x: rect.x - NATIVE_MAPS_OVERSCAN_PX.left,
+        x: rect.x,
         y: rect.y,
-        width: rect.width + NATIVE_MAPS_OVERSCAN_PX.left,
-        height: rect.height + NATIVE_MAPS_OVERSCAN_PX.bottom
+        width: rect.width,
+        height: rect.height
       };
       if (bounds.width < 80 || bounds.height < 80) {
         retryTimer = window.setTimeout(scheduleSync, 80);
@@ -1059,10 +1059,10 @@ export function CanvasSurfacesSlice({
       }
       const rect = slot.getBoundingClientRect();
       const bounds = {
-        x: rect.x,
+        x: rect.x - NATIVE_MAPS_OVERSCAN_PX.left,
         y: rect.y,
-        width: rect.width,
-        height: rect.height
+        width: rect.width + NATIVE_MAPS_OVERSCAN_PX.left,
+        height: rect.height + NATIVE_MAPS_OVERSCAN_PX.bottom
       };
       if (bounds.width < 80 || bounds.height < 80) {
         retryTimer = window.setTimeout(scheduleSync, 80);
