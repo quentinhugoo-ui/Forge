@@ -446,8 +446,9 @@ describe("LLM multimodal attachments", () => {
   it("registers Airbnb as a Brain-backed module CodeAct", () => {
     expect(brainSource).toContain('pub const BRAIN_AIRBNB_COMMAND: &str = "/airbnb_"');
     expect(brainSource).toContain("BRAIN_CODEACT_ROUTING_RULES");
-    expect(brainSource).toContain("Use /airbnb_ only for explicit Airbnb, lodging, accommodation");
-    expect(brainSource).toContain("Do not use /airbnb_ for city facts, weather, geography, maps");
+    expect(brainSource).toContain("geographic place plus travel/vacation/stay lexical field means /airbnb_");
+    expect(brainSource).toContain("Use /airbnb_ when a geographic place appears with travel/vacation/stay language");
+    expect(brainSource).toContain("Do not use for city facts, local weather, geography, maps, or routes without travel/vacation/stay intent");
     expect(brainSource).toContain("brain_airbnb_codeact_template()");
     expect(mainSource).toContain('if (moduleId === "airbnb")');
     expect(mainSource).toContain('Template Airbnb: ${BRAIN_AIRBNB_COMMAND}');
@@ -455,6 +456,11 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("BRAIN_CODEACT_ROUTING_RULES");
     expect(mainSource).toContain("N'utilise ${BRAIN_GOOGLEWEB_COMMAND} que pour une recherche web generique");
     expect(mainSource).toContain("N'utilise pas ${BRAIN_GOOGLEWEB_COMMAND} pour une action Airbnb.");
+    expect(mainSource).toContain("function userTextHasTravelOrStayIntent");
+    expect(mainSource).toContain("function inferGeographicTargetFromUserText");
+    expect(mainSource).toContain("partir|aller");
+    expect(mainSource).toContain("applyGeographicTravelAirbnbFallback");
+    expect(mainSource).toContain("host_geographic_travel_fallback");
     expect(mainSource).toContain("executeAssistantAirbnbCodeAct");
     expect(mainSource).toContain("navigateNativeWebExplorerToAirbnb");
     expect(mainSource).toContain('parsed.hostname === "www.airbnb.com"');
@@ -467,9 +473,12 @@ describe("LLM multimodal attachments", () => {
     expect(brainSource).toContain("brain_maps_codeact_template()");
     expect(brainSource).toContain("Google Earth");
     expect(brainSource).toContain("local weather at a place");
+    expect(brainSource).toContain("geographic place detected alone means /maps_");
     expect(brainSource).toContain("prefer /maps_ over /sciencebrain_, /airbnb_, and /googleweb_");
-    expect(mainSource).toContain("de la meteo d'une ville");
-    expect(mainSource).toContain("Prefere ${BRAIN_MAPS_COMMAND} a ${BRAIN_SCIENCE_COMMAND}");
+    expect(mainSource).toContain("lieu geographique detecte seul = ${BRAIN_MAPS_COMMAND}");
+    expect(mainSource).toContain("lieu geographique + champ lexical voyage/vacances/sejour = ${BRAIN_AIRBNB_COMMAND}");
+    expect(mainSource).toContain("la meteo d'une ville");
+    expect(mainSource).toContain("ecris une phrase naturelle puis active ${BRAIN_MAPS_COMMAND}");
     expect(mainSource).toContain("function inferMapsTargetFromUserText");
     expect(mainSource).toContain("applyGeographicMapsFallback");
     expect(mainSource).toContain("parle|parles|raconte|dis");
