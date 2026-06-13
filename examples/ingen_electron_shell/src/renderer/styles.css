@@ -3998,7 +3998,7 @@ button {
 .chatCanvas__messages::-webkit-scrollbar-thumb {
   background: var(--forge-sidebar-bg);
   border: 0;
-  border-radius: 0;
+  border-radius: 1px;
   transition: background 140ms ease-out;
 }
 
