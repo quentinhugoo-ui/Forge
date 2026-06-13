@@ -4899,8 +4899,6 @@ button {
   --assistant-mark-line-soft: color-mix(in oklab, var(--forge-line), transparent 74%);
   --assistant-mark-label: color-mix(in oklab, var(--forge-muted), var(--forge-text) 24%);
   --assistant-mark-text: color-mix(in oklab, var(--forge-text), var(--forge-muted) 6%);
-  --assistant-mark-fill-chat: color-mix(in oklab, var(--forge-chat-bg), var(--forge-text) 3%);
-  --assistant-mark-fill-sidebar: color-mix(in oklab, var(--forge-sidebar-bg), transparent 28%);
   --assistant-mark-radius: 6px;
   display: block;
   width: 100%;
@@ -4975,32 +4973,60 @@ button {
 
 .assistantText__list {
   display: grid;
-  gap: 7px;
-  margin: 0;
-  padding-left: 20px;
+  gap: 12px;
+  margin: 2px 0;
+  padding-left: 0;
+  list-style: none;
 }
 
 .assistantText__list li {
+  position: relative;
   margin: 0;
-  padding: 3px 8px 3px 2px;
-  border-radius: var(--assistant-mark-radius);
+  padding: 0 0 0 21px;
+  color: var(--assistant-mark-text);
+  line-height: 1.48;
 }
 
-.assistantText__list li:nth-child(3n + 2) {
-  background: var(--assistant-mark-fill-chat);
+.assistantText__list li::before {
+  position: absolute;
+  top: 0.74em;
+  left: 4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px !important;
+  background: color-mix(in oklab, var(--assistant-mark-label), transparent 8%);
+  content: "";
+  transform: translateY(-50%);
 }
 
-.assistantText__list li:nth-child(4n) {
-  background: var(--assistant-mark-fill-sidebar);
+ol.assistantText__list {
+  counter-reset: assistant-ordered-list;
 }
 
-.assistantText__list li::marker {
+ol.assistantText__list li {
+  counter-increment: assistant-ordered-list;
+  padding-left: 31px;
+}
+
+ol.assistantText__list li::before {
+  top: 0.06em;
+  left: 0;
+  width: 20px;
+  height: auto;
+  background: transparent;
   color: var(--assistant-mark-label);
+  content: counter(assistant-ordered-list) ".";
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 1.45;
+  text-align: right;
+  transform: none;
 }
 
 .assistantText__taskList {
   display: grid;
-  gap: 0;
+  gap: 9px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -5014,24 +5040,13 @@ button {
   align-items: start;
   gap: 10px;
   margin: 0;
-  padding: 4px 8px 12px 6px;
-  border-radius: var(--assistant-mark-radius);
+  padding: 2px 0 12px;
   background: transparent;
   color: var(--assistant-mark-text);
 }
 
 .assistantText__taskItem:last-child {
-  padding-bottom: 4px;
-}
-
-.assistantText__taskItem:nth-child(3n + 2) {
-  --assistant-task-halo: var(--assistant-mark-fill-chat);
-  background: var(--assistant-mark-fill-chat);
-}
-
-.assistantText__taskItem:nth-child(4n) {
-  --assistant-task-halo: var(--assistant-mark-fill-sidebar);
-  background: var(--assistant-mark-fill-sidebar);
+  padding-bottom: 2px;
 }
 
 .assistantText__taskCheck {
