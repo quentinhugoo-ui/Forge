@@ -715,6 +715,13 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".assistantThinkingEvent__label strong");
   });
 
+  it("keeps uploaded visual media uncut while assistant thinking is pending", () => {
+    expect(rendererSource).toContain('preserveAspectRatio="xMidYMid meet"');
+    expect(stylesSource).toContain(".transcriptAttachment--video .transcriptAttachment__media");
+    expect(stylesSource).toContain("object-fit: contain");
+    expect(stylesSource).not.toContain("Fill the blob so no straight letterbox edge cuts through the feathered mask.");
+  });
+
   it("turns the composer send arrow into a pixel loader while a send is pending", () => {
     expect(rendererSource).toContain("composerSendBusy");
     expect(rendererSource).toContain("beginComposerSendBusy");
