@@ -21,6 +21,9 @@ export const AGENT_DOCUMENT_WRITE_COMMAND = "/agent_document_write_";
 export const AGENT_DOCUMENT_CONVERT_COMMAND = "/agent_document_convert_";
 export const AGENT_DEV_STATUS_COMMAND = "/agent_dev_status_";
 export const AGENT_DEV_DIFF_COMMAND = "/agent_dev_diff_";
+export const AGENT_DEV_COMMIT_COMMAND = "/agent_dev_commit_";
+export const AGENT_DEV_PUSH_COMMAND = "/agent_dev_push_";
+export const AGENT_GITHUB_PR_CREATE_COMMAND = "/agent_github_pr_create_";
 export const AGENT_DEV_CHECK_COMMAND = "/agent_dev_check_";
 export const AGENT_AUTOMATION_RECORD_COMMAND = "/agent_automation_record_";
 
@@ -48,6 +51,9 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_DOCUMENT_CONVERT_COMMAND,
   AGENT_DEV_STATUS_COMMAND,
   AGENT_DEV_DIFF_COMMAND,
+  AGENT_DEV_COMMIT_COMMAND,
+  AGENT_DEV_PUSH_COMMAND,
+  AGENT_GITHUB_PR_CREATE_COMMAND,
   AGENT_DEV_CHECK_COMMAND,
   AGENT_AUTOMATION_RECORD_COMMAND
 ] as const;
@@ -85,6 +91,9 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_DOCUMENT_CONVERT_COMMAND, "document text converted and verified"],
   [AGENT_DEV_STATUS_COMMAND, "repository status inspected"],
   [AGENT_DEV_DIFF_COMMAND, "repository diff inspected"],
+  [AGENT_DEV_COMMIT_COMMAND, "confirmed Git commit verified"],
+  [AGENT_DEV_PUSH_COMMAND, "confirmed Git push verified"],
+  [AGENT_GITHUB_PR_CREATE_COMMAND, "confirmed GitHub pull request verified"],
   [AGENT_DEV_CHECK_COMMAND, "confirmed developer check completed"],
   [AGENT_AUTOMATION_RECORD_COMMAND, "confirmed automation goal recorded"]
 ]);
@@ -115,6 +124,9 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["document.convert_text", AGENT_DOCUMENT_CONVERT_COMMAND],
   ["dev.repo_status", AGENT_DEV_STATUS_COMMAND],
   ["dev.git_diff", AGENT_DEV_DIFF_COMMAND],
+  ["dev.git_commit", AGENT_DEV_COMMIT_COMMAND],
+  ["dev.git_push", AGENT_DEV_PUSH_COMMAND],
+  ["dev.github_pr_create", AGENT_GITHUB_PR_CREATE_COMMAND],
   ["dev.run_check", AGENT_DEV_CHECK_COMMAND],
   ["automation.record", AGENT_AUTOMATION_RECORD_COMMAND]
 ] as const;
@@ -145,6 +157,9 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["document_convert_text", AGENT_DOCUMENT_CONVERT_COMMAND],
   ["dev_repo_status", AGENT_DEV_STATUS_COMMAND],
   ["dev_git_diff", AGENT_DEV_DIFF_COMMAND],
+  ["dev_git_commit", AGENT_DEV_COMMIT_COMMAND],
+  ["dev_git_push", AGENT_DEV_PUSH_COMMAND],
+  ["dev_github_pr_create", AGENT_GITHUB_PR_CREATE_COMMAND],
   ["dev_run_check", AGENT_DEV_CHECK_COMMAND],
   ["automation_record", AGENT_AUTOMATION_RECORD_COMMAND]
 ]);

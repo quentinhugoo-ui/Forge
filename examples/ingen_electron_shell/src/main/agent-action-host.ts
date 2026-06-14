@@ -98,6 +98,9 @@ const AGENT_ACTION_EVENT_HINTS = [
   "document.convert_text:/agent_document_convert_",
   "dev.repo_status:/agent_dev_status_",
   "dev.git_diff:/agent_dev_diff_",
+  "dev.git_commit:/agent_dev_commit_",
+  "dev.git_push:/agent_dev_push_",
+  "dev.github_pr_create:/agent_github_pr_create_",
   "dev.run_check:/agent_dev_check_",
   "automation.record:/agent_automation_record_"
 ];
@@ -128,6 +131,9 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   document_convert_text: "/agent_document_convert_",
   dev_repo_status: "/agent_dev_status_",
   dev_git_diff: "/agent_dev_diff_",
+  dev_git_commit: "/agent_dev_commit_",
+  dev_git_push: "/agent_dev_push_",
+  dev_github_pr_create: "/agent_github_pr_create_",
   dev_run_check: "/agent_dev_check_",
   automation_record: "/agent_automation_record_"
 };
@@ -424,7 +430,7 @@ export function agentActionRoutingHint(): string {
   return [
     "LOCAL_ACTION_TOOLS v1",
     "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, write/inspect documents, run commands, control Windows settings/tools, install/update software, download assets, or operate the workspace/computer.",
-    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text",
+    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create",
     "windows_reach=shell.full can invoke PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process, ms-settings URIs, installers, CLIs, and other native Windows tools when confirmed:true is appropriate.",
     "computer_use=Inspect GUI first, then act once, then verify by appshot/window state. Never approve security, payment, credential, destructive, or UAC prompts for the user.",
     "format=Emit AGENT_ACTION_JSON only when real execution is needed, then wait for AGENT_ACTION_RESULT. The AGENT_ACTION_JSON marker must start its own line, with no prose before it. Never fake tool events.",
@@ -625,6 +631,10 @@ function commandExitVerification(execution: { commandLine: string; accepted: boo
   ]);
 }
 
+function commandExitProbe(execution: { commandLine: string; accepted: boolean; exitCode: number | null; timedOut: boolean }): AgentVerificationProbe {
+  return commandExitVerification(execution).probes[0]!;
+}
+
 type GitExecution = {
   accepted: boolean;
   commandLine: string;
@@ -665,6 +675,40 @@ function executeGit(config: AgentActionHostConfig, args: string[], timeoutMs = 1
       : actionError(
           "rust_unavailable",
           timedOut ? `Git command timed out after ${timeoutMs}ms.` : child.error?.message ?? `Git exited with status ${exitCode ?? "unknown"}.`,
+          { args, stderr, exitCode, timedOut }
+        )
+  };
+}
+
+function executeGh(config: AgentActionHostConfig, args: string[], timeoutMs = 30_000): GitExecution {
+  const startedAt = Date.now();
+  const child = spawnSync("gh", args, {
+    cwd: config.workspaceRoot,
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: timeoutMs,
+    windowsHide: true
+  });
+  const durationMs = Math.max(0, Date.now() - startedAt);
+  const stdout = child.stdout ?? "";
+  const stderr = child.stderr ?? "";
+  const exitCode = child.status ?? null;
+  const timedOut = commandTimedOut(child.error);
+  const accepted = !child.error && child.status === 0;
+  const commandLine = renderCommandLine("gh", args);
+  return {
+    accepted,
+    commandLine,
+    exitCode,
+    durationMs,
+    stdout,
+    stderr,
+    timedOut,
+    error: accepted
+      ? undefined
+      : actionError(
+          "rust_unavailable",
+          timedOut ? `GitHub CLI command timed out after ${timeoutMs}ms.` : child.error?.message ?? `GitHub CLI exited with status ${exitCode ?? "unknown"}.`,
           { args, stderr, exitCode, timedOut }
         )
   };
@@ -878,7 +922,15 @@ export function createDocumentMediaPolicy(_config: AgentActionHostConfig): Agent
 export function createDeveloperAutomationPolicy(_config: AgentActionHostConfig): AgentDeveloperAutomationPolicy {
   const policy: AgentDeveloperAutomationPolicy = {
     schema: "ingen.developer_automation.policy.v1",
-    executableActions: ["dev_repo_status", "dev_git_diff", "dev_run_check", "automation_record"],
+    executableActions: [
+      "dev_repo_status",
+      "dev_git_diff",
+      "dev_git_commit",
+      "dev_git_push",
+      "dev_github_pr_create",
+      "dev_run_check",
+      "automation_record"
+    ],
     repoInspectionRequiresConfirmation: false,
     commandChecksRequireConfirmation: true,
     gitMutationRequiresConfirmation: true,
@@ -1335,6 +1387,60 @@ function createExecutableActionCapabilities(): AgentActionCapability[] {
       notes: "Use this to summarize work before commit or review."
     }),
     actionCapability({
+      id: "dev.git_commit",
+      family: "dev.git",
+      surface: "developer.git",
+      title: "Create confirmed Git commit",
+      status: "available",
+      risk: "workspace_write",
+      operations: ["inspect status before commit", "stage explicit paths when provided", "create commit", "verify HEAD changed"],
+      underlyingTools: ["git status --porcelain=v1", "git add -- <paths>", "git commit -m", "git rev-parse HEAD"],
+      fallbacks: ["manual staging", "shell.full confirmed git commit"],
+      verification: ["command_exit", "filesystem", "artifact_hash"],
+      approval: "confirmed",
+      executableActionIds: ["dev.git_commit"],
+      requiresApproval: true,
+      writes: true,
+      description: "Create a confirmed Git commit from explicit paths or already-staged changes, then verify the new HEAD hash.",
+      notes: "This never stages the whole repository implicitly; pass paths for newly selected files or stage beforehand."
+    }),
+    actionCapability({
+      id: "dev.git_push",
+      family: "dev.git",
+      surface: "developer.git",
+      title: "Push confirmed Git branch",
+      status: "available",
+      risk: "external_ui",
+      operations: ["inspect local branch", "push branch to remote", "verify remote head"],
+      underlyingTools: ["git status --porcelain=v1 -b", "git push", "git ls-remote --heads"],
+      fallbacks: ["GitHub connector push", "shell.full confirmed git push"],
+      verification: ["command_exit", "artifact_hash"],
+      approval: "confirmed",
+      executableActionIds: ["dev.git_push"],
+      requiresApproval: true,
+      writes: true,
+      description: "Push the current or requested branch to a remote and verify the remote head matches local HEAD.",
+      notes: "Network write; requires confirmed:true and never extracts credentials."
+    }),
+    actionCapability({
+      id: "dev.github_pr_create",
+      family: "dev.git",
+      surface: "developer.github",
+      title: "Create confirmed GitHub pull request",
+      status: "available",
+      risk: "external_ui",
+      operations: ["inspect GitHub CLI auth", "create PR non-interactively", "verify PR URL with gh pr view"],
+      underlyingTools: ["gh auth status --active", "gh pr create", "gh pr view"],
+      fallbacks: ["GitHub connector create_pull_request", "manual PR URL"],
+      verification: ["command_exit", "artifact_hash"],
+      approval: "confirmed",
+      executableActionIds: ["dev.github_pr_create"],
+      requiresApproval: true,
+      writes: true,
+      description: "Create a GitHub PR with explicit title/body/head/base inputs and verify the created URL.",
+      notes: "MCP stays out of scope; this uses the GitHub CLI when available and authenticated."
+    }),
+    actionCapability({
       id: "dev.run_check",
       family: "dev.git",
       surface: "developer.command",
@@ -1626,11 +1732,11 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       risk: "workspace_write",
       operations: ["inspect repo", "edit code", "run tests", "commit", "push", "open PR"],
       underlyingTools: ["git", "npm", "cargo", "gh", "language toolchains"],
-      fallbacks: ["MCP GitHub", "shell.full"],
+      fallbacks: ["GitHub connector", "shell.full"],
       verification: ["command_exit", "filesystem", "mcp_result"],
       approval: "confirmed",
       writes: true,
-      notes: "Use repo wrappers where required; preserve unrelated user changes."
+      notes: "Git status, diff, commit, push and PR creation now have direct actions; broader CI/review flows remain planned."
     }),
     atlasEntry({
       id: "virtualization.wsl",
@@ -1889,7 +1995,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `browser_web=download:${manifest.browserWeb.downloadRequiresConfirmation ? "confirmed" : "open"} navigation:${manifest.browserWeb.navigationRequiresConfirmation ? "confirmed" : "open"} submission:${manifest.browserWeb.submissionRequiresConfirmation ? "confirmed" : "open"} artifact:${manifest.browserWeb.artifactPolicy}`,
     `document_media=workspace_writes:${manifest.documentMedia.workspaceWritesRequireConfirmation ? "confirmed" : "open"} computer_writes:${manifest.documentMedia.computerScopeWritesRequireConfirmation ? "confirmed" : "open"} office_com:${manifest.documentMedia.officeComRequiresConfirmation ? "confirmed" : "open"} macros:${manifest.documentMedia.macroPolicy} artifact:${manifest.documentMedia.artifactPolicy}`,
     `developer_automation=repo_inspect:${manifest.developerAutomation.repoInspectionRequiresConfirmation ? "confirmed" : "open"} checks:${manifest.developerAutomation.commandChecksRequireConfirmation ? "confirmed" : "open"} git_mutation:${manifest.developerAutomation.gitMutationRequiresConfirmation ? "confirmed" : "open"} cloud_writes:${manifest.developerAutomation.cloudWritesRequireConfirmation ? "confirmed" : "open"} mcp:${manifest.developerAutomation.mcpToolCallingStatus} automation:${manifest.developerAutomation.automationPersistenceRequiresConfirmation ? "confirmed" : "open"}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.run_check automation.record",
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.run_check automation.record",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -1903,7 +2009,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
-    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes task_scheduler_thread_wakeups pr_creation full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop",
+    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes task_scheduler_thread_wakeups full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -3449,8 +3555,8 @@ function parseGitStatusPorcelain(output: string): {
   for (const line of output.split(/\r?\n/)) {
     if (!line) continue;
     if (line.startsWith("## ")) {
-      const branchMatch = /^## ([^.\s]+|[^.\s]+\.{3}[^.\s]+)/.exec(line);
-      branch = branchMatch?.[1]?.split("...")[0];
+      const branchPart = line.slice(3).split("...", 1)[0]?.split(/\s+/, 1)[0];
+      branch = branchPart && branchPart !== "HEAD" && branchPart !== "No" ? branchPart : undefined;
       const aheadMatch = /\[ahead (\d+)/.exec(line);
       const behindMatch = /behind (\d+)/.exec(line);
       ahead = aheadMatch ? Number(aheadMatch[1]) : undefined;
@@ -3575,6 +3681,304 @@ async function devGitDiffAction(config: AgentActionHostConfig, request: AgentAct
     stdoutPreview: statDiff.stdout.slice(0, MAX_PREVIEW_CHARS),
     observedChanges: [`git_diff_bytes:${statDiff.stdout.length}`],
     verification: commandExitVerification({ commandLine: statDiff.commandLine, accepted: true, exitCode: statDiff.exitCode, timedOut: statDiff.timedOut }),
+    developer: summary
+  });
+}
+
+function gitStatusSummary(config: AgentActionHostConfig, action: AgentDeveloperRepoSummary["action"], status: GitExecution): AgentDeveloperRepoSummary {
+  const parsed = status.accepted
+    ? parseGitStatusPorcelain(status.stdout)
+    : { changedFiles: 0, stagedFiles: 0, unstagedFiles: 0, untrackedFiles: 0 };
+  return developerRepoSummary({
+    action,
+    root: config.workspaceRoot,
+    branch: parsed.branch,
+    ahead: parsed.ahead,
+    behind: parsed.behind,
+    changedFiles: parsed.changedFiles,
+    stagedFiles: parsed.stagedFiles,
+    unstagedFiles: parsed.unstagedFiles,
+    untrackedFiles: parsed.untrackedFiles,
+    commandLine: status.commandLine,
+    exitCode: status.exitCode,
+    durationMs: status.durationMs
+  });
+}
+
+function gitCommandFailure(config: AgentActionHostConfig, request: AgentActionRequest, routeId: string, execution: GitExecution): AgentActionResult {
+  return result(config, request, {
+    accepted: false,
+    commandLine: execution.commandLine,
+    routeId,
+    exitCode: execution.exitCode,
+    durationMs: execution.durationMs,
+    timedOut: execution.timedOut,
+    stdoutPreview: execution.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+    failureCategory: execution.timedOut ? "timeout" : "command_error",
+    verification: commandExitVerification({
+      commandLine: execution.commandLine,
+      accepted: false,
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut
+    }),
+    error: execution.error
+  });
+}
+
+function trimmedGitHead(config: AgentActionHostConfig): string {
+  const head = executeGit(config, ["rev-parse", "HEAD"]);
+  return head.accepted ? head.stdout.trim() : "";
+}
+
+async function devGitCommitAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Git commit requires confirmed:true.", request)
+    });
+  }
+  const message = (request.title ?? request.text ?? request.content ?? "").trim();
+  if (!message) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "title, text or content is required as the Git commit message.", request)
+    });
+  }
+  const requestedPaths = (request.paths ?? (request.path ? [request.path] : [])).map((path) => path.trim()).filter(Boolean);
+  const beforeStatus = executeGit(config, ["status", "--porcelain=v1", "-b"]);
+  if (!beforeStatus.accepted) {
+    return gitCommandFailure(config, request, "dev.git_commit.status_before", beforeStatus);
+  }
+  if (requestedPaths.length > 0) {
+    const add = executeGit(config, ["add", "--", ...requestedPaths], 60_000);
+    if (!add.accepted) {
+      return gitCommandFailure(config, request, "dev.git_commit.add", add);
+    }
+  }
+  const stagedStatus = executeGit(config, ["status", "--porcelain=v1", "-b"]);
+  const staged = stagedStatus.accepted ? parseGitStatusPorcelain(stagedStatus.stdout).stagedFiles : 0;
+  if (staged <= 0) {
+    return result(config, request, {
+      accepted: false,
+      routeId: "dev.git_commit",
+      commandLine: stagedStatus.commandLine,
+      exitCode: stagedStatus.exitCode,
+      durationMs: stagedStatus.durationMs,
+      stdoutPreview: stagedStatus.stdout.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: "unverifiable",
+      error: actionError("bad_payload", "No staged changes are available for commit; pass explicit paths or stage files first.", request),
+      developer: gitStatusSummary(config, "git_commit", stagedStatus)
+    });
+  }
+  const beforeHead = trimmedGitHead(config);
+  const commit = executeGit(config, ["commit", "-m", message], 120_000);
+  if (!commit.accepted) {
+    return gitCommandFailure(config, request, "dev.git_commit", commit);
+  }
+  const afterHead = trimmedGitHead(config);
+  const afterStatus = executeGit(config, ["status", "--porcelain=v1", "-b"]);
+  const summary = {
+    ...gitStatusSummary(config, "git_commit", afterStatus),
+    commitHash: afterHead,
+    commandLine: commit.commandLine,
+    exitCode: commit.exitCode,
+    durationMs: commit.durationMs
+  };
+  const verification = verificationResult([
+    commandExitProbe({ commandLine: commit.commandLine, accepted: commit.accepted, exitCode: commit.exitCode, timedOut: commit.timedOut }),
+    verificationProbe({
+      id: "git.commit.head_changed",
+      kind: "artifact_hash",
+      target: config.workspaceRoot,
+      expectation: "HEAD changes after commit",
+      actual: `before=${beforeHead || "none"} after=${afterHead || "none"}`,
+      passed: afterHead.length > 0 && afterHead !== beforeHead
+    }),
+    verificationProbe({
+      id: "git.commit.status_after",
+      kind: "command_exit",
+      target: afterStatus.commandLine,
+      expectation: "post-commit status query exits with 0",
+      actual: `exit_code=${afterStatus.exitCode ?? "unknown"}`,
+      passed: afterStatus.accepted
+    })
+  ]);
+  return result(config, request, {
+    accepted: true,
+    commandLine: commit.commandLine,
+    routeId: "dev.git_commit",
+    exitCode: commit.exitCode,
+    durationMs: commit.durationMs,
+    stdoutPreview: commit.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: commit.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`git_commit:${afterHead}`, `git_staged_after:${summary.stagedFiles}`, `git_changed_after:${summary.changedFiles}`],
+    verification,
+    developer: summary
+  });
+}
+
+async function devGitPushAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Git push requires confirmed:true.", request)
+    });
+  }
+  const status = executeGit(config, ["status", "--porcelain=v1", "-b"]);
+  if (!status.accepted) {
+    return gitCommandFailure(config, request, "dev.git_push.status_before", status);
+  }
+  const parsed = parseGitStatusPorcelain(status.stdout);
+  const branch = (request.headBranch ?? parsed.branch ?? "").trim();
+  if (!branch) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "unverifiable",
+      error: actionError("bad_payload", "headBranch is required when the current Git branch cannot be detected.", request),
+      developer: gitStatusSummary(config, "git_push", status)
+    });
+  }
+  const remote = (request.remote ?? "origin").trim();
+  const head = trimmedGitHead(config);
+  const push = executeGit(config, ["push", remote, branch], 120_000);
+  if (!push.accepted) {
+    return gitCommandFailure(config, request, "dev.git_push", push);
+  }
+  const lsRemote = executeGit(config, ["ls-remote", "--heads", remote, branch], 30_000);
+  const remoteMatches = Boolean(head && lsRemote.accepted && lsRemote.stdout.includes(head));
+  const afterStatus = executeGit(config, ["status", "--porcelain=v1", "-b"]);
+  const summary = {
+    ...gitStatusSummary(config, "git_push", afterStatus),
+    commitHash: head,
+    remote,
+    commandLine: push.commandLine,
+    exitCode: push.exitCode,
+    durationMs: push.durationMs
+  };
+  const verification = verificationResult([
+    commandExitProbe({ commandLine: push.commandLine, accepted: push.accepted, exitCode: push.exitCode, timedOut: push.timedOut }),
+    verificationProbe({
+      id: "git.push.remote_head",
+      kind: "artifact_hash",
+      target: `${remote}/${branch}`,
+      expectation: "remote branch head matches local HEAD",
+      actual: `local=${head || "none"} remote_output_bytes=${Buffer.byteLength(lsRemote.stdout, "utf8")}`,
+      passed: remoteMatches
+    })
+  ]);
+  return result(config, request, {
+    accepted: true,
+    commandLine: push.commandLine,
+    routeId: "dev.git_push",
+    exitCode: push.exitCode,
+    durationMs: push.durationMs,
+    stdoutPreview: push.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: push.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`git_pushed:${remote}/${branch}`, `git_head:${head}`],
+    verification,
+    developer: summary
+  });
+}
+
+function extractGithubPrUrl(output: string): string {
+  return output.split(/\s+/).find((token) => /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\/?$/.test(token.trim()))?.trim() ?? "";
+}
+
+async function devGithubPrCreateAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "GitHub PR creation requires confirmed:true.", request)
+    });
+  }
+  const title = (request.title ?? "").trim();
+  if (!title) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "title is required for GitHub PR creation.", request)
+    });
+  }
+  const status = executeGit(config, ["status", "--porcelain=v1", "-b"]);
+  if (!status.accepted) {
+    return gitCommandFailure(config, request, "dev.github_pr_create.status_before", status);
+  }
+  const parsed = parseGitStatusPorcelain(status.stdout);
+  const headBranch = (request.headBranch ?? parsed.branch ?? "").trim();
+  if (!headBranch) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "unverifiable",
+      error: actionError("bad_payload", "headBranch is required when the current Git branch cannot be detected.", request),
+      developer: gitStatusSummary(config, "github_pr_create", status)
+    });
+  }
+  if ((parsed.ahead ?? 0) > 0) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "unverifiable",
+      error: actionError("bad_payload", "Branch has unpushed commits; run confirmed dev_git_push before creating the PR.", { headBranch, ahead: parsed.ahead }),
+      developer: gitStatusSummary(config, "github_pr_create", status)
+    });
+  }
+  const auth = executeGh(config, ["auth", "status", "--active"], 15_000);
+  if (!auth.accepted) {
+    return gitCommandFailure(config, request, "dev.github_pr_create.auth", auth);
+  }
+  const args = ["pr", "create", "--title", title, "--body", request.content ?? request.text ?? "", "--head", headBranch];
+  if (request.baseBranch?.trim()) {
+    args.push("--base", request.baseBranch.trim());
+  }
+  if (request.draft === true) {
+    args.push("--draft");
+  }
+  const created = executeGh(config, args, 120_000);
+  if (!created.accepted) {
+    return gitCommandFailure(config, request, "dev.github_pr_create", created);
+  }
+  const prUrl = extractGithubPrUrl(created.stdout);
+  const viewed = prUrl ? executeGh(config, ["pr", "view", prUrl, "--json", "url,state,headRefName,baseRefName"], 30_000) : undefined;
+  const viewMatches = Boolean(viewed?.accepted && prUrl && viewed.stdout.includes(prUrl) && viewed.stdout.includes(headBranch));
+  const summary = {
+    ...gitStatusSummary(config, "github_pr_create", status),
+    prUrl,
+    commandLine: created.commandLine,
+    exitCode: created.exitCode,
+    durationMs: created.durationMs
+  };
+  const verification = verificationResult([
+    commandExitProbe({ commandLine: created.commandLine, accepted: created.accepted, exitCode: created.exitCode, timedOut: created.timedOut }),
+    verificationProbe({
+      id: "github.pr.url",
+      kind: "artifact_hash",
+      target: prUrl || "gh pr create stdout",
+      expectation: "created PR URL is printed by gh",
+      actual: prUrl || "missing",
+      passed: Boolean(prUrl)
+    }),
+    verificationProbe({
+      id: "github.pr.view",
+      kind: "command_exit",
+      target: viewed?.commandLine ?? "gh pr view",
+      expectation: "gh pr view confirms URL and head branch",
+      actual: `accepted=${viewed?.accepted ?? false} stdout_bytes=${Buffer.byteLength(viewed?.stdout ?? "", "utf8")}`,
+      passed: viewMatches
+    })
+  ]);
+  return result(config, request, {
+    accepted: true,
+    commandLine: created.commandLine,
+    routeId: "dev.github_pr_create",
+    exitCode: created.exitCode,
+    durationMs: created.durationMs,
+    stdoutPreview: created.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: created.stderr.slice(0, MAX_PREVIEW_CHARS),
+    artifacts: prUrl ? [prUrl] : [],
+    observedChanges: prUrl ? [`github_pr:${prUrl}`, `github_head:${headBranch}`] : [`github_head:${headBranch}`],
+    verification,
     developer: summary
   });
 }
@@ -3720,6 +4124,12 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return await devRepoStatusAction(config, request);
       case "dev_git_diff":
         return await devGitDiffAction(config, request);
+      case "dev_git_commit":
+        return await devGitCommitAction(config, request);
+      case "dev_git_push":
+        return await devGitPushAction(config, request);
+      case "dev_github_pr_create":
+        return await devGithubPrCreateAction(config, request);
       case "dev_run_check":
         return await devRunCheckAction(config, request);
       case "automation_record":

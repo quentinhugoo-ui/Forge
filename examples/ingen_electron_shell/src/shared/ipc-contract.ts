@@ -595,7 +595,14 @@ export interface AgentDocumentMediaPolicy {
   proofHash: string;
 }
 
-export type AgentDeveloperAutomationAction = "repo_status" | "git_diff" | "run_check" | "record_automation";
+export type AgentDeveloperAutomationAction =
+  | "repo_status"
+  | "git_diff"
+  | "git_commit"
+  | "git_push"
+  | "github_pr_create"
+  | "run_check"
+  | "record_automation";
 
 export interface AgentDeveloperRepoSummary {
   schema: "ingen.developer.repo_summary.v1";
@@ -609,6 +616,9 @@ export interface AgentDeveloperRepoSummary {
   unstagedFiles: number;
   untrackedFiles: number;
   diffStat?: string;
+  commitHash?: string;
+  remote?: string;
+  prUrl?: string;
   commandLine?: string;
   exitCode?: number | null;
   durationMs?: number;
@@ -697,6 +707,9 @@ export type AgentActionKind =
   | "document_convert_text"
   | "dev_repo_status"
   | "dev_git_diff"
+  | "dev_git_commit"
+  | "dev_git_push"
+  | "dev_github_pr_create"
   | "dev_run_check"
   | "automation_record";
 
@@ -716,6 +729,11 @@ export interface AgentActionRequest {
   url?: string;
   content?: string;
   title?: string;
+  baseBranch?: string;
+  headBranch?: string;
+  remote?: string;
+  paths?: string[];
+  draft?: boolean;
   maxResults?: number;
   confirmed?: boolean;
   recursive?: boolean;
@@ -890,6 +908,9 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "document_convert_text",
     "dev_repo_status",
     "dev_git_diff",
+    "dev_git_commit",
+    "dev_git_push",
+    "dev_github_pr_create",
     "dev_run_check",
     "automation_record"
   ];
@@ -910,12 +931,23 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
       return false;
     }
   }
+  for (const key of ["baseBranch", "headBranch", "remote"] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
+      return false;
+    }
+  }
   for (const key of ["windowTitle", "text"] as const) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
       return false;
     }
   }
   if (candidate.args !== undefined && (!Array.isArray(candidate.args) || !candidate.args.every((arg) => typeof arg === "string"))) {
+    return false;
+  }
+  if (candidate.paths !== undefined && (!Array.isArray(candidate.paths) || !candidate.paths.every((path) => typeof path === "string"))) {
+    return false;
+  }
+  if (candidate.draft !== undefined && typeof candidate.draft !== "boolean") {
     return false;
   }
   if (

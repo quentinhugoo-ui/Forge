@@ -62,6 +62,9 @@ describe("agent action host", () => {
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("document.inspect");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("document.write_json");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.repo_status");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.git_commit");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.git_push");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.github_pr_create");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("automation.record");
     expect(manifest.capabilityAtlas.length).toBeGreaterThanOrEqual(15);
     expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("windows.wmi");
@@ -102,6 +105,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("events=fs.list:/agent_list_");
     expect(promptManifest).toContain("fs.delete_tree:/agent_delete_tree_");
     expect(promptManifest).toContain("shell.full:/agent_shell_");
+    expect(promptManifest).toContain("dev.github_pr_create:/agent_github_pr_create_");
     expect(promptManifest).toContain("capability_atlas=count:");
     expect(promptManifest).toContain("manifest_hash=");
     expect(promptManifest).toContain("atlas_hash=");
@@ -177,6 +181,9 @@ describe("agent action host", () => {
       "document.convert_text",
       "dev.repo_status",
       "dev.git_diff",
+      "dev.git_commit",
+      "dev.git_push",
+      "dev.github_pr_create",
       "dev.run_check",
       "automation.record"
     ]);
@@ -309,7 +316,15 @@ describe("agent action host", () => {
     });
 
     expect(policy.proofHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(policy.executableActions).toEqual(["dev_repo_status", "dev_git_diff", "dev_run_check", "automation_record"]);
+    expect(policy.executableActions).toEqual([
+      "dev_repo_status",
+      "dev_git_diff",
+      "dev_git_commit",
+      "dev_git_push",
+      "dev_github_pr_create",
+      "dev_run_check",
+      "automation_record"
+    ]);
     expect(policy.repoInspectionRequiresConfirmation).toBe(false);
     expect(policy.commandChecksRequireConfirmation).toBe(true);
     expect(policy.gitMutationRequiresConfirmation).toBe(true);
@@ -732,6 +747,54 @@ describe("agent action host", () => {
       });
       expect(diff.accepted).toBe(true);
       expect(diff.developer?.diffStat).toContain("tracked.txt");
+
+      const rejectedCommit = await executeAgentActionRequest(config, {
+        action: "dev_git_commit",
+        title: "Update tracked fixture",
+        paths: ["tracked.txt"]
+      });
+      expect(rejectedCommit.accepted).toBe(false);
+      expect(rejectedCommit.error?.message).toContain("confirmed:true");
+
+      const commit = await executeAgentActionRequest(config, {
+        action: "dev_git_commit",
+        title: "Update tracked fixture",
+        paths: ["tracked.txt"],
+        confirmed: true
+      });
+      expect(commit.accepted).toBe(true);
+      expect(commit.routeId).toBe("dev.git_commit");
+      expect(commit.developer?.action).toBe("git_commit");
+      expect(commit.developer?.commitHash).toMatch(/^[a-f0-9]{40}$/);
+      expect(commit.verification?.passed).toBe(true);
+
+      const remotePath = join(config.workspaceRoot, ".git", "agent-action-remote.git");
+      spawnSync("git", ["init", "--bare", remotePath], { cwd: config.workspaceRoot, encoding: "utf8", stdio: "pipe" });
+      spawnSync("git", ["remote", "add", "origin", remotePath], { cwd: config.workspaceRoot, encoding: "utf8", stdio: "pipe" });
+      const push = await executeAgentActionRequest(config, {
+        action: "dev_git_push",
+        remote: "origin",
+        confirmed: true
+      });
+      expect(push.accepted).toBe(true);
+      expect(push.routeId).toBe("dev.git_push");
+      expect(push.developer?.action).toBe("git_push");
+      expect(push.developer?.remote).toBe("origin");
+      expect(push.verification?.passed).toBe(true);
+
+      const rejectedPr = await executeAgentActionRequest(config, {
+        action: "dev_github_pr_create",
+        title: "Test PR"
+      });
+      expect(rejectedPr.accepted).toBe(false);
+      expect(rejectedPr.error?.message).toContain("confirmed:true");
+
+      const missingPrTitle = await executeAgentActionRequest(config, {
+        action: "dev_github_pr_create",
+        confirmed: true
+      });
+      expect(missingPrTitle.accepted).toBe(false);
+      expect(missingPrTitle.error?.message).toContain("title is required");
 
       const rejectedCheck = await executeAgentActionRequest(config, {
         action: "dev_run_check",

@@ -310,7 +310,7 @@ Acceptance:
 - It can call an MCP tool and use the result in the same loop.
 - Background work is visible, cancellable and summarized.
 
-Status: implemented for the planned scope. The host now exposes `AgentDeveloperAutomationPolicy`, executable developer actions for Git status, Git diff and confirmed workspace checks, plus a confirmed append-only automation ledger record for visible resumable/background goals. Dev results include command exit verification, dirty/staged/untracked counts, diff stats and proof hashes. Real MCP `tools/list`/`tools/call`, cloud CLI writes, PR creation, subagents/hooks and OS-level scheduled/thread wakeups remain planned connector backends rather than fake direct execution.
+Status: partially executable beyond the planned scope. The host now exposes `AgentDeveloperAutomationPolicy` with direct GitHub/Git actions for repo status, diff, confirmed commit, confirmed push and confirmed PR creation. Commit stages only explicit `paths` or already-staged changes, then verifies a new `HEAD`; push verifies the remote branch head with `git ls-remote`; PR creation uses non-interactive `gh pr create` and verifies the resulting URL with `gh pr view`. Dev checks and automation ledger recording remain as before. Real MCP `tools/list`/`tools/call`, cloud CLI writes, subagents/hooks, CI/review automation and OS-level scheduled/thread wakeups remain planned connector backends rather than fake direct execution.
 
 ### 10. UX, Events, Audit And Benchmarks
 
@@ -333,7 +333,7 @@ Acceptance:
 - The UI never says work was done when no observed state changed.
 - Benchmarks prove success, retry and safe blocking behavior.
 
-Status: implemented for the planned scope. Runtime events already render English labels, running-to-completed transitions, expandable command trees, file modification counters, context compaction markers and final loop summaries. The shared `AGENT_ACTION_BENCHMARK_SUITE` now records the required local-agent benchmark contract across filesystem, code, install/update, GUI, browser, document, Windows setting, process/service, scheduler, WSL/dev, Git/PR, cloud, blocked-danger, context compaction and final-summary cases. Scheduler, PR and cloud write execution remain planned backends; the benchmark suite deliberately marks them as retry/blocked unless a verified runtime route exists.
+Status: implemented for the planned scope, with Git/PR promoted to executable. Runtime events already render English labels, running-to-completed transitions, expandable command trees, file modification counters, context compaction markers and final loop summaries. The shared `AGENT_ACTION_BENCHMARK_SUITE` now records the required local-agent benchmark contract across filesystem, code, install/update, GUI, browser, document, Windows setting, process/service, scheduler, WSL/dev, Git/PR, cloud, blocked-danger, context compaction and final-summary cases. Git/PR now expects verified confirmed execution; scheduler and cloud write execution remain planned/blocked unless a verified runtime route exists.
 
 ## Public Interfaces
 

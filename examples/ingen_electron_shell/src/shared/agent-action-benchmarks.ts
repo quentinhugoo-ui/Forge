@@ -180,15 +180,15 @@ export const AGENT_ACTION_BENCHMARK_SUITE: readonly AgentActionBenchmarkCase[] =
     id: "git.pr.workflow",
     surface: "git_pr",
     userGoal: "inspect work, commit and prepare a pull request",
-    primaryActionId: "dev.repo_status",
-    fallbackActionIds: ["dev.git_diff", "shell.full", "planned:github.pr"],
-    eventCommand: "/agent_dev_status_",
-    eventLabel: "repository status inspected",
+    primaryActionId: "dev.github_pr_create",
+    fallbackActionIds: ["dev.git_commit", "dev.git_push", "dev.git_diff", "dev.repo_status", "shell.full"],
+    eventCommand: "/agent_github_pr_create_",
+    eventLabel: "confirmed GitHub pull request verified",
     expectedOutcome: "success",
-    approval: "none",
+    approval: "prompt",
     evidence: ["command_exit", "runtime_event"],
-    observedState: "dirty/staged/untracked counts are returned before mutation",
-    proofRule: "Git mutation and PR creation remain confirmed; read-only repo inspection is open."
+    observedState: "commit hash, pushed remote head or PR URL is verified by the runtime before success",
+    proofRule: "Git mutation and PR creation must stay confirmed and must not report success without AGENT_ACTION_RESULT verification."
   },
   {
     id: "cloud.cli.write",

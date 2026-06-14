@@ -10,8 +10,11 @@ import {
   AGENT_DOCUMENT_WRITE_COMMAND,
   AGENT_AUTOMATION_RECORD_COMMAND,
   AGENT_DEV_CHECK_COMMAND,
+  AGENT_DEV_COMMIT_COMMAND,
   AGENT_DEV_DIFF_COMMAND,
+  AGENT_DEV_PUSH_COMMAND,
   AGENT_DEV_STATUS_COMMAND,
+  AGENT_GITHUB_PR_CREATE_COMMAND,
   AGENT_APPSHOT_COMMAND,
   AGENT_COMPUTER_INSPECT_COMMAND,
   AGENT_FOCUS_WINDOW_COMMAND,
@@ -47,6 +50,9 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION capability="document.convert_text"')?.command).toBe(AGENT_DOCUMENT_CONVERT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="dev_repo_status"')?.command).toBe(AGENT_DEV_STATUS_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="dev.git_diff"')?.command).toBe(AGENT_DEV_DIFF_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="dev_git_commit"')?.command).toBe(AGENT_DEV_COMMIT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION tool="dev.git_push"')?.command).toBe(AGENT_DEV_PUSH_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION capability="dev.github_pr_create"')?.command).toBe(AGENT_GITHUB_PR_CREATE_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="dev.run_check"')?.command).toBe(AGENT_DEV_CHECK_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="automation_record"')?.command).toBe(AGENT_AUTOMATION_RECORD_COMMAND);
   });
