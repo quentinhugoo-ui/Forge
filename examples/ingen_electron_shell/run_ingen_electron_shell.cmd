@@ -13,11 +13,13 @@ set FORGE_CARGO_SESSION=ingen-electron-shortcut
 set REPO_ROOT=%~dp0..\..
 for %%I in ("%REPO_ROOT%") do set REPO_ROOT=%%~fI
 set FORGE_ELECTRON_BACKEND_EXE=%REPO_ROOT%\.codex-targets\ingen-electron-shortcut\debug\ingen_electron_backend_bridge.exe
+set FORGE_WINDOWS_TASKBAR_HELPER_EXE=%REPO_ROOT%\.codex-targets\ingen-electron-shortcut\debug\ingen_windows_taskbar_helper.exe
 set FORGE_ELECTRON_EXE=%~dp0node_modules\electron\dist\electron.exe
 set INGEN_ELECTRON_LEGACY_USER_DATA_DIR=%APPDATA%\InGen
 set INGEN_ELECTRON_USER_DATA_DIR=%APPDATA%\InGenRuntime
 set BUILD_LOCK=C:\tmp\ingen-electron-launch-build.lock
 set NEED_BACKEND_REBUILD=0
+set NEED_TASKBAR_HELPER_REBUILD=0
 set NEED_ELECTRON_REBUILD=0
 set APP_ALREADY_RUNNING=0
 set OWN_BUILD_LOCK=0
@@ -51,12 +53,17 @@ if errorlevel 1 (
 set OWN_BUILD_LOCK=1
 
 if not exist "%FORGE_ELECTRON_BACKEND_EXE%" set NEED_BACKEND_REBUILD=1
+if not exist "%FORGE_WINDOWS_TASKBAR_HELPER_EXE%" set NEED_TASKBAR_HELPER_REBUILD=1
 if "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" set NEED_BACKEND_REBUILD=1
+if "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" set NEED_TASKBAR_HELPER_REBUILD=1
 if "%DESKTOP_AUTO_REBUILD%"=="1" (
   C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$exe = '%FORGE_ELECTRON_BACKEND_EXE%'; $srcRoot = '%REPO_ROOT%\examples\ingen_native_services'; $bin = Get-Item -LiteralPath $exe -ErrorAction SilentlyContinue; $latest = Get-ChildItem -LiteralPath (Join-Path $srcRoot 'src') -Recurse -File -Include *.rs -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if (-not $bin -or ($latest -and $latest.LastWriteTimeUtc -gt $bin.LastWriteTimeUtc)) { exit 1 }"
   if errorlevel 1 set NEED_BACKEND_REBUILD=1
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$exe = '%FORGE_WINDOWS_TASKBAR_HELPER_EXE%'; $src = '%REPO_ROOT%\examples\ingen_native_services\src\bin\ingen_windows_taskbar_helper.rs'; $bin = Get-Item -LiteralPath $exe -ErrorAction SilentlyContinue; $source = Get-Item -LiteralPath $src -ErrorAction SilentlyContinue; if (-not $bin -or ($source -and $source.LastWriteTimeUtc -gt $bin.LastWriteTimeUtc)) { exit 1 }"
+  if errorlevel 1 set NEED_TASKBAR_HELPER_REBUILD=1
 ) else (
   if "%NEED_BACKEND_REBUILD%"=="0" echo Desktop stable mode: using existing backend bridge. >> "%LOG%"
+  if "%NEED_TASKBAR_HELPER_REBUILD%"=="0" echo Desktop stable mode: using existing taskbar helper. >> "%LOG%"
 )
 
 if "%NEED_BACKEND_REBUILD%"=="1" (
@@ -65,6 +72,18 @@ if "%NEED_BACKEND_REBUILD%"=="1" (
   if errorlevel 1 (
     if exist "%FORGE_ELECTRON_BACKEND_EXE%" (
       echo Backend rebuild failed. Falling back to the existing backend bridge. >> "%LOG%"
+    ) else (
+      goto fail
+    )
+  )
+)
+
+if "%NEED_TASKBAR_HELPER_REBUILD%"=="1" (
+  echo Building Windows taskbar helper... >> "%LOG%"
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%REPO_ROOT%\scripts\forge-cargo.ps1" build --manifest-path "%REPO_ROOT%\examples\ingen_native_services\Cargo.toml" --bin ingen_windows_taskbar_helper >> "%LOG%" 2>>&1
+  if errorlevel 1 (
+    if exist "%FORGE_WINDOWS_TASKBAR_HELPER_EXE%" (
+      echo Taskbar helper rebuild failed. Falling back to the existing taskbar helper. >> "%LOG%"
     ) else (
       goto fail
     )

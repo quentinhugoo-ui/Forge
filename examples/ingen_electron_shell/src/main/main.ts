@@ -10996,14 +10996,16 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
   window.setMinimumSize(420, 128);
   window.setAlwaysOnTop(true, "floating");
-  const bounds = widgetWindowBounds(window);
-  console.info("Applying native widget window bounds", { id: window.id, bounds });
-  traceWidgetTaskbarStep("apply-widget-bounds", { id: window.id, bounds });
+  const bounds = widgetWindowBounds(window, { taskbarHidden: true });
+  console.info("Applying native widget window bounds", { id: window.id, bounds, plannedTaskbarHidden: true });
+  traceWidgetTaskbarStep("apply-widget-bounds", { id: window.id, bounds, plannedTaskbarHidden: true });
   clearWidgetWindowBoundsAnimationTimer();
   window.setBounds(bounds, false);
   window.show();
   window.focus();
-  armNativeWidgetTaskbarAutoHide(window);
+  if (!widgetTaskbarHidden) {
+    armNativeWidgetTaskbarAutoHide(window);
+  }
 }
 
 function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
@@ -11122,6 +11124,154 @@ type WindowsTaskbarFastResult = {
   registryPathFound: boolean;
   registryByte: number;
 };
+
+type WindowsTaskbarNativeResult = {
+  ok: boolean;
+  command?: string;
+  hidden?: boolean;
+  current?: number;
+  target?: number;
+  elapsedMs?: number;
+  error?: string;
+  ready?: boolean;
+  service?: string;
+};
+
+let widgetTaskbarNativeHelper: ChildProcessWithoutNullStreams | null = null;
+let widgetTaskbarNativeHelperBuffer = "";
+const widgetTaskbarNativeRequests: Array<(result: WindowsTaskbarNativeResult | null) => void> = [];
+
+function findWindowsTaskbarNativeHelper(): string | null {
+  const executableName = process.platform === "win32" ? "ingen_windows_taskbar_helper.exe" : "ingen_windows_taskbar_helper";
+  const candidates = [
+    process.env.FORGE_WINDOWS_TASKBAR_HELPER_EXE ?? "",
+    join(repoRoot, ".codex-targets", "ingen-electron-shortcut", "debug", executableName),
+    join(repoRoot, "examples", "ingen_native_services", "target", "debug", executableName),
+    join(repoRoot, "target", "debug", executableName),
+    join(process.resourcesPath ?? "", executableName),
+    join(dirname(app.getPath("exe")), executableName)
+  ];
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function resetWindowsTaskbarNativeHelper(): void {
+  const pending = widgetTaskbarNativeRequests.splice(0);
+  for (const resolve of pending) {
+    resolve(null);
+  }
+  if (widgetTaskbarNativeHelper && !widgetTaskbarNativeHelper.killed) {
+    widgetTaskbarNativeHelper.kill();
+  }
+  widgetTaskbarNativeHelper = null;
+  widgetTaskbarNativeHelperBuffer = "";
+}
+
+function handleWindowsTaskbarNativeHelperLine(line: string): void {
+  if (line.trim() === "") {
+    return;
+  }
+  let parsed: WindowsTaskbarNativeResult | null = null;
+  try {
+    parsed = JSON.parse(line) as WindowsTaskbarNativeResult;
+  } catch (error) {
+    console.warn("Windows taskbar native helper response was invalid.", error);
+  }
+  if (parsed?.ready === true) {
+    traceWidgetTaskbarStep("taskbar-native-helper-ready", { service: parsed.service ?? "" });
+    return;
+  }
+  const resolve = widgetTaskbarNativeRequests.shift();
+  if (resolve) {
+    resolve(parsed);
+  }
+}
+
+function ensureWindowsTaskbarNativeHelper(): ChildProcessWithoutNullStreams | null {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  if (widgetTaskbarNativeHelper && !widgetTaskbarNativeHelper.killed) {
+    return widgetTaskbarNativeHelper;
+  }
+  const helperPath = findWindowsTaskbarNativeHelper();
+  if (!helperPath) {
+    traceWidgetTaskbarStep("taskbar-native-helper-missing");
+    return null;
+  }
+  const child = spawn(helperPath, [], { windowsHide: true });
+  widgetTaskbarNativeHelper = child;
+  widgetTaskbarNativeHelperBuffer = "";
+  traceWidgetTaskbarStep("taskbar-native-helper-started", { helperPath });
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    widgetTaskbarNativeHelperBuffer += chunk;
+    let newlineIndex = widgetTaskbarNativeHelperBuffer.indexOf("\n");
+    while (newlineIndex >= 0) {
+      const line = widgetTaskbarNativeHelperBuffer.slice(0, newlineIndex).trim();
+      widgetTaskbarNativeHelperBuffer = widgetTaskbarNativeHelperBuffer.slice(newlineIndex + 1);
+      handleWindowsTaskbarNativeHelperLine(line);
+      newlineIndex = widgetTaskbarNativeHelperBuffer.indexOf("\n");
+    }
+  });
+  child.stderr.on("data", (chunk: string) => {
+    if (chunk.trim() !== "") {
+      console.warn("Windows taskbar native helper stderr", chunk.trim());
+    }
+  });
+  child.on("error", (error) => {
+    console.warn("Windows taskbar native helper failed.", error);
+    resetWindowsTaskbarNativeHelper();
+  });
+  child.on("exit", () => {
+    resetWindowsTaskbarNativeHelper();
+  });
+  return child;
+}
+
+function runWindowsTaskbarNativeHelperAsync(hidden: boolean): Promise<WindowsTaskbarNativeResult | null> {
+  const helper = ensureWindowsTaskbarNativeHelper();
+  if (!helper) {
+    return Promise.resolve(null);
+  }
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    const finish = (result: WindowsTaskbarNativeResult | null): void => {
+      clearTimeout(timeout);
+      traceWidgetTaskbarStep("taskbar-native-command-finished", {
+        hidden,
+        accepted: result?.ok === true,
+        helperElapsedMs: result?.elapsedMs ?? null,
+        elapsedMs: Date.now() - startedAt,
+        error: result?.error ?? ""
+      });
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      const index = widgetTaskbarNativeRequests.indexOf(finish);
+      if (index >= 0) {
+        widgetTaskbarNativeRequests.splice(index, 1);
+      }
+      finish(null);
+    }, 1_500);
+    widgetTaskbarNativeRequests.push(finish);
+    helper.stdin.write(hidden ? "hide\n" : "show\n", (error) => {
+      if (error) {
+        const index = widgetTaskbarNativeRequests.indexOf(finish);
+        if (index >= 0) {
+          widgetTaskbarNativeRequests.splice(index, 1);
+        }
+        console.warn("Windows taskbar native helper write failed.", error);
+        finish(null);
+      }
+    });
+  });
+}
 
 function buildWindowsTaskbarAutoHideFastScript(hidden: boolean): string {
   const desiredHidden = hidden ? "$true" : "$false";
@@ -11778,8 +11928,28 @@ function scheduleNativeWidgetTaskbarAutoHide(window: BrowserWindow, hidden: bool
         return;
       }
       let accepted = false;
-      const fastResult = await runWindowsTaskbarAutoHideFastAsync(hidden);
-      if (fastResult) {
+      const nativeResult = await runWindowsTaskbarNativeHelperAsync(hidden);
+      if (nativeResult?.ok === true) {
+        accepted = true;
+        widgetTaskbarHidden = hidden;
+        if (widgetTaskbarOriginalState === null && hidden && typeof nativeResult.current === "number") {
+          widgetTaskbarOriginalState = nativeResult.current;
+        }
+        if (!hidden) {
+          widgetTaskbarOriginalState = null;
+          widgetTaskbarOriginalRegistryByte = null;
+        }
+        traceWidgetTaskbarStep("taskbar-native-applied", {
+          id: window.id,
+          hidden,
+          current: nativeResult.current ?? null,
+          target: nativeResult.target ?? null,
+          helperElapsedMs: nativeResult.elapsedMs ?? null,
+          token
+        });
+      } else {
+        const fastResult = await runWindowsTaskbarAutoHideFastAsync(hidden);
+        if (fastResult) {
         accepted = true;
         widgetTaskbarHidden = hidden;
         if (widgetTaskbarOriginalState === null && hidden) {
@@ -11800,16 +11970,17 @@ function scheduleNativeWidgetTaskbarAutoHide(window: BrowserWindow, hidden: bool
           registryByte: fastResult.registryByte,
           token
         });
-      } else {
-        traceWidgetTaskbarStep("taskbar-fast-fallback", { id: window.id, hidden, token });
-        accepted = hidden
-          ? await setWidgetTaskbarHiddenAsync(true)
-          : await restoreWidgetTaskbarStateAsync();
+        } else {
+          traceWidgetTaskbarStep("taskbar-fast-fallback", { id: window.id, hidden, token });
+          accepted = hidden
+            ? await setWidgetTaskbarHiddenAsync(true)
+            : await restoreWidgetTaskbarStateAsync();
+        }
       }
       if (token !== widgetTaskbarAutoHideJobToken) {
         return;
       }
-      if (hidden && accepted && !window.isDestroyed() && widgetWindowRestoreState !== null) {
+      if (hidden && accepted && !window.isDestroyed() && widgetWindowRestoreState !== null && boundsLookLikeWidget(window.getBounds())) {
         settleNativeWidgetWindowBounds(window);
       }
       traceWidgetTaskbarStep("taskbar-autohide-finished", { id: window.id, hidden, accepted, token });
@@ -11927,6 +12098,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
     resetNativeWidgetClickThrough(window);
     resetNativeWidgetWindowShape(window);
     saveWidgetWindowRestoreState(window);
+    armNativeWidgetTaskbarAutoHide(window);
     window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
     window.setAlwaysOnTop(true, "floating");
     const requestedDelay = typeof delayMs === "number" && Number.isFinite(delayMs) ? delayMs : WIDGET_WINDOW_SHRINK_DELAY_MS;
