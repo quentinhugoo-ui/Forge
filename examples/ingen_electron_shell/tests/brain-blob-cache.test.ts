@@ -3,7 +3,9 @@ import {
   BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA,
   BRAIN_BLOB_MONSTER_FRAME_HZ,
   brainBlobMonsterFrameAddress,
-  createBrainBlobMonsterFrameCache
+  createBrainBlobMonsterFrameCache,
+  getBrainBlobMonsterRuntimeStats,
+  subscribeBrainBlobMonsterRuntimeStats
 } from "../src/renderer/brain-blob-cache";
 
 const baseFrame = {
@@ -51,6 +53,27 @@ describe("Brain blob Monster frame cache", () => {
     expect(second.reused).toBe(true);
     expect(second.stats.uniqueFrames).toBe(1);
     expect(second.stats.reusedFrames).toBe(1);
+  });
+
+  it("publishes runtime stats for the Hardware meter", () => {
+    const cache = createBrainBlobMonsterFrameCache();
+    let publishCount = 0;
+    const unsubscribe = subscribeBrainBlobMonsterRuntimeStats(() => {
+      publishCount += 1;
+    });
+
+    cache.probe({
+      ...baseFrame,
+      timeSeconds: cache.quantizeTime(2)
+    });
+    const stats = getBrainBlobMonsterRuntimeStats();
+    unsubscribe();
+
+    expect(publishCount).toBeGreaterThan(0);
+    expect(stats.schema).toBe(BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA);
+    expect(stats.lane).toBe("webgpu");
+    expect(stats.uniqueFrames).toBeGreaterThan(0);
+    expect(stats.submittedFps).toBeGreaterThanOrEqual(0);
   });
 
   it("separates shader lanes so WebGPU and WebGL never share frame proofs", () => {

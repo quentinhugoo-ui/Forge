@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   BRAIN_RENAME_SESSION_COMMAND,
@@ -8,6 +8,10 @@ import {
   type SidebarSessionItem
 } from "../shared/ipc-contract";
 import { BrainBlob } from "./brain-blob";
+import {
+  getBrainBlobMonsterRuntimeStats,
+  subscribeBrainBlobMonsterRuntimeStats
+} from "./brain-blob-cache";
 import {
   readBrainAgentMemory,
   readBrainUserLocationMemory,
@@ -1090,6 +1094,22 @@ function hardwareTemperatureMinMax(samples: HardwareGaugeSample[]): { min: numbe
   };
 }
 
+function averageRecentHardwarePercent(samples: HardwareGaugeSample[], windowMs: number): number | null {
+  const lastSample = samples[samples.length - 1];
+  if (!lastSample) return null;
+  const minTime = lastSample.sampledAt - windowMs;
+  const values = samples
+    .filter((sample) => sample.sampledAt >= minTime)
+    .map((sample) => sample.percent)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function compactPercentValue(value: number | null): string {
+  return value === null ? "--" : String(Math.round(value));
+}
+
 function rendererFallbackHardwareSnapshot(reason: string): HardwareTelemetrySnapshot {
   const cores = typeof navigator.hardwareConcurrency === "number" ? navigator.hardwareConcurrency : 0;
   const navigatorMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
@@ -1298,6 +1318,40 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
   );
 }
 
+function HardwareBlobWorkMeter({ history }: { history: Record<HardwareMonitorCardId, HardwareGaugeSample[]> }) {
+  const blobStats = useSyncExternalStore(
+    subscribeBrainBlobMonsterRuntimeStats,
+    getBrainBlobMonsterRuntimeStats,
+    getBrainBlobMonsterRuntimeStats
+  );
+  const cpuAverage = averageRecentHardwarePercent(history.cpu, 8000);
+  const gpuAverage = averageRecentHardwarePercent(history.gpu, 8000);
+  return (
+    <section className="hardwareBlobMeter" aria-label="Blob hardware work">
+      <div>
+        <span>CPU avg</span>
+        <strong>{compactPercentValue(cpuAverage)}</strong>
+        <em>%</em>
+      </div>
+      <div>
+        <span>GPU avg</span>
+        <strong>{compactPercentValue(gpuAverage)}</strong>
+        <em>%</em>
+      </div>
+      <div>
+        <span>Blob skip</span>
+        <strong>{Math.round(blobStats.reusePercent)}</strong>
+        <em>%</em>
+      </div>
+      <div>
+        <span>Draw fps</span>
+        <strong>{Math.round(blobStats.submittedFps)}</strong>
+        <em>{blobStats.lane}</em>
+      </div>
+    </section>
+  );
+}
+
 function HardwareSpace() {
   const [snapshot, setSnapshot] = useState<HardwareTelemetrySnapshot | null>(null);
   const [error, setError] = useState("");
@@ -1390,6 +1444,7 @@ function HardwareSpace() {
             <HardwareGaugeCard card={card} samples={history[card.id] ?? []} key={card.id} />
           ))}
         </section>
+        <HardwareBlobWorkMeter history={history} />
       </div>
     </div>
   );

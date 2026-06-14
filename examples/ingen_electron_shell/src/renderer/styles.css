@@ -9166,6 +9166,46 @@ ol.assistantText__list li::before {
   min-width: 0;
 }
 
+.hardwareBlobMeter {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.hardwareBlobMeter div {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklab, var(--forge-line), transparent 54%);
+  background: color-mix(in oklab, var(--forge-sidebar-bg), #000 7%);
+  color: color-mix(in oklab, var(--forge-text), transparent 14%);
+}
+
+.hardwareBlobMeter span,
+.hardwareBlobMeter em {
+  display: block;
+  overflow: hidden;
+  color: color-mix(in oklab, var(--forge-muted), transparent 14%);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-style: normal;
+  font-weight: 680;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hardwareBlobMeter strong {
+  display: inline-block;
+  margin-top: 4px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 780;
+  line-height: 1;
+}
+
 .hardwareGauge {
   --hardware-temperature-color: #ff4f70;
   position: relative;
@@ -9377,6 +9417,10 @@ ol.assistantText__list li::before {
 
   .hardwareGauge__screen {
     height: 72px;
+  }
+
+  .hardwareBlobMeter {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .hardwareGauge__readout span {
