@@ -17,7 +17,9 @@ import { ProfileCoverBanner } from "./ProfileCoverBanner";
 import { RightPanelSlice } from "./RightPanelSlice";
 import { primaryAssistantGeoEntityLabel } from "./assistant-geo-entities";
 import { readBrainAgentMemory, readBrainUserMemory } from "./brain-user-memory-store";
+import { HeaderSurfaceRouter } from "./HeaderSurfaceRouter";
 import { headerShadowStore, useHeaderShadowStore } from "./header-shadow-store";
+import { headerSurfaceStore, useHeaderSurfaceStore } from "./header-surface-store";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { SidebarSlice, type SidebarModuleId } from "./SidebarSlice";
 import { sidebarShadowStore, useSidebarShadowStore } from "./sidebar-shadow-store";
@@ -83,6 +85,7 @@ function sectionGroup(section: NativeSection): string {
 
 export function App() {
   const { snapshot } = useHeaderShadowStore();
+  const { snapshot: headerSurfaceSnapshot } = useHeaderSurfaceStore();
   const { snapshot: sidebarSnapshot } = useSidebarShadowStore();
   const { snapshot: panelsChatSnapshot } = usePanelsChatBottomStore();
   const [canvasSplitOpen, setCanvasSplitOpen] = useState(false);
@@ -278,12 +281,16 @@ export function App() {
         if (!mounted) {
           return;
         }
-        await Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot()]);
+        await Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot(), headerSurfaceStore.refresh()]);
       });
     return () => {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    void headerSurfaceStore.refresh();
+  }, [snapshot.activeSection, snapshot.profileCanvas]);
 
   useEffect(() => {
     if (!workspaceMenuOpen && workspaceNotice === null) {
@@ -896,6 +903,10 @@ export function App() {
 
       {workspaceGateActive ? (
         <div className="workspaceRequiredVeil" aria-hidden="true" onClick={() => void chooseWorkspace()} />
+      ) : null}
+
+      {!isFullPageCanvas && snapshot.activeSection === "banger" ? (
+        <HeaderSurfaceRouter snapshot={headerSurfaceSnapshot} />
       ) : null}
 
       {!isFullPageCanvas && !sessionHasStarted ? (

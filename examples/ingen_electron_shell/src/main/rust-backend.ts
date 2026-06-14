@@ -46,6 +46,33 @@ export interface RustBackendProjection {
   proofHash: string;
 }
 
+export interface RustBangerPreviewFrame {
+  accepted: boolean;
+  schema: "forge.banger.visible_preview_frame.v1";
+  source: string;
+  width: number;
+  height: number;
+  frameDataUrl: string;
+  frameHash: string;
+  sceneHash: string;
+  proofHash: string;
+  metrics: {
+    splatCount: number;
+    projectedSplatCount: number;
+    rasterizedSplatCount: number;
+    shadedPixelCount: number;
+    tileCount: number;
+    benchmarkGateCount: number;
+    promotionAllowed: boolean;
+    renderPath: string;
+  };
+  error?: {
+    code: string;
+    message: string;
+    proofHash: string;
+  };
+}
+
 let cachedProjection: RustBackendProjection | null = shadowProjection("startup snapshot; native bridge refresh pending");
 let cachedAt = 0;
 let refreshInFlight: Promise<RustBackendProjection> | null = null;
@@ -89,8 +116,28 @@ async function loadRustBackendProjection(shellRoot: string): Promise<RustBackend
   }
 }
 
-async function runBackendExe(exePath: string): Promise<string> {
-  const { stdout } = await execFileAsync(exePath, [], {
+export async function loadRustBangerPreviewFrame(shellRoot: string): Promise<RustBangerPreviewFrame> {
+  const repoRoot = join(shellRoot, "..", "..");
+  const bridgeExe = process.env.FORGE_ELECTRON_BACKEND_EXE;
+  try {
+    const stdout =
+      bridgeExe && existsSync(bridgeExe)
+        ? await runBackendExe(bridgeExe, ["--banger-preview-frame"])
+        : process.env.FORGE_ELECTRON_ALLOW_CARGO_BACKEND === "1"
+          ? await runBackendViaForgeCargo(repoRoot, ["--banger-preview-frame"])
+          : null;
+    if (!stdout) {
+      return shadowBangerPreviewFrame("native bridge binary unavailable; cargo backend disabled");
+    }
+    return parseBangerPreviewFrame(stdout);
+  } catch (error) {
+    console.error("Rust Banger preview frame failed.", error);
+    return shadowBangerPreviewFrame("native preview frame failed; no frame promoted");
+  }
+}
+
+async function runBackendExe(exePath: string, args: string[] = []): Promise<string> {
+  const { stdout } = await execFileAsync(exePath, args, {
     timeout: 20_000,
     windowsHide: true,
     maxBuffer: 1024 * 1024
@@ -98,7 +145,7 @@ async function runBackendExe(exePath: string): Promise<string> {
   return stdout;
 }
 
-async function runBackendViaForgeCargo(repoRoot: string): Promise<string> {
+async function runBackendViaForgeCargo(repoRoot: string, bridgeArgs: string[] = []): Promise<string> {
   const powershell = join(
     process.env.SystemRoot ?? "C:\\Windows",
     "System32",
@@ -119,7 +166,8 @@ async function runBackendViaForgeCargo(repoRoot: string): Promise<string> {
       "--manifest-path",
       "examples\\ingen_native_services\\Cargo.toml",
       "--bin",
-      "ingen_electron_backend_bridge"
+      "ingen_electron_backend_bridge",
+      ...(bridgeArgs.length > 0 ? ["--", ...bridgeArgs] : [])
     ],
     {
       cwd: repoRoot,
@@ -129,6 +177,32 @@ async function runBackendViaForgeCargo(repoRoot: string): Promise<string> {
     }
   );
   return stdout;
+}
+
+function parseBangerPreviewFrame(stdout: string): RustBangerPreviewFrame {
+  const line = stdout
+    .trim()
+    .split(/\r?\n/)
+    .reverse()
+    .find((entry) => entry.trim().startsWith("{"));
+  if (!line) {
+    throw new Error("Rust backend did not return a JSON Banger preview frame.");
+  }
+  const parsed = JSON.parse(line) as Partial<RustBangerPreviewFrame>;
+  if (
+    parsed.schema !== "forge.banger.visible_preview_frame.v1" ||
+    parsed.accepted !== true ||
+    typeof parsed.frameDataUrl !== "string" ||
+    !parsed.frameDataUrl.startsWith("data:image/bmp;base64,") ||
+    typeof parsed.frameHash !== "string" ||
+    typeof parsed.sceneHash !== "string" ||
+    typeof parsed.proofHash !== "string" ||
+    !parsed.metrics ||
+    typeof parsed.metrics.shadedPixelCount !== "number"
+  ) {
+    throw new Error("Rust Banger preview frame failed validation.");
+  }
+  return parsed as RustBangerPreviewFrame;
 }
 
 function parseProjection(stdout: string): RustBackendProjection {
@@ -249,6 +323,37 @@ function shadowProjection(reason: string): RustBackendProjection {
   };
   projection.proofHash = hashJson(projection);
   return projection;
+}
+
+function shadowBangerPreviewFrame(reason: string): RustBangerPreviewFrame {
+  const frame: RustBangerPreviewFrame = {
+    accepted: false,
+    schema: "forge.banger.visible_preview_frame.v1",
+    source: "examples/ingen_native_services/shadow",
+    width: 0,
+    height: 0,
+    frameDataUrl: "",
+    frameHash: "",
+    sceneHash: "",
+    proofHash: "",
+    metrics: {
+      splatCount: 0,
+      projectedSplatCount: 0,
+      rasterizedSplatCount: 0,
+      shadedPixelCount: 0,
+      tileCount: 0,
+      benchmarkGateCount: 0,
+      promotionAllowed: false,
+      renderPath: "native_preview_unavailable"
+    },
+    error: {
+      code: "rust_unavailable",
+      message: reason,
+      proofHash: hashJson({ reason })
+    }
+  };
+  frame.proofHash = hashJson({ ...frame, proofHash: "" });
+  return frame;
 }
 
 function hashJson(value: unknown): string {

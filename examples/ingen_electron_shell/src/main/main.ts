@@ -11,7 +11,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { inflateRawSync } from "node:zlib";
 import {
   cachedRustBackendProjection,
+  loadRustBangerPreviewFrame,
   refreshRustBackendProjection,
+  type RustBangerPreviewFrame,
   type RustBackendProjection
 } from "./rust-backend.js";
 import {
@@ -13116,6 +13118,12 @@ function installIpc(): void {
     }
     void refreshRustBackendProjection(shellRoot);
     return headerSurfaceSnapshot();
+  });
+  ipcMain.handle("forge:get-banger-preview-frame", async (event): Promise<RustBangerPreviewFrame> => {
+    if (!validateSender(event)) {
+      return loadRustBangerPreviewFrame(shellRoot);
+    }
+    return loadRustBangerPreviewFrame(shellRoot);
   });
   ipcMain.handle("forge:dispatch-header-command", (event, command: unknown): HeaderCommandResult => {
     const mode = cutoverMode();

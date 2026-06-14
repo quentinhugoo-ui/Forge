@@ -44,6 +44,9 @@ const forgeShell: ForgeShellApi = {
   getCanvasSurfacesSnapshot() {
     return ipcRenderer.invoke("forge:get-canvas-surfaces-snapshot");
   },
+  getBangerPreviewFrame() {
+    return ipcRenderer.invoke("forge:get-banger-preview-frame");
+  },
   dispatchCanvasSurfacesCommand(command: CanvasSurfacesCommand) {
     return ipcRenderer.invoke("forge:dispatch-canvas-surfaces-command", command);
   },

@@ -732,6 +732,29 @@ export interface HardwareTelemetrySnapshot {
   proofHash: string;
 }
 
+export interface BangerPreviewFrameResult {
+  accepted: boolean;
+  schema: "forge.banger.visible_preview_frame.v1";
+  source: string;
+  width: number;
+  height: number;
+  frameDataUrl: string;
+  frameHash: string;
+  sceneHash: string;
+  proofHash: string;
+  metrics: {
+    splatCount: number;
+    projectedSplatCount: number;
+    rasterizedSplatCount: number;
+    shadedPixelCount: number;
+    tileCount: number;
+    benchmarkGateCount: number;
+    promotionAllowed: boolean;
+    renderPath: string;
+  };
+  error?: IpcError;
+}
+
 export interface ForgeShellApi extends GeneratedForgeShellApi {
   connectLlmProvider: (provider: LlmProviderConnectId) => Promise<LlmProviderConnectResult>;
   resetLlmProvider?: (provider: LlmProviderConnectId) => Promise<LlmProviderConnectResult>;
@@ -743,6 +766,7 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   getAgentActionHostManifest?: () => Promise<AgentActionHostManifest>;
   executeAgentAction?: (request: AgentActionRequest) => Promise<AgentActionResult>;
   getHardwareTelemetrySnapshot?: () => Promise<HardwareTelemetrySnapshot>;
+  getBangerPreviewFrame?: () => Promise<BangerPreviewFrameResult>;
   showWorkspaceInExplorer?: () => Promise<WorkspaceActionResult>;
   copyWorkspacePath?: () => Promise<WorkspaceActionResult>;
   copyWorkspaceBranchName?: () => Promise<WorkspaceActionResult>;
