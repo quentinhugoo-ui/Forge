@@ -1390,7 +1390,7 @@ mod tests {
         assert_eq!(frame.metrics.projected_splat_count, 0);
         assert!(frame.metrics.shaded_pixel_count > 0);
         assert_eq!(frame.metrics.water_pipeline_hash.len(), 64);
-        assert_eq!(frame.metrics.water_pass_count, 8);
+        assert_eq!(frame.metrics.water_pass_count, 10);
         assert!(frame.metrics.water_virtual_page_count > 0);
         assert_eq!(frame.metrics.water_info_texture_hash.len(), 64);
         assert!(frame.metrics.water_info_shoreline_texel_count > 0);

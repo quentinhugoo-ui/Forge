@@ -312,9 +312,11 @@ pub struct BangerNativeWaterPipelineManifest {
     pub near_field_mesh: BangerNativeWaterNearFieldMesh,
     pub normal_displacement: BangerNativeWaterNormalDisplacement,
     pub water_info_texture: BangerNativeWaterInfoTextureManifest,
+    pub hzb_scene_depth: BangerNativeWaterHzbPacket,
     pub foam_spray: BangerNativeWaterFoamSpray,
     pub reflections: BangerNativeWaterReflectionPacket,
     pub volumetric_absorption: BangerNativeWaterAbsorptionPacket,
+    pub single_layer_composite: BangerNativeWaterSingleLayerCompositePacket,
     pub sdf_voxel_interaction: BangerNativeWaterSdfVoxelPacket,
     pub pass_schedule: Vec<BangerNativeWaterPass>,
     pub virtual_page_budget: BangerNativeWaterPageBudget,
@@ -332,6 +334,8 @@ pub struct BangerNativeWaterSpectralOcean {
     pub displacement_texture_count: u32,
     pub slope_texture_count: u32,
     pub spectral_storage_texel_count: u32,
+    pub displacement_storage_texel_count: u32,
+    pub slope_storage_texel_count: u32,
     pub gpu_compute_dispatched: bool,
     pub compute_pass_hash: String,
     pub temporal_phase_hash: String,
@@ -387,6 +391,21 @@ pub struct BangerNativeWaterInfoTextureManifest {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterHzbPacket {
+    pub source_depth: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub mip_count: u32,
+    pub logical_texel_count: u32,
+    pub format: &'static str,
+    pub meshlet_culling_enabled: bool,
+    pub ssr_refraction_enabled: bool,
+    pub compute_pass_hash: String,
+    pub resource_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangerNativeWaterFoamSpray {
     pub foam_source: &'static str,
     pub spray_source: &'static str,
@@ -414,6 +433,17 @@ pub struct BangerNativeWaterAbsorptionPacket {
     pub scattering_lut_resolution: u32,
     pub caustics_enabled: bool,
     pub absorption_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterSingleLayerCompositePacket {
+    pub scene_color_source: &'static str,
+    pub scene_depth_source: &'static str,
+    pub refraction_mask_source: &'static str,
+    pub reflection_source: &'static str,
+    pub absorption_scattering_source: &'static str,
+    pub composite_pass_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -21332,9 +21362,10 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     let clear_color = [0.035, 0.024, 0.045, 1.0];
     let shader_source = banger_present_bootstrap_wgsl();
     let spectral_shader_source = banger_water_spectral_compute_wgsl();
+    let hzb_shader_source = banger_water_hzb_compute_wgsl();
     let visual_pipeline_hash = hash_text_hex(
         "forge.banger.native_present_loop.ocean_sunset_shader.v1",
-        &format!("{shader_source}\n{spectral_shader_source}"),
+        &format!("{shader_source}\n{spectral_shader_source}\n{hzb_shader_source}"),
     );
     let mesh_vertex_count = 3u32 + 96u32 * 96u32 * 6u32;
     let mesh_triangle_count = mesh_vertex_count / 3;
@@ -21375,8 +21406,14 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     );
     let spectral_width = 128u32;
     let spectral_height = 128u32;
-    let water_spectral_storage = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("banger-native-present-water-spectral-storage"),
+    let water_displacement_storage = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-displacement-storage"),
+        size: u64::from(spectral_width) * u64::from(spectral_height) * 16,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let water_slope_storage = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-slope-storage"),
         size: u64::from(spectral_width) * u64::from(spectral_height) * 16,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -21398,9 +21435,85 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         0,
         water_info_uniform_words_u8(water_spectral_uniform_words).as_slice(),
     );
+    let hzb_width = water_pipeline_manifest.hzb_scene_depth.width;
+    let hzb_height = water_pipeline_manifest.hzb_scene_depth.height;
+    let hzb_mip_count = water_pipeline_manifest.hzb_scene_depth.mip_count;
+    let hzb_texel_count = water_pipeline_manifest.hzb_scene_depth.logical_texel_count;
+    let water_hzb_storage = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-hzb-storage"),
+        size: u64::from(hzb_texel_count) * 16,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let water_hzb_uniform_words = [hzb_width, hzb_height, hzb_mip_count, hzb_texel_count];
+    let water_hzb_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-hzb-uniform"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(
+        &water_hzb_uniform,
+        0,
+        water_info_uniform_words_u8(water_hzb_uniform_words).as_slice(),
+    );
     let spectral_compute_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("banger-native-present-spectral-compute-bind-group-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+    let spectral_compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-present-spectral-compute-bind-group"),
+        layout: &spectral_compute_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: water_displacement_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: water_slope_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: water_spectral_uniform.as_entire_binding(),
+            },
+        ],
+    });
+    let hzb_compute_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-present-water-hzb-compute-bind-group-layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -21422,19 +21535,47 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
-    let spectral_compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("banger-native-present-spectral-compute-bind-group"),
-        layout: &spectral_compute_bind_group_layout,
+    let hzb_compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-present-water-hzb-compute-bind-group"),
+        layout: &hzb_compute_bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: water_spectral_storage.as_entire_binding(),
+                resource: water_hzb_storage.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: water_spectral_uniform.as_entire_binding(),
+                resource: water_hzb_uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: water_info_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: water_info_uniform.as_entire_binding(),
             },
         ],
     });
@@ -21476,6 +21617,36 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
                     binding: 3,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
@@ -21498,11 +21669,23 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: water_spectral_storage.as_entire_binding(),
+                resource: water_displacement_storage.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 3,
+                resource: water_slope_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
                 resource: water_spectral_uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: water_hzb_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: water_hzb_uniform.as_entire_binding(),
             },
         ],
     });
@@ -21519,6 +21702,23 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         label: Some("banger-native-present-water-spectral-pipeline"),
         layout: Some(&spectral_pipeline_layout),
         module: &spectral_shader,
+        entry_point: Some("cs_main"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        cache: None,
+    });
+    let hzb_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-present-water-hzb-compute-shader"),
+        source: wgpu::ShaderSource::Wgsl(hzb_shader_source.into()),
+    });
+    let hzb_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("banger-native-present-water-hzb-pipeline-layout"),
+        bind_group_layouts: &[Some(&hzb_compute_bind_group_layout)],
+        immediate_size: 0,
+    });
+    let hzb_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("banger-native-present-water-hzb-pipeline"),
+        layout: Some(&hzb_pipeline_layout),
+        module: &hzb_shader,
         entry_point: Some("cs_main"),
         compilation_options: wgpu::PipelineCompilationOptions::default(),
         cache: None,
@@ -21628,6 +21828,15 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         pass.set_pipeline(&spectral_pipeline);
         pass.set_bind_group(0, &spectral_compute_bind_group, &[]);
         pass.dispatch_workgroups(spectral_width.div_ceil(8), spectral_height.div_ceil(8), 1);
+    }
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("banger-native-present-water-hzb-compute-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&hzb_pipeline);
+        pass.set_bind_group(0, &hzb_compute_bind_group, &[]);
+        pass.dispatch_workgroups(hzb_width.div_ceil(8), hzb_height.div_ceil(8), 1);
     }
     {
         let color_attachments = [Some(wgpu::RenderPassColorAttachment {
@@ -21985,10 +22194,17 @@ struct WaterSpectralUniform {
     dims: vec4<u32>,
 };
 
+struct WaterHzbUniform {
+    dims: vec4<u32>,
+};
+
 @group(0) @binding(0) var<storage, read> water_info_texels: array<vec4<u32>>;
 @group(0) @binding(1) var<uniform> water_info_uniform: WaterInfoUniform;
-@group(0) @binding(2) var<storage, read> water_spectral_texels: array<vec4<u32>>;
-@group(0) @binding(3) var<uniform> water_spectral_uniform: WaterSpectralUniform;
+@group(0) @binding(2) var<storage, read> water_displacement_texels: array<vec4<u32>>;
+@group(0) @binding(3) var<storage, read> water_slope_texels: array<vec4<u32>>;
+@group(0) @binding(4) var<uniform> water_spectral_uniform: WaterSpectralUniform;
+@group(0) @binding(5) var<storage, read> water_hzb_texels: array<vec4<u32>>;
+@group(0) @binding(6) var<uniform> water_hzb_uniform: WaterHzbUniform;
 
 fn saturate(value: f32) -> f32 {
     return clamp(value, 0.0, 1.0);
@@ -22010,12 +22226,38 @@ fn sample_water_info(uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(packed) * (1.0 / 65535.0);
 }
 
-fn sample_water_spectral(uv: vec2<f32>) -> vec4<f32> {
+fn sample_water_displacement(uv: vec2<f32>) -> vec4<f32> {
     let width = max(water_spectral_uniform.dims.x, 1u);
     let height = max(water_spectral_uniform.dims.y, 1u);
     let px = min(u32(saturate(uv.x) * f32(width)), width - 1u);
     let py = min(u32(saturate(uv.y) * f32(height)), height - 1u);
-    let packed = water_spectral_texels[py * width + px];
+    let packed = water_displacement_texels[py * width + px];
+    return vec4<f32>(packed) * (1.0 / 65535.0);
+}
+
+fn sample_water_slope(uv: vec2<f32>) -> vec4<f32> {
+    let width = max(water_spectral_uniform.dims.x, 1u);
+    let height = max(water_spectral_uniform.dims.y, 1u);
+    let px = min(u32(saturate(uv.x) * f32(width)), width - 1u);
+    let py = min(u32(saturate(uv.y) * f32(height)), height - 1u);
+    let packed = water_slope_texels[py * width + px];
+    return vec4<f32>(packed) * (1.0 / 65535.0);
+}
+
+fn sample_water_hzb(uv: vec2<f32>, mip: u32) -> vec4<f32> {
+    let base_width = max(water_hzb_uniform.dims.x, 1u);
+    let base_height = max(water_hzb_uniform.dims.y, 1u);
+    let mip_count = max(water_hzb_uniform.dims.z, 1u);
+    let selected_mip = min(mip, mip_count - 1u);
+    var offset = 0u;
+    for (var level = 0u; level < selected_mip; level = level + 1u) {
+        offset = offset + max(base_width >> level, 1u) * max(base_height >> level, 1u);
+    }
+    let width = max(base_width >> selected_mip, 1u);
+    let height = max(base_height >> selected_mip, 1u);
+    let px = min(u32(saturate(uv.x) * f32(width)), width - 1u);
+    let py = min(u32(saturate(uv.y) * f32(height)), height - 1u);
+    let packed = water_hzb_texels[offset + py * width + px];
     return vec4<f32>(packed) * (1.0 / 65535.0);
 }
 
@@ -22115,11 +22357,12 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
     let x = mix(-44.0, 44.0, gx) * mix(0.22, 1.0, smoothstep(0.0, 0.65, distance_t));
     let world = vec2<f32>(x, z);
     let water_info = sample_water_info(vec2<f32>(gx, gz));
-    let spectral = sample_water_spectral(vec2<f32>(gx, gz));
+    let displacement = sample_water_displacement(vec2<f32>(gx, gz));
     let water_depth_delta = water_info.y - water_info.x;
     let shore_lift = smoothstep(0.065, 0.0, abs(water_depth_delta)) * 0.18;
-    let spectral_height = (spectral.x * 2.0 - 1.0) * 0.82;
-    let h = ocean_height(world) * 0.42 + spectral_height + water_depth_delta * 0.42 + shore_lift;
+    let spectral_height = (displacement.x * 2.0 - 1.0) * 0.88;
+    let choppy = (displacement.yz * 2.0 - vec2<f32>(1.0, 1.0)) * mix(0.34, 0.08, distance_t);
+    let h = ocean_height(world + choppy) * 0.36 + spectral_height + water_depth_delta * 0.42 + shore_lift;
     let ndc_x = x / (z * 0.34);
     let ndc_y = mix(-1.16, -0.08, pow(gz, 0.48)) + h * mix(0.055, 0.010, distance_t);
     out.position = vec4<f32>(ndc_x, ndc_y, mix(0.12, 0.86, distance_t), 1.0);
@@ -22148,25 +22391,34 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let sun_path = exp(-abs(screen_uv.x - sun_center.x) * (8.0 + in.distance_t * 18.0)) * smoothstep(0.05, 0.95, 1.0 - in.distance_t);
     let wave_glint = smoothstep(0.58, 1.0, sin(ocean_height(in.world_xz) * 3.1 + in.world_xz.y * 0.72) * 0.5 + 0.5);
     let water_info = sample_water_info(water_info_uv_from_world(in.world_xz));
-    let spectral = sample_water_spectral(water_info_uv_from_world(in.world_xz));
+    let surface_uv = water_info_uv_from_world(in.world_xz);
+    let displacement = sample_water_displacement(surface_uv);
+    let slope_sample = sample_water_slope(surface_uv);
+    let hzb = sample_water_hzb(screen_uv + (slope_sample.xy * 2.0 - vec2<f32>(1.0, 1.0)) * 0.018, 1u);
     let water_depth_delta = water_info.y - water_info.x;
     let shoreline = smoothstep(0.075, 0.0, abs(water_depth_delta));
     let flow = water_info.zw * 2.0 - vec2<f32>(1.0, 1.0);
-    let spectral_slope = spectral.yz * 2.0 - vec2<f32>(1.0, 1.0);
-    let spectral_foam = spectral.w;
+    let spectral_slope = slope_sample.xy * 2.0 - vec2<f32>(1.0, 1.0);
+    let spectral_foam = slope_sample.z;
+    let refraction_mask = hzb.z;
+    let hzb_occlusion = smoothstep(0.18, 0.94, hzb.y - hzb.x);
     let flow_energy = smoothstep(0.18, 0.72, length(flow));
     let foam_seed = sin(dot(in.world_xz + flow * 2.4, vec2<f32>(1.7, 0.43)) * 4.8) * 0.5 + 0.5;
     let wave_foam = smoothstep(0.72, 1.0, abs(normal.x) + abs(normal.z)) * smoothstep(0.0, 0.35, 1.0 - in.distance_t);
-    let foam = saturate(wave_foam * 0.46 + spectral_foam * 0.35 + shoreline * (0.35 + 0.65 * foam_seed) + flow_energy * shoreline * 0.42);
+    let foam = saturate(wave_foam * 0.42 + spectral_foam * 0.36 + shoreline * (0.35 + 0.65 * foam_seed) + flow_energy * shoreline * 0.42);
     let shallow_tint = smoothstep(0.16, 0.0, abs(water_depth_delta));
 
     let deep = vec3<f32>(0.010, 0.055, 0.13);
     let near = mix(vec3<f32>(0.02, 0.23, 0.30), vec3<f32>(0.07, 0.35, 0.34), shallow_tint);
+    let refracted_scene = sky_color(vec2<f32>(screen_uv.x + spectral_slope.x * 0.045, 0.46 + (1.0 - in.distance_t) * 0.18), sun_center);
     let reflected = sky_color(vec2<f32>(screen_uv.x + (normal.x + spectral_slope.x * 0.18) * 0.08, 0.50 + (1.0 - in.distance_t) * 0.22), sun_center);
+    let absorption = exp(-(0.45 + in.distance_t * 2.2 + hzb_occlusion * 1.4));
     var color = mix(near, deep, smoothstep(0.0, 0.92, in.distance_t));
+    color = mix(color, refracted_scene * vec3<f32>(0.16, 0.34, 0.30), refraction_mask * absorption * 0.28);
     color = mix(color, reflected, 0.12 + fresnel * 0.42 + shoreline * 0.06);
+    color += vec3<f32>(0.02, 0.13, 0.10) * (1.0 - absorption) * 0.30;
     color += vec3<f32>(1.0, 0.38, 0.08) * sun_path * (0.24 + 0.42 * wave_glint);
-    color += vec3<f32>(1.0, 0.78, 0.52) * specular * 0.55;
+    color += vec3<f32>(1.0, 0.78, 0.52) * specular * (0.48 + displacement.w * 0.22);
     color = mix(color, vec3<f32>(0.72, 0.91, 0.88), shoreline * 0.14);
     color = mix(color, vec3<f32>(0.72, 0.90, 0.94), foam * 0.24);
     color *= 0.72 + 0.28 * smoothstep(0.0, 0.85, 1.0 - in.distance_t);
@@ -22181,8 +22433,9 @@ struct WaterSpectralUniform {
     dims: vec4<u32>,
 };
 
-@group(0) @binding(0) var<storage, read_write> water_spectral_texels: array<vec4<u32>>;
-@group(0) @binding(1) var<uniform> water_spectral_uniform: WaterSpectralUniform;
+@group(0) @binding(0) var<storage, read_write> water_displacement_texels: array<vec4<u32>>;
+@group(0) @binding(1) var<storage, read_write> water_slope_texels: array<vec4<u32>>;
+@group(0) @binding(2) var<uniform> water_spectral_uniform: WaterSpectralUniform;
 
 fn saturate(value: f32) -> f32 {
     return clamp(value, 0.0, 1.0);
@@ -22222,14 +22475,95 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let hx = spectral_height(p + vec2<f32>(e, 0.0));
     let hy = spectral_height(p + vec2<f32>(0.0, e));
     let slope = vec2<f32>(h - hx, h - hy) * 12.0;
+    let choppy = normalize(vec2<f32>(slope.x + 0.001, slope.y + 0.001)) * saturate(length(slope) * 0.18);
     let foam = smoothstep(0.32, 0.92, abs(slope.x) + abs(slope.y)) * smoothstep(0.0, 0.22, 1.0 - uv.y);
     let index = gid.y * width + gid.x;
-    water_spectral_texels[index] = vec4<u32>(
+    water_displacement_texels[index] = vec4<u32>(
         pack_unorm16(h * 0.5 + 0.5),
+        pack_unorm16(choppy.x * 0.5 + 0.5),
+        pack_unorm16(choppy.y * 0.5 + 0.5),
+        pack_unorm16(abs(h))
+    );
+    water_slope_texels[index] = vec4<u32>(
         pack_unorm16(slope.x * 0.5 + 0.5),
         pack_unorm16(slope.y * 0.5 + 0.5),
-        pack_unorm16(foam)
+        pack_unorm16(foam),
+        pack_unorm16(length(slope) * 0.25)
     );
+}
+"#
+}
+
+fn banger_water_hzb_compute_wgsl() -> &'static str {
+    r#"
+struct WaterHzbUniform {
+    dims: vec4<u32>,
+};
+
+struct WaterInfoUniform {
+    dims: vec4<u32>,
+};
+
+@group(0) @binding(0) var<storage, read_write> water_hzb_texels: array<vec4<u32>>;
+@group(0) @binding(1) var<uniform> water_hzb_uniform: WaterHzbUniform;
+@group(0) @binding(2) var<storage, read> water_info_texels: array<vec4<u32>>;
+@group(0) @binding(3) var<uniform> water_info_uniform: WaterInfoUniform;
+
+fn saturate(value: f32) -> f32 {
+    return clamp(value, 0.0, 1.0);
+}
+
+fn pack_unorm16(value: f32) -> u32 {
+    return u32(saturate(value) * 65535.0 + 0.5);
+}
+
+fn hzb_offset_for_mip(mip: u32, base_width: u32, base_height: u32) -> u32 {
+    var offset = 0u;
+    for (var level = 0u; level < mip; level = level + 1u) {
+        offset = offset + max(base_width >> level, 1u) * max(base_height >> level, 1u);
+    }
+    return offset;
+}
+
+fn sample_water_info(uv: vec2<f32>) -> vec4<f32> {
+    let width = max(water_info_uniform.dims.x, 1u);
+    let height = max(water_info_uniform.dims.y, 1u);
+    let px = min(u32(saturate(uv.x) * f32(width)), width - 1u);
+    let py = min(u32(saturate(uv.y) * f32(height)), height - 1u);
+    let packed = water_info_texels[py * width + px];
+    return vec4<f32>(packed) * (1.0 / 65535.0);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let base_width = water_hzb_uniform.dims.x;
+    let base_height = water_hzb_uniform.dims.y;
+    let mip_count = water_hzb_uniform.dims.z;
+    for (var mip = 0u; mip < mip_count; mip = mip + 1u) {
+        let width = max(base_width >> mip, 1u);
+        let height = max(base_height >> mip, 1u);
+        if (gid.x >= width || gid.y >= height) {
+            continue;
+        }
+        let uv = vec2<f32>(
+            f32(gid.x) / f32(max(width - 1u, 1u)),
+            f32(gid.y) / f32(max(height - 1u, 1u))
+        );
+        let info = sample_water_info(uv);
+        let scene_depth_without_water = saturate(0.18 + uv.y * 0.72 + info.x * 0.08);
+        let water_depth = saturate(0.14 + uv.y * 0.78 + info.y * 0.06);
+        let min_depth = min(scene_depth_without_water, water_depth);
+        let max_depth = max(scene_depth_without_water, water_depth);
+        let refraction_mask = smoothstep(0.015, 0.16, abs(scene_depth_without_water - water_depth));
+        let shoreline_mask = smoothstep(0.075, 0.0, abs(info.y - info.x));
+        let offset = hzb_offset_for_mip(mip, base_width, base_height);
+        water_hzb_texels[offset + gid.y * width + gid.x] = vec4<u32>(
+            pack_unorm16(min_depth),
+            pack_unorm16(max_depth),
+            pack_unorm16(refraction_mask),
+            pack_unorm16(shoreline_mask)
+        );
+    }
 }
 "#
 }
@@ -22758,10 +23092,12 @@ fn build_water_pipeline_manifest(
         displacement_texture_count: 4,
         slope_texture_count: 4,
         spectral_storage_texel_count: 128 * 128,
+        displacement_storage_texel_count: 128 * 128,
+        slope_storage_texel_count: 128 * 128,
         gpu_compute_dispatched: true,
         compute_pass_hash: hash_text_hex(
             "forge.banger.water.spectral_compute_pass.v1",
-            &format!("spectral_storage:128x128:workgroup8x8:{visual_pipeline_hash}"),
+            &format!("displacement_slope_storage:128x128:workgroup8x8:{visual_pipeline_hash}"),
         ),
         temporal_phase_hash: hash_text_hex(
             "forge.banger.water.fft_temporal_phase.v1",
@@ -22794,6 +23130,29 @@ fn build_water_pipeline_manifest(
         ),
     };
     let water_info_texture = build_water_info_texture_manifest(width, height, visual_pipeline_hash);
+    let hzb_width = (width / 4).clamp(64, 256);
+    let hzb_height = (height / 4).clamp(64, 256);
+    let hzb_mip_count = 7;
+    let hzb_logical_texel_count = hzb_pyramid_texel_count(hzb_width, hzb_height, hzb_mip_count);
+    let hzb_compute_pass_hash = hash_text_hex(
+        "forge.banger.water.hzb_scene_depth_compute.v1",
+        &format!("scene_without_water_depth:{hzb_width}:{hzb_height}:{hzb_mip_count}:{visual_pipeline_hash}"),
+    );
+    let hzb_scene_depth = BangerNativeWaterHzbPacket {
+        source_depth: "scene_depth_without_water_plus_water_depth_bounds",
+        width: hzb_width,
+        height: hzb_height,
+        mip_count: hzb_mip_count,
+        logical_texel_count: hzb_logical_texel_count,
+        format: "rgba16_logical_min_depth_max_depth_refraction_mask_shoreline_mask",
+        meshlet_culling_enabled: true,
+        ssr_refraction_enabled: true,
+        compute_pass_hash: hzb_compute_pass_hash.clone(),
+        resource_hash: hash_text_hex(
+            "forge.banger.water.hzb_scene_depth_resource.v1",
+            &format!("{hzb_compute_pass_hash}:{hzb_logical_texel_count}:rgba16"),
+        ),
+    };
     let foam_spray = BangerNativeWaterFoamSpray {
         foam_source: "jacobian_breaking_mask_plus_water_info_shoreline_sdf",
         spray_source: "gpu_particle_emitters_from_whitewater_tiles",
@@ -22826,6 +23185,23 @@ fn build_water_pipeline_manifest(
         absorption_hash: hash_text_hex(
             "forge.banger.water.absorption_packet.v1",
             &format!("beer_lambert:64:caustics:{visual_pipeline_hash}"),
+        ),
+    };
+    let single_layer_composite = BangerNativeWaterSingleLayerCompositePacket {
+        scene_color_source: "opaque_scene_color_without_water",
+        scene_depth_source: "opaque_scene_depth_without_water_hzb",
+        refraction_mask_source: "hzb_depth_delta_plus_water_info_texture",
+        reflection_source: "screen_space_reflection_hzb_plus_radiance_probe",
+        absorption_scattering_source: "beer_lambert_depth_integral_plus_single_scattering_lut",
+        composite_pass_hash: hash_text_hex(
+            "forge.banger.water.single_layer_composite.v1",
+            &format!(
+                "{}:{}:{}:{}",
+                hzb_scene_depth.resource_hash,
+                reflections.reflection_hash,
+                volumetric_absorption.absorption_hash,
+                water_info_texture.proof_hash
+            ),
         ),
     };
     let sdf_voxel_interaction = BangerNativeWaterSdfVoxelPacket {
@@ -22866,9 +23242,11 @@ fn build_water_pipeline_manifest(
         &near_field_mesh,
         &normal_displacement,
         &water_info_texture,
+        &hzb_scene_depth,
         &foam_spray,
         &reflections,
         &volumetric_absorption,
+        &single_layer_composite,
         &sdf_voxel_interaction,
         &pass_schedule,
         &virtual_page_budget,
@@ -22876,15 +23254,17 @@ fn build_water_pipeline_manifest(
     let proof_hash = hash_text_hex(
         "forge.banger.water_hybrid_pipeline.proof.v1",
         &format!(
-            "{manifest_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{manifest_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             far_field_fft.temporal_phase_hash,
             far_field_fft.compute_pass_hash,
             near_field_mesh.page_table_hash,
             normal_displacement.normal_pack_hash,
             water_info_texture.proof_hash,
+            hzb_scene_depth.resource_hash,
             foam_spray.foam_mask_hash,
             reflections.reflection_hash,
             volumetric_absorption.absorption_hash,
+            single_layer_composite.composite_pass_hash,
             sdf_voxel_interaction.sdf_voxel_hash,
             virtual_page_budget.budget_hash
         ),
@@ -22900,9 +23280,11 @@ fn build_water_pipeline_manifest(
         near_field_mesh,
         normal_displacement,
         water_info_texture,
+        hzb_scene_depth,
         foam_spray,
         reflections,
         volumetric_absorption,
+        single_layer_composite,
         sdf_voxel_interaction,
         pass_schedule,
         virtual_page_budget,
@@ -22915,6 +23297,13 @@ fn build_water_pipeline_manifest(
 
 fn build_water_pass_schedule(visual_pipeline_hash: &str) -> Vec<BangerNativeWaterPass> {
     [
+        (
+            "scene_without_water_depth_hzb",
+            "graphics_compute",
+            "opaque_scene_color_depth_without_water",
+            "hzb_scene_color_depth",
+            "SingleLayerWater pre-water scene depth and HZB principles",
+        ),
         (
             "fft_spectrum_cascade_update",
             "async_compute",
@@ -22965,7 +23354,14 @@ fn build_water_pass_schedule(visual_pipeline_hash: &str) -> Vec<BangerNativeWate
             "Single-layer water absorption/refraction model",
         ),
         (
-            "water_composite_taa_history",
+            "single_layer_water_composite",
+            "graphics",
+            "scene_without_water_refraction_mask_reflection_absorption",
+            "lit_single_layer_water_color",
+            "SingleLayerWater deferred composite principles",
+        ),
+        (
+            "water_taa_history_present",
             "graphics",
             "lit_water_color_motion",
             "presentable_hdr_water",
@@ -23138,15 +23534,26 @@ fn water_info_uniform_words_u8(words: [u32; 4]) -> Vec<u8> {
     bytes
 }
 
+fn hzb_pyramid_texel_count(width: u32, height: u32, mip_count: u32) -> u32 {
+    let mut texel_count = 0u32;
+    for mip in 0..mip_count {
+        texel_count = texel_count.saturating_add(width.checked_shr(mip).unwrap_or(0).max(1)
+            * height.checked_shr(mip).unwrap_or(0).max(1));
+    }
+    texel_count
+}
+
 fn water_pipeline_manifest_hash(
     source_contract_hash: &str,
     far_field_fft: &BangerNativeWaterSpectralOcean,
     near_field_mesh: &BangerNativeWaterNearFieldMesh,
     normal_displacement: &BangerNativeWaterNormalDisplacement,
     water_info_texture: &BangerNativeWaterInfoTextureManifest,
+    hzb_scene_depth: &BangerNativeWaterHzbPacket,
     foam_spray: &BangerNativeWaterFoamSpray,
     reflections: &BangerNativeWaterReflectionPacket,
     volumetric_absorption: &BangerNativeWaterAbsorptionPacket,
+    single_layer_composite: &BangerNativeWaterSingleLayerCompositePacket,
     sdf_voxel_interaction: &BangerNativeWaterSdfVoxelPacket,
     pass_schedule: &[BangerNativeWaterPass],
     virtual_page_budget: &BangerNativeWaterPageBudget,
@@ -23157,13 +23564,18 @@ fn water_pipeline_manifest_hash(
     h.update(far_field_fft.temporal_phase_hash.as_bytes());
     h.update(far_field_fft.compute_pass_hash.as_bytes());
     h.update(far_field_fft.spectral_storage_texel_count.to_le_bytes());
+    h.update(far_field_fft.displacement_storage_texel_count.to_le_bytes());
+    h.update(far_field_fft.slope_storage_texel_count.to_le_bytes());
     h.update(near_field_mesh.page_table_hash.as_bytes());
     h.update(normal_displacement.normal_pack_hash.as_bytes());
     h.update(water_info_texture.proof_hash.as_bytes());
     h.update(water_info_texture.output_texture_hash.as_bytes());
+    h.update(hzb_scene_depth.compute_pass_hash.as_bytes());
+    h.update(hzb_scene_depth.resource_hash.as_bytes());
     h.update(foam_spray.foam_mask_hash.as_bytes());
     h.update(reflections.reflection_hash.as_bytes());
     h.update(volumetric_absorption.absorption_hash.as_bytes());
+    h.update(single_layer_composite.composite_pass_hash.as_bytes());
     h.update(sdf_voxel_interaction.sdf_voxel_hash.as_bytes());
     for pass in pass_schedule {
         h.update(pass.pass_hash.as_bytes());
@@ -23874,6 +24286,20 @@ mod tests {
                 .spectral_storage_texel_count,
             128 * 128
         );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .far_field_fft
+                .displacement_storage_texel_count,
+            128 * 128
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .far_field_fft
+                .slope_storage_texel_count,
+            128 * 128
+        );
         assert!(response.water_pipeline_manifest.far_field_fft.gpu_compute_dispatched);
         assert_eq!(
             response.water_pipeline_manifest.far_field_fft.compute_pass_hash.len(),
@@ -23976,6 +24402,30 @@ mod tests {
             response.water_pipeline_manifest.water_info_texture.proof_hash.len(),
             64
         );
+        assert_eq!(response.water_pipeline_manifest.hzb_scene_depth.width, 160);
+        assert_eq!(response.water_pipeline_manifest.hzb_scene_depth.height, 90);
+        assert_eq!(response.water_pipeline_manifest.hzb_scene_depth.mip_count, 7);
+        assert!(
+            response
+                .water_pipeline_manifest
+                .hzb_scene_depth
+                .logical_texel_count
+                > 160 * 90
+        );
+        assert!(response.water_pipeline_manifest.hzb_scene_depth.meshlet_culling_enabled);
+        assert!(response.water_pipeline_manifest.hzb_scene_depth.ssr_refraction_enabled);
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .hzb_scene_depth
+                .compute_pass_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response.water_pipeline_manifest.hzb_scene_depth.resource_hash.len(),
+            64
+        );
         assert!(response.water_pipeline_manifest.foam_spray.shoreline_sdf_enabled);
         assert_eq!(
             response.water_pipeline_manifest.reflections.primary_path,
@@ -23986,6 +24436,28 @@ mod tests {
             "beer_lambert_single_layer_water"
         );
         assert!(response.water_pipeline_manifest.volumetric_absorption.caustics_enabled);
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .single_layer_composite
+                .scene_depth_source,
+            "opaque_scene_depth_without_water_hzb"
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .single_layer_composite
+                .refraction_mask_source,
+            "hzb_depth_delta_plus_water_info_texture"
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .single_layer_composite
+                .composite_pass_hash
+                .len(),
+            64
+        );
         assert!(response.water_pipeline_manifest.sdf_voxel_interaction.collision_enabled);
         assert!(
             response
@@ -23997,7 +24469,13 @@ mod tests {
             .water_pipeline_manifest
             .sdf_voxel_interaction
             .near_shore_foam_enabled);
-        assert_eq!(response.water_pipeline_manifest.pass_schedule.len(), 8);
+        assert_eq!(response.water_pipeline_manifest.pass_schedule.len(), 10);
+        assert!(response
+            .water_pipeline_manifest
+            .pass_schedule
+            .iter()
+            .any(|pass| pass.name == "scene_without_water_depth_hzb"
+                && pass.output_kind == "hzb_scene_color_depth"));
         assert!(response
             .water_pipeline_manifest
             .pass_schedule
@@ -24016,6 +24494,12 @@ mod tests {
             .iter()
             .any(|pass| pass.name == "screen_ray_reflection_resolve"
                 && pass.input_kind == "hzb_scene_color_depth"));
+        assert!(response
+            .water_pipeline_manifest
+            .pass_schedule
+            .iter()
+            .any(|pass| pass.name == "single_layer_water_composite"
+                && pass.input_kind == "scene_without_water_refraction_mask_reflection_absorption"));
         assert_eq!(
             response.water_pipeline_manifest.virtual_page_budget.meshlet_pages,
             response.water_pipeline_manifest.near_field_mesh.meshlet_page_count
