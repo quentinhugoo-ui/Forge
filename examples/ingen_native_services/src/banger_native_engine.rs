@@ -224,6 +224,14 @@ pub struct BangerNativePresentLoopBootstrapResponse {
     pub mesh_vertex_count: u32,
     pub mesh_triangle_count: u32,
     pub draw_call_count: u32,
+    pub camera_position: [f32; 3],
+    pub camera_target: [f32; 3],
+    pub camera_up: [f32; 3],
+    pub camera_fov_y_degrees: f32,
+    pub camera_contract_hash: String,
+    pub view_projection_hash: String,
+    pub model_transform_hash: String,
+    pub scene_bounds_hash: String,
     pub scene3d_proof_hash: String,
     pub readback_proof_hash: String,
     pub frame_hash: String,
@@ -1628,7 +1636,7 @@ impl BangerNativeEngine {
         let proof_hash = hash_text_hex(
             "forge.banger.native_present_loop_bootstrap.proof.v1",
             &format!(
-                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 render.render_pass_count,
                 render.submitted_frame_count,
                 gpu_probe.adapters.len(),
@@ -1636,6 +1644,8 @@ impl BangerNativeEngine {
                 render.readback_checksum_hash,
                 render.visual_signature_hash,
                 render.screen_coverage_hash,
+                render.camera_contract_hash,
+                render.view_projection_hash,
                 render.depth_readback_proof_hash,
                 render.scene3d_proof_hash,
                 render.readback_proof_hash
@@ -1688,6 +1698,14 @@ impl BangerNativeEngine {
             mesh_vertex_count: render.mesh_vertex_count,
             mesh_triangle_count: render.mesh_triangle_count,
             draw_call_count: render.draw_call_count,
+            camera_position: render.camera_position,
+            camera_target: render.camera_target,
+            camera_up: render.camera_up,
+            camera_fov_y_degrees: render.camera_fov_y_degrees,
+            camera_contract_hash: render.camera_contract_hash,
+            view_projection_hash: render.view_projection_hash,
+            model_transform_hash: render.model_transform_hash,
+            scene_bounds_hash: render.scene_bounds_hash,
             scene3d_proof_hash: render.scene3d_proof_hash,
             readback_proof_hash: render.readback_proof_hash,
             frame_hash,
@@ -12654,6 +12672,14 @@ struct WgpuPresentBootstrap {
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
+    camera_position: [f32; 3],
+    camera_target: [f32; 3],
+    camera_up: [f32; 3],
+    camera_fov_y_degrees: f32,
+    camera_contract_hash: String,
+    view_projection_hash: String,
+    model_transform_hash: String,
+    scene_bounds_hash: String,
     scene3d_proof_hash: String,
     readback_proof_hash: String,
 }
@@ -12802,6 +12828,29 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     let mesh_vertex_count = 36u32;
     let mesh_triangle_count = mesh_vertex_count / 3;
     let draw_call_count = 1u32;
+    let camera_position = [0.0, 0.0, -2.4];
+    let camera_target = [0.0, 0.0, 0.0];
+    let camera_up = [0.0, 1.0, 0.0];
+    let camera_fov_y_degrees = 73.07f32;
+    let scene_bounds_min = [-0.5, -0.5, -0.5];
+    let scene_bounds_max = [0.5, 0.5, 0.5];
+    let model_yaw_pitch_roll = [0.62, -0.42, 0.0];
+    let camera_contract_hash = present_loop_camera_contract_hash(
+        camera_position,
+        camera_target,
+        camera_up,
+        camera_fov_y_degrees,
+        width,
+        height,
+    );
+    let view_projection_hash = present_loop_view_projection_hash(
+        &camera_contract_hash,
+        width,
+        height,
+        camera_fov_y_degrees,
+    );
+    let model_transform_hash = present_loop_model_transform_hash(model_yaw_pitch_roll);
+    let scene_bounds_hash = present_loop_scene_bounds_hash(scene_bounds_min, scene_bounds_max);
     let bytes_per_pixel = 4u32;
     let unpadded_bytes_per_row = width.saturating_mul(bytes_per_pixel);
     let padded_bytes_per_row = align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
@@ -12982,6 +13031,10 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         &visual_signature_hash,
         &depth_metrics.proof_hash,
         &screen_coverage_hash,
+        &camera_contract_hash,
+        &view_projection_hash,
+        &model_transform_hash,
+        &scene_bounds_hash,
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
@@ -13019,6 +13072,14 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
+        camera_position,
+        camera_target,
+        camera_up,
+        camera_fov_y_degrees,
+        camera_contract_hash,
+        view_projection_hash,
+        model_transform_hash,
+        scene_bounds_hash,
         scene3d_proof_hash,
         readback_proof_hash: readback_metrics.proof_hash,
     })
@@ -13390,6 +13451,66 @@ fn present_loop_screen_coverage_hash(
     hex32(h.finalize().into())
 }
 
+fn present_loop_camera_contract_hash(
+    camera_position: [f32; 3],
+    camera_target: [f32; 3],
+    camera_up: [f32; 3],
+    camera_fov_y_degrees: f32,
+    width: u32,
+    height: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.camera_contract.v1\0");
+    for value in camera_position
+        .iter()
+        .chain(camera_target.iter())
+        .chain(camera_up.iter())
+    {
+        h.update(value.to_le_bytes());
+    }
+    h.update(camera_fov_y_degrees.to_le_bytes());
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn present_loop_view_projection_hash(
+    camera_contract_hash: &str,
+    width: u32,
+    height: u32,
+    camera_fov_y_degrees: f32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.view_projection.v1\0");
+    h.update(camera_contract_hash.as_bytes());
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(camera_fov_y_degrees.to_le_bytes());
+    let aspect = width as f32 / height.max(1) as f32;
+    let focal_y = 1.0 / (0.5 * camera_fov_y_degrees.to_radians()).tan();
+    h.update(aspect.to_le_bytes());
+    h.update(focal_y.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn present_loop_model_transform_hash(yaw_pitch_roll: [f32; 3]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.model_transform.v1\0");
+    for value in yaw_pitch_roll {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn present_loop_scene_bounds_hash(bounds_min: [f32; 3], bounds_max: [f32; 3]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.scene_bounds.v1\0");
+    for value in bounds_min.iter().chain(bounds_max.iter()) {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn present_loop_depth_target_hash(
     width: u32,
     height: u32,
@@ -13411,6 +13532,10 @@ fn present_loop_scene3d_proof_hash(
     visual_signature_hash: &str,
     depth_readback_proof_hash: &str,
     screen_coverage_hash: &str,
+    camera_contract_hash: &str,
+    view_projection_hash: &str,
+    model_transform_hash: &str,
+    scene_bounds_hash: &str,
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
@@ -13422,6 +13547,10 @@ fn present_loop_scene3d_proof_hash(
     h.update(visual_signature_hash.as_bytes());
     h.update(depth_readback_proof_hash.as_bytes());
     h.update(screen_coverage_hash.as_bytes());
+    h.update(camera_contract_hash.as_bytes());
+    h.update(view_projection_hash.as_bytes());
+    h.update(model_transform_hash.as_bytes());
+    h.update(scene_bounds_hash.as_bytes());
     h.update(mesh_vertex_count.to_le_bytes());
     h.update(mesh_triangle_count.to_le_bytes());
     h.update(draw_call_count.to_le_bytes());
@@ -13800,6 +13929,14 @@ mod tests {
         assert_eq!(response.mesh_vertex_count, 36);
         assert_eq!(response.mesh_triangle_count, 12);
         assert_eq!(response.draw_call_count, 1);
+        assert_eq!(response.camera_position, [0.0, 0.0, -2.4]);
+        assert_eq!(response.camera_target, [0.0, 0.0, 0.0]);
+        assert_eq!(response.camera_up, [0.0, 1.0, 0.0]);
+        assert!(response.camera_fov_y_degrees > 1.0);
+        assert_eq!(response.camera_contract_hash.len(), 64);
+        assert_eq!(response.view_projection_hash.len(), 64);
+        assert_eq!(response.model_transform_hash.len(), 64);
+        assert_eq!(response.scene_bounds_hash.len(), 64);
         assert_eq!(response.scene3d_proof_hash.len(), 64);
         assert_eq!(response.readback_proof_hash.len(), 64);
         assert_eq!(response.frame_hash.len(), 64);
