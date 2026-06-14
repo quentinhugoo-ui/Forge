@@ -110,6 +110,14 @@ import {
   type AgentActionHostConfig
 } from "./agent-action-host.js";
 import {
+  AGENT_ACTION_JSON_PREFIX,
+  agentActionLiveVisibleText,
+  extractAgentActionJsonRequest,
+  removeAgentActionJsonFragment,
+  removeAgentActionJsonFragments,
+  type ExtractedAgentAction
+} from "./agent-action-loop.js";
+import {
   parseSearchArchiveCodeAct,
   renderSearchArchiveResult,
   searchArchiveSessions,
@@ -5164,7 +5172,6 @@ function modelNameFromError(message: string, fallbackModel: string): string {
 }
 
 const ASSISTANT_PROVIDER_UNAVAILABLE_TEXT = "Provider unavailable. Check connection, auth, or quota.";
-const AGENT_ACTION_JSON_PREFIX = "AGENT_ACTION_JSON";
 const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1";
 const AGENT_ACTION_LOOP_MAX_STEPS = 6;
 
@@ -5184,49 +5191,6 @@ function friendlyAssistantErrorText(params: {
     return `${failingModel || "Selected model"} cannot read images. Choose a vision model.`;
   }
   return ASSISTANT_PROVIDER_UNAVAILABLE_TEXT;
-}
-
-interface ExtractedAgentAction {
-  request: AgentActionRequest;
-  line: string;
-}
-
-function extractAgentActionJsonRequest(text: string): ExtractedAgentAction | undefined {
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith(AGENT_ACTION_JSON_PREFIX)) {
-      continue;
-    }
-    const rawJson = trimmed.slice(AGENT_ACTION_JSON_PREFIX.length).trim();
-    if (!rawJson) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(rawJson) as unknown;
-      if (isAgentActionRequest(parsed)) {
-        return { request: parsed, line };
-      }
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
-function removeAgentActionJsonLine(text: string, lineToRemove: string): string {
-  let removed = false;
-  return text
-    .split(/\r?\n/)
-    .filter((line) => {
-      if (!removed && line === lineToRemove) {
-        removed = true;
-        return false;
-      }
-      return true;
-    })
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 function agentActionResultSummary(result: AgentActionResult): string {
@@ -5252,7 +5216,7 @@ function agentActionResultSummary(result: AgentActionResult): string {
 }
 
 function renderExecutedAgentActionText(text: string, extracted: ExtractedAgentAction, result: AgentActionResult): string {
-  const visibleText = removeAgentActionJsonLine(text, extracted.line);
+  const visibleText = removeAgentActionJsonFragment(text, extracted);
   const eventCommand = agentActionEventCommandForRequest(extracted.request);
   return [
     visibleText,
@@ -5345,10 +5309,7 @@ async function executeAssistantAgentActionLoop(params: {
       proofHash: hashJson({ agentActionLoopStep: step + 1, previousProofHash: assistantMessage.proofHash, continuationProofHash: continuation.proofHash })
     };
   }
-  const strippedText = assistantMessage.text
-    .split(/\r?\n/)
-    .filter((line) => !line.trim().startsWith(AGENT_ACTION_JSON_PREFIX))
-    .join("\n")
+  const strippedText = removeAgentActionJsonFragments(assistantMessage.text)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   return {
@@ -10624,7 +10585,8 @@ function createAssistantLiveTextSink(params: {
   let lastText = "";
   return {
     onText: (text) => {
-      const trimmed = [params.prefixText?.trimEnd() ?? "", text.trimEnd()]
+      const visibleText = agentActionLiveVisibleText(text).trimEnd();
+      const trimmed = [params.prefixText?.trimEnd() ?? "", visibleText]
         .filter((part) => part.length > 0)
         .join("\n\n");
       if (!trimmed || trimmed === lastText) {

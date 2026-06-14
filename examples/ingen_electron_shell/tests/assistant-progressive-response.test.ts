@@ -8,6 +8,7 @@ const preloadSource = readFileSync(join(root, "src", "preload", "preload.ts"), "
 const storeSource = readFileSync(join(root, "src", "renderer", "panels-chat-bottom-store.ts"), "utf8");
 const ipcContractSource = readFileSync(join(root, "src", "shared", "ipc-contract.ts"), "utf8");
 const animationSource = readFileSync(join(root, "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
+const agentActionLoopSource = readFileSync(join(root, "src", "main", "agent-action-loop.ts"), "utf8");
 
 describe("assistant progressive response feed", () => {
   it("pushes transcript snapshot events while a chat command is still running", () => {
@@ -36,7 +37,7 @@ describe("assistant progressive response feed", () => {
   });
 
   it("runs agent action requests as a visible loop stream", () => {
-    expect(mainSource).toContain('const AGENT_ACTION_JSON_PREFIX = "AGENT_ACTION_JSON"');
+    expect(agentActionLoopSource).toContain('export const AGENT_ACTION_JSON_PREFIX = "AGENT_ACTION_JSON"');
     expect(mainSource).toContain('const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1"');
     expect(mainSource).toContain("function executeAssistantAgentActionLoop");
     expect(mainSource).toContain("extractAgentActionJsonRequest(assistantMessage.text)");
@@ -44,6 +45,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("agentActionLoopContinuationUserText");
     expect(mainSource).toContain("params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage))");
     expect(mainSource).toContain("assistantMessage = await executeAssistantAgentActionLoop({");
+    expect(agentActionLoopSource).toContain("let markerIndex = text.indexOf(AGENT_ACTION_JSON_PREFIX)");
+    expect(agentActionLoopSource).toContain("export function jsonObjectEndIndex");
+    expect(agentActionLoopSource).toContain("export function removeAgentActionJsonFragment");
+    expect(agentActionLoopSource).toContain("export function agentActionLiveVisibleText");
   });
 
   it("streams provider text into the transcript and cuts over to tools live", () => {
@@ -59,6 +64,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("body.stream = true");
     expect(mainSource).toContain("runOpenRouterChatCompletion(profile, providerUserText, attachments, userMessageId, moduleId, transcript, liveSink)");
     expect(mainSource).toContain("function createAssistantLiveTextSink");
+    expect(mainSource).toContain("const visibleText = agentActionLiveVisibleText(text).trimEnd()");
     expect(mainSource).toContain("transcriptWithReplacedMessage(params.baseTranscript, liveMessage)");
     expect(mainSource).toContain("shouldStop: (text) => Boolean(extractAgentActionJsonRequest(text))");
     expect(mainSource).toContain("liveTextSink");

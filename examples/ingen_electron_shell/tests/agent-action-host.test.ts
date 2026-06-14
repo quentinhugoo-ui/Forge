@@ -54,6 +54,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("fs.delete_tree:/agent_delete_tree_");
     expect(promptManifest).toContain("shell.full:/agent_shell_");
     expect(promptManifest).toContain("loop_stream=When local action is needed");
+    expect(promptManifest).toContain("starts with AGENT_ACTION_JSON at column 1");
     expect(promptManifest).toContain("action_request_format=AGENT_ACTION_JSON");
     expect(promptManifest).toContain("tool_truth=Never claim an action was executed");
   });
@@ -63,6 +64,7 @@ describe("agent action host", () => {
     expect(hint).toContain("LOCAL_ACTION_TOOLS v1");
     expect(hint).toContain("families=fs.list fs.search");
     expect(hint).toContain("format=Emit AGENT_ACTION_JSON");
+    expect(hint).toContain("must start its own line");
     expect(hint).not.toContain("workspace_root=");
     expect(hint).not.toContain("protected_roots=");
   });
