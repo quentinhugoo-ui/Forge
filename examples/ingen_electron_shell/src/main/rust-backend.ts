@@ -96,9 +96,14 @@ export interface RustBangerPresentLoopBootstrap {
   submittedFrameCount: number;
   drawCallCount?: number;
   vertexCount?: number;
+  indexCount?: number;
+  sceneObjectCount?: number;
+  depthFormat?: string;
   renderLoopPolicy?: string;
   clearColor: [number, number, number, number];
   frameUniformHash?: string;
+  cameraUniformHash?: string;
+  sceneMeshHash?: string;
   shaderSourceHash?: string;
   renderPipelineHash?: string;
   frameHash: string;
@@ -443,7 +448,12 @@ function parseBangerPresentLoopBootstrap(stdout: string): RustBangerPresentLoopB
     typeof parsed.submittedFrameCount !== "number" ||
     parsed.submittedFrameCount < 1 ||
     (typeof parsed.drawCallCount === "number" && parsed.drawCallCount < 1) ||
-    (typeof parsed.vertexCount === "number" && parsed.vertexCount < 3)
+    (typeof parsed.vertexCount === "number" && parsed.vertexCount < 3) ||
+    (typeof parsed.indexCount === "number" && parsed.indexCount < 3) ||
+    (typeof parsed.sceneObjectCount === "number" && parsed.sceneObjectCount < 1) ||
+    (typeof parsed.depthFormat === "string" && parsed.depthFormat.length === 0) ||
+    (typeof parsed.sceneMeshHash === "string" && parsed.sceneMeshHash.length !== 64) ||
+    (typeof parsed.cameraUniformHash === "string" && parsed.cameraUniformHash.length !== 64)
   ) {
     throw new Error("Rust Banger present loop bootstrap failed validation.");
   }
@@ -624,9 +634,14 @@ function shadowBangerPresentLoopBootstrap(reason: string): RustBangerPresentLoop
     submittedFrameCount: 0,
     drawCallCount: 0,
     vertexCount: 0,
+    indexCount: 0,
+    sceneObjectCount: 0,
+    depthFormat: "unavailable",
     renderLoopPolicy: "shadow_only",
     clearColor: [0, 0, 0, 1],
     frameUniformHash: "",
+    cameraUniformHash: "",
+    sceneMeshHash: "",
     shaderSourceHash: "",
     renderPipelineHash: "",
     frameHash: "",

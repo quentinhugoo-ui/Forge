@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 const routerSource = readFileSync("src/renderer/HeaderSurfaceRouter.tsx", "utf8");
 const stylesSource = readFileSync("src/renderer/styles.css", "utf8");
 const rustBackendSource = readFileSync("src/main/rust-backend.ts", "utf8");
+const nativeBridgeSource = readFileSync("../ingen_native_services/src/bin/ingen_electron_backend_bridge.rs", "utf8");
 
 describe("Banger native viewport contract", () => {
   it("keeps the Banger page as a full-screen native render surface with no inner frame prose", () => {
@@ -38,5 +39,12 @@ describe("Banger native viewport contract", () => {
     expect(rustBackendSource).toContain("shaderSourceHash");
     expect(rustBackendSource).toContain("renderPipelineHash");
     expect(rustBackendSource).toContain("renderLoopPolicy");
+    expect(rustBackendSource).toContain("indexCount");
+    expect(rustBackendSource).toContain("sceneObjectCount");
+    expect(rustBackendSource).toContain("sceneMeshHash");
+    expect(rustBackendSource).toContain("cameraUniformHash");
+    expect(nativeBridgeSource).toContain("Depth24Plus");
+    expect(nativeBridgeSource).toContain("draw_indexed");
+    expect(nativeBridgeSource).toContain("banger_cube_vertex_bytes");
   });
 });

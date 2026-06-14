@@ -116,9 +116,14 @@ struct BangerNativeHostProjection {
     submitted_frame_count: u32,
     draw_call_count: u32,
     vertex_count: u32,
+    index_count: u32,
+    scene_object_count: u32,
+    depth_format: &'static str,
     render_loop_policy: &'static str,
     clear_color: [f64; 4],
     frame_uniform_hash: String,
+    camera_uniform_hash: String,
+    scene_mesh_hash: String,
     shader_source_hash: String,
     render_pipeline_hash: String,
     frame_hash: String,
@@ -142,6 +147,11 @@ struct BangerNativeScenePipeline {
     render_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+    scene_mesh_hash: String,
+    depth_format: wgpu::TextureFormat,
     shader_source_hash: String,
     render_pipeline_hash: String,
 }
@@ -594,7 +604,7 @@ fn run_banger_native_host(
     let child_hash = sha256_hex(format!("{:p}", child as *mut c_void).as_bytes());
     let frame_hash = sha256_hex(
         format!(
-            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{}",
+            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{:?}:{}:{}:{}",
             config.width,
             config.height,
             format,
@@ -602,6 +612,9 @@ fn run_banger_native_host(
             alpha_mode,
             parent_hash,
             child_hash,
+            scene_pipeline.scene_mesh_hash,
+            scene_pipeline.index_count,
+            scene_pipeline.depth_format,
             scene_pipeline.shader_source_hash,
             scene_pipeline.render_pipeline_hash,
             frame_uniform_hash
@@ -633,10 +646,15 @@ fn run_banger_native_host(
         render_pass_count: 1,
         submitted_frame_count: 1,
         draw_call_count: 1,
-        vertex_count: 3,
-        render_loop_policy: "native_wgpu_uniform_frame_loop_v1",
+        vertex_count: 8,
+        index_count: scene_pipeline.index_count,
+        scene_object_count: 1,
+        depth_format: "Depth24Plus",
+        render_loop_policy: "native_wgpu_mesh_depth_camera_loop_v1",
         clear_color,
-        frame_uniform_hash,
+        frame_uniform_hash: frame_uniform_hash.clone(),
+        camera_uniform_hash: frame_uniform_hash,
+        scene_mesh_hash: scene_pipeline.scene_mesh_hash.clone(),
         shader_source_hash: scene_pipeline.shader_source_hash.clone(),
         render_pipeline_hash: scene_pipeline.render_pipeline_hash.clone(),
         frame_hash,
@@ -644,8 +662,8 @@ fn run_banger_native_host(
         proof_hash: String::new(),
         host_pid: std::process::id(),
         verifier: BangerNativeHostVerifier {
-            wall: "latency+native_surface+ui_branching",
-            frontier_hypothesis: "Banger owns a persistent Win32 child surface with a programmable wgpu render loop under Electron chrome.",
+            wall: "native_surface+depth+scene_submission",
+            frontier_hypothesis: "Banger can promote the child surface from a liveness triangle to a native indexed mesh pass with camera uniforms and depth.",
             local_gate: "forge-cargo run --manifest-path examples\\ingen_native_services\\Cargo.toml --bin ingen_electron_backend_bridge -- --banger-native-host",
             rollback_path: "fall back to --banger-present-loop-bootstrap offscreen target",
         },
@@ -735,6 +753,21 @@ fn render_child_surface_frame(
         }
     };
     let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("banger-native-child-host-depth-texture"),
+        size: wgpu::Extent3d {
+            width: viewport_width.max(1),
+            height: viewport_height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: scene_pipeline.depth_format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("banger-native-child-host-encoder"),
     });
@@ -754,16 +787,25 @@ fn render_child_surface_frame(
             },
         })];
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("banger-native-child-host-clear-pass"),
+            label: Some("banger-native-child-host-mesh-depth-pass"),
             color_attachments: &color_attachments,
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
         });
         pass.set_pipeline(&scene_pipeline.render_pipeline);
         pass.set_bind_group(0, &scene_pipeline.bind_group, &[]);
-        pass.draw(0..3, 0..1);
+        pass.set_vertex_buffer(0, scene_pipeline.vertex_buffer.slice(..));
+        pass.set_index_buffer(scene_pipeline.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        pass.draw_indexed(0..scene_pipeline.index_count, 0, 0..1);
     }
     queue.submit(Some(encoder.finish()));
     device
@@ -788,10 +830,32 @@ fn create_banger_first_scene_pipeline(
     });
     let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("banger-native-frame-uniform-buffer"),
-        size: 16,
+        size: 80,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
         mapped_at_creation: false,
     });
+    let vertex_bytes = banger_cube_vertex_bytes();
+    let index_bytes = banger_cube_index_bytes();
+    let scene_mesh_hash = sha256_hex(
+        format!(
+            "banger-cube-mesh-v1:{}:{}",
+            sha256_hex(&vertex_bytes),
+            sha256_hex(&index_bytes)
+        )
+        .as_bytes(),
+    );
+    let vertex_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-cube-vertex-buffer",
+        wgpu::BufferUsages::VERTEX,
+        &vertex_bytes,
+    );
+    let index_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-cube-index-buffer",
+        wgpu::BufferUsages::INDEX,
+        &index_bytes,
+    );
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("banger-native-frame-bind-group-layout"),
         entries: &[wgpu::BindGroupLayoutEntry {
@@ -830,18 +894,39 @@ fn create_banger_first_scene_pipeline(
             module: &shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
-            buffers: &[],
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: 24,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 0,
+                        shader_location: 0,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 12,
+                        shader_location: 1,
+                    },
+                ],
+            }],
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None,
+            cull_mode: Some(wgpu::Face::Back),
             unclipped_depth: false,
             polygon_mode: wgpu::PolygonMode::Fill,
             conservative: false,
         },
-        depth_stencil: None,
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module: &shader,
@@ -854,8 +939,8 @@ fn create_banger_first_scene_pipeline(
     });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{:?}:{:?}:{:?}:uniform_frame_v1",
-            shader_source_hash, format, present_mode, alpha_mode
+            "banger-first-scene-pipeline:{}:{}:{:?}:{:?}:{:?}:mesh_depth_camera_v1",
+            shader_source_hash, scene_mesh_hash, format, present_mode, alpha_mode
         )
         .as_bytes(),
     );
@@ -863,6 +948,11 @@ fn create_banger_first_scene_pipeline(
         render_pipeline,
         uniform_buffer,
         bind_group,
+        vertex_buffer,
+        index_buffer,
+        index_count: (index_bytes.len() / 2) as u32,
+        scene_mesh_hash,
+        depth_format: wgpu::TextureFormat::Depth24Plus,
         shader_source_hash,
         render_pipeline_hash,
     }
@@ -872,6 +962,7 @@ fn create_banger_first_scene_pipeline(
 fn banger_native_first_scene_wgsl() -> &'static str {
     r#"
 struct FrameUniform {
+    view_proj: mat4x4<f32>,
     time_seconds: f32,
     frame_index: u32,
     viewport: vec2<f32>,
@@ -883,36 +974,38 @@ var<uniform> frame: FrameUniform;
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec3<f32>,
+    @location(1) normal_hint: vec3<f32>,
 };
 
 @vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+fn vs_main(@location(0) position: vec3<f32>, @location(1) color: vec3<f32>) -> VertexOut {
     let t = frame.time_seconds;
-    let aspect = max(frame.viewport.x / max(frame.viewport.y, 1.0), 0.25);
-    let orbit = vec2<f32>(cos(t * 0.55), sin(t * 0.55));
-    let pulse = 0.08 * sin(t * 1.7 + f32(frame.frame_index) * 0.015);
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-0.68 + pulse, -0.56),
-        vec2<f32>( 0.68, -0.50 + pulse),
-        vec2<f32>( 0.02 + orbit.x * 0.06,  0.68 + orbit.y * 0.06)
+    let yaw = t * 0.62;
+    let pitch = 0.32 + 0.12 * sin(t * 0.45);
+    let rotated_y = vec3<f32>(
+        position.x * cos(yaw) + position.z * sin(yaw),
+        position.y,
+        -position.x * sin(yaw) + position.z * cos(yaw)
     );
-    var colors = array<vec3<f32>, 3>(
-        vec3<f32>(0.95, 0.18, 0.12),
-        vec3<f32>(0.12, 0.82, 0.42),
-        vec3<f32>(0.18, 0.44, 1.00)
+    let rotated = vec3<f32>(
+        rotated_y.x,
+        rotated_y.y * cos(pitch) - rotated_y.z * sin(pitch),
+        rotated_y.y * sin(pitch) + rotated_y.z * cos(pitch)
     );
     var out: VertexOut;
-    let corrected = vec2<f32>(positions[vertex_index].x / aspect, positions[vertex_index].y);
-    out.position = vec4<f32>(corrected, 0.0, 1.0);
-    out.color = colors[vertex_index] * (0.82 + 0.18 * abs(sin(t + f32(vertex_index))));
+    out.position = frame.view_proj * vec4<f32>(rotated, 1.0);
+    out.color = color;
+    out.normal_hint = normalize(rotated);
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let rim = vec3<f32>(0.06, 0.08, 0.11);
-    let breathe = 0.92 + 0.08 * sin(frame.time_seconds * 2.0);
-    return vec4<f32>(max(in.color * breathe, rim), 1.0);
+    let light_dir = normalize(vec3<f32>(0.35, 0.55, 0.74));
+    let lambert = clamp(dot(normalize(in.normal_hint), light_dir) * 0.5 + 0.5, 0.22, 1.0);
+    let rim = vec3<f32>(0.04, 0.06, 0.09);
+    let pulse = 0.96 + 0.04 * sin(frame.time_seconds * 1.8 + f32(frame.frame_index) * 0.01);
+    return vec4<f32>(max(in.color * lambert * pulse, rim), 1.0);
 }
 "#
 }
@@ -923,13 +1016,149 @@ fn banger_frame_uniform_bytes(
     frame_index: u32,
     viewport_width: u32,
     viewport_height: u32,
-) -> [u8; 16] {
-    let mut bytes = [0u8; 16];
-    bytes[0..4].copy_from_slice(&time_seconds.to_le_bytes());
-    bytes[4..8].copy_from_slice(&frame_index.to_le_bytes());
-    bytes[8..12].copy_from_slice(&(viewport_width as f32).to_le_bytes());
-    bytes[12..16].copy_from_slice(&(viewport_height as f32).to_le_bytes());
+) -> [u8; 80] {
+    let mut bytes = [0u8; 80];
+    let view_proj = banger_view_projection_matrix(time_seconds, viewport_width, viewport_height);
+    for (index, value) in view_proj.iter().enumerate() {
+        bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes[64..68].copy_from_slice(&time_seconds.to_le_bytes());
+    bytes[68..72].copy_from_slice(&frame_index.to_le_bytes());
+    bytes[72..76].copy_from_slice(&(viewport_width as f32).to_le_bytes());
+    bytes[76..80].copy_from_slice(&(viewport_height as f32).to_le_bytes());
     bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_create_mapped_buffer(
+    device: &wgpu::Device,
+    label: &'static str,
+    usage: wgpu::BufferUsages,
+    bytes: &[u8],
+) -> wgpu::Buffer {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: bytes.len() as u64,
+        usage,
+        mapped_at_creation: true,
+    });
+    buffer.slice(..).get_mapped_range_mut().copy_from_slice(bytes);
+    buffer.unmap();
+    buffer
+}
+
+#[cfg(target_os = "windows")]
+fn banger_cube_vertex_bytes() -> Vec<u8> {
+    let vertices: [[f32; 6]; 8] = [
+        [-0.75, -0.75, 0.75, 0.95, 0.18, 0.12],
+        [0.75, -0.75, 0.75, 0.12, 0.82, 0.42],
+        [0.75, 0.75, 0.75, 0.18, 0.44, 1.00],
+        [-0.75, 0.75, 0.75, 0.98, 0.78, 0.16],
+        [-0.75, -0.75, -0.75, 0.84, 0.26, 0.92],
+        [0.75, -0.75, -0.75, 0.10, 0.72, 0.82],
+        [0.75, 0.75, -0.75, 0.96, 0.42, 0.21],
+        [-0.75, 0.75, -0.75, 0.66, 0.92, 0.24],
+    ];
+    let mut bytes = Vec::with_capacity(vertices.len() * 24);
+    for vertex in vertices {
+        for value in vertex {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_cube_index_bytes() -> Vec<u8> {
+    let indices: [u16; 36] = [
+        0, 1, 2, 0, 2, 3,
+        1, 5, 6, 1, 6, 2,
+        5, 4, 7, 5, 7, 6,
+        4, 0, 3, 4, 3, 7,
+        3, 2, 6, 3, 6, 7,
+        4, 5, 1, 4, 1, 0,
+    ];
+    let mut bytes = Vec::with_capacity(indices.len() * 2);
+    for index in indices {
+        bytes.extend_from_slice(&index.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_view_projection_matrix(time_seconds: f32, viewport_width: u32, viewport_height: u32) -> [f32; 16] {
+    let aspect = (viewport_width as f32 / viewport_height.max(1) as f32).clamp(0.25, 4.0);
+    let eye = [
+        3.2 + 0.18 * (time_seconds * 0.37).sin(),
+        2.15,
+        4.35 + 0.12 * (time_seconds * 0.29).cos(),
+    ];
+    let view = banger_look_at_rh(eye, [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+    let projection = banger_perspective_rh_zo(55.0_f32.to_radians(), aspect, 0.05, 128.0);
+    banger_mat4_mul(projection, view)
+}
+
+#[cfg(target_os = "windows")]
+fn banger_perspective_rh_zo(fovy_radians: f32, aspect: f32, near: f32, far: f32) -> [f32; 16] {
+    let f = 1.0 / (fovy_radians * 0.5).tan();
+    [
+        f / aspect, 0.0, 0.0, 0.0,
+        0.0, f, 0.0, 0.0,
+        0.0, 0.0, far / (near - far), -1.0,
+        0.0, 0.0, (far * near) / (near - far), 0.0,
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn banger_look_at_rh(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [f32; 16] {
+    let forward = banger_vec3_normalize([
+        target[0] - eye[0],
+        target[1] - eye[1],
+        target[2] - eye[2],
+    ]);
+    let side = banger_vec3_normalize(banger_vec3_cross(forward, up));
+    let camera_up = banger_vec3_cross(side, forward);
+    [
+        side[0], camera_up[0], -forward[0], 0.0,
+        side[1], camera_up[1], -forward[1], 0.0,
+        side[2], camera_up[2], -forward[2], 0.0,
+        -banger_vec3_dot(side, eye), -banger_vec3_dot(camera_up, eye), banger_vec3_dot(forward, eye), 1.0,
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn banger_mat4_mul(a: [f32; 16], b: [f32; 16]) -> [f32; 16] {
+    let mut out = [0.0; 16];
+    for column in 0..4 {
+        for row in 0..4 {
+            out[column * 4 + row] =
+                a[row] * b[column * 4] +
+                a[4 + row] * b[column * 4 + 1] +
+                a[8 + row] * b[column * 4 + 2] +
+                a[12 + row] * b[column * 4 + 3];
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "windows")]
+fn banger_vec3_cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn banger_vec3_dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+#[cfg(target_os = "windows")]
+fn banger_vec3_normalize(value: [f32; 3]) -> [f32; 3] {
+    let length = banger_vec3_dot(value, value).sqrt().max(0.0001);
+    [value[0] / length, value[1] / length, value[2] / length]
 }
 
 #[cfg(target_os = "windows")]
@@ -1013,7 +1242,9 @@ mod tests {
         let source = banger_native_first_scene_wgsl();
         assert!(source.contains("@vertex"));
         assert!(source.contains("@fragment"));
-        assert!(source.contains("@builtin(vertex_index)"));
+        assert!(source.contains("view_proj"));
+        assert!(source.contains("@location(0) position"));
+        assert!(source.contains("@location(1) color"));
         assert!(source.contains("FrameUniform"));
         assert!(source.contains("@group(0) @binding(0)"));
         assert_eq!(sha256_hex(source.as_bytes()).len(), 64);
@@ -1023,9 +1254,21 @@ mod tests {
     #[test]
     fn encodes_banger_frame_uniforms_for_gpu_loop() {
         let bytes = banger_frame_uniform_bytes(1.25, 42, 1920, 1080);
-        assert_eq!(bytes.len(), 16);
-        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 42);
-        assert_eq!(f32::from_le_bytes(bytes[8..12].try_into().unwrap()), 1920.0);
+        assert_eq!(bytes.len(), 80);
+        assert_eq!(u32::from_le_bytes(bytes[68..72].try_into().unwrap()), 42);
+        assert_eq!(f32::from_le_bytes(bytes[72..76].try_into().unwrap()), 1920.0);
         assert_eq!(sha256_hex(&bytes).len(), 64);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_banger_cube_mesh_for_indexed_native_draws() {
+        let vertex_bytes = banger_cube_vertex_bytes();
+        let index_bytes = banger_cube_index_bytes();
+        assert_eq!(vertex_bytes.len(), 8 * 24);
+        assert_eq!(index_bytes.len(), 36 * 2);
+        assert_eq!(u16::from_le_bytes(index_bytes[0..2].try_into().unwrap()), 0);
+        assert_eq!(sha256_hex(&vertex_bytes).len(), 64);
+        assert_eq!(sha256_hex(&index_bytes).len(), 64);
     }
 }
