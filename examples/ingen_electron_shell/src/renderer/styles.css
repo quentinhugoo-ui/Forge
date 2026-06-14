@@ -11089,7 +11089,7 @@ ol.assistantText__list li::before {
 
 .shell--widget-minimizing-canvas .composer,
 .shell--widget-minimizing-canvas .bottomControls {
-  transition: none;
+  will-change: transform;
 }
 
 .shell--widget-minimizing .bottomControls__widgetButton--active {
@@ -11128,26 +11128,26 @@ ol.assistantText__list li::before {
   transform: translate3d(calc(100vw + 96px), 0, 0);
 }
 
-.shell--widget-minimizing-canvas .canvasSurfaces,
+.shell--widget-canvas-hidden .canvasSurfaces,
 .shell--widget-mode .canvasSurfaces,
-.shell--widget-minimizing-canvas .canvasCover,
+.shell--widget-canvas-hidden .canvasCover,
 .shell--widget-mode .canvasCover,
-.shell--widget-minimizing-canvas .profileCanvas,
+.shell--widget-canvas-hidden .profileCanvas,
 .shell--widget-mode .profileCanvas,
-.shell--widget-minimizing-canvas .chatCanvas,
+.shell--widget-canvas-hidden .chatCanvas,
 .shell--widget-mode .chatCanvas,
-.shell--widget-minimizing-canvas .parallelTranscriptGrid,
+.shell--widget-canvas-hidden .parallelTranscriptGrid,
 .shell--widget-mode .parallelTranscriptGrid,
-.shell--widget-minimizing-canvas .workspaceRequiredVeil,
+.shell--widget-canvas-hidden .workspaceRequiredVeil,
 .shell--widget-mode .workspaceRequiredVeil,
-.shell--widget-minimizing-canvas .sidebarLedger,
+.shell--widget-canvas-hidden .sidebarLedger,
 .shell--widget-mode .sidebarLedger,
-.shell--widget-minimizing-canvas .shadowLedger,
+.shell--widget-canvas-hidden .shadowLedger,
 .shell--widget-mode .shadowLedger {
   transform: translate3d(0, calc(-100vh - 96px), 0);
 }
 
-.shell--widget-minimizing-canvas::before {
+.shell--widget-canvas-hidden::before {
   transform: translate3d(0, calc(-100vh - 96px), 0);
 }
 
@@ -11324,6 +11324,11 @@ ol.assistantText__list li::before {
   min-height: 82px;
   height: auto;
   padding: 8px;
+  transition: transform var(--widget-side-exit-motion), left var(--sidebar-motion), width var(--sidebar-motion);
+}
+
+.shell--widget-mode .composer {
+  transform: none;
   transition: none;
 }
 
@@ -11357,7 +11362,18 @@ ol.assistantText__list li::before {
   grid-template-columns: max-content 34px minmax(0, 1fr) max-content 30px;
   gap: 7px;
   width: var(--chat-width);
+  transition: transform var(--widget-side-exit-motion), left var(--sidebar-motion), width var(--sidebar-motion);
+}
+
+.shell--widget-mode .bottomControls {
+  transform: none;
   transition: none;
+}
+
+.shell--widget-minimizing-canvas .composer,
+.shell--widget-minimizing-canvas .bottomControls {
+  transform: translate3d(0, var(--widget-chat-drop, 48px), 0);
+  transition: transform var(--widget-canvas-exit-motion), left var(--widget-canvas-exit-motion), width var(--widget-canvas-exit-motion);
 }
 
 .shell--widget-minimizing .bottomControls code,

@@ -79,7 +79,7 @@ const WIDGET_SURFACE_CLOSE_DELAY_MS = WIDGET_CANVAS_EXIT_MS + WIDGET_SIDE_EXIT_M
 const WIDGET_NATIVE_SHRINK_LEAD_MS = 80;
 const WIDGET_NATIVE_SETTLE_MS = 260;
 const WIDGET_HANDOFF_SETTLE_MS = WIDGET_NATIVE_SHRINK_LEAD_MS + WIDGET_NATIVE_SETTLE_MS;
-const WIDGET_NATIVE_SHRINK_DELAY_MS = 0;
+const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_CANVAS_EXIT_MS;
 const WIDGET_VISUAL_SETTLE_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_HANDOFF_SETTLE_MS;
 
 type WidgetLayoutLock = {
@@ -87,6 +87,7 @@ type WidgetLayoutLock = {
   chatWidth: number;
   bottomLeft: number;
   bottomWidth: number;
+  chatDrop: number;
 };
 
 type WidgetHitRegion = {
@@ -115,11 +116,15 @@ function readWidgetLayoutLock(): WidgetLayoutLock | null {
   const bottomControlsRect = document.querySelector(".bottomControls")?.getBoundingClientRect();
   const chatWidth = Math.round(composerRect.width);
   const bottomWidth = Math.round(bottomControlsRect?.width ?? composerRect.width);
+  const screenHeight = window.screen?.height ?? 0;
+  const availableHeight = window.screen?.availHeight ?? screenHeight;
+  const chatDrop = Math.max(0, Math.min(96, Math.round(screenHeight - availableHeight - 2)));
   return {
     chatLeft: Math.round((window.innerWidth - chatWidth) / 2),
     chatWidth,
     bottomLeft: Math.round((window.innerWidth - bottomWidth) / 2),
-    bottomWidth
+    bottomWidth,
+    chatDrop
   };
 }
 
@@ -171,7 +176,8 @@ function shellStyleWithWidgetLock(lock: WidgetLayoutLock | null): React.CSSPrope
     "--widget-chat-left": `${lock.chatLeft}px`,
     "--widget-chat-width": `${lock.chatWidth}px`,
     "--widget-bottom-left": `${lock.bottomLeft}px`,
-    "--widget-bottom-width": `${lock.bottomWidth}px`
+    "--widget-bottom-width": `${lock.bottomWidth}px`,
+    "--widget-chat-drop": `${lock.chatDrop}px`
   } as React.CSSProperties;
 }
 
@@ -381,7 +387,8 @@ export function App() {
     isLlmProviderCanvas ? "shell--llm-provider" : "",
     isBrainCanvas ? "shell--brain-canvas" : "",
     isBangerPage ? "shell--banger-page" : "",
-    widgetMinimizingPhase !== "" ? "shell--widget-minimizing shell--widget-minimizing-canvas" : "",
+    widgetMinimizingPhase !== "" ? "shell--widget-minimizing shell--widget-canvas-hidden" : "",
+    widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-canvas" : "",
     widgetMinimizingPhase === "sides" || widgetMinimizingPhase === "header" ? "shell--widget-minimizing-sides" : "",
     widgetMinimizingPhase === "header" ? "shell--widget-minimizing-header" : "",
     widgetMode ? "shell--widget-mode" : "",
