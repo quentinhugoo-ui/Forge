@@ -11134,10 +11134,37 @@ function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boole
 }
 
 function restoreWidgetTaskbarState(): boolean {
-  if (widgetTaskbarOriginalState === null) {
+  if (process.platform !== "win32") {
     return true;
   }
-  return setWidgetTaskbarHidden((widgetTaskbarOriginalState & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0, true);
+  const current = runWindowsTaskbarAutoHideProbe();
+  if (!current) {
+    return false;
+  }
+  const targetState = current.target & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG;
+  const targetRegistryByte = current.registryPathFound && current.registryByte >= 0
+    ? current.registryByte & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG
+    : undefined;
+  const result = runWindowsTaskbarAutoHideProbe(targetState, targetRegistryByte);
+  widgetTaskbarOriginalState = null;
+  widgetTaskbarOriginalRegistryByte = null;
+  widgetTaskbarHidden = false;
+  if (!result) {
+    return false;
+  }
+  const stateVisible = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
+  const registryVisible =
+    !result.registryPathFound ||
+    result.registryByte < 0 ||
+    (result.registryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
+  traceWidgetTaskbarStep("restore-taskbar-visible", {
+    stateVisible,
+    registryVisible,
+    appBarState: result.target,
+    registryByte: result.registryByte,
+    taskbarRect: result.taskbarRect
+  });
+  return stateVisible && registryVisible;
 }
 
 function finalizeWidgetTaskbarState(reason: string): void {
