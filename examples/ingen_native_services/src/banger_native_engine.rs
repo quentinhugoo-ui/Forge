@@ -1312,11 +1312,21 @@ pub struct BangerNativeRhiSubmitPacket {
     pub lifecycle_hash: String,
     pub fence_scope_hash: String,
     pub breadcrumb_path_hash: String,
+    pub queue_packet_hash: String,
+    pub resource_transition_hash: String,
+    pub queue_fence_edge_hash: String,
+    pub present_contract_hash: String,
     pub parallel_translation_budget: u32,
+    pub resource_transition_count: usize,
+    pub queue_fence_edge_count: usize,
     pub present_receipt_hash: String,
     pub validation_receipt_hash: String,
     pub packet_hash: String,
     pub command_lifecycles: Vec<BangerNativeRhiCommandLifecycle>,
+    pub queue_packets: Vec<BangerNativeRhiQueuePacket>,
+    pub resource_transitions: Vec<BangerNativeRhiResourceTransition>,
+    pub queue_fence_edges: Vec<BangerNativeRhiQueueFenceEdge>,
+    pub present_contract: BangerNativeRhiPresentContract,
     pub fence_scope: BangerNativeRhiFenceScope,
     pub present_receipt: BangerNativeRhiPresentReceipt,
     pub validation_receipt: BangerNativeRhiValidationReceipt,
@@ -1341,6 +1351,63 @@ pub struct BangerNativeRhiCommandLifecycle {
     pub parallel_translation_budget: u32,
     pub breadcrumb_hash: String,
     pub lifecycle_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRhiQueuePacket {
+    pub queue_lane: &'static str,
+    pub queue_family: &'static str,
+    pub queue_id: String,
+    pub command_count: usize,
+    pub first_command_hash: Option<String>,
+    pub last_command_hash: Option<String>,
+    pub wait_count: usize,
+    pub signal_count: usize,
+    pub queue_packet_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRhiResourceTransition {
+    pub transition_id: u32,
+    pub resource_name: String,
+    pub resource_hash: String,
+    pub from_queue: &'static str,
+    pub to_queue: &'static str,
+    pub before_access: &'static str,
+    pub after_access: &'static str,
+    pub transition_flags: &'static str,
+    pub source_graph_transition_hash: String,
+    pub command_dependency_hash: String,
+    pub transition_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRhiQueueFenceEdge {
+    pub edge_id: u32,
+    pub from_queue: &'static str,
+    pub to_queue: &'static str,
+    pub wait_value: u64,
+    pub signal_value: u64,
+    pub source_step_hash: String,
+    pub target_step_hash: String,
+    pub edge_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRhiPresentContract {
+    pub schema: &'static str,
+    pub present_queue: &'static str,
+    pub backbuffer_hash: String,
+    pub presentable_frame_hash: String,
+    pub swapchain_policy: &'static str,
+    pub acquire_hash: String,
+    pub submit_hash: String,
+    pub present_hash: String,
+    pub contract_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1377,8 +1444,12 @@ pub struct BangerNativeRhiValidationReceipt {
     pub authority: &'static str,
     pub state_transition_count: usize,
     pub invalid_transition_count: usize,
+    pub checked_queue_packet_count: usize,
+    pub checked_resource_transition_count: usize,
+    pub checked_queue_fence_edge_count: usize,
     pub timeline_monotonic: bool,
     pub breadcrumb_count: usize,
+    pub present_contract_valid: bool,
     pub validation_hash: String,
 }
 
@@ -3176,8 +3247,12 @@ impl BangerNativeEngine {
             &temporal_history_packet,
             &gaussian_splat_layer_manifest,
         );
-        let rhi_submit_packet =
-            build_rhi_submit_packet(&prepared, &texture_bridge_contract, &frame_submission_packet);
+        let rhi_submit_packet = build_rhi_submit_packet(
+            &prepared,
+            &texture_bridge_contract,
+            &frame_submission_packet,
+            &render_graph_compilation,
+        );
         let gpu_execution_receipt = build_gpu_execution_receipt(
             &prepared,
             &frame_submission_packet,
@@ -7267,6 +7342,7 @@ fn build_rhi_submit_packet(
     prepared: &MonsterPreparedCompute,
     texture_bridge_contract: &BangerNativeTextureBridgeContract,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
 ) -> BangerNativeRhiSubmitPacket {
     let timeline_base_value = rhi_timeline_base_value(frame_submission_packet);
     let acquire_backbuffer_hash = rhi_acquire_backbuffer_hash(
@@ -7407,11 +7483,33 @@ fn build_rhi_submit_packet(
         texture_bridge_contract,
         parallel_translation_budget,
     );
+    let queue_packets = build_rhi_queue_packets(
+        frame_submission_packet,
+        texture_bridge_contract,
+        &command_lifecycles,
+        &steps,
+    );
+    let resource_transitions = build_rhi_resource_transitions(
+        render_graph_compilation,
+        frame_submission_packet,
+    );
+    let queue_fence_edges = build_rhi_queue_fence_edges(&steps);
     let fence_timeline_hash = rhi_fence_timeline_hash(&steps);
     let lifecycle_hash = rhi_command_lifecycle_manifest_hash(&command_lifecycles);
+    let queue_packet_hash = rhi_queue_packets_hash(&queue_packets);
+    let resource_transition_hash = rhi_resource_transitions_hash(&resource_transitions);
+    let queue_fence_edge_hash = rhi_queue_fence_edges_hash(&queue_fence_edges);
     let fence_scope = build_rhi_fence_scope(frame_submission_packet, &steps);
     let fence_scope_hash = fence_scope.scope_hash.clone();
     let breadcrumb_path_hash = rhi_breadcrumb_path_hash(&command_lifecycles, &steps);
+    let present_contract = build_rhi_present_contract(
+        texture_bridge_contract,
+        frame_submission_packet,
+        &acquire_backbuffer_hash,
+        &submit_batch_hash,
+        &present_hash,
+    );
+    let present_contract_hash = present_contract.contract_hash.clone();
     let present_receipt = build_rhi_present_receipt(
         texture_bridge_contract,
         frame_submission_packet,
@@ -7419,8 +7517,15 @@ fn build_rhi_submit_packet(
         present_timeline,
     );
     let present_receipt_hash = present_receipt.receipt_hash.clone();
-    let validation_receipt =
-        build_rhi_validation_receipt(&command_lifecycles, &steps, &present_receipt);
+    let validation_receipt = build_rhi_validation_receipt(
+        &command_lifecycles,
+        &steps,
+        &queue_packets,
+        &resource_transitions,
+        &queue_fence_edges,
+        &present_contract,
+        &present_receipt,
+    );
     let validation_receipt_hash = validation_receipt.validation_hash.clone();
     let packet_hash = rhi_submit_packet_hash(
         prepared,
@@ -7434,14 +7539,21 @@ fn build_rhi_submit_packet(
         &lifecycle_hash,
         &fence_scope_hash,
         &breadcrumb_path_hash,
+        &queue_packet_hash,
+        &resource_transition_hash,
+        &queue_fence_edge_hash,
+        &present_contract_hash,
         parallel_translation_budget,
         &present_receipt_hash,
         &validation_receipt_hash,
         &steps,
+        &queue_packets,
+        &resource_transitions,
+        &queue_fence_edges,
     );
     BangerNativeRhiSubmitPacket {
-        schema: "forge.banger.native_rhi_submit_packet.v2",
-        schema_version: 2,
+        schema: "forge.banger.native_rhi_submit_packet.v3",
+        schema_version: 3,
         authority: "banger_frame_submission_to_native_rhi_submit",
         clean_room_basis: "local_unreal_sparse_dynamic_rhi_finalize_submit_present_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
@@ -7461,11 +7573,21 @@ fn build_rhi_submit_packet(
         lifecycle_hash,
         fence_scope_hash,
         breadcrumb_path_hash,
+        queue_packet_hash,
+        resource_transition_hash,
+        queue_fence_edge_hash,
+        present_contract_hash,
         parallel_translation_budget,
+        resource_transition_count: resource_transitions.len(),
+        queue_fence_edge_count: queue_fence_edges.len(),
         present_receipt_hash,
         validation_receipt_hash,
         packet_hash,
         command_lifecycles,
+        queue_packets,
+        resource_transitions,
+        queue_fence_edges,
+        present_contract,
         fence_scope,
         present_receipt,
         validation_receipt,
@@ -9693,6 +9815,285 @@ fn rhi_command_lifecycle_manifest_hash(
     hex32(h.finalize().into())
 }
 
+fn build_rhi_queue_packets(
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    lifecycles: &[BangerNativeRhiCommandLifecycle],
+    steps: &[BangerNativeRhiSubmitStep],
+) -> Vec<BangerNativeRhiQueuePacket> {
+    let backend_family = backend_submit_family(&texture_bridge_contract.backend);
+    frame_submission_packet
+        .commands
+        .iter()
+        .map(|command| command.queue_lane)
+        .chain(["present"])
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|queue_lane| {
+            let commands = frame_submission_packet
+                .commands
+                .iter()
+                .filter(|command| command.queue_lane == queue_lane)
+                .collect::<Vec<_>>();
+            let wait_count = steps
+                .iter()
+                .filter(|step| step.queue_lane == queue_lane)
+                .count();
+            let signal_count = wait_count;
+            let queue_family = lifecycles
+                .iter()
+                .find(|lifecycle| lifecycle.queue_lane == queue_lane)
+                .map(|lifecycle| lifecycle.queue_family)
+                .unwrap_or_else(|| rhi_queue_family_for_lane(queue_lane, backend_family));
+            let queue_id = lifecycles
+                .iter()
+                .find(|lifecycle| lifecycle.queue_lane == queue_lane)
+                .map(|lifecycle| lifecycle.queue_id.clone())
+                .unwrap_or_else(|| format!("{backend_family}_{queue_lane}_queue"));
+            let first_command_hash = commands.first().map(|command| command.command_hash.clone());
+            let last_command_hash = commands.last().map(|command| command.command_hash.clone());
+            let queue_packet_hash = rhi_queue_packet_hash(
+                queue_lane,
+                queue_family,
+                &queue_id,
+                commands.len(),
+                first_command_hash.as_deref(),
+                last_command_hash.as_deref(),
+                wait_count,
+                signal_count,
+            );
+            BangerNativeRhiQueuePacket {
+                queue_lane,
+                queue_family,
+                queue_id,
+                command_count: commands.len(),
+                first_command_hash,
+                last_command_hash,
+                wait_count,
+                signal_count,
+                queue_packet_hash,
+            }
+        })
+        .collect()
+}
+
+fn build_rhi_resource_transitions(
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+) -> Vec<BangerNativeRhiResourceTransition> {
+    render_graph_compilation
+        .subresource_transitions
+        .iter()
+        .map(|transition| {
+            let command_dependency_hash = frame_submission_packet
+                .commands
+                .iter()
+                .find(|command| command.pass_name == transition.to_pass)
+                .map(|command| command.barrier_hash.clone())
+                .unwrap_or_else(|| frame_submission_packet.frame_schedule_hash.clone());
+            let transition_hash = rhi_resource_transition_hash(
+                transition,
+                &command_dependency_hash,
+            );
+            BangerNativeRhiResourceTransition {
+                transition_id: transition.transition_id,
+                resource_name: transition.resource_name.clone(),
+                resource_hash: transition.resource_hash.clone(),
+                from_queue: transition.before_queue,
+                to_queue: transition.after_queue,
+                before_access: transition.before_access,
+                after_access: transition.after_access,
+                transition_flags: transition.transition_flags,
+                source_graph_transition_hash: transition.transition_hash.clone(),
+                command_dependency_hash,
+                transition_hash,
+            }
+        })
+        .collect()
+}
+
+fn build_rhi_queue_fence_edges(
+    steps: &[BangerNativeRhiSubmitStep],
+) -> Vec<BangerNativeRhiQueueFenceEdge> {
+    steps
+        .windows(2)
+        .enumerate()
+        .map(|(index, pair)| {
+            let source = &pair[0];
+            let target = &pair[1];
+            let edge_hash = rhi_queue_fence_edge_hash(index as u32, source, target);
+            BangerNativeRhiQueueFenceEdge {
+                edge_id: index as u32,
+                from_queue: source.queue_lane,
+                to_queue: target.queue_lane,
+                wait_value: source.timeline_value,
+                signal_value: target.timeline_value,
+                source_step_hash: source.step_hash.clone(),
+                target_step_hash: target.step_hash.clone(),
+                edge_hash,
+            }
+        })
+        .collect()
+}
+
+fn build_rhi_present_contract(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    acquire_backbuffer_hash: &str,
+    submit_batch_hash: &str,
+    present_hash: &str,
+) -> BangerNativeRhiPresentContract {
+    let swapchain_policy = if texture_bridge_contract.same_device_queue_available {
+        "same_device_queue_swapchain_contract"
+    } else {
+        "fallback_readback_swapchain_contract"
+    };
+    let contract_hash = rhi_present_contract_hash(
+        "present",
+        &frame_submission_packet.color_target_hash,
+        &frame_submission_packet.presentable_frame_hash,
+        swapchain_policy,
+        acquire_backbuffer_hash,
+        submit_batch_hash,
+        present_hash,
+    );
+    BangerNativeRhiPresentContract {
+        schema: "forge.banger.rhi_present_contract.v1",
+        present_queue: "present",
+        backbuffer_hash: frame_submission_packet.color_target_hash.clone(),
+        presentable_frame_hash: frame_submission_packet.presentable_frame_hash.clone(),
+        swapchain_policy,
+        acquire_hash: acquire_backbuffer_hash.to_string(),
+        submit_hash: submit_batch_hash.to_string(),
+        present_hash: present_hash.to_string(),
+        contract_hash,
+    }
+}
+
+fn rhi_queue_packet_hash(
+    queue_lane: &str,
+    queue_family: &str,
+    queue_id: &str,
+    command_count: usize,
+    first_command_hash: Option<&str>,
+    last_command_hash: Option<&str>,
+    wait_count: usize,
+    signal_count: usize,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.queue_packet.v1\0");
+    h.update(queue_lane.as_bytes());
+    h.update(queue_family.as_bytes());
+    h.update(queue_id.as_bytes());
+    h.update((command_count as u64).to_le_bytes());
+    if let Some(first_command_hash) = first_command_hash {
+        h.update(first_command_hash.as_bytes());
+    }
+    if let Some(last_command_hash) = last_command_hash {
+        h.update(last_command_hash.as_bytes());
+    }
+    h.update((wait_count as u64).to_le_bytes());
+    h.update((signal_count as u64).to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn rhi_queue_packets_hash(queue_packets: &[BangerNativeRhiQueuePacket]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.queue_packets.v1\0");
+    for queue_packet in queue_packets {
+        h.update(queue_packet.queue_packet_hash.as_bytes());
+        h.update(queue_packet.queue_lane.as_bytes());
+        h.update(queue_packet.queue_family.as_bytes());
+        h.update((queue_packet.command_count as u64).to_le_bytes());
+        h.update((queue_packet.wait_count as u64).to_le_bytes());
+        h.update((queue_packet.signal_count as u64).to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn rhi_resource_transition_hash(
+    transition: &BangerNativeRenderGraphSubresourceTransition,
+    command_dependency_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.resource_transition.v1\0");
+    h.update(transition.transition_id.to_le_bytes());
+    h.update(transition.transition_hash.as_bytes());
+    h.update(transition.resource_hash.as_bytes());
+    h.update(transition.before_queue.as_bytes());
+    h.update(transition.after_queue.as_bytes());
+    h.update(transition.before_access.as_bytes());
+    h.update(transition.after_access.as_bytes());
+    h.update(transition.transition_flags.as_bytes());
+    h.update(command_dependency_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn rhi_resource_transitions_hash(
+    transitions: &[BangerNativeRhiResourceTransition],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.resource_transitions.v1\0");
+    for transition in transitions {
+        h.update(transition.transition_hash.as_bytes());
+        h.update(transition.source_graph_transition_hash.as_bytes());
+        h.update(transition.command_dependency_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn rhi_queue_fence_edge_hash(
+    edge_id: u32,
+    source: &BangerNativeRhiSubmitStep,
+    target: &BangerNativeRhiSubmitStep,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.queue_fence_edge.v1\0");
+    h.update(edge_id.to_le_bytes());
+    h.update(source.queue_lane.as_bytes());
+    h.update(target.queue_lane.as_bytes());
+    h.update(source.timeline_value.to_le_bytes());
+    h.update(target.timeline_value.to_le_bytes());
+    h.update(source.step_hash.as_bytes());
+    h.update(target.step_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn rhi_queue_fence_edges_hash(edges: &[BangerNativeRhiQueueFenceEdge]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.queue_fence_edges.v1\0");
+    for edge in edges {
+        h.update(edge.edge_id.to_le_bytes());
+        h.update(edge.edge_hash.as_bytes());
+        h.update(edge.from_queue.as_bytes());
+        h.update(edge.to_queue.as_bytes());
+        h.update(edge.wait_value.to_le_bytes());
+        h.update(edge.signal_value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn rhi_present_contract_hash(
+    present_queue: &str,
+    backbuffer_hash: &str,
+    presentable_frame_hash: &str,
+    swapchain_policy: &str,
+    acquire_hash: &str,
+    submit_hash: &str,
+    present_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.present_contract.v1\0");
+    h.update(present_queue.as_bytes());
+    h.update(backbuffer_hash.as_bytes());
+    h.update(presentable_frame_hash.as_bytes());
+    h.update(swapchain_policy.as_bytes());
+    h.update(acquire_hash.as_bytes());
+    h.update(submit_hash.as_bytes());
+    h.update(present_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
 fn build_rhi_fence_scope(
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     steps: &[BangerNativeRhiSubmitStep],
@@ -9834,11 +10235,18 @@ fn rhi_present_receipt_hash(
 fn build_rhi_validation_receipt(
     lifecycles: &[BangerNativeRhiCommandLifecycle],
     steps: &[BangerNativeRhiSubmitStep],
+    queue_packets: &[BangerNativeRhiQueuePacket],
+    resource_transitions: &[BangerNativeRhiResourceTransition],
+    queue_fence_edges: &[BangerNativeRhiQueueFenceEdge],
+    present_contract: &BangerNativeRhiPresentContract,
     present_receipt: &BangerNativeRhiPresentReceipt,
 ) -> BangerNativeRhiValidationReceipt {
     let timeline_monotonic = steps
         .windows(2)
         .all(|pair| pair[0].timeline_value <= pair[1].timeline_value);
+    let present_contract_valid = present_contract.contract_hash.len() == 64
+        && present_contract.present_hash.len() == 64
+        && present_receipt.presented;
     let invalid_transition_count = lifecycles
         .iter()
         .filter(|lifecycle| {
@@ -9849,21 +10257,31 @@ fn build_rhi_validation_receipt(
         })
         .count()
         + usize::from(!timeline_monotonic)
-        + usize::from(!present_receipt.presented);
+        + usize::from(!present_receipt.presented)
+        + usize::from(queue_packets.is_empty())
+        + usize::from(!present_contract_valid);
     let validation_hash = rhi_validation_receipt_hash(
         lifecycles.len(),
         invalid_transition_count,
+        queue_packets.len(),
+        resource_transitions.len(),
+        queue_fence_edges.len(),
         timeline_monotonic,
         lifecycles.len(),
+        present_contract_valid,
         &present_receipt.receipt_hash,
     );
     BangerNativeRhiValidationReceipt {
-        schema: "forge.banger.rhi_validation_receipt.v1",
-        authority: "command_lifecycle_fence_breadcrumb_present_validation",
-        state_transition_count: lifecycles.len() * 5,
+        schema: "forge.banger.rhi_validation_receipt.v2",
+        authority: "command_lifecycle_queue_fence_transition_present_validation",
+        state_transition_count: lifecycles.len() * 5 + resource_transitions.len(),
         invalid_transition_count,
+        checked_queue_packet_count: queue_packets.len(),
+        checked_resource_transition_count: resource_transitions.len(),
+        checked_queue_fence_edge_count: queue_fence_edges.len(),
         timeline_monotonic,
         breadcrumb_count: lifecycles.len(),
+        present_contract_valid,
         validation_hash,
     }
 }
@@ -9871,16 +10289,24 @@ fn build_rhi_validation_receipt(
 fn rhi_validation_receipt_hash(
     lifecycle_count: usize,
     invalid_transition_count: usize,
+    queue_packet_count: usize,
+    resource_transition_count: usize,
+    queue_fence_edge_count: usize,
     timeline_monotonic: bool,
     breadcrumb_count: usize,
+    present_contract_valid: bool,
     present_receipt_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.rhi.validation_receipt.v1\0");
+    h.update(b"forge.banger.rhi.validation_receipt.v2\0");
     h.update((lifecycle_count as u64).to_le_bytes());
     h.update((invalid_transition_count as u64).to_le_bytes());
+    h.update((queue_packet_count as u64).to_le_bytes());
+    h.update((resource_transition_count as u64).to_le_bytes());
+    h.update((queue_fence_edge_count as u64).to_le_bytes());
     h.update([timeline_monotonic as u8]);
     h.update((breadcrumb_count as u64).to_le_bytes());
+    h.update([present_contract_valid as u8]);
     h.update(present_receipt_hash.as_bytes());
     hex32(h.finalize().into())
 }
@@ -9897,13 +10323,20 @@ fn rhi_submit_packet_hash(
     lifecycle_hash: &str,
     fence_scope_hash: &str,
     breadcrumb_path_hash: &str,
+    queue_packet_hash: &str,
+    resource_transition_hash: &str,
+    queue_fence_edge_hash: &str,
+    present_contract_hash: &str,
     parallel_translation_budget: u32,
     present_receipt_hash: &str,
     validation_receipt_hash: &str,
     steps: &[BangerNativeRhiSubmitStep],
+    queue_packets: &[BangerNativeRhiQueuePacket],
+    resource_transitions: &[BangerNativeRhiResourceTransition],
+    queue_fence_edges: &[BangerNativeRhiQueueFenceEdge],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_rhi_submit_packet.v2\0");
+    h.update(b"forge.banger.native_rhi_submit_packet.v3\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
@@ -9916,11 +10349,24 @@ fn rhi_submit_packet_hash(
     h.update(lifecycle_hash.as_bytes());
     h.update(fence_scope_hash.as_bytes());
     h.update(breadcrumb_path_hash.as_bytes());
+    h.update(queue_packet_hash.as_bytes());
+    h.update(resource_transition_hash.as_bytes());
+    h.update(queue_fence_edge_hash.as_bytes());
+    h.update(present_contract_hash.as_bytes());
     h.update(parallel_translation_budget.to_le_bytes());
     h.update(present_receipt_hash.as_bytes());
     h.update(validation_receipt_hash.as_bytes());
     for step in steps {
         h.update(step.step_hash.as_bytes());
+    }
+    for queue_packet in queue_packets {
+        h.update(queue_packet.queue_packet_hash.as_bytes());
+    }
+    for transition in resource_transitions {
+        h.update(transition.transition_hash.as_bytes());
+    }
+    for edge in queue_fence_edges {
+        h.update(edge.edge_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -22444,9 +22890,9 @@ mod tests {
                 )));
         assert_eq!(
             response.rhi_submit_packet.schema,
-            "forge.banger.native_rhi_submit_packet.v2"
+            "forge.banger.native_rhi_submit_packet.v3"
         );
-        assert_eq!(response.rhi_submit_packet.schema_version, 2);
+        assert_eq!(response.rhi_submit_packet.schema_version, 3);
         assert_eq!(
             response.rhi_submit_packet.authority,
             "banger_frame_submission_to_native_rhi_submit"
@@ -22493,7 +22939,25 @@ mod tests {
         assert_eq!(response.rhi_submit_packet.lifecycle_hash.len(), 64);
         assert_eq!(response.rhi_submit_packet.fence_scope_hash.len(), 64);
         assert_eq!(response.rhi_submit_packet.breadcrumb_path_hash.len(), 64);
+        assert_eq!(response.rhi_submit_packet.queue_packet_hash.len(), 64);
+        assert_eq!(response.rhi_submit_packet.resource_transition_hash.len(), 64);
+        assert_eq!(response.rhi_submit_packet.queue_fence_edge_hash.len(), 64);
+        assert_eq!(response.rhi_submit_packet.present_contract_hash.len(), 64);
         assert!(response.rhi_submit_packet.parallel_translation_budget > 0);
+        assert_eq!(
+            response.rhi_submit_packet.resource_transition_count,
+            response.rhi_submit_packet.resource_transitions.len()
+        );
+        assert_eq!(
+            response.rhi_submit_packet.resource_transition_count,
+            response
+                .render_graph_compilation
+                .subresource_transition_count
+        );
+        assert_eq!(
+            response.rhi_submit_packet.queue_fence_edge_count,
+            response.rhi_submit_packet.queue_fence_edges.len()
+        );
         assert_eq!(response.rhi_submit_packet.present_receipt_hash.len(), 64);
         assert_eq!(response.rhi_submit_packet.validation_receipt_hash.len(), 64);
         assert_eq!(response.rhi_submit_packet.packet_hash.len(), 64);
@@ -22508,6 +22972,14 @@ mod tests {
         assert_eq!(
             response.rhi_submit_packet.present_receipt.receipt_hash,
             response.rhi_submit_packet.present_receipt_hash
+        );
+        assert_eq!(
+            response.rhi_submit_packet.present_contract.contract_hash,
+            response.rhi_submit_packet.present_contract_hash
+        );
+        assert_eq!(
+            response.rhi_submit_packet.present_contract.presentable_frame_hash,
+            response.frame_submission_packet.presentable_frame_hash
         );
         assert!(response.rhi_submit_packet.present_receipt.presented);
         assert_eq!(
@@ -22527,6 +22999,31 @@ mod tests {
             .timeline_monotonic);
         assert!(response
             .rhi_submit_packet
+            .validation_receipt
+            .present_contract_valid);
+        assert_eq!(
+            response
+                .rhi_submit_packet
+                .validation_receipt
+                .checked_queue_packet_count,
+            response.rhi_submit_packet.queue_packets.len()
+        );
+        assert_eq!(
+            response
+                .rhi_submit_packet
+                .validation_receipt
+                .checked_resource_transition_count,
+            response.rhi_submit_packet.resource_transitions.len()
+        );
+        assert_eq!(
+            response
+                .rhi_submit_packet
+                .validation_receipt
+                .checked_queue_fence_edge_count,
+            response.rhi_submit_packet.queue_fence_edges.len()
+        );
+        assert!(response
+            .rhi_submit_packet
             .command_lifecycles
             .iter()
             .all(|lifecycle| lifecycle.lifecycle_hash.len() == 64
@@ -22538,6 +23035,30 @@ mod tests {
                 && lifecycle.translate_state == "translated_or_native_backend_ready"
                 && lifecycle.submit_state == "submitted_in_batch"
                 && lifecycle.fence_state == "fenced_on_timeline"));
+        assert!(response
+            .rhi_submit_packet
+            .queue_packets
+            .iter()
+            .all(|queue| queue.queue_packet_hash.len() == 64
+                && !queue.queue_id.is_empty()
+                && !queue.queue_family.is_empty()
+                && queue.wait_count == queue.signal_count));
+        assert!(response
+            .rhi_submit_packet
+            .resource_transitions
+            .iter()
+            .all(|transition| transition.transition_hash.len() == 64
+                && transition.source_graph_transition_hash.len() == 64
+                && transition.command_dependency_hash.len() == 64
+                && !transition.transition_flags.is_empty()));
+        assert!(response
+            .rhi_submit_packet
+            .queue_fence_edges
+            .iter()
+            .all(|edge| edge.edge_hash.len() == 64
+                && edge.source_step_hash.len() == 64
+                && edge.target_step_hash.len() == 64
+                && edge.wait_value <= edge.signal_value));
         assert_eq!(
             response.rhi_submit_packet.steps.len(),
             response.frame_submission_packet.command_count + 3
