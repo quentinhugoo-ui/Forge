@@ -232,12 +232,25 @@ pub struct BangerNativePresentLoopBootstrapResponse {
     pub view_projection_hash: String,
     pub model_transform_hash: String,
     pub scene_bounds_hash: String,
+    pub frame_witness_sample_count: usize,
+    pub frame_witness_hash: String,
+    pub frame_witness_samples: Vec<BangerNativeFrameWitnessSample>,
     pub scene3d_proof_hash: String,
     pub readback_proof_hash: String,
     pub frame_hash: String,
     pub present_loop_hash: String,
     pub proof_hash: String,
     pub verifier: BangerNativeRenderVerifier,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeFrameWitnessSample {
+    pub sample_id: &'static str,
+    pub pixel: [u32; 2],
+    pub color_rgba8: [u8; 4],
+    pub depth: f32,
+    pub sample_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1636,7 +1649,7 @@ impl BangerNativeEngine {
         let proof_hash = hash_text_hex(
             "forge.banger.native_present_loop_bootstrap.proof.v1",
             &format!(
-                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 render.render_pass_count,
                 render.submitted_frame_count,
                 gpu_probe.adapters.len(),
@@ -1646,6 +1659,7 @@ impl BangerNativeEngine {
                 render.screen_coverage_hash,
                 render.camera_contract_hash,
                 render.view_projection_hash,
+                render.frame_witness_hash,
                 render.depth_readback_proof_hash,
                 render.scene3d_proof_hash,
                 render.readback_proof_hash
@@ -1706,6 +1720,9 @@ impl BangerNativeEngine {
             view_projection_hash: render.view_projection_hash,
             model_transform_hash: render.model_transform_hash,
             scene_bounds_hash: render.scene_bounds_hash,
+            frame_witness_sample_count: render.frame_witness_samples.len(),
+            frame_witness_hash: render.frame_witness_hash,
+            frame_witness_samples: render.frame_witness_samples,
             scene3d_proof_hash: render.scene3d_proof_hash,
             readback_proof_hash: render.readback_proof_hash,
             frame_hash,
@@ -12680,6 +12697,8 @@ struct WgpuPresentBootstrap {
     view_projection_hash: String,
     model_transform_hash: String,
     scene_bounds_hash: String,
+    frame_witness_hash: String,
+    frame_witness_samples: Vec<BangerNativeFrameWitnessSample>,
     scene3d_proof_hash: String,
     readback_proof_hash: String,
 }
@@ -12974,8 +12993,6 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         unpadded_bytes_per_row,
         padded_bytes_per_row,
     );
-    drop(readback_view);
-    readback_buffer.unmap();
     let depth_readback_slice = depth_readback_buffer.slice(..);
     let (depth_sender, depth_receiver) = mpsc::channel();
     depth_readback_slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -12996,8 +13013,23 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         depth_unpadded_bytes_per_row,
         depth_padded_bytes_per_row,
     );
+    let frame_witness_samples = present_loop_frame_witness_samples(
+        &readback_view,
+        &depth_readback_view,
+        width,
+        height,
+        unpadded_bytes_per_row,
+        padded_bytes_per_row,
+        depth_unpadded_bytes_per_row,
+        depth_padded_bytes_per_row,
+        readback_metrics.coverage_bounds,
+        depth_metrics.coverage_bounds,
+    );
+    let frame_witness_hash = present_loop_frame_witness_hash(&frame_witness_samples);
     drop(depth_readback_view);
     depth_readback_buffer.unmap();
+    drop(readback_view);
+    readback_buffer.unmap();
     if readback_metrics.nonblack_pixel_sample_count == 0
         || readback_metrics.nonzero_tile_count == 0
         || readback_metrics.unique_color_sample_count < 2
@@ -13035,6 +13067,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         &view_projection_hash,
         &model_transform_hash,
         &scene_bounds_hash,
+        &frame_witness_hash,
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
@@ -13080,6 +13113,8 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         view_projection_hash,
         model_transform_hash,
         scene_bounds_hash,
+        frame_witness_hash,
+        frame_witness_samples,
         scene3d_proof_hash,
         readback_proof_hash: readback_metrics.proof_hash,
     })
@@ -13451,6 +13486,139 @@ fn present_loop_screen_coverage_hash(
     hex32(h.finalize().into())
 }
 
+fn present_loop_frame_witness_samples(
+    color_bytes: &[u8],
+    depth_bytes: &[u8],
+    width: u32,
+    height: u32,
+    color_unpadded_bytes_per_row: u32,
+    color_padded_bytes_per_row: u32,
+    depth_unpadded_bytes_per_row: u32,
+    depth_padded_bytes_per_row: u32,
+    color_coverage_bounds: [u32; 4],
+    depth_coverage_bounds: [u32; 4],
+) -> Vec<BangerNativeFrameWitnessSample> {
+    let center_x = width / 2;
+    let center_y = height / 2;
+    let color_mid = [
+        (color_coverage_bounds[0] + color_coverage_bounds[2]) / 2,
+        (color_coverage_bounds[1] + color_coverage_bounds[3]) / 2,
+    ];
+    let depth_mid = [
+        (depth_coverage_bounds[0] + depth_coverage_bounds[2]) / 2,
+        (depth_coverage_bounds[1] + depth_coverage_bounds[3]) / 2,
+    ];
+    [
+        ("viewport_center", [center_x, center_y]),
+        ("color_coverage_center", color_mid),
+        ("depth_coverage_center", depth_mid),
+        ("color_coverage_min", [color_coverage_bounds[0], color_coverage_bounds[1]]),
+        ("color_coverage_max", [color_coverage_bounds[2], color_coverage_bounds[3]]),
+    ]
+    .into_iter()
+    .map(|(sample_id, pixel)| {
+        let pixel = [
+            pixel[0].min(width.saturating_sub(1)),
+            pixel[1].min(height.saturating_sub(1)),
+        ];
+        let color_rgba8 = present_loop_sample_color(
+            color_bytes,
+            pixel,
+            color_unpadded_bytes_per_row,
+            color_padded_bytes_per_row,
+        );
+        let depth = present_loop_sample_depth(
+            depth_bytes,
+            pixel,
+            depth_unpadded_bytes_per_row,
+            depth_padded_bytes_per_row,
+        );
+        let sample_hash = present_loop_frame_witness_sample_hash(sample_id, pixel, color_rgba8, depth);
+        BangerNativeFrameWitnessSample {
+            sample_id,
+            pixel,
+            color_rgba8,
+            depth,
+            sample_hash,
+        }
+    })
+    .collect()
+}
+
+fn present_loop_sample_color(
+    bytes: &[u8],
+    pixel: [u32; 2],
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+) -> [u8; 4] {
+    let row_start = pixel[1] as usize * padded_bytes_per_row as usize;
+    let pixel_start = row_start + pixel[0] as usize * 4;
+    let row_end = row_start.saturating_add(unpadded_bytes_per_row as usize);
+    if pixel_start + 4 <= row_end && pixel_start + 4 <= bytes.len() {
+        [
+            bytes[pixel_start],
+            bytes[pixel_start + 1],
+            bytes[pixel_start + 2],
+            bytes[pixel_start + 3],
+        ]
+    } else {
+        [0, 0, 0, 0]
+    }
+}
+
+fn present_loop_sample_depth(
+    bytes: &[u8],
+    pixel: [u32; 2],
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+) -> f32 {
+    let row_start = pixel[1] as usize * padded_bytes_per_row as usize;
+    let pixel_start = row_start + pixel[0] as usize * 4;
+    let row_end = row_start.saturating_add(unpadded_bytes_per_row as usize);
+    if pixel_start + 4 <= row_end && pixel_start + 4 <= bytes.len() {
+        f32::from_le_bytes([
+            bytes[pixel_start],
+            bytes[pixel_start + 1],
+            bytes[pixel_start + 2],
+            bytes[pixel_start + 3],
+        ])
+    } else {
+        1.0
+    }
+}
+
+fn present_loop_frame_witness_sample_hash(
+    sample_id: &str,
+    pixel: [u32; 2],
+    color_rgba8: [u8; 4],
+    depth: f32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.frame_witness_sample.v1\0");
+    h.update(sample_id.as_bytes());
+    for value in pixel {
+        h.update(value.to_le_bytes());
+    }
+    h.update(color_rgba8);
+    h.update(depth.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn present_loop_frame_witness_hash(samples: &[BangerNativeFrameWitnessSample]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.frame_witness.v1\0");
+    for sample in samples {
+        h.update(sample.sample_id.as_bytes());
+        for value in sample.pixel {
+            h.update(value.to_le_bytes());
+        }
+        h.update(sample.color_rgba8);
+        h.update(sample.depth.to_le_bytes());
+        h.update(sample.sample_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn present_loop_camera_contract_hash(
     camera_position: [f32; 3],
     camera_target: [f32; 3],
@@ -13536,6 +13704,7 @@ fn present_loop_scene3d_proof_hash(
     view_projection_hash: &str,
     model_transform_hash: &str,
     scene_bounds_hash: &str,
+    frame_witness_hash: &str,
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
@@ -13551,6 +13720,7 @@ fn present_loop_scene3d_proof_hash(
     h.update(view_projection_hash.as_bytes());
     h.update(model_transform_hash.as_bytes());
     h.update(scene_bounds_hash.as_bytes());
+    h.update(frame_witness_hash.as_bytes());
     h.update(mesh_vertex_count.to_le_bytes());
     h.update(mesh_triangle_count.to_le_bytes());
     h.update(draw_call_count.to_le_bytes());
@@ -13937,6 +14107,18 @@ mod tests {
         assert_eq!(response.view_projection_hash.len(), 64);
         assert_eq!(response.model_transform_hash.len(), 64);
         assert_eq!(response.scene_bounds_hash.len(), 64);
+        assert_eq!(response.frame_witness_sample_count, response.frame_witness_samples.len());
+        assert!(response.frame_witness_sample_count >= 5);
+        assert_eq!(response.frame_witness_hash.len(), 64);
+        assert!(response.frame_witness_samples.iter().all(|sample| {
+            sample.sample_hash.len() == 64
+                && sample.pixel[0] < response.viewport_width
+                && sample.pixel[1] < response.viewport_height
+        }));
+        assert!(response.frame_witness_samples.iter().any(|sample| {
+            (sample.color_rgba8[0] != 0 || sample.color_rgba8[1] != 0 || sample.color_rgba8[2] != 0)
+                && sample.depth < 0.999
+        }));
         assert_eq!(response.scene3d_proof_hash.len(), 64);
         assert_eq!(response.readback_proof_hash.len(), 64);
         assert_eq!(response.frame_hash.len(), 64);
