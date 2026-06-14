@@ -1547,6 +1547,7 @@ pub struct BangerNativeBackendSubmitTarget {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeBackendExecutionPacket {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub authority: &'static str,
     pub clean_room_basis: &'static str,
     pub source_contract_hash: String,
@@ -1561,12 +1562,24 @@ pub struct BangerNativeBackendExecutionPacket {
     pub nonblack_pixel_sample_count: u32,
     pub swapchain_image_count: u32,
     pub memory_barrier_count: u32,
+    pub queue_packet_count: usize,
+    pub backend_resource_transition_count: usize,
+    pub descriptor_binding_count: usize,
+    pub command_allocator_record_count: usize,
     pub executor_schedule_hash: String,
     pub pipeline_binding_hash: String,
+    pub descriptor_binding_hash: String,
+    pub command_allocator_record_hash: String,
+    pub backend_resource_transition_hash: String,
     pub readback_buffer_hash: String,
     pub nonblank_signature_hash: String,
     pub frame_latch_hash: String,
+    pub validation_receipt_hash: String,
     pub packet_hash: String,
+    pub descriptor_bindings: Vec<BangerNativeBackendDescriptorBinding>,
+    pub command_allocators: Vec<BangerNativeBackendCommandAllocatorRecord>,
+    pub backend_resource_transitions: Vec<BangerNativeBackendResourceTransition>,
+    pub validation_receipt: BangerNativeBackendExecutionValidationReceipt,
     pub passes: Vec<BangerNativeBackendExecutionPass>,
 }
 
@@ -1586,6 +1599,62 @@ pub struct BangerNativeBackendExecutionPass {
     pub readback_region_hash: String,
     pub nonblank_sample_hash: String,
     pub pass_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeBackendDescriptorBinding {
+    pub binding_id: String,
+    pub pass_id: String,
+    pub queue_lane: &'static str,
+    pub backend_family: &'static str,
+    pub descriptor_backend: &'static str,
+    pub descriptor_heap_hash: String,
+    pub source_descriptor_table_hash: String,
+    pub bind_group_or_table_index: u32,
+    pub binding_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeBackendCommandAllocatorRecord {
+    pub allocator_id: String,
+    pub queue_lane: &'static str,
+    pub queue_family: &'static str,
+    pub backend_family: &'static str,
+    pub command_count: usize,
+    pub reset_policy: &'static str,
+    pub source_queue_packet_hash: String,
+    pub allocator_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeBackendResourceTransition {
+    pub transition_id: u32,
+    pub resource_name: String,
+    pub from_queue: &'static str,
+    pub to_queue: &'static str,
+    pub backend_barrier_kind: &'static str,
+    pub source_rhi_transition_hash: String,
+    pub target_barrier_hash: String,
+    pub transition_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeBackendExecutionValidationReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_pass_count: usize,
+    pub checked_descriptor_binding_count: usize,
+    pub checked_command_allocator_count: usize,
+    pub checked_resource_transition_count: usize,
+    pub missing_descriptor_binding_count: usize,
+    pub missing_allocator_count: usize,
+    pub invalid_transition_count: usize,
+    pub nonblank_gate_valid: bool,
+    pub validation_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -7868,9 +7937,19 @@ fn build_backend_execution_packet(
         .iter()
         .map(|target| target.barrier_batch_count)
         .sum::<u32>();
+    let descriptor_bindings = build_backend_descriptor_bindings(backend_submit_plan, &passes);
+    let command_allocators =
+        build_backend_command_allocator_records(backend_submit_plan, rhi_submit_packet);
+    let backend_resource_transitions =
+        build_backend_resource_transitions(backend_submit_plan, rhi_submit_packet);
     let executor_schedule_hash =
         backend_execution_schedule_hash(frame_submission_packet, rhi_submit_packet, &passes);
     let pipeline_binding_hash = backend_execution_pipeline_binding_hash(backend_submit_plan, &passes);
+    let descriptor_binding_hash = backend_descriptor_bindings_hash(&descriptor_bindings);
+    let command_allocator_record_hash =
+        backend_command_allocator_records_hash(&command_allocators);
+    let backend_resource_transition_hash =
+        backend_resource_transitions_hash(&backend_resource_transitions);
     let readback_buffer_hash = backend_execution_readback_buffer_hash(
         texture_bridge_contract,
         gpu_execution_receipt,
@@ -7891,6 +7970,15 @@ fn build_backend_execution_packet(
         backend_submit_plan,
         &nonblank_signature_hash,
     );
+    let validation_receipt = build_backend_execution_validation_receipt(
+        &passes,
+        &descriptor_bindings,
+        &command_allocators,
+        &backend_resource_transitions,
+        nonzero_tile_count,
+        nonblack_pixel_sample_count,
+    );
+    let validation_receipt_hash = validation_receipt.validation_hash.clone();
     let packet_hash = backend_execution_packet_hash(
         prepared,
         texture_bridge_contract,
@@ -7900,15 +7988,23 @@ fn build_backend_execution_packet(
         backend_submit_plan,
         &executor_schedule_hash,
         &pipeline_binding_hash,
+        &descriptor_binding_hash,
+        &command_allocator_record_hash,
+        &backend_resource_transition_hash,
         &readback_buffer_hash,
         &nonblank_signature_hash,
         &frame_latch_hash,
+        &validation_receipt_hash,
+        &descriptor_bindings,
+        &command_allocators,
+        &backend_resource_transitions,
         &passes,
     );
     BangerNativeBackendExecutionPacket {
-        schema: "forge.banger.native_backend_execution_packet.v1",
+        schema: "forge.banger.native_backend_execution_packet.v3",
+        schema_version: 3,
         authority: "banger_backend_submit_plan_to_executable_native_frame",
-        clean_room_basis: "local_unreal_sparse_rhi_backend_execution_readback_contract_no_source_copy",
+        clean_room_basis: "local_unreal_sparse_rhi_backend_execution_descriptor_allocator_transition_contract_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
         backend_submit_plan_hash: backend_submit_plan.submit_plan_hash.clone(),
         rhi_submit_hash: rhi_submit_packet.packet_hash.clone(),
@@ -7921,12 +8017,24 @@ fn build_backend_execution_packet(
         nonblack_pixel_sample_count,
         swapchain_image_count,
         memory_barrier_count,
+        queue_packet_count: rhi_submit_packet.queue_packets.len(),
+        backend_resource_transition_count: backend_resource_transitions.len(),
+        descriptor_binding_count: descriptor_bindings.len(),
+        command_allocator_record_count: command_allocators.len(),
         executor_schedule_hash,
         pipeline_binding_hash,
+        descriptor_binding_hash,
+        command_allocator_record_hash,
+        backend_resource_transition_hash,
         readback_buffer_hash,
         nonblank_signature_hash,
         frame_latch_hash,
+        validation_receipt_hash,
         packet_hash,
+        descriptor_bindings,
+        command_allocators,
+        backend_resource_transitions,
+        validation_receipt,
         passes,
     }
 }
@@ -8069,6 +8177,322 @@ fn backend_execution_pass_hash(
     hex32(h.finalize().into())
 }
 
+fn build_backend_descriptor_bindings(
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    passes: &[BangerNativeBackendExecutionPass],
+) -> Vec<BangerNativeBackendDescriptorBinding> {
+    passes
+        .iter()
+        .enumerate()
+        .map(|(index, pass)| {
+            let target = backend_execution_target_for_lane(backend_submit_plan, pass.queue_lane);
+            let descriptor_backend = backend_descriptor_backend_kind(target.backend_family);
+            let binding_id = format!("backend_binding_{index:03}_{}", pass.pass_name);
+            let bind_group_or_table_index = index as u32 % target.descriptor_table_count.max(1);
+            let binding_hash = backend_descriptor_binding_hash(
+                &binding_id,
+                pass,
+                target,
+                descriptor_backend,
+                bind_group_or_table_index,
+                backend_submit_plan,
+            );
+            BangerNativeBackendDescriptorBinding {
+                binding_id,
+                pass_id: pass.pass_id.clone(),
+                queue_lane: pass.queue_lane,
+                backend_family: target.backend_family,
+                descriptor_backend,
+                descriptor_heap_hash: backend_submit_plan.descriptor_heap_hash.clone(),
+                source_descriptor_table_hash: pass.descriptor_table_hash.clone(),
+                bind_group_or_table_index,
+                binding_hash,
+            }
+        })
+        .collect()
+}
+
+fn build_backend_command_allocator_records(
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+) -> Vec<BangerNativeBackendCommandAllocatorRecord> {
+    rhi_submit_packet
+        .queue_packets
+        .iter()
+        .enumerate()
+        .map(|(index, queue_packet)| {
+            let target = backend_execution_target_for_lane(backend_submit_plan, queue_packet.queue_lane);
+            let allocator_id = format!(
+                "backend_allocator_{index:02}_{}_{}",
+                target.backend_family, queue_packet.queue_lane
+            );
+            let reset_policy = backend_allocator_reset_policy(target.backend_family);
+            let allocator_hash = backend_command_allocator_record_hash(
+                &allocator_id,
+                queue_packet,
+                target,
+                reset_policy,
+                backend_submit_plan,
+            );
+            BangerNativeBackendCommandAllocatorRecord {
+                allocator_id,
+                queue_lane: queue_packet.queue_lane,
+                queue_family: queue_packet.queue_family,
+                backend_family: target.backend_family,
+                command_count: queue_packet.command_count,
+                reset_policy,
+                source_queue_packet_hash: queue_packet.queue_packet_hash.clone(),
+                allocator_hash,
+            }
+        })
+        .collect()
+}
+
+fn build_backend_resource_transitions(
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+) -> Vec<BangerNativeBackendResourceTransition> {
+    rhi_submit_packet
+        .resource_transitions
+        .iter()
+        .map(|transition| {
+            let target = backend_execution_target_for_lane(backend_submit_plan, transition.to_queue);
+            let backend_barrier_kind =
+                backend_resource_barrier_kind(target.backend_family, transition.transition_flags);
+            let target_barrier_hash =
+                backend_resource_transition_target_barrier_hash(transition, target, backend_barrier_kind);
+            let transition_hash = backend_resource_transition_hash(
+                transition,
+                target,
+                backend_barrier_kind,
+                &target_barrier_hash,
+            );
+            BangerNativeBackendResourceTransition {
+                transition_id: transition.transition_id,
+                resource_name: transition.resource_name.clone(),
+                from_queue: transition.from_queue,
+                to_queue: transition.to_queue,
+                backend_barrier_kind,
+                source_rhi_transition_hash: transition.transition_hash.clone(),
+                target_barrier_hash,
+                transition_hash,
+            }
+        })
+        .collect()
+}
+
+fn backend_descriptor_backend_kind(backend_family: &str) -> &'static str {
+    match backend_family {
+        "d3d12" => "d3d12_descriptor_table",
+        "vulkan" => "vulkan_descriptor_set",
+        "metal" => "metal_argument_buffer",
+        _ => "wgpu_bind_group",
+    }
+}
+
+fn backend_allocator_reset_policy(backend_family: &str) -> &'static str {
+    match backend_family {
+        "d3d12" => "reset_command_allocator_after_fence",
+        "vulkan" => "reset_command_pool_per_frame_overlap",
+        "metal" => "recycle_command_buffer_after_completion",
+        _ => "wgpu_encoder_recreate_per_submission",
+    }
+}
+
+fn backend_resource_barrier_kind(backend_family: &str, transition_flags: &str) -> &'static str {
+    match backend_family {
+        "d3d12" if transition_flags.contains("uav") => "d3d12_uav_barrier",
+        "d3d12" => "d3d12_resource_barrier",
+        "vulkan" if transition_flags.contains("ownership") => "vk_queue_family_ownership_transfer",
+        "vulkan" => "vk_pipeline_barrier2",
+        "metal" => "metal_resource_usage_scope",
+        _ => "wgpu_implicit_encoder_barrier",
+    }
+}
+
+fn backend_descriptor_binding_hash(
+    binding_id: &str,
+    pass: &BangerNativeBackendExecutionPass,
+    target: &BangerNativeBackendSubmitTarget,
+    descriptor_backend: &str,
+    bind_group_or_table_index: u32,
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.descriptor_binding.v1\0");
+    h.update(binding_id.as_bytes());
+    h.update(pass.pass_hash.as_bytes());
+    h.update(pass.descriptor_table_hash.as_bytes());
+    h.update(target.target_hash.as_bytes());
+    h.update(descriptor_backend.as_bytes());
+    h.update(bind_group_or_table_index.to_le_bytes());
+    h.update(backend_submit_plan.descriptor_heap_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_descriptor_bindings_hash(bindings: &[BangerNativeBackendDescriptorBinding]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.descriptor_bindings.v1\0");
+    for binding in bindings {
+        h.update(binding.binding_hash.as_bytes());
+        h.update(binding.descriptor_backend.as_bytes());
+        h.update(binding.bind_group_or_table_index.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_command_allocator_record_hash(
+    allocator_id: &str,
+    queue_packet: &BangerNativeRhiQueuePacket,
+    target: &BangerNativeBackendSubmitTarget,
+    reset_policy: &str,
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.command_allocator_record.v1\0");
+    h.update(allocator_id.as_bytes());
+    h.update(queue_packet.queue_packet_hash.as_bytes());
+    h.update(target.target_hash.as_bytes());
+    h.update(reset_policy.as_bytes());
+    h.update(backend_submit_plan.command_allocator_hash.as_bytes());
+    h.update((queue_packet.command_count as u64).to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_command_allocator_records_hash(
+    records: &[BangerNativeBackendCommandAllocatorRecord],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.command_allocator_records.v1\0");
+    for record in records {
+        h.update(record.allocator_hash.as_bytes());
+        h.update(record.queue_lane.as_bytes());
+        h.update(record.queue_family.as_bytes());
+        h.update(record.reset_policy.as_bytes());
+        h.update((record.command_count as u64).to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_resource_transition_target_barrier_hash(
+    transition: &BangerNativeRhiResourceTransition,
+    target: &BangerNativeBackendSubmitTarget,
+    backend_barrier_kind: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.resource_transition_target_barrier.v1\0");
+    h.update(transition.transition_hash.as_bytes());
+    h.update(target.target_hash.as_bytes());
+    h.update(backend_barrier_kind.as_bytes());
+    h.update(transition.before_access.as_bytes());
+    h.update(transition.after_access.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_resource_transition_hash(
+    transition: &BangerNativeRhiResourceTransition,
+    target: &BangerNativeBackendSubmitTarget,
+    backend_barrier_kind: &str,
+    target_barrier_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.resource_transition.v1\0");
+    h.update(transition.transition_id.to_le_bytes());
+    h.update(transition.transition_hash.as_bytes());
+    h.update(transition.resource_hash.as_bytes());
+    h.update(target.target_hash.as_bytes());
+    h.update(backend_barrier_kind.as_bytes());
+    h.update(target_barrier_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_resource_transitions_hash(
+    transitions: &[BangerNativeBackendResourceTransition],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.resource_transitions.v1\0");
+    for transition in transitions {
+        h.update(transition.transition_hash.as_bytes());
+        h.update(transition.source_rhi_transition_hash.as_bytes());
+        h.update(transition.target_barrier_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn build_backend_execution_validation_receipt(
+    passes: &[BangerNativeBackendExecutionPass],
+    descriptor_bindings: &[BangerNativeBackendDescriptorBinding],
+    command_allocators: &[BangerNativeBackendCommandAllocatorRecord],
+    backend_resource_transitions: &[BangerNativeBackendResourceTransition],
+    nonzero_tile_count: u32,
+    nonblack_pixel_sample_count: u32,
+) -> BangerNativeBackendExecutionValidationReceipt {
+    let missing_descriptor_binding_count = passes
+        .iter()
+        .filter(|pass| {
+            !descriptor_bindings
+                .iter()
+                .any(|binding| binding.pass_id == pass.pass_id)
+        })
+        .count();
+    let missing_allocator_count = usize::from(command_allocators.is_empty());
+    let invalid_transition_count = backend_resource_transitions
+        .iter()
+        .filter(|transition| {
+            transition.source_rhi_transition_hash.len() != 64
+                || transition.target_barrier_hash.len() != 64
+                || transition.transition_hash.len() != 64
+        })
+        .count();
+    let nonblank_gate_valid = nonzero_tile_count > 0 && nonblack_pixel_sample_count > 0;
+    let validation_hash = backend_execution_validation_receipt_hash(
+        passes.len(),
+        descriptor_bindings.len(),
+        command_allocators.len(),
+        backend_resource_transitions.len(),
+        missing_descriptor_binding_count,
+        missing_allocator_count,
+        invalid_transition_count,
+        nonblank_gate_valid,
+    );
+    BangerNativeBackendExecutionValidationReceipt {
+        schema: "forge.banger.backend_execution_validation_receipt.v1",
+        authority: "backend_descriptor_allocator_transition_nonblank_gate_validation",
+        checked_pass_count: passes.len(),
+        checked_descriptor_binding_count: descriptor_bindings.len(),
+        checked_command_allocator_count: command_allocators.len(),
+        checked_resource_transition_count: backend_resource_transitions.len(),
+        missing_descriptor_binding_count,
+        missing_allocator_count,
+        invalid_transition_count,
+        nonblank_gate_valid,
+        validation_hash,
+    }
+}
+
+fn backend_execution_validation_receipt_hash(
+    checked_pass_count: usize,
+    checked_descriptor_binding_count: usize,
+    checked_command_allocator_count: usize,
+    checked_resource_transition_count: usize,
+    missing_descriptor_binding_count: usize,
+    missing_allocator_count: usize,
+    invalid_transition_count: usize,
+    nonblank_gate_valid: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.validation_receipt.v1\0");
+    h.update((checked_pass_count as u64).to_le_bytes());
+    h.update((checked_descriptor_binding_count as u64).to_le_bytes());
+    h.update((checked_command_allocator_count as u64).to_le_bytes());
+    h.update((checked_resource_transition_count as u64).to_le_bytes());
+    h.update((missing_descriptor_binding_count as u64).to_le_bytes());
+    h.update((missing_allocator_count as u64).to_le_bytes());
+    h.update((invalid_transition_count as u64).to_le_bytes());
+    h.update([nonblank_gate_valid as u8]);
+    hex32(h.finalize().into())
+}
+
 fn backend_execution_schedule_hash(
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
@@ -8163,13 +8587,20 @@ fn backend_execution_packet_hash(
     backend_submit_plan: &BangerNativeBackendSubmitPlan,
     executor_schedule_hash: &str,
     pipeline_binding_hash: &str,
+    descriptor_binding_hash: &str,
+    command_allocator_record_hash: &str,
+    backend_resource_transition_hash: &str,
     readback_buffer_hash: &str,
     nonblank_signature_hash: &str,
     frame_latch_hash: &str,
+    validation_receipt_hash: &str,
+    descriptor_bindings: &[BangerNativeBackendDescriptorBinding],
+    command_allocators: &[BangerNativeBackendCommandAllocatorRecord],
+    backend_resource_transitions: &[BangerNativeBackendResourceTransition],
     passes: &[BangerNativeBackendExecutionPass],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_backend_execution_packet.v1\0");
+    h.update(b"forge.banger.native_backend_execution_packet.v3\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
@@ -8179,9 +8610,22 @@ fn backend_execution_packet_hash(
     h.update(backend_submit_plan.submit_plan_hash.as_bytes());
     h.update(executor_schedule_hash.as_bytes());
     h.update(pipeline_binding_hash.as_bytes());
+    h.update(descriptor_binding_hash.as_bytes());
+    h.update(command_allocator_record_hash.as_bytes());
+    h.update(backend_resource_transition_hash.as_bytes());
     h.update(readback_buffer_hash.as_bytes());
     h.update(nonblank_signature_hash.as_bytes());
     h.update(frame_latch_hash.as_bytes());
+    h.update(validation_receipt_hash.as_bytes());
+    for binding in descriptor_bindings {
+        h.update(binding.binding_hash.as_bytes());
+    }
+    for allocator in command_allocators {
+        h.update(allocator.allocator_hash.as_bytes());
+    }
+    for transition in backend_resource_transitions {
+        h.update(transition.transition_hash.as_bytes());
+    }
     for pass in passes {
         h.update(pass.pass_hash.as_bytes());
     }
@@ -23211,8 +23655,9 @@ mod tests {
                 && target.command_allocator_count > 0));
         assert_eq!(
             response.backend_execution_packet.schema,
-            "forge.banger.native_backend_execution_packet.v1"
+            "forge.banger.native_backend_execution_packet.v3"
         );
+        assert_eq!(response.backend_execution_packet.schema_version, 3);
         assert_eq!(
             response.backend_execution_packet.authority,
             "banger_backend_submit_plan_to_executable_native_frame"
@@ -23220,7 +23665,7 @@ mod tests {
         assert!(response
             .backend_execution_packet
             .clean_room_basis
-            .contains("backend_execution_readback_contract"));
+            .contains("descriptor_allocator_transition_contract"));
         assert_eq!(
             response.backend_execution_packet.source_contract_hash,
             response.source_hash
@@ -23263,15 +23708,123 @@ mod tests {
         assert!(response.backend_execution_packet.nonblack_pixel_sample_count > 0);
         assert!(response.backend_execution_packet.swapchain_image_count >= 2);
         assert!(response.backend_execution_packet.memory_barrier_count > 0);
+        assert_eq!(
+            response.backend_execution_packet.queue_packet_count,
+            response.rhi_submit_packet.queue_packets.len()
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .backend_resource_transition_count,
+            response.rhi_submit_packet.resource_transitions.len()
+        );
+        assert_eq!(
+            response.backend_execution_packet.descriptor_binding_count,
+            response.backend_execution_packet.descriptor_bindings.len()
+        );
+        assert_eq!(
+            response.backend_execution_packet.descriptor_binding_count,
+            response.backend_execution_packet.executable_pass_count
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .command_allocator_record_count,
+            response.backend_execution_packet.command_allocators.len()
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .command_allocator_record_count,
+            response.rhi_submit_packet.queue_packets.len()
+        );
         assert_eq!(response.backend_execution_packet.executor_schedule_hash.len(), 64);
         assert_eq!(response.backend_execution_packet.pipeline_binding_hash.len(), 64);
+        assert_eq!(response.backend_execution_packet.descriptor_binding_hash.len(), 64);
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .command_allocator_record_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .backend_resource_transition_hash
+                .len(),
+            64
+        );
         assert_eq!(response.backend_execution_packet.readback_buffer_hash.len(), 64);
         assert_eq!(
             response.backend_execution_packet.nonblank_signature_hash.len(),
             64
         );
         assert_eq!(response.backend_execution_packet.frame_latch_hash.len(), 64);
+        assert_eq!(response.backend_execution_packet.validation_receipt_hash.len(), 64);
         assert_eq!(response.backend_execution_packet.packet_hash.len(), 64);
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .validation_receipt
+                .validation_hash,
+            response.backend_execution_packet.validation_receipt_hash
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .validation_receipt
+                .checked_pass_count,
+            response.backend_execution_packet.executable_pass_count
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .validation_receipt
+                .checked_descriptor_binding_count,
+            response.backend_execution_packet.descriptor_binding_count
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .validation_receipt
+                .checked_command_allocator_count,
+            response.backend_execution_packet.command_allocator_record_count
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .validation_receipt
+                .checked_resource_transition_count,
+            response
+                .backend_execution_packet
+                .backend_resource_transition_count
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .validation_receipt
+                .missing_descriptor_binding_count,
+            0
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .validation_receipt
+                .missing_allocator_count,
+            0
+        );
+        assert_eq!(
+            response
+                .backend_execution_packet
+                .validation_receipt
+                .invalid_transition_count,
+            0
+        );
+        assert!(response
+            .backend_execution_packet
+            .validation_receipt
+            .nonblank_gate_valid);
         assert!(response
             .backend_execution_packet
             .passes
@@ -23284,6 +23837,30 @@ mod tests {
                 && pass.readback_region_hash.len() == 64
                 && pass.nonblank_sample_hash.len() == 64
                 && pass.pass_hash.len() == 64));
+        assert!(response
+            .backend_execution_packet
+            .descriptor_bindings
+            .iter()
+            .all(|binding| binding.binding_hash.len() == 64
+                && binding.descriptor_heap_hash.len() == 64
+                && binding.source_descriptor_table_hash.len() == 64
+                && !binding.descriptor_backend.is_empty()));
+        assert!(response
+            .backend_execution_packet
+            .command_allocators
+            .iter()
+            .all(|allocator| allocator.allocator_hash.len() == 64
+                && allocator.source_queue_packet_hash.len() == 64
+                && !allocator.reset_policy.is_empty()
+                && !allocator.queue_family.is_empty()));
+        assert!(response
+            .backend_execution_packet
+            .backend_resource_transitions
+            .iter()
+            .all(|transition| transition.transition_hash.len() == 64
+                && transition.source_rhi_transition_hash.len() == 64
+                && transition.target_barrier_hash.len() == 64
+                && !transition.backend_barrier_kind.is_empty()));
         assert!(response
             .backend_execution_packet
             .passes
