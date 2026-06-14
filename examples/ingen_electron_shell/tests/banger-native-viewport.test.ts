@@ -31,6 +31,8 @@ describe("Banger native viewport contract", () => {
     expect(stylesSource).not.toContain("bangerCesiumViewport");
     expect(stylesSource).not.toContain("cesium-widget");
     expect(stylesSource).toContain(".surface--banger .nativeViewportSlot");
+    expect(stylesSource).toContain(".surface--banger .nativeViewportSlot::after");
+    expect(stylesSource).toContain("perspective(620px) rotateX(58deg)");
     expect(stylesSource).toContain("object-fit: cover");
   });
 
