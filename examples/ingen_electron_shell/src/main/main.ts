@@ -11106,6 +11106,163 @@ type WindowsTaskbarStateProbe = {
   registryByte: number;
 };
 
+type WindowsTaskbarFastResult = {
+  ok: boolean;
+  target: number;
+  registryPathFound: boolean;
+  registryByte: number;
+};
+
+function buildWindowsTaskbarAutoHideFastScript(hidden: boolean): string {
+  const desiredHidden = hidden ? "$true" : "$false";
+  return `
+$ErrorActionPreference = "Stop"
+$startedAt = [System.Diagnostics.Stopwatch]::StartNew()
+$source = @"
+using System;
+using System.Runtime.InteropServices;
+public static class InGenTaskbarFast {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct RECT {
+    public Int32 left;
+    public Int32 top;
+    public Int32 right;
+    public Int32 bottom;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  public struct APPBARDATA {
+    public UInt32 cbSize;
+    public IntPtr hWnd;
+    public UInt32 uCallbackMessage;
+    public UInt32 uEdge;
+    public RECT rc;
+    public IntPtr lParam;
+  }
+  [DllImport("shell32.dll", SetLastError=true)]
+  public static extern UIntPtr SHAppBarMessage(UInt32 dwMessage, ref APPBARDATA pData);
+  [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+  public static extern IntPtr FindWindow(String lpClassName, String lpWindowName);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  public static extern IntPtr SendMessageTimeout(IntPtr hWnd, UInt32 Msg, UIntPtr wParam, String lParam, UInt32 fuFlags, UInt32 uTimeout, out UIntPtr lpdwResult);
+  public const UInt32 ABM_GETSTATE = 0x00000004;
+  public const UInt32 ABM_SETSTATE = 0x0000000A;
+  public const Int32 ABS_AUTOHIDE = 0x0000001;
+  public static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
+  public const UInt32 WM_SETTINGCHANGE = 0x001A;
+  public const UInt32 SMTO_ABORTIFHUNG = 0x0002;
+}
+"@
+Add-Type -TypeDefinition $source
+function Send-InGenTraySettingsChangedFast {
+  $result = [UIntPtr]::Zero
+  [void][InGenTaskbarFast]::SendMessageTimeout([InGenTaskbarFast]::HWND_BROADCAST, [InGenTaskbarFast]::WM_SETTINGCHANGE, [UIntPtr]::Zero, "TraySettings", [InGenTaskbarFast]::SMTO_ABORTIFHUNG, 120, [ref]$result)
+}
+$hidden = ${desiredHidden}
+$taskbarHandle = [InGenTaskbarFast]::FindWindow("Shell_TrayWnd", $null)
+$data = New-Object InGenTaskbarFast+APPBARDATA
+$data.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][InGenTaskbarFast+APPBARDATA])
+$data.hWnd = $taskbarHandle
+$current = [int]([InGenTaskbarFast]::SHAppBarMessage([InGenTaskbarFast]::ABM_GETSTATE, [ref]$data).ToUInt32())
+$target = if ($hidden) { $current -bor [InGenTaskbarFast]::ABS_AUTOHIDE } else { $current -band (-bnot [InGenTaskbarFast]::ABS_AUTOHIDE) }
+$data.lParam = [IntPtr]$target
+[void][InGenTaskbarFast]::SHAppBarMessage([InGenTaskbarFast]::ABM_SETSTATE, [ref]$data)
+$registryPath = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StuckRects3"
+$registryFound = Test-Path -LiteralPath $registryPath
+$registryByte = -1
+if ($registryFound) {
+  $settings = [byte[]](Get-ItemProperty -LiteralPath $registryPath -Name Settings).Settings
+  if ($settings.Length -gt 8) {
+    $registryByte = [int]$settings[8]
+    $nextRegistryByte = if ($hidden) { $registryByte -bor [InGenTaskbarFast]::ABS_AUTOHIDE } else { $registryByte -band (-bnot [InGenTaskbarFast]::ABS_AUTOHIDE) }
+    $settings[8] = [byte]$nextRegistryByte
+    Set-ItemProperty -LiteralPath $registryPath -Name Settings -Value $settings
+    $registryByte = [int]$settings[8]
+    Send-InGenTraySettingsChangedFast
+  }
+}
+@{
+  ok = $true
+  target = $target
+  registryPathFound = $registryFound
+  registryByte = $registryByte
+  elapsedMs = [int]$startedAt.ElapsedMilliseconds
+} | ConvertTo-Json -Compress
+`;
+}
+
+function parseWindowsTaskbarFastResult(stdout: string): WindowsTaskbarFastResult | null {
+  try {
+    const parsed = JSON.parse(stdout.trim()) as Partial<WindowsTaskbarFastResult>;
+    if (
+      parsed.ok === true &&
+      typeof parsed.target === "number" &&
+      typeof parsed.registryPathFound === "boolean" &&
+      typeof parsed.registryByte === "number"
+    ) {
+      return {
+        ok: true,
+        target: parsed.target,
+        registryPathFound: parsed.registryPathFound,
+        registryByte: parsed.registryByte
+      };
+    }
+  } catch (error) {
+    console.warn("Windows taskbar fast response was invalid.", error);
+  }
+  return null;
+}
+
+function runWindowsTaskbarAutoHideFastAsync(hidden: boolean): Promise<WindowsTaskbarFastResult | null> {
+  if (process.platform !== "win32") {
+    return Promise.resolve(null);
+  }
+  const script = buildWindowsTaskbarAutoHideFastScript(hidden);
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], {
+      windowsHide: true
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (result: WindowsTaskbarFastResult | null): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      traceWidgetTaskbarStep("taskbar-fast-command-finished", { hidden, accepted: result !== null, elapsedMs: Date.now() - startedAt });
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      child.kill();
+      console.warn("Windows taskbar fast command timed out.");
+      finish(null);
+    }, 2_000);
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      console.warn("Windows taskbar fast command failed to start.", error);
+      finish(null);
+    });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        console.warn("Windows taskbar fast command failed.", stderr || stdout);
+        finish(null);
+        return;
+      }
+      finish(parseWindowsTaskbarFastResult(stdout));
+    });
+  });
+}
+
 function buildWindowsTaskbarAutoHideProbeScript(targetState?: number, targetRegistryByte?: number): string {
   const desiredState = targetState === undefined ? "$null" : String(Math.max(0, Math.round(targetState)));
   const desiredRegistryByte = targetRegistryByte === undefined ? "$null" : String(Math.max(0, Math.min(255, Math.round(targetRegistryByte))));
@@ -11610,9 +11767,35 @@ function scheduleNativeWidgetTaskbarAutoHide(window: BrowserWindow, hidden: bool
       if (token !== widgetTaskbarAutoHideJobToken) {
         return;
       }
-      const accepted = hidden
-        ? await setWidgetTaskbarHiddenAsync(true)
-        : await restoreWidgetTaskbarStateAsync();
+      let accepted = false;
+      const fastResult = await runWindowsTaskbarAutoHideFastAsync(hidden);
+      if (fastResult) {
+        accepted = true;
+        widgetTaskbarHidden = hidden;
+        if (widgetTaskbarOriginalState === null && hidden) {
+          widgetTaskbarOriginalState = fastResult.target & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG;
+        }
+        if (widgetTaskbarOriginalRegistryByte === null && hidden && fastResult.registryPathFound && fastResult.registryByte >= 0) {
+          widgetTaskbarOriginalRegistryByte = fastResult.registryByte & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG;
+        }
+        if (!hidden) {
+          widgetTaskbarOriginalState = null;
+          widgetTaskbarOriginalRegistryByte = null;
+        }
+        traceWidgetTaskbarStep("taskbar-fast-applied", {
+          id: window.id,
+          hidden,
+          target: fastResult.target,
+          registryPathFound: fastResult.registryPathFound,
+          registryByte: fastResult.registryByte,
+          token
+        });
+      } else {
+        traceWidgetTaskbarStep("taskbar-fast-fallback", { id: window.id, hidden, token });
+        accepted = hidden
+          ? await setWidgetTaskbarHiddenAsync(true)
+          : await restoreWidgetTaskbarStateAsync();
+      }
       if (token !== widgetTaskbarAutoHideJobToken) {
         return;
       }
