@@ -154,7 +154,8 @@ export function App() {
   // Brain behaves like LLM Provider: a full page replacing the whole canvas,
   // closable from the workspace-header cross.
   const isFullPageCanvas = isLlmProviderCanvas || isBrainCanvas;
-  const renderPanelsChatBottom = globalThis.location?.port !== "5176" && !isFullPageCanvas;
+  const isBangerPage = snapshot.activeSection === "banger" && !isFullPageCanvas;
+  const renderPanelsChatBottom = globalThis.location?.port !== "5176" && !isFullPageCanvas && !isBangerPage;
   const canvasSurfaceOpen =
     canvasSplitOpen ||
     canvasFilesOpen ||
@@ -259,6 +260,7 @@ export function App() {
     canvasMapsOpen ? "shell--maps-canvas-open" : "",
     isLlmProviderCanvas ? "shell--llm-provider" : "",
     isBrainCanvas ? "shell--brain-canvas" : "",
+    isBangerPage ? "shell--banger-page" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
 
@@ -905,11 +907,11 @@ export function App() {
         <div className="workspaceRequiredVeil" aria-hidden="true" onClick={() => void chooseWorkspace()} />
       ) : null}
 
-      {!isFullPageCanvas && snapshot.activeSection === "banger" ? (
+      {isBangerPage ? (
         <HeaderSurfaceRouter snapshot={headerSurfaceSnapshot} />
       ) : null}
 
-      {!isFullPageCanvas && !sessionHasStarted ? (
+      {!isFullPageCanvas && !isBangerPage && !sessionHasStarted ? (
         <section className="canvasCover" aria-label="Forge home canvas">
           <ProfileCoverBanner key={`home-canvas-${homeCanvasResetId}`} leftPanelOpen={snapshot.leftPanelOpen} welcomeMessage={welcomeMessage} />
         </section>
@@ -927,7 +929,7 @@ export function App() {
       />
       <RightPanelSlice open={snapshot.rightPanelOpen} />
 
-      {!isFullPageCanvas ? (
+      {!isFullPageCanvas && !isBangerPage ? (
         <CanvasSurfacesSlice
           split={canvasSurfaceOpen}
           actionsOpen={canvasSplitOpen}

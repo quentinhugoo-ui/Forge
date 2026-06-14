@@ -2945,11 +2945,16 @@ button {
   position: fixed;
   left: var(--surface-left);
   top: var(--surface-top);
+  z-index: 18;
   width: var(--surface-width);
   height: var(--surface-height);
   min-width: 0;
   color: var(--forge-text);
   background: var(--forge-canvas-bg);
+}
+
+.shell--banger-page .surfaceRouter {
+  box-shadow: 0 0 0 1px var(--forge-line);
 }
 
 .surface {
