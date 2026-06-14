@@ -91,6 +91,7 @@ type WidgetHitRegion = {
 
 const WIDGET_HIT_REGION_TARGETS = [
   { selector: ".composer", padding: 1 },
+  { selector: ".widgetWindowsButton", padding: 1 },
   { selector: ".bottomControls button", padding: 1 },
   { selector: ".permissionModeControl", padding: 1 },
   { selector: ".composerQuestionnaire", padding: 1 },
@@ -1037,6 +1038,19 @@ export function App() {
           })}
         </div>
       </section>
+
+      <button
+        type="button"
+        className="widgetWindowsButton"
+        aria-hidden={!widgetMode}
+        aria-label="Windows"
+        tabIndex={widgetMode ? 0 : -1}
+        title="Windows"
+      >
+        <svg viewBox="0 0 88 88" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+          <path d="m0 12.402 35.687-4.86.016 34.423-35.67.203zm35.67 33.529.028 34.453L.028 75.48.026 45.7zm4.326-39.025L87.314 0v41.527l-47.318.376zm47.329 39.349-.011 41.34-47.318-6.678-.066-34.739z" />
+        </svg>
+      </button>
 
       <section className="workspaceHeader" aria-label="Workspace header">
         {isFullPageCanvas && !isBrainCanvas ? (

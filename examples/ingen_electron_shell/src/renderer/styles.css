@@ -741,7 +741,7 @@ button {
 
 .shell--widget-mode .titlebar {
   pointer-events: none;
-  transform: translateY(calc(100vh + 96px));
+  transform: translateY(calc(-100% - 72px));
   transition-property: transform;
   transition-delay: 0ms;
   transition-duration: 760ms;
@@ -750,7 +750,7 @@ button {
 
 .shell--widget-mode .workspaceHeader {
   pointer-events: none;
-  transform: translateY(calc(100vh + 96px));
+  transform: translateY(calc(-100% - 96px));
   transition-property: transform;
   transition-delay: 40ms;
   transition-duration: 760ms;
@@ -780,6 +780,41 @@ button {
   transition-delay: 260ms;
   transition-duration: 760ms;
   transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+}
+
+.widgetWindowsButton {
+  position: fixed;
+  left: max(10px, calc(var(--chat-left) - 48px));
+  bottom: calc(var(--composer-bottom) + 24px);
+  z-index: 44;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: #00adef;
+  background: color-mix(in oklab, var(--forge-chat-bg), transparent 12%);
+  border: 1px solid color-mix(in oklab, #00adef, transparent 72%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition:
+    left var(--sidebar-motion),
+    opacity 180ms ease-out,
+    transform 180ms ease-out;
+}
+
+.widgetWindowsButton svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+.shell--widget-mode .widgetWindowsButton {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition-delay: 0ms, 920ms, 920ms;
 }
 
 .navIconButton {
