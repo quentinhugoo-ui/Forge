@@ -134,6 +134,66 @@ Date: 2026-06-14
     carries deterministic latency, VRAM, cache-reuse, proof-reproducibility and
     visual-capability gates before Banger GPU promotion is allowed.
 
+## Google Photorealistic 3D Tiles Lane
+
+Date: 2026-06-14
+
+Unreal-class geospatial rendering is currently done by installing Cesium for
+Unreal, adding a Cesium Georeference, then loading Google Photorealistic 3D
+Tiles through Cesium ion / Google Maps Platform. Banger must mirror the same
+architecture, not a Google Earth WebView:
+
+```text
+Google Map Tiles API root tileset
+-> OGC 3D Tiles traversal
+-> georeferenced world origin / camera
+-> screen-space-error LOD and request scheduler
+-> tile content fetch with session + API key
+-> glTF / Draco / texture decode
+-> visible attribution aggregation
+-> renderer residency and cache
+```
+
+Implementation constraints from the current official floor:
+
+- Google exposes the root tileset as
+  `https://tile.googleapis.com/v1/3dtiles/root.json?key=...`.
+- A root request authorizes a bounded loading session; child tile URLs carry a
+  `session` parameter and must be requested again with the API key attached.
+- The renderer must support OGC 3D Tiles / glTF tile content and must display
+  Google/data attribution on screen.
+- Google names CesiumJS and Cesium for Unreal as compatible renderers; CesiumJS
+  1.91+ and Cesium for Unreal 1.12+ are the minimum compatibility floor.
+- For performance, the reference path increases parallel requests to
+  `tile.googleapis.com` and skips LODs when acceptable, but this must remain
+  budgeted by Banger telemetry and cache pressure.
+
+The Banger shape is therefore:
+
+```text
+source = google_photorealistic_3d_tiles
+interop_floor = cesium_for_unreal / cesium_js
+native_target = banger_rust_3d_tiles_streamer
+renderer_contract = forge.banger.geospatial_globe.v1
+cache_authority = Monster exact/partial tile residency reuse
+legal_gate = Google logo + sorted visible data attribution
+secret_gate = API key never enters renderer logs, proofs or commits
+```
+
+First implementation gate:
+
+1. Add a strict geospatial tileset manifest with root URL, redacted credential
+   source, session hash, attribution hash, camera/georeference hash, visible
+   tile ids, SSE/LOD policy, request budget and cache-residency proof.
+2. Use CesiumJS only as the first visible proof if a Google key is present;
+   otherwise expose a no-network mock tileset so Banger UI and cache logic can
+   be tested deterministically.
+3. Promote native Rust parsing in slices: root tileset JSON, child URI
+   canonicalization, glTF attribution extraction, then mesh/texture residency.
+4. Replace Cesium rendering only when Banger beats it on at least one measured
+   gate: control, latency, memory, cache reuse, proof reproducibility or scene
+   editability.
+
 ## Ghidra Pipeline
 
 Unreal Engine is not currently installed on this machine; only Epic Games
