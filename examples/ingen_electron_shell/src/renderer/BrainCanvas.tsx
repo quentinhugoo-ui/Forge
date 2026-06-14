@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   BRAIN_RENAME_SESSION_COMMAND,
@@ -974,13 +974,15 @@ function hardwareGaugePoints(
   const step = width / Math.max(1, HARDWARE_GAUGE_HISTORY_LIMIT - 1);
   const startX = width - (visible.length - 1) * step;
   return visible
-    .map((sample, index) => {
+    .map((sample, index): HardwareGaugePoint | null => {
       const rawValue = readValue(sample);
-      const value = rawValue === null ? min : clampNumber(rawValue, min, max);
+      if (rawValue === null || !Number.isFinite(rawValue)) return null;
+      const value = clampNumber(rawValue, min, max);
       const x = startX + index * step;
       const y = height - ((value - min) / (max - min)) * height;
       return { x, y };
-    });
+    })
+    .filter((point): point is HardwareGaugePoint => point !== null);
 }
 
 function hardwareGaugeSeriesPath(
@@ -1140,6 +1142,65 @@ function rendererFallbackHardwareSnapshot(reason: string): HardwareTelemetrySnap
   };
 }
 
+function isRendererFallbackHardwareSnapshot(snapshot: HardwareTelemetrySnapshot): boolean {
+  return snapshot.proofHash.startsWith("renderer-fallback-") || snapshot.platform === "unknown" || snapshot.arch === "renderer";
+}
+
+function preserveMetric(previous: HardwareMetric | undefined, next: HardwareMetric): HardwareMetric {
+  if (next.value !== null) return next;
+  if (!previous || previous.value === null) return next;
+  return {
+    ...next,
+    value: previous.value,
+    status: previous.status
+  };
+}
+
+function mergeStableHardwareSnapshot(
+  previous: HardwareTelemetrySnapshot | null,
+  next: HardwareTelemetrySnapshot
+): HardwareTelemetrySnapshot {
+  if (!previous || isRendererFallbackHardwareSnapshot(next)) {
+    return previous ?? next;
+  }
+  const previousGpu = previous.gpus[0];
+  const nextGpu = next.gpus[0];
+  const primaryGpu =
+    previousGpu && (!nextGpu || nextGpu.source === "unavailable")
+      ? previousGpu
+      : nextGpu
+        ? {
+            ...nextGpu,
+            utilization: preserveMetric(previousGpu?.utilization, nextGpu.utilization),
+            temperature: preserveMetric(previousGpu?.temperature, nextGpu.temperature),
+            memoryUsed: preserveMetric(previousGpu?.memoryUsed, nextGpu.memoryUsed),
+            memoryTotal: preserveMetric(previousGpu?.memoryTotal, nextGpu.memoryTotal),
+            fanSpeed: preserveMetric(previousGpu?.fanSpeed, nextGpu.fanSpeed),
+            powerDraw: preserveMetric(previousGpu?.powerDraw, nextGpu.powerDraw)
+          }
+        : undefined;
+  return {
+    ...next,
+    cpu: {
+      ...next.cpu,
+      utilization: preserveMetric(previous.cpu.utilization, next.cpu.utilization),
+      temperature: preserveMetric(previous.cpu.temperature, next.cpu.temperature),
+      loadAverage: preserveMetric(previous.cpu.loadAverage, next.cpu.loadAverage)
+    },
+    memory: {
+      ...next.memory,
+      used: preserveMetric(previous.memory.used, next.memory.used),
+      total: preserveMetric(previous.memory.total, next.memory.total),
+      utilization: preserveMetric(previous.memory.utilization, next.memory.utilization)
+    },
+    thermal: {
+      systemTemperature: preserveMetric(previous.thermal.systemTemperature, next.thermal.systemTemperature),
+      source: next.thermal.source === "unavailable" ? previous.thermal.source : next.thermal.source
+    },
+    gpus: primaryGpu ? [primaryGpu, ...next.gpus.slice(1)] : next.gpus
+  };
+}
+
 async function requestHardwareTelemetry(): Promise<HardwareTelemetrySnapshot> {
   const api = window.forgeShell?.getHardwareTelemetrySnapshot;
   if (!api) {
@@ -1240,6 +1301,7 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
 function HardwareSpace() {
   const [snapshot, setSnapshot] = useState<HardwareTelemetrySnapshot | null>(null);
   const [error, setError] = useState("");
+  const stableSnapshotRef = useRef<HardwareTelemetrySnapshot | null>(null);
   const [history, setHistory] = useState<Record<HardwareMonitorCardId, HardwareGaugeSample[]>>({
     gpu: [],
     cpu: [],
@@ -1256,21 +1318,33 @@ function HardwareSpace() {
       void requestHardwareTelemetry()
         .then((next) => {
           if (cancelled) return;
-          setSnapshot(next ?? null);
-          setError(next ? "" : "Telemetry unavailable");
-          if (next) {
-            const sampledAt = new Date(next.sampledAt).getTime();
+          if (!next) {
+            setError("Telemetry unavailable");
+            return;
+          }
+          const isFallback = isRendererFallbackHardwareSnapshot(next);
+          const stable = mergeStableHardwareSnapshot(stableSnapshotRef.current, next);
+          stableSnapshotRef.current = stable;
+          setSnapshot(stable);
+          setError(isFallback ? "Telemetry momentarily delayed" : "");
+          if (!isFallback) {
+            const sampledAt = new Date(stable.sampledAt).getTime();
             const sampleTime = Number.isFinite(sampledAt) ? sampledAt : Date.now();
-            const cards = hardwareCardViews(next);
+            const cards = hardwareCardViews(stable);
             setHistory((current) => {
               const updated = { ...current };
               for (const card of cards) {
+                const previousSamples = updated[card.id] ?? [];
+                const previousSample = previousSamples[previousSamples.length - 1];
+                const temperature = card.temperature.value ?? previousSample?.temperature ?? null;
+                const percent = card.percent.value ?? previousSample?.percent ?? null;
+                if (temperature === null && percent === null) continue;
                 updated[card.id] = [
-                  ...(updated[card.id] ?? []),
+                  ...previousSamples,
                   {
                     sampledAt: sampleTime,
-                    temperature: card.temperature.value,
-                    percent: card.percent.value
+                    temperature,
+                    percent
                   }
                 ].slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
               }

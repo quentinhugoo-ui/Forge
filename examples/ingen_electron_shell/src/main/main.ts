@@ -845,7 +845,10 @@ const NVIDIA_SMI_TIMEOUT_MS = 900;
 type HardwareThermalSource = HardwareTelemetrySnapshot["thermal"]["source"];
 type TemperatureReading = { label: string; value: number; source: HardwareThermalSource };
 type ThermalTemperatures = { cpu: number | null; system: number | null; source: HardwareThermalSource };
+const HARDWARE_GPU_REFRESH_MS = 250;
 const HARDWARE_THERMAL_REFRESH_MS = 1000;
+let cachedNvidiaGpus: { gpus: HardwareGpuSnapshot[]; sampledAt: number } | null = null;
+let nvidiaGpuRefreshScheduled = false;
 let cachedThermalTemperatures: (ThermalTemperatures & { sampledAt: number }) | null = null;
 let thermalRefreshPromise: Promise<ThermalTemperatures> | null = null;
 
@@ -959,7 +962,7 @@ function emptyGpu(source: HardwareGpuSnapshot["source"] = "unavailable"): Hardwa
   };
 }
 
-function queryNvidiaGpus(): HardwareGpuSnapshot[] {
+function queryNvidiaGpusUncached(): HardwareGpuSnapshot[] {
   const stdout = runNvidiaSmiQuery([
       "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,fan.speed",
       "--format=csv,noheader,nounits"
@@ -993,6 +996,32 @@ function queryNvidiaGpus(): HardwareGpuSnapshot[] {
         powerDraw: hardwareMetric("Power draw", roundMetric(parseNumber(powerRaw)), "W")
       };
     });
+}
+
+function scheduleNvidiaGpuRefresh(): void {
+  if (nvidiaGpuRefreshScheduled) return;
+  nvidiaGpuRefreshScheduled = true;
+  setTimeout(() => {
+    try {
+      cachedNvidiaGpus = {
+        gpus: queryNvidiaGpusUncached(),
+        sampledAt: Date.now()
+      };
+    } catch (error) {
+      console.warn("Hardware NVIDIA refresh failed.", error);
+    } finally {
+      nvidiaGpuRefreshScheduled = false;
+    }
+  }, 0);
+}
+
+function queryNvidiaGpusCached(): HardwareGpuSnapshot[] {
+  const now = Date.now();
+  if (cachedNvidiaGpus && now - cachedNvidiaGpus.sampledAt <= HARDWARE_GPU_REFRESH_MS) {
+    return cachedNvidiaGpus.gpus;
+  }
+  scheduleNvidiaGpuRefresh();
+  return cachedNvidiaGpus?.gpus ?? [];
 }
 
 function vendorFromGpuName(name: string): HardwareGpuSnapshot["vendor"] {
@@ -1500,9 +1529,9 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
   const freeMemoryGb = os.freemem() / 1024 ** 3;
   const usedMemoryGb = Math.max(0, totalMemoryGb - freeMemoryGb);
   const memoryPercent = totalMemoryGb > 0 ? (usedMemoryGb / totalMemoryGb) * 100 : null;
-  const nvidiaGpus = queryNvidiaGpus();
+  const nvidiaGpus = queryNvidiaGpusCached();
   const linuxHwmonGpus = process.platform === "linux" ? await queryLinuxHwmonGpus() : [];
-  const windowsGpus = nvidiaGpus.length > 0 ? [] : queryWindowsVideoControllers();
+  const windowsGpus = nvidiaGpus.length > 0 || nvidiaGpuRefreshScheduled ? [] : queryWindowsVideoControllers();
   const drmGpus = nvidiaGpus.length > 0 || windowsGpus.length > 0 ? [] : await queryLinuxDrmGpu();
   const enrichedNvidiaGpus = process.platform === "linux" ? mergeGpuSensorFallbacks(nvidiaGpus, linuxHwmonGpus) : nvidiaGpus;
   const linuxGpus = process.platform === "linux" && enrichedNvidiaGpus.length === 0 && windowsGpus.length === 0
