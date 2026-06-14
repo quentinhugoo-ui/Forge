@@ -2720,7 +2720,15 @@ interface AgentFileModificationSummary {
 }
 
 function isAgentFileModificationCommand(command: AgentActionEventCommand): boolean {
-  return command === AGENT_COPY_PATH_COMMAND;
+  return (
+    command === AGENT_CREATE_DIRECTORY_COMMAND ||
+    command === AGENT_RENAME_PATH_COMMAND ||
+    command === AGENT_MOVE_PATH_COMMAND ||
+    command === AGENT_COPY_PATH_COMMAND ||
+    command === AGENT_DELETE_EMPTY_DIRECTORY_COMMAND ||
+    command === AGENT_DELETE_TREE_COMMAND ||
+    command === AGENT_SHELL_COMMAND
+  );
 }
 
 function fileNameFromEventPath(path: string): string {
@@ -2743,16 +2751,12 @@ function eventResultPath(detail?: string): string | undefined {
   return undefined;
 }
 
-function eventModificationDelta(detail?: string): { addedChars: number; removedChars: number } | undefined {
+function eventModificationDelta(detail?: string): { addedChars: number; removedChars: number } {
   const match = /chars\s+\+(\d+)\s+-(\d+)/i.exec(detail ?? "");
-  if (!match) {
-    return undefined;
-  }
-  const delta = {
-    addedChars: Number(match[1]),
-    removedChars: Number(match[2])
+  return {
+    addedChars: match ? Number(match[1]) : 0,
+    removedChars: match ? Number(match[2]) : 0
   };
-  return delta.addedChars > 0 || delta.removedChars > 0 ? delta : undefined;
 }
 
 function agentFileModificationSummary(event: TranscriptCodeActEvent, command: AgentActionEventCommand): AgentFileModificationSummary | undefined {
@@ -2764,9 +2768,6 @@ function agentFileModificationSummary(event: TranscriptCodeActEvent, command: Ag
     return undefined;
   }
   const delta = eventModificationDelta(event.detail);
-  if (!delta) {
-    return undefined;
-  }
   return {
     fileName: fileNameFromEventPath(path),
     path,

@@ -71,7 +71,9 @@ button {
   --chat-canvas-bottom: 138px;
   --transcript-bottom-breathing-room: 48px;
   --sidebar-motion: 340ms cubic-bezier(0.22, 1, 0.36, 1);
-  --widget-exit-motion: 860ms cubic-bezier(0.22, 1, 0.36, 1);
+  --widget-side-exit-motion: 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  --widget-header-exit-motion: 360ms cubic-bezier(0.22, 1, 0.36, 1);
+  --widget-canvas-exit-motion: 860ms cubic-bezier(0.22, 1, 0.36, 1);
   width: 100vw;
   height: 100vh;
   background: var(--forge-bg);
@@ -165,8 +167,7 @@ button {
   --workspace-right: calc(var(--canvas-files-pane-right) + var(--canvas-files-pane-width) + 18px);
 }
 
-.shell--widget-mode,
-.shell--widget-minimizing {
+.shell--widget-mode {
   --left-panel-offset: 0px;
   --main-left: 0px;
   --right-panel-gutter: 0px;
@@ -178,6 +179,14 @@ button {
   --chat-left: var(--widget-chat-left, calc((100vw - var(--chat-width)) / 2));
   --bottom-width: var(--widget-bottom-width, min(764px, calc(100vw - 80px)));
   --bottom-left: var(--widget-bottom-left, calc((100vw - var(--bottom-width)) / 2));
+  background: transparent;
+}
+
+.shell--widget-minimizing {
+  --chat-width: var(--widget-chat-width, min(780px, calc(var(--workspace-width) - 64px)));
+  --chat-left: var(--widget-chat-left, calc(var(--workspace-left) + ((var(--workspace-width) - var(--chat-width)) / 2)));
+  --bottom-width: var(--widget-bottom-width, min(764px, calc(var(--workspace-width) - 80px)));
+  --bottom-left: var(--widget-bottom-left, calc(var(--workspace-left) + ((var(--workspace-width) - var(--bottom-width)) / 2)));
   background: transparent;
 }
 
@@ -11019,103 +11028,100 @@ ol.assistantText__list li::before {
   transform: translateX(calc(100% + 12px));
 }
 
-/* MINI uses the left sidebar close motion as the single reference rhythm. */
-.shell--widget-minimizing .titlebar,
+/* MINI exits in order: side surfaces, header, then the general canvas. */
 .shell--widget-mode .titlebar,
-.shell--widget-minimizing .workspaceHeader,
 .shell--widget-mode .workspaceHeader,
-.shell--widget-minimizing .leftPanel,
+.shell--widget-minimizing-sides .leftPanel,
 .shell--widget-mode .leftPanel,
-.shell--widget-minimizing .rightPanel,
+.shell--widget-minimizing-sides .rightPanel,
 .shell--widget-mode .rightPanel,
-.shell--widget-minimizing .canvasSurfaces,
 .shell--widget-mode .canvasSurfaces,
-.shell--widget-minimizing .canvasSplitPane,
+.shell--widget-minimizing-sides .canvasSplitPane,
 .shell--widget-mode .canvasSplitPane,
-.shell--widget-minimizing .canvasPlanetRail,
+.shell--widget-minimizing-sides .canvasPlanetRail,
 .shell--widget-mode .canvasPlanetRail,
-.shell--widget-minimizing .canvasFilesPane,
+.shell--widget-minimizing-sides .canvasFilesPane,
 .shell--widget-mode .canvasFilesPane,
-.shell--widget-minimizing .canvasTerminalPane,
+.shell--widget-minimizing-sides .canvasTerminalPane,
 .shell--widget-mode .canvasTerminalPane,
-.shell--widget-minimizing .canvasCover,
 .shell--widget-mode .canvasCover,
-.shell--widget-minimizing .profileCanvas,
 .shell--widget-mode .profileCanvas,
-.shell--widget-minimizing .chatCanvas,
 .shell--widget-mode .chatCanvas,
-.shell--widget-minimizing .parallelTranscriptGrid,
 .shell--widget-mode .parallelTranscriptGrid,
-.shell--widget-minimizing .workspaceRequiredVeil,
 .shell--widget-mode .workspaceRequiredVeil,
-.shell--widget-minimizing .sidebarLedger,
 .shell--widget-mode .sidebarLedger,
-.shell--widget-minimizing .shadowLedger,
 .shell--widget-mode .shadowLedger {
   pointer-events: none;
   transition: transform var(--sidebar-motion);
   will-change: transform;
 }
 
-.shell--widget-minimizing .titlebar,
-.shell--widget-minimizing .workspaceHeader,
-.shell--widget-minimizing .rightPanel,
-.shell--widget-minimizing .canvasSurfaces,
-.shell--widget-minimizing .canvasSplitPane,
-.shell--widget-minimizing .canvasPlanetRail,
-.shell--widget-minimizing .canvasFilesPane,
-.shell--widget-minimizing .canvasTerminalPane,
-.shell--widget-minimizing .canvasCover,
-.shell--widget-minimizing .profileCanvas,
-.shell--widget-minimizing .chatCanvas,
-.shell--widget-minimizing .parallelTranscriptGrid,
-.shell--widget-minimizing .workspaceRequiredVeil,
-.shell--widget-minimizing .sidebarLedger,
-.shell--widget-minimizing .shadowLedger {
-  transition: transform var(--widget-exit-motion), opacity var(--widget-exit-motion);
+.shell--widget-minimizing-sides .leftPanel,
+.shell--widget-minimizing-sides .rightPanel,
+.shell--widget-minimizing-sides .canvasSplitPane,
+.shell--widget-minimizing-sides .canvasPlanetRail,
+.shell--widget-minimizing-sides .canvasFilesPane,
+.shell--widget-minimizing-sides .canvasTerminalPane {
+  transition: transform var(--widget-side-exit-motion), opacity var(--widget-side-exit-motion);
 }
 
-.shell--widget-minimizing .titlebar,
+.shell--widget-minimizing-header .titlebar,
+.shell--widget-minimizing-header .workspaceHeader {
+  transition: transform var(--widget-header-exit-motion), opacity var(--widget-header-exit-motion);
+}
+
+.shell--widget-minimizing-canvas .canvasSurfaces,
+.shell--widget-minimizing-canvas .canvasCover,
+.shell--widget-minimizing-canvas .profileCanvas,
+.shell--widget-minimizing-canvas .chatCanvas,
+.shell--widget-minimizing-canvas .parallelTranscriptGrid,
+.shell--widget-minimizing-canvas .workspaceRequiredVeil,
+.shell--widget-minimizing-canvas .sidebarLedger,
+.shell--widget-minimizing-canvas .shadowLedger {
+  transition: transform var(--widget-canvas-exit-motion), opacity var(--widget-canvas-exit-motion);
+}
+
+.shell--widget-minimizing-header .titlebar,
 .shell--widget-mode .titlebar,
-.shell--widget-minimizing .workspaceHeader,
+.shell--widget-minimizing-header .workspaceHeader,
 .shell--widget-mode .workspaceHeader {
   transform: translate3d(0, calc(-100% - 72px), 0);
 }
 
-.shell--widget-minimizing .leftPanel,
+.shell--widget-minimizing-sides .leftPanel,
 .shell--widget-mode .leftPanel {
   transform: translate3d(calc(-100% - 18px), 0, 0);
 }
 
-.shell--widget-minimizing .rightPanel,
+.shell--widget-minimizing-sides .rightPanel,
 .shell--widget-mode .rightPanel,
-.shell--widget-minimizing .canvasSplitPane,
+.shell--widget-minimizing-sides .canvasSplitPane,
 .shell--widget-mode .canvasSplitPane,
-.shell--widget-minimizing .canvasPlanetRail,
+.shell--widget-minimizing-sides .canvasPlanetRail,
 .shell--widget-mode .canvasPlanetRail,
-.shell--widget-minimizing .canvasFilesPane,
+.shell--widget-minimizing-sides .canvasFilesPane,
 .shell--widget-mode .canvasFilesPane,
-.shell--widget-minimizing .canvasTerminalPane,
+.shell--widget-minimizing-sides .canvasTerminalPane,
 .shell--widget-mode .canvasTerminalPane {
   opacity: 1;
   transform: translate3d(calc(100vw + 96px), 0, 0);
 }
 
-.shell--widget-minimizing .canvasSurfaces,
+.shell--widget-minimizing-canvas .canvasSurfaces,
 .shell--widget-mode .canvasSurfaces,
-.shell--widget-minimizing .canvasCover,
+.shell--widget-minimizing-canvas .canvasCover,
 .shell--widget-mode .canvasCover,
-.shell--widget-minimizing .profileCanvas,
+.shell--widget-minimizing-canvas .profileCanvas,
 .shell--widget-mode .profileCanvas,
-.shell--widget-minimizing .chatCanvas,
+.shell--widget-minimizing-canvas .chatCanvas,
 .shell--widget-mode .chatCanvas,
-.shell--widget-minimizing .parallelTranscriptGrid,
+.shell--widget-minimizing-canvas .parallelTranscriptGrid,
 .shell--widget-mode .parallelTranscriptGrid,
-.shell--widget-minimizing .workspaceRequiredVeil,
+.shell--widget-minimizing-canvas .workspaceRequiredVeil,
 .shell--widget-mode .workspaceRequiredVeil,
-.shell--widget-minimizing .sidebarLedger,
+.shell--widget-minimizing-canvas .sidebarLedger,
 .shell--widget-mode .sidebarLedger,
-.shell--widget-minimizing .shadowLedger,
+.shell--widget-minimizing-canvas .shadowLedger,
 .shell--widget-mode .shadowLedger {
   transform: translate3d(0, calc(100vh + 96px), 0);
 }

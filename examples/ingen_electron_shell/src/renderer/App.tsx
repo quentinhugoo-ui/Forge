@@ -72,8 +72,10 @@ const WINDOW_CONTROLS = [
 
 const GOOGLE_EARTH_DOM_DEFAULT_URL =
   "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
-const WIDGET_SURFACE_CLOSE_DELAY_MS = 860;
-const WIDGET_SIDEBAR_SETTLE_MS = 360;
+const WIDGET_SIDE_EXIT_MS = 420;
+const WIDGET_HEADER_EXIT_MS = 360;
+const WIDGET_CANVAS_EXIT_MS = 860;
+const WIDGET_SURFACE_CLOSE_DELAY_MS = WIDGET_SIDE_EXIT_MS + WIDGET_HEADER_EXIT_MS + WIDGET_CANVAS_EXIT_MS;
 const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + 80;
 
 type WidgetLayoutLock = {
@@ -89,6 +91,8 @@ type WidgetHitRegion = {
   width: number;
   height: number;
 };
+
+type WidgetMinimizingPhase = "" | "sides" | "header" | "canvas";
 
 const WIDGET_HIT_REGION_TARGETS = [
   { selector: ".composer", padding: 6 },
@@ -196,7 +200,7 @@ export function App() {
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
   const [widgetMode, setWidgetMode] = useState(false);
-  const [widgetMinimizing, setWidgetMinimizing] = useState(false);
+  const [widgetMinimizingPhase, setWidgetMinimizingPhase] = useState<WidgetMinimizingPhase>("");
   const [widgetLayoutLock, setWidgetLayoutLock] = useState<WidgetLayoutLock | null>(null);
   const canvasMapsOpenRef = useRef(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
@@ -224,6 +228,7 @@ export function App() {
   const workspaceNoticeTimerRef = useRef<number | null>(null);
   const parallelSidebarBirthTimerRef = useRef<number | null>(null);
   const widgetSurfaceCloseTimerRef = useRef<number | null>(null);
+  const widgetModeSequenceRef = useRef(0);
   const previousActiveSessionIdRef = useRef(panelsChatSnapshot.activeSessionId);
   const mapsOwnerSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -365,20 +370,22 @@ export function App() {
     isLlmProviderCanvas ? "shell--llm-provider" : "",
     isBrainCanvas ? "shell--brain-canvas" : "",
     isBangerPage ? "shell--banger-page" : "",
-    widgetMinimizing ? "shell--widget-minimizing" : "",
+    widgetMinimizingPhase !== "" ? "shell--widget-minimizing shell--widget-minimizing-sides" : "",
+    widgetMinimizingPhase === "header" || widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-header" : "",
+    widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-canvas" : "",
     widgetMode ? "shell--widget-mode" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
 
   useEffect(() => {
-    const widgetSurfaceVisible = widgetMode || widgetMinimizing;
+    const widgetSurfaceVisible = widgetMode || widgetMinimizingPhase !== "";
     document.documentElement.classList.toggle("ingen-widget-mode", widgetSurfaceVisible);
     document.body.classList.toggle("ingen-widget-mode", widgetSurfaceVisible);
     return () => {
       document.documentElement.classList.remove("ingen-widget-mode");
       document.body.classList.remove("ingen-widget-mode");
     };
-  }, [widgetMinimizing, widgetMode]);
+  }, [widgetMinimizingPhase, widgetMode]);
 
   useEffect(() => {
     const api = globalThis.window?.forgeWindowControls;
@@ -890,6 +897,8 @@ export function App() {
   );
 
   const setWidgetModeEnabled = useCallback((enabled: boolean) => {
+    const sequenceToken = widgetModeSequenceRef.current + 1;
+    widgetModeSequenceRef.current = sequenceToken;
     if (widgetSurfaceCloseTimerRef.current !== null) {
       window.clearTimeout(widgetSurfaceCloseTimerRef.current);
       widgetSurfaceCloseTimerRef.current = null;
@@ -897,7 +906,7 @@ export function App() {
     setWorkspaceMenuOpen(false);
     setWorkspaceNotice(null);
     if (!enabled) {
-      setWidgetMinimizing(false);
+      setWidgetMinimizingPhase("");
       setWidgetMode(false);
       setWidgetLayoutLock(null);
       void globalThis.window?.forgeWindowControls?.setWidgetMode?.(false);
@@ -905,35 +914,48 @@ export function App() {
     }
 
     void (async () => {
-      if (snapshot.leftPanelOpen) {
-        await headerShadowStore.dispatchControl({ id: "left-panel", command: "toggle_left_panel" });
-        await Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot()]);
-        await waitForWidgetMotion(WIDGET_SIDEBAR_SETTLE_MS);
-      }
       setWidgetLayoutLock(readWidgetLayoutLock());
-      setWidgetMinimizing(true);
+      setWidgetMinimizingPhase("sides");
       setWidgetMode(false);
       void globalThis.window?.forgeWindowControls?.setWidgetMode?.(true, WIDGET_NATIVE_SHRINK_DELAY_MS);
+      if (snapshot.leftPanelOpen) {
+        void headerShadowStore
+          .dispatchControl({ id: "left-panel", command: "toggle_left_panel" })
+          .then(() => Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot()]));
+      }
 
-      widgetSurfaceCloseTimerRef.current = window.setTimeout(() => {
-        widgetSurfaceCloseTimerRef.current = null;
-        setWidgetMode(true);
-        setWidgetMinimizing(false);
-        setCanvasSplitOpen(false);
-        setCanvasFilesOpen(false);
-        setCanvasTerminalOpen(false);
-        setCanvasActivePane("");
-        setCanvasPlanetsOpen(false);
-        setCanvasWebExplorerOpen(false);
-        canvasMapsOpenRef.current = false;
-        setCanvasMapsOpen(false);
-        setParallelPrompts([""]);
-        void globalThis.window?.forgeShell?.hideNativeWebExplorer?.();
-        void globalThis.window?.forgeShell?.hideNativeMaps?.();
-        if (activeProfileCanvas) {
-          void closeProfileCanvas();
-        }
-      }, WIDGET_SURFACE_CLOSE_DELAY_MS);
+      await waitForWidgetMotion(WIDGET_SIDE_EXIT_MS);
+      if (widgetModeSequenceRef.current !== sequenceToken) {
+        return;
+      }
+      setWidgetMinimizingPhase("header");
+
+      await waitForWidgetMotion(WIDGET_HEADER_EXIT_MS);
+      if (widgetModeSequenceRef.current !== sequenceToken) {
+        return;
+      }
+      setWidgetMinimizingPhase("canvas");
+
+      await waitForWidgetMotion(WIDGET_CANVAS_EXIT_MS);
+      if (widgetModeSequenceRef.current !== sequenceToken) {
+        return;
+      }
+      setWidgetMode(true);
+      setWidgetMinimizingPhase("");
+      setCanvasSplitOpen(false);
+      setCanvasFilesOpen(false);
+      setCanvasTerminalOpen(false);
+      setCanvasActivePane("");
+      setCanvasPlanetsOpen(false);
+      setCanvasWebExplorerOpen(false);
+      canvasMapsOpenRef.current = false;
+      setCanvasMapsOpen(false);
+      setParallelPrompts([""]);
+      void globalThis.window?.forgeShell?.hideNativeWebExplorer?.();
+      void globalThis.window?.forgeShell?.hideNativeMaps?.();
+      if (activeProfileCanvas) {
+        void closeProfileCanvas();
+      }
     })();
   }, [activeProfileCanvas, closeProfileCanvas, snapshot.leftPanelOpen]);
   const topControls = useMemo(() => snapshot.topControls.filter((control) => control.visible), [snapshot]);
