@@ -745,7 +745,7 @@ button {
   transition-property: transform;
   transition-delay: 0ms;
   transition-duration: 760ms;
-  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .shell--widget-mode .workspaceHeader {
@@ -754,7 +754,7 @@ button {
   transition-property: transform;
   transition-delay: 40ms;
   transition-duration: 760ms;
-  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .shell--widget-mode .leftPanel {
@@ -763,7 +763,7 @@ button {
   transition-property: transform;
   transition-delay: 0ms;
   transition-duration: 760ms;
-  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .shell--widget-mode .rightPanel {
@@ -773,7 +773,7 @@ button {
   transition-property: transform;
   transition-delay: 0ms;
   transition-duration: 760ms;
-  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .shell--widget-mode .canvasCover,
@@ -788,7 +788,7 @@ button {
   transition-property: transform;
   transition-delay: 260ms;
   transition-duration: 760ms;
-  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .shell--widget-mode .canvasSurfaces {
@@ -801,7 +801,7 @@ button {
   transition-property: transform;
   transition-delay: 260ms;
   transition-duration: 760ms;
-  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .shell--widget-mode .canvasSplitPane,
@@ -813,7 +813,7 @@ button {
   transition-property: transform;
   transition-delay: 0ms;
   transition-duration: 760ms;
-  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .widgetWindowsButton {
@@ -11088,6 +11088,71 @@ ol.assistantText__list li::before {
   opacity: 0;
   pointer-events: none;
   transform: translateX(calc(100% + 12px));
+}
+
+/* MINI exit choreography stays late so base shell surfaces cannot override it. */
+.shell--widget-mode .titlebar {
+  pointer-events: none;
+  transform: translateY(calc(-100% - 72px));
+  transition-delay: 0ms;
+  transition-duration: 760ms;
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.shell--widget-mode .workspaceHeader {
+  pointer-events: none;
+  transform: translateY(calc(-100% - 96px));
+  transition-delay: 40ms;
+  transition-duration: 760ms;
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.shell--widget-mode .leftPanel {
+  pointer-events: none;
+  transform: translateX(calc(-100% - 18px));
+  transition-delay: 0ms;
+  transition-duration: 760ms;
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.shell--widget-mode .rightPanel,
+.shell--widget-mode .canvasSplitPane,
+.shell--widget-mode .canvasPlanetRail,
+.shell--widget-mode .canvasFilesPane,
+.shell--widget-mode .canvasTerminalPane {
+  pointer-events: none;
+  transform: translateX(calc(100vw + 96px));
+  transition-delay: 0ms;
+  transition-duration: 760ms;
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.shell--widget-mode .rightPanel {
+  opacity: 1;
+}
+
+.shell--widget-mode .canvasCover,
+.shell--widget-mode .profileCanvas,
+.shell--widget-mode .chatCanvas,
+.shell--widget-mode .parallelTranscriptGrid,
+.shell--widget-mode .workspaceRequiredVeil,
+.shell--widget-mode .sidebarLedger,
+.shell--widget-mode .shadowLedger,
+.shell--widget-mode .canvasSurfaces__primary {
+  pointer-events: none;
+  transform: translateY(calc(100vh + 96px));
+  transition-delay: 260ms;
+  transition-duration: 760ms;
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.shell--widget-mode .canvasSurfaces {
+  pointer-events: none;
 }
 
 @media (max-width: 1220px) {
