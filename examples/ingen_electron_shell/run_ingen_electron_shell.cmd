@@ -22,6 +22,8 @@ set NEED_BACKEND_REBUILD=0
 set NEED_ELECTRON_REBUILD=0
 set APP_ALREADY_RUNNING=0
 set OWN_BUILD_LOCK=0
+set DESKTOP_AUTO_REBUILD=0
+if "%FORGE_ELECTRON_DESKTOP_AUTO_REBUILD%"=="1" set DESKTOP_AUTO_REBUILD=1
 
 if not exist "%INGEN_ELECTRON_USER_DATA_DIR%" mkdir "%INGEN_ELECTRON_USER_DATA_DIR%"
 if not exist "%INGEN_ELECTRON_USER_DATA_DIR%\brain" if exist "%INGEN_ELECTRON_LEGACY_USER_DATA_DIR%\brain" (
@@ -36,7 +38,7 @@ C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionP
 if not errorlevel 1 set APP_ALREADY_RUNNING=1
 
 if "%APP_ALREADY_RUNNING%"=="1" (
-  echo InGen is already running. Build freshness will still be checked before starting/focusing Electron. >> "%LOG%"
+  echo InGen is already running. Desktop launcher will prefer the existing stable build. >> "%LOG%"
 )
 
 2>nul mkdir "%BUILD_LOCK%"
@@ -48,8 +50,13 @@ if errorlevel 1 (
 set OWN_BUILD_LOCK=1
 
 if not exist "%FORGE_ELECTRON_BACKEND_EXE%" set NEED_BACKEND_REBUILD=1
-C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$exe = '%FORGE_ELECTRON_BACKEND_EXE%'; $srcRoot = '%REPO_ROOT%\examples\ingen_native_services'; $bin = Get-Item -LiteralPath $exe -ErrorAction SilentlyContinue; $latest = Get-ChildItem -LiteralPath (Join-Path $srcRoot 'src') -Recurse -File -Include *.rs -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if (-not $bin -or ($latest -and $latest.LastWriteTimeUtc -gt $bin.LastWriteTimeUtc)) { exit 1 }"
-if errorlevel 1 set NEED_BACKEND_REBUILD=1
+if "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" set NEED_BACKEND_REBUILD=1
+if "%DESKTOP_AUTO_REBUILD%"=="1" (
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$exe = '%FORGE_ELECTRON_BACKEND_EXE%'; $srcRoot = '%REPO_ROOT%\examples\ingen_native_services'; $bin = Get-Item -LiteralPath $exe -ErrorAction SilentlyContinue; $latest = Get-ChildItem -LiteralPath (Join-Path $srcRoot 'src') -Recurse -File -Include *.rs -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if (-not $bin -or ($latest -and $latest.LastWriteTimeUtc -gt $bin.LastWriteTimeUtc)) { exit 1 }"
+  if errorlevel 1 set NEED_BACKEND_REBUILD=1
+) else (
+  if "%NEED_BACKEND_REBUILD%"=="0" echo Desktop stable mode: using existing backend bridge. >> "%LOG%"
+)
 
 if "%NEED_BACKEND_REBUILD%"=="1" (
   echo Building Rust backend bridge... >> "%LOG%"
@@ -66,8 +73,12 @@ if "%NEED_BACKEND_REBUILD%"=="1" (
 if not exist "%~dp0dist-electron\main\main.js" set NEED_ELECTRON_REBUILD=1
 if not exist "%~dp0dist\renderer\index.html" set NEED_ELECTRON_REBUILD=1
 if "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" set NEED_ELECTRON_REBUILD=1
-C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = '%~dp0'; $dist = Get-Item -LiteralPath (Join-Path $root 'dist-electron\main\main.js') -ErrorAction SilentlyContinue; $renderer = Get-Item -LiteralPath (Join-Path $root 'dist\renderer\index.html') -ErrorAction SilentlyContinue; $latest = Get-ChildItem -LiteralPath (Join-Path $root 'src') -Recurse -File -Include *.ts,*.tsx,*.css -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if (-not $dist -or -not $renderer -or ($latest -and ($latest.LastWriteTimeUtc -gt $dist.LastWriteTimeUtc -or $latest.LastWriteTimeUtc -gt $renderer.LastWriteTimeUtc))) { exit 1 }"
-if errorlevel 1 set NEED_ELECTRON_REBUILD=1
+if "%DESKTOP_AUTO_REBUILD%"=="1" (
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = '%~dp0'; $dist = Get-Item -LiteralPath (Join-Path $root 'dist-electron\main\main.js') -ErrorAction SilentlyContinue; $renderer = Get-Item -LiteralPath (Join-Path $root 'dist\renderer\index.html') -ErrorAction SilentlyContinue; $latest = Get-ChildItem -LiteralPath (Join-Path $root 'src') -Recurse -File -Include *.ts,*.tsx,*.css -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if (-not $dist -or -not $renderer -or ($latest -and ($latest.LastWriteTimeUtc -gt $dist.LastWriteTimeUtc -or $latest.LastWriteTimeUtc -gt $renderer.LastWriteTimeUtc))) { exit 1 }"
+  if errorlevel 1 set NEED_ELECTRON_REBUILD=1
+) else (
+  if "%NEED_ELECTRON_REBUILD%"=="0" echo Desktop stable mode: using existing Electron build. Set FORGE_ELECTRON_DESKTOP_AUTO_REBUILD=1 or FORGE_ELECTRON_FORCE_REBUILD=1 to rebuild. >> "%LOG%"
+)
 
 if "%NEED_ELECTRON_REBUILD%"=="1" (
   echo Building Electron main process... >> "%LOG%"
