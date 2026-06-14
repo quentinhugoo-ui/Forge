@@ -11350,12 +11350,18 @@ ol.assistantText__list li::before {
 }
 
 .shell--widget-minimizing .composer__upload,
-.shell--widget-mode .composer__upload,
-.shell--widget-minimizing .composer__divider,
-.shell--widget-mode .composer__divider {
+.shell--widget-mode .composer__upload {
   width: var(--composer-upload-size);
   height: var(--composer-upload-size);
   min-width: var(--composer-upload-min-size);
+  min-height: var(--composer-upload-min-size);
+}
+
+.shell--widget-minimizing .composer__divider,
+.shell--widget-mode .composer__divider {
+  width: 1px;
+  min-width: 1px;
+  height: var(--composer-upload-size);
   min-height: var(--composer-upload-min-size);
 }
 
