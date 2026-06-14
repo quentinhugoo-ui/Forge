@@ -16,6 +16,7 @@ import type {
   AgentCapabilityVerification,
   AgentCloudCliProvider,
   AgentCloudCliSummary,
+  AgentDocumentToolchainSummary,
   AgentWindowsAdminSummary,
   AgentBrowserDownloadArtifact,
   AgentBrowserPageSummary,
@@ -126,23 +127,29 @@ const AGENT_ACTION_EVENT_HINTS = [
   "document.office_export_pdf:/agent_document_office_export_pdf_",
   "document.image_ocr:/agent_document_image_ocr_",
   "document.media_metadata:/agent_document_media_metadata_",
+  "document.toolchain_inspect:/agent_document_toolchain_inspect_",
+  "document.toolchain_install:/agent_document_toolchain_install_",
   "dev.repo_status:/agent_dev_status_",
   "dev.git_diff:/agent_dev_diff_",
   "dev.git_commit:/agent_dev_commit_",
   "dev.git_push:/agent_dev_push_",
   "dev.github_pr_create:/agent_github_pr_create_",
+  "dev.github_pr_review_submit:/agent_github_pr_review_",
   "dev.run_check:/agent_dev_check_",
   "cloud.inspect:/agent_cloud_inspect_",
   "cloud.run_readonly:/agent_cloud_readonly_",
   "cloud.run_write:/agent_cloud_write_",
   "windows.setting_inspect:/agent_windows_setting_inspect_",
   "windows.setting_apply:/agent_windows_setting_apply_",
+  "windows.sensitive_inspect:/agent_windows_sensitive_inspect_",
+  "windows.sensitive_apply:/agent_windows_sensitive_apply_",
   "windows.process_service_inspect:/agent_process_service_inspect_",
   "windows.process_service_control:/agent_process_service_control_",
   "windows.package_inspect:/agent_package_inspect_",
   "windows.package_install_update:/agent_package_install_update_",
   "ci.checks_inspect:/agent_ci_checks_inspect_",
   "ci.run_inspect:/agent_ci_run_inspect_",
+  "ci.rerun_failed:/agent_ci_rerun_failed_",
   "virtualization.inspect:/agent_virtualization_inspect_",
   "virtualization.run_command:/agent_virtualization_run_",
   "automation.schedule:/agent_automation_schedule_",
@@ -191,23 +198,29 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   document_office_export_pdf: "/agent_document_office_export_pdf_",
   document_image_ocr: "/agent_document_image_ocr_",
   document_media_metadata: "/agent_document_media_metadata_",
+  document_toolchain_inspect: "/agent_document_toolchain_inspect_",
+  document_toolchain_install: "/agent_document_toolchain_install_",
   dev_repo_status: "/agent_dev_status_",
   dev_git_diff: "/agent_dev_diff_",
   dev_git_commit: "/agent_dev_commit_",
   dev_git_push: "/agent_dev_push_",
   dev_github_pr_create: "/agent_github_pr_create_",
+  dev_github_pr_review_submit: "/agent_github_pr_review_",
   dev_run_check: "/agent_dev_check_",
   cloud_cli_inspect: "/agent_cloud_inspect_",
   cloud_cli_run_readonly: "/agent_cloud_readonly_",
   cloud_cli_run_write: "/agent_cloud_write_",
   windows_setting_inspect: "/agent_windows_setting_inspect_",
   windows_setting_apply: "/agent_windows_setting_apply_",
+  windows_sensitive_inspect: "/agent_windows_sensitive_inspect_",
+  windows_sensitive_apply: "/agent_windows_sensitive_apply_",
   process_service_inspect: "/agent_process_service_inspect_",
   process_service_control: "/agent_process_service_control_",
   package_inspect: "/agent_package_inspect_",
   package_install_update: "/agent_package_install_update_",
   ci_checks_inspect: "/agent_ci_checks_inspect_",
   ci_run_inspect: "/agent_ci_run_inspect_",
+  ci_rerun_failed: "/agent_ci_rerun_failed_",
   virtualization_inspect: "/agent_virtualization_inspect_",
   virtualization_run_command: "/agent_virtualization_run_",
   automation_schedule: "/agent_automation_schedule_",
@@ -508,7 +521,7 @@ export function agentActionRoutingHint(): string {
   return [
     "LOCAL_ACTION_TOOLS v1",
     "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, write/inspect documents, run commands, control Windows settings/tools, install/update software, download assets, or operate the workspace/computer.",
-    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url browser.playwright_inspect browser.screenshot browser.click browser.type_text browser.playwright_download document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create",
+    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url browser.playwright_inspect browser.screenshot browser.click browser.type_text browser.playwright_download document.inspect document.write_text document.write_json document.write_csv document.convert_text document.toolchain_inspect document.toolchain_install dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.github_pr_review_submit ci.rerun_failed windows.sensitive_inspect windows.sensitive_apply",
     "windows_reach=shell.full can invoke PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process, ms-settings URIs, installers, CLIs, and other native Windows tools when confirmed:true is appropriate.",
     "computer_use=Inspect GUI/UIA first, then act once with confirmed:true, then verify by foreground/UI state. Never approve security, payment, credential, destructive, or UAC prompts for the user.",
     "format=Emit AGENT_ACTION_JSON only when real execution is needed, then wait for AGENT_ACTION_RESULT. The AGENT_ACTION_JSON marker must start its own line, with no prose before it. Never fake tool events.",
@@ -617,6 +630,7 @@ function result(
     browserScreenshot: patch.browserScreenshot,
     download: patch.download,
     documentMedia: patch.documentMedia,
+    documentToolchain: patch.documentToolchain,
     developer: patch.developer,
     virtualization: patch.virtualization,
     cloud: patch.cloud,
@@ -1015,7 +1029,9 @@ export function createDocumentMediaPolicy(_config: AgentActionHostConfig): Agent
       "document_office_inspect",
       "document_office_export_pdf",
       "document_image_ocr",
-      "document_media_metadata"
+      "document_media_metadata",
+      "document_toolchain_inspect",
+      "document_toolchain_install"
     ],
     workspaceWritesRequireConfirmation: false,
     computerScopeWritesRequireConfirmation: true,
@@ -1037,18 +1053,22 @@ export function createDeveloperAutomationPolicy(_config: AgentActionHostConfig):
       "dev_git_commit",
       "dev_git_push",
       "dev_github_pr_create",
+      "dev_github_pr_review_submit",
       "dev_run_check",
       "cloud_cli_inspect",
       "cloud_cli_run_readonly",
       "cloud_cli_run_write",
       "windows_setting_inspect",
       "windows_setting_apply",
+      "windows_sensitive_inspect",
+      "windows_sensitive_apply",
       "process_service_inspect",
       "process_service_control",
       "package_inspect",
       "package_install_update",
       "ci_checks_inspect",
       "ci_run_inspect",
+      "ci_rerun_failed",
       "virtualization_inspect",
       "virtualization_run_command",
       "automation_schedule",
@@ -1901,43 +1921,46 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       family: "package.manager",
       surface: "windows.package",
       title: "Install, update and inspect packages",
-      status: "planned",
+      status: "available",
       risk: "computer_write",
       operations: ["list packages", "install software", "upgrade software", "uninstall software"],
       underlyingTools: ["winget", "PowerShell", "installer executables"],
       fallbacks: ["direct vendor installer", "browser download", "manual confirmation"],
       verification: ["package_state", "command_exit", "process_state"],
       approval: "prompt",
+      executableActionIds: ["package.inspect", "package.install_update", "document.toolchain_install"],
       writes: true,
-      notes: "Not a direct action in v1; route through confirmed shell.full."
+      notes: "Direct actions cover inspection and confirmed exact-id install/update; uninstall and arbitrary installers remain shell-confirmed."
     }),
     atlasEntry({
       id: "windows.registry",
       family: "windows.registry",
       surface: "windows.system",
       title: "Inspect and modify registry keys",
-      status: "planned",
+      status: "available",
       risk: "computer_write",
       operations: ["query keys", "set values", "delete values", "export keys"],
       underlyingTools: ["reg.exe", "PowerShell registry provider"],
       fallbacks: ["ms-settings URI", "GUI/computer_use"],
       verification: ["registry_state", "command_exit"],
       approval: "prompt",
+      executableActionIds: ["windows.setting_inspect", "windows.setting_apply"],
       writes: true,
-      notes: "System hive writes require explicit user approval; use shell.full only."
+      notes: "Direct writes are limited to confirmed explicit HKCU values; system hive writes remain blocked or separately shell-confirmed."
     }),
     atlasEntry({
       id: "windows.services",
       family: "windows.services",
       surface: "windows.system",
       title: "Inspect and control services",
-      status: "planned",
+      status: "available",
       risk: "computer_write",
       operations: ["query services", "start service", "stop service", "change startup mode"],
       underlyingTools: ["Get-Service", "sc.exe", "PowerShell service cmdlets"],
       fallbacks: ["Services MMC via GUI/computer_use"],
       verification: ["service_state", "event_log"],
       approval: "prompt",
+      executableActionIds: ["windows.process_service_inspect", "windows.process_service_control"],
       writes: true,
       notes: "Service mutation can affect the machine and remains approval-gated."
     }),
@@ -1946,13 +1969,14 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       family: "windows.processes",
       surface: "windows.system",
       title: "Inspect and control processes",
-      status: "planned",
+      status: "available",
       risk: "computer_write",
       operations: ["list processes", "start process", "stop process", "inspect handles"],
       underlyingTools: ["Get-Process", "Start-Process", "Stop-Process", "tasklist", "taskkill"],
       fallbacks: ["Task Manager via GUI/computer_use"],
       verification: ["process_state", "command_exit"],
       approval: "prompt",
+      executableActionIds: ["windows.process_service_inspect"],
       writes: true,
       notes: "Killing processes requires confirmation unless app owns the process."
     }),
@@ -2022,13 +2046,14 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       family: "windows.settings",
       surface: "windows.gui",
       title: "Open and control Windows Settings",
-      status: "planned",
+      status: "available",
       risk: "external_ui",
       operations: ["open settings pages", "inspect visible settings", "guide or automate toggles"],
       underlyingTools: ["ms-settings URI", "Start-Process", "UI Automation"],
       fallbacks: ["Control Panel applets", "registry", "PowerShell"],
       verification: ["ui_state", "registry_state"],
       approval: "prompt",
+      executableActionIds: ["windows.setting_inspect", "windows.setting_apply", "windows.sensitive_inspect", "windows.sensitive_apply"],
       writes: true,
       notes: "Use API/CLI when available, then shell, then GUI/computer-use for settings that only exist visually."
     }),
@@ -2129,30 +2154,56 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       family: "documents.media",
       surface: "documents",
       title: "Read, transform and create documents/media",
-      status: "planned",
+      status: "available",
       risk: "workspace_write",
       operations: ["parse PDF/Office", "convert files", "extract text", "write reports", "process images/audio/video"],
-      underlyingTools: ["bundled document libraries", "Office COM", "ffmpeg if installed", "OCR"],
-      fallbacks: ["shell.full external CLI", "manual export"],
+      underlyingTools: ["PDF.js", "Office COM", "ffprobe.exe", "tesseract.exe", "WinGet toolchain installer"],
+      fallbacks: ["document.toolchain_install", "shell.full external CLI", "manual export"],
       verification: ["filesystem", "artifact_hash"],
       approval: "confirmed",
+      executableActionIds: [
+        "document.inspect",
+        "document.write_text",
+        "document.write_json",
+        "document.write_csv",
+        "document.convert_text",
+        "document.pdf_extract_text",
+        "document.office_inspect",
+        "document.office_export_pdf",
+        "document.image_ocr",
+        "document.media_metadata",
+        "document.toolchain_inspect",
+        "document.toolchain_install"
+      ],
       writes: true,
-      notes: "Large artifacts should be referenced by path, hash and compact manifest."
+      notes: "Large artifacts should be referenced by path, hash and compact manifest; missing OCR/media tools are probed or installed with confirmation before use."
     }),
     atlasEntry({
       id: "dev.git",
       family: "dev.git",
       surface: "developer",
       title: "Develop, test and collaborate in repositories",
-      status: "planned",
+      status: "available",
       risk: "workspace_write",
       operations: ["inspect repo", "edit code", "run tests", "commit", "push", "open PR"],
       underlyingTools: ["git", "npm", "cargo", "gh", "language toolchains"],
       fallbacks: ["GitHub connector", "shell.full"],
       verification: ["command_exit", "filesystem", "mcp_result"],
       approval: "confirmed",
+      executableActionIds: [
+        "dev.repo_status",
+        "dev.git_diff",
+        "dev.git_commit",
+        "dev.git_push",
+        "dev.github_pr_create",
+        "dev.github_pr_review_submit",
+        "dev.run_check",
+        "ci.checks_inspect",
+        "ci.run_inspect",
+        "ci.rerun_failed"
+      ],
       writes: true,
-      notes: "Git status, diff, commit, push and PR creation now have direct actions; broader CI/review flows remain planned."
+      notes: "Git status, diff, commit, push, PR creation, confirmed PR review submission, CI inspection and failed-job rerun now have direct actions."
     }),
     atlasEntry({
       id: "virtualization.wsl",
@@ -2184,7 +2235,7 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       approval: "prompt",
       writes: true,
       executableActionIds: ["virtualization.inspect", "virtualization.run_command"],
-      notes: "Docker inspection and confirmed docker exec are direct actions. Hyper-V VM inventory is direct; VM lifecycle and in-guest command execution remain prompt-gated/planned."
+      notes: "Docker inspection and confirmed docker exec are direct actions. Hyper-V VM inventory, named confirmed lifecycle routes and guest command execution are direct actions with PowerShell/exit-code proof."
     }),
     atlasEntry({
       id: "cloud.clis",
@@ -2413,7 +2464,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `browser_web=download:${manifest.browserWeb.downloadRequiresConfirmation ? "confirmed" : "open"} navigation:${manifest.browserWeb.navigationRequiresConfirmation ? "confirmed" : "open"} submission:${manifest.browserWeb.submissionRequiresConfirmation ? "confirmed" : "open"} artifact:${manifest.browserWeb.artifactPolicy}`,
     `document_media=workspace_writes:${manifest.documentMedia.workspaceWritesRequireConfirmation ? "confirmed" : "open"} computer_writes:${manifest.documentMedia.computerScopeWritesRequireConfirmation ? "confirmed" : "open"} office_com:${manifest.documentMedia.officeComRequiresConfirmation ? "confirmed" : "open"} macros:${manifest.documentMedia.macroPolicy} artifact:${manifest.documentMedia.artifactPolicy}`,
     `developer_automation=repo_inspect:${manifest.developerAutomation.repoInspectionRequiresConfirmation ? "confirmed" : "open"} checks:${manifest.developerAutomation.commandChecksRequireConfirmation ? "confirmed" : "open"} git_mutation:${manifest.developerAutomation.gitMutationRequiresConfirmation ? "confirmed" : "open"} cloud_writes:${manifest.developerAutomation.cloudWritesRequireConfirmation ? "confirmed" : "open"} mcp:${manifest.developerAutomation.mcpToolCallingStatus} automation:${manifest.developerAutomation.automationPersistenceRequiresConfirmation ? "confirmed" : "open"}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url browser.playwright_inspect browser.screenshot browser.click browser.type_text browser.playwright_download document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.run_check virtualization.inspect virtualization.run_command automation.schedule automation.list automation.cancel automation.record",
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url browser.playwright_inspect browser.screenshot browser.click browser.type_text browser.playwright_download document.inspect document.write_text document.write_json document.write_csv document.convert_text document.pdf_extract_text document.office_inspect document.office_export_pdf document.image_ocr document.media_metadata document.toolchain_inspect document.toolchain_install dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.github_pr_review_submit dev.run_check windows.setting_inspect windows.setting_apply windows.sensitive_inspect windows.sensitive_apply package.inspect package.install_update ci.checks_inspect ci.run_inspect ci.rerun_failed virtualization.inspect virtualization.run_command automation.schedule automation.list automation.cancel automation.record",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -2427,7 +2478,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
-    "planned=contained_webexplorer_dom persistent_browser_sessions browser_account_state_changes office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes thread_wakeups hyperv_guest_command_execution semantic_screen_targeting bundled_ocr_engine",
+    "planned=contained_webexplorer_dom persistent_browser_sessions browser_account_state_changes mcp.tools_call thread_wakeups semantic_screen_targeting bundled_ocr_model",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -5527,6 +5578,228 @@ async function documentOfficeExportPdfAction(config: AgentActionHostConfig, requ
   });
 }
 
+function documentToolchainSummary(input: Omit<AgentDocumentToolchainSummary, "schema" | "proofHash">): AgentDocumentToolchainSummary {
+  const summary: AgentDocumentToolchainSummary = {
+    schema: "ingen.document_toolchain.summary.v1",
+    ...input,
+    proofHash: ""
+  };
+  summary.proofHash = hashJson({ ...summary, proofHash: "" });
+  return summary;
+}
+
+function documentToolchainTarget(request: AgentActionRequest): AgentDocumentToolchainSummary["target"] {
+  const target = (request.query ?? "all").trim().toLowerCase();
+  return target === "ocr" || target === "media" || target === "office" || target === "all" ? target : "all";
+}
+
+function officeComProbe(): { available: boolean; resources: Record<string, unknown>[]; stdout: string; stderr: string; exitCode: number | null; commandLine: string } {
+  const script = `
+$ErrorActionPreference = 'Stop'
+$items = @(
+  @{ id = 'office_word'; progId = 'Word.Application' },
+  @{ id = 'office_excel'; progId = 'Excel.Application' },
+  @{ id = 'office_powerpoint'; progId = 'PowerPoint.Application' }
+)
+$items | ForEach-Object {
+  $type = [Type]::GetTypeFromProgID($_.progId)
+  [pscustomobject]@{
+    id = $_.id
+    progId = $_.progId
+    available = ($type -ne $null)
+    clsid = if ($type -ne $null) { $type.GUID.ToString() } else { $null }
+  }
+} | ConvertTo-Json -Compress
+`;
+  const execution = executePowerShellJson(script, 10_000);
+  const resources = execution.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        const parsed = JSON.parse(line) as unknown;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
+        }
+        return parsed && typeof parsed === "object" ? [parsed as Record<string, unknown>] : [];
+      } catch {
+        return [];
+      }
+    });
+  return {
+    available: execution.accepted && resources.some((resource) => resource.available === true),
+    resources,
+    stdout: execution.stdout,
+    stderr: execution.stderr,
+    exitCode: execution.exitCode,
+    commandLine: "powershell.exe -EncodedCommand <document.office_com_probe>"
+  };
+}
+
+function inspectDocumentToolchain(config: AgentActionHostConfig, target: AgentDocumentToolchainSummary["target"]): AgentDocumentToolchainSummary {
+  const tesseractPath = detectToolPath(config, "tesseract.exe");
+  const ffprobePath = detectToolPath(config, "ffprobe.exe");
+  const tesseractVersion = tesseractPath ? executeNativeTool(tesseractPath, ["--version"], config.cwd, 8_000) : undefined;
+  const ffprobeVersion = ffprobePath ? executeNativeTool(ffprobePath, ["-version"], config.cwd, 8_000) : undefined;
+  const office = config.platform === "win32" ? officeComProbe() : undefined;
+  const officeResources = office?.resources ?? [];
+  const tools: AgentDocumentToolchainSummary["tools"] = [];
+  if (target === "all" || target === "ocr") {
+    tools.push({
+      id: "tesseract",
+      available: Boolean(tesseractPath),
+      command: "tesseract.exe",
+      detectedPath: tesseractPath,
+      version: tesseractVersion?.stdout.split(/\r?\n/, 1)[0]?.trim(),
+      packageId: "UB-Mannheim.TesseractOCR",
+      installable: true
+    });
+  }
+  if (target === "all" || target === "media") {
+    tools.push({
+      id: "ffprobe",
+      available: Boolean(ffprobePath),
+      command: "ffprobe.exe",
+      detectedPath: ffprobePath,
+      version: ffprobeVersion?.stdout.split(/\r?\n/, 1)[0]?.trim(),
+      packageId: "Gyan.FFmpeg",
+      installable: true
+    });
+  }
+  if (target === "all" || target === "office") {
+    for (const officeTool of [
+      ["office_word", "Word.Application"],
+      ["office_excel", "Excel.Application"],
+      ["office_powerpoint", "PowerPoint.Application"]
+    ] as const) {
+      const resource = officeResources.find((item) => item.id === officeTool[0]);
+      tools.push({
+        id: officeTool[0],
+        available: resource?.available === true,
+        command: officeTool[1],
+        version: typeof resource?.clsid === "string" ? resource.clsid : undefined,
+        installable: false
+      });
+    }
+  }
+  return documentToolchainSummary({
+    action: "inspect",
+    target,
+    tools
+  });
+}
+
+async function documentToolchainInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const target = documentToolchainTarget(request);
+  const summary = inspectDocumentToolchain(config, target);
+  return result(config, request, {
+    accepted: true,
+    routeId: "document.toolchain_inspect",
+    observedChanges: summary.tools.map((tool) => `${tool.id}:${tool.available ? "available" : "missing"}`),
+    verification: verificationResult([
+      verificationProbe({
+        id: "document.toolchain.reported",
+        kind: "event_log",
+        target,
+        expectation: "tool availability is reported without claiming missing tools succeeded",
+        actual: summary.tools.map((tool) => `${tool.id}=${tool.available}`).join(" "),
+        passed: true
+      })
+    ]),
+    documentToolchain: summary,
+    stdoutPreview: JSON.stringify(summary.tools, null, 2).slice(0, MAX_PREVIEW_CHARS)
+  });
+}
+
+async function documentToolchainInstallAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Document toolchain install requires confirmed:true.", request)
+    });
+  }
+  const target = documentToolchainTarget(request);
+  if (target === "office") {
+    const summary = inspectDocumentToolchain(config, target);
+    summary.action = "install";
+    summary.proofHash = hashJson({ ...summary, proofHash: "" });
+    return result(config, request, {
+      accepted: false,
+      routeId: "document.toolchain_install.office_blocked",
+      failureCategory: "denied",
+      documentToolchain: summary,
+      verification: verificationResult([
+        verificationProbe({
+          id: "document.toolchain.office_install_policy",
+          kind: "manual_confirmation",
+          target: "Microsoft Office",
+          expectation: "licensed Office installation is not automated by the local agent",
+          actual: "blocked",
+          passed: false
+        })
+      ]),
+      error: actionError("bad_payload", "Office COM can be inspected when installed, but Microsoft Office install/update is not automated by this backend.", request)
+    });
+  }
+  const packageIds = target === "ocr" ? ["UB-Mannheim.TesseractOCR"] : target === "media" ? ["Gyan.FFmpeg"] : ["UB-Mannheim.TesseractOCR", "Gyan.FFmpeg"];
+  let lastExecution: GitExecution | undefined;
+  for (const packageId of packageIds) {
+    lastExecution = executeNativeTool(
+      "winget.exe",
+      ["install", "--id", packageId, "-e", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"],
+      config.cwd,
+      Math.min(commandTimeout(request), 180_000)
+    );
+    if (!lastExecution.accepted) {
+      break;
+    }
+  }
+  const inspected = inspectDocumentToolchain(config, target);
+  inspected.action = "install";
+  inspected.commandLine = lastExecution?.commandLine;
+  inspected.exitCode = lastExecution?.exitCode;
+  inspected.proofHash = hashJson({ ...inspected, proofHash: "" });
+  const expectedInstalled = inspected.tools.filter((tool) => tool.installable);
+  const installed = expectedInstalled.length > 0 && expectedInstalled.every((tool) => tool.available);
+  return result(config, request, {
+    accepted: Boolean(lastExecution?.accepted && installed),
+    routeId: "document.toolchain_install",
+    commandLine: lastExecution?.commandLine,
+    exitCode: lastExecution?.exitCode,
+    durationMs: lastExecution?.durationMs,
+    timedOut: lastExecution?.timedOut,
+    stdoutPreview: lastExecution?.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: lastExecution?.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: inspected.tools.map((tool) => `${tool.id}:${tool.available ? "available" : "missing"}`),
+    verification: verificationResult([
+      commandExitProbe({
+        commandLine: lastExecution?.commandLine ?? "winget.exe",
+        accepted: Boolean(lastExecution?.accepted),
+        exitCode: lastExecution?.exitCode ?? null,
+        timedOut: lastExecution?.timedOut ?? false
+      }),
+      verificationProbe({
+        id: "document.toolchain.detect_after_install",
+        kind: "command_exit",
+        target,
+        expectation: "installed document toolchain binaries are detected after winget returns",
+        actual: inspected.tools.map((tool) => `${tool.id}=${tool.available}`).join(" "),
+        passed: installed
+      })
+    ]),
+    documentToolchain: inspected,
+    userPresenceRequired: true,
+    failureCategory: lastExecution?.accepted && installed ? undefined : lastExecution?.timedOut ? "timeout" : "missing_tool",
+    error:
+      lastExecution?.accepted && installed
+        ? undefined
+        : lastExecution?.error ?? actionError("rust_unavailable", "Document toolchain install did not produce detectable local binaries.", inspected)
+  });
+}
+
 async function documentImageOcrAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   const confirmationBlocked = requireConfirmedDocumentTool(config, request, "Image OCR");
   if (confirmationBlocked) return confirmationBlocked;
@@ -6450,6 +6723,151 @@ Get-ItemProperty -Path $path -Name $name | ConvertTo-Json -Depth 4 -Compress
   });
 }
 
+function sensitiveWindowsScript(request: AgentActionRequest, mutation = false): { script: string; target: string; blocked?: string } {
+  const setting = (request.settingName ?? request.query ?? "firewall").trim().toLowerCase();
+  if (setting === "firewall") {
+    if (!mutation) {
+      return {
+        target: "firewall",
+        script: `
+$ErrorActionPreference = 'Stop'
+Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction | ConvertTo-Json -Compress
+`
+      };
+    }
+    const desired = (request.content ?? request.command ?? "").trim().toLowerCase();
+    if (desired !== "enable" && desired !== "disable") {
+      return { target: "firewall", script: "", blocked: "windows_sensitive_apply settingName:\"firewall\" requires content enable|disable." };
+    }
+    return {
+      target: `firewall:${desired}`,
+      script: `
+$ErrorActionPreference = 'Stop'
+$enabled = ${desired === "enable" ? "$true" : "$false"}
+Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled $enabled
+Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction | ConvertTo-Json -Compress
+`
+    };
+  }
+  if (setting === "defender") {
+    if (mutation) {
+      return { target: "defender", script: "", blocked: "Defender/security weakening is blocked as a typed mutation; use manual Windows Security UI if you intend to change it." };
+    }
+    return {
+      target: "defender",
+      script: `
+$ErrorActionPreference = 'Stop'
+Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,IoavProtectionEnabled,AntispywareEnabled | ConvertTo-Json -Compress
+`
+    };
+  }
+  if (setting === "bitlocker") {
+    if (mutation) {
+      return { target: "bitlocker", script: "", blocked: "BitLocker mutation is blocked by this typed adapter." };
+    }
+    return {
+      target: "bitlocker",
+      script: `
+$ErrorActionPreference = 'Stop'
+Get-BitLockerVolume | Select-Object MountPoint,VolumeStatus,ProtectionStatus,EncryptionPercentage | ConvertTo-Json -Compress
+`
+    };
+  }
+  if (setting === "user_env") {
+    const name = (request.query ?? "").trim();
+    if (!name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      return { target: "user_env", script: "", blocked: "user_env requires query to be a safe environment variable name." };
+    }
+    if (!mutation) {
+      return {
+        target: `user_env:${name}`,
+        script: `
+$ErrorActionPreference = 'Stop'
+[pscustomobject]@{ name = ${powerShellString(name)}; value = [Environment]::GetEnvironmentVariable(${powerShellString(name)}, 'User') } | ConvertTo-Json -Compress
+`
+      };
+    }
+    return {
+      target: `user_env:${name}`,
+      script: `
+$ErrorActionPreference = 'Stop'
+[Environment]::SetEnvironmentVariable(${powerShellString(name)}, ${powerShellString(request.content ?? "")}, 'User')
+[pscustomobject]@{ name = ${powerShellString(name)}; value = [Environment]::GetEnvironmentVariable(${powerShellString(name)}, 'User') } | ConvertTo-Json -Compress
+`
+    };
+  }
+  return { target: setting, script: "", blocked: "Unsupported sensitive Windows surface. Supported: firewall, defender, bitlocker, user_env." };
+}
+
+async function windowsSensitiveInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const { script, target, blocked } = sensitiveWindowsScript(request, false);
+  if (blocked) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "bad_path",
+      error: actionError("bad_payload", blocked, request)
+    });
+  }
+  const execution = windowsPowerShellExecution(script, 20_000);
+  return windowsAdminCommandResult(config, request, {
+    surface: "sensitive_system",
+    action: "inspect",
+    routeId: "windows.sensitive_inspect",
+    execution,
+    target,
+    mutationPolicy: "readonly"
+  });
+}
+
+async function windowsSensitiveApplyAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Sensitive Windows mutation requires confirmed:true.", request)
+    });
+  }
+  const { script, target, blocked } = sensitiveWindowsScript(request, true);
+  if (blocked) {
+    const summary = windowsAdminSummary({
+      surface: "sensitive_system",
+      action: "apply",
+      available: false,
+      target,
+      resources: [{ blocked }],
+      mutationPolicy: "blocked_dangerous"
+    });
+    return result(config, request, {
+      accepted: false,
+      routeId: "windows.sensitive_apply.blocked",
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      windowsAdmin: summary,
+      verification: verificationResult([
+        verificationProbe({
+          id: "windows.sensitive.blocked",
+          kind: "manual_confirmation",
+          target,
+          expectation: "unsupported or security-weakening mutation is blocked before execution",
+          actual: blocked,
+          passed: false
+        })
+      ]),
+      error: actionError("bad_payload", blocked, request)
+    });
+  }
+  const execution = windowsPowerShellExecution(script, 45_000);
+  return windowsAdminCommandResult(config, request, {
+    surface: "sensitive_system",
+    action: "apply",
+    routeId: "windows.sensitive_apply",
+    execution,
+    target,
+    mutationPolicy: "confirmed_write"
+  });
+}
+
 async function processServiceInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   const service = request.serviceName?.trim();
   const query = request.query?.trim();
@@ -6611,6 +7029,58 @@ async function ciRunInspectAction(config: AgentActionHostConfig, request: AgentA
     execution,
     target: runId ?? "workflow_runs",
     mutationPolicy: "readonly"
+  });
+}
+
+async function ciRerunFailedAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Re-running failed CI jobs requires confirmed:true.", request)
+    });
+  }
+  const runId = request.query?.trim();
+  const args = ["run", "rerun", ...(runId ? [runId] : []), "--failed"];
+  const rerun = executeNativeTool("gh.exe", args, config.workspaceRoot, 45_000);
+  const viewed = runId ? executeNativeTool("gh.exe", ["run", "view", runId, "--json", "databaseId,status,conclusion,headSha"], config.workspaceRoot, 30_000) : undefined;
+  const verified = rerun.accepted && (!runId || viewed?.accepted === true);
+  const summary = windowsAdminSummary({
+    surface: "ci_review",
+    action: "rerun",
+    available: verified,
+    target: runId ?? "latest_failed_run",
+    commandLine: rerun.commandLine,
+    exitCode: rerun.exitCode,
+    resources: [{ stdoutPreview: rerun.stdout.slice(0, 4_000), stderrPreview: rerun.stderr.slice(0, 2_000), viewPreview: viewed?.stdout.slice(0, 2_000) }],
+    mutationPolicy: "confirmed_write"
+  });
+  return result(config, request, {
+    accepted: verified,
+    commandLine: rerun.commandLine,
+    routeId: "ci.rerun_failed",
+    exitCode: rerun.exitCode,
+    durationMs: rerun.durationMs,
+    timedOut: rerun.timedOut,
+    stdoutPreview: rerun.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: rerun.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`ci_rerun_target:${runId ?? "latest_failed_run"}`, `exit_code:${rerun.exitCode ?? "unknown"}`],
+    verification: verificationResult([
+      commandExitProbe({ commandLine: rerun.commandLine, accepted: rerun.accepted, exitCode: rerun.exitCode, timedOut: rerun.timedOut }),
+      verificationProbe({
+        id: "ci.rerun.view",
+        kind: "command_exit",
+        target: viewed?.commandLine ?? rerun.commandLine,
+        expectation: runId ? "gh run view confirms the rerun target is visible after rerun request" : "gh accepted rerun of failed jobs",
+        actual: `view_accepted=${viewed?.accepted ?? !runId}`,
+        passed: !runId || viewed?.accepted === true
+      })
+    ]),
+    windowsAdmin: summary,
+    userPresenceRequired: true,
+    failureCategory: verified ? undefined : rerun.timedOut ? "timeout" : "command_error",
+    error: verified ? undefined : rerun.error ?? viewed?.error ?? actionError("rust_unavailable", "Failed CI rerun could not be verified.", request)
   });
 }
 
@@ -7267,6 +7737,93 @@ async function devGithubPrCreateAction(config: AgentActionHostConfig, request: A
   });
 }
 
+async function devGithubPrReviewSubmitAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "GitHub PR review submission requires confirmed:true.", request)
+    });
+  }
+  const target = (request.query ?? request.url ?? "").trim();
+  if (!target) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "query or url must identify the pull request for dev_github_pr_review_submit.", request)
+    });
+  }
+  const mode = (request.command ?? "comment").trim().toLowerCase();
+  const reviewFlag =
+    mode === "approve"
+      ? "--approve"
+      : mode === "request_changes" || mode === "request-changes"
+        ? "--request-changes"
+        : mode === "comment"
+          ? "--comment"
+          : undefined;
+  if (!reviewFlag) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "command must be approve, comment or request_changes for GitHub PR review submission.", request)
+    });
+  }
+  const body = (request.content ?? request.text ?? "").trim();
+  if (!body && reviewFlag !== "--approve") {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "content or text is required for comment/request_changes review submissions.", request)
+    });
+  }
+  const auth = executeGh(config, ["auth", "status", "--active"], 15_000);
+  if (!auth.accepted) {
+    return gitCommandFailure(config, request, "dev.github_pr_review.auth", auth);
+  }
+  const args = ["pr", "review", target, reviewFlag];
+  if (body) {
+    args.push("--body", body);
+  }
+  const reviewed = executeGh(config, args, 60_000);
+  if (!reviewed.accepted) {
+    return gitCommandFailure(config, request, "dev.github_pr_review", reviewed);
+  }
+  const viewed = executeGh(config, ["pr", "view", target, "--json", "url,state,latestReviews,reviewDecision"], 30_000);
+  const verified = viewed.accepted && (viewed.stdout.includes("latestReviews") || viewed.stdout.includes("reviewDecision"));
+  const status = executeGit(config, ["status", "--porcelain=v1", "-b"]);
+  const summary = {
+    ...gitStatusSummary(config, "github_pr_review", status),
+    prUrl: target,
+    commandLine: reviewed.commandLine,
+    exitCode: reviewed.exitCode,
+    durationMs: reviewed.durationMs
+  };
+  return result(config, request, {
+    accepted: verified,
+    commandLine: reviewed.commandLine,
+    routeId: "dev.github_pr_review",
+    exitCode: reviewed.exitCode,
+    durationMs: reviewed.durationMs,
+    stdoutPreview: reviewed.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: reviewed.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`github_pr_review:${target}`, `review_mode:${mode}`],
+    verification: verificationResult([
+      commandExitProbe({ commandLine: reviewed.commandLine, accepted: reviewed.accepted, exitCode: reviewed.exitCode, timedOut: reviewed.timedOut }),
+      verificationProbe({
+        id: "github.pr.review.view",
+        kind: "command_exit",
+        target: viewed.commandLine,
+        expectation: "gh pr view exposes review state after review submission",
+        actual: `accepted=${viewed.accepted} stdout_bytes=${Buffer.byteLength(viewed.stdout, "utf8")}`,
+        passed: verified
+      })
+    ]),
+    developer: summary,
+    userPresenceRequired: true,
+    failureCategory: verified ? undefined : "unverifiable",
+    error: verified ? undefined : viewed.error ?? actionError("rust_unavailable", "GitHub review submission succeeded but review state verification failed.", viewed.stdout)
+  });
+}
+
 async function devRunCheckAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   if (request.confirmed !== true) {
     return result(config, request, {
@@ -7652,6 +8209,10 @@ async function executeAgentActionRequestInner(config: AgentActionHostConfig, req
         return await documentImageOcrAction(config, request);
       case "document_media_metadata":
         return await documentMediaMetadataAction(config, request);
+      case "document_toolchain_inspect":
+        return await documentToolchainInspectAction(config, request);
+      case "document_toolchain_install":
+        return await documentToolchainInstallAction(config, request);
       case "dev_repo_status":
         return await devRepoStatusAction(config, request);
       case "dev_git_diff":
@@ -7662,6 +8223,8 @@ async function executeAgentActionRequestInner(config: AgentActionHostConfig, req
         return await devGitPushAction(config, request);
       case "dev_github_pr_create":
         return await devGithubPrCreateAction(config, request);
+      case "dev_github_pr_review_submit":
+        return await devGithubPrReviewSubmitAction(config, request);
       case "dev_run_check":
         return await devRunCheckAction(config, request);
       case "cloud_cli_inspect":
@@ -7674,6 +8237,10 @@ async function executeAgentActionRequestInner(config: AgentActionHostConfig, req
         return await windowsSettingInspectAction(config, request);
       case "windows_setting_apply":
         return await windowsSettingApplyAction(config, request);
+      case "windows_sensitive_inspect":
+        return await windowsSensitiveInspectAction(config, request);
+      case "windows_sensitive_apply":
+        return await windowsSensitiveApplyAction(config, request);
       case "process_service_inspect":
         return await processServiceInspectAction(config, request);
       case "process_service_control":
@@ -7686,6 +8253,8 @@ async function executeAgentActionRequestInner(config: AgentActionHostConfig, req
         return await ciChecksInspectAction(config, request);
       case "ci_run_inspect":
         return await ciRunInspectAction(config, request);
+      case "ci_rerun_failed":
+        return await ciRerunFailedAction(config, request);
       case "virtualization_inspect":
         return await virtualizationInspectAction(config, request);
       case "virtualization_run_command":

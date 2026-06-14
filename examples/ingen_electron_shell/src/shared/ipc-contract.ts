@@ -620,7 +620,9 @@ export type AgentDocumentMediaAction =
   | "office_inspect"
   | "office_export_pdf"
   | "image_ocr"
-  | "media_metadata";
+  | "media_metadata"
+  | "toolchain_inspect"
+  | "toolchain_install";
 export type AgentDocumentMediaKind =
   | "text"
   | "markdown"
@@ -678,12 +680,32 @@ export interface AgentDocumentMediaPolicy {
   proofHash: string;
 }
 
+export interface AgentDocumentToolchainSummary {
+  schema: "ingen.document_toolchain.summary.v1";
+  action: "inspect" | "install";
+  target: "all" | "ocr" | "media" | "office";
+  tools: Array<{
+    id: "tesseract" | "ffprobe" | "office_word" | "office_excel" | "office_powerpoint";
+    available: boolean;
+    command?: string;
+    detectedPath?: string;
+    version?: string;
+    packageId?: string;
+    installable: boolean;
+  }>;
+  commandLine?: string;
+  exitCode?: number | null;
+  proofHash: string;
+}
+
 export type AgentDeveloperAutomationAction =
   | "repo_status"
   | "git_diff"
   | "git_commit"
   | "git_push"
   | "github_pr_create"
+  | "github_pr_review"
+  | "ci_rerun_failed"
   | "run_check"
   | "schedule_automation"
   | "list_automations"
@@ -816,23 +838,29 @@ export type AgentActionKind =
   | "document_office_export_pdf"
   | "document_image_ocr"
   | "document_media_metadata"
+  | "document_toolchain_inspect"
+  | "document_toolchain_install"
   | "dev_repo_status"
   | "dev_git_diff"
   | "dev_git_commit"
   | "dev_git_push"
   | "dev_github_pr_create"
+  | "dev_github_pr_review_submit"
   | "dev_run_check"
   | "cloud_cli_inspect"
   | "cloud_cli_run_readonly"
   | "cloud_cli_run_write"
   | "windows_setting_inspect"
   | "windows_setting_apply"
+  | "windows_sensitive_inspect"
+  | "windows_sensitive_apply"
   | "process_service_inspect"
   | "process_service_control"
   | "package_inspect"
   | "package_install_update"
   | "ci_checks_inspect"
   | "ci_run_inspect"
+  | "ci_rerun_failed"
   | "virtualization_inspect"
   | "virtualization_run_command"
   | "automation_schedule"
@@ -936,8 +964,8 @@ export interface AgentCloudCliSummary {
 
 export interface AgentWindowsAdminSummary {
   schema: "ingen.windows_admin.summary.v1";
-  surface: "settings" | "process_service" | "package" | "ci_review";
-  action: "inspect" | "apply" | "control" | "install_update";
+  surface: "settings" | "sensitive_system" | "process_service" | "package" | "ci_review";
+  action: "inspect" | "apply" | "control" | "install_update" | "rerun" | "review";
   available: boolean;
   target?: string;
   commandLine?: string;
@@ -984,6 +1012,7 @@ export interface AgentActionResult {
   browserScreenshot?: AgentBrowserScreenshotArtifact;
   download?: AgentBrowserDownloadArtifact;
   documentMedia?: AgentDocumentMediaSummary;
+  documentToolchain?: AgentDocumentToolchainSummary;
   developer?: AgentDeveloperRepoSummary;
   virtualization?: AgentVirtualizationSummary;
   cloud?: AgentCloudCliSummary;
@@ -1132,23 +1161,29 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "document_office_export_pdf",
     "document_image_ocr",
     "document_media_metadata",
+    "document_toolchain_inspect",
+    "document_toolchain_install",
     "dev_repo_status",
     "dev_git_diff",
     "dev_git_commit",
     "dev_git_push",
     "dev_github_pr_create",
+    "dev_github_pr_review_submit",
     "dev_run_check",
     "cloud_cli_inspect",
     "cloud_cli_run_readonly",
     "cloud_cli_run_write",
     "windows_setting_inspect",
     "windows_setting_apply",
+    "windows_sensitive_inspect",
+    "windows_sensitive_apply",
     "process_service_inspect",
     "process_service_control",
     "package_inspect",
     "package_install_update",
     "ci_checks_inspect",
     "ci_run_inspect",
+    "ci_rerun_failed",
     "virtualization_inspect",
     "virtualization_run_command",
     "automation_schedule",

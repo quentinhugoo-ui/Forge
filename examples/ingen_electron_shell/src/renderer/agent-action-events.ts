@@ -35,23 +35,29 @@ export const AGENT_DOCUMENT_OFFICE_INSPECT_COMMAND = "/agent_document_office_ins
 export const AGENT_DOCUMENT_OFFICE_EXPORT_PDF_COMMAND = "/agent_document_office_export_pdf_";
 export const AGENT_DOCUMENT_IMAGE_OCR_COMMAND = "/agent_document_image_ocr_";
 export const AGENT_DOCUMENT_MEDIA_METADATA_COMMAND = "/agent_document_media_metadata_";
+export const AGENT_DOCUMENT_TOOLCHAIN_INSPECT_COMMAND = "/agent_document_toolchain_inspect_";
+export const AGENT_DOCUMENT_TOOLCHAIN_INSTALL_COMMAND = "/agent_document_toolchain_install_";
 export const AGENT_DEV_STATUS_COMMAND = "/agent_dev_status_";
 export const AGENT_DEV_DIFF_COMMAND = "/agent_dev_diff_";
 export const AGENT_DEV_COMMIT_COMMAND = "/agent_dev_commit_";
 export const AGENT_DEV_PUSH_COMMAND = "/agent_dev_push_";
 export const AGENT_GITHUB_PR_CREATE_COMMAND = "/agent_github_pr_create_";
+export const AGENT_GITHUB_PR_REVIEW_COMMAND = "/agent_github_pr_review_";
 export const AGENT_DEV_CHECK_COMMAND = "/agent_dev_check_";
 export const AGENT_CLOUD_INSPECT_COMMAND = "/agent_cloud_inspect_";
 export const AGENT_CLOUD_READONLY_COMMAND = "/agent_cloud_readonly_";
 export const AGENT_CLOUD_WRITE_COMMAND = "/agent_cloud_write_";
 export const AGENT_WINDOWS_SETTING_INSPECT_COMMAND = "/agent_windows_setting_inspect_";
 export const AGENT_WINDOWS_SETTING_APPLY_COMMAND = "/agent_windows_setting_apply_";
+export const AGENT_WINDOWS_SENSITIVE_INSPECT_COMMAND = "/agent_windows_sensitive_inspect_";
+export const AGENT_WINDOWS_SENSITIVE_APPLY_COMMAND = "/agent_windows_sensitive_apply_";
 export const AGENT_PROCESS_SERVICE_INSPECT_COMMAND = "/agent_process_service_inspect_";
 export const AGENT_PROCESS_SERVICE_CONTROL_COMMAND = "/agent_process_service_control_";
 export const AGENT_PACKAGE_INSPECT_COMMAND = "/agent_package_inspect_";
 export const AGENT_PACKAGE_INSTALL_UPDATE_COMMAND = "/agent_package_install_update_";
 export const AGENT_CI_CHECKS_INSPECT_COMMAND = "/agent_ci_checks_inspect_";
 export const AGENT_CI_RUN_INSPECT_COMMAND = "/agent_ci_run_inspect_";
+export const AGENT_CI_RERUN_FAILED_COMMAND = "/agent_ci_rerun_failed_";
 export const AGENT_VIRTUALIZATION_INSPECT_COMMAND = "/agent_virtualization_inspect_";
 export const AGENT_VIRTUALIZATION_RUN_COMMAND = "/agent_virtualization_run_";
 export const AGENT_AUTOMATION_SCHEDULE_COMMAND = "/agent_automation_schedule_";
@@ -97,23 +103,29 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_DOCUMENT_OFFICE_EXPORT_PDF_COMMAND,
   AGENT_DOCUMENT_IMAGE_OCR_COMMAND,
   AGENT_DOCUMENT_MEDIA_METADATA_COMMAND,
+  AGENT_DOCUMENT_TOOLCHAIN_INSPECT_COMMAND,
+  AGENT_DOCUMENT_TOOLCHAIN_INSTALL_COMMAND,
   AGENT_DEV_STATUS_COMMAND,
   AGENT_DEV_DIFF_COMMAND,
   AGENT_DEV_COMMIT_COMMAND,
   AGENT_DEV_PUSH_COMMAND,
   AGENT_GITHUB_PR_CREATE_COMMAND,
+  AGENT_GITHUB_PR_REVIEW_COMMAND,
   AGENT_DEV_CHECK_COMMAND,
   AGENT_CLOUD_INSPECT_COMMAND,
   AGENT_CLOUD_READONLY_COMMAND,
   AGENT_CLOUD_WRITE_COMMAND,
   AGENT_WINDOWS_SETTING_INSPECT_COMMAND,
   AGENT_WINDOWS_SETTING_APPLY_COMMAND,
+  AGENT_WINDOWS_SENSITIVE_INSPECT_COMMAND,
+  AGENT_WINDOWS_SENSITIVE_APPLY_COMMAND,
   AGENT_PROCESS_SERVICE_INSPECT_COMMAND,
   AGENT_PROCESS_SERVICE_CONTROL_COMMAND,
   AGENT_PACKAGE_INSPECT_COMMAND,
   AGENT_PACKAGE_INSTALL_UPDATE_COMMAND,
   AGENT_CI_CHECKS_INSPECT_COMMAND,
   AGENT_CI_RUN_INSPECT_COMMAND,
+  AGENT_CI_RERUN_FAILED_COMMAND,
   AGENT_VIRTUALIZATION_INSPECT_COMMAND,
   AGENT_VIRTUALIZATION_RUN_COMMAND,
   AGENT_AUTOMATION_SCHEDULE_COMMAND,
@@ -169,23 +181,29 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_DOCUMENT_OFFICE_EXPORT_PDF_COMMAND, "confirmed Office PDF export verified"],
   [AGENT_DOCUMENT_IMAGE_OCR_COMMAND, "confirmed image OCR completed"],
   [AGENT_DOCUMENT_MEDIA_METADATA_COMMAND, "media metadata inspected"],
+  [AGENT_DOCUMENT_TOOLCHAIN_INSPECT_COMMAND, "document toolchain inspected"],
+  [AGENT_DOCUMENT_TOOLCHAIN_INSTALL_COMMAND, "confirmed document toolchain install verified"],
   [AGENT_DEV_STATUS_COMMAND, "repository status inspected"],
   [AGENT_DEV_DIFF_COMMAND, "repository diff inspected"],
   [AGENT_DEV_COMMIT_COMMAND, "confirmed Git commit verified"],
   [AGENT_DEV_PUSH_COMMAND, "confirmed Git push verified"],
   [AGENT_GITHUB_PR_CREATE_COMMAND, "confirmed GitHub pull request verified"],
+  [AGENT_GITHUB_PR_REVIEW_COMMAND, "confirmed GitHub review submitted"],
   [AGENT_DEV_CHECK_COMMAND, "confirmed developer check completed"],
   [AGENT_CLOUD_INSPECT_COMMAND, "cloud CLI contexts inspected"],
   [AGENT_CLOUD_READONLY_COMMAND, "cloud CLI read-only command completed"],
   [AGENT_CLOUD_WRITE_COMMAND, "confirmed cloud CLI write command completed"],
   [AGENT_WINDOWS_SETTING_INSPECT_COMMAND, "Windows setting inspected"],
   [AGENT_WINDOWS_SETTING_APPLY_COMMAND, "confirmed Windows setting applied"],
+  [AGENT_WINDOWS_SENSITIVE_INSPECT_COMMAND, "sensitive Windows state inspected"],
+  [AGENT_WINDOWS_SENSITIVE_APPLY_COMMAND, "confirmed sensitive Windows change verified"],
   [AGENT_PROCESS_SERVICE_INSPECT_COMMAND, "process or service state inspected"],
   [AGENT_PROCESS_SERVICE_CONTROL_COMMAND, "confirmed service control completed"],
   [AGENT_PACKAGE_INSPECT_COMMAND, "package manager state inspected"],
   [AGENT_PACKAGE_INSTALL_UPDATE_COMMAND, "confirmed package install or update verified"],
   [AGENT_CI_CHECKS_INSPECT_COMMAND, "CI checks inspected"],
   [AGENT_CI_RUN_INSPECT_COMMAND, "CI run inspected"],
+  [AGENT_CI_RERUN_FAILED_COMMAND, "confirmed failed CI jobs rerun"],
   [AGENT_VIRTUALIZATION_INSPECT_COMMAND, "virtualization backends inspected"],
   [AGENT_VIRTUALIZATION_RUN_COMMAND, "confirmed virtualization command completed"],
   [AGENT_AUTOMATION_SCHEDULE_COMMAND, "confirmed Windows scheduled task verified"],
@@ -234,23 +252,29 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["document.office_export_pdf", AGENT_DOCUMENT_OFFICE_EXPORT_PDF_COMMAND],
   ["document.image_ocr", AGENT_DOCUMENT_IMAGE_OCR_COMMAND],
   ["document.media_metadata", AGENT_DOCUMENT_MEDIA_METADATA_COMMAND],
+  ["document.toolchain_inspect", AGENT_DOCUMENT_TOOLCHAIN_INSPECT_COMMAND],
+  ["document.toolchain_install", AGENT_DOCUMENT_TOOLCHAIN_INSTALL_COMMAND],
   ["dev.repo_status", AGENT_DEV_STATUS_COMMAND],
   ["dev.git_diff", AGENT_DEV_DIFF_COMMAND],
   ["dev.git_commit", AGENT_DEV_COMMIT_COMMAND],
   ["dev.git_push", AGENT_DEV_PUSH_COMMAND],
   ["dev.github_pr_create", AGENT_GITHUB_PR_CREATE_COMMAND],
+  ["dev.github_pr_review_submit", AGENT_GITHUB_PR_REVIEW_COMMAND],
   ["dev.run_check", AGENT_DEV_CHECK_COMMAND],
   ["cloud.inspect", AGENT_CLOUD_INSPECT_COMMAND],
   ["cloud.run_readonly", AGENT_CLOUD_READONLY_COMMAND],
   ["cloud.run_write", AGENT_CLOUD_WRITE_COMMAND],
   ["windows.setting_inspect", AGENT_WINDOWS_SETTING_INSPECT_COMMAND],
   ["windows.setting_apply", AGENT_WINDOWS_SETTING_APPLY_COMMAND],
+  ["windows.sensitive_inspect", AGENT_WINDOWS_SENSITIVE_INSPECT_COMMAND],
+  ["windows.sensitive_apply", AGENT_WINDOWS_SENSITIVE_APPLY_COMMAND],
   ["windows.process_service_inspect", AGENT_PROCESS_SERVICE_INSPECT_COMMAND],
   ["windows.process_service_control", AGENT_PROCESS_SERVICE_CONTROL_COMMAND],
   ["windows.package_inspect", AGENT_PACKAGE_INSPECT_COMMAND],
   ["windows.package_install_update", AGENT_PACKAGE_INSTALL_UPDATE_COMMAND],
   ["ci.checks_inspect", AGENT_CI_CHECKS_INSPECT_COMMAND],
   ["ci.run_inspect", AGENT_CI_RUN_INSPECT_COMMAND],
+  ["ci.rerun_failed", AGENT_CI_RERUN_FAILED_COMMAND],
   ["virtualization.inspect", AGENT_VIRTUALIZATION_INSPECT_COMMAND],
   ["virtualization.run_command", AGENT_VIRTUALIZATION_RUN_COMMAND],
   ["automation.schedule", AGENT_AUTOMATION_SCHEDULE_COMMAND],
@@ -299,23 +323,29 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["document_office_export_pdf", AGENT_DOCUMENT_OFFICE_EXPORT_PDF_COMMAND],
   ["document_image_ocr", AGENT_DOCUMENT_IMAGE_OCR_COMMAND],
   ["document_media_metadata", AGENT_DOCUMENT_MEDIA_METADATA_COMMAND],
+  ["document_toolchain_inspect", AGENT_DOCUMENT_TOOLCHAIN_INSPECT_COMMAND],
+  ["document_toolchain_install", AGENT_DOCUMENT_TOOLCHAIN_INSTALL_COMMAND],
   ["dev_repo_status", AGENT_DEV_STATUS_COMMAND],
   ["dev_git_diff", AGENT_DEV_DIFF_COMMAND],
   ["dev_git_commit", AGENT_DEV_COMMIT_COMMAND],
   ["dev_git_push", AGENT_DEV_PUSH_COMMAND],
   ["dev_github_pr_create", AGENT_GITHUB_PR_CREATE_COMMAND],
+  ["dev_github_pr_review_submit", AGENT_GITHUB_PR_REVIEW_COMMAND],
   ["dev_run_check", AGENT_DEV_CHECK_COMMAND],
   ["cloud_cli_inspect", AGENT_CLOUD_INSPECT_COMMAND],
   ["cloud_cli_run_readonly", AGENT_CLOUD_READONLY_COMMAND],
   ["cloud_cli_run_write", AGENT_CLOUD_WRITE_COMMAND],
   ["windows_setting_inspect", AGENT_WINDOWS_SETTING_INSPECT_COMMAND],
   ["windows_setting_apply", AGENT_WINDOWS_SETTING_APPLY_COMMAND],
+  ["windows_sensitive_inspect", AGENT_WINDOWS_SENSITIVE_INSPECT_COMMAND],
+  ["windows_sensitive_apply", AGENT_WINDOWS_SENSITIVE_APPLY_COMMAND],
   ["process_service_inspect", AGENT_PROCESS_SERVICE_INSPECT_COMMAND],
   ["process_service_control", AGENT_PROCESS_SERVICE_CONTROL_COMMAND],
   ["package_inspect", AGENT_PACKAGE_INSPECT_COMMAND],
   ["package_install_update", AGENT_PACKAGE_INSTALL_UPDATE_COMMAND],
   ["ci_checks_inspect", AGENT_CI_CHECKS_INSPECT_COMMAND],
   ["ci_run_inspect", AGENT_CI_RUN_INSPECT_COMMAND],
+  ["ci_rerun_failed", AGENT_CI_RERUN_FAILED_COMMAND],
   ["virtualization_inspect", AGENT_VIRTUALIZATION_INSPECT_COMMAND],
   ["virtualization_run_command", AGENT_VIRTUALIZATION_RUN_COMMAND],
   ["automation_schedule", AGENT_AUTOMATION_SCHEDULE_COMMAND],

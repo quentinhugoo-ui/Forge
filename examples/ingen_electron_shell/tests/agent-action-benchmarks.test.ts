@@ -88,8 +88,11 @@ describe("agent action benchmark suite", () => {
       expect(byId.get("filesystem.organize.safe_moves")).toMatchObject({ status: "success" });
       expect(byId.get("code.run.tests.after_edit")).toMatchObject({ status: "success" });
       expect(byId.get("document.write_and_inspect")).toMatchObject({ status: "success" });
+      expect(byId.get("document.toolchain.install")).toMatchObject({ status: "blocked" });
       expect(byId.get("install.update.package_manager")).toMatchObject({ status: "blocked" });
       expect(byId.get("windows.setting.change")).toMatchObject({ status: "blocked" });
+      expect(byId.get("windows.sensitive.firewall")).toMatchObject({ status: "blocked" });
+      expect(byId.get("ci.review.mutation")).toMatchObject({ status: "blocked" });
       expect(byId.get("cloud.cli.write")).toMatchObject({ status: "blocked" });
       expect(byId.get("blocked.danger.credentials")).toMatchObject({ status: "blocked" });
       expect((results as Array<{ status: string }>).some((result) => result.status === "planned")).toBe(false);

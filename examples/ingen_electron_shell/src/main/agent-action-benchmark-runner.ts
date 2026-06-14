@@ -68,8 +68,14 @@ async function executableBenchmarkRequest(config: AgentActionHostConfig, benchma
   if (benchmark.id === "document.write_and_inspect") {
     return { action: "document_write_text", path: "benchmark/report.md", content: "# Benchmark\n\nRuntime proof.\n" };
   }
+  if (benchmark.id === "document.toolchain.install") {
+    return { action: "document_toolchain_install", query: "ocr" };
+  }
   if (benchmark.id === "windows.setting.change") {
     return { action: "windows_setting_apply", path: "HKCU:\\Software\\InGenBenchmark", settingName: "Value", content: "1" };
+  }
+  if (benchmark.id === "windows.sensitive.firewall") {
+    return { action: "windows_sensitive_apply", settingName: "firewall", content: "disable" };
   }
   if (benchmark.id === "process.service.lifecycle") {
     return { action: "process_service_inspect" };
@@ -82,6 +88,9 @@ async function executableBenchmarkRequest(config: AgentActionHostConfig, benchma
   }
   if (benchmark.id === "git.pr.workflow") {
     return { action: "dev_repo_status" };
+  }
+  if (benchmark.id === "ci.review.mutation") {
+    return { action: "dev_github_pr_review_submit", query: "1", command: "comment", content: "Benchmark review" };
   }
   if (benchmark.id === "cloud.cli.write") {
     return { action: "cloud_cli_run_write", cloudProvider: "aws", args: ["s3", "sync", "a", "b"] };

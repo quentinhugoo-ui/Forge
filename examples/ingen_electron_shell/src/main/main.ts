@@ -1,5 +1,5 @@
 import { app, BrowserView, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell } from "electron";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, createReadStream, existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -5820,23 +5820,29 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   document_office_export_pdf: "document.office_export_pdf",
   document_image_ocr: "document.image_ocr",
   document_media_metadata: "document.media_metadata",
+  document_toolchain_inspect: "document.toolchain_inspect",
+  document_toolchain_install: "document.toolchain_install",
   dev_repo_status: "dev.repo_status",
   dev_git_diff: "dev.git_diff",
   dev_git_commit: "dev.git_commit",
   dev_git_push: "dev.git_push",
   dev_github_pr_create: "dev.github_pr_create",
+  dev_github_pr_review_submit: "dev.github_pr_review_submit",
   dev_run_check: "dev.run_check",
   cloud_cli_inspect: "cloud.inspect",
   cloud_cli_run_readonly: "cloud.run_readonly",
   cloud_cli_run_write: "cloud.run_write",
   windows_setting_inspect: "windows.setting_inspect",
   windows_setting_apply: "windows.setting_apply",
+  windows_sensitive_inspect: "windows.sensitive_inspect",
+  windows_sensitive_apply: "windows.sensitive_apply",
   process_service_inspect: "windows.process_service_inspect",
   process_service_control: "windows.process_service_control",
   package_inspect: "windows.package_inspect",
   package_install_update: "windows.package_install_update",
   ci_checks_inspect: "ci.checks_inspect",
   ci_run_inspect: "ci.run_inspect",
+  ci_rerun_failed: "ci.rerun_failed",
   virtualization_inspect: "virtualization.inspect",
   virtualization_run_command: "virtualization.run_command",
   automation_schedule: "automation.schedule",
@@ -5937,8 +5943,11 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "virtualization_run_command" ||
         params.request.action === "cloud_cli_run_write" ||
         params.request.action === "windows_setting_apply" ||
+        params.request.action === "windows_sensitive_apply" ||
         params.request.action === "process_service_control" ||
-        params.request.action === "package_install_update"
+        params.request.action === "package_install_update" ||
+        params.request.action === "document_toolchain_install" ||
+        params.request.action === "ci_rerun_failed"
       ? "computer_write"
       : params.request.action === "computer_appshot" ||
         params.request.action === "computer_focus_window" ||
@@ -5955,7 +5964,8 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "browser_type_text" ||
         params.request.action === "document_office_inspect" ||
         params.request.action === "document_office_export_pdf" ||
-        params.request.action === "document_image_ocr"
+        params.request.action === "document_image_ocr" ||
+        params.request.action === "dev_github_pr_review_submit"
       ? "external_ui"
       : params.request.action === "dev_git_push" ||
         params.request.action === "dev_github_pr_create"

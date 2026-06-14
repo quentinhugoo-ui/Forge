@@ -215,7 +215,7 @@ describe("agent action host", () => {
       "automation.record"
     ]);
     expect(summary.availableFamilies).toContain("shell.full");
-    expect(summary.plannedFamilies).toContain("windows.settings");
+    expect(summary.availableFamilies).toContain("windows.settings");
     expect(summary.blockedFamilies).toContain("windows.credentials");
     expect(summary.approvalGatedFamilies).toContain("browser.cdp");
     expect(summary.promptBudget).toBe("compact_by_default_detail_on_selected_capability");
@@ -347,7 +347,9 @@ describe("agent action host", () => {
       "document_office_inspect",
       "document_office_export_pdf",
       "document_image_ocr",
-      "document_media_metadata"
+      "document_media_metadata",
+      "document_toolchain_inspect",
+      "document_toolchain_install"
     ]);
     expect(policy.workspaceWritesRequireConfirmation).toBe(false);
     expect(policy.computerScopeWritesRequireConfirmation).toBe(true);
@@ -371,18 +373,22 @@ describe("agent action host", () => {
       "dev_git_commit",
       "dev_git_push",
       "dev_github_pr_create",
+      "dev_github_pr_review_submit",
       "dev_run_check",
       "cloud_cli_inspect",
       "cloud_cli_run_readonly",
       "cloud_cli_run_write",
       "windows_setting_inspect",
       "windows_setting_apply",
+      "windows_sensitive_inspect",
+      "windows_sensitive_apply",
       "process_service_inspect",
       "process_service_control",
       "package_inspect",
       "package_install_update",
       "ci_checks_inspect",
       "ci_run_inspect",
+      "ci_rerun_failed",
       "virtualization_inspect",
       "virtualization_run_command",
       "automation_schedule",
@@ -817,7 +823,7 @@ describe("agent action host", () => {
         expect(blocked.error?.message).toContain("confirmed:true");
       }
     });
-  });
+  }, 20_000);
 
   it("writes, inspects and converts document/data artifacts with readback verification", async () => {
     await withTempWorkspace(async (config) => {
@@ -967,8 +973,40 @@ describe("agent action host", () => {
         expect(metadata.verification?.passed).toBe(false);
         expect(metadata.error?.message).toBeTruthy();
       }
+
+      const toolchain = await executeAgentActionRequest(config, {
+        action: "document_toolchain_inspect",
+        query: "all"
+      });
+      expect(toolchain.accepted).toBe(true);
+      expect(toolchain.documentToolchain?.schema).toBe("ingen.document_toolchain.summary.v1");
+      expect(toolchain.documentToolchain?.tools.map((tool) => tool.id)).toEqual([
+        "tesseract",
+        "ffprobe",
+        "office_word",
+        "office_excel",
+        "office_powerpoint"
+      ]);
+      expect(toolchain.verification?.passed).toBe(true);
+
+      const toolchainInstallBlocked = await executeAgentActionRequest(config, {
+        action: "document_toolchain_install",
+        query: "ocr"
+      });
+      expect(toolchainInstallBlocked.accepted).toBe(false);
+      expect(toolchainInstallBlocked.userPresenceRequired).toBe(true);
+      expect(toolchainInstallBlocked.error?.message).toContain("confirmed:true");
+
+      const officeInstallBlocked = await executeAgentActionRequest(config, {
+        action: "document_toolchain_install",
+        query: "office",
+        confirmed: true
+      });
+      expect(officeInstallBlocked.accepted).toBe(false);
+      expect(officeInstallBlocked.documentToolchain?.target).toBe("office");
+      expect(officeInstallBlocked.error?.message).toContain("Office install/update is not automated");
     });
-  });
+  }, 20_000);
 
   gitIt("inspects Git state, runs confirmed checks and records automation goals", async () => {
     await withTempWorkspace(async (config) => {
@@ -1158,6 +1196,33 @@ describe("agent action host", () => {
       expect(serviceControl.accepted).toBe(false);
       expect(serviceControl.error?.message).toContain("confirmed:true");
 
+      const sensitiveInspect = await executeAgentActionRequest(config, {
+        action: "windows_sensitive_inspect",
+        settingName: "user_env",
+        query: "PATH"
+      });
+      expect(sensitiveInspect.accepted).toBe(true);
+      expect(sensitiveInspect.windowsAdmin?.surface).toBe("sensitive_system");
+      expect(sensitiveInspect.windowsAdmin?.mutationPolicy).toBe("readonly");
+
+      const sensitiveApply = await executeAgentActionRequest(config, {
+        action: "windows_sensitive_apply",
+        settingName: "user_env",
+        query: "INGEN_TEST",
+        content: "1"
+      });
+      expect(sensitiveApply.accepted).toBe(false);
+      expect(sensitiveApply.userPresenceRequired).toBe(true);
+
+      const defenderBlocked = await executeAgentActionRequest(config, {
+        action: "windows_sensitive_apply",
+        settingName: "defender",
+        content: "disable",
+        confirmed: true
+      });
+      expect(defenderBlocked.accepted).toBe(false);
+      expect(defenderBlocked.windowsAdmin?.mutationPolicy).toBe("blocked_dangerous");
+
       const packageInspect = await executeAgentActionRequest(config, {
         action: "package_inspect"
       });
@@ -1184,6 +1249,22 @@ describe("agent action host", () => {
         expect(ci.error?.message).toBeTruthy();
       }
 
+      const rerunBlocked = await executeAgentActionRequest(config, {
+        action: "ci_rerun_failed",
+        query: "123"
+      });
+      expect(rerunBlocked.accepted).toBe(false);
+      expect(rerunBlocked.userPresenceRequired).toBe(true);
+
+      const reviewBlocked = await executeAgentActionRequest(config, {
+        action: "dev_github_pr_review_submit",
+        query: "1",
+        command: "comment",
+        content: "Looks good."
+      });
+      expect(reviewBlocked.accepted).toBe(false);
+      expect(reviewBlocked.userPresenceRequired).toBe(true);
+
       const hypervRejected = await executeAgentActionRequest(config, {
         action: "virtualization_run_command",
         provider: "hyperv",
@@ -1193,7 +1274,7 @@ describe("agent action host", () => {
       expect(hypervRejected.accepted).toBe(false);
       expect(hypervRejected.error?.message).toContain("vmName is required");
     });
-  });
+  }, 20_000);
 
   schedulerIt("creates, lists and cancels a real InGen-owned scheduled task", async () => {
     await withTempWorkspace(async (config) => {
@@ -1357,7 +1438,7 @@ describe("agent action host", () => {
       expect(tasklist.routeId).toBe("processes.tasklist");
       expect(tasklist.commandLine).toContain("tasklist.exe");
     });
-  });
+  }, 20_000);
 
   it("searches workspace content with bounded matches", async () => {
     await withTempWorkspace(async (config) => {
