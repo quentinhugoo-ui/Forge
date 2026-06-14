@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
     process::{self, Command},
@@ -824,17 +824,95 @@ pub struct BangerNativeGpuSceneValidationReceipt {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeCullingManifest {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub authority: &'static str,
     pub culling_path: &'static str,
     pub candidate_count: usize,
     pub visible_count: usize,
     pub culled_count: usize,
     pub max_lod_error: f32,
+    pub spatial_grid_hash: String,
+    pub static_cell_count: usize,
+    pub dynamic_object_count: usize,
+    pub compressed_chunk_count: usize,
     pub visibility_result_hash: String,
     pub indirect_draw_buffer_hash: String,
     pub cache_reuse_hash: String,
     pub manifest_hash: String,
+    pub spatial_grid_packet: BangerNativeSceneCullingGridPacket,
     pub entries: Vec<BangerNativeCullingEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeSceneCullingGridPacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_scene_hash: String,
+    pub cell_size_world: f32,
+    pub level_count: u32,
+    pub static_cell_count: usize,
+    pub dynamic_object_count: usize,
+    pub compressed_chunk_count: usize,
+    pub coarse_mask_hash: String,
+    pub static_grid_hash: String,
+    pub dynamic_lane_hash: String,
+    pub compressed_chunk_hash: String,
+    pub validation_receipt_hash: String,
+    pub packet_hash: String,
+    pub cells: Vec<BangerNativeSceneCullingGridCell>,
+    pub dynamic_objects: Vec<BangerNativeSceneCullingDynamicObject>,
+    pub compressed_chunks: Vec<BangerNativeSceneCullingGridChunk>,
+    pub validation_receipt: BangerNativeSceneCullingGridValidationReceipt,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeSceneCullingGridCell {
+    pub cell_id: String,
+    pub level: u32,
+    pub coord: [i32; 3],
+    pub coarse_mask: u64,
+    pub object_count: usize,
+    pub first_object_hash: Option<String>,
+    pub cell_bounds_hash: String,
+    pub object_set_hash: String,
+    pub cell_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeSceneCullingDynamicObject {
+    pub object_id: String,
+    pub reason: &'static str,
+    pub bounding_sphere: [f32; 4],
+    pub object_hash: String,
+    pub lane_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeSceneCullingGridChunk {
+    pub chunk_id: String,
+    pub level: u32,
+    pub cell_count: usize,
+    pub object_count: usize,
+    pub compression_scheme: &'static str,
+    pub chunk_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeSceneCullingGridValidationReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_cell_count: usize,
+    pub checked_dynamic_object_count: usize,
+    pub duplicate_object_count: usize,
+    pub empty_cell_count: usize,
+    pub all_visible_objects_accounted: bool,
+    pub validation_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3705,6 +3783,8 @@ fn build_culling_manifest(
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
     resource_table: &BangerNativeResourceTable,
 ) -> BangerNativeCullingManifest {
+    let spatial_grid_packet = build_scene_culling_grid_packet(prepared, scene_graph_submission);
+    let spatial_grid_hash = spatial_grid_packet.packet_hash.clone();
     let entries = scene_graph_submission
         .submissions
         .iter()
@@ -3726,22 +3806,415 @@ fn build_culling_manifest(
         &visibility_result_hash,
         &indirect_draw_buffer_hash,
         &cache_reuse_hash,
+        &spatial_grid_hash,
         &entries,
     );
     BangerNativeCullingManifest {
-        schema: "forge.banger.native_culling_manifest.v1",
+        schema: "forge.banger.native_culling_manifest.v2",
+        schema_version: 2,
         authority: "scene_graph_submission_meshlet_virtual_geometry_cull_contract",
-        culling_path: "compute_cull_to_indirect_draw_buffer_mesh_shader_ready",
+        culling_path: "forge_hashed_spatial_grid_compute_cull_to_indirect_draw",
         candidate_count: entries.len(),
         visible_count,
         culled_count,
         max_lod_error,
+        spatial_grid_hash,
+        static_cell_count: spatial_grid_packet.static_cell_count,
+        dynamic_object_count: spatial_grid_packet.dynamic_object_count,
+        compressed_chunk_count: spatial_grid_packet.compressed_chunk_count,
         visibility_result_hash,
         indirect_draw_buffer_hash,
         cache_reuse_hash,
         manifest_hash,
+        spatial_grid_packet,
         entries,
     }
+}
+
+fn build_scene_culling_grid_packet(
+    prepared: &MonsterPreparedCompute,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+) -> BangerNativeSceneCullingGridPacket {
+    let cell_size_world = scene_culling_grid_cell_size(scene_graph_submission);
+    let mut static_cells: BTreeMap<(u32, [i32; 3]), Vec<&BangerNativeSceneSubmissionNode>> =
+        BTreeMap::new();
+    let mut dynamic_objects = Vec::new();
+    for node in scene_graph_submission
+        .submissions
+        .iter()
+        .filter(|node| node.visible && node.renderable)
+    {
+        if let Some(reason) = scene_culling_dynamic_reason(node, cell_size_world) {
+            let object_hash = scene_culling_grid_object_hash(node);
+            let lane_hash =
+                scene_culling_dynamic_lane_hash(node, reason, &object_hash, prepared);
+            dynamic_objects.push(BangerNativeSceneCullingDynamicObject {
+                object_id: node.object_id.clone(),
+                reason,
+                bounding_sphere: node.world_bounding_sphere,
+                object_hash,
+                lane_hash,
+            });
+            continue;
+        }
+        let level = scene_culling_grid_level(node.world_bounding_sphere[3], cell_size_world);
+        let coord = scene_culling_grid_coord(node.world_bounding_sphere, cell_size_world, level);
+        static_cells.entry((level, coord)).or_default().push(node);
+    }
+    let cells = static_cells
+        .into_iter()
+        .map(|((level, coord), nodes)| {
+            let object_set_hash = scene_culling_grid_object_set_hash(&nodes);
+            let cell_bounds_hash = scene_culling_grid_cell_bounds_hash(level, coord, cell_size_world);
+            let coarse_mask = scene_culling_grid_coarse_mask(coord);
+            let first_object_hash = nodes.first().map(|node| node.proof_hash.clone());
+            let cell_id = format!(
+                "scene_cell_l{level}_{}_{}_{}",
+                coord[0], coord[1], coord[2]
+            );
+            let cell_hash = scene_culling_grid_cell_hash(
+                &cell_id,
+                level,
+                coord,
+                coarse_mask,
+                nodes.len(),
+                &object_set_hash,
+                &cell_bounds_hash,
+            );
+            BangerNativeSceneCullingGridCell {
+                cell_id,
+                level,
+                coord,
+                coarse_mask,
+                object_count: nodes.len(),
+                first_object_hash,
+                cell_bounds_hash,
+                object_set_hash,
+                cell_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let compressed_chunks = scene_culling_grid_chunks(&cells);
+    let validation_receipt =
+        build_scene_culling_grid_validation_receipt(scene_graph_submission, &cells, &dynamic_objects);
+    let coarse_mask_hash = scene_culling_grid_coarse_mask_hash(&cells);
+    let static_grid_hash = scene_culling_static_grid_hash(&cells);
+    let dynamic_lane_hash = scene_culling_dynamic_lane_manifest_hash(&dynamic_objects);
+    let compressed_chunk_hash = scene_culling_compressed_chunk_manifest_hash(&compressed_chunks);
+    let validation_receipt_hash = validation_receipt.validation_hash.clone();
+    let packet_hash = scene_culling_grid_packet_hash(
+        prepared,
+        scene_graph_submission,
+        cell_size_world,
+        3,
+        &coarse_mask_hash,
+        &static_grid_hash,
+        &dynamic_lane_hash,
+        &compressed_chunk_hash,
+        &validation_receipt_hash,
+    );
+    BangerNativeSceneCullingGridPacket {
+        schema: "forge.banger.scene_culling_grid_packet.v1",
+        authority: "forge_hashed_static_cells_dynamic_lane_culling_grid",
+        clean_room_basis: "local_unreal_sparse_scene_culling_hierarchical_spatial_hash_grid_principles_no_source_copy",
+        source_scene_hash: scene_graph_submission.submission_hash.clone(),
+        cell_size_world,
+        level_count: 3,
+        static_cell_count: cells.len(),
+        dynamic_object_count: dynamic_objects.len(),
+        compressed_chunk_count: compressed_chunks.len(),
+        coarse_mask_hash,
+        static_grid_hash,
+        dynamic_lane_hash,
+        compressed_chunk_hash,
+        validation_receipt_hash,
+        packet_hash,
+        cells,
+        dynamic_objects,
+        compressed_chunks,
+        validation_receipt,
+    }
+}
+
+fn scene_culling_grid_cell_size(scene_graph_submission: &BangerNativeSceneGraphSubmission) -> f32 {
+    let radius = scene_graph_submission.fit_bounding_sphere[3].max(1.0);
+    (radius / 8.0).clamp(1.0, 4096.0)
+}
+
+fn scene_culling_dynamic_reason(
+    node: &BangerNativeSceneSubmissionNode,
+    cell_size_world: f32,
+) -> Option<&'static str> {
+    let radius = node.world_bounding_sphere[3].max(0.0);
+    if node.resource_slots.is_empty() {
+        Some("missing_resident_resource_slot")
+    } else if radius > cell_size_world * 2.0 {
+        Some("large_bounds_dynamic_lane")
+    } else if matches!(node.representation, "gaussian_splat" | "particle" | "dynamic_mesh") {
+        Some("representation_dynamic_lane")
+    } else {
+        None
+    }
+}
+
+fn scene_culling_grid_level(radius: f32, cell_size_world: f32) -> u32 {
+    if radius > cell_size_world {
+        2
+    } else if radius > cell_size_world * 0.5 {
+        1
+    } else {
+        0
+    }
+}
+
+fn scene_culling_grid_coord(
+    bounding_sphere: [f32; 4],
+    cell_size_world: f32,
+    level: u32,
+) -> [i32; 3] {
+    let scale = cell_size_world * (1u32 << level).max(1) as f32;
+    [
+        (bounding_sphere[0] / scale).floor() as i32,
+        (bounding_sphere[1] / scale).floor() as i32,
+        (bounding_sphere[2] / scale).floor() as i32,
+    ]
+}
+
+fn scene_culling_grid_coarse_mask(coord: [i32; 3]) -> u64 {
+    let x = coord[0].rem_euclid(4) as u64;
+    let y = coord[1].rem_euclid(4) as u64;
+    let z = coord[2].rem_euclid(4) as u64;
+    1u64 << (x + y * 4 + z * 16)
+}
+
+fn scene_culling_grid_object_hash(node: &BangerNativeSceneSubmissionNode) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.grid_object.v1\0");
+    h.update(node.proof_hash.as_bytes());
+    h.update(node.object_id.as_bytes());
+    h.update(node.world_transform_hash.as_bytes());
+    h.update(node.world_bounding_sphere[3].to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn scene_culling_dynamic_lane_hash(
+    node: &BangerNativeSceneSubmissionNode,
+    reason: &str,
+    object_hash: &str,
+    prepared: &MonsterPreparedCompute,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.dynamic_lane_entry.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(node.object_id.as_bytes());
+    h.update(reason.as_bytes());
+    h.update(object_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn scene_culling_grid_object_set_hash(nodes: &[&BangerNativeSceneSubmissionNode]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.grid_object_set.v1\0");
+    for node in nodes {
+        h.update(node.proof_hash.as_bytes());
+        h.update(node.object_id.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_culling_grid_cell_bounds_hash(level: u32, coord: [i32; 3], cell_size_world: f32) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.cell_bounds.v1\0");
+    h.update(level.to_le_bytes());
+    for value in coord {
+        h.update(value.to_le_bytes());
+    }
+    h.update(cell_size_world.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn scene_culling_grid_cell_hash(
+    cell_id: &str,
+    level: u32,
+    coord: [i32; 3],
+    coarse_mask: u64,
+    object_count: usize,
+    object_set_hash: &str,
+    cell_bounds_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.grid_cell.v1\0");
+    h.update(cell_id.as_bytes());
+    h.update(level.to_le_bytes());
+    for value in coord {
+        h.update(value.to_le_bytes());
+    }
+    h.update(coarse_mask.to_le_bytes());
+    h.update((object_count as u64).to_le_bytes());
+    h.update(object_set_hash.as_bytes());
+    h.update(cell_bounds_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn scene_culling_grid_chunks(
+    cells: &[BangerNativeSceneCullingGridCell],
+) -> Vec<BangerNativeSceneCullingGridChunk> {
+    cells
+        .chunks(8)
+        .enumerate()
+        .map(|(index, chunk_cells)| {
+            let level = chunk_cells.iter().map(|cell| cell.level).min().unwrap_or(0);
+            let object_count = chunk_cells.iter().map(|cell| cell.object_count).sum();
+            let chunk_id = format!("scene_culling_chunk_{index:03}");
+            let chunk_hash = scene_culling_grid_chunk_hash(&chunk_id, level, chunk_cells, object_count);
+            BangerNativeSceneCullingGridChunk {
+                chunk_id,
+                level,
+                cell_count: chunk_cells.len(),
+                object_count,
+                compression_scheme: "hash_sorted_cell_block_rle",
+                chunk_hash,
+            }
+        })
+        .collect()
+}
+
+fn scene_culling_grid_chunk_hash(
+    chunk_id: &str,
+    level: u32,
+    cells: &[BangerNativeSceneCullingGridCell],
+    object_count: usize,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.grid_chunk.v1\0");
+    h.update(chunk_id.as_bytes());
+    h.update(level.to_le_bytes());
+    h.update((object_count as u64).to_le_bytes());
+    for cell in cells {
+        h.update(cell.cell_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn build_scene_culling_grid_validation_receipt(
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    cells: &[BangerNativeSceneCullingGridCell],
+    dynamic_objects: &[BangerNativeSceneCullingDynamicObject],
+) -> BangerNativeSceneCullingGridValidationReceipt {
+    let expected_count = scene_graph_submission
+        .submissions
+        .iter()
+        .filter(|node| node.visible && node.renderable)
+        .count();
+    let accounted_count = cells.iter().map(|cell| cell.object_count).sum::<usize>() + dynamic_objects.len();
+    let duplicate_object_count = accounted_count.saturating_sub(expected_count);
+    let empty_cell_count = cells.iter().filter(|cell| cell.object_count == 0).count();
+    let all_visible_objects_accounted = accounted_count >= expected_count && duplicate_object_count == 0;
+    let validation_hash = scene_culling_grid_validation_hash(
+        cells.len(),
+        dynamic_objects.len(),
+        duplicate_object_count,
+        empty_cell_count,
+        all_visible_objects_accounted,
+    );
+    BangerNativeSceneCullingGridValidationReceipt {
+        schema: "forge.banger.scene_culling_grid_validation_receipt.v1",
+        authority: "static_cell_dynamic_lane_accounting",
+        checked_cell_count: cells.len(),
+        checked_dynamic_object_count: dynamic_objects.len(),
+        duplicate_object_count,
+        empty_cell_count,
+        all_visible_objects_accounted,
+        validation_hash,
+    }
+}
+
+fn scene_culling_grid_validation_hash(
+    checked_cell_count: usize,
+    checked_dynamic_object_count: usize,
+    duplicate_object_count: usize,
+    empty_cell_count: usize,
+    all_visible_objects_accounted: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.grid_validation.v1\0");
+    h.update((checked_cell_count as u64).to_le_bytes());
+    h.update((checked_dynamic_object_count as u64).to_le_bytes());
+    h.update((duplicate_object_count as u64).to_le_bytes());
+    h.update((empty_cell_count as u64).to_le_bytes());
+    h.update([all_visible_objects_accounted as u8]);
+    hex32(h.finalize().into())
+}
+
+fn scene_culling_grid_coarse_mask_hash(cells: &[BangerNativeSceneCullingGridCell]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.coarse_mask_manifest.v1\0");
+    for cell in cells {
+        h.update(cell.coarse_mask.to_le_bytes());
+        h.update(cell.cell_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_culling_static_grid_hash(cells: &[BangerNativeSceneCullingGridCell]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.static_grid.v1\0");
+    for cell in cells {
+        h.update(cell.cell_hash.as_bytes());
+        h.update(cell.object_set_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_culling_dynamic_lane_manifest_hash(
+    dynamic_objects: &[BangerNativeSceneCullingDynamicObject],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.dynamic_lane_manifest.v1\0");
+    for object in dynamic_objects {
+        h.update(object.object_id.as_bytes());
+        h.update(object.reason.as_bytes());
+        h.update(object.lane_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_culling_compressed_chunk_manifest_hash(
+    chunks: &[BangerNativeSceneCullingGridChunk],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling.compressed_chunk_manifest.v1\0");
+    for chunk in chunks {
+        h.update(chunk.chunk_hash.as_bytes());
+        h.update(chunk.compression_scheme.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_culling_grid_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    cell_size_world: f32,
+    level_count: u32,
+    coarse_mask_hash: &str,
+    static_grid_hash: &str,
+    dynamic_lane_hash: &str,
+    compressed_chunk_hash: &str,
+    validation_receipt_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_culling_grid_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(scene_graph_submission.submission_hash.as_bytes());
+    h.update(cell_size_world.to_le_bytes());
+    h.update(level_count.to_le_bytes());
+    h.update(coarse_mask_hash.as_bytes());
+    h.update(static_grid_hash.as_bytes());
+    h.update(dynamic_lane_hash.as_bytes());
+    h.update(compressed_chunk_hash.as_bytes());
+    h.update(validation_receipt_hash.as_bytes());
+    hex32(h.finalize().into())
 }
 
 fn culling_entry_from_submission(
@@ -9028,16 +9501,18 @@ fn culling_manifest_hash(
     visibility_result_hash: &str,
     indirect_draw_buffer_hash: &str,
     cache_reuse_hash: &str,
+    spatial_grid_hash: &str,
     entries: &[BangerNativeCullingEntry],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_culling_manifest.v1\0");
+    h.update(b"forge.banger.native_culling_manifest.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(scene_graph_submission.submission_hash.as_bytes());
     h.update(visibility_result_hash.as_bytes());
     h.update(indirect_draw_buffer_hash.as_bytes());
     h.update(cache_reuse_hash.as_bytes());
+    h.update(spatial_grid_hash.as_bytes());
     for entry in entries {
         h.update(entry.proof_hash.as_bytes());
     }
@@ -17773,13 +18248,81 @@ mod tests {
                 && flags.payload_hash.len() == 64));
         assert_eq!(
             response.culling_manifest.schema,
-            "forge.banger.native_culling_manifest.v1"
+            "forge.banger.native_culling_manifest.v2"
         );
+        assert_eq!(response.culling_manifest.schema_version, 2);
         assert!(response.culling_manifest.candidate_count > 0);
         assert_eq!(
             response.culling_manifest.visible_count + response.culling_manifest.culled_count,
             response.culling_manifest.candidate_count
         );
+        assert_eq!(response.culling_manifest.spatial_grid_hash.len(), 64);
+        assert_eq!(
+            response.culling_manifest.spatial_grid_packet.packet_hash,
+            response.culling_manifest.spatial_grid_hash
+        );
+        assert_eq!(
+            response.culling_manifest.static_cell_count,
+            response.culling_manifest.spatial_grid_packet.static_cell_count
+        );
+        assert_eq!(
+            response.culling_manifest.dynamic_object_count,
+            response.culling_manifest
+                .spatial_grid_packet
+                .dynamic_object_count
+        );
+        assert_eq!(
+            response.culling_manifest.compressed_chunk_count,
+            response.culling_manifest
+                .spatial_grid_packet
+                .compressed_chunk_count
+        );
+        assert_eq!(
+            response.culling_manifest.spatial_grid_packet.schema,
+            "forge.banger.scene_culling_grid_packet.v1"
+        );
+        assert_eq!(
+            response
+                .culling_manifest
+                .spatial_grid_packet
+                .validation_receipt
+                .validation_hash,
+            response
+                .culling_manifest
+                .spatial_grid_packet
+                .validation_receipt_hash
+        );
+        assert!(response
+            .culling_manifest
+            .spatial_grid_packet
+            .validation_receipt
+            .all_visible_objects_accounted);
+        assert_eq!(
+            response
+                .culling_manifest
+                .spatial_grid_packet
+                .validation_receipt
+                .duplicate_object_count,
+            0
+        );
+        assert!(response
+            .culling_manifest
+            .spatial_grid_packet
+            .cells
+            .iter()
+            .all(|cell| cell.object_count > 0
+                && cell.coarse_mask != 0
+                && cell.cell_bounds_hash.len() == 64
+                && cell.object_set_hash.len() == 64
+                && cell.cell_hash.len() == 64));
+        assert!(response
+            .culling_manifest
+            .spatial_grid_packet
+            .compressed_chunks
+            .iter()
+            .all(|chunk| chunk.cell_count > 0
+                && chunk.object_count > 0
+                && chunk.chunk_hash.len() == 64));
         assert_eq!(response.culling_manifest.visibility_result_hash.len(), 64);
         assert_eq!(response.culling_manifest.indirect_draw_buffer_hash.len(), 64);
         assert_eq!(response.culling_manifest.cache_reuse_hash.len(), 64);
