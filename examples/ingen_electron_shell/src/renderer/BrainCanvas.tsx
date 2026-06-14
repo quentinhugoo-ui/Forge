@@ -833,13 +833,19 @@ const HARDWARE_GAUGE_HISTORY_LIMIT = 48;
 
 type HardwareGaugeSample = {
   sampledAt: number;
-  value: number | null;
+  temperature: number | null;
+  percent: number | null;
 };
 
-type HardwareGaugeView = {
-  id: "gpu-utilization" | "cpu-temperature" | "system-temperature" | "ram-utilization";
-  label: string;
-  metric: HardwareMetric;
+type HardwareMonitorCardId = "gpu" | "cpu" | "system";
+
+type HardwareMonitorCardView = {
+  id: HardwareMonitorCardId;
+  title: string;
+  detail: string;
+  badge: string;
+  temperature: HardwareMetric;
+  percent: HardwareMetric;
   min: number;
   max: number;
 };
@@ -864,36 +870,43 @@ function cpuTemperatureGaugeMetric(snapshot: HardwareTelemetrySnapshot): Hardwar
   return hardwareFallbackMetric("CPU", null, "C");
 }
 
-function hardwareGaugeViews(snapshot: HardwareTelemetrySnapshot): HardwareGaugeView[] {
+function hardwareGpuTitle(name: string | undefined): string {
+  if (!name || name.toLowerCase().includes("unavailable")) return "GPU";
+  return name;
+}
+
+function hardwareCardViews(snapshot: HardwareTelemetrySnapshot): HardwareMonitorCardView[] {
   const primaryGpu = snapshot.gpus[0];
   return [
     {
-      id: "gpu-utilization",
-      label: "GPU",
-      metric: primaryGpu ? { ...primaryGpu.utilization, label: "GPU" } : hardwareFallbackMetric("GPU", null, "%"),
-      min: 0,
-      max: 100
-    },
-    {
-      id: "cpu-temperature",
-      label: "CPU",
-      metric: cpuTemperatureGaugeMetric(snapshot),
+      id: "gpu",
+      title: hardwareGpuTitle(primaryGpu?.name),
+      detail: "Température / Util.",
+      badge: "GPU",
+      temperature: primaryGpu ? { ...primaryGpu.temperature, label: "GPU" } : hardwareFallbackMetric("GPU", null, "C"),
+      percent: primaryGpu ? { ...primaryGpu.utilization, label: "GPU" } : hardwareFallbackMetric("GPU", null, "%"),
       min: 25,
       max: 105
     },
     {
-      id: "system-temperature",
-      label: "System",
-      metric: { ...snapshot.thermal.systemTemperature, label: "System" },
+      id: "cpu",
+      title: snapshot.cpu.model || "CPU",
+      detail: "Température / Util.",
+      badge: "CPU",
+      temperature: cpuTemperatureGaugeMetric(snapshot),
+      percent: { ...snapshot.cpu.utilization, label: "CPU" },
       min: 25,
       max: 105
     },
     {
-      id: "ram-utilization",
-      label: "RAM",
-      metric: { ...snapshot.memory.utilization, label: "RAM" },
-      min: 0,
-      max: 100
+      id: "system",
+      title: "Système",
+      detail: "Température / RAM",
+      badge: "Système",
+      temperature: { ...snapshot.thermal.systemTemperature, label: "Système" },
+      percent: { ...snapshot.memory.utilization, label: "RAM" },
+      min: 25,
+      max: 105
     }
   ];
 }
@@ -920,7 +933,7 @@ function hardwareGaugePath(samples: HardwareGaugeSample[], min: number, max: num
   const denominator = Math.max(1, visible.length - 1);
   return visible
     .map((sample, index) => {
-      const value = sample.value === null ? min : clampNumber(sample.value, min, max);
+      const value = sample.temperature === null ? min : clampNumber(sample.temperature, min, max);
       const x = (index / denominator) * width;
       const y = height - ((value - min) / (max - min)) * height;
       return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
@@ -934,6 +947,19 @@ function hardwareGaugeAreaPath(samples: HardwareGaugeSample[], min: number, max:
   const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
   const lastX = visible.length <= 1 ? 0 : width;
   return `M 0 ${height} ${line.replace(/^M/, "L")} L ${lastX} ${height} Z`;
+}
+
+function hardwareTemperatureMinMax(samples: HardwareGaugeSample[]): { min: number | null; max: number | null } {
+  const values = samples
+    .map((sample) => sample.temperature)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  if (values.length === 0) {
+    return { min: null, max: null };
+  }
+  return {
+    min: Math.round(Math.min(...values)),
+    max: Math.round(Math.max(...values))
+  };
 }
 
 function rendererFallbackHardwareSnapshot(reason: string): HardwareTelemetrySnapshot {
@@ -1009,30 +1035,43 @@ async function requestHardwareTelemetry(): Promise<HardwareTelemetrySnapshot> {
   }
 }
 
-function HardwareGaugeCard({ gauge, samples }: { gauge: HardwareGaugeView; samples: HardwareGaugeSample[] }) {
-  const level = hardwareGaugeLevel(gauge.metric, gauge.min, gauge.max);
-  const linePath = hardwareGaugePath(samples, gauge.min, gauge.max);
-  const areaPath = hardwareGaugeAreaPath(samples, gauge.min, gauge.max);
-  const isUnavailable = gauge.metric.value === null;
+function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; samples: HardwareGaugeSample[] }) {
+  const level = hardwareGaugeLevel(card.temperature, card.min, card.max);
+  const linePath = hardwareGaugePath(samples, card.min, card.max);
+  const areaPath = hardwareGaugeAreaPath(samples, card.min, card.max);
+  const minMax = hardwareTemperatureMinMax(samples);
+  const isUnavailable = card.temperature.value === null;
   return (
-    <article className={["hardwareGauge", `hardwareGauge--${gauge.metric.status}`].join(" ")} aria-label={gauge.label}>
-      <div className="hardwareGauge__plot" aria-hidden="true">
-        <svg viewBox="0 0 278 82" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id={`hardwareGaugeFill-${gauge.id}`} x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="currentColor" stopOpacity="0.34" />
-              <stop offset="100%" stopColor="currentColor" stopOpacity="0.02" />
-            </linearGradient>
-          </defs>
-          <path className="hardwareGauge__gridLine" d="M 0 20.5 H 278 M 0 41 H 278 M 0 61.5 H 278" />
-          {areaPath ? <path className="hardwareGauge__area" d={areaPath} fill={`url(#hardwareGaugeFill-${gauge.id})`} /> : null}
-          {linePath ? <path className="hardwareGauge__line" d={linePath} /> : null}
-        </svg>
-      </div>
+    <article className={["hardwareGauge", `hardwareGauge--${card.temperature.status}`].join(" ")} aria-label={card.badge}>
+      <section className="hardwareGauge__main">
+        <header className="hardwareGauge__head">
+          <strong>{card.title}</strong>
+          <span>{card.detail}</span>
+        </header>
+        <div className="hardwareGauge__screen">
+          <svg viewBox="0 0 278 82" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <linearGradient id={`hardwareGaugeFill-${card.id}`} x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="currentColor" stopOpacity="0.28" />
+                <stop offset="100%" stopColor="currentColor" stopOpacity="0.02" />
+              </linearGradient>
+            </defs>
+            <path className="hardwareGauge__gridLine" d="M 0 20.5 H 278 M 0 41 H 278 M 0 61.5 H 278" />
+            {areaPath ? <path className="hardwareGauge__area" d={areaPath} fill={`url(#hardwareGaugeFill-${card.id})`} /> : null}
+            {linePath ? <path className="hardwareGauge__line" d={linePath} /> : null}
+          </svg>
+        </div>
+        <div className="hardwareGauge__range">
+          <span>Min : {minMax.min === null ? "--" : `${minMax.min}°`}</span>
+          <span>Max : {minMax.max === null ? "--" : `${minMax.max}°`}</span>
+        </div>
+      </section>
       <div className="hardwareGauge__readout">
-        <span>{gauge.label}</span>
-        <strong>{compactGaugeValue(gauge.metric)}</strong>
-        {compactGaugeUnit(gauge.metric) ? <em>{compactGaugeUnit(gauge.metric)}</em> : null}
+        <span>{card.badge}</span>
+        <strong>{compactGaugeValue(card.temperature)}</strong>
+        {compactGaugeUnit(card.temperature) ? <em>{compactGaugeUnit(card.temperature)}</em> : null}
+        <strong className="hardwareGauge__percent">{compactGaugeValue(card.percent)}</strong>
+        {compactGaugeUnit(card.percent) ? <em>{compactGaugeUnit(card.percent)}</em> : null}
       </div>
       <div className="hardwareGauge__level" aria-hidden="true">
         <i style={{ height: `${isUnavailable ? 0 : level}%` }} />
@@ -1044,11 +1083,10 @@ function HardwareGaugeCard({ gauge, samples }: { gauge: HardwareGaugeView; sampl
 function HardwareSpace() {
   const [snapshot, setSnapshot] = useState<HardwareTelemetrySnapshot | null>(null);
   const [error, setError] = useState("");
-  const [history, setHistory] = useState<Record<HardwareGaugeView["id"], HardwareGaugeSample[]>>({
-    "gpu-utilization": [],
-    "cpu-temperature": [],
-    "system-temperature": [],
-    "ram-utilization": []
+  const [history, setHistory] = useState<Record<HardwareMonitorCardId, HardwareGaugeSample[]>>({
+    gpu: [],
+    cpu: [],
+    system: []
   });
 
   useEffect(() => {
@@ -1063,15 +1101,16 @@ function HardwareSpace() {
           if (next) {
             const sampledAt = new Date(next.sampledAt).getTime();
             const sampleTime = Number.isFinite(sampledAt) ? sampledAt : Date.now();
-            const gauges = hardwareGaugeViews(next);
+            const cards = hardwareCardViews(next);
             setHistory((current) => {
               const updated = { ...current };
-              for (const gauge of gauges) {
-                updated[gauge.id] = [
-                  ...(updated[gauge.id] ?? []),
+              for (const card of cards) {
+                updated[card.id] = [
+                  ...(updated[card.id] ?? []),
                   {
                     sampledAt: sampleTime,
-                    value: gauge.metric.value
+                    temperature: card.temperature.value,
+                    percent: card.percent.value
                   }
                 ].slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
               }
@@ -1108,14 +1147,14 @@ function HardwareSpace() {
     );
   }
 
-  const gauges = hardwareGaugeViews(snapshot);
+  const cards = hardwareCardViews(snapshot);
 
   return (
     <div className="brainCanvas__space">
       <div className="hardwareDashboard">
         <section className="hardwareGaugeBoard" aria-label="Hardware surveillance">
-          {gauges.map((gauge) => (
-            <HardwareGaugeCard gauge={gauge} samples={history[gauge.id] ?? []} key={gauge.id} />
+          {cards.map((card) => (
+            <HardwareGaugeCard card={card} samples={history[card.id] ?? []} key={card.id} />
           ))}
         </section>
       </div>
