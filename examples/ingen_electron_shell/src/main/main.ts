@@ -222,6 +222,7 @@ const TRANSPARENT_WINDOW_BACKGROUND = "#00000000";
 const WIDGET_WINDOW_HEIGHT = 174;
 const WIDGET_WINDOW_BOTTOM_GAP = 0;
 const WIDGET_WINDOW_SHRINK_DELAY_MS = 720;
+const WINDOWS_TASKBAR_AUTOHIDE_FLAG = 0x1;
 const PANELS_CHAT_BOTTOM_MAX_VIDEO_SUBTITLE_BYTES = 48 * 1024;
 const PANELS_CHAT_BOTTOM_CONTEXT_TEXT_BYTES = 24 * 1024;
 const PANELS_CHAT_BOTTOM_CONTEXT_TOKEN_BUDGET = 80_000;
@@ -247,6 +248,8 @@ let widgetWindowRestoreState: WidgetWindowRestoreState | null = null;
 let widgetWindowShrinkTimer: ReturnType<typeof setTimeout> | null = null;
 let widgetWindowHitRegions: Electron.Rectangle[] = [];
 let widgetWindowClickThrough = false;
+let widgetTaskbarOriginalState: number | null = null;
+let widgetTaskbarHidden = false;
 let nativeWebExplorerView: BrowserView | null = null;
 let nativeWebExplorerOwner: BrowserWindow | null = null;
 let nativeWebExplorerLoadedUrl = "";
@@ -10183,6 +10186,145 @@ function resetNativeWidgetClickThrough(window: BrowserWindow): void {
   window.setIgnoreMouseEvents(false);
 }
 
+type WindowsTaskbarStateProbe = {
+  ok: boolean;
+  state: number;
+  target: number;
+};
+
+function runWindowsTaskbarAutoHideProbe(targetState?: number): WindowsTaskbarStateProbe | null {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  const desiredState = targetState === undefined ? "$null" : String(Math.max(0, Math.round(targetState)));
+  const script = `
+$ErrorActionPreference = "Stop"
+$source = @"
+using System;
+using System.Runtime.InteropServices;
+public static class InGenTaskbarState {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct RECT {
+    public Int32 left;
+    public Int32 top;
+    public Int32 right;
+    public Int32 bottom;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  public struct APPBARDATA {
+    public UInt32 cbSize;
+    public IntPtr hWnd;
+    public UInt32 uCallbackMessage;
+    public UInt32 uEdge;
+    public RECT rc;
+    public IntPtr lParam;
+  }
+  [DllImport("shell32.dll", SetLastError=true)]
+  public static extern UIntPtr SHAppBarMessage(UInt32 dwMessage, ref APPBARDATA pData);
+  public const UInt32 ABM_GETSTATE = 0x00000004;
+  public const UInt32 ABM_SETSTATE = 0x0000000A;
+  public const Int32 ABS_AUTOHIDE = 0x0000001;
+}
+"@
+Add-Type -TypeDefinition $source
+$data = New-Object InGenTaskbarState+APPBARDATA
+$data.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][InGenTaskbarState+APPBARDATA])
+$current = [int]([InGenTaskbarState]::SHAppBarMessage([InGenTaskbarState]::ABM_GETSTATE, [ref]$data).ToUInt32())
+$desiredState = ${desiredState}
+$target = $current
+if ($null -ne $desiredState) {
+  $target = [int]$desiredState
+  $data.lParam = [IntPtr]$target
+  [void][InGenTaskbarState]::SHAppBarMessage([InGenTaskbarState]::ABM_SETSTATE, [ref]$data)
+  Start-Sleep -Milliseconds 80
+  $data = New-Object InGenTaskbarState+APPBARDATA
+  $data.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][InGenTaskbarState+APPBARDATA])
+  $target = [int]([InGenTaskbarState]::SHAppBarMessage([InGenTaskbarState]::ABM_GETSTATE, [ref]$data).ToUInt32())
+}
+@{ ok = $true; state = $current; target = $target } | ConvertTo-Json -Compress
+`;
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], {
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: 2_000,
+    windowsHide: true
+  });
+  if (result.status !== 0) {
+    console.warn("Windows taskbar auto-hide command failed.", result.stderr || result.stdout);
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(result.stdout.trim()) as Partial<WindowsTaskbarStateProbe>;
+    if (parsed.ok === true && typeof parsed.state === "number" && typeof parsed.target === "number") {
+      return { ok: true, state: parsed.state, target: parsed.target };
+    }
+  } catch (error) {
+    console.warn("Windows taskbar auto-hide response was invalid.", error);
+  }
+  return null;
+}
+
+function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boolean {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  const current = runWindowsTaskbarAutoHideProbe();
+  if (!current) {
+    return false;
+  }
+  if (widgetTaskbarOriginalState === null) {
+    widgetTaskbarOriginalState = current.target;
+  }
+  const targetState = restoreOriginal && widgetTaskbarOriginalState !== null
+    ? widgetTaskbarOriginalState
+    : hidden
+      ? current.target | WINDOWS_TASKBAR_AUTOHIDE_FLAG
+      : current.target & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG;
+  const result = runWindowsTaskbarAutoHideProbe(targetState);
+  if (!result) {
+    return false;
+  }
+  widgetTaskbarHidden = (targetState & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0;
+  if (restoreOriginal) {
+    widgetTaskbarOriginalState = null;
+  }
+  return true;
+}
+
+function restoreWidgetTaskbarState(): void {
+  if (widgetTaskbarOriginalState === null) {
+    return;
+  }
+  void setWidgetTaskbarHidden((widgetTaskbarOriginalState & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0, true);
+}
+
+function setNativeWindowWidgetTaskbarAutoHide(event: Electron.IpcMainInvokeEvent, enabled: unknown): boolean {
+  if (!validateSender(event)) {
+    console.warn("Blocked window widget taskbar auto-hide from invalid sender", event.senderFrame?.url ?? "");
+    return false;
+  }
+  if (enabled === true) {
+    if (widgetWindowRestoreState === null) {
+      return false;
+    }
+    return setWidgetTaskbarHidden(true);
+  }
+  restoreWidgetTaskbarState();
+  return true;
+}
+
+function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): boolean {
+  if (!validateSender(event)) {
+    console.warn("Blocked window widget taskbar toggle from invalid sender", event.senderFrame?.url ?? "");
+    return false;
+  }
+  if (widgetWindowRestoreState === null) {
+    return false;
+  }
+  return setWidgetTaskbarHidden(!widgetTaskbarHidden);
+}
+
 function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, regions: unknown): boolean {
   if (!validateSender(event)) {
     console.warn("Blocked window widget hit regions from invalid sender", event.senderFrame?.url ?? "");
@@ -10254,6 +10396,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   }
 
   clearWidgetWindowShrinkTimer();
+  restoreWidgetTaskbarState();
   resetNativeWidgetClickThrough(window);
   resetNativeWidgetWindowShape(window);
   const restoreState = widgetWindowRestoreState;
@@ -10284,6 +10427,8 @@ function installWindowControlIpc(): void {
   ipcMain.handle("forge:window-widget-mode", (event, enabled, delayMs): boolean => setNativeWindowWidgetMode(event, enabled, delayMs));
   ipcMain.handle("forge:window-widget-hit-regions", (event, regions): boolean => setNativeWindowWidgetHitRegions(event, regions));
   ipcMain.handle("forge:window-widget-click-through", (event, enabled): boolean => setNativeWindowWidgetClickThrough(event, enabled));
+  ipcMain.handle("forge:window-widget-taskbar-autohide", (event, enabled): boolean => setNativeWindowWidgetTaskbarAutoHide(event, enabled));
+  ipcMain.handle("forge:window-widget-taskbar-toggle", (event): boolean => toggleNativeWindowWidgetTaskbar(event));
 }
 
 function terminalProof(value: unknown): string {
@@ -14653,6 +14798,7 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
+  restoreWidgetTaskbarState();
   destroyAttachmentSnapshotWindow();
 });
 

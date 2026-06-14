@@ -913,6 +913,7 @@ export function App() {
       setWidgetMinimizingPhase("");
       setWidgetMode(false);
       setWidgetLayoutLock(null);
+      void globalThis.window?.forgeWindowControls?.setWidgetTaskbarAutoHide?.(false);
       void globalThis.window?.forgeWindowControls?.setWidgetMode?.(false);
       return;
     }
@@ -964,6 +965,7 @@ export function App() {
       if (activeProfileCanvas) {
         void closeProfileCanvas();
       }
+      void globalThis.window?.forgeWindowControls?.setWidgetTaskbarAutoHide?.(true);
     })();
   }, [activeProfileCanvas, closeProfileCanvas, snapshot.leftPanelOpen]);
   const topControls = useMemo(() => snapshot.topControls.filter((control) => control.visible), [snapshot]);
@@ -1041,9 +1043,12 @@ export function App() {
         type="button"
         className="widgetWindowsButton"
         aria-hidden={!widgetMode}
-        aria-label="Windows"
+        aria-label="Afficher ou masquer la barre des taches Windows"
         tabIndex={widgetMode ? 0 : -1}
-        title="Windows"
+        title="Afficher ou masquer la barre des taches Windows"
+        onClick={() => {
+          void globalThis.window?.forgeWindowControls?.toggleWidgetTaskbar?.();
+        }}
       >
         <svg viewBox="0 0 88 88" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
           <path d="m0 12.402 35.687-4.86.016 34.423-35.67.203zm35.67 33.529.028 34.453L.028 75.48.026 45.7zm4.326-39.025L87.314 0v41.527l-47.318.376zm47.329 39.349-.011 41.34-47.318-6.678-.066-34.739z" />

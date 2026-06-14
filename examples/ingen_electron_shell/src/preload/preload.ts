@@ -213,6 +213,12 @@ const forgeWindowControls = {
   setWidgetClickThrough(enabled: boolean): Promise<boolean> {
     return ipcRenderer.invoke("forge:window-widget-click-through", enabled);
   },
+  setWidgetTaskbarAutoHide(enabled: boolean): Promise<boolean> {
+    return ipcRenderer.invoke("forge:window-widget-taskbar-autohide", enabled);
+  },
+  toggleWidgetTaskbar(): Promise<boolean> {
+    return ipcRenderer.invoke("forge:window-widget-taskbar-toggle");
+  },
   close(): Promise<boolean> {
     return ipcRenderer.invoke("forge:window-close");
   }

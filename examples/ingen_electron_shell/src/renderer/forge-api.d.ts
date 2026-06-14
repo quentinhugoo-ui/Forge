@@ -6,6 +6,8 @@ interface ForgeWindowControlsApi {
   setWidgetMode?: (enabled: boolean, delayMs?: number) => Promise<boolean>;
   setWidgetHitRegions?: (regions: Array<{ x: number; y: number; width: number; height: number }>) => Promise<boolean>;
   setWidgetClickThrough?: (enabled: boolean) => Promise<boolean>;
+  setWidgetTaskbarAutoHide?: (enabled: boolean) => Promise<boolean>;
+  toggleWidgetTaskbar?: () => Promise<boolean>;
   close: () => Promise<boolean>;
 }
 
