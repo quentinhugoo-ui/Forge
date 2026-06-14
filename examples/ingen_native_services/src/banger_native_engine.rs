@@ -143,6 +143,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub virtual_shadow_packet: BangerNativeVirtualShadowPacket,
     pub direct_lighting_packet: BangerNativeDirectLightingPacket,
     pub material_closure_packet: BangerNativeMaterialClosurePacket,
+    pub temporal_history_packet: BangerNativeTemporalHistoryPacket,
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
     pub frame_submission_packet: BangerNativeFrameSubmissionPacket,
     pub rhi_submit_packet: BangerNativeRhiSubmitPacket,
@@ -1137,6 +1138,58 @@ pub struct BangerNativeMaterialClosureEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangerNativeTemporalHistoryPacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub material_closure_hash: String,
+    pub direct_lighting_hash: String,
+    pub render_graph_hash: String,
+    pub temporal_epoch: u64,
+    pub history_layer_count: usize,
+    pub motion_vector_tile_count: usize,
+    pub disocclusion_tile_count: usize,
+    pub rejection_tile_count: usize,
+    pub resurrection_candidate_count: usize,
+    pub async_compute_candidate_count: usize,
+    pub jitter_sequence_hash: String,
+    pub motion_vector_hash: String,
+    pub history_reprojection_hash: String,
+    pub disocclusion_mask_hash: String,
+    pub rejection_hash: String,
+    pub accumulation_hash: String,
+    pub packet_hash: String,
+    pub entries: Vec<BangerNativeTemporalHistoryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeTemporalHistoryEntry {
+    pub object_id: String,
+    pub cluster_id: String,
+    pub history_layer_id: String,
+    pub history_kind: &'static str,
+    pub temporal_epoch: u64,
+    pub jitter_index: u32,
+    pub temporal_jitter_pixels: [f32; 2],
+    pub motion_tile: [u32; 4],
+    pub history_tile: [u32; 4],
+    pub velocity_quantized: [i16; 2],
+    pub disocclusion_score: u16,
+    pub rejection_mode: &'static str,
+    pub accumulation_weight_q15: u16,
+    pub material_closure_hash: String,
+    pub direct_resolve_hash: String,
+    pub motion_vector_hash: String,
+    pub history_reprojection_hash: String,
+    pub disocclusion_hash: String,
+    pub accumulation_hash: String,
+    pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangerNativeGaussianSplatLayerManifest {
     pub schema: &'static str,
     pub authority: &'static str,
@@ -2006,6 +2059,12 @@ impl BangerNativeEngine {
             &direct_lighting_packet,
             &render_graph_compilation,
         );
+        let temporal_history_packet = build_temporal_history_packet(
+            &prepared,
+            &direct_lighting_packet,
+            &material_closure_packet,
+            &render_graph_compilation,
+        );
         let gaussian_splat_layer_manifest = build_gaussian_splat_layer_manifest(
             &prepared,
             &scene_graph_submission,
@@ -2032,6 +2091,7 @@ impl BangerNativeEngine {
             &virtual_shadow_packet,
             &direct_lighting_packet,
             &material_closure_packet,
+            &temporal_history_packet,
             &gaussian_splat_layer_manifest,
         );
         let rhi_submit_packet =
@@ -2082,6 +2142,7 @@ impl BangerNativeEngine {
             &virtual_shadow_packet,
             &direct_lighting_packet,
             &material_closure_packet,
+            &temporal_history_packet,
             &gaussian_splat_layer_manifest,
             &frame_submission_packet,
             &rhi_submit_packet,
@@ -2144,6 +2205,7 @@ impl BangerNativeEngine {
             virtual_shadow_packet,
             direct_lighting_packet,
             material_closure_packet,
+            temporal_history_packet,
             gaussian_splat_layer_manifest,
             frame_submission_packet,
             rhi_submit_packet,
@@ -3863,6 +3925,175 @@ fn build_material_closure_packet(
     }
 }
 
+fn build_temporal_history_packet(
+    prepared: &MonsterPreparedCompute,
+    direct_lighting_packet: &BangerNativeDirectLightingPacket,
+    material_closure_packet: &BangerNativeMaterialClosurePacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+) -> BangerNativeTemporalHistoryPacket {
+    let temporal_epoch = temporal_epoch_from_hash(&prepared.manifest_hash);
+    let entries = material_closure_packet
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, material_entry)| {
+            let direct_entry = direct_lighting_packet
+                .entries
+                .iter()
+                .find(|entry| entry.cluster_id == material_entry.cluster_id);
+            let jitter_index = temporal_jitter_index(temporal_epoch, index as u32);
+            let temporal_jitter_pixels = temporal_jitter_pixels(jitter_index);
+            let history_kind = temporal_history_kind(material_entry, direct_entry);
+            let motion_tile = temporal_motion_tile(material_entry, direct_entry, index as u32);
+            let history_tile = temporal_history_tile(&motion_tile, temporal_jitter_pixels);
+            let velocity_quantized =
+                temporal_velocity_quantized(material_entry, direct_entry, temporal_jitter_pixels);
+            let disocclusion_score =
+                temporal_disocclusion_score(material_entry, direct_entry, &velocity_quantized);
+            let rejection_mode = temporal_rejection_mode(disocclusion_score, material_entry, direct_entry);
+            let accumulation_weight_q15 =
+                temporal_accumulation_weight_q15(rejection_mode, material_entry, direct_entry);
+            let history_layer_id = temporal_history_layer_id(
+                material_entry,
+                history_kind,
+                temporal_epoch,
+                jitter_index,
+            );
+            let direct_resolve_hash = direct_entry
+                .map(|entry| {
+                    hash_text_hex(
+                        "forge.banger.temporal_history.direct_resolve_entry.v1",
+                        &format!(
+                            "{}:{}:{}:{}:{}",
+                            entry.entry_hash,
+                            entry.contribution_hash,
+                            entry.resolve_tile[0],
+                            entry.resolve_tile[1],
+                            entry.resolve_tile[2]
+                        ),
+                    )
+                })
+                .unwrap_or_else(|| material_entry.resolve_hash.clone());
+            let motion_vector_hash = temporal_motion_vector_hash(
+                material_entry,
+                &history_layer_id,
+                &motion_tile,
+                &velocity_quantized,
+                jitter_index,
+                temporal_jitter_pixels,
+            );
+            let history_reprojection_hash = temporal_history_reprojection_hash(
+                material_entry,
+                &history_layer_id,
+                &history_tile,
+                &motion_vector_hash,
+                &direct_resolve_hash,
+            );
+            let disocclusion_hash = temporal_disocclusion_hash(
+                material_entry,
+                &motion_vector_hash,
+                disocclusion_score,
+                rejection_mode,
+            );
+            let accumulation_hash = temporal_accumulation_hash(
+                material_entry,
+                &history_reprojection_hash,
+                &disocclusion_hash,
+                accumulation_weight_q15,
+            );
+            let entry_hash = temporal_history_entry_hash(
+                material_entry,
+                &history_layer_id,
+                history_kind,
+                temporal_epoch,
+                jitter_index,
+                &motion_vector_hash,
+                &history_reprojection_hash,
+                &disocclusion_hash,
+                &accumulation_hash,
+            );
+            BangerNativeTemporalHistoryEntry {
+                object_id: material_entry.object_id.clone(),
+                cluster_id: material_entry.cluster_id.clone(),
+                history_layer_id,
+                history_kind,
+                temporal_epoch,
+                jitter_index,
+                temporal_jitter_pixels,
+                motion_tile,
+                history_tile,
+                velocity_quantized,
+                disocclusion_score,
+                rejection_mode,
+                accumulation_weight_q15,
+                material_closure_hash: material_entry.closure_hash.clone(),
+                direct_resolve_hash,
+                motion_vector_hash,
+                history_reprojection_hash,
+                disocclusion_hash,
+                accumulation_hash,
+                entry_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let jitter_sequence_hash = temporal_jitter_sequence_hash(temporal_epoch, &entries);
+    let motion_vector_hash = temporal_motion_vector_table_hash(&entries);
+    let history_reprojection_hash = temporal_history_reprojection_table_hash(&entries);
+    let disocclusion_mask_hash = temporal_disocclusion_mask_hash(&entries);
+    let rejection_hash = temporal_rejection_hash(&entries);
+    let accumulation_hash = temporal_accumulation_table_hash(&entries);
+    let packet_hash = temporal_history_packet_hash(
+        prepared,
+        direct_lighting_packet,
+        material_closure_packet,
+        render_graph_compilation,
+        temporal_epoch,
+        &jitter_sequence_hash,
+        &motion_vector_hash,
+        &history_reprojection_hash,
+        &disocclusion_mask_hash,
+        &rejection_hash,
+        &accumulation_hash,
+        &entries,
+    );
+    BangerNativeTemporalHistoryPacket {
+        schema: "forge.banger.temporal_history_packet.v1",
+        authority: "banger_tsr_motion_history_rejection_accumulation",
+        clean_room_basis: "local_unreal_sparse_tsr_taa_velocity_history_rejection_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        material_closure_hash: material_closure_packet.packet_hash.clone(),
+        direct_lighting_hash: direct_lighting_packet.packet_hash.clone(),
+        render_graph_hash: render_graph_compilation.graph_hash.clone(),
+        temporal_epoch,
+        history_layer_count: entries.len(),
+        motion_vector_tile_count: entries.len(),
+        disocclusion_tile_count: entries
+            .iter()
+            .filter(|entry| entry.disocclusion_score > 512)
+            .count(),
+        rejection_tile_count: entries
+            .iter()
+            .filter(|entry| entry.rejection_mode != "history_accept")
+            .count(),
+        resurrection_candidate_count: entries
+            .iter()
+            .filter(|entry| entry.rejection_mode == "history_resurrection_candidate")
+            .count(),
+        async_compute_candidate_count: entries
+            .iter()
+            .filter(|entry| entry.history_kind == "async_tsr_history_update")
+            .count(),
+        jitter_sequence_hash,
+        motion_vector_hash,
+        history_reprojection_hash,
+        disocclusion_mask_hash,
+        rejection_hash,
+        accumulation_hash,
+        packet_hash,
+        entries,
+    }
+}
+
 fn build_gaussian_splat_layer_manifest(
     prepared: &MonsterPreparedCompute,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
@@ -4383,6 +4614,7 @@ fn build_frame_submission_packet(
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> BangerNativeFrameSubmissionPacket {
     let color_target_hash = frame_submission_target_hash(
@@ -4424,6 +4656,7 @@ fn build_frame_submission_packet(
                 virtual_shadow_packet,
                 direct_lighting_packet,
                 material_closure_packet,
+                temporal_history_packet,
                 gaussian_splat_layer_manifest,
             );
             let output_target_hash = frame_submission_command_output_hash(
@@ -4479,6 +4712,7 @@ fn build_frame_submission_packet(
         virtual_shadow_packet,
         direct_lighting_packet,
         material_closure_packet,
+        temporal_history_packet,
         &color_target_hash,
         &depth_target_hash,
         &render_target_state_hash,
@@ -5612,6 +5846,7 @@ fn frame_submission_command_input_hash(
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> String {
     let mut h = Sha256::new();
@@ -5633,6 +5868,8 @@ fn frame_submission_command_input_hash(
         h.update(direct_lighting_packet.resolve_hash.as_bytes());
         h.update(material_closure_packet.packet_hash.as_bytes());
         h.update(material_closure_packet.resolve_hash.as_bytes());
+        h.update(temporal_history_packet.packet_hash.as_bytes());
+        h.update(temporal_history_packet.accumulation_hash.as_bytes());
     }
     if pass.stage == "shadow_depth" {
         h.update(virtual_shadow_packet.packet_hash.as_bytes());
@@ -5644,6 +5881,8 @@ fn frame_submission_command_input_hash(
         h.update(material_closure_packet.closure_stack_hash.as_bytes());
         h.update(material_closure_packet.bsdf_table_hash.as_bytes());
         h.update(material_closure_packet.texture_table_hash.as_bytes());
+        h.update(temporal_history_packet.history_reprojection_hash.as_bytes());
+        h.update(temporal_history_packet.rejection_hash.as_bytes());
         h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
         h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
     }
@@ -5755,6 +5994,7 @@ fn frame_submission_packet_hash(
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
     color_target_hash: &str,
     depth_target_hash: &str,
     render_target_state_hash: &str,
@@ -5776,6 +6016,9 @@ fn frame_submission_packet_hash(
     h.update(material_closure_packet.packet_hash.as_bytes());
     h.update(material_closure_packet.closure_stack_hash.as_bytes());
     h.update(material_closure_packet.resolve_hash.as_bytes());
+    h.update(temporal_history_packet.packet_hash.as_bytes());
+    h.update(temporal_history_packet.motion_vector_hash.as_bytes());
+    h.update(temporal_history_packet.accumulation_hash.as_bytes());
     h.update(color_target_hash.as_bytes());
     h.update(depth_target_hash.as_bytes());
     h.update(render_target_state_hash.as_bytes());
@@ -7569,6 +7812,370 @@ fn material_closure_packet_hash(
     h.update(bsdf_table_hash.as_bytes());
     h.update(texture_table_hash.as_bytes());
     h.update(resolve_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn temporal_jitter_index(temporal_epoch: u64, salt: u32) -> u32 {
+    ((temporal_epoch as u32).wrapping_add(salt.wrapping_mul(3))) % 16
+}
+
+fn temporal_jitter_pixels(jitter_index: u32) -> [f32; 2] {
+    const HALTON_2_3: [[f32; 2]; 16] = [
+        [0.0, -0.166_666_66],
+        [-0.25, 0.166_666_69],
+        [0.25, -0.388_888_9],
+        [-0.375, -0.055_555_55],
+        [0.125, 0.277_777_8],
+        [-0.125, -0.277_777_8],
+        [0.375, 0.055_555_582],
+        [-0.4375, 0.388_888_9],
+        [0.0625, -0.462_962_96],
+        [-0.1875, -0.129_629_61],
+        [0.3125, 0.203_703_7],
+        [-0.3125, -0.351_851_85],
+        [0.1875, -0.018_518_507],
+        [-0.0625, 0.314_814_8],
+        [0.4375, -0.240_740_75],
+        [-0.46875, 0.092_592_6],
+    ];
+    HALTON_2_3[(jitter_index as usize) % HALTON_2_3.len()]
+}
+
+fn temporal_history_kind(
+    material_entry: &BangerNativeMaterialClosureEntry,
+    direct_entry: Option<&BangerNativeDirectLightingEntry>,
+) -> &'static str {
+    if direct_entry
+        .map(|entry| entry.ray_tracing_candidate)
+        .unwrap_or(false)
+        || material_entry.layer_count > 2
+    {
+        "async_tsr_history_update"
+    } else if material_entry.opacity_quantized < 48_000 {
+        "responsive_taa_history"
+    } else {
+        "standard_taa_history"
+    }
+}
+
+fn temporal_motion_tile(
+    material_entry: &BangerNativeMaterialClosureEntry,
+    direct_entry: Option<&BangerNativeDirectLightingEntry>,
+    salt: u32,
+) -> [u32; 4] {
+    let tile = direct_entry
+        .map(|entry| entry.resolve_tile)
+        .unwrap_or([salt * 16, salt * 16, 16, 16]);
+    [
+        tile[0].wrapping_add(material_entry.material_bin_id % 7) % 4096,
+        tile[1].wrapping_add(salt * 5) % 4096,
+        tile[2].max(8),
+        tile[3].max(8),
+    ]
+}
+
+fn temporal_history_tile(motion_tile: &[u32; 4], jitter: [f32; 2]) -> [u32; 4] {
+    let jx = (jitter[0].abs() * 8.0) as u32;
+    let jy = (jitter[1].abs() * 8.0) as u32;
+    [
+        motion_tile[0].saturating_sub(jx),
+        motion_tile[1].saturating_sub(jy),
+        motion_tile[2].saturating_add(jx).max(8),
+        motion_tile[3].saturating_add(jy).max(8),
+    ]
+}
+
+fn temporal_velocity_quantized(
+    material_entry: &BangerNativeMaterialClosureEntry,
+    direct_entry: Option<&BangerNativeDirectLightingEntry>,
+    jitter: [f32; 2],
+) -> [i16; 2] {
+    let sample_count = direct_entry.map(|entry| entry.sample_count).unwrap_or(1);
+    let vx = ((material_entry.roughness_quantized as i32 / 512)
+        - (material_entry.metallic_quantized as i32 / 1024)
+        + (jitter[0] * 256.0) as i32
+        + (sample_count as i32 % 32))
+        .clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    let vy = ((material_entry.opacity_quantized as i32 / 1024)
+        - (material_entry.layer_count as i32 * 24)
+        + (jitter[1] * 256.0) as i32)
+        .clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    [vx, vy]
+}
+
+fn temporal_disocclusion_score(
+    material_entry: &BangerNativeMaterialClosureEntry,
+    direct_entry: Option<&BangerNativeDirectLightingEntry>,
+    velocity_quantized: &[i16; 2],
+) -> u16 {
+    let velocity_energy =
+        velocity_quantized[0].unsigned_abs() as u32 + velocity_quantized[1].unsigned_abs() as u32;
+    let sample_pressure = direct_entry.map(|entry| entry.sample_count / 64).unwrap_or(0);
+    let opacity_pressure = (u16::MAX - material_entry.opacity_quantized) as u32 / 64;
+    velocity_energy
+        .saturating_add(sample_pressure)
+        .saturating_add(opacity_pressure)
+        .min(u16::MAX as u32) as u16
+}
+
+fn temporal_rejection_mode(
+    disocclusion_score: u16,
+    material_entry: &BangerNativeMaterialClosureEntry,
+    direct_entry: Option<&BangerNativeDirectLightingEntry>,
+) -> &'static str {
+    if disocclusion_score > 4096 {
+        "history_reject_disocclusion"
+    } else if direct_entry
+        .map(|entry| entry.ray_tracing_candidate)
+        .unwrap_or(false)
+        && material_entry.layer_count > 2
+    {
+        "history_resurrection_candidate"
+    } else if material_entry.opacity_quantized < 48_000 {
+        "history_clamp_responsive_material"
+    } else {
+        "history_accept"
+    }
+}
+
+fn temporal_accumulation_weight_q15(
+    rejection_mode: &str,
+    material_entry: &BangerNativeMaterialClosureEntry,
+    direct_entry: Option<&BangerNativeDirectLightingEntry>,
+) -> u16 {
+    let base: u16 = match rejection_mode {
+        "history_reject_disocclusion" => 4096,
+        "history_resurrection_candidate" => 16_384,
+        "history_clamp_responsive_material" => 12_288,
+        _ => 26_214,
+    };
+    let sample_bonus = direct_entry
+        .map(|entry| (entry.sample_count / 256).min(4096) as u16)
+        .unwrap_or(0);
+    base.saturating_add(sample_bonus)
+        .saturating_sub(material_entry.layer_count as u16 * 256)
+        .clamp(1024, 32_767)
+}
+
+fn temporal_history_layer_id(
+    material_entry: &BangerNativeMaterialClosureEntry,
+    history_kind: &str,
+    temporal_epoch: u64,
+    jitter_index: u32,
+) -> String {
+    hash_text_hex(
+        "forge.banger.temporal_history.layer_id.v1",
+        &format!(
+            "{}:{}:{}:{}:{}",
+            material_entry.cluster_id,
+            material_entry.closure_stack_id,
+            history_kind,
+            temporal_epoch,
+            jitter_index
+        ),
+    )
+}
+
+fn temporal_motion_vector_hash(
+    material_entry: &BangerNativeMaterialClosureEntry,
+    history_layer_id: &str,
+    motion_tile: &[u32; 4],
+    velocity_quantized: &[i16; 2],
+    jitter_index: u32,
+    temporal_jitter_pixels: [f32; 2],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.motion_vector.v1\0");
+    h.update(material_entry.entry_hash.as_bytes());
+    h.update(history_layer_id.as_bytes());
+    for value in motion_tile {
+        h.update(value.to_le_bytes());
+    }
+    for value in velocity_quantized {
+        h.update(value.to_le_bytes());
+    }
+    h.update(jitter_index.to_le_bytes());
+    for value in temporal_jitter_pixels {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn temporal_history_reprojection_hash(
+    material_entry: &BangerNativeMaterialClosureEntry,
+    history_layer_id: &str,
+    history_tile: &[u32; 4],
+    motion_vector_hash: &str,
+    direct_resolve_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.reprojection.v1\0");
+    h.update(material_entry.resolve_hash.as_bytes());
+    h.update(history_layer_id.as_bytes());
+    h.update(motion_vector_hash.as_bytes());
+    h.update(direct_resolve_hash.as_bytes());
+    for value in history_tile {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn temporal_disocclusion_hash(
+    material_entry: &BangerNativeMaterialClosureEntry,
+    motion_vector_hash: &str,
+    disocclusion_score: u16,
+    rejection_mode: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.disocclusion.v1\0");
+    h.update(material_entry.shadow_mask_hash.as_bytes());
+    h.update(motion_vector_hash.as_bytes());
+    h.update(disocclusion_score.to_le_bytes());
+    h.update(rejection_mode.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn temporal_accumulation_hash(
+    material_entry: &BangerNativeMaterialClosureEntry,
+    history_reprojection_hash: &str,
+    disocclusion_hash: &str,
+    accumulation_weight_q15: u16,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.accumulation.v1\0");
+    h.update(material_entry.bsdf_hash.as_bytes());
+    h.update(history_reprojection_hash.as_bytes());
+    h.update(disocclusion_hash.as_bytes());
+    h.update(accumulation_weight_q15.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn temporal_history_entry_hash(
+    material_entry: &BangerNativeMaterialClosureEntry,
+    history_layer_id: &str,
+    history_kind: &str,
+    temporal_epoch: u64,
+    jitter_index: u32,
+    motion_vector_hash: &str,
+    history_reprojection_hash: &str,
+    disocclusion_hash: &str,
+    accumulation_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.entry.v1\0");
+    h.update(material_entry.entry_hash.as_bytes());
+    h.update(history_layer_id.as_bytes());
+    h.update(history_kind.as_bytes());
+    h.update(temporal_epoch.to_le_bytes());
+    h.update(jitter_index.to_le_bytes());
+    h.update(motion_vector_hash.as_bytes());
+    h.update(history_reprojection_hash.as_bytes());
+    h.update(disocclusion_hash.as_bytes());
+    h.update(accumulation_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn temporal_jitter_sequence_hash(
+    temporal_epoch: u64,
+    entries: &[BangerNativeTemporalHistoryEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.jitter_sequence.v1\0");
+    h.update(temporal_epoch.to_le_bytes());
+    for entry in entries {
+        h.update(entry.jitter_index.to_le_bytes());
+        for value in entry.temporal_jitter_pixels {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn temporal_motion_vector_table_hash(entries: &[BangerNativeTemporalHistoryEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.motion_vector_table.v1\0");
+    for entry in entries {
+        h.update(entry.motion_vector_hash.as_bytes());
+        for value in entry.velocity_quantized {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn temporal_history_reprojection_table_hash(entries: &[BangerNativeTemporalHistoryEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.reprojection_table.v1\0");
+    for entry in entries {
+        h.update(entry.history_reprojection_hash.as_bytes());
+        for value in entry.history_tile {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn temporal_disocclusion_mask_hash(entries: &[BangerNativeTemporalHistoryEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.disocclusion_mask.v1\0");
+    for entry in entries {
+        h.update(entry.disocclusion_hash.as_bytes());
+        h.update(entry.disocclusion_score.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn temporal_rejection_hash(entries: &[BangerNativeTemporalHistoryEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.rejection.v1\0");
+    for entry in entries {
+        h.update(entry.rejection_mode.as_bytes());
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn temporal_accumulation_table_hash(entries: &[BangerNativeTemporalHistoryEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history.accumulation_table.v1\0");
+    for entry in entries {
+        h.update(entry.accumulation_hash.as_bytes());
+        h.update(entry.accumulation_weight_q15.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn temporal_history_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    direct_lighting_packet: &BangerNativeDirectLightingPacket,
+    material_closure_packet: &BangerNativeMaterialClosurePacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    temporal_epoch: u64,
+    jitter_sequence_hash: &str,
+    motion_vector_hash: &str,
+    history_reprojection_hash: &str,
+    disocclusion_mask_hash: &str,
+    rejection_hash: &str,
+    accumulation_hash: &str,
+    entries: &[BangerNativeTemporalHistoryEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.temporal_history_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(direct_lighting_packet.packet_hash.as_bytes());
+    h.update(material_closure_packet.packet_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(temporal_epoch.to_le_bytes());
+    h.update(jitter_sequence_hash.as_bytes());
+    h.update(motion_vector_hash.as_bytes());
+    h.update(history_reprojection_hash.as_bytes());
+    h.update(disocclusion_mask_hash.as_bytes());
+    h.update(rejection_hash.as_bytes());
+    h.update(accumulation_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
     }
@@ -11055,6 +11662,7 @@ fn render_handoff_hash(
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
@@ -11105,6 +11713,12 @@ fn render_handoff_hash(
     h.update(material_closure_packet.bsdf_table_hash.as_bytes());
     h.update(material_closure_packet.texture_table_hash.as_bytes());
     h.update(material_closure_packet.resolve_hash.as_bytes());
+    h.update(temporal_history_packet.packet_hash.as_bytes());
+    h.update(temporal_history_packet.jitter_sequence_hash.as_bytes());
+    h.update(temporal_history_packet.motion_vector_hash.as_bytes());
+    h.update(temporal_history_packet.history_reprojection_hash.as_bytes());
+    h.update(temporal_history_packet.disocclusion_mask_hash.as_bytes());
+    h.update(temporal_history_packet.accumulation_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
     h.update(frame_submission_packet.submission_hash.as_bytes());
@@ -12559,6 +13173,85 @@ mod tests {
                         | "subsurface_diffuse"
                         | "metallic_ggx"
                         | "dielectric_ggx"
+                )));
+        assert_eq!(
+            response.temporal_history_packet.schema,
+            "forge.banger.temporal_history_packet.v1"
+        );
+        assert_eq!(
+            response.temporal_history_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.temporal_history_packet.material_closure_hash,
+            response.material_closure_packet.packet_hash
+        );
+        assert_eq!(
+            response.temporal_history_packet.direct_lighting_hash,
+            response.direct_lighting_packet.packet_hash
+        );
+        assert_eq!(
+            response.temporal_history_packet.render_graph_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert!(response.temporal_history_packet.temporal_epoch > 0);
+        assert_eq!(
+            response.temporal_history_packet.history_layer_count,
+            response.temporal_history_packet.entries.len()
+        );
+        assert_eq!(
+            response.temporal_history_packet.motion_vector_tile_count,
+            response.temporal_history_packet.entries.len()
+        );
+        assert!(response.temporal_history_packet.async_compute_candidate_count > 0);
+        assert_eq!(response.temporal_history_packet.jitter_sequence_hash.len(), 64);
+        assert_eq!(response.temporal_history_packet.motion_vector_hash.len(), 64);
+        assert_eq!(
+            response
+                .temporal_history_packet
+                .history_reprojection_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.temporal_history_packet.disocclusion_mask_hash.len(), 64);
+        assert_eq!(response.temporal_history_packet.rejection_hash.len(), 64);
+        assert_eq!(response.temporal_history_packet.accumulation_hash.len(), 64);
+        assert_eq!(response.temporal_history_packet.packet_hash.len(), 64);
+        assert!(response
+            .temporal_history_packet
+            .clean_room_basis
+            .contains("local_unreal_sparse_tsr_taa"));
+        assert!(response
+            .temporal_history_packet
+            .entries
+            .iter()
+            .all(|entry| entry.history_layer_id.len() == 64
+                && entry.temporal_epoch == response.temporal_history_packet.temporal_epoch
+                && entry.jitter_index < 16
+                && entry.motion_tile[2] > 0
+                && entry.motion_tile[3] > 0
+                && entry.history_tile[2] > 0
+                && entry.history_tile[3] > 0
+                && entry.accumulation_weight_q15 >= 1024
+                && entry.material_closure_hash.len() == 64
+                && entry.direct_resolve_hash.len() == 64
+                && entry.motion_vector_hash.len() == 64
+                && entry.history_reprojection_hash.len() == 64
+                && entry.disocclusion_hash.len() == 64
+                && entry.accumulation_hash.len() == 64
+                && entry.entry_hash.len() == 64
+                && matches!(
+                    entry.history_kind,
+                    "async_tsr_history_update"
+                        | "responsive_taa_history"
+                        | "standard_taa_history"
+                )
+                && matches!(
+                    entry.rejection_mode,
+                    "history_reject_disocclusion"
+                        | "history_resurrection_candidate"
+                        | "history_clamp_responsive_material"
+                        | "history_accept"
                 )));
         assert_eq!(
             response.gaussian_splat_layer_manifest.schema,
