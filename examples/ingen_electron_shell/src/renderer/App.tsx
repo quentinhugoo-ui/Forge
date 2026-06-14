@@ -955,6 +955,7 @@ export function App() {
         return;
       }
       setWidgetMinimizingPhase("canvas");
+      void globalThis.window?.forgeWindowControls?.setWidgetTaskbarAutoHide?.(true);
 
       await waitForWidgetMotion(WIDGET_CANVAS_EXIT_MS);
       if (widgetModeSequenceRef.current !== sequenceToken) {
@@ -980,7 +981,6 @@ export function App() {
       if (activeProfileCanvas) {
         void closeProfileCanvas();
       }
-      void globalThis.window?.forgeWindowControls?.setWidgetTaskbarAutoHide?.(true);
     })();
   }, [activeProfileCanvas, closeProfileCanvas, snapshot.leftPanelOpen]);
   const topControls = useMemo(() => snapshot.topControls.filter((control) => control.visible), [snapshot]);

@@ -5571,7 +5571,11 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   document_write_text: "document.write_text",
   document_write_json: "document.write_json",
   document_write_csv: "document.write_csv",
-  document_convert_text: "document.convert_text"
+  document_convert_text: "document.convert_text",
+  dev_repo_status: "dev.repo_status",
+  dev_git_diff: "dev.git_diff",
+  dev_run_check: "dev.run_check",
+  automation_record: "automation.record"
 };
 
 function friendlyAssistantErrorText(params: {
@@ -5677,7 +5681,9 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "run_readonly_command" ||
         params.request.action === "computer_inspect" ||
         params.request.action === "browser_inspect_url" ||
-        params.request.action === "document_inspect"
+        params.request.action === "document_inspect" ||
+        params.request.action === "dev_repo_status" ||
+        params.request.action === "dev_git_diff"
       ? "read"
       : "workspace_write",
     status: "pending",
@@ -5898,6 +5904,8 @@ function compactAgentActionResult(result: AgentActionResult): string {
     browserPage: result.browserPage,
     download: result.download,
     documentMedia: result.documentMedia,
+    developer: result.developer,
+    automation: result.automation,
     userPresenceRequired: result.userPresenceRequired,
     verification: result.verification
       ? {
@@ -5957,7 +5965,9 @@ function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
     request.action === "run_readonly_command" ||
     request.action === "computer_inspect" ||
     request.action === "browser_inspect_url" ||
-    request.action === "document_inspect"
+    request.action === "document_inspect" ||
+    request.action === "dev_repo_status" ||
+    request.action === "dev_git_diff"
   );
 }
 
@@ -10804,19 +10814,6 @@ function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boole
   return true;
 }
 
-function moveNativeWidgetWindowForTaskbar(window: BrowserWindow): void {
-  if (widgetWindowRestoreState === null || window.isDestroyed()) {
-    return;
-  }
-  const targetBounds = widgetWindowBounds(window, { taskbarHidden: widgetTaskbarHidden });
-  console.info("Animating native widget window for taskbar state", {
-    id: window.id,
-    taskbarHidden: widgetTaskbarHidden,
-    targetBounds
-  });
-  animateNativeWidgetWindowBounds(window, targetBounds);
-}
-
 function restoreWidgetTaskbarState(): boolean {
   if (widgetTaskbarOriginalState === null) {
     return true;
@@ -10837,17 +10834,9 @@ function setNativeWindowWidgetTaskbarAutoHide(event: Electron.IpcMainInvokeEvent
     if (widgetWindowRestoreState === null) {
       return false;
     }
-    const accepted = setWidgetTaskbarHidden(true);
-    if (accepted) {
-      moveNativeWidgetWindowForTaskbar(window);
-    }
-    return accepted;
+    return setWidgetTaskbarHidden(true);
   }
-  const accepted = restoreWidgetTaskbarState();
-  if (accepted) {
-    moveNativeWidgetWindowForTaskbar(window);
-  }
-  return accepted;
+  return restoreWidgetTaskbarState();
 }
 
 function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): boolean {
@@ -10858,14 +10847,7 @@ function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): bo
   if (widgetWindowRestoreState === null) {
     return false;
   }
-  const accepted = setWidgetTaskbarHidden(!widgetTaskbarHidden);
-  if (accepted) {
-    const window = senderNativeWindow(event);
-    if (window && !window.isDestroyed()) {
-      moveNativeWidgetWindowForTaskbar(window);
-    }
-  }
-  return accepted;
+  return setWidgetTaskbarHidden(!widgetTaskbarHidden);
 }
 
 function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, regions: unknown): boolean {
