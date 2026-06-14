@@ -28,6 +28,13 @@ Initial Banger study targets:
 - Nanite-oriented lessons: `Renderer/Private/Nanite/*`
 - Lumen-oriented lessons: `Renderer/Private/Lumen/*`
 
+Clean-room extraction applied in Forge:
+
+- RDG lesson: resources and passes must be declared before execution, then compiled into explicit lifetimes, barriers and an execution order.
+- RHI lesson: command submission should consume a compact compiled plan rather than ad hoc renderer-local state.
+- MeshPass lesson: scene visibility/material/resource binding is a pass-level contract, not a side effect hidden inside a draw call.
+- Banger implementation: `BangerNativeRenderGraphCompilation` compiles Monster/KASM render artifacts into resource records, pass records, dependency edges and proof hashes.
+
 Clean-room rule:
 
 - Use Unreal only as architectural research.

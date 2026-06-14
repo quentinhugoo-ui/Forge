@@ -126,6 +126,8 @@ pub struct BangerNativeRenderPrepareResponse {
     pub texture_bridge_contract: BangerNativeTextureBridgeContract,
     pub pipeline_cache_keys: Vec<String>,
     pub render_graph: Vec<BangerNativeRenderPass>,
+    pub render_graph_manifest_hash: String,
+    pub render_graph_compilation: BangerNativeRenderGraphCompilation,
     pub residency_jobs: Vec<BangerNativeResidencyJob>,
     pub resource_table_hash: String,
     pub resource_table: BangerNativeResourceTable,
@@ -699,6 +701,72 @@ pub struct BangerNativeFrameGraphBinding {
     pub write_barrier: &'static str,
     pub async_compute_candidate: bool,
     pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRenderGraphCompilation {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub monster_kasm_contract_hash: String,
+    pub pass_count: usize,
+    pub resource_count: usize,
+    pub edge_count: usize,
+    pub async_compute_candidate_count: usize,
+    pub extracted_resource_count: usize,
+    pub culled_pass_count: usize,
+    pub compiled_order_hash: String,
+    pub resource_lifetime_hash: String,
+    pub barrier_plan_hash: String,
+    pub graph_hash: String,
+    pub resources: Vec<BangerNativeRenderGraphResource>,
+    pub edges: Vec<BangerNativeRenderGraphEdge>,
+    pub compiled_passes: Vec<BangerNativeRenderGraphCompiledPass>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRenderGraphResource {
+    pub name: String,
+    pub kind: &'static str,
+    pub producer_pass: &'static str,
+    pub first_stage: &'static str,
+    pub last_stage: &'static str,
+    pub slot_count: usize,
+    pub resident_bytes: u64,
+    pub upload_bytes: u64,
+    pub extracted: bool,
+    pub resource_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRenderGraphEdge {
+    pub from_pass: &'static str,
+    pub to_pass: &'static str,
+    pub resource_name: String,
+    pub resource_hash: String,
+    pub read_barrier: &'static str,
+    pub write_barrier: &'static str,
+    pub async_boundary: bool,
+    pub edge_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRenderGraphCompiledPass {
+    pub order: u32,
+    pub pass_name: &'static str,
+    pub stage: &'static str,
+    pub pass_kind: &'static str,
+    pub reads: Vec<String>,
+    pub writes: Vec<String>,
+    pub pipeline_cache_key: String,
+    pub async_compute_candidate: bool,
+    pub culled: bool,
+    pub pass_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1333,6 +1401,8 @@ impl BangerNativeEngine {
             &pipeline_cache_keys,
             &resource_table,
         );
+        let render_graph_compilation =
+            compile_banger_render_graph(&prepared, &render_graph, &frame_graph_bindings, &resource_table);
         let scene_graph_submission = build_scene_graph_submission(
             &prepared,
             &editable_scene_manifest,
@@ -1387,10 +1457,12 @@ impl BangerNativeEngine {
             &culling_manifest,
             &radiance_schedule_manifest,
             &gaussian_splat_layer_manifest,
+            &render_graph_compilation,
         );
         let render_pass_count = render_graph.len();
         let residency_job_count = residency_jobs.len();
         let resource_table_hash = resource_table.table_hash.clone();
+        let render_graph_manifest_hash = render_graph_compilation.graph_hash.clone();
 
         Ok(BangerNativeRenderPrepareResponse {
             ok: true,
@@ -1425,6 +1497,8 @@ impl BangerNativeEngine {
             texture_bridge_contract,
             pipeline_cache_keys,
             render_graph,
+            render_graph_manifest_hash,
+            render_graph_compilation,
             residency_jobs,
             resource_table_hash,
             resource_table,
@@ -1688,6 +1762,135 @@ fn build_frame_graph_bindings(
             }
         })
         .collect()
+}
+
+fn compile_banger_render_graph(
+    prepared: &MonsterPreparedCompute,
+    render_graph: &[BangerNativeRenderPass],
+    frame_graph_bindings: &[BangerNativeFrameGraphBinding],
+    resource_table: &BangerNativeResourceTable,
+) -> BangerNativeRenderGraphCompilation {
+    let mut resources = Vec::new();
+    let mut compiled_passes = Vec::new();
+    for (index, pass) in render_graph.iter().enumerate() {
+        let binding = &frame_graph_bindings[index];
+        let slots = resource_table
+            .slots
+            .iter()
+            .filter(|slot| binding.resource_slots.contains(&slot.slot))
+            .collect::<Vec<_>>();
+        let resident_bytes = slots.iter().map(|slot| slot.byte_len).sum::<u64>();
+        let upload_bytes = slots
+            .iter()
+            .filter(|slot| slot.upload_lane != "resident_cache")
+            .map(|slot| slot.byte_len)
+            .sum::<u64>();
+        let resource_name = format!("{}::{}", pass.stage, pass.writes);
+        let resource_hash = banger_render_graph_resource_hash(
+            &resource_name,
+            pass,
+            binding,
+            slots.iter().map(|slot| slot.resource_key.as_str()).collect::<Vec<_>>().as_slice(),
+            resident_bytes,
+            upload_bytes,
+        );
+        resources.push(BangerNativeRenderGraphResource {
+            name: resource_name.clone(),
+            kind: pass.consumes_kind,
+            producer_pass: pass.name,
+            first_stage: pass.stage,
+            last_stage: pass.stage,
+            slot_count: slots.len(),
+            resident_bytes,
+            upload_bytes,
+            extracted: matches!(pass.stage, "visibility_cull" | "lighting_cache" | "material_bind"),
+            resource_hash: resource_hash.clone(),
+        });
+        let pass_hash = banger_render_graph_compiled_pass_hash(
+            index as u32,
+            pass,
+            binding,
+            &resource_name,
+            &resource_hash,
+        );
+        compiled_passes.push(BangerNativeRenderGraphCompiledPass {
+            order: index as u32,
+            pass_name: pass.name,
+            stage: pass.stage,
+            pass_kind: pass.consumes_kind,
+            reads: binding.resource_slots.iter().map(|slot| format!("resource_slot_{slot}")).collect(),
+            writes: vec![resource_name],
+            pipeline_cache_key: binding.pipeline_cache_key.clone(),
+            async_compute_candidate: binding.async_compute_candidate,
+            culled: binding.resource_slots.is_empty(),
+            pass_hash,
+        });
+    }
+
+    let mut edges = Vec::new();
+    for index in 1..compiled_passes.len() {
+        let previous = &compiled_passes[index - 1];
+        let current = &compiled_passes[index];
+        let previous_resource = &resources[index - 1];
+        let binding = &frame_graph_bindings[index];
+        let edge_hash = banger_render_graph_edge_hash(
+            previous.pass_name,
+            current.pass_name,
+            &previous_resource.name,
+            &previous_resource.resource_hash,
+            binding.read_barrier,
+            binding.write_barrier,
+            previous.async_compute_candidate || current.async_compute_candidate,
+        );
+        edges.push(BangerNativeRenderGraphEdge {
+            from_pass: previous.pass_name,
+            to_pass: current.pass_name,
+            resource_name: previous_resource.name.clone(),
+            resource_hash: previous_resource.resource_hash.clone(),
+            read_barrier: binding.read_barrier,
+            write_barrier: binding.write_barrier,
+            async_boundary: previous.async_compute_candidate || current.async_compute_candidate,
+            edge_hash,
+        });
+    }
+
+    let compiled_order_hash = banger_render_graph_order_hash(&compiled_passes);
+    let resource_lifetime_hash = banger_render_graph_lifetime_hash(&resources);
+    let barrier_plan_hash = banger_render_graph_barrier_hash(&edges);
+    let monster_kasm_contract_hash = banger_render_graph_kasm_contract_hash(prepared, render_graph);
+    let graph_hash = banger_render_graph_manifest_hash(
+        prepared,
+        &compiled_order_hash,
+        &resource_lifetime_hash,
+        &barrier_plan_hash,
+        &monster_kasm_contract_hash,
+        &compiled_passes,
+        &resources,
+        &edges,
+    );
+    BangerNativeRenderGraphCompilation {
+        schema: "forge.banger.native_render_graph_compilation.v1",
+        authority: "monster_kasm_to_banger_native_render_graph",
+        clean_room_basis: "local_unreal_sparse_study_rdg_rhi_meshpass_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        monster_kasm_contract_hash,
+        pass_count: compiled_passes.len(),
+        resource_count: resources.len(),
+        edge_count: edges.len(),
+        async_compute_candidate_count: compiled_passes
+            .iter()
+            .filter(|pass| pass.async_compute_candidate)
+            .count(),
+        extracted_resource_count: resources.iter().filter(|resource| resource.extracted).count(),
+        culled_pass_count: compiled_passes.iter().filter(|pass| pass.culled).count(),
+        compiled_order_hash,
+        resource_lifetime_hash,
+        barrier_plan_hash,
+        graph_hash,
+        resources,
+        edges,
+        compiled_passes,
+    }
 }
 
 fn build_scene_graph_submission(
@@ -5231,6 +5434,166 @@ fn resource_table_hash(
     hex32(h.finalize().into())
 }
 
+fn banger_render_graph_resource_hash(
+    resource_name: &str,
+    pass: &BangerNativeRenderPass,
+    binding: &BangerNativeFrameGraphBinding,
+    resource_keys: &[&str],
+    resident_bytes: u64,
+    upload_bytes: u64,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_resource.v1\0");
+    h.update(resource_name.as_bytes());
+    h.update(pass.name.as_bytes());
+    h.update(pass.stage.as_bytes());
+    h.update(pass.consumes_kind.as_bytes());
+    h.update(pass.writes.as_bytes());
+    h.update(binding.pipeline_cache_key.as_bytes());
+    h.update(resident_bytes.to_le_bytes());
+    h.update(upload_bytes.to_le_bytes());
+    for key in resource_keys {
+        h.update(key.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_compiled_pass_hash(
+    order: u32,
+    pass: &BangerNativeRenderPass,
+    binding: &BangerNativeFrameGraphBinding,
+    resource_name: &str,
+    resource_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_compiled_pass.v1\0");
+    h.update(order.to_le_bytes());
+    h.update(pass.name.as_bytes());
+    h.update(pass.stage.as_bytes());
+    h.update(pass.consumes_kind.as_bytes());
+    h.update(pass.cache_class.as_bytes());
+    h.update(binding.read_barrier.as_bytes());
+    h.update(binding.write_barrier.as_bytes());
+    h.update(binding.pipeline_cache_key.as_bytes());
+    h.update(resource_name.as_bytes());
+    h.update(resource_hash.as_bytes());
+    h.update([binding.async_compute_candidate as u8]);
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_edge_hash(
+    from_pass: &str,
+    to_pass: &str,
+    resource_name: &str,
+    resource_hash: &str,
+    read_barrier: &str,
+    write_barrier: &str,
+    async_boundary: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_edge.v1\0");
+    h.update(from_pass.as_bytes());
+    h.update(to_pass.as_bytes());
+    h.update(resource_name.as_bytes());
+    h.update(resource_hash.as_bytes());
+    h.update(read_barrier.as_bytes());
+    h.update(write_barrier.as_bytes());
+    h.update([async_boundary as u8]);
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_order_hash(passes: &[BangerNativeRenderGraphCompiledPass]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_order.v1\0");
+    for pass in passes {
+        h.update(pass.order.to_le_bytes());
+        h.update(pass.pass_name.as_bytes());
+        h.update(pass.stage.as_bytes());
+        h.update(pass.pass_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_lifetime_hash(resources: &[BangerNativeRenderGraphResource]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_lifetime.v1\0");
+    for resource in resources {
+        h.update(resource.name.as_bytes());
+        h.update(resource.first_stage.as_bytes());
+        h.update(resource.last_stage.as_bytes());
+        h.update(resource.slot_count.to_le_bytes());
+        h.update(resource.resident_bytes.to_le_bytes());
+        h.update(resource.upload_bytes.to_le_bytes());
+        h.update([resource.extracted as u8]);
+        h.update(resource.resource_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_barrier_hash(edges: &[BangerNativeRenderGraphEdge]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_barrier_plan.v1\0");
+    for edge in edges {
+        h.update(edge.from_pass.as_bytes());
+        h.update(edge.to_pass.as_bytes());
+        h.update(edge.resource_hash.as_bytes());
+        h.update(edge.read_barrier.as_bytes());
+        h.update(edge.write_barrier.as_bytes());
+        h.update([edge.async_boundary as u8]);
+        h.update(edge.edge_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_kasm_contract_hash(
+    prepared: &MonsterPreparedCompute,
+    render_graph: &[BangerNativeRenderPass],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.monster_kasm_render_graph_contract.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.source_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(prepared.gpu_batch_plan.plan_hash.as_bytes());
+    for pass in render_graph {
+        h.update(pass.name.as_bytes());
+        h.update(pass.stage.as_bytes());
+        h.update(pass.consumes_kind.as_bytes());
+        h.update(pass.writes.as_bytes());
+        h.update(pass.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_manifest_hash(
+    prepared: &MonsterPreparedCompute,
+    compiled_order_hash: &str,
+    resource_lifetime_hash: &str,
+    barrier_plan_hash: &str,
+    monster_kasm_contract_hash: &str,
+    passes: &[BangerNativeRenderGraphCompiledPass],
+    resources: &[BangerNativeRenderGraphResource],
+    edges: &[BangerNativeRenderGraphEdge],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_compilation.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(compiled_order_hash.as_bytes());
+    h.update(resource_lifetime_hash.as_bytes());
+    h.update(barrier_plan_hash.as_bytes());
+    h.update(monster_kasm_contract_hash.as_bytes());
+    for pass in passes {
+        h.update(pass.pass_hash.as_bytes());
+    }
+    for resource in resources {
+        h.update(resource.resource_hash.as_bytes());
+    }
+    for edge in edges {
+        h.update(edge.edge_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 impl From<&MonsterNativeTandemArtifact> for BangerNativeRenderArtifactSummary {
     fn from(artifact: &MonsterNativeTandemArtifact) -> Self {
         Self {
@@ -6041,6 +6404,7 @@ fn render_handoff_hash(
     culling_manifest: &BangerNativeCullingManifest,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_render_handoff.v1\0");
@@ -6061,6 +6425,10 @@ fn render_handoff_hash(
     h.update(radiance_schedule_manifest.invalidation_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(render_graph_compilation.compiled_order_hash.as_bytes());
+    h.update(render_graph_compilation.resource_lifetime_hash.as_bytes());
+    h.update(render_graph_compilation.barrier_plan_hash.as_bytes());
     for artifact in artifacts {
         h.update(b"\0artifact\0");
         h.update(artifact.kind.as_bytes());
@@ -6370,6 +6738,63 @@ mod tests {
                 )));
         assert!(!response.shader_compiler_ticket.compiler_version_hash.is_empty());
         assert_eq!(response.pipeline_cache_keys.len(), response.artifacts.len());
+        assert_eq!(
+            response.render_graph_compilation.schema,
+            "forge.banger.native_render_graph_compilation.v1"
+        );
+        assert_eq!(
+            response.render_graph_compilation.authority,
+            "monster_kasm_to_banger_native_render_graph"
+        );
+        assert!(response
+            .render_graph_compilation
+            .clean_room_basis
+            .contains("local_unreal_sparse_study"));
+        assert_eq!(
+            response.render_graph_manifest_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert_eq!(response.render_graph_manifest_hash.len(), 64);
+        assert_eq!(response.render_graph_compilation.source_contract_hash, response.source_hash);
+        assert_eq!(response.render_graph_compilation.monster_kasm_contract_hash.len(), 64);
+        assert_eq!(response.render_graph_compilation.pass_count, response.render_graph.len());
+        assert_eq!(
+            response.render_graph_compilation.resource_count,
+            response.render_graph_compilation.resources.len()
+        );
+        assert_eq!(
+            response.render_graph_compilation.edge_count,
+            response.render_graph_compilation.edges.len()
+        );
+        assert_eq!(
+            response.render_graph_compilation.compiled_passes.len(),
+            response.render_graph.len()
+        );
+        assert_eq!(response.render_graph_compilation.culled_pass_count, 0);
+        assert_eq!(response.render_graph_compilation.compiled_order_hash.len(), 64);
+        assert_eq!(response.render_graph_compilation.resource_lifetime_hash.len(), 64);
+        assert_eq!(response.render_graph_compilation.barrier_plan_hash.len(), 64);
+        assert!(response
+            .render_graph_compilation
+            .resources
+            .iter()
+            .all(|resource| resource.slot_count > 0
+                && resource.resident_bytes > 0
+                && resource.resource_hash.len() == 64));
+        assert!(response
+            .render_graph_compilation
+            .compiled_passes
+            .iter()
+            .all(|pass| !pass.reads.is_empty()
+                && !pass.writes.is_empty()
+                && !pass.pipeline_cache_key.is_empty()
+                && !pass.culled
+                && pass.pass_hash.len() == 64));
+        assert!(response
+            .render_graph_compilation
+            .edges
+            .iter()
+            .all(|edge| edge.resource_hash.len() == 64 && edge.edge_hash.len() == 64));
         assert_eq!(
             response.pipeline_cache_manifest.schema,
             "forge.banger.native_pipeline_cache_manifest.v1"
