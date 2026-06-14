@@ -825,6 +825,14 @@ export type AgentActionKind =
   | "cloud_cli_inspect"
   | "cloud_cli_run_readonly"
   | "cloud_cli_run_write"
+  | "windows_setting_inspect"
+  | "windows_setting_apply"
+  | "process_service_inspect"
+  | "process_service_control"
+  | "package_inspect"
+  | "package_install_update"
+  | "ci_checks_inspect"
+  | "ci_run_inspect"
   | "virtualization_inspect"
   | "virtualization_run_command"
   | "automation_schedule"
@@ -865,6 +873,9 @@ export interface AgentActionRequest {
   vmName?: string;
   nativeFallback?: boolean;
   taskName?: string;
+  serviceName?: string;
+  packageId?: string;
+  settingName?: string;
   scheduleType?: string;
   startTime?: string;
   startDate?: string;
@@ -923,6 +934,19 @@ export interface AgentCloudCliSummary {
   proofHash: string;
 }
 
+export interface AgentWindowsAdminSummary {
+  schema: "ingen.windows_admin.summary.v1";
+  surface: "settings" | "process_service" | "package" | "ci_review";
+  action: "inspect" | "apply" | "control" | "install_update";
+  available: boolean;
+  target?: string;
+  commandLine?: string;
+  exitCode?: number | null;
+  resources: Record<string, unknown>[];
+  mutationPolicy: "readonly" | "confirmed_write" | "blocked_dangerous";
+  proofHash: string;
+}
+
 export interface AgentRuntimeAuditSummary {
   schema: "ingen.agent_runtime_audit.summary.v1";
   path: string;
@@ -963,6 +987,7 @@ export interface AgentActionResult {
   developer?: AgentDeveloperRepoSummary;
   virtualization?: AgentVirtualizationSummary;
   cloud?: AgentCloudCliSummary;
+  windowsAdmin?: AgentWindowsAdminSummary;
   automation?: AgentAutomationLedgerEntry;
   audit?: AgentRuntimeAuditSummary;
   userPresenceRequired?: boolean;
@@ -1116,6 +1141,14 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "cloud_cli_inspect",
     "cloud_cli_run_readonly",
     "cloud_cli_run_write",
+    "windows_setting_inspect",
+    "windows_setting_apply",
+    "process_service_inspect",
+    "process_service_control",
+    "package_inspect",
+    "package_install_update",
+    "ci_checks_inspect",
+    "ci_run_inspect",
     "virtualization_inspect",
     "virtualization_run_command",
     "automation_schedule",
@@ -1162,6 +1195,11 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     }
   }
   for (const key of ["taskName", "scheduleType", "startTime", "startDate"] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
+      return false;
+    }
+  }
+  for (const key of ["serviceName", "packageId", "settingName"] as const) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
       return false;
     }

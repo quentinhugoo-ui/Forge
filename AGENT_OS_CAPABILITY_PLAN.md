@@ -37,12 +37,12 @@ Implemented foundation:
 - `AgentCapabilityAtlas` exists as a non-executable knowledge layer.
 - Existing executable actions remain unchanged: `fs.list`, `fs.search`, `fs.create_directory`, `fs.rename`, `fs.move`, `fs.copy`, `fs.delete_empty_directory`, `fs.delete_tree`, `shell.readonly`, `shell.full`.
 - The manifest now exposes planned/boundary capabilities such as WMI, settings, credentials, browser CDP, Office COM, RPA, cloud CLIs, MCP/plugins and automations.
-- Git/PR, InGen-owned Windows Task Scheduler actions, and WSL/Docker/Hyper-V virtualization inspection have graduated to verified executable routes.
+- Git/PR, InGen-owned Windows Task Scheduler actions, WSL/Docker/Hyper-V virtualization, Windows admin read/write guards, package manager probes and CI inspection have graduated to verified executable routes where local tools are available.
 - `shell.full` remains the confirmed universal Windows escape hatch.
 
 Current limitation:
 
-- Most atlas entries are not yet direct executable backends.
+- Several atlas entries are still boundary knowledge rather than direct executable backends, especially MCP, deep account-changing browser flows, bundled OCR/media toolchains and destructive system administration.
 - The loop still has legacy file-organization compatibility logic; it must not become the general model.
 - The event layer can show tool activity, but the next phases must make every event correspond to verified action state.
 
@@ -319,9 +319,11 @@ Status: partially executable beyond the planned scope. The host now exposes `Age
 
 Windows scheduler automation is now a real backend for InGen-owned tasks. `automation.schedule` creates a visible Task Scheduler task through `schtasks /Create`, verifies it with `schtasks /Query`, and mirrors the proof into the append-only automation ledger. `automation.list` queries Task Scheduler and filters to `InGenAgent_` root tasks. `automation.cancel` deletes only `InGenAgent_` tasks through `schtasks /Delete`, verifies the task is gone, and appends a cancellation record. Creation and cancellation require `confirmed:true`; arbitrary system task names, folders and dangerous scheduler mutation remain blocked or require a separately confirmed shell route. If Windows denies Task Scheduler access or the backend is unavailable, the action returns a verified blocked/failure result and never emits a false scheduled/done state.
 
-WSL, Docker and Hyper-V are now partially executable. `virtualization.inspect` probes WSL status/version/distributions, Docker version/container inventory and Hyper-V VM inventory without mutation, returning available/missing backend state as runtime evidence. `virtualization.run_command` can run a confirmed command through WSL or an existing Docker container and verifies the exit code; if the backend is unavailable and `nativeFallback:true` is explicitly set, it can run the same confirmed command in the native workspace as a verified fallback. Hyper-V guest command execution, VM lifecycle mutation, WSL distro import/export/unregister/install and Docker image/container lifecycle mutation remain planned or separately prompt-gated rather than direct actions.
+WSL, Docker and Hyper-V are now executable with explicit proof boundaries. `virtualization.inspect` probes WSL status/version/distributions, Docker version/container inventory and Hyper-V VM inventory without mutation, returning available/missing backend state as runtime evidence. `virtualization.run_command` can run a confirmed command through WSL, an existing Docker container or a named Hyper-V VM guest route, and verifies the exit code; if WSL is unavailable and `nativeFallback:true` is explicitly set, it can run the same confirmed command in the native workspace as a verified fallback. Hyper-V lifecycle commands for a named VM are confirmed, PowerShell-backed and verified by `Get-VM`; WSL distro import/export/unregister/install, Docker image/container lifecycle mutation and any destructive VM operation beyond the named confirmed route remain blocked or require a separately confirmed shell route.
 
-Cloud CLIs are now executable through explicit provider-scoped actions. `cloud_cli.inspect` detects `aws`, `az`, `gcloud`, `gh` and `stripe`, captures version/context probes with credential redaction, and reports missing tools as unavailable rather than failed success. `cloud_cli.run_readonly` allows only read-shaped commands and blocks credential/token/secret access. `cloud_cli.run_write` requires `confirmed:true`, keeps tenant/project/account context in the proof summary, verifies command exit, redacts credential-shaped output and blocks destructive verbs such as delete/remove/destroy/terminate/purge/revoke/cancel/logout. Real MCP `tools/list`/`tools/call`, subagents/hooks, CI/review automation and non-scheduler thread wakeups remain planned connector backends rather than fake direct execution. MCP is intentionally out of scope for this session.
+Windows admin, package and CI routes are executable through narrow adapters. `windows_setting_inspect` reads OS or explicit registry state without CIM dependency; `windows_setting_apply` is limited to explicit `HKCU:\` value writes with `confirmed:true` and readback proof. `process_service_inspect` can inspect a process or service; `process_service_control` can start, stop or restart a named service only with `confirmed:true` and service-state proof. `package_inspect` reports WinGet availability/package state without claiming success when `winget.exe` is missing; `package_install_update` requires `confirmed:true`, an exact package id and command-exit verification. `ci_checks_inspect` and `ci_run_inspect` use `gh` for read-only checks/log inspection and cleanly fail when the CLI/auth is unavailable.
+
+Cloud CLIs are now executable through explicit provider-scoped actions. `cloud_cli.inspect` detects `aws`, `az`, `gcloud`, `gh` and `stripe`, captures version/context probes with credential redaction, and reports missing tools as unavailable rather than failed success. `cloud_cli.run_readonly` allows only read-shaped commands and blocks credential/token/secret access. `cloud_cli.run_write` requires `confirmed:true`, keeps tenant/project/account context in the proof summary, verifies command exit, redacts credential-shaped output and blocks destructive verbs such as delete/remove/destroy/terminate/purge/revoke/cancel/logout. Real MCP `tools/list`/`tools/call`, subagents/hooks, CI review mutation automation and non-scheduler thread wakeups remain planned connector backends rather than fake direct execution. MCP is intentionally out of scope for this session.
 
 ### 10. UX, Events, Audit And Benchmarks
 
@@ -344,7 +346,7 @@ Acceptance:
 - The UI never says work was done when no observed state changed.
 - Benchmarks prove success, retry and safe blocking behavior.
 
-Status: implemented for the planned scope, with Git/PR, scheduler, virtualization, document/media and cloud CLIs promoted to executable where local backends exist. Runtime events already render English labels, running-to-completed transitions, expandable command trees, file modification counters, context compaction markers and final loop summaries. Every `executeAgentActionRequest` call now appends `started`, `result` or `blocked`, `verification` and `summary` entries to `.ingen-agent-artifacts/agent-action-runtime.jsonl`; each result carries an `AgentRuntimeAuditSummary` with entry hashes and log SHA-256. If the audit append fails, the wrapper returns a verified failure instead of reporting success. The shared `AGENT_ACTION_BENCHMARK_SUITE` now records the required local-agent benchmark contract across filesystem, code, install/update, GUI, browser, document, Windows setting, process/service, scheduler, WSL/dev, Git/PR, cloud, blocked-danger, context compaction and final-summary cases. `runAgentActionBenchmarkSuite` executes the currently safe cases in a temp workspace (filesystem move, developer check, document write, cloud write block and credential block) and returns `planned` for cases without a local runner instead of treating them as success. Git/PR now expects verified confirmed execution. Scheduler now expects a verified Task Scheduler create/query/delete route or a clean permission/missing-backend block. WSL/dev expects `virtualization.run_command` with command-exit proof or a clean native fallback/missing-backend result; cloud commands expect provider-scoped read-only/write-confirmed execution or a clean blocked-danger result.
+Status: implemented for the planned scope, with Git/PR, scheduler, virtualization, Windows admin, package manager, document/media and cloud CLIs promoted to executable where local backends exist. Runtime events already render English labels, running-to-completed transitions, expandable command trees, file modification counters, context compaction markers and final loop summaries. Every `executeAgentActionRequest` call now appends `started`, `result` or `blocked`, `verification` and `summary` entries to `.ingen-agent-artifacts/agent-action-runtime.jsonl`; each result carries an `AgentRuntimeAuditSummary` with entry hashes and log SHA-256. If the audit append fails, the wrapper returns a verified failure instead of reporting success. The shared `AGENT_ACTION_BENCHMARK_SUITE` now records the required local-agent benchmark contract across filesystem, code, install/update, GUI, browser, document, Windows setting, process/service, scheduler, WSL/dev, Git/PR, cloud, blocked-danger, context compaction and final-summary cases. `runAgentActionBenchmarkSuite` executes every case through a real local runner, a verified safe block, or an explicit runtime-contract proof; it no longer emits `planned`. Git/PR now expects verified confirmed execution. Scheduler expects a verified Task Scheduler create/query/delete route or a clean permission/missing-backend block. Install/update, browser download and Windows setting mutation cases prove prompt gating instead of fake mutation. WSL/dev expects `virtualization.run_command` with command-exit proof or a clean native fallback/missing-backend result; cloud commands expect provider-scoped read-only/write-confirmed execution or a clean blocked-danger result.
 
 ## Public Interfaces
 
@@ -387,11 +389,11 @@ Prompt or confirmed:
 - File move/copy/rename/create in computer scope.
 - Any recursive delete.
 - Arbitrary shell command.
-- Installer, update, uninstall.
-- Registry/service/process/network/firewall mutation.
+- Installer, update, uninstall through exact package ids or confirmed shell routes.
+- Registry/service/process/network/firewall mutation; direct typed registry writes are limited to confirmed explicit `HKCU:\` value updates.
 - Browser form submission, download execution, account change.
 - Office COM write, macro run, Outlook send.
-- WSL/Hyper-V/Docker lifecycle mutation.
+- WSL/Hyper-V/Docker lifecycle mutation; only named, confirmed, verified Hyper-V lifecycle routes are direct today.
 - Cloud writes.
 - Automations and scheduled tasks.
 
@@ -432,11 +434,11 @@ Required local scenarios:
 - Attempt a protected-root action and verify it is blocked.
 - Simulate a failed command and verify retry prompt behavior.
 - Inspect installed packages with a read-only route.
-- Open a settings URI in planned/approval mode.
+- Inspect OS/settings state and block or confirm registry changes with readback proof.
 - Drive a simple GUI fixture once computer-use is implemented.
-- Download a file in a contained browser and verify artifact hash.
+- Download a file in a contained browser and verify artifact hash, or prove confirmation is required.
 - Parse and produce CSV/PDF/Office-like fixtures.
-- Query WSL availability without installing anything.
+- Query WSL availability without installing anything, and run a bounded confirmed command with exit proof or clean fallback.
 - Create a scheduled task only in a temp/approved test lane.
 - Verify final summary appears after every tool-using loop.
 

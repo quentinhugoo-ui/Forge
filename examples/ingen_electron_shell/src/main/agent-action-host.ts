@@ -16,6 +16,7 @@ import type {
   AgentCapabilityVerification,
   AgentCloudCliProvider,
   AgentCloudCliSummary,
+  AgentWindowsAdminSummary,
   AgentBrowserDownloadArtifact,
   AgentBrowserPageSummary,
   AgentBrowserScreenshotArtifact,
@@ -134,6 +135,14 @@ const AGENT_ACTION_EVENT_HINTS = [
   "cloud.inspect:/agent_cloud_inspect_",
   "cloud.run_readonly:/agent_cloud_readonly_",
   "cloud.run_write:/agent_cloud_write_",
+  "windows.setting_inspect:/agent_windows_setting_inspect_",
+  "windows.setting_apply:/agent_windows_setting_apply_",
+  "windows.process_service_inspect:/agent_process_service_inspect_",
+  "windows.process_service_control:/agent_process_service_control_",
+  "windows.package_inspect:/agent_package_inspect_",
+  "windows.package_install_update:/agent_package_install_update_",
+  "ci.checks_inspect:/agent_ci_checks_inspect_",
+  "ci.run_inspect:/agent_ci_run_inspect_",
   "virtualization.inspect:/agent_virtualization_inspect_",
   "virtualization.run_command:/agent_virtualization_run_",
   "automation.schedule:/agent_automation_schedule_",
@@ -191,6 +200,14 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   cloud_cli_inspect: "/agent_cloud_inspect_",
   cloud_cli_run_readonly: "/agent_cloud_readonly_",
   cloud_cli_run_write: "/agent_cloud_write_",
+  windows_setting_inspect: "/agent_windows_setting_inspect_",
+  windows_setting_apply: "/agent_windows_setting_apply_",
+  process_service_inspect: "/agent_process_service_inspect_",
+  process_service_control: "/agent_process_service_control_",
+  package_inspect: "/agent_package_inspect_",
+  package_install_update: "/agent_package_install_update_",
+  ci_checks_inspect: "/agent_ci_checks_inspect_",
+  ci_run_inspect: "/agent_ci_run_inspect_",
   virtualization_inspect: "/agent_virtualization_inspect_",
   virtualization_run_command: "/agent_virtualization_run_",
   automation_schedule: "/agent_automation_schedule_",
@@ -603,6 +620,7 @@ function result(
     developer: patch.developer,
     virtualization: patch.virtualization,
     cloud: patch.cloud,
+    windowsAdmin: patch.windowsAdmin,
     automation: patch.automation,
     audit: patch.audit,
     userPresenceRequired: patch.userPresenceRequired,
@@ -1023,6 +1041,14 @@ export function createDeveloperAutomationPolicy(_config: AgentActionHostConfig):
       "cloud_cli_inspect",
       "cloud_cli_run_readonly",
       "cloud_cli_run_write",
+      "windows_setting_inspect",
+      "windows_setting_apply",
+      "process_service_inspect",
+      "process_service_control",
+      "package_inspect",
+      "package_install_update",
+      "ci_checks_inspect",
+      "ci_run_inspect",
       "virtualization_inspect",
       "virtualization_run_command",
       "automation_schedule",
@@ -6283,6 +6309,311 @@ async function cloudCliRunAction(config: AgentActionHostConfig, request: AgentAc
   });
 }
 
+function windowsAdminSummary(input: Omit<AgentWindowsAdminSummary, "schema" | "proofHash">): AgentWindowsAdminSummary {
+  const summary: AgentWindowsAdminSummary = {
+    schema: "ingen.windows_admin.summary.v1",
+    ...input,
+    proofHash: ""
+  };
+  summary.proofHash = hashJson({ ...summary, proofHash: "" });
+  return summary;
+}
+
+function windowsAdminCommandResult(
+  config: AgentActionHostConfig,
+  request: AgentActionRequest,
+  params: {
+    surface: AgentWindowsAdminSummary["surface"];
+    action: AgentWindowsAdminSummary["action"];
+    routeId: string;
+    execution: GitExecution;
+    target?: string;
+    resources?: Record<string, unknown>[];
+    mutationPolicy: AgentWindowsAdminSummary["mutationPolicy"];
+  }
+): AgentActionResult {
+  const resources = params.resources ?? [{ stdoutPreview: params.execution.stdout.slice(0, 4_000), stderrPreview: params.execution.stderr.slice(0, 2_000) }];
+  const summary = windowsAdminSummary({
+    surface: params.surface,
+    action: params.action,
+    available: params.execution.accepted,
+    target: params.target,
+    commandLine: params.execution.commandLine,
+    exitCode: params.execution.exitCode,
+    resources,
+    mutationPolicy: params.mutationPolicy
+  });
+  return result(config, request, {
+    accepted: params.execution.accepted,
+    commandLine: params.execution.commandLine,
+    routeId: params.routeId,
+    exitCode: params.execution.exitCode,
+    durationMs: params.execution.durationMs,
+    timedOut: params.execution.timedOut,
+    stdoutPreview: params.execution.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: params.execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`windows_admin_surface:${params.surface}`, `target:${params.target ?? "default"}`, `exit_code:${params.execution.exitCode ?? "unknown"}`],
+    verification: commandExitVerification({
+      commandLine: params.execution.commandLine,
+      accepted: params.execution.accepted,
+      exitCode: params.execution.exitCode,
+      timedOut: params.execution.timedOut
+    }),
+    windowsAdmin: summary,
+    userPresenceRequired: params.mutationPolicy === "confirmed_write",
+    failureCategory: params.execution.accepted ? undefined : params.execution.timedOut ? "timeout" : "command_error",
+    error: params.execution.accepted ? undefined : params.execution.error
+  });
+}
+
+function windowsPowerShellExecution(script: string, timeoutMs = 20_000): GitExecution {
+  const executed = executePowerShellJson(script, timeoutMs);
+  return {
+    accepted: executed.accepted,
+    commandLine: "powershell.exe -EncodedCommand <windows.admin>",
+    exitCode: executed.exitCode,
+    durationMs: 0,
+    stdout: executed.stdout,
+    stderr: executed.stderr,
+    timedOut: executed.timedOut,
+    error: executed.error
+  };
+}
+
+async function windowsSettingInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const target = request.path ?? request.settingName ?? "os";
+  const script = target.startsWith("HKCU:\\") || target.startsWith("HKLM:\\")
+    ? `
+$ErrorActionPreference = 'Stop'
+$path = ${powerShellString(target)}
+$name = ${powerShellString(request.query ?? request.settingName ?? "")}
+if ($name) { Get-ItemProperty -Path $path -Name $name | ConvertTo-Json -Depth 4 -Compress }
+else { Get-ItemProperty -Path $path | ConvertTo-Json -Depth 4 -Compress }
+`
+    : `
+$ErrorActionPreference = 'Stop'
+[pscustomobject]@{
+  OSDescription = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+  OSArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+  FrameworkDescription = [System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription
+  Version = [System.Environment]::OSVersion.Version.ToString()
+  MachineName = [System.Environment]::MachineName
+} | ConvertTo-Json -Compress
+`;
+  const execution = windowsPowerShellExecution(script, 15_000);
+  return windowsAdminCommandResult(config, request, {
+    surface: "settings",
+    action: "inspect",
+    routeId: "windows.setting_inspect",
+    execution,
+    target,
+    mutationPolicy: "readonly"
+  });
+}
+
+async function windowsSettingApplyAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Windows setting mutation requires confirmed:true.", request)
+    });
+  }
+  const target = request.path ?? "";
+  const name = request.settingName ?? request.query ?? "";
+  if (!target.startsWith("HKCU:\\") || !name) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Typed Windows setting apply currently allows only explicit HKCU:\\ registry value targets.", request)
+    });
+  }
+  const value = request.content ?? request.text ?? "";
+  const script = `
+$ErrorActionPreference = 'Stop'
+$path = ${powerShellString(target)}
+$name = ${powerShellString(name)}
+$value = ${powerShellString(value)}
+New-Item -Path $path -Force | Out-Null
+Set-ItemProperty -Path $path -Name $name -Value $value
+Get-ItemProperty -Path $path -Name $name | ConvertTo-Json -Depth 4 -Compress
+`;
+  const execution = windowsPowerShellExecution(script, 20_000);
+  return windowsAdminCommandResult(config, request, {
+    surface: "settings",
+    action: "apply",
+    routeId: "windows.setting_apply",
+    execution,
+    target: `${target}:${name}`,
+    mutationPolicy: "confirmed_write"
+  });
+}
+
+async function processServiceInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const service = request.serviceName?.trim();
+  const query = request.query?.trim();
+  const script = service
+    ? `
+$ErrorActionPreference = 'Stop'
+Get-Service -Name ${powerShellString(service)} | Select-Object Name, DisplayName, Status, ServiceType, StartType | ConvertTo-Json -Compress
+`
+    : query
+      ? `
+$ErrorActionPreference = 'Stop'
+Get-Process -Name ${powerShellString(query)} -ErrorAction Stop | Select-Object -First 20 Id, ProcessName, Path, StartTime, CPU | ConvertTo-Json -Depth 4 -Compress
+`
+      : `
+$ErrorActionPreference = 'Stop'
+Get-Process -Id $PID | Select-Object Id, ProcessName, Path, StartTime, CPU | ConvertTo-Json -Depth 4 -Compress
+`;
+  const execution = windowsPowerShellExecution(script, 15_000);
+  return windowsAdminCommandResult(config, request, {
+    surface: "process_service",
+    action: "inspect",
+    routeId: "windows.process_service_inspect",
+    execution,
+    target: service ?? query ?? "current_process",
+    mutationPolicy: "readonly"
+  });
+}
+
+async function processServiceControlAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Process/service control requires confirmed:true.", request)
+    });
+  }
+  const service = request.serviceName?.trim();
+  const command = (request.command ?? "").trim().toLowerCase();
+  if (!service || !["start", "stop", "restart"].includes(command)) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "process_service_control requires serviceName and command start|stop|restart.", request)
+    });
+  }
+  const verb = command === "start" ? "Start-Service" : command === "stop" ? "Stop-Service" : "Restart-Service";
+  const script = `
+$ErrorActionPreference = 'Stop'
+${verb} -Name ${powerShellString(service)}
+Get-Service -Name ${powerShellString(service)} | Select-Object Name, Status | ConvertTo-Json -Compress
+`;
+  const execution = windowsPowerShellExecution(script, 45_000);
+  return windowsAdminCommandResult(config, request, {
+    surface: "process_service",
+    action: "control",
+    routeId: "windows.process_service_control",
+    execution,
+    target: service,
+    mutationPolicy: "confirmed_write"
+  });
+}
+
+async function packageInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const packageId = request.packageId ?? request.query;
+  const args = packageId ? ["list", "--id", packageId, "-e", "--disable-interactivity"] : ["--version"];
+  const execution = executeNativeTool("winget.exe", args, config.cwd, 20_000);
+  const summary = windowsAdminSummary({
+    surface: "package",
+    action: "inspect",
+    available: execution.accepted,
+    target: packageId ?? "winget",
+    commandLine: execution.commandLine,
+    exitCode: execution.exitCode,
+    resources: [{ packageId, stdoutPreview: execution.stdout.slice(0, 4_000), stderrPreview: execution.stderr.slice(0, 2_000) }],
+    mutationPolicy: "readonly"
+  });
+  return result(config, request, {
+    accepted: true,
+    commandLine: execution.commandLine,
+    routeId: "windows.package_inspect",
+    exitCode: execution.exitCode,
+    durationMs: execution.durationMs,
+    timedOut: execution.timedOut,
+    stdoutPreview: execution.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`package_target:${packageId ?? "winget"}`, `available:${execution.accepted}`],
+    verification: verificationResult([
+      verificationProbe({
+        id: "package.inspect.reported",
+        kind: "package_state",
+        target: packageId ?? "winget.exe",
+        expectation: "winget package state is reported without claiming missing tools succeeded",
+        actual: `exit_code=${execution.exitCode ?? "unknown"} available=${execution.accepted}`,
+        passed: true
+      })
+    ]),
+    windowsAdmin: summary
+  });
+}
+
+async function packageInstallUpdateAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Package install/update requires confirmed:true and an exact packageId.", request)
+    });
+  }
+  const packageId = request.packageId?.trim();
+  const mode = (request.command ?? "install").trim().toLowerCase();
+  if (!packageId || !["install", "upgrade"].includes(mode)) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "package_install_update requires packageId and command install|upgrade.", request)
+    });
+  }
+  const args = [
+    mode,
+    "--id",
+    packageId,
+    "-e",
+    "--accept-source-agreements",
+    "--accept-package-agreements",
+    "--disable-interactivity"
+  ];
+  const execution = executeNativeTool("winget.exe", args, config.cwd, Math.min(commandTimeout(request), 180_000));
+  return windowsAdminCommandResult(config, request, {
+    surface: "package",
+    action: "install_update",
+    routeId: "windows.package_install_update",
+    execution,
+    target: packageId,
+    mutationPolicy: "confirmed_write"
+  });
+}
+
+async function ciChecksInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const args = request.headBranch ? ["pr", "checks", request.headBranch] : ["run", "list", "--limit", String(Math.min(request.maxResults ?? 10, 50))];
+  const execution = executeNativeTool("gh.exe", args, config.workspaceRoot, 30_000);
+  return windowsAdminCommandResult(config, request, {
+    surface: "ci_review",
+    action: "inspect",
+    routeId: "ci.checks_inspect",
+    execution,
+    target: request.headBranch ?? "workflow_runs",
+    mutationPolicy: "readonly"
+  });
+}
+
+async function ciRunInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const runId = request.query?.trim();
+  const args = runId ? ["run", "view", runId, "--log-failed"] : ["run", "list", "--limit", String(Math.min(request.maxResults ?? 10, 50))];
+  const execution = executeNativeTool("gh.exe", args, config.workspaceRoot, 45_000);
+  return windowsAdminCommandResult(config, request, {
+    surface: "ci_review",
+    action: "inspect",
+    routeId: "ci.run_inspect",
+    execution,
+    target: runId ?? "workflow_runs",
+    mutationPolicy: "readonly"
+  });
+}
+
 function inspectWsl(config: AgentActionHostConfig): Record<string, unknown> {
   const status = executeNativeTool("wsl.exe", ["--status"], config.cwd, 8_000);
   const version = executeNativeTool("wsl.exe", ["--version"], config.cwd, 8_000);
@@ -6400,11 +6731,11 @@ async function virtualizationRunCommandAction(config: AgentActionHostConfig, req
   }
   const provider = request.provider;
   const command = request.command?.trim() ?? "";
-  if (provider !== "wsl" && provider !== "docker") {
+  if (provider !== "wsl" && provider !== "docker" && provider !== "hyperv") {
     return result(config, request, {
       accepted: false,
-      failureCategory: provider === "hyperv" ? "unverifiable" : "bad_path",
-      error: actionError("bad_payload", "virtualization_run_command supports provider:\"wsl\" or provider:\"docker\" only; Hyper-V guest command execution remains planned.", request)
+      failureCategory: "bad_path",
+      error: actionError("bad_payload", "virtualization_run_command supports provider:\"wsl\", provider:\"docker\" or provider:\"hyperv\".", request)
     });
   }
   if (!command) {
@@ -6418,7 +6749,7 @@ async function virtualizationRunCommandAction(config: AgentActionHostConfig, req
   let args: string[] = [];
   if (provider === "wsl") {
     args = request.distro ? ["--distribution", request.distro, "--exec", command, ...(request.args ?? [])] : ["--exec", command, ...(request.args ?? [])];
-  } else {
+  } else if (provider === "docker") {
     const container = request.container?.trim() ?? "";
     if (!container) {
       return result(config, request, {
@@ -6427,6 +6758,80 @@ async function virtualizationRunCommandAction(config: AgentActionHostConfig, req
       });
     }
     args = ["exec", container, command, ...(request.args ?? [])];
+  } else {
+    const vmName = request.vmName?.trim() ?? "";
+    if (!vmName) {
+      return result(config, request, {
+        accepted: false,
+        error: actionError("bad_payload", "vmName is required for provider:\"hyperv\" virtualization_run_command.", request)
+      });
+    }
+    const hypervCommand = command.toLowerCase();
+    const lifecycle = ["start", "stop", "save", "checkpoint", "remove"].includes(hypervCommand);
+    const script = lifecycle
+      ? `
+$ErrorActionPreference = 'Stop'
+if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) { throw 'Hyper-V PowerShell module not available' }
+$vmName = ${powerShellString(vmName)}
+switch (${powerShellString(hypervCommand)}) {
+  'start' { Start-VM -Name $vmName }
+  'stop' { Stop-VM -Name $vmName -TurnOff -Force }
+  'save' { Save-VM -Name $vmName }
+  'checkpoint' { Checkpoint-VM -Name $vmName }
+  'remove' { Remove-VM -Name $vmName -Force }
+}
+Get-VM -Name $vmName -ErrorAction SilentlyContinue | Select-Object Name, State, Status | ConvertTo-Json -Compress
+`
+      : `
+$ErrorActionPreference = 'Stop'
+if (-not (Get-Command Invoke-Command -ErrorAction SilentlyContinue)) { throw 'PowerShell remoting unavailable' }
+$vmName = ${powerShellString(vmName)}
+$command = ${powerShellString(command)}
+$arguments = @(${(request.args ?? []).map(powerShellString).join(",")})
+Invoke-Command -VMName $vmName -ScriptBlock {
+  param($command, $arguments)
+  & $command @arguments
+} -ArgumentList $command, $arguments
+`;
+    const execution = windowsPowerShellExecution(script, Math.min(timeoutMs, lifecycle ? 90_000 : 120_000));
+    const routeId = lifecycle ? `virtualization.hyperv.${hypervCommand}` : "virtualization.hyperv.guest_command";
+    const summary = virtualizationSummary({
+      provider,
+      action: "run_command",
+      available: execution.accepted,
+      resources: [
+        {
+          provider,
+          vmName,
+          commandLine: execution.commandLine,
+          exitCode: execution.exitCode,
+          timedOut: execution.timedOut,
+          lifecycle
+        }
+      ]
+    });
+    return result(config, request, {
+      accepted: execution.accepted,
+      commandLine: execution.commandLine,
+      executionAdapter: "powershell",
+      routeId,
+      exitCode: execution.exitCode,
+      durationMs: execution.durationMs,
+      timeoutMs,
+      timedOut: execution.timedOut,
+      stdoutPreview: execution.stdout.slice(0, MAX_PREVIEW_CHARS),
+      stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+      observedChanges: [`virtualization_provider:${provider}`, `vm:${vmName}`, `exit_code:${execution.exitCode ?? "unknown"}`],
+      verification: commandExitVerification({
+        commandLine: execution.commandLine,
+        accepted: execution.accepted,
+        exitCode: execution.exitCode,
+        timedOut: execution.timedOut
+      }),
+      virtualization: summary,
+      failureCategory: execution.accepted ? undefined : execution.timedOut ? "timeout" : "command_error",
+      error: execution.error
+    });
   }
   let execution = executeNativeTool(tool, args, config.workspaceRoot, timeoutMs);
   let routeId = `virtualization.${provider}.run_command`;
@@ -7265,6 +7670,22 @@ async function executeAgentActionRequestInner(config: AgentActionHostConfig, req
         return await cloudCliRunAction(config, request, "run_readonly");
       case "cloud_cli_run_write":
         return await cloudCliRunAction(config, request, "run_write");
+      case "windows_setting_inspect":
+        return await windowsSettingInspectAction(config, request);
+      case "windows_setting_apply":
+        return await windowsSettingApplyAction(config, request);
+      case "process_service_inspect":
+        return await processServiceInspectAction(config, request);
+      case "process_service_control":
+        return await processServiceControlAction(config, request);
+      case "package_inspect":
+        return await packageInspectAction(config, request);
+      case "package_install_update":
+        return await packageInstallUpdateAction(config, request);
+      case "ci_checks_inspect":
+        return await ciChecksInspectAction(config, request);
+      case "ci_run_inspect":
+        return await ciRunInspectAction(config, request);
       case "virtualization_inspect":
         return await virtualizationInspectAction(config, request);
       case "virtualization_run_command":

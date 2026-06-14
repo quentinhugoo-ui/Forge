@@ -44,6 +44,14 @@ export const AGENT_DEV_CHECK_COMMAND = "/agent_dev_check_";
 export const AGENT_CLOUD_INSPECT_COMMAND = "/agent_cloud_inspect_";
 export const AGENT_CLOUD_READONLY_COMMAND = "/agent_cloud_readonly_";
 export const AGENT_CLOUD_WRITE_COMMAND = "/agent_cloud_write_";
+export const AGENT_WINDOWS_SETTING_INSPECT_COMMAND = "/agent_windows_setting_inspect_";
+export const AGENT_WINDOWS_SETTING_APPLY_COMMAND = "/agent_windows_setting_apply_";
+export const AGENT_PROCESS_SERVICE_INSPECT_COMMAND = "/agent_process_service_inspect_";
+export const AGENT_PROCESS_SERVICE_CONTROL_COMMAND = "/agent_process_service_control_";
+export const AGENT_PACKAGE_INSPECT_COMMAND = "/agent_package_inspect_";
+export const AGENT_PACKAGE_INSTALL_UPDATE_COMMAND = "/agent_package_install_update_";
+export const AGENT_CI_CHECKS_INSPECT_COMMAND = "/agent_ci_checks_inspect_";
+export const AGENT_CI_RUN_INSPECT_COMMAND = "/agent_ci_run_inspect_";
 export const AGENT_VIRTUALIZATION_INSPECT_COMMAND = "/agent_virtualization_inspect_";
 export const AGENT_VIRTUALIZATION_RUN_COMMAND = "/agent_virtualization_run_";
 export const AGENT_AUTOMATION_SCHEDULE_COMMAND = "/agent_automation_schedule_";
@@ -98,6 +106,14 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_CLOUD_INSPECT_COMMAND,
   AGENT_CLOUD_READONLY_COMMAND,
   AGENT_CLOUD_WRITE_COMMAND,
+  AGENT_WINDOWS_SETTING_INSPECT_COMMAND,
+  AGENT_WINDOWS_SETTING_APPLY_COMMAND,
+  AGENT_PROCESS_SERVICE_INSPECT_COMMAND,
+  AGENT_PROCESS_SERVICE_CONTROL_COMMAND,
+  AGENT_PACKAGE_INSPECT_COMMAND,
+  AGENT_PACKAGE_INSTALL_UPDATE_COMMAND,
+  AGENT_CI_CHECKS_INSPECT_COMMAND,
+  AGENT_CI_RUN_INSPECT_COMMAND,
   AGENT_VIRTUALIZATION_INSPECT_COMMAND,
   AGENT_VIRTUALIZATION_RUN_COMMAND,
   AGENT_AUTOMATION_SCHEDULE_COMMAND,
@@ -162,6 +178,14 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_CLOUD_INSPECT_COMMAND, "cloud CLI contexts inspected"],
   [AGENT_CLOUD_READONLY_COMMAND, "cloud CLI read-only command completed"],
   [AGENT_CLOUD_WRITE_COMMAND, "confirmed cloud CLI write command completed"],
+  [AGENT_WINDOWS_SETTING_INSPECT_COMMAND, "Windows setting inspected"],
+  [AGENT_WINDOWS_SETTING_APPLY_COMMAND, "confirmed Windows setting applied"],
+  [AGENT_PROCESS_SERVICE_INSPECT_COMMAND, "process or service state inspected"],
+  [AGENT_PROCESS_SERVICE_CONTROL_COMMAND, "confirmed service control completed"],
+  [AGENT_PACKAGE_INSPECT_COMMAND, "package manager state inspected"],
+  [AGENT_PACKAGE_INSTALL_UPDATE_COMMAND, "confirmed package install or update verified"],
+  [AGENT_CI_CHECKS_INSPECT_COMMAND, "CI checks inspected"],
+  [AGENT_CI_RUN_INSPECT_COMMAND, "CI run inspected"],
   [AGENT_VIRTUALIZATION_INSPECT_COMMAND, "virtualization backends inspected"],
   [AGENT_VIRTUALIZATION_RUN_COMMAND, "confirmed virtualization command completed"],
   [AGENT_AUTOMATION_SCHEDULE_COMMAND, "confirmed Windows scheduled task verified"],
@@ -219,6 +243,14 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["cloud.inspect", AGENT_CLOUD_INSPECT_COMMAND],
   ["cloud.run_readonly", AGENT_CLOUD_READONLY_COMMAND],
   ["cloud.run_write", AGENT_CLOUD_WRITE_COMMAND],
+  ["windows.setting_inspect", AGENT_WINDOWS_SETTING_INSPECT_COMMAND],
+  ["windows.setting_apply", AGENT_WINDOWS_SETTING_APPLY_COMMAND],
+  ["windows.process_service_inspect", AGENT_PROCESS_SERVICE_INSPECT_COMMAND],
+  ["windows.process_service_control", AGENT_PROCESS_SERVICE_CONTROL_COMMAND],
+  ["windows.package_inspect", AGENT_PACKAGE_INSPECT_COMMAND],
+  ["windows.package_install_update", AGENT_PACKAGE_INSTALL_UPDATE_COMMAND],
+  ["ci.checks_inspect", AGENT_CI_CHECKS_INSPECT_COMMAND],
+  ["ci.run_inspect", AGENT_CI_RUN_INSPECT_COMMAND],
   ["virtualization.inspect", AGENT_VIRTUALIZATION_INSPECT_COMMAND],
   ["virtualization.run_command", AGENT_VIRTUALIZATION_RUN_COMMAND],
   ["automation.schedule", AGENT_AUTOMATION_SCHEDULE_COMMAND],
@@ -276,6 +308,14 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["cloud_cli_inspect", AGENT_CLOUD_INSPECT_COMMAND],
   ["cloud_cli_run_readonly", AGENT_CLOUD_READONLY_COMMAND],
   ["cloud_cli_run_write", AGENT_CLOUD_WRITE_COMMAND],
+  ["windows_setting_inspect", AGENT_WINDOWS_SETTING_INSPECT_COMMAND],
+  ["windows_setting_apply", AGENT_WINDOWS_SETTING_APPLY_COMMAND],
+  ["process_service_inspect", AGENT_PROCESS_SERVICE_INSPECT_COMMAND],
+  ["process_service_control", AGENT_PROCESS_SERVICE_CONTROL_COMMAND],
+  ["package_inspect", AGENT_PACKAGE_INSPECT_COMMAND],
+  ["package_install_update", AGENT_PACKAGE_INSTALL_UPDATE_COMMAND],
+  ["ci_checks_inspect", AGENT_CI_CHECKS_INSPECT_COMMAND],
+  ["ci_run_inspect", AGENT_CI_RUN_INSPECT_COMMAND],
   ["virtualization_inspect", AGENT_VIRTUALIZATION_INSPECT_COMMAND],
   ["virtualization_run_command", AGENT_VIRTUALIZATION_RUN_COMMAND],
   ["automation_schedule", AGENT_AUTOMATION_SCHEDULE_COMMAND],

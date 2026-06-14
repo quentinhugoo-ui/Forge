@@ -15,6 +15,8 @@ import {
   AGENT_CLOUD_INSPECT_COMMAND,
   AGENT_CLOUD_READONLY_COMMAND,
   AGENT_CLOUD_WRITE_COMMAND,
+  AGENT_CI_CHECKS_INSPECT_COMMAND,
+  AGENT_CI_RUN_INSPECT_COMMAND,
   AGENT_DELETE_TREE_COMMAND,
   AGENT_DOCUMENT_CONVERT_COMMAND,
   AGENT_DOCUMENT_IMAGE_OCR_COMMAND,
@@ -31,8 +33,14 @@ import {
   AGENT_DEV_PUSH_COMMAND,
   AGENT_DEV_STATUS_COMMAND,
   AGENT_GITHUB_PR_CREATE_COMMAND,
+  AGENT_PACKAGE_INSPECT_COMMAND,
+  AGENT_PACKAGE_INSTALL_UPDATE_COMMAND,
+  AGENT_PROCESS_SERVICE_CONTROL_COMMAND,
+  AGENT_PROCESS_SERVICE_INSPECT_COMMAND,
   AGENT_VIRTUALIZATION_INSPECT_COMMAND,
   AGENT_VIRTUALIZATION_RUN_COMMAND,
+  AGENT_WINDOWS_SETTING_APPLY_COMMAND,
+  AGENT_WINDOWS_SETTING_INSPECT_COMMAND,
   AGENT_APPSHOT_COMMAND,
   AGENT_COMPUTER_INSPECT_COMMAND,
   AGENT_CLICK_COMMAND,
@@ -97,6 +105,14 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION action="cloud_cli_inspect"')?.command).toBe(AGENT_CLOUD_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="cloud.run_readonly"')?.command).toBe(AGENT_CLOUD_READONLY_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="cloud_cli_run_write"')?.command).toBe(AGENT_CLOUD_WRITE_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="windows_setting_inspect"')?.command).toBe(AGENT_WINDOWS_SETTING_INSPECT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION tool="windows.setting_apply"')?.command).toBe(AGENT_WINDOWS_SETTING_APPLY_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="process_service_inspect"')?.command).toBe(AGENT_PROCESS_SERVICE_INSPECT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="process_service_control"')?.command).toBe(AGENT_PROCESS_SERVICE_CONTROL_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="package_inspect"')?.command).toBe(AGENT_PACKAGE_INSPECT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="package_install_update"')?.command).toBe(AGENT_PACKAGE_INSTALL_UPDATE_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="ci_checks_inspect"')?.command).toBe(AGENT_CI_CHECKS_INSPECT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="ci_run_inspect"')?.command).toBe(AGENT_CI_RUN_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="virtualization_inspect"')?.command).toBe(AGENT_VIRTUALIZATION_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="virtualization.run_command"')?.command).toBe(AGENT_VIRTUALIZATION_RUN_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="automation_schedule"')?.command).toBe(AGENT_AUTOMATION_SCHEDULE_COMMAND);

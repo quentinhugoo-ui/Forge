@@ -5829,6 +5829,14 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   cloud_cli_inspect: "cloud.inspect",
   cloud_cli_run_readonly: "cloud.run_readonly",
   cloud_cli_run_write: "cloud.run_write",
+  windows_setting_inspect: "windows.setting_inspect",
+  windows_setting_apply: "windows.setting_apply",
+  process_service_inspect: "windows.process_service_inspect",
+  process_service_control: "windows.process_service_control",
+  package_inspect: "windows.package_inspect",
+  package_install_update: "windows.package_install_update",
+  ci_checks_inspect: "ci.checks_inspect",
+  ci_run_inspect: "ci.run_inspect",
   virtualization_inspect: "virtualization.inspect",
   virtualization_run_command: "virtualization.run_command",
   automation_schedule: "automation.schedule",
@@ -5927,7 +5935,10 @@ function emitAgentRuntimeToolCallStarted(params: {
       ? "destructive"
       : params.request.action === "run_command" ||
         params.request.action === "virtualization_run_command" ||
-        params.request.action === "cloud_cli_run_write"
+        params.request.action === "cloud_cli_run_write" ||
+        params.request.action === "windows_setting_apply" ||
+        params.request.action === "process_service_control" ||
+        params.request.action === "package_install_update"
       ? "computer_write"
       : params.request.action === "computer_appshot" ||
         params.request.action === "computer_focus_window" ||
@@ -5969,6 +5980,11 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "dev_git_diff" ||
         params.request.action === "cloud_cli_inspect" ||
         params.request.action === "cloud_cli_run_readonly" ||
+        params.request.action === "windows_setting_inspect" ||
+        params.request.action === "process_service_inspect" ||
+        params.request.action === "package_inspect" ||
+        params.request.action === "ci_checks_inspect" ||
+        params.request.action === "ci_run_inspect" ||
         params.request.action === "virtualization_inspect"
       ? "read"
       : "workspace_write",
@@ -6283,6 +6299,11 @@ function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
     request.action === "dev_git_diff" ||
     request.action === "cloud_cli_inspect" ||
     request.action === "cloud_cli_run_readonly" ||
+    request.action === "windows_setting_inspect" ||
+    request.action === "process_service_inspect" ||
+    request.action === "package_inspect" ||
+    request.action === "ci_checks_inspect" ||
+    request.action === "ci_run_inspect" ||
     request.action === "virtualization_inspect" ||
     request.action === "automation_list"
   );

@@ -188,6 +188,14 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "cloud_cli_inspect", cloudProvider: "all" })).toBe(true);
     expect(isAgentActionRequest({ action: "cloud_cli_run_readonly", cloudProvider: "aws", args: ["sts", "get-caller-identity"], account: "123456789012" })).toBe(true);
     expect(isAgentActionRequest({ action: "cloud_cli_run_write", cloudProvider: "gcp", args: ["run", "deploy", "svc"], project: "demo", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "windows_setting_inspect", settingName: "os" })).toBe(true);
+    expect(isAgentActionRequest({ action: "windows_setting_apply", path: "HKCU:\\Software\\InGenTest", settingName: "Value", content: "1", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "process_service_inspect", query: "node" })).toBe(true);
+    expect(isAgentActionRequest({ action: "process_service_control", serviceName: "Spooler", command: "restart", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "package_inspect", packageId: "Git.Git" })).toBe(true);
+    expect(isAgentActionRequest({ action: "package_install_update", packageId: "Git.Git", command: "upgrade", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "ci_checks_inspect", headBranch: "master" })).toBe(true);
+    expect(isAgentActionRequest({ action: "ci_run_inspect", query: "123" })).toBe(true);
     expect(isAgentActionRequest({ action: "virtualization_inspect", provider: "all", maxResults: 10 })).toBe(true);
     expect(isAgentActionRequest({ action: "virtualization_run_command", provider: "wsl", distro: "Ubuntu", command: "true", nativeFallback: true, confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "virtualization_run_command", provider: "docker", container: "dev", command: "node", args: ["--version"], confirmed: true })).toBe(true);
@@ -207,6 +215,8 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "dev_github_pr_create", title: "Bad", draft: "yes", confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "cloud_cli_inspect", cloudProvider: "digitalocean" })).toBe(false);
     expect(isAgentActionRequest({ action: "cloud_cli_run_readonly", cloudProvider: "aws", tenant: 42 })).toBe(false);
+    expect(isAgentActionRequest({ action: "package_inspect", packageId: 42 })).toBe(false);
+    expect(isAgentActionRequest({ action: "process_service_control", serviceName: 42, confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "virtualization_inspect", provider: "xhyve" })).toBe(false);
     expect(isAgentActionRequest({ action: "virtualization_run_command", provider: "wsl", nativeFallback: "yes", confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "automation_schedule", title: "Bad", command: "cmd.exe", startTime: 2359, confirmed: true })).toBe(false);

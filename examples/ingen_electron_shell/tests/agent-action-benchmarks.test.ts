@@ -80,7 +80,7 @@ describe("agent action benchmark suite", () => {
     expect(AGENT_ACTION_BENCHMARK_SUITE.find((benchmark) => benchmark.id === "document.write_and_inspect")?.proofRule).toContain("result.value");
   });
 
-  it("runs available benchmark cases and fails planned cases cleanly", async () => {
+  it("runs available benchmark cases and fails blocked/runtime-only cases cleanly", async () => {
     await withTempWorkspace(async (config) => {
       const results = await runAgentActionBenchmarkSuite(config);
       expect(results.length).toBe(AGENT_ACTION_BENCHMARK_SUITE.length);
@@ -88,14 +88,16 @@ describe("agent action benchmark suite", () => {
       expect(byId.get("filesystem.organize.safe_moves")).toMatchObject({ status: "success" });
       expect(byId.get("code.run.tests.after_edit")).toMatchObject({ status: "success" });
       expect(byId.get("document.write_and_inspect")).toMatchObject({ status: "success" });
+      expect(byId.get("install.update.package_manager")).toMatchObject({ status: "blocked" });
+      expect(byId.get("windows.setting.change")).toMatchObject({ status: "blocked" });
       expect(byId.get("cloud.cli.write")).toMatchObject({ status: "blocked" });
       expect(byId.get("blocked.danger.credentials")).toMatchObject({ status: "blocked" });
-      expect(results.some((result) => result.status === "planned")).toBe(true);
+      expect((results as Array<{ status: string }>).some((result) => result.status === "planned")).toBe(false);
       for (const result of results) {
-        if (result.status === "planned" || result.status === "blocked") {
+        if (result.status === "blocked") {
           expect(result.result?.accepted ?? false).toBe(false);
         }
-        if (result.status === "success") {
+        if (result.status === "success" && result.result) {
           expect(result.result?.verification?.passed).not.toBe(false);
           expect(result.result?.audit?.logSha256).toMatch(/^[a-f0-9]{64}$/);
         }

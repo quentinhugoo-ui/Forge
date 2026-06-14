@@ -375,6 +375,14 @@ describe("agent action host", () => {
       "cloud_cli_inspect",
       "cloud_cli_run_readonly",
       "cloud_cli_run_write",
+      "windows_setting_inspect",
+      "windows_setting_apply",
+      "process_service_inspect",
+      "process_service_control",
+      "package_inspect",
+      "package_install_update",
+      "ci_checks_inspect",
+      "ci_run_inspect",
       "virtualization_inspect",
       "virtualization_run_command",
       "automation_schedule",
@@ -1113,6 +1121,77 @@ describe("agent action host", () => {
       expect(unconfirmedWrite.accepted).toBe(false);
       expect(unconfirmedWrite.userPresenceRequired).toBe(true);
       expect(unconfirmedWrite.error?.message).toContain("confirmed:true");
+    });
+  });
+
+  it("runs typed Windows admin adapters and blocks sensitive mutations without confirmation", async () => {
+    await withTempWorkspace(async (config) => {
+      const settingInspect = await executeAgentActionRequest(config, {
+        action: "windows_setting_inspect",
+        settingName: "os"
+      });
+      expect(settingInspect.accepted).toBe(true);
+      expect(settingInspect.routeId).toBe("windows.setting_inspect");
+      expect(settingInspect.windowsAdmin?.schema).toBe("ingen.windows_admin.summary.v1");
+      expect(settingInspect.windowsAdmin?.mutationPolicy).toBe("readonly");
+
+      const settingApply = await executeAgentActionRequest(config, {
+        action: "windows_setting_apply",
+        path: "HKCU:\\Software\\InGenTest",
+        settingName: "Value",
+        content: "1"
+      });
+      expect(settingApply.accepted).toBe(false);
+      expect(settingApply.userPresenceRequired).toBe(true);
+
+      const processInspect = await executeAgentActionRequest(config, {
+        action: "process_service_inspect"
+      });
+      expect(processInspect.accepted).toBe(true);
+      expect(processInspect.windowsAdmin?.surface).toBe("process_service");
+
+      const serviceControl = await executeAgentActionRequest(config, {
+        action: "process_service_control",
+        serviceName: "Spooler",
+        command: "restart"
+      });
+      expect(serviceControl.accepted).toBe(false);
+      expect(serviceControl.error?.message).toContain("confirmed:true");
+
+      const packageInspect = await executeAgentActionRequest(config, {
+        action: "package_inspect"
+      });
+      expect(packageInspect.accepted).toBe(true);
+      expect(packageInspect.windowsAdmin?.surface).toBe("package");
+      expect(packageInspect.verification?.passed).toBe(true);
+
+      const packageInstall = await executeAgentActionRequest(config, {
+        action: "package_install_update",
+        packageId: "Git.Git",
+        command: "upgrade"
+      });
+      expect(packageInstall.accepted).toBe(false);
+      expect(packageInstall.userPresenceRequired).toBe(true);
+
+      const ci = await executeAgentActionRequest(config, {
+        action: "ci_checks_inspect",
+        maxResults: 5
+      });
+      if (ci.accepted) {
+        expect(ci.windowsAdmin?.surface).toBe("ci_review");
+        expect(ci.verification?.passed).toBe(true);
+      } else {
+        expect(ci.error?.message).toBeTruthy();
+      }
+
+      const hypervRejected = await executeAgentActionRequest(config, {
+        action: "virtualization_run_command",
+        provider: "hyperv",
+        command: "hostname",
+        confirmed: true
+      });
+      expect(hypervRejected.accepted).toBe(false);
+      expect(hypervRejected.error?.message).toContain("vmName is required");
     });
   });
 
