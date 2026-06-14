@@ -21327,13 +21327,95 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     });
     let depth_view = depth_target.create_view(&wgpu::TextureViewDescriptor::default());
     let clear_color = [0.035, 0.024, 0.045, 1.0];
+    let shader_source = banger_present_bootstrap_wgsl();
+    let visual_pipeline_hash = hash_text_hex(
+        "forge.banger.native_present_loop.ocean_sunset_shader.v1",
+        shader_source,
+    );
+    let mesh_vertex_count = 3u32 + 96u32 * 96u32 * 6u32;
+    let mesh_triangle_count = mesh_vertex_count / 3;
+    let water_pipeline_manifest =
+        build_water_pipeline_manifest(width, height, mesh_vertex_count, mesh_triangle_count, &visual_pipeline_hash);
+    let water_pipeline_hash = water_pipeline_manifest.manifest_hash.clone();
+    let water_info_gpu_words = build_water_info_texture_gpu_words(
+        water_pipeline_manifest.water_info_texture.texture_width,
+        water_pipeline_manifest.water_info_texture.texture_height,
+    );
+    let water_info_storage = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-info-storage"),
+        size: water_info_gpu_words.len() as u64 * 16,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(
+        &water_info_storage,
+        0,
+        water_info_gpu_words_u8(&water_info_gpu_words).as_slice(),
+    );
+    let water_info_uniform_words = [
+        water_pipeline_manifest.water_info_texture.texture_width,
+        water_pipeline_manifest.water_info_texture.texture_height,
+        water_pipeline_manifest.water_info_texture.shoreline_texel_count,
+        water_pipeline_manifest.water_info_texture.velocity_texel_count,
+    ];
+    let water_info_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-info-uniform"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(
+        &water_info_uniform,
+        0,
+        water_info_uniform_words_u8(water_info_uniform_words).as_slice(),
+    );
+    let water_info_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-present-water-info-bind-group-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+    let water_info_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-present-water-info-bind-group"),
+        layout: &water_info_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: water_info_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: water_info_uniform.as_entire_binding(),
+            },
+        ],
+    });
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("banger-native-present-bootstrap-visual-shader"),
-        source: wgpu::ShaderSource::Wgsl(banger_present_bootstrap_wgsl().into()),
+        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("banger-native-present-bootstrap-pipeline-layout"),
-        bind_group_layouts: &[],
+        bind_group_layouts: &[Some(&water_info_bind_group_layout)],
         immediate_size: 0,
     });
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -21375,16 +21457,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         multiview_mask: None,
         cache: None,
     });
-    let visual_pipeline_hash = hash_text_hex(
-        "forge.banger.native_present_loop.ocean_sunset_shader.v1",
-        banger_present_bootstrap_wgsl(),
-    );
     let depth_target_hash = present_loop_depth_target_hash(width, height, "Depth32Float", &visual_pipeline_hash);
-    let mesh_vertex_count = 3u32 + 96u32 * 96u32 * 6u32;
-    let mesh_triangle_count = mesh_vertex_count / 3;
-    let water_pipeline_manifest =
-        build_water_pipeline_manifest(width, height, mesh_vertex_count, mesh_triangle_count, &visual_pipeline_hash);
-    let water_pipeline_hash = water_pipeline_manifest.manifest_hash.clone();
     let draw_call_count = 1u32;
     let camera_position = [0.0, 0.0, -2.4];
     let camera_target = [0.0, 0.0, 0.0];
@@ -21464,6 +21537,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             multiview_mask: None,
         });
         pass.set_pipeline(&render_pipeline);
+        pass.set_bind_group(0, &water_info_bind_group, &[]);
         pass.draw(0..mesh_vertex_count, 0..1);
     }
     encoder.copy_texture_to_buffer(
@@ -21702,6 +21776,15 @@ struct PresentLoopReadbackMetrics {
     proof_hash: String,
 }
 
+#[derive(Clone, Debug)]
+struct WaterInfoTextureGpuBuild {
+    words: Vec<[u32; 4]>,
+    output_texture_hash: String,
+    nonzero_texel_count: u32,
+    shoreline_texel_count: u32,
+    velocity_texel_count: u32,
+}
+
 struct PresentLoopDepthReadbackMetrics {
     checksum_hash: String,
     occupied_pixel_count: u32,
@@ -21771,8 +21854,31 @@ struct VertexOut {
     @location(3) layer: f32,
 };
 
+struct WaterInfoUniform {
+    dims: vec4<u32>,
+};
+
+@group(0) @binding(0) var<storage, read> water_info_texels: array<vec4<u32>>;
+@group(0) @binding(1) var<uniform> water_info_uniform: WaterInfoUniform;
+
 fn saturate(value: f32) -> f32 {
     return clamp(value, 0.0, 1.0);
+}
+
+fn water_info_uv_from_world(p: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(
+        saturate(p.x / 88.0 + 0.5),
+        saturate((p.y - 4.0) / 82.0)
+    );
+}
+
+fn sample_water_info(uv: vec2<f32>) -> vec4<f32> {
+    let width = max(water_info_uniform.dims.x, 1u);
+    let height = max(water_info_uniform.dims.y, 1u);
+    let px = min(u32(saturate(uv.x) * f32(width)), width - 1u);
+    let py = min(u32(saturate(uv.y) * f32(height)), height - 1u);
+    let packed = water_info_texels[py * width + px];
+    return vec4<f32>(packed) * (1.0 / 65535.0);
 }
 
 fn hash12(p: vec2<f32>) -> f32 {
@@ -21870,7 +21976,10 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
     let z = mix(4.0, 86.0, distance_t);
     let x = mix(-44.0, 44.0, gx) * mix(0.22, 1.0, smoothstep(0.0, 0.65, distance_t));
     let world = vec2<f32>(x, z);
-    let h = ocean_height(world);
+    let water_info = sample_water_info(vec2<f32>(gx, gz));
+    let water_depth_delta = water_info.y - water_info.x;
+    let shore_lift = smoothstep(0.065, 0.0, abs(water_depth_delta)) * 0.18;
+    let h = ocean_height(world) + water_depth_delta * 0.42 + shore_lift;
     let ndc_x = x / (z * 0.34);
     let ndc_y = mix(-1.16, -0.08, pow(gz, 0.48)) + h * mix(0.055, 0.010, distance_t);
     out.position = vec4<f32>(ndc_x, ndc_y, mix(0.12, 0.86, distance_t), 1.0);
@@ -21898,16 +22007,25 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let specular = pow(saturate(dot(reflect(-light_dir, normal), view_dir)), 84.0);
     let sun_path = exp(-abs(screen_uv.x - sun_center.x) * (8.0 + in.distance_t * 18.0)) * smoothstep(0.05, 0.95, 1.0 - in.distance_t);
     let wave_glint = smoothstep(0.58, 1.0, sin(ocean_height(in.world_xz) * 3.1 + in.world_xz.y * 0.72) * 0.5 + 0.5);
-    let foam = smoothstep(0.72, 1.0, abs(normal.x) + abs(normal.z)) * smoothstep(0.0, 0.35, 1.0 - in.distance_t);
+    let water_info = sample_water_info(water_info_uv_from_world(in.world_xz));
+    let water_depth_delta = water_info.y - water_info.x;
+    let shoreline = smoothstep(0.075, 0.0, abs(water_depth_delta));
+    let flow = water_info.zw * 2.0 - vec2<f32>(1.0, 1.0);
+    let flow_energy = smoothstep(0.18, 0.72, length(flow));
+    let foam_seed = sin(dot(in.world_xz + flow * 2.4, vec2<f32>(1.7, 0.43)) * 4.8) * 0.5 + 0.5;
+    let wave_foam = smoothstep(0.72, 1.0, abs(normal.x) + abs(normal.z)) * smoothstep(0.0, 0.35, 1.0 - in.distance_t);
+    let foam = saturate(wave_foam * 0.72 + shoreline * (0.35 + 0.65 * foam_seed) + flow_energy * shoreline * 0.42);
+    let shallow_tint = smoothstep(0.16, 0.0, abs(water_depth_delta));
 
     let deep = vec3<f32>(0.010, 0.055, 0.13);
-    let near = vec3<f32>(0.02, 0.23, 0.30);
+    let near = mix(vec3<f32>(0.02, 0.23, 0.30), vec3<f32>(0.07, 0.35, 0.34), shallow_tint);
     let reflected = sky_color(vec2<f32>(screen_uv.x + normal.x * 0.08, 0.50 + (1.0 - in.distance_t) * 0.22), sun_center);
     var color = mix(near, deep, smoothstep(0.0, 0.92, in.distance_t));
-    color = mix(color, reflected, 0.16 + fresnel * 0.42);
+    color = mix(color, reflected, 0.12 + fresnel * 0.42 + shoreline * 0.06);
     color += vec3<f32>(1.0, 0.38, 0.08) * sun_path * (0.24 + 0.42 * wave_glint);
     color += vec3<f32>(1.0, 0.78, 0.52) * specular * 0.55;
-    color = mix(color, vec3<f32>(0.64, 0.88, 0.92), foam * 0.18);
+    color = mix(color, vec3<f32>(0.72, 0.91, 0.88), shoreline * 0.14);
+    color = mix(color, vec3<f32>(0.72, 0.90, 0.94), foam * 0.24);
     color *= 0.72 + 0.28 * smoothstep(0.0, 0.85, 1.0 - in.distance_t);
     return vec4<f32>(pow(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.92)), 1.0);
 }
@@ -22693,11 +22811,56 @@ fn build_water_info_texture_manifest(
         &format!("{merge_pass_hash}:velocity_radius_3"),
     );
 
+    let water_info_gpu = build_water_info_texture_gpu(texture_width, texture_height, &blur_pass_hash);
+    let output_texture_hash = water_info_gpu.output_texture_hash;
+    let nonzero_texel_count = water_info_gpu.nonzero_texel_count;
+    let shoreline_texel_count = water_info_gpu.shoreline_texel_count;
+    let velocity_texel_count = water_info_gpu.velocity_texel_count;
+    let proof_hash = hash_text_hex(
+        "forge.banger.water_info_texture.proof.v1",
+        &format!(
+            "{terrain_depth_pass_hash}:{dilated_water_depth_pass_hash}:{water_body_pass_hash}:{merge_pass_hash}:{blur_pass_hash}:{output_texture_hash}:{nonzero_texel_count}:{shoreline_texel_count}:{velocity_texel_count}"
+        ),
+    );
+
+    BangerNativeWaterInfoTextureManifest {
+        schema: "forge.banger.water_info_texture.v1",
+        schema_version: 1,
+        authority: "banger_water_info_texture_depth_velocity_merge_blur",
+        clean_room_basis:
+            "local_unreal_sparse_water_info_texture_terrain_dilated_depth_water_body_merge_blur_principles_no_source_copy",
+        texture_width,
+        texture_height,
+        format: "rgba16float_logical_depth_depth_velocity_velocity",
+        terrain_depth_pass_hash,
+        dilated_water_depth_pass_hash,
+        water_body_pass_hash,
+        merge_pass_hash,
+        blur_pass_hash,
+        output_texture_hash,
+        nonzero_texel_count,
+        shoreline_texel_count,
+        velocity_texel_count,
+        external_srv_ready: true,
+        proof_hash,
+    }
+}
+
+fn build_water_info_texture_gpu_words(texture_width: u32, texture_height: u32) -> Vec<[u32; 4]> {
+    build_water_info_texture_gpu(texture_width, texture_height, "runtime_wgpu_water_info").words
+}
+
+fn build_water_info_texture_gpu(
+    texture_width: u32,
+    texture_height: u32,
+    hash_salt: &str,
+) -> WaterInfoTextureGpuBuild {
     let mut h = Sha256::new();
     h.update(b"forge.banger.water_info_texture.output.v1\0");
     h.update(texture_width.to_le_bytes());
     h.update(texture_height.to_le_bytes());
-    h.update(blur_pass_hash.as_bytes());
+    h.update(hash_salt.as_bytes());
+    let mut words = Vec::with_capacity(texture_width as usize * texture_height as usize);
     let mut nonzero_texel_count = 0u32;
     let mut shoreline_texel_count = 0u32;
     let mut velocity_texel_count = 0u32;
@@ -22727,41 +22890,43 @@ fn build_water_info_texture_manifest(
             if velocity_x.abs() > 0.02 || velocity_y.abs() > 0.02 {
                 velocity_texel_count += 1;
             }
+            words.push([
+                u32::from(packed[0]),
+                u32::from(packed[1]),
+                u32::from(packed[2]),
+                u32::from(packed[3]),
+            ]);
             for value in packed {
                 h.update(value.to_le_bytes());
             }
             h.update([shoreline]);
         }
     }
-    let output_texture_hash = hex32(h.finalize().into());
-    let proof_hash = hash_text_hex(
-        "forge.banger.water_info_texture.proof.v1",
-        &format!(
-            "{terrain_depth_pass_hash}:{dilated_water_depth_pass_hash}:{water_body_pass_hash}:{merge_pass_hash}:{blur_pass_hash}:{output_texture_hash}:{nonzero_texel_count}:{shoreline_texel_count}:{velocity_texel_count}"
-        ),
-    );
-
-    BangerNativeWaterInfoTextureManifest {
-        schema: "forge.banger.water_info_texture.v1",
-        schema_version: 1,
-        authority: "banger_water_info_texture_depth_velocity_merge_blur",
-        clean_room_basis:
-            "local_unreal_sparse_water_info_texture_terrain_dilated_depth_water_body_merge_blur_principles_no_source_copy",
-        texture_width,
-        texture_height,
-        format: "rgba16float_logical_depth_depth_velocity_velocity",
-        terrain_depth_pass_hash,
-        dilated_water_depth_pass_hash,
-        water_body_pass_hash,
-        merge_pass_hash,
-        blur_pass_hash,
-        output_texture_hash,
+    WaterInfoTextureGpuBuild {
+        words,
+        output_texture_hash: hex32(h.finalize().into()),
         nonzero_texel_count,
         shoreline_texel_count,
         velocity_texel_count,
-        external_srv_ready: true,
-        proof_hash,
     }
+}
+
+fn water_info_gpu_words_u8(words: &[[u32; 4]]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(words.len() * 16);
+    for texel in words {
+        for value in texel {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+fn water_info_uniform_words_u8(words: [u32; 4]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(16);
+    for value in words {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
 }
 
 fn water_pipeline_manifest_hash(
