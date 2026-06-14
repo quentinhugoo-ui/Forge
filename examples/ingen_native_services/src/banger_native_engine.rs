@@ -142,6 +142,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub lumen_lighting_packet: BangerNativeLumenLightingPacket,
     pub virtual_shadow_packet: BangerNativeVirtualShadowPacket,
     pub direct_lighting_packet: BangerNativeDirectLightingPacket,
+    pub material_closure_packet: BangerNativeMaterialClosurePacket,
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
     pub frame_submission_packet: BangerNativeFrameSubmissionPacket,
     pub rhi_submit_packet: BangerNativeRhiSubmitPacket,
@@ -1087,6 +1088,55 @@ pub struct BangerNativeDirectLightingEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangerNativeMaterialClosurePacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub direct_lighting_hash: String,
+    pub lumen_lighting_hash: String,
+    pub virtual_shadow_hash: String,
+    pub shader_material_abi_hash: String,
+    pub render_graph_hash: String,
+    pub closure_count: usize,
+    pub layered_closure_count: usize,
+    pub texture_slot_count: u32,
+    pub hardware_ray_candidate_count: usize,
+    pub closure_stack_hash: String,
+    pub bsdf_table_hash: String,
+    pub texture_table_hash: String,
+    pub resolve_hash: String,
+    pub packet_hash: String,
+    pub entries: Vec<BangerNativeMaterialClosureEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeMaterialClosureEntry {
+    pub object_id: String,
+    pub cluster_id: String,
+    pub material_bin_id: u32,
+    pub closure_stack_id: String,
+    pub base_closure: &'static str,
+    pub coating_closure: &'static str,
+    pub layer_count: u32,
+    pub texture_slot_base: u32,
+    pub texture_slot_count: u32,
+    pub roughness_quantized: u16,
+    pub metallic_quantized: u16,
+    pub opacity_quantized: u16,
+    pub light_cluster_id: String,
+    pub surface_cache_hash: String,
+    pub shadow_mask_hash: String,
+    pub closure_hash: String,
+    pub bsdf_hash: String,
+    pub texture_hash: String,
+    pub resolve_hash: String,
+    pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangerNativeGaussianSplatLayerManifest {
     pub schema: &'static str,
     pub authority: &'static str,
@@ -1948,6 +1998,14 @@ impl BangerNativeEngine {
             &radiance_schedule_manifest,
             &render_graph_compilation,
         );
+        let material_closure_packet = build_material_closure_packet(
+            &prepared,
+            &shader_compiler_ticket.material_abi,
+            &lumen_lighting_packet,
+            &virtual_shadow_packet,
+            &direct_lighting_packet,
+            &render_graph_compilation,
+        );
         let gaussian_splat_layer_manifest = build_gaussian_splat_layer_manifest(
             &prepared,
             &scene_graph_submission,
@@ -1973,6 +2031,7 @@ impl BangerNativeEngine {
             &lumen_lighting_packet,
             &virtual_shadow_packet,
             &direct_lighting_packet,
+            &material_closure_packet,
             &gaussian_splat_layer_manifest,
         );
         let rhi_submit_packet =
@@ -2022,6 +2081,7 @@ impl BangerNativeEngine {
             &lumen_lighting_packet,
             &virtual_shadow_packet,
             &direct_lighting_packet,
+            &material_closure_packet,
             &gaussian_splat_layer_manifest,
             &frame_submission_packet,
             &rhi_submit_packet,
@@ -2083,6 +2143,7 @@ impl BangerNativeEngine {
             lumen_lighting_packet,
             virtual_shadow_packet,
             direct_lighting_packet,
+            material_closure_packet,
             gaussian_splat_layer_manifest,
             frame_submission_packet,
             rhi_submit_packet,
@@ -3659,6 +3720,149 @@ fn build_direct_lighting_packet(
     }
 }
 
+fn build_material_closure_packet(
+    prepared: &MonsterPreparedCompute,
+    material_abi: &BangerNativeShaderMaterialAbi,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
+    direct_lighting_packet: &BangerNativeDirectLightingPacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+) -> BangerNativeMaterialClosurePacket {
+    let entries = direct_lighting_packet
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, direct_entry)| {
+            let lumen_entry = lumen_lighting_packet
+                .entries
+                .iter()
+                .find(|entry| entry.cluster_id == direct_entry.cluster_id);
+            let shadow_entry = virtual_shadow_packet
+                .entries
+                .iter()
+                .find(|entry| entry.cluster_id == direct_entry.cluster_id);
+            let material_bin_id = lumen_entry
+                .map(|entry| entry.material_bin_id)
+                .unwrap_or(index as u32);
+            let base_closure = material_base_closure(material_bin_id, direct_entry.light_kind);
+            let coating_closure = material_coating_closure(lumen_entry, shadow_entry);
+            let layer_count = material_layer_count(base_closure, coating_closure, direct_entry);
+            let texture_slot_base = material_texture_slot_base(material_abi, material_bin_id);
+            let texture_slot_count = material_texture_slot_count(material_abi, layer_count, direct_entry);
+            let roughness_quantized = material_roughness_quantized(lumen_entry, direct_entry);
+            let metallic_quantized = material_metallic_quantized(material_bin_id, direct_entry);
+            let opacity_quantized = material_opacity_quantized(shadow_entry, direct_entry);
+            let closure_stack_id = material_closure_stack_id(
+                direct_entry,
+                material_bin_id,
+                base_closure,
+                coating_closure,
+                layer_count,
+            );
+            let surface_cache_hash = lumen_entry
+                .map(|entry| entry.surface_cache_hash.clone())
+                .unwrap_or_else(|| direct_entry.contribution_hash.clone());
+            let closure_hash = material_closure_hash(
+                direct_entry,
+                &closure_stack_id,
+                material_bin_id,
+                base_closure,
+                coating_closure,
+                layer_count,
+                roughness_quantized,
+                metallic_quantized,
+                opacity_quantized,
+            );
+            let bsdf_hash = material_bsdf_hash(
+                &closure_hash,
+                direct_entry,
+                lumen_entry,
+                roughness_quantized,
+                metallic_quantized,
+            );
+            let texture_hash = material_texture_hash(
+                &closure_hash,
+                material_abi,
+                texture_slot_base,
+                texture_slot_count,
+                &surface_cache_hash,
+            );
+            let resolve_hash =
+                material_resolve_hash(&bsdf_hash, &texture_hash, direct_entry, shadow_entry);
+            let entry_hash = material_closure_entry_hash(
+                direct_entry,
+                &closure_stack_id,
+                &closure_hash,
+                &bsdf_hash,
+                &texture_hash,
+                &resolve_hash,
+                texture_slot_base,
+                texture_slot_count,
+            );
+            BangerNativeMaterialClosureEntry {
+                object_id: direct_entry.object_id.clone(),
+                cluster_id: direct_entry.cluster_id.clone(),
+                material_bin_id,
+                closure_stack_id,
+                base_closure,
+                coating_closure,
+                layer_count,
+                texture_slot_base,
+                texture_slot_count,
+                roughness_quantized,
+                metallic_quantized,
+                opacity_quantized,
+                light_cluster_id: direct_entry.light_cluster_id.clone(),
+                surface_cache_hash,
+                shadow_mask_hash: direct_entry.shadow_mask_hash.clone(),
+                closure_hash,
+                bsdf_hash,
+                texture_hash,
+                resolve_hash,
+                entry_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let closure_stack_hash = material_closure_stack_hash(&entries);
+    let bsdf_table_hash = material_bsdf_table_hash(&entries);
+    let texture_table_hash = material_texture_table_hash(&entries);
+    let resolve_hash = material_closure_resolve_hash(&entries);
+    let packet_hash = material_closure_packet_hash(
+        prepared,
+        material_abi,
+        lumen_lighting_packet,
+        virtual_shadow_packet,
+        direct_lighting_packet,
+        render_graph_compilation,
+        &closure_stack_hash,
+        &bsdf_table_hash,
+        &texture_table_hash,
+        &resolve_hash,
+        &entries,
+    );
+    BangerNativeMaterialClosurePacket {
+        schema: "forge.banger.material_closure_packet.v1",
+        authority: "banger_substrate_style_material_closure_stack_texture_table_resolve",
+        clean_room_basis: "local_unreal_sparse_substrate_material_closure_layering_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        direct_lighting_hash: direct_lighting_packet.packet_hash.clone(),
+        lumen_lighting_hash: lumen_lighting_packet.packet_hash.clone(),
+        virtual_shadow_hash: virtual_shadow_packet.packet_hash.clone(),
+        shader_material_abi_hash: material_abi.layout_hash.clone(),
+        render_graph_hash: render_graph_compilation.graph_hash.clone(),
+        closure_count: entries.len(),
+        layered_closure_count: entries.iter().filter(|entry| entry.layer_count > 1).count(),
+        texture_slot_count: entries.iter().map(|entry| entry.texture_slot_count).sum(),
+        hardware_ray_candidate_count: direct_lighting_packet.hardware_ray_candidate_count,
+        closure_stack_hash,
+        bsdf_table_hash,
+        texture_table_hash,
+        resolve_hash,
+        packet_hash,
+        entries,
+    }
+}
+
 fn build_gaussian_splat_layer_manifest(
     prepared: &MonsterPreparedCompute,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
@@ -4178,6 +4382,7 @@ fn build_frame_submission_packet(
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
+    material_closure_packet: &BangerNativeMaterialClosurePacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> BangerNativeFrameSubmissionPacket {
     let color_target_hash = frame_submission_target_hash(
@@ -4218,6 +4423,7 @@ fn build_frame_submission_packet(
                 lumen_lighting_packet,
                 virtual_shadow_packet,
                 direct_lighting_packet,
+                material_closure_packet,
                 gaussian_splat_layer_manifest,
             );
             let output_target_hash = frame_submission_command_output_hash(
@@ -4272,6 +4478,7 @@ fn build_frame_submission_packet(
         lumen_lighting_packet,
         virtual_shadow_packet,
         direct_lighting_packet,
+        material_closure_packet,
         &color_target_hash,
         &depth_target_hash,
         &render_target_state_hash,
@@ -5404,6 +5611,7 @@ fn frame_submission_command_input_hash(
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
+    material_closure_packet: &BangerNativeMaterialClosurePacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> String {
     let mut h = Sha256::new();
@@ -5423,6 +5631,8 @@ fn frame_submission_command_input_hash(
         h.update(virtual_shadow_packet.projection_hash.as_bytes());
         h.update(direct_lighting_packet.packet_hash.as_bytes());
         h.update(direct_lighting_packet.resolve_hash.as_bytes());
+        h.update(material_closure_packet.packet_hash.as_bytes());
+        h.update(material_closure_packet.resolve_hash.as_bytes());
     }
     if pass.stage == "shadow_depth" {
         h.update(virtual_shadow_packet.packet_hash.as_bytes());
@@ -5430,6 +5640,10 @@ fn frame_submission_command_input_hash(
         h.update(direct_lighting_packet.shadow_mask_hash.as_bytes());
     }
     if pass.stage == "material_bind" {
+        h.update(material_closure_packet.packet_hash.as_bytes());
+        h.update(material_closure_packet.closure_stack_hash.as_bytes());
+        h.update(material_closure_packet.bsdf_table_hash.as_bytes());
+        h.update(material_closure_packet.texture_table_hash.as_bytes());
         h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
         h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
     }
@@ -5540,6 +5754,7 @@ fn frame_submission_packet_hash(
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
+    material_closure_packet: &BangerNativeMaterialClosurePacket,
     color_target_hash: &str,
     depth_target_hash: &str,
     render_target_state_hash: &str,
@@ -5558,6 +5773,9 @@ fn frame_submission_packet_hash(
     h.update(lumen_lighting_packet.packet_hash.as_bytes());
     h.update(virtual_shadow_packet.packet_hash.as_bytes());
     h.update(direct_lighting_packet.packet_hash.as_bytes());
+    h.update(material_closure_packet.packet_hash.as_bytes());
+    h.update(material_closure_packet.closure_stack_hash.as_bytes());
+    h.update(material_closure_packet.resolve_hash.as_bytes());
     h.update(color_target_hash.as_bytes());
     h.update(depth_target_hash.as_bytes());
     h.update(render_target_state_hash.as_bytes());
@@ -7057,6 +7275,299 @@ fn direct_lighting_packet_hash(
     h.update(sample_sequence_hash.as_bytes());
     h.update(shadow_mask_hash.as_bytes());
     h.update(denoiser_hash.as_bytes());
+    h.update(resolve_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn material_base_closure(material_bin_id: u32, light_kind: &str) -> &'static str {
+    if light_kind == "hardware_ray_megalight" {
+        "thin_surface_specular_diffuse"
+    } else if material_bin_id % 5 == 0 {
+        "subsurface_diffuse"
+    } else if material_bin_id % 3 == 0 {
+        "metallic_ggx"
+    } else {
+        "dielectric_ggx"
+    }
+}
+
+fn material_coating_closure(
+    lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+    shadow_entry: Option<&BangerNativeVirtualShadowEntry>,
+) -> &'static str {
+    if shadow_entry
+        .map(|entry| entry.cache_state == "persistent_cache_hit")
+        .unwrap_or(false)
+    {
+        "clearcoat_cached_shadow"
+    } else if lumen_entry
+        .map(|entry| entry.reflection_ray_count > entry.diffuse_ray_count / 2)
+        .unwrap_or(false)
+    {
+        "anisotropic_reflection_lobe"
+    } else {
+        "matte_energy_preserving_lobe"
+    }
+}
+
+fn material_layer_count(
+    base_closure: &str,
+    coating_closure: &str,
+    direct_entry: &BangerNativeDirectLightingEntry,
+) -> u32 {
+    let base_layers = if base_closure == "subsurface_diffuse" { 2 } else { 1 };
+    let coating_layers = if coating_closure == "matte_energy_preserving_lobe" { 1 } else { 2 };
+    let ray_layers = if direct_entry.ray_tracing_candidate { 1 } else { 0 };
+    (base_layers + coating_layers + ray_layers).clamp(1, 5)
+}
+
+fn material_texture_slot_base(material_abi: &BangerNativeShaderMaterialAbi, material_bin_id: u32) -> u32 {
+    material_abi
+        .texture_binding_base
+        .saturating_add(material_bin_id % material_abi.max_texture_slots.max(1))
+}
+
+fn material_texture_slot_count(
+    material_abi: &BangerNativeShaderMaterialAbi,
+    layer_count: u32,
+    direct_entry: &BangerNativeDirectLightingEntry,
+) -> u32 {
+    let ray_bonus = u32::from(direct_entry.ray_tracing_candidate);
+    layer_count
+        .saturating_add(ray_bonus)
+        .clamp(1, material_abi.max_texture_slots.max(1))
+}
+
+fn material_roughness_quantized(
+    lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+    direct_entry: &BangerNativeDirectLightingEntry,
+) -> u16 {
+    let rays = lumen_entry
+        .map(|entry| entry.diffuse_ray_count.saturating_add(entry.reflection_ray_count))
+        .unwrap_or(direct_entry.sample_count);
+    (rays % 1024).saturating_mul(64).min(u16::MAX as u32) as u16
+}
+
+fn material_metallic_quantized(
+    material_bin_id: u32,
+    direct_entry: &BangerNativeDirectLightingEntry,
+) -> u16 {
+    let base = if direct_entry.light_kind == "hardware_ray_megalight" {
+        384
+    } else {
+        material_bin_id % 512
+    };
+    base.saturating_mul(128).min(u16::MAX as u32) as u16
+}
+
+fn material_opacity_quantized(
+    shadow_entry: Option<&BangerNativeVirtualShadowEntry>,
+    direct_entry: &BangerNativeDirectLightingEntry,
+) -> u16 {
+    let occlusion = shadow_entry
+        .map(|entry| entry.ray_budget / 128)
+        .unwrap_or(direct_entry.sample_count / 128)
+        .min(255);
+    u16::MAX.saturating_sub((occlusion as u16).saturating_mul(64))
+}
+
+fn material_closure_stack_id(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    material_bin_id: u32,
+    base_closure: &str,
+    coating_closure: &str,
+    layer_count: u32,
+) -> String {
+    hash_text_hex(
+        "forge.banger.material_closure.stack_id.v1",
+        &format!(
+            "{}:{}:{}:{}:{}:{}",
+            direct_entry.cluster_id,
+            direct_entry.light_cluster_id,
+            material_bin_id,
+            base_closure,
+            coating_closure,
+            layer_count
+        ),
+    )
+}
+
+fn material_closure_hash(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    closure_stack_id: &str,
+    material_bin_id: u32,
+    base_closure: &str,
+    coating_closure: &str,
+    layer_count: u32,
+    roughness_quantized: u16,
+    metallic_quantized: u16,
+    opacity_quantized: u16,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.closure.v1\0");
+    h.update(direct_entry.entry_hash.as_bytes());
+    h.update(closure_stack_id.as_bytes());
+    h.update(material_bin_id.to_le_bytes());
+    h.update(base_closure.as_bytes());
+    h.update(coating_closure.as_bytes());
+    h.update(layer_count.to_le_bytes());
+    h.update(roughness_quantized.to_le_bytes());
+    h.update(metallic_quantized.to_le_bytes());
+    h.update(opacity_quantized.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn material_bsdf_hash(
+    closure_hash: &str,
+    direct_entry: &BangerNativeDirectLightingEntry,
+    lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+    roughness_quantized: u16,
+    metallic_quantized: u16,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.bsdf.v1\0");
+    h.update(closure_hash.as_bytes());
+    h.update(direct_entry.contribution_hash.as_bytes());
+    h.update(roughness_quantized.to_le_bytes());
+    h.update(metallic_quantized.to_le_bytes());
+    if let Some(lumen_entry) = lumen_entry {
+        h.update(lumen_entry.surface_cache_hash.as_bytes());
+        h.update(lumen_entry.trace_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn material_texture_hash(
+    closure_hash: &str,
+    material_abi: &BangerNativeShaderMaterialAbi,
+    texture_slot_base: u32,
+    texture_slot_count: u32,
+    surface_cache_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.texture_table_entry.v1\0");
+    h.update(closure_hash.as_bytes());
+    h.update(material_abi.layout_hash.as_bytes());
+    h.update(texture_slot_base.to_le_bytes());
+    h.update(texture_slot_count.to_le_bytes());
+    h.update(surface_cache_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn material_resolve_hash(
+    bsdf_hash: &str,
+    texture_hash: &str,
+    direct_entry: &BangerNativeDirectLightingEntry,
+    shadow_entry: Option<&BangerNativeVirtualShadowEntry>,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.resolve.v1\0");
+    h.update(bsdf_hash.as_bytes());
+    h.update(texture_hash.as_bytes());
+    h.update(direct_entry.resolve_tile[0].to_le_bytes());
+    h.update(direct_entry.resolve_tile[1].to_le_bytes());
+    h.update(direct_entry.resolve_tile[2].to_le_bytes());
+    h.update(direct_entry.resolve_tile[3].to_le_bytes());
+    if let Some(shadow_entry) = shadow_entry {
+        h.update(shadow_entry.projection_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn material_closure_entry_hash(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    closure_stack_id: &str,
+    closure_hash: &str,
+    bsdf_hash: &str,
+    texture_hash: &str,
+    resolve_hash: &str,
+    texture_slot_base: u32,
+    texture_slot_count: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.entry.v1\0");
+    h.update(direct_entry.entry_hash.as_bytes());
+    h.update(closure_stack_id.as_bytes());
+    h.update(closure_hash.as_bytes());
+    h.update(bsdf_hash.as_bytes());
+    h.update(texture_hash.as_bytes());
+    h.update(resolve_hash.as_bytes());
+    h.update(texture_slot_base.to_le_bytes());
+    h.update(texture_slot_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn material_closure_stack_hash(entries: &[BangerNativeMaterialClosureEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.stack_table.v1\0");
+    for entry in entries {
+        h.update(entry.closure_stack_id.as_bytes());
+        h.update(entry.closure_hash.as_bytes());
+        h.update(entry.layer_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn material_bsdf_table_hash(entries: &[BangerNativeMaterialClosureEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.bsdf_table.v1\0");
+    for entry in entries {
+        h.update(entry.bsdf_hash.as_bytes());
+        h.update(entry.roughness_quantized.to_le_bytes());
+        h.update(entry.metallic_quantized.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn material_texture_table_hash(entries: &[BangerNativeMaterialClosureEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.texture_table.v1\0");
+    for entry in entries {
+        h.update(entry.texture_hash.as_bytes());
+        h.update(entry.texture_slot_base.to_le_bytes());
+        h.update(entry.texture_slot_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn material_closure_resolve_hash(entries: &[BangerNativeMaterialClosureEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.resolve_table.v1\0");
+    for entry in entries {
+        h.update(entry.resolve_hash.as_bytes());
+        h.update(entry.shadow_mask_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn material_closure_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    material_abi: &BangerNativeShaderMaterialAbi,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
+    direct_lighting_packet: &BangerNativeDirectLightingPacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    closure_stack_hash: &str,
+    bsdf_table_hash: &str,
+    texture_table_hash: &str,
+    resolve_hash: &str,
+    entries: &[BangerNativeMaterialClosureEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(material_abi.layout_hash.as_bytes());
+    h.update(lumen_lighting_packet.packet_hash.as_bytes());
+    h.update(virtual_shadow_packet.packet_hash.as_bytes());
+    h.update(direct_lighting_packet.packet_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(closure_stack_hash.as_bytes());
+    h.update(bsdf_table_hash.as_bytes());
+    h.update(texture_table_hash.as_bytes());
     h.update(resolve_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
@@ -10543,6 +11054,7 @@ fn render_handoff_hash(
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
+    material_closure_packet: &BangerNativeMaterialClosurePacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
@@ -10588,6 +11100,11 @@ fn render_handoff_hash(
     h.update(direct_lighting_packet.packet_hash.as_bytes());
     h.update(direct_lighting_packet.sample_sequence_hash.as_bytes());
     h.update(direct_lighting_packet.resolve_hash.as_bytes());
+    h.update(material_closure_packet.packet_hash.as_bytes());
+    h.update(material_closure_packet.closure_stack_hash.as_bytes());
+    h.update(material_closure_packet.bsdf_table_hash.as_bytes());
+    h.update(material_closure_packet.texture_table_hash.as_bytes());
+    h.update(material_closure_packet.resolve_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
     h.update(frame_submission_packet.submission_hash.as_bytes());
@@ -11980,6 +12497,68 @@ mod tests {
                     "hardware_ray_megalight"
                         | "stochastic_many_light"
                         | "clustered_deferred_light"
+                )));
+        assert_eq!(
+            response.material_closure_packet.schema,
+            "forge.banger.material_closure_packet.v1"
+        );
+        assert_eq!(
+            response.material_closure_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.material_closure_packet.direct_lighting_hash,
+            response.direct_lighting_packet.packet_hash
+        );
+        assert_eq!(
+            response.material_closure_packet.lumen_lighting_hash,
+            response.lumen_lighting_packet.packet_hash
+        );
+        assert_eq!(
+            response.material_closure_packet.virtual_shadow_hash,
+            response.virtual_shadow_packet.packet_hash
+        );
+        assert_eq!(
+            response.material_closure_packet.shader_material_abi_hash,
+            response.shader_compiler_ticket.material_abi.layout_hash
+        );
+        assert_eq!(
+            response.material_closure_packet.render_graph_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert_eq!(
+            response.material_closure_packet.closure_count,
+            response.material_closure_packet.entries.len()
+        );
+        assert!(response.material_closure_packet.layered_closure_count > 0);
+        assert!(response.material_closure_packet.texture_slot_count > 0);
+        assert_eq!(response.material_closure_packet.closure_stack_hash.len(), 64);
+        assert_eq!(response.material_closure_packet.bsdf_table_hash.len(), 64);
+        assert_eq!(response.material_closure_packet.texture_table_hash.len(), 64);
+        assert_eq!(response.material_closure_packet.resolve_hash.len(), 64);
+        assert_eq!(response.material_closure_packet.packet_hash.len(), 64);
+        assert!(response
+            .material_closure_packet
+            .clean_room_basis
+            .contains("local_unreal_sparse_substrate"));
+        assert!(response
+            .material_closure_packet
+            .entries
+            .iter()
+            .all(|entry| entry.closure_stack_id.len() == 64
+                && entry.layer_count >= 1
+                && entry.texture_slot_count >= 1
+                && entry.closure_hash.len() == 64
+                && entry.bsdf_hash.len() == 64
+                && entry.texture_hash.len() == 64
+                && entry.resolve_hash.len() == 64
+                && entry.entry_hash.len() == 64
+                && matches!(
+                    entry.base_closure,
+                    "thin_surface_specular_diffuse"
+                        | "subsurface_diffuse"
+                        | "metallic_ggx"
+                        | "dielectric_ggx"
                 )));
         assert_eq!(
             response.gaussian_splat_layer_manifest.schema,
