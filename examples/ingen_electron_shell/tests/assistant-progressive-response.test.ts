@@ -54,6 +54,8 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("AGENT_ACTION_FORCED_CONTINUATION v1");
     expect(mainSource).toContain("applyDeterministicOrganizationFallback");
     expect(mainSource).toContain("deterministicOrganizationRequestsFromList");
+    expect(mainSource).toContain('`${visibleText ? `${visibleText}\\n\\n` : ""}${eventCommand}\\n\\n${resultText}`');
+    expect(mainSource).toContain("const fallbackMessage = await applyDeterministicOrganizationFallback");
     expect(mainSource).toContain("params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage))");
     expect(mainSource).toContain("assistantMessage = await executeAssistantAgentActionLoop({");
     expect(agentActionLoopSource).toContain("let markerIndex = text.indexOf(AGENT_ACTION_JSON_PREFIX)");

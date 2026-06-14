@@ -5219,12 +5219,8 @@ function agentActionResultSummary(result: AgentActionResult): string {
 function renderExecutedAgentActionText(text: string, extracted: ExtractedAgentAction, result: AgentActionResult): string {
   const visibleText = removeAgentActionJsonFragment(text, extracted);
   const eventCommand = agentActionEventCommandForRequest(extracted.request);
-  return [
-    visibleText,
-    eventCommand,
-    "",
-    agentActionResultSummary(result)
-  ].filter((part) => part.length > 0).join("\n").trim();
+  const resultText = agentActionResultSummary(result);
+  return `${visibleText ? `${visibleText}\n\n` : ""}${eventCommand}\n\n${resultText}`.trim();
 }
 
 function compactAgentActionResult(result: AgentActionResult): string {
@@ -5388,12 +5384,7 @@ async function applyDeterministicOrganizationFallback(params: {
     const result = await executeAgentActionRequest(agentActionHostConfig(), request);
     assistantMessage = {
       ...assistantMessage,
-      text: [
-        assistantMessage.text,
-        agentActionEventCommandForRequest(request),
-        "",
-        agentActionResultSummary(result)
-      ].filter((part) => part.length > 0).join("\n").trim(),
+      text: `${assistantMessage.text.trimEnd()}\n\n${agentActionEventCommandForRequest(request)}\n\n${agentActionResultSummary(result)}`.trim(),
       proofHash: hashJson({ deterministicAgentActionFallback: true, previousProofHash: assistantMessage.proofHash, request, result })
     };
     if (!result.accepted) {
@@ -5428,6 +5419,18 @@ async function executeAssistantAgentActionLoop(params: {
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
     if (!result.accepted) {
       return assistantMessage;
+    }
+    if (agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result)) {
+      const fallbackMessage = await applyDeterministicOrganizationFallback({
+        assistantMessage,
+        originalUserText: params.originalUserText,
+        request: extracted.request,
+        result
+      });
+      if (fallbackMessage.text !== assistantMessage.text) {
+        params.commitTranscript(transcriptWithMessage(params.baseTranscript, fallbackMessage));
+        return fallbackMessage;
+      }
     }
     const continuationLiveSink = createAssistantLiveTextSink({
       baseTranscript: params.baseTranscript,
