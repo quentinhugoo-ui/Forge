@@ -254,6 +254,7 @@ let widgetWindowBoundsAnimationTimer: ReturnType<typeof setInterval> | null = nu
 let widgetWindowHitRegions: Electron.Rectangle[] = [];
 let widgetWindowClickThrough = false;
 let widgetTaskbarOriginalState: number | null = null;
+let widgetTaskbarOriginalRegistryByte: number | null = null;
 let widgetTaskbarHidden = false;
 let nativeWebExplorerView: BrowserView | null = null;
 let nativeWebExplorerOwner: BrowserWindow | null = null;
@@ -10633,13 +10634,16 @@ type WindowsTaskbarStateProbe = {
   state: number;
   target: number;
   taskbarHandleFound: boolean;
+  registryPathFound: boolean;
+  registryByte: number;
 };
 
-function runWindowsTaskbarAutoHideProbe(targetState?: number): WindowsTaskbarStateProbe | null {
+function runWindowsTaskbarAutoHideProbe(targetState?: number, targetRegistryByte?: number): WindowsTaskbarStateProbe | null {
   if (process.platform !== "win32") {
     return null;
   }
   const desiredState = targetState === undefined ? "$null" : String(Math.max(0, Math.round(targetState)));
+  const desiredRegistryByte = targetRegistryByte === undefined ? "$null" : String(Math.max(0, Math.min(255, Math.round(targetRegistryByte))));
   const script = `
 $ErrorActionPreference = "Stop"
 $source = @"
@@ -10666,12 +10670,38 @@ public static class InGenTaskbarState {
   public static extern UIntPtr SHAppBarMessage(UInt32 dwMessage, ref APPBARDATA pData);
   [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
   public static extern IntPtr FindWindow(String lpClassName, String lpWindowName);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  public static extern IntPtr SendMessageTimeout(IntPtr hWnd, UInt32 Msg, UIntPtr wParam, String lParam, UInt32 fuFlags, UInt32 uTimeout, out UIntPtr lpdwResult);
   public const UInt32 ABM_GETSTATE = 0x00000004;
   public const UInt32 ABM_SETSTATE = 0x0000000A;
   public const Int32 ABS_AUTOHIDE = 0x0000001;
+  public static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
+  public const UInt32 WM_SETTINGCHANGE = 0x001A;
+  public const UInt32 SMTO_ABORTIFHUNG = 0x0002;
 }
 "@
 Add-Type -TypeDefinition $source
+function Send-InGenTraySettingsChanged {
+  $result = [UIntPtr]::Zero
+  [void][InGenTaskbarState]::SendMessageTimeout([InGenTaskbarState]::HWND_BROADCAST, [InGenTaskbarState]::WM_SETTINGCHANGE, [UIntPtr]::Zero, "TraySettings", [InGenTaskbarState]::SMTO_ABORTIFHUNG, 1500, [ref]$result)
+}
+$registryPath = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StuckRects3"
+$registryFound = Test-Path -LiteralPath $registryPath
+$registryByte = -1
+$desiredRegistryByte = ${desiredRegistryByte}
+if ($registryFound) {
+  $settings = [byte[]](Get-ItemProperty -LiteralPath $registryPath -Name Settings).Settings
+  if ($settings.Length -gt 8) {
+    $registryByte = [int]$settings[8]
+    if ($null -ne $desiredRegistryByte) {
+      $settings[8] = [byte]$desiredRegistryByte
+      Set-ItemProperty -LiteralPath $registryPath -Name Settings -Value $settings
+      $registryByte = [int]$settings[8]
+      Send-InGenTraySettingsChanged
+      Start-Sleep -Milliseconds 180
+    }
+  }
+}
 $taskbarHandle = [InGenTaskbarState]::FindWindow("Shell_TrayWnd", $null)
 $data = New-Object InGenTaskbarState+APPBARDATA
 $data.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][InGenTaskbarState+APPBARDATA])
@@ -10689,7 +10719,13 @@ if ($null -ne $desiredState) {
   $data.hWnd = $taskbarHandle
   $target = [int]([InGenTaskbarState]::SHAppBarMessage([InGenTaskbarState]::ABM_GETSTATE, [ref]$data).ToUInt32())
 }
-@{ ok = $true; state = $current; target = $target; taskbarHandleFound = ($taskbarHandle -ne [IntPtr]::Zero) } | ConvertTo-Json -Compress
+if ($registryFound) {
+  $settings = [byte[]](Get-ItemProperty -LiteralPath $registryPath -Name Settings).Settings
+  if ($settings.Length -gt 8) {
+    $registryByte = [int]$settings[8]
+  }
+}
+@{ ok = $true; state = $current; target = $target; taskbarHandleFound = ($taskbarHandle -ne [IntPtr]::Zero); registryPathFound = $registryFound; registryByte = $registryByte } | ConvertTo-Json -Compress
 `;
   const encoded = Buffer.from(script, "utf16le").toString("base64");
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], {
@@ -10708,13 +10744,17 @@ if ($null -ne $desiredState) {
       parsed.ok === true &&
       typeof parsed.state === "number" &&
       typeof parsed.target === "number" &&
-      typeof parsed.taskbarHandleFound === "boolean"
+      typeof parsed.taskbarHandleFound === "boolean" &&
+      typeof parsed.registryPathFound === "boolean" &&
+      typeof parsed.registryByte === "number"
     ) {
       return {
         ok: true,
         state: parsed.state,
         target: parsed.target,
-        taskbarHandleFound: parsed.taskbarHandleFound
+        taskbarHandleFound: parsed.taskbarHandleFound,
+        registryPathFound: parsed.registryPathFound,
+        registryByte: parsed.registryByte
       };
     }
   } catch (error) {
@@ -10734,18 +10774,31 @@ function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boole
   if (widgetTaskbarOriginalState === null) {
     widgetTaskbarOriginalState = current.target;
   }
+  if (widgetTaskbarOriginalRegistryByte === null && current.registryPathFound && current.registryByte >= 0) {
+    widgetTaskbarOriginalRegistryByte = current.registryByte;
+  }
   const targetState = restoreOriginal && widgetTaskbarOriginalState !== null
     ? widgetTaskbarOriginalState
     : hidden
       ? current.target | WINDOWS_TASKBAR_AUTOHIDE_FLAG
       : current.target & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG;
-  const result = runWindowsTaskbarAutoHideProbe(targetState);
+  const targetRegistryByte = restoreOriginal && widgetTaskbarOriginalRegistryByte !== null
+    ? widgetTaskbarOriginalRegistryByte
+    : current.registryPathFound && current.registryByte >= 0
+      ? hidden
+        ? current.registryByte | WINDOWS_TASKBAR_AUTOHIDE_FLAG
+        : current.registryByte & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG
+      : undefined;
+  const result = runWindowsTaskbarAutoHideProbe(targetState, targetRegistryByte);
   if (!result) {
     return false;
   }
-  widgetTaskbarHidden = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0;
+  widgetTaskbarHidden = result.registryPathFound && result.registryByte >= 0
+    ? (result.registryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0
+    : (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0;
   if (restoreOriginal) {
     widgetTaskbarOriginalState = null;
+    widgetTaskbarOriginalRegistryByte = null;
     widgetTaskbarHidden = false;
   }
   return true;
