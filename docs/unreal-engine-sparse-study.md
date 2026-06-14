@@ -52,6 +52,8 @@ Clean-room extraction applied in Forge:
 - Banger implementation: `BangerNativeNaniteSecondLayerPacket` derives those contracts from GPU scene primitives, meshlet visibility and resource-table residency.
 - Lumen lesson: surface cache pages, screen probes, radiance cache tiles and trace policy must be scheduled as one lighting contract, not scattered post-process state.
 - Banger implementation: `BangerNativeLumenLightingPacket` binds Nanite pages, radiance probe pages and render graph lighting passes into deterministic GI/reflection hashes.
+- Virtual shadow map lesson: shadow page marking, persistent cache state, light-grid cells and projection tiles must be explicit before shadow depth submission.
+- Banger implementation: `BangerNativeVirtualShadowPacket` derives shadow pages from Lumen/Nanite visibility and binds page table, cache, invalidation, projection and light-grid hashes.
 
 Clean-room rule:
 

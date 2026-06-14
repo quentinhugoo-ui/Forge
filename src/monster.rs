@@ -10115,6 +10115,7 @@ fn native_tandem_artifacts_for_route(
                     "voxel_page",
                     "meshlet_page",
                     "surfel_radiance_cache",
+                    "shadow_page",
                     "material_payload",
                 ] {
                     out.push(native_render_artifact_for_output(route, output, kind));
@@ -10255,6 +10256,7 @@ fn native_render_artifact_layout(kind: &str) -> &'static str {
         "voxel_page" => "nanovdb_like_upper_internal_node_16x16x16_u8_occupancy_mask",
         "meshlet_page" => "gpu_driven_meshlet_page_64_vertices_cone_bounds_lod_error",
         "surfel_radiance_cache" => "multi_bounce_surfel_radiance_cache_32_records_sh2",
+        "shadow_page" => "virtual_shadow_depth_page_128x128_u16_moment_cache",
         "material_payload" => "pbr_material_variant_payload_f32_albedo_roughness_metallic_emissive",
         _ => "native_render_artifact_page",
     }
@@ -10266,6 +10268,7 @@ fn native_render_cache_class(kind: &str) -> &'static str {
         "voxel_page" => "sparse_vdb_internal_residency_cache",
         "meshlet_page" => "gpu_driven_meshlet_culling_cache",
         "surfel_radiance_cache" => "multi_bounce_surfel_radiance_cache",
+        "shadow_page" => "virtual_shadow_page_table_cache",
         "material_payload" => "material_variant_payload_cache",
         _ => "native_render_cache",
     }
@@ -10276,6 +10279,7 @@ fn native_render_residency_policy(kind: &str) -> &'static str {
         "sdf_brick" | "voxel_page" => "hash_addressed_sparse_vdb_pages_lru_resident_by_camera_brick",
         "meshlet_page" => "gpu_visible_meshlet_pages_resident_by_lod_error_and_frustum",
         "surfel_radiance_cache" => "radiance_records_resident_by_probe_cell_and_temporal_epoch",
+        "shadow_page" => "virtual_shadow_pages_resident_by_light_grid_and_page_marking",
         "material_payload" => "material_variants_resident_by_shader_hash_and_surface_set",
         _ => "hash_addressed_native_render_pages",
     }
@@ -10286,6 +10290,7 @@ fn native_render_culling_policy(kind: &str) -> &'static str {
         "sdf_brick" | "voxel_page" => "hierarchical_bbox_empty_tile_skip_distance_band",
         "meshlet_page" => "sphere_cone_frustum_occlusion_lod_error_culling",
         "surfel_radiance_cache" => "normal_cone_visibility_and_bounce_energy_threshold",
+        "shadow_page" => "light_grid_page_marking_receiver_depth_projection",
         "material_payload" => "variant_key_selects_pbr_payload_without_geometry_cull",
         _ => "renderer_domain_culling_policy",
     }
@@ -10294,6 +10299,7 @@ fn native_render_culling_policy(kind: &str) -> &'static str {
 fn native_render_artifact_page_size(kind: &str) -> usize {
     match kind {
         "material_payload" => 256,
+        "shadow_page" => 4 * 1024,
         "sdf_brick" => 2 * 1024,
         "voxel_page" => 4 * 1024,
         _ => 8 * 1024,
@@ -10311,6 +10317,7 @@ fn native_render_artifact_bytes(
         "voxel_page" => native_voxel_page_bytes(route, output),
         "meshlet_page" => native_meshlet_page_bytes(route, output),
         "surfel_radiance_cache" => native_surfel_radiance_cache_bytes(route, output),
+        "shadow_page" => native_shadow_page_bytes(route, output),
         "material_payload" => native_material_payload_bytes(route, output),
         _ => output.output_hash.as_bytes().to_vec(),
     };
@@ -10374,6 +10381,7 @@ fn native_render_cache_kind_code(kind: &str) -> u32 {
         "voxel_page" => 0x56444249,
         "meshlet_page" => 0x4d53484c,
         "surfel_radiance_cache" => 0x5352464c,
+        "shadow_page" => 0x56534d50,
         "material_payload" => 0x4d415456,
         _ => 0,
     }
@@ -10384,6 +10392,7 @@ fn native_render_cache_lod_count(kind: &str) -> u32 {
         "meshlet_page" => 4,
         "sdf_brick" | "voxel_page" => 3,
         "surfel_radiance_cache" => 2,
+        "shadow_page" => 5,
         "material_payload" => 1,
         _ => 1,
     }
@@ -10395,6 +10404,7 @@ fn native_render_cache_record_count(kind: &str) -> u32 {
         "voxel_page" => 4096,
         "meshlet_page" => 64,
         "surfel_radiance_cache" => 32,
+        "shadow_page" => 128,
         "material_payload" => 4,
         _ => 1,
     }
@@ -10406,6 +10416,7 @@ fn native_render_cache_page_flags(kind: &str) -> u32 {
         "voxel_page" => 0b0010_0111,
         "meshlet_page" => 0b0100_1011,
         "surfel_radiance_cache" => 0b1000_1101,
+        "shadow_page" => 0b0110_1111,
         "material_payload" => 0b0001_0001,
         _ => 0,
     }
@@ -10416,6 +10427,7 @@ fn native_render_cache_bounds(kind: &str, seed: u64) -> [f32; 8] {
     match kind {
         "meshlet_page" => [-0.5 - jitter, -0.5 - jitter, -0.25, 0.5 + jitter, 0.5 + jitter, 0.25, 0.02, 0.001],
         "surfel_radiance_cache" => [-0.45, -0.45, -0.45, 0.45, 0.45, 0.45, 2.0, 0.05],
+        "shadow_page" => [-1.0 - jitter, -1.0 - jitter, 0.0, 1.0 + jitter, 1.0 + jitter, 1.0, 5.0, 0.02],
         "material_payload" => [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, jitter, 1.0],
         _ => [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 3.0, jitter],
     }
@@ -10506,6 +10518,22 @@ fn native_surfel_radiance_cache_bytes(route: &MonsterEngineRoute, output: &Monst
         let sh2 = pz * bounce2 * 0.4886025;
         let sh3 = px * bounce2 * 0.4886025;
         for value in [px, py, pz, px.signum(), py.signum(), pz.signum(), bounce1, bounce2, bounce3, sh0, sh1, sh2, sh3, u, v] {
+            push_f32(&mut out, value);
+        }
+    }
+    out
+}
+
+fn native_shadow_page_bytes(route: &MonsterEngineRoute, output: &MonsterOutputArtifact) -> Vec<u8> {
+    let seed = native_render_seed(route, output, "shadow_page");
+    let mut out = Vec::with_capacity(128 * 4 * 4);
+    for page in 0..128u64 {
+        let h = sha256_u64(&seed.wrapping_add(page.wrapping_mul(17)).to_le_bytes());
+        let map_id = (h & 0x1fff) as f32;
+        let clipmap = ((h >> 13) & 0x7) as f32;
+        let page_x = ((h >> 16) & 0xfff) as f32;
+        let page_y = ((h >> 28) & 0xfff) as f32;
+        for value in [map_id, clipmap, page_x, page_y] {
             push_f32(&mut out, value);
         }
     }
@@ -35117,7 +35145,7 @@ fn monster_prepared_manifest_keeps_native_render_outputs_compact() {
     assert_eq!(prepared.native_ready_outputs.len(), 1);
     assert_eq!(prepared.native_ready_outputs[0].handoff, "sdf");
     assert_eq!(prepared.native_ready_output_hashes().len(), 1);
-    assert_eq!(prepared.native_tandem_artifacts.len(), 5);
+    assert_eq!(prepared.native_tandem_artifacts.len(), 6);
     let kinds = prepared
         .native_tandem_artifacts
         .iter()
@@ -35127,6 +35155,7 @@ fn monster_prepared_manifest_keeps_native_render_outputs_compact() {
     assert!(kinds.contains(&"voxel_page"));
     assert!(kinds.contains(&"meshlet_page"));
     assert!(kinds.contains(&"surfel_radiance_cache"));
+    assert!(kinds.contains(&"shadow_page"));
     assert!(kinds.contains(&"material_payload"));
     for artifact in &prepared.native_tandem_artifacts {
         assert_eq!(artifact.schema, "forge.monster.native_tandem.artifact.v1");
@@ -35138,6 +35167,7 @@ fn monster_prepared_manifest_keeps_native_render_outputs_compact() {
                 | "sparse_vdb_internal_residency_cache"
                 | "gpu_driven_meshlet_culling_cache"
                 | "multi_bounce_surfel_radiance_cache"
+                | "virtual_shadow_page_table_cache"
                 | "material_variant_payload_cache"
         ));
         assert_eq!(artifact.renderer_cache_hash.len(), 64);
@@ -35169,6 +35199,10 @@ fn monster_prepared_manifest_keeps_native_render_outputs_compact() {
         .native_tandem_artifacts
         .iter()
         .any(|artifact| artifact.layout == "multi_bounce_surfel_radiance_cache_32_records_sh2"));
+    assert!(prepared
+        .native_tandem_artifacts
+        .iter()
+        .any(|artifact| artifact.layout == "virtual_shadow_depth_page_128x128_u16_moment_cache"));
     assert!(prepared
         .native_tandem_artifacts
         .iter()
@@ -35221,6 +35255,13 @@ fn monster_promotes_native_render_pages_to_production_renderer_caches() {
     assert!(radiance.layout.contains("multi_bounce"));
     assert!(radiance.renderer_residency_policy.contains("temporal_epoch"));
     assert!(radiance.byte_len >= 32 * 15 * 4);
+
+    let shadow = find("shadow_page");
+    assert_eq!(shadow.renderer_cache_class, "virtual_shadow_page_table_cache");
+    assert!(shadow.layout.contains("virtual_shadow_depth"));
+    assert!(shadow.renderer_residency_policy.contains("light_grid"));
+    assert!(shadow.renderer_culling_policy.contains("page_marking"));
+    assert!(shadow.byte_len >= 128 * 4 * 4);
 
     let material = find("material_payload");
     assert_eq!(material.renderer_cache_class, "material_variant_payload_cache");

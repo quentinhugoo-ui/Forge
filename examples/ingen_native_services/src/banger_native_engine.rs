@@ -140,6 +140,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub raster_work_queue: BangerNativeRasterWorkQueue,
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
     pub lumen_lighting_packet: BangerNativeLumenLightingPacket,
+    pub virtual_shadow_packet: BangerNativeVirtualShadowPacket,
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
     pub frame_submission_packet: BangerNativeFrameSubmissionPacket,
     pub rhi_submit_packet: BangerNativeRhiSubmitPacket,
@@ -985,6 +986,54 @@ pub struct BangerNativeLumenLightingEntry {
     pub surface_cache_hash: String,
     pub screen_probe_hash: String,
     pub trace_hash: String,
+    pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualShadowPacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub nanite_second_layer_hash: String,
+    pub lumen_lighting_hash: String,
+    pub radiance_schedule_hash: String,
+    pub render_graph_hash: String,
+    pub virtual_page_count: usize,
+    pub cached_page_count: usize,
+    pub invalidated_page_count: usize,
+    pub light_page_count: usize,
+    pub shadow_ray_budget: u64,
+    pub page_table_hash: String,
+    pub cache_hash: String,
+    pub invalidation_hash: String,
+    pub projection_hash: String,
+    pub light_grid_hash: String,
+    pub packet_hash: String,
+    pub entries: Vec<BangerNativeVirtualShadowEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualShadowEntry {
+    pub object_id: String,
+    pub cluster_id: String,
+    pub shadow_page_id: String,
+    pub source_surface_page_id: String,
+    pub virtual_light_id: String,
+    pub virtual_map_id: u32,
+    pub clipmap_level: u32,
+    pub page_coord: [u32; 3],
+    pub resolution: u32,
+    pub cache_state: &'static str,
+    pub invalidation_reason: &'static str,
+    pub light_grid_cell: [u32; 3],
+    pub projection_tile: [u32; 4],
+    pub ray_budget: u32,
+    pub page_table_hash: String,
+    pub cache_hash: String,
+    pub projection_hash: String,
     pub entry_hash: String,
 }
 
@@ -1837,6 +1886,13 @@ impl BangerNativeEngine {
             &radiance_schedule_manifest,
             &render_graph_compilation,
         );
+        let virtual_shadow_packet = build_virtual_shadow_packet(
+            &prepared,
+            &nanite_second_layer_packet,
+            &lumen_lighting_packet,
+            &radiance_schedule_manifest,
+            &render_graph_compilation,
+        );
         let gaussian_splat_layer_manifest = build_gaussian_splat_layer_manifest(
             &prepared,
             &scene_graph_submission,
@@ -1860,6 +1916,7 @@ impl BangerNativeEngine {
             &raster_work_queue,
             &radiance_schedule_manifest,
             &lumen_lighting_packet,
+            &virtual_shadow_packet,
             &gaussian_splat_layer_manifest,
         );
         let rhi_submit_packet =
@@ -1907,6 +1964,7 @@ impl BangerNativeEngine {
             &raster_work_queue,
             &radiance_schedule_manifest,
             &lumen_lighting_packet,
+            &virtual_shadow_packet,
             &gaussian_splat_layer_manifest,
             &frame_submission_packet,
             &rhi_submit_packet,
@@ -1966,6 +2024,7 @@ impl BangerNativeEngine {
             raster_work_queue,
             radiance_schedule_manifest,
             lumen_lighting_packet,
+            virtual_shadow_packet,
             gaussian_splat_layer_manifest,
             frame_submission_packet,
             rhi_submit_packet,
@@ -3277,6 +3336,146 @@ fn build_lumen_lighting_packet(
     }
 }
 
+fn build_virtual_shadow_packet(
+    prepared: &MonsterPreparedCompute,
+    nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+) -> BangerNativeVirtualShadowPacket {
+    let entries = lumen_lighting_packet
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, lumen_entry)| {
+            let matching_nanite = nanite_second_layer_packet
+                .entries
+                .iter()
+                .find(|entry| entry.cluster_id == lumen_entry.cluster_id);
+            let virtual_map_id = virtual_shadow_map_id(lumen_entry, index as u32);
+            let clipmap_level = virtual_shadow_clipmap_level(lumen_entry);
+            let page_coord = virtual_shadow_page_coord(lumen_entry, virtual_map_id, clipmap_level);
+            let resolution = virtual_shadow_resolution(clipmap_level, lumen_entry);
+            let cache_state = virtual_shadow_cache_state(lumen_entry, matching_nanite);
+            let invalidation_reason = virtual_shadow_invalidation_reason(lumen_entry, cache_state);
+            let light_grid_cell = virtual_shadow_light_grid_cell(lumen_entry, index as u32);
+            let projection_tile = virtual_shadow_projection_tile(lumen_entry, &page_coord, resolution);
+            let ray_budget = virtual_shadow_ray_budget(lumen_entry, radiance_schedule_manifest.light_budget);
+            let virtual_light_id = virtual_shadow_light_id(lumen_entry, virtual_map_id);
+            let shadow_page_id = format!(
+                "vshadow:{}:{}:{}:{}",
+                virtual_map_id, clipmap_level, page_coord[0], page_coord[1]
+            );
+            let page_table_hash = virtual_shadow_page_table_entry_hash(
+                lumen_entry,
+                &shadow_page_id,
+                &virtual_light_id,
+                &page_coord,
+                resolution,
+            );
+            let cache_hash = virtual_shadow_cache_entry_hash(
+                lumen_entry,
+                cache_state,
+                invalidation_reason,
+                &page_table_hash,
+            );
+            let projection_hash = virtual_shadow_projection_entry_hash(
+                lumen_entry,
+                &projection_tile,
+                &light_grid_cell,
+                ray_budget,
+            );
+            let entry_hash = virtual_shadow_entry_hash(
+                lumen_entry,
+                &shadow_page_id,
+                &virtual_light_id,
+                virtual_map_id,
+                clipmap_level,
+                &page_coord,
+                resolution,
+                cache_state,
+                invalidation_reason,
+                &light_grid_cell,
+                &projection_tile,
+                ray_budget,
+                &page_table_hash,
+                &cache_hash,
+                &projection_hash,
+            );
+            BangerNativeVirtualShadowEntry {
+                object_id: lumen_entry.object_id.clone(),
+                cluster_id: lumen_entry.cluster_id.clone(),
+                shadow_page_id,
+                source_surface_page_id: lumen_entry.surface_page_id.clone(),
+                virtual_light_id,
+                virtual_map_id,
+                clipmap_level,
+                page_coord,
+                resolution,
+                cache_state,
+                invalidation_reason,
+                light_grid_cell,
+                projection_tile,
+                ray_budget,
+                page_table_hash,
+                cache_hash,
+                projection_hash,
+                entry_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let page_table_hash = virtual_shadow_page_table_hash(&entries);
+    let cache_hash = virtual_shadow_cache_hash(&entries);
+    let invalidation_hash = virtual_shadow_invalidation_hash(&entries);
+    let projection_hash = virtual_shadow_projection_hash(&entries);
+    let light_grid_hash = virtual_shadow_light_grid_hash(&entries);
+    let packet_hash = virtual_shadow_packet_hash(
+        prepared,
+        nanite_second_layer_packet,
+        lumen_lighting_packet,
+        radiance_schedule_manifest,
+        render_graph_compilation,
+        &page_table_hash,
+        &cache_hash,
+        &invalidation_hash,
+        &projection_hash,
+        &light_grid_hash,
+        &entries,
+    );
+    BangerNativeVirtualShadowPacket {
+        schema: "forge.banger.virtual_shadow_packet.v1",
+        authority: "banger_virtual_shadow_page_cache_light_grid_projection",
+        clean_room_basis: "local_unreal_sparse_virtual_shadow_map_page_marking_cache_projection_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        nanite_second_layer_hash: nanite_second_layer_packet.packet_hash.clone(),
+        lumen_lighting_hash: lumen_lighting_packet.packet_hash.clone(),
+        radiance_schedule_hash: radiance_schedule_manifest.schedule_hash.clone(),
+        render_graph_hash: render_graph_compilation.graph_hash.clone(),
+        virtual_page_count: entries.len(),
+        cached_page_count: entries
+            .iter()
+            .filter(|entry| entry.cache_state != "page_mark_required")
+            .count(),
+        invalidated_page_count: entries
+            .iter()
+            .filter(|entry| entry.invalidation_reason != "stable_cache_reuse")
+            .count(),
+        light_page_count: entries
+            .iter()
+            .map(|entry| entry.virtual_light_id.as_str())
+            .collect::<BTreeSet<_>>()
+            .len(),
+        shadow_ray_budget: entries.iter().map(|entry| entry.ray_budget as u64).sum(),
+        page_table_hash,
+        cache_hash,
+        invalidation_hash,
+        projection_hash,
+        light_grid_hash,
+        packet_hash,
+        entries,
+    }
+}
+
 fn build_gaussian_splat_layer_manifest(
     prepared: &MonsterPreparedCompute,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
@@ -3794,6 +3993,7 @@ fn build_frame_submission_packet(
     raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> BangerNativeFrameSubmissionPacket {
     let color_target_hash = frame_submission_target_hash(
@@ -3832,6 +4032,7 @@ fn build_frame_submission_packet(
                 &pass_jobs,
                 radiance_schedule_manifest,
                 lumen_lighting_packet,
+                virtual_shadow_packet,
                 gaussian_splat_layer_manifest,
             );
             let output_target_hash = frame_submission_command_output_hash(
@@ -3884,6 +4085,7 @@ fn build_frame_submission_packet(
         render_graph_compilation,
         raster_work_queue,
         lumen_lighting_packet,
+        virtual_shadow_packet,
         &color_target_hash,
         &depth_target_hash,
         &render_target_state_hash,
@@ -5014,6 +5216,7 @@ fn frame_submission_command_input_hash(
     pass_jobs: &[&BangerNativeRasterWorkItem],
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> String {
     let mut h = Sha256::new();
@@ -5029,6 +5232,12 @@ fn frame_submission_command_input_hash(
         h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
         h.update(lumen_lighting_packet.packet_hash.as_bytes());
         h.update(lumen_lighting_packet.diffuse_indirect_hash.as_bytes());
+        h.update(virtual_shadow_packet.packet_hash.as_bytes());
+        h.update(virtual_shadow_packet.projection_hash.as_bytes());
+    }
+    if pass.stage == "shadow_depth" {
+        h.update(virtual_shadow_packet.packet_hash.as_bytes());
+        h.update(virtual_shadow_packet.page_table_hash.as_bytes());
     }
     if pass.stage == "material_bind" {
         h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
@@ -5139,6 +5348,7 @@ fn frame_submission_packet_hash(
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
     raster_work_queue: &BangerNativeRasterWorkQueue,
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     color_target_hash: &str,
     depth_target_hash: &str,
     render_target_state_hash: &str,
@@ -5155,6 +5365,7 @@ fn frame_submission_packet_hash(
     h.update(render_graph_compilation.graph_hash.as_bytes());
     h.update(raster_work_queue.queue_hash.as_bytes());
     h.update(lumen_lighting_packet.packet_hash.as_bytes());
+    h.update(virtual_shadow_packet.packet_hash.as_bytes());
     h.update(color_target_hash.as_bytes());
     h.update(depth_target_hash.as_bytes());
     h.update(render_target_state_hash.as_bytes());
@@ -6109,6 +6320,300 @@ fn lumen_lighting_packet_hash(
     h.update(trace_policy_hash.as_bytes());
     h.update(diffuse_indirect_hash.as_bytes());
     h.update(reflection_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_map_id(entry: &BangerNativeLumenLightingEntry, salt: u32) -> u32 {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.map_id.v1\0");
+    h.update(entry.entry_hash.as_bytes());
+    h.update(entry.source_probe_page_id.as_bytes());
+    h.update(salt.to_le_bytes());
+    let digest: [u8; 32] = h.finalize().into();
+    u32::from_le_bytes(digest[0..4].try_into().expect("virtual shadow map id bytes")) % 8192
+}
+
+fn virtual_shadow_clipmap_level(entry: &BangerNativeLumenLightingEntry) -> u32 {
+    let ray_pressure = (entry.diffuse_ray_count / 64).min(4);
+    let material_pressure = entry.material_bin_id % 3;
+    (ray_pressure + material_pressure).min(6)
+}
+
+fn virtual_shadow_page_coord(
+    entry: &BangerNativeLumenLightingEntry,
+    virtual_map_id: u32,
+    clipmap_level: u32,
+) -> [u32; 3] {
+    [
+        entry.radiance_tile[0].wrapping_add(virtual_map_id) % 4096,
+        entry.radiance_tile[1].wrapping_add(clipmap_level * 19) % 4096,
+        clipmap_level,
+    ]
+}
+
+fn virtual_shadow_resolution(clipmap_level: u32, entry: &BangerNativeLumenLightingEntry) -> u32 {
+    let base = if entry.trace_policy == "hardware_ray_traced_surface_cache" {
+        256
+    } else {
+        128
+    };
+    (base >> clipmap_level.min(2)).max(64)
+}
+
+fn virtual_shadow_cache_state(
+    lumen_entry: &BangerNativeLumenLightingEntry,
+    nanite_entry: Option<&BangerNativeNaniteSecondLayerEntry>,
+) -> &'static str {
+    if lumen_entry.residency_state != "resident_page" {
+        "page_mark_required"
+    } else if lumen_entry.temporal_reuse_frames > 1
+        && nanite_entry
+            .map(|entry| entry.residency_state == "resident_page")
+            .unwrap_or(false)
+    {
+        "persistent_cache_hit"
+    } else {
+        "cache_warm"
+    }
+}
+
+fn virtual_shadow_invalidation_reason(
+    lumen_entry: &BangerNativeLumenLightingEntry,
+    cache_state: &str,
+) -> &'static str {
+    if cache_state == "page_mark_required" {
+        "geometry_page_streaming"
+    } else if lumen_entry.temporal_reuse_frames <= 1 {
+        "temporal_epoch_new"
+    } else if lumen_entry.diffuse_ray_count > 1024 {
+        "light_budget_pressure"
+    } else {
+        "stable_cache_reuse"
+    }
+}
+
+fn virtual_shadow_light_grid_cell(
+    entry: &BangerNativeLumenLightingEntry,
+    salt: u32,
+) -> [u32; 3] {
+    [
+        entry.screen_probe_coord[0].wrapping_add(salt * 3) / 64,
+        entry.screen_probe_coord[1].wrapping_add(salt * 5) / 64,
+        (entry.reflection_ray_count + entry.diffuse_ray_count / 64).min(63),
+    ]
+}
+
+fn virtual_shadow_projection_tile(
+    entry: &BangerNativeLumenLightingEntry,
+    page_coord: &[u32; 3],
+    resolution: u32,
+) -> [u32; 4] {
+    [
+        page_coord[0].wrapping_add(entry.radiance_tile[0]) % 4096,
+        page_coord[1].wrapping_add(entry.radiance_tile[1]) % 4096,
+        resolution,
+        resolution,
+    ]
+}
+
+fn virtual_shadow_ray_budget(
+    entry: &BangerNativeLumenLightingEntry,
+    fallback_light_budget: u32,
+) -> u32 {
+    let base = entry.diffuse_ray_count.saturating_add(entry.reflection_ray_count);
+    base.saturating_add(fallback_light_budget).clamp(1, 8192)
+}
+
+fn virtual_shadow_light_id(entry: &BangerNativeLumenLightingEntry, virtual_map_id: u32) -> String {
+    hash_text_hex(
+        "forge.banger.virtual_shadow.light_id.v1",
+        &format!(
+            "{}:{}:{}",
+            entry.source_probe_page_id, entry.material_bin_id, virtual_map_id
+        ),
+    )
+}
+
+fn virtual_shadow_page_table_entry_hash(
+    entry: &BangerNativeLumenLightingEntry,
+    shadow_page_id: &str,
+    virtual_light_id: &str,
+    page_coord: &[u32; 3],
+    resolution: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.page_table_entry.v1\0");
+    h.update(entry.entry_hash.as_bytes());
+    h.update(shadow_page_id.as_bytes());
+    h.update(virtual_light_id.as_bytes());
+    for value in page_coord {
+        h.update(value.to_le_bytes());
+    }
+    h.update(resolution.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_cache_entry_hash(
+    entry: &BangerNativeLumenLightingEntry,
+    cache_state: &str,
+    invalidation_reason: &str,
+    page_table_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.cache_entry.v1\0");
+    h.update(entry.surface_cache_hash.as_bytes());
+    h.update(cache_state.as_bytes());
+    h.update(invalidation_reason.as_bytes());
+    h.update(page_table_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_projection_entry_hash(
+    entry: &BangerNativeLumenLightingEntry,
+    projection_tile: &[u32; 4],
+    light_grid_cell: &[u32; 3],
+    ray_budget: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.projection_entry.v1\0");
+    h.update(entry.trace_hash.as_bytes());
+    for value in projection_tile {
+        h.update(value.to_le_bytes());
+    }
+    for value in light_grid_cell {
+        h.update(value.to_le_bytes());
+    }
+    h.update(ray_budget.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_entry_hash(
+    entry: &BangerNativeLumenLightingEntry,
+    shadow_page_id: &str,
+    virtual_light_id: &str,
+    virtual_map_id: u32,
+    clipmap_level: u32,
+    page_coord: &[u32; 3],
+    resolution: u32,
+    cache_state: &str,
+    invalidation_reason: &str,
+    light_grid_cell: &[u32; 3],
+    projection_tile: &[u32; 4],
+    ray_budget: u32,
+    page_table_hash: &str,
+    cache_hash: &str,
+    projection_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.entry.v1\0");
+    h.update(entry.entry_hash.as_bytes());
+    h.update(shadow_page_id.as_bytes());
+    h.update(virtual_light_id.as_bytes());
+    h.update(virtual_map_id.to_le_bytes());
+    h.update(clipmap_level.to_le_bytes());
+    for value in page_coord {
+        h.update(value.to_le_bytes());
+    }
+    h.update(resolution.to_le_bytes());
+    h.update(cache_state.as_bytes());
+    h.update(invalidation_reason.as_bytes());
+    for value in light_grid_cell {
+        h.update(value.to_le_bytes());
+    }
+    for value in projection_tile {
+        h.update(value.to_le_bytes());
+    }
+    h.update(ray_budget.to_le_bytes());
+    h.update(page_table_hash.as_bytes());
+    h.update(cache_hash.as_bytes());
+    h.update(projection_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_page_table_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.page_table.v1\0");
+    for entry in entries {
+        h.update(entry.shadow_page_id.as_bytes());
+        h.update(entry.page_table_hash.as_bytes());
+        h.update(entry.virtual_map_id.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_cache_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.cache.v1\0");
+    for entry in entries {
+        h.update(entry.cache_state.as_bytes());
+        h.update(entry.cache_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_invalidation_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.invalidation.v1\0");
+    for entry in entries {
+        h.update(entry.invalidation_reason.as_bytes());
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_projection_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.projection.v1\0");
+    for entry in entries {
+        h.update(entry.projection_hash.as_bytes());
+        for value in entry.projection_tile {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_light_grid_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.light_grid.v1\0");
+    for entry in entries {
+        h.update(entry.virtual_light_id.as_bytes());
+        for value in entry.light_grid_cell {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    page_table_hash: &str,
+    cache_hash: &str,
+    invalidation_hash: &str,
+    projection_hash: &str,
+    light_grid_hash: &str,
+    entries: &[BangerNativeVirtualShadowEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(nanite_second_layer_packet.packet_hash.as_bytes());
+    h.update(lumen_lighting_packet.packet_hash.as_bytes());
+    h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(page_table_hash.as_bytes());
+    h.update(cache_hash.as_bytes());
+    h.update(invalidation_hash.as_bytes());
+    h.update(projection_hash.as_bytes());
+    h.update(light_grid_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
     }
@@ -8818,6 +9323,12 @@ fn render_pass_from_artifact(artifact: &MonsterNativeTandemArtifact) -> BangerNa
             "surfel_radiance_cache",
             true,
         ),
+        "shadow_page" => (
+            "virtual_shadow_depth",
+            "shadow_depth",
+            "virtual_shadow_page_table",
+            true,
+        ),
         "material_payload" => (
             "material_payload_bind",
             "material_bind",
@@ -9586,6 +10097,7 @@ fn render_handoff_hash(
     raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
@@ -9625,6 +10137,9 @@ fn render_handoff_hash(
     h.update(lumen_lighting_packet.packet_hash.as_bytes());
     h.update(lumen_lighting_packet.surface_cache_hash.as_bytes());
     h.update(lumen_lighting_packet.diffuse_indirect_hash.as_bytes());
+    h.update(virtual_shadow_packet.packet_hash.as_bytes());
+    h.update(virtual_shadow_packet.page_table_hash.as_bytes());
+    h.update(virtual_shadow_packet.projection_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
     h.update(frame_submission_packet.submission_hash.as_bytes());
@@ -9764,6 +10279,7 @@ forge_program:
   let streamed = pcg_execute(pcg, world_partition_cell(page))
   let budget = light_budget_select(light_cluster(lit), camera)
   emit out_mesh: geometry_page = streamed
+  emit out_shadow: shadow_page = shadow
   emit out_material: material_graph = mat
   emit out_budget: light_budget = budget
 forge_inputs:
@@ -9775,6 +10291,7 @@ forge_inputs:
   param camera: vec3 unit none bounds [-1.0, 1.0] nominal 0.0
 forge_outputs:
   output out_mesh: geometry_page unit none handoff mesh_params
+  output out_shadow: shadow_page unit none handoff artifact
   output out_material: material_graph unit none handoff artifact
   output out_budget: light_budget unit none handoff artifact
 forge_constraints:
@@ -10854,6 +11371,90 @@ mod tests {
                         | "software_sdf_probe_trace"
                         | "screen_probe_then_surface_cache"
                 )));
+        assert_eq!(
+            response.virtual_shadow_packet.schema,
+            "forge.banger.virtual_shadow_packet.v1"
+        );
+        assert_eq!(
+            response.virtual_shadow_packet.authority,
+            "banger_virtual_shadow_page_cache_light_grid_projection"
+        );
+        assert!(response
+            .virtual_shadow_packet
+            .clean_room_basis
+            .contains("local_unreal_sparse_virtual_shadow_map"));
+        assert_eq!(
+            response.virtual_shadow_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.virtual_shadow_packet.nanite_second_layer_hash,
+            response.nanite_second_layer_packet.packet_hash
+        );
+        assert_eq!(
+            response.virtual_shadow_packet.lumen_lighting_hash,
+            response.lumen_lighting_packet.packet_hash
+        );
+        assert_eq!(
+            response.virtual_shadow_packet.radiance_schedule_hash,
+            response.radiance_schedule_manifest.schedule_hash
+        );
+        assert_eq!(
+            response.virtual_shadow_packet.render_graph_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert_eq!(
+            response.virtual_shadow_packet.virtual_page_count,
+            response.virtual_shadow_packet.entries.len()
+        );
+        assert!(
+            response.virtual_shadow_packet.cached_page_count
+                <= response.virtual_shadow_packet.virtual_page_count
+        );
+        assert!(
+            response.virtual_shadow_packet.invalidated_page_count
+                <= response.virtual_shadow_packet.virtual_page_count
+        );
+        assert!(response.virtual_shadow_packet.light_page_count > 0);
+        assert!(response.virtual_shadow_packet.shadow_ray_budget > 0);
+        assert_eq!(response.virtual_shadow_packet.page_table_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.cache_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.invalidation_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.projection_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.light_grid_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.packet_hash.len(), 64);
+        assert!(response
+            .virtual_shadow_packet
+            .entries
+            .iter()
+            .all(|entry| entry.shadow_page_id.starts_with("vshadow:")
+                && entry.source_surface_page_id.starts_with("surface:")
+                && entry.virtual_light_id.len() == 64
+                && entry.resolution >= 64
+                && entry.projection_tile[2] == entry.resolution
+                && entry.projection_tile[3] == entry.resolution
+                && entry.ray_budget > 0
+                && entry.page_table_hash.len() == 64
+                && entry.cache_hash.len() == 64
+                && entry.projection_hash.len() == 64
+                && entry.entry_hash.len() == 64
+                && matches!(
+                    entry.cache_state,
+                    "persistent_cache_hit" | "cache_warm" | "page_mark_required"
+                )
+                && matches!(
+                    entry.invalidation_reason,
+                    "stable_cache_reuse"
+                        | "geometry_page_streaming"
+                        | "temporal_epoch_new"
+                        | "light_budget_pressure"
+                )));
+        assert!(response
+            .render_graph_compilation
+            .compiled_passes
+            .iter()
+            .any(|pass| pass.stage == "shadow_depth"
+                && pass.pass_name == "virtual_shadow_depth"));
         assert_eq!(
             response.gaussian_splat_layer_manifest.schema,
             "forge.banger.native_gaussian_splat_layer_manifest.v1"
