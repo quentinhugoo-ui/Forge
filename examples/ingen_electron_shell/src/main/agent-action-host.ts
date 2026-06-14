@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { appendFile, cp, mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, parse, relative, resolve } from "node:path";
 import type {
   AgentAppshotArtifact,
@@ -24,6 +24,9 @@ import type {
   AgentDocumentMediaKind,
   AgentDocumentMediaPolicy,
   AgentDocumentMediaSummary,
+  AgentAutomationLedgerEntry,
+  AgentDeveloperAutomationPolicy,
+  AgentDeveloperRepoSummary,
   AgentFailureCategory,
   AgentRetryStrategy,
   AgentRetryStrategyId,
@@ -92,7 +95,11 @@ const AGENT_ACTION_EVENT_HINTS = [
   "document.write_text:/agent_document_write_",
   "document.write_json:/agent_document_write_",
   "document.write_csv:/agent_document_write_",
-  "document.convert_text:/agent_document_convert_"
+  "document.convert_text:/agent_document_convert_",
+  "dev.repo_status:/agent_dev_status_",
+  "dev.git_diff:/agent_dev_diff_",
+  "dev.run_check:/agent_dev_check_",
+  "automation.record:/agent_automation_record_"
 ];
 
 const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string> = {
@@ -118,7 +125,11 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   document_write_text: "/agent_document_write_",
   document_write_json: "/agent_document_write_",
   document_write_csv: "/agent_document_write_",
-  document_convert_text: "/agent_document_convert_"
+  document_convert_text: "/agent_document_convert_",
+  dev_repo_status: "/agent_dev_status_",
+  dev_git_diff: "/agent_dev_diff_",
+  dev_run_check: "/agent_dev_check_",
+  automation_record: "/agent_automation_record_"
 };
 
 const WINDOWS_EXECUTION_ADAPTERS: AgentWindowsExecutionAdapterId[] = ["powershell", "cmd", "windows_command", "shell_full"];
@@ -521,6 +532,8 @@ function result(
     browserPage: patch.browserPage,
     download: patch.download,
     documentMedia: patch.documentMedia,
+    developer: patch.developer,
+    automation: patch.automation,
     userPresenceRequired: patch.userPresenceRequired,
     failureCategory,
     retryRoutes: patch.retryRoutes ?? retryRoutesForFailure(failureCategory),
@@ -610,6 +623,51 @@ function commandExitVerification(execution: { commandLine: string; accepted: boo
       passed: execution.accepted && execution.exitCode === 0 && !execution.timedOut
     })
   ]);
+}
+
+type GitExecution = {
+  accepted: boolean;
+  commandLine: string;
+  exitCode: number | null;
+  durationMs: number;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  error?: IpcError;
+};
+
+function executeGit(config: AgentActionHostConfig, args: string[], timeoutMs = 15_000): GitExecution {
+  const startedAt = Date.now();
+  const child = spawnSync("git", args, {
+    cwd: config.workspaceRoot,
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: timeoutMs,
+    windowsHide: true
+  });
+  const durationMs = Math.max(0, Date.now() - startedAt);
+  const stdout = child.stdout ?? "";
+  const stderr = child.stderr ?? "";
+  const exitCode = child.status ?? null;
+  const timedOut = commandTimedOut(child.error);
+  const accepted = !child.error && child.status === 0;
+  const commandLine = renderCommandLine("git", args);
+  return {
+    accepted,
+    commandLine,
+    exitCode,
+    durationMs,
+    stdout,
+    stderr,
+    timedOut,
+    error: accepted
+      ? undefined
+      : actionError(
+          "rust_unavailable",
+          timedOut ? `Git command timed out after ${timeoutMs}ms.` : child.error?.message ?? `Git exited with status ${exitCode ?? "unknown"}.`,
+          { args, stderr, exitCode, timedOut }
+        )
+  };
 }
 
 function canonicalPath(value: string): string {
@@ -811,6 +869,23 @@ export function createDocumentMediaPolicy(_config: AgentActionHostConfig): Agent
     officeComRequiresConfirmation: true,
     macroPolicy: "blocked_without_explicit_user_approval",
     artifactPolicy: "verify_readback_size_hash_and_parser_status",
+    proofHash: ""
+  };
+  policy.proofHash = hashJson({ ...policy, proofHash: "" });
+  return policy;
+}
+
+export function createDeveloperAutomationPolicy(_config: AgentActionHostConfig): AgentDeveloperAutomationPolicy {
+  const policy: AgentDeveloperAutomationPolicy = {
+    schema: "ingen.developer_automation.policy.v1",
+    executableActions: ["dev_repo_status", "dev_git_diff", "dev_run_check", "automation_record"],
+    repoInspectionRequiresConfirmation: false,
+    commandChecksRequireConfirmation: true,
+    gitMutationRequiresConfirmation: true,
+    cloudWritesRequireConfirmation: true,
+    mcpToolCallingStatus: "planned_connector_required",
+    automationPersistenceRequiresConfirmation: true,
+    artifactPolicy: "verify_command_exit_git_state_or_ledger_hash",
     proofHash: ""
   };
   policy.proofHash = hashJson({ ...policy, proofHash: "" });
@@ -1222,6 +1297,78 @@ function createExecutableActionCapabilities(): AgentActionCapability[] {
       writes: true,
       description: "Perform a safe local text/Markdown conversion between two paths and verify the output artifact.",
       notes: "PDF, Office, image, audio and video conversion remain planned backends."
+    }),
+    actionCapability({
+      id: "dev.repo_status",
+      family: "dev.git",
+      surface: "developer.git",
+      title: "Inspect repository status",
+      status: "available",
+      risk: "read",
+      operations: ["git rev-parse", "git branch", "git status porcelain", "summarize dirty state"],
+      underlyingTools: ["git status --porcelain", "git rev-parse", "git branch"],
+      fallbacks: ["shell.readonly git status", "filesystem.discovery"],
+      verification: ["command_exit", "filesystem"],
+      approval: "none",
+      executableActionIds: ["dev.repo_status"],
+      requiresApproval: false,
+      writes: false,
+      description: "Inspect Git repository state and return compact dirty/staged/untracked counts.",
+      notes: "Use before code edits, commits or pushes to preserve unrelated changes."
+    }),
+    actionCapability({
+      id: "dev.git_diff",
+      family: "dev.git",
+      surface: "developer.git",
+      title: "Inspect repository diff",
+      status: "available",
+      risk: "read",
+      operations: ["git diff --stat", "git diff --name-status", "summarize changed files"],
+      underlyingTools: ["git diff", "git diff --stat", "git diff --name-status"],
+      fallbacks: ["shell.readonly git diff"],
+      verification: ["command_exit"],
+      approval: "none",
+      executableActionIds: ["dev.git_diff"],
+      requiresApproval: false,
+      writes: false,
+      description: "Inspect current Git diff without staging or changing files.",
+      notes: "Use this to summarize work before commit or review."
+    }),
+    actionCapability({
+      id: "dev.run_check",
+      family: "dev.git",
+      surface: "developer.command",
+      title: "Run confirmed developer check",
+      status: "available",
+      risk: "workspace_write",
+      operations: ["run tests", "run build", "run lint", "capture stdout/stderr", "verify exit code"],
+      underlyingTools: ["npm", "node", "cargo wrapper", "git", "project scripts"],
+      fallbacks: ["shell.full confirmed command", "CI logs", "manual approval"],
+      verification: ["command_exit", "filesystem"],
+      approval: "prompt",
+      executableActionIds: ["dev.run_check"],
+      requiresApproval: true,
+      writes: true,
+      description: "Run a developer verification command in the workspace after confirmed:true.",
+      notes: "Checks may write caches or build outputs, so confirmation is required."
+    }),
+    actionCapability({
+      id: "automation.record",
+      family: "automations.goals",
+      surface: "automation.ledger",
+      title: "Record automation goal",
+      status: "available",
+      risk: "workspace_write",
+      operations: ["record resumable goal", "append automation ledger", "hash ledger entry"],
+      underlyingTools: ["workspace JSONL ledger", "future Task Scheduler/thread wakeups"],
+      fallbacks: ["document.write_json", "manual reminder", "Task Scheduler planned"],
+      verification: ["filesystem", "artifact_hash"],
+      approval: "prompt",
+      executableActionIds: ["automation.record"],
+      requiresApproval: true,
+      writes: true,
+      description: "Record a confirmed automation/background goal in a workspace ledger for visibility and cancellation handoff.",
+      notes: "This does not create an OS scheduled task yet; Task Scheduler and thread wakeups remain planned."
     })
   ];
 }
@@ -1676,6 +1823,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
   const computerUse = createComputerUsePolicy(config);
   const browserWeb = createBrowserWebPolicy(config);
   const documentMedia = createDocumentMediaPolicy(config);
+  const developerAutomation = createDeveloperAutomationPolicy(config);
   const runtime = createAgentActionRuntimeManifestSummary(config);
   const manifest: AgentActionHostManifest = {
     schema: "ingen.agent_action_host.manifest.v1",
@@ -1700,6 +1848,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
     computerUse,
     browserWeb,
     documentMedia,
+    developerAutomation,
     runtime,
     proofHash: ""
   };
@@ -1739,7 +1888,8 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `computer_use=${manifest.computerUse.userPresenceMode} pacing=${manifest.computerUse.pacingPolicy} forbidden=${manifest.computerUse.forbiddenPrompts.join("|")}`,
     `browser_web=download:${manifest.browserWeb.downloadRequiresConfirmation ? "confirmed" : "open"} navigation:${manifest.browserWeb.navigationRequiresConfirmation ? "confirmed" : "open"} submission:${manifest.browserWeb.submissionRequiresConfirmation ? "confirmed" : "open"} artifact:${manifest.browserWeb.artifactPolicy}`,
     `document_media=workspace_writes:${manifest.documentMedia.workspaceWritesRequireConfirmation ? "confirmed" : "open"} computer_writes:${manifest.documentMedia.computerScopeWritesRequireConfirmation ? "confirmed" : "open"} office_com:${manifest.documentMedia.officeComRequiresConfirmation ? "confirmed" : "open"} macros:${manifest.documentMedia.macroPolicy} artifact:${manifest.documentMedia.artifactPolicy}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text",
+    `developer_automation=repo_inspect:${manifest.developerAutomation.repoInspectionRequiresConfirmation ? "confirmed" : "open"} checks:${manifest.developerAutomation.commandChecksRequireConfirmation ? "confirmed" : "open"} git_mutation:${manifest.developerAutomation.gitMutationRequiresConfirmation ? "confirmed" : "open"} cloud_writes:${manifest.developerAutomation.cloudWritesRequireConfirmation ? "confirmed" : "open"} mcp:${manifest.developerAutomation.mcpToolCallingStatus} automation:${manifest.developerAutomation.automationPersistenceRequiresConfirmation ? "confirmed" : "open"}`,
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.run_check automation.record",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -1753,7 +1903,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
-    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop mcp",
+    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes task_scheduler_thread_wakeups pr_creation full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -3280,6 +3430,244 @@ async function documentConvertTextAction(config: AgentActionHostConfig, request:
   });
 }
 
+function parseGitStatusPorcelain(output: string): {
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+  changedFiles: number;
+  stagedFiles: number;
+  unstagedFiles: number;
+  untrackedFiles: number;
+} {
+  let branch: string | undefined;
+  let ahead: number | undefined;
+  let behind: number | undefined;
+  let changedFiles = 0;
+  let stagedFiles = 0;
+  let unstagedFiles = 0;
+  let untrackedFiles = 0;
+  for (const line of output.split(/\r?\n/)) {
+    if (!line) continue;
+    if (line.startsWith("## ")) {
+      const branchMatch = /^## ([^.\s]+|[^.\s]+\.{3}[^.\s]+)/.exec(line);
+      branch = branchMatch?.[1]?.split("...")[0];
+      const aheadMatch = /\[ahead (\d+)/.exec(line);
+      const behindMatch = /behind (\d+)/.exec(line);
+      ahead = aheadMatch ? Number(aheadMatch[1]) : undefined;
+      behind = behindMatch ? Number(behindMatch[1]) : undefined;
+      continue;
+    }
+    changedFiles += 1;
+    if (line.startsWith("??")) {
+      untrackedFiles += 1;
+      continue;
+    }
+    const indexState = line[0] ?? " ";
+    const worktreeState = line[1] ?? " ";
+    if (indexState !== " " && indexState !== "?") stagedFiles += 1;
+    if (worktreeState !== " " && worktreeState !== "?") unstagedFiles += 1;
+  }
+  return { branch, ahead, behind, changedFiles, stagedFiles, unstagedFiles, untrackedFiles };
+}
+
+function developerRepoSummary(input: Omit<AgentDeveloperRepoSummary, "schema" | "proofHash">): AgentDeveloperRepoSummary {
+  const summary: AgentDeveloperRepoSummary = {
+    schema: "ingen.developer.repo_summary.v1",
+    ...input,
+    proofHash: ""
+  };
+  summary.proofHash = hashJson({ ...summary, proofHash: "" });
+  return summary;
+}
+
+function automationLedgerEntry(input: Omit<AgentAutomationLedgerEntry, "schema" | "proofHash">): AgentAutomationLedgerEntry {
+  const entry: AgentAutomationLedgerEntry = {
+    schema: "ingen.automation.ledger_entry.v1",
+    ...input,
+    proofHash: ""
+  };
+  entry.proofHash = hashJson({ ...entry, proofHash: "" });
+  return entry;
+}
+
+async function devRepoStatusAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const status = executeGit(config, ["status", "--porcelain=v1", "-b"]);
+  if (!status.accepted) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: status.commandLine,
+      routeId: "dev.repo_status",
+      exitCode: status.exitCode,
+      durationMs: status.durationMs,
+      timedOut: status.timedOut,
+      stderrPreview: status.stderr.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: status.timedOut ? "timeout" : "command_error",
+      error: status.error
+    });
+  }
+  const root = executeGit(config, ["rev-parse", "--show-toplevel"]);
+  const parsed = parseGitStatusPorcelain(status.stdout);
+  const summary = developerRepoSummary({
+    action: "repo_status",
+    root: (root.accepted ? root.stdout.trim() : config.workspaceRoot) || config.workspaceRoot,
+    branch: parsed.branch,
+    ahead: parsed.ahead,
+    behind: parsed.behind,
+    changedFiles: parsed.changedFiles,
+    stagedFiles: parsed.stagedFiles,
+    unstagedFiles: parsed.unstagedFiles,
+    untrackedFiles: parsed.untrackedFiles,
+    commandLine: status.commandLine,
+    exitCode: status.exitCode,
+    durationMs: status.durationMs
+  });
+  return result(config, request, {
+    accepted: true,
+    commandLine: status.commandLine,
+    routeId: "dev.repo_status",
+    exitCode: status.exitCode,
+    durationMs: status.durationMs,
+    stdoutPreview: status.stdout.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`git_changed:${summary.changedFiles}`, `git_staged:${summary.stagedFiles}`, `git_untracked:${summary.untrackedFiles}`],
+    verification: commandExitVerification({ commandLine: status.commandLine, accepted: true, exitCode: status.exitCode, timedOut: status.timedOut }),
+    developer: summary
+  });
+}
+
+async function devGitDiffAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const statDiff = executeGit(config, ["diff", "--stat"]);
+  if (!statDiff.accepted) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: statDiff.commandLine,
+      routeId: "dev.git_diff",
+      exitCode: statDiff.exitCode,
+      durationMs: statDiff.durationMs,
+      timedOut: statDiff.timedOut,
+      stderrPreview: statDiff.stderr.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: statDiff.timedOut ? "timeout" : "command_error",
+      error: statDiff.error
+    });
+  }
+  const status = executeGit(config, ["status", "--porcelain=v1", "-b"]);
+  const parsed = status.accepted ? parseGitStatusPorcelain(status.stdout) : { changedFiles: 0, stagedFiles: 0, unstagedFiles: 0, untrackedFiles: 0 };
+  const summary = developerRepoSummary({
+    action: "git_diff",
+    root: config.workspaceRoot,
+    branch: parsed.branch,
+    ahead: parsed.ahead,
+    behind: parsed.behind,
+    changedFiles: parsed.changedFiles,
+    stagedFiles: parsed.stagedFiles,
+    unstagedFiles: parsed.unstagedFiles,
+    untrackedFiles: parsed.untrackedFiles,
+    diffStat: statDiff.stdout.slice(0, MAX_PREVIEW_CHARS),
+    commandLine: statDiff.commandLine,
+    exitCode: statDiff.exitCode,
+    durationMs: statDiff.durationMs
+  });
+  return result(config, request, {
+    accepted: true,
+    commandLine: statDiff.commandLine,
+    routeId: "dev.git_diff",
+    exitCode: statDiff.exitCode,
+    durationMs: statDiff.durationMs,
+    stdoutPreview: statDiff.stdout.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`git_diff_bytes:${statDiff.stdout.length}`],
+    verification: commandExitVerification({ commandLine: statDiff.commandLine, accepted: true, exitCode: statDiff.exitCode, timedOut: statDiff.timedOut }),
+    developer: summary
+  });
+}
+
+async function devRunCheckAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Developer checks require confirmed:true because they may write caches or build outputs.", request)
+    });
+  }
+  const command = request.command?.trim() ?? "";
+  if (!command) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "command is required for dev_run_check.", request)
+    });
+  }
+  const execution = executeWindowsCommand(config, request, false);
+  const status = executeGit(config, ["status", "--porcelain=v1", "-b"]);
+  const parsed = status.accepted ? parseGitStatusPorcelain(status.stdout) : { changedFiles: 0, stagedFiles: 0, unstagedFiles: 0, untrackedFiles: 0 };
+  const summary = developerRepoSummary({
+    action: "run_check",
+    root: config.workspaceRoot,
+    branch: parsed.branch,
+    ahead: parsed.ahead,
+    behind: parsed.behind,
+    changedFiles: parsed.changedFiles,
+    stagedFiles: parsed.stagedFiles,
+    unstagedFiles: parsed.unstagedFiles,
+    untrackedFiles: parsed.untrackedFiles,
+    commandLine: execution.commandLine,
+    exitCode: execution.exitCode,
+    durationMs: execution.durationMs
+  });
+  return result(config, request, {
+    ...execution,
+    routeId: "dev.run_check",
+    developer: summary
+  });
+}
+
+async function automationRecordAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Recording a persistent automation goal requires confirmed:true.", request)
+    });
+  }
+  const title = (request.title ?? request.query ?? request.text ?? request.content ?? "").trim();
+  if (!title) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "title, query, text or content is required for automation_record.", request)
+    });
+  }
+  const ledgerPath = resolve(config.workspaceRoot, ".ingen-agent-artifacts", "automation-ledger.jsonl");
+  await mkdir(dirname(ledgerPath), { recursive: true });
+  const createdAt = new Date().toISOString();
+  const id = createHash("sha256").update(`automation\n${createdAt}\n${title}`).digest("hex").slice(0, 16);
+  const entry = automationLedgerEntry({
+    id,
+    title,
+    status: "recorded",
+    ledgerPath: pathLabel(config, { ...request, scope: "workspace" }, ledgerPath),
+    createdAt
+  });
+  await appendFile(ledgerPath, `${JSON.stringify(entry)}\n`, "utf8");
+  const ledgerBytes = await readFile(ledgerPath);
+  const ledgerHash = createHash("sha256").update(ledgerBytes).digest("hex");
+  return result(config, request, {
+    accepted: true,
+    path: entry.ledgerPath,
+    artifacts: [entry.ledgerPath],
+    observedChanges: [`automation_record:${entry.id}`, `ledger_sha256:${ledgerHash}`],
+    verification: verificationResult([
+      await filesystemProbe("automation.ledger.exists", ledgerPath, "file"),
+      verificationProbe({
+        id: "automation.ledger.hash",
+        kind: "artifact_hash",
+        target: ledgerPath,
+        expectation: "ledger sha256 computed after append",
+        actual: ledgerHash,
+        passed: /^[a-f0-9]{64}$/.test(ledgerHash)
+      })
+    ]),
+    automation: entry,
+    value: charDeltaValue(JSON.stringify(entry).length + 1, 0)
+  });
+}
+
 export async function executeAgentActionRequest(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   try {
     switch (request.action) {
@@ -3328,6 +3716,14 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return await documentWriteCsvAction(config, request);
       case "document_convert_text":
         return await documentConvertTextAction(config, request);
+      case "dev_repo_status":
+        return await devRepoStatusAction(config, request);
+      case "dev_git_diff":
+        return await devGitDiffAction(config, request);
+      case "dev_run_check":
+        return await devRunCheckAction(config, request);
+      case "automation_record":
+        return await automationRecordAction(config, request);
       default:
         return result(config, request, {
           accepted: false,

@@ -595,6 +595,49 @@ export interface AgentDocumentMediaPolicy {
   proofHash: string;
 }
 
+export type AgentDeveloperAutomationAction = "repo_status" | "git_diff" | "run_check" | "record_automation";
+
+export interface AgentDeveloperRepoSummary {
+  schema: "ingen.developer.repo_summary.v1";
+  action: AgentDeveloperAutomationAction;
+  root: string;
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+  changedFiles: number;
+  stagedFiles: number;
+  unstagedFiles: number;
+  untrackedFiles: number;
+  diffStat?: string;
+  commandLine?: string;
+  exitCode?: number | null;
+  durationMs?: number;
+  proofHash: string;
+}
+
+export interface AgentAutomationLedgerEntry {
+  schema: "ingen.automation.ledger_entry.v1";
+  id: string;
+  title: string;
+  status: "recorded" | "cancelled";
+  ledgerPath: string;
+  createdAt: string;
+  proofHash: string;
+}
+
+export interface AgentDeveloperAutomationPolicy {
+  schema: "ingen.developer_automation.policy.v1";
+  executableActions: AgentActionKind[];
+  repoInspectionRequiresConfirmation: boolean;
+  commandChecksRequireConfirmation: boolean;
+  gitMutationRequiresConfirmation: boolean;
+  cloudWritesRequireConfirmation: boolean;
+  mcpToolCallingStatus: "planned_connector_required";
+  automationPersistenceRequiresConfirmation: boolean;
+  artifactPolicy: "verify_command_exit_git_state_or_ledger_hash";
+  proofHash: string;
+}
+
 export interface AgentActionCapability extends AgentCapabilityAtlasEntry {
   requiresApproval: boolean;
   description: string;
@@ -623,6 +666,7 @@ export interface AgentActionHostManifest {
   computerUse: AgentComputerUsePolicy;
   browserWeb: AgentBrowserWebPolicy;
   documentMedia: AgentDocumentMediaPolicy;
+  developerAutomation: AgentDeveloperAutomationPolicy;
   runtime: AgentActionRuntimeManifestSummary;
   proofHash: string;
 }
@@ -650,7 +694,11 @@ export type AgentActionKind =
   | "document_write_text"
   | "document_write_json"
   | "document_write_csv"
-  | "document_convert_text";
+  | "document_convert_text"
+  | "dev_repo_status"
+  | "dev_git_diff"
+  | "dev_run_check"
+  | "automation_record";
 
 export type AgentActionScope = "workspace" | "computer";
 
@@ -667,6 +715,7 @@ export interface AgentActionRequest {
   text?: string;
   url?: string;
   content?: string;
+  title?: string;
   maxResults?: number;
   confirmed?: boolean;
   recursive?: boolean;
@@ -711,6 +760,8 @@ export interface AgentActionResult {
   browserPage?: AgentBrowserPageSummary;
   download?: AgentBrowserDownloadArtifact;
   documentMedia?: AgentDocumentMediaSummary;
+  developer?: AgentDeveloperRepoSummary;
+  automation?: AgentAutomationLedgerEntry;
   userPresenceRequired?: boolean;
   failureCategory?: AgentFailureCategory;
   retryRoutes?: AgentRetryStrategyId[];
@@ -836,7 +887,11 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "document_write_text",
     "document_write_json",
     "document_write_csv",
-    "document_convert_text"
+    "document_convert_text",
+    "dev_repo_status",
+    "dev_git_diff",
+    "dev_run_check",
+    "automation_record"
   ];
   if (!actions.includes(candidate.action as AgentActionKind)) {
     return false;
@@ -850,7 +905,7 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
   ) {
     return false;
   }
-  for (const key of ["path", "toPath", "query", "command", "url", "content"] as const) {
+  for (const key of ["path", "toPath", "query", "command", "url", "content", "title"] as const) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
       return false;
     }

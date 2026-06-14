@@ -310,6 +310,8 @@ Acceptance:
 - It can call an MCP tool and use the result in the same loop.
 - Background work is visible, cancellable and summarized.
 
+Status: implemented for the planned scope. The host now exposes `AgentDeveloperAutomationPolicy`, executable developer actions for Git status, Git diff and confirmed workspace checks, plus a confirmed append-only automation ledger record for visible resumable/background goals. Dev results include command exit verification, dirty/staged/untracked counts, diff stats and proof hashes. Real MCP `tools/list`/`tools/call`, cloud CLI writes, PR creation, subagents/hooks and OS-level scheduled/thread wakeups remain planned connector backends rather than fake direct execution.
+
 ### 10. UX, Events, Audit And Benchmarks
 
 Goal: make the agent's work legible, trustworthy and benchmarkable.

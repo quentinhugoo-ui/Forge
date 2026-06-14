@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import {
   createAgentActionRuntimeManifestSummary,
   createBrowserWebPolicy,
   createComputerUsePolicy,
+  createDeveloperAutomationPolicy,
   createDocumentMediaPolicy,
   createAgentVerificationPolicy,
   createWindowsExecutionPolicy,
@@ -38,6 +40,7 @@ async function withTempWorkspace<T>(run: (config: AgentActionHostConfig, root: s
 
 describe("agent action host", () => {
   const windowsIt = process.platform === "win32" ? it : it.skip;
+  const gitIt = spawnSync("git", ["--version"], { encoding: "utf8", stdio: "pipe" }).status === 0 ? it : it.skip;
 
   it("publishes bounded local-agent capabilities", () => {
     const manifest = createAgentActionHostManifest({
@@ -58,6 +61,8 @@ describe("agent action host", () => {
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("browser.download");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("document.inspect");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("document.write_json");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.repo_status");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("automation.record");
     expect(manifest.capabilityAtlas.length).toBeGreaterThanOrEqual(15);
     expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("windows.wmi");
     expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("browser.cdp");
@@ -83,6 +88,8 @@ describe("agent action host", () => {
     expect(manifest.browserWeb.executableActions).toContain("browser_download");
     expect(manifest.documentMedia.schema).toBe("ingen.document_media.policy.v1");
     expect(manifest.documentMedia.executableActions).toContain("document_write_json");
+    expect(manifest.developerAutomation.schema).toBe("ingen.developer_automation.policy.v1");
+    expect(manifest.developerAutomation.executableActions).toContain("dev_repo_status");
     expect([...manifest.runtime.installedToolIds, ...manifest.runtime.missingToolIds]).toContain("winget");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
 
@@ -117,6 +124,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("computer_use=foreground_required_for_risky_gui_actions pacing=single_action_then_verify");
     expect(promptManifest).toContain("browser_web=download:confirmed navigation:confirmed submission:confirmed");
     expect(promptManifest).toContain("document_media=workspace_writes:open computer_writes:confirmed office_com:confirmed");
+    expect(promptManifest).toContain("developer_automation=repo_inspect:open checks:confirmed git_mutation:confirmed cloud_writes:confirmed mcp:planned_connector_required automation:confirmed");
     expect(promptManifest).toContain("windows.wmi:planned/none");
     expect(promptManifest).toContain("office.com:planned/prompt");
     expect(promptManifest).toContain("capability_policy=Use the atlas for reasoning");
@@ -166,7 +174,11 @@ describe("agent action host", () => {
       "document.write_text",
       "document.write_json",
       "document.write_csv",
-      "document.convert_text"
+      "document.convert_text",
+      "dev.repo_status",
+      "dev.git_diff",
+      "dev.run_check",
+      "automation.record"
     ]);
     expect(summary.availableFamilies).toContain("shell.full");
     expect(summary.plannedFamilies).toContain("windows.settings");
@@ -286,6 +298,25 @@ describe("agent action host", () => {
     expect(policy.officeComRequiresConfirmation).toBe(true);
     expect(policy.macroPolicy).toBe("blocked_without_explicit_user_approval");
     expect(policy.artifactPolicy).toBe("verify_readback_size_hash_and_parser_status");
+  });
+
+  it("publishes a developer/cloud/MCP/automation policy", () => {
+    const policy = createDeveloperAutomationPolicy({
+      workspaceRoot: "C:\\repo",
+      workspaceActive: true,
+      cwd: "C:\\repo",
+      platform: "win32"
+    });
+
+    expect(policy.proofHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(policy.executableActions).toEqual(["dev_repo_status", "dev_git_diff", "dev_run_check", "automation_record"]);
+    expect(policy.repoInspectionRequiresConfirmation).toBe(false);
+    expect(policy.commandChecksRequireConfirmation).toBe(true);
+    expect(policy.gitMutationRequiresConfirmation).toBe(true);
+    expect(policy.cloudWritesRequireConfirmation).toBe(true);
+    expect(policy.mcpToolCallingStatus).toBe("planned_connector_required");
+    expect(policy.automationPersistenceRequiresConfirmation).toBe(true);
+    expect(policy.artifactPolicy).toBe("verify_command_exit_git_state_or_ledger_hash");
   });
 
   it("detects local tool availability and renders selected capability detail on demand", () => {
@@ -672,6 +703,71 @@ describe("agent action host", () => {
       expect(converted.toPath).toBe("notes\\source.txt");
       expect(converted.documentMedia?.kind).toBe("text");
       await expect(readFile(join(config.workspaceRoot, "notes", "source.txt"), "utf8")).resolves.toContain("Title");
+    });
+  });
+
+  gitIt("inspects Git state, runs confirmed checks and records automation goals", async () => {
+    await withTempWorkspace(async (config) => {
+      spawnSync("git", ["init"], { cwd: config.workspaceRoot, encoding: "utf8", stdio: "pipe" });
+      spawnSync("git", ["config", "user.email", "agent@example.test"], { cwd: config.workspaceRoot, encoding: "utf8", stdio: "pipe" });
+      spawnSync("git", ["config", "user.name", "Agent Test"], { cwd: config.workspaceRoot, encoding: "utf8", stdio: "pipe" });
+      await writeFile(join(config.workspaceRoot, "tracked.txt"), "one\n", "utf8");
+      spawnSync("git", ["add", "tracked.txt"], { cwd: config.workspaceRoot, encoding: "utf8", stdio: "pipe" });
+      spawnSync("git", ["commit", "-m", "Initial"], { cwd: config.workspaceRoot, encoding: "utf8", stdio: "pipe" });
+      await writeFile(join(config.workspaceRoot, "tracked.txt"), "one\ntwo\n", "utf8");
+      await writeFile(join(config.workspaceRoot, "untracked.txt"), "new\n", "utf8");
+
+      const status = await executeAgentActionRequest(config, {
+        action: "dev_repo_status"
+      });
+      expect(status.accepted).toBe(true);
+      expect(status.developer?.schema).toBe("ingen.developer.repo_summary.v1");
+      expect(status.developer?.changedFiles).toBeGreaterThanOrEqual(2);
+      expect(status.developer?.unstagedFiles).toBeGreaterThanOrEqual(1);
+      expect(status.developer?.untrackedFiles).toBeGreaterThanOrEqual(1);
+      expect(status.verification?.passed).toBe(true);
+
+      const diff = await executeAgentActionRequest(config, {
+        action: "dev_git_diff"
+      });
+      expect(diff.accepted).toBe(true);
+      expect(diff.developer?.diffStat).toContain("tracked.txt");
+
+      const rejectedCheck = await executeAgentActionRequest(config, {
+        action: "dev_run_check",
+        command: process.execPath,
+        args: ["-e", "console.log('check')"]
+      });
+      expect(rejectedCheck.accepted).toBe(false);
+      expect(rejectedCheck.error?.message).toContain("confirmed:true");
+
+      const check = await executeAgentActionRequest(config, {
+        action: "dev_run_check",
+        command: process.execPath,
+        args: ["-e", "console.log('check-ok')"],
+        confirmed: true
+      });
+      expect(check.accepted).toBe(true);
+      expect(check.routeId).toBe("dev.run_check");
+      expect(check.stdoutPreview).toContain("check-ok");
+      expect(check.developer?.action).toBe("run_check");
+
+      const rejectedAutomation = await executeAgentActionRequest(config, {
+        action: "automation_record",
+        title: "Check the build every morning"
+      });
+      expect(rejectedAutomation.accepted).toBe(false);
+
+      const automation = await executeAgentActionRequest(config, {
+        action: "automation_record",
+        title: "Check the build every morning",
+        confirmed: true
+      });
+      expect(automation.accepted).toBe(true);
+      expect(automation.automation?.schema).toBe("ingen.automation.ledger_entry.v1");
+      expect(automation.automation?.status).toBe("recorded");
+      expect(automation.automation?.proofHash).toMatch(/^[a-f0-9]{64}$/);
+      await expect(readFile(join(config.workspaceRoot, ".ingen-agent-artifacts", "automation-ledger.jsonl"), "utf8")).resolves.toContain("Check the build every morning");
     });
   });
 

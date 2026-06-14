@@ -8,6 +8,10 @@ import {
   AGENT_DOCUMENT_CONVERT_COMMAND,
   AGENT_DOCUMENT_INSPECT_COMMAND,
   AGENT_DOCUMENT_WRITE_COMMAND,
+  AGENT_AUTOMATION_RECORD_COMMAND,
+  AGENT_DEV_CHECK_COMMAND,
+  AGENT_DEV_DIFF_COMMAND,
+  AGENT_DEV_STATUS_COMMAND,
   AGENT_APPSHOT_COMMAND,
   AGENT_COMPUTER_INSPECT_COMMAND,
   AGENT_FOCUS_WINDOW_COMMAND,
@@ -41,6 +45,10 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION action="document_inspect" path="report.md"')?.command).toBe(AGENT_DOCUMENT_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="document.write_json" path="data.json"')?.command).toBe(AGENT_DOCUMENT_WRITE_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="document.convert_text"')?.command).toBe(AGENT_DOCUMENT_CONVERT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="dev_repo_status"')?.command).toBe(AGENT_DEV_STATUS_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION tool="dev.git_diff"')?.command).toBe(AGENT_DEV_DIFF_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION capability="dev.run_check"')?.command).toBe(AGENT_DEV_CHECK_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="automation_record"')?.command).toBe(AGENT_AUTOMATION_RECORD_COMMAND);
   });
 
   it("keeps path metadata for file modification event cards", () => {

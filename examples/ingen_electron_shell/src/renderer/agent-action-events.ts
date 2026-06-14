@@ -19,6 +19,10 @@ export const AGENT_BROWSER_OPEN_COMMAND = "/agent_browser_open_";
 export const AGENT_DOCUMENT_INSPECT_COMMAND = "/agent_document_inspect_";
 export const AGENT_DOCUMENT_WRITE_COMMAND = "/agent_document_write_";
 export const AGENT_DOCUMENT_CONVERT_COMMAND = "/agent_document_convert_";
+export const AGENT_DEV_STATUS_COMMAND = "/agent_dev_status_";
+export const AGENT_DEV_DIFF_COMMAND = "/agent_dev_diff_";
+export const AGENT_DEV_CHECK_COMMAND = "/agent_dev_check_";
+export const AGENT_AUTOMATION_RECORD_COMMAND = "/agent_automation_record_";
 
 export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_LIST_COMMAND,
@@ -41,7 +45,11 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_BROWSER_OPEN_COMMAND,
   AGENT_DOCUMENT_INSPECT_COMMAND,
   AGENT_DOCUMENT_WRITE_COMMAND,
-  AGENT_DOCUMENT_CONVERT_COMMAND
+  AGENT_DOCUMENT_CONVERT_COMMAND,
+  AGENT_DEV_STATUS_COMMAND,
+  AGENT_DEV_DIFF_COMMAND,
+  AGENT_DEV_CHECK_COMMAND,
+  AGENT_AUTOMATION_RECORD_COMMAND
 ] as const;
 
 export type AgentActionEventCommand = (typeof AGENT_ACTION_EVENT_COMMANDS)[number];
@@ -74,7 +82,11 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_BROWSER_OPEN_COMMAND, "confirmed browser navigation requested"],
   [AGENT_DOCUMENT_INSPECT_COMMAND, "document/media artifact inspected"],
   [AGENT_DOCUMENT_WRITE_COMMAND, "document/data artifact written and verified"],
-  [AGENT_DOCUMENT_CONVERT_COMMAND, "document text converted and verified"]
+  [AGENT_DOCUMENT_CONVERT_COMMAND, "document text converted and verified"],
+  [AGENT_DEV_STATUS_COMMAND, "repository status inspected"],
+  [AGENT_DEV_DIFF_COMMAND, "repository diff inspected"],
+  [AGENT_DEV_CHECK_COMMAND, "confirmed developer check completed"],
+  [AGENT_AUTOMATION_RECORD_COMMAND, "confirmed automation goal recorded"]
 ]);
 
 export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand][] = [
@@ -100,7 +112,11 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["document.write_text", AGENT_DOCUMENT_WRITE_COMMAND],
   ["document.write_json", AGENT_DOCUMENT_WRITE_COMMAND],
   ["document.write_csv", AGENT_DOCUMENT_WRITE_COMMAND],
-  ["document.convert_text", AGENT_DOCUMENT_CONVERT_COMMAND]
+  ["document.convert_text", AGENT_DOCUMENT_CONVERT_COMMAND],
+  ["dev.repo_status", AGENT_DEV_STATUS_COMMAND],
+  ["dev.git_diff", AGENT_DEV_DIFF_COMMAND],
+  ["dev.run_check", AGENT_DEV_CHECK_COMMAND],
+  ["automation.record", AGENT_AUTOMATION_RECORD_COMMAND]
 ] as const;
 
 const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
@@ -126,7 +142,11 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["document_write_text", AGENT_DOCUMENT_WRITE_COMMAND],
   ["document_write_json", AGENT_DOCUMENT_WRITE_COMMAND],
   ["document_write_csv", AGENT_DOCUMENT_WRITE_COMMAND],
-  ["document_convert_text", AGENT_DOCUMENT_CONVERT_COMMAND]
+  ["document_convert_text", AGENT_DOCUMENT_CONVERT_COMMAND],
+  ["dev_repo_status", AGENT_DEV_STATUS_COMMAND],
+  ["dev_git_diff", AGENT_DEV_DIFF_COMMAND],
+  ["dev_run_check", AGENT_DEV_CHECK_COMMAND],
+  ["automation_record", AGENT_AUTOMATION_RECORD_COMMAND]
 ]);
 
 const AGENT_ACTION_EVENT_BY_TOOL = new Map<string, AgentActionEventCommand>(AGENT_ACTION_EVENT_HINTS);
