@@ -9,6 +9,7 @@ const storeSource = readFileSync(join(root, "src", "renderer", "panels-chat-bott
 const ipcContractSource = readFileSync(join(root, "src", "shared", "ipc-contract.ts"), "utf8");
 const animationSource = readFileSync(join(root, "src", "renderer", "PanelsChatBottomSlice.tsx"), "utf8");
 const agentActionLoopSource = readFileSync(join(root, "src", "main", "agent-action-loop.ts"), "utf8");
+const normalizedMainSource = mainSource.replace(/\r\n/g, "\n");
 
 describe("assistant progressive response feed", () => {
   it("pushes transcript snapshot events while a chat command is still running", () => {
@@ -173,10 +174,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("AGENT_ACTION_COMPACTION_STATE v1");
     expect(mainSource).toContain("last_tool_ground_truth=");
     expect(mainSource).toContain("After compaction, continue the same observe-act-verify-retry loop");
-    expect(mainSource).toContain("result.accepted\n      ? \"next=verify whether the user objective is now satisfied");
+    expect(normalizedMainSource).toContain("result.accepted\n      ? \"next=verify whether the user objective is now satisfied");
     expect(mainSource).toContain("agentActionSelectedCapabilityContext(request, result)");
-    expect(mainSource).toContain("agentEvents.emit({\n      kind: \"compaction_started\"");
-    expect(mainSource).toContain("agentEvents.emit({\n      kind: \"compaction_completed\"");
+    expect(normalizedMainSource).toContain("agentEvents.emit({\n      kind: \"compaction_started\"");
+    expect(normalizedMainSource).toContain("agentEvents.emit({\n      kind: \"compaction_completed\"");
     expect(mainSource).toContain("window.webContents.send(\"forge:agent-runtime-event\", runtimeEvent)");
     expect(mainSource).toContain("!message.id.startsWith(\"assistant-status-\")");
     expect(mainSource).not.toContain("providerConversationMessages(\n  event");
