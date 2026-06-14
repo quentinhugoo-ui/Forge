@@ -11329,6 +11329,51 @@ ol.assistantText__list li::before {
   }
 }
 
+.shell--widget-minimizing .composer,
+.shell--widget-mode .composer {
+  --composer-upload-min-size: 66px;
+  --composer-input-height: var(--composer-upload-min-size);
+  left: var(--chat-left);
+  bottom: var(--composer-bottom);
+  grid-template-columns: var(--composer-upload-size) 1px minmax(0, 1fr) 88px 26px;
+  min-height: 82px;
+  height: auto;
+  padding: 8px;
+  transition: none;
+}
+
+.shell--widget-minimizing .composer__input,
+.shell--widget-mode .composer__input {
+  min-height: 66px;
+  height: 66px;
+  padding: 18px 8px 10px;
+}
+
+.shell--widget-minimizing .composer__upload,
+.shell--widget-mode .composer__upload,
+.shell--widget-minimizing .composer__divider,
+.shell--widget-mode .composer__divider {
+  width: var(--composer-upload-size);
+  height: var(--composer-upload-size);
+  min-width: var(--composer-upload-min-size);
+  min-height: var(--composer-upload-min-size);
+}
+
+.shell--widget-minimizing .bottomControls,
+.shell--widget-mode .bottomControls {
+  left: var(--chat-left);
+  bottom: var(--bottom-controls-bottom);
+  grid-template-columns: max-content 34px minmax(0, 1fr) max-content 30px;
+  gap: 7px;
+  width: var(--chat-width);
+  transition: none;
+}
+
+.shell--widget-minimizing .bottomControls code,
+.shell--widget-mode .bottomControls code {
+  display: inline;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .statusDock button,
   .bottomControls button,
