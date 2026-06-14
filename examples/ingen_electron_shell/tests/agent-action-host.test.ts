@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createAgentCapabilityAtlas,
   createAgentActionHostManifest,
   agentActionEventCommandForRequest,
   agentActionHostPromptManifest,
@@ -43,6 +44,9 @@ describe("agent action host", () => {
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("fs.delete_tree");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.full");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.readonly");
+    expect(manifest.capabilityAtlas.length).toBeGreaterThanOrEqual(15);
+    expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("windows.wmi");
+    expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("browser.cdp");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
 
     const promptManifest = agentActionHostPromptManifest({
@@ -54,6 +58,12 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("events=fs.list:/agent_list_");
     expect(promptManifest).toContain("fs.delete_tree:/agent_delete_tree_");
     expect(promptManifest).toContain("shell.full:/agent_shell_");
+    expect(promptManifest).toContain("capability_atlas=count:");
+    expect(promptManifest).toContain("windows.wmi:planned/none");
+    expect(promptManifest).toContain("office.com:planned/prompt");
+    expect(promptManifest).toContain("capability_policy=Use the atlas for reasoning");
+    expect(promptManifest).toContain("Prefer structured app/API/CLI routes first, then confirmed shell.full, then GUI/computer-use");
+    expect(promptManifest).toContain("capability_limits=Planned or blocked atlas entries are not direct AGENT_ACTION_JSON actions");
     expect(promptManifest).toContain("windows_reach=shell.full can use PowerShell/cmd");
     expect(promptManifest).toContain("retry=If AGENT_ACTION_RESULT reports failure");
     expect(promptManifest).toContain("loop_stream=When local action is needed");
@@ -61,6 +71,40 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("starts with AGENT_ACTION_JSON at column 1");
     expect(promptManifest).toContain("action_request_format=AGENT_ACTION_JSON");
     expect(promptManifest).toContain("tool_truth=Never claim an action was executed");
+  });
+
+  it("publishes a broad non-executable Windows capability atlas", () => {
+    const atlas = createAgentCapabilityAtlas({
+      workspaceRoot: "C:\\repo",
+      workspaceActive: true,
+      cwd: "C:\\repo",
+      platform: "win32"
+    });
+    const byFamily = new Map(atlas.map((capability) => [capability.family, capability]));
+
+    for (const family of [
+      "office.com",
+      "browser.cdp",
+      "windows.wmi",
+      "windows.scheduler",
+      "windows.settings",
+      "windows.credentials",
+      "virtualization.wsl",
+      "automation.rpa"
+    ]) {
+      expect(byFamily.has(family)).toBe(true);
+    }
+
+    expect(atlas.length).toBeGreaterThanOrEqual(15);
+    expect(byFamily.get("windows.credentials")?.status).toBe("blocked");
+    expect(byFamily.get("windows.credentials")?.approval).toBe("blocked");
+    expect(byFamily.get("windows.scheduler")?.approval).toBe("prompt");
+    expect(byFamily.get("windows.settings")?.approval).toBe("prompt");
+    expect(byFamily.get("browser.cdp")?.status).toBe("planned");
+    expect(byFamily.get("virtualization.wsl")?.status).toBe("planned");
+    expect(byFamily.get("office.com")?.executableActionIds).toBeUndefined();
+    expect(byFamily.get("shell.full")?.executableActionIds).toEqual(["shell.full"]);
+    expect(byFamily.get("shell.full")?.notes).toContain("universal Windows escape hatch");
   });
 
   it("keeps a compact stable routing hint separate from the runtime manifest", () => {

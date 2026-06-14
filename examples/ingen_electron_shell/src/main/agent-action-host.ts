@@ -9,6 +9,7 @@ import type {
   AgentActionRequest,
   AgentActionResult,
   AgentActionSearchMatch,
+  AgentCapabilityAtlasEntry,
   IpcError
 } from "../shared/ipc-contract.js";
 
@@ -186,139 +187,566 @@ function clampMaxResults(value: unknown, fallback: number): number {
   return Math.max(1, Math.min(500, typeof value === "number" && Number.isInteger(value) ? value : fallback));
 }
 
-export function createAgentActionHostManifest(config: AgentActionHostConfig): AgentActionHostManifest {
-  const capabilities: AgentActionCapability[] = [
-    {
+function atlasEntry(entry: AgentCapabilityAtlasEntry): AgentCapabilityAtlasEntry {
+  return entry;
+}
+
+function actionCapability(entry: AgentActionCapability): AgentActionCapability {
+  return entry;
+}
+
+function createExecutableActionCapabilities(): AgentActionCapability[] {
+  return [
+    actionCapability({
       id: "fs.list",
+      family: "filesystem.discovery",
+      surface: "filesystem",
       title: "List files",
       status: "available",
       risk: "read",
+      operations: ["enumerate directories", "inspect path metadata"],
       underlyingTools: ["node:fs/readdir", "PowerShell Get-ChildItem", "rg --files"],
+      fallbacks: ["shell.readonly Get-ChildItem", "shell.readonly rg --files"],
+      verification: ["filesystem"],
+      approval: "none",
+      executableActionIds: ["fs.list"],
       requiresApproval: false,
       writes: false,
-      description: "Enumerate files and directories inside the workspace or, with scope:\"computer\", anywhere except protected roots."
-    },
-    {
+      description: "Enumerate files and directories inside the workspace or, with scope:\"computer\", anywhere except protected roots.",
+      notes: "Prefer this before shell when the user asks what is in a folder."
+    }),
+    actionCapability({
       id: "fs.search",
+      family: "filesystem.search",
+      surface: "filesystem",
       title: "Search content",
       status: "available",
       risk: "read",
+      operations: ["search file contents", "search bounded paths"],
       underlyingTools: ["rg", "node fallback"],
+      fallbacks: ["shell.readonly Select-String", "shell.readonly findstr"],
+      verification: ["filesystem"],
+      approval: "none",
+      executableActionIds: ["fs.search"],
       requiresApproval: false,
       writes: false,
-      description: "Search file contents inside the workspace or, with scope:\"computer\", bounded areas of the computer."
-    },
-    {
+      description: "Search file contents inside the workspace or, with scope:\"computer\", bounded areas of the computer.",
+      notes: "Use compact result previews; keep broad computer searches bounded."
+    }),
+    actionCapability({
       id: "fs.create_directory",
+      family: "filesystem.mutation",
+      surface: "filesystem",
       title: "Create directory",
       status: "available",
       risk: "workspace_write",
+      operations: ["create directory"],
       underlyingTools: ["node:fs/mkdir", "PowerShell New-Item"],
+      fallbacks: ["shell.full New-Item", "cmd mkdir"],
+      verification: ["filesystem"],
+      approval: "confirmed",
+      executableActionIds: ["fs.create_directory"],
       requiresApproval: true,
       writes: true,
-      description: "Create one directory inside the workspace, or anywhere on the computer when scope:\"computer\" and confirmed:true are set."
-    },
-    {
+      description: "Create one directory inside the workspace, or anywhere on the computer when scope:\"computer\" and confirmed:true are set.",
+      notes: "Computer scope writes require explicit confirmation."
+    }),
+    actionCapability({
       id: "fs.rename",
+      family: "filesystem.mutation",
+      surface: "filesystem",
       title: "Rename path",
       status: "available",
       risk: "workspace_write",
+      operations: ["rename file", "rename directory"],
       underlyingTools: ["node:fs/rename", "PowerShell Rename-Item"],
+      fallbacks: ["shell.full Rename-Item", "cmd ren"],
+      verification: ["filesystem"],
+      approval: "confirmed",
+      executableActionIds: ["fs.rename"],
       requiresApproval: true,
       writes: true,
-      description: "Rename one file or directory inside the workspace, or anywhere on the computer when scope:\"computer\" and confirmed:true are set."
-    },
-    {
+      description: "Rename one file or directory inside the workspace, or anywhere on the computer when scope:\"computer\" and confirmed:true are set.",
+      notes: "Verify old path disappeared and new path exists."
+    }),
+    actionCapability({
       id: "fs.move",
+      family: "filesystem.mutation",
+      surface: "filesystem",
       title: "Move path",
       status: "available",
       risk: "workspace_write",
+      operations: ["move file", "move directory"],
       underlyingTools: ["node:fs/rename", "PowerShell Move-Item"],
+      fallbacks: ["shell.full Move-Item", "robocopy then remove source"],
+      verification: ["filesystem"],
+      approval: "confirmed",
+      executableActionIds: ["fs.move"],
       requiresApproval: true,
       writes: true,
-      description: "Move one file or directory inside the workspace, or anywhere on the computer when scope:\"computer\" and confirmed:true are set."
-    },
-    {
+      description: "Move one file or directory inside the workspace, or anywhere on the computer when scope:\"computer\" and confirmed:true are set.",
+      notes: "Use path guards before any whole-computer move."
+    }),
+    actionCapability({
       id: "fs.copy",
+      family: "filesystem.mutation",
+      surface: "filesystem",
       title: "Copy path",
       status: "available",
       risk: "workspace_write",
+      operations: ["copy file", "copy directory"],
       underlyingTools: ["node:fs/cp", "PowerShell Copy-Item"],
+      fallbacks: ["shell.full Copy-Item", "robocopy"],
+      verification: ["filesystem", "artifact_hash"],
+      approval: "confirmed",
+      executableActionIds: ["fs.copy"],
       requiresApproval: true,
       writes: true,
-      description: "Copy files or directories. Directory copy requires recursive:true; computer scope requires confirmed:true."
-    },
-    {
+      description: "Copy files or directories. Directory copy requires recursive:true; computer scope requires confirmed:true.",
+      notes: "For important copies, verify size or hash when practical."
+    }),
+    actionCapability({
       id: "fs.delete_empty_directory",
+      family: "filesystem.destructive",
+      surface: "filesystem",
       title: "Delete empty directory",
       status: "available",
       risk: "destructive",
+      operations: ["delete empty directory"],
       underlyingTools: ["node:fs/rmdir", "PowerShell Remove-Item"],
+      fallbacks: ["shell.full Remove-Item"],
+      verification: ["filesystem"],
+      approval: "prompt",
+      executableActionIds: ["fs.delete_empty_directory"],
       requiresApproval: true,
       writes: true,
-      description: "Delete only an empty directory; works in workspace or confirmed computer scope."
-    },
-    {
+      description: "Delete only an empty directory; works in workspace or confirmed computer scope.",
+      notes: "Deletion requires confirmation and protected roots remain blocked."
+    }),
+    actionCapability({
       id: "fs.delete_tree",
+      family: "filesystem.destructive",
+      surface: "filesystem",
       title: "Delete tree",
       status: "available",
       risk: "destructive",
+      operations: ["recursive delete"],
       underlyingTools: ["node:fs/rm recursive", "PowerShell Remove-Item -Recurse"],
+      fallbacks: ["shell.full Remove-Item -Recurse"],
+      verification: ["filesystem"],
+      approval: "prompt",
+      executableActionIds: ["fs.delete_tree"],
       requiresApproval: true,
       writes: true,
-      description: "Recursively delete a file or directory after confirmed:true and absolute root guards. System/protected roots are blocked."
-    },
-    {
+      description: "Recursively delete a file or directory after confirmed:true and absolute root guards. System/protected roots are blocked.",
+      notes: "Never run against unresolved paths or protected/system roots."
+    }),
+    actionCapability({
       id: "shell.readonly",
+      family: "shell.readonly",
+      surface: "shell",
       title: "Run read-only command",
       status: "available",
       risk: "read",
+      operations: ["inspect workspace", "read command output"],
       underlyingTools: ["rg", "git status", "git diff", "git branch", "git rev-parse"],
+      fallbacks: ["filesystem.discovery", "filesystem.search"],
+      verification: ["command_exit"],
+      approval: "none",
+      executableActionIds: ["shell.readonly"],
       requiresApproval: false,
       writes: false,
-      description: "Execute a small allowlist of read-only workspace inspection commands."
-    },
-    {
+      description: "Execute a small allowlist of read-only workspace inspection commands.",
+      notes: "Readonly shell is for inspection, not local mutation."
+    }),
+    actionCapability({
       id: "shell.full",
+      family: "shell.full",
+      surface: "shell",
       title: "Run confirmed command",
       status: "available",
       risk: "computer_write",
+      operations: ["run arbitrary local command", "invoke Windows native tools", "download/install/update when confirmed"],
       underlyingTools: ["PowerShell", "cmd", "winget", "reg.exe", "schtasks", "netsh", "DISM", "rundll32", "Start-Process", "ms-settings", "native shell"],
+      fallbacks: ["PowerShell", "cmd.exe", "Windows native CLI", "GUI/computer_use when available"],
+      verification: ["command_exit", "filesystem", "process_state", "registry_state", "service_state", "package_state"],
+      approval: "prompt",
+      executableActionIds: ["shell.full"],
       requiresApproval: true,
       writes: true,
-      description: "Execute an arbitrary local command only when confirmed:true is set. This is the universal Windows escape hatch for settings, installers, updates, downloads, CLIs, system tools and app automation."
-    },
-    {
-      id: "browser.playwright",
-      title: "Contained browser automation",
-      status: "planned",
-      risk: "external_ui",
-      underlyingTools: ["Playwright", "Electron WebContentsView", "CDP"],
-      requiresApproval: true,
-      writes: false,
-      description: "Drive WebExplorer through a contained browser harness; external submissions remain confirmation-gated."
-    },
-    {
-      id: "computer_use",
-      title: "Computer use",
-      status: "planned",
-      risk: "external_ui",
-      underlyingTools: ["screenshot", "Win32 SendInput", "UI Automation"],
-      requiresApproval: true,
-      writes: true,
-      description: "Screen/click/keyboard control is reserved for a later confirmation-gated native adapter."
-    },
-    {
-      id: "mcp",
-      title: "MCP tools",
-      status: "planned",
-      risk: "external_ui",
-      underlyingTools: ["tools/list", "tools/call"],
-      requiresApproval: true,
-      writes: false,
-      description: "Expose external systems through MCP-compatible tool metadata and structured calls."
-    }
+      description: "Execute an arbitrary local command only when confirmed:true is set. This is the universal Windows escape hatch for settings, installers, updates, downloads, CLIs, system tools and app automation.",
+      notes: "Prefer structured APIs first; use shell.full as the confirmed universal Windows escape hatch."
+    })
   ];
+}
+
+export function createAgentCapabilityAtlas(config: AgentActionHostConfig): AgentCapabilityAtlasEntry[] {
+  const executable = createExecutableActionCapabilities();
+  const atlas: AgentCapabilityAtlasEntry[] = [
+    ...executable,
+    atlasEntry({
+      id: "package.winget",
+      family: "package.manager",
+      surface: "windows.package",
+      title: "Install, update and inspect packages",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["list packages", "install software", "upgrade software", "uninstall software"],
+      underlyingTools: ["winget", "PowerShell", "installer executables"],
+      fallbacks: ["direct vendor installer", "browser download", "manual confirmation"],
+      verification: ["package_state", "command_exit", "process_state"],
+      approval: "prompt",
+      writes: true,
+      notes: "Not a direct action in v1; route through confirmed shell.full."
+    }),
+    atlasEntry({
+      id: "windows.registry",
+      family: "windows.registry",
+      surface: "windows.system",
+      title: "Inspect and modify registry keys",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["query keys", "set values", "delete values", "export keys"],
+      underlyingTools: ["reg.exe", "PowerShell registry provider"],
+      fallbacks: ["ms-settings URI", "GUI/computer_use"],
+      verification: ["registry_state", "command_exit"],
+      approval: "prompt",
+      writes: true,
+      notes: "System hive writes require explicit user approval; use shell.full only."
+    }),
+    atlasEntry({
+      id: "windows.services",
+      family: "windows.services",
+      surface: "windows.system",
+      title: "Inspect and control services",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["query services", "start service", "stop service", "change startup mode"],
+      underlyingTools: ["Get-Service", "sc.exe", "PowerShell service cmdlets"],
+      fallbacks: ["Services MMC via GUI/computer_use"],
+      verification: ["service_state", "event_log"],
+      approval: "prompt",
+      writes: true,
+      notes: "Service mutation can affect the machine and remains approval-gated."
+    }),
+    atlasEntry({
+      id: "windows.processes",
+      family: "windows.processes",
+      surface: "windows.system",
+      title: "Inspect and control processes",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["list processes", "start process", "stop process", "inspect handles"],
+      underlyingTools: ["Get-Process", "Start-Process", "Stop-Process", "tasklist", "taskkill"],
+      fallbacks: ["Task Manager via GUI/computer_use"],
+      verification: ["process_state", "command_exit"],
+      approval: "prompt",
+      writes: true,
+      notes: "Killing processes requires confirmation unless app owns the process."
+    }),
+    atlasEntry({
+      id: "windows.scheduler",
+      family: "windows.scheduler",
+      surface: "windows.system",
+      title: "Create and inspect scheduled tasks",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["query tasks", "create task", "enable/disable task", "delete task"],
+      underlyingTools: ["schtasks", "ScheduledTasks PowerShell module", "Task Scheduler COM"],
+      fallbacks: ["Task Scheduler GUI/computer_use"],
+      verification: ["command_exit", "event_log"],
+      approval: "prompt",
+      writes: true,
+      notes: "Recurring/background tasks must be visible in the audit trail."
+    }),
+    atlasEntry({
+      id: "windows.wmi",
+      family: "windows.wmi",
+      surface: "windows.system",
+      title: "Query Windows management state",
+      status: "planned",
+      risk: "read",
+      operations: ["query OS state", "query devices", "query hardware", "query installed software"],
+      underlyingTools: ["Get-CimInstance", "Get-WmiObject", "wmic"],
+      fallbacks: ["PowerShell native cmdlets", "Event Logs"],
+      verification: ["command_exit"],
+      approval: "none",
+      writes: false,
+      notes: `Runtime platform=${config.platform}; mutation through WMI must use a separate prompt-gated capability.`
+    }),
+    atlasEntry({
+      id: "windows.events",
+      family: "windows.event_logs",
+      surface: "windows.diagnostics",
+      title: "Read Event Viewer and diagnostic logs",
+      status: "planned",
+      risk: "read",
+      operations: ["query event logs", "filter errors", "export diagnostic snippets"],
+      underlyingTools: ["Get-WinEvent", "wevtutil", "Event Viewer"],
+      fallbacks: ["application logs", "PowerShell transcript"],
+      verification: ["event_log", "command_exit"],
+      approval: "none",
+      writes: false,
+      notes: "Use for independent verification after system changes."
+    }),
+    atlasEntry({
+      id: "windows.network",
+      family: "windows.network",
+      surface: "windows.network",
+      title: "Inspect and adjust network state",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["inspect adapters", "query routes", "test connectivity", "change firewall rules"],
+      underlyingTools: ["netsh", "Get-NetAdapter", "Test-NetConnection", "New-NetFirewallRule"],
+      fallbacks: ["Windows Settings URI", "Control Panel GUI"],
+      verification: ["command_exit", "registry_state", "event_log"],
+      approval: "prompt",
+      writes: true,
+      notes: "Firewall/VPN/proxy mutation is sensitive and must be user-approved."
+    }),
+    atlasEntry({
+      id: "windows.settings",
+      family: "windows.settings",
+      surface: "windows.gui",
+      title: "Open and control Windows Settings",
+      status: "planned",
+      risk: "external_ui",
+      operations: ["open settings pages", "inspect visible settings", "guide or automate toggles"],
+      underlyingTools: ["ms-settings URI", "Start-Process", "UI Automation"],
+      fallbacks: ["Control Panel applets", "registry", "PowerShell"],
+      verification: ["ui_state", "registry_state"],
+      approval: "prompt",
+      writes: true,
+      notes: "Use API/CLI when available, then shell, then GUI/computer-use for settings that only exist visually."
+    }),
+    atlasEntry({
+      id: "windows.credentials",
+      family: "windows.credentials",
+      surface: "windows.security",
+      title: "Credential and secret boundaries",
+      status: "blocked",
+      risk: "blocked",
+      operations: ["detect credential requirement", "request user presence", "refuse silent secret access"],
+      underlyingTools: ["Credential Manager", "SecretManagement", "browser profile prompts"],
+      fallbacks: ["manual user entry", "external authenticated connector"],
+      verification: ["manual_confirmation"],
+      approval: "blocked",
+      writes: false,
+      notes: "Never read or exfiltrate secrets silently; authenticated actions require explicit user presence."
+    }),
+    atlasEntry({
+      id: "windows.certificates",
+      family: "windows.certificates",
+      surface: "windows.security",
+      title: "Certificate store inspection",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["inspect certificate stores", "import certificate", "export public metadata"],
+      underlyingTools: ["certutil", "PowerShell Cert: provider"],
+      fallbacks: ["certmgr.msc GUI"],
+      verification: ["command_exit", "registry_state"],
+      approval: "prompt",
+      writes: true,
+      notes: "Private key export or trust changes are high-risk and prompt-gated."
+    }),
+    atlasEntry({
+      id: "browser.cdp",
+      family: "browser.cdp",
+      surface: "browser",
+      title: "Control browsers through DevTools Protocol",
+      status: "planned",
+      risk: "external_ui",
+      operations: ["inspect page", "click/type", "capture network", "download files", "run browser tests"],
+      underlyingTools: ["Chrome DevTools Protocol", "Playwright", "Electron WebContents"],
+      fallbacks: ["GUI/computer_use", "MCP browser tools"],
+      verification: ["browser_state", "ui_state", "artifact_hash"],
+      approval: "prompt",
+      writes: true,
+      notes: "External submissions, purchases and account changes require confirmation."
+    }),
+    atlasEntry({
+      id: "computer.ui_automation",
+      family: "computer.ui_automation",
+      surface: "desktop_gui",
+      title: "Control desktop apps through accessibility and input",
+      status: "planned",
+      risk: "external_ui",
+      operations: ["screenshot", "OCR", "click", "type", "drag", "inspect accessibility tree"],
+      underlyingTools: ["UI Automation", "Win32 SendInput", "screenshot/OCR"],
+      fallbacks: ["PowerShell/CLI", "app-specific COM/API"],
+      verification: ["ui_state", "manual_confirmation"],
+      approval: "prompt",
+      writes: true,
+      notes: "Prefer structured API/CLI first, shell second, GUI/computer-use only when needed."
+    }),
+    atlasEntry({
+      id: "automation.rpa",
+      family: "automation.rpa",
+      surface: "desktop_gui",
+      title: "Run repeatable desktop RPA flows",
+      status: "planned",
+      risk: "external_ui",
+      operations: ["record or invoke RPA flow", "automate legacy GUI workflow"],
+      underlyingTools: ["Power Automate Desktop", "UI Automation"],
+      fallbacks: ["computer.ui_automation", "shell.full"],
+      verification: ["ui_state", "event_log"],
+      approval: "prompt",
+      writes: true,
+      notes: "RPA flows must be explicit, audited and cancellable."
+    }),
+    atlasEntry({
+      id: "office.com",
+      family: "office.com",
+      surface: "office",
+      title: "Control Office apps through COM/VBA",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["read documents", "edit workbooks", "export PDFs", "run macros only with consent"],
+      underlyingTools: ["COM Automation", "VBA object models", "PowerShell"],
+      fallbacks: ["document parsers", "GUI/computer_use"],
+      verification: ["filesystem", "artifact_hash", "ui_state"],
+      approval: "prompt",
+      writes: true,
+      notes: "Macros and Outlook sending are sensitive and require explicit confirmation."
+    }),
+    atlasEntry({
+      id: "documents.media",
+      family: "documents.media",
+      surface: "documents",
+      title: "Read, transform and create documents/media",
+      status: "planned",
+      risk: "workspace_write",
+      operations: ["parse PDF/Office", "convert files", "extract text", "write reports", "process images/audio/video"],
+      underlyingTools: ["bundled document libraries", "Office COM", "ffmpeg if installed", "OCR"],
+      fallbacks: ["shell.full external CLI", "manual export"],
+      verification: ["filesystem", "artifact_hash"],
+      approval: "confirmed",
+      writes: true,
+      notes: "Large artifacts should be referenced by path, hash and compact manifest."
+    }),
+    atlasEntry({
+      id: "dev.git",
+      family: "dev.git",
+      surface: "developer",
+      title: "Develop, test and collaborate in repositories",
+      status: "planned",
+      risk: "workspace_write",
+      operations: ["inspect repo", "edit code", "run tests", "commit", "push", "open PR"],
+      underlyingTools: ["git", "npm", "cargo", "gh", "language toolchains"],
+      fallbacks: ["MCP GitHub", "shell.full"],
+      verification: ["command_exit", "filesystem", "mcp_result"],
+      approval: "confirmed",
+      writes: true,
+      notes: "Use repo wrappers where required; preserve unrelated user changes."
+    }),
+    atlasEntry({
+      id: "virtualization.wsl",
+      family: "virtualization.wsl",
+      surface: "virtualization",
+      title: "Use WSL distributions",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["list distros", "run Linux commands", "import/export distros", "install WSL"],
+      underlyingTools: ["wsl.exe", "PowerShell"],
+      fallbacks: ["native Windows toolchain", "Docker"],
+      verification: ["command_exit", "filesystem", "process_state"],
+      approval: "prompt",
+      writes: true,
+      notes: "Distro install/import/export and cross-filesystem writes require confirmation."
+    }),
+    atlasEntry({
+      id: "virtualization.hyperv_docker",
+      family: "virtualization.hyperv_docker",
+      surface: "virtualization",
+      title: "Use containers and virtual machines",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["inspect containers", "run containers", "manage Hyper-V VMs"],
+      underlyingTools: ["docker", "PowerShell Hyper-V module", "wsl.exe"],
+      fallbacks: ["local toolchain", "cloud runner"],
+      verification: ["process_state", "command_exit"],
+      approval: "prompt",
+      writes: true,
+      notes: "VM/container lifecycle changes are prompt-gated."
+    }),
+    atlasEntry({
+      id: "cloud.clis",
+      family: "cloud.clis",
+      surface: "cloud",
+      title: "Use authenticated cloud CLIs",
+      status: "planned",
+      risk: "external_ui",
+      operations: ["inspect cloud resources", "deploy", "download artifacts"],
+      underlyingTools: ["az", "aws", "gcloud", "gh"],
+      fallbacks: ["MCP connectors", "browser.cdp"],
+      verification: ["command_exit", "mcp_result"],
+      approval: "prompt",
+      writes: true,
+      notes: "Cloud writes and credential prompts require explicit user confirmation."
+    }),
+    atlasEntry({
+      id: "mcp.plugins",
+      family: "mcp.plugins",
+      surface: "external_tools",
+      title: "Use MCP, plugins, skills, hooks and subagents",
+      status: "planned",
+      risk: "external_ui",
+      operations: ["list tools", "call tools", "delegate subtask", "run hook"],
+      underlyingTools: ["MCP tools/list", "MCP tools/call", "plugin manifests", "skills"],
+      fallbacks: ["shell.full", "browser.cdp"],
+      verification: ["mcp_result", "artifact_hash"],
+      approval: "prompt",
+      writes: true,
+      notes: "External tool calls inherit the risk of the underlying connector."
+    }),
+    atlasEntry({
+      id: "automations.goals",
+      family: "automations.goals",
+      surface: "agent_runtime",
+      title: "Run persistent goals and automations",
+      status: "planned",
+      risk: "computer_write",
+      operations: ["schedule follow-up", "poll status", "resume work", "monitor command"],
+      underlyingTools: ["Task Scheduler", "app automation ledger", "thread wakeups"],
+      fallbacks: ["manual reminder", "shell.full schtasks"],
+      verification: ["event_log", "mcp_result", "manual_confirmation"],
+      approval: "prompt",
+      writes: true,
+      notes: "Background work must be visible, cancellable and summarized."
+    }),
+    atlasEntry({
+      id: "security.admin_boundary",
+      family: "security.admin_boundary",
+      surface: "windows.security",
+      title: "Respect admin and security boundaries",
+      status: "blocked",
+      risk: "blocked",
+      operations: ["detect UAC/admin boundary", "stop before bypass", "ask user for approval"],
+      underlyingTools: ["UAC", "Windows Security"],
+      fallbacks: ["manual user action", "reduced-permission route"],
+      verification: ["manual_confirmation"],
+      approval: "blocked",
+      writes: false,
+      notes: "Never bypass UAC, approve security prompts, or weaken security silently."
+    })
+  ];
+  return atlas;
+}
+
+function compactCapabilityAtlasLine(atlas: AgentCapabilityAtlasEntry[]): string {
+  const familySummary = atlas
+    .map((entry) => `${entry.family}:${entry.status}/${entry.approval}`)
+    .join(" ");
+  const plannedFamilies = atlas
+    .filter((entry) => entry.status !== "available")
+    .map((entry) => entry.family)
+    .join("|");
+  return `capability_atlas=count:${atlas.length} families=${familySummary} planned_or_blocked=${plannedFamilies}`;
+}
+
+export function createAgentActionHostManifest(config: AgentActionHostConfig): AgentActionHostManifest {
+  const capabilities = createExecutableActionCapabilities();
+  const capabilityAtlas = createAgentCapabilityAtlas(config);
   const manifest: AgentActionHostManifest = {
     schema: "ingen.agent_action_host.manifest.v1",
     workspace: {
@@ -335,6 +763,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
       computerUse: "planned_confirmation_required"
     },
     capabilities,
+    capabilityAtlas,
     proofHash: ""
   };
   manifest.proofHash = hashJson({ ...manifest, proofHash: "" });
@@ -353,6 +782,9 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `shell=${manifest.permissions.shell}`,
     `protected_roots=${manifest.workspace.protectedRoots.join("|")}`,
     "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
+    compactCapabilityAtlasLine(manifest.capabilityAtlas),
+    "capability_policy=Use the atlas for reasoning, not as fake execution. Prefer structured app/API/CLI routes first, then confirmed shell.full, then GUI/computer-use only when the task cannot be completed through a safer route.",
+    "capability_limits=Planned or blocked atlas entries are not direct AGENT_ACTION_JSON actions. Use available executable actions only, or explain the missing backend/approval boundary.",
     "windows_reach=shell.full can use PowerShell/cmd plus Windows-native tools such as winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process and ms-settings URIs when confirmed:true is warranted.",
     `events=${AGENT_ACTION_EVENT_HINTS.join(" ")}`,
     "loop_stream=When local action is needed, write one short progress paragraph first, then emit exactly one AGENT_ACTION_JSON line that starts with AGENT_ACTION_JSON at column 1. After the app returns AGENT_ACTION_RESULT, continue with another short paragraph plus another AGENT_ACTION_JSON if more work remains, or finish with a compact summary.",

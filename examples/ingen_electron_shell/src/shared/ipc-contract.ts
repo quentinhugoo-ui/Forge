@@ -296,31 +296,46 @@ export interface WorkspaceActionResult {
   error?: IpcError;
 }
 
-export type AgentActionCapabilityId =
-  | "fs.list"
-  | "fs.search"
-  | "fs.create_directory"
-  | "fs.rename"
-  | "fs.move"
-  | "fs.copy"
-  | "fs.delete_empty_directory"
-  | "fs.delete_tree"
-  | "shell.readonly"
-  | "shell.full"
-  | "browser.playwright"
-  | "computer_use"
-  | "mcp";
+export type AgentActionCapabilityId = string;
 
 export type AgentActionRisk = "read" | "workspace_write" | "computer_write" | "destructive" | "external_ui" | "blocked";
+export type AgentCapabilityFamily = string;
+export type AgentCapabilitySurface = string;
+export type AgentCapabilityApproval = "none" | "prompt" | "confirmed" | "blocked";
+export type AgentCapabilityStatus = "available" | "planned" | "blocked";
+export type AgentCapabilityVerification =
+  | "artifact_hash"
+  | "browser_state"
+  | "command_exit"
+  | "event_log"
+  | "filesystem"
+  | "manual_confirmation"
+  | "mcp_result"
+  | "package_state"
+  | "process_state"
+  | "registry_state"
+  | "service_state"
+  | "ui_state";
 
-export interface AgentActionCapability {
-  id: AgentActionCapabilityId;
+export interface AgentCapabilityAtlasEntry {
+  id: string;
+  family: AgentCapabilityFamily;
+  surface: AgentCapabilitySurface;
   title: string;
-  status: "available" | "planned" | "blocked";
+  status: AgentCapabilityStatus;
   risk: AgentActionRisk;
+  operations: string[];
   underlyingTools: string[];
-  requiresApproval: boolean;
+  fallbacks: string[];
+  verification: AgentCapabilityVerification[];
+  approval: AgentCapabilityApproval;
   writes: boolean;
+  notes: string;
+  executableActionIds?: AgentActionCapabilityId[];
+}
+
+export interface AgentActionCapability extends AgentCapabilityAtlasEntry {
+  requiresApproval: boolean;
   description: string;
 }
 
@@ -340,6 +355,7 @@ export interface AgentActionHostManifest {
     computerUse: "planned_confirmation_required";
   };
   capabilities: AgentActionCapability[];
+  capabilityAtlas: AgentCapabilityAtlasEntry[];
   proofHash: string;
 }
 
