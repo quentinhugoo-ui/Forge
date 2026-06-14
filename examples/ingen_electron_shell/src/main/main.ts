@@ -5824,6 +5824,9 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   dev_git_push: "dev.git_push",
   dev_github_pr_create: "dev.github_pr_create",
   dev_run_check: "dev.run_check",
+  cloud_cli_inspect: "cloud.inspect",
+  cloud_cli_run_readonly: "cloud.run_readonly",
+  cloud_cli_run_write: "cloud.run_write",
   virtualization_inspect: "virtualization.inspect",
   virtualization_run_command: "virtualization.run_command",
   automation_schedule: "automation.schedule",
@@ -5921,7 +5924,8 @@ function emitAgentRuntimeToolCallStarted(params: {
     risk: params.request.action === "delete_empty_directory" || params.request.action === "delete_tree"
       ? "destructive"
       : params.request.action === "run_command" ||
-        params.request.action === "virtualization_run_command"
+        params.request.action === "virtualization_run_command" ||
+        params.request.action === "cloud_cli_run_write"
       ? "computer_write"
       : params.request.action === "computer_appshot" ||
         params.request.action === "computer_focus_window" ||
@@ -5961,6 +5965,8 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "document_media_metadata" ||
         params.request.action === "dev_repo_status" ||
         params.request.action === "dev_git_diff" ||
+        params.request.action === "cloud_cli_inspect" ||
+        params.request.action === "cloud_cli_run_readonly" ||
         params.request.action === "virtualization_inspect"
       ? "read"
       : "workspace_write",
@@ -6273,6 +6279,8 @@ function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
     request.action === "document_inspect" ||
     request.action === "dev_repo_status" ||
     request.action === "dev_git_diff" ||
+    request.action === "cloud_cli_inspect" ||
+    request.action === "cloud_cli_run_readonly" ||
     request.action === "virtualization_inspect" ||
     request.action === "automation_list"
   );

@@ -14,6 +14,8 @@ import type {
   AgentActionRuntimeManifestSummary,
   AgentCapabilityAtlasEntry,
   AgentCapabilityVerification,
+  AgentCloudCliProvider,
+  AgentCloudCliSummary,
   AgentBrowserDownloadArtifact,
   AgentBrowserPageSummary,
   AgentBrowserScreenshotArtifact,
@@ -67,8 +69,12 @@ const AGENT_ACTION_TOOL_DETECTION_COMMANDS: readonly { id: string; command: stri
   { id: "rundll32", command: "rundll32.exe" },
   { id: "wsl", command: "wsl.exe" },
   { id: "docker", command: "docker.exe" },
+  { id: "aws", command: "aws.exe" },
+  { id: "az", command: "az.cmd" },
+  { id: "gcloud", command: "gcloud.cmd" },
   { id: "git", command: "git.exe" },
   { id: "gh", command: "gh.exe" },
+  { id: "stripe", command: "stripe.exe" },
   { id: "node", command: "node.exe" },
   { id: "npm", command: "npm.cmd" },
   { id: "cargo", command: "cargo.exe" },
@@ -124,6 +130,9 @@ const AGENT_ACTION_EVENT_HINTS = [
   "dev.git_push:/agent_dev_push_",
   "dev.github_pr_create:/agent_github_pr_create_",
   "dev.run_check:/agent_dev_check_",
+  "cloud.inspect:/agent_cloud_inspect_",
+  "cloud.run_readonly:/agent_cloud_readonly_",
+  "cloud.run_write:/agent_cloud_write_",
   "virtualization.inspect:/agent_virtualization_inspect_",
   "virtualization.run_command:/agent_virtualization_run_",
   "automation.schedule:/agent_automation_schedule_",
@@ -178,6 +187,9 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   dev_git_push: "/agent_dev_push_",
   dev_github_pr_create: "/agent_github_pr_create_",
   dev_run_check: "/agent_dev_check_",
+  cloud_cli_inspect: "/agent_cloud_inspect_",
+  cloud_cli_run_readonly: "/agent_cloud_readonly_",
+  cloud_cli_run_write: "/agent_cloud_write_",
   virtualization_inspect: "/agent_virtualization_inspect_",
   virtualization_run_command: "/agent_virtualization_run_",
   automation_schedule: "/agent_automation_schedule_",
@@ -589,6 +601,7 @@ function result(
     documentMedia: patch.documentMedia,
     developer: patch.developer,
     virtualization: patch.virtualization,
+    cloud: patch.cloud,
     automation: patch.automation,
     userPresenceRequired: patch.userPresenceRequired,
     failureCategory,
@@ -1005,6 +1018,9 @@ export function createDeveloperAutomationPolicy(_config: AgentActionHostConfig):
       "dev_git_push",
       "dev_github_pr_create",
       "dev_run_check",
+      "cloud_cli_inspect",
+      "cloud_cli_run_readonly",
+      "cloud_cli_run_write",
       "virtualization_inspect",
       "virtualization_run_command",
       "automation_schedule",
@@ -5964,6 +5980,213 @@ function virtualizationToolName(provider: Exclude<AgentVirtualizationProvider, "
   return provider === "wsl" ? "wsl.exe" : provider === "docker" ? "docker.exe" : "powershell.exe";
 }
 
+const CLOUD_PROVIDER_COMMAND: Record<Exclude<AgentCloudCliProvider, "all">, string> = {
+  aws: "aws.exe",
+  azure: "az.cmd",
+  gcp: "gcloud.cmd",
+  github: "gh.exe",
+  stripe: "stripe.exe"
+};
+
+const CLOUD_DESTRUCTIVE_TOKENS = new Set(["delete", "remove", "rm", "destroy", "terminate", "purge", "drop", "revoke", "cancel", "disable", "logout"]);
+
+function cloudCliSummary(input: Omit<AgentCloudCliSummary, "schema" | "proofHash">): AgentCloudCliSummary {
+  const summary: AgentCloudCliSummary = {
+    schema: "ingen.cloud_cli.summary.v1",
+    ...input,
+    proofHash: ""
+  };
+  summary.proofHash = hashJson({ ...summary, proofHash: "" });
+  return summary;
+}
+
+function selectedCloudProviders(provider: AgentCloudCliProvider | undefined): Exclude<AgentCloudCliProvider, "all">[] {
+  if (!provider || provider === "all") {
+    return ["aws", "azure", "gcp", "github", "stripe"];
+  }
+  return [provider];
+}
+
+function redactCloudOutput(value: string): string {
+  return value
+    .replace(/(access[_-]?key|secret[_-]?key|session[_-]?token|api[_-]?key|token|password)(["':=\s]+)([^"',\s]+)/gi, "$1$2<redacted>")
+    .replace(/(sk|pk|rk)_(live|test)_[A-Za-z0-9]+/g, "$1_$2_<redacted>")
+    .slice(0, MAX_PREVIEW_CHARS);
+}
+
+function cloudInspectArgs(provider: Exclude<AgentCloudCliProvider, "all">): string[] {
+  if (provider === "aws") return ["sts", "get-caller-identity", "--output", "json", "--no-cli-pager"];
+  if (provider === "azure") return ["account", "show", "--output", "json"];
+  if (provider === "gcp") return ["config", "list", "--format=json"];
+  if (provider === "github") return ["auth", "status"];
+  return ["config", "--list"];
+}
+
+function cloudVersionArgs(provider: Exclude<AgentCloudCliProvider, "all">): string[] {
+  if (provider === "aws") return ["--version"];
+  if (provider === "azure") return ["version", "--output", "json"];
+  if (provider === "gcp") return ["version", "--format=json"];
+  if (provider === "github") return ["--version"];
+  return ["version"];
+}
+
+function cloudProviderFromRequest(request: AgentActionRequest): Exclude<AgentCloudCliProvider, "all"> | undefined {
+  const providers = selectedCloudProviders(request.cloudProvider);
+  return providers.length === 1 ? providers[0] : undefined;
+}
+
+function cloudCommandContainsCredentialAccess(args: string[]): boolean {
+  return args.some((arg) => /credential|secret|token|password|apikey|api-key|login|auth/i.test(arg));
+}
+
+function cloudCommandIsDangerous(args: string[]): boolean {
+  return args.some((arg) => CLOUD_DESTRUCTIVE_TOKENS.has(arg.toLowerCase()));
+}
+
+function cloudReadonlyCommandAllowed(provider: Exclude<AgentCloudCliProvider, "all">, args: string[]): boolean {
+  if (args.length === 0 || cloudCommandContainsCredentialAccess(args) || cloudCommandIsDangerous(args)) {
+    return false;
+  }
+  const first = args[0]?.toLowerCase();
+  const second = args[1]?.toLowerCase();
+  if (["--version", "version", "help", "--help"].includes(first ?? "")) return true;
+  if (provider === "aws") return ["describe", "get", "list", "lookup"].some((prefix) => (second ?? first ?? "").startsWith(prefix)) || first === "sts";
+  if (provider === "azure") return ["show", "list"].includes(second ?? "") || first === "account";
+  if (provider === "gcp") return ["describe", "list", "get-iam-policy"].includes(second ?? "") || first === "config";
+  if (provider === "github") return ["status", "view", "list"].includes(second ?? "") || ["auth", "repo", "pr", "issue", "run"].includes(first ?? "");
+  return ["list", "get", "status", "logs"].includes(first ?? "");
+}
+
+function cloudWriteCommandAllowed(args: string[]): boolean {
+  return args.length > 0 && !cloudCommandContainsCredentialAccess(args) && !cloudCommandIsDangerous(args);
+}
+
+async function cloudCliInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const providers = selectedCloudProviders(request.cloudProvider);
+  const resources: Record<string, unknown>[] = [];
+  const probes: AgentVerificationProbe[] = [];
+  let available = false;
+  let firstCommandLine: string | undefined;
+  let firstExitCode: number | null | undefined;
+  for (const provider of providers) {
+    const command = CLOUD_PROVIDER_COMMAND[provider];
+    const version = executeNativeTool(command, cloudVersionArgs(provider), config.cwd, 8_000);
+    const identity = executeNativeTool(command, cloudInspectArgs(provider), config.cwd, 12_000);
+    const providerAvailable = version.accepted || identity.accepted;
+    available ||= providerAvailable;
+    firstCommandLine ??= identity.commandLine;
+    firstExitCode ??= identity.exitCode;
+    resources.push({
+      provider,
+      command,
+      available: providerAvailable,
+      versionExitCode: version.exitCode,
+      identityExitCode: identity.exitCode,
+      stdoutPreview: redactCloudOutput(identity.stdout || version.stdout),
+      stderrPreview: redactCloudOutput(identity.stderr || version.stderr)
+    });
+    probes.push(
+      verificationProbe({
+        id: `cloud.${provider}.detected_or_reported`,
+        kind: "command_exit",
+        target: version.commandLine,
+        expectation: "cloud CLI detection must be reported without claiming unavailable tools succeeded",
+        actual: `available=${providerAvailable} version_exit=${version.exitCode ?? "unknown"} identity_exit=${identity.exitCode ?? "unknown"}`,
+        passed: true
+      })
+    );
+  }
+  const summary = cloudCliSummary({
+    provider: request.cloudProvider ?? "all",
+    action: "inspect",
+    available,
+    resources,
+    commandLine: firstCommandLine,
+    exitCode: firstExitCode ?? null,
+    redactionStatus: "credentials_redacted",
+    mutationPolicy: "readonly"
+  });
+  return result(config, request, {
+    accepted: true,
+    commandLine: firstCommandLine,
+    routeId: "cloud.inspect",
+    exitCode: firstExitCode ?? null,
+    stdoutPreview: redactCloudOutput(JSON.stringify(resources)),
+    observedChanges: [`cloud_providers:${providers.join(",")}`, `available:${available}`],
+    verification: verificationResult(probes),
+    cloud: summary
+  });
+}
+
+async function cloudCliRunAction(config: AgentActionHostConfig, request: AgentActionRequest, mode: "run_readonly" | "run_write"): Promise<AgentActionResult> {
+  const provider = cloudProviderFromRequest(request);
+  if (!provider) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Cloud CLI run requires one explicit cloudProvider.", request)
+    });
+  }
+  const args = request.args ?? [];
+  if (mode === "run_write" && request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Cloud CLI write actions require confirmed:true.", request)
+    });
+  }
+  const allowed = mode === "run_readonly" ? cloudReadonlyCommandAllowed(provider, args) : cloudWriteCommandAllowed(args);
+  if (!allowed) {
+    const dangerous = cloudCommandIsDangerous(args) || cloudCommandContainsCredentialAccess(args);
+    const summary = cloudCliSummary({
+      provider,
+      action: mode,
+      available: false,
+      resources: [],
+      redactionStatus: "credentials_redacted",
+      mutationPolicy: dangerous ? "blocked_dangerous" : mode === "run_readonly" ? "readonly" : "confirmed_write"
+    });
+    return result(config, request, {
+      accepted: false,
+      failureCategory: dangerous ? "denied" : "bad_path",
+      cloud: summary,
+      error: actionError("bad_payload", dangerous ? "Cloud CLI command is blocked because it requests credentials/secrets or a destructive operation." : "Cloud CLI command is outside the allowed read/write shape.", { provider, args })
+    });
+  }
+  const command = CLOUD_PROVIDER_COMMAND[provider];
+  const execution = executeNativeTool(command, args, config.workspaceRoot, Math.min(commandTimeout(request), mode === "run_readonly" ? 30_000 : 120_000));
+  const summary = cloudCliSummary({
+    provider,
+    action: mode,
+    available: execution.accepted,
+    account: request.account,
+    tenant: request.tenant,
+    project: request.project,
+    resources: [{ provider, command, args, accepted: execution.accepted }],
+    commandLine: execution.commandLine,
+    exitCode: execution.exitCode,
+    redactionStatus: "credentials_redacted",
+    mutationPolicy: mode === "run_readonly" ? "readonly" : "confirmed_write"
+  });
+  return result(config, request, {
+    accepted: execution.accepted,
+    commandLine: execution.commandLine,
+    routeId: mode === "run_readonly" ? "cloud.run_readonly" : "cloud.run_write",
+    exitCode: execution.exitCode,
+    durationMs: execution.durationMs,
+    timeoutMs: Math.min(commandTimeout(request), mode === "run_readonly" ? 30_000 : 120_000),
+    timedOut: execution.timedOut,
+    stdoutPreview: redactCloudOutput(execution.stdout),
+    stderrPreview: redactCloudOutput(execution.stderr),
+    observedChanges: [`cloud_provider:${provider}`, `mode:${mode}`, `exit_code:${execution.exitCode ?? "unknown"}`],
+    verification: commandExitVerification({ commandLine: execution.commandLine, accepted: execution.accepted, exitCode: execution.exitCode, timedOut: execution.timedOut }),
+    cloud: summary,
+    userPresenceRequired: mode === "run_write",
+    failureCategory: execution.accepted ? undefined : execution.timedOut ? "timeout" : "command_error",
+    error: execution.accepted ? undefined : execution.error
+  });
+}
+
 function inspectWsl(config: AgentActionHostConfig): Record<string, unknown> {
   const status = executeNativeTool("wsl.exe", ["--status"], config.cwd, 8_000);
   const version = executeNativeTool("wsl.exe", ["--version"], config.cwd, 8_000);
@@ -6940,6 +7163,12 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return await devGithubPrCreateAction(config, request);
       case "dev_run_check":
         return await devRunCheckAction(config, request);
+      case "cloud_cli_inspect":
+        return await cloudCliInspectAction(config, request);
+      case "cloud_cli_run_readonly":
+        return await cloudCliRunAction(config, request, "run_readonly");
+      case "cloud_cli_run_write":
+        return await cloudCliRunAction(config, request, "run_write");
       case "virtualization_inspect":
         return await virtualizationInspectAction(config, request);
       case "virtualization_run_command":

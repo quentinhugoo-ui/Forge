@@ -822,6 +822,9 @@ export type AgentActionKind =
   | "dev_git_push"
   | "dev_github_pr_create"
   | "dev_run_check"
+  | "cloud_cli_inspect"
+  | "cloud_cli_run_readonly"
+  | "cloud_cli_run_write"
   | "virtualization_inspect"
   | "virtualization_run_command"
   | "automation_schedule"
@@ -831,6 +834,7 @@ export type AgentActionKind =
 
 export type AgentActionScope = "workspace" | "computer";
 export type AgentVirtualizationProvider = "wsl" | "docker" | "hyperv" | "all";
+export type AgentCloudCliProvider = "aws" | "azure" | "gcp" | "github" | "stripe" | "all";
 
 export interface AgentActionRequest {
   action: AgentActionKind;
@@ -852,6 +856,10 @@ export interface AgentActionRequest {
   paths?: string[];
   draft?: boolean;
   provider?: AgentVirtualizationProvider;
+  cloudProvider?: AgentCloudCliProvider;
+  tenant?: string;
+  project?: string;
+  account?: string;
   distro?: string;
   container?: string;
   vmName?: string;
@@ -898,6 +906,23 @@ export interface AgentVirtualizationSummary {
   proofHash: string;
 }
 
+export interface AgentCloudCliSummary {
+  schema: "ingen.cloud_cli.summary.v1";
+  provider: AgentCloudCliProvider;
+  action: "inspect" | "run_readonly" | "run_write";
+  available: boolean;
+  version?: string;
+  account?: string;
+  tenant?: string;
+  project?: string;
+  resources: Record<string, unknown>[];
+  commandLine?: string;
+  exitCode?: number | null;
+  redactionStatus: "credentials_redacted";
+  mutationPolicy: "readonly" | "confirmed_write" | "blocked_dangerous";
+  proofHash: string;
+}
+
 export interface AgentActionResult {
   schema: "ingen.agent_action_host.result.v1";
   accepted: boolean;
@@ -927,6 +952,7 @@ export interface AgentActionResult {
   documentMedia?: AgentDocumentMediaSummary;
   developer?: AgentDeveloperRepoSummary;
   virtualization?: AgentVirtualizationSummary;
+  cloud?: AgentCloudCliSummary;
   automation?: AgentAutomationLedgerEntry;
   userPresenceRequired?: boolean;
   failureCategory?: AgentFailureCategory;
@@ -1076,6 +1102,9 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "dev_git_push",
     "dev_github_pr_create",
     "dev_run_check",
+    "cloud_cli_inspect",
+    "cloud_cli_run_readonly",
+    "cloud_cli_run_write",
     "virtualization_inspect",
     "virtualization_run_command",
     "automation_schedule",
@@ -1107,6 +1136,14 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
   }
   if (candidate.provider !== undefined && !["wsl", "docker", "hyperv", "all"].includes(candidate.provider)) {
     return false;
+  }
+  if (candidate.cloudProvider !== undefined && !["aws", "azure", "gcp", "github", "stripe", "all"].includes(candidate.cloudProvider)) {
+    return false;
+  }
+  for (const key of ["tenant", "project", "account"] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
+      return false;
+    }
   }
   for (const key of ["distro", "container", "vmName"] as const) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") {

@@ -372,6 +372,9 @@ describe("agent action host", () => {
       "dev_git_push",
       "dev_github_pr_create",
       "dev_run_check",
+      "cloud_cli_inspect",
+      "cloud_cli_run_readonly",
+      "cloud_cli_run_write",
       "virtualization_inspect",
       "virtualization_run_command",
       "automation_schedule",
@@ -1064,6 +1067,47 @@ describe("agent action host", () => {
       await expect(readFile(join(config.workspaceRoot, ".ingen-agent-artifacts", "automation-ledger.jsonl"), "utf8")).resolves.toContain("Check the build every morning");
     });
   }, 15_000);
+
+  it("inspects cloud CLIs and blocks unsafe cloud commands before execution", async () => {
+    await withTempWorkspace(async (config) => {
+      const inspected = await executeAgentActionRequest(config, {
+        action: "cloud_cli_inspect",
+        cloudProvider: "all"
+      });
+      expect(inspected.accepted).toBe(true);
+      expect(inspected.routeId).toBe("cloud.inspect");
+      expect(inspected.cloud?.schema).toBe("ingen.cloud_cli.summary.v1");
+      expect(inspected.cloud?.resources.length).toBeGreaterThanOrEqual(5);
+      expect(inspected.cloud?.redactionStatus).toBe("credentials_redacted");
+      expect(inspected.verification?.passed).toBe(true);
+
+      const secretRead = await executeAgentActionRequest(config, {
+        action: "cloud_cli_run_readonly",
+        cloudProvider: "aws",
+        args: ["configure", "get", "aws_secret_access_key"]
+      });
+      expect(secretRead.accepted).toBe(false);
+      expect(secretRead.cloud?.mutationPolicy).toBe("blocked_dangerous");
+      expect(secretRead.error?.message).toContain("credentials");
+
+      const destructiveRead = await executeAgentActionRequest(config, {
+        action: "cloud_cli_run_readonly",
+        cloudProvider: "gcp",
+        args: ["compute", "instances", "delete", "vm-1"]
+      });
+      expect(destructiveRead.accepted).toBe(false);
+      expect(destructiveRead.cloud?.mutationPolicy).toBe("blocked_dangerous");
+
+      const unconfirmedWrite = await executeAgentActionRequest(config, {
+        action: "cloud_cli_run_write",
+        cloudProvider: "github",
+        args: ["repo", "edit", "--description", "demo"]
+      });
+      expect(unconfirmedWrite.accepted).toBe(false);
+      expect(unconfirmedWrite.userPresenceRequired).toBe(true);
+      expect(unconfirmedWrite.error?.message).toContain("confirmed:true");
+    });
+  });
 
   schedulerIt("creates, lists and cancels a real InGen-owned scheduled task", async () => {
     await withTempWorkspace(async (config) => {

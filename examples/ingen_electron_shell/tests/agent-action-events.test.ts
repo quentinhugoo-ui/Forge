@@ -12,6 +12,9 @@ import {
   AGENT_AUTOMATION_CANCEL_COMMAND,
   AGENT_AUTOMATION_LIST_COMMAND,
   AGENT_AUTOMATION_SCHEDULE_COMMAND,
+  AGENT_CLOUD_INSPECT_COMMAND,
+  AGENT_CLOUD_READONLY_COMMAND,
+  AGENT_CLOUD_WRITE_COMMAND,
   AGENT_DELETE_TREE_COMMAND,
   AGENT_DOCUMENT_CONVERT_COMMAND,
   AGENT_DOCUMENT_IMAGE_OCR_COMMAND,
@@ -91,6 +94,9 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION tool="dev.git_push"')?.command).toBe(AGENT_DEV_PUSH_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="dev.github_pr_create"')?.command).toBe(AGENT_GITHUB_PR_CREATE_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="dev.run_check"')?.command).toBe(AGENT_DEV_CHECK_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="cloud_cli_inspect"')?.command).toBe(AGENT_CLOUD_INSPECT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION tool="cloud.run_readonly"')?.command).toBe(AGENT_CLOUD_READONLY_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="cloud_cli_run_write"')?.command).toBe(AGENT_CLOUD_WRITE_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="virtualization_inspect"')?.command).toBe(AGENT_VIRTUALIZATION_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="virtualization.run_command"')?.command).toBe(AGENT_VIRTUALIZATION_RUN_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="automation_schedule"')?.command).toBe(AGENT_AUTOMATION_SCHEDULE_COMMAND);
