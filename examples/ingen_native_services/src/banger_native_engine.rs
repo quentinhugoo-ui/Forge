@@ -443,6 +443,7 @@ pub struct BangerNativePageResidencyAllocatorPacket {
     pub nanite_second_layer_hash: String,
     pub virtual_shadow_hash: String,
     pub material_closure_hash: String,
+    pub temporal_history_hash: String,
     pub render_graph_hash: String,
     pub virtual_page_count: usize,
     pub physical_page_count: usize,
@@ -450,19 +451,32 @@ pub struct BangerNativePageResidencyAllocatorPacket {
     pub streaming_request_count: usize,
     pub eviction_candidate_count: usize,
     pub locked_page_count: usize,
+    pub compacted_feedback_count: usize,
+    pub stale_feedback_count: usize,
+    pub pool_pressure_receipt_count: usize,
+    pub aliasing_candidate_count: usize,
+    pub page_table_deferred_update_count: usize,
     pub pool_pressure_pct: f32,
     pub dropped_page_count: usize,
     pub physical_pool_hash: String,
     pub virtual_page_table_hash: String,
     pub feedback_request_hash: String,
+    pub compacted_feedback_hash: String,
+    pub stale_feedback_hash: String,
     pub allocation_hash: String,
     pub eviction_hash: String,
     pub pressure_receipt_hash: String,
+    pub pool_pressure_receipt_hash: String,
+    pub aliasing_hash: String,
     pub dropped_page_hash: String,
+    pub validation_receipt_hash: String,
     pub packet_hash: String,
     pub entries: Vec<BangerNativePageResidencyEntry>,
+    pub compacted_feedback: Vec<BangerNativePageResidencyCompactedFeedback>,
+    pub pool_receipts: Vec<BangerNativePageResidencyPoolReceipt>,
     pub pressure_receipt: BangerNativePageResidencyPressureReceipt,
     pub dropped_pages: Vec<BangerNativePageResidencyDroppedPage>,
+    pub validation_receipt: BangerNativePageResidencyValidationReceipt,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -480,10 +494,18 @@ pub struct BangerNativePageResidencyEntry {
     pub residency_state: &'static str,
     pub priority: u32,
     pub lock_state: &'static str,
+    pub feedback_space_id: u32,
+    pub feedback_request_word: u64,
+    pub feedback_age_frames: u32,
+    pub stale_feedback: bool,
+    pub deferred_page_table_update: bool,
+    pub aliasing_candidate: bool,
     pub producer_hash: String,
     pub feedback_hash: String,
+    pub compacted_feedback_hash: String,
     pub allocation_hash: String,
     pub eviction_hash: String,
+    pub temporal_pin_hash: String,
     pub entry_hash: String,
 }
 
@@ -1012,6 +1034,48 @@ pub struct BangerNativePageResidencyPressureReceipt {
     pub pool_pressure_pct: f32,
     pub pressure_tier: &'static str,
     pub receipt_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePageResidencyCompactedFeedback {
+    pub feedback_key: String,
+    pub physical_pool: &'static str,
+    pub feedback_space_id: u32,
+    pub request_count: usize,
+    pub newest_feedback_age_frames: u32,
+    pub priority_sum: u64,
+    pub stale_request_count: usize,
+    pub feedback_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePageResidencyPoolReceipt {
+    pub physical_pool: &'static str,
+    pub virtual_page_count: usize,
+    pub physical_page_count: usize,
+    pub resident_page_count: usize,
+    pub streaming_request_count: usize,
+    pub eviction_candidate_count: usize,
+    pub aliasing_candidate_count: usize,
+    pub pool_pressure_pct: f32,
+    pub pressure_tier: &'static str,
+    pub receipt_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePageResidencyValidationReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_page_count: usize,
+    pub checked_feedback_count: usize,
+    pub checked_pool_count: usize,
+    pub stale_feedback_count: usize,
+    pub deferred_page_table_update_count: usize,
+    pub all_pages_have_compacted_feedback: bool,
+    pub validation_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3004,18 +3068,19 @@ impl BangerNativeEngine {
             &direct_lighting_packet,
             &render_graph_compilation,
         );
+        let temporal_history_packet = build_temporal_history_packet(
+            &prepared,
+            &direct_lighting_packet,
+            &material_closure_packet,
+            &render_graph_compilation,
+        );
         let page_residency_allocator = build_page_residency_allocator_packet(
             &prepared,
             &resource_table,
             &nanite_second_layer_packet,
             &virtual_shadow_packet,
             &material_closure_packet,
-            &render_graph_compilation,
-        );
-        let temporal_history_packet = build_temporal_history_packet(
-            &prepared,
-            &direct_lighting_packet,
-            &material_closure_packet,
+            &temporal_history_packet,
             &render_graph_compilation,
         );
         let gaussian_splat_layer_manifest = build_gaussian_splat_layer_manifest(
@@ -6216,6 +6281,7 @@ fn build_page_residency_allocator_packet(
     nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
 ) -> BangerNativePageResidencyAllocatorPacket {
     let mut entries = Vec::new();
@@ -6226,8 +6292,22 @@ fn build_page_residency_allocator_packet(
         entries.push(page_residency_entry_from_virtual_shadow(entry, index as u32));
     }
     for (index, entry) in material_closure_packet.entries.iter().enumerate() {
-        entries.push(page_residency_entry_from_material(entry, index as u32));
+        let temporal_entry = temporal_history_packet
+            .entries
+            .iter()
+            .find(|history| history.cluster_id == entry.cluster_id);
+        entries.push(page_residency_entry_from_material(
+            entry,
+            temporal_entry,
+            index as u32,
+        ));
     }
+    let compacted_feedback = page_residency_compacted_feedback(&entries);
+    let compacted_feedback_hash = page_residency_compacted_feedback_hash(&compacted_feedback);
+    let stale_feedback_hash = page_residency_stale_feedback_hash(&entries);
+    let pool_receipts = page_residency_pool_receipts(&entries);
+    let pool_pressure_receipt_hash = page_residency_pool_receipts_hash(&pool_receipts);
+    let aliasing_hash = page_residency_aliasing_hash(&entries);
     let physical_pool_hash = page_residency_physical_pool_hash(&entries);
     let virtual_page_table_hash = page_residency_virtual_page_table_hash(&entries);
     let feedback_request_hash = page_residency_feedback_request_hash(&entries);
@@ -6237,32 +6317,44 @@ fn build_page_residency_allocator_packet(
     let pressure_receipt_hash = pressure_receipt.receipt_hash.clone();
     let dropped_pages = page_residency_dropped_pages(&entries, pressure_receipt.pool_pressure_pct);
     let dropped_page_hash = page_residency_dropped_page_hash(&dropped_pages);
+    let validation_receipt =
+        page_residency_validation_receipt(&entries, &compacted_feedback, &pool_receipts);
+    let validation_receipt_hash = validation_receipt.validation_hash.clone();
     let packet_hash = page_residency_allocator_packet_hash(
         prepared,
         resource_table,
         nanite_second_layer_packet,
         virtual_shadow_packet,
         material_closure_packet,
+        temporal_history_packet,
         render_graph_compilation,
         &physical_pool_hash,
         &virtual_page_table_hash,
         &feedback_request_hash,
+        &compacted_feedback_hash,
+        &stale_feedback_hash,
         &allocation_hash,
         &eviction_hash,
         &pressure_receipt_hash,
+        &pool_pressure_receipt_hash,
+        &aliasing_hash,
         &dropped_page_hash,
+        &validation_receipt_hash,
         &entries,
+        &compacted_feedback,
+        &pool_receipts,
     );
     BangerNativePageResidencyAllocatorPacket {
-        schema: "forge.banger.page_residency_allocator_packet.v2",
-        schema_version: 2,
+        schema: "forge.banger.page_residency_allocator_packet.v3",
+        schema_version: 3,
         authority: "banger_virtual_page_feedback_physical_pool_allocator",
-        clean_room_basis: "local_unreal_sparse_nanite_vsm_virtual_texture_feedback_physical_page_principles_no_source_copy",
+        clean_room_basis: "local_unreal_sparse_nanite_vsm_virtual_texture_feedback_compaction_pool_residency_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
         resource_table_hash: resource_table.table_hash.clone(),
         nanite_second_layer_hash: nanite_second_layer_packet.packet_hash.clone(),
         virtual_shadow_hash: virtual_shadow_packet.packet_hash.clone(),
         material_closure_hash: material_closure_packet.packet_hash.clone(),
+        temporal_history_hash: temporal_history_packet.packet_hash.clone(),
         render_graph_hash: render_graph_compilation.graph_hash.clone(),
         virtual_page_count: entries.len(),
         physical_page_count: entries
@@ -6286,19 +6378,35 @@ fn build_page_residency_allocator_packet(
             .iter()
             .filter(|entry| entry.lock_state == "locked_for_frame")
             .count(),
+        compacted_feedback_count: compacted_feedback.len(),
+        stale_feedback_count: validation_receipt.stale_feedback_count,
+        pool_pressure_receipt_count: pool_receipts.len(),
+        aliasing_candidate_count: entries
+            .iter()
+            .filter(|entry| entry.aliasing_candidate)
+            .count(),
+        page_table_deferred_update_count: validation_receipt.deferred_page_table_update_count,
         pool_pressure_pct: pressure_receipt.pool_pressure_pct,
         dropped_page_count: dropped_pages.len(),
         physical_pool_hash,
         virtual_page_table_hash,
         feedback_request_hash,
+        compacted_feedback_hash,
+        stale_feedback_hash,
         allocation_hash,
         eviction_hash,
         pressure_receipt_hash,
+        pool_pressure_receipt_hash,
+        aliasing_hash,
         dropped_page_hash,
+        validation_receipt_hash,
         packet_hash,
         entries,
+        compacted_feedback,
+        pool_receipts,
         pressure_receipt,
         dropped_pages,
+        validation_receipt,
     }
 }
 
@@ -13655,6 +13763,20 @@ fn page_residency_entry_from_nanite(
         byte_len,
     );
     let lock_state = page_residency_lock_state(entry.residency_state, priority);
+    let feedback_space_id =
+        page_residency_feedback_space_id("nanite_geometry_page", "nanite_geometry_pool");
+    let feedback_request_word = entry.feedback_word;
+    let feedback_age_frames =
+        page_residency_feedback_age_frames(entry.residency_state, entry.requested_lod_bucket);
+    let stale_feedback = page_residency_stale_feedback(entry.residency_state, feedback_age_frames);
+    let deferred_page_table_update =
+        page_residency_deferred_page_table_update(entry.residency_state, stale_feedback);
+    let aliasing_candidate = page_residency_aliasing_candidate(
+        "nanite_geometry_page",
+        &physical_address,
+        priority,
+        stale_feedback,
+    );
     let producer_hash = page_residency_producer_hash(
         "nanite_geometry_page",
         &entry.object_id,
@@ -13662,6 +13784,13 @@ fn page_residency_entry_from_nanite(
         &entry.page_hash,
     );
     let feedback_hash = page_residency_feedback_hash(&entry.page_hash, entry.feedback_word, priority);
+    let compacted_feedback_hash = page_residency_compacted_feedback_entry_hash(
+        "nanite_geometry_pool",
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        priority,
+    );
     let allocation_hash = page_residency_allocation_entry_hash(
         &page_id,
         "nanite_geometry_page",
@@ -13672,6 +13801,13 @@ fn page_residency_entry_from_nanite(
         lock_state,
     );
     let eviction_hash = page_residency_eviction_entry_hash(&page_id, lock_state, priority, &feedback_hash);
+    let temporal_pin_hash = page_residency_temporal_pin_hash(
+        &page_id,
+        "nanite_geometry_page",
+        None,
+        feedback_age_frames,
+        deferred_page_table_update,
+    );
     let entry_hash = page_residency_entry_hash(
         &page_id,
         "nanite_geometry_page",
@@ -13685,10 +13821,18 @@ fn page_residency_entry_from_nanite(
         entry.residency_state,
         priority,
         lock_state,
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        stale_feedback,
+        deferred_page_table_update,
+        aliasing_candidate,
         &producer_hash,
         &feedback_hash,
+        &compacted_feedback_hash,
         &allocation_hash,
         &eviction_hash,
+        &temporal_pin_hash,
     );
     BangerNativePageResidencyEntry {
         page_id,
@@ -13703,10 +13847,18 @@ fn page_residency_entry_from_nanite(
         residency_state: entry.residency_state,
         priority,
         lock_state,
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        stale_feedback,
+        deferred_page_table_update,
+        aliasing_candidate,
         producer_hash,
         feedback_hash,
+        compacted_feedback_hash,
         allocation_hash,
         eviction_hash,
+        temporal_pin_hash,
         entry_hash,
     }
 }
@@ -13740,6 +13892,22 @@ fn page_residency_entry_from_virtual_shadow(
     )
     .saturating_add(128u32.saturating_sub(entry.clipmap_level.min(128)));
     let lock_state = page_residency_lock_state(residency_state, priority);
+    let feedback_space_id =
+        page_residency_feedback_space_id("virtual_shadow_page", "virtual_shadow_physical_pool");
+    let feedback_request_word =
+        u64::from(entry.ray_budget) | ((entry.invalidation_mask as u64) << 32);
+    let feedback_age_frames =
+        page_residency_feedback_age_frames(residency_state, entry.page_age_frames);
+    let stale_feedback = page_residency_stale_feedback(residency_state, feedback_age_frames);
+    let deferred_page_table_update =
+        page_residency_deferred_page_table_update(residency_state, stale_feedback)
+            || entry.invalidation_mask != 0;
+    let aliasing_candidate = page_residency_aliasing_candidate(
+        "virtual_shadow_page",
+        &physical_address,
+        priority,
+        stale_feedback,
+    );
     let producer_hash = page_residency_producer_hash(
         "virtual_shadow_page",
         &entry.object_id,
@@ -13748,6 +13916,13 @@ fn page_residency_entry_from_virtual_shadow(
     );
     let feedback_hash =
         page_residency_feedback_hash(&entry.page_table_hash, u64::from(entry.ray_budget), priority);
+    let compacted_feedback_hash = page_residency_compacted_feedback_entry_hash(
+        "virtual_shadow_physical_pool",
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        priority,
+    );
     let allocation_hash = page_residency_allocation_entry_hash(
         &entry.shadow_page_id,
         "virtual_shadow_page",
@@ -13759,6 +13934,13 @@ fn page_residency_entry_from_virtual_shadow(
     );
     let eviction_hash =
         page_residency_eviction_entry_hash(&entry.shadow_page_id, lock_state, priority, &feedback_hash);
+    let temporal_pin_hash = page_residency_temporal_pin_hash(
+        &entry.shadow_page_id,
+        "virtual_shadow_page",
+        Some(&entry.cache_metadata_hash),
+        feedback_age_frames,
+        deferred_page_table_update,
+    );
     let entry_hash = page_residency_entry_hash(
         &entry.shadow_page_id,
         "virtual_shadow_page",
@@ -13772,10 +13954,18 @@ fn page_residency_entry_from_virtual_shadow(
         residency_state,
         priority,
         lock_state,
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        stale_feedback,
+        deferred_page_table_update,
+        aliasing_candidate,
         &producer_hash,
         &feedback_hash,
+        &compacted_feedback_hash,
         &allocation_hash,
         &eviction_hash,
+        &temporal_pin_hash,
     );
     BangerNativePageResidencyEntry {
         page_id: entry.shadow_page_id.clone(),
@@ -13790,16 +13980,25 @@ fn page_residency_entry_from_virtual_shadow(
         residency_state,
         priority,
         lock_state,
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        stale_feedback,
+        deferred_page_table_update,
+        aliasing_candidate,
         producer_hash,
         feedback_hash,
+        compacted_feedback_hash,
         allocation_hash,
         eviction_hash,
+        temporal_pin_hash,
         entry_hash,
     }
 }
 
 fn page_residency_entry_from_material(
     entry: &BangerNativeMaterialClosureEntry,
+    temporal_entry: Option<&BangerNativeTemporalHistoryEntry>,
     salt: u32,
 ) -> BangerNativePageResidencyEntry {
     let page_id = hash_text_hex(
@@ -13826,8 +14025,38 @@ fn page_residency_entry_from_material(
         entry.layer_count,
         u64::from(entry.texture_slot_count),
         64,
+    )
+    .saturating_add(
+        temporal_entry
+            .map(|history| u32::from(history.stochastic_lighting_enabled) * 192)
+            .unwrap_or_default(),
     );
     let lock_state = page_residency_lock_state(residency_state, priority);
+    let feedback_space_id =
+        page_residency_feedback_space_id("material_virtual_texture_page", "material_texture_pool");
+    let feedback_request_word = u64::from(entry.texture_slot_count)
+        | ((entry.bsdf_feature_mask as u64) << 16)
+        | (temporal_entry
+            .map(|history| (history.resurrection_mask as u64) << 40)
+            .unwrap_or_default());
+    let feedback_age_frames = temporal_entry
+        .map(|history| u32::from(history.history_sample_count).saturating_add(history.jitter_index))
+        .unwrap_or_else(|| page_residency_feedback_age_frames(residency_state, entry.layer_count));
+    let stale_feedback = page_residency_stale_feedback(residency_state, feedback_age_frames)
+        || temporal_entry
+            .map(|history| history.history_validity_q15 < 4096)
+            .unwrap_or(false);
+    let deferred_page_table_update =
+        page_residency_deferred_page_table_update(residency_state, stale_feedback)
+            || temporal_entry
+                .map(|history| history.resurrection_mask != 0)
+                .unwrap_or(false);
+    let aliasing_candidate = page_residency_aliasing_candidate(
+        "material_virtual_texture_page",
+        &physical_address,
+        priority,
+        stale_feedback,
+    );
     let producer_hash = page_residency_producer_hash(
         "material_virtual_texture_page",
         &entry.object_id,
@@ -13836,6 +14065,13 @@ fn page_residency_entry_from_material(
     );
     let feedback_hash =
         page_residency_feedback_hash(&entry.texture_hash, u64::from(entry.texture_slot_count), priority);
+    let compacted_feedback_hash = page_residency_compacted_feedback_entry_hash(
+        "material_texture_pool",
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        priority,
+    );
     let allocation_hash = page_residency_allocation_entry_hash(
         &page_id,
         "material_virtual_texture_page",
@@ -13846,6 +14082,13 @@ fn page_residency_entry_from_material(
         lock_state,
     );
     let eviction_hash = page_residency_eviction_entry_hash(&page_id, lock_state, priority, &feedback_hash);
+    let temporal_pin_hash = page_residency_temporal_pin_hash(
+        &page_id,
+        "material_virtual_texture_page",
+        temporal_entry.map(|history| history.substrate_history_hash.as_str()),
+        feedback_age_frames,
+        deferred_page_table_update,
+    );
     let entry_hash = page_residency_entry_hash(
         &page_id,
         "material_virtual_texture_page",
@@ -13859,10 +14102,18 @@ fn page_residency_entry_from_material(
         residency_state,
         priority,
         lock_state,
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        stale_feedback,
+        deferred_page_table_update,
+        aliasing_candidate,
         &producer_hash,
         &feedback_hash,
+        &compacted_feedback_hash,
         &allocation_hash,
         &eviction_hash,
+        &temporal_pin_hash,
     );
     BangerNativePageResidencyEntry {
         page_id,
@@ -13877,10 +14128,18 @@ fn page_residency_entry_from_material(
         residency_state,
         priority,
         lock_state,
+        feedback_space_id,
+        feedback_request_word,
+        feedback_age_frames,
+        stale_feedback,
+        deferred_page_table_update,
+        aliasing_candidate,
         producer_hash,
         feedback_hash,
+        compacted_feedback_hash,
         allocation_hash,
         eviction_hash,
+        temporal_pin_hash,
         entry_hash,
     }
 }
@@ -13932,6 +14191,45 @@ fn page_residency_lock_state(residency_state: &str, priority: u32) -> &'static s
     }
 }
 
+fn page_residency_feedback_space_id(page_kind: &str, physical_pool: &str) -> u32 {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.feedback_space_id.v1\0");
+    h.update(page_kind.as_bytes());
+    h.update(physical_pool.as_bytes());
+    let digest: [u8; 32] = h.finalize().into();
+    u32::from_le_bytes(digest[0..4].try_into().expect("feedback space id bytes")) % 16
+}
+
+fn page_residency_feedback_age_frames(residency_state: &str, age_hint: u32) -> u32 {
+    let state_age = match residency_state {
+        "resident_page" => 0,
+        "warm_page" => 1,
+        "feedback_requested" => 2,
+        "streaming_request" => 3,
+        _ => 4,
+    };
+    state_age + age_hint.min(12)
+}
+
+fn page_residency_stale_feedback(residency_state: &str, feedback_age_frames: u32) -> bool {
+    feedback_age_frames > 6 || (residency_state != "resident_page" && feedback_age_frames > 3)
+}
+
+fn page_residency_deferred_page_table_update(residency_state: &str, stale_feedback: bool) -> bool {
+    stale_feedback || matches!(residency_state, "streaming_request" | "feedback_requested")
+}
+
+fn page_residency_aliasing_candidate(
+    page_kind: &str,
+    physical_address: &[u32; 4],
+    priority: u32,
+    stale_feedback: bool,
+) -> bool {
+    stale_feedback
+        || (priority < 3072 && physical_address[3] % 3 == 0)
+        || (page_kind == "material_virtual_texture_page" && physical_address[2] % 5 == 0)
+}
+
 fn page_residency_producer_hash(page_kind: &str, object_id: &str, cluster_id: &str, source_hash: &str) -> String {
     hash_text_hex(
         "forge.banger.page_residency.producer.v1",
@@ -13945,6 +14243,40 @@ fn page_residency_feedback_hash(source_page_hash: &str, feedback_word: u64, prio
     h.update(source_page_hash.as_bytes());
     h.update(feedback_word.to_le_bytes());
     h.update(priority.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn page_residency_compacted_feedback_entry_hash(
+    physical_pool: &str,
+    feedback_space_id: u32,
+    feedback_request_word: u64,
+    feedback_age_frames: u32,
+    priority: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.compacted_feedback_entry.v1\0");
+    h.update(physical_pool.as_bytes());
+    h.update(feedback_space_id.to_le_bytes());
+    h.update(feedback_request_word.to_le_bytes());
+    h.update(feedback_age_frames.to_le_bytes());
+    h.update(priority.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn page_residency_temporal_pin_hash(
+    page_id: &str,
+    page_kind: &str,
+    temporal_hash: Option<&str>,
+    feedback_age_frames: u32,
+    deferred_page_table_update: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.temporal_pin.v1\0");
+    h.update(page_id.as_bytes());
+    h.update(page_kind.as_bytes());
+    h.update(temporal_hash.unwrap_or("no_temporal_history_pin").as_bytes());
+    h.update(feedback_age_frames.to_le_bytes());
+    h.update([deferred_page_table_update as u8]);
     hex32(h.finalize().into())
 }
 
@@ -13996,13 +14328,21 @@ fn page_residency_entry_hash(
     residency_state: &str,
     priority: u32,
     lock_state: &str,
+    feedback_space_id: u32,
+    feedback_request_word: u64,
+    feedback_age_frames: u32,
+    stale_feedback: bool,
+    deferred_page_table_update: bool,
+    aliasing_candidate: bool,
     producer_hash: &str,
     feedback_hash: &str,
+    compacted_feedback_hash: &str,
     allocation_hash: &str,
     eviction_hash: &str,
+    temporal_pin_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.page_residency.entry.v1\0");
+    h.update(b"forge.banger.page_residency.entry.v2\0");
     h.update(page_id.as_bytes());
     h.update(page_kind.as_bytes());
     h.update(physical_pool.as_bytes());
@@ -14019,29 +14359,38 @@ fn page_residency_entry_hash(
     h.update(residency_state.as_bytes());
     h.update(priority.to_le_bytes());
     h.update(lock_state.as_bytes());
+    h.update(feedback_space_id.to_le_bytes());
+    h.update(feedback_request_word.to_le_bytes());
+    h.update(feedback_age_frames.to_le_bytes());
+    h.update([stale_feedback as u8]);
+    h.update([deferred_page_table_update as u8]);
+    h.update([aliasing_candidate as u8]);
     h.update(producer_hash.as_bytes());
     h.update(feedback_hash.as_bytes());
+    h.update(compacted_feedback_hash.as_bytes());
     h.update(allocation_hash.as_bytes());
     h.update(eviction_hash.as_bytes());
+    h.update(temporal_pin_hash.as_bytes());
     hex32(h.finalize().into())
 }
 
 fn page_residency_physical_pool_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.page_residency.physical_pools.v1\0");
+    h.update(b"forge.banger.page_residency.physical_pools.v2\0");
     for entry in entries {
         h.update(entry.physical_pool.as_bytes());
         for value in entry.physical_address {
             h.update(value.to_le_bytes());
         }
         h.update(entry.allocation_hash.as_bytes());
+        h.update([entry.aliasing_candidate as u8]);
     }
     hex32(h.finalize().into())
 }
 
 fn page_residency_virtual_page_table_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.page_residency.virtual_page_table.v1\0");
+    h.update(b"forge.banger.page_residency.virtual_page_table.v2\0");
     for entry in entries {
         h.update(entry.page_id.as_bytes());
         h.update(entry.page_kind.as_bytes());
@@ -14049,15 +14398,19 @@ fn page_residency_virtual_page_table_hash(entries: &[BangerNativePageResidencyEn
             h.update(value.to_le_bytes());
         }
         h.update(entry.source_page_hash.as_bytes());
+        h.update([entry.deferred_page_table_update as u8]);
     }
     hex32(h.finalize().into())
 }
 
 fn page_residency_feedback_request_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.page_residency.feedback_requests.v1\0");
+    h.update(b"forge.banger.page_residency.feedback_requests.v2\0");
     for entry in entries {
         h.update(entry.feedback_hash.as_bytes());
+        h.update(entry.compacted_feedback_hash.as_bytes());
+        h.update(entry.feedback_request_word.to_le_bytes());
+        h.update(entry.feedback_age_frames.to_le_bytes());
         h.update(entry.priority.to_le_bytes());
     }
     hex32(h.finalize().into())
@@ -14065,20 +14418,150 @@ fn page_residency_feedback_request_hash(entries: &[BangerNativePageResidencyEntr
 
 fn page_residency_allocation_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.page_residency.allocations.v1\0");
+    h.update(b"forge.banger.page_residency.allocations.v2\0");
     for entry in entries {
         h.update(entry.allocation_hash.as_bytes());
         h.update(entry.lock_state.as_bytes());
+        h.update(entry.temporal_pin_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
 
 fn page_residency_eviction_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.page_residency.evictions.v1\0");
+    h.update(b"forge.banger.page_residency.evictions.v2\0");
     for entry in entries {
         h.update(entry.eviction_hash.as_bytes());
         h.update(entry.lock_state.as_bytes());
+        h.update([entry.stale_feedback as u8]);
+    }
+    hex32(h.finalize().into())
+}
+
+fn page_residency_compacted_feedback(
+    entries: &[BangerNativePageResidencyEntry],
+) -> Vec<BangerNativePageResidencyCompactedFeedback> {
+    let mut grouped: BTreeMap<(String, u32, u64), Vec<&BangerNativePageResidencyEntry>> = BTreeMap::new();
+    for entry in entries {
+        grouped
+            .entry((
+                entry.physical_pool.to_string(),
+                entry.feedback_space_id,
+                entry.feedback_request_word,
+            ))
+            .or_default()
+            .push(entry);
+    }
+    grouped
+        .into_iter()
+        .map(|((physical_pool, feedback_space_id, feedback_request_word), feedback_entries)| {
+            let newest_feedback_age_frames = feedback_entries
+                .iter()
+                .map(|entry| entry.feedback_age_frames)
+                .min()
+                .unwrap_or_default();
+            let priority_sum = feedback_entries
+                .iter()
+                .map(|entry| entry.priority as u64)
+                .sum::<u64>();
+            let stale_request_count = feedback_entries
+                .iter()
+                .filter(|entry| entry.stale_feedback)
+                .count();
+            let feedback_key = hash_text_hex(
+                "forge.banger.page_residency.compacted_feedback_key.v1",
+                &format!("{physical_pool}:{feedback_space_id}:{feedback_request_word}"),
+            );
+            let feedback_hash = page_residency_compacted_feedback_hash_one(
+                &feedback_key,
+                &physical_pool,
+                feedback_space_id,
+                feedback_request_word,
+                feedback_entries.len(),
+                newest_feedback_age_frames,
+                priority_sum,
+                stale_request_count,
+            );
+            BangerNativePageResidencyCompactedFeedback {
+                feedback_key,
+                physical_pool: page_residency_pool_static(&physical_pool),
+                feedback_space_id,
+                request_count: feedback_entries.len(),
+                newest_feedback_age_frames,
+                priority_sum,
+                stale_request_count,
+                feedback_hash,
+            }
+        })
+        .collect()
+}
+
+fn page_residency_pool_static(pool: &str) -> &'static str {
+    match pool {
+        "nanite_geometry_pool" => "nanite_geometry_pool",
+        "virtual_shadow_physical_pool" => "virtual_shadow_physical_pool",
+        "material_texture_pool" => "material_texture_pool",
+        _ => "unknown_physical_pool",
+    }
+}
+
+fn page_residency_compacted_feedback_hash_one(
+    feedback_key: &str,
+    physical_pool: &str,
+    feedback_space_id: u32,
+    feedback_request_word: u64,
+    request_count: usize,
+    newest_feedback_age_frames: u32,
+    priority_sum: u64,
+    stale_request_count: usize,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.compacted_feedback.v1\0");
+    h.update(feedback_key.as_bytes());
+    h.update(physical_pool.as_bytes());
+    h.update(feedback_space_id.to_le_bytes());
+    h.update(feedback_request_word.to_le_bytes());
+    h.update((request_count as u64).to_le_bytes());
+    h.update(newest_feedback_age_frames.to_le_bytes());
+    h.update(priority_sum.to_le_bytes());
+    h.update((stale_request_count as u64).to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn page_residency_compacted_feedback_hash(
+    feedback: &[BangerNativePageResidencyCompactedFeedback],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.compacted_feedback_table.v1\0");
+    for entry in feedback {
+        h.update(entry.feedback_key.as_bytes());
+        h.update(entry.feedback_hash.as_bytes());
+        h.update((entry.request_count as u64).to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn page_residency_stale_feedback_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.stale_feedback.v1\0");
+    for entry in entries {
+        h.update(entry.page_id.as_bytes());
+        h.update(entry.feedback_age_frames.to_le_bytes());
+        h.update([entry.stale_feedback as u8]);
+    }
+    hex32(h.finalize().into())
+}
+
+fn page_residency_aliasing_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.aliasing.v1\0");
+    for entry in entries {
+        h.update(entry.page_id.as_bytes());
+        h.update(entry.physical_pool.as_bytes());
+        for value in entry.physical_address {
+            h.update(value.to_le_bytes());
+        }
+        h.update([entry.aliasing_candidate as u8]);
     }
     hex32(h.finalize().into())
 }
@@ -14194,6 +14677,180 @@ fn page_residency_pressure_receipt_hash(
     hex32(h.finalize().into())
 }
 
+fn page_residency_pool_receipts(
+    entries: &[BangerNativePageResidencyEntry],
+) -> Vec<BangerNativePageResidencyPoolReceipt> {
+    let mut grouped: BTreeMap<&'static str, Vec<&BangerNativePageResidencyEntry>> = BTreeMap::new();
+    for entry in entries {
+        grouped.entry(entry.physical_pool).or_default().push(entry);
+    }
+    grouped
+        .into_iter()
+        .map(|(physical_pool, pool_entries)| {
+            let virtual_page_count = pool_entries.len();
+            let physical_page_count = pool_entries
+                .iter()
+                .map(|entry| entry.physical_address)
+                .collect::<BTreeSet<_>>()
+                .len();
+            let resident_page_count = pool_entries
+                .iter()
+                .filter(|entry| entry.residency_state == "resident_page" || entry.lock_state == "locked_for_frame")
+                .count();
+            let streaming_request_count = pool_entries
+                .iter()
+                .filter(|entry| entry.residency_state != "resident_page")
+                .count();
+            let eviction_candidate_count = pool_entries
+                .iter()
+                .filter(|entry| entry.lock_state == "eviction_candidate")
+                .count();
+            let aliasing_candidate_count = pool_entries
+                .iter()
+                .filter(|entry| entry.aliasing_candidate)
+                .count();
+            let locked_page_count = pool_entries
+                .iter()
+                .filter(|entry| entry.lock_state == "locked_for_frame")
+                .count();
+            let pool_pressure_pct = page_residency_pool_pressure_pct(
+                virtual_page_count,
+                physical_page_count,
+                streaming_request_count,
+                eviction_candidate_count,
+                locked_page_count,
+            );
+            let pressure_tier = page_residency_pressure_tier(pool_pressure_pct);
+            let receipt_hash = page_residency_pool_receipt_hash(
+                physical_pool,
+                virtual_page_count,
+                physical_page_count,
+                resident_page_count,
+                streaming_request_count,
+                eviction_candidate_count,
+                aliasing_candidate_count,
+                pool_pressure_pct,
+                pressure_tier,
+            );
+            BangerNativePageResidencyPoolReceipt {
+                physical_pool,
+                virtual_page_count,
+                physical_page_count,
+                resident_page_count,
+                streaming_request_count,
+                eviction_candidate_count,
+                aliasing_candidate_count,
+                pool_pressure_pct,
+                pressure_tier,
+                receipt_hash,
+            }
+        })
+        .collect()
+}
+
+fn page_residency_pool_receipt_hash(
+    physical_pool: &str,
+    virtual_page_count: usize,
+    physical_page_count: usize,
+    resident_page_count: usize,
+    streaming_request_count: usize,
+    eviction_candidate_count: usize,
+    aliasing_candidate_count: usize,
+    pool_pressure_pct: f32,
+    pressure_tier: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.pool_receipt.v1\0");
+    h.update(physical_pool.as_bytes());
+    h.update((virtual_page_count as u64).to_le_bytes());
+    h.update((physical_page_count as u64).to_le_bytes());
+    h.update((resident_page_count as u64).to_le_bytes());
+    h.update((streaming_request_count as u64).to_le_bytes());
+    h.update((eviction_candidate_count as u64).to_le_bytes());
+    h.update((aliasing_candidate_count as u64).to_le_bytes());
+    h.update(pool_pressure_pct.to_le_bytes());
+    h.update(pressure_tier.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn page_residency_pool_receipts_hash(
+    receipts: &[BangerNativePageResidencyPoolReceipt],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.pool_receipts.v1\0");
+    for receipt in receipts {
+        h.update(receipt.physical_pool.as_bytes());
+        h.update(receipt.receipt_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn page_residency_validation_receipt(
+    entries: &[BangerNativePageResidencyEntry],
+    compacted_feedback: &[BangerNativePageResidencyCompactedFeedback],
+    pool_receipts: &[BangerNativePageResidencyPoolReceipt],
+) -> BangerNativePageResidencyValidationReceipt {
+    let feedback_keys = compacted_feedback
+        .iter()
+        .map(|entry| entry.feedback_key.as_str())
+        .collect::<BTreeSet<_>>();
+    let stale_feedback_count = entries.iter().filter(|entry| entry.stale_feedback).count();
+    let deferred_page_table_update_count = entries
+        .iter()
+        .filter(|entry| entry.deferred_page_table_update)
+        .count();
+    let all_pages_have_compacted_feedback = entries
+        .iter()
+        .all(|entry| {
+            let feedback_key = hash_text_hex(
+                "forge.banger.page_residency.compacted_feedback_key.v1",
+                &format!(
+                    "{}:{}:{}",
+                    entry.physical_pool, entry.feedback_space_id, entry.feedback_request_word
+                ),
+            );
+            feedback_keys.contains(feedback_key.as_str())
+        });
+    let validation_hash = page_residency_validation_receipt_hash(
+        entries.len(),
+        compacted_feedback.len(),
+        pool_receipts.len(),
+        stale_feedback_count,
+        deferred_page_table_update_count,
+        all_pages_have_compacted_feedback,
+    );
+    BangerNativePageResidencyValidationReceipt {
+        schema: "forge.banger.page_residency_validation_receipt.v1",
+        authority: "feedback_compaction_pool_residency_validation",
+        checked_page_count: entries.len(),
+        checked_feedback_count: compacted_feedback.len(),
+        checked_pool_count: pool_receipts.len(),
+        stale_feedback_count,
+        deferred_page_table_update_count,
+        all_pages_have_compacted_feedback,
+        validation_hash,
+    }
+}
+
+fn page_residency_validation_receipt_hash(
+    checked_page_count: usize,
+    checked_feedback_count: usize,
+    checked_pool_count: usize,
+    stale_feedback_count: usize,
+    deferred_page_table_update_count: usize,
+    all_pages_have_compacted_feedback: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.validation_receipt.v1\0");
+    h.update((checked_page_count as u64).to_le_bytes());
+    h.update((checked_feedback_count as u64).to_le_bytes());
+    h.update((checked_pool_count as u64).to_le_bytes());
+    h.update((stale_feedback_count as u64).to_le_bytes());
+    h.update((deferred_page_table_update_count as u64).to_le_bytes());
+    h.update([all_pages_have_compacted_feedback as u8]);
+    hex32(h.finalize().into())
+}
+
 fn page_residency_dropped_pages(
     entries: &[BangerNativePageResidencyEntry],
     pool_pressure_pct: f32,
@@ -14261,34 +14918,54 @@ fn page_residency_allocator_packet_hash(
     nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
     physical_pool_hash: &str,
     virtual_page_table_hash: &str,
     feedback_request_hash: &str,
+    compacted_feedback_hash: &str,
+    stale_feedback_hash: &str,
     allocation_hash: &str,
     eviction_hash: &str,
     pressure_receipt_hash: &str,
+    pool_pressure_receipt_hash: &str,
+    aliasing_hash: &str,
     dropped_page_hash: &str,
+    validation_receipt_hash: &str,
     entries: &[BangerNativePageResidencyEntry],
+    compacted_feedback: &[BangerNativePageResidencyCompactedFeedback],
+    pool_receipts: &[BangerNativePageResidencyPoolReceipt],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.page_residency_allocator_packet.v2\0");
+    h.update(b"forge.banger.page_residency_allocator_packet.v3\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(resource_table.table_hash.as_bytes());
     h.update(nanite_second_layer_packet.packet_hash.as_bytes());
     h.update(virtual_shadow_packet.packet_hash.as_bytes());
     h.update(material_closure_packet.packet_hash.as_bytes());
+    h.update(temporal_history_packet.packet_hash.as_bytes());
     h.update(render_graph_compilation.graph_hash.as_bytes());
     h.update(physical_pool_hash.as_bytes());
     h.update(virtual_page_table_hash.as_bytes());
     h.update(feedback_request_hash.as_bytes());
+    h.update(compacted_feedback_hash.as_bytes());
+    h.update(stale_feedback_hash.as_bytes());
     h.update(allocation_hash.as_bytes());
     h.update(eviction_hash.as_bytes());
     h.update(pressure_receipt_hash.as_bytes());
+    h.update(pool_pressure_receipt_hash.as_bytes());
+    h.update(aliasing_hash.as_bytes());
     h.update(dropped_page_hash.as_bytes());
+    h.update(validation_receipt_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
+    }
+    for feedback in compacted_feedback {
+        h.update(feedback.feedback_hash.as_bytes());
+    }
+    for receipt in pool_receipts {
+        h.update(receipt.receipt_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -22369,9 +23046,9 @@ mod tests {
                 )));
         assert_eq!(
             response.page_residency_allocator.schema,
-            "forge.banger.page_residency_allocator_packet.v2"
+            "forge.banger.page_residency_allocator_packet.v3"
         );
-        assert_eq!(response.page_residency_allocator.schema_version, 2);
+        assert_eq!(response.page_residency_allocator.schema_version, 3);
         assert_eq!(
             response.page_residency_allocator.source_contract_hash,
             response.source_hash
@@ -22393,6 +23070,10 @@ mod tests {
             response.material_closure_packet.packet_hash
         );
         assert_eq!(
+            response.page_residency_allocator.temporal_history_hash,
+            response.temporal_history_packet.packet_hash
+        );
+        assert_eq!(
             response.page_residency_allocator.render_graph_hash,
             response.render_graph_compilation.graph_hash
         );
@@ -22403,6 +23084,30 @@ mod tests {
         assert!(response.page_residency_allocator.physical_page_count > 0);
         assert!(response.page_residency_allocator.resident_page_count > 0);
         assert!(response.page_residency_allocator.locked_page_count > 0);
+        assert_eq!(
+            response.page_residency_allocator.compacted_feedback_count,
+            response.page_residency_allocator.compacted_feedback.len()
+        );
+        assert_eq!(
+            response.page_residency_allocator.stale_feedback_count,
+            response
+                .page_residency_allocator
+                .validation_receipt
+                .stale_feedback_count
+        );
+        assert_eq!(
+            response.page_residency_allocator.pool_pressure_receipt_count,
+            response.page_residency_allocator.pool_receipts.len()
+        );
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .page_table_deferred_update_count,
+            response
+                .page_residency_allocator
+                .validation_receipt
+                .deferred_page_table_update_count
+        );
         assert!(response.page_residency_allocator.pool_pressure_pct >= 0.0);
         assert_eq!(
             response.page_residency_allocator.dropped_page_count,
@@ -22423,11 +23128,59 @@ mod tests {
                 .len(),
             64
         );
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .compacted_feedback_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.page_residency_allocator.stale_feedback_hash.len(), 64);
         assert_eq!(response.page_residency_allocator.allocation_hash.len(), 64);
         assert_eq!(response.page_residency_allocator.eviction_hash.len(), 64);
         assert_eq!(response.page_residency_allocator.pressure_receipt_hash.len(), 64);
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .pool_pressure_receipt_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.page_residency_allocator.aliasing_hash.len(), 64);
         assert_eq!(response.page_residency_allocator.dropped_page_hash.len(), 64);
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .validation_receipt_hash
+                .len(),
+            64
+        );
         assert_eq!(response.page_residency_allocator.packet_hash.len(), 64);
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .validation_receipt
+                .validation_hash,
+            response.page_residency_allocator.validation_receipt_hash
+        );
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .validation_receipt
+                .checked_page_count,
+            response.page_residency_allocator.entries.len()
+        );
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .validation_receipt
+                .checked_feedback_count,
+            response.page_residency_allocator.compacted_feedback.len()
+        );
+        assert!(response
+            .page_residency_allocator
+            .validation_receipt
+            .all_pages_have_compacted_feedback);
         assert_eq!(
             response
                 .page_residency_allocator
@@ -22455,6 +23208,28 @@ mod tests {
             .contains("local_unreal_sparse_nanite_vsm_virtual_texture"));
         assert!(response
             .page_residency_allocator
+            .compacted_feedback
+            .iter()
+            .all(|feedback| feedback.feedback_key.len() == 64
+                && feedback.feedback_space_id < 16
+                && feedback.request_count > 0
+                && feedback.feedback_hash.len() == 64));
+        assert!(response
+            .page_residency_allocator
+            .pool_receipts
+            .iter()
+            .all(|receipt| receipt.virtual_page_count > 0
+                && receipt.physical_page_count > 0
+                && receipt.receipt_hash.len() == 64
+                && matches!(
+                    receipt.pressure_tier,
+                    "low_pool_pressure"
+                        | "moderate_pool_pressure"
+                        | "high_pool_pressure"
+                        | "critical_pool_pressure"
+                )));
+        assert!(response
+            .page_residency_allocator
             .entries
             .iter()
             .any(|entry| entry.page_kind == "nanite_geometry_page"));
@@ -22476,10 +23251,13 @@ mod tests {
                 && !entry.object_id.is_empty()
                 && entry.source_page_hash.len() == 64
                 && entry.priority > 0
+                && entry.feedback_space_id < 16
                 && entry.producer_hash.len() == 64
                 && entry.feedback_hash.len() == 64
+                && entry.compacted_feedback_hash.len() == 64
                 && entry.allocation_hash.len() == 64
                 && entry.eviction_hash.len() == 64
+                && entry.temporal_pin_hash.len() == 64
                 && entry.entry_hash.len() == 64
                 && matches!(
                     entry.page_kind,
