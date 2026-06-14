@@ -2664,9 +2664,15 @@ function brainSegmentEventText(command: TranscriptCodeActCommand, phase: "changi
     : `Changed from General Brain to ${target}`;
 }
 
-function TranscriptCodeActEventLine({ event }: { event: TranscriptCodeActEvent }) {
+function activeAgentEventText(agentName: string, command: TranscriptCodeActCommand): string {
+  const label = agentName.trim() || "Agent";
+  return `${label} is using ${command}`;
+}
+
+function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: string; event: TranscriptCodeActEvent; writing: boolean }) {
   const isBrainSegment = isBrainSegmentCommand(event.command);
   const agentCommand = isAgentActionCommand(event.command) ? event.command : undefined;
+  const isPendingAgentEvent = writing && Boolean(agentCommand) && !event.detail;
   const [brainSegmentPhase, setBrainSegmentPhase] = useState<"changing" | "changed">(isBrainSegment ? "changing" : "changed");
 
   useEffect(() => {
@@ -2681,9 +2687,13 @@ function TranscriptCodeActEventLine({ event }: { event: TranscriptCodeActEvent }
   const eventClassName = isBrainSegment
     ? `transcriptCodeActEvent transcriptCodeActEvent--brainSegment transcriptCodeActEvent--brainSegment-${brainSegmentPhase}`
     : agentCommand
-      ? `transcriptCodeActEvent transcriptCodeActEvent--agent transcriptCodeActEvent--agent-${agentActionTone(agentCommand)}`
+      ? `transcriptCodeActEvent transcriptCodeActEvent--agent transcriptCodeActEvent--agent-${agentActionTone(agentCommand)}${isPendingAgentEvent ? " transcriptCodeActEvent--agent-pending" : " transcriptCodeActEvent--agent-complete"}`
       : "transcriptCodeActEvent";
-  const text = isBrainSegment ? brainSegmentEventText(event.command, brainSegmentPhase) : event.text;
+  const text = isBrainSegment
+    ? brainSegmentEventText(event.command, brainSegmentPhase)
+    : isPendingAgentEvent
+      ? activeAgentEventText(agentName, event.command)
+      : event.text;
 
   return (
     <div className={eventClassName}>
@@ -2756,11 +2766,13 @@ function TranscriptCommandSummaryLine({ events }: { events: TranscriptCodeActEve
 }
 
 function AssistantMarkdownText({
+  agentName,
   text,
   messageId,
   writing,
   onUseMathInCompute
 }: {
+  agentName: string;
   text: string;
   messageId: string;
   writing: boolean;
@@ -2774,7 +2786,7 @@ function AssistantMarkdownText({
           return <TranscriptCommandSummaryLine events={block.events} key={`${messageId}-event-group-${index}`} />;
         }
         if (block.kind === "event") {
-          return <TranscriptCodeActEventLine event={block.event} key={`${messageId}-event-${index}-${block.event.command}`} />;
+          return <TranscriptCodeActEventLine agentName={agentName} event={block.event} key={`${messageId}-event-${index}-${block.event.command}`} writing={writing} />;
         }
         if (block.kind === "heading") {
           const Tag = block.level <= 2 ? "h3" : "h4";
@@ -2899,20 +2911,22 @@ function AssistantMarkdownText({
   );
 }
 
-function StaticAssistantText({ message, onUseMathInCompute }: { message: TranscriptMessage; onUseMathInCompute?: AssistantMathUseHandler }) {
+function StaticAssistantText({ agentName, message, onUseMathInCompute }: { agentName: string; message: TranscriptMessage; onUseMathInCompute?: AssistantMathUseHandler }) {
   const renderableText = useMemo(() => assistantRenderableText(message.text), [message.text]);
   return (
     <div className="assistantText" aria-label={renderableText}>
-      <AssistantMarkdownText messageId={message.id} text={renderableText} writing={false} onUseMathInCompute={onUseMathInCompute} />
+      <AssistantMarkdownText agentName={agentName} messageId={message.id} text={renderableText} writing={false} onUseMathInCompute={onUseMathInCompute} />
     </div>
   );
 }
 
 function AnimatedAssistantText({
+  agentName,
   message,
   onAnimationComplete,
   onUseMathInCompute
 }: {
+  agentName: string;
   message: TranscriptMessage;
   onAnimationComplete?: (messageId: string) => void;
   onUseMathInCompute?: AssistantMathUseHandler;
@@ -3001,7 +3015,7 @@ function AnimatedAssistantText({
 
   return (
     <div className="assistantText" aria-label={renderableText} ref={textRef}>
-      <AssistantMarkdownText messageId={message.id} text={visibleText} writing={writing} onUseMathInCompute={onUseMathInCompute} />
+      <AssistantMarkdownText agentName={agentName} messageId={message.id} text={visibleText} writing={writing} onUseMathInCompute={onUseMathInCompute} />
     </div>
   );
 }
@@ -3292,9 +3306,9 @@ function TranscriptCanvas({
                     ) : assistantError ? (
                       <AssistantErrorText message={renderedMessage} />
                     ) : assistantShouldAnimate ? (
-                      <AnimatedAssistantText message={renderedMessage} onAnimationComplete={completeAssistantAnimation} onUseMathInCompute={onUseMathInCompute} />
+                      <AnimatedAssistantText agentName={agentName} message={renderedMessage} onAnimationComplete={completeAssistantAnimation} onUseMathInCompute={onUseMathInCompute} />
                     ) : (
-                      <StaticAssistantText message={renderedMessage} onUseMathInCompute={onUseMathInCompute} />
+                      <StaticAssistantText agentName={agentName} message={renderedMessage} onUseMathInCompute={onUseMathInCompute} />
                     )}
                   </div>
                   {assistantAwaitingAnimation ? null : actions}

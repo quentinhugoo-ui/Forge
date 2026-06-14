@@ -769,11 +769,17 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("function TranscriptCommandSummaryLine");
     expect(rendererSource).toContain("commands executed");
     expect(rendererSource).toContain("Executed command tree");
+    expect(rendererSource).toContain("function activeAgentEventText");
+    expect(rendererSource).toContain("is using");
+    expect(rendererSource).toContain("transcriptCodeActEvent--agent-pending");
+    expect(rendererSource).toContain("transcriptCodeActEvent--agent-complete");
     expect(rendererSource).toContain("transcriptItem--assistantLoop");
     expect(stylesSource).toContain(".transcriptCommandSummaryLine");
     expect(stylesSource).toContain(".transcriptCommandSummaryLine__icon");
     expect(stylesSource).toContain(".transcriptCommandTree");
     expect(stylesSource).toContain(".transcriptCommandTree__branch");
+    expect(stylesSource).toContain("transcriptAgentEventPulse");
+    expect(stylesSource).toContain("transcriptAgentEventSettle");
     expect(stylesSource).toContain(".transcriptItem--assistantLoop");
   });
 

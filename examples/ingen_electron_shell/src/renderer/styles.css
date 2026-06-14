@@ -4282,6 +4282,37 @@ button {
   color: #d3b8ff;
 }
 
+.transcriptCodeActEvent--agent {
+  transition:
+    color 260ms ease-out,
+    opacity 260ms ease-out,
+    filter 260ms ease-out,
+    transform 260ms ease-out;
+}
+
+.transcriptCodeActEvent--agent-pending {
+  color: #d8dde0;
+  opacity: 1;
+  filter: drop-shadow(0 0 10px color-mix(in oklab, currentColor 18%, transparent));
+}
+
+.transcriptCodeActEvent--agent-pending .transcriptCodeActEvent__icon {
+  animation: transcriptAgentEventPulse 1150ms ease-in-out infinite;
+}
+
+.transcriptCodeActEvent--agent-pending .transcriptCodeActEvent__text {
+  color: #d8dde0;
+}
+
+.transcriptCodeActEvent--agent-complete {
+  opacity: 0.72;
+  animation: transcriptAgentEventSettle 260ms ease-out both;
+}
+
+.transcriptCodeActEvent--agent-complete .transcriptCodeActEvent__text {
+  color: #8d9396;
+}
+
 .transcriptCodeActEvent__command {
   position: absolute;
   left: -138px;
@@ -6048,6 +6079,31 @@ ol.assistantText__list li::before {
   }
 }
 
+@keyframes transcriptAgentEventPulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes transcriptAgentEventSettle {
+  from {
+    opacity: 1;
+    transform: translateY(-1px);
+    filter: drop-shadow(0 0 8px color-mix(in oklab, currentColor 14%, transparent));
+  }
+  to {
+    opacity: 0.72;
+    transform: translateY(0);
+    filter: drop-shadow(0 0 0 transparent);
+  }
+}
+
 @keyframes composerQuestionnaireEnter {
   from {
     opacity: 0;
@@ -6131,6 +6187,8 @@ ol.assistantText__list li::before {
   .transcriptCodeActEvent--brainSegment-changing,
   .transcriptCodeActEvent__icon .brainSegmentIcon,
   .transcriptCodeActEvent__icon .brainSegmentIcon path,
+  .transcriptCodeActEvent--agent-pending .transcriptCodeActEvent__icon,
+  .transcriptCodeActEvent--agent-complete,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__command,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__text,
   .assistantText__wordFlash,

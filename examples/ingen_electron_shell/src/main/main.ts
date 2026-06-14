@@ -5219,11 +5219,14 @@ function agentActionResultSummary(result: AgentActionResult): string {
   return "Resultat: action appliquee.";
 }
 
-function renderExecutedAgentActionText(text: string, extracted: ExtractedAgentAction, result: AgentActionResult): string {
+function renderPendingAgentActionText(text: string, extracted: ExtractedAgentAction): string {
   const visibleText = removeAgentActionJsonFragment(text, extracted);
   const eventCommand = agentActionEventCommandForRequest(extracted.request);
-  const resultText = agentActionResultSummary(result);
-  return `${visibleText ? `${visibleText}\n\n` : ""}${eventCommand}\n\n${resultText}`.trim();
+  return `${visibleText ? `${visibleText}\n\n` : ""}${eventCommand}`.trim();
+}
+
+function renderCompletedPendingAgentActionText(text: string, result: AgentActionResult): string {
+  return `${text.trimEnd()}\n\n${agentActionResultSummary(result)}`.trim();
 }
 
 function compactAgentActionResult(result: AgentActionResult): string {
@@ -5386,10 +5389,16 @@ async function applyDeterministicOrganizationFallback(params: {
   };
   params.commitProgress?.(assistantMessage);
   for (const request of requests) {
+    assistantMessage = {
+      ...assistantMessage,
+      text: `${assistantMessage.text.trimEnd()}\n\n${agentActionEventCommandForRequest(request)}`.trim(),
+      proofHash: hashJson({ deterministicAgentActionFallbackPending: true, previousProofHash: assistantMessage.proofHash, request })
+    };
+    params.commitProgress?.(assistantMessage);
     const result = await executeAgentActionRequest(agentActionHostConfig(), request);
     assistantMessage = {
       ...assistantMessage,
-      text: `${assistantMessage.text.trimEnd()}\n\n${agentActionEventCommandForRequest(request)}\n\n${agentActionResultSummary(result)}`.trim(),
+      text: renderCompletedPendingAgentActionText(assistantMessage.text, result),
       proofHash: hashJson({ deterministicAgentActionFallback: true, previousProofHash: assistantMessage.proofHash, request, result })
     };
     params.commitProgress?.(assistantMessage);
@@ -5416,10 +5425,16 @@ async function executeAssistantAgentActionLoop(params: {
     if (!extracted) {
       return assistantMessage;
     }
+    assistantMessage = {
+      ...assistantMessage,
+      text: renderPendingAgentActionText(assistantMessage.text, extracted),
+      proofHash: hashJson({ agentActionLoopPendingStep: step + 1, previousProofHash: assistantMessage.proofHash, request: extracted.request })
+    };
+    params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
     const result = await executeAgentActionRequest(agentActionHostConfig(), extracted.request);
     assistantMessage = {
       ...assistantMessage,
-      text: renderExecutedAgentActionText(assistantMessage.text, extracted, result),
+      text: renderCompletedPendingAgentActionText(assistantMessage.text, result),
       proofHash: hashJson({ agentActionLoopStep: step + 1, previousProofHash: assistantMessage.proofHash, request: extracted.request, result })
     };
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
