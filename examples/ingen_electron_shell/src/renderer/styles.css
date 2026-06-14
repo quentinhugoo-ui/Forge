@@ -9138,6 +9138,7 @@ ol.assistantText__list li::before {
 }
 
 .hardwareGauge {
+  --hardware-temperature-color: #ff4f70;
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 72px 6px;
@@ -9291,6 +9292,11 @@ ol.assistantText__list li::before {
   font-style: normal;
   font-weight: 720;
   line-height: 1;
+}
+
+.hardwareGauge__temperatureValue,
+.hardwareGauge__temperatureUnit {
+  color: var(--hardware-temperature-color) !important;
 }
 
 .hardwareGauge__percent {

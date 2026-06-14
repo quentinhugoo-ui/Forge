@@ -844,6 +844,10 @@ let previousCpuTimes: CpuTimes[] | null = null;
 const NVIDIA_SMI_TIMEOUT_MS = 4500;
 type HardwareThermalSource = HardwareTelemetrySnapshot["thermal"]["source"];
 type TemperatureReading = { label: string; value: number; source: HardwareThermalSource };
+type ThermalTemperatures = { cpu: number | null; system: number | null; source: HardwareThermalSource };
+const HARDWARE_THERMAL_REFRESH_MS = 1000;
+let cachedThermalTemperatures: (ThermalTemperatures & { sampledAt: number }) | null = null;
+let thermalRefreshPromise: Promise<ThermalTemperatures> | null = null;
 
 function hardwareMetric(
   label: string,
@@ -1437,6 +1441,38 @@ async function queryThermalTemperatures(): Promise<{ cpu: number | null; system:
   return { cpu: null, system: null, source: "unavailable" };
 }
 
+function refreshCachedThermalTemperatures(): Promise<ThermalTemperatures> {
+  if (!thermalRefreshPromise) {
+    thermalRefreshPromise = queryThermalTemperatures()
+      .then((reading) => {
+        cachedThermalTemperatures = { ...reading, sampledAt: Date.now() };
+        return reading;
+      })
+      .finally(() => {
+        thermalRefreshPromise = null;
+      });
+  }
+  return thermalRefreshPromise;
+}
+
+async function queryThermalTemperaturesCached(): Promise<ThermalTemperatures> {
+  const now = Date.now();
+  if (
+    cachedThermalTemperatures &&
+    now - cachedThermalTemperatures.sampledAt <= HARDWARE_THERMAL_REFRESH_MS
+  ) {
+    return cachedThermalTemperatures;
+  }
+  const refresh = refreshCachedThermalTemperatures();
+  if (cachedThermalTemperatures) {
+    void refresh.catch((error) => {
+      console.warn("Hardware thermal refresh failed.", error);
+    });
+    return cachedThermalTemperatures;
+  }
+  return refresh;
+}
+
 function topProcessSnapshot(): HardwareProcessSnapshot[] {
   const current = process.cpuUsage();
   return [
@@ -1465,7 +1501,7 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
   const linuxGpus = process.platform === "linux" && enrichedNvidiaGpus.length === 0 && windowsGpus.length === 0
     ? mergeGpuSensorFallbacks(drmGpus, linuxHwmonGpus)
     : [];
-  const thermalTemperatures = await queryThermalTemperatures();
+  const thermalTemperatures = await queryThermalTemperaturesCached();
   const gpuNotes =
     nvidiaGpus.length === 0 && windowsGpus.length > 0
       ? ["Windows system fallback identifies adapters through Win32_VideoController; live GPU load, thermals, fan and power require vendor telemetry."]

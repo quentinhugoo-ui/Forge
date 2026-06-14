@@ -827,7 +827,7 @@ function MemorySpace() {
   );
 }
 
-const HARDWARE_POLL_MS = 1000;
+const HARDWARE_POLL_MS = 500;
 const HARDWARE_REQUEST_TIMEOUT_MS = 6500;
 const HARDWARE_GAUGE_HISTORY_LIMIT = 96;
 const HARDWARE_GAUGE_MIN_TEMP_SPAN_C = 18;
@@ -1183,14 +1183,12 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
           <svg viewBox="0 0 278 82" preserveAspectRatio="none" aria-hidden="true">
             <defs>
               <linearGradient id={`hardwareGaugeTempStroke-${card.id}`} x1="0" x2="0" y1="82" y2="0" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#f1b735" />
-                <stop offset="54%" stopColor="#ff8a00" />
-                <stop offset="100%" stopColor="#ff315f" />
+                <stop offset="0%" stopColor="#ff4f70" />
+                <stop offset="100%" stopColor="#ff4f70" />
               </linearGradient>
               <linearGradient id={`hardwareGaugeTempFill-${card.id}`} x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="#ff315f" stopOpacity="0.3" />
-                <stop offset="62%" stopColor="#ff8a00" stopOpacity="0.12" />
-                <stop offset="100%" stopColor="#f1b735" stopOpacity="0.02" />
+                <stop offset="0%" stopColor="#ff4f70" stopOpacity="0.22" />
+                <stop offset="100%" stopColor="#ff4f70" stopOpacity="0.02" />
               </linearGradient>
               <linearGradient id={`hardwareGaugeActivityFill-${card.id}`} x1="0" x2="0" y1="82" y2="0" gradientUnits="userSpaceOnUse">
                 <stop offset="0%" stopColor="#ff9c00" stopOpacity="0" />
@@ -1227,8 +1225,8 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
       </section>
       <div className="hardwareGauge__readout">
         <span>{card.badge}</span>
-        <strong>{compactGaugeValue(card.temperature)}</strong>
-        {compactGaugeUnit(card.temperature) ? <em>{compactGaugeUnit(card.temperature)}</em> : null}
+        <strong className="hardwareGauge__temperatureValue">{compactGaugeValue(card.temperature)}</strong>
+        {compactGaugeUnit(card.temperature) ? <em className="hardwareGauge__temperatureUnit">{compactGaugeUnit(card.temperature)}</em> : null}
         <strong className="hardwareGauge__percent">{compactGaugeValue(card.percent)}</strong>
         {compactGaugeUnit(card.percent) ? <em>{compactGaugeUnit(card.percent)}</em> : null}
       </div>
@@ -1250,8 +1248,11 @@ function HardwareSpace() {
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
     let timer: number | undefined;
     const refresh = () => {
+      if (inFlight) return;
+      inFlight = true;
       void requestHardwareTelemetry()
         .then((next) => {
           if (cancelled) return;
@@ -1282,16 +1283,15 @@ function HardwareSpace() {
           setError(caught instanceof Error ? caught.message : "Telemetry unavailable");
         })
         .finally(() => {
-          if (!cancelled) {
-            timer = window.setTimeout(refresh, HARDWARE_POLL_MS);
-          }
+          inFlight = false;
         });
     };
     refresh();
+    timer = window.setInterval(refresh, HARDWARE_POLL_MS);
     return () => {
       cancelled = true;
       if (timer !== undefined) {
-        window.clearTimeout(timer);
+        window.clearInterval(timer);
       }
     };
   }, []);
