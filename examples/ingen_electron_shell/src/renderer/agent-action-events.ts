@@ -22,6 +22,11 @@ export const AGENT_DRAG_COMMAND = "/agent_drag_";
 export const AGENT_BROWSER_INSPECT_COMMAND = "/agent_browser_inspect_";
 export const AGENT_BROWSER_DOWNLOAD_COMMAND = "/agent_browser_download_";
 export const AGENT_BROWSER_OPEN_COMMAND = "/agent_browser_open_";
+export const AGENT_BROWSER_PLAYWRIGHT_INSPECT_COMMAND = "/agent_browser_playwright_inspect_";
+export const AGENT_BROWSER_SCREENSHOT_COMMAND = "/agent_browser_screenshot_";
+export const AGENT_BROWSER_CLICK_COMMAND = "/agent_browser_click_";
+export const AGENT_BROWSER_TYPE_TEXT_COMMAND = "/agent_browser_type_text_";
+export const AGENT_BROWSER_PLAYWRIGHT_DOWNLOAD_COMMAND = "/agent_browser_playwright_download_";
 export const AGENT_DOCUMENT_INSPECT_COMMAND = "/agent_document_inspect_";
 export const AGENT_DOCUMENT_WRITE_COMMAND = "/agent_document_write_";
 export const AGENT_DOCUMENT_CONVERT_COMMAND = "/agent_document_convert_";
@@ -63,6 +68,11 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_BROWSER_INSPECT_COMMAND,
   AGENT_BROWSER_DOWNLOAD_COMMAND,
   AGENT_BROWSER_OPEN_COMMAND,
+  AGENT_BROWSER_PLAYWRIGHT_INSPECT_COMMAND,
+  AGENT_BROWSER_SCREENSHOT_COMMAND,
+  AGENT_BROWSER_CLICK_COMMAND,
+  AGENT_BROWSER_TYPE_TEXT_COMMAND,
+  AGENT_BROWSER_PLAYWRIGHT_DOWNLOAD_COMMAND,
   AGENT_DOCUMENT_INSPECT_COMMAND,
   AGENT_DOCUMENT_WRITE_COMMAND,
   AGENT_DOCUMENT_CONVERT_COMMAND,
@@ -114,6 +124,11 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_BROWSER_INSPECT_COMMAND, "web page state inspected"],
   [AGENT_BROWSER_DOWNLOAD_COMMAND, "confirmed web download verified"],
   [AGENT_BROWSER_OPEN_COMMAND, "confirmed browser navigation requested"],
+  [AGENT_BROWSER_PLAYWRIGHT_INSPECT_COMMAND, "Playwright DOM and network state inspected"],
+  [AGENT_BROWSER_SCREENSHOT_COMMAND, "confirmed browser screenshot verified"],
+  [AGENT_BROWSER_CLICK_COMMAND, "confirmed browser click verified"],
+  [AGENT_BROWSER_TYPE_TEXT_COMMAND, "confirmed browser typing verified"],
+  [AGENT_BROWSER_PLAYWRIGHT_DOWNLOAD_COMMAND, "confirmed Playwright download verified"],
   [AGENT_DOCUMENT_INSPECT_COMMAND, "document/media artifact inspected"],
   [AGENT_DOCUMENT_WRITE_COMMAND, "document/data artifact written and verified"],
   [AGENT_DOCUMENT_CONVERT_COMMAND, "document text converted and verified"],
@@ -156,6 +171,11 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["browser.inspect_url", AGENT_BROWSER_INSPECT_COMMAND],
   ["browser.download", AGENT_BROWSER_DOWNLOAD_COMMAND],
   ["browser.open_url", AGENT_BROWSER_OPEN_COMMAND],
+  ["browser.playwright_inspect", AGENT_BROWSER_PLAYWRIGHT_INSPECT_COMMAND],
+  ["browser.screenshot", AGENT_BROWSER_SCREENSHOT_COMMAND],
+  ["browser.click", AGENT_BROWSER_CLICK_COMMAND],
+  ["browser.type_text", AGENT_BROWSER_TYPE_TEXT_COMMAND],
+  ["browser.playwright_download", AGENT_BROWSER_PLAYWRIGHT_DOWNLOAD_COMMAND],
   ["document.inspect", AGENT_DOCUMENT_INSPECT_COMMAND],
   ["document.write_text", AGENT_DOCUMENT_WRITE_COMMAND],
   ["document.write_json", AGENT_DOCUMENT_WRITE_COMMAND],
@@ -200,6 +220,11 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["browser_inspect_url", AGENT_BROWSER_INSPECT_COMMAND],
   ["browser_download", AGENT_BROWSER_DOWNLOAD_COMMAND],
   ["browser_open_url", AGENT_BROWSER_OPEN_COMMAND],
+  ["browser_playwright_inspect", AGENT_BROWSER_PLAYWRIGHT_INSPECT_COMMAND],
+  ["browser_screenshot", AGENT_BROWSER_SCREENSHOT_COMMAND],
+  ["browser_click", AGENT_BROWSER_CLICK_COMMAND],
+  ["browser_type_text", AGENT_BROWSER_TYPE_TEXT_COMMAND],
+  ["browser_playwright_download", AGENT_BROWSER_PLAYWRIGHT_DOWNLOAD_COMMAND],
   ["document_inspect", AGENT_DOCUMENT_INSPECT_COMMAND],
   ["document_write_text", AGENT_DOCUMENT_WRITE_COMMAND],
   ["document_write_json", AGENT_DOCUMENT_WRITE_COMMAND],

@@ -16,6 +16,7 @@ import type {
   AgentCapabilityVerification,
   AgentBrowserDownloadArtifact,
   AgentBrowserPageSummary,
+  AgentBrowserScreenshotArtifact,
   AgentBrowserWebPolicy,
   AgentComputerDisplaySummary,
   AgentComputerUsePolicy,
@@ -100,6 +101,11 @@ const AGENT_ACTION_EVENT_HINTS = [
   "browser.inspect_url:/agent_browser_inspect_",
   "browser.download:/agent_browser_download_",
   "browser.open_url:/agent_browser_open_",
+  "browser.playwright_inspect:/agent_browser_playwright_inspect_",
+  "browser.screenshot:/agent_browser_screenshot_",
+  "browser.click:/agent_browser_click_",
+  "browser.type_text:/agent_browser_type_text_",
+  "browser.playwright_download:/agent_browser_playwright_download_",
   "document.inspect:/agent_document_inspect_",
   "document.write_text:/agent_document_write_",
   "document.write_json:/agent_document_write_",
@@ -144,6 +150,11 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   browser_inspect_url: "/agent_browser_inspect_",
   browser_download: "/agent_browser_download_",
   browser_open_url: "/agent_browser_open_",
+  browser_playwright_inspect: "/agent_browser_playwright_inspect_",
+  browser_screenshot: "/agent_browser_screenshot_",
+  browser_click: "/agent_browser_click_",
+  browser_type_text: "/agent_browser_type_text_",
+  browser_playwright_download: "/agent_browser_playwright_download_",
   document_inspect: "/agent_document_inspect_",
   document_write_text: "/agent_document_write_",
   document_write_json: "/agent_document_write_",
@@ -455,7 +466,7 @@ export function agentActionRoutingHint(): string {
   return [
     "LOCAL_ACTION_TOOLS v1",
     "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, write/inspect documents, run commands, control Windows settings/tools, install/update software, download assets, or operate the workspace/computer.",
-    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create",
+    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url browser.playwright_inspect browser.screenshot browser.click browser.type_text browser.playwright_download document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create",
     "windows_reach=shell.full can invoke PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process, ms-settings URIs, installers, CLIs, and other native Windows tools when confirmed:true is appropriate.",
     "computer_use=Inspect GUI/UIA first, then act once with confirmed:true, then verify by foreground/UI state. Never approve security, payment, credential, destructive, or UAC prompts for the user.",
     "format=Emit AGENT_ACTION_JSON only when real execution is needed, then wait for AGENT_ACTION_RESULT. The AGENT_ACTION_JSON marker must start its own line, with no prose before it. Never fake tool events.",
@@ -561,6 +572,7 @@ function result(
     computerUse: patch.computerUse,
     appshot: patch.appshot,
     browserPage: patch.browserPage,
+    browserScreenshot: patch.browserScreenshot,
     download: patch.download,
     documentMedia: patch.documentMedia,
     developer: patch.developer,
@@ -923,7 +935,16 @@ export function createComputerUsePolicy(_config: AgentActionHostConfig): AgentCo
 export function createBrowserWebPolicy(_config: AgentActionHostConfig): AgentBrowserWebPolicy {
   const policy: AgentBrowserWebPolicy = {
     schema: "ingen.browser_web.policy.v1",
-    executableActions: ["browser_inspect_url", "browser_download", "browser_open_url"],
+    executableActions: [
+      "browser_inspect_url",
+      "browser_download",
+      "browser_open_url",
+      "browser_playwright_inspect",
+      "browser_screenshot",
+      "browser_click",
+      "browser_type_text",
+      "browser_playwright_download"
+    ],
     inspectionRequiresConfirmation: false,
     navigationRequiresConfirmation: true,
     downloadRequiresConfirmation: true,
@@ -1404,6 +1425,96 @@ function createExecutableActionCapabilities(): AgentActionCapability[] {
       writes: true,
       description: "Open a URL in the default browser after explicit confirmation.",
       notes: "External navigation can expose data or trigger account state; never submit forms without user approval."
+    }),
+    actionCapability({
+      id: "browser.playwright_inspect",
+      family: "browser.cdp",
+      surface: "browser.web",
+      title: "Inspect page with Playwright",
+      status: "available",
+      risk: "read",
+      operations: ["navigate isolated browser context", "inspect DOM counts", "capture ARIA snapshot", "record network request/response summaries"],
+      underlyingTools: ["@playwright/test chromium", "Playwright page events", "Playwright ariaSnapshot"],
+      fallbacks: ["browser.inspect_url", "shell.full curl", "computer.ui_tree"],
+      verification: ["browser_state", "command_exit"],
+      approval: "none",
+      executableActionIds: ["browser.playwright_inspect"],
+      requiresApproval: false,
+      writes: false,
+      description: "Open a URL in an isolated headless browser and return DOM plus bounded network evidence.",
+      notes: "Uses a fresh browser context without profile credentials."
+    }),
+    actionCapability({
+      id: "browser.screenshot",
+      family: "browser.cdp",
+      surface: "browser.web",
+      title: "Capture browser screenshot",
+      status: "available",
+      risk: "external_ui",
+      operations: ["navigate isolated browser context", "capture full-page screenshot", "persist PNG artifact", "hash screenshot"],
+      underlyingTools: ["@playwright/test chromium", "page.screenshot"],
+      fallbacks: ["computer.appshot", "manual screenshot"],
+      verification: ["browser_state", "artifact_hash", "filesystem"],
+      approval: "prompt",
+      executableActionIds: ["browser.screenshot"],
+      requiresApproval: true,
+      writes: true,
+      description: "Capture a confirmed Playwright screenshot artifact and verify its hash.",
+      notes: "Writes a local artifact, so confirmed:true is required."
+    }),
+    actionCapability({
+      id: "browser.click",
+      family: "browser.cdp",
+      surface: "browser.web",
+      title: "Click page element",
+      status: "available",
+      risk: "external_ui",
+      operations: ["navigate isolated browser context", "click locator", "block form submission without explicit confirmation", "verify post-click page state"],
+      underlyingTools: ["@playwright/test chromium", "locator.click"],
+      fallbacks: ["computer.click", "manual browser action"],
+      verification: ["browser_state"],
+      approval: "prompt",
+      executableActionIds: ["browser.click"],
+      requiresApproval: true,
+      writes: true,
+      description: "Perform one confirmed locator click in an isolated Playwright page and verify the resulting state.",
+      notes: "Submit buttons and form-associated clicks require formSubmissionConfirmed:true."
+    }),
+    actionCapability({
+      id: "browser.type_text",
+      family: "browser.cdp",
+      surface: "browser.web",
+      title: "Type into page element",
+      status: "available",
+      risk: "external_ui",
+      operations: ["navigate isolated browser context", "fill locator text", "block credential and payment fields", "verify selector value"],
+      underlyingTools: ["@playwright/test chromium", "locator.fill"],
+      fallbacks: ["computer.type_text", "manual browser action"],
+      verification: ["browser_state"],
+      approval: "prompt",
+      executableActionIds: ["browser.type_text"],
+      requiresApproval: true,
+      writes: true,
+      description: "Type confirmed text into a non-sensitive browser field in an isolated context.",
+      notes: "Password, one-time-code and payment fields are blocked."
+    }),
+    actionCapability({
+      id: "browser.playwright_download",
+      family: "browser.cdp",
+      surface: "browser.web",
+      title: "Download via page click",
+      status: "available",
+      risk: "computer_write",
+      operations: ["navigate isolated browser context", "wait for download event", "click locator", "save artifact", "hash downloaded file"],
+      underlyingTools: ["@playwright/test chromium", "page.waitForEvent('download')", "download.saveAs"],
+      fallbacks: ["browser.download", "shell.full curl"],
+      verification: ["browser_state", "filesystem", "artifact_hash"],
+      approval: "prompt",
+      executableActionIds: ["browser.playwright_download"],
+      requiresApproval: true,
+      writes: true,
+      description: "Trigger a confirmed page download through Playwright and verify the persisted artifact.",
+      notes: "If no download event is observed, this returns blocked/unverifiable rather than success."
     }),
     actionCapability({
       id: "document.inspect",
@@ -1889,15 +2000,16 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       family: "browser.cdp",
       surface: "browser",
       title: "Control browsers through DevTools Protocol",
-      status: "planned",
+      status: "available",
       risk: "external_ui",
       operations: ["inspect page", "click/type", "capture network", "download files", "run browser tests"],
-      underlyingTools: ["Chrome DevTools Protocol", "Playwright", "Electron WebContents"],
+      underlyingTools: ["Playwright", "Chrome DevTools Protocol", "Electron WebContents"],
       fallbacks: ["GUI/computer_use", "MCP browser tools"],
       verification: ["browser_state", "ui_state", "artifact_hash"],
       approval: "prompt",
       writes: true,
-      notes: "External submissions, purchases and account changes require confirmation."
+      executableActionIds: ["browser.playwright_inspect", "browser.screenshot", "browser.click", "browser.type_text", "browser.playwright_download"],
+      notes: "Playwright direct actions run in an isolated context. External submissions, purchases and account changes require confirmation; MCP browser tools remain out of scope."
     }),
     atlasEntry({
       id: "computer.ui_automation",
@@ -2234,7 +2346,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `browser_web=download:${manifest.browserWeb.downloadRequiresConfirmation ? "confirmed" : "open"} navigation:${manifest.browserWeb.navigationRequiresConfirmation ? "confirmed" : "open"} submission:${manifest.browserWeb.submissionRequiresConfirmation ? "confirmed" : "open"} artifact:${manifest.browserWeb.artifactPolicy}`,
     `document_media=workspace_writes:${manifest.documentMedia.workspaceWritesRequireConfirmation ? "confirmed" : "open"} computer_writes:${manifest.documentMedia.computerScopeWritesRequireConfirmation ? "confirmed" : "open"} office_com:${manifest.documentMedia.officeComRequiresConfirmation ? "confirmed" : "open"} macros:${manifest.documentMedia.macroPolicy} artifact:${manifest.documentMedia.artifactPolicy}`,
     `developer_automation=repo_inspect:${manifest.developerAutomation.repoInspectionRequiresConfirmation ? "confirmed" : "open"} checks:${manifest.developerAutomation.commandChecksRequireConfirmation ? "confirmed" : "open"} git_mutation:${manifest.developerAutomation.gitMutationRequiresConfirmation ? "confirmed" : "open"} cloud_writes:${manifest.developerAutomation.cloudWritesRequireConfirmation ? "confirmed" : "open"} mcp:${manifest.developerAutomation.mcpToolCallingStatus} automation:${manifest.developerAutomation.automationPersistenceRequiresConfirmation ? "confirmed" : "open"}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.run_check virtualization.inspect virtualization.run_command automation.schedule automation.list automation.cancel automation.record",
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url browser.playwright_inspect browser.screenshot browser.click browser.type_text browser.playwright_download document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.run_check virtualization.inspect virtualization.run_command automation.schedule automation.list automation.cancel automation.record",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -2248,7 +2360,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
-    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes thread_wakeups hyperv_guest_command_execution semantic_screen_targeting bundled_ocr_engine",
+    "planned=contained_webexplorer_dom persistent_browser_sessions browser_account_state_changes office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes thread_wakeups hyperv_guest_command_execution semantic_screen_targeting bundled_ocr_engine",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -2856,6 +2968,16 @@ function browserPageSummary(input: Omit<AgentBrowserPageSummary, "schema" | "pro
 function browserDownloadArtifact(input: Omit<AgentBrowserDownloadArtifact, "schema" | "proofHash">): AgentBrowserDownloadArtifact {
   const artifact: AgentBrowserDownloadArtifact = {
     schema: "ingen.browser.download_artifact.v1",
+    ...input,
+    proofHash: ""
+  };
+  artifact.proofHash = hashJson({ ...artifact, proofHash: "" });
+  return artifact;
+}
+
+function browserScreenshotArtifact(input: Omit<AgentBrowserScreenshotArtifact, "schema" | "proofHash">): AgentBrowserScreenshotArtifact {
+  const artifact: AgentBrowserScreenshotArtifact = {
+    schema: "ingen.browser.screenshot_artifact.v1",
     ...input,
     proofHash: ""
   };
@@ -3753,6 +3875,174 @@ function suggestedDownloadFilename(url: URL, contentDisposition: string | null):
   return sanitized || "download.bin";
 }
 
+async function pathExists(candidate: string): Promise<boolean> {
+  try {
+    await stat(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type PlaywrightNetworkRecord = {
+  url: string;
+  method?: string;
+  resourceType?: string;
+  status?: number;
+  ok?: boolean;
+  failureText?: string;
+};
+
+type PlaywrightPageState = {
+  finalUrl: string;
+  statusCode?: number;
+  ok?: boolean;
+  title?: string;
+  linkCount: number;
+  formCount: number;
+  downloadCandidateCount: number;
+  domNodeCount: number;
+  ariaSnapshot?: string;
+  network: PlaywrightNetworkRecord[];
+  width: number;
+  height: number;
+};
+
+async function loadPlaywrightChromium(): Promise<{ chromium: { launch(options: Record<string, unknown>): Promise<unknown> } } | IpcError> {
+  try {
+    const playwright = await import("@playwright/test");
+    return { chromium: playwright.chromium as unknown as { launch(options: Record<string, unknown>): Promise<unknown> } };
+  } catch (error) {
+    return actionError("rust_unavailable", error instanceof Error ? error.message : String(error), { module: "@playwright/test" });
+  }
+}
+
+function selectorRequired(config: AgentActionHostConfig, request: AgentActionRequest): AgentActionResult | undefined {
+  if (!request.selector?.trim()) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "selector is required for this browser action.", request)
+    });
+  }
+  return undefined;
+}
+
+async function playwrightPageState(page: any, response: any, network: PlaywrightNetworkRecord[]): Promise<PlaywrightPageState> {
+  const [title, counts, ariaSnapshot, viewport] = await Promise.all([
+    page.title().catch(() => undefined),
+    page.evaluate(() => ({
+      linkCount: document.querySelectorAll("a").length,
+      formCount: document.querySelectorAll("form").length,
+      downloadCandidateCount: document.querySelectorAll("[download], a[href*='download'], button, input[type='submit']").length,
+      domNodeCount: document.querySelectorAll("*").length,
+      width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0, window.innerWidth),
+      height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0, window.innerHeight)
+    })),
+    typeof page.ariaSnapshot === "function" ? page.ariaSnapshot({ depth: 3, mode: "ai", boxes: true, timeout: 2_000 }).catch(() => undefined) : undefined,
+    page.viewportSize?.() ?? undefined
+  ]);
+  return {
+    finalUrl: page.url(),
+    statusCode: typeof response?.status === "function" ? response.status() : undefined,
+    ok: typeof response?.ok === "function" ? response.ok() : undefined,
+    title,
+    linkCount: counts.linkCount,
+    formCount: counts.formCount,
+    downloadCandidateCount: counts.downloadCandidateCount,
+    domNodeCount: counts.domNodeCount,
+    ariaSnapshot: typeof ariaSnapshot === "string" ? ariaSnapshot.slice(0, 8_000) : undefined,
+    network: network.slice(-80),
+    width: counts.width || viewport?.width || 0,
+    height: counts.height || viewport?.height || 0
+  };
+}
+
+async function withPlaywrightPage<T>(
+  config: AgentActionHostConfig,
+  request: AgentActionRequest,
+  run: (params: { page: any; response: any; network: PlaywrightNetworkRecord[]; timeoutMs: number; url: URL }) => Promise<T>
+): Promise<T | AgentActionResult> {
+  const url = parseAgentUrl(request);
+  if (isIpcError(url)) {
+    return result(config, request, { accepted: false, error: url });
+  }
+  const loaded = await loadPlaywrightChromium();
+  if ("code" in loaded) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "missing_tool",
+      error: actionError("rust_unavailable", "Playwright is not available in the Electron shell runtime.", loaded)
+    });
+  }
+  const timeoutMs = browserFetchTimeout(request);
+  let browser: any;
+  let context: any;
+  try {
+    browser = await loaded.chromium.launch({ headless: true, timeout: Math.min(timeoutMs, 30_000) });
+    context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1280, height: 900 } });
+    const page = await context.newPage();
+    page.setDefaultTimeout(Math.min(timeoutMs, 30_000));
+    const network = new Map<string, PlaywrightNetworkRecord>();
+    page.on("request", (requestInfo: any) => {
+      const key = `${Date.now()}:${requestInfo.url()}`;
+      network.set(key, {
+        url: requestInfo.url(),
+        method: requestInfo.method(),
+        resourceType: requestInfo.resourceType()
+      });
+      if (network.size > 100) {
+        const first = network.keys().next().value;
+        if (first) network.delete(first);
+      }
+    });
+    page.on("response", (responseInfo: any) => {
+      const urlValue = responseInfo.url();
+      const existingKey = [...network.keys()].reverse().find((key) => network.get(key)?.url === urlValue);
+      const entry: PlaywrightNetworkRecord = existingKey ? network.get(existingKey)! : { url: urlValue };
+      entry.status = responseInfo.status();
+      entry.ok = responseInfo.ok();
+      if (existingKey) {
+        network.set(existingKey, entry);
+      }
+    });
+    page.on("requestfailed", (requestInfo: any) => {
+      const urlValue = requestInfo.url();
+      const existingKey = [...network.keys()].reverse().find((key) => network.get(key)?.url === urlValue);
+      const entry: PlaywrightNetworkRecord = existingKey ? network.get(existingKey)! : { url: urlValue };
+      entry.failureText = requestInfo.failure()?.errorText ?? "failed";
+      if (existingKey) {
+        network.set(existingKey, entry);
+      }
+    });
+    const response = await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    return await run({ page, response, network: [...network.values()], timeoutMs, url });
+  } catch (error) {
+    const timedOut = error instanceof Error && /timeout/i.test(error.message);
+    return result(config, request, {
+      accepted: false,
+      commandLine: `playwright chromium ${url.toString()}`,
+      routeId: "browser.playwright",
+      timeoutMs,
+      timedOut,
+      failureCategory: timedOut ? "timeout" : "missing_tool",
+      error: actionError("rust_unavailable", timedOut ? `Playwright action timed out after ${timeoutMs}ms.` : error instanceof Error ? error.message : String(error), {
+        url: url.toString()
+      })
+    });
+  } finally {
+    try {
+      await context?.close();
+    } catch {
+      // Best-effort cleanup only.
+    }
+    try {
+      await browser?.close();
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+}
+
 async function browserInspectUrlAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   const url = parseAgentUrl(request);
   if (isIpcError(url)) {
@@ -3975,6 +4265,400 @@ Start-Process $url
     browserPage: page,
     userPresenceRequired: true
   });
+}
+
+async function browserPlaywrightInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const startedAt = Date.now();
+  const outcome = await withPlaywrightPage(config, request, async ({ page, response, network, timeoutMs, url }) => {
+    const state = await playwrightPageState(page, response, network);
+    return result(config, request, {
+      accepted: true,
+      commandLine: `playwright chromium inspect ${url.toString()}`,
+      routeId: "browser.playwright_inspect",
+      durationMs: Math.max(0, Date.now() - startedAt),
+      timeoutMs,
+      observedChanges: [`dom_nodes:${state.domNodeCount}`, `network_events:${state.network.length}`, `forms:${state.formCount}`],
+      verification: verificationResult([
+        verificationProbe({
+          id: "browser.playwright.dom",
+          kind: "browser_state",
+          target: state.finalUrl,
+          expectation: "DOM and network state returned from isolated Playwright page",
+          actual: `dom_nodes=${state.domNodeCount} network=${state.network.length} status=${state.statusCode ?? "data"}`,
+          passed: state.domNodeCount > 0 && (typeof state.statusCode === "number" || url.protocol === "data:")
+        })
+      ]),
+      browserPage: browserPageSummary({
+        action: "playwright_inspect",
+        url: url.toString(),
+        finalUrl: state.finalUrl,
+        statusCode: state.statusCode,
+        ok: state.ok,
+        title: state.title,
+        linkCount: state.linkCount,
+        formCount: state.formCount,
+        downloadCandidateCount: state.downloadCandidateCount,
+        domNodeCount: state.domNodeCount,
+        ariaSnapshot: state.ariaSnapshot,
+        network: state.network,
+        screenshotStatus: "planned",
+        domStatus: "available",
+        networkLogStatus: "available"
+      })
+    });
+  });
+  return outcome as AgentActionResult;
+}
+
+async function browserScreenshotAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Browser screenshot requires confirmed:true because it persists a visual artifact.", request)
+    });
+  }
+  const startedAt = Date.now();
+  const outcome = await withPlaywrightPage(config, request, async ({ page, response, network, timeoutMs, url }) => {
+    const targetPath = resolveActionPath(config, { ...request, scope: request.scope ?? "workspace" }, request.path ?? `.ingen-agent-artifacts/browser-screenshot-${Date.now()}.png`);
+    if (typeof targetPath !== "string") {
+      return result(config, request, { accepted: false, error: targetPath });
+    }
+    if (await pathExists(targetPath)) {
+      return result(config, request, {
+        accepted: false,
+        failureCategory: "bad_path",
+        error: actionError("bad_payload", "Browser screenshot target already exists; refusing to overwrite.", { path: targetPath })
+      });
+    }
+    await mkdir(dirname(targetPath), { recursive: true });
+    await page.screenshot({ path: targetPath, fullPage: true });
+    const bytes = await readFile(targetPath);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const state = await playwrightPageState(page, response, network);
+    const artifact = browserScreenshotArtifact({
+      url: url.toString(),
+      path: pathLabel(config, request, targetPath),
+      width: state.width,
+      height: state.height,
+      bytes: bytes.length,
+      sha256
+    });
+    return result(config, request, {
+      accepted: true,
+      path: artifact.path,
+      commandLine: `playwright chromium screenshot ${url.toString()} > ${artifact.path}`,
+      routeId: "browser.screenshot",
+      durationMs: Math.max(0, Date.now() - startedAt),
+      timeoutMs,
+      artifacts: [artifact.path],
+      observedChanges: [`browser_screenshot:${artifact.width}x${artifact.height}`, `sha256:${artifact.sha256}`],
+      verification: verificationResult([
+        await filesystemProbe("browser.screenshot.exists", targetPath, "file"),
+        verificationProbe({
+          id: "browser.screenshot.hash",
+          kind: "artifact_hash",
+          target: targetPath,
+          expectation: "screenshot sha256 computed",
+          actual: sha256,
+          passed: /^[a-f0-9]{64}$/.test(sha256)
+        })
+      ]),
+      browserPage: browserPageSummary({
+        action: "screenshot",
+        url: url.toString(),
+        finalUrl: state.finalUrl,
+        statusCode: state.statusCode,
+        ok: state.ok,
+        title: state.title,
+        linkCount: state.linkCount,
+        formCount: state.formCount,
+        downloadCandidateCount: state.downloadCandidateCount,
+        domNodeCount: state.domNodeCount,
+        network: state.network,
+        screenshotStatus: "available",
+        domStatus: "available",
+        networkLogStatus: "available"
+      }),
+      browserScreenshot: artifact,
+      userPresenceRequired: true
+    });
+  });
+  return outcome as AgentActionResult;
+}
+
+async function browserSelectorInfo(page: any, selector: string): Promise<{
+  exists: boolean;
+  tagName?: string;
+  type?: string;
+  text?: string;
+  role?: string;
+  autocomplete?: string;
+  inForm?: boolean;
+  submitLike?: boolean;
+  sensitiveLike?: boolean;
+}> {
+  const locator = page.locator(selector).first();
+  const count = await locator.count().catch(() => 0);
+  if (count < 1) {
+    return { exists: false };
+  }
+  return await locator.evaluate((element: Element) => {
+    const input = element as HTMLInputElement;
+    const tagName = element.tagName.toLowerCase();
+    const type = (input.getAttribute?.("type") ?? "").toLowerCase();
+    const autocomplete = (input.getAttribute?.("autocomplete") ?? "").toLowerCase();
+    const text = (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 240);
+    const role = (element.getAttribute("role") ?? "").toLowerCase();
+    const inForm = Boolean(element.closest("form"));
+    const submitLike = tagName === "button" || role === "button" || type === "submit" || /submit|pay|purchase|checkout|confirm|buy/i.test(text);
+    const sensitiveLike = type === "password" || /one-time-code|current-password|new-password|cc-|card|credential|password|pin/i.test(`${autocomplete} ${type} ${text}`);
+    return { exists: true, tagName, type, text, role, autocomplete, inForm, submitLike, sensitiveLike };
+  });
+}
+
+function browserInteractionConfirmationError(config: AgentActionHostConfig, request: AgentActionRequest): AgentActionResult | undefined {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Browser interaction requires confirmed:true.", request)
+    });
+  }
+  return selectorRequired(config, request);
+}
+
+async function browserClickAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const preflight = browserInteractionConfirmationError(config, request);
+  if (preflight) return preflight;
+  const selector = request.selector!.trim();
+  const startedAt = Date.now();
+  const outcome = await withPlaywrightPage(config, request, async ({ page, response, network, timeoutMs, url }) => {
+    const info = await browserSelectorInfo(page, selector);
+    if (!info.exists) {
+      return result(config, request, { accepted: false, failureCategory: "bad_path", error: actionError("bad_payload", "Browser selector did not match any element.", { selector }) });
+    }
+    if ((info.inForm || info.submitLike) && request.formSubmissionConfirmed !== true) {
+      const state = await playwrightPageState(page, response, network);
+      return result(config, request, {
+        accepted: false,
+        userPresenceRequired: true,
+        failureCategory: "denied",
+        browserPage: browserPageSummary({
+          action: "click",
+          url: url.toString(),
+          finalUrl: state.finalUrl,
+          selector,
+          selectorMatched: true,
+          formCount: state.formCount,
+          domNodeCount: state.domNodeCount,
+          network: state.network,
+          screenshotStatus: "planned",
+          domStatus: "available",
+          networkLogStatus: "available"
+        }),
+        error: actionError("bad_payload", "Click may submit a form or trigger an account/payment action; set formSubmissionConfirmed:true to proceed.", info)
+      });
+    }
+    await page.locator(selector).first().click();
+    await page.waitForLoadState("domcontentloaded", { timeout: 2_000 }).catch(() => undefined);
+    const state = await playwrightPageState(page, response, network);
+    return result(config, request, {
+      accepted: true,
+      commandLine: `playwright chromium click ${url.toString()} ${selector}`,
+      routeId: "browser.click",
+      durationMs: Math.max(0, Date.now() - startedAt),
+      timeoutMs,
+      observedChanges: [`selector_clicked:${selector}`, `final_url:${state.finalUrl}`, `network_events:${state.network.length}`],
+      verification: verificationResult([
+        verificationProbe({
+          id: "browser.click.selector",
+          kind: "browser_state",
+          target: selector,
+          expectation: "selector matched and click completed without a blocked form submission",
+          actual: `matched=${info.exists} final_url=${state.finalUrl}`,
+          passed: true
+        })
+      ]),
+      browserPage: browserPageSummary({
+        action: "click",
+        url: url.toString(),
+        finalUrl: state.finalUrl,
+        statusCode: state.statusCode,
+        ok: state.ok,
+        title: state.title,
+        selector,
+        selectorMatched: true,
+        linkCount: state.linkCount,
+        formCount: state.formCount,
+        downloadCandidateCount: state.downloadCandidateCount,
+        domNodeCount: state.domNodeCount,
+        ariaSnapshot: state.ariaSnapshot,
+        network: state.network,
+        screenshotStatus: "planned",
+        domStatus: "available",
+        networkLogStatus: "available"
+      }),
+      userPresenceRequired: true
+    });
+  });
+  return outcome as AgentActionResult;
+}
+
+async function browserTypeTextAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const preflight = browserInteractionConfirmationError(config, request);
+  if (preflight) return preflight;
+  if (request.text === undefined) {
+    return result(config, request, { accepted: false, error: actionError("bad_payload", "text is required for browser_type_text.", request) });
+  }
+  const selector = request.selector!.trim();
+  const startedAt = Date.now();
+  const outcome = await withPlaywrightPage(config, request, async ({ page, response, network, timeoutMs, url }) => {
+    const info = await browserSelectorInfo(page, selector);
+    if (!info.exists) {
+      return result(config, request, { accepted: false, failureCategory: "bad_path", error: actionError("bad_payload", "Browser selector did not match any element.", { selector }) });
+    }
+    if (info.sensitiveLike) {
+      return result(config, request, {
+        accepted: false,
+        userPresenceRequired: true,
+        failureCategory: "denied",
+        error: actionError("bad_payload", "Typing into password, credential, one-time-code or payment fields is blocked.", info)
+      });
+    }
+    await page.locator(selector).first().fill(request.text ?? "");
+    const actualValue = await page.locator(selector).first().evaluate((element: Element) => (element as HTMLInputElement).value ?? element.textContent ?? "");
+    const state = await playwrightPageState(page, response, network);
+    return result(config, request, {
+      accepted: true,
+      commandLine: `playwright chromium fill ${url.toString()} ${selector}`,
+      routeId: "browser.type_text",
+      durationMs: Math.max(0, Date.now() - startedAt),
+      timeoutMs,
+      observedChanges: [`selector_filled:${selector}`, `typed_chars:${request.text?.length ?? 0}`],
+      verification: verificationResult([
+        verificationProbe({
+          id: "browser.type_text.value",
+          kind: "browser_state",
+          target: selector,
+          expectation: "locator value equals requested text",
+          actual: `chars=${String(actualValue).length}`,
+          passed: actualValue === request.text
+        })
+      ]),
+      browserPage: browserPageSummary({
+        action: "type_text",
+        url: url.toString(),
+        finalUrl: state.finalUrl,
+        statusCode: state.statusCode,
+        ok: state.ok,
+        title: state.title,
+        selector,
+        selectorMatched: true,
+        linkCount: state.linkCount,
+        formCount: state.formCount,
+        downloadCandidateCount: state.downloadCandidateCount,
+        domNodeCount: state.domNodeCount,
+        ariaSnapshot: state.ariaSnapshot,
+        network: state.network,
+        screenshotStatus: "planned",
+        domStatus: "available",
+        networkLogStatus: "available"
+      }),
+      value: charDeltaValue(request.text?.length ?? 0, 0),
+      userPresenceRequired: true
+    });
+  });
+  return outcome as AgentActionResult;
+}
+
+async function browserPlaywrightDownloadAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const preflight = browserInteractionConfirmationError(config, request);
+  if (preflight) return preflight;
+  const selector = request.selector!.trim();
+  const startedAt = Date.now();
+  const outcome = await withPlaywrightPage(config, request, async ({ page, response, network, timeoutMs, url }) => {
+    const info = await browserSelectorInfo(page, selector);
+    if (!info.exists) {
+      return result(config, request, { accepted: false, failureCategory: "bad_path", error: actionError("bad_payload", "Browser selector did not match any element.", { selector }) });
+    }
+    if ((info.inForm || info.submitLike) && request.formSubmissionConfirmed !== true && !/download/i.test(`${info.text ?? ""} ${selector}`)) {
+      return result(config, request, {
+        accepted: false,
+        userPresenceRequired: true,
+        failureCategory: "denied",
+        error: actionError("bad_payload", "Download click is form-associated; set formSubmissionConfirmed:true to proceed.", info)
+      });
+    }
+    const downloadPromise = page.waitForEvent("download", { timeout: timeoutMs });
+    await page.locator(selector).first().click();
+    const download = await downloadPromise;
+    const suggestedFilename = suggestedDownloadFilename(url, download.suggestedFilename?.() ?? null);
+    const targetPath = resolveActionPath(config, { ...request, scope: request.scope ?? "workspace" }, request.path ?? `.ingen-agent-artifacts/downloads/${suggestedFilename}`);
+    if (typeof targetPath !== "string") {
+      return result(config, request, { accepted: false, error: targetPath });
+    }
+    if (await pathExists(targetPath)) {
+      return result(config, request, { accepted: false, failureCategory: "bad_path", error: actionError("bad_payload", "Download target already exists; refusing to overwrite.", { path: targetPath }) });
+    }
+    await mkdir(dirname(targetPath), { recursive: true });
+    await download.saveAs(targetPath);
+    const bytes = await readFile(targetPath);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const state = await playwrightPageState(page, response, network);
+    const artifact = browserDownloadArtifact({
+      url: download.url?.() ?? url.toString(),
+      path: pathLabel(config, request, targetPath),
+      bytes: bytes.length,
+      sha256,
+      suggestedFilename
+    });
+    return result(config, request, {
+      accepted: true,
+      path: artifact.path,
+      commandLine: `playwright chromium download ${url.toString()} ${selector} > ${artifact.path}`,
+      routeId: "browser.playwright_download",
+      durationMs: Math.max(0, Date.now() - startedAt),
+      timeoutMs,
+      artifacts: [artifact.path],
+      observedChanges: [`download:${artifact.bytes}`, `sha256:${artifact.sha256}`, `network_events:${state.network.length}`],
+      verification: verificationResult([
+        await filesystemProbe("browser.playwright_download.exists", targetPath, "file"),
+        verificationProbe({
+          id: "browser.playwright_download.hash",
+          kind: "artifact_hash",
+          target: targetPath,
+          expectation: "sha256 computed for Playwright download",
+          actual: sha256,
+          passed: /^[a-f0-9]{64}$/.test(sha256)
+        })
+      ]),
+      browserPage: browserPageSummary({
+        action: "playwright_download",
+        url: url.toString(),
+        finalUrl: state.finalUrl,
+        statusCode: state.statusCode,
+        ok: state.ok,
+        title: state.title,
+        selector,
+        selectorMatched: true,
+        linkCount: state.linkCount,
+        formCount: state.formCount,
+        downloadCandidateCount: state.downloadCandidateCount,
+        domNodeCount: state.domNodeCount,
+        network: state.network,
+        screenshotStatus: "planned",
+        domStatus: "available",
+        networkLogStatus: "available"
+      }),
+      download: artifact,
+      value: charDeltaValue(bytes.length, 0),
+      userPresenceRequired: true
+    });
+  });
+  return outcome as AgentActionResult;
 }
 
 function documentKindForPath(path: string): AgentDocumentMediaKind {
@@ -5489,6 +6173,16 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return await browserDownloadAction(config, request);
       case "browser_open_url":
         return await browserOpenUrlAction(config, request);
+      case "browser_playwright_inspect":
+        return await browserPlaywrightInspectAction(config, request);
+      case "browser_screenshot":
+        return await browserScreenshotAction(config, request);
+      case "browser_click":
+        return await browserClickAction(config, request);
+      case "browser_type_text":
+        return await browserTypeTextAction(config, request);
+      case "browser_playwright_download":
+        return await browserPlaywrightDownloadAction(config, request);
       case "document_inspect":
         return await documentInspectAction(config, request);
       case "document_write_text":

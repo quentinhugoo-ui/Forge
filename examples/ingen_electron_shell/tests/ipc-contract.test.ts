@@ -165,6 +165,11 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "browser_inspect_url", url: "https://example.com" })).toBe(true);
     expect(isAgentActionRequest({ action: "browser_download", url: "https://example.com/file.zip", path: "downloads/file.zip", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "browser_open_url", url: "https://example.com", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "browser_playwright_inspect", url: "https://example.com" })).toBe(true);
+    expect(isAgentActionRequest({ action: "browser_screenshot", url: "https://example.com", path: "shots/page.png", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "browser_click", url: "https://example.com", selector: "button", confirmed: true, formSubmissionConfirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "browser_type_text", url: "https://example.com", selector: "input[name=q]", text: "hello", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "browser_playwright_download", url: "https://example.com", selector: "a[download]", path: "downloads/file.txt", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "document_inspect", path: "report.md" })).toBe(true);
     expect(isAgentActionRequest({ action: "document_write_text", path: "report.md", content: "# Report" })).toBe(true);
     expect(isAgentActionRequest({ action: "document_write_json", path: "data.json", content: "{\"ok\":true}" })).toBe(true);
@@ -186,6 +191,8 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "computer_click", x: 10.5, y: 20, confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "computer_click", x: 10, y: 20, button: "primary", confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "browser_inspect_url", url: 42 })).toBe(false);
+    expect(isAgentActionRequest({ action: "browser_click", url: "https://example.com", selector: 42, confirmed: true })).toBe(false);
+    expect(isAgentActionRequest({ action: "browser_click", url: "https://example.com", selector: "button", confirmed: true, formSubmissionConfirmed: "yes" })).toBe(false);
     expect(isAgentActionRequest({ action: "document_write_text", path: "report.md", content: 42 })).toBe(false);
     expect(isAgentActionRequest({ action: "dev_git_commit", title: "Bad", paths: [42], confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "dev_github_pr_create", title: "Bad", draft: "yes", confirmed: true })).toBe(false);

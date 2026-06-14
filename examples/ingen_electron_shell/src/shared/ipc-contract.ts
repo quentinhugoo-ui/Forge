@@ -533,7 +533,24 @@ export interface AgentComputerUsePolicy {
   proofHash: string;
 }
 
-export type AgentBrowserWebAction = "inspect_url" | "download" | "open_url";
+export type AgentBrowserWebAction =
+  | "inspect_url"
+  | "download"
+  | "open_url"
+  | "playwright_inspect"
+  | "screenshot"
+  | "click"
+  | "type_text"
+  | "playwright_download";
+
+export interface AgentBrowserNetworkEntry {
+  url: string;
+  method?: string;
+  resourceType?: string;
+  status?: number;
+  ok?: boolean;
+  failureText?: string;
+}
 
 export interface AgentBrowserPageSummary {
   schema: "ingen.browser.page_summary.v1";
@@ -548,9 +565,25 @@ export interface AgentBrowserPageSummary {
   linkCount?: number;
   formCount?: number;
   downloadCandidateCount?: number;
+  domNodeCount?: number;
+  selector?: string;
+  selectorMatched?: boolean;
+  ariaSnapshot?: string;
+  network?: AgentBrowserNetworkEntry[];
   screenshotStatus: "available" | "planned" | "blocked";
   domStatus: "available" | "planned" | "blocked";
   networkLogStatus: "available" | "planned" | "blocked";
+  proofHash: string;
+}
+
+export interface AgentBrowserScreenshotArtifact {
+  schema: "ingen.browser.screenshot_artifact.v1";
+  url: string;
+  path: string;
+  width: number;
+  height: number;
+  bytes: number;
+  sha256: string;
   proofHash: string;
 }
 
@@ -745,6 +778,11 @@ export type AgentActionKind =
   | "browser_inspect_url"
   | "browser_download"
   | "browser_open_url"
+  | "browser_playwright_inspect"
+  | "browser_screenshot"
+  | "browser_click"
+  | "browser_type_text"
+  | "browser_playwright_download"
   | "document_inspect"
   | "document_write_text"
   | "document_write_json"
@@ -801,6 +839,8 @@ export interface AgentActionRequest {
   toY?: number;
   deltaY?: number;
   button?: "left" | "right" | "middle";
+  selector?: string;
+  formSubmissionConfirmed?: boolean;
   confirmed?: boolean;
   recursive?: boolean;
   timeoutMs?: number;
@@ -853,6 +893,7 @@ export interface AgentActionResult {
   computerUse?: AgentComputerUseSnapshot;
   appshot?: AgentAppshotArtifact;
   browserPage?: AgentBrowserPageSummary;
+  browserScreenshot?: AgentBrowserScreenshotArtifact;
   download?: AgentBrowserDownloadArtifact;
   documentMedia?: AgentDocumentMediaSummary;
   developer?: AgentDeveloperRepoSummary;
@@ -985,6 +1026,11 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "browser_inspect_url",
     "browser_download",
     "browser_open_url",
+    "browser_playwright_inspect",
+    "browser_screenshot",
+    "browser_click",
+    "browser_type_text",
+    "browser_playwright_download",
     "document_inspect",
     "document_write_text",
     "document_write_json",
@@ -1015,7 +1061,7 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
   ) {
     return false;
   }
-  for (const key of ["path", "toPath", "query", "command", "url", "content", "title"] as const) {
+  for (const key of ["path", "toPath", "query", "command", "url", "content", "title", "selector"] as const) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
       return false;
     }
@@ -1053,6 +1099,9 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     return false;
   }
   if (candidate.nativeFallback !== undefined && typeof candidate.nativeFallback !== "boolean") {
+    return false;
+  }
+  if (candidate.formSubmissionConfirmed !== undefined && typeof candidate.formSubmissionConfirmed !== "boolean") {
     return false;
   }
   if (candidate.button !== undefined && !["left", "right", "middle"].includes(candidate.button)) {

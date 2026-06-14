@@ -60,6 +60,8 @@ describe("agent action host", () => {
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.readonly");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("browser.inspect_url");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("browser.download");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("browser.playwright_inspect");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("browser.playwright_download");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("document.inspect");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("document.write_json");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.repo_status");
@@ -189,6 +191,11 @@ describe("agent action host", () => {
       "browser.inspect_url",
       "browser.download",
       "browser.open_url",
+      "browser.playwright_inspect",
+      "browser.screenshot",
+      "browser.click",
+      "browser.type_text",
+      "browser.playwright_download",
       "document.inspect",
       "document.write_text",
       "document.write_json",
@@ -303,7 +310,16 @@ describe("agent action host", () => {
     });
 
     expect(policy.proofHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(policy.executableActions).toEqual(["browser_inspect_url", "browser_download", "browser_open_url"]);
+    expect(policy.executableActions).toEqual([
+      "browser_inspect_url",
+      "browser_download",
+      "browser_open_url",
+      "browser_playwright_inspect",
+      "browser_screenshot",
+      "browser_click",
+      "browser_type_text",
+      "browser_playwright_download"
+    ]);
     expect(policy.inspectionRequiresConfirmation).toBe(false);
     expect(policy.downloadRequiresConfirmation).toBe(true);
     expect(policy.navigationRequiresConfirmation).toBe(true);
@@ -410,7 +426,14 @@ describe("agent action host", () => {
     expect(byFamily.get("windows.scheduler")?.status).toBe("available");
     expect(byFamily.get("windows.scheduler")?.approval).toBe("prompt");
     expect(byFamily.get("windows.settings")?.approval).toBe("prompt");
-    expect(byFamily.get("browser.cdp")?.status).toBe("planned");
+    expect(byFamily.get("browser.cdp")?.status).toBe("available");
+    expect(byFamily.get("browser.cdp")?.executableActionIds).toEqual([
+      "browser.playwright_inspect",
+      "browser.screenshot",
+      "browser.click",
+      "browser.type_text",
+      "browser.playwright_download"
+    ]);
     expect(byFamily.get("virtualization.wsl")?.status).toBe("available");
     expect(byFamily.get("computer.ui_automation")?.status).toBe("available");
     expect(byFamily.get("computer.ui_automation")?.executableActionIds).toEqual([
@@ -724,6 +747,20 @@ describe("agent action host", () => {
       expect(inspected.browserPage?.domStatus).toBe("available");
       expect(inspected.verification?.passed).toBe(true);
 
+      const playwrightInspected = await executeAgentActionRequest(config, {
+        action: "browser_playwright_inspect",
+        url
+      });
+      if (playwrightInspected.accepted) {
+        expect(playwrightInspected.browserPage?.domStatus).toBe("available");
+        expect(playwrightInspected.browserPage?.networkLogStatus).toBe("available");
+        expect(playwrightInspected.browserPage?.domNodeCount).toBeGreaterThan(0);
+        expect(playwrightInspected.verification?.passed).toBe(true);
+      } else {
+        expect(["missing_tool", "timeout", "command_error"]).toContain(playwrightInspected.failureCategory);
+        expect(playwrightInspected.error?.message).toBeTruthy();
+      }
+
       const unconfirmed = await executeAgentActionRequest(config, {
         action: "browser_download",
         url,
@@ -745,6 +782,18 @@ describe("agent action host", () => {
       expect(downloaded.download?.sha256).toMatch(/^[a-f0-9]{64}$/);
       expect(downloaded.verification?.passed).toBe(true);
       await expect(readFile(join(config.workspaceRoot, "downloads", "page.html"), "utf8")).resolves.toBe(html);
+
+      for (const request of [
+        { action: "browser_screenshot" as const, url, path: "shots/page.png" },
+        { action: "browser_click" as const, url, selector: "button" },
+        { action: "browser_type_text" as const, url, selector: "input", text: "hello" },
+        { action: "browser_playwright_download" as const, url, selector: "a[download]", path: "downloads/playwright.txt" }
+      ]) {
+        const blocked = await executeAgentActionRequest(config, request);
+        expect(blocked.accepted).toBe(false);
+        expect(blocked.userPresenceRequired).toBe(true);
+        expect(blocked.error?.message).toContain("confirmed:true");
+      }
     });
   });
 

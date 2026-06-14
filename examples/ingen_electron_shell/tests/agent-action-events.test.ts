@@ -3,6 +3,11 @@ import {
   AGENT_BROWSER_DOWNLOAD_COMMAND,
   AGENT_BROWSER_INSPECT_COMMAND,
   AGENT_BROWSER_OPEN_COMMAND,
+  AGENT_BROWSER_CLICK_COMMAND,
+  AGENT_BROWSER_PLAYWRIGHT_DOWNLOAD_COMMAND,
+  AGENT_BROWSER_PLAYWRIGHT_INSPECT_COMMAND,
+  AGENT_BROWSER_SCREENSHOT_COMMAND,
+  AGENT_BROWSER_TYPE_TEXT_COMMAND,
   AGENT_COPY_PATH_COMMAND,
   AGENT_AUTOMATION_CANCEL_COMMAND,
   AGENT_AUTOMATION_LIST_COMMAND,
@@ -62,6 +67,11 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION action="browser_inspect_url"')?.command).toBe(AGENT_BROWSER_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="browser.download"')?.command).toBe(AGENT_BROWSER_DOWNLOAD_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="browser.open_url"')?.command).toBe(AGENT_BROWSER_OPEN_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="browser_playwright_inspect"')?.command).toBe(AGENT_BROWSER_PLAYWRIGHT_INSPECT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="browser_screenshot"')?.command).toBe(AGENT_BROWSER_SCREENSHOT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="browser_click"')?.command).toBe(AGENT_BROWSER_CLICK_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="browser_type_text"')?.command).toBe(AGENT_BROWSER_TYPE_TEXT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="browser_playwright_download"')?.command).toBe(AGENT_BROWSER_PLAYWRIGHT_DOWNLOAD_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="document_inspect" path="report.md"')?.command).toBe(AGENT_DOCUMENT_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="document.write_json" path="data.json"')?.command).toBe(AGENT_DOCUMENT_WRITE_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="document.convert_text"')?.command).toBe(AGENT_DOCUMENT_CONVERT_COMMAND);

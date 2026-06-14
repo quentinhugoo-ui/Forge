@@ -5803,6 +5803,11 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   browser_inspect_url: "browser.inspect_url",
   browser_download: "browser.download",
   browser_open_url: "browser.open_url",
+  browser_playwright_inspect: "browser.playwright_inspect",
+  browser_screenshot: "browser.screenshot",
+  browser_click: "browser.click",
+  browser_type_text: "browser.type_text",
+  browser_playwright_download: "browser.playwright_download",
   document_inspect: "document.inspect",
   document_write_text: "document.write_text",
   document_write_json: "document.write_json",
@@ -5922,7 +5927,10 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "computer_type_text" ||
         params.request.action === "computer_scroll" ||
         params.request.action === "computer_drag" ||
-        params.request.action === "browser_open_url"
+        params.request.action === "browser_open_url" ||
+        params.request.action === "browser_screenshot" ||
+        params.request.action === "browser_click" ||
+        params.request.action === "browser_type_text"
       ? "external_ui"
       : params.request.action === "dev_git_push" ||
         params.request.action === "dev_github_pr_create"
@@ -5930,7 +5938,8 @@ function emitAgentRuntimeToolCallStarted(params: {
       : params.request.action === "automation_schedule" ||
         params.request.action === "automation_cancel"
       ? "computer_write"
-      : params.request.action === "browser_download"
+      : params.request.action === "browser_download" ||
+        params.request.action === "browser_playwright_download"
       ? "computer_write"
       : params.request.action === "list" ||
         params.request.action === "search" ||
@@ -5938,6 +5947,7 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "computer_inspect" ||
         params.request.action === "computer_ui_tree" ||
         params.request.action === "browser_inspect_url" ||
+        params.request.action === "browser_playwright_inspect" ||
         params.request.action === "document_inspect" ||
         params.request.action === "dev_repo_status" ||
         params.request.action === "dev_git_diff" ||
@@ -6163,7 +6173,28 @@ function compactAgentActionResult(result: AgentActionResult): string {
         }
       : undefined,
     appshot: result.appshot,
-    browserPage: result.browserPage,
+    browserPage: result.browserPage
+      ? {
+          action: result.browserPage.action,
+          url: result.browserPage.url,
+          finalUrl: result.browserPage.finalUrl,
+          statusCode: result.browserPage.statusCode,
+          ok: result.browserPage.ok,
+          title: result.browserPage.title,
+          linkCount: result.browserPage.linkCount,
+          formCount: result.browserPage.formCount,
+          downloadCandidateCount: result.browserPage.downloadCandidateCount,
+          domNodeCount: result.browserPage.domNodeCount,
+          selector: result.browserPage.selector,
+          selectorMatched: result.browserPage.selectorMatched,
+          networkCount: result.browserPage.network?.length,
+          screenshotStatus: result.browserPage.screenshotStatus,
+          domStatus: result.browserPage.domStatus,
+          networkLogStatus: result.browserPage.networkLogStatus,
+          proofHash: result.browserPage.proofHash
+        }
+      : undefined,
+    browserScreenshot: result.browserScreenshot,
     download: result.download,
     documentMedia: result.documentMedia,
     developer: result.developer,
@@ -6228,6 +6259,7 @@ function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
     request.action === "computer_inspect" ||
     request.action === "computer_ui_tree" ||
     request.action === "browser_inspect_url" ||
+    request.action === "browser_playwright_inspect" ||
     request.action === "document_inspect" ||
     request.action === "dev_repo_status" ||
     request.action === "dev_git_diff" ||

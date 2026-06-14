@@ -271,7 +271,9 @@ Acceptance:
 - It asks for confirmation before external submissions, purchases, account changes or credential prompts.
 - Downloads are referenced by path and artifact hash.
 
-Status: implemented for the planned scope. The host now exposes `AgentBrowserWebPolicy`, executable web actions for bounded URL inspection, confirmed URL downloads with persisted artifact size and SHA-256, and confirmed external browser navigation. Page summaries include status, content type, title, link/form/download-candidate counts and planned screenshot/DOM/network-log fields. Deep CDP sessions, contained WebExplorer DOM control, Playwright network logs and form submission automation remain planned backends rather than fake direct execution.
+Status: executable for the current isolated Playwright backend scope. The host now exposes `AgentBrowserWebPolicy` with direct fetch actions plus `browser_playwright_inspect`, `browser_screenshot`, `browser_click`, `browser_type_text` and `browser_playwright_download`. Playwright actions launch a fresh headless Chromium context without profile credentials, collect bounded DOM/ARIA/network evidence, verify screenshots by file hash, and verify page-triggered downloads through Playwright's download event and persisted SHA-256 artifact. Browser click/type actions require `confirmed:true`; form-associated clicks require `formSubmissionConfirmed:true`, and password/credential/one-time-code/payment fields are blocked rather than silently filled.
+
+Still planned/blocked: persistent browser sessions, reuse of authenticated browser profile state, contained WebExplorer DOM control, account-changing submissions/purchases without explicit confirmation, and MCP browser tools.
 
 ### 8. Documents, Office, Media And Data
 
