@@ -6986,9 +6986,9 @@ ol.assistantText__list li::before {
   left: var(--chat-left);
   bottom: var(--bottom-controls-bottom);
   display: grid;
-  grid-template-columns: 83px 1px minmax(0, 1fr) max-content 30px;
+  grid-template-columns: max-content 22px minmax(0, 1fr) max-content 30px;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   width: var(--chat-width);
   height: 20px;
   padding: 0 8px;
@@ -6999,10 +6999,43 @@ ol.assistantText__list li::before {
 
 .permissionModeControl {
   --self-directed-spectrum: linear-gradient(90deg, #34d399, #22d3ee, #38bdf8, #818cf8, #c084fc, #facc15, #fb923c, #ef4444, #f472b6, #34d399);
-  grid-column: 1 / 4;
+  grid-column: 1;
   justify-self: start;
   position: relative;
   min-width: 0;
+}
+
+.bottomControls__widgetButton {
+  grid-column: 2;
+  justify-self: start;
+  display: grid !important;
+  place-items: center;
+  width: 22px;
+  min-width: 22px;
+  height: 20px !important;
+  min-height: 20px;
+  padding: 0 !important;
+  color: color-mix(in oklab, var(--forge-muted), transparent 18%) !important;
+  background: transparent !important;
+  border: 0 !important;
+  cursor: pointer;
+  opacity: 0.82;
+  transition:
+    color 140ms ease-out,
+    opacity 140ms ease-out,
+    transform 160ms ease-out;
+}
+
+.bottomControls__widgetButton:hover,
+.bottomControls__widgetButton:focus-visible {
+  color: var(--forge-text) !important;
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.bottomControls__widgetButton:focus-visible {
+  outline: 1px solid color-mix(in oklab, var(--forge-text), transparent 74%);
+  outline-offset: 2px;
 }
 
 .permissionModeTrigger {
