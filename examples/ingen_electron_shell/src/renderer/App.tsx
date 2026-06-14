@@ -990,15 +990,7 @@ export function App() {
         return;
       }
       if (nativeWidgetAccepted === false) {
-        console.warn("Native widget mode was not accepted; skipping Windows taskbar auto-hide.");
-        return;
-      }
-      const taskbarHidden = await windowControls?.setWidgetTaskbarAutoHide?.(true).catch((error: unknown) => {
-        console.warn("Failed to enable Windows taskbar auto-hide for widget mode", error);
-        return false;
-      });
-      if (taskbarHidden !== true) {
-        console.warn("Windows taskbar auto-hide was not verified for widget mode.");
+        console.warn("Native widget mode was not accepted.");
       }
     })();
   }, [activeProfileCanvas, closeProfileCanvas, snapshot.leftPanelOpen]);

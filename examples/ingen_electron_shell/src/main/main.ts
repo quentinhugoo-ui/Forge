@@ -250,6 +250,7 @@ type WidgetWindowRestoreState = {
 };
 let widgetWindowRestoreState: WidgetWindowRestoreState | null = null;
 let widgetWindowShrinkTimer: ReturnType<typeof setTimeout> | null = null;
+let widgetTaskbarAutoHideTimer: ReturnType<typeof setTimeout> | null = null;
 let widgetWindowBoundsAnimationTimer: ReturnType<typeof setInterval> | null = null;
 let widgetWindowHitRegions: Electron.Rectangle[] = [];
 let widgetWindowClickThrough = false;
@@ -10504,6 +10505,13 @@ function clearWidgetWindowShrinkTimer(): void {
   }
 }
 
+function clearWidgetTaskbarAutoHideTimer(): void {
+  if (widgetTaskbarAutoHideTimer !== null) {
+    clearTimeout(widgetTaskbarAutoHideTimer);
+    widgetTaskbarAutoHideTimer = null;
+  }
+}
+
 function clearWidgetWindowBoundsAnimationTimer(): void {
   if (widgetWindowBoundsAnimationTimer !== null) {
     clearInterval(widgetWindowBoundsAnimationTimer);
@@ -10581,6 +10589,7 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.setBounds(bounds, false);
   window.show();
   window.focus();
+  armNativeWidgetTaskbarAutoHide(window);
 }
 
 function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
@@ -10591,6 +10600,24 @@ function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
   const bounds = widgetWindowBounds(window);
   console.info("Settling native widget window bounds", { id: window.id, bounds, taskbarHidden: widgetTaskbarHidden });
   window.setBounds(bounds, false);
+}
+
+function armNativeWidgetTaskbarAutoHide(window: BrowserWindow): void {
+  if (process.platform !== "win32" || window.isDestroyed() || widgetWindowRestoreState === null) {
+    return;
+  }
+  clearWidgetTaskbarAutoHideTimer();
+  widgetTaskbarAutoHideTimer = setTimeout(() => {
+    widgetTaskbarAutoHideTimer = null;
+    if (window.isDestroyed() || widgetWindowRestoreState === null) {
+      return;
+    }
+    const accepted = setWidgetTaskbarHidden(true);
+    console.info("Native widget taskbar auto-hide final step", { id: window.id, accepted });
+    if (accepted) {
+      settleNativeWidgetWindowBounds(window);
+    }
+  }, 260);
 }
 
 function sanitizeWidgetHitRegions(value: unknown, window: BrowserWindow): Electron.Rectangle[] {
@@ -11031,6 +11058,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   }
 
   clearWidgetWindowShrinkTimer();
+  clearWidgetTaskbarAutoHideTimer();
   clearWidgetWindowBoundsAnimationTimer();
   restoreWidgetTaskbarState();
   resetNativeWidgetClickThrough(window);
