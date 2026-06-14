@@ -602,6 +602,9 @@ export type AgentDeveloperAutomationAction =
   | "git_push"
   | "github_pr_create"
   | "run_check"
+  | "schedule_automation"
+  | "list_automations"
+  | "cancel_automation"
   | "record_automation";
 
 export interface AgentDeveloperRepoSummary {
@@ -629,9 +632,18 @@ export interface AgentAutomationLedgerEntry {
   schema: "ingen.automation.ledger_entry.v1";
   id: string;
   title: string;
-  status: "recorded" | "cancelled";
+  status: "recorded" | "scheduled" | "cancelled";
   ledgerPath: string;
   createdAt: string;
+  cancelledAt?: string;
+  backend?: "ledger" | "windows_task_scheduler";
+  taskName?: string;
+  taskPath?: string;
+  taskRun?: string;
+  scheduleType?: string;
+  startTime?: string;
+  nextRunTime?: string;
+  schedulerStatus?: string;
   proofHash: string;
 }
 
@@ -711,6 +723,9 @@ export type AgentActionKind =
   | "dev_git_push"
   | "dev_github_pr_create"
   | "dev_run_check"
+  | "automation_schedule"
+  | "automation_list"
+  | "automation_cancel"
   | "automation_record";
 
 export type AgentActionScope = "workspace" | "computer";
@@ -734,6 +749,10 @@ export interface AgentActionRequest {
   remote?: string;
   paths?: string[];
   draft?: boolean;
+  taskName?: string;
+  scheduleType?: string;
+  startTime?: string;
+  startDate?: string;
   maxResults?: number;
   confirmed?: boolean;
   recursive?: boolean;
@@ -912,6 +931,9 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "dev_git_push",
     "dev_github_pr_create",
     "dev_run_check",
+    "automation_schedule",
+    "automation_list",
+    "automation_cancel",
     "automation_record"
   ];
   if (!actions.includes(candidate.action as AgentActionKind)) {
@@ -932,6 +954,11 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     }
   }
   for (const key of ["baseBranch", "headBranch", "remote"] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
+      return false;
+    }
+  }
+  for (const key of ["taskName", "scheduleType", "startTime", "startDate"] as const) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
       return false;
     }

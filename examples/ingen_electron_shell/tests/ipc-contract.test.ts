@@ -170,12 +170,16 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "dev_git_push", remote: "origin", headBranch: "feature/test", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "dev_github_pr_create", title: "PR", content: "Body", baseBranch: "master", headBranch: "feature/test", draft: true, confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "dev_run_check", command: "npm.cmd", args: ["test"], confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "automation_schedule", title: "Daily check", command: "cmd.exe", args: ["/c", "echo ok"], taskName: "DailyCheck", scheduleType: "ONCE", startTime: "23:59", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "automation_list", maxResults: 10 })).toBe(true);
+    expect(isAgentActionRequest({ action: "automation_cancel", taskName: "InGenAgent_DailyCheck", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "automation_record", title: "Daily build check", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "computer_focus_window", windowTitle: 42, confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "browser_inspect_url", url: 42 })).toBe(false);
     expect(isAgentActionRequest({ action: "document_write_text", path: "report.md", content: 42 })).toBe(false);
     expect(isAgentActionRequest({ action: "dev_git_commit", title: "Bad", paths: [42], confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "dev_github_pr_create", title: "Bad", draft: "yes", confirmed: true })).toBe(false);
+    expect(isAgentActionRequest({ action: "automation_schedule", title: "Bad", command: "cmd.exe", startTime: 2359, confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "automation_record", title: 42, confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "delete_empty_directory", path: "tmp", confirmed: "yes" })).toBe(false);
     expect(isAgentActionRequest({ action: "list", scope: "galaxy", path: "." })).toBe(false);

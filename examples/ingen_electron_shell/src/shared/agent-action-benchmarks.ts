@@ -152,15 +152,15 @@ export const AGENT_ACTION_BENCHMARK_SUITE: readonly AgentActionBenchmarkCase[] =
     id: "scheduler.create_visible_task",
     surface: "scheduler",
     userGoal: "create a visible scheduled automation",
-    primaryActionId: "planned:windows.scheduler",
-    fallbackActionIds: ["automation.record", "schtasks"],
-    eventCommand: "/agent_automation_record_",
-    eventLabel: "confirmed automation goal recorded",
-    expectedOutcome: "retry",
+    primaryActionId: "automation.schedule",
+    fallbackActionIds: ["automation.list", "automation.cancel", "automation.record", "schtasks"],
+    eventCommand: "/agent_automation_schedule_",
+    eventLabel: "confirmed Windows scheduled task verified",
+    expectedOutcome: "success",
     approval: "prompt",
-    evidence: ["filesystem", "runtime_event"],
-    observedState: "automation ledger entry exists until Task Scheduler backend is available",
-    proofRule: "Scheduled work must be visible, cancellable and summarized."
+    evidence: ["command_exit", "artifact_hash", "runtime_event"],
+    observedState: "Task Scheduler query returns the InGen-owned task and ledger mirror has a stable hash",
+    proofRule: "Scheduled work must not be reported complete until schtasks query verifies the task and the audit ledger hash is recorded."
   },
   {
     id: "wsl.dev.command",

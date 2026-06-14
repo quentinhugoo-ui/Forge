@@ -36,7 +36,8 @@ Implemented foundation:
 
 - `AgentCapabilityAtlas` exists as a non-executable knowledge layer.
 - Existing executable actions remain unchanged: `fs.list`, `fs.search`, `fs.create_directory`, `fs.rename`, `fs.move`, `fs.copy`, `fs.delete_empty_directory`, `fs.delete_tree`, `shell.readonly`, `shell.full`.
-- The manifest now exposes planned/boundary capabilities such as WMI, scheduler, settings, credentials, browser CDP, Office COM, RPA, WSL, Hyper-V/Docker, cloud CLIs, MCP/plugins and automations.
+- The manifest now exposes planned/boundary capabilities such as WMI, settings, credentials, browser CDP, Office COM, RPA, WSL, Hyper-V/Docker, cloud CLIs, MCP/plugins and automations.
+- Git/PR and InGen-owned Windows Task Scheduler actions have graduated to verified executable routes.
 - `shell.full` remains the confirmed universal Windows escape hatch.
 
 Current limitation:
@@ -310,7 +311,11 @@ Acceptance:
 - It can call an MCP tool and use the result in the same loop.
 - Background work is visible, cancellable and summarized.
 
-Status: partially executable beyond the planned scope. The host now exposes `AgentDeveloperAutomationPolicy` with direct GitHub/Git actions for repo status, diff, confirmed commit, confirmed push and confirmed PR creation. Commit stages only explicit `paths` or already-staged changes, then verifies a new `HEAD`; push verifies the remote branch head with `git ls-remote`; PR creation uses non-interactive `gh pr create` and verifies the resulting URL with `gh pr view`. Dev checks and automation ledger recording remain as before. Real MCP `tools/list`/`tools/call`, cloud CLI writes, subagents/hooks, CI/review automation and OS-level scheduled/thread wakeups remain planned connector backends rather than fake direct execution.
+Status: partially executable beyond the planned scope. The host now exposes `AgentDeveloperAutomationPolicy` with direct GitHub/Git actions for repo status, diff, confirmed commit, confirmed push and confirmed PR creation. Commit stages only explicit `paths` or already-staged changes, then verifies a new `HEAD`; push verifies the remote branch head with `git ls-remote`; PR creation uses non-interactive `gh pr create` and verifies the resulting URL with `gh pr view`.
+
+Windows scheduler automation is now a real backend for InGen-owned tasks. `automation.schedule` creates a visible Task Scheduler task through `schtasks /Create`, verifies it with `schtasks /Query`, and mirrors the proof into the append-only automation ledger. `automation.list` queries Task Scheduler and filters to `InGenAgent_` root tasks. `automation.cancel` deletes only `InGenAgent_` tasks through `schtasks /Delete`, verifies the task is gone, and appends a cancellation record. Creation and cancellation require `confirmed:true`; arbitrary system task names, folders and dangerous scheduler mutation remain blocked or require a separately confirmed shell route. If Windows denies Task Scheduler access or the backend is unavailable, the action returns a verified blocked/failure result and never emits a false scheduled/done state.
+
+Real MCP `tools/list`/`tools/call`, cloud CLI writes, subagents/hooks, CI/review automation and non-scheduler thread wakeups remain planned connector backends rather than fake direct execution. MCP is intentionally out of scope for this session.
 
 ### 10. UX, Events, Audit And Benchmarks
 
@@ -333,7 +338,7 @@ Acceptance:
 - The UI never says work was done when no observed state changed.
 - Benchmarks prove success, retry and safe blocking behavior.
 
-Status: implemented for the planned scope, with Git/PR promoted to executable. Runtime events already render English labels, running-to-completed transitions, expandable command trees, file modification counters, context compaction markers and final loop summaries. The shared `AGENT_ACTION_BENCHMARK_SUITE` now records the required local-agent benchmark contract across filesystem, code, install/update, GUI, browser, document, Windows setting, process/service, scheduler, WSL/dev, Git/PR, cloud, blocked-danger, context compaction and final-summary cases. Git/PR now expects verified confirmed execution; scheduler and cloud write execution remain planned/blocked unless a verified runtime route exists.
+Status: implemented for the planned scope, with Git/PR and scheduler promoted to executable. Runtime events already render English labels, running-to-completed transitions, expandable command trees, file modification counters, context compaction markers and final loop summaries. The shared `AGENT_ACTION_BENCHMARK_SUITE` now records the required local-agent benchmark contract across filesystem, code, install/update, GUI, browser, document, Windows setting, process/service, scheduler, WSL/dev, Git/PR, cloud, blocked-danger, context compaction and final-summary cases. Git/PR now expects verified confirmed execution. Scheduler now expects a verified Task Scheduler create/query/delete route or a clean permission/missing-backend block; cloud write execution remains planned/blocked unless a verified runtime route exists.
 
 ## Public Interfaces
 

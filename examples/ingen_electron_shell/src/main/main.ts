@@ -5592,6 +5592,9 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   dev_git_push: "dev.git_push",
   dev_github_pr_create: "dev.github_pr_create",
   dev_run_check: "dev.run_check",
+  automation_schedule: "automation.schedule",
+  automation_list: "automation.list",
+  automation_cancel: "automation.cancel",
   automation_record: "automation.record"
 };
 
@@ -5694,6 +5697,9 @@ function emitAgentRuntimeToolCallStarted(params: {
       : params.request.action === "dev_git_push" ||
         params.request.action === "dev_github_pr_create"
       ? "external_ui"
+      : params.request.action === "automation_schedule" ||
+        params.request.action === "automation_cancel"
+      ? "computer_write"
       : params.request.action === "browser_download"
       ? "computer_write"
       : params.request.action === "list" ||
@@ -5987,7 +5993,8 @@ function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
     request.action === "browser_inspect_url" ||
     request.action === "document_inspect" ||
     request.action === "dev_repo_status" ||
-    request.action === "dev_git_diff"
+    request.action === "dev_git_diff" ||
+    request.action === "automation_list"
   );
 }
 

@@ -40,6 +40,7 @@ async function withTempWorkspace<T>(run: (config: AgentActionHostConfig, root: s
 
 describe("agent action host", () => {
   const windowsIt = process.platform === "win32" ? it : it.skip;
+  const schedulerIt = process.platform === "win32" && spawnSync("schtasks.exe", ["/?"], { encoding: "utf8", stdio: "pipe" }).status === 0 ? it : it.skip;
   const gitIt = spawnSync("git", ["--version"], { encoding: "utf8", stdio: "pipe" }).status === 0 ? it : it.skip;
 
   it("publishes bounded local-agent capabilities", () => {
@@ -65,6 +66,8 @@ describe("agent action host", () => {
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.git_commit");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.git_push");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.github_pr_create");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("automation.schedule");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("automation.cancel");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("automation.record");
     expect(manifest.capabilityAtlas.length).toBeGreaterThanOrEqual(15);
     expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("windows.wmi");
@@ -106,6 +109,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("fs.delete_tree:/agent_delete_tree_");
     expect(promptManifest).toContain("shell.full:/agent_shell_");
     expect(promptManifest).toContain("dev.github_pr_create:/agent_github_pr_create_");
+    expect(promptManifest).toContain("automation.schedule:/agent_automation_schedule_");
     expect(promptManifest).toContain("capability_atlas=count:");
     expect(promptManifest).toContain("manifest_hash=");
     expect(promptManifest).toContain("atlas_hash=");
@@ -185,6 +189,9 @@ describe("agent action host", () => {
       "dev.git_push",
       "dev.github_pr_create",
       "dev.run_check",
+      "automation.schedule",
+      "automation.list",
+      "automation.cancel",
       "automation.record"
     ]);
     expect(summary.availableFamilies).toContain("shell.full");
@@ -323,6 +330,9 @@ describe("agent action host", () => {
       "dev_git_push",
       "dev_github_pr_create",
       "dev_run_check",
+      "automation_schedule",
+      "automation_list",
+      "automation_cancel",
       "automation_record"
     ]);
     expect(policy.repoInspectionRequiresConfirmation).toBe(false);
@@ -379,6 +389,7 @@ describe("agent action host", () => {
     expect(atlas.length).toBeGreaterThanOrEqual(15);
     expect(byFamily.get("windows.credentials")?.status).toBe("blocked");
     expect(byFamily.get("windows.credentials")?.approval).toBe("blocked");
+    expect(byFamily.get("windows.scheduler")?.status).toBe("available");
     expect(byFamily.get("windows.scheduler")?.approval).toBe("prompt");
     expect(byFamily.get("windows.settings")?.approval).toBe("prompt");
     expect(byFamily.get("browser.cdp")?.status).toBe("planned");
@@ -831,6 +842,72 @@ describe("agent action host", () => {
       expect(automation.automation?.status).toBe("recorded");
       expect(automation.automation?.proofHash).toMatch(/^[a-f0-9]{64}$/);
       await expect(readFile(join(config.workspaceRoot, ".ingen-agent-artifacts", "automation-ledger.jsonl"), "utf8")).resolves.toContain("Check the build every morning");
+    });
+  }, 15_000);
+
+  schedulerIt("creates, lists and cancels a real InGen-owned scheduled task", async () => {
+    await withTempWorkspace(async (config) => {
+      const taskName = `InGenAgent_AgentActionHost-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      try {
+        const rejected = await executeAgentActionRequest(config, {
+          action: "automation_schedule",
+          title: "Scheduler test",
+          command: "cmd.exe",
+          args: ["/d", "/s", "/c", "echo ingen-scheduler-test"],
+          taskName,
+          scheduleType: "ONLOGON"
+        });
+        expect(rejected.accepted).toBe(false);
+        expect(rejected.error?.message).toContain("confirmed:true");
+
+        const scheduled = await executeAgentActionRequest(config, {
+          action: "automation_schedule",
+          title: "Scheduler test",
+          command: "cmd.exe",
+          args: ["/d", "/s", "/c", "echo ingen-scheduler-test"],
+          taskName,
+          scheduleType: "ONLOGON",
+          confirmed: true
+        });
+        if (!scheduled.accepted) {
+          expect(["permission", "missing_tool"]).toContain(scheduled.failureCategory);
+          expect(scheduled.routeId).toBe("automation.schedule.create");
+          expect(scheduled.verification?.passed).toBe(false);
+          return;
+        }
+        expect(scheduled.accepted).toBe(true);
+        expect(scheduled.routeId).toBe("automation.schedule");
+        expect(scheduled.automation?.status).toBe("scheduled");
+        expect(scheduled.automation?.backend).toBe("windows_task_scheduler");
+        expect(scheduled.verification?.passed).toBe(true);
+
+        const listed = await executeAgentActionRequest(config, {
+          action: "automation_list",
+          maxResults: 50
+        });
+        expect(listed.accepted).toBe(true);
+        expect(listed.routeId).toBe("automation.list");
+        expect(listed.stdoutPreview).toContain("AgentActionHost");
+
+        const cancelled = await executeAgentActionRequest(config, {
+          action: "automation_cancel",
+          taskName,
+          confirmed: true
+        });
+        expect(cancelled.accepted).toBe(true);
+        expect(cancelled.routeId).toBe("automation.cancel");
+        expect(cancelled.automation?.status).toBe("cancelled");
+        expect(cancelled.verification?.passed).toBe(true);
+        await expect(readFile(join(config.workspaceRoot, ".ingen-agent-artifacts", "automation-ledger.jsonl"), "utf8")).resolves.toContain(
+          "windows_task_scheduler"
+        );
+      } finally {
+        await executeAgentActionRequest(config, {
+          action: "automation_cancel",
+          taskName,
+          confirmed: true
+        });
+      }
     });
   });
 

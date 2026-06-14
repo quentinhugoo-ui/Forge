@@ -102,6 +102,9 @@ const AGENT_ACTION_EVENT_HINTS = [
   "dev.git_push:/agent_dev_push_",
   "dev.github_pr_create:/agent_github_pr_create_",
   "dev.run_check:/agent_dev_check_",
+  "automation.schedule:/agent_automation_schedule_",
+  "automation.list:/agent_automation_list_",
+  "automation.cancel:/agent_automation_cancel_",
   "automation.record:/agent_automation_record_"
 ];
 
@@ -135,6 +138,9 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   dev_git_push: "/agent_dev_push_",
   dev_github_pr_create: "/agent_github_pr_create_",
   dev_run_check: "/agent_dev_check_",
+  automation_schedule: "/agent_automation_schedule_",
+  automation_list: "/agent_automation_list_",
+  automation_cancel: "/agent_automation_cancel_",
   automation_record: "/agent_automation_record_"
 };
 
@@ -929,6 +935,9 @@ export function createDeveloperAutomationPolicy(_config: AgentActionHostConfig):
       "dev_git_push",
       "dev_github_pr_create",
       "dev_run_check",
+      "automation_schedule",
+      "automation_list",
+      "automation_cancel",
       "automation_record"
     ],
     repoInspectionRequiresConfirmation: false,
@@ -1459,6 +1468,60 @@ function createExecutableActionCapabilities(): AgentActionCapability[] {
       notes: "Checks may write caches or build outputs, so confirmation is required."
     }),
     actionCapability({
+      id: "automation.schedule",
+      family: "windows.scheduler",
+      surface: "automation.task_scheduler",
+      title: "Schedule confirmed Windows automation",
+      status: "available",
+      risk: "computer_write",
+      operations: ["create Task Scheduler task", "verify scheduled task", "mirror audit ledger"],
+      underlyingTools: ["schtasks /Create", "schtasks /Query", "workspace JSONL audit ledger"],
+      fallbacks: ["automation.record", "shell.full confirmed schtasks"],
+      verification: ["command_exit", "event_log", "artifact_hash"],
+      approval: "prompt",
+      executableActionIds: ["automation.schedule"],
+      requiresApproval: true,
+      writes: true,
+      description: "Create an InGen-owned visible Windows scheduled task with the InGenAgent_ prefix and mirror the proof to the audit ledger.",
+      notes: "Only InGenAgent_ root tasks are directly managed; arbitrary system task mutation remains outside this direct action."
+    }),
+    actionCapability({
+      id: "automation.list",
+      family: "windows.scheduler",
+      surface: "automation.task_scheduler",
+      title: "List InGen scheduled automations",
+      status: "available",
+      risk: "read",
+      operations: ["query Task Scheduler", "summarize InGen-owned tasks", "read audit ledger"],
+      underlyingTools: ["schtasks /Query /FO CSV /V", "workspace JSONL audit ledger"],
+      fallbacks: ["automation.record ledger", "shell.readonly schtasks query"],
+      verification: ["command_exit", "artifact_hash"],
+      approval: "none",
+      executableActionIds: ["automation.list"],
+      requiresApproval: false,
+      writes: false,
+      description: "List visible InGen-owned scheduled tasks and include the audit ledger path/hash.",
+      notes: "The action filters to InGenAgent_ root tasks instead of exposing unrelated system tasks."
+    }),
+    actionCapability({
+      id: "automation.cancel",
+      family: "windows.scheduler",
+      surface: "automation.task_scheduler",
+      title: "Cancel confirmed scheduled automation",
+      status: "available",
+      risk: "computer_write",
+      operations: ["delete InGen Task Scheduler task", "verify deletion", "append audit ledger cancellation"],
+      underlyingTools: ["schtasks /Delete", "schtasks /Query", "workspace JSONL audit ledger"],
+      fallbacks: ["schtasks /Change /Disable through confirmed shell.full"],
+      verification: ["command_exit", "event_log", "artifact_hash"],
+      approval: "prompt",
+      executableActionIds: ["automation.cancel"],
+      requiresApproval: true,
+      writes: true,
+      description: "Delete an InGen-owned scheduled task after confirmation and append a cancellation audit record.",
+      notes: "This refuses task names outside InGenAgent_ so the agent cannot silently alter system tasks."
+    }),
+    actionCapability({
       id: "automation.record",
       family: "automations.goals",
       surface: "automation.ledger",
@@ -1466,15 +1529,15 @@ function createExecutableActionCapabilities(): AgentActionCapability[] {
       status: "available",
       risk: "workspace_write",
       operations: ["record resumable goal", "append automation ledger", "hash ledger entry"],
-      underlyingTools: ["workspace JSONL ledger", "future Task Scheduler/thread wakeups"],
-      fallbacks: ["document.write_json", "manual reminder", "Task Scheduler planned"],
+      underlyingTools: ["workspace JSONL ledger", "Task Scheduler audit mirror"],
+      fallbacks: ["automation.schedule", "document.write_json", "manual reminder"],
       verification: ["filesystem", "artifact_hash"],
       approval: "prompt",
       executableActionIds: ["automation.record"],
       requiresApproval: true,
       writes: true,
       description: "Record a confirmed automation/background goal in a workspace ledger for visibility and cancellation handoff.",
-      notes: "This does not create an OS scheduled task yet; Task Scheduler and thread wakeups remain planned."
+      notes: "Use automation.schedule when a real OS-visible scheduled task is required."
     })
   ];
 }
@@ -1548,15 +1611,16 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       family: "windows.scheduler",
       surface: "windows.system",
       title: "Create and inspect scheduled tasks",
-      status: "planned",
+      status: "available",
       risk: "computer_write",
-      operations: ["query tasks", "create task", "enable/disable task", "delete task"],
-      underlyingTools: ["schtasks", "ScheduledTasks PowerShell module", "Task Scheduler COM"],
-      fallbacks: ["Task Scheduler GUI/computer_use"],
+      operations: ["query InGen tasks", "create InGen task", "delete InGen task", "mirror audit ledger"],
+      underlyingTools: ["schtasks /Query", "schtasks /Create", "schtasks /Delete", "workspace JSONL audit ledger"],
+      fallbacks: ["ScheduledTasks PowerShell module", "Task Scheduler GUI/computer_use", "confirmed shell.full"],
       verification: ["command_exit", "event_log"],
       approval: "prompt",
       writes: true,
-      notes: "Recurring/background tasks must be visible in the audit trail."
+      executableActionIds: ["automation.schedule", "automation.list", "automation.cancel"],
+      notes: "Direct actions are limited to InGenAgent_ root tasks; arbitrary task changes still require a separate confirmed shell route."
     }),
     atlasEntry({
       id: "windows.wmi",
@@ -1995,7 +2059,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `browser_web=download:${manifest.browserWeb.downloadRequiresConfirmation ? "confirmed" : "open"} navigation:${manifest.browserWeb.navigationRequiresConfirmation ? "confirmed" : "open"} submission:${manifest.browserWeb.submissionRequiresConfirmation ? "confirmed" : "open"} artifact:${manifest.browserWeb.artifactPolicy}`,
     `document_media=workspace_writes:${manifest.documentMedia.workspaceWritesRequireConfirmation ? "confirmed" : "open"} computer_writes:${manifest.documentMedia.computerScopeWritesRequireConfirmation ? "confirmed" : "open"} office_com:${manifest.documentMedia.officeComRequiresConfirmation ? "confirmed" : "open"} macros:${manifest.documentMedia.macroPolicy} artifact:${manifest.documentMedia.artifactPolicy}`,
     `developer_automation=repo_inspect:${manifest.developerAutomation.repoInspectionRequiresConfirmation ? "confirmed" : "open"} checks:${manifest.developerAutomation.commandChecksRequireConfirmation ? "confirmed" : "open"} git_mutation:${manifest.developerAutomation.gitMutationRequiresConfirmation ? "confirmed" : "open"} cloud_writes:${manifest.developerAutomation.cloudWritesRequireConfirmation ? "confirmed" : "open"} mcp:${manifest.developerAutomation.mcpToolCallingStatus} automation:${manifest.developerAutomation.automationPersistenceRequiresConfirmation ? "confirmed" : "open"}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.run_check automation.record",
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.run_check automation.schedule automation.list automation.cancel automation.record",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -2009,7 +2073,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
-    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes task_scheduler_thread_wakeups full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop",
+    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes thread_wakeups full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -2355,6 +2419,20 @@ function quoteCommandArg(value: string): string {
 
 function renderCommandLine(command: string, args: string[]): string {
   return [command, ...args].map(quoteCommandArg).join(" ");
+}
+
+function quoteSchedulerTaskRunPart(value: string): string {
+  const trimmed = value.trim();
+  if (/^[A-Za-z0-9_./:=+-]+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return `"${trimmed.replace(/"/g, '""')}"`;
+}
+
+function renderSchedulerTaskRun(command: string, args: string[]): string {
+  const trimmedCommand = command.trim();
+  const commandPart = args.length > 0 ? `"${trimmedCommand.replace(/"/g, '""')}"` : quoteSchedulerTaskRunPart(trimmedCommand);
+  return [commandPart, ...args.map(quoteSchedulerTaskRunPart)].join(" ");
 }
 
 function routeForWindowsCommand(command: string): AgentWindowsRouteCatalogEntry {
@@ -3596,6 +3674,138 @@ function automationLedgerEntry(input: Omit<AgentAutomationLedgerEntry, "schema" 
   return entry;
 }
 
+const INGEN_TASK_SCHEDULER_ROOT = "InGenAgent_";
+
+function automationLedgerPath(config: AgentActionHostConfig): string {
+  return resolve(config.workspaceRoot, ".ingen-agent-artifacts", "automation-ledger.jsonl");
+}
+
+function normalizeInGenTaskPath(input: string): string | IpcError {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return actionError("bad_payload", "taskName is required.", input);
+  }
+  const withoutLeadingSlash = trimmed.replace(/^\\+/, "");
+  const raw = withoutLeadingSlash.startsWith(INGEN_TASK_SCHEDULER_ROOT) ? withoutLeadingSlash : `${INGEN_TASK_SCHEDULER_ROOT}${withoutLeadingSlash}`;
+  const normalized = raw.replace(/\//g, "\\").replace(/\\{2,}/g, "\\");
+  if (!normalized.startsWith(INGEN_TASK_SCHEDULER_ROOT)) {
+    return actionError("bad_payload", "Only InGenAgent_ scheduled tasks can be managed by direct automation actions.", input);
+  }
+  if (normalized.includes("\\") || normalized.includes("..") || /[<>:"|?*]/.test(normalized)) {
+    return actionError("bad_payload", "Task name must be a root Task Scheduler name with no folders or forbidden characters.", input);
+  }
+  return normalized.slice(0, 238);
+}
+
+function defaultTaskName(title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "automation";
+  const suffix = createHash("sha256").update(`${Date.now()}\n${title}`).digest("hex").slice(0, 10);
+  return `${slug}-${suffix}`;
+}
+
+function defaultSchedulerStartTime(): string {
+  const date = new Date(Date.now() + 5 * 60_000);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function executeSchtasks(args: string[], timeoutMs = 30_000): GitExecution {
+  const startedAt = Date.now();
+  const child = spawnSync("schtasks.exe", args, {
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: timeoutMs,
+    windowsHide: true
+  });
+  const durationMs = Math.max(0, Date.now() - startedAt);
+  const stdout = child.stdout ?? "";
+  const stderr = child.stderr ?? "";
+  const exitCode = child.status ?? null;
+  const timedOut = commandTimedOut(child.error);
+  const accepted = !child.error && child.status === 0;
+  const commandLine = renderCommandLine("schtasks.exe", args);
+  return {
+    accepted,
+    commandLine,
+    exitCode,
+    durationMs,
+    stdout,
+    stderr,
+    timedOut,
+    error: accepted
+      ? undefined
+      : actionError(
+          "rust_unavailable",
+          timedOut ? `schtasks command timed out after ${timeoutMs}ms.` : child.error?.message ?? `schtasks exited with status ${exitCode ?? "unknown"}.`,
+          { args, stderr, exitCode, timedOut }
+        )
+  };
+}
+
+function schedulerCommandFailure(config: AgentActionHostConfig, request: AgentActionRequest, routeId: string, execution: GitExecution): AgentActionResult {
+  const schedulerOutput = `${execution.stderr}\n${execution.stdout}\n${execution.error?.message ?? ""}`;
+  const permissionDenied = /access denied|denied|acces refuse|accès refusé|refus|permission|privilege|0x80070005/i.test(schedulerOutput);
+  const unavailable = /path.*not.*found|system cannot find|chemin.*introuvable|introuvable/i.test(schedulerOutput);
+  return result(config, request, {
+    accepted: false,
+    commandLine: execution.commandLine,
+    routeId,
+    exitCode: execution.exitCode,
+    durationMs: execution.durationMs,
+    timedOut: execution.timedOut,
+    stdoutPreview: execution.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+    failureCategory: execution.timedOut ? "timeout" : permissionDenied ? "permission" : unavailable ? "missing_tool" : "command_error",
+    verification: commandExitVerification({
+      commandLine: execution.commandLine,
+      accepted: false,
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut
+    }),
+    error: execution.error
+  });
+}
+
+function schedulerTaskRows(csvText: string): Record<string, string>[] {
+  const parsed = parseCsvRows(csvText);
+  if (!parsed.valid || parsed.rows.length < 2) {
+    return [];
+  }
+  const headers = parsed.rows[0] ?? [];
+  return parsed.rows.slice(1).map((row) => {
+    const record: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      record[header] = row[index] ?? "";
+    });
+    return record;
+  });
+}
+
+function schedulerTaskSummaryFromQuery(taskPath: string, query: GitExecution): Partial<AgentAutomationLedgerEntry> {
+  const row = schedulerTaskRows(query.stdout).find((candidate) => (candidate["TaskName"] ?? "").replace(/^\\+/, "").toLowerCase() === taskPath.toLowerCase());
+  return {
+    taskPath,
+    nextRunTime: row?.["Next Run Time"],
+    schedulerStatus: row?.["Status"] || row?.["Scheduled Task State"]
+  };
+}
+
+async function appendAutomationLedger(config: AgentActionHostConfig, entry: AgentAutomationLedgerEntry): Promise<{ ledgerPath: string; ledgerHash: string }> {
+  const ledgerPath = automationLedgerPath(config);
+  await mkdir(dirname(ledgerPath), { recursive: true });
+  await appendFile(ledgerPath, `${JSON.stringify(entry)}\n`, "utf8");
+  const ledgerBytes = await readFile(ledgerPath);
+  return {
+    ledgerPath,
+    ledgerHash: createHash("sha256").update(ledgerBytes).digest("hex")
+  };
+}
+
 async function devRepoStatusAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   const status = executeGit(config, ["status", "--porcelain=v1", "-b"]);
   if (!status.accepted) {
@@ -4022,6 +4232,227 @@ async function devRunCheckAction(config: AgentActionHostConfig, request: AgentAc
   });
 }
 
+async function automationScheduleAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Creating a Windows scheduled automation requires confirmed:true.", request)
+    });
+  }
+  if (config.platform !== "win32") {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "missing_tool",
+      error: actionError("rust_unavailable", "Windows Task Scheduler is available only on win32.", request)
+    });
+  }
+  const title = (request.title ?? request.query ?? request.text ?? "").trim();
+  const command = request.command?.trim() ?? "";
+  if (!title || !command) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "title and command are required for automation_schedule.", request)
+    });
+  }
+  const taskPath = normalizeInGenTaskPath(request.taskName ?? defaultTaskName(title));
+  if (typeof taskPath !== "string") {
+    return result(config, request, { accepted: false, error: taskPath });
+  }
+  const scheduleType = (request.scheduleType ?? "ONCE").trim().toUpperCase();
+  if (!["ONCE", "DAILY", "WEEKLY", "MONTHLY", "HOURLY", "MINUTE", "ONLOGON", "ONSTART"].includes(scheduleType)) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "scheduleType must be one of ONCE, DAILY, WEEKLY, MONTHLY, HOURLY, MINUTE, ONLOGON or ONSTART.", request)
+    });
+  }
+  const taskRun = renderSchedulerTaskRun(command, request.args ?? []);
+  const args = ["/Create", "/TN", taskPath, "/TR", taskRun, "/SC", scheduleType, "/F"];
+  const startTime = request.startTime?.trim() || (["ONCE", "DAILY", "WEEKLY", "MONTHLY", "HOURLY", "MINUTE"].includes(scheduleType) ? defaultSchedulerStartTime() : "");
+  if (startTime) {
+    args.push("/ST", startTime);
+  }
+  if (request.startDate?.trim()) {
+    args.push("/SD", request.startDate.trim());
+  }
+  const created = executeSchtasks(args, 60_000);
+  if (!created.accepted) {
+    return schedulerCommandFailure(config, request, "automation.schedule.create", created);
+  }
+  const queried = executeSchtasks(["/Query", "/TN", taskPath, "/FO", "CSV", "/V"], 30_000);
+  const createdAt = new Date().toISOString();
+  const id = createHash("sha256").update(`scheduled\n${taskPath}\n${createdAt}\n${taskRun}`).digest("hex").slice(0, 16);
+  const schedulerSummary = schedulerTaskSummaryFromQuery(taskPath, queried);
+  const entry = automationLedgerEntry({
+    id,
+    title,
+    status: "scheduled",
+    ledgerPath: pathLabel(config, { ...request, scope: "workspace" }, automationLedgerPath(config)),
+    createdAt,
+    backend: "windows_task_scheduler",
+    taskName: basename(taskPath),
+    taskPath,
+    taskRun,
+    scheduleType,
+    startTime: startTime || undefined,
+    nextRunTime: schedulerSummary.nextRunTime,
+    schedulerStatus: schedulerSummary.schedulerStatus
+  });
+  const ledger = await appendAutomationLedger(config, entry);
+  const verification = verificationResult([
+    commandExitProbe({ commandLine: created.commandLine, accepted: created.accepted, exitCode: created.exitCode, timedOut: created.timedOut }),
+    verificationProbe({
+      id: "automation.scheduler.query",
+      kind: "event_log",
+      target: taskPath,
+      expectation: "schtasks query returns the created task",
+      actual: `accepted=${queried.accepted} stdout_bytes=${Buffer.byteLength(queried.stdout, "utf8")}`,
+      passed: queried.accepted && queried.stdout.toLowerCase().includes(taskPath.toLowerCase())
+    }),
+    verificationProbe({
+      id: "automation.ledger.hash",
+      kind: "artifact_hash",
+      target: ledger.ledgerPath,
+      expectation: "ledger sha256 computed after scheduler mirror append",
+      actual: ledger.ledgerHash,
+      passed: /^[a-f0-9]{64}$/.test(ledger.ledgerHash)
+    })
+  ]);
+  return result(config, request, {
+    accepted: true,
+    path: entry.taskPath,
+    artifacts: [entry.ledgerPath],
+    commandLine: created.commandLine,
+    routeId: "automation.schedule",
+    exitCode: created.exitCode,
+    durationMs: created.durationMs,
+    stdoutPreview: [created.stdout, queried.stdout].join("\n").slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: [created.stderr, queried.stderr].join("\n").slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`scheduler_task:${taskPath}`, `automation_status:scheduled`, `ledger_sha256:${ledger.ledgerHash}`],
+    verification,
+    automation: entry
+  });
+}
+
+async function automationListAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (config.platform !== "win32") {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "missing_tool",
+      error: actionError("rust_unavailable", "Windows Task Scheduler is available only on win32.", request)
+    });
+  }
+  const queried = executeSchtasks(["/Query", "/FO", "CSV", "/V"], 30_000);
+  if (!queried.accepted) {
+    return schedulerCommandFailure(config, request, "automation.list", queried);
+  }
+  const rows = schedulerTaskRows(queried.stdout).filter((row) =>
+    (row["TaskName"] ?? "").replace(/^\\+/, "").toLowerCase().startsWith(INGEN_TASK_SCHEDULER_ROOT.toLowerCase())
+  );
+  const ledgerPath = automationLedgerPath(config);
+  let ledgerHash = "missing";
+  try {
+    const ledgerBytes = await readFile(ledgerPath);
+    ledgerHash = createHash("sha256").update(ledgerBytes).digest("hex");
+  } catch {
+    ledgerHash = "missing";
+  }
+  return result(config, request, {
+    accepted: true,
+    path: pathLabel(config, { ...request, scope: "workspace" }, ledgerPath),
+    commandLine: queried.commandLine,
+    routeId: "automation.list",
+    exitCode: queried.exitCode,
+    durationMs: queried.durationMs,
+    stdoutPreview: rows.slice(0, request.maxResults ?? 25).map((row) => JSON.stringify(row)).join("\n").slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: queried.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`scheduler_tasks:${rows.length}`, `ledger_sha256:${ledgerHash}`],
+    verification: verificationResult([
+      commandExitProbe({ commandLine: queried.commandLine, accepted: queried.accepted, exitCode: queried.exitCode, timedOut: queried.timedOut }),
+      verificationProbe({
+        id: "automation.list.filter",
+        kind: "event_log",
+        target: INGEN_TASK_SCHEDULER_ROOT,
+        expectation: "query completed and InGen task filter was applied",
+        actual: `rows=${rows.length}`,
+        passed: true
+      })
+    ]),
+    value: `scheduler tasks ${rows.length}`
+  });
+}
+
+async function automationCancelAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Cancelling a Windows scheduled automation requires confirmed:true.", request)
+    });
+  }
+  if (config.platform !== "win32") {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "missing_tool",
+      error: actionError("rust_unavailable", "Windows Task Scheduler is available only on win32.", request)
+    });
+  }
+  const taskPath = normalizeInGenTaskPath(request.taskName ?? request.path ?? "");
+  if (typeof taskPath !== "string") {
+    return result(config, request, { accepted: false, error: taskPath });
+  }
+  const deleted = executeSchtasks(["/Delete", "/TN", taskPath, "/F"], 30_000);
+  if (!deleted.accepted) {
+    return schedulerCommandFailure(config, request, "automation.cancel.delete", deleted);
+  }
+  const queried = executeSchtasks(["/Query", "/TN", taskPath, "/FO", "CSV", "/V"], 15_000);
+  const cancelledAt = new Date().toISOString();
+  const entry = automationLedgerEntry({
+    id: createHash("sha256").update(`cancelled\n${taskPath}\n${cancelledAt}`).digest("hex").slice(0, 16),
+    title: request.title?.trim() || taskPath,
+    status: "cancelled",
+    ledgerPath: pathLabel(config, { ...request, scope: "workspace" }, automationLedgerPath(config)),
+    createdAt: cancelledAt,
+    cancelledAt,
+    backend: "windows_task_scheduler",
+    taskName: basename(taskPath),
+    taskPath
+  });
+  const ledger = await appendAutomationLedger(config, entry);
+  return result(config, request, {
+    accepted: true,
+    path: taskPath,
+    artifacts: [entry.ledgerPath],
+    commandLine: deleted.commandLine,
+    routeId: "automation.cancel",
+    exitCode: deleted.exitCode,
+    durationMs: deleted.durationMs,
+    stdoutPreview: [deleted.stdout, queried.stdout].join("\n").slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: [deleted.stderr, queried.stderr].join("\n").slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`scheduler_task_deleted:${taskPath}`, `automation_status:cancelled`, `ledger_sha256:${ledger.ledgerHash}`],
+    verification: verificationResult([
+      commandExitProbe({ commandLine: deleted.commandLine, accepted: deleted.accepted, exitCode: deleted.exitCode, timedOut: deleted.timedOut }),
+      verificationProbe({
+        id: "automation.scheduler.deleted",
+        kind: "event_log",
+        target: taskPath,
+        expectation: "post-delete query no longer returns the task",
+        actual: `accepted=${queried.accepted} exit_code=${queried.exitCode ?? "unknown"}`,
+        passed: !queried.accepted
+      }),
+      verificationProbe({
+        id: "automation.ledger.cancel_hash",
+        kind: "artifact_hash",
+        target: ledger.ledgerPath,
+        expectation: "ledger sha256 computed after cancellation append",
+        actual: ledger.ledgerHash,
+        passed: /^[a-f0-9]{64}$/.test(ledger.ledgerHash)
+      })
+    ]),
+    automation: entry
+  });
+}
+
 async function automationRecordAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   if (request.confirmed !== true) {
     return result(config, request, {
@@ -4037,8 +4468,7 @@ async function automationRecordAction(config: AgentActionHostConfig, request: Ag
       error: actionError("bad_payload", "title, query, text or content is required for automation_record.", request)
     });
   }
-  const ledgerPath = resolve(config.workspaceRoot, ".ingen-agent-artifacts", "automation-ledger.jsonl");
-  await mkdir(dirname(ledgerPath), { recursive: true });
+  const ledgerPath = automationLedgerPath(config);
   const createdAt = new Date().toISOString();
   const id = createHash("sha256").update(`automation\n${createdAt}\n${title}`).digest("hex").slice(0, 16);
   const entry = automationLedgerEntry({
@@ -4046,16 +4476,15 @@ async function automationRecordAction(config: AgentActionHostConfig, request: Ag
     title,
     status: "recorded",
     ledgerPath: pathLabel(config, { ...request, scope: "workspace" }, ledgerPath),
-    createdAt
+    createdAt,
+    backend: "ledger"
   });
-  await appendFile(ledgerPath, `${JSON.stringify(entry)}\n`, "utf8");
-  const ledgerBytes = await readFile(ledgerPath);
-  const ledgerHash = createHash("sha256").update(ledgerBytes).digest("hex");
+  const ledger = await appendAutomationLedger(config, entry);
   return result(config, request, {
     accepted: true,
     path: entry.ledgerPath,
     artifacts: [entry.ledgerPath],
-    observedChanges: [`automation_record:${entry.id}`, `ledger_sha256:${ledgerHash}`],
+    observedChanges: [`automation_record:${entry.id}`, `ledger_sha256:${ledger.ledgerHash}`],
     verification: verificationResult([
       await filesystemProbe("automation.ledger.exists", ledgerPath, "file"),
       verificationProbe({
@@ -4063,8 +4492,8 @@ async function automationRecordAction(config: AgentActionHostConfig, request: Ag
         kind: "artifact_hash",
         target: ledgerPath,
         expectation: "ledger sha256 computed after append",
-        actual: ledgerHash,
-        passed: /^[a-f0-9]{64}$/.test(ledgerHash)
+        actual: ledger.ledgerHash,
+        passed: /^[a-f0-9]{64}$/.test(ledger.ledgerHash)
       })
     ]),
     automation: entry,
@@ -4132,6 +4561,12 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return await devGithubPrCreateAction(config, request);
       case "dev_run_check":
         return await devRunCheckAction(config, request);
+      case "automation_schedule":
+        return await automationScheduleAction(config, request);
+      case "automation_list":
+        return await automationListAction(config, request);
+      case "automation_cancel":
+        return await automationCancelAction(config, request);
       case "automation_record":
         return await automationRecordAction(config, request);
       default:

@@ -4,6 +4,9 @@ import {
   AGENT_BROWSER_INSPECT_COMMAND,
   AGENT_BROWSER_OPEN_COMMAND,
   AGENT_COPY_PATH_COMMAND,
+  AGENT_AUTOMATION_CANCEL_COMMAND,
+  AGENT_AUTOMATION_LIST_COMMAND,
+  AGENT_AUTOMATION_SCHEDULE_COMMAND,
   AGENT_DELETE_TREE_COMMAND,
   AGENT_DOCUMENT_CONVERT_COMMAND,
   AGENT_DOCUMENT_INSPECT_COMMAND,
@@ -54,6 +57,9 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION tool="dev.git_push"')?.command).toBe(AGENT_DEV_PUSH_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="dev.github_pr_create"')?.command).toBe(AGENT_GITHUB_PR_CREATE_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="dev.run_check"')?.command).toBe(AGENT_DEV_CHECK_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="automation_schedule"')?.command).toBe(AGENT_AUTOMATION_SCHEDULE_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION tool="automation.list"')?.command).toBe(AGENT_AUTOMATION_LIST_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION capability="automation.cancel"')?.command).toBe(AGENT_AUTOMATION_CANCEL_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="automation_record"')?.command).toBe(AGENT_AUTOMATION_RECORD_COMMAND);
   });
 
