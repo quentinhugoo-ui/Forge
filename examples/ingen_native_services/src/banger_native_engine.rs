@@ -141,6 +141,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub frame_submission_packet: BangerNativeFrameSubmissionPacket,
     pub rhi_submit_packet: BangerNativeRhiSubmitPacket,
     pub gpu_execution_receipt: BangerNativeGpuExecutionReceipt,
+    pub backend_submit_plan: BangerNativeBackendSubmitPlan,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
@@ -775,6 +776,42 @@ pub struct BangerNativeGpuExecutionPhaseReceipt {
     pub completed: bool,
     pub diagnostic_hash: String,
     pub phase_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeBackendSubmitPlan {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub backend_family: &'static str,
+    pub backend_label: String,
+    pub frame_submission_hash: String,
+    pub rhi_submit_hash: String,
+    pub execution_receipt_hash: String,
+    pub swapchain_contract_hash: String,
+    pub descriptor_heap_hash: String,
+    pub pipeline_state_cache_hash: String,
+    pub backend_barrier_plan_hash: String,
+    pub command_allocator_hash: String,
+    pub submit_plan_hash: String,
+    pub targets: Vec<BangerNativeBackendSubmitTarget>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeBackendSubmitTarget {
+    pub target_id: String,
+    pub backend_family: &'static str,
+    pub queue_lane: &'static str,
+    pub swapchain_image_count: u32,
+    pub descriptor_table_count: u32,
+    pub pipeline_state_count: u32,
+    pub barrier_batch_count: u32,
+    pub command_allocator_count: u32,
+    pub present_path: &'static str,
+    pub target_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1669,6 +1706,14 @@ impl BangerNativeEngine {
             &rhi_submit_packet,
             &raster_work_queue,
         );
+        let backend_submit_plan = build_backend_submit_plan(
+            &prepared,
+            &pipeline_cache_manifest,
+            &texture_bridge_contract,
+            &frame_submission_packet,
+            &rhi_submit_packet,
+            &gpu_execution_receipt,
+        );
         let benchmark_promotion_manifest = build_benchmark_promotion_manifest(
             &prepared,
             &render_graph,
@@ -1698,6 +1743,7 @@ impl BangerNativeEngine {
             &frame_submission_packet,
             &rhi_submit_packet,
             &gpu_execution_receipt,
+            &backend_submit_plan,
             &render_graph_compilation,
         );
         let render_pass_count = render_graph.len();
@@ -1753,6 +1799,7 @@ impl BangerNativeEngine {
             frame_submission_packet,
             rhi_submit_packet,
             gpu_execution_receipt,
+            backend_submit_plan,
             frame_graph_bindings,
             artifacts,
             verifier: BangerNativeRenderVerifier {
@@ -3577,6 +3624,111 @@ fn build_gpu_execution_receipt(
     }
 }
 
+fn build_backend_submit_plan(
+    prepared: &MonsterPreparedCompute,
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+) -> BangerNativeBackendSubmitPlan {
+    let backend_family = backend_submit_family(&texture_bridge_contract.backend);
+    let targets = ["graphics", "compute", "present"]
+        .iter()
+        .enumerate()
+        .map(|(index, queue_lane)| {
+            let swapchain_image_count = backend_swapchain_image_count(backend_family);
+            let descriptor_table_count = backend_descriptor_table_count(
+                backend_family,
+                frame_submission_packet.command_count,
+                rhi_submit_packet.submitted_queue_count,
+            );
+            let pipeline_state_count =
+                backend_pipeline_state_count(frame_submission_packet.command_count, backend_family);
+            let barrier_batch_count =
+                backend_barrier_batch_count(rhi_submit_packet.steps.len(), backend_family);
+            let command_allocator_count =
+                backend_command_allocator_count(rhi_submit_packet.command_list_count, backend_family);
+            let present_path = backend_present_path(backend_family);
+            let target_id = format!("backend_target_{index:02}_{backend_family}_{queue_lane}");
+            let target_hash = backend_submit_target_hash(
+                &target_id,
+                backend_family,
+                queue_lane,
+                swapchain_image_count,
+                descriptor_table_count,
+                pipeline_state_count,
+                barrier_batch_count,
+                command_allocator_count,
+                present_path,
+            );
+            BangerNativeBackendSubmitTarget {
+                target_id,
+                backend_family,
+                queue_lane,
+                swapchain_image_count,
+                descriptor_table_count,
+                pipeline_state_count,
+                barrier_batch_count,
+                command_allocator_count,
+                present_path,
+                target_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let swapchain_contract_hash =
+        backend_swapchain_contract_hash(texture_bridge_contract, frame_submission_packet, &targets);
+    let descriptor_heap_hash = backend_descriptor_heap_hash(
+        backend_family,
+        pipeline_cache_manifest,
+        frame_submission_packet,
+        &targets,
+    );
+    let pipeline_state_cache_hash = backend_pipeline_state_cache_hash(
+        backend_family,
+        pipeline_cache_manifest,
+        frame_submission_packet,
+        &targets,
+    );
+    let backend_barrier_plan_hash =
+        backend_barrier_plan_hash(backend_family, rhi_submit_packet, gpu_execution_receipt, &targets);
+    let command_allocator_hash =
+        backend_command_allocator_hash(backend_family, rhi_submit_packet, &targets);
+    let submit_plan_hash = backend_submit_plan_hash(
+        prepared,
+        pipeline_cache_manifest,
+        texture_bridge_contract,
+        frame_submission_packet,
+        rhi_submit_packet,
+        gpu_execution_receipt,
+        backend_family,
+        &swapchain_contract_hash,
+        &descriptor_heap_hash,
+        &pipeline_state_cache_hash,
+        &backend_barrier_plan_hash,
+        &command_allocator_hash,
+        &targets,
+    );
+    BangerNativeBackendSubmitPlan {
+        schema: "forge.banger.native_backend_submit_plan.v1",
+        authority: "banger_rhi_submit_to_backend_specific_contract",
+        clean_room_basis: "local_unreal_sparse_d3d12_vulkan_backend_submit_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        backend_family,
+        backend_label: texture_bridge_contract.backend.clone(),
+        frame_submission_hash: frame_submission_packet.submission_hash.clone(),
+        rhi_submit_hash: rhi_submit_packet.packet_hash.clone(),
+        execution_receipt_hash: gpu_execution_receipt.receipt_hash.clone(),
+        swapchain_contract_hash,
+        descriptor_heap_hash,
+        pipeline_state_cache_hash,
+        backend_barrier_plan_hash,
+        command_allocator_hash,
+        submit_plan_hash,
+        targets,
+    }
+}
+
 fn texture_bridge_backend_can_share(backend: &str) -> bool {
     let backend = backend.to_ascii_lowercase();
     backend.contains("vulkan") || backend.contains("dx12") || backend.contains("metal")
@@ -4498,6 +4650,229 @@ fn gpu_execution_receipt_hash(
     h.update(readback_policy_hash.as_bytes());
     for phase in phases {
         h.update(phase.phase_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_submit_family(backend: &str) -> &'static str {
+    let backend = backend.to_ascii_lowercase();
+    if backend.contains("dx12") || backend.contains("d3d12") {
+        "d3d12"
+    } else if backend.contains("vulkan") {
+        "vulkan"
+    } else if backend.contains("metal") {
+        "metal"
+    } else {
+        "wgpu_generic"
+    }
+}
+
+fn backend_swapchain_image_count(backend_family: &str) -> u32 {
+    match backend_family {
+        "vulkan" => 3,
+        "d3d12" | "metal" => 2,
+        _ => 2,
+    }
+}
+
+fn backend_descriptor_table_count(
+    backend_family: &str,
+    command_count: usize,
+    queue_count: usize,
+) -> u32 {
+    let base = match backend_family {
+        "d3d12" => 3,
+        "vulkan" => 2,
+        "metal" => 2,
+        _ => 1,
+    };
+    base + command_count.max(1) as u32 + queue_count.max(1) as u32
+}
+
+fn backend_pipeline_state_count(command_count: usize, backend_family: &str) -> u32 {
+    let backend_bonus = if backend_family == "d3d12" || backend_family == "vulkan" {
+        2
+    } else {
+        1
+    };
+    command_count.max(1) as u32 + backend_bonus
+}
+
+fn backend_barrier_batch_count(step_count: usize, backend_family: &str) -> u32 {
+    let divisor = if backend_family == "vulkan" { 2 } else { 3 };
+    (step_count.max(1) as u32).div_ceil(divisor)
+}
+
+fn backend_command_allocator_count(command_list_count: usize, backend_family: &str) -> u32 {
+    let frame_overlap = if backend_family == "vulkan" { 3 } else { 2 };
+    command_list_count.max(1) as u32 * frame_overlap
+}
+
+fn backend_present_path(backend_family: &str) -> &'static str {
+    match backend_family {
+        "d3d12" => "dxgi_swapchain_present",
+        "vulkan" => "vk_queue_present",
+        "metal" => "metal_drawable_present",
+        _ => "wgpu_surface_present",
+    }
+}
+
+fn backend_submit_target_hash(
+    target_id: &str,
+    backend_family: &str,
+    queue_lane: &str,
+    swapchain_image_count: u32,
+    descriptor_table_count: u32,
+    pipeline_state_count: u32,
+    barrier_batch_count: u32,
+    command_allocator_count: u32,
+    present_path: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_submit.target.v1\0");
+    h.update(target_id.as_bytes());
+    h.update(backend_family.as_bytes());
+    h.update(queue_lane.as_bytes());
+    h.update(swapchain_image_count.to_le_bytes());
+    h.update(descriptor_table_count.to_le_bytes());
+    h.update(pipeline_state_count.to_le_bytes());
+    h.update(barrier_batch_count.to_le_bytes());
+    h.update(command_allocator_count.to_le_bytes());
+    h.update(present_path.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_swapchain_contract_hash(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    targets: &[BangerNativeBackendSubmitTarget],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_submit.swapchain_contract.v1\0");
+    h.update(texture_bridge_contract.viewport_contract_hash.as_bytes());
+    h.update(texture_bridge_contract.device_queue_hash.as_bytes());
+    h.update(texture_bridge_contract.width.to_le_bytes());
+    h.update(texture_bridge_contract.height.to_le_bytes());
+    h.update(texture_bridge_contract.pixel_format.as_bytes());
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    for target in targets {
+        h.update(target.target_hash.as_bytes());
+        h.update(target.present_path.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_descriptor_heap_hash(
+    backend_family: &str,
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    targets: &[BangerNativeBackendSubmitTarget],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_submit.descriptor_heap.v1\0");
+    h.update(backend_family.as_bytes());
+    h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(frame_submission_packet.command_buffer_hash.as_bytes());
+    for command in &frame_submission_packet.commands {
+        h.update(command.input_hash.as_bytes());
+        h.update(command.output_target_hash.as_bytes());
+    }
+    for target in targets {
+        h.update(target.descriptor_table_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_pipeline_state_cache_hash(
+    backend_family: &str,
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    targets: &[BangerNativeBackendSubmitTarget],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_submit.pipeline_state_cache.v1\0");
+    h.update(backend_family.as_bytes());
+    h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(pipeline_cache_manifest.driver_hash.as_bytes());
+    h.update(pipeline_cache_manifest.driver_info_hash.as_bytes());
+    h.update(frame_submission_packet.frame_schedule_hash.as_bytes());
+    for entry in &pipeline_cache_manifest.entries {
+        h.update(entry.pipeline_cache_key.as_bytes());
+        h.update(entry.blob_hash.as_bytes());
+        h.update(entry.render_pass_abi_hash.as_bytes());
+    }
+    for target in targets {
+        h.update(target.pipeline_state_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_barrier_plan_hash(
+    backend_family: &str,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    targets: &[BangerNativeBackendSubmitTarget],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_submit.barrier_plan.v1\0");
+    h.update(backend_family.as_bytes());
+    h.update(rhi_submit_packet.fence_timeline_hash.as_bytes());
+    h.update(gpu_execution_receipt.queue_timeline_hash.as_bytes());
+    for target in targets {
+        h.update(target.barrier_batch_count.to_le_bytes());
+        h.update(target.target_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_command_allocator_hash(
+    backend_family: &str,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    targets: &[BangerNativeBackendSubmitTarget],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_submit.command_allocator.v1\0");
+    h.update(backend_family.as_bytes());
+    h.update(rhi_submit_packet.finalized_command_lists_hash.as_bytes());
+    h.update(rhi_submit_packet.submit_batch_hash.as_bytes());
+    for target in targets {
+        h.update(target.command_allocator_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_submit_plan_hash(
+    prepared: &MonsterPreparedCompute,
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    backend_family: &str,
+    swapchain_contract_hash: &str,
+    descriptor_heap_hash: &str,
+    pipeline_state_cache_hash: &str,
+    backend_barrier_plan_hash: &str,
+    command_allocator_hash: &str,
+    targets: &[BangerNativeBackendSubmitTarget],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_backend_submit_plan.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
+    h.update(frame_submission_packet.submission_hash.as_bytes());
+    h.update(rhi_submit_packet.packet_hash.as_bytes());
+    h.update(gpu_execution_receipt.receipt_hash.as_bytes());
+    h.update(backend_family.as_bytes());
+    h.update(swapchain_contract_hash.as_bytes());
+    h.update(descriptor_heap_hash.as_bytes());
+    h.update(pipeline_state_cache_hash.as_bytes());
+    h.update(backend_barrier_plan_hash.as_bytes());
+    h.update(command_allocator_hash.as_bytes());
+    for target in targets {
+        h.update(target.target_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -7987,6 +8362,7 @@ fn render_handoff_hash(
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
     gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
 ) -> String {
     let mut h = Sha256::new();
@@ -8023,6 +8399,9 @@ fn render_handoff_hash(
     h.update(gpu_execution_receipt.receipt_hash.as_bytes());
     h.update(gpu_execution_receipt.frame_diagnostic_hash.as_bytes());
     h.update(gpu_execution_receipt.queue_timeline_hash.as_bytes());
+    h.update(backend_submit_plan.submit_plan_hash.as_bytes());
+    h.update(backend_submit_plan.swapchain_contract_hash.as_bytes());
+    h.update(backend_submit_plan.backend_barrier_plan_hash.as_bytes());
     h.update(render_graph_compilation.graph_hash.as_bytes());
     h.update(render_graph_compilation.compiled_order_hash.as_bytes());
     h.update(render_graph_compilation.resource_lifetime_hash.as_bytes());
@@ -8915,6 +9294,66 @@ mod tests {
                 && phase.diagnostic_hash.len() == 64
                 && phase.phase_hash.len() == 64
                 && phase.timeline_value >= response.rhi_submit_packet.timeline_base_value));
+        assert_eq!(
+            response.backend_submit_plan.schema,
+            "forge.banger.native_backend_submit_plan.v1"
+        );
+        assert_eq!(
+            response.backend_submit_plan.authority,
+            "banger_rhi_submit_to_backend_specific_contract"
+        );
+        assert!(matches!(
+            response.backend_submit_plan.backend_family,
+            "d3d12" | "vulkan" | "metal" | "wgpu_generic"
+        ));
+        assert_eq!(
+            response.backend_submit_plan.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.backend_submit_plan.frame_submission_hash,
+            response.frame_submission_packet.submission_hash
+        );
+        assert_eq!(
+            response.backend_submit_plan.rhi_submit_hash,
+            response.rhi_submit_packet.packet_hash
+        );
+        assert_eq!(
+            response.backend_submit_plan.execution_receipt_hash,
+            response.gpu_execution_receipt.receipt_hash
+        );
+        assert_eq!(response.backend_submit_plan.swapchain_contract_hash.len(), 64);
+        assert_eq!(response.backend_submit_plan.descriptor_heap_hash.len(), 64);
+        assert_eq!(response.backend_submit_plan.pipeline_state_cache_hash.len(), 64);
+        assert_eq!(response.backend_submit_plan.backend_barrier_plan_hash.len(), 64);
+        assert_eq!(response.backend_submit_plan.command_allocator_hash.len(), 64);
+        assert_eq!(response.backend_submit_plan.submit_plan_hash.len(), 64);
+        assert_eq!(response.backend_submit_plan.targets.len(), 3);
+        assert!(response
+            .backend_submit_plan
+            .targets
+            .iter()
+            .any(|target| target.queue_lane == "graphics"));
+        assert!(response
+            .backend_submit_plan
+            .targets
+            .iter()
+            .any(|target| target.queue_lane == "compute"));
+        assert!(response
+            .backend_submit_plan
+            .targets
+            .iter()
+            .any(|target| target.queue_lane == "present"));
+        assert!(response
+            .backend_submit_plan
+            .targets
+            .iter()
+            .all(|target| target.target_hash.len() == 64
+                && target.swapchain_image_count >= 2
+                && target.descriptor_table_count > 0
+                && target.pipeline_state_count > 0
+                && target.barrier_batch_count > 0
+                && target.command_allocator_count > 0));
         assert_eq!(
             response.radiance_schedule_manifest.schema,
             "forge.banger.native_radiance_schedule_manifest.v1"

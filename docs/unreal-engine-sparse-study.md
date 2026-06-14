@@ -44,6 +44,8 @@ Clean-room extraction applied in Forge:
 - Banger implementation: `BangerNativeRhiSubmitPacket` turns the frame submission into acquire/finalize/submit/present steps with timeline and fence hashes.
 - GPU execution lesson: submit readiness still needs an explicit receipt tying timelines, present proof and nonblank-frame diagnostics together before live backend execution.
 - Banger implementation: `BangerNativeGpuExecutionReceipt` records submit-ready phases, timeline diagnostics and readback policy hashes for the frame.
+- D3D12/Vulkan backend lesson: swapchain images, descriptor tables, pipeline-state caches, command allocators and barrier batches must be explicit backend contracts.
+- Banger implementation: `BangerNativeBackendSubmitPlan` specializes the RHI submit receipt into backend-family targets and proof hashes.
 
 Clean-room rule:
 
