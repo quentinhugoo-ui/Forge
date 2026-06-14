@@ -210,6 +210,12 @@ pub struct BangerNativePresentLoopBootstrapResponse {
     pub unique_color_sample_count: u32,
     pub visual_signature_hash: String,
     pub depth_target_hash: String,
+    pub depth_readback_byte_count: u64,
+    pub depth_occupied_pixel_count: u32,
+    pub depth_min: f32,
+    pub depth_max: f32,
+    pub depth_readback_hash: String,
+    pub depth_readback_proof_hash: String,
     pub mesh_vertex_count: u32,
     pub mesh_triangle_count: u32,
     pub draw_call_count: u32,
@@ -1617,13 +1623,14 @@ impl BangerNativeEngine {
         let proof_hash = hash_text_hex(
             "forge.banger.native_present_loop_bootstrap.proof.v1",
             &format!(
-                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 render.render_pass_count,
                 render.submitted_frame_count,
                 gpu_probe.adapters.len(),
                 render.readback_byte_count,
                 render.readback_checksum_hash,
                 render.visual_signature_hash,
+                render.depth_readback_proof_hash,
                 render.scene3d_proof_hash,
                 render.readback_proof_hash
             ),
@@ -1661,6 +1668,12 @@ impl BangerNativeEngine {
             unique_color_sample_count: render.unique_color_sample_count,
             visual_signature_hash: render.visual_signature_hash,
             depth_target_hash: render.depth_target_hash,
+            depth_readback_byte_count: render.depth_readback_byte_count,
+            depth_occupied_pixel_count: render.depth_occupied_pixel_count,
+            depth_min: render.depth_min,
+            depth_max: render.depth_max,
+            depth_readback_hash: render.depth_readback_hash,
+            depth_readback_proof_hash: render.depth_readback_proof_hash,
             mesh_vertex_count: render.mesh_vertex_count,
             mesh_triangle_count: render.mesh_triangle_count,
             draw_call_count: render.draw_call_count,
@@ -12616,6 +12629,12 @@ struct WgpuPresentBootstrap {
     unique_color_sample_count: u32,
     visual_signature_hash: String,
     depth_target_hash: String,
+    depth_readback_byte_count: u64,
+    depth_occupied_pixel_count: u32,
+    depth_min: f32,
+    depth_max: f32,
+    depth_readback_hash: String,
+    depth_readback_proof_hash: String,
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
@@ -12706,7 +12725,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: depth_format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let depth_view = depth_target.create_view(&wgpu::TextureViewDescriptor::default());
@@ -12777,6 +12796,17 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
+    let depth_unpadded_bytes_per_row = width.saturating_mul(bytes_per_pixel);
+    let depth_padded_bytes_per_row =
+        align_to(depth_unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let depth_readback_byte_count =
+        u64::from(depth_padded_bytes_per_row).saturating_mul(u64::from(height));
+    let depth_readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-bootstrap-depth-readback"),
+        size: depth_readback_byte_count,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("banger-native-present-bootstrap-encoder"),
     });
@@ -12834,6 +12864,27 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             depth_or_array_layers: 1,
         },
     );
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &depth_target,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::DepthOnly,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &depth_readback_buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(depth_padded_bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
     queue.submit(Some(encoder.finish()));
     device
         .poll(wgpu::PollType::wait_indefinitely())
@@ -12860,11 +12911,36 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     );
     drop(readback_view);
     readback_buffer.unmap();
+    let depth_readback_slice = depth_readback_buffer.slice(..);
+    let (depth_sender, depth_receiver) = mpsc::channel();
+    depth_readback_slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = depth_sender.send(result);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|error| format!("Banger present loop depth readback poll failed: {error}"))?;
+    depth_receiver
+        .recv()
+        .map_err(|err| format!("Banger present loop depth readback callback failed: {err}"))?
+        .map_err(|err| format!("Banger present loop depth readback map failed: {err}"))?;
+    let depth_readback_view = depth_readback_slice.get_mapped_range();
+    let depth_metrics = present_loop_depth_readback_metrics(
+        &depth_readback_view,
+        width,
+        height,
+        depth_unpadded_bytes_per_row,
+        depth_padded_bytes_per_row,
+    );
+    drop(depth_readback_view);
+    depth_readback_buffer.unmap();
     if readback_metrics.nonblack_pixel_sample_count == 0
         || readback_metrics.nonzero_tile_count == 0
         || readback_metrics.unique_color_sample_count < 2
     {
         return Err("Banger present loop readback produced a flat or black frame".to_string());
+    }
+    if depth_metrics.occupied_pixel_count == 0 || depth_metrics.depth_min >= 0.999 {
+        return Err("Banger present loop depth readback produced only clear depth".to_string());
     }
     let visual_signature_hash = present_loop_visual_signature_hash(
         width,
@@ -12878,6 +12954,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         &visual_pipeline_hash,
         &depth_target_hash,
         &visual_signature_hash,
+        &depth_metrics.proof_hash,
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
@@ -12901,6 +12978,12 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         unique_color_sample_count: readback_metrics.unique_color_sample_count,
         visual_signature_hash,
         depth_target_hash,
+        depth_readback_byte_count,
+        depth_occupied_pixel_count: depth_metrics.occupied_pixel_count,
+        depth_min: depth_metrics.depth_min,
+        depth_max: depth_metrics.depth_max,
+        depth_readback_hash: depth_metrics.checksum_hash,
+        depth_readback_proof_hash: depth_metrics.proof_hash,
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
@@ -12914,6 +12997,14 @@ struct PresentLoopReadbackMetrics {
     nonblack_pixel_sample_count: u32,
     nonzero_tile_count: u32,
     unique_color_sample_count: u32,
+    proof_hash: String,
+}
+
+struct PresentLoopDepthReadbackMetrics {
+    checksum_hash: String,
+    occupied_pixel_count: u32,
+    depth_min: f32,
+    depth_max: f32,
     proof_hash: String,
 }
 
@@ -13060,6 +13151,86 @@ fn present_loop_readback_proof_hash(
     hex32(h.finalize().into())
 }
 
+fn present_loop_depth_readback_metrics(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+) -> PresentLoopDepthReadbackMetrics {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.depth_readback_checksum.v1\0");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(unpadded_bytes_per_row.to_le_bytes());
+    h.update(padded_bytes_per_row.to_le_bytes());
+    let mut occupied_pixel_count = 0u32;
+    let mut depth_min = 1.0f32;
+    let mut depth_max = 0.0f32;
+    for y in 0..height {
+        let row_start = y as usize * padded_bytes_per_row as usize;
+        let row_end = row_start.saturating_add(unpadded_bytes_per_row as usize);
+        if row_end > bytes.len() {
+            break;
+        }
+        let row = &bytes[row_start..row_end];
+        h.update(row);
+        for pixel in row.chunks_exact(4) {
+            let depth = f32::from_le_bytes([pixel[0], pixel[1], pixel[2], pixel[3]]);
+            if depth.is_finite() && (0.0..0.999).contains(&depth) {
+                occupied_pixel_count = occupied_pixel_count.saturating_add(1);
+                depth_min = depth_min.min(depth);
+                depth_max = depth_max.max(depth);
+            }
+        }
+    }
+    if occupied_pixel_count == 0 {
+        depth_min = 1.0;
+        depth_max = 1.0;
+    }
+    let checksum_hash = hex32(h.finalize().into());
+    let proof_hash = present_loop_depth_readback_proof_hash(
+        width,
+        height,
+        unpadded_bytes_per_row,
+        padded_bytes_per_row,
+        &checksum_hash,
+        occupied_pixel_count,
+        depth_min,
+        depth_max,
+    );
+    PresentLoopDepthReadbackMetrics {
+        checksum_hash,
+        occupied_pixel_count,
+        depth_min,
+        depth_max,
+        proof_hash,
+    }
+}
+
+fn present_loop_depth_readback_proof_hash(
+    width: u32,
+    height: u32,
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+    checksum_hash: &str,
+    occupied_pixel_count: u32,
+    depth_min: f32,
+    depth_max: f32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.depth_readback_proof.v1\0");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(unpadded_bytes_per_row.to_le_bytes());
+    h.update(padded_bytes_per_row.to_le_bytes());
+    h.update(checksum_hash.as_bytes());
+    h.update(occupied_pixel_count.to_le_bytes());
+    h.update(depth_min.to_le_bytes());
+    h.update(depth_max.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
 fn present_loop_visual_signature_hash(
     width: u32,
     height: u32,
@@ -13098,6 +13269,7 @@ fn present_loop_scene3d_proof_hash(
     visual_pipeline_hash: &str,
     depth_target_hash: &str,
     visual_signature_hash: &str,
+    depth_readback_proof_hash: &str,
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
@@ -13107,6 +13279,7 @@ fn present_loop_scene3d_proof_hash(
     h.update(visual_pipeline_hash.as_bytes());
     h.update(depth_target_hash.as_bytes());
     h.update(visual_signature_hash.as_bytes());
+    h.update(depth_readback_proof_hash.as_bytes());
     h.update(mesh_vertex_count.to_le_bytes());
     h.update(mesh_triangle_count.to_le_bytes());
     h.update(draw_call_count.to_le_bytes());
@@ -13468,6 +13641,13 @@ mod tests {
         assert!(response.unique_color_sample_count >= 2);
         assert_eq!(response.visual_signature_hash.len(), 64);
         assert_eq!(response.depth_target_hash.len(), 64);
+        assert_eq!(response.depth_readback_byte_count, 640 * 360 * 4);
+        assert!(response.depth_occupied_pixel_count > 0);
+        assert!(response.depth_min < 0.999);
+        assert!(response.depth_max <= 1.0);
+        assert!(response.depth_min <= response.depth_max);
+        assert_eq!(response.depth_readback_hash.len(), 64);
+        assert_eq!(response.depth_readback_proof_hash.len(), 64);
         assert_eq!(response.mesh_vertex_count, 36);
         assert_eq!(response.mesh_triangle_count, 12);
         assert_eq!(response.draw_call_count, 1);
