@@ -871,6 +871,113 @@ Banger UI
 Banger n est plus le moteur profond. Banger est la surface intelligente du
 moteur InGen.
 
+## Etape 6 - Globe Geospatial Photorealiste
+
+Objectif:
+
+```text
+Google Photorealistic 3D Tiles / Cesium comme flux geospatial de depart
+-> Banger comme viewport proprietaire
+-> Rust Native Engine comme runtime temps reel
+-> Monster / Forge comme memoire computationnelle anti-recalcul
+-> couche Gaussian Splatting pour densification et photorealisme
+```
+
+Cette etape n est pas un simple remplacement de Google Earth par une webview.
+Elle doit ouvrir une lane geospatiale Banger qui transforme les tuiles 3D,
+les decisions de camera et les representations hybrides en calculs
+content-addressed.
+
+Pipeline cible:
+
+```text
+requete geographique / camera / session
+-> selection de tuiles visibles
+-> canonicalisation de l etat rendu
+-> hash Forge du travail repetable
+-> Monster lookup exact / partiel
+-> cache hit: reuse tile plan, buffers, shader variant, visibility lists
+-> cache miss: Rust calcule, Monster indexe les artefacts
+-> GPU rend via Banger
+```
+
+La source Google/Cesium sert de socle visuel et geospatial:
+
+```text
+3D Tiles = structure monde, georeferencement, mesh/texture, LOD initial
+Cesium = reference temporaire pour streaming, camera, attribution, SSE
+Banger = runtime final: scene graph, render graph, cache, outils, edition
+Monster = deduplication massive et preuve des calculs reutilisables
+```
+
+La couche Gaussian Splatting sert aux zones ou le mesh/texture classique ne
+suffit pas:
+
+```text
+mesh/texture 3D Tiles = structure, collision, navigation, contexte spatial
+gaussian splats = rendu photorealiste, vegetation, details fins, captures
+proxy SDF/voxel = selection, collisions, mesures, contexte LLM
+surfel/radiance cache = lumiere et coherence visuelle
+```
+
+Monster ne doit pas dessiner chaque pixel et ne doit pas etre dans la boucle
+fragment. Son role est d empecher Rust de refaire les memes preparations de
+rendu:
+
+```text
+camera state
++ tile id / lod / bounding volume
++ material state
++ light/radiance state
++ shader variant
++ gaussian layer params
++ GPU capability profile
+= render compute hash
+```
+
+Si ce hash existe deja, le moteur doit reutiliser:
+
+- decisions LOD et screen-space error,
+- frustum / occlusion / visibility results,
+- meshlet clusters et indirect draw buffers,
+- tile residency plans et upload pages,
+- material bindings et shader variants,
+- gaussian splat buckets, sort groups et importance masks,
+- radiance / surfel cache pages,
+- proof hashes et manifests de promotion.
+
+Contrat de depart:
+
+```text
+forge.banger.geospatial_globe.v1
+source = google_photorealistic_3d_tiles
+interop_renderer = cesium
+target_renderer = banger_rust_native
+augmentation = gaussian_splatting_layer
+authority = monster_content_addressed_tile_residency
+```
+
+Promotions:
+
+1. MVP: CesiumJS affiche le globe dans une surface Banger dediee, avec camera,
+   tuiles visibles, attribution et metriques capturees.
+2. Monster scelle les etats repetables: camera, visible tile set, SSE, LOD,
+   cache residency et proof hashes.
+3. Rust consomme un manifeste de tuiles et commence par piloter cache,
+   streaming et selection avant de remplacer le renderer visible.
+4. Banger ajoute une couche Gaussian Splatting importee ou pre-calculee par
+   zone, avec proxy collision/selection separe.
+5. Les morceaux qui battent Cesium sur controle, latence, memoire ou preuve
+   sont promus dans le renderer natif; les autres restent en interop.
+
+Regle:
+
+```text
+Cesium peut etre le premier renderer visible.
+Il ne doit pas devenir l architecture profonde.
+L architecture profonde reste Rust Native Engine + Forge/Monster.
+```
+
 ## Apart - Google Web Et Navigation Native
 
 Plus tard, InGen devra aussi porter une section Google Web pour que le LLM
