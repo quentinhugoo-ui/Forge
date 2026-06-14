@@ -46,6 +46,8 @@ Clean-room extraction applied in Forge:
 - Banger implementation: `BangerNativeGpuExecutionReceipt` records submit-ready phases, timeline diagnostics and readback policy hashes for the frame.
 - D3D12/Vulkan backend lesson: swapchain images, descriptor tables, pipeline-state caches, command allocators and barrier batches must be explicit backend contracts.
 - Banger implementation: `BangerNativeBackendSubmitPlan` specializes the RHI submit receipt into backend-family targets and proof hashes.
+- GPUScene lesson: renderable primitives should be compacted into persistent primitive, instance, payload and material buffers with explicit upload ranges.
+- Banger implementation: `BangerNativeGpuScenePacket` converts scene graph submissions into GPU scene primitive records and buffer hashes.
 
 Clean-room rule:
 
