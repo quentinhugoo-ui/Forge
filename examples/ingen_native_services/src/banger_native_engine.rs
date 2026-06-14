@@ -22,6 +22,20 @@ pub struct BangerNativeRenderPrepareRequest {
     pub prefer_mesh_shaders: Option<bool>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNewObjectPrepareRequest {
+    pub scene_id: Option<String>,
+    pub object_id: Option<String>,
+    pub parent_id: Option<String>,
+    pub object_prompt: String,
+    pub representation: Option<String>,
+    pub known_fragment_hashes: Option<Vec<String>>,
+    pub target_frame_ms: Option<f32>,
+    pub vram_budget_mb: Option<u32>,
+    pub prefer_mesh_shaders: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeRenderPrepareResponse {
@@ -53,6 +67,29 @@ pub struct BangerNativeRenderPrepareResponse {
     pub editable_scene_manifest: BangerEditableSceneManifest,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
+    pub verifier: BangerNativeRenderVerifier,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNewObjectPrepareResponse {
+    pub ok: bool,
+    pub schema: &'static str,
+    pub command: &'static str,
+    pub lane: &'static str,
+    pub scene_id: String,
+    pub object_id: String,
+    pub representation: &'static str,
+    pub base_manifest_hash: String,
+    pub updated_manifest_hash: String,
+    pub newobject_contract_source_hash: String,
+    pub newobject_contract_manifest_hash: String,
+    pub newobject_contract_proof_hash: String,
+    pub edit_hash: String,
+    pub contract_prepared: bool,
+    pub gpu_page_promotion_allowed: bool,
+    pub promotion_gate: &'static str,
+    pub editable_scene_manifest: BangerEditableSceneManifest,
     pub verifier: BangerNativeRenderVerifier,
 }
 
@@ -233,6 +270,122 @@ pub struct BangerNativeRenderVerifier {
 pub struct BangerNativeEngine;
 
 impl BangerNativeEngine {
+    pub fn prepare_newobject_contract(
+        monster: &MonsterNode,
+        request: BangerNewObjectPrepareRequest,
+    ) -> Result<BangerNewObjectPrepareResponse, String> {
+        let BangerNewObjectPrepareRequest {
+            scene_id,
+            object_id,
+            parent_id,
+            object_prompt,
+            representation,
+            known_fragment_hashes,
+            target_frame_ms,
+            vram_budget_mb,
+            prefer_mesh_shaders,
+        } = request;
+        let scene_id = sanitize_scene_id(scene_id.as_deref().unwrap_or("banger_default_scene"));
+        let representation = normalize_newobject_representation(representation.as_deref())?;
+        let prompt_hash = hash_text_hex("forge.banger.newobject.prompt.v1", &object_prompt);
+        let object_id = object_id
+            .as_deref()
+            .map(sanitize_scene_id)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| format!("newobject_{}", &prompt_hash[..12]));
+
+        let base_handoff = Self::prepare_render_handoff(
+            monster,
+            BangerNativeRenderPrepareRequest {
+                scene_id: Some(scene_id.clone()),
+                known_fragment_hashes: known_fragment_hashes.clone(),
+                target_frame_ms,
+                vram_budget_mb,
+                prefer_mesh_shaders,
+            },
+        )?;
+        let base_manifest_hash = base_handoff.editable_scene_manifest.manifest_hash.clone();
+        let parent_id = parent_id
+            .as_deref()
+            .map(sanitize_scene_ref)
+            .unwrap_or_else(|| format!("{scene_id}:root"));
+        if !base_handoff
+            .editable_scene_manifest
+            .objects
+            .iter()
+            .any(|object| object.object_id == parent_id)
+        {
+            return Err(format!(
+                "Banger /newobject_ parent {parent_id} is not present in editable scene manifest {base_manifest_hash}"
+            ));
+        }
+
+        let contract_source =
+            banger_newobject_forge_source(&scene_id, &object_id, representation, &prompt_hash);
+        let contract_prepared = monster
+            .prepare_forge_source(&contract_source, known_fragment_hashes.unwrap_or_default())
+            .map_err(|err| format!("Banger /newobject_ Forge contract prepare failed: {err:?}"))?;
+        if contract_prepared.route.lane != MonsterEngineLane::NativeTandemRender
+            || contract_prepared.route.native_domain != MonsterNativeTandemDomain::Render3d
+        {
+            return Err(format!(
+                "Banger /newobject_ routed to {:?}/{} instead of native_tandem_render/render_3d",
+                contract_prepared.route.lane, contract_prepared.route.native_domain
+            ));
+        }
+
+        let pending_object = pending_newobject_scene_object(
+            &contract_prepared,
+            &scene_id,
+            &object_id,
+            &parent_id,
+            representation,
+        );
+        let editable_scene_manifest = append_newobject_to_manifest(
+            &contract_prepared,
+            &base_handoff.resource_table,
+            base_handoff.editable_scene_manifest,
+            pending_object,
+        );
+        let updated_manifest_hash = editable_scene_manifest.manifest_hash.clone();
+        let edit_hash = newobject_edit_hash(
+            &base_manifest_hash,
+            &updated_manifest_hash,
+            &contract_prepared,
+            &object_id,
+            representation,
+        );
+
+        Ok(BangerNewObjectPrepareResponse {
+            ok: true,
+            schema: "forge.banger.newobject_prepare.v1",
+            command: "/newobject_",
+            lane: MonsterEngineLane::NativeTandemRender.label(),
+            scene_id,
+            object_id,
+            representation,
+            base_manifest_hash,
+            updated_manifest_hash,
+            newobject_contract_source_hash: contract_prepared.route.plan.source_hash.clone(),
+            newobject_contract_manifest_hash: contract_prepared.manifest_hash.clone(),
+            newobject_contract_proof_hash: contract_prepared.route.plan.proof_hash.clone(),
+            edit_hash,
+            contract_prepared: true,
+            gpu_page_promotion_allowed: false,
+            promotion_gate: "renderer_must_consume_updated_editable_scene_manifest_before_gpu_page_promotion",
+            editable_scene_manifest,
+            verifier: BangerNativeRenderVerifier {
+                wall: "ui_branching+proof_quality+scene_authority",
+                frontier_hypothesis:
+                    "/newobject_ becomes a scene-manifest edit backed by a fresh Forge/Monster render contract, not a renderer-local object side path.",
+                local_gate:
+                    "cargo test --manifest-path examples\\ingen_native_services\\Cargo.toml banger_native_engine::tests::prepares_newobject_contract_as_scene_manifest_edit",
+                rollback_path:
+                    "remove prepare_newobject_contract and keep the native_tandem_render handoff manifest from step 1",
+            },
+        })
+    }
+
     pub fn prepare_render_handoff(
         monster: &MonsterNode,
         request: BangerNativeRenderPrepareRequest,
@@ -449,6 +602,59 @@ fn editable_scene_object_from_artifact(
     object
 }
 
+fn append_newobject_to_manifest(
+    prepared: &MonsterPreparedCompute,
+    resource_table: &BangerNativeResourceTable,
+    mut manifest: BangerEditableSceneManifest,
+    object: BangerEditableSceneObject,
+) -> BangerEditableSceneManifest {
+    manifest.objects.push(object);
+    manifest.object_count = manifest.objects.len();
+    manifest.graph_hash = editable_scene_graph_hash(&manifest.scene_id, &manifest.objects);
+    manifest.bounds_hash = editable_scene_bounds_hash(&manifest.scene_id, &manifest.objects);
+    manifest.manifest_hash = editable_scene_manifest_hash(
+        prepared,
+        resource_table,
+        &manifest.objects,
+        &manifest.graph_hash,
+        &manifest.bounds_hash,
+    );
+    manifest
+}
+
+fn pending_newobject_scene_object(
+    prepared: &MonsterPreparedCompute,
+    scene_id: &str,
+    object_id: &str,
+    parent_id: &str,
+    representation: &'static str,
+) -> BangerEditableSceneObject {
+    let transform = identity_transform();
+    let (aabb_min, aabb_max) = fallback_aabb_for_representation(representation);
+    let mut object = BangerEditableSceneObject {
+        object_id: format!("{scene_id}:{object_id}"),
+        parent_id: Some(parent_id.to_string()),
+        role: scene_role_for_representation(representation),
+        representation,
+        source_artifact_name: Some(format!("{object_id}.newobject_contract")),
+        source_artifact_kind: "newobject_contract",
+        source_artifact_hash: prepared.manifest_hash.clone(),
+        renderer_cache_hash: prepared.route.plan.compute_ir_hash.clone(),
+        residency_policy: "pending_contract_no_gpu_pages_until_renderer_promotion",
+        local_transform: transform,
+        world_transform: transform,
+        local_transform_hash: transform_hash("local", &transform),
+        world_transform_hash: transform_hash("world", &transform),
+        aabb_min,
+        aabb_max,
+        bounding_sphere: bounding_sphere(aabb_min, aabb_max),
+        editable_slots: editable_slots_for_representation(representation),
+        proof_hash: String::new(),
+    };
+    object.proof_hash = editable_object_hash_with_manifest(prepared, &object);
+    object
+}
+
 fn build_resource_table(
     prepared: &MonsterPreparedCompute,
     artifacts: &[&MonsterNativeTandemArtifact],
@@ -553,6 +759,18 @@ fn scene_role_for_kind(kind: &str) -> &'static str {
     }
 }
 
+fn scene_role_for_representation(representation: &str) -> &'static str {
+    match representation {
+        "sdf" => "procedural_shape_field",
+        "voxel" => "volume_or_streaming_cell",
+        "meshlet" => "visible_geometry_cluster",
+        "surfel" => "lighting_cache_probe_set",
+        "gaussian_splat" => "captured_splat_layer",
+        "material_graph" => "material_variant_set",
+        _ => "native_render_artifact",
+    }
+}
+
 fn scene_representation_for_kind(kind: &str) -> &'static str {
     match kind {
         "sdf_brick" => "sdf",
@@ -564,6 +782,22 @@ fn scene_representation_for_kind(kind: &str) -> &'static str {
     }
 }
 
+fn normalize_newobject_representation(raw: Option<&str>) -> Result<&'static str, String> {
+    let value = raw.unwrap_or("sdf").trim().to_ascii_lowercase();
+    match value.as_str() {
+        "" | "sdf" | "field" | "implicit" | "procedural" => Ok("sdf"),
+        "voxel" | "voxels" | "volume" => Ok("voxel"),
+        "mesh" | "meshlet" | "meshlets" | "geometry" => Ok("meshlet"),
+        "surfel" | "surfels" | "radiance" => Ok("surfel"),
+        "gaussian" | "gaussian_splat" | "gaussian-splat" | "splat" | "splats" => {
+            Ok("gaussian_splat")
+        }
+        "material" | "material_graph" | "material-graph" => Ok("material_graph"),
+        "native" | "native_artifact" | "artifact" => Ok("native_artifact"),
+        _ => Err(format!("unsupported Banger /newobject_ representation: {value}")),
+    }
+}
+
 fn editable_slots_for_kind(kind: &str) -> Vec<&'static str> {
     match kind {
         "sdf_brick" => vec!["name", "transform", "sdf_params", "material_ref", "visibility"],
@@ -571,6 +805,18 @@ fn editable_slots_for_kind(kind: &str) -> Vec<&'static str> {
         "meshlet_page" => vec!["name", "transform", "lod_bias", "material_ref", "visibility"],
         "surfel_radiance_cache" => vec!["name", "probe_density", "bounce_budget", "temporal_reuse"],
         "material_payload" => vec!["name", "albedo", "roughness", "metallic", "emissive"],
+        _ => vec!["name", "transform", "visibility"],
+    }
+}
+
+fn editable_slots_for_representation(representation: &str) -> Vec<&'static str> {
+    match representation {
+        "sdf" => vec!["name", "transform", "sdf_params", "material_ref", "visibility"],
+        "voxel" => vec!["name", "transform", "voxel_lod", "streaming_priority", "visibility"],
+        "meshlet" => vec!["name", "transform", "lod_bias", "material_ref", "visibility"],
+        "surfel" => vec!["name", "probe_density", "bounce_budget", "temporal_reuse"],
+        "gaussian_splat" => vec!["name", "transform", "splat_bucket_policy", "proxy_bounds", "visibility"],
+        "material_graph" => vec!["name", "albedo", "roughness", "metallic", "emissive"],
         _ => vec!["name", "transform", "visibility"],
     }
 }
@@ -597,6 +843,16 @@ fn fallback_aabb_for_kind(kind: &str) -> ([f32; 3], [f32; 3]) {
         "material_payload" => ([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
         "meshlet_page" => ([-0.5, -0.5, -0.25], [0.5, 0.5, 0.25]),
         "surfel_radiance_cache" => ([-0.45, -0.45, -0.45], [0.45, 0.45, 0.45]),
+        _ => ([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]),
+    }
+}
+
+fn fallback_aabb_for_representation(representation: &str) -> ([f32; 3], [f32; 3]) {
+    match representation {
+        "material_graph" => ([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+        "meshlet" => ([-0.5, -0.5, -0.25], [0.5, 0.5, 0.25]),
+        "surfel" => ([-0.45, -0.45, -0.45], [0.45, 0.45, 0.45]),
+        "gaussian_splat" => ([-0.75, -0.75, -0.5], [0.75, 0.75, 0.5]),
         _ => ([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]),
     }
 }
@@ -712,6 +968,24 @@ fn editable_scene_bounds_hash(scene_id: &str, objects: &[BangerEditableSceneObje
             h.update(value.to_le_bytes());
         }
     }
+    hex32(h.finalize().into())
+}
+
+fn newobject_edit_hash(
+    base_manifest_hash: &str,
+    updated_manifest_hash: &str,
+    prepared: &MonsterPreparedCompute,
+    object_id: &str,
+    representation: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.newobject_edit.v1\0");
+    h.update(base_manifest_hash.as_bytes());
+    h.update(updated_manifest_hash.as_bytes());
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(object_id.as_bytes());
+    h.update(representation.as_bytes());
     hex32(h.finalize().into())
 }
 
@@ -1152,6 +1426,14 @@ fn render_handoff_hash(
     hex32(h.finalize().into())
 }
 
+fn hash_text_hex(schema: &str, text: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(schema.as_bytes());
+    h.update(b"\0");
+    h.update(text.as_bytes());
+    hex32(h.finalize().into())
+}
+
 fn hex32(bytes: [u8; 32]) -> String {
     let mut out = String::with_capacity(64);
     for byte in bytes {
@@ -1159,6 +1441,25 @@ fn hex32(bytes: [u8; 32]) -> String {
         let _ = write!(&mut out, "{byte:02x}");
     }
     out
+}
+
+fn sanitize_forge_identifier(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len().min(80));
+    for ch in raw.chars().take(80) {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        out.insert(0, '_');
+    }
+    if out.is_empty() {
+        "banger_object".to_string()
+    } else {
+        out
+    }
 }
 
 fn sanitize_scene_id(raw: &str) -> String {
@@ -1177,7 +1478,37 @@ fn sanitize_scene_id(raw: &str) -> String {
     }
 }
 
+fn sanitize_scene_ref(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len().min(96));
+    for ch in raw.chars().take(96) {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | ':') {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "banger_default_scene:root".to_string()
+    } else {
+        out
+    }
+}
+
+fn banger_newobject_forge_source(
+    scene_id: &str,
+    object_id: &str,
+    representation: &str,
+    prompt_hash: &str,
+) -> String {
+    let token = sanitize_forge_identifier(&format!(
+        "newobject_{scene_id}_{object_id}_{representation}_{}",
+        &prompt_hash[..12]
+    ));
+    banger_native_render_forge_source(&token)
+}
+
 fn banger_native_render_forge_source(scene_id: &str) -> String {
+    let scene_id = sanitize_forge_identifier(scene_id);
     format!(
         "forge_module:
   module banger_native_render_{scene_id} version 1
@@ -1332,5 +1663,53 @@ mod tests {
             .iter()
             .any(|slot| slot.kind == "meshlet_page" && slot.usage == "storage_read_indirect_draw"));
         assert!(response.render_handoff_hash.len() == 64);
+    }
+
+    #[test]
+    fn prepares_newobject_contract_as_scene_manifest_edit() {
+        let path = fresh_tmp_path("banger-native-engine", "newobject");
+        let _tmp = TmpDir::new(path.clone());
+        let store = Store::open(path).expect("store");
+        let monster = MonsterNode::new(store, MemoryGovernor::new(8 * 1024 * 1024));
+
+        let response = BangerNativeEngine::prepare_newobject_contract(
+            &monster,
+            BangerNewObjectPrepareRequest {
+                scene_id: Some("design_scene".to_string()),
+                object_id: Some("wing_panel".to_string()),
+                parent_id: None,
+                object_prompt: "Create a lightweight SDF wing panel with editable material slots".to_string(),
+                representation: Some("sdf".to_string()),
+                known_fragment_hashes: None,
+                target_frame_ms: Some(16.67),
+                vram_budget_mb: Some(2048),
+                prefer_mesh_shaders: Some(true),
+            },
+        )
+        .expect("newobject contract");
+
+        assert!(response.ok);
+        assert_eq!(response.command, "/newobject_");
+        assert_eq!(response.lane, "native_tandem_render");
+        assert_eq!(response.scene_id, "design_scene");
+        assert_eq!(response.object_id, "wing_panel");
+        assert_eq!(response.representation, "sdf");
+        assert!(response.contract_prepared);
+        assert!(!response.gpu_page_promotion_allowed);
+        assert_ne!(response.base_manifest_hash, response.updated_manifest_hash);
+        assert_eq!(response.newobject_contract_source_hash.len(), 64);
+        assert_eq!(response.newobject_contract_manifest_hash.len(), 64);
+        assert_eq!(response.newobject_contract_proof_hash.len(), 64);
+        assert_eq!(response.edit_hash.len(), 64);
+        assert!(response
+            .editable_scene_manifest
+            .objects
+            .iter()
+            .any(|object| object.object_id == "design_scene:wing_panel"
+                && object.parent_id.as_deref() == Some("design_scene:root")
+                && object.source_artifact_kind == "newobject_contract"
+                && object.representation == "sdf"
+                && object.residency_policy == "pending_contract_no_gpu_pages_until_renderer_promotion"
+                && object.proof_hash.len() == 64));
     }
 }

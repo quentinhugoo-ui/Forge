@@ -69,6 +69,9 @@ Date: 2026-06-14
 2. Route Banger `/newobject_` into the same manifest instead of creating
    renderer-local objects: edits must produce a new Forge contract before GPU
    pages are promoted.
+   Status: started in `BangerNativeEngine::prepare_newobject_contract` as
+   `forge.banger.newobject_prepare.v1`; GPU page promotion remains gated until
+   the renderer consumes the updated editable scene manifest.
 3. Add persistent native pipeline-cache blobs keyed by adapter, driver,
    shader source hash, shader reflection and render-pass ABI.
 4. Replace the placeholder child-surface contract with a verified texture
