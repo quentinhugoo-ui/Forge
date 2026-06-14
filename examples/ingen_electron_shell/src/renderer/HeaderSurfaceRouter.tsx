@@ -49,6 +49,7 @@ function WebExplorerSurface({ surfaces }: { surfaces: HeaderSurfaceContract[] })
 function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const cesiumHostRef = useRef<HTMLDivElement | null>(null);
   const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
+  const [cesiumMounted, setCesiumMounted] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -72,6 +73,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     let cancelled = false;
     let viewer: { destroy: () => void; isDestroyed?: () => boolean } | null = null;
 
+    setCesiumMounted(false);
     void import("cesium")
       .then(async (Cesium) => {
         if (cancelled) return;
@@ -98,7 +100,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
           homeButton: false,
           infoBox: false,
           navigationHelpButton: false,
-          requestRenderMode: true,
+          requestRenderMode: false,
           scene3DOnly: true,
           sceneModePicker: false,
           selectionIndicator: false,
@@ -106,6 +108,9 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
           timeline: false
         });
         const cesiumViewer = viewer as any;
+        setCesiumMounted(true);
+        cesiumViewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#05070a");
+        cesiumViewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#2f6f9f");
         cesiumViewer.scene.globe.enableLighting = true;
         cesiumViewer.scene.skyAtmosphere.show = true;
         const { longitude, latitude, heightMeters, headingDegrees, pitchDegrees, rollDegrees } = initialView;
@@ -145,7 +150,8 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
         });
         cesiumViewer.scene.requestRender();
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error("Banger Cesium viewport failed to mount.", error);
         // Keep the Banger canvas available even if the external tiles provider is still cold.
       });
 
@@ -159,7 +165,11 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
 
   return (
     <section className="surface surface--banger" aria-label={surface.label}>
-      <div ref={cesiumHostRef} className="bangerCesiumViewport" aria-label="Banger Cesium geospatial viewport" />
+      <div
+        ref={cesiumHostRef}
+        className={cesiumMounted ? "bangerCesiumViewport bangerCesiumViewport--mounted" : "bangerCesiumViewport"}
+        aria-label="Banger Cesium geospatial viewport"
+      />
     </section>
   );
 }
