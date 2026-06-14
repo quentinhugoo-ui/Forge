@@ -64,7 +64,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("body.stream = true");
     expect(mainSource).toContain("runOpenRouterChatCompletion(profile, providerUserText, attachments, userMessageId, moduleId, transcript, liveSink)");
     expect(mainSource).toContain("function createAssistantLiveTextSink");
-    expect(mainSource).toContain("const visibleText = agentActionLiveVisibleText(text).trimEnd()");
+    expect(mainSource).toContain("removeRenameSessionCodeActLines(agentActionLiveVisibleText(text))");
     expect(mainSource).toContain("transcriptWithReplacedMessage(params.baseTranscript, liveMessage)");
     expect(mainSource).toContain("shouldStop: (text) => Boolean(extractAgentActionJsonRequest(text))");
     expect(mainSource).toContain("liveTextSink");

@@ -10058,7 +10058,7 @@ function polishedSessionTitle(title: string, reason: string): string {
   }
   const copiedTalk = compact.match(/^(?:parle|parles|parlez)\s+moi\s+de\s+(.+)$/i);
   if (copiedTalk?.[1]) {
-    return normalizeSessionTitle(`Decouverte de ${copiedTalk[1]}`);
+    return normalizeSessionTitle(copiedTalk[1]);
   }
   const words = compact.split(/\s+/).filter(Boolean);
   const hasTitleShape = /\b(de|du|des|sur|pour|avec|dans|analyse|histoire|decouverte|recherche|climat|creation|debug|refonte|plan)\b/i.test(compact);
@@ -10072,7 +10072,7 @@ function polishedSessionTitle(title: string, reason: string): string {
     if (/voyage|vacance|sejour|airbnb|logement|hotel|location/i.test(reason)) {
       return normalizeSessionTitle(`Voyage a ${compact}`);
     }
-    return normalizeSessionTitle(`Decouverte de ${compact}`);
+    return normalizeSessionTitle(compact);
   }
   return compact;
 }
@@ -10585,7 +10585,7 @@ function createAssistantLiveTextSink(params: {
   let lastText = "";
   return {
     onText: (text) => {
-      const visibleText = agentActionLiveVisibleText(text).trimEnd();
+      const visibleText = removeRenameSessionChatter(removeLooseRenameSessionChatter(removeRenameSessionCodeActLines(agentActionLiveVisibleText(text)))).trimEnd();
       const trimmed = [params.prefixText?.trimEnd() ?? "", visibleText]
         .filter((part) => part.length > 0)
         .join("\n\n");

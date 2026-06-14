@@ -46,7 +46,8 @@ describe("session rename CodeAct", () => {
     expect(mainSource).toContain('"$1 $2="');
     expect(mainSource).toContain("function polishedSessionTitle");
     expect(mainSource).not.toContain("applyFirstTurnRuntimeSessionTitle(assistantMessage, session, draft, assistantTitleSource, message.id, requestTranscriptWithUser)");
-    expect(mainSource).toContain("Decouverte de ${compact}");
+    expect(mainSource).not.toContain("Decouverte de ${compact}");
+    expect(mainSource).not.toContain("Decouverte de ${copiedTalk[1]}");
     expect(mainSource).toContain("Histoire de ${copiedHistory[1]}");
     expect(mainSource).toContain("renameChatSession(session, request)");
     expect(mainSource).toContain("archiveSession.title = request.title");
