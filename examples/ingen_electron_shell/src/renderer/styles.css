@@ -11034,7 +11034,7 @@ ol.assistantText__list li::before {
   transform: translateX(calc(100% + 12px));
 }
 
-/* MINI exits in order: side surfaces, header, then the general canvas. */
+/* MINI exits in order: general canvas upward with widget handoff, side surfaces, then header. */
 .shell--widget-mode .titlebar,
 .shell--widget-mode .workspaceHeader,
 .shell--widget-minimizing-sides .leftPanel,
@@ -11144,11 +11144,11 @@ ol.assistantText__list li::before {
 .shell--widget-mode .sidebarLedger,
 .shell--widget-minimizing-canvas .shadowLedger,
 .shell--widget-mode .shadowLedger {
-  transform: translate3d(0, calc(100vh + 96px), 0);
+  transform: translate3d(0, calc(-100vh - 96px), 0);
 }
 
 .shell--widget-minimizing-canvas::before {
-  transform: translate3d(0, calc(100vh + 96px), 0);
+  transform: translate3d(0, calc(-100vh - 96px), 0);
 }
 
 @media (max-width: 1220px) {

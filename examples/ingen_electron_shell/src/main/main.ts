@@ -11000,9 +11000,9 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   console.info("Applying native widget window bounds", { id: window.id, bounds, plannedTaskbarHidden: true });
   traceWidgetTaskbarStep("apply-widget-bounds", { id: window.id, bounds, plannedTaskbarHidden: true });
   clearWidgetWindowBoundsAnimationTimer();
-  window.setBounds(bounds, false);
   window.show();
   window.focus();
+  animateNativeWidgetWindowBounds(window, bounds, WIDGET_TASKBAR_SLIDE_MS);
   if (!widgetTaskbarHidden) {
     armNativeWidgetTaskbarAutoHide(window);
   }

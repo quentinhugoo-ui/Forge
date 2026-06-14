@@ -75,11 +75,11 @@ const GOOGLE_EARTH_DOM_DEFAULT_URL =
 const WIDGET_SIDE_EXIT_MS = 420;
 const WIDGET_HEADER_EXIT_MS = 360;
 const WIDGET_CANVAS_EXIT_MS = 860;
-const WIDGET_SURFACE_CLOSE_DELAY_MS = WIDGET_SIDE_EXIT_MS + WIDGET_HEADER_EXIT_MS + WIDGET_CANVAS_EXIT_MS;
+const WIDGET_SURFACE_CLOSE_DELAY_MS = WIDGET_CANVAS_EXIT_MS + WIDGET_SIDE_EXIT_MS + WIDGET_HEADER_EXIT_MS;
 const WIDGET_NATIVE_SHRINK_LEAD_MS = 80;
 const WIDGET_NATIVE_SETTLE_MS = 260;
 const WIDGET_HANDOFF_SETTLE_MS = WIDGET_NATIVE_SHRINK_LEAD_MS + WIDGET_NATIVE_SETTLE_MS;
-const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_NATIVE_SHRINK_LEAD_MS;
+const WIDGET_NATIVE_SHRINK_DELAY_MS = 0;
 const WIDGET_VISUAL_SETTLE_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_HANDOFF_SETTLE_MS;
 
 type WidgetLayoutLock = {
@@ -381,9 +381,9 @@ export function App() {
     isLlmProviderCanvas ? "shell--llm-provider" : "",
     isBrainCanvas ? "shell--brain-canvas" : "",
     isBangerPage ? "shell--banger-page" : "",
-    widgetMinimizingPhase !== "" ? "shell--widget-minimizing shell--widget-minimizing-sides" : "",
-    widgetMinimizingPhase === "header" || widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-header" : "",
-    widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-canvas" : "",
+    widgetMinimizingPhase !== "" ? "shell--widget-minimizing shell--widget-minimizing-canvas" : "",
+    widgetMinimizingPhase === "sides" || widgetMinimizingPhase === "header" ? "shell--widget-minimizing-sides" : "",
+    widgetMinimizingPhase === "header" ? "shell--widget-minimizing-header" : "",
     widgetMode ? "shell--widget-mode" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
@@ -974,7 +974,7 @@ export function App() {
 
     void (async () => {
       setWidgetLayoutLock(readWidgetLayoutLock());
-      setWidgetMinimizingPhase("sides");
+      setWidgetMinimizingPhase("canvas");
       setWidgetMode(false);
       const windowControls = globalThis.window?.forgeWindowControls;
       const nativeWidgetModeReady = windowControls?.setWidgetMode?.(true, WIDGET_NATIVE_SHRINK_DELAY_MS)
@@ -982,6 +982,12 @@ export function App() {
           console.warn("Failed to arm native widget mode", error);
           return false;
         });
+
+      await waitForWidgetMotion(WIDGET_CANVAS_EXIT_MS);
+      if (widgetModeSequenceRef.current !== sequenceToken) {
+        return;
+      }
+      setWidgetMinimizingPhase("sides");
       if (snapshot.leftPanelOpen) {
         void headerShadowStore
           .dispatchControl({ id: "left-panel", command: "toggle_left_panel" })
@@ -995,12 +1001,6 @@ export function App() {
       setWidgetMinimizingPhase("header");
 
       await waitForWidgetMotion(WIDGET_HEADER_EXIT_MS);
-      if (widgetModeSequenceRef.current !== sequenceToken) {
-        return;
-      }
-      setWidgetMinimizingPhase("canvas");
-
-      await waitForWidgetMotion(WIDGET_CANVAS_EXIT_MS);
       if (widgetModeSequenceRef.current !== sequenceToken) {
         return;
       }
