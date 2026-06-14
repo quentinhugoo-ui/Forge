@@ -1081,13 +1081,12 @@ export function App() {
                   if (event.button !== 0) {
                     return;
                   }
-                  event.preventDefault();
                   event.stopPropagation();
-                  void dispatchWindowControl(control);
                 }}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
+                  void dispatchWindowControl(control);
                 }}
                 onKeyDown={(event) => {
                   if (event.key !== "Enter" && event.key !== " ") {
