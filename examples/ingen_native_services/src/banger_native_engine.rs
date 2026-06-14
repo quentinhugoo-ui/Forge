@@ -138,6 +138,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub raster_work_queue: BangerNativeRasterWorkQueue,
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
+    pub frame_submission_packet: BangerNativeFrameSubmissionPacket,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
@@ -655,6 +656,49 @@ pub struct BangerNativeRasterWorkItem {
     pub write_barrier: &'static str,
     pub bind_group_hash: String,
     pub job_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeFrameSubmissionPacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub texture_bridge_hash: String,
+    pub render_graph_hash: String,
+    pub raster_queue_hash: String,
+    pub color_target_hash: String,
+    pub depth_target_hash: String,
+    pub render_target_state_hash: String,
+    pub command_buffer_hash: String,
+    pub frame_schedule_hash: String,
+    pub presentable_frame_hash: String,
+    pub submission_hash: String,
+    pub pass_count: usize,
+    pub raster_job_count: usize,
+    pub command_count: usize,
+    pub submitted_queue_count: usize,
+    pub commands: Vec<BangerNativeFrameCommandPacket>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeFrameCommandPacket {
+    pub command_id: String,
+    pub order: u32,
+    pub pass_name: &'static str,
+    pub stage: &'static str,
+    pub queue_lane: &'static str,
+    pub resource_read_count: usize,
+    pub resource_write_count: usize,
+    pub raster_job_count: usize,
+    pub first_raster_job_hash: Option<String>,
+    pub last_raster_job_hash: Option<String>,
+    pub input_hash: String,
+    pub output_target_hash: String,
+    pub barrier_hash: String,
+    pub command_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1533,6 +1577,14 @@ impl BangerNativeEngine {
             viewport_width,
             viewport_height,
         );
+        let frame_submission_packet = build_frame_submission_packet(
+            &prepared,
+            &texture_bridge_contract,
+            &render_graph_compilation,
+            &raster_work_queue,
+            &radiance_schedule_manifest,
+            &gaussian_splat_layer_manifest,
+        );
         let benchmark_promotion_manifest = build_benchmark_promotion_manifest(
             &prepared,
             &render_graph,
@@ -1559,6 +1611,7 @@ impl BangerNativeEngine {
             &raster_work_queue,
             &radiance_schedule_manifest,
             &gaussian_splat_layer_manifest,
+            &frame_submission_packet,
             &render_graph_compilation,
         );
         let render_pass_count = render_graph.len();
@@ -1611,6 +1664,7 @@ impl BangerNativeEngine {
             raster_work_queue,
             radiance_schedule_manifest,
             gaussian_splat_layer_manifest,
+            frame_submission_packet,
             frame_graph_bindings,
             artifacts,
             verifier: BangerNativeRenderVerifier {
@@ -3051,6 +3105,136 @@ fn build_texture_bridge_contract(
     }
 }
 
+fn build_frame_submission_packet(
+    prepared: &MonsterPreparedCompute,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    raster_work_queue: &BangerNativeRasterWorkQueue,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
+) -> BangerNativeFrameSubmissionPacket {
+    let color_target_hash = frame_submission_target_hash(
+        "color",
+        texture_bridge_contract.width,
+        texture_bridge_contract.height,
+        texture_bridge_contract.pixel_format,
+        &texture_bridge_contract.frame_hash,
+    );
+    let depth_target_hash = frame_submission_target_hash(
+        "depth",
+        texture_bridge_contract.width,
+        texture_bridge_contract.height,
+        "depth32float",
+        &texture_bridge_contract.viewport_contract_hash,
+    );
+    let render_target_state_hash = frame_submission_render_target_state_hash(
+        texture_bridge_contract,
+        &color_target_hash,
+        &depth_target_hash,
+    );
+    let commands = render_graph_compilation
+        .compiled_passes
+        .iter()
+        .map(|pass| {
+            let pass_jobs = raster_work_queue
+                .jobs
+                .iter()
+                .filter(|job| job.pass_name == pass.pass_name)
+                .collect::<Vec<_>>();
+            let queue_lane = frame_submission_queue_lane(pass, &pass_jobs);
+            let first_raster_job_hash = pass_jobs.first().map(|job| job.job_hash.clone());
+            let last_raster_job_hash = pass_jobs.last().map(|job| job.job_hash.clone());
+            let input_hash = frame_submission_command_input_hash(
+                pass,
+                &pass_jobs,
+                radiance_schedule_manifest,
+                gaussian_splat_layer_manifest,
+            );
+            let output_target_hash = frame_submission_command_output_hash(
+                pass,
+                &color_target_hash,
+                &depth_target_hash,
+                &render_target_state_hash,
+            );
+            let barrier_hash =
+                frame_submission_command_barrier_hash(pass, queue_lane, raster_work_queue);
+            let command_id = format!("frame_cmd_{:03}_{}", pass.order, pass.pass_name);
+            let command_hash = frame_submission_command_hash(
+                &command_id,
+                pass,
+                queue_lane,
+                pass_jobs.len(),
+                &input_hash,
+                &output_target_hash,
+                &barrier_hash,
+            );
+            BangerNativeFrameCommandPacket {
+                command_id,
+                order: pass.order,
+                pass_name: pass.pass_name,
+                stage: pass.stage,
+                queue_lane,
+                resource_read_count: pass.reads.len(),
+                resource_write_count: pass.writes.len(),
+                raster_job_count: pass_jobs.len(),
+                first_raster_job_hash,
+                last_raster_job_hash,
+                input_hash,
+                output_target_hash,
+                barrier_hash,
+                command_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let command_buffer_hash = frame_submission_command_buffer_hash(&commands);
+    let frame_schedule_hash = frame_submission_schedule_hash(render_graph_compilation, &commands);
+    let presentable_frame_hash = frame_submission_presentable_frame_hash(
+        texture_bridge_contract,
+        &render_target_state_hash,
+        &command_buffer_hash,
+        &frame_schedule_hash,
+    );
+    let submission_hash = frame_submission_packet_hash(
+        prepared,
+        texture_bridge_contract,
+        render_graph_compilation,
+        raster_work_queue,
+        &color_target_hash,
+        &depth_target_hash,
+        &render_target_state_hash,
+        &command_buffer_hash,
+        &frame_schedule_hash,
+        &presentable_frame_hash,
+        &commands,
+    );
+    let submitted_queue_count = commands
+        .iter()
+        .map(|command| command.queue_lane)
+        .collect::<BTreeSet<_>>()
+        .len();
+    BangerNativeFrameSubmissionPacket {
+        schema: "forge.banger.native_frame_submission_packet.v1",
+        authority: "banger_render_graph_raster_queue_to_native_frame_submission",
+        clean_room_basis: "local_unreal_sparse_rdg_rhi_submit_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        texture_bridge_hash: texture_bridge_contract.bridge_proof_hash.clone(),
+        render_graph_hash: render_graph_compilation.graph_hash.clone(),
+        raster_queue_hash: raster_work_queue.queue_hash.clone(),
+        color_target_hash,
+        depth_target_hash,
+        render_target_state_hash,
+        command_buffer_hash,
+        frame_schedule_hash,
+        presentable_frame_hash,
+        submission_hash,
+        pass_count: render_graph_compilation.pass_count,
+        raster_job_count: raster_work_queue.jobs.len(),
+        command_count: commands.len(),
+        submitted_queue_count,
+        commands,
+    }
+}
+
 fn texture_bridge_backend_can_share(backend: &str) -> bool {
     let backend = backend.to_ascii_lowercase();
     backend.contains("vulkan") || backend.contains("dx12") || backend.contains("metal")
@@ -3515,6 +3699,208 @@ fn raster_work_queue_hash(
     h.update(dispatch_plan_hash.as_bytes());
     for job in jobs {
         h.update(job.job_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn frame_submission_target_hash(
+    target_kind: &str,
+    width: u32,
+    height: u32,
+    format: &str,
+    parent_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_submission.target.v1\0");
+    h.update(target_kind.as_bytes());
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(format.as_bytes());
+    h.update(parent_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn frame_submission_render_target_state_hash(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    color_target_hash: &str,
+    depth_target_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_submission.render_target_state.v1\0");
+    h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
+    h.update(texture_bridge_contract.width.to_le_bytes());
+    h.update(texture_bridge_contract.height.to_le_bytes());
+    h.update(texture_bridge_contract.pixel_format.as_bytes());
+    h.update(color_target_hash.as_bytes());
+    h.update(depth_target_hash.as_bytes());
+    for usage in &texture_bridge_contract.texture_usage {
+        h.update(usage.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn frame_submission_queue_lane(
+    pass: &BangerNativeRenderGraphCompiledPass,
+    pass_jobs: &[&BangerNativeRasterWorkItem],
+) -> &'static str {
+    if let Some(job) = pass_jobs.first() {
+        job.queue_lane
+    } else if pass.async_compute_candidate {
+        "async_compute"
+    } else {
+        "graphics"
+    }
+}
+
+fn frame_submission_command_input_hash(
+    pass: &BangerNativeRenderGraphCompiledPass,
+    pass_jobs: &[&BangerNativeRasterWorkItem],
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_submission.command_input.v1\0");
+    h.update(pass.pass_hash.as_bytes());
+    for read in &pass.reads {
+        h.update(read.as_bytes());
+    }
+    for job in pass_jobs {
+        h.update(job.job_hash.as_bytes());
+    }
+    if pass.stage == "lighting_cache" {
+        h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    }
+    if pass.stage == "material_bind" {
+        h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
+        h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn frame_submission_command_output_hash(
+    pass: &BangerNativeRenderGraphCompiledPass,
+    color_target_hash: &str,
+    depth_target_hash: &str,
+    render_target_state_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_submission.command_output.v1\0");
+    h.update(pass.pass_hash.as_bytes());
+    for write in &pass.writes {
+        h.update(write.as_bytes());
+    }
+    h.update(color_target_hash.as_bytes());
+    h.update(depth_target_hash.as_bytes());
+    h.update(render_target_state_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn frame_submission_command_barrier_hash(
+    pass: &BangerNativeRenderGraphCompiledPass,
+    queue_lane: &str,
+    raster_work_queue: &BangerNativeRasterWorkQueue,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_submission.command_barrier.v1\0");
+    h.update(pass.pass_hash.as_bytes());
+    h.update(queue_lane.as_bytes());
+    h.update(raster_work_queue.queue_barrier_hash.as_bytes());
+    h.update(raster_work_queue.dispatch_plan_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn frame_submission_command_hash(
+    command_id: &str,
+    pass: &BangerNativeRenderGraphCompiledPass,
+    queue_lane: &str,
+    raster_job_count: usize,
+    input_hash: &str,
+    output_target_hash: &str,
+    barrier_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_submission.command.v1\0");
+    h.update(command_id.as_bytes());
+    h.update(pass.order.to_le_bytes());
+    h.update(pass.pass_hash.as_bytes());
+    h.update(queue_lane.as_bytes());
+    h.update((raster_job_count as u64).to_le_bytes());
+    h.update(input_hash.as_bytes());
+    h.update(output_target_hash.as_bytes());
+    h.update(barrier_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn frame_submission_command_buffer_hash(commands: &[BangerNativeFrameCommandPacket]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_submission.command_buffer.v1\0");
+    for command in commands {
+        h.update(command.command_hash.as_bytes());
+        h.update(command.queue_lane.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn frame_submission_schedule_hash(
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    commands: &[BangerNativeFrameCommandPacket],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_submission.schedule.v1\0");
+    h.update(render_graph_compilation.compiled_order_hash.as_bytes());
+    h.update(render_graph_compilation.barrier_plan_hash.as_bytes());
+    for command in commands {
+        h.update(command.command_id.as_bytes());
+        h.update(command.order.to_le_bytes());
+        h.update(command.queue_lane.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn frame_submission_presentable_frame_hash(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    render_target_state_hash: &str,
+    command_buffer_hash: &str,
+    frame_schedule_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_submission.presentable_frame.v1\0");
+    h.update(texture_bridge_contract.frame_hash.as_bytes());
+    h.update(texture_bridge_contract.viewport_contract_hash.as_bytes());
+    h.update(render_target_state_hash.as_bytes());
+    h.update(command_buffer_hash.as_bytes());
+    h.update(frame_schedule_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn frame_submission_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    raster_work_queue: &BangerNativeRasterWorkQueue,
+    color_target_hash: &str,
+    depth_target_hash: &str,
+    render_target_state_hash: &str,
+    command_buffer_hash: &str,
+    frame_schedule_hash: &str,
+    presentable_frame_hash: &str,
+    commands: &[BangerNativeFrameCommandPacket],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_frame_submission_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(raster_work_queue.queue_hash.as_bytes());
+    h.update(color_target_hash.as_bytes());
+    h.update(depth_target_hash.as_bytes());
+    h.update(render_target_state_hash.as_bytes());
+    h.update(command_buffer_hash.as_bytes());
+    h.update(frame_schedule_hash.as_bytes());
+    h.update(presentable_frame_hash.as_bytes());
+    for command in commands {
+        h.update(command.command_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -7001,6 +7387,7 @@ fn render_handoff_hash(
     raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
 ) -> String {
     let mut h = Sha256::new();
@@ -7028,6 +7415,9 @@ fn render_handoff_hash(
     h.update(radiance_schedule_manifest.invalidation_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
+    h.update(frame_submission_packet.submission_hash.as_bytes());
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    h.update(frame_submission_packet.command_buffer_hash.as_bytes());
     h.update(render_graph_compilation.graph_hash.as_bytes());
     h.update(render_graph_compilation.compiled_order_hash.as_bytes());
     h.update(render_graph_compilation.resource_lifetime_hash.as_bytes());
@@ -7730,6 +8120,71 @@ mod tests {
                 && job.threadgroup_count > 0
                 && job.indirect_draw_args[0] > 0
                 && matches!(job.queue_lane, "graphics_mesh_shader" | "async_compute_raster")));
+        assert_eq!(
+            response.frame_submission_packet.schema,
+            "forge.banger.native_frame_submission_packet.v1"
+        );
+        assert_eq!(
+            response.frame_submission_packet.authority,
+            "banger_render_graph_raster_queue_to_native_frame_submission"
+        );
+        assert!(response
+            .frame_submission_packet
+            .clean_room_basis
+            .contains("local_unreal_sparse_rdg_rhi_submit"));
+        assert_eq!(
+            response.frame_submission_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.frame_submission_packet.texture_bridge_hash,
+            response.texture_bridge_contract.bridge_proof_hash
+        );
+        assert_eq!(
+            response.frame_submission_packet.render_graph_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert_eq!(
+            response.frame_submission_packet.raster_queue_hash,
+            response.raster_work_queue.queue_hash
+        );
+        assert_eq!(
+            response.frame_submission_packet.pass_count,
+            response.render_graph_compilation.pass_count
+        );
+        assert_eq!(
+            response.frame_submission_packet.raster_job_count,
+            response.raster_work_queue.jobs.len()
+        );
+        assert_eq!(
+            response.frame_submission_packet.command_count,
+            response.frame_submission_packet.commands.len()
+        );
+        assert_eq!(
+            response.frame_submission_packet.command_count,
+            response.render_graph_compilation.compiled_passes.len()
+        );
+        assert!(response.frame_submission_packet.submitted_queue_count > 0);
+        assert_eq!(response.frame_submission_packet.color_target_hash.len(), 64);
+        assert_eq!(response.frame_submission_packet.depth_target_hash.len(), 64);
+        assert_eq!(response.frame_submission_packet.render_target_state_hash.len(), 64);
+        assert_eq!(response.frame_submission_packet.command_buffer_hash.len(), 64);
+        assert_eq!(response.frame_submission_packet.frame_schedule_hash.len(), 64);
+        assert_eq!(response.frame_submission_packet.presentable_frame_hash.len(), 64);
+        assert_eq!(response.frame_submission_packet.submission_hash.len(), 64);
+        assert!(response
+            .frame_submission_packet
+            .commands
+            .iter()
+            .all(|command| command.command_hash.len() == 64
+                && command.input_hash.len() == 64
+                && command.output_target_hash.len() == 64
+                && command.barrier_hash.len() == 64
+                && command.resource_write_count > 0
+                && matches!(
+                    command.queue_lane,
+                    "graphics_mesh_shader" | "async_compute_raster" | "graphics" | "async_compute"
+                )));
         assert_eq!(
             response.radiance_schedule_manifest.schema,
             "forge.banger.native_radiance_schedule_manifest.v1"
