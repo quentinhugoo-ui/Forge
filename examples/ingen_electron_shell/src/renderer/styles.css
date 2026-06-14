@@ -11094,6 +11094,16 @@ ol.assistantText__list li::before {
   transition: transform var(--widget-canvas-exit-motion), opacity var(--widget-canvas-exit-motion);
 }
 
+.shell--widget-minimizing-canvas .composer,
+.shell--widget-minimizing-canvas .bottomControls {
+  transition: none;
+}
+
+.shell--widget-minimizing .bottomControls__widgetButton--active {
+  color: color-mix(in oklab, var(--forge-muted), transparent 18%) !important;
+  opacity: 0.82;
+}
+
 .shell--widget-minimizing-header .titlebar,
 .shell--widget-mode .titlebar,
 .shell--widget-minimizing-header .workspaceHeader,
