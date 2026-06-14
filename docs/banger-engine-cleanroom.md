@@ -133,6 +133,27 @@ Date: 2026-06-14
     `forge.banger.benchmark_promotion_manifest.v1`; every render handoff now
     carries deterministic latency, VRAM, cache-reuse, proof-reproducibility and
     visual-capability gates before Banger GPU promotion is allowed.
+11. Promote the Unreal/RDG clean-room lessons into Banger frame contracts:
+    render graph resources, pass states, subresource transitions, external
+    access ops, frame submission, RHI queue packets, fences, present contracts
+    and backend execution must be hash-addressed.
+    Status: implemented in `examples/ingen_native_services/src/banger_native_engine.rs`
+    through `BangerNativeRenderGraphCompilation` v3,
+    `BangerNativeRhiSubmitPacket` v3,
+    `BangerNativeBackendExecutionPacket` v3 and
+    `BangerNativeGpuExecutionReceipt` v3.
+12. Make the final frame handoff a compact manifest, not a loose collection of
+    packet hashes.
+    Status: implemented as `BangerNativeFrameHandoffManifest` v2. The public
+    `render_handoff_hash` now points at this manifest and binds Monster source
+    proof, render graph, texture bridge, frame submission, RHI submit, GPU
+    receipt, backend execution, page residency and temporal history.
+13. Keep the next promotion gate narrow: replace proof-only backend contracts
+    with a real native backend execution slice only when it can still emit the
+    same hashes and receipts.
+    Status: next. Candidate slice: wgpu command encoder execution for the
+    existing frame submission/RHI/backend contracts, with deterministic
+    framebuffer witness samples and no Electron canvas authority.
 
 ## Google Photorealistic 3D Tiles Lane
 

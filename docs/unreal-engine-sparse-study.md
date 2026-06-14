@@ -56,6 +56,18 @@ Clean-room extraction applied in Forge:
 - Banger implementation: `BangerNativeVirtualShadowPacket` derives shadow pages from Lumen/Nanite visibility and binds page table, cache, invalidation, projection and light-grid hashes.
 - MegaLights/stochastic lighting lesson: direct lighting needs compact light clusters, stable sample sequences, shadow masks, denoiser tiles and resolve tiles tied to the same light-grid state.
 - Banger implementation: `BangerNativeDirectLightingPacket` derives direct-lighting samples from virtual shadow pages and binds light-grid, sampling, shadow-mask, denoise and resolve hashes.
+- Substrate/TSR lesson: material closures and temporal history must be first-class frame resources, not hidden shader side effects.
+- Banger implementation: `BangerNativeMaterialClosurePacket` and `BangerNativeTemporalHistoryPacket` bind Substrate-style closure tiles, material texture tables, motion vectors, disocclusion, rejection, resurrection and accumulation hashes.
+- Virtualized residency lesson: Nanite, virtual shadow maps and material payloads need a shared feedback compaction and physical-pool pressure model.
+- Banger implementation: `BangerNativePageResidencyAllocatorPacket` v3 unifies Nanite, VSM and material residency with compacted feedback, stale-feedback detection, deferred page-table updates, aliasing candidates, pool receipts and validation hashes.
+- RDG v3 lesson: a serious render graph must track pass-resource state, subresource transitions and external-access operations, then make those visible to later RHI/backend stages.
+- Banger implementation: `BangerNativeRenderGraphCompilation` v3 now exposes pass resource states, subresource transitions, external access ops, lifetime hashes and validation receipts.
+- RHI v3 lesson: queue packets, resource transitions, queue fence edges and present contracts must be explicit before backend specialization.
+- Banger implementation: `BangerNativeRhiSubmitPacket` v3 derives queue packets, RHI transitions, fence edges and present contracts from frame submission and render graph contracts.
+- Backend execution v3 lesson: descriptor bindings, command allocators and backend-specific resource barriers are execution artifacts, not incidental backend locals.
+- Banger implementation: `BangerNativeBackendExecutionPacket` v3 records descriptor bindings, command allocator records, backend resource transitions, validation receipts and nonblank execution gates.
+- Frame proof lesson: submit readiness is not enough; the final handoff needs one compact manifest joining graph, RHI, GPU receipt, backend execution, residency and temporal proof.
+- Banger implementation: `BangerNativeFrameHandoffManifest` v2 is now the public `render_handoff_hash` authority for native tandem render handoffs.
 
 Clean-room rule:
 
