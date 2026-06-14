@@ -9225,18 +9225,29 @@ ol.assistantText__list li::before {
   vector-effect: non-scaling-stroke;
 }
 
-.hardwareGauge__area {
-  opacity: 0.86;
+.hardwareGauge__temperatureArea,
+.hardwareGauge__activityArea {
+  opacity: 0.92;
 }
 
-.hardwareGauge__line {
+.hardwareGauge__activityLine,
+.hardwareGauge__temperatureLine {
   fill: none;
-  stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 8px color-mix(in oklab, currentColor, transparent 48%));
+}
+
+.hardwareGauge__activityLine {
+  stroke: #f1b735;
+  stroke-width: 1.55;
+  opacity: 0.82;
+  filter: drop-shadow(0 0 7px rgba(241, 183, 53, 0.34));
+}
+
+.hardwareGauge__temperatureLine {
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 8px rgba(255, 72, 55, 0.42));
 }
 
 .hardwareGauge__range {

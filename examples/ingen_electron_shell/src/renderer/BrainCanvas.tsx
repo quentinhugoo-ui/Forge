@@ -927,13 +927,21 @@ function hardwareGaugeLevel(metric: HardwareMetric, min: number, max: number): n
   return clampNumber(((metric.value - min) / (max - min)) * 100, 0, 100);
 }
 
-function hardwareGaugePath(samples: HardwareGaugeSample[], min: number, max: number, width = 278, height = 82): string {
+function hardwareGaugeSeriesPath(
+  samples: HardwareGaugeSample[],
+  readValue: (sample: HardwareGaugeSample) => number | null,
+  min: number,
+  max: number,
+  width = 278,
+  height = 82
+): string {
   const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
-  if (visible.length === 0) return "";
+  if (visible.length === 0 || max <= min) return "";
   const denominator = Math.max(1, visible.length - 1);
   return visible
     .map((sample, index) => {
-      const value = sample.temperature === null ? min : clampNumber(sample.temperature, min, max);
+      const rawValue = readValue(sample);
+      const value = rawValue === null ? min : clampNumber(rawValue, min, max);
       const x = (index / denominator) * width;
       const y = height - ((value - min) / (max - min)) * height;
       return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
@@ -941,12 +949,35 @@ function hardwareGaugePath(samples: HardwareGaugeSample[], min: number, max: num
     .join(" ");
 }
 
-function hardwareGaugeAreaPath(samples: HardwareGaugeSample[], min: number, max: number, width = 278, height = 82): string {
-  const line = hardwareGaugePath(samples, min, max, width, height);
+function hardwareGaugeAreaPath(
+  samples: HardwareGaugeSample[],
+  readValue: (sample: HardwareGaugeSample) => number | null,
+  min: number,
+  max: number,
+  width = 278,
+  height = 82
+): string {
+  const line = hardwareGaugeSeriesPath(samples, readValue, min, max, width, height);
   if (!line) return "";
   const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
   const lastX = visible.length <= 1 ? 0 : width;
   return `M 0 ${height} ${line.replace(/^M/, "L")} L ${lastX} ${height} Z`;
+}
+
+function hardwareTemperaturePath(samples: HardwareGaugeSample[], min: number, max: number): string {
+  return hardwareGaugeSeriesPath(samples, (sample) => sample.temperature, min, max);
+}
+
+function hardwareTemperatureAreaPath(samples: HardwareGaugeSample[], min: number, max: number): string {
+  return hardwareGaugeAreaPath(samples, (sample) => sample.temperature, min, max);
+}
+
+function hardwareActivityPath(samples: HardwareGaugeSample[]): string {
+  return hardwareGaugeSeriesPath(samples, (sample) => sample.percent, 0, 100);
+}
+
+function hardwareActivityAreaPath(samples: HardwareGaugeSample[]): string {
+  return hardwareGaugeAreaPath(samples, (sample) => sample.percent, 0, 100);
 }
 
 function hardwareTemperatureMinMax(samples: HardwareGaugeSample[]): { min: number | null; max: number | null } {
@@ -1037,8 +1068,10 @@ async function requestHardwareTelemetry(): Promise<HardwareTelemetrySnapshot> {
 
 function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; samples: HardwareGaugeSample[] }) {
   const level = hardwareGaugeLevel(card.temperature, card.min, card.max);
-  const linePath = hardwareGaugePath(samples, card.min, card.max);
-  const areaPath = hardwareGaugeAreaPath(samples, card.min, card.max);
+  const temperatureLinePath = hardwareTemperaturePath(samples, card.min, card.max);
+  const temperatureAreaPath = hardwareTemperatureAreaPath(samples, card.min, card.max);
+  const activityLinePath = hardwareActivityPath(samples);
+  const activityAreaPath = hardwareActivityAreaPath(samples);
   const minMax = hardwareTemperatureMinMax(samples);
   const isUnavailable = card.temperature.value === null;
   return (
@@ -1051,14 +1084,32 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
         <div className="hardwareGauge__screen">
           <svg viewBox="0 0 278 82" preserveAspectRatio="none" aria-hidden="true">
             <defs>
-              <linearGradient id={`hardwareGaugeFill-${card.id}`} x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="currentColor" stopOpacity="0.28" />
-                <stop offset="100%" stopColor="currentColor" stopOpacity="0.02" />
+              <linearGradient id={`hardwareGaugeTempStroke-${card.id}`} x1="0" x2="0" y1="82" y2="0" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#f1b735" />
+                <stop offset="54%" stopColor="#ff8a00" />
+                <stop offset="100%" stopColor="#ff315f" />
+              </linearGradient>
+              <linearGradient id={`hardwareGaugeTempFill-${card.id}`} x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="#ff315f" stopOpacity="0.3" />
+                <stop offset="62%" stopColor="#ff8a00" stopOpacity="0.12" />
+                <stop offset="100%" stopColor="#f1b735" stopOpacity="0.02" />
+              </linearGradient>
+              <linearGradient id={`hardwareGaugeActivityFill-${card.id}`} x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="#f1b735" stopOpacity="0.22" />
+                <stop offset="100%" stopColor="#f1b735" stopOpacity="0.02" />
               </linearGradient>
             </defs>
             <path className="hardwareGauge__gridLine" d="M 0 20.5 H 278 M 0 41 H 278 M 0 61.5 H 278" />
-            {areaPath ? <path className="hardwareGauge__area" d={areaPath} fill={`url(#hardwareGaugeFill-${card.id})`} /> : null}
-            {linePath ? <path className="hardwareGauge__line" d={linePath} /> : null}
+            {activityAreaPath ? (
+              <path className="hardwareGauge__activityArea" d={activityAreaPath} fill={`url(#hardwareGaugeActivityFill-${card.id})`} />
+            ) : null}
+            {temperatureAreaPath ? (
+              <path className="hardwareGauge__temperatureArea" d={temperatureAreaPath} fill={`url(#hardwareGaugeTempFill-${card.id})`} />
+            ) : null}
+            {activityLinePath ? <path className="hardwareGauge__activityLine" d={activityLinePath} /> : null}
+            {temperatureLinePath ? (
+              <path className="hardwareGauge__temperatureLine" d={temperatureLinePath} stroke={`url(#hardwareGaugeTempStroke-${card.id})`} />
+            ) : null}
           </svg>
         </div>
         <div className="hardwareGauge__range">
