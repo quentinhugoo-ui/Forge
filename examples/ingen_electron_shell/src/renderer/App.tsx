@@ -937,7 +937,12 @@ export function App() {
       setWidgetLayoutLock(readWidgetLayoutLock());
       setWidgetMinimizingPhase("sides");
       setWidgetMode(false);
-      void globalThis.window?.forgeWindowControls?.setWidgetMode?.(true, WIDGET_NATIVE_SHRINK_DELAY_MS);
+      const windowControls = globalThis.window?.forgeWindowControls;
+      const nativeWidgetModeReady = windowControls?.setWidgetMode?.(true, WIDGET_NATIVE_SHRINK_DELAY_MS)
+        .catch((error: unknown) => {
+          console.warn("Failed to arm native widget mode", error);
+          return false;
+        });
       if (snapshot.leftPanelOpen) {
         void headerShadowStore
           .dispatchControl({ id: "left-panel", command: "toggle_left_panel" })
@@ -955,7 +960,6 @@ export function App() {
         return;
       }
       setWidgetMinimizingPhase("canvas");
-      void globalThis.window?.forgeWindowControls?.setWidgetTaskbarAutoHide?.(true);
 
       await waitForWidgetMotion(WIDGET_CANVAS_EXIT_MS);
       if (widgetModeSequenceRef.current !== sequenceToken) {
@@ -980,6 +984,21 @@ export function App() {
       void globalThis.window?.forgeShell?.hideNativeMaps?.();
       if (activeProfileCanvas) {
         void closeProfileCanvas();
+      }
+      const nativeWidgetAccepted = await nativeWidgetModeReady;
+      if (widgetModeSequenceRef.current !== sequenceToken) {
+        return;
+      }
+      if (nativeWidgetAccepted === false) {
+        console.warn("Native widget mode was not accepted; skipping Windows taskbar auto-hide.");
+        return;
+      }
+      const taskbarHidden = await windowControls?.setWidgetTaskbarAutoHide?.(true).catch((error: unknown) => {
+        console.warn("Failed to enable Windows taskbar auto-hide for widget mode", error);
+        return false;
+      });
+      if (taskbarHidden !== true) {
+        console.warn("Windows taskbar auto-hide was not verified for widget mode.");
       }
     })();
   }, [activeProfileCanvas, closeProfileCanvas, snapshot.leftPanelOpen]);

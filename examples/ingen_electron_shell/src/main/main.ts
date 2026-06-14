@@ -10583,6 +10583,16 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.focus();
 }
 
+function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
+  if (window.isDestroyed() || widgetWindowRestoreState === null) {
+    return;
+  }
+  clearWidgetWindowBoundsAnimationTimer();
+  const bounds = widgetWindowBounds(window);
+  console.info("Settling native widget window bounds", { id: window.id, bounds, taskbarHidden: widgetTaskbarHidden });
+  window.setBounds(bounds, false);
+}
+
 function sanitizeWidgetHitRegions(value: unknown, window: BrowserWindow): Electron.Rectangle[] {
   if (!Array.isArray(value)) {
     return [];
@@ -10787,7 +10797,7 @@ $visiblyHidden = $rectFound -and (
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], {
     encoding: "utf8",
     stdio: "pipe",
-    timeout: 2_000,
+    timeout: 8_000,
     windowsHide: true
   });
   if (result.status !== 0) {
@@ -10922,7 +10932,11 @@ function setNativeWindowWidgetTaskbarAutoHide(event: Electron.IpcMainInvokeEvent
     if (widgetWindowRestoreState === null) {
       return false;
     }
-    return setWidgetTaskbarHidden(true);
+    const accepted = setWidgetTaskbarHidden(true);
+    if (accepted) {
+      settleNativeWidgetWindowBounds(window);
+    }
+    return accepted;
   }
   return restoreWidgetTaskbarState();
 }
@@ -10932,10 +10946,18 @@ function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): bo
     console.warn("Blocked window widget taskbar toggle from invalid sender", event.senderFrame?.url ?? "");
     return false;
   }
+  const window = senderNativeWindow(event);
+  if (!window || window.isDestroyed()) {
+    return false;
+  }
   if (widgetWindowRestoreState === null) {
     return false;
   }
-  return setWidgetTaskbarHidden(!widgetTaskbarHidden);
+  const accepted = setWidgetTaskbarHidden(!widgetTaskbarHidden);
+  if (accepted) {
+    settleNativeWidgetWindowBounds(window);
+  }
+  return accepted;
 }
 
 function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, regions: unknown): boolean {
