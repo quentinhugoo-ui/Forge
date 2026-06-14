@@ -70,6 +70,12 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("agentActionLoopPendingStep");
     expect(mainSource).toContain("deterministicAgentActionFallbackPending");
     expect(mainSource).toContain("const fallbackMessage = await applyDeterministicOrganizationFallback");
+    expect(mainSource).toContain("function emitAgentLoopDiagnosticSummary");
+    expect(mainSource).toContain('outcome: "completed"');
+    expect(mainSource).toContain('outcome: "blocked"');
+    expect(mainSource).toContain('outcome: "deterministic_fallback"');
+    expect(mainSource).toContain('outcome: "max_steps"');
+    expect(mainSource).toContain("tool_steps=");
     expect(mainSource).toContain("params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage))");
     expect(mainSource).toContain("assistantMessage = await executeAssistantAgentActionLoop({");
     expect(agentActionLoopSource).toContain("let markerIndex = text.indexOf(AGENT_ACTION_JSON_PREFIX)");
@@ -130,5 +136,21 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("omittedItems");
     expect(mainSource).toContain("omittedMatches");
     expect(mainSource).toContain("trimUtf8Bytes(result.stdoutPreview, AGENT_ACTION_RESULT_PREVIEW_BYTES)");
+  });
+
+  it("has diagnostics for desktop organization, tool-result resumption, compaction, and event/prompt separation", () => {
+    expect(mainSource).toContain("function deterministicOrganizationRequestsFromList");
+    expect(mainSource).toContain("agentActionOrganizeCategory(item)");
+    expect(mainSource).toContain("action: \"create_directory\"");
+    expect(mainSource).toContain("action: \"move_path\"");
+    expect(mainSource).toContain("agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result)");
+    expect(mainSource).toContain("agentActionLoopContinuationUserText(params.originalUserText, extracted.request, result, step)");
+    expect(mainSource).toContain("AGENT_ACTION_RESULT_PREFIX");
+    expect(mainSource).toContain("compactAgentActionResult(result)");
+    expect(mainSource).toContain("agentEvents.emit({\n      kind: \"compaction_started\"");
+    expect(mainSource).toContain("agentEvents.emit({\n      kind: \"compaction_completed\"");
+    expect(mainSource).toContain("window.webContents.send(\"forge:agent-runtime-event\", runtimeEvent)");
+    expect(mainSource).toContain("!message.id.startsWith(\"assistant-status-\")");
+    expect(mainSource).not.toContain("providerConversationMessages(\n  event");
   });
 });

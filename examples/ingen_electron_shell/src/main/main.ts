@@ -5560,6 +5560,19 @@ function compactAgentActionResult(result: AgentActionResult): string {
   });
 }
 
+function emitAgentLoopDiagnosticSummary(params: {
+  agentEvents: AgentRuntimeEventQueue;
+  messageId: string;
+  outcome: "completed" | "blocked" | "deterministic_fallback" | "max_steps";
+  toolSteps: number;
+}): void {
+  params.agentEvents.emit({
+    kind: "final_summary",
+    messageId: params.messageId,
+    summary: `Agent loop ${params.outcome}; tool_steps=${params.toolSteps}`
+  });
+}
+
 function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
   return request.action === "list" || request.action === "search" || request.action === "run_readonly_command";
 }
@@ -5745,9 +5758,18 @@ async function executeAssistantAgentActionLoop(params: {
   commitTranscript: (transcript: TranscriptMessage[]) => void;
 }): Promise<TranscriptMessage> {
   let assistantMessage = params.assistantMessage;
+  let toolSteps = 0;
   for (let step = 0; step < AGENT_ACTION_LOOP_MAX_STEPS; step += 1) {
     const extracted = extractAgentActionJsonRequest(assistantMessage.text);
     if (!extracted) {
+      if (toolSteps > 0) {
+        emitAgentLoopDiagnosticSummary({
+          agentEvents: params.agentEvents,
+          messageId: assistantMessage.id,
+          outcome: "completed",
+          toolSteps
+        });
+      }
       return assistantMessage;
     }
     const toolCall = emitAgentRuntimeToolCallStarted({
@@ -5769,6 +5791,7 @@ async function executeAssistantAgentActionLoop(params: {
       toolCall,
       result
     });
+    toolSteps += 1;
     assistantMessage = {
       ...assistantMessage,
       text: renderCompletedPendingAgentActionText(assistantMessage.text, result),
@@ -5776,6 +5799,12 @@ async function executeAssistantAgentActionLoop(params: {
     };
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
     if (!result.accepted) {
+      emitAgentLoopDiagnosticSummary({
+        agentEvents: params.agentEvents,
+        messageId: assistantMessage.id,
+        outcome: "blocked",
+        toolSteps
+      });
       return assistantMessage;
     }
     if (agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result)) {
@@ -5789,6 +5818,12 @@ async function executeAssistantAgentActionLoop(params: {
       });
       if (fallbackMessage.text !== assistantMessage.text) {
         params.commitTranscript(transcriptWithMessage(params.baseTranscript, fallbackMessage));
+        emitAgentLoopDiagnosticSummary({
+          agentEvents: params.agentEvents,
+          messageId: fallbackMessage.id,
+          outcome: "deterministic_fallback",
+          toolSteps
+        });
         return fallbackMessage;
       }
     }
@@ -5853,10 +5888,11 @@ async function executeAssistantAgentActionLoop(params: {
   const strippedText = removeAgentActionJsonFragments(assistantMessage.text)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  params.agentEvents.emit({
-    kind: "final_summary",
+  emitAgentLoopDiagnosticSummary({
+    agentEvents: params.agentEvents,
     messageId: assistantMessage.id,
-    summary: `Agent action loop stopped after ${AGENT_ACTION_LOOP_MAX_STEPS} steps to preserve local control.`
+    outcome: "max_steps",
+    toolSteps
   });
   return {
     ...assistantMessage,
