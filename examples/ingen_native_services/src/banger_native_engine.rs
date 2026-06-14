@@ -131,6 +131,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub residency_jobs: Vec<BangerNativeResidencyJob>,
     pub resource_table_hash: String,
     pub resource_table: BangerNativeResourceTable,
+    pub page_residency_allocator: BangerNativePageResidencyAllocatorPacket,
     pub editable_scene_manifest: BangerEditableSceneManifest,
     pub scene_graph_submission: BangerNativeSceneGraphSubmission,
     pub gpu_scene_packet: BangerNativeGpuScenePacket,
@@ -376,6 +377,55 @@ pub struct BangerNativeResourceSlot {
     pub promotion_hash: String,
     #[serde(skip_serializing)]
     pub payload_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePageResidencyAllocatorPacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub resource_table_hash: String,
+    pub nanite_second_layer_hash: String,
+    pub virtual_shadow_hash: String,
+    pub material_closure_hash: String,
+    pub render_graph_hash: String,
+    pub virtual_page_count: usize,
+    pub physical_page_count: usize,
+    pub resident_page_count: usize,
+    pub streaming_request_count: usize,
+    pub eviction_candidate_count: usize,
+    pub locked_page_count: usize,
+    pub physical_pool_hash: String,
+    pub virtual_page_table_hash: String,
+    pub feedback_request_hash: String,
+    pub allocation_hash: String,
+    pub eviction_hash: String,
+    pub packet_hash: String,
+    pub entries: Vec<BangerNativePageResidencyEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePageResidencyEntry {
+    pub page_id: String,
+    pub page_kind: &'static str,
+    pub physical_pool: &'static str,
+    pub object_id: String,
+    pub cluster_id: String,
+    pub resource_slot: u32,
+    pub source_page_hash: String,
+    pub virtual_address: [u32; 4],
+    pub physical_address: [u32; 4],
+    pub residency_state: &'static str,
+    pub priority: u32,
+    pub lock_state: &'static str,
+    pub producer_hash: String,
+    pub feedback_hash: String,
+    pub allocation_hash: String,
+    pub eviction_hash: String,
+    pub entry_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2059,6 +2109,14 @@ impl BangerNativeEngine {
             &direct_lighting_packet,
             &render_graph_compilation,
         );
+        let page_residency_allocator = build_page_residency_allocator_packet(
+            &prepared,
+            &resource_table,
+            &nanite_second_layer_packet,
+            &virtual_shadow_packet,
+            &material_closure_packet,
+            &render_graph_compilation,
+        );
         let temporal_history_packet = build_temporal_history_packet(
             &prepared,
             &direct_lighting_packet,
@@ -2091,6 +2149,7 @@ impl BangerNativeEngine {
             &virtual_shadow_packet,
             &direct_lighting_packet,
             &material_closure_packet,
+            &page_residency_allocator,
             &temporal_history_packet,
             &gaussian_splat_layer_manifest,
         );
@@ -2142,6 +2201,7 @@ impl BangerNativeEngine {
             &virtual_shadow_packet,
             &direct_lighting_packet,
             &material_closure_packet,
+            &page_residency_allocator,
             &temporal_history_packet,
             &gaussian_splat_layer_manifest,
             &frame_submission_packet,
@@ -2193,6 +2253,7 @@ impl BangerNativeEngine {
             residency_jobs,
             resource_table_hash,
             resource_table,
+            page_residency_allocator,
             editable_scene_manifest,
             scene_graph_submission,
             gpu_scene_packet,
@@ -4094,6 +4155,85 @@ fn build_temporal_history_packet(
     }
 }
 
+fn build_page_residency_allocator_packet(
+    prepared: &MonsterPreparedCompute,
+    resource_table: &BangerNativeResourceTable,
+    nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
+    virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
+    material_closure_packet: &BangerNativeMaterialClosurePacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+) -> BangerNativePageResidencyAllocatorPacket {
+    let mut entries = Vec::new();
+    for (index, entry) in nanite_second_layer_packet.entries.iter().enumerate() {
+        entries.push(page_residency_entry_from_nanite(entry, resource_table, index as u32));
+    }
+    for (index, entry) in virtual_shadow_packet.entries.iter().enumerate() {
+        entries.push(page_residency_entry_from_virtual_shadow(entry, index as u32));
+    }
+    for (index, entry) in material_closure_packet.entries.iter().enumerate() {
+        entries.push(page_residency_entry_from_material(entry, index as u32));
+    }
+    let physical_pool_hash = page_residency_physical_pool_hash(&entries);
+    let virtual_page_table_hash = page_residency_virtual_page_table_hash(&entries);
+    let feedback_request_hash = page_residency_feedback_request_hash(&entries);
+    let allocation_hash = page_residency_allocation_hash(&entries);
+    let eviction_hash = page_residency_eviction_hash(&entries);
+    let packet_hash = page_residency_allocator_packet_hash(
+        prepared,
+        resource_table,
+        nanite_second_layer_packet,
+        virtual_shadow_packet,
+        material_closure_packet,
+        render_graph_compilation,
+        &physical_pool_hash,
+        &virtual_page_table_hash,
+        &feedback_request_hash,
+        &allocation_hash,
+        &eviction_hash,
+        &entries,
+    );
+    BangerNativePageResidencyAllocatorPacket {
+        schema: "forge.banger.page_residency_allocator_packet.v1",
+        authority: "banger_virtual_page_feedback_physical_pool_allocator",
+        clean_room_basis: "local_unreal_sparse_nanite_vsm_virtual_texture_feedback_physical_page_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        resource_table_hash: resource_table.table_hash.clone(),
+        nanite_second_layer_hash: nanite_second_layer_packet.packet_hash.clone(),
+        virtual_shadow_hash: virtual_shadow_packet.packet_hash.clone(),
+        material_closure_hash: material_closure_packet.packet_hash.clone(),
+        render_graph_hash: render_graph_compilation.graph_hash.clone(),
+        virtual_page_count: entries.len(),
+        physical_page_count: entries
+            .iter()
+            .map(|entry| (entry.physical_pool, entry.physical_address))
+            .collect::<BTreeSet<_>>()
+            .len(),
+        resident_page_count: entries
+            .iter()
+            .filter(|entry| entry.residency_state == "resident_page" || entry.lock_state == "locked_for_frame")
+            .count(),
+        streaming_request_count: entries
+            .iter()
+            .filter(|entry| entry.residency_state != "resident_page")
+            .count(),
+        eviction_candidate_count: entries
+            .iter()
+            .filter(|entry| entry.lock_state == "eviction_candidate")
+            .count(),
+        locked_page_count: entries
+            .iter()
+            .filter(|entry| entry.lock_state == "locked_for_frame")
+            .count(),
+        physical_pool_hash,
+        virtual_page_table_hash,
+        feedback_request_hash,
+        allocation_hash,
+        eviction_hash,
+        packet_hash,
+        entries,
+    }
+}
+
 fn build_gaussian_splat_layer_manifest(
     prepared: &MonsterPreparedCompute,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
@@ -4614,6 +4754,7 @@ fn build_frame_submission_packet(
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
+    page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
     temporal_history_packet: &BangerNativeTemporalHistoryPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> BangerNativeFrameSubmissionPacket {
@@ -4656,6 +4797,7 @@ fn build_frame_submission_packet(
                 virtual_shadow_packet,
                 direct_lighting_packet,
                 material_closure_packet,
+                page_residency_allocator,
                 temporal_history_packet,
                 gaussian_splat_layer_manifest,
             );
@@ -4712,6 +4854,7 @@ fn build_frame_submission_packet(
         virtual_shadow_packet,
         direct_lighting_packet,
         material_closure_packet,
+        page_residency_allocator,
         temporal_history_packet,
         &color_target_hash,
         &depth_target_hash,
@@ -5846,6 +5989,7 @@ fn frame_submission_command_input_hash(
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
+    page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
     temporal_history_packet: &BangerNativeTemporalHistoryPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> String {
@@ -5857,6 +6001,11 @@ fn frame_submission_command_input_hash(
     }
     for job in pass_jobs {
         h.update(job.job_hash.as_bytes());
+    }
+    if pass.stage == "resident_page_upload" || pass.stage == "visibility_cull" {
+        h.update(page_residency_allocator.packet_hash.as_bytes());
+        h.update(page_residency_allocator.virtual_page_table_hash.as_bytes());
+        h.update(page_residency_allocator.allocation_hash.as_bytes());
     }
     if pass.stage == "lighting_cache" {
         h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
@@ -5875,12 +6024,15 @@ fn frame_submission_command_input_hash(
         h.update(virtual_shadow_packet.packet_hash.as_bytes());
         h.update(virtual_shadow_packet.page_table_hash.as_bytes());
         h.update(direct_lighting_packet.shadow_mask_hash.as_bytes());
+        h.update(page_residency_allocator.physical_pool_hash.as_bytes());
+        h.update(page_residency_allocator.eviction_hash.as_bytes());
     }
     if pass.stage == "material_bind" {
         h.update(material_closure_packet.packet_hash.as_bytes());
         h.update(material_closure_packet.closure_stack_hash.as_bytes());
         h.update(material_closure_packet.bsdf_table_hash.as_bytes());
         h.update(material_closure_packet.texture_table_hash.as_bytes());
+        h.update(page_residency_allocator.feedback_request_hash.as_bytes());
         h.update(temporal_history_packet.history_reprojection_hash.as_bytes());
         h.update(temporal_history_packet.rejection_hash.as_bytes());
         h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
@@ -5994,6 +6146,7 @@ fn frame_submission_packet_hash(
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
+    page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
     temporal_history_packet: &BangerNativeTemporalHistoryPacket,
     color_target_hash: &str,
     depth_target_hash: &str,
@@ -6016,6 +6169,9 @@ fn frame_submission_packet_hash(
     h.update(material_closure_packet.packet_hash.as_bytes());
     h.update(material_closure_packet.closure_stack_hash.as_bytes());
     h.update(material_closure_packet.resolve_hash.as_bytes());
+    h.update(page_residency_allocator.packet_hash.as_bytes());
+    h.update(page_residency_allocator.allocation_hash.as_bytes());
+    h.update(page_residency_allocator.feedback_request_hash.as_bytes());
     h.update(temporal_history_packet.packet_hash.as_bytes());
     h.update(temporal_history_packet.motion_vector_hash.as_bytes());
     h.update(temporal_history_packet.accumulation_hash.as_bytes());
@@ -8176,6 +8332,497 @@ fn temporal_history_packet_hash(
     h.update(disocclusion_mask_hash.as_bytes());
     h.update(rejection_hash.as_bytes());
     h.update(accumulation_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn page_residency_entry_from_nanite(
+    entry: &BangerNativeNaniteSecondLayerEntry,
+    resource_table: &BangerNativeResourceTable,
+    salt: u32,
+) -> BangerNativePageResidencyEntry {
+    let page_id = hash_text_hex(
+        "forge.banger.page_residency.nanite_page_id.v1",
+        &format!("{}:{}:{}", entry.cluster_id, entry.resource_slot, entry.page_hash),
+    );
+    let byte_len = resource_table
+        .slots
+        .iter()
+        .find(|slot| slot.slot == entry.resource_slot)
+        .map(|slot| slot.byte_len)
+        .unwrap_or(0);
+    let virtual_address = [
+        entry.resource_slot,
+        entry.requested_lod_bucket,
+        (entry.feedback_word & 0xffff) as u32,
+        byte_len.min(u32::MAX as u64) as u32,
+    ];
+    let physical_address = page_residency_physical_address(&entry.page_hash, salt, "nanite_geometry_pool");
+    let priority = page_residency_priority(
+        entry.residency_state,
+        entry.requested_lod_bucket,
+        entry.feedback_word,
+        byte_len,
+    );
+    let lock_state = page_residency_lock_state(entry.residency_state, priority);
+    let producer_hash = page_residency_producer_hash(
+        "nanite_geometry_page",
+        &entry.object_id,
+        &entry.cluster_id,
+        &entry.page_hash,
+    );
+    let feedback_hash = page_residency_feedback_hash(&entry.page_hash, entry.feedback_word, priority);
+    let allocation_hash = page_residency_allocation_entry_hash(
+        &page_id,
+        "nanite_geometry_page",
+        "nanite_geometry_pool",
+        &virtual_address,
+        &physical_address,
+        priority,
+        lock_state,
+    );
+    let eviction_hash = page_residency_eviction_entry_hash(&page_id, lock_state, priority, &feedback_hash);
+    let entry_hash = page_residency_entry_hash(
+        &page_id,
+        "nanite_geometry_page",
+        "nanite_geometry_pool",
+        &entry.object_id,
+        &entry.cluster_id,
+        entry.resource_slot,
+        &entry.page_hash,
+        &virtual_address,
+        &physical_address,
+        entry.residency_state,
+        priority,
+        lock_state,
+        &producer_hash,
+        &feedback_hash,
+        &allocation_hash,
+        &eviction_hash,
+    );
+    BangerNativePageResidencyEntry {
+        page_id,
+        page_kind: "nanite_geometry_page",
+        physical_pool: "nanite_geometry_pool",
+        object_id: entry.object_id.clone(),
+        cluster_id: entry.cluster_id.clone(),
+        resource_slot: entry.resource_slot,
+        source_page_hash: entry.page_hash.clone(),
+        virtual_address,
+        physical_address,
+        residency_state: entry.residency_state,
+        priority,
+        lock_state,
+        producer_hash,
+        feedback_hash,
+        allocation_hash,
+        eviction_hash,
+        entry_hash,
+    }
+}
+
+fn page_residency_entry_from_virtual_shadow(
+    entry: &BangerNativeVirtualShadowEntry,
+    _salt: u32,
+) -> BangerNativePageResidencyEntry {
+    let virtual_address = [
+        entry.virtual_map_id,
+        entry.page_coord[0],
+        entry.page_coord[1],
+        entry.clipmap_level,
+    ];
+    let physical_address = [
+        entry.projection_tile[0],
+        entry.projection_tile[1],
+        entry.resolution,
+        entry.page_coord[2],
+    ];
+    let residency_state = match entry.cache_state {
+        "persistent_cache_hit" => "resident_page",
+        "cache_warm" => "warm_page",
+        _ => "streaming_request",
+    };
+    let priority = page_residency_priority(
+        residency_state,
+        entry.clipmap_level,
+        u64::from(entry.ray_budget),
+        u64::from(entry.resolution).saturating_mul(u64::from(entry.resolution)),
+    )
+    .saturating_add(128u32.saturating_sub(entry.clipmap_level.min(128)));
+    let lock_state = page_residency_lock_state(residency_state, priority);
+    let producer_hash = page_residency_producer_hash(
+        "virtual_shadow_page",
+        &entry.object_id,
+        &entry.cluster_id,
+        &entry.page_table_hash,
+    );
+    let feedback_hash =
+        page_residency_feedback_hash(&entry.page_table_hash, u64::from(entry.ray_budget), priority);
+    let allocation_hash = page_residency_allocation_entry_hash(
+        &entry.shadow_page_id,
+        "virtual_shadow_page",
+        "virtual_shadow_physical_pool",
+        &virtual_address,
+        &physical_address,
+        priority,
+        lock_state,
+    );
+    let eviction_hash =
+        page_residency_eviction_entry_hash(&entry.shadow_page_id, lock_state, priority, &feedback_hash);
+    let entry_hash = page_residency_entry_hash(
+        &entry.shadow_page_id,
+        "virtual_shadow_page",
+        "virtual_shadow_physical_pool",
+        &entry.object_id,
+        &entry.cluster_id,
+        u32::MAX,
+        &entry.page_table_hash,
+        &virtual_address,
+        &physical_address,
+        residency_state,
+        priority,
+        lock_state,
+        &producer_hash,
+        &feedback_hash,
+        &allocation_hash,
+        &eviction_hash,
+    );
+    BangerNativePageResidencyEntry {
+        page_id: entry.shadow_page_id.clone(),
+        page_kind: "virtual_shadow_page",
+        physical_pool: "virtual_shadow_physical_pool",
+        object_id: entry.object_id.clone(),
+        cluster_id: entry.cluster_id.clone(),
+        resource_slot: u32::MAX,
+        source_page_hash: entry.page_table_hash.clone(),
+        virtual_address,
+        physical_address,
+        residency_state,
+        priority,
+        lock_state,
+        producer_hash,
+        feedback_hash,
+        allocation_hash,
+        eviction_hash,
+        entry_hash,
+    }
+}
+
+fn page_residency_entry_from_material(
+    entry: &BangerNativeMaterialClosureEntry,
+    salt: u32,
+) -> BangerNativePageResidencyEntry {
+    let page_id = hash_text_hex(
+        "forge.banger.page_residency.material_page_id.v1",
+        &format!(
+            "{}:{}:{}:{}",
+            entry.cluster_id, entry.texture_slot_base, entry.texture_slot_count, entry.texture_hash
+        ),
+    );
+    let virtual_address = [
+        entry.texture_slot_base,
+        entry.texture_slot_count,
+        entry.material_bin_id,
+        entry.layer_count,
+    ];
+    let physical_address = page_residency_physical_address(&entry.texture_hash, salt, "material_texture_pool");
+    let residency_state = if entry.texture_slot_count <= 2 {
+        "resident_page"
+    } else {
+        "feedback_requested"
+    };
+    let priority = page_residency_priority(
+        residency_state,
+        entry.layer_count,
+        u64::from(entry.texture_slot_count),
+        64,
+    );
+    let lock_state = page_residency_lock_state(residency_state, priority);
+    let producer_hash = page_residency_producer_hash(
+        "material_virtual_texture_page",
+        &entry.object_id,
+        &entry.cluster_id,
+        &entry.texture_hash,
+    );
+    let feedback_hash =
+        page_residency_feedback_hash(&entry.texture_hash, u64::from(entry.texture_slot_count), priority);
+    let allocation_hash = page_residency_allocation_entry_hash(
+        &page_id,
+        "material_virtual_texture_page",
+        "material_texture_pool",
+        &virtual_address,
+        &physical_address,
+        priority,
+        lock_state,
+    );
+    let eviction_hash = page_residency_eviction_entry_hash(&page_id, lock_state, priority, &feedback_hash);
+    let entry_hash = page_residency_entry_hash(
+        &page_id,
+        "material_virtual_texture_page",
+        "material_texture_pool",
+        &entry.object_id,
+        &entry.cluster_id,
+        entry.texture_slot_base,
+        &entry.texture_hash,
+        &virtual_address,
+        &physical_address,
+        residency_state,
+        priority,
+        lock_state,
+        &producer_hash,
+        &feedback_hash,
+        &allocation_hash,
+        &eviction_hash,
+    );
+    BangerNativePageResidencyEntry {
+        page_id,
+        page_kind: "material_virtual_texture_page",
+        physical_pool: "material_texture_pool",
+        object_id: entry.object_id.clone(),
+        cluster_id: entry.cluster_id.clone(),
+        resource_slot: entry.texture_slot_base,
+        source_page_hash: entry.texture_hash.clone(),
+        virtual_address,
+        physical_address,
+        residency_state,
+        priority,
+        lock_state,
+        producer_hash,
+        feedback_hash,
+        allocation_hash,
+        eviction_hash,
+        entry_hash,
+    }
+}
+
+fn page_residency_physical_address(page_hash: &str, salt: u32, pool: &str) -> [u32; 4] {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.physical_address.v1\0");
+    h.update(page_hash.as_bytes());
+    h.update(pool.as_bytes());
+    h.update(salt.to_le_bytes());
+    let digest: [u8; 32] = h.finalize().into();
+    [
+        u32::from_le_bytes(digest[0..4].try_into().expect("page address x")) % 8192,
+        u32::from_le_bytes(digest[4..8].try_into().expect("page address y")) % 8192,
+        u32::from_le_bytes(digest[8..12].try_into().expect("page address layer")) % 256,
+        u32::from_le_bytes(digest[12..16].try_into().expect("page address generation")),
+    ]
+}
+
+fn page_residency_priority(
+    residency_state: &str,
+    lod_or_level: u32,
+    feedback_word: u64,
+    byte_len: u64,
+) -> u32 {
+    let state_bias: u32 = match residency_state {
+        "resident_page" => 4096,
+        "persistent_cache_hit" => 4096,
+        "warm_page" | "cache_warm" => 3072,
+        "feedback_requested" => 2048,
+        _ => 1024,
+    };
+    let lod_bias = 512u32.saturating_sub(lod_or_level.min(512));
+    let feedback_bias = (feedback_word.count_ones() * 8).min(1024);
+    let size_bias = (byte_len / 4096).min(512) as u32;
+    state_bias
+        .saturating_add(lod_bias)
+        .saturating_add(feedback_bias)
+        .saturating_add(size_bias)
+}
+
+fn page_residency_lock_state(residency_state: &str, priority: u32) -> &'static str {
+    if residency_state == "resident_page" && priority >= 4096 {
+        "locked_for_frame"
+    } else if priority < 2048 {
+        "eviction_candidate"
+    } else {
+        "streaming_or_reuse"
+    }
+}
+
+fn page_residency_producer_hash(page_kind: &str, object_id: &str, cluster_id: &str, source_hash: &str) -> String {
+    hash_text_hex(
+        "forge.banger.page_residency.producer.v1",
+        &format!("{page_kind}:{object_id}:{cluster_id}:{source_hash}"),
+    )
+}
+
+fn page_residency_feedback_hash(source_page_hash: &str, feedback_word: u64, priority: u32) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.feedback.v1\0");
+    h.update(source_page_hash.as_bytes());
+    h.update(feedback_word.to_le_bytes());
+    h.update(priority.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn page_residency_allocation_entry_hash(
+    page_id: &str,
+    page_kind: &str,
+    physical_pool: &str,
+    virtual_address: &[u32; 4],
+    physical_address: &[u32; 4],
+    priority: u32,
+    lock_state: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.allocation_entry.v1\0");
+    h.update(page_id.as_bytes());
+    h.update(page_kind.as_bytes());
+    h.update(physical_pool.as_bytes());
+    for value in virtual_address {
+        h.update(value.to_le_bytes());
+    }
+    for value in physical_address {
+        h.update(value.to_le_bytes());
+    }
+    h.update(priority.to_le_bytes());
+    h.update(lock_state.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn page_residency_eviction_entry_hash(page_id: &str, lock_state: &str, priority: u32, feedback_hash: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.eviction_entry.v1\0");
+    h.update(page_id.as_bytes());
+    h.update(lock_state.as_bytes());
+    h.update(priority.to_le_bytes());
+    h.update(feedback_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn page_residency_entry_hash(
+    page_id: &str,
+    page_kind: &str,
+    physical_pool: &str,
+    object_id: &str,
+    cluster_id: &str,
+    resource_slot: u32,
+    source_page_hash: &str,
+    virtual_address: &[u32; 4],
+    physical_address: &[u32; 4],
+    residency_state: &str,
+    priority: u32,
+    lock_state: &str,
+    producer_hash: &str,
+    feedback_hash: &str,
+    allocation_hash: &str,
+    eviction_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.entry.v1\0");
+    h.update(page_id.as_bytes());
+    h.update(page_kind.as_bytes());
+    h.update(physical_pool.as_bytes());
+    h.update(object_id.as_bytes());
+    h.update(cluster_id.as_bytes());
+    h.update(resource_slot.to_le_bytes());
+    h.update(source_page_hash.as_bytes());
+    for value in virtual_address {
+        h.update(value.to_le_bytes());
+    }
+    for value in physical_address {
+        h.update(value.to_le_bytes());
+    }
+    h.update(residency_state.as_bytes());
+    h.update(priority.to_le_bytes());
+    h.update(lock_state.as_bytes());
+    h.update(producer_hash.as_bytes());
+    h.update(feedback_hash.as_bytes());
+    h.update(allocation_hash.as_bytes());
+    h.update(eviction_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn page_residency_physical_pool_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.physical_pools.v1\0");
+    for entry in entries {
+        h.update(entry.physical_pool.as_bytes());
+        for value in entry.physical_address {
+            h.update(value.to_le_bytes());
+        }
+        h.update(entry.allocation_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn page_residency_virtual_page_table_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.virtual_page_table.v1\0");
+    for entry in entries {
+        h.update(entry.page_id.as_bytes());
+        h.update(entry.page_kind.as_bytes());
+        for value in entry.virtual_address {
+            h.update(value.to_le_bytes());
+        }
+        h.update(entry.source_page_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn page_residency_feedback_request_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.feedback_requests.v1\0");
+    for entry in entries {
+        h.update(entry.feedback_hash.as_bytes());
+        h.update(entry.priority.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn page_residency_allocation_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.allocations.v1\0");
+    for entry in entries {
+        h.update(entry.allocation_hash.as_bytes());
+        h.update(entry.lock_state.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn page_residency_eviction_hash(entries: &[BangerNativePageResidencyEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.evictions.v1\0");
+    for entry in entries {
+        h.update(entry.eviction_hash.as_bytes());
+        h.update(entry.lock_state.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn page_residency_allocator_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    resource_table: &BangerNativeResourceTable,
+    nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
+    virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
+    material_closure_packet: &BangerNativeMaterialClosurePacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    physical_pool_hash: &str,
+    virtual_page_table_hash: &str,
+    feedback_request_hash: &str,
+    allocation_hash: &str,
+    eviction_hash: &str,
+    entries: &[BangerNativePageResidencyEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency_allocator_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(resource_table.table_hash.as_bytes());
+    h.update(nanite_second_layer_packet.packet_hash.as_bytes());
+    h.update(virtual_shadow_packet.packet_hash.as_bytes());
+    h.update(material_closure_packet.packet_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(physical_pool_hash.as_bytes());
+    h.update(virtual_page_table_hash.as_bytes());
+    h.update(feedback_request_hash.as_bytes());
+    h.update(allocation_hash.as_bytes());
+    h.update(eviction_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
     }
@@ -11662,6 +12309,7 @@ fn render_handoff_hash(
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
     material_closure_packet: &BangerNativeMaterialClosurePacket,
+    page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
     temporal_history_packet: &BangerNativeTemporalHistoryPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
@@ -11713,6 +12361,12 @@ fn render_handoff_hash(
     h.update(material_closure_packet.bsdf_table_hash.as_bytes());
     h.update(material_closure_packet.texture_table_hash.as_bytes());
     h.update(material_closure_packet.resolve_hash.as_bytes());
+    h.update(page_residency_allocator.packet_hash.as_bytes());
+    h.update(page_residency_allocator.physical_pool_hash.as_bytes());
+    h.update(page_residency_allocator.virtual_page_table_hash.as_bytes());
+    h.update(page_residency_allocator.feedback_request_hash.as_bytes());
+    h.update(page_residency_allocator.allocation_hash.as_bytes());
+    h.update(page_residency_allocator.eviction_hash.as_bytes());
     h.update(temporal_history_packet.packet_hash.as_bytes());
     h.update(temporal_history_packet.jitter_sequence_hash.as_bytes());
     h.update(temporal_history_packet.motion_vector_hash.as_bytes());
@@ -13252,6 +13906,101 @@ mod tests {
                         | "history_resurrection_candidate"
                         | "history_clamp_responsive_material"
                         | "history_accept"
+                )));
+        assert_eq!(
+            response.page_residency_allocator.schema,
+            "forge.banger.page_residency_allocator_packet.v1"
+        );
+        assert_eq!(
+            response.page_residency_allocator.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.page_residency_allocator.resource_table_hash,
+            response.resource_table.table_hash
+        );
+        assert_eq!(
+            response.page_residency_allocator.nanite_second_layer_hash,
+            response.nanite_second_layer_packet.packet_hash
+        );
+        assert_eq!(
+            response.page_residency_allocator.virtual_shadow_hash,
+            response.virtual_shadow_packet.packet_hash
+        );
+        assert_eq!(
+            response.page_residency_allocator.material_closure_hash,
+            response.material_closure_packet.packet_hash
+        );
+        assert_eq!(
+            response.page_residency_allocator.render_graph_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert_eq!(
+            response.page_residency_allocator.virtual_page_count,
+            response.page_residency_allocator.entries.len()
+        );
+        assert!(response.page_residency_allocator.physical_page_count > 0);
+        assert!(response.page_residency_allocator.resident_page_count > 0);
+        assert!(response.page_residency_allocator.locked_page_count > 0);
+        assert_eq!(response.page_residency_allocator.physical_pool_hash.len(), 64);
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .virtual_page_table_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .feedback_request_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.page_residency_allocator.allocation_hash.len(), 64);
+        assert_eq!(response.page_residency_allocator.eviction_hash.len(), 64);
+        assert_eq!(response.page_residency_allocator.packet_hash.len(), 64);
+        assert!(response
+            .page_residency_allocator
+            .clean_room_basis
+            .contains("local_unreal_sparse_nanite_vsm_virtual_texture"));
+        assert!(response
+            .page_residency_allocator
+            .entries
+            .iter()
+            .any(|entry| entry.page_kind == "nanite_geometry_page"));
+        assert!(response
+            .page_residency_allocator
+            .entries
+            .iter()
+            .any(|entry| entry.page_kind == "virtual_shadow_page"));
+        assert!(response
+            .page_residency_allocator
+            .entries
+            .iter()
+            .any(|entry| entry.page_kind == "material_virtual_texture_page"));
+        assert!(response
+            .page_residency_allocator
+            .entries
+            .iter()
+            .all(|entry| !entry.page_id.is_empty()
+                && !entry.object_id.is_empty()
+                && entry.source_page_hash.len() == 64
+                && entry.priority > 0
+                && entry.producer_hash.len() == 64
+                && entry.feedback_hash.len() == 64
+                && entry.allocation_hash.len() == 64
+                && entry.eviction_hash.len() == 64
+                && entry.entry_hash.len() == 64
+                && matches!(
+                    entry.page_kind,
+                    "nanite_geometry_page"
+                        | "virtual_shadow_page"
+                        | "material_virtual_texture_page"
+                )
+                && matches!(
+                    entry.lock_state,
+                    "locked_for_frame" | "streaming_or_reuse" | "eviction_candidate"
                 )));
         assert_eq!(
             response.gaussian_splat_layer_manifest.schema,
