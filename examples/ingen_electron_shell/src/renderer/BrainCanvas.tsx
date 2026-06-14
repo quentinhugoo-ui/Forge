@@ -1203,7 +1203,6 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
                 <stop offset="100%" stopColor="#ffd05c" stopOpacity="0.95" />
               </linearGradient>
             </defs>
-            <path className="hardwareGauge__gridLine" d="M 0 20.5 H 278 M 0 41 H 278 M 0 61.5 H 278" />
             {activityAreaPath ? (
               <path className="hardwareGauge__activityArea" d={activityAreaPath} fill={`url(#hardwareGaugeActivityFill-${card.id})`} />
             ) : null}

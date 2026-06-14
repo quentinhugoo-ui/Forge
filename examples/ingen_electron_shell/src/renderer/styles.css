@@ -9205,9 +9205,7 @@ ol.assistantText__list li::before {
   min-height: 0;
   overflow: hidden;
   border: 1px solid color-mix(in oklab, var(--forge-line), transparent 72%);
-  background:
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.026) 0 1px, transparent 1px 7px),
-    color-mix(in oklab, var(--forge-sidebar-bg), #000 14%);
+  background: var(--forge-canvas-bg);
   color: currentColor;
 }
 
@@ -9216,13 +9214,6 @@ ol.assistantText__list li::before {
   width: 100%;
   height: 100%;
   overflow: hidden;
-}
-
-.hardwareGauge__gridLine {
-  fill: none;
-  stroke: color-mix(in oklab, var(--forge-line), transparent 62%);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
 }
 
 .hardwareGauge__temperatureArea {
