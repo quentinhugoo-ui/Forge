@@ -16,7 +16,6 @@ set FORGE_ELECTRON_BACKEND_EXE=%REPO_ROOT%\.codex-targets\ingen-electron-shortcu
 set FORGE_ELECTRON_EXE=%~dp0node_modules\electron\dist\electron.exe
 set INGEN_ELECTRON_LEGACY_USER_DATA_DIR=%APPDATA%\InGen
 set INGEN_ELECTRON_USER_DATA_DIR=%APPDATA%\InGenRuntime
-set INGEN_ELECTRON_BYPASS_SINGLE_INSTANCE_LOCK=1
 set BUILD_LOCK=C:\tmp\ingen-electron-launch-build.lock
 set NEED_BACKEND_REBUILD=0
 set NEED_ELECTRON_REBUILD=0
@@ -38,7 +37,9 @@ C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionP
 if not errorlevel 1 set APP_ALREADY_RUNNING=1
 
 if "%APP_ALREADY_RUNNING%"=="1" (
-  echo InGen is already running. Desktop launcher will prefer the existing stable build. >> "%LOG%"
+  echo InGen is already running. Focusing the existing window and exiting. >> "%LOG%"
+  C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\'); $electron = '%FORGE_ELECTRON_EXE%'; $running = Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $electron -and $_.CommandLine -like ('*' + $root + '*') } | Select-Object -First 1; if ($running) { $shell = New-Object -ComObject WScript.Shell; [void]$shell.AppActivate([int]$running.ProcessId) }" >> "%LOG%" 2>>&1
+  exit /b 0
 )
 
 2>nul mkdir "%BUILD_LOCK%"
