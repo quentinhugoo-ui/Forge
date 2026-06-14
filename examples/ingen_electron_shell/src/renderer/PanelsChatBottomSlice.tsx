@@ -3517,6 +3517,8 @@ interface PanelsChatBottomSliceProps {
   webExplorerOpen?: boolean;
   composerModule?: SidebarModuleId | null;
   onComposerModuleChange?: (id: SidebarModuleId | null) => void;
+  widgetMode?: boolean;
+  onWidgetModeChange?: (enabled: boolean) => void;
 }
 
 type PermissionMode = PanelsChatBottomSnapshot["composer"]["permissionMode"];
@@ -3703,7 +3705,9 @@ export function PanelsChatBottomSlice({
   onParallelPromptChange,
   webExplorerOpen = false,
   composerModule = null,
-  onComposerModuleChange
+  onComposerModuleChange,
+  widgetMode = false,
+  onWidgetModeChange
 }: PanelsChatBottomSliceProps = {}) {
   const { snapshot } = usePanelsChatBottomStore();
   const permissionMenuId = useId();
@@ -3887,6 +3891,16 @@ export function PanelsChatBottomSlice({
       return;
     }
     void dispatch({ kind: "attach_dropped_files", filePaths }).then(() => inputRef.current?.focus());
+  };
+  const toggleWidgetMode = () => {
+    if (!onWidgetModeChange) {
+      return;
+    }
+    if (widgetMode) {
+      onWidgetModeChange(false);
+      return;
+    }
+    onWidgetModeChange(true);
   };
   const stageImageForEdit = useCallback((preview: ComposerUploadPreview) => {
     void dispatch({ kind: "stage_attachment_for_edit", attachmentIds: [preview.id] }).then(() => {
@@ -4511,9 +4525,11 @@ export function PanelsChatBottomSlice({
         </div>
         <button
           type="button"
-          className="bottomControls__widgetButton"
+          className={widgetMode ? "bottomControls__widgetButton bottomControls__widgetButton--active" : "bottomControls__widgetButton"}
           title="Mode widget"
           aria-label="Passer en mode widget"
+          aria-pressed={widgetMode}
+          onClick={toggleWidgetMode}
         >
           <strong>MINI</strong>
         </button>

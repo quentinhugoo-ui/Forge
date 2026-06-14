@@ -72,6 +72,7 @@ const WINDOW_CONTROLS = [
 
 const GOOGLE_EARTH_DOM_DEFAULT_URL =
   "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
+const WIDGET_SURFACE_CLOSE_DELAY_MS = 900;
 
 function sectionGroup(section: NativeSection): string {
   if (section === "trading") {
@@ -95,6 +96,7 @@ export function App() {
   const [canvasPlanetsOpen, setCanvasPlanetsOpen] = useState(false);
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
+  const [widgetMode, setWidgetMode] = useState(false);
   const canvasMapsOpenRef = useRef(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
   const [mapsParallelIndex, setMapsParallelIndex] = useState(0);
@@ -120,6 +122,7 @@ export function App() {
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const workspaceNoticeTimerRef = useRef<number | null>(null);
   const parallelSidebarBirthTimerRef = useRef<number | null>(null);
+  const widgetSurfaceCloseTimerRef = useRef<number | null>(null);
   const previousActiveSessionIdRef = useRef(panelsChatSnapshot.activeSessionId);
   const mapsOwnerSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -261,6 +264,7 @@ export function App() {
     isLlmProviderCanvas ? "shell--llm-provider" : "",
     isBrainCanvas ? "shell--brain-canvas" : "",
     isBangerPage ? "shell--banger-page" : "",
+    widgetMode ? "shell--widget-mode" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
 
@@ -326,6 +330,9 @@ export function App() {
       }
       if (parallelSidebarBirthTimerRef.current !== null) {
         window.clearTimeout(parallelSidebarBirthTimerRef.current);
+      }
+      if (widgetSurfaceCloseTimerRef.current !== null) {
+        window.clearTimeout(widgetSurfaceCloseTimerRef.current);
       }
     };
   }, []);
@@ -712,6 +719,46 @@ export function App() {
     []
   );
 
+  const setWidgetModeEnabled = useCallback((enabled: boolean) => {
+    if (widgetSurfaceCloseTimerRef.current !== null) {
+      window.clearTimeout(widgetSurfaceCloseTimerRef.current);
+      widgetSurfaceCloseTimerRef.current = null;
+    }
+    setWidgetMode(enabled);
+    setWorkspaceMenuOpen(false);
+    setWorkspaceNotice(null);
+    if (!enabled) {
+      return;
+    }
+
+    widgetSurfaceCloseTimerRef.current = window.setTimeout(() => {
+      widgetSurfaceCloseTimerRef.current = null;
+      setCanvasSplitOpen(false);
+      setCanvasFilesOpen(false);
+      setCanvasTerminalOpen(false);
+      setCanvasActivePane("");
+      setCanvasPlanetsOpen(false);
+      setCanvasWebExplorerOpen(false);
+      canvasMapsOpenRef.current = false;
+      setCanvasMapsOpen(false);
+      setParallelPrompts([""]);
+      void globalThis.window?.forgeShell?.hideNativeWebExplorer?.();
+      void globalThis.window?.forgeShell?.hideNativeMaps?.();
+    }, WIDGET_SURFACE_CLOSE_DELAY_MS);
+
+    void (async () => {
+      if (activeProfileCanvas) {
+        await closeProfileCanvas();
+      }
+      if (snapshot.leftPanelOpen) {
+        await headerShadowStore.dispatchControl({ id: "left-panel", command: "toggle_left_panel" });
+      }
+      if (snapshot.rightPanelOpen) {
+        await headerShadowStore.dispatchControl({ id: "plan", command: "toggle_right_panel", route: "right-panel" });
+      }
+      await Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot()]);
+    })();
+  }, [activeProfileCanvas, closeProfileCanvas, snapshot.leftPanelOpen, snapshot.rightPanelOpen]);
   const topControls = useMemo(() => snapshot.topControls.filter((control) => control.visible), [snapshot]);
   const workspaceControls = useMemo(
     () => snapshot.workspaceControls.filter((control) => control.visible),
@@ -971,6 +1018,8 @@ export function App() {
           webExplorerOpen={canvasWebExplorerOpen}
           composerModule={composerModuleId ?? (canvasWebExplorerOpen ? webExplorerModuleId : null)}
           onComposerModuleChange={setComposerModuleId}
+          widgetMode={widgetMode}
+          onWidgetModeChange={setWidgetModeEnabled}
         />
       ) : null}
     </main>
