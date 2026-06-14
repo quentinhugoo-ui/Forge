@@ -13133,7 +13133,6 @@ function installIpc(): void {
   });
   ipcMain.handle("forge:get-banger-google-tiles-config", async (event): Promise<BangerGoogleTilesConfigResult> => {
     const schema = "forge.banger.google_photorealistic_tiles_config.v1" as const;
-    const source = "electron-main-env" as const;
     const initialView = {
       longitude: -122.08409,
       latitude: 37.42207,
@@ -13144,7 +13143,7 @@ function installIpc(): void {
     };
     const base = {
       schema,
-      source,
+      source: "render-resolver-proxy" as const,
       rootTilesetUrl: "",
       requestBudget: 18,
       showCreditsOnScreen: true as const,
@@ -13162,6 +13161,30 @@ function installIpc(): void {
         proofHash: hashJson({ schema, accepted: false, reason: "bad_sender" })
       };
     }
+    const renderBaseUrl = (
+      process.env.FORGE_BANGER_GOOGLE_TILES_BACKEND_URL ??
+      process.env.FORGE_REAL_ESTATE_BACKEND_URL ??
+      process.env.FORGE_RENDER_BACKEND_URL ??
+      "https://forge-6cai.onrender.com"
+    ).trim().replace(/\/+$/, "");
+    if (renderBaseUrl) {
+      const result = {
+        ...base,
+        accepted: true,
+        rootTilesetUrl: `${renderBaseUrl}/api/banger/google-tiles/root.json`
+      };
+      return {
+        ...result,
+        proofHash: hashJson({
+          schema,
+          accepted: true,
+          source: result.source,
+          endpoint: result.rootTilesetUrl,
+          requestBudget: result.requestBudget,
+          initialView
+        })
+      };
+    }
     const apiKey = (process.env.GOOGLE_MAP_TILES_API_KEY ?? process.env.VITE_GOOGLE_MAP_TILES_API_KEY ?? "").trim();
     if (!apiKey) {
       return {
@@ -13177,6 +13200,7 @@ function installIpc(): void {
     }
     const result = {
       ...base,
+      source: "electron-main-env" as const,
       accepted: true,
       rootTilesetUrl: `https://tile.googleapis.com/v1/3dtiles/root.json?key=${encodeURIComponent(apiKey)}`
     };

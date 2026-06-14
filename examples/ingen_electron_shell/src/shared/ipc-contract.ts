@@ -758,7 +758,7 @@ export interface BangerPreviewFrameResult {
 export interface BangerGoogleTilesConfigResult {
   accepted: boolean;
   schema: "forge.banger.google_photorealistic_tiles_config.v1";
-  source: "electron-main-env";
+  source: "render-resolver-proxy" | "electron-main-env";
   rootTilesetUrl: string;
   requestBudget: number;
   showCreditsOnScreen: true;

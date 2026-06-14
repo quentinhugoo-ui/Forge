@@ -8,6 +8,7 @@ use std::time::Duration;
 
 const DEFAULT_RENDER_KEEPALIVE_SECONDS: u64 = 10 * 60;
 const MIN_RENDER_KEEPALIVE_SECONDS: u64 = 60;
+const BANGER_GOOGLE_TILES_PROXY_PREFIX: &str = "/api/banger/google-tiles/";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +153,15 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), String> {
         );
     }
 
+    if let Some(target) = request_target(&request_line) {
+        if request_line.starts_with("GET ") && target.starts_with(BANGER_GOOGLE_TILES_PROXY_PREFIX) {
+            return proxy_banger_google_tiles(&mut stream, target);
+        }
+        if request_line.starts_with("OPTIONS ") && target.starts_with(BANGER_GOOGLE_TILES_PROXY_PREFIX) {
+            return write_empty_response(&mut stream, 204);
+        }
+    }
+
     let expected_token = resolver_token();
     if let Some(expected) = expected_token {
         let presented = auth_header
@@ -231,6 +241,10 @@ fn truthy_env(name: &str) -> bool {
             matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
         })
         .unwrap_or(false)
+}
+
+fn request_target(request_line: &str) -> Option<&str> {
+    request_line.split_whitespace().nth(1)
 }
 
 fn render_keepalive_enabled() -> bool {
@@ -339,13 +353,57 @@ fn write_json_response(
     };
     let body = serde_json::to_string(payload).map_err(|err| format!("encode response: {err}"))?;
     let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.len(),
         body
     );
     stream
         .write_all(response.as_bytes())
         .map_err(|err| format!("write response: {err}"))?;
+    stream.flush().map_err(|err| format!("flush response: {err}"))
+}
+
+fn write_empty_response(stream: &mut TcpStream, status: u16) -> Result<(), String> {
+    let reason = match status {
+        204 => "No Content",
+        _ => "OK",
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    stream
+        .write_all(response.as_bytes())
+        .map_err(|err| format!("write response: {err}"))?;
+    stream.flush().map_err(|err| format!("flush response: {err}"))
+}
+
+fn write_binary_response(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+) -> Result<(), String> {
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        503 => "Service Unavailable",
+        _ => "OK",
+    };
+    let header = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(header.as_bytes())
+        .map_err(|err| format!("write response headers: {err}"))?;
+    stream
+        .write_all(body)
+        .map_err(|err| format!("write response body: {err}"))?;
     stream.flush().map_err(|err| format!("flush response: {err}"))
 }
 
@@ -378,6 +436,67 @@ fn google_places_api_key() -> Option<String> {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
     })
+}
+
+fn google_map_tiles_api_key() -> Option<String> {
+    [
+        "FORGE_GOOGLE_MAP_TILES_API_KEY",
+        "GOOGLE_MAP_TILES_API_KEY",
+        "GOOGLE_MAPS_API_KEY",
+        "GOOGLE_API_KEY",
+    ]
+    .iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn proxy_banger_google_tiles(stream: &mut TcpStream, target: &str) -> Result<(), String> {
+    let Some(api_key) = google_map_tiles_api_key() else {
+        return write_json_response(
+            stream,
+            503,
+            &json!({
+                "error": "google_map_tiles_key_missing",
+                "message": "Set GOOGLE_MAP_TILES_API_KEY or FORGE_GOOGLE_MAP_TILES_API_KEY on Render."
+            }),
+        );
+    };
+    let relative = target
+        .strip_prefix(BANGER_GOOGLE_TILES_PROXY_PREFIX)
+        .unwrap_or("root.json");
+    let (tile_path, query) = relative.split_once('?').unwrap_or((relative, ""));
+    let tile_path = if tile_path.trim().is_empty() { "root.json" } else { tile_path };
+    let query_prefix = if query.trim().is_empty() {
+        "?".to_string()
+    } else {
+        format!("?{query}&")
+    };
+    let remote_url = format!(
+        "https://tile.googleapis.com/v1/3dtiles/{tile_path}{query_prefix}key={api_key}"
+    );
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|err| format!("google tiles client: {err}"))?;
+    let response = client
+        .get(remote_url)
+        .send()
+        .map_err(|err| format!("google tiles request: {err}"))?;
+    let status = response.status().as_u16();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let bytes = response
+        .bytes()
+        .map_err(|err| format!("google tiles body: {err}"))?;
+    write_binary_response(stream, status, &content_type, bytes.as_ref())
 }
 
 fn google_places_text_search_contact(
