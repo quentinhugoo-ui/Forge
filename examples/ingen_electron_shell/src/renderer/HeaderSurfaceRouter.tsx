@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import "cesium/Build/Cesium/Widgets/widgets.css";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type {
-  BangerGoogleTilesConfigResult,
+  BangerPreviewFrameResult,
   HeaderSurfaceContract,
   HeaderSurfaceSnapshot
 } from "../shared/ipc-contract";
@@ -47,130 +46,45 @@ function WebExplorerSurface({ surfaces }: { surfaces: HeaderSurfaceContract[] })
 }
 
 function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
-  const cesiumHostRef = useRef<HTMLDivElement | null>(null);
-  const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
-  const [cesiumLive, setCesiumLive] = useState(false);
+  const [previewFrame, setPreviewFrame] = useState<BangerPreviewFrameResult | null>(null);
 
   useEffect(() => {
     let active = true;
-    void globalThis.window?.forgeShell?.getBangerGoogleTilesConfig?.()
+    void globalThis.window?.forgeShell?.getBangerPreviewFrame?.()
       .then((result) => {
         if (active) {
-          setTilesConfig(result ?? null);
+          setPreviewFrame(result ?? null);
         }
+      })
+      .catch((error) => {
+        console.error("Banger native preview frame failed to load.", error);
       });
     return () => {
       active = false;
     };
   }, []);
 
-  useEffect(() => {
-    const host = cesiumHostRef.current;
-    if (!host) {
-      return;
-    }
-
-    let cancelled = false;
-    let viewer: { destroy: () => void; isDestroyed?: () => boolean } | null = null;
-    let removePostRender: (() => void) | null = null;
-
-    setCesiumLive(false);
-    void import("cesium")
-      .then(async (Cesium) => {
-        if (cancelled) return;
-        const baseLayer = Cesium.ImageryLayer.fromProviderAsync(
-          Cesium.TileMapServiceImageryProvider.fromUrl(
-            Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII")
-          )
-        );
-        Cesium.RequestScheduler.requestsByServer["tile.googleapis.com:443"] = tilesConfig?.requestBudget ?? 18;
-        viewer = new Cesium.Viewer(host, {
-          animation: false,
-          baseLayer,
-          baseLayerPicker: false,
-          fullscreenButton: false,
-          geocoder: false,
-          homeButton: false,
-          infoBox: false,
-          navigationHelpButton: false,
-          requestRenderMode: false,
-          scene3DOnly: true,
-          sceneModePicker: false,
-          selectionIndicator: false,
-          shouldAnimate: false,
-          skyAtmosphere: false,
-          skyBox: false,
-          timeline: false
-        });
-        const cesiumViewer = viewer as any;
-        cesiumViewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#05070a");
-        cesiumViewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#2f6f9f");
-        cesiumViewer.scene.globe.enableLighting = false;
-        cesiumViewer.scene.globe.show = true;
-        cesiumViewer.scene.renderError.addEventListener((_scene: unknown, error: unknown) => {
-          console.error("Banger Cesium render failed.", error);
-          setCesiumLive(false);
-        });
-        const markLiveWhenGlobeIsVisible = () => {
-          if (cancelled) return;
-          const visibleRectangle = cesiumViewer.camera.computeViewRectangle(Cesium.Ellipsoid.WGS84);
-          if (visibleRectangle) {
-            setCesiumLive(true);
-            if (removePostRender) {
-              removePostRender();
-              removePostRender = null;
-            }
-          }
-        };
-        removePostRender = cesiumViewer.scene.postRender.addEventListener(markLiveWhenGlobeIsVisible);
-        cesiumViewer.resize();
-        cesiumViewer.camera.setView({
-          destination: Cesium.Rectangle.fromDegrees(-180, -75, 180, 75)
-        });
-        cesiumViewer.scene.requestRender();
-        if (!tilesConfig?.accepted || !tilesConfig.rootTilesetUrl) {
-          return;
-        }
-        const tilesetFactory = Cesium.Cesium3DTileset as unknown as {
-          fromUrl?: (url: string, options: Record<string, unknown>) => Promise<unknown>;
-          new(options: Record<string, unknown>): unknown;
-        };
-        const tilesetOptions = {
-          showCreditsOnScreen: tilesConfig.showCreditsOnScreen,
-          skipLevelOfDetail: true,
-          dynamicScreenSpaceError: true
-        };
-        const tileset = tilesetFactory.fromUrl
-          ? await tilesetFactory.fromUrl(tilesConfig.rootTilesetUrl, tilesetOptions)
-          : new tilesetFactory({ url: tilesConfig.rootTilesetUrl, ...tilesetOptions });
-        if (cancelled) return;
-        cesiumViewer.scene.primitives.add(tileset);
-        cesiumViewer.scene.requestRender();
-      })
-      .catch((error) => {
-        console.error("Banger Cesium viewport failed to mount.", error);
-        setCesiumLive(false);
-        // Keep the Banger canvas available even if the external tiles provider is still cold.
-      });
-
-    return () => {
-      cancelled = true;
-      if (removePostRender) {
-        removePostRender();
-      }
-      if (viewer && (!viewer.isDestroyed || !viewer.isDestroyed())) {
-        viewer.destroy();
-      }
-    };
-  }, [tilesConfig]);
+  const hasNativeFrame = previewFrame?.accepted === true && previewFrame.frameDataUrl.length > 0;
 
   return (
     <section className="surface surface--banger" aria-label={surface.label}>
       <div
-        ref={cesiumHostRef}
-        className={cesiumLive ? "bangerCesiumViewport bangerCesiumViewport--live" : "bangerCesiumViewport"}
-        aria-label="Banger Cesium geospatial viewport"
-      />
+        className={hasNativeFrame ? "nativeViewportSlot nativeViewportSlot--live" : "nativeViewportSlot"}
+        aria-label="Banger native renderer surface"
+        data-native-contract={surface.nativeContract}
+        data-render-path={previewFrame?.metrics.renderPath ?? "rust-banger-wgpu-child-window"}
+      >
+        {hasNativeFrame ? (
+          <img
+            className="nativeViewportSlot__frame"
+            src={previewFrame.frameDataUrl}
+            alt=""
+            draggable={false}
+          />
+        ) : (
+          <div className="nativeViewportSlot__empty" aria-hidden="true" />
+        )}
+      </div>
     </section>
   );
 }

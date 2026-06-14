@@ -3062,74 +3062,6 @@ button {
   background: #05070a;
 }
 
-.bangerCesiumViewport {
-  position: absolute;
-  inset: 0;
-  isolation: isolate;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 49% 45%, rgba(70, 143, 186, 0.9) 0 12%, rgba(34, 90, 134, 0.92) 24%, rgba(8, 18, 32, 0.96) 33%, transparent 34%),
-    radial-gradient(circle at 43% 41%, rgba(203, 231, 240, 0.52) 0 1px, transparent 2px),
-    radial-gradient(circle at 62% 37%, rgba(203, 231, 240, 0.45) 0 1px, transparent 2px),
-    radial-gradient(circle at 70% 64%, rgba(203, 231, 240, 0.38) 0 1px, transparent 2px),
-    #05070a;
-}
-
-.bangerCesiumViewport::before {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-  content: "";
-  background:
-    radial-gradient(circle at 50% 45%, transparent 0 17%, rgba(5, 7, 10, 0.28) 27%, rgba(5, 7, 10, 0.86) 43%, transparent 44%),
-    linear-gradient(115deg, transparent 0 43%, rgba(255, 255, 255, 0.12) 44%, transparent 47%);
-  opacity: 1;
-  transition: opacity 240ms ease;
-}
-
-.bangerCesiumViewport--live::before {
-  opacity: 0;
-}
-
-.bangerCesiumViewport .cesium-widget,
-.bangerCesiumViewport .cesium-widget canvas {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  outline: none;
-}
-
-.surface--banger .cesium-viewer,
-.surface--banger .cesium-viewer-cesiumWidgetContainer,
-.surface--banger .cesium-widget {
-  position: absolute;
-  inset: 0;
-}
-
-.surface--banger .cesium-widget-credits {
-  right: 12px;
-  bottom: 94px;
-  max-width: min(620px, calc(100vw - 360px));
-  color: rgba(245, 247, 250, 0.82);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-}
-
-.surface--banger .cesium-credit-textContainer,
-.surface--banger .cesium-credit-logoContainer {
-  border-radius: 4px;
-  background: rgba(5, 7, 10, 0.62);
-}
-
-.surface--banger .nativeViewportSlot__frame {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
 .nativeViewportSlot--live {
   display: block;
   padding: 0;
@@ -3151,6 +3083,27 @@ button {
   display: grid;
   gap: 10px;
   place-items: center;
+}
+
+.surface--banger .nativeViewportSlot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    #05070a;
+  background-size: 32px 32px;
+  pointer-events: none;
+}
+
+.surface--banger .nativeViewportSlot__frame {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .bangerFrameLedger {
