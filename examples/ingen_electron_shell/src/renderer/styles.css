@@ -16,6 +16,10 @@
   background: #0e0e0f;
 }
 
+html.ingen-widget-mode {
+  background: transparent;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -27,6 +31,10 @@ body {
   overflow: hidden;
   background: var(--forge-bg);
   color: var(--forge-text);
+}
+
+body.ingen-widget-mode {
+  background: transparent;
 }
 
 button {
@@ -168,6 +176,7 @@ button {
   --chat-left: calc((100vw - var(--chat-width)) / 2);
   --bottom-width: min(764px, calc(100vw - 80px));
   --bottom-left: calc((100vw - var(--bottom-width)) / 2);
+  background: transparent;
 }
 
 .titlebar {

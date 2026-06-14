@@ -204,6 +204,9 @@ const forgeWindowControls = {
   toggleMaximize(): Promise<boolean> {
     return ipcRenderer.invoke("forge:window-toggle-maximize");
   },
+  setWidgetMode(enabled: boolean): Promise<boolean> {
+    return ipcRenderer.invoke("forge:window-widget-mode", enabled);
+  },
   close(): Promise<boolean> {
     return ipcRenderer.invoke("forge:window-close");
   }

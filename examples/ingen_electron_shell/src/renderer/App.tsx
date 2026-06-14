@@ -269,6 +269,15 @@ export function App() {
   ].join(" ");
 
   useEffect(() => {
+    document.documentElement.classList.toggle("ingen-widget-mode", widgetMode);
+    document.body.classList.toggle("ingen-widget-mode", widgetMode);
+    return () => {
+      document.documentElement.classList.remove("ingen-widget-mode");
+      document.body.classList.remove("ingen-widget-mode");
+    };
+  }, [widgetMode]);
+
+  useEffect(() => {
     if (workspaceFolder) {
       setWorkspaceGateActive(false);
       return;
@@ -728,6 +737,7 @@ export function App() {
     setWorkspaceMenuOpen(false);
     setWorkspaceNotice(null);
     if (!enabled) {
+      void globalThis.window?.forgeWindowControls?.setWidgetMode?.(false);
       return;
     }
 
@@ -744,6 +754,7 @@ export function App() {
       setParallelPrompts([""]);
       void globalThis.window?.forgeShell?.hideNativeWebExplorer?.();
       void globalThis.window?.forgeShell?.hideNativeMaps?.();
+      void globalThis.window?.forgeWindowControls?.setWidgetMode?.(true);
     }, WIDGET_SURFACE_CLOSE_DELAY_MS);
 
     void (async () => {

@@ -218,6 +218,11 @@ const PANELS_CHAT_BOTTOM_MAX_OPENAI_FILE_BYTES = 20 * 1024 * 1024;
 const PANELS_CHAT_BOTTOM_MAX_TEXT_PREVIEW_BYTES = 96 * 1024;
 const PANELS_CHAT_BOTTOM_MAX_VISUAL_SNAPSHOTS = 6;
 const PANELS_CHAT_BOTTOM_MAX_VIDEO_SUBTITLE_CUES = 160;
+const MAIN_WINDOW_BACKGROUND = "#0e0e0f";
+const TRANSPARENT_WINDOW_BACKGROUND = "#00000000";
+const WIDGET_WINDOW_MAX_WIDTH = 860;
+const WIDGET_WINDOW_HEIGHT = 174;
+const WIDGET_WINDOW_BOTTOM_GAP = 18;
 const PANELS_CHAT_BOTTOM_MAX_VIDEO_SUBTITLE_BYTES = 48 * 1024;
 const PANELS_CHAT_BOTTOM_CONTEXT_TEXT_BYTES = 24 * 1024;
 const PANELS_CHAT_BOTTOM_CONTEXT_TOKEN_BUDGET = 80_000;
@@ -233,6 +238,13 @@ const authWindows = new Map<LlmProviderConnectId, BrowserWindow>();
 const providerAuthWatchers = new Map<LlmProviderConnectId, ReturnType<typeof setInterval>>();
 let claudeProvisioningActive = false;
 let codexRuntimeWindow: BrowserWindow | null = null;
+type WidgetWindowRestoreState = {
+  bounds: Electron.Rectangle;
+  minimumSize: [number, number];
+  maximized: boolean;
+  fullScreen: boolean;
+};
+let widgetWindowRestoreState: WidgetWindowRestoreState | null = null;
 let nativeWebExplorerView: BrowserView | null = null;
 let nativeWebExplorerOwner: BrowserWindow | null = null;
 let nativeWebExplorerLoadedUrl = "";
@@ -9772,10 +9784,79 @@ function closeNativeWindow(event: Electron.IpcMainInvokeEvent): boolean {
   return true;
 }
 
+function widgetWindowBounds(window: BrowserWindow): Electron.Rectangle {
+  const display = screen.getDisplayMatching(window.getBounds());
+  const { workArea } = display;
+  const width = Math.min(WIDGET_WINDOW_MAX_WIDTH, Math.max(520, workArea.width - 48));
+  const height = Math.min(WIDGET_WINDOW_HEIGHT, Math.max(136, workArea.height - 24));
+  return {
+    x: workArea.x + Math.round((workArea.width - width) / 2),
+    y: workArea.y + workArea.height - height - WIDGET_WINDOW_BOTTOM_GAP,
+    width,
+    height
+  };
+}
+
+function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: unknown): boolean {
+  if (!validateSender(event)) {
+    console.warn("Blocked window widget mode from invalid sender", event.senderFrame?.url ?? "");
+    return false;
+  }
+  const window = senderNativeWindow(event);
+  if (!window || window.isDestroyed()) {
+    return false;
+  }
+
+  if (enabled === true) {
+    if (widgetWindowRestoreState === null) {
+      const [minWidth, minHeight] = window.getMinimumSize();
+      widgetWindowRestoreState = {
+        bounds: window.getBounds(),
+        minimumSize: [minWidth, minHeight],
+        maximized: window.isMaximized(),
+        fullScreen: window.isFullScreen()
+      };
+    }
+    if (window.isFullScreen()) {
+      window.setFullScreen(false);
+    }
+    if (window.isMaximized()) {
+      window.unmaximize();
+    }
+    window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
+    window.setMinimumSize(420, 128);
+    window.setAlwaysOnTop(true, "floating");
+    window.setBounds(widgetWindowBounds(window), true);
+    window.show();
+    return true;
+  }
+
+  const restoreState = widgetWindowRestoreState;
+  widgetWindowRestoreState = null;
+  window.setAlwaysOnTop(false);
+  window.setBackgroundColor(MAIN_WINDOW_BACKGROUND);
+  if (!restoreState) {
+    return true;
+  }
+  window.setMinimumSize(restoreState.minimumSize[0], restoreState.minimumSize[1]);
+  if (restoreState.fullScreen) {
+    window.setFullScreen(true);
+  } else if (restoreState.maximized) {
+    window.setBounds(restoreState.bounds, false);
+    window.maximize();
+  } else {
+    window.setBounds(restoreState.bounds, true);
+  }
+  window.show();
+  window.focus();
+  return true;
+}
+
 function installWindowControlIpc(): void {
   ipcMain.handle("forge:window-minimize", (event): boolean => minimizeNativeWindow(event));
   ipcMain.handle("forge:window-toggle-maximize", (event): boolean => toggleNativeWindowMaximize(event));
   ipcMain.handle("forge:window-close", (event): boolean => closeNativeWindow(event));
+  ipcMain.handle("forge:window-widget-mode", (event, enabled): boolean => setNativeWindowWidgetMode(event, enabled));
 }
 
 function terminalProof(value: unknown): string {
@@ -13941,7 +14022,8 @@ async function createWindow(): Promise<void> {
     autoHideMenuBar: labWindow ? true : false,
     title: labWindow ? "InGen Event Text Lab" : "InGen",
     show: false,
-    backgroundColor: labWindow ? "#101112" : "#0e0e0f",
+    transparent: !labWindow,
+    backgroundColor: labWindow ? "#101112" : MAIN_WINDOW_BACKGROUND,
     webPreferences: {
       preload: join(shellRoot, "preload.cjs"),
       contextIsolation: true,
