@@ -1811,6 +1811,7 @@ pub struct BangerNativeDirectLightingValidationReceipt {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeMaterialClosurePacket {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub authority: &'static str,
     pub clean_room_basis: &'static str,
     pub source_contract_hash: String,
@@ -1823,12 +1824,22 @@ pub struct BangerNativeMaterialClosurePacket {
     pub layered_closure_count: usize,
     pub texture_slot_count: u32,
     pub hardware_ray_candidate_count: usize,
+    pub substrate_tile_count: usize,
+    pub stochastic_lighting_closure_count: usize,
+    pub complex_closure_count: usize,
+    pub thin_transmission_count: usize,
     pub closure_stack_hash: String,
+    pub substrate_header_hash: String,
+    pub tile_classification_hash: String,
     pub bsdf_table_hash: String,
     pub texture_table_hash: String,
+    pub mega_lights_coupling_hash: String,
     pub resolve_hash: String,
+    pub validation_receipt_hash: String,
     pub packet_hash: String,
     pub entries: Vec<BangerNativeMaterialClosureEntry>,
+    pub substrate_tiles: Vec<BangerNativeSubstrateMaterialTile>,
+    pub validation_receipt: BangerNativeMaterialClosureValidationReceipt,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1841,6 +1852,16 @@ pub struct BangerNativeMaterialClosureEntry {
     pub base_closure: &'static str,
     pub coating_closure: &'static str,
     pub layer_count: u32,
+    pub substrate_tile_id: String,
+    pub substrate_tile_type: &'static str,
+    pub substrate_header_bits: u32,
+    pub bsdf_feature_mask: u32,
+    pub shared_local_basis_count: u32,
+    pub top_layer_weight_q15: u16,
+    pub lighting_path: &'static str,
+    pub mega_lights_sample_tile_id: String,
+    pub stochastic_lighting_enabled: bool,
+    pub vsm_shadow_coupled: bool,
     pub texture_slot_base: u32,
     pub texture_slot_count: u32,
     pub roughness_quantized: u16,
@@ -1850,10 +1871,39 @@ pub struct BangerNativeMaterialClosureEntry {
     pub surface_cache_hash: String,
     pub shadow_mask_hash: String,
     pub closure_hash: String,
+    pub substrate_header_hash: String,
+    pub tile_classification_hash: String,
     pub bsdf_hash: String,
     pub texture_hash: String,
+    pub mega_lights_coupling_hash: String,
     pub resolve_hash: String,
     pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeSubstrateMaterialTile {
+    pub substrate_tile_id: String,
+    pub tile_type: &'static str,
+    pub tile_rect: [u32; 4],
+    pub closure_count: usize,
+    pub stochastic_lighting_count: usize,
+    pub complex_closure_count: usize,
+    pub tile_mask: u32,
+    pub tile_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeMaterialClosureValidationReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_closure_count: usize,
+    pub checked_tile_count: usize,
+    pub stochastic_lighting_closure_count: usize,
+    pub complex_closure_count: usize,
+    pub all_closures_have_tiles: bool,
+    pub validation_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -5623,11 +5673,37 @@ fn build_material_closure_packet(
             let base_closure = material_base_closure(material_bin_id, direct_entry.light_kind);
             let coating_closure = material_coating_closure(lumen_entry, shadow_entry);
             let layer_count = material_layer_count(base_closure, coating_closure, direct_entry);
+            let substrate_tile_id = material_substrate_tile_id(direct_entry, material_bin_id);
+            let substrate_tile_type =
+                material_substrate_tile_type(base_closure, coating_closure, layer_count, direct_entry);
             let texture_slot_base = material_texture_slot_base(material_abi, material_bin_id);
             let texture_slot_count = material_texture_slot_count(material_abi, layer_count, direct_entry);
             let roughness_quantized = material_roughness_quantized(lumen_entry, direct_entry);
             let metallic_quantized = material_metallic_quantized(material_bin_id, direct_entry);
             let opacity_quantized = material_opacity_quantized(shadow_entry, direct_entry);
+            let bsdf_feature_mask = material_bsdf_feature_mask(
+                base_closure,
+                coating_closure,
+                direct_entry,
+                shadow_entry,
+            );
+            let shared_local_basis_count =
+                material_shared_local_basis_count(layer_count, bsdf_feature_mask);
+            let top_layer_weight_q15 =
+                material_top_layer_weight_q15(direct_entry, shadow_entry, roughness_quantized);
+            let substrate_header_bits = material_substrate_header_bits(
+                layer_count,
+                shared_local_basis_count,
+                substrate_tile_type,
+                bsdf_feature_mask,
+                top_layer_weight_q15,
+            );
+            let lighting_path = material_lighting_path(direct_entry);
+            let stochastic_lighting_enabled =
+                material_stochastic_lighting_enabled(direct_entry, substrate_tile_type);
+            let vsm_shadow_coupled = shadow_entry
+                .map(|entry| entry.clipmap_range_id == direct_entry.vsm_clipmap_range_id)
+                .unwrap_or(false);
             let closure_stack_id = material_closure_stack_id(
                 direct_entry,
                 material_bin_id,
@@ -5638,6 +5714,22 @@ fn build_material_closure_packet(
             let surface_cache_hash = lumen_entry
                 .map(|entry| entry.surface_cache_hash.clone())
                 .unwrap_or_else(|| direct_entry.contribution_hash.clone());
+            let substrate_header_hash = material_substrate_header_hash(
+                direct_entry,
+                &substrate_tile_id,
+                substrate_tile_type,
+                substrate_header_bits,
+                bsdf_feature_mask,
+                shared_local_basis_count,
+                top_layer_weight_q15,
+            );
+            let tile_classification_hash = material_tile_classification_hash(
+                direct_entry,
+                &substrate_tile_id,
+                substrate_tile_type,
+                stochastic_lighting_enabled,
+                vsm_shadow_coupled,
+            );
             let closure_hash = material_closure_hash(
                 direct_entry,
                 &closure_stack_id,
@@ -5645,6 +5737,8 @@ fn build_material_closure_packet(
                 base_closure,
                 coating_closure,
                 layer_count,
+                substrate_header_bits,
+                bsdf_feature_mask,
                 roughness_quantized,
                 metallic_quantized,
                 opacity_quantized,
@@ -5653,6 +5747,8 @@ fn build_material_closure_packet(
                 &closure_hash,
                 direct_entry,
                 lumen_entry,
+                &substrate_header_hash,
+                bsdf_feature_mask,
                 roughness_quantized,
                 metallic_quantized,
             );
@@ -5663,14 +5759,30 @@ fn build_material_closure_packet(
                 texture_slot_count,
                 &surface_cache_hash,
             );
+            let mega_lights_coupling_hash = material_mega_lights_coupling_hash(
+                direct_entry,
+                shadow_entry,
+                &tile_classification_hash,
+                stochastic_lighting_enabled,
+                vsm_shadow_coupled,
+            );
             let resolve_hash =
-                material_resolve_hash(&bsdf_hash, &texture_hash, direct_entry, shadow_entry);
+                material_resolve_hash(
+                    &bsdf_hash,
+                    &texture_hash,
+                    &mega_lights_coupling_hash,
+                    direct_entry,
+                    shadow_entry,
+                );
             let entry_hash = material_closure_entry_hash(
                 direct_entry,
                 &closure_stack_id,
                 &closure_hash,
+                &substrate_header_hash,
+                &tile_classification_hash,
                 &bsdf_hash,
                 &texture_hash,
+                &mega_lights_coupling_hash,
                 &resolve_hash,
                 texture_slot_base,
                 texture_slot_count,
@@ -5683,6 +5795,16 @@ fn build_material_closure_packet(
                 base_closure,
                 coating_closure,
                 layer_count,
+                substrate_tile_id,
+                substrate_tile_type,
+                substrate_header_bits,
+                bsdf_feature_mask,
+                shared_local_basis_count,
+                top_layer_weight_q15,
+                lighting_path,
+                mega_lights_sample_tile_id: direct_entry.sample_tile_id.clone(),
+                stochastic_lighting_enabled,
+                vsm_shadow_coupled,
                 texture_slot_base,
                 texture_slot_count,
                 roughness_quantized,
@@ -5692,16 +5814,26 @@ fn build_material_closure_packet(
                 surface_cache_hash,
                 shadow_mask_hash: direct_entry.shadow_mask_hash.clone(),
                 closure_hash,
+                substrate_header_hash,
+                tile_classification_hash,
                 bsdf_hash,
                 texture_hash,
+                mega_lights_coupling_hash,
                 resolve_hash,
                 entry_hash,
             }
         })
         .collect::<Vec<_>>();
+    let substrate_tiles = build_material_substrate_tiles(&entries);
+    let validation_receipt =
+        build_material_closure_validation_receipt(&entries, &substrate_tiles);
+    let validation_receipt_hash = validation_receipt.validation_hash.clone();
     let closure_stack_hash = material_closure_stack_hash(&entries);
+    let substrate_header_hash = material_substrate_header_table_hash(&entries);
+    let tile_classification_hash = material_tile_classification_table_hash(&entries, &substrate_tiles);
     let bsdf_table_hash = material_bsdf_table_hash(&entries);
     let texture_table_hash = material_texture_table_hash(&entries);
+    let mega_lights_coupling_hash = material_mega_lights_coupling_table_hash(&entries);
     let resolve_hash = material_closure_resolve_hash(&entries);
     let packet_hash = material_closure_packet_hash(
         prepared,
@@ -5711,15 +5843,21 @@ fn build_material_closure_packet(
         direct_lighting_packet,
         render_graph_compilation,
         &closure_stack_hash,
+        &substrate_header_hash,
+        &tile_classification_hash,
         &bsdf_table_hash,
         &texture_table_hash,
+        &mega_lights_coupling_hash,
         &resolve_hash,
+        &validation_receipt_hash,
         &entries,
+        &substrate_tiles,
     );
     BangerNativeMaterialClosurePacket {
-        schema: "forge.banger.material_closure_packet.v1",
+        schema: "forge.banger.material_closure_packet.v2",
+        schema_version: 2,
         authority: "banger_substrate_style_material_closure_stack_texture_table_resolve",
-        clean_room_basis: "local_unreal_sparse_substrate_material_closure_layering_principles_no_source_copy",
+        clean_room_basis: "local_unreal_sparse_substrate_material_closure_tile_classification_stochastic_lighting_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
         direct_lighting_hash: direct_lighting_packet.packet_hash.clone(),
         lumen_lighting_hash: lumen_lighting_packet.packet_hash.clone(),
@@ -5730,12 +5868,25 @@ fn build_material_closure_packet(
         layered_closure_count: entries.iter().filter(|entry| entry.layer_count > 1).count(),
         texture_slot_count: entries.iter().map(|entry| entry.texture_slot_count).sum(),
         hardware_ray_candidate_count: direct_lighting_packet.hardware_ray_candidate_count,
+        substrate_tile_count: substrate_tiles.len(),
+        stochastic_lighting_closure_count: validation_receipt.stochastic_lighting_closure_count,
+        complex_closure_count: validation_receipt.complex_closure_count,
+        thin_transmission_count: entries
+            .iter()
+            .filter(|entry| entry.bsdf_feature_mask & 0b0010_0000 != 0)
+            .count(),
         closure_stack_hash,
+        substrate_header_hash,
+        tile_classification_hash,
         bsdf_table_hash,
         texture_table_hash,
+        mega_lights_coupling_hash,
         resolve_hash,
+        validation_receipt_hash,
         packet_hash,
         entries,
+        substrate_tiles,
+        validation_receipt,
     }
 }
 
@@ -11994,6 +12145,138 @@ fn material_layer_count(
     (base_layers + coating_layers + ray_layers).clamp(1, 5)
 }
 
+fn material_substrate_tile_id(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    material_bin_id: u32,
+) -> String {
+    hash_text_hex(
+        "forge.banger.material_closure.substrate_tile_id.v1",
+        &format!(
+            "{}:{}:{}:{}:{}",
+            direct_entry.sample_tile_id,
+            direct_entry.cluster_id,
+            material_bin_id,
+            direct_entry.denoiser_tile[0] / 8,
+            direct_entry.denoiser_tile[1] / 8
+        ),
+    )
+}
+
+fn material_substrate_tile_type(
+    base_closure: &str,
+    coating_closure: &str,
+    layer_count: u32,
+    direct_entry: &BangerNativeDirectLightingEntry,
+) -> &'static str {
+    if layer_count >= 4 || direct_entry.ray_tracing_candidate {
+        "complex_special"
+    } else if layer_count >= 3 || coating_closure != "matte_energy_preserving_lobe" {
+        "complex"
+    } else if base_closure == "dielectric_ggx" && layer_count == 1 {
+        "simple"
+    } else {
+        "single"
+    }
+}
+
+fn material_bsdf_feature_mask(
+    base_closure: &str,
+    coating_closure: &str,
+    direct_entry: &BangerNativeDirectLightingEntry,
+    shadow_entry: Option<&BangerNativeVirtualShadowEntry>,
+) -> u32 {
+    let mut mask = 0u32;
+    if coating_closure == "anisotropic_reflection_lobe" {
+        mask |= 0b0000_0001;
+    }
+    if coating_closure == "clearcoat_cached_shadow" {
+        mask |= 0b0000_0010;
+    }
+    if base_closure == "subsurface_diffuse" {
+        mask |= 0b0000_0100;
+    }
+    if direct_entry.ray_tracing_candidate {
+        mask |= 0b0000_1000;
+    }
+    if direct_entry.stochastic_sample_mode != "single_pixel_jitter" {
+        mask |= 0b0001_0000;
+    }
+    if shadow_entry
+        .map(|entry| entry.depth_range_shift > 0.25)
+        .unwrap_or(false)
+    {
+        mask |= 0b0010_0000;
+    }
+    if direct_entry.vsm_pruned {
+        mask |= 0b0100_0000;
+    }
+    mask
+}
+
+fn material_shared_local_basis_count(layer_count: u32, bsdf_feature_mask: u32) -> u32 {
+    let anisotropy_basis = u32::from(bsdf_feature_mask & 0b0000_0001 != 0);
+    let transmission_basis = u32::from(bsdf_feature_mask & 0b0010_0000 != 0);
+    layer_count
+        .saturating_add(anisotropy_basis)
+        .saturating_add(transmission_basis)
+        .clamp(1, 4)
+}
+
+fn material_top_layer_weight_q15(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    shadow_entry: Option<&BangerNativeVirtualShadowEntry>,
+    roughness_quantized: u16,
+) -> u16 {
+    let roughness_weight = (roughness_quantized as u32 / 4).min(16_384);
+    let history_weight = (direct_entry.temporal_history_weight * 8192.0).round() as u32;
+    let shadow_weight = shadow_entry
+        .map(|entry| (entry.page_age_bucket * 1024).min(4096))
+        .unwrap_or_default();
+    roughness_weight
+        .saturating_add(history_weight)
+        .saturating_add(shadow_weight)
+        .min(32_767) as u16
+}
+
+fn material_substrate_header_bits(
+    layer_count: u32,
+    shared_local_basis_count: u32,
+    substrate_tile_type: &str,
+    bsdf_feature_mask: u32,
+    top_layer_weight_q15: u16,
+) -> u32 {
+    let tile_type_bits = match substrate_tile_type {
+        "simple" => 0,
+        "single" => 1,
+        "complex" => 2,
+        "complex_special" => 3,
+        _ => 0,
+    };
+    (layer_count.min(15))
+        | (shared_local_basis_count.min(3) << 4)
+        | (tile_type_bits << 6)
+        | ((bsdf_feature_mask & 0xff) << 8)
+        | (((top_layer_weight_q15 as u32) >> 7) << 16)
+}
+
+fn material_lighting_path(direct_entry: &BangerNativeDirectLightingEntry) -> &'static str {
+    if direct_entry.ray_tracing_candidate {
+        "hardware_ray_megalights_material"
+    } else if direct_entry.stochastic_sample_mode != "single_pixel_jitter" {
+        "stochastic_megalights_material"
+    } else {
+        "clustered_deferred_material"
+    }
+}
+
+fn material_stochastic_lighting_enabled(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    substrate_tile_type: &str,
+) -> bool {
+    direct_entry.stochastic_sample_mode != "single_pixel_jitter"
+        || matches!(substrate_tile_type, "complex" | "complex_special")
+}
+
 fn material_texture_slot_base(material_abi: &BangerNativeShaderMaterialAbi, material_bin_id: u32) -> u32 {
     material_abi
         .texture_binding_base
@@ -12072,21 +12355,64 @@ fn material_closure_hash(
     base_closure: &str,
     coating_closure: &str,
     layer_count: u32,
+    substrate_header_bits: u32,
+    bsdf_feature_mask: u32,
     roughness_quantized: u16,
     metallic_quantized: u16,
     opacity_quantized: u16,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.material_closure.closure.v1\0");
+    h.update(b"forge.banger.material_closure.closure.v2\0");
     h.update(direct_entry.entry_hash.as_bytes());
     h.update(closure_stack_id.as_bytes());
     h.update(material_bin_id.to_le_bytes());
     h.update(base_closure.as_bytes());
     h.update(coating_closure.as_bytes());
     h.update(layer_count.to_le_bytes());
+    h.update(substrate_header_bits.to_le_bytes());
+    h.update(bsdf_feature_mask.to_le_bytes());
     h.update(roughness_quantized.to_le_bytes());
     h.update(metallic_quantized.to_le_bytes());
     h.update(opacity_quantized.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn material_substrate_header_hash(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    substrate_tile_id: &str,
+    substrate_tile_type: &str,
+    substrate_header_bits: u32,
+    bsdf_feature_mask: u32,
+    shared_local_basis_count: u32,
+    top_layer_weight_q15: u16,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.substrate_header.v1\0");
+    h.update(direct_entry.entry_hash.as_bytes());
+    h.update(substrate_tile_id.as_bytes());
+    h.update(substrate_tile_type.as_bytes());
+    h.update(substrate_header_bits.to_le_bytes());
+    h.update(bsdf_feature_mask.to_le_bytes());
+    h.update(shared_local_basis_count.to_le_bytes());
+    h.update(top_layer_weight_q15.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn material_tile_classification_hash(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    substrate_tile_id: &str,
+    substrate_tile_type: &str,
+    stochastic_lighting_enabled: bool,
+    vsm_shadow_coupled: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.tile_classification.v1\0");
+    h.update(substrate_tile_id.as_bytes());
+    h.update(substrate_tile_type.as_bytes());
+    h.update(direct_entry.sample_tile_hash.as_bytes());
+    h.update(direct_entry.vsm_pruned_grid_hash.as_bytes());
+    h.update([stochastic_lighting_enabled as u8]);
+    h.update([vsm_shadow_coupled as u8]);
     hex32(h.finalize().into())
 }
 
@@ -12094,13 +12420,18 @@ fn material_bsdf_hash(
     closure_hash: &str,
     direct_entry: &BangerNativeDirectLightingEntry,
     lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+    substrate_header_hash: &str,
+    bsdf_feature_mask: u32,
     roughness_quantized: u16,
     metallic_quantized: u16,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.material_closure.bsdf.v1\0");
+    h.update(b"forge.banger.material_closure.bsdf.v2\0");
     h.update(closure_hash.as_bytes());
+    h.update(substrate_header_hash.as_bytes());
     h.update(direct_entry.contribution_hash.as_bytes());
+    h.update(direct_entry.temporal_reprojection_hash.as_bytes());
+    h.update(bsdf_feature_mask.to_le_bytes());
     h.update(roughness_quantized.to_le_bytes());
     h.update(metallic_quantized.to_le_bytes());
     if let Some(lumen_entry) = lumen_entry {
@@ -12118,7 +12449,7 @@ fn material_texture_hash(
     surface_cache_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.material_closure.texture_table_entry.v1\0");
+    h.update(b"forge.banger.material_closure.texture_table_entry.v2\0");
     h.update(closure_hash.as_bytes());
     h.update(material_abi.layout_hash.as_bytes());
     h.update(texture_slot_base.to_le_bytes());
@@ -12127,16 +12458,39 @@ fn material_texture_hash(
     hex32(h.finalize().into())
 }
 
+fn material_mega_lights_coupling_hash(
+    direct_entry: &BangerNativeDirectLightingEntry,
+    shadow_entry: Option<&BangerNativeVirtualShadowEntry>,
+    tile_classification_hash: &str,
+    stochastic_lighting_enabled: bool,
+    vsm_shadow_coupled: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.megalights_coupling.v1\0");
+    h.update(direct_entry.sample_tile_id.as_bytes());
+    h.update(direct_entry.hzb_visibility_hash.as_bytes());
+    h.update(direct_entry.temporal_reprojection_hash.as_bytes());
+    h.update(tile_classification_hash.as_bytes());
+    h.update([stochastic_lighting_enabled as u8]);
+    h.update([vsm_shadow_coupled as u8]);
+    if let Some(shadow_entry) = shadow_entry {
+        h.update(shadow_entry.cache_metadata_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn material_resolve_hash(
     bsdf_hash: &str,
     texture_hash: &str,
+    mega_lights_coupling_hash: &str,
     direct_entry: &BangerNativeDirectLightingEntry,
     shadow_entry: Option<&BangerNativeVirtualShadowEntry>,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.material_closure.resolve.v1\0");
+    h.update(b"forge.banger.material_closure.resolve.v2\0");
     h.update(bsdf_hash.as_bytes());
     h.update(texture_hash.as_bytes());
+    h.update(mega_lights_coupling_hash.as_bytes());
     h.update(direct_entry.resolve_tile[0].to_le_bytes());
     h.update(direct_entry.resolve_tile[1].to_le_bytes());
     h.update(direct_entry.resolve_tile[2].to_le_bytes());
@@ -12151,41 +12505,164 @@ fn material_closure_entry_hash(
     direct_entry: &BangerNativeDirectLightingEntry,
     closure_stack_id: &str,
     closure_hash: &str,
+    substrate_header_hash: &str,
+    tile_classification_hash: &str,
     bsdf_hash: &str,
     texture_hash: &str,
+    mega_lights_coupling_hash: &str,
     resolve_hash: &str,
     texture_slot_base: u32,
     texture_slot_count: u32,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.material_closure.entry.v1\0");
+    h.update(b"forge.banger.material_closure.entry.v2\0");
     h.update(direct_entry.entry_hash.as_bytes());
     h.update(closure_stack_id.as_bytes());
     h.update(closure_hash.as_bytes());
+    h.update(substrate_header_hash.as_bytes());
+    h.update(tile_classification_hash.as_bytes());
     h.update(bsdf_hash.as_bytes());
     h.update(texture_hash.as_bytes());
+    h.update(mega_lights_coupling_hash.as_bytes());
     h.update(resolve_hash.as_bytes());
     h.update(texture_slot_base.to_le_bytes());
     h.update(texture_slot_count.to_le_bytes());
     hex32(h.finalize().into())
 }
 
+fn build_material_substrate_tiles(
+    entries: &[BangerNativeMaterialClosureEntry],
+) -> Vec<BangerNativeSubstrateMaterialTile> {
+    let mut grouped: BTreeMap<String, Vec<&BangerNativeMaterialClosureEntry>> = BTreeMap::new();
+    for entry in entries {
+        grouped
+            .entry(entry.substrate_tile_id.clone())
+            .or_default()
+            .push(entry);
+    }
+    grouped
+        .into_iter()
+        .map(|(substrate_tile_id, tile_entries)| {
+            let first = tile_entries[0];
+            let stochastic_lighting_count = tile_entries
+                .iter()
+                .filter(|entry| entry.stochastic_lighting_enabled)
+                .count();
+            let complex_closure_count = tile_entries
+                .iter()
+                .filter(|entry| matches!(entry.substrate_tile_type, "complex" | "complex_special"))
+                .count();
+            let tile_mask = material_substrate_tile_mask(&tile_entries);
+            let tile_hash = material_substrate_tile_hash(
+                &substrate_tile_id,
+                first.substrate_tile_type,
+                &first_tile_rect(first),
+                tile_entries.len(),
+                stochastic_lighting_count,
+                complex_closure_count,
+                tile_mask,
+            );
+            BangerNativeSubstrateMaterialTile {
+                substrate_tile_id,
+                tile_type: first.substrate_tile_type,
+                tile_rect: first_tile_rect(first),
+                closure_count: tile_entries.len(),
+                stochastic_lighting_count,
+                complex_closure_count,
+                tile_mask,
+                tile_hash,
+            }
+        })
+        .collect()
+}
+
+fn first_tile_rect(entry: &BangerNativeMaterialClosureEntry) -> [u32; 4] {
+    [
+        entry.texture_slot_base,
+        entry.material_bin_id % 256,
+        8 + entry.layer_count * 2,
+        8 + entry.texture_slot_count * 2,
+    ]
+}
+
+fn material_substrate_tile_mask(entries: &[&BangerNativeMaterialClosureEntry]) -> u32 {
+    entries.iter().fold(0u32, |mask, entry| {
+        let lane = ((entry.material_bin_id ^ entry.layer_count ^ entry.texture_slot_count) % 31)
+            .min(31);
+        mask | (1u32 << lane)
+    })
+}
+
+fn material_substrate_tile_hash(
+    substrate_tile_id: &str,
+    tile_type: &str,
+    tile_rect: &[u32; 4],
+    closure_count: usize,
+    stochastic_lighting_count: usize,
+    complex_closure_count: usize,
+    tile_mask: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.substrate_tile.v1\0");
+    h.update(substrate_tile_id.as_bytes());
+    h.update(tile_type.as_bytes());
+    for value in tile_rect {
+        h.update(value.to_le_bytes());
+    }
+    h.update((closure_count as u64).to_le_bytes());
+    h.update((stochastic_lighting_count as u64).to_le_bytes());
+    h.update((complex_closure_count as u64).to_le_bytes());
+    h.update(tile_mask.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
 fn material_closure_stack_hash(entries: &[BangerNativeMaterialClosureEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.material_closure.stack_table.v1\0");
+    h.update(b"forge.banger.material_closure.stack_table.v2\0");
     for entry in entries {
         h.update(entry.closure_stack_id.as_bytes());
         h.update(entry.closure_hash.as_bytes());
+        h.update(entry.substrate_tile_id.as_bytes());
         h.update(entry.layer_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn material_substrate_header_table_hash(entries: &[BangerNativeMaterialClosureEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.substrate_header_table.v1\0");
+    for entry in entries {
+        h.update(entry.substrate_header_hash.as_bytes());
+        h.update(entry.substrate_header_bits.to_le_bytes());
+        h.update(entry.bsdf_feature_mask.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn material_tile_classification_table_hash(
+    entries: &[BangerNativeMaterialClosureEntry],
+    substrate_tiles: &[BangerNativeSubstrateMaterialTile],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.tile_classification_table.v1\0");
+    for entry in entries {
+        h.update(entry.tile_classification_hash.as_bytes());
+        h.update(entry.substrate_tile_type.as_bytes());
+        h.update([entry.stochastic_lighting_enabled as u8]);
+    }
+    for tile in substrate_tiles {
+        h.update(tile.tile_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
 
 fn material_bsdf_table_hash(entries: &[BangerNativeMaterialClosureEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.material_closure.bsdf_table.v1\0");
+    h.update(b"forge.banger.material_closure.bsdf_table.v2\0");
     for entry in entries {
         h.update(entry.bsdf_hash.as_bytes());
+        h.update(entry.substrate_header_hash.as_bytes());
+        h.update(entry.bsdf_feature_mask.to_le_bytes());
         h.update(entry.roughness_quantized.to_le_bytes());
         h.update(entry.metallic_quantized.to_le_bytes());
     }
@@ -12194,22 +12671,90 @@ fn material_bsdf_table_hash(entries: &[BangerNativeMaterialClosureEntry]) -> Str
 
 fn material_texture_table_hash(entries: &[BangerNativeMaterialClosureEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.material_closure.texture_table.v1\0");
+    h.update(b"forge.banger.material_closure.texture_table.v2\0");
     for entry in entries {
         h.update(entry.texture_hash.as_bytes());
+        h.update(entry.substrate_tile_id.as_bytes());
         h.update(entry.texture_slot_base.to_le_bytes());
         h.update(entry.texture_slot_count.to_le_bytes());
     }
     hex32(h.finalize().into())
 }
 
+fn material_mega_lights_coupling_table_hash(entries: &[BangerNativeMaterialClosureEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.megalights_coupling_table.v1\0");
+    for entry in entries {
+        h.update(entry.mega_lights_coupling_hash.as_bytes());
+        h.update(entry.mega_lights_sample_tile_id.as_bytes());
+        h.update([entry.vsm_shadow_coupled as u8]);
+    }
+    hex32(h.finalize().into())
+}
+
 fn material_closure_resolve_hash(entries: &[BangerNativeMaterialClosureEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.material_closure.resolve_table.v1\0");
+    h.update(b"forge.banger.material_closure.resolve_table.v2\0");
     for entry in entries {
         h.update(entry.resolve_hash.as_bytes());
         h.update(entry.shadow_mask_hash.as_bytes());
+        h.update(entry.mega_lights_coupling_hash.as_bytes());
     }
+    hex32(h.finalize().into())
+}
+
+fn build_material_closure_validation_receipt(
+    entries: &[BangerNativeMaterialClosureEntry],
+    substrate_tiles: &[BangerNativeSubstrateMaterialTile],
+) -> BangerNativeMaterialClosureValidationReceipt {
+    let tile_ids = substrate_tiles
+        .iter()
+        .map(|tile| tile.substrate_tile_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let stochastic_lighting_closure_count = entries
+        .iter()
+        .filter(|entry| entry.stochastic_lighting_enabled)
+        .count();
+    let complex_closure_count = entries
+        .iter()
+        .filter(|entry| matches!(entry.substrate_tile_type, "complex" | "complex_special"))
+        .count();
+    let all_closures_have_tiles = entries
+        .iter()
+        .all(|entry| tile_ids.contains(entry.substrate_tile_id.as_str()));
+    let validation_hash = material_closure_validation_receipt_hash(
+        entries.len(),
+        substrate_tiles.len(),
+        stochastic_lighting_closure_count,
+        complex_closure_count,
+        all_closures_have_tiles,
+    );
+    BangerNativeMaterialClosureValidationReceipt {
+        schema: "forge.banger.material_closure_validation_receipt.v1",
+        authority: "substrate_material_tile_classification_validation",
+        checked_closure_count: entries.len(),
+        checked_tile_count: substrate_tiles.len(),
+        stochastic_lighting_closure_count,
+        complex_closure_count,
+        all_closures_have_tiles,
+        validation_hash,
+    }
+}
+
+fn material_closure_validation_receipt_hash(
+    checked_closure_count: usize,
+    checked_tile_count: usize,
+    stochastic_lighting_closure_count: usize,
+    complex_closure_count: usize,
+    all_closures_have_tiles: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.material_closure.validation_receipt.v1\0");
+    h.update((checked_closure_count as u64).to_le_bytes());
+    h.update((checked_tile_count as u64).to_le_bytes());
+    h.update((stochastic_lighting_closure_count as u64).to_le_bytes());
+    h.update((complex_closure_count as u64).to_le_bytes());
+    h.update([all_closures_have_tiles as u8]);
     hex32(h.finalize().into())
 }
 
@@ -12221,13 +12766,18 @@ fn material_closure_packet_hash(
     direct_lighting_packet: &BangerNativeDirectLightingPacket,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
     closure_stack_hash: &str,
+    substrate_header_hash: &str,
+    tile_classification_hash: &str,
     bsdf_table_hash: &str,
     texture_table_hash: &str,
+    mega_lights_coupling_hash: &str,
     resolve_hash: &str,
+    validation_receipt_hash: &str,
     entries: &[BangerNativeMaterialClosureEntry],
+    substrate_tiles: &[BangerNativeSubstrateMaterialTile],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.material_closure_packet.v1\0");
+    h.update(b"forge.banger.material_closure_packet.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(material_abi.layout_hash.as_bytes());
@@ -12236,11 +12786,18 @@ fn material_closure_packet_hash(
     h.update(direct_lighting_packet.packet_hash.as_bytes());
     h.update(render_graph_compilation.graph_hash.as_bytes());
     h.update(closure_stack_hash.as_bytes());
+    h.update(substrate_header_hash.as_bytes());
+    h.update(tile_classification_hash.as_bytes());
     h.update(bsdf_table_hash.as_bytes());
     h.update(texture_table_hash.as_bytes());
+    h.update(mega_lights_coupling_hash.as_bytes());
     h.update(resolve_hash.as_bytes());
+    h.update(validation_receipt_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
+    }
+    for tile in substrate_tiles {
+        h.update(tile.tile_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -21053,8 +21610,9 @@ mod tests {
                 )));
         assert_eq!(
             response.material_closure_packet.schema,
-            "forge.banger.material_closure_packet.v1"
+            "forge.banger.material_closure_packet.v2"
         );
+        assert_eq!(response.material_closure_packet.schema_version, 2);
         assert_eq!(
             response.material_closure_packet.source_contract_hash,
             response.source_hash
@@ -21085,11 +21643,89 @@ mod tests {
         );
         assert!(response.material_closure_packet.layered_closure_count > 0);
         assert!(response.material_closure_packet.texture_slot_count > 0);
+        assert_eq!(
+            response.material_closure_packet.substrate_tile_count,
+            response.material_closure_packet.substrate_tiles.len()
+        );
+        assert_eq!(
+            response
+                .material_closure_packet
+                .stochastic_lighting_closure_count,
+            response
+                .material_closure_packet
+                .validation_receipt
+                .stochastic_lighting_closure_count
+        );
+        assert_eq!(
+            response.material_closure_packet.complex_closure_count,
+            response
+                .material_closure_packet
+                .validation_receipt
+                .complex_closure_count
+        );
         assert_eq!(response.material_closure_packet.closure_stack_hash.len(), 64);
+        assert_eq!(
+            response.material_closure_packet.substrate_header_hash.len(),
+            64
+        );
+        assert_eq!(
+            response.material_closure_packet.tile_classification_hash.len(),
+            64
+        );
         assert_eq!(response.material_closure_packet.bsdf_table_hash.len(), 64);
         assert_eq!(response.material_closure_packet.texture_table_hash.len(), 64);
+        assert_eq!(
+            response
+                .material_closure_packet
+                .mega_lights_coupling_hash
+                .len(),
+            64
+        );
         assert_eq!(response.material_closure_packet.resolve_hash.len(), 64);
+        assert_eq!(
+            response.material_closure_packet.validation_receipt_hash.len(),
+            64
+        );
         assert_eq!(response.material_closure_packet.packet_hash.len(), 64);
+        assert_eq!(
+            response
+                .material_closure_packet
+                .validation_receipt
+                .validation_hash,
+            response.material_closure_packet.validation_receipt_hash
+        );
+        assert_eq!(
+            response
+                .material_closure_packet
+                .validation_receipt
+                .checked_closure_count,
+            response.material_closure_packet.entries.len()
+        );
+        assert_eq!(
+            response
+                .material_closure_packet
+                .validation_receipt
+                .checked_tile_count,
+            response.material_closure_packet.substrate_tiles.len()
+        );
+        assert!(response
+            .material_closure_packet
+            .validation_receipt
+            .all_closures_have_tiles);
+        assert!(response
+            .material_closure_packet
+            .substrate_tiles
+            .iter()
+            .all(|tile| tile.substrate_tile_id.len() == 64
+                && tile.tile_rect[2] > 0
+                && tile.tile_rect[3] > 0
+                && tile.closure_count > 0
+                && tile.tile_mask != 0
+                && tile.tile_hash.len() == 64
+                && matches!(
+                    tile.tile_type,
+                    "simple" | "single" | "complex" | "complex_special"
+                )));
         assert!(response
             .material_closure_packet
             .clean_room_basis
@@ -21100,10 +21736,18 @@ mod tests {
             .iter()
             .all(|entry| entry.closure_stack_id.len() == 64
                 && entry.layer_count >= 1
+                && entry.substrate_tile_id.len() == 64
+                && entry.substrate_header_bits != 0
+                && entry.shared_local_basis_count >= 1
+                && entry.top_layer_weight_q15 > 0
+                && entry.mega_lights_sample_tile_id.len() == 64
                 && entry.texture_slot_count >= 1
                 && entry.closure_hash.len() == 64
+                && entry.substrate_header_hash.len() == 64
+                && entry.tile_classification_hash.len() == 64
                 && entry.bsdf_hash.len() == 64
                 && entry.texture_hash.len() == 64
+                && entry.mega_lights_coupling_hash.len() == 64
                 && entry.resolve_hash.len() == 64
                 && entry.entry_hash.len() == 64
                 && matches!(
@@ -21112,6 +21756,16 @@ mod tests {
                         | "subsurface_diffuse"
                         | "metallic_ggx"
                         | "dielectric_ggx"
+                )
+                && matches!(
+                    entry.substrate_tile_type,
+                    "simple" | "single" | "complex" | "complex_special"
+                )
+                && matches!(
+                    entry.lighting_path,
+                    "hardware_ray_megalights_material"
+                        | "stochastic_megalights_material"
+                        | "clustered_deferred_material"
                 )));
         assert_eq!(
             response.temporal_history_packet.schema,
