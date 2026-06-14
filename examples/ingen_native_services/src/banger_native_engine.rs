@@ -435,6 +435,7 @@ pub struct BangerNativeResourceSlot {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativePageResidencyAllocatorPacket {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub authority: &'static str,
     pub clean_room_basis: &'static str,
     pub source_contract_hash: String,
@@ -449,13 +450,19 @@ pub struct BangerNativePageResidencyAllocatorPacket {
     pub streaming_request_count: usize,
     pub eviction_candidate_count: usize,
     pub locked_page_count: usize,
+    pub pool_pressure_pct: f32,
+    pub dropped_page_count: usize,
     pub physical_pool_hash: String,
     pub virtual_page_table_hash: String,
     pub feedback_request_hash: String,
     pub allocation_hash: String,
     pub eviction_hash: String,
+    pub pressure_receipt_hash: String,
+    pub dropped_page_hash: String,
     pub packet_hash: String,
     pub entries: Vec<BangerNativePageResidencyEntry>,
+    pub pressure_receipt: BangerNativePageResidencyPressureReceipt,
+    pub dropped_pages: Vec<BangerNativePageResidencyDroppedPage>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -868,6 +875,32 @@ pub struct BangerNativeMeshletVisibilityEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangerNativePageResidencyPressureReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub virtual_page_count: usize,
+    pub physical_page_count: usize,
+    pub resident_page_count: usize,
+    pub streaming_request_count: usize,
+    pub eviction_candidate_count: usize,
+    pub locked_page_count: usize,
+    pub pool_pressure_pct: f32,
+    pub pressure_tier: &'static str,
+    pub receipt_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePageResidencyDroppedPage {
+    pub page_id: String,
+    pub page_kind: &'static str,
+    pub drop_reason: &'static str,
+    pub priority: u32,
+    pub drop_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangerNativeMeshletCandidateCluster {
     pub cluster_id: String,
     pub object_id: String,
@@ -1225,12 +1258,15 @@ pub struct BangerNativeBackendExecutionPass {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeRadianceScheduleManifest {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub authority: &'static str,
     pub temporal_epoch: u64,
     pub probe_page_count: usize,
     pub active_probe_count: u64,
     pub light_budget: u32,
     pub async_compute_residency_policy: &'static str,
+    pub retention_policy_hash: String,
+    pub cache_invalidation_reason_hash: String,
     pub invalidation_hash: String,
     pub schedule_hash: String,
     pub entries: Vec<BangerNativeRadianceProbePage>,
@@ -1248,6 +1284,8 @@ pub struct BangerNativeRadianceProbePage {
     pub update_priority: u32,
     pub async_compute: bool,
     pub residency_policy: &'static str,
+    pub retention_age_frames: u32,
+    pub invalidation_reason: &'static str,
     pub invalidation_hash: String,
     pub proof_hash: String,
 }
@@ -1304,6 +1342,7 @@ pub struct BangerNativeLumenLightingEntry {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeVirtualShadowPacket {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub authority: &'static str,
     pub clean_room_basis: &'static str,
     pub source_contract_hash: String,
@@ -1316,9 +1355,13 @@ pub struct BangerNativeVirtualShadowPacket {
     pub invalidated_page_count: usize,
     pub light_page_count: usize,
     pub shadow_ray_budget: u64,
+    pub max_page_age_frames: u32,
+    pub page_pool_pressure_pct: f32,
     pub page_table_hash: String,
     pub cache_hash: String,
     pub invalidation_hash: String,
+    pub page_age_hash: String,
+    pub page_pressure_hash: String,
     pub projection_hash: String,
     pub light_grid_hash: String,
     pub packet_hash: String,
@@ -1339,6 +1382,8 @@ pub struct BangerNativeVirtualShadowEntry {
     pub resolution: u32,
     pub cache_state: &'static str,
     pub invalidation_reason: &'static str,
+    pub page_age_frames: u32,
+    pub page_pool_pressure_pct: f32,
     pub light_grid_cell: [u32; 3],
     pub projection_tile: [u32; 4],
     pub ray_budget: u32,
@@ -4068,23 +4113,30 @@ fn build_radiance_schedule_manifest(
         .sum::<u64>();
     let invalidation_hash =
         radiance_manifest_invalidation_hash(scene_graph_submission, culling_manifest, &entries);
+    let retention_policy_hash = radiance_retention_policy_hash(&entries, temporal_reuse_frames);
+    let cache_invalidation_reason_hash = radiance_cache_invalidation_reason_hash(&entries);
     let schedule_hash = radiance_schedule_hash(
         prepared,
         scene_graph_submission,
         culling_manifest,
         temporal_epoch,
         light_budget,
+        &retention_policy_hash,
+        &cache_invalidation_reason_hash,
         &invalidation_hash,
         &entries,
     );
     BangerNativeRadianceScheduleManifest {
-        schema: "forge.banger.native_radiance_schedule_manifest.v1",
+        schema: "forge.banger.native_radiance_schedule_manifest.v2",
+        schema_version: 2,
         authority: "surfel_radiance_cache_probe_pages_temporal_light_budget_async_compute",
         temporal_epoch,
         probe_page_count: entries.len(),
         active_probe_count,
         light_budget,
         async_compute_residency_policy: "async_compute_lighting_stream_temporal_reuse",
+        retention_policy_hash,
+        cache_invalidation_reason_hash,
         invalidation_hash,
         schedule_hash,
         entries,
@@ -4102,6 +4154,8 @@ fn radiance_probe_page_from_slot(
 ) -> BangerNativeRadianceProbePage {
     let probe_count = ((slot.byte_len / 64).max(1).min(u32::MAX as u64)) as u32;
     let update_priority = radiance_update_priority(slot, culling_manifest);
+    let retention_age_frames = radiance_retention_age_frames(prepared, slot, temporal_reuse_frames);
+    let invalidation_reason = radiance_invalidation_reason(slot, culling_manifest, retention_age_frames);
     let invalidation_hash = radiance_probe_invalidation_hash(
         prepared,
         slot,
@@ -4109,6 +4163,8 @@ fn radiance_probe_page_from_slot(
         culling_manifest,
         temporal_epoch,
         light_budget,
+        retention_age_frames,
+        invalidation_reason,
     );
     let proof_hash = radiance_probe_page_proof_hash(
         slot,
@@ -4116,6 +4172,8 @@ fn radiance_probe_page_from_slot(
         temporal_reuse_frames,
         light_budget,
         update_priority,
+        retention_age_frames,
+        invalidation_reason,
         &invalidation_hash,
     );
     BangerNativeRadianceProbePage {
@@ -4128,6 +4186,8 @@ fn radiance_probe_page_from_slot(
         update_priority,
         async_compute: true,
         residency_policy: "async_compute_lighting_stream",
+        retention_age_frames,
+        invalidation_reason,
         invalidation_hash,
         proof_hash,
     }
@@ -4297,6 +4357,9 @@ fn build_virtual_shadow_packet(
             let resolution = virtual_shadow_resolution(clipmap_level, lumen_entry);
             let cache_state = virtual_shadow_cache_state(lumen_entry, matching_nanite);
             let invalidation_reason = virtual_shadow_invalidation_reason(lumen_entry, cache_state);
+            let page_age_frames = virtual_shadow_page_age_frames(lumen_entry, cache_state);
+            let page_pool_pressure_pct =
+                virtual_shadow_page_pool_pressure_pct(lumen_entry, page_age_frames, cache_state);
             let light_grid_cell = virtual_shadow_light_grid_cell(lumen_entry, index as u32);
             let projection_tile = virtual_shadow_projection_tile(lumen_entry, &page_coord, resolution);
             let ray_budget = virtual_shadow_ray_budget(lumen_entry, radiance_schedule_manifest.light_budget);
@@ -4316,6 +4379,8 @@ fn build_virtual_shadow_packet(
                 lumen_entry,
                 cache_state,
                 invalidation_reason,
+                page_age_frames,
+                page_pool_pressure_pct,
                 &page_table_hash,
             );
             let projection_hash = virtual_shadow_projection_entry_hash(
@@ -4334,6 +4399,8 @@ fn build_virtual_shadow_packet(
                 resolution,
                 cache_state,
                 invalidation_reason,
+                page_age_frames,
+                page_pool_pressure_pct,
                 &light_grid_cell,
                 &projection_tile,
                 ray_budget,
@@ -4353,6 +4420,8 @@ fn build_virtual_shadow_packet(
                 resolution,
                 cache_state,
                 invalidation_reason,
+                page_age_frames,
+                page_pool_pressure_pct,
                 light_grid_cell,
                 projection_tile,
                 ray_budget,
@@ -4366,6 +4435,8 @@ fn build_virtual_shadow_packet(
     let page_table_hash = virtual_shadow_page_table_hash(&entries);
     let cache_hash = virtual_shadow_cache_hash(&entries);
     let invalidation_hash = virtual_shadow_invalidation_hash(&entries);
+    let page_age_hash = virtual_shadow_page_age_hash(&entries);
+    let page_pressure_hash = virtual_shadow_page_pressure_hash(&entries);
     let projection_hash = virtual_shadow_projection_hash(&entries);
     let light_grid_hash = virtual_shadow_light_grid_hash(&entries);
     let packet_hash = virtual_shadow_packet_hash(
@@ -4377,12 +4448,15 @@ fn build_virtual_shadow_packet(
         &page_table_hash,
         &cache_hash,
         &invalidation_hash,
+        &page_age_hash,
+        &page_pressure_hash,
         &projection_hash,
         &light_grid_hash,
         &entries,
     );
     BangerNativeVirtualShadowPacket {
-        schema: "forge.banger.virtual_shadow_packet.v1",
+        schema: "forge.banger.virtual_shadow_packet.v2",
+        schema_version: 2,
         authority: "banger_virtual_shadow_page_cache_light_grid_projection",
         clean_room_basis: "local_unreal_sparse_virtual_shadow_map_page_marking_cache_projection_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
@@ -4405,9 +4479,13 @@ fn build_virtual_shadow_packet(
             .collect::<BTreeSet<_>>()
             .len(),
         shadow_ray_budget: entries.iter().map(|entry| entry.ray_budget as u64).sum(),
+        max_page_age_frames: entries.iter().map(|entry| entry.page_age_frames).max().unwrap_or_default(),
+        page_pool_pressure_pct: virtual_shadow_packet_pressure_pct(&entries),
         page_table_hash,
         cache_hash,
         invalidation_hash,
+        page_age_hash,
+        page_pressure_hash,
         projection_hash,
         light_grid_hash,
         packet_hash,
@@ -4875,6 +4953,10 @@ fn build_page_residency_allocator_packet(
     let feedback_request_hash = page_residency_feedback_request_hash(&entries);
     let allocation_hash = page_residency_allocation_hash(&entries);
     let eviction_hash = page_residency_eviction_hash(&entries);
+    let pressure_receipt = page_residency_pressure_receipt(&entries);
+    let pressure_receipt_hash = pressure_receipt.receipt_hash.clone();
+    let dropped_pages = page_residency_dropped_pages(&entries, pressure_receipt.pool_pressure_pct);
+    let dropped_page_hash = page_residency_dropped_page_hash(&dropped_pages);
     let packet_hash = page_residency_allocator_packet_hash(
         prepared,
         resource_table,
@@ -4887,10 +4969,13 @@ fn build_page_residency_allocator_packet(
         &feedback_request_hash,
         &allocation_hash,
         &eviction_hash,
+        &pressure_receipt_hash,
+        &dropped_page_hash,
         &entries,
     );
     BangerNativePageResidencyAllocatorPacket {
-        schema: "forge.banger.page_residency_allocator_packet.v1",
+        schema: "forge.banger.page_residency_allocator_packet.v2",
+        schema_version: 2,
         authority: "banger_virtual_page_feedback_physical_pool_allocator",
         clean_room_basis: "local_unreal_sparse_nanite_vsm_virtual_texture_feedback_physical_page_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
@@ -4921,13 +5006,19 @@ fn build_page_residency_allocator_packet(
             .iter()
             .filter(|entry| entry.lock_state == "locked_for_frame")
             .count(),
+        pool_pressure_pct: pressure_receipt.pool_pressure_pct,
+        dropped_page_count: dropped_pages.len(),
         physical_pool_hash,
         virtual_page_table_hash,
         feedback_request_hash,
         allocation_hash,
         eviction_hash,
+        pressure_receipt_hash,
+        dropped_page_hash,
         packet_hash,
         entries,
+        pressure_receipt,
+        dropped_pages,
     }
 }
 
@@ -8368,6 +8459,33 @@ fn radiance_update_priority(
     1 + lod_pressure + page_pressure
 }
 
+fn radiance_retention_age_frames(
+    prepared: &MonsterPreparedCompute,
+    slot: &BangerNativeResourceSlot,
+    temporal_reuse_frames: u32,
+) -> u32 {
+    let cache_bonus = if prepared.is_fully_cached() { 2 } else { 0 };
+    temporal_reuse_frames
+        .saturating_add(cache_bonus)
+        .saturating_add((slot.page_index as u32).min(3))
+}
+
+fn radiance_invalidation_reason(
+    slot: &BangerNativeResourceSlot,
+    culling_manifest: &BangerNativeCullingManifest,
+    retention_age_frames: u32,
+) -> &'static str {
+    if slot.upload_lane != "resident_cache" {
+        "probe_page_streaming"
+    } else if culling_manifest.culled_count > culling_manifest.visible_count {
+        "visibility_set_changed"
+    } else if retention_age_frames <= 1 {
+        "temporal_epoch_new"
+    } else {
+        "stable_temporal_reuse"
+    }
+}
+
 fn radiance_probe_invalidation_hash(
     prepared: &MonsterPreparedCompute,
     slot: &BangerNativeResourceSlot,
@@ -8375,9 +8493,11 @@ fn radiance_probe_invalidation_hash(
     culling_manifest: &BangerNativeCullingManifest,
     temporal_epoch: u64,
     light_budget: u32,
+    retention_age_frames: u32,
+    invalidation_reason: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.radiance_probe.invalidation.v1\0");
+    h.update(b"forge.banger.radiance_probe.invalidation.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(slot.resource_key.as_bytes());
     h.update(slot.page_hash.as_bytes());
@@ -8385,6 +8505,8 @@ fn radiance_probe_invalidation_hash(
     h.update(culling_manifest.visibility_result_hash.as_bytes());
     h.update(temporal_epoch.to_le_bytes());
     h.update(light_budget.to_le_bytes());
+    h.update(retention_age_frames.to_le_bytes());
+    h.update(invalidation_reason.as_bytes());
     hex32(h.finalize().into())
 }
 
@@ -8394,16 +8516,20 @@ fn radiance_probe_page_proof_hash(
     temporal_reuse_frames: u32,
     light_budget: u32,
     update_priority: u32,
+    retention_age_frames: u32,
+    invalidation_reason: &str,
     invalidation_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.radiance_probe.page_proof.v1\0");
+    h.update(b"forge.banger.radiance_probe.page_proof.v2\0");
     h.update(slot.resource_key.as_bytes());
     h.update(slot.page_hash.as_bytes());
     h.update(probe_count.to_le_bytes());
     h.update(temporal_reuse_frames.to_le_bytes());
     h.update(light_budget.to_le_bytes());
     h.update(update_priority.to_le_bytes());
+    h.update(retention_age_frames.to_le_bytes());
+    h.update(invalidation_reason.as_bytes());
     h.update(invalidation_hash.as_bytes());
     hex32(h.finalize().into())
 }
@@ -8423,23 +8549,53 @@ fn radiance_manifest_invalidation_hash(
     hex32(h.finalize().into())
 }
 
+fn radiance_retention_policy_hash(
+    entries: &[BangerNativeRadianceProbePage],
+    temporal_reuse_frames: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance_schedule.retention_policy.v1\0");
+    h.update(temporal_reuse_frames.to_le_bytes());
+    for entry in entries {
+        h.update(entry.probe_page_id.as_bytes());
+        h.update(entry.retention_age_frames.to_le_bytes());
+        h.update(entry.residency_policy.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn radiance_cache_invalidation_reason_hash(entries: &[BangerNativeRadianceProbePage]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance_schedule.invalidation_reasons.v1\0");
+    for entry in entries {
+        h.update(entry.probe_page_id.as_bytes());
+        h.update(entry.invalidation_reason.as_bytes());
+        h.update(entry.invalidation_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn radiance_schedule_hash(
     prepared: &MonsterPreparedCompute,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
     culling_manifest: &BangerNativeCullingManifest,
     temporal_epoch: u64,
     light_budget: u32,
+    retention_policy_hash: &str,
+    cache_invalidation_reason_hash: &str,
     invalidation_hash: &str,
     entries: &[BangerNativeRadianceProbePage],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_radiance_schedule_manifest.v1\0");
+    h.update(b"forge.banger.native_radiance_schedule_manifest.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(scene_graph_submission.submission_hash.as_bytes());
     h.update(culling_manifest.manifest_hash.as_bytes());
     h.update(temporal_epoch.to_le_bytes());
     h.update(light_budget.to_le_bytes());
+    h.update(retention_policy_hash.as_bytes());
+    h.update(cache_invalidation_reason_hash.as_bytes());
     h.update(invalidation_hash.as_bytes());
     for entry in entries {
         h.update(entry.proof_hash.as_bytes());
@@ -8738,6 +8894,31 @@ fn virtual_shadow_invalidation_reason(
     }
 }
 
+fn virtual_shadow_page_age_frames(
+    entry: &BangerNativeLumenLightingEntry,
+    cache_state: &str,
+) -> u32 {
+    match cache_state {
+        "persistent_cache_hit" => entry.temporal_reuse_frames.saturating_add(2),
+        "cache_warm" => entry.temporal_reuse_frames.max(1),
+        _ => 0,
+    }
+}
+
+fn virtual_shadow_page_pool_pressure_pct(
+    entry: &BangerNativeLumenLightingEntry,
+    page_age_frames: u32,
+    cache_state: &str,
+) -> f32 {
+    let ray_pressure = (entry.diffuse_ray_count.saturating_add(entry.reflection_ray_count) as f32
+        / 4096.0)
+        .min(1.0)
+        * 60.0;
+    let age_relief = (page_age_frames as f32 * 4.0).min(24.0);
+    let cache_penalty = if cache_state == "page_mark_required" { 30.0 } else { 0.0 };
+    (ray_pressure + cache_penalty - age_relief).clamp(0.0, 100.0)
+}
+
 fn virtual_shadow_light_grid_cell(
     entry: &BangerNativeLumenLightingEntry,
     salt: u32,
@@ -8803,13 +8984,17 @@ fn virtual_shadow_cache_entry_hash(
     entry: &BangerNativeLumenLightingEntry,
     cache_state: &str,
     invalidation_reason: &str,
+    page_age_frames: u32,
+    page_pool_pressure_pct: f32,
     page_table_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.virtual_shadow.cache_entry.v1\0");
+    h.update(b"forge.banger.virtual_shadow.cache_entry.v2\0");
     h.update(entry.surface_cache_hash.as_bytes());
     h.update(cache_state.as_bytes());
     h.update(invalidation_reason.as_bytes());
+    h.update(page_age_frames.to_le_bytes());
+    h.update(page_pool_pressure_pct.to_le_bytes());
     h.update(page_table_hash.as_bytes());
     hex32(h.finalize().into())
 }
@@ -8843,6 +9028,8 @@ fn virtual_shadow_entry_hash(
     resolution: u32,
     cache_state: &str,
     invalidation_reason: &str,
+    page_age_frames: u32,
+    page_pool_pressure_pct: f32,
     light_grid_cell: &[u32; 3],
     projection_tile: &[u32; 4],
     ray_budget: u32,
@@ -8851,7 +9038,7 @@ fn virtual_shadow_entry_hash(
     projection_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.virtual_shadow.entry.v1\0");
+    h.update(b"forge.banger.virtual_shadow.entry.v2\0");
     h.update(entry.entry_hash.as_bytes());
     h.update(shadow_page_id.as_bytes());
     h.update(virtual_light_id.as_bytes());
@@ -8863,6 +9050,8 @@ fn virtual_shadow_entry_hash(
     h.update(resolution.to_le_bytes());
     h.update(cache_state.as_bytes());
     h.update(invalidation_reason.as_bytes());
+    h.update(page_age_frames.to_le_bytes());
+    h.update(page_pool_pressure_pct.to_le_bytes());
     for value in light_grid_cell {
         h.update(value.to_le_bytes());
     }
@@ -8889,9 +9078,11 @@ fn virtual_shadow_page_table_hash(entries: &[BangerNativeVirtualShadowEntry]) ->
 
 fn virtual_shadow_cache_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.virtual_shadow.cache.v1\0");
+    h.update(b"forge.banger.virtual_shadow.cache.v2\0");
     for entry in entries {
         h.update(entry.cache_state.as_bytes());
+        h.update(entry.page_age_frames.to_le_bytes());
+        h.update(entry.page_pool_pressure_pct.to_le_bytes());
         h.update(entry.cache_hash.as_bytes());
     }
     hex32(h.finalize().into())
@@ -8905,6 +9096,40 @@ fn virtual_shadow_invalidation_hash(entries: &[BangerNativeVirtualShadowEntry]) 
         h.update(entry.entry_hash.as_bytes());
     }
     hex32(h.finalize().into())
+}
+
+fn virtual_shadow_page_age_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.page_age.v1\0");
+    for entry in entries {
+        h.update(entry.shadow_page_id.as_bytes());
+        h.update(entry.page_age_frames.to_le_bytes());
+        h.update(entry.cache_state.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_page_pressure_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.page_pressure.v1\0");
+    for entry in entries {
+        h.update(entry.shadow_page_id.as_bytes());
+        h.update(entry.page_pool_pressure_pct.to_le_bytes());
+        h.update(entry.invalidation_reason.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_packet_pressure_pct(entries: &[BangerNativeVirtualShadowEntry]) -> f32 {
+    if entries.is_empty() {
+        0.0
+    } else {
+        entries
+            .iter()
+            .map(|entry| entry.page_pool_pressure_pct)
+            .sum::<f32>()
+            / entries.len() as f32
+    }
 }
 
 fn virtual_shadow_projection_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
@@ -8940,12 +9165,14 @@ fn virtual_shadow_packet_hash(
     page_table_hash: &str,
     cache_hash: &str,
     invalidation_hash: &str,
+    page_age_hash: &str,
+    page_pressure_hash: &str,
     projection_hash: &str,
     light_grid_hash: &str,
     entries: &[BangerNativeVirtualShadowEntry],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.virtual_shadow_packet.v1\0");
+    h.update(b"forge.banger.virtual_shadow_packet.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(nanite_second_layer_packet.packet_hash.as_bytes());
@@ -8955,6 +9182,8 @@ fn virtual_shadow_packet_hash(
     h.update(page_table_hash.as_bytes());
     h.update(cache_hash.as_bytes());
     h.update(invalidation_hash.as_bytes());
+    h.update(page_age_hash.as_bytes());
+    h.update(page_pressure_hash.as_bytes());
     h.update(projection_hash.as_bytes());
     h.update(light_grid_hash.as_bytes());
     for entry in entries {
@@ -10329,6 +10558,178 @@ fn page_residency_eviction_hash(entries: &[BangerNativePageResidencyEntry]) -> S
     hex32(h.finalize().into())
 }
 
+fn page_residency_pressure_receipt(
+    entries: &[BangerNativePageResidencyEntry],
+) -> BangerNativePageResidencyPressureReceipt {
+    let virtual_page_count = entries.len();
+    let physical_page_count = entries
+        .iter()
+        .map(|entry| (entry.physical_pool, entry.physical_address))
+        .collect::<BTreeSet<_>>()
+        .len();
+    let resident_page_count = entries
+        .iter()
+        .filter(|entry| entry.residency_state == "resident_page" || entry.lock_state == "locked_for_frame")
+        .count();
+    let streaming_request_count = entries
+        .iter()
+        .filter(|entry| entry.residency_state != "resident_page")
+        .count();
+    let eviction_candidate_count = entries
+        .iter()
+        .filter(|entry| entry.lock_state == "eviction_candidate")
+        .count();
+    let locked_page_count = entries
+        .iter()
+        .filter(|entry| entry.lock_state == "locked_for_frame")
+        .count();
+    let pool_pressure_pct = page_residency_pool_pressure_pct(
+        virtual_page_count,
+        physical_page_count,
+        streaming_request_count,
+        eviction_candidate_count,
+        locked_page_count,
+    );
+    let pressure_tier = page_residency_pressure_tier(pool_pressure_pct);
+    let receipt_hash = page_residency_pressure_receipt_hash(
+        virtual_page_count,
+        physical_page_count,
+        resident_page_count,
+        streaming_request_count,
+        eviction_candidate_count,
+        locked_page_count,
+        pool_pressure_pct,
+        pressure_tier,
+    );
+    BangerNativePageResidencyPressureReceipt {
+        schema: "forge.banger.page_residency_pressure_receipt.v1",
+        authority: "virtual_page_pool_pressure_and_eviction_policy",
+        virtual_page_count,
+        physical_page_count,
+        resident_page_count,
+        streaming_request_count,
+        eviction_candidate_count,
+        locked_page_count,
+        pool_pressure_pct,
+        pressure_tier,
+        receipt_hash,
+    }
+}
+
+fn page_residency_pool_pressure_pct(
+    virtual_page_count: usize,
+    physical_page_count: usize,
+    streaming_request_count: usize,
+    eviction_candidate_count: usize,
+    locked_page_count: usize,
+) -> f32 {
+    if virtual_page_count == 0 {
+        return 0.0;
+    }
+    let occupancy = physical_page_count as f32 / virtual_page_count.max(1) as f32;
+    let stream_pressure = streaming_request_count as f32 / virtual_page_count as f32;
+    let eviction_pressure = eviction_candidate_count as f32 / virtual_page_count as f32;
+    let lock_relief = locked_page_count as f32 / virtual_page_count as f32;
+    ((occupancy * 45.0) + (stream_pressure * 35.0) + (eviction_pressure * 30.0) - (lock_relief * 15.0))
+        .clamp(0.0, 100.0)
+}
+
+fn page_residency_pressure_tier(pool_pressure_pct: f32) -> &'static str {
+    if pool_pressure_pct >= 85.0 {
+        "critical_pool_pressure"
+    } else if pool_pressure_pct >= 60.0 {
+        "high_pool_pressure"
+    } else if pool_pressure_pct >= 35.0 {
+        "moderate_pool_pressure"
+    } else {
+        "low_pool_pressure"
+    }
+}
+
+fn page_residency_pressure_receipt_hash(
+    virtual_page_count: usize,
+    physical_page_count: usize,
+    resident_page_count: usize,
+    streaming_request_count: usize,
+    eviction_candidate_count: usize,
+    locked_page_count: usize,
+    pool_pressure_pct: f32,
+    pressure_tier: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.pressure_receipt.v1\0");
+    h.update((virtual_page_count as u64).to_le_bytes());
+    h.update((physical_page_count as u64).to_le_bytes());
+    h.update((resident_page_count as u64).to_le_bytes());
+    h.update((streaming_request_count as u64).to_le_bytes());
+    h.update((eviction_candidate_count as u64).to_le_bytes());
+    h.update((locked_page_count as u64).to_le_bytes());
+    h.update(pool_pressure_pct.to_le_bytes());
+    h.update(pressure_tier.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn page_residency_dropped_pages(
+    entries: &[BangerNativePageResidencyEntry],
+    pool_pressure_pct: f32,
+) -> Vec<BangerNativePageResidencyDroppedPage> {
+    entries
+        .iter()
+        .filter(|entry| entry.lock_state == "eviction_candidate" || pool_pressure_pct >= 85.0)
+        .map(|entry| {
+            let drop_reason = page_residency_drop_reason(entry, pool_pressure_pct);
+            let drop_hash = page_residency_drop_hash(entry, drop_reason);
+            BangerNativePageResidencyDroppedPage {
+                page_id: entry.page_id.clone(),
+                page_kind: entry.page_kind,
+                drop_reason,
+                priority: entry.priority,
+                drop_hash,
+            }
+        })
+        .collect()
+}
+
+fn page_residency_drop_reason(
+    entry: &BangerNativePageResidencyEntry,
+    pool_pressure_pct: f32,
+) -> &'static str {
+    if entry.lock_state == "locked_for_frame" {
+        "kept_locked_for_frame"
+    } else if pool_pressure_pct >= 85.0 {
+        "critical_pressure_drop"
+    } else if entry.priority < 2048 {
+        "low_priority_eviction"
+    } else {
+        "streaming_backlog_trim"
+    }
+}
+
+fn page_residency_drop_hash(
+    entry: &BangerNativePageResidencyEntry,
+    drop_reason: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.drop.v1\0");
+    h.update(entry.page_id.as_bytes());
+    h.update(entry.page_kind.as_bytes());
+    h.update(drop_reason.as_bytes());
+    h.update(entry.priority.to_le_bytes());
+    h.update(entry.entry_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn page_residency_dropped_page_hash(dropped_pages: &[BangerNativePageResidencyDroppedPage]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.page_residency.dropped_pages.v1\0");
+    for page in dropped_pages {
+        h.update(page.page_id.as_bytes());
+        h.update(page.drop_reason.as_bytes());
+        h.update(page.drop_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn page_residency_allocator_packet_hash(
     prepared: &MonsterPreparedCompute,
     resource_table: &BangerNativeResourceTable,
@@ -10341,10 +10742,12 @@ fn page_residency_allocator_packet_hash(
     feedback_request_hash: &str,
     allocation_hash: &str,
     eviction_hash: &str,
+    pressure_receipt_hash: &str,
+    dropped_page_hash: &str,
     entries: &[BangerNativePageResidencyEntry],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.page_residency_allocator_packet.v1\0");
+    h.update(b"forge.banger.page_residency_allocator_packet.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(resource_table.table_hash.as_bytes());
@@ -10357,6 +10760,8 @@ fn page_residency_allocator_packet_hash(
     h.update(feedback_request_hash.as_bytes());
     h.update(allocation_hash.as_bytes());
     h.update(eviction_hash.as_bytes());
+    h.update(pressure_receipt_hash.as_bytes());
+    h.update(dropped_page_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
     }
@@ -15532,12 +15937,16 @@ fn render_handoff_hash(
     h.update(raster_work_queue.bind_table_hash.as_bytes());
     h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
     h.update(radiance_schedule_manifest.invalidation_hash.as_bytes());
+    h.update(radiance_schedule_manifest.retention_policy_hash.as_bytes());
+    h.update(radiance_schedule_manifest.cache_invalidation_reason_hash.as_bytes());
     h.update(lumen_lighting_packet.packet_hash.as_bytes());
     h.update(lumen_lighting_packet.surface_cache_hash.as_bytes());
     h.update(lumen_lighting_packet.diffuse_indirect_hash.as_bytes());
     h.update(virtual_shadow_packet.packet_hash.as_bytes());
     h.update(virtual_shadow_packet.page_table_hash.as_bytes());
     h.update(virtual_shadow_packet.projection_hash.as_bytes());
+    h.update(virtual_shadow_packet.page_age_hash.as_bytes());
+    h.update(virtual_shadow_packet.page_pressure_hash.as_bytes());
     h.update(direct_lighting_packet.packet_hash.as_bytes());
     h.update(direct_lighting_packet.sample_sequence_hash.as_bytes());
     h.update(direct_lighting_packet.resolve_hash.as_bytes());
@@ -15552,6 +15961,8 @@ fn render_handoff_hash(
     h.update(page_residency_allocator.feedback_request_hash.as_bytes());
     h.update(page_residency_allocator.allocation_hash.as_bytes());
     h.update(page_residency_allocator.eviction_hash.as_bytes());
+    h.update(page_residency_allocator.pressure_receipt_hash.as_bytes());
+    h.update(page_residency_allocator.dropped_page_hash.as_bytes());
     h.update(temporal_history_packet.packet_hash.as_bytes());
     h.update(temporal_history_packet.jitter_sequence_hash.as_bytes());
     h.update(temporal_history_packet.motion_vector_hash.as_bytes());
@@ -17087,8 +17498,9 @@ mod tests {
             .any(|pass| pass.stage == "material_bind"));
         assert_eq!(
             response.radiance_schedule_manifest.schema,
-            "forge.banger.native_radiance_schedule_manifest.v1"
+            "forge.banger.native_radiance_schedule_manifest.v2"
         );
+        assert_eq!(response.radiance_schedule_manifest.schema_version, 2);
         assert!(response.radiance_schedule_manifest.temporal_epoch > 0);
         assert!(response.radiance_schedule_manifest.probe_page_count > 0);
         assert!(response.radiance_schedule_manifest.active_probe_count > 0);
@@ -17096,6 +17508,14 @@ mod tests {
         assert_eq!(
             response.radiance_schedule_manifest.async_compute_residency_policy,
             "async_compute_lighting_stream_temporal_reuse"
+        );
+        assert_eq!(response.radiance_schedule_manifest.retention_policy_hash.len(), 64);
+        assert_eq!(
+            response
+                .radiance_schedule_manifest
+                .cache_invalidation_reason_hash
+                .len(),
+            64
         );
         assert_eq!(response.radiance_schedule_manifest.invalidation_hash.len(), 64);
         assert_eq!(response.radiance_schedule_manifest.schedule_hash.len(), 64);
@@ -17111,8 +17531,16 @@ mod tests {
                 && entry.residency_policy == "async_compute_lighting_stream"
                 && entry.probe_count > 0
                 && entry.light_budget == response.radiance_schedule_manifest.light_budget
+                && entry.retention_age_frames >= entry.temporal_reuse_frames
                 && entry.invalidation_hash.len() == 64
-                && entry.proof_hash.len() == 64));
+                && entry.proof_hash.len() == 64
+                && matches!(
+                    entry.invalidation_reason,
+                    "probe_page_streaming"
+                        | "visibility_set_changed"
+                        | "temporal_epoch_new"
+                        | "stable_temporal_reuse"
+                )));
         assert_eq!(
             response.lumen_lighting_packet.schema,
             "forge.banger.lumen_lighting_packet.v1"
@@ -17193,8 +17621,9 @@ mod tests {
                 )));
         assert_eq!(
             response.virtual_shadow_packet.schema,
-            "forge.banger.virtual_shadow_packet.v1"
+            "forge.banger.virtual_shadow_packet.v2"
         );
+        assert_eq!(response.virtual_shadow_packet.schema_version, 2);
         assert_eq!(
             response.virtual_shadow_packet.authority,
             "banger_virtual_shadow_page_cache_light_grid_projection"
@@ -17237,9 +17666,15 @@ mod tests {
         );
         assert!(response.virtual_shadow_packet.light_page_count > 0);
         assert!(response.virtual_shadow_packet.shadow_ray_budget > 0);
+        if response.virtual_shadow_packet.cached_page_count > 0 {
+            assert!(response.virtual_shadow_packet.max_page_age_frames >= 1);
+        }
+        assert!(response.virtual_shadow_packet.page_pool_pressure_pct >= 0.0);
         assert_eq!(response.virtual_shadow_packet.page_table_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.cache_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.invalidation_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.page_age_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.page_pressure_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.projection_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.light_grid_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.packet_hash.len(), 64);
@@ -17254,6 +17689,7 @@ mod tests {
                 && entry.projection_tile[2] == entry.resolution
                 && entry.projection_tile[3] == entry.resolution
                 && entry.ray_budget > 0
+                && entry.page_pool_pressure_pct >= 0.0
                 && entry.page_table_hash.len() == 64
                 && entry.cache_hash.len() == 64
                 && entry.projection_hash.len() == 64
@@ -17496,8 +17932,9 @@ mod tests {
                 )));
         assert_eq!(
             response.page_residency_allocator.schema,
-            "forge.banger.page_residency_allocator_packet.v1"
+            "forge.banger.page_residency_allocator_packet.v2"
         );
+        assert_eq!(response.page_residency_allocator.schema_version, 2);
         assert_eq!(
             response.page_residency_allocator.source_contract_hash,
             response.source_hash
@@ -17529,6 +17966,11 @@ mod tests {
         assert!(response.page_residency_allocator.physical_page_count > 0);
         assert!(response.page_residency_allocator.resident_page_count > 0);
         assert!(response.page_residency_allocator.locked_page_count > 0);
+        assert!(response.page_residency_allocator.pool_pressure_pct >= 0.0);
+        assert_eq!(
+            response.page_residency_allocator.dropped_page_count,
+            response.page_residency_allocator.dropped_pages.len()
+        );
         assert_eq!(response.page_residency_allocator.physical_pool_hash.len(), 64);
         assert_eq!(
             response
@@ -17546,7 +17988,30 @@ mod tests {
         );
         assert_eq!(response.page_residency_allocator.allocation_hash.len(), 64);
         assert_eq!(response.page_residency_allocator.eviction_hash.len(), 64);
+        assert_eq!(response.page_residency_allocator.pressure_receipt_hash.len(), 64);
+        assert_eq!(response.page_residency_allocator.dropped_page_hash.len(), 64);
         assert_eq!(response.page_residency_allocator.packet_hash.len(), 64);
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .pressure_receipt
+                .receipt_hash,
+            response.page_residency_allocator.pressure_receipt_hash
+        );
+        assert_eq!(
+            response
+                .page_residency_allocator
+                .pressure_receipt
+                .virtual_page_count,
+            response.page_residency_allocator.virtual_page_count
+        );
+        assert!(matches!(
+            response.page_residency_allocator.pressure_receipt.pressure_tier,
+            "low_pool_pressure"
+                | "moderate_pool_pressure"
+                | "high_pool_pressure"
+                | "critical_pool_pressure"
+        ));
         assert!(response
             .page_residency_allocator
             .clean_room_basis
@@ -17588,6 +18053,18 @@ mod tests {
                 && matches!(
                     entry.lock_state,
                     "locked_for_frame" | "streaming_or_reuse" | "eviction_candidate"
+                )));
+        assert!(response
+            .page_residency_allocator
+            .dropped_pages
+            .iter()
+            .all(|page| page.drop_hash.len() == 64
+                && matches!(
+                    page.drop_reason,
+                    "critical_pressure_drop"
+                        | "low_priority_eviction"
+                        | "streaming_backlog_trim"
+                        | "kept_locked_for_frame"
                 )));
         assert_eq!(
             response.gaussian_splat_layer_manifest.schema,
