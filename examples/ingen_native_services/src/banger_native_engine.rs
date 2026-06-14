@@ -1719,6 +1719,7 @@ pub struct BangerNativeVirtualShadowValidationReceipt {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeDirectLightingPacket {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub authority: &'static str,
     pub clean_room_basis: &'static str,
     pub source_contract_hash: String,
@@ -1733,13 +1734,22 @@ pub struct BangerNativeDirectLightingPacket {
     pub denoiser_tile_count: usize,
     pub resolve_tile_count: usize,
     pub hardware_ray_candidate_count: usize,
+    pub mega_light_tile_count: usize,
+    pub vsm_pruned_light_count: usize,
+    pub temporal_reuse_candidate_count: usize,
     pub light_grid_hash: String,
     pub sample_sequence_hash: String,
+    pub sample_tile_hash: String,
     pub shadow_mask_hash: String,
+    pub vsm_pruned_grid_hash: String,
+    pub temporal_reprojection_hash: String,
     pub denoiser_hash: String,
     pub resolve_hash: String,
+    pub validation_receipt_hash: String,
     pub packet_hash: String,
     pub entries: Vec<BangerNativeDirectLightingEntry>,
+    pub sample_tiles: Vec<BangerNativeMegaLightSampleTile>,
+    pub validation_receipt: BangerNativeDirectLightingValidationReceipt,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1753,13 +1763,48 @@ pub struct BangerNativeDirectLightingEntry {
     pub light_grid_cell: [u32; 3],
     pub sample_sequence: u64,
     pub sample_count: u32,
+    pub sample_tile_id: String,
+    pub stochastic_sample_mode: &'static str,
+    pub temporal_history_weight: f32,
+    pub vsm_pruned: bool,
+    pub vsm_clipmap_range_id: String,
     pub shadow_page_id: String,
     pub shadow_mask_hash: String,
     pub contribution_hash: String,
+    pub sample_tile_hash: String,
+    pub hzb_visibility_hash: String,
+    pub vsm_pruned_grid_hash: String,
+    pub temporal_reprojection_hash: String,
     pub denoiser_tile: [u32; 4],
     pub resolve_tile: [u32; 4],
     pub ray_tracing_candidate: bool,
     pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeMegaLightSampleTile {
+    pub sample_tile_id: String,
+    pub light_grid_cell: [u32; 3],
+    pub tile_rect: [u32; 4],
+    pub sample_count: u32,
+    pub vsm_pruned_light_count: usize,
+    pub temporal_history_weight_sum: f32,
+    pub tile_bitmask: u32,
+    pub tile_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeDirectLightingValidationReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_light_count: usize,
+    pub checked_tile_count: usize,
+    pub vsm_pruned_light_count: usize,
+    pub temporal_reuse_candidate_count: usize,
+    pub all_lights_have_sample_tiles: bool,
+    pub validation_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -5379,6 +5424,39 @@ fn build_direct_lighting_packet(
             );
             let sample_sequence =
                 direct_lighting_sample_sequence(shadow_entry, &light_cluster_id, index as u32);
+            let sample_tile_id =
+                direct_lighting_sample_tile_id(shadow_entry, &light_cluster_id, sample_sequence);
+            let stochastic_sample_mode =
+                direct_lighting_stochastic_sample_mode(shadow_entry, sample_count);
+            let temporal_history_weight =
+                direct_lighting_temporal_history_weight(shadow_entry, lumen_entry);
+            let vsm_pruned = direct_lighting_vsm_pruned(shadow_entry);
+            let hzb_visibility_hash = direct_lighting_hzb_visibility_hash(
+                shadow_entry,
+                &sample_tile_id,
+                sample_sequence,
+                vsm_pruned,
+            );
+            let sample_tile_hash = direct_lighting_sample_tile_entry_hash(
+                shadow_entry,
+                &sample_tile_id,
+                stochastic_sample_mode,
+                sample_count,
+                temporal_history_weight,
+                vsm_pruned,
+            );
+            let vsm_pruned_grid_hash = direct_lighting_vsm_pruned_grid_entry_hash(
+                shadow_entry,
+                &light_cluster_id,
+                vsm_pruned,
+                &hzb_visibility_hash,
+            );
+            let temporal_reprojection_hash = direct_lighting_temporal_reprojection_hash(
+                shadow_entry,
+                lumen_entry,
+                temporal_history_weight,
+                &sample_tile_hash,
+            );
             let shadow_mask_hash =
                 direct_lighting_shadow_mask_hash(shadow_entry, lumen_entry, sample_sequence);
             let contribution_hash = direct_lighting_contribution_hash(
@@ -5402,6 +5480,14 @@ fn build_direct_lighting_packet(
                 &denoiser_tile,
                 &resolve_tile,
                 ray_tracing_candidate,
+                &sample_tile_id,
+                stochastic_sample_mode,
+                temporal_history_weight,
+                vsm_pruned,
+                &hzb_visibility_hash,
+                &sample_tile_hash,
+                &vsm_pruned_grid_hash,
+                &temporal_reprojection_hash,
             );
             BangerNativeDirectLightingEntry {
                 object_id: shadow_entry.object_id.clone(),
@@ -5412,9 +5498,18 @@ fn build_direct_lighting_packet(
                 light_grid_cell: shadow_entry.light_grid_cell,
                 sample_sequence,
                 sample_count,
+                sample_tile_id,
+                stochastic_sample_mode,
+                temporal_history_weight,
+                vsm_pruned,
+                vsm_clipmap_range_id: shadow_entry.clipmap_range_id.clone(),
                 shadow_page_id: shadow_entry.shadow_page_id.clone(),
                 shadow_mask_hash,
                 contribution_hash,
+                sample_tile_hash,
+                hzb_visibility_hash,
+                vsm_pruned_grid_hash,
+                temporal_reprojection_hash,
                 denoiser_tile,
                 resolve_tile,
                 ray_tracing_candidate,
@@ -5422,9 +5517,16 @@ fn build_direct_lighting_packet(
             }
         })
         .collect::<Vec<_>>();
+    let sample_tiles = build_direct_lighting_sample_tiles(&entries);
+    let validation_receipt =
+        build_direct_lighting_validation_receipt(&entries, &sample_tiles);
+    let validation_receipt_hash = validation_receipt.validation_hash.clone();
     let light_grid_hash = direct_lighting_grid_hash(&entries);
     let sample_sequence_hash = direct_lighting_sample_sequence_hash(&entries);
+    let sample_tile_hash = direct_lighting_sample_tiles_hash(&sample_tiles);
     let shadow_mask_hash = direct_lighting_shadow_masks_hash(&entries);
+    let vsm_pruned_grid_hash = direct_lighting_vsm_pruned_grid_hash(&entries);
+    let temporal_reprojection_hash = direct_lighting_temporal_reprojection_table_hash(&entries);
     let denoiser_hash = direct_lighting_denoiser_hash(&entries);
     let resolve_hash = direct_lighting_resolve_hash(&entries);
     let packet_hash = direct_lighting_packet_hash(
@@ -5435,15 +5537,21 @@ fn build_direct_lighting_packet(
         render_graph_compilation,
         &light_grid_hash,
         &sample_sequence_hash,
+        &sample_tile_hash,
         &shadow_mask_hash,
+        &vsm_pruned_grid_hash,
+        &temporal_reprojection_hash,
         &denoiser_hash,
         &resolve_hash,
+        &validation_receipt_hash,
         &entries,
+        &sample_tiles,
     );
     BangerNativeDirectLightingPacket {
-        schema: "forge.banger.direct_lighting_packet.v1",
+        schema: "forge.banger.direct_lighting_packet.v2",
+        schema_version: 2,
         authority: "banger_megalights_light_grid_stochastic_shadowed_resolve",
-        clean_room_basis: "local_unreal_sparse_megalights_stochastic_light_grid_resolve_denoise_principles_no_source_copy",
+        clean_room_basis: "local_unreal_sparse_megalights_stochastic_sample_before_vsm_marking_tile_history_pruned_grid_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
         lumen_lighting_hash: lumen_lighting_packet.packet_hash.clone(),
         virtual_shadow_hash: virtual_shadow_packet.packet_hash.clone(),
@@ -5469,13 +5577,22 @@ fn build_direct_lighting_packet(
             .iter()
             .filter(|entry| entry.ray_tracing_candidate)
             .count(),
+        mega_light_tile_count: sample_tiles.len(),
+        vsm_pruned_light_count: validation_receipt.vsm_pruned_light_count,
+        temporal_reuse_candidate_count: validation_receipt.temporal_reuse_candidate_count,
         light_grid_hash,
         sample_sequence_hash,
+        sample_tile_hash,
         shadow_mask_hash,
+        vsm_pruned_grid_hash,
+        temporal_reprojection_hash,
         denoiser_hash,
         resolve_hash,
+        validation_receipt_hash,
         packet_hash,
         entries,
+        sample_tiles,
+        validation_receipt,
     }
 }
 
@@ -11317,15 +11434,141 @@ fn direct_lighting_sample_sequence(
     u64::from_le_bytes(digest[0..8].try_into().expect("direct lighting sample sequence bytes"))
 }
 
+fn direct_lighting_sample_tile_id(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    light_cluster_id: &str,
+    sample_sequence: u64,
+) -> String {
+    hash_text_hex(
+        "forge.banger.direct_lighting.sample_tile_id.v1",
+        &format!(
+            "{}:{}:{}:{}:{}",
+            light_cluster_id,
+            shadow_entry.light_grid_cell[0],
+            shadow_entry.light_grid_cell[1],
+            shadow_entry.projection_tile[0] / 8,
+            sample_sequence & 0xff
+        ),
+    )
+}
+
+fn direct_lighting_stochastic_sample_mode(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    sample_count: u32,
+) -> &'static str {
+    if shadow_entry.ray_budget > 2048 || sample_count > 4096 {
+        "stochastic_offset_2x2"
+    } else if direct_lighting_vsm_pruned(shadow_entry) || shadow_entry.page_age_bucket >= 2 {
+        "stochastic_offset_2x1"
+    } else {
+        "single_pixel_jitter"
+    }
+}
+
+fn direct_lighting_temporal_history_weight(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+) -> f32 {
+    let reuse_frames = lumen_entry
+        .map(|entry| entry.temporal_reuse_frames)
+        .unwrap_or(shadow_entry.page_age_frames) as f32;
+    let cache_bonus = if shadow_entry.cache_state == "persistent_cache_hit" {
+        0.25
+    } else {
+        0.0
+    };
+    let invalidation_penalty = if shadow_entry.invalidation_mask == 0 {
+        0.0
+    } else {
+        0.35
+    };
+    ((reuse_frames / 16.0) + cache_bonus - invalidation_penalty).clamp(0.0, 1.0)
+}
+
+fn direct_lighting_vsm_pruned(shadow_entry: &BangerNativeVirtualShadowEntry) -> bool {
+    shadow_entry.invalidation_mask != 0
+        || shadow_entry.page_pool_pressure_pct >= 50.0
+        || shadow_entry.depth_range_shift > 0.25
+}
+
+fn direct_lighting_hzb_visibility_hash(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    sample_tile_id: &str,
+    sample_sequence: u64,
+    vsm_pruned: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.hzb_visibility.v1\0");
+    h.update(shadow_entry.hzb_input_hash.as_bytes());
+    h.update(sample_tile_id.as_bytes());
+    h.update(sample_sequence.to_le_bytes());
+    h.update([vsm_pruned as u8]);
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_sample_tile_entry_hash(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    sample_tile_id: &str,
+    stochastic_sample_mode: &str,
+    sample_count: u32,
+    temporal_history_weight: f32,
+    vsm_pruned: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.sample_tile_entry.v1\0");
+    h.update(shadow_entry.entry_hash.as_bytes());
+    h.update(sample_tile_id.as_bytes());
+    h.update(stochastic_sample_mode.as_bytes());
+    h.update(sample_count.to_le_bytes());
+    h.update(temporal_history_weight.to_le_bytes());
+    h.update([vsm_pruned as u8]);
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_vsm_pruned_grid_entry_hash(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    light_cluster_id: &str,
+    vsm_pruned: bool,
+    hzb_visibility_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.vsm_pruned_grid_entry.v1\0");
+    h.update(light_cluster_id.as_bytes());
+    h.update(shadow_entry.clipmap_range_id.as_bytes());
+    h.update(shadow_entry.page_table_hash.as_bytes());
+    h.update(shadow_entry.hzb_invalidation_hash.as_bytes());
+    h.update(hzb_visibility_hash.as_bytes());
+    h.update([vsm_pruned as u8]);
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_temporal_reprojection_hash(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+    temporal_history_weight: f32,
+    sample_tile_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.temporal_reprojection.v1\0");
+    h.update(shadow_entry.cache_metadata_hash.as_bytes());
+    h.update(sample_tile_hash.as_bytes());
+    h.update(temporal_history_weight.to_le_bytes());
+    if let Some(lumen_entry) = lumen_entry {
+        h.update(lumen_entry.screen_probe_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn direct_lighting_shadow_mask_hash(
     shadow_entry: &BangerNativeVirtualShadowEntry,
     lumen_entry: Option<&BangerNativeLumenLightingEntry>,
     sample_sequence: u64,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.direct_lighting.shadow_mask.v1\0");
+    h.update(b"forge.banger.direct_lighting.shadow_mask.v2\0");
     h.update(shadow_entry.page_table_hash.as_bytes());
     h.update(shadow_entry.projection_hash.as_bytes());
+    h.update(shadow_entry.hzb_input_hash.as_bytes());
     h.update(sample_sequence.to_le_bytes());
     if let Some(lumen_entry) = lumen_entry {
         h.update(lumen_entry.trace_hash.as_bytes());
@@ -11341,11 +11584,12 @@ fn direct_lighting_contribution_hash(
     shadow_mask_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.direct_lighting.contribution.v1\0");
+    h.update(b"forge.banger.direct_lighting.contribution.v2\0");
     h.update(shadow_entry.entry_hash.as_bytes());
     h.update(light_kind.as_bytes());
     h.update(sample_count.to_le_bytes());
     h.update(shadow_mask_hash.as_bytes());
+    h.update(shadow_entry.cache_metadata_hash.as_bytes());
     if let Some(lumen_entry) = lumen_entry {
         h.update(lumen_entry.diffuse_ray_count.to_le_bytes());
         h.update(lumen_entry.reflection_ray_count.to_le_bytes());
@@ -11399,16 +11643,32 @@ fn direct_lighting_entry_hash(
     denoiser_tile: &[u32; 4],
     resolve_tile: &[u32; 4],
     ray_tracing_candidate: bool,
+    sample_tile_id: &str,
+    stochastic_sample_mode: &str,
+    temporal_history_weight: f32,
+    vsm_pruned: bool,
+    hzb_visibility_hash: &str,
+    sample_tile_hash: &str,
+    vsm_pruned_grid_hash: &str,
+    temporal_reprojection_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.direct_lighting.entry.v1\0");
+    h.update(b"forge.banger.direct_lighting.entry.v2\0");
     h.update(shadow_entry.entry_hash.as_bytes());
     h.update(light_cluster_id.as_bytes());
     h.update(light_kind.as_bytes());
     h.update(sample_sequence.to_le_bytes());
     h.update(sample_count.to_le_bytes());
+    h.update(sample_tile_id.as_bytes());
+    h.update(stochastic_sample_mode.as_bytes());
+    h.update(temporal_history_weight.to_le_bytes());
+    h.update([vsm_pruned as u8]);
     h.update(shadow_mask_hash.as_bytes());
     h.update(contribution_hash.as_bytes());
+    h.update(hzb_visibility_hash.as_bytes());
+    h.update(sample_tile_hash.as_bytes());
+    h.update(vsm_pruned_grid_hash.as_bytes());
+    h.update(temporal_reprojection_hash.as_bytes());
     for value in denoiser_tile {
         h.update(value.to_le_bytes());
     }
@@ -11419,11 +11679,95 @@ fn direct_lighting_entry_hash(
     hex32(h.finalize().into())
 }
 
+fn build_direct_lighting_sample_tiles(
+    entries: &[BangerNativeDirectLightingEntry],
+) -> Vec<BangerNativeMegaLightSampleTile> {
+    let mut grouped: BTreeMap<String, Vec<&BangerNativeDirectLightingEntry>> = BTreeMap::new();
+    for entry in entries {
+        grouped
+            .entry(entry.sample_tile_id.clone())
+            .or_default()
+            .push(entry);
+    }
+    grouped
+        .into_iter()
+        .map(|(sample_tile_id, tile_entries)| {
+            let first = tile_entries[0];
+            let sample_count = tile_entries
+                .iter()
+                .map(|entry| entry.sample_count)
+                .sum::<u32>();
+            let vsm_pruned_light_count = tile_entries
+                .iter()
+                .filter(|entry| entry.vsm_pruned)
+                .count();
+            let temporal_history_weight_sum = tile_entries
+                .iter()
+                .map(|entry| entry.temporal_history_weight)
+                .sum::<f32>();
+            let tile_bitmask = direct_lighting_tile_bitmask(&tile_entries);
+            let tile_hash = direct_lighting_sample_tile_hash(
+                &sample_tile_id,
+                &first.light_grid_cell,
+                &first.denoiser_tile,
+                sample_count,
+                vsm_pruned_light_count,
+                temporal_history_weight_sum,
+                tile_bitmask,
+            );
+            BangerNativeMegaLightSampleTile {
+                sample_tile_id,
+                light_grid_cell: first.light_grid_cell,
+                tile_rect: first.denoiser_tile,
+                sample_count,
+                vsm_pruned_light_count,
+                temporal_history_weight_sum,
+                tile_bitmask,
+                tile_hash,
+            }
+        })
+        .collect()
+}
+
+fn direct_lighting_tile_bitmask(entries: &[&BangerNativeDirectLightingEntry]) -> u32 {
+    entries.iter().fold(0u32, |mask, entry| {
+        let lane = ((entry.light_grid_cell[0] ^ entry.light_grid_cell[1] ^ entry.sample_count) % 31)
+            .min(31);
+        mask | (1u32 << lane)
+    })
+}
+
+fn direct_lighting_sample_tile_hash(
+    sample_tile_id: &str,
+    light_grid_cell: &[u32; 3],
+    tile_rect: &[u32; 4],
+    sample_count: u32,
+    vsm_pruned_light_count: usize,
+    temporal_history_weight_sum: f32,
+    tile_bitmask: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.sample_tile.v1\0");
+    h.update(sample_tile_id.as_bytes());
+    for value in light_grid_cell {
+        h.update(value.to_le_bytes());
+    }
+    for value in tile_rect {
+        h.update(value.to_le_bytes());
+    }
+    h.update(sample_count.to_le_bytes());
+    h.update((vsm_pruned_light_count as u64).to_le_bytes());
+    h.update(temporal_history_weight_sum.to_le_bytes());
+    h.update(tile_bitmask.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
 fn direct_lighting_grid_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.direct_lighting.light_grid.v1\0");
+    h.update(b"forge.banger.direct_lighting.light_grid.v2\0");
     for entry in entries {
         h.update(entry.light_cluster_id.as_bytes());
+        h.update(entry.vsm_clipmap_range_id.as_bytes());
         for value in entry.light_grid_cell {
             h.update(value.to_le_bytes());
         }
@@ -11433,45 +11777,134 @@ fn direct_lighting_grid_hash(entries: &[BangerNativeDirectLightingEntry]) -> Str
 
 fn direct_lighting_sample_sequence_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.direct_lighting.sample_sequences.v1\0");
+    h.update(b"forge.banger.direct_lighting.sample_sequences.v2\0");
     for entry in entries {
         h.update(entry.sample_sequence.to_le_bytes());
         h.update(entry.sample_count.to_le_bytes());
+        h.update(entry.stochastic_sample_mode.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_sample_tiles_hash(sample_tiles: &[BangerNativeMegaLightSampleTile]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.sample_tiles.v1\0");
+    for tile in sample_tiles {
+        h.update(tile.sample_tile_id.as_bytes());
+        h.update(tile.tile_hash.as_bytes());
+        h.update(tile.tile_bitmask.to_le_bytes());
     }
     hex32(h.finalize().into())
 }
 
 fn direct_lighting_shadow_masks_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.direct_lighting.shadow_masks.v1\0");
+    h.update(b"forge.banger.direct_lighting.shadow_masks.v2\0");
     for entry in entries {
         h.update(entry.shadow_page_id.as_bytes());
+        h.update(entry.hzb_visibility_hash.as_bytes());
         h.update(entry.shadow_mask_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_vsm_pruned_grid_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.vsm_pruned_grid.v1\0");
+    for entry in entries {
+        h.update(entry.vsm_clipmap_range_id.as_bytes());
+        h.update(entry.vsm_pruned_grid_hash.as_bytes());
+        h.update([entry.vsm_pruned as u8]);
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_temporal_reprojection_table_hash(
+    entries: &[BangerNativeDirectLightingEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.temporal_reprojection_table.v1\0");
+    for entry in entries {
+        h.update(entry.temporal_reprojection_hash.as_bytes());
+        h.update(entry.temporal_history_weight.to_le_bytes());
     }
     hex32(h.finalize().into())
 }
 
 fn direct_lighting_denoiser_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.direct_lighting.denoiser.v1\0");
+    h.update(b"forge.banger.direct_lighting.denoiser.v2\0");
     for entry in entries {
         for value in entry.denoiser_tile {
             h.update(value.to_le_bytes());
         }
         h.update(entry.contribution_hash.as_bytes());
+        h.update(entry.temporal_reprojection_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
 
 fn direct_lighting_resolve_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.direct_lighting.resolve.v1\0");
+    h.update(b"forge.banger.direct_lighting.resolve.v2\0");
     for entry in entries {
         for value in entry.resolve_tile {
             h.update(value.to_le_bytes());
         }
         h.update(entry.entry_hash.as_bytes());
     }
+    hex32(h.finalize().into())
+}
+
+fn build_direct_lighting_validation_receipt(
+    entries: &[BangerNativeDirectLightingEntry],
+    sample_tiles: &[BangerNativeMegaLightSampleTile],
+) -> BangerNativeDirectLightingValidationReceipt {
+    let tile_ids = sample_tiles
+        .iter()
+        .map(|tile| tile.sample_tile_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let vsm_pruned_light_count = entries.iter().filter(|entry| entry.vsm_pruned).count();
+    let temporal_reuse_candidate_count = entries
+        .iter()
+        .filter(|entry| entry.temporal_history_weight > 0.0)
+        .count();
+    let all_lights_have_sample_tiles = entries
+        .iter()
+        .all(|entry| tile_ids.contains(entry.sample_tile_id.as_str()));
+    let validation_hash = direct_lighting_validation_receipt_hash(
+        entries.len(),
+        sample_tiles.len(),
+        vsm_pruned_light_count,
+        temporal_reuse_candidate_count,
+        all_lights_have_sample_tiles,
+    );
+    BangerNativeDirectLightingValidationReceipt {
+        schema: "forge.banger.direct_lighting_validation_receipt.v1",
+        authority: "megalights_sample_tile_vsm_pruned_grid_validation",
+        checked_light_count: entries.len(),
+        checked_tile_count: sample_tiles.len(),
+        vsm_pruned_light_count,
+        temporal_reuse_candidate_count,
+        all_lights_have_sample_tiles,
+        validation_hash,
+    }
+}
+
+fn direct_lighting_validation_receipt_hash(
+    checked_light_count: usize,
+    checked_tile_count: usize,
+    vsm_pruned_light_count: usize,
+    temporal_reuse_candidate_count: usize,
+    all_lights_have_sample_tiles: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.validation_receipt.v1\0");
+    h.update((checked_light_count as u64).to_le_bytes());
+    h.update((checked_tile_count as u64).to_le_bytes());
+    h.update((vsm_pruned_light_count as u64).to_le_bytes());
+    h.update((temporal_reuse_candidate_count as u64).to_le_bytes());
+    h.update([all_lights_have_sample_tiles as u8]);
     hex32(h.finalize().into())
 }
 
@@ -11483,13 +11916,18 @@ fn direct_lighting_packet_hash(
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
     light_grid_hash: &str,
     sample_sequence_hash: &str,
+    sample_tile_hash: &str,
     shadow_mask_hash: &str,
+    vsm_pruned_grid_hash: &str,
+    temporal_reprojection_hash: &str,
     denoiser_hash: &str,
     resolve_hash: &str,
+    validation_receipt_hash: &str,
     entries: &[BangerNativeDirectLightingEntry],
+    sample_tiles: &[BangerNativeMegaLightSampleTile],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.direct_lighting_packet.v1\0");
+    h.update(b"forge.banger.direct_lighting_packet.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(lumen_lighting_packet.packet_hash.as_bytes());
@@ -11498,11 +11936,18 @@ fn direct_lighting_packet_hash(
     h.update(render_graph_compilation.graph_hash.as_bytes());
     h.update(light_grid_hash.as_bytes());
     h.update(sample_sequence_hash.as_bytes());
+    h.update(sample_tile_hash.as_bytes());
     h.update(shadow_mask_hash.as_bytes());
+    h.update(vsm_pruned_grid_hash.as_bytes());
+    h.update(temporal_reprojection_hash.as_bytes());
     h.update(denoiser_hash.as_bytes());
     h.update(resolve_hash.as_bytes());
+    h.update(validation_receipt_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
+    }
+    for tile in sample_tiles {
+        h.update(tile.tile_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -20447,8 +20892,9 @@ mod tests {
                 && pass.pass_name == "virtual_shadow_depth"));
         assert_eq!(
             response.direct_lighting_packet.schema,
-            "forge.banger.direct_lighting_packet.v1"
+            "forge.banger.direct_lighting_packet.v2"
         );
+        assert_eq!(response.direct_lighting_packet.schema_version, 2);
         assert_eq!(
             response.direct_lighting_packet.authority,
             "banger_megalights_light_grid_stochastic_shadowed_resolve"
@@ -20492,15 +20938,83 @@ mod tests {
             response.direct_lighting_packet.resolve_tile_count,
             response.direct_lighting_packet.entries.len()
         );
+        assert_eq!(
+            response.direct_lighting_packet.mega_light_tile_count,
+            response.direct_lighting_packet.sample_tiles.len()
+        );
+        assert_eq!(
+            response.direct_lighting_packet.vsm_pruned_light_count,
+            response
+                .direct_lighting_packet
+                .validation_receipt
+                .vsm_pruned_light_count
+        );
+        assert_eq!(
+            response
+                .direct_lighting_packet
+                .temporal_reuse_candidate_count,
+            response
+                .direct_lighting_packet
+                .validation_receipt
+                .temporal_reuse_candidate_count
+        );
         assert_eq!(response.direct_lighting_packet.light_grid_hash.len(), 64);
         assert_eq!(
             response.direct_lighting_packet.sample_sequence_hash.len(),
             64
         );
+        assert_eq!(response.direct_lighting_packet.sample_tile_hash.len(), 64);
         assert_eq!(response.direct_lighting_packet.shadow_mask_hash.len(), 64);
+        assert_eq!(response.direct_lighting_packet.vsm_pruned_grid_hash.len(), 64);
+        assert_eq!(
+            response
+                .direct_lighting_packet
+                .temporal_reprojection_hash
+                .len(),
+            64
+        );
         assert_eq!(response.direct_lighting_packet.denoiser_hash.len(), 64);
         assert_eq!(response.direct_lighting_packet.resolve_hash.len(), 64);
+        assert_eq!(
+            response.direct_lighting_packet.validation_receipt_hash.len(),
+            64
+        );
         assert_eq!(response.direct_lighting_packet.packet_hash.len(), 64);
+        assert_eq!(
+            response
+                .direct_lighting_packet
+                .validation_receipt
+                .validation_hash,
+            response.direct_lighting_packet.validation_receipt_hash
+        );
+        assert_eq!(
+            response
+                .direct_lighting_packet
+                .validation_receipt
+                .checked_light_count,
+            response.direct_lighting_packet.entries.len()
+        );
+        assert_eq!(
+            response
+                .direct_lighting_packet
+                .validation_receipt
+                .checked_tile_count,
+            response.direct_lighting_packet.sample_tiles.len()
+        );
+        assert!(response
+            .direct_lighting_packet
+            .validation_receipt
+            .all_lights_have_sample_tiles);
+        assert!(response
+            .direct_lighting_packet
+            .sample_tiles
+            .iter()
+            .all(|tile| tile.sample_tile_id.len() == 64
+                && tile.tile_rect[2] > 0
+                && tile.tile_rect[3] > 0
+                && tile.sample_count > 0
+                && tile.tile_bitmask != 0
+                && tile.tile_hash.len() == 64));
         assert!(response
             .direct_lighting_packet
             .entries
@@ -20510,8 +21024,16 @@ mod tests {
                 && entry.shadow_page_id.starts_with("vshadow:")
                 && entry.sample_sequence != 0
                 && entry.sample_count > 0
+                && entry.sample_tile_id.len() == 64
+                && entry.temporal_history_weight >= 0.0
+                && entry.temporal_history_weight <= 1.0
+                && entry.vsm_clipmap_range_id.len() == 64
                 && entry.shadow_mask_hash.len() == 64
                 && entry.contribution_hash.len() == 64
+                && entry.sample_tile_hash.len() == 64
+                && entry.hzb_visibility_hash.len() == 64
+                && entry.vsm_pruned_grid_hash.len() == 64
+                && entry.temporal_reprojection_hash.len() == 64
                 && entry.denoiser_tile[2] > 0
                 && entry.denoiser_tile[3] > 0
                 && entry.resolve_tile[2] == entry.denoiser_tile[2]
@@ -20522,6 +21044,12 @@ mod tests {
                     "hardware_ray_megalight"
                         | "stochastic_many_light"
                         | "clustered_deferred_light"
+                )
+                && matches!(
+                    entry.stochastic_sample_mode,
+                    "stochastic_offset_2x2"
+                        | "stochastic_offset_2x1"
+                        | "single_pixel_jitter"
                 )));
         assert_eq!(
             response.material_closure_packet.schema,
