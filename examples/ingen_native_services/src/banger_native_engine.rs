@@ -809,24 +809,42 @@ pub struct BangerNativeCullingEntry {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeMeshletVisibilityPacket {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub authority: &'static str,
     pub clean_room_basis: &'static str,
     pub source_contract_hash: String,
     pub scene_graph_hash: String,
     pub culling_manifest_hash: String,
     pub render_graph_manifest_hash: String,
+    pub candidate_cluster_count: usize,
     pub cluster_count: usize,
     pub visible_cluster_count: usize,
+    pub streaming_request_count: usize,
     pub hardware_raster_candidate_count: usize,
     pub software_raster_candidate_count: usize,
     pub max_lod_bucket: u32,
     pub indirect_draw_word_count: usize,
+    pub time_budget_us: u32,
+    pub selected_raster_path: &'static str,
     pub visibility_buffer_hash: String,
     pub lod_error_buffer_hash: String,
     pub cluster_page_table_hash: String,
     pub indirect_draw_packet_hash: String,
+    pub candidate_cluster_buffer_hash: String,
+    pub visible_cluster_buffer_hash: String,
+    pub dual_indirect_args_hash: String,
+    pub streaming_request_buffer_hash: String,
+    pub hzb_resource_hash: String,
+    pub raster_path_selection_hash: String,
+    pub validation_receipt_hash: String,
     pub packet_hash: String,
     pub entries: Vec<BangerNativeMeshletVisibilityEntry>,
+    pub candidate_clusters: Vec<BangerNativeMeshletCandidateCluster>,
+    pub visible_clusters: Vec<BangerNativeMeshletVisibleCluster>,
+    pub indirect_arg_buffers: Vec<BangerNativeMeshletIndirectArgBuffer>,
+    pub streaming_requests: Vec<BangerNativeMeshletStreamingRequest>,
+    pub hzb_resource: BangerNativeMeshletHzbResource,
+    pub validation_receipt: BangerNativeMeshletVisibilityValidationReceipt,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -846,6 +864,78 @@ pub struct BangerNativeMeshletVisibilityEntry {
     pub indirect_draw_args: [u32; 5],
     pub source_culling_proof_hash: String,
     pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeMeshletCandidateCluster {
+    pub cluster_id: String,
+    pub object_id: String,
+    pub resource_slot: u32,
+    pub visible_after_cull: bool,
+    pub lod_bucket: u32,
+    pub bounding_sphere: [f32; 4],
+    pub candidate_word: u64,
+    pub candidate_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeMeshletVisibleCluster {
+    pub cluster_id: String,
+    pub object_id: String,
+    pub resource_slot: u32,
+    pub raster_path: &'static str,
+    pub visibility_word: u64,
+    pub indirect_draw_args: [u32; 5],
+    pub visible_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeMeshletIndirectArgBuffer {
+    pub buffer_role: &'static str,
+    pub phase: &'static str,
+    pub cluster_count: usize,
+    pub word_count: usize,
+    pub buffer_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeMeshletStreamingRequest {
+    pub cluster_id: String,
+    pub resource_slot: u32,
+    pub page_hash: String,
+    pub request_kind: &'static str,
+    pub priority: u32,
+    pub request_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeMeshletHzbResource {
+    pub resource_id: String,
+    pub width: u32,
+    pub height: u32,
+    pub mip_count: u32,
+    pub source_hash: String,
+    pub resource_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeMeshletVisibilityValidationReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_candidate_count: usize,
+    pub checked_visible_count: usize,
+    pub checked_indirect_buffer_count: usize,
+    pub missing_candidate_count: usize,
+    pub invalid_indirect_arg_count: usize,
+    pub missing_streaming_request_count: usize,
+    pub validation_hash: String,
+    pub issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3548,6 +3638,7 @@ fn build_meshlet_visibility_packet(
     resource_table: &BangerNativeResourceTable,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
 ) -> BangerNativeMeshletVisibilityPacket {
+    let candidate_clusters = build_meshlet_candidate_clusters(culling_manifest);
     let mut entries = Vec::new();
     for culling_entry in culling_manifest
         .entries
@@ -3596,10 +3687,34 @@ fn build_meshlet_visibility_packet(
             });
         }
     }
+    let visible_clusters = entries
+        .iter()
+        .map(|entry| {
+            let visible_hash = meshlet_visible_cluster_hash(entry);
+            BangerNativeMeshletVisibleCluster {
+                cluster_id: entry.cluster_id.clone(),
+                object_id: entry.object_id.clone(),
+                resource_slot: entry.resource_slot,
+                raster_path: entry.raster_path,
+                visibility_word: entry.visibility_word,
+                indirect_draw_args: entry.indirect_draw_args,
+                visible_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let indirect_arg_buffers = meshlet_dual_indirect_arg_buffers(&entries);
+    let streaming_requests = meshlet_streaming_requests(&entries, resource_table);
+    let hzb_resource =
+        meshlet_hzb_resource(scene_graph_submission, culling_manifest, render_graph_compilation, &entries);
     let visibility_buffer_hash = meshlet_visibility_buffer_hash(&entries);
     let lod_error_buffer_hash = meshlet_lod_error_buffer_hash(&entries);
     let cluster_page_table_hash = meshlet_cluster_page_table_hash(&entries);
     let indirect_draw_packet_hash = meshlet_indirect_draw_packet_hash(&entries);
+    let candidate_cluster_buffer_hash = meshlet_candidate_cluster_buffer_hash(&candidate_clusters);
+    let visible_cluster_buffer_hash = meshlet_visible_cluster_buffer_hash(&visible_clusters);
+    let dual_indirect_args_hash = meshlet_dual_indirect_args_hash(&indirect_arg_buffers);
+    let streaming_request_buffer_hash = meshlet_streaming_request_buffer_hash(&streaming_requests);
+    let hzb_resource_hash = hzb_resource.resource_hash.clone();
     let max_lod_bucket = entries.iter().map(|entry| entry.lod_bucket).max().unwrap_or_default();
     let hardware_raster_candidate_count = entries
         .iter()
@@ -3607,6 +3722,27 @@ fn build_meshlet_visibility_packet(
         .count();
     let software_raster_candidate_count =
         entries.len().saturating_sub(hardware_raster_candidate_count);
+    let selected_raster_path =
+        meshlet_selected_raster_path(hardware_raster_candidate_count, software_raster_candidate_count);
+    let time_budget_us = meshlet_visibility_time_budget_us(
+        prepared,
+        entries.len(),
+        hardware_raster_candidate_count,
+        software_raster_candidate_count,
+    );
+    let raster_path_selection_hash = meshlet_raster_path_selection_hash(
+        selected_raster_path,
+        time_budget_us,
+        hardware_raster_candidate_count,
+        software_raster_candidate_count,
+    );
+    let validation_receipt = build_meshlet_visibility_validation_receipt(
+        &candidate_clusters,
+        &visible_clusters,
+        &indirect_arg_buffers,
+        &streaming_requests,
+    );
+    let validation_receipt_hash = validation_receipt.validation_hash.clone();
     let packet_hash = meshlet_visibility_packet_hash(
         prepared,
         scene_graph_submission,
@@ -3616,28 +3752,53 @@ fn build_meshlet_visibility_packet(
         &lod_error_buffer_hash,
         &cluster_page_table_hash,
         &indirect_draw_packet_hash,
+        &candidate_cluster_buffer_hash,
+        &visible_cluster_buffer_hash,
+        &dual_indirect_args_hash,
+        &streaming_request_buffer_hash,
+        &hzb_resource_hash,
+        &raster_path_selection_hash,
+        &validation_receipt_hash,
         &entries,
     );
     BangerNativeMeshletVisibilityPacket {
-        schema: "forge.banger.meshlet_visibility_packet.v1",
+        schema: "forge.banger.meshlet_visibility_packet.v2",
+        schema_version: 2,
         authority: "monster_kasm_scene_graph_to_banger_meshlet_visibility",
         clean_room_basis: "local_unreal_sparse_nanite_study_visibility_raster_context_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
         scene_graph_hash: scene_graph_submission.submission_hash.clone(),
         culling_manifest_hash: culling_manifest.manifest_hash.clone(),
         render_graph_manifest_hash: render_graph_compilation.graph_hash.clone(),
+        candidate_cluster_count: candidate_clusters.len(),
         cluster_count: entries.len(),
         visible_cluster_count: entries.len(),
+        streaming_request_count: streaming_requests.len(),
         hardware_raster_candidate_count,
         software_raster_candidate_count,
         max_lod_bucket,
         indirect_draw_word_count: entries.len() * 5,
+        time_budget_us,
+        selected_raster_path,
         visibility_buffer_hash,
         lod_error_buffer_hash,
         cluster_page_table_hash,
         indirect_draw_packet_hash,
+        candidate_cluster_buffer_hash,
+        visible_cluster_buffer_hash,
+        dual_indirect_args_hash,
+        streaming_request_buffer_hash,
+        hzb_resource_hash,
+        raster_path_selection_hash,
+        validation_receipt_hash,
         packet_hash,
         entries,
+        candidate_clusters,
+        visible_clusters,
+        indirect_arg_buffers,
+        streaming_requests,
+        hzb_resource,
+        validation_receipt,
     }
 }
 
@@ -6452,6 +6613,257 @@ fn meshlet_visibility_entry_hash(
     hex32(h.finalize().into())
 }
 
+fn build_meshlet_candidate_clusters(
+    culling_manifest: &BangerNativeCullingManifest,
+) -> Vec<BangerNativeMeshletCandidateCluster> {
+    culling_manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.representation == "meshlet")
+        .flat_map(|entry| {
+            entry
+                .resource_slots
+                .iter()
+                .enumerate()
+                .map(move |(cluster_index, resource_slot)| {
+                    let cluster_id = format!("{}:cluster_{cluster_index}", entry.object_id);
+                    let candidate_word =
+                        meshlet_candidate_word(entry, *resource_slot, cluster_index as u32);
+                    let candidate_hash =
+                        meshlet_candidate_cluster_hash(&cluster_id, entry, *resource_slot, candidate_word);
+                    BangerNativeMeshletCandidateCluster {
+                        cluster_id,
+                        object_id: entry.object_id.clone(),
+                        resource_slot: *resource_slot,
+                        visible_after_cull: entry.visible_after_cull,
+                        lod_bucket: entry.lod_bucket,
+                        bounding_sphere: entry.bounding_sphere,
+                        candidate_word,
+                        candidate_hash,
+                    }
+                })
+        })
+        .collect()
+}
+
+fn meshlet_candidate_word(
+    entry: &BangerNativeCullingEntry,
+    resource_slot: u32,
+    cluster_index: u32,
+) -> u64 {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.candidate_word.v1\0");
+    h.update(entry.object_id.as_bytes());
+    h.update(resource_slot.to_le_bytes());
+    h.update(cluster_index.to_le_bytes());
+    h.update(entry.lod_bucket.to_le_bytes());
+    h.update([entry.visible_after_cull as u8]);
+    h.update(entry.proof_hash.as_bytes());
+    let digest: [u8; 32] = h.finalize().into();
+    u64::from_le_bytes(digest[0..8].try_into().expect("candidate word bytes"))
+}
+
+fn meshlet_candidate_cluster_hash(
+    cluster_id: &str,
+    entry: &BangerNativeCullingEntry,
+    resource_slot: u32,
+    candidate_word: u64,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.candidate_cluster.v1\0");
+    h.update(cluster_id.as_bytes());
+    h.update(entry.object_id.as_bytes());
+    h.update(resource_slot.to_le_bytes());
+    h.update([entry.visible_after_cull as u8]);
+    h.update(entry.lod_bucket.to_le_bytes());
+    for value in entry.bounding_sphere {
+        h.update(value.to_le_bytes());
+    }
+    h.update(candidate_word.to_le_bytes());
+    h.update(entry.proof_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn meshlet_visible_cluster_hash(entry: &BangerNativeMeshletVisibilityEntry) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.visible_cluster.v1\0");
+    h.update(entry.cluster_id.as_bytes());
+    h.update(entry.object_id.as_bytes());
+    h.update(entry.resource_slot.to_le_bytes());
+    h.update(entry.raster_path.as_bytes());
+    h.update(entry.visibility_word.to_le_bytes());
+    for arg in entry.indirect_draw_args {
+        h.update(arg.to_le_bytes());
+    }
+    h.update(entry.entry_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn meshlet_dual_indirect_arg_buffers(
+    entries: &[BangerNativeMeshletVisibilityEntry],
+) -> Vec<BangerNativeMeshletIndirectArgBuffer> {
+    [
+        ("candidate_cluster_args", "cluster_cull"),
+        ("visible_raster_args", "raster_dispatch"),
+    ]
+    .into_iter()
+    .map(|(buffer_role, phase)| {
+        let buffer_hash = meshlet_indirect_arg_buffer_hash(buffer_role, phase, entries);
+        BangerNativeMeshletIndirectArgBuffer {
+            buffer_role,
+            phase,
+            cluster_count: entries.len(),
+            word_count: entries.len() * 5,
+            buffer_hash,
+        }
+    })
+    .collect()
+}
+
+fn meshlet_indirect_arg_buffer_hash(
+    buffer_role: &str,
+    phase: &str,
+    entries: &[BangerNativeMeshletVisibilityEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.indirect_arg_buffer.v1\0");
+    h.update(buffer_role.as_bytes());
+    h.update(phase.as_bytes());
+    for entry in entries {
+        h.update(entry.cluster_id.as_bytes());
+        for arg in entry.indirect_draw_args {
+            h.update(arg.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn meshlet_streaming_requests(
+    entries: &[BangerNativeMeshletVisibilityEntry],
+    resource_table: &BangerNativeResourceTable,
+) -> Vec<BangerNativeMeshletStreamingRequest> {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let slot = resource_table
+                .slots
+                .iter()
+                .find(|slot| slot.slot == entry.resource_slot)?;
+            if slot.upload_lane == "resident_cache" {
+                return None;
+            }
+            let request_kind = if slot.byte_len <= 4096 {
+                "small_page_stream"
+            } else {
+                "large_page_stream"
+            };
+            let priority = meshlet_streaming_priority(entry, slot.byte_len);
+            let request_hash = meshlet_streaming_request_hash(entry, request_kind, priority);
+            Some(BangerNativeMeshletStreamingRequest {
+                cluster_id: entry.cluster_id.clone(),
+                resource_slot: entry.resource_slot,
+                page_hash: entry.page_hash.clone(),
+                request_kind,
+                priority,
+                request_hash,
+            })
+        })
+        .collect()
+}
+
+fn meshlet_streaming_priority(entry: &BangerNativeMeshletVisibilityEntry, byte_len: u64) -> u32 {
+    let lod_priority = 16u32.saturating_sub(entry.lod_bucket.min(15));
+    let size_priority = ((byte_len / 1024).min(64) as u32).max(1);
+    lod_priority.saturating_mul(4).saturating_add(size_priority)
+}
+
+fn meshlet_streaming_request_hash(
+    entry: &BangerNativeMeshletVisibilityEntry,
+    request_kind: &str,
+    priority: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.streaming_request.v1\0");
+    h.update(entry.cluster_id.as_bytes());
+    h.update(entry.resource_slot.to_le_bytes());
+    h.update(entry.page_hash.as_bytes());
+    h.update(request_kind.as_bytes());
+    h.update(priority.to_le_bytes());
+    h.update(entry.entry_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn meshlet_hzb_resource(
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    entries: &[BangerNativeMeshletVisibilityEntry],
+) -> BangerNativeMeshletHzbResource {
+    let max_lod = entries.iter().map(|entry| entry.lod_bucket).max().unwrap_or_default();
+    let mip_count = (max_lod + 2).clamp(2, 8);
+    let width = 1024u32;
+    let height = 1024u32;
+    let source_hash = meshlet_hzb_source_hash(
+        scene_graph_submission,
+        culling_manifest,
+        render_graph_compilation,
+        entries,
+        width,
+        height,
+        mip_count,
+    );
+    let resource_id = format!("hzb:{}:{}", scene_graph_submission.scene_id, mip_count);
+    let resource_hash = meshlet_hzb_resource_hash(&resource_id, width, height, mip_count, &source_hash);
+    BangerNativeMeshletHzbResource {
+        resource_id,
+        width,
+        height,
+        mip_count,
+        source_hash,
+        resource_hash,
+    }
+}
+
+fn meshlet_hzb_source_hash(
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    entries: &[BangerNativeMeshletVisibilityEntry],
+    width: u32,
+    height: u32,
+    mip_count: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.hzb_source.v1\0");
+    h.update(scene_graph_submission.submission_hash.as_bytes());
+    h.update(culling_manifest.manifest_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(mip_count.to_le_bytes());
+    for entry in entries {
+        h.update(entry.visibility_word.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn meshlet_hzb_resource_hash(
+    resource_id: &str,
+    width: u32,
+    height: u32,
+    mip_count: u32,
+    source_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.hzb_resource.v1\0");
+    h.update(resource_id.as_bytes());
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(mip_count.to_le_bytes());
+    h.update(source_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
 fn meshlet_visibility_buffer_hash(entries: &[BangerNativeMeshletVisibilityEntry]) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.meshlet.visibility_buffer.v1\0");
@@ -6497,6 +6909,176 @@ fn meshlet_indirect_draw_packet_hash(entries: &[BangerNativeMeshletVisibilityEnt
     hex32(h.finalize().into())
 }
 
+fn meshlet_candidate_cluster_buffer_hash(
+    candidates: &[BangerNativeMeshletCandidateCluster],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.candidate_cluster_buffer.v1\0");
+    for candidate in candidates {
+        h.update(candidate.candidate_hash.as_bytes());
+        h.update(candidate.candidate_word.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn meshlet_visible_cluster_buffer_hash(
+    visible_clusters: &[BangerNativeMeshletVisibleCluster],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.visible_cluster_buffer.v1\0");
+    for cluster in visible_clusters {
+        h.update(cluster.visible_hash.as_bytes());
+        h.update(cluster.visibility_word.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn meshlet_dual_indirect_args_hash(
+    buffers: &[BangerNativeMeshletIndirectArgBuffer],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.dual_indirect_args.v1\0");
+    for buffer in buffers {
+        h.update(buffer.buffer_role.as_bytes());
+        h.update(buffer.phase.as_bytes());
+        h.update(buffer.buffer_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn meshlet_streaming_request_buffer_hash(
+    requests: &[BangerNativeMeshletStreamingRequest],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.streaming_request_buffer.v1\0");
+    for request in requests {
+        h.update(request.request_hash.as_bytes());
+        h.update(request.priority.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn meshlet_selected_raster_path(
+    hardware_count: usize,
+    software_count: usize,
+) -> &'static str {
+    match (hardware_count > 0, software_count > 0) {
+        (true, true) => "mixed_hardware_compute_raster",
+        (true, false) => "hardware_mesh_raster",
+        (false, true) => "compute_software_raster",
+        (false, false) => "no_visible_meshlet_raster",
+    }
+}
+
+fn meshlet_visibility_time_budget_us(
+    prepared: &MonsterPreparedCompute,
+    cluster_count: usize,
+    hardware_count: usize,
+    software_count: usize,
+) -> u32 {
+    let cached_discount = if prepared.is_fully_cached() { 2 } else { 1 };
+    let base = 250u32;
+    let hardware_cost = (hardware_count as u32).saturating_mul(28);
+    let software_cost = (software_count as u32).saturating_mul(54);
+    let cluster_cost = (cluster_count as u32).saturating_mul(8);
+    base.saturating_add(hardware_cost)
+        .saturating_add(software_cost)
+        .saturating_add(cluster_cost)
+        / cached_discount
+}
+
+fn meshlet_raster_path_selection_hash(
+    selected_raster_path: &str,
+    time_budget_us: u32,
+    hardware_count: usize,
+    software_count: usize,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.raster_path_selection.v1\0");
+    h.update(selected_raster_path.as_bytes());
+    h.update(time_budget_us.to_le_bytes());
+    h.update((hardware_count as u64).to_le_bytes());
+    h.update((software_count as u64).to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn build_meshlet_visibility_validation_receipt(
+    candidates: &[BangerNativeMeshletCandidateCluster],
+    visible_clusters: &[BangerNativeMeshletVisibleCluster],
+    indirect_arg_buffers: &[BangerNativeMeshletIndirectArgBuffer],
+    streaming_requests: &[BangerNativeMeshletStreamingRequest],
+) -> BangerNativeMeshletVisibilityValidationReceipt {
+    let candidate_ids = candidates
+        .iter()
+        .map(|candidate| candidate.cluster_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut issues = Vec::new();
+    let mut missing_candidate_count = 0usize;
+    let mut invalid_indirect_arg_count = 0usize;
+    for visible in visible_clusters {
+        if !candidate_ids.contains(visible.cluster_id.as_str()) {
+            missing_candidate_count += 1;
+            issues.push(format!("cluster:{}:missing_candidate", visible.cluster_id));
+        }
+        if visible.indirect_draw_args[0] == 0 || visible.indirect_draw_args[1] == 0 {
+            invalid_indirect_arg_count += 1;
+            issues.push(format!("cluster:{}:invalid_indirect_args", visible.cluster_id));
+        }
+    }
+    if indirect_arg_buffers.len() < 2 {
+        invalid_indirect_arg_count += 1;
+        issues.push("indirect_args:missing_dual_buffer".to_string());
+    }
+    let missing_streaming_request_count = streaming_requests
+        .iter()
+        .filter(|request| request.request_hash.len() != 64)
+        .count();
+    let validation_hash = meshlet_visibility_validation_hash(
+        candidates.len(),
+        visible_clusters.len(),
+        indirect_arg_buffers.len(),
+        missing_candidate_count,
+        invalid_indirect_arg_count,
+        missing_streaming_request_count,
+        &issues,
+    );
+    BangerNativeMeshletVisibilityValidationReceipt {
+        schema: "forge.banger.meshlet_visibility_validation_receipt.v1",
+        authority: "meshlet_candidate_visible_indirect_streaming_consistency",
+        checked_candidate_count: candidates.len(),
+        checked_visible_count: visible_clusters.len(),
+        checked_indirect_buffer_count: indirect_arg_buffers.len(),
+        missing_candidate_count,
+        invalid_indirect_arg_count,
+        missing_streaming_request_count,
+        validation_hash,
+        issues,
+    }
+}
+
+fn meshlet_visibility_validation_hash(
+    checked_candidate_count: usize,
+    checked_visible_count: usize,
+    checked_indirect_buffer_count: usize,
+    missing_candidate_count: usize,
+    invalid_indirect_arg_count: usize,
+    missing_streaming_request_count: usize,
+    issues: &[String],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.meshlet.visibility_validation.v1\0");
+    h.update((checked_candidate_count as u64).to_le_bytes());
+    h.update((checked_visible_count as u64).to_le_bytes());
+    h.update((checked_indirect_buffer_count as u64).to_le_bytes());
+    h.update((missing_candidate_count as u64).to_le_bytes());
+    h.update((invalid_indirect_arg_count as u64).to_le_bytes());
+    h.update((missing_streaming_request_count as u64).to_le_bytes());
+    for issue in issues {
+        h.update(issue.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn meshlet_visibility_packet_hash(
     prepared: &MonsterPreparedCompute,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
@@ -6506,10 +7088,17 @@ fn meshlet_visibility_packet_hash(
     lod_error_buffer_hash: &str,
     cluster_page_table_hash: &str,
     indirect_draw_packet_hash: &str,
+    candidate_cluster_buffer_hash: &str,
+    visible_cluster_buffer_hash: &str,
+    dual_indirect_args_hash: &str,
+    streaming_request_buffer_hash: &str,
+    hzb_resource_hash: &str,
+    raster_path_selection_hash: &str,
+    validation_receipt_hash: &str,
     entries: &[BangerNativeMeshletVisibilityEntry],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.meshlet_visibility_packet.v1\0");
+    h.update(b"forge.banger.meshlet_visibility_packet.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(scene_graph_submission.submission_hash.as_bytes());
@@ -6519,6 +7108,13 @@ fn meshlet_visibility_packet_hash(
     h.update(lod_error_buffer_hash.as_bytes());
     h.update(cluster_page_table_hash.as_bytes());
     h.update(indirect_draw_packet_hash.as_bytes());
+    h.update(candidate_cluster_buffer_hash.as_bytes());
+    h.update(visible_cluster_buffer_hash.as_bytes());
+    h.update(dual_indirect_args_hash.as_bytes());
+    h.update(streaming_request_buffer_hash.as_bytes());
+    h.update(hzb_resource_hash.as_bytes());
+    h.update(raster_path_selection_hash.as_bytes());
+    h.update(validation_receipt_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
     }
@@ -14921,6 +15517,13 @@ fn render_handoff_hash(
     h.update(meshlet_visibility_packet.packet_hash.as_bytes());
     h.update(meshlet_visibility_packet.visibility_buffer_hash.as_bytes());
     h.update(meshlet_visibility_packet.indirect_draw_packet_hash.as_bytes());
+    h.update(meshlet_visibility_packet.candidate_cluster_buffer_hash.as_bytes());
+    h.update(meshlet_visibility_packet.visible_cluster_buffer_hash.as_bytes());
+    h.update(meshlet_visibility_packet.dual_indirect_args_hash.as_bytes());
+    h.update(meshlet_visibility_packet.streaming_request_buffer_hash.as_bytes());
+    h.update(meshlet_visibility_packet.hzb_resource_hash.as_bytes());
+    h.update(meshlet_visibility_packet.raster_path_selection_hash.as_bytes());
+    h.update(meshlet_visibility_packet.validation_receipt_hash.as_bytes());
     h.update(nanite_second_layer_packet.packet_hash.as_bytes());
     h.update(nanite_second_layer_packet.streaming_feedback_hash.as_bytes());
     h.update(nanite_second_layer_packet.visibility_resolve_hash.as_bytes());
@@ -15806,8 +16409,9 @@ mod tests {
                 && entry.proof_hash.len() == 64));
         assert_eq!(
             response.meshlet_visibility_packet.schema,
-            "forge.banger.meshlet_visibility_packet.v1"
+            "forge.banger.meshlet_visibility_packet.v2"
         );
+        assert_eq!(response.meshlet_visibility_packet.schema_version, 2);
         assert_eq!(
             response.meshlet_visibility_packet.authority,
             "monster_kasm_scene_graph_to_banger_meshlet_visibility"
@@ -15833,6 +16437,14 @@ mod tests {
             response.render_graph_compilation.graph_hash
         );
         assert!(response.meshlet_visibility_packet.cluster_count > 0);
+        assert!(
+            response.meshlet_visibility_packet.candidate_cluster_count
+                >= response.meshlet_visibility_packet.visible_cluster_count
+        );
+        assert_eq!(
+            response.meshlet_visibility_packet.candidate_cluster_count,
+            response.meshlet_visibility_packet.candidate_clusters.len()
+        );
         assert_eq!(
             response.meshlet_visibility_packet.cluster_count,
             response.meshlet_visibility_packet.entries.len()
@@ -15840,6 +16452,14 @@ mod tests {
         assert_eq!(
             response.meshlet_visibility_packet.visible_cluster_count,
             response.meshlet_visibility_packet.cluster_count
+        );
+        assert_eq!(
+            response.meshlet_visibility_packet.visible_cluster_count,
+            response.meshlet_visibility_packet.visible_clusters.len()
+        );
+        assert_eq!(
+            response.meshlet_visibility_packet.streaming_request_count,
+            response.meshlet_visibility_packet.streaming_requests.len()
         );
         assert_eq!(
             response
@@ -15860,11 +16480,121 @@ mod tests {
         assert_eq!(
             response
                 .meshlet_visibility_packet
+                .candidate_cluster_buffer_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .meshlet_visibility_packet
+                .visible_cluster_buffer_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response.meshlet_visibility_packet.dual_indirect_args_hash.len(),
+            64
+        );
+        assert_eq!(
+            response
+                .meshlet_visibility_packet
+                .streaming_request_buffer_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.meshlet_visibility_packet.hzb_resource_hash.len(), 64);
+        assert_eq!(
+            response
+                .meshlet_visibility_packet
+                .raster_path_selection_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .meshlet_visibility_packet
+                .validation_receipt_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .meshlet_visibility_packet
                 .indirect_draw_packet_hash
                 .len(),
             64
         );
         assert_eq!(response.meshlet_visibility_packet.packet_hash.len(), 64);
+        assert!(response.meshlet_visibility_packet.time_budget_us > 0);
+        assert!(matches!(
+            response.meshlet_visibility_packet.selected_raster_path,
+            "mixed_hardware_compute_raster"
+                | "hardware_mesh_raster"
+                | "compute_software_raster"
+                | "no_visible_meshlet_raster"
+        ));
+        assert_eq!(
+            response
+                .meshlet_visibility_packet
+                .validation_receipt
+                .validation_hash,
+            response.meshlet_visibility_packet.validation_receipt_hash
+        );
+        assert_eq!(
+            response
+                .meshlet_visibility_packet
+                .validation_receipt
+                .checked_candidate_count,
+            response.meshlet_visibility_packet.candidate_cluster_count
+        );
+        assert_eq!(
+            response
+                .meshlet_visibility_packet
+                .validation_receipt
+                .checked_visible_count,
+            response.meshlet_visibility_packet.visible_cluster_count
+        );
+        assert_eq!(
+            response
+                .meshlet_visibility_packet
+                .validation_receipt
+                .missing_candidate_count,
+            0
+        );
+        assert_eq!(
+            response
+                .meshlet_visibility_packet
+                .validation_receipt
+                .invalid_indirect_arg_count,
+            0
+        );
+        assert!(response.meshlet_visibility_packet.validation_receipt.issues.is_empty());
+        assert_eq!(response.meshlet_visibility_packet.indirect_arg_buffers.len(), 2);
+        assert!(response
+            .meshlet_visibility_packet
+            .indirect_arg_buffers
+            .iter()
+            .all(|buffer| buffer.word_count == response.meshlet_visibility_packet.cluster_count * 5
+                && buffer.buffer_hash.len() == 64));
+        assert!(response.meshlet_visibility_packet.hzb_resource.width > 0);
+        assert!(response.meshlet_visibility_packet.hzb_resource.height > 0);
+        assert!(response.meshlet_visibility_packet.hzb_resource.mip_count >= 2);
+        assert_eq!(
+            response.meshlet_visibility_packet.hzb_resource.resource_hash,
+            response.meshlet_visibility_packet.hzb_resource_hash
+        );
+        assert!(response
+            .meshlet_visibility_packet
+            .candidate_clusters
+            .iter()
+            .all(|cluster| cluster.candidate_word > 0 && cluster.candidate_hash.len() == 64));
+        assert!(response
+            .meshlet_visibility_packet
+            .visible_clusters
+            .iter()
+            .all(|cluster| cluster.visible_hash.len() == 64
+                && cluster.visibility_word > 0
+                && cluster.indirect_draw_args[0] > 0));
         assert!(response
             .meshlet_visibility_packet
             .entries
