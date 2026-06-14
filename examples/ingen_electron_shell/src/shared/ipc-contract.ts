@@ -862,7 +862,11 @@ export interface BangerPresentLoopBootstrapResult {
   alphaMode: string;
   renderPassCount: number;
   submittedFrameCount: number;
+  drawCallCount?: number;
+  vertexCount?: number;
   clearColor: [number, number, number, number];
+  shaderSourceHash?: string;
+  renderPipelineHash?: string;
   frameHash: string;
   presentLoopHash: string;
   proofHash: string;

@@ -94,7 +94,11 @@ export interface RustBangerPresentLoopBootstrap {
   alphaMode: string;
   renderPassCount: number;
   submittedFrameCount: number;
+  drawCallCount?: number;
+  vertexCount?: number;
   clearColor: [number, number, number, number];
+  shaderSourceHash?: string;
+  renderPipelineHash?: string;
   frameHash: string;
   presentLoopHash: string;
   proofHash: string;
@@ -435,7 +439,9 @@ function parseBangerPresentLoopBootstrap(stdout: string): RustBangerPresentLoopB
     typeof parsed.presentLoopHash !== "string" ||
     typeof parsed.proofHash !== "string" ||
     typeof parsed.submittedFrameCount !== "number" ||
-    parsed.submittedFrameCount < 1
+    parsed.submittedFrameCount < 1 ||
+    (typeof parsed.drawCallCount === "number" && parsed.drawCallCount < 1) ||
+    (typeof parsed.vertexCount === "number" && parsed.vertexCount < 3)
   ) {
     throw new Error("Rust Banger present loop bootstrap failed validation.");
   }
@@ -614,7 +620,11 @@ function shadowBangerPresentLoopBootstrap(reason: string): RustBangerPresentLoop
     alphaMode: "unavailable",
     renderPassCount: 0,
     submittedFrameCount: 0,
+    drawCallCount: 0,
+    vertexCount: 0,
     clearColor: [0, 0, 0, 1],
+    shaderSourceHash: "",
+    renderPipelineHash: "",
     frameHash: "",
     presentLoopHash: "",
     proofHash: "",

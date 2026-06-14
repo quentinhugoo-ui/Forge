@@ -114,7 +114,11 @@ struct BangerNativeHostProjection {
     alpha_mode: String,
     render_pass_count: u32,
     submitted_frame_count: u32,
+    draw_call_count: u32,
+    vertex_count: u32,
     clear_color: [f64; 4],
+    shader_source_hash: String,
+    render_pipeline_hash: String,
     frame_hash: String,
     present_loop_hash: String,
     proof_hash: String,
@@ -561,13 +565,31 @@ fn run_banger_native_host(
     surface.configure(&device, &config);
 
     let clear_color = [0.015, 0.018, 0.024, 1.0];
-    render_child_surface_frame(&surface, &device, &queue, clear_color)?;
+    let shader_source = banger_native_first_scene_wgsl();
+    let shader_source_hash = sha256_hex(shader_source.as_bytes());
+    let render_pipeline = create_banger_first_scene_pipeline(&device, format, shader_source);
+    let render_pipeline_hash = sha256_hex(
+        format!(
+            "banger-first-scene-pipeline:{}:{:?}:{:?}:{:?}",
+            shader_source_hash, format, present_mode, alpha_mode
+        )
+        .as_bytes(),
+    );
+    render_child_surface_frame(&surface, &device, &queue, &render_pipeline, clear_color)?;
     let parent_hash = sha256_hex(parent_window_handle.unwrap_or_default().as_bytes());
     let child_hash = sha256_hex(format!("{:p}", child as *mut c_void).as_bytes());
     let frame_hash = sha256_hex(
         format!(
-            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}",
-            config.width, config.height, format, present_mode, alpha_mode, parent_hash, child_hash
+            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}",
+            config.width,
+            config.height,
+            format,
+            present_mode,
+            alpha_mode,
+            parent_hash,
+            child_hash,
+            shader_source_hash,
+            render_pipeline_hash
         )
         .as_bytes(),
     );
@@ -595,14 +617,18 @@ fn run_banger_native_host(
         alpha_mode: format!("{:?}", alpha_mode),
         render_pass_count: 1,
         submitted_frame_count: 1,
+        draw_call_count: 1,
+        vertex_count: 3,
         clear_color,
+        shader_source_hash,
+        render_pipeline_hash,
         frame_hash,
         present_loop_hash,
         proof_hash: String::new(),
         host_pid: std::process::id(),
         verifier: BangerNativeHostVerifier {
             wall: "latency+native_surface+ui_branching",
-            frontier_hypothesis: "Banger owns a persistent Win32 child surface and wgpu swapchain under Electron chrome.",
+            frontier_hypothesis: "Banger owns a persistent Win32 child surface with a programmable wgpu render pipeline under Electron chrome.",
             local_gate: "forge-cargo run --manifest-path examples\\ingen_native_services\\Cargo.toml --bin ingen_electron_backend_bridge -- --banger-native-host",
             rollback_path: "fall back to --banger-present-loop-bootstrap offscreen target",
         },
@@ -615,7 +641,7 @@ fn run_banger_native_host(
     let mut submitted = 1u32;
     while submitted < requested_frames && unsafe { IsWindow(parent) } != 0 && unsafe { IsWindow(child) } != 0 {
         pump_win32_messages();
-        render_child_surface_frame(&surface, &device, &queue, clear_color)?;
+        render_child_surface_frame(&surface, &device, &queue, &render_pipeline, clear_color)?;
         submitted += 1;
         thread::sleep(Duration::from_millis(16));
     }
@@ -638,6 +664,7 @@ fn render_child_surface_frame(
     surface: &wgpu::Surface<'_>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    render_pipeline: &wgpu::RenderPipeline,
     clear_color: [f64; 4],
 ) -> Result<(), String> {
     let frame = match surface.get_current_texture() {
@@ -672,7 +699,7 @@ fn render_child_surface_frame(
                 store: wgpu::StoreOp::Store,
             },
         })];
-        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("banger-native-child-host-clear-pass"),
             color_attachments: &color_attachments,
             depth_stencil_attachment: None,
@@ -680,6 +707,8 @@ fn render_child_surface_frame(
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        pass.set_pipeline(render_pipeline);
+        pass.draw(0..3, 0..1);
     }
     queue.submit(Some(encoder.finish()));
     device
@@ -687,6 +716,86 @@ fn render_child_surface_frame(
         .map_err(|error| format!("Banger child host GPU poll failed: {error}"))?;
     frame.present();
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn create_banger_first_scene_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    shader_source: &'static str,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-first-scene-wgsl"),
+        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+    });
+    let targets = [Some(wgpu::ColorTargetState {
+        format,
+        blend: Some(wgpu::BlendState::REPLACE),
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("banger-native-first-scene-pipeline"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &targets,
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn banger_native_first_scene_wgsl() -> &'static str {
+    r#"
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec3<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-0.72, -0.58),
+        vec2<f32>( 0.72, -0.50),
+        vec2<f32>( 0.02,  0.72)
+    );
+    var colors = array<vec3<f32>, 3>(
+        vec3<f32>(0.95, 0.18, 0.12),
+        vec3<f32>(0.12, 0.82, 0.42),
+        vec3<f32>(0.18, 0.44, 1.00)
+    );
+    var out: VertexOut;
+    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    out.color = colors[vertex_index];
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let rim = vec3<f32>(0.06, 0.08, 0.11);
+    return vec4<f32>(max(in.color, rim), 1.0);
+}
+"#
 }
 
 #[cfg(target_os = "windows")]
@@ -749,5 +858,15 @@ mod tests {
         assert_eq!(bmp.len(), 58);
         assert_eq!(&bmp[54..58], &[0x33, 0x22, 0x11, 0x44]);
         assert_eq!(base64_encode(b"BM"), "Qk0=");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn embeds_first_scene_wgsl_pipeline_artifact() {
+        let source = banger_native_first_scene_wgsl();
+        assert!(source.contains("@vertex"));
+        assert!(source.contains("@fragment"));
+        assert!(source.contains("@builtin(vertex_index)"));
+        assert_eq!(sha256_hex(source.as_bytes()).len(), 64);
     }
 }

@@ -35,5 +35,7 @@ describe("Banger native viewport contract", () => {
     expect(rustBackendSource).toContain("launchRustBangerNativeHost");
     expect(rustBackendSource).toContain("--banger-native-host");
     expect(rustBackendSource).toContain("FORGE_BANGER_PARENT_HWND");
+    expect(rustBackendSource).toContain("shaderSourceHash");
+    expect(rustBackendSource).toContain("renderPipelineHash");
   });
 });
