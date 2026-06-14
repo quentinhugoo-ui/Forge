@@ -81,8 +81,6 @@ const WIDGET_NATIVE_SETTLE_MS = 260;
 const WIDGET_HANDOFF_SETTLE_MS = WIDGET_NATIVE_SHRINK_LEAD_MS + WIDGET_NATIVE_SETTLE_MS;
 const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_NATIVE_SHRINK_LEAD_MS;
 const WIDGET_VISUAL_SETTLE_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_HANDOFF_SETTLE_MS;
-const WIDGET_TASKBAR_STEP_MS = 180;
-const WIDGET_TASKBAR_RESTORE_AFTER_EXIT_MS = 760;
 
 type WidgetLayoutLock = {
   chatLeft: number;
@@ -969,12 +967,6 @@ export function App() {
         if (nativeWidgetRestored === false) {
           console.warn("Native widget restore was not accepted.");
         }
-        window.setTimeout(() => {
-          void windowControls?.setWidgetTaskbarAutoHide?.(false).catch((error: unknown) => {
-            console.warn("Failed to restore widget taskbar state", error);
-            return false;
-          });
-        }, WIDGET_TASKBAR_RESTORE_AFTER_EXIT_MS);
         releaseWidgetModeTransition(sequenceToken, 420);
       })();
       return;
@@ -1038,17 +1030,6 @@ export function App() {
       }
       if (nativeWidgetAccepted === false) {
         console.warn("Native widget mode was not accepted.");
-      }
-      if (nativeWidgetAccepted !== false) {
-        window.setTimeout(() => {
-          if (widgetModeSequenceRef.current !== sequenceToken) {
-            return;
-          }
-          void windowControls?.setWidgetTaskbarAutoHide?.(true).catch((error: unknown) => {
-            console.warn("Failed to hide Windows taskbar after widget handoff", error);
-            return false;
-          });
-        }, WIDGET_TASKBAR_STEP_MS);
       }
       releaseWidgetModeTransition(sequenceToken);
     })();

@@ -227,6 +227,7 @@ const WIDGET_WINDOW_BOTTOM_GAP = 0;
 const WIDGET_WINDOW_AUTOHIDE_BOTTOM_GAP = 2;
 const WIDGET_WINDOW_SHRINK_DELAY_MS = 720;
 const WIDGET_TASKBAR_SLIDE_MS = 320;
+const WIDGET_WINDOW_RESTORE_MS = 560;
 const WINDOWS_TASKBAR_AUTOHIDE_FLAG = 0x1;
 const PANELS_CHAT_BOTTOM_MAX_VIDEO_SUBTITLE_BYTES = 48 * 1024;
 const PANELS_CHAT_BOTTOM_CONTEXT_TEXT_BYTES = 24 * 1024;
@@ -10898,6 +10899,33 @@ function animateNativeWidgetWindowBounds(window: BrowserWindow, targetBounds: El
   widgetWindowBoundsAnimationTimer = setInterval(applyFrame, 16);
 }
 
+function finishNativeWidgetWindowRestore(window: BrowserWindow, restoreState: WidgetWindowRestoreState | null, restoreBounds: Electron.Rectangle): void {
+  if (window.isDestroyed() || widgetWindowRestoreState !== null) {
+    return;
+  }
+  clearWidgetWindowBoundsAnimationTimer();
+  window.setBounds(restoreBounds, false);
+  if (restoreState) {
+    window.setMinimumSize(restoreState.minimumSize[0], restoreState.minimumSize[1]);
+    if (restoreState.fullScreen) {
+      window.setFullScreen(true);
+    } else if (restoreState.maximized) {
+      window.maximize();
+    }
+  } else {
+    window.setMinimumSize(1180, 760);
+  }
+  window.setAlwaysOnTop(false);
+  window.show();
+  window.focus();
+  traceWidgetTaskbarStep("restore-widget-window-animation-finished", {
+    id: window.id,
+    restoreBounds,
+    maximized: restoreState?.maximized ?? false,
+    fullScreen: restoreState?.fullScreen ?? false
+  });
+}
+
 function saveWidgetWindowRestoreState(window: BrowserWindow): void {
   if (widgetWindowRestoreState !== null) {
     return;
@@ -10944,6 +10972,7 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.setBounds(bounds, false);
   window.show();
   window.focus();
+  armNativeWidgetTaskbarAutoHide(window);
 }
 
 function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
@@ -10972,24 +11001,8 @@ function armNativeWidgetTaskbarAutoHide(window: BrowserWindow): void {
     });
     return;
   }
-  clearWidgetTaskbarAutoHideTimer();
   traceWidgetTaskbarStep("arm-taskbar-autohide", { id: window.id });
-  widgetTaskbarAutoHideTimer = setTimeout(() => {
-    widgetTaskbarAutoHideTimer = null;
-    if (window.isDestroyed() || widgetWindowRestoreState === null) {
-      traceWidgetTaskbarStep("cancel-taskbar-autohide", {
-        destroyed: window.isDestroyed(),
-        hasRestoreState: widgetWindowRestoreState !== null
-      });
-      return;
-    }
-    const accepted = setWidgetTaskbarHidden(true);
-    console.info("Native widget taskbar auto-hide final step", { id: window.id, accepted });
-    traceWidgetTaskbarStep("taskbar-autohide-final-step", { id: window.id, accepted });
-    if (accepted) {
-      settleNativeWidgetWindowBounds(window);
-    }
-  }, 260);
+  void scheduleNativeWidgetTaskbarAutoHide(window, true);
 }
 
 function sanitizeWidgetHitRegions(value: unknown, window: BrowserWindow): Electron.Rectangle[] {
@@ -11725,14 +11738,17 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   resetNativeWidgetWindowShape(window);
   const restoreState = widgetWindowRestoreState;
   widgetWindowRestoreState = null;
-  window.setAlwaysOnTop(false);
   window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
   if (!restoreState) {
     const fallbackBounds = normalWindowRestoreBounds(window);
-    window.setMinimumSize(1180, 760);
-    window.setBounds(fallbackBounds, false);
+    window.setMinimumSize(420, 128);
+    window.setAlwaysOnTop(true, "floating");
     window.show();
+    window.moveTop();
     window.focus();
+    animateNativeWidgetWindowBounds(window, fallbackBounds, WIDGET_WINDOW_RESTORE_MS);
+    setTimeout(() => finishNativeWidgetWindowRestore(window, null, fallbackBounds), WIDGET_WINDOW_RESTORE_MS + 40);
+    void scheduleNativeWidgetTaskbarAutoHide(window, false);
     traceWidgetTaskbarStep("restore-widget-without-state", { id: window.id, fallbackBounds });
     return true;
   }
@@ -11740,19 +11756,14 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   const restoreBounds = restoreStateBoundsLookLikeWidget
     ? normalWindowRestoreBounds(window)
     : restoreState.bounds;
-  if (restoreStateBoundsLookLikeWidget) {
-    window.setMinimumSize(1180, 760);
-  } else {
-    window.setMinimumSize(restoreState.minimumSize[0], restoreState.minimumSize[1]);
-  }
-  if (restoreState.fullScreen) {
-    window.setFullScreen(true);
-  } else if (restoreState.maximized) {
-    window.setBounds(restoreBounds, false);
-    window.maximize();
-  } else {
-    window.setBounds(restoreBounds, false);
-  }
+  window.setMinimumSize(420, 128);
+  window.setAlwaysOnTop(true, "floating");
+  window.show();
+  window.moveTop();
+  window.focus();
+  animateNativeWidgetWindowBounds(window, restoreBounds, WIDGET_WINDOW_RESTORE_MS);
+  setTimeout(() => finishNativeWidgetWindowRestore(window, restoreState, restoreBounds), WIDGET_WINDOW_RESTORE_MS + 40);
+  void scheduleNativeWidgetTaskbarAutoHide(window, false);
   traceWidgetTaskbarStep("restore-widget-window-bounds", {
     id: window.id,
     requestedBounds: restoreState.bounds,
@@ -11761,8 +11772,6 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
     maximized: restoreState.maximized,
     fullScreen: restoreState.fullScreen
   });
-  window.show();
-  window.focus();
   return true;
 }
 
