@@ -16,6 +16,9 @@ export const AGENT_CLIPBOARD_WRITE_COMMAND = "/agent_clipboard_write_";
 export const AGENT_BROWSER_INSPECT_COMMAND = "/agent_browser_inspect_";
 export const AGENT_BROWSER_DOWNLOAD_COMMAND = "/agent_browser_download_";
 export const AGENT_BROWSER_OPEN_COMMAND = "/agent_browser_open_";
+export const AGENT_DOCUMENT_INSPECT_COMMAND = "/agent_document_inspect_";
+export const AGENT_DOCUMENT_WRITE_COMMAND = "/agent_document_write_";
+export const AGENT_DOCUMENT_CONVERT_COMMAND = "/agent_document_convert_";
 
 export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_LIST_COMMAND,
@@ -35,7 +38,10 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_CLIPBOARD_WRITE_COMMAND,
   AGENT_BROWSER_INSPECT_COMMAND,
   AGENT_BROWSER_DOWNLOAD_COMMAND,
-  AGENT_BROWSER_OPEN_COMMAND
+  AGENT_BROWSER_OPEN_COMMAND,
+  AGENT_DOCUMENT_INSPECT_COMMAND,
+  AGENT_DOCUMENT_WRITE_COMMAND,
+  AGENT_DOCUMENT_CONVERT_COMMAND
 ] as const;
 
 export type AgentActionEventCommand = (typeof AGENT_ACTION_EVENT_COMMANDS)[number];
@@ -65,7 +71,10 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_CLIPBOARD_WRITE_COMMAND, "confirmed clipboard text replaced"],
   [AGENT_BROWSER_INSPECT_COMMAND, "web page state inspected"],
   [AGENT_BROWSER_DOWNLOAD_COMMAND, "confirmed web download verified"],
-  [AGENT_BROWSER_OPEN_COMMAND, "confirmed browser navigation requested"]
+  [AGENT_BROWSER_OPEN_COMMAND, "confirmed browser navigation requested"],
+  [AGENT_DOCUMENT_INSPECT_COMMAND, "document/media artifact inspected"],
+  [AGENT_DOCUMENT_WRITE_COMMAND, "document/data artifact written and verified"],
+  [AGENT_DOCUMENT_CONVERT_COMMAND, "document text converted and verified"]
 ]);
 
 export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand][] = [
@@ -86,7 +95,12 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["computer.clipboard_write", AGENT_CLIPBOARD_WRITE_COMMAND],
   ["browser.inspect_url", AGENT_BROWSER_INSPECT_COMMAND],
   ["browser.download", AGENT_BROWSER_DOWNLOAD_COMMAND],
-  ["browser.open_url", AGENT_BROWSER_OPEN_COMMAND]
+  ["browser.open_url", AGENT_BROWSER_OPEN_COMMAND],
+  ["document.inspect", AGENT_DOCUMENT_INSPECT_COMMAND],
+  ["document.write_text", AGENT_DOCUMENT_WRITE_COMMAND],
+  ["document.write_json", AGENT_DOCUMENT_WRITE_COMMAND],
+  ["document.write_csv", AGENT_DOCUMENT_WRITE_COMMAND],
+  ["document.convert_text", AGENT_DOCUMENT_CONVERT_COMMAND]
 ] as const;
 
 const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
@@ -107,7 +121,12 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["computer_clipboard_write", AGENT_CLIPBOARD_WRITE_COMMAND],
   ["browser_inspect_url", AGENT_BROWSER_INSPECT_COMMAND],
   ["browser_download", AGENT_BROWSER_DOWNLOAD_COMMAND],
-  ["browser_open_url", AGENT_BROWSER_OPEN_COMMAND]
+  ["browser_open_url", AGENT_BROWSER_OPEN_COMMAND],
+  ["document_inspect", AGENT_DOCUMENT_INSPECT_COMMAND],
+  ["document_write_text", AGENT_DOCUMENT_WRITE_COMMAND],
+  ["document_write_json", AGENT_DOCUMENT_WRITE_COMMAND],
+  ["document_write_csv", AGENT_DOCUMENT_WRITE_COMMAND],
+  ["document_convert_text", AGENT_DOCUMENT_CONVERT_COMMAND]
 ]);
 
 const AGENT_ACTION_EVENT_BY_TOOL = new Map<string, AgentActionEventCommand>(AGENT_ACTION_EVENT_HINTS);

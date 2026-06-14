@@ -9,6 +9,7 @@ import {
   createAgentActionRuntimeManifestSummary,
   createBrowserWebPolicy,
   createComputerUsePolicy,
+  createDocumentMediaPolicy,
   createAgentVerificationPolicy,
   createWindowsExecutionPolicy,
   detectAgentActionInstalledTools,
@@ -55,6 +56,8 @@ describe("agent action host", () => {
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.readonly");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("browser.inspect_url");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("browser.download");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("document.inspect");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("document.write_json");
     expect(manifest.capabilityAtlas.length).toBeGreaterThanOrEqual(15);
     expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("windows.wmi");
     expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("browser.cdp");
@@ -78,6 +81,8 @@ describe("agent action host", () => {
     expect(manifest.computerUse.executableActions).toContain("computer_inspect");
     expect(manifest.browserWeb.schema).toBe("ingen.browser_web.policy.v1");
     expect(manifest.browserWeb.executableActions).toContain("browser_download");
+    expect(manifest.documentMedia.schema).toBe("ingen.document_media.policy.v1");
+    expect(manifest.documentMedia.executableActions).toContain("document_write_json");
     expect([...manifest.runtime.installedToolIds, ...manifest.runtime.missingToolIds]).toContain("winget");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
 
@@ -111,6 +116,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("retry_strategies=api_cli|powershell|cmd|windows_command|wmi_cim|registry|settings_uri|browser_cdp|gui_computer_use|manual_approval");
     expect(promptManifest).toContain("computer_use=foreground_required_for_risky_gui_actions pacing=single_action_then_verify");
     expect(promptManifest).toContain("browser_web=download:confirmed navigation:confirmed submission:confirmed");
+    expect(promptManifest).toContain("document_media=workspace_writes:open computer_writes:confirmed office_com:confirmed");
     expect(promptManifest).toContain("windows.wmi:planned/none");
     expect(promptManifest).toContain("office.com:planned/prompt");
     expect(promptManifest).toContain("capability_policy=Use the atlas for reasoning");
@@ -155,7 +161,12 @@ describe("agent action host", () => {
       "computer.clipboard",
       "browser.inspect_url",
       "browser.download",
-      "browser.open_url"
+      "browser.open_url",
+      "document.inspect",
+      "document.write_text",
+      "document.write_json",
+      "document.write_csv",
+      "document.convert_text"
     ]);
     expect(summary.availableFamilies).toContain("shell.full");
     expect(summary.plannedFamilies).toContain("windows.settings");
@@ -258,6 +269,23 @@ describe("agent action host", () => {
     expect(policy.submissionRequiresConfirmation).toBe(true);
     expect(policy.credentialPromptPolicy).toBe("never_fill_or_submit_without_user");
     expect(policy.artifactPolicy).toBe("persist_downloads_with_size_and_sha256");
+  });
+
+  it("publishes a document/media policy for verified artifacts", () => {
+    const policy = createDocumentMediaPolicy({
+      workspaceRoot: "C:\\repo",
+      workspaceActive: true,
+      cwd: "C:\\repo",
+      platform: "win32"
+    });
+
+    expect(policy.proofHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(policy.executableActions).toEqual(["document_inspect", "document_write_text", "document_write_json", "document_write_csv", "document_convert_text"]);
+    expect(policy.workspaceWritesRequireConfirmation).toBe(false);
+    expect(policy.computerScopeWritesRequireConfirmation).toBe(true);
+    expect(policy.officeComRequiresConfirmation).toBe(true);
+    expect(policy.macroPolicy).toBe("blocked_without_explicit_user_approval");
+    expect(policy.artifactPolicy).toBe("verify_readback_size_hash_and_parser_status");
   });
 
   it("detects local tool availability and renders selected capability detail on demand", () => {
@@ -590,6 +618,60 @@ describe("agent action host", () => {
       expect(downloaded.download?.sha256).toMatch(/^[a-f0-9]{64}$/);
       expect(downloaded.verification?.passed).toBe(true);
       await expect(readFile(join(config.workspaceRoot, "downloads", "page.html"), "utf8")).resolves.toBe(html);
+    });
+  });
+
+  it("writes, inspects and converts document/data artifacts with readback verification", async () => {
+    await withTempWorkspace(async (config) => {
+      const writtenJson = await executeAgentActionRequest(config, {
+        action: "document_write_json",
+        path: "data/report.json",
+        content: "{\"answer\":42,\"items\":[\"a\",\"b\"]}"
+      });
+      expect(writtenJson.accepted).toBe(true);
+      expect(writtenJson.documentMedia?.schema).toBe("ingen.document_media.summary.v1");
+      expect(writtenJson.documentMedia?.kind).toBe("json");
+      expect(writtenJson.documentMedia?.jsonValid).toBe(true);
+      expect(writtenJson.documentMedia?.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(writtenJson.verification?.passed).toBe(true);
+      await expect(readFile(join(config.workspaceRoot, "data", "report.json"), "utf8")).resolves.toContain("\"answer\": 42");
+
+      const writtenCsv = await executeAgentActionRequest(config, {
+        action: "document_write_csv",
+        path: "data/table.csv",
+        content: "name,value\r\nalpha,1\r\nbeta,2"
+      });
+      expect(writtenCsv.accepted).toBe(true);
+      expect(writtenCsv.documentMedia?.kind).toBe("csv");
+      expect(writtenCsv.documentMedia?.csvRows).toBe(3);
+      expect(writtenCsv.documentMedia?.csvColumns).toBe(2);
+
+      const writtenMarkdown = await executeAgentActionRequest(config, {
+        action: "document_write_text",
+        path: "notes/source.md",
+        content: "# Title\n\nA [link](https://example.com) and **bold** text.\n"
+      });
+      expect(writtenMarkdown.accepted).toBe(true);
+      expect(writtenMarkdown.documentMedia?.kind).toBe("markdown");
+      expect(writtenMarkdown.documentMedia?.markdownHeadingCount).toBe(1);
+
+      const inspected = await executeAgentActionRequest(config, {
+        action: "document_inspect",
+        path: "notes/source.md"
+      });
+      expect(inspected.accepted).toBe(true);
+      expect(inspected.documentMedia?.parserStatus).toBe("available");
+      expect(inspected.documentMedia?.conversionStatus).toBe("available");
+
+      const converted = await executeAgentActionRequest(config, {
+        action: "document_convert_text",
+        path: "notes/source.md",
+        toPath: "notes/source.txt"
+      });
+      expect(converted.accepted).toBe(true);
+      expect(converted.toPath).toBe("notes\\source.txt");
+      expect(converted.documentMedia?.kind).toBe("text");
+      await expect(readFile(join(config.workspaceRoot, "notes", "source.txt"), "utf8")).resolves.toContain("Title");
     });
   });
 

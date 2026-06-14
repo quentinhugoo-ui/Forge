@@ -288,6 +288,8 @@ Acceptance:
 - Large outputs are stored on disk and summarized compactly.
 - Office COM and macros remain prompt-gated.
 
+Status: implemented for the planned scope. The host now exposes `AgentDocumentMediaPolicy`, executable document/data actions for artifact inspection, UTF-8 text/Markdown writes, JSON validation and pretty-write, RFC-4180-style CSV validation/write, and bounded text/Markdown conversion. Results include readback verification, size, SHA-256, parser status and compact document/media summaries. Rich Office COM, macros, PDF parsing, OCR, image/audio/video codecs and proprietary conversions remain planned or prompt-gated backends rather than fake direct execution.
+
 ### 9. Developer, Cloud, MCP And Automation Surfaces
 
 Goal: match Codex/Claude Code class workflows for coding and external tools.

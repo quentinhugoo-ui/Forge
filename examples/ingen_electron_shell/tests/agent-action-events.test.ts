@@ -5,6 +5,9 @@ import {
   AGENT_BROWSER_OPEN_COMMAND,
   AGENT_COPY_PATH_COMMAND,
   AGENT_DELETE_TREE_COMMAND,
+  AGENT_DOCUMENT_CONVERT_COMMAND,
+  AGENT_DOCUMENT_INSPECT_COMMAND,
+  AGENT_DOCUMENT_WRITE_COMMAND,
   AGENT_APPSHOT_COMMAND,
   AGENT_COMPUTER_INSPECT_COMMAND,
   AGENT_FOCUS_WINDOW_COMMAND,
@@ -35,6 +38,9 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION action="browser_inspect_url"')?.command).toBe(AGENT_BROWSER_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="browser.download"')?.command).toBe(AGENT_BROWSER_DOWNLOAD_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="browser.open_url"')?.command).toBe(AGENT_BROWSER_OPEN_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="document_inspect" path="report.md"')?.command).toBe(AGENT_DOCUMENT_INSPECT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION tool="document.write_json" path="data.json"')?.command).toBe(AGENT_DOCUMENT_WRITE_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION capability="document.convert_text"')?.command).toBe(AGENT_DOCUMENT_CONVERT_COMMAND);
   });
 
   it("keeps path metadata for file modification event cards", () => {

@@ -160,8 +160,13 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "browser_inspect_url", url: "https://example.com" })).toBe(true);
     expect(isAgentActionRequest({ action: "browser_download", url: "https://example.com/file.zip", path: "downloads/file.zip", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "browser_open_url", url: "https://example.com", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "document_inspect", path: "report.md" })).toBe(true);
+    expect(isAgentActionRequest({ action: "document_write_text", path: "report.md", content: "# Report" })).toBe(true);
+    expect(isAgentActionRequest({ action: "document_write_json", path: "data.json", content: "{\"ok\":true}" })).toBe(true);
+    expect(isAgentActionRequest({ action: "document_convert_text", path: "report.md", toPath: "report.txt" })).toBe(true);
     expect(isAgentActionRequest({ action: "computer_focus_window", windowTitle: 42, confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "browser_inspect_url", url: 42 })).toBe(false);
+    expect(isAgentActionRequest({ action: "document_write_text", path: "report.md", content: 42 })).toBe(false);
     expect(isAgentActionRequest({ action: "delete_empty_directory", path: "tmp", confirmed: "yes" })).toBe(false);
     expect(isAgentActionRequest({ action: "list", scope: "galaxy", path: "." })).toBe(false);
     expect(isAgentActionRequest({ action: "raw_shell", command: "powershell.exe" })).toBe(false);

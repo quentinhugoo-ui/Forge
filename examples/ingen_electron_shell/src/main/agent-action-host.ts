@@ -21,6 +21,9 @@ import type {
   AgentComputerUsePolicy,
   AgentComputerUseSnapshot,
   AgentComputerWindowSummary,
+  AgentDocumentMediaKind,
+  AgentDocumentMediaPolicy,
+  AgentDocumentMediaSummary,
   AgentFailureCategory,
   AgentRetryStrategy,
   AgentRetryStrategyId,
@@ -84,7 +87,12 @@ const AGENT_ACTION_EVENT_HINTS = [
   "computer.clipboard_write:/agent_clipboard_write_",
   "browser.inspect_url:/agent_browser_inspect_",
   "browser.download:/agent_browser_download_",
-  "browser.open_url:/agent_browser_open_"
+  "browser.open_url:/agent_browser_open_",
+  "document.inspect:/agent_document_inspect_",
+  "document.write_text:/agent_document_write_",
+  "document.write_json:/agent_document_write_",
+  "document.write_csv:/agent_document_write_",
+  "document.convert_text:/agent_document_convert_"
 ];
 
 const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string> = {
@@ -105,7 +113,12 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   computer_clipboard_write: "/agent_clipboard_write_",
   browser_inspect_url: "/agent_browser_inspect_",
   browser_download: "/agent_browser_download_",
-  browser_open_url: "/agent_browser_open_"
+  browser_open_url: "/agent_browser_open_",
+  document_inspect: "/agent_document_inspect_",
+  document_write_text: "/agent_document_write_",
+  document_write_json: "/agent_document_write_",
+  document_write_csv: "/agent_document_write_",
+  document_convert_text: "/agent_document_convert_"
 };
 
 const WINDOWS_EXECUTION_ADAPTERS: AgentWindowsExecutionAdapterId[] = ["powershell", "cmd", "windows_command", "shell_full"];
@@ -399,8 +412,8 @@ const AGENT_RETRY_STRATEGIES: AgentRetryStrategy[] = [
 export function agentActionRoutingHint(): string {
   return [
     "LOCAL_ACTION_TOOLS v1",
-    "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, run commands, control Windows settings/tools, install/update software, download assets, or operate the workspace/computer.",
-    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write",
+    "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, write/inspect documents, run commands, control Windows settings/tools, install/update software, download assets, or operate the workspace/computer.",
+    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text",
     "windows_reach=shell.full can invoke PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process, ms-settings URIs, installers, CLIs, and other native Windows tools when confirmed:true is appropriate.",
     "computer_use=Inspect GUI first, then act once, then verify by appshot/window state. Never approve security, payment, credential, destructive, or UAC prompts for the user.",
     "format=Emit AGENT_ACTION_JSON only when real execution is needed, then wait for AGENT_ACTION_RESULT. The AGENT_ACTION_JSON marker must start its own line, with no prose before it. Never fake tool events.",
@@ -507,6 +520,7 @@ function result(
     appshot: patch.appshot,
     browserPage: patch.browserPage,
     download: patch.download,
+    documentMedia: patch.documentMedia,
     userPresenceRequired: patch.userPresenceRequired,
     failureCategory,
     retryRoutes: patch.retryRoutes ?? retryRoutesForFailure(failureCategory),
@@ -782,6 +796,21 @@ export function createBrowserWebPolicy(_config: AgentActionHostConfig): AgentBro
     submissionRequiresConfirmation: true,
     credentialPromptPolicy: "never_fill_or_submit_without_user",
     artifactPolicy: "persist_downloads_with_size_and_sha256",
+    proofHash: ""
+  };
+  policy.proofHash = hashJson({ ...policy, proofHash: "" });
+  return policy;
+}
+
+export function createDocumentMediaPolicy(_config: AgentActionHostConfig): AgentDocumentMediaPolicy {
+  const policy: AgentDocumentMediaPolicy = {
+    schema: "ingen.document_media.policy.v1",
+    executableActions: ["document_inspect", "document_write_text", "document_write_json", "document_write_csv", "document_convert_text"],
+    workspaceWritesRequireConfirmation: false,
+    computerScopeWritesRequireConfirmation: true,
+    officeComRequiresConfirmation: true,
+    macroPolicy: "blocked_without_explicit_user_approval",
+    artifactPolicy: "verify_readback_size_hash_and_parser_status",
     proofHash: ""
   };
   policy.proofHash = hashJson({ ...policy, proofHash: "" });
@@ -1103,6 +1132,96 @@ function createExecutableActionCapabilities(): AgentActionCapability[] {
       writes: true,
       description: "Open a URL in the default browser after explicit confirmation.",
       notes: "External navigation can expose data or trigger account state; never submit forms without user approval."
+    }),
+    actionCapability({
+      id: "document.inspect",
+      family: "documents.media",
+      surface: "documents.media",
+      title: "Inspect document or media artifact",
+      status: "available",
+      risk: "read",
+      operations: ["read file metadata", "detect common document/media type", "compute sha256", "parse text/json/csv/markdown summaries"],
+      underlyingTools: ["node:fs/readFile", "node:crypto/createHash", "JSON parser", "RFC 4180 style CSV summary"],
+      fallbacks: ["shell.readonly file inspection", "shell.full external metadata tool when confirmed"],
+      verification: ["filesystem", "artifact_hash"],
+      approval: "none",
+      executableActionIds: ["document.inspect"],
+      requiresApproval: false,
+      writes: false,
+      description: "Inspect a document, data file or media artifact and return a compact verified summary.",
+      notes: "Rich Office/PDF/media parsing is planned; v1 always returns size and sha256."
+    }),
+    actionCapability({
+      id: "document.write_text",
+      family: "documents.media",
+      surface: "documents.media",
+      title: "Write text or Markdown",
+      status: "available",
+      risk: "workspace_write",
+      operations: ["write text", "write markdown", "read back content", "hash artifact"],
+      underlyingTools: ["node:fs/writeFile", "node:fs/readFile", "node:crypto/createHash"],
+      fallbacks: ["fs.copy from generated artifact", "shell.full Set-Content when confirmed"],
+      verification: ["filesystem", "artifact_hash"],
+      approval: "confirmed",
+      executableActionIds: ["document.write_text"],
+      requiresApproval: false,
+      writes: true,
+      description: "Create or replace a UTF-8 text/Markdown file and verify by readback, size and hash.",
+      notes: "Computer-scope writes require confirmed:true."
+    }),
+    actionCapability({
+      id: "document.write_json",
+      family: "documents.media",
+      surface: "documents.media",
+      title: "Write JSON",
+      status: "available",
+      risk: "workspace_write",
+      operations: ["validate JSON", "pretty-print JSON", "write file", "verify parser readback"],
+      underlyingTools: ["JSON.parse", "JSON.stringify", "node:fs/writeFile", "node:crypto/createHash"],
+      fallbacks: ["document.write_text after user approval", "shell.full node script when confirmed"],
+      verification: ["filesystem", "artifact_hash"],
+      approval: "confirmed",
+      executableActionIds: ["document.write_json"],
+      requiresApproval: false,
+      writes: true,
+      description: "Validate, pretty-print and write JSON, then verify by parser readback and hash.",
+      notes: "Invalid JSON is rejected rather than written."
+    }),
+    actionCapability({
+      id: "document.write_csv",
+      family: "documents.media",
+      surface: "documents.media",
+      title: "Write CSV",
+      status: "available",
+      risk: "workspace_write",
+      operations: ["validate CSV shape", "write CSV text", "summarize rows and columns", "hash artifact"],
+      underlyingTools: ["RFC 4180 style CSV parser", "node:fs/writeFile", "node:crypto/createHash"],
+      fallbacks: ["document.write_text with explicit user intent", "shell.full converter when confirmed"],
+      verification: ["filesystem", "artifact_hash"],
+      approval: "confirmed",
+      executableActionIds: ["document.write_csv"],
+      requiresApproval: false,
+      writes: true,
+      description: "Write CSV content and verify row/column shape plus hash.",
+      notes: "This is a bounded CSV validator, not a full spreadsheet engine."
+    }),
+    actionCapability({
+      id: "document.convert_text",
+      family: "documents.media",
+      surface: "documents.media",
+      title: "Convert text and Markdown",
+      status: "available",
+      risk: "workspace_write",
+      operations: ["convert Markdown to plain text", "copy plain text to Markdown-safe artifact", "verify output hash"],
+      underlyingTools: ["bounded Markdown stripper", "node:fs/readFile", "node:fs/writeFile"],
+      fallbacks: ["external document converter through confirmed shell.full"],
+      verification: ["filesystem", "artifact_hash"],
+      approval: "confirmed",
+      executableActionIds: ["document.convert_text"],
+      requiresApproval: false,
+      writes: true,
+      description: "Perform a safe local text/Markdown conversion between two paths and verify the output artifact.",
+      notes: "PDF, Office, image, audio and video conversion remain planned backends."
     })
   ];
 }
@@ -1556,6 +1675,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
   const verification = createAgentVerificationPolicy(config);
   const computerUse = createComputerUsePolicy(config);
   const browserWeb = createBrowserWebPolicy(config);
+  const documentMedia = createDocumentMediaPolicy(config);
   const runtime = createAgentActionRuntimeManifestSummary(config);
   const manifest: AgentActionHostManifest = {
     schema: "ingen.agent_action_host.manifest.v1",
@@ -1579,6 +1699,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
     verification,
     computerUse,
     browserWeb,
+    documentMedia,
     runtime,
     proofHash: ""
   };
@@ -1617,7 +1738,8 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `retry_strategies=${manifest.verification.retryStrategies.map((strategy) => strategy.id).join("|")}`,
     `computer_use=${manifest.computerUse.userPresenceMode} pacing=${manifest.computerUse.pacingPolicy} forbidden=${manifest.computerUse.forbiddenPrompts.join("|")}`,
     `browser_web=download:${manifest.browserWeb.downloadRequiresConfirmation ? "confirmed" : "open"} navigation:${manifest.browserWeb.navigationRequiresConfirmation ? "confirmed" : "open"} submission:${manifest.browserWeb.submissionRequiresConfirmation ? "confirmed" : "open"} artifact:${manifest.browserWeb.artifactPolicy}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url",
+    `document_media=workspace_writes:${manifest.documentMedia.workspaceWritesRequireConfirmation ? "confirmed" : "open"} computer_writes:${manifest.documentMedia.computerScopeWritesRequireConfirmation ? "confirmed" : "open"} office_com:${manifest.documentMedia.officeComRequiresConfirmation ? "confirmed" : "open"} macros:${manifest.documentMedia.macroPolicy} artifact:${manifest.documentMedia.artifactPolicy}`,
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -1631,7 +1753,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
-    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop mcp",
+    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop mcp",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -2827,6 +2949,337 @@ Start-Process $url
   });
 }
 
+function documentKindForPath(path: string): AgentDocumentMediaKind {
+  const extension = parse(path).ext.toLowerCase();
+  if ([".txt", ".log", ".ini", ".yaml", ".yml", ".xml", ".html", ".css", ".ts", ".tsx", ".js", ".jsx", ".rs", ".py"].includes(extension)) {
+    return "text";
+  }
+  if ([".md", ".markdown"].includes(extension)) return "markdown";
+  if (extension === ".json") return "json";
+  if ([".csv", ".tsv"].includes(extension)) return "csv";
+  if ([".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp"].includes(extension)) return "office";
+  if (extension === ".pdf") return "pdf";
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico"].includes(extension)) return "image";
+  if ([".mp3", ".wav", ".ogg", ".flac", ".m4a"].includes(extension)) return "audio";
+  if ([".mp4", ".mov", ".mkv", ".avi", ".webm"].includes(extension)) return "video";
+  if ([".zip", ".7z", ".rar", ".tar", ".gz"].includes(extension)) return "archive";
+  return extension ? "binary" : "unknown";
+}
+
+function documentParserStatus(kind: AgentDocumentMediaKind): "available" | "planned" | "blocked" {
+  return ["text", "markdown", "json", "csv"].includes(kind) ? "available" : "planned";
+}
+
+function textLineCount(text: string): number {
+  if (!text) return 0;
+  return text.split(/\r\n|\r|\n/).length;
+}
+
+function parseCsvRows(text: string): { rows: string[][]; valid: boolean; error?: string } {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (quoted) {
+      if (char === '"' && next === '"') {
+        field += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        field += char;
+      }
+      continue;
+    }
+    if (char === '"') {
+      if (field.length > 0) {
+        return { rows, valid: false, error: "quote appeared inside an unquoted field" };
+      }
+      quoted = true;
+      continue;
+    }
+    if (char === ",") {
+      row.push(field);
+      field = "";
+      continue;
+    }
+    if (char === "\r" || char === "\n") {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      continue;
+    }
+    field += char;
+  }
+  if (quoted) {
+    return { rows, valid: false, error: "unterminated quoted field" };
+  }
+  if (field.length > 0 || row.length > 0 || text.endsWith(",")) {
+    row.push(field);
+    rows.push(row);
+  }
+  const width = rows[0]?.length ?? 0;
+  const valid = rows.every((candidate) => candidate.length === width);
+  return { rows, valid, error: valid ? undefined : "rows do not have a consistent number of fields" };
+}
+
+function stripMarkdownToText(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z0-9_-]*\n?|\n?```/g, ""))
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^[>\-*+]\s+/gm, "")
+    .replace(/[*_`~]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
+}
+
+function documentMediaSummaryFromBytes(params: {
+  action: AgentDocumentMediaSummary["action"];
+  path: string;
+  label: string;
+  bytes: Buffer;
+}): AgentDocumentMediaSummary {
+  const kind = documentKindForPath(params.path);
+  const extension = parse(params.path).ext.toLowerCase();
+  const sha256 = createHash("sha256").update(params.bytes).digest("hex");
+  const parserStatus = documentParserStatus(kind);
+  const summary: AgentDocumentMediaSummary = {
+    schema: "ingen.document_media.summary.v1",
+    action: params.action,
+    path: params.label,
+    kind,
+    extension,
+    bytes: params.bytes.length,
+    sha256,
+    parserStatus,
+    conversionStatus: ["text", "markdown"].includes(kind) ? "available" : "planned",
+    proofHash: ""
+  };
+  if (parserStatus === "available") {
+    const text = params.bytes.toString("utf8");
+    summary.lineCount = textLineCount(text);
+    summary.charCount = text.length;
+    if (kind === "json") {
+      try {
+        JSON.parse(text);
+        summary.jsonValid = true;
+      } catch {
+        summary.jsonValid = false;
+      }
+    }
+    if (kind === "csv") {
+      const parsed = parseCsvRows(text);
+      summary.csvRows = parsed.rows.length;
+      summary.csvColumns = parsed.rows[0]?.length ?? 0;
+    }
+    if (kind === "markdown") {
+      summary.markdownHeadingCount = Array.from(text.matchAll(/^#{1,6}\s+/gm)).length;
+    }
+  }
+  summary.proofHash = hashJson({ ...summary, proofHash: "" });
+  return summary;
+}
+
+async function documentMediaSummaryForPath(
+  config: AgentActionHostConfig,
+  request: AgentActionRequest,
+  action: AgentDocumentMediaSummary["action"],
+  absolutePath: string
+): Promise<AgentDocumentMediaSummary> {
+  const bytes = await readFile(absolutePath);
+  return documentMediaSummaryFromBytes({
+    action,
+    path: absolutePath,
+    label: pathLabel(config, request, absolutePath),
+    bytes
+  });
+}
+
+async function documentInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const resolved = resolveActionPath(config, request, request.path);
+  if (typeof resolved !== "string") {
+    return result(config, request, { accepted: false, error: resolved });
+  }
+  const summary = await documentMediaSummaryForPath(config, request, "inspect", resolved);
+  return result(config, request, {
+    accepted: true,
+    path: summary.path,
+    observedChanges: [`document_kind:${summary.kind}`, `bytes:${summary.bytes}`, `sha256:${summary.sha256}`],
+    verification: verificationResult([
+      await filesystemProbe("document.inspect.exists", resolved, "file"),
+      verificationProbe({
+        id: "document.inspect.hash",
+        kind: "artifact_hash",
+        target: resolved,
+        expectation: "sha256 computed",
+        actual: summary.sha256,
+        passed: /^[a-f0-9]{64}$/.test(summary.sha256)
+      })
+    ]),
+    documentMedia: summary
+  });
+}
+
+async function readPreviousText(path: string): Promise<string> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+async function writeDocumentContent(
+  config: AgentActionHostConfig,
+  request: AgentActionRequest,
+  action: AgentDocumentMediaSummary["action"],
+  content: string
+): Promise<AgentActionResult> {
+  if (requiresComputerWriteConfirmation(request)) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Computer-scope document write requires confirmed:true.", request)
+    });
+  }
+  const resolved = resolveActionPath(config, request, request.path);
+  if (typeof resolved !== "string") {
+    return result(config, request, { accepted: false, error: resolved });
+  }
+  const previous = await readPreviousText(resolved);
+  await mkdir(dirname(resolved), { recursive: true });
+  await writeFile(resolved, content, "utf8");
+  const summary = await documentMediaSummaryForPath(config, request, action, resolved);
+  const readback = await readFile(resolved, "utf8");
+  const verification = verificationResult([
+    await filesystemProbe("document.write.exists", resolved, "file"),
+    verificationProbe({
+      id: "document.write.readback",
+      kind: "artifact_hash",
+      target: resolved,
+      expectation: "readback matches requested content",
+      actual: `matches=${readback === content} sha256=${summary.sha256}`,
+      passed: readback === content
+    })
+  ]);
+  return result(config, request, {
+    accepted: true,
+    path: summary.path,
+    artifacts: [summary.path],
+    observedChanges: [`document_kind:${summary.kind}`, `bytes:${summary.bytes}`, `sha256:${summary.sha256}`],
+    verification,
+    documentMedia: summary,
+    value: charDeltaValue(content.length, previous.length)
+  });
+}
+
+async function documentWriteTextAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.content === undefined) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "content is required for document_write_text.", request)
+    });
+  }
+  return writeDocumentContent(config, request, "write_text", request.content);
+}
+
+async function documentWriteJsonAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.content === undefined) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "content is required for document_write_json.", request)
+    });
+  }
+  let rendered = "";
+  try {
+    rendered = `${JSON.stringify(JSON.parse(request.content), null, 2)}\n`;
+  } catch (error) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "bad_path",
+      error: actionError("bad_payload", error instanceof Error ? `Invalid JSON: ${error.message}` : "Invalid JSON.", request)
+    });
+  }
+  return writeDocumentContent(config, request, "write_json", rendered);
+}
+
+async function documentWriteCsvAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.content === undefined) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "content is required for document_write_csv.", request)
+    });
+  }
+  const parsed = parseCsvRows(request.content);
+  if (!parsed.valid) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "bad_path",
+      error: actionError("bad_payload", `Invalid CSV: ${parsed.error ?? "parse failed"}.`, request)
+    });
+  }
+  return writeDocumentContent(config, request, "write_csv", request.content.endsWith("\n") ? request.content : `${request.content}\n`);
+}
+
+async function documentConvertTextAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (requiresComputerWriteConfirmation(request)) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Computer-scope document conversion requires confirmed:true.", request)
+    });
+  }
+  const from = resolveActionPath(config, request, request.path);
+  const to = resolveActionPath(config, request, request.toPath);
+  if (typeof from !== "string") {
+    return result(config, request, { accepted: false, error: from });
+  }
+  if (typeof to !== "string") {
+    return result(config, request, { accepted: false, error: to });
+  }
+  const source = await readFile(from, "utf8");
+  const fromKind = documentKindForPath(from);
+  const toKind = documentKindForPath(to);
+  if (!["text", "markdown"].includes(fromKind) || !["text", "markdown"].includes(toKind)) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "unverifiable",
+      error: actionError("bad_payload", "document_convert_text currently supports only text and Markdown paths.", { fromKind, toKind })
+    });
+  }
+  const converted = fromKind === "markdown" && toKind === "text" ? stripMarkdownToText(source) : source;
+  await mkdir(dirname(to), { recursive: true });
+  await writeFile(to, converted, "utf8");
+  const summary = await documentMediaSummaryForPath(config, request, "convert_text", to);
+  const verification = verificationResult([
+    await filesystemProbe("document.convert.output_exists", to, "file"),
+    verificationProbe({
+      id: "document.convert.output_hash",
+      kind: "artifact_hash",
+      target: to,
+      expectation: "converted output hash computed",
+      actual: summary.sha256,
+      passed: /^[a-f0-9]{64}$/.test(summary.sha256)
+    })
+  ]);
+  return result(config, request, {
+    accepted: true,
+    path: pathLabel(config, request, from),
+    toPath: summary.path,
+    artifacts: [summary.path],
+    observedChanges: [`document_convert:${fromKind}->${toKind}`, `sha256:${summary.sha256}`],
+    verification,
+    documentMedia: summary,
+    value: charDeltaValue(converted.length, 0)
+  });
+}
+
 export async function executeAgentActionRequest(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   try {
     switch (request.action) {
@@ -2865,6 +3318,16 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return await browserDownloadAction(config, request);
       case "browser_open_url":
         return await browserOpenUrlAction(config, request);
+      case "document_inspect":
+        return await documentInspectAction(config, request);
+      case "document_write_text":
+        return await documentWriteTextAction(config, request);
+      case "document_write_json":
+        return await documentWriteJsonAction(config, request);
+      case "document_write_csv":
+        return await documentWriteCsvAction(config, request);
+      case "document_convert_text":
+        return await documentConvertTextAction(config, request);
       default:
         return result(config, request, {
           accepted: false,

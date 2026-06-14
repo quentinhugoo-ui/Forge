@@ -5565,7 +5565,12 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   computer_clipboard_write: "computer.clipboard_write",
   browser_inspect_url: "browser.inspect_url",
   browser_download: "browser.download",
-  browser_open_url: "browser.open_url"
+  browser_open_url: "browser.open_url",
+  document_inspect: "document.inspect",
+  document_write_text: "document.write_text",
+  document_write_json: "document.write_json",
+  document_write_csv: "document.write_csv",
+  document_convert_text: "document.convert_text"
 };
 
 function friendlyAssistantErrorText(params: {
@@ -5670,7 +5675,8 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "search" ||
         params.request.action === "run_readonly_command" ||
         params.request.action === "computer_inspect" ||
-        params.request.action === "browser_inspect_url"
+        params.request.action === "browser_inspect_url" ||
+        params.request.action === "document_inspect"
       ? "read"
       : "workspace_write",
     status: "pending",
@@ -5890,6 +5896,7 @@ function compactAgentActionResult(result: AgentActionResult): string {
     appshot: result.appshot,
     browserPage: result.browserPage,
     download: result.download,
+    documentMedia: result.documentMedia,
     userPresenceRequired: result.userPresenceRequired,
     verification: result.verification
       ? {
@@ -5948,7 +5955,8 @@ function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
     request.action === "search" ||
     request.action === "run_readonly_command" ||
     request.action === "computer_inspect" ||
-    request.action === "browser_inspect_url"
+    request.action === "browser_inspect_url" ||
+    request.action === "document_inspect"
   );
 }
 

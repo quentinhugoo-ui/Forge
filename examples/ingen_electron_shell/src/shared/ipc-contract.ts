@@ -550,6 +550,51 @@ export interface AgentBrowserWebPolicy {
   proofHash: string;
 }
 
+export type AgentDocumentMediaAction = "inspect" | "write_text" | "write_json" | "write_csv" | "convert_text";
+export type AgentDocumentMediaKind =
+  | "text"
+  | "markdown"
+  | "json"
+  | "csv"
+  | "office"
+  | "pdf"
+  | "image"
+  | "audio"
+  | "video"
+  | "archive"
+  | "binary"
+  | "unknown";
+
+export interface AgentDocumentMediaSummary {
+  schema: "ingen.document_media.summary.v1";
+  action: AgentDocumentMediaAction;
+  path: string;
+  kind: AgentDocumentMediaKind;
+  extension: string;
+  bytes: number;
+  sha256: string;
+  lineCount?: number;
+  charCount?: number;
+  jsonValid?: boolean;
+  csvRows?: number;
+  csvColumns?: number;
+  markdownHeadingCount?: number;
+  parserStatus: "available" | "planned" | "blocked";
+  conversionStatus: "available" | "planned" | "blocked";
+  proofHash: string;
+}
+
+export interface AgentDocumentMediaPolicy {
+  schema: "ingen.document_media.policy.v1";
+  executableActions: AgentActionKind[];
+  workspaceWritesRequireConfirmation: boolean;
+  computerScopeWritesRequireConfirmation: boolean;
+  officeComRequiresConfirmation: boolean;
+  macroPolicy: "blocked_without_explicit_user_approval";
+  artifactPolicy: "verify_readback_size_hash_and_parser_status";
+  proofHash: string;
+}
+
 export interface AgentActionCapability extends AgentCapabilityAtlasEntry {
   requiresApproval: boolean;
   description: string;
@@ -577,6 +622,7 @@ export interface AgentActionHostManifest {
   verification: AgentVerificationPolicy;
   computerUse: AgentComputerUsePolicy;
   browserWeb: AgentBrowserWebPolicy;
+  documentMedia: AgentDocumentMediaPolicy;
   runtime: AgentActionRuntimeManifestSummary;
   proofHash: string;
 }
@@ -599,7 +645,12 @@ export type AgentActionKind =
   | "computer_clipboard_write"
   | "browser_inspect_url"
   | "browser_download"
-  | "browser_open_url";
+  | "browser_open_url"
+  | "document_inspect"
+  | "document_write_text"
+  | "document_write_json"
+  | "document_write_csv"
+  | "document_convert_text";
 
 export type AgentActionScope = "workspace" | "computer";
 
@@ -615,6 +666,7 @@ export interface AgentActionRequest {
   windowTitle?: string;
   text?: string;
   url?: string;
+  content?: string;
   maxResults?: number;
   confirmed?: boolean;
   recursive?: boolean;
@@ -658,6 +710,7 @@ export interface AgentActionResult {
   appshot?: AgentAppshotArtifact;
   browserPage?: AgentBrowserPageSummary;
   download?: AgentBrowserDownloadArtifact;
+  documentMedia?: AgentDocumentMediaSummary;
   userPresenceRequired?: boolean;
   failureCategory?: AgentFailureCategory;
   retryRoutes?: AgentRetryStrategyId[];
@@ -778,7 +831,12 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "computer_clipboard_write",
     "browser_inspect_url",
     "browser_download",
-    "browser_open_url"
+    "browser_open_url",
+    "document_inspect",
+    "document_write_text",
+    "document_write_json",
+    "document_write_csv",
+    "document_convert_text"
   ];
   if (!actions.includes(candidate.action as AgentActionKind)) {
     return false;
@@ -792,7 +850,7 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
   ) {
     return false;
   }
-  for (const key of ["path", "toPath", "query", "command", "url"] as const) {
+  for (const key of ["path", "toPath", "query", "command", "url", "content"] as const) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
       return false;
     }
