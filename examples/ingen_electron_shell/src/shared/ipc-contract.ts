@@ -231,7 +231,11 @@ export type LlmProviderRuntimeSnapshot = Record<LlmProviderConnectId, LlmProvide
 
 export interface PanelsChatBottomSnapshotEvent {
   kind: "snapshot_updated";
-  reason: "transcript_committed" | "assistant_progressive_seed";
+  reason:
+    | "transcript_committed"
+    | "assistant_progressive_seed"
+    | "context_compaction_started"
+    | "context_compaction_completed";
   sessionId: string;
   proofHash: string;
 }
