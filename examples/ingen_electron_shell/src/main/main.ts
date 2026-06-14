@@ -1,7 +1,7 @@
 import { app, BrowserView, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell } from "electron";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { mkdir, open, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { cpus } from "node:os";
@@ -257,6 +257,19 @@ let widgetWindowClickThrough = false;
 let widgetTaskbarOriginalState: number | null = null;
 let widgetTaskbarOriginalRegistryByte: number | null = null;
 let widgetTaskbarHidden = false;
+
+function traceWidgetTaskbarStep(step: string, detail: Record<string, unknown> = {}): void {
+  try {
+    appendFileSync(
+      join(app.getPath("userData"), "widget-taskbar.log"),
+      `${JSON.stringify({ at: new Date().toISOString(), step, ...detail })}\n`,
+      "utf8"
+    );
+  } catch {
+    // Best-effort diagnostic trace only.
+  }
+}
+
 let nativeWebExplorerView: BrowserView | null = null;
 let nativeWebExplorerOwner: BrowserWindow | null = null;
 let nativeWebExplorerLoadedUrl = "";
@@ -10585,6 +10598,7 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.setAlwaysOnTop(true, "floating");
   const bounds = widgetWindowBounds(window);
   console.info("Applying native widget window bounds", { id: window.id, bounds });
+  traceWidgetTaskbarStep("apply-widget-bounds", { id: window.id, bounds });
   clearWidgetWindowBoundsAnimationTimer();
   window.setBounds(bounds, false);
   window.show();
@@ -10599,21 +10613,33 @@ function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
   clearWidgetWindowBoundsAnimationTimer();
   const bounds = widgetWindowBounds(window);
   console.info("Settling native widget window bounds", { id: window.id, bounds, taskbarHidden: widgetTaskbarHidden });
+  traceWidgetTaskbarStep("settle-widget-bounds", { id: window.id, bounds, taskbarHidden: widgetTaskbarHidden });
   window.setBounds(bounds, false);
 }
 
 function armNativeWidgetTaskbarAutoHide(window: BrowserWindow): void {
   if (process.platform !== "win32" || window.isDestroyed() || widgetWindowRestoreState === null) {
+    traceWidgetTaskbarStep("skip-arm-taskbar-autohide", {
+      platform: process.platform,
+      destroyed: window.isDestroyed(),
+      hasRestoreState: widgetWindowRestoreState !== null
+    });
     return;
   }
   clearWidgetTaskbarAutoHideTimer();
+  traceWidgetTaskbarStep("arm-taskbar-autohide", { id: window.id });
   widgetTaskbarAutoHideTimer = setTimeout(() => {
     widgetTaskbarAutoHideTimer = null;
     if (window.isDestroyed() || widgetWindowRestoreState === null) {
+      traceWidgetTaskbarStep("cancel-taskbar-autohide", {
+        destroyed: window.isDestroyed(),
+        hasRestoreState: widgetWindowRestoreState !== null
+      });
       return;
     }
     const accepted = setWidgetTaskbarHidden(true);
     console.info("Native widget taskbar auto-hide final step", { id: window.id, accepted });
+    traceWidgetTaskbarStep("taskbar-autohide-final-step", { id: window.id, accepted });
     if (accepted) {
       settleNativeWidgetWindowBounds(window);
     }
@@ -10922,6 +10948,17 @@ function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boole
     screen: { width: result.screenWidth, height: result.screenHeight },
     taskbarRect: result.taskbarRect
   });
+  traceWidgetTaskbarStep("taskbar-autohide-probe", {
+    requestedHidden: targetHidden,
+    verified,
+    verifiedState,
+    verifiedRegistry,
+    verifiedVisual,
+    appBarState: result.target,
+    registryByte: result.registryByte,
+    screen: { width: result.screenWidth, height: result.screenHeight },
+    taskbarRect: result.taskbarRect
+  });
   if (!verified) {
     console.warn("Windows taskbar auto-hide probe did not reach the requested visible state.", {
       requestedHidden: targetHidden,
@@ -11046,6 +11083,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
     const requestedDelay = typeof delayMs === "number" && Number.isFinite(delayMs) ? delayMs : WIDGET_WINDOW_SHRINK_DELAY_MS;
     const shrinkDelay = Math.max(0, Math.min(2_000, Math.round(requestedDelay)));
     console.info("Arming native widget window mode", { id: window.id, shrinkDelay, currentBounds: window.getBounds() });
+    traceWidgetTaskbarStep("arm-widget-mode", { id: window.id, shrinkDelay, currentBounds: window.getBounds() });
     if (shrinkDelay <= 0) {
       applyNativeWidgetWindowBounds(window);
     } else {
