@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createBrainBlobMonsterFrameCache } from "./brain-blob-cache";
 
 /* Brain page background: a soft 3D gooey blob raymarched as an SDF metaball
    scene, ported from the Uiverse "andrew-manzyk" loader. The seven blurred
@@ -52,6 +53,7 @@ const WEBGPU_BUFFER_USAGE = {
 } as const;
 const BRAIN_BLOB_SUPERSAMPLE = 2.2;
 const BRAIN_BLOB_MAX_FRAMEBUFFER_SIDE = 3000;
+const BRAIN_BLOB_SHADER_CONTRACT = "forge.kasm.brain_blob.sdf_metaball_raymarch.v1";
 /* Global animation pacing: < 1 slows every motion (orbits, droplets, wobble,
    colorize) uniformly, since both backends derive everything from this t. */
 const BRAIN_BLOB_TIME_SCALE = 0.6;
@@ -733,6 +735,7 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
     let deviceLost = false;
     let firstFrameSubmitted = false;
     let pointerStrength = 0;
+    const frameCache = createBrainBlobMonsterFrameCache();
     void device.lost.then((info) => {
       deviceLost = true;
       console.warn("Brain blob WebGPU device lost.", info);
@@ -746,11 +749,25 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
     };
     const pump = pumpBlobFrames(canvas, resize, (timeSeconds) => {
       if (!configured || deviceLost) return;
-      const t = timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset;
+      const t = frameCache.quantizeTime(timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset);
+      const nextPointerStrength = pointerStrength + ((pointer.over ? 1 : 0) - pointerStrength) * 0.16;
+      const frameProbe = frameCache.probe({
+        lane: "webgpu",
+        shaderHash: `${BRAIN_BLOB_SHADER_CONTRACT}:wgsl`,
+        canvasWidth: canvas.width,
+        canvasHeight: canvas.height,
+        timeSeconds: t,
+        seed,
+        pointerX: pointer.x,
+        pointerY: pointer.y,
+        pointerStrength: nextPointerStrength,
+        pointerOver: pointer.over
+      });
+      if (frameProbe.reused) return;
+      pointerStrength = nextPointerStrength;
       uniformData[0] = canvas.width;
       uniformData[1] = canvas.height;
       uniformData[2] = t;
-      pointerStrength += ((pointer.over ? 1 : 0) - pointerStrength) * 0.16;
       uniformData[BLOB_MOUSE_FLOAT_OFFSET] = pointer.x;
       uniformData[BLOB_MOUSE_FLOAT_OFFSET + 1] = pointer.y;
       uniformData[BLOB_MOUSE_FLOAT_OFFSET + 2] = pointerStrength;
@@ -842,13 +859,28 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
 
   let firstFrameSubmitted = false;
   let pointerStrength = 0;
+  const frameCache = createBrainBlobMonsterFrameCache();
   const pump = pumpBlobFrames(canvas, () => fitBlobFramebuffer(canvas), (timeSeconds) => {
     if (gl.isContextLost()) return;
-    const t = timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset;
+    const t = frameCache.quantizeTime(timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset);
+    const nextPointerStrength = pointerStrength + ((pointer.over ? 1 : 0) - pointerStrength) * 0.16;
+    const frameProbe = frameCache.probe({
+      lane: "webgl2",
+      shaderHash: `${BRAIN_BLOB_SHADER_CONTRACT}:glsl`,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      timeSeconds: t,
+      seed,
+      pointerX: pointer.x,
+      pointerY: pointer.y,
+      pointerStrength: nextPointerStrength,
+      pointerOver: pointer.over
+    });
+    if (frameProbe.reused) return;
+    pointerStrength = nextPointerStrength;
     uniformData[0] = canvas.width;
     uniformData[1] = canvas.height;
     uniformData[2] = t;
-    pointerStrength += ((pointer.over ? 1 : 0) - pointerStrength) * 0.16;
     uniformData[BLOB_MOUSE_FLOAT_OFFSET] = pointer.x;
     uniformData[BLOB_MOUSE_FLOAT_OFFSET + 1] = pointer.y;
     uniformData[BLOB_MOUSE_FLOAT_OFFSET + 2] = pointerStrength;
