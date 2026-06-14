@@ -1282,6 +1282,7 @@ export interface HardwareTelemetrySnapshot {
     model: string;
     cores: number;
     utilization: HardwareMetric;
+    temperature: HardwareMetric;
     loadAverage: HardwareMetric;
   };
   memory: {
@@ -1291,7 +1292,7 @@ export interface HardwareTelemetrySnapshot {
   };
   thermal: {
     systemTemperature: HardwareMetric;
-    source: "linux-thermal" | "windows-acpi" | "unavailable";
+    source: "linux-thermal" | "windows-acpi" | "windows-wmi-sensor" | "macos-powermetrics" | "unavailable";
   };
   gpus: HardwareGpuSnapshot[];
   topProcesses: HardwareProcessSnapshot[];

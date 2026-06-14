@@ -870,10 +870,7 @@ function hardwareFallbackMetric(label: string, value: number | null, unit: Hardw
 }
 
 function cpuTemperatureGaugeMetric(snapshot: HardwareTelemetrySnapshot): HardwareMetric {
-  if (snapshot.thermal.source === "linux-thermal") {
-    return { ...snapshot.thermal.systemTemperature, label: "CPU" };
-  }
-  return hardwareFallbackMetric("CPU", null, "C");
+  return { ...snapshot.cpu.temperature, label: "CPU" };
 }
 
 function hardwareGpuTitle(name: string | undefined): string {
@@ -1105,6 +1102,7 @@ function rendererFallbackHardwareSnapshot(reason: string): HardwareTelemetrySnap
       model: "Browser renderer",
       cores,
       utilization: hardwareFallbackMetric("CPU load", null, "%"),
+      temperature: hardwareFallbackMetric("CPU temperature", null, "C"),
       loadAverage: hardwareFallbackMetric("Load average", null, "count")
     },
     memory: {

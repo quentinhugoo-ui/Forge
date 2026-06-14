@@ -842,6 +842,8 @@ type CpuTimes = ReturnType<typeof cpus>[number]["times"];
 
 let previousCpuTimes: CpuTimes[] | null = null;
 const NVIDIA_SMI_TIMEOUT_MS = 4500;
+type HardwareThermalSource = HardwareTelemetrySnapshot["thermal"]["source"];
+type TemperatureReading = { label: string; value: number; source: HardwareThermalSource };
 
 function hardwareMetric(
   label: string,
@@ -1080,6 +1082,17 @@ function linuxMicrowattsToWatts(value: number | null): number | null {
   return roundMetric(value / 1_000_000);
 }
 
+function validTemperatureCelsius(value: number | null): number | null {
+  if (value === null || !Number.isFinite(value) || value < -40 || value > 130) return null;
+  return roundMetric(value);
+}
+
+function normalizeWindowsTemperature(value: number | null): number | null {
+  if (value === null || !Number.isFinite(value) || value <= 0) return null;
+  const celsius = value > 1000 ? value / 10 - 273.15 : value > 200 ? value - 273.15 : value;
+  return validTemperatureCelsius(celsius);
+}
+
 interface LinuxHwmonProbe {
   name: string;
   temperatures: Array<{ label: string; value: number }>;
@@ -1138,6 +1151,14 @@ function linuxHwmonLooksLikeGpu(name: string): boolean {
 function linuxHwmonLooksLikeCpu(name: string): boolean {
   const normalized = name.toLowerCase();
   return ["coretemp", "k10temp", "zenpower", "cpu", "x86_pkg_temp", "acpitz"].some((token) => normalized.includes(token));
+}
+
+function temperatureLooksLikeCpu(label: string): boolean {
+  return /cpu|package|core|ccd|tctl|tdie|ryzen|intel|amd/i.test(label);
+}
+
+function temperatureLooksLikeSystem(label: string): boolean {
+  return /system|motherboard|mainboard|board|ambient|acpi|thermal|tz\d*/i.test(label);
 }
 
 async function queryLinuxHwmonGpus(): Promise<HardwareGpuSnapshot[]> {
@@ -1218,39 +1239,68 @@ async function queryLinuxDrmGpu(): Promise<HardwareGpuSnapshot[]> {
   }
 }
 
-async function queryLinuxSystemTemperature(): Promise<number | null> {
+async function queryLinuxThermalTemperatures(): Promise<{ cpu: number | null; system: number | null; source: HardwareThermalSource }> {
   if (process.platform !== "linux") {
-    return null;
+    return { cpu: null, system: null, source: "unavailable" };
   }
   const hwmonProbes = await queryLinuxHwmonProbes();
-  const cpuTemperatures = hwmonProbes
+  const cpuTemperatures: TemperatureReading[] = hwmonProbes
     .filter((probe) => linuxHwmonLooksLikeCpu(probe.name))
-    .flatMap((probe) => probe.temperatures);
+    .flatMap((probe) => probe.temperatures.map((temperature) => ({
+      label: `${probe.name} ${temperature.label}`,
+      value: temperature.value,
+      source: "linux-thermal" as const
+    })));
+  const allTemperatures: TemperatureReading[] = hwmonProbes.flatMap((probe) =>
+    probe.temperatures.map((temperature) => ({
+      label: `${probe.name} ${temperature.label}`,
+      value: temperature.value,
+      source: "linux-thermal" as const
+    }))
+  );
+  let cpu: number | null = null;
   if (cpuTemperatures.length > 0) {
     const packageTemperatures = cpuTemperatures.filter((temperature) =>
-      /package|tctl|tdie|cpu/i.test(temperature.label)
+      temperatureLooksLikeCpu(temperature.label)
     );
     const selected = packageTemperatures.length > 0 ? packageTemperatures : cpuTemperatures;
-    return roundMetric(Math.max(...selected.map((temperature) => temperature.value)));
+    cpu = validTemperatureCelsius(Math.max(...selected.map((temperature) => temperature.value)));
+  }
+  let system: number | null = null;
+  const systemTemperatures = allTemperatures.filter((temperature) =>
+    temperatureLooksLikeSystem(temperature.label) && !temperatureLooksLikeCpu(temperature.label)
+  );
+  if (systemTemperatures.length > 0) {
+    system = validTemperatureCelsius(Math.max(...systemTemperatures.map((temperature) => temperature.value)));
   }
   try {
     const { readdir } = await import("node:fs/promises");
     const zones = await readdir("/sys/class/thermal", { withFileTypes: true });
     for (const zone of zones.filter((entry) => /^thermal_zone\d+$/.test(entry.name))) {
       const value = await readFirstNumericFile([`/sys/class/thermal/${zone.name}/temp`]);
-      if (value !== null) {
-        return value > 1000 ? roundMetric(value / 1000) : roundMetric(value);
+      const temperature = validTemperatureCelsius(value !== null && Math.abs(value) > 1000 ? value / 1000 : value);
+      if (temperature !== null) {
+        system = system === null ? temperature : Math.max(system, temperature);
       }
     }
   } catch {
     // Thermal zones are optional on many Linux systems.
   }
-  return null;
+  if (system === null) {
+    system = cpu;
+  }
+  return { cpu, system, source: cpu !== null || system !== null ? "linux-thermal" : "unavailable" };
 }
 
-function queryWindowsSystemTemperature(): number | null {
+function parseJsonArray(stdout: string): unknown[] {
+  if (!stdout.trim()) return [];
+  const parsed = JSON.parse(stdout) as unknown;
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+function runWindowsTemperaturePowerShell(command: string, timeout = 3500): unknown[] {
   if (process.platform !== "win32") {
-    return null;
+    return [];
   }
   const result = spawnSync(
     "powershell.exe",
@@ -1259,40 +1309,132 @@ function queryWindowsSystemTemperature(): number | null {
       "-ExecutionPolicy",
       "Bypass",
       "-Command",
-      "Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue | Select-Object -ExpandProperty CurrentTemperature | ConvertTo-Json -Compress"
+      command
     ],
-    { encoding: "utf8", stdio: "pipe", timeout: 2500, windowsHide: true }
+    { encoding: "utf8", stdio: "pipe", timeout, windowsHide: true }
   );
   if (result.status !== 0 || !result.stdout.trim()) {
-    return null;
+    return [];
   }
   try {
-    const parsed = JSON.parse(result.stdout) as unknown;
-    const values = Array.isArray(parsed) ? parsed : [parsed];
-    for (const value of values) {
-      if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-        return roundMetric(value / 10 - 273.15);
-      }
-    }
+    return parseJsonArray(result.stdout);
   } catch {
-    const parsed = Number.parseFloat(result.stdout.trim());
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return roundMetric(parsed / 10 - 273.15);
-    }
+    return [];
   }
-  return null;
 }
 
-async function querySystemTemperature(): Promise<{ value: number | null; source: HardwareTelemetrySnapshot["thermal"]["source"] }> {
-  const linuxTemperature = await queryLinuxSystemTemperature();
-  if (linuxTemperature !== null) {
-    return { value: linuxTemperature, source: "linux-thermal" };
+function queryWindowsHardwareMonitorTemperatures(): TemperatureReading[] {
+  const records = runWindowsTemperaturePowerShell(`
+    $items = @();
+    foreach ($ns in @('root/LibreHardwareMonitor','root/OpenHardwareMonitor')) {
+      try {
+        $items += Get-CimInstance -Namespace $ns -ClassName Sensor -ErrorAction Stop |
+          Where-Object { $_.SensorType -eq 'Temperature' -and $_.Value -ne $null } |
+          Select-Object @{Name='Namespace';Expression={$ns}},Name,Identifier,Parent,Value
+      } catch {}
+    }
+    $items | ConvertTo-Json -Compress
+  `);
+  return records
+    .map((record): TemperatureReading | null => {
+      if (!record || typeof record !== "object") return null;
+      const item = record as { Name?: unknown; Identifier?: unknown; Parent?: unknown; Value?: unknown };
+      const value = typeof item.Value === "number" ? validTemperatureCelsius(item.Value) : null;
+      if (value === null) return null;
+      const label = [item.Name, item.Identifier, item.Parent]
+        .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+        .join(" ");
+      return { label, value, source: "windows-wmi-sensor" };
+    })
+    .filter((reading): reading is TemperatureReading => reading !== null);
+}
+
+function queryWindowsThermalZoneTemperatures(): TemperatureReading[] {
+  const perfRecords = runWindowsTemperaturePowerShell(`
+    $items = @();
+    try {
+      $items += Get-CimInstance -Namespace root/cimv2 -ClassName Win32_PerfFormattedData_Counters_ThermalZoneInformation -ErrorAction Stop |
+        Select-Object @{Name='Source';Expression={'perf'}},Name,Temperature
+    } catch {}
+    try {
+      $items += Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop |
+        Select-Object @{Name='Source';Expression={'acpi'}},@{Name='Name';Expression={$_.InstanceName}},@{Name='Temperature';Expression={$_.CurrentTemperature}}
+    } catch {}
+    $items | ConvertTo-Json -Compress
+  `);
+  return perfRecords
+    .map((record): TemperatureReading | null => {
+      if (!record || typeof record !== "object") return null;
+      const item = record as { Name?: unknown; Temperature?: unknown };
+      const raw = typeof item.Temperature === "number" ? item.Temperature : null;
+      const value = normalizeWindowsTemperature(raw);
+      if (value === null) return null;
+      const label = typeof item.Name === "string" && item.Name.trim() ? item.Name.trim() : "Windows thermal zone";
+      return { label, value, source: "windows-acpi" };
+    })
+    .filter((reading): reading is TemperatureReading => reading !== null);
+}
+
+function queryWindowsThermalTemperatures(): { cpu: number | null; system: number | null; source: HardwareThermalSource } {
+  if (process.platform !== "win32") {
+    return { cpu: null, system: null, source: "unavailable" };
   }
-  const windowsTemperature = queryWindowsSystemTemperature();
-  if (windowsTemperature !== null) {
-    return { value: windowsTemperature, source: "windows-acpi" };
+  const sensorReadings = queryWindowsHardwareMonitorTemperatures();
+  const zoneReadings = queryWindowsThermalZoneTemperatures();
+  const cpuReadings = sensorReadings.filter((reading) => temperatureLooksLikeCpu(reading.label));
+  const systemReadings = [
+    ...sensorReadings.filter((reading) => temperatureLooksLikeSystem(reading.label) && !temperatureLooksLikeCpu(reading.label)),
+    ...zoneReadings
+  ];
+  const cpu =
+    cpuReadings.length > 0
+      ? validTemperatureCelsius(Math.max(...cpuReadings.map((reading) => reading.value)))
+      : zoneReadings.length > 0
+        ? validTemperatureCelsius(Math.max(...zoneReadings.map((reading) => reading.value)))
+        : null;
+  const system =
+    systemReadings.length > 0
+      ? validTemperatureCelsius(Math.max(...systemReadings.map((reading) => reading.value)))
+      : cpu;
+  const source: HardwareThermalSource =
+    cpuReadings.length > 0 || sensorReadings.length > 0
+      ? "windows-wmi-sensor"
+      : zoneReadings.length > 0
+        ? "windows-acpi"
+        : "unavailable";
+  return { cpu, system, source };
+}
+
+function queryMacosCpuTemperature(): number | null {
+  if (process.platform !== "darwin") {
+    return null;
   }
-  return { value: null, source: "unavailable" };
+  const result = spawnSync("/usr/bin/powermetrics", ["--samplers", "smc", "-n", "1", "-i", "1000"], {
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: 3500,
+    windowsHide: true
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+  const matches = Array.from(output.matchAll(/(?:CPU|processor)[^:\n]*(?:die|proximity|temp|temperature)[^:\n]*:\s*([0-9]+(?:\.[0-9]+)?)\s*C/gi));
+  const values = matches
+    .map((match) => validTemperatureCelsius(Number.parseFloat(match[1] ?? "")))
+    .filter((value): value is number => value !== null);
+  return values.length > 0 ? roundMetric(Math.max(...values)) : null;
+}
+
+async function queryThermalTemperatures(): Promise<{ cpu: number | null; system: number | null; source: HardwareThermalSource }> {
+  if (process.platform === "linux") {
+    return queryLinuxThermalTemperatures();
+  }
+  if (process.platform === "win32") {
+    return queryWindowsThermalTemperatures();
+  }
+  if (process.platform === "darwin") {
+    const cpu = queryMacosCpuTemperature();
+    return { cpu, system: cpu, source: cpu === null ? "unavailable" : "macos-powermetrics" };
+  }
+  return { cpu: null, system: null, source: "unavailable" };
 }
 
 function topProcessSnapshot(): HardwareProcessSnapshot[] {
@@ -1323,7 +1465,7 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
   const linuxGpus = process.platform === "linux" && enrichedNvidiaGpus.length === 0 && windowsGpus.length === 0
     ? mergeGpuSensorFallbacks(drmGpus, linuxHwmonGpus)
     : [];
-  const systemTemperature = await querySystemTemperature();
+  const thermalTemperatures = await queryThermalTemperatures();
   const gpuNotes =
     nvidiaGpus.length === 0 && windowsGpus.length > 0
       ? ["Windows system fallback identifies adapters through Win32_VideoController; live GPU load, thermals, fan and power require vendor telemetry."]
@@ -1338,6 +1480,7 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
       model: allCpus[0]?.model ?? "CPU",
       cores: allCpus.length,
       utilization: hardwareMetric("CPU load", cpuUsage, "%", metricStatusPercent(cpuUsage, 82, 94)),
+      temperature: hardwareMetric("CPU temperature", thermalTemperatures.cpu, "C", metricStatusTemperature(thermalTemperatures.cpu)),
       loadAverage: hardwareMetric("Load average", roundMetric(os.loadavg()[0] ?? null, 2), "count")
     },
     memory: {
@@ -1346,8 +1489,8 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
       utilization: hardwareMetric("RAM load", roundMetric(memoryPercent), "%", metricStatusPercent(memoryPercent, 78, 90))
     },
     thermal: {
-      systemTemperature: hardwareMetric("System temperature", systemTemperature.value, "C", metricStatusTemperature(systemTemperature.value)),
-      source: systemTemperature.source
+      systemTemperature: hardwareMetric("System temperature", thermalTemperatures.system, "C", metricStatusTemperature(thermalTemperatures.system)),
+      source: thermalTemperatures.source
     },
     gpus: [...enrichedNvidiaGpus, ...windowsGpus, ...linuxGpus],
     topProcesses: topProcessSnapshot(),
