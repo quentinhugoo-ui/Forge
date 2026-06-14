@@ -723,12 +723,15 @@ export type AgentActionKind =
   | "dev_git_push"
   | "dev_github_pr_create"
   | "dev_run_check"
+  | "virtualization_inspect"
+  | "virtualization_run_command"
   | "automation_schedule"
   | "automation_list"
   | "automation_cancel"
   | "automation_record";
 
 export type AgentActionScope = "workspace" | "computer";
+export type AgentVirtualizationProvider = "wsl" | "docker" | "hyperv" | "all";
 
 export interface AgentActionRequest {
   action: AgentActionKind;
@@ -749,6 +752,11 @@ export interface AgentActionRequest {
   remote?: string;
   paths?: string[];
   draft?: boolean;
+  provider?: AgentVirtualizationProvider;
+  distro?: string;
+  container?: string;
+  vmName?: string;
+  nativeFallback?: boolean;
   taskName?: string;
   scheduleType?: string;
   startTime?: string;
@@ -769,6 +777,17 @@ export interface AgentActionSearchMatch {
   path: string;
   line: number;
   text: string;
+}
+
+export interface AgentVirtualizationSummary {
+  schema: "ingen.virtualization.summary.v1";
+  provider: AgentVirtualizationProvider;
+  action: "inspect" | "run_command";
+  available: boolean;
+  version?: string;
+  resources: Record<string, unknown>[];
+  fallback?: string;
+  proofHash: string;
 }
 
 export interface AgentActionResult {
@@ -798,6 +817,7 @@ export interface AgentActionResult {
   download?: AgentBrowserDownloadArtifact;
   documentMedia?: AgentDocumentMediaSummary;
   developer?: AgentDeveloperRepoSummary;
+  virtualization?: AgentVirtualizationSummary;
   automation?: AgentAutomationLedgerEntry;
   userPresenceRequired?: boolean;
   failureCategory?: AgentFailureCategory;
@@ -931,6 +951,8 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "dev_git_push",
     "dev_github_pr_create",
     "dev_run_check",
+    "virtualization_inspect",
+    "virtualization_run_command",
     "automation_schedule",
     "automation_list",
     "automation_cancel",
@@ -958,6 +980,14 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
       return false;
     }
   }
+  if (candidate.provider !== undefined && !["wsl", "docker", "hyperv", "all"].includes(candidate.provider)) {
+    return false;
+  }
+  for (const key of ["distro", "container", "vmName"] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
+      return false;
+    }
+  }
   for (const key of ["taskName", "scheduleType", "startTime", "startDate"] as const) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
       return false;
@@ -975,6 +1005,9 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     return false;
   }
   if (candidate.draft !== undefined && typeof candidate.draft !== "boolean") {
+    return false;
+  }
+  if (candidate.nativeFallback !== undefined && typeof candidate.nativeFallback !== "boolean") {
     return false;
   }
   if (

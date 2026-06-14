@@ -5736,6 +5736,8 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   dev_git_push: "dev.git_push",
   dev_github_pr_create: "dev.github_pr_create",
   dev_run_check: "dev.run_check",
+  virtualization_inspect: "virtualization.inspect",
+  virtualization_run_command: "virtualization.run_command",
   automation_schedule: "automation.schedule",
   automation_list: "automation.list",
   automation_cancel: "automation.cancel",
@@ -5830,7 +5832,8 @@ function emitAgentRuntimeToolCallStarted(params: {
     request: params.request,
     risk: params.request.action === "delete_empty_directory" || params.request.action === "delete_tree"
       ? "destructive"
-      : params.request.action === "run_command"
+      : params.request.action === "run_command" ||
+        params.request.action === "virtualization_run_command"
       ? "computer_write"
       : params.request.action === "computer_appshot" ||
         params.request.action === "computer_focus_window" ||
@@ -5853,7 +5856,8 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "browser_inspect_url" ||
         params.request.action === "document_inspect" ||
         params.request.action === "dev_repo_status" ||
-        params.request.action === "dev_git_diff"
+        params.request.action === "dev_git_diff" ||
+        params.request.action === "virtualization_inspect"
       ? "read"
       : "workspace_write",
     status: "pending",
@@ -6138,6 +6142,7 @@ function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
     request.action === "document_inspect" ||
     request.action === "dev_repo_status" ||
     request.action === "dev_git_diff" ||
+    request.action === "virtualization_inspect" ||
     request.action === "automation_list"
   );
 }

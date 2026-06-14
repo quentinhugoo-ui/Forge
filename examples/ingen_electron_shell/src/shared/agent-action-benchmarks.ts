@@ -166,15 +166,15 @@ export const AGENT_ACTION_BENCHMARK_SUITE: readonly AgentActionBenchmarkCase[] =
     id: "wsl.dev.command",
     surface: "wsl_dev",
     userGoal: "run a development command through WSL or a container",
-    primaryActionId: "shell.full",
-    fallbackActionIds: ["dev.run_check", "powershell"],
-    eventCommand: "/agent_shell_",
-    eventLabel: "confirmed shell command executed",
+    primaryActionId: "virtualization.run_command",
+    fallbackActionIds: ["virtualization.inspect", "dev.run_check", "shell.full"],
+    eventCommand: "/agent_virtualization_run_",
+    eventLabel: "confirmed virtualization command completed",
     expectedOutcome: "retry",
     approval: "prompt",
     evidence: ["command_exit", "runtime_event"],
-    observedState: "wsl/docker command exit and fallback route are recorded",
-    proofRule: "If WSL or Docker is unavailable, report the missing backend and use native dev checks when possible."
+    observedState: "wsl/docker command exit or verified native fallback route is recorded",
+    proofRule: "If WSL or Docker is unavailable, report the missing backend and use confirmed native dev checks only when requested."
   },
   {
     id: "git.pr.workflow",

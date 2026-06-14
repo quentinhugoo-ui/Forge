@@ -25,6 +25,8 @@ export const AGENT_DEV_COMMIT_COMMAND = "/agent_dev_commit_";
 export const AGENT_DEV_PUSH_COMMAND = "/agent_dev_push_";
 export const AGENT_GITHUB_PR_CREATE_COMMAND = "/agent_github_pr_create_";
 export const AGENT_DEV_CHECK_COMMAND = "/agent_dev_check_";
+export const AGENT_VIRTUALIZATION_INSPECT_COMMAND = "/agent_virtualization_inspect_";
+export const AGENT_VIRTUALIZATION_RUN_COMMAND = "/agent_virtualization_run_";
 export const AGENT_AUTOMATION_SCHEDULE_COMMAND = "/agent_automation_schedule_";
 export const AGENT_AUTOMATION_LIST_COMMAND = "/agent_automation_list_";
 export const AGENT_AUTOMATION_CANCEL_COMMAND = "/agent_automation_cancel_";
@@ -58,6 +60,8 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_DEV_PUSH_COMMAND,
   AGENT_GITHUB_PR_CREATE_COMMAND,
   AGENT_DEV_CHECK_COMMAND,
+  AGENT_VIRTUALIZATION_INSPECT_COMMAND,
+  AGENT_VIRTUALIZATION_RUN_COMMAND,
   AGENT_AUTOMATION_SCHEDULE_COMMAND,
   AGENT_AUTOMATION_LIST_COMMAND,
   AGENT_AUTOMATION_CANCEL_COMMAND,
@@ -101,6 +105,8 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_DEV_PUSH_COMMAND, "confirmed Git push verified"],
   [AGENT_GITHUB_PR_CREATE_COMMAND, "confirmed GitHub pull request verified"],
   [AGENT_DEV_CHECK_COMMAND, "confirmed developer check completed"],
+  [AGENT_VIRTUALIZATION_INSPECT_COMMAND, "virtualization backends inspected"],
+  [AGENT_VIRTUALIZATION_RUN_COMMAND, "confirmed virtualization command completed"],
   [AGENT_AUTOMATION_SCHEDULE_COMMAND, "confirmed Windows scheduled task verified"],
   [AGENT_AUTOMATION_LIST_COMMAND, "Windows scheduled tasks inspected"],
   [AGENT_AUTOMATION_CANCEL_COMMAND, "confirmed Windows scheduled task cancelled"],
@@ -137,6 +143,8 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["dev.git_push", AGENT_DEV_PUSH_COMMAND],
   ["dev.github_pr_create", AGENT_GITHUB_PR_CREATE_COMMAND],
   ["dev.run_check", AGENT_DEV_CHECK_COMMAND],
+  ["virtualization.inspect", AGENT_VIRTUALIZATION_INSPECT_COMMAND],
+  ["virtualization.run_command", AGENT_VIRTUALIZATION_RUN_COMMAND],
   ["automation.schedule", AGENT_AUTOMATION_SCHEDULE_COMMAND],
   ["automation.list", AGENT_AUTOMATION_LIST_COMMAND],
   ["automation.cancel", AGENT_AUTOMATION_CANCEL_COMMAND],
@@ -173,6 +181,8 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["dev_git_push", AGENT_DEV_PUSH_COMMAND],
   ["dev_github_pr_create", AGENT_GITHUB_PR_CREATE_COMMAND],
   ["dev_run_check", AGENT_DEV_CHECK_COMMAND],
+  ["virtualization_inspect", AGENT_VIRTUALIZATION_INSPECT_COMMAND],
+  ["virtualization_run_command", AGENT_VIRTUALIZATION_RUN_COMMAND],
   ["automation_schedule", AGENT_AUTOMATION_SCHEDULE_COMMAND],
   ["automation_list", AGENT_AUTOMATION_LIST_COMMAND],
   ["automation_cancel", AGENT_AUTOMATION_CANCEL_COMMAND],

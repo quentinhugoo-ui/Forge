@@ -66,6 +66,8 @@ describe("agent action host", () => {
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.git_commit");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.git_push");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("dev.github_pr_create");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("virtualization.inspect");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("virtualization.run_command");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("automation.schedule");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("automation.cancel");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("automation.record");
@@ -109,6 +111,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("fs.delete_tree:/agent_delete_tree_");
     expect(promptManifest).toContain("shell.full:/agent_shell_");
     expect(promptManifest).toContain("dev.github_pr_create:/agent_github_pr_create_");
+    expect(promptManifest).toContain("virtualization.inspect:/agent_virtualization_inspect_");
     expect(promptManifest).toContain("automation.schedule:/agent_automation_schedule_");
     expect(promptManifest).toContain("capability_atlas=count:");
     expect(promptManifest).toContain("manifest_hash=");
@@ -189,6 +192,8 @@ describe("agent action host", () => {
       "dev.git_push",
       "dev.github_pr_create",
       "dev.run_check",
+      "virtualization.inspect",
+      "virtualization.run_command",
       "automation.schedule",
       "automation.list",
       "automation.cancel",
@@ -330,6 +335,8 @@ describe("agent action host", () => {
       "dev_git_push",
       "dev_github_pr_create",
       "dev_run_check",
+      "virtualization_inspect",
+      "virtualization_run_command",
       "automation_schedule",
       "automation_list",
       "automation_cancel",
@@ -393,7 +400,9 @@ describe("agent action host", () => {
     expect(byFamily.get("windows.scheduler")?.approval).toBe("prompt");
     expect(byFamily.get("windows.settings")?.approval).toBe("prompt");
     expect(byFamily.get("browser.cdp")?.status).toBe("planned");
-    expect(byFamily.get("virtualization.wsl")?.status).toBe("planned");
+    expect(byFamily.get("virtualization.wsl")?.status).toBe("available");
+    expect(byFamily.get("virtualization.hyperv_docker")?.status).toBe("available");
+    expect(byFamily.get("virtualization.wsl")?.executableActionIds).toEqual(["virtualization.inspect", "virtualization.run_command"]);
     expect(byFamily.get("office.com")?.executableActionIds).toBeUndefined();
     expect(byFamily.get("shell.full")?.executableActionIds).toEqual(["shell.full"]);
     expect(byFamily.get("shell.full")?.notes).toContain("universal Windows escape hatch");
@@ -910,6 +919,46 @@ describe("agent action host", () => {
       }
     });
   });
+
+  it("inspects virtualization backends and verifies confirmed native fallback execution", async () => {
+    await withTempWorkspace(async (config) => {
+      const inspected = await executeAgentActionRequest(config, {
+        action: "virtualization_inspect",
+        provider: "all"
+      });
+      expect(inspected.accepted).toBe(true);
+      expect(inspected.routeId).toBe("virtualization.inspect");
+      expect(inspected.virtualization?.schema).toBe("ingen.virtualization.summary.v1");
+      expect(inspected.virtualization?.resources.length).toBeGreaterThanOrEqual(3);
+      expect(inspected.verification?.passed).toBe(true);
+
+      const rejected = await executeAgentActionRequest(config, {
+        action: "virtualization_run_command",
+        provider: "docker",
+        container: "ingen-missing-container-for-fallback",
+        command: process.execPath,
+        args: ["-e", "console.log('fallback-ok')"],
+        nativeFallback: true
+      });
+      expect(rejected.accepted).toBe(false);
+      expect(rejected.failureCategory).toBe("denied");
+
+      const executed = await executeAgentActionRequest(config, {
+        action: "virtualization_run_command",
+        provider: "docker",
+        container: "ingen-missing-container-for-fallback",
+        command: process.execPath,
+        args: ["-e", "console.log('fallback-ok')"],
+        nativeFallback: true,
+        confirmed: true
+      });
+      expect(executed.accepted).toBe(true);
+      expect(executed.routeId).toBe("virtualization.native_fallback");
+      expect(executed.exitCode).toBe(0);
+      expect(executed.stdoutPreview).toContain("fallback-ok");
+      expect(executed.verification?.passed).toBe(true);
+    });
+  }, 20_000);
 
   it("reports command timeout and structured execution metadata", async () => {
     await withTempWorkspace(async (config) => {

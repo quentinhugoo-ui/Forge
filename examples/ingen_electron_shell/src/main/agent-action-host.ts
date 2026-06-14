@@ -33,6 +33,8 @@ import type {
   AgentVerificationPolicy,
   AgentVerificationProbe,
   AgentVerificationResult,
+  AgentVirtualizationProvider,
+  AgentVirtualizationSummary,
   AgentWindowsExecutionAdapterId,
   AgentWindowsExecutionPolicy,
   AgentWindowsRouteCatalogEntry,
@@ -102,6 +104,8 @@ const AGENT_ACTION_EVENT_HINTS = [
   "dev.git_push:/agent_dev_push_",
   "dev.github_pr_create:/agent_github_pr_create_",
   "dev.run_check:/agent_dev_check_",
+  "virtualization.inspect:/agent_virtualization_inspect_",
+  "virtualization.run_command:/agent_virtualization_run_",
   "automation.schedule:/agent_automation_schedule_",
   "automation.list:/agent_automation_list_",
   "automation.cancel:/agent_automation_cancel_",
@@ -138,6 +142,8 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   dev_git_push: "/agent_dev_push_",
   dev_github_pr_create: "/agent_github_pr_create_",
   dev_run_check: "/agent_dev_check_",
+  virtualization_inspect: "/agent_virtualization_inspect_",
+  virtualization_run_command: "/agent_virtualization_run_",
   automation_schedule: "/agent_automation_schedule_",
   automation_list: "/agent_automation_list_",
   automation_cancel: "/agent_automation_cancel_",
@@ -545,6 +551,7 @@ function result(
     download: patch.download,
     documentMedia: patch.documentMedia,
     developer: patch.developer,
+    virtualization: patch.virtualization,
     automation: patch.automation,
     userPresenceRequired: patch.userPresenceRequired,
     failureCategory,
@@ -935,6 +942,8 @@ export function createDeveloperAutomationPolicy(_config: AgentActionHostConfig):
       "dev_git_push",
       "dev_github_pr_create",
       "dev_run_check",
+      "virtualization_inspect",
+      "virtualization_run_command",
       "automation_schedule",
       "automation_list",
       "automation_cancel",
@@ -1468,6 +1477,42 @@ function createExecutableActionCapabilities(): AgentActionCapability[] {
       notes: "Checks may write caches or build outputs, so confirmation is required."
     }),
     actionCapability({
+      id: "virtualization.inspect",
+      family: "virtualization.wsl",
+      surface: "virtualization",
+      title: "Inspect WSL, Docker and Hyper-V",
+      status: "available",
+      risk: "read",
+      operations: ["inspect WSL status and distributions", "inspect Docker version and containers", "inspect Hyper-V VMs"],
+      underlyingTools: ["wsl.exe --status", "wsl.exe --list --verbose", "docker version", "docker ps --format json", "PowerShell Get-VM"],
+      fallbacks: ["native Windows toolchain", "dev.run_check", "shell.readonly"],
+      verification: ["command_exit", "process_state"],
+      approval: "none",
+      executableActionIds: ["virtualization.inspect"],
+      requiresApproval: false,
+      writes: false,
+      description: "Inspect local virtualization backends and return compact runtime evidence without mutating distributions, containers or VMs.",
+      notes: "Missing WSL/Docker/Hyper-V is reported as a verified backend state, not as success."
+    }),
+    actionCapability({
+      id: "virtualization.run_command",
+      family: "virtualization.wsl",
+      surface: "virtualization",
+      title: "Run confirmed WSL or Docker command",
+      status: "available",
+      risk: "computer_write",
+      operations: ["run command through WSL", "run command in an existing Docker container", "capture exit code", "fallback to native dev command when backend is missing"],
+      underlyingTools: ["wsl.exe --exec", "docker exec", "native command fallback"],
+      fallbacks: ["dev.run_check", "shell.full confirmed native command"],
+      verification: ["command_exit"],
+      approval: "prompt",
+      executableActionIds: ["virtualization.run_command"],
+      requiresApproval: true,
+      writes: true,
+      description: "Execute a confirmed development command through WSL or Docker and verify by exit code; Hyper-V command execution remains blocked.",
+      notes: "Distro/container lifecycle changes, Docker image pulls and Hyper-V VM commands are not direct actions in this step."
+    }),
+    actionCapability({
       id: "automation.schedule",
       family: "windows.scheduler",
       surface: "automation.task_scheduler",
@@ -1807,7 +1852,7 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       family: "virtualization.wsl",
       surface: "virtualization",
       title: "Use WSL distributions",
-      status: "planned",
+      status: "available",
       risk: "computer_write",
       operations: ["list distros", "run Linux commands", "import/export distros", "install WSL"],
       underlyingTools: ["wsl.exe", "PowerShell"],
@@ -1815,14 +1860,15 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       verification: ["command_exit", "filesystem", "process_state"],
       approval: "prompt",
       writes: true,
-      notes: "Distro install/import/export and cross-filesystem writes require confirmation."
+      executableActionIds: ["virtualization.inspect", "virtualization.run_command"],
+      notes: "Inspection and confirmed command execution are direct actions; distro install/import/export and destructive lifecycle changes remain blocked or shell-confirmed."
     }),
     atlasEntry({
       id: "virtualization.hyperv_docker",
       family: "virtualization.hyperv_docker",
       surface: "virtualization",
       title: "Use containers and virtual machines",
-      status: "planned",
+      status: "available",
       risk: "computer_write",
       operations: ["inspect containers", "run containers", "manage Hyper-V VMs"],
       underlyingTools: ["docker", "PowerShell Hyper-V module", "wsl.exe"],
@@ -1830,7 +1876,8 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       verification: ["process_state", "command_exit"],
       approval: "prompt",
       writes: true,
-      notes: "VM/container lifecycle changes are prompt-gated."
+      executableActionIds: ["virtualization.inspect", "virtualization.run_command"],
+      notes: "Docker inspection and confirmed docker exec are direct actions. Hyper-V VM inventory is direct; VM lifecycle and in-guest command execution remain prompt-gated/planned."
     }),
     atlasEntry({
       id: "cloud.clis",
@@ -2059,7 +2106,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `browser_web=download:${manifest.browserWeb.downloadRequiresConfirmation ? "confirmed" : "open"} navigation:${manifest.browserWeb.navigationRequiresConfirmation ? "confirmed" : "open"} submission:${manifest.browserWeb.submissionRequiresConfirmation ? "confirmed" : "open"} artifact:${manifest.browserWeb.artifactPolicy}`,
     `document_media=workspace_writes:${manifest.documentMedia.workspaceWritesRequireConfirmation ? "confirmed" : "open"} computer_writes:${manifest.documentMedia.computerScopeWritesRequireConfirmation ? "confirmed" : "open"} office_com:${manifest.documentMedia.officeComRequiresConfirmation ? "confirmed" : "open"} macros:${manifest.documentMedia.macroPolicy} artifact:${manifest.documentMedia.artifactPolicy}`,
     `developer_automation=repo_inspect:${manifest.developerAutomation.repoInspectionRequiresConfirmation ? "confirmed" : "open"} checks:${manifest.developerAutomation.commandChecksRequireConfirmation ? "confirmed" : "open"} git_mutation:${manifest.developerAutomation.gitMutationRequiresConfirmation ? "confirmed" : "open"} cloud_writes:${manifest.developerAutomation.cloudWritesRequireConfirmation ? "confirmed" : "open"} mcp:${manifest.developerAutomation.mcpToolCallingStatus} automation:${manifest.developerAutomation.automationPersistenceRequiresConfirmation ? "confirmed" : "open"}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.run_check automation.schedule automation.list automation.cancel automation.record",
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.run_check virtualization.inspect virtualization.run_command automation.schedule automation.list automation.cancel automation.record",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -2073,7 +2120,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
-    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes thread_wakeups full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop",
+    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes thread_wakeups hyperv_guest_command_execution full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -3806,6 +3853,253 @@ async function appendAutomationLedger(config: AgentActionHostConfig, entry: Agen
   };
 }
 
+function executeNativeTool(command: string, args: string[], cwd: string, timeoutMs = 15_000): GitExecution {
+  const startedAt = Date.now();
+  const child = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: timeoutMs,
+    windowsHide: true
+  });
+  const durationMs = Math.max(0, Date.now() - startedAt);
+  const stdout = child.stdout ?? "";
+  const stderr = child.stderr ?? "";
+  const exitCode = child.status ?? null;
+  const timedOut = commandTimedOut(child.error);
+  const accepted = !child.error && child.status === 0;
+  const commandLine = renderCommandLine(command, args);
+  return {
+    accepted,
+    commandLine,
+    exitCode,
+    durationMs,
+    stdout,
+    stderr,
+    timedOut,
+    error: accepted
+      ? undefined
+      : actionError(
+          "rust_unavailable",
+          timedOut ? `${command} timed out after ${timeoutMs}ms.` : child.error?.message ?? `${command} exited with status ${exitCode ?? "unknown"}.`,
+          { command, args, stderr, exitCode, timedOut }
+        )
+  };
+}
+
+function virtualizationSummary(input: Omit<AgentVirtualizationSummary, "schema" | "proofHash">): AgentVirtualizationSummary {
+  const summary: AgentVirtualizationSummary = {
+    schema: "ingen.virtualization.summary.v1",
+    ...input,
+    proofHash: ""
+  };
+  summary.proofHash = hashJson({ ...summary, proofHash: "" });
+  return summary;
+}
+
+function selectedVirtualizationProviders(provider: AgentVirtualizationProvider | undefined): Exclude<AgentVirtualizationProvider, "all">[] {
+  if (!provider || provider === "all") {
+    return ["wsl", "docker", "hyperv"];
+  }
+  return [provider];
+}
+
+function virtualizationToolName(provider: Exclude<AgentVirtualizationProvider, "all">): string {
+  return provider === "wsl" ? "wsl.exe" : provider === "docker" ? "docker.exe" : "powershell.exe";
+}
+
+function inspectWsl(config: AgentActionHostConfig): Record<string, unknown> {
+  const status = executeNativeTool("wsl.exe", ["--status"], config.cwd, 8_000);
+  const version = executeNativeTool("wsl.exe", ["--version"], config.cwd, 8_000);
+  const distros = executeNativeTool("wsl.exe", ["--list", "--verbose"], config.cwd, 8_000);
+  return {
+    provider: "wsl",
+    available: status.accepted || distros.accepted,
+    commands: [
+      { commandLine: status.commandLine, accepted: status.accepted, exitCode: status.exitCode },
+      { commandLine: version.commandLine, accepted: version.accepted, exitCode: version.exitCode },
+      { commandLine: distros.commandLine, accepted: distros.accepted, exitCode: distros.exitCode }
+    ],
+    statusPreview: status.stdout.slice(0, 2_000),
+    versionPreview: version.stdout.slice(0, 2_000),
+    distroPreview: distros.stdout.slice(0, 2_000),
+    errorPreview: [status.stderr, version.stderr, distros.stderr].filter(Boolean).join("\n").slice(0, 2_000)
+  };
+}
+
+function inspectDocker(config: AgentActionHostConfig): Record<string, unknown> {
+  const version = executeNativeTool("docker.exe", ["version", "--format", "json"], config.cwd, 10_000);
+  const containers = executeNativeTool("docker.exe", ["ps", "--all", "--format", "json"], config.cwd, 10_000);
+  return {
+    provider: "docker",
+    available: version.accepted || containers.accepted,
+    commands: [
+      { commandLine: version.commandLine, accepted: version.accepted, exitCode: version.exitCode },
+      { commandLine: containers.commandLine, accepted: containers.accepted, exitCode: containers.exitCode }
+    ],
+    versionPreview: version.stdout.slice(0, 2_000),
+    containersPreview: containers.stdout.slice(0, 4_000),
+    errorPreview: [version.stderr, containers.stderr].filter(Boolean).join("\n").slice(0, 2_000)
+  };
+}
+
+function inspectHyperV(): Record<string, unknown> {
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) {
+  [pscustomobject]@{ available = $false; reason = 'Hyper-V PowerShell module not available'; vms = @() } | ConvertTo-Json -Depth 5 -Compress
+  exit 0
+}
+$vms = Get-VM | Select-Object Name, State, Status, Version, Uptime
+[pscustomobject]@{ available = $true; vms = @($vms) } | ConvertTo-Json -Depth 5 -Compress
+`;
+  const execution = executePowerShellJson(script, 10_000);
+  let parsed: Record<string, unknown> = {};
+  if (execution.stdout.trim()) {
+    try {
+      parsed = parseJsonObject<Record<string, unknown>>(execution.stdout);
+    } catch {
+      parsed = { parseError: true };
+    }
+  }
+  return {
+    provider: "hyperv",
+    available: execution.accepted && parsed.available === true,
+    commandLine: "powershell.exe -EncodedCommand <virtualization.hyperv.inspect>",
+    exitCode: execution.exitCode,
+    vms: Array.isArray(parsed.vms) ? parsed.vms : [],
+    reason: parsed.reason,
+    errorPreview: execution.stderr.slice(0, 2_000)
+  };
+}
+
+async function virtualizationInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const provider = request.provider ?? "all";
+  const resources = selectedVirtualizationProviders(provider).map((candidate) => {
+    if (candidate === "wsl") {
+      return inspectWsl(config);
+    }
+    if (candidate === "docker") {
+      return inspectDocker(config);
+    }
+    return inspectHyperV();
+  });
+  const available = resources.some((resource) => resource.available === true);
+  const summary = virtualizationSummary({
+    provider,
+    action: "inspect",
+    available,
+    resources,
+    fallback: available ? undefined : "native Windows command or dev.run_check"
+  });
+  const verification = verificationResult([
+    verificationProbe({
+      id: "virtualization.inspect.completed",
+      kind: "process_state",
+      target: provider,
+      expectation: "virtualization backends inspected without mutation",
+      actual: `providers=${resources.length} available=${available}`,
+      passed: resources.length > 0
+    })
+  ]);
+  return result(config, request, {
+    accepted: true,
+    commandLine: `virtualization.inspect ${provider}`,
+    routeId: "virtualization.inspect",
+    stdoutPreview: JSON.stringify(resources, null, 2).slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`virtualization_providers:${resources.length}`, `virtualization_available:${available}`],
+    verification,
+    virtualization: summary,
+    value: `providers ${resources.length} available ${available ? "yes" : "no"}`
+  });
+}
+
+async function virtualizationRunCommandAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Virtualization command execution requires confirmed:true.", request)
+    });
+  }
+  const provider = request.provider;
+  const command = request.command?.trim() ?? "";
+  if (provider !== "wsl" && provider !== "docker") {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: provider === "hyperv" ? "unverifiable" : "bad_path",
+      error: actionError("bad_payload", "virtualization_run_command supports provider:\"wsl\" or provider:\"docker\" only; Hyper-V guest command execution remains planned.", request)
+    });
+  }
+  if (!command) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "command is required for virtualization_run_command.", request)
+    });
+  }
+  const timeoutMs = commandTimeout(request);
+  const tool = virtualizationToolName(provider);
+  let args: string[] = [];
+  if (provider === "wsl") {
+    args = request.distro ? ["--distribution", request.distro, "--exec", command, ...(request.args ?? [])] : ["--exec", command, ...(request.args ?? [])];
+  } else {
+    const container = request.container?.trim() ?? "";
+    if (!container) {
+      return result(config, request, {
+        accepted: false,
+        error: actionError("bad_payload", "container is required for provider:\"docker\" virtualization_run_command.", request)
+      });
+    }
+    args = ["exec", container, command, ...(request.args ?? [])];
+  }
+  let execution = executeNativeTool(tool, args, config.workspaceRoot, timeoutMs);
+  let routeId = `virtualization.${provider}.run_command`;
+  let fallbackUsed: string | undefined;
+  if (!execution.accepted && request.nativeFallback === true && request.scope !== "computer") {
+    fallbackUsed = "native workspace command";
+    execution = executeNativeTool(command, request.args ?? [], config.workspaceRoot, timeoutMs);
+    routeId = "virtualization.native_fallback";
+  }
+  const summary = virtualizationSummary({
+    provider,
+    action: "run_command",
+    available: execution.accepted,
+    resources: [
+      {
+        provider,
+        commandLine: execution.commandLine,
+        exitCode: execution.exitCode,
+        timedOut: execution.timedOut,
+        fallbackUsed
+      }
+    ],
+    fallback: fallbackUsed
+  });
+  return result(config, request, {
+    accepted: execution.accepted,
+    commandLine: execution.commandLine,
+    executionAdapter: "windows_command",
+    routeId,
+    exitCode: execution.exitCode,
+    durationMs: execution.durationMs,
+    timeoutMs,
+    timedOut: execution.timedOut,
+    stdoutPreview: execution.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`virtualization_provider:${provider}`, `exit_code:${execution.exitCode ?? "unknown"}`],
+    verification: commandExitVerification({
+      commandLine: execution.commandLine,
+      accepted: execution.accepted,
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut
+    }),
+    virtualization: summary,
+    failureCategory: execution.accepted ? undefined : execution.timedOut ? "timeout" : "missing_tool",
+    error: execution.error
+  });
+}
+
 async function devRepoStatusAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   const status = executeGit(config, ["status", "--porcelain=v1", "-b"]);
   if (!status.accepted) {
@@ -4561,6 +4855,10 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return await devGithubPrCreateAction(config, request);
       case "dev_run_check":
         return await devRunCheckAction(config, request);
+      case "virtualization_inspect":
+        return await virtualizationInspectAction(config, request);
+      case "virtualization_run_command":
+        return await virtualizationRunCommandAction(config, request);
       case "automation_schedule":
         return await automationScheduleAction(config, request);
       case "automation_list":
