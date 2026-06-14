@@ -1203,7 +1203,10 @@ type AssistantMarkdownBlock =
   | { kind: "event"; event: TranscriptCodeActEvent }
   | { kind: "event_group"; events: TranscriptCodeActEvent[] };
 
-type TranscriptCodeActCommand = BrainCodeActCommand | AgentActionEventCommand | `/compute_${string}_`;
+const CONTEXT_COMPACTION_COMMAND = "/context_compaction_";
+
+type TranscriptContextCompactionState = "compressing" | "compressed";
+type TranscriptCodeActCommand = BrainCodeActCommand | AgentActionEventCommand | `/compute_${string}_` | typeof CONTEXT_COMPACTION_COMMAND;
 type AssistantTableAlignment = "left" | "center" | "right";
 type AssistantCalloutTone = "info" | "warning" | "success" | "assumption";
 
@@ -1228,6 +1231,7 @@ interface TranscriptCodeActEvent {
   detail?: string;
   path?: string;
   toPath?: string;
+  compactionState?: TranscriptContextCompactionState;
 }
 
 const BRAIN_CODEACT_COMMAND_SET = new Set<string>(BRAIN_CODEACT_COMMANDS);
@@ -1262,6 +1266,23 @@ const TRANSCRIPT_CODEACT_EVENT_TEXT = new Map<string, string>([
   [BRAIN_RUST_STATE_STORE_COMMAND, "Rust state store contract prepared"]
 ]);
 
+function contextCompactionStateFromLine(line: string): TranscriptContextCompactionState {
+  const match = /(?:^|\s)state\s*=\s*("([^"]+)"|'([^']+)'|([^\s]+))/.exec(line);
+  const value = (match?.[2] ?? match?.[3] ?? match?.[4] ?? "").trim().toLowerCase();
+  return value === "compressed" ? "compressed" : "compressing";
+}
+
+function transcriptCodeActEvent(command: TranscriptCodeActCommand, line = ""): TranscriptCodeActEvent {
+  const event: TranscriptCodeActEvent = {
+    command,
+    text: codeActEventText(command)
+  };
+  if (command === CONTEXT_COMPACTION_COMMAND) {
+    event.compactionState = contextCompactionStateFromLine(line);
+  }
+  return event;
+}
+
 function dynamicComputeLabel(command: string): string {
   return command
     .replace(/^\/compute_/, "")
@@ -1275,6 +1296,9 @@ function isDynamicComputeCommand(value: string): value is `/compute_${string}_` 
 }
 
 function codeActEventText(command: TranscriptCodeActCommand): string {
+  if (command === CONTEXT_COMPACTION_COMMAND) {
+    return "Compressing context";
+  }
   const agentActionText = agentActionEventCommandFromToken(command);
   if (agentActionText) {
     return agentActionEventText(agentActionText);
@@ -1288,6 +1312,9 @@ function codeActEventText(command: TranscriptCodeActCommand): string {
 
 function readCodeActCommand(value: string): TranscriptCodeActCommand | undefined {
   const trimmed = value.trim().replace(/^["'`]+|["'`,;]+$/g, "");
+  if (trimmed === CONTEXT_COMPACTION_COMMAND) {
+    return CONTEXT_COMPACTION_COMMAND;
+  }
   const agentActionCommand = agentActionEventCommandFromToken(trimmed);
   if (agentActionCommand) {
     return agentActionCommand;
@@ -1310,20 +1337,20 @@ function codeActEventFromLine(line: string): TranscriptCodeActEvent | undefined 
   const commandAssignment = /(?:^|\s)command\s*=\s*("([^"]+)"|'([^']+)'|([^\s]+))/.exec(trimmed);
   const assignedCommand = commandAssignment ? readCodeActCommand(commandAssignment[2] ?? commandAssignment[3] ?? commandAssignment[4] ?? "") : undefined;
   if (assignedCommand) {
-    return { command: assignedCommand, text: codeActEventText(assignedCommand) };
+    return transcriptCodeActEvent(assignedCommand, trimmed);
   }
   const firstToken = trimmed.split(/\s+/, 1)[0] ?? "";
   const directCommand = readCodeActCommand(firstToken);
   if (directCommand) {
-    return { command: directCommand, text: codeActEventText(directCommand) };
+    return transcriptCodeActEvent(directCommand, trimmed);
   }
   const containedCommand = BRAIN_CODEACT_COMMANDS_BY_LENGTH.find((command) => trimmed.includes(command));
   if (containedCommand) {
-    return { command: containedCommand, text: codeActEventText(containedCommand) };
+    return transcriptCodeActEvent(containedCommand);
   }
   const dynamicCompute = /\/compute_[a-zA-Z0-9][a-zA-Z0-9_]*_/.exec(trimmed)?.[0];
   if (dynamicCompute && isDynamicComputeCommand(dynamicCompute)) {
-    return { command: dynamicCompute, text: codeActEventText(dynamicCompute) };
+    return transcriptCodeActEvent(dynamicCompute);
   }
   return undefined;
 }
@@ -1710,6 +1737,9 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
 }
 
 function shouldGroupAsCodexCommandEvent(event: TranscriptCodeActEvent): boolean {
+  if (event.command === CONTEXT_COMPACTION_COMMAND) {
+    return false;
+  }
   if (isAgentActionCommand(event.command) && isAgentFileModificationCommand(event.command)) {
     return false;
   }
@@ -2658,6 +2688,10 @@ function isBrainSegmentCommand(command: TranscriptCodeActCommand): boolean {
   return command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND;
 }
 
+function isContextCompactionCommand(command: TranscriptCodeActCommand): command is typeof CONTEXT_COMPACTION_COMMAND {
+  return command === CONTEXT_COMPACTION_COMMAND;
+}
+
 function brainSegmentName(command: TranscriptCodeActCommand): string {
   return command === BRAIN_CODING_COMMAND ? "Coding Brain" : "Science Brain";
 }
@@ -2771,7 +2805,22 @@ function AnimatedModificationCounter({ addedChars, removedChars }: { addedChars:
   );
 }
 
+function TranscriptContextCompactionEventLine({ event }: { event: TranscriptCodeActEvent }) {
+  const state = event.compactionState ?? "compressing";
+  const complete = state === "compressed";
+  return (
+    <div className={`transcriptContextCompactionEvent transcriptContextCompactionEvent--${state}`} role="status" aria-live={complete ? "off" : "polite"}>
+      <span className="transcriptContextCompactionEvent__line" aria-hidden="true" />
+      <span className="transcriptContextCompactionEvent__text">{complete ? "Context compressed" : "Compressing context"}</span>
+      <span className="transcriptContextCompactionEvent__line" aria-hidden="true" />
+    </div>
+  );
+}
+
 function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: string; event: TranscriptCodeActEvent; writing: boolean }) {
+  if (isContextCompactionCommand(event.command)) {
+    return <TranscriptContextCompactionEventLine event={event} />;
+  }
   const isBrainSegment = isBrainSegmentCommand(event.command);
   const agentCommand = isAgentActionCommand(event.command) ? event.command : undefined;
   const isPendingAgentEvent = writing && Boolean(agentCommand) && !event.detail;

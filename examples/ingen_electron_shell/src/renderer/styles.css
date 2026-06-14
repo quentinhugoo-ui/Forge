@@ -4422,6 +4422,70 @@ button {
   white-space: nowrap;
 }
 
+.transcriptContextCompactionEvent {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(48px, 1fr) auto minmax(48px, 1fr);
+  align-items: center;
+  justify-self: center;
+  gap: 13px;
+  width: min(620px, calc(100% - 28px));
+  margin: 13px auto 15px;
+  color: #8fb7ff;
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.transcriptContextCompactionEvent__text,
+.transcriptContextCompactionEvent__line {
+  background: linear-gradient(90deg, #8fb7ff, #35d486, #67e8f9, #d3b8ff, #8fb7ff);
+  background-size: 260% 100%;
+}
+
+.transcriptContextCompactionEvent__text {
+  color: transparent;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  white-space: nowrap;
+}
+
+.transcriptContextCompactionEvent__line {
+  display: block;
+  height: 1px;
+  min-width: 0;
+  border-radius: 999px;
+  opacity: 0.72;
+  transform: scaleX(0);
+}
+
+.transcriptContextCompactionEvent--compressing .transcriptContextCompactionEvent__line {
+  animation: transcriptContextCompactionLine 1180ms cubic-bezier(0.22, 1, 0.36, 1) both, transcriptContextCompactionFlow 2.8s ease-in-out infinite;
+}
+
+.transcriptContextCompactionEvent--compressing .transcriptContextCompactionEvent__text {
+  animation: transcriptContextCompactionInk 2.8s ease-in-out infinite;
+}
+
+.transcriptContextCompactionEvent--compressed {
+  color: #8d9396;
+  animation: transcriptContextCompactionSettle 320ms ease-out both;
+}
+
+.transcriptContextCompactionEvent--compressed .transcriptContextCompactionEvent__text {
+  color: #8d9396;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+.transcriptContextCompactionEvent--compressed .transcriptContextCompactionEvent__line {
+  background: #464c50;
+  opacity: 0.64;
+  transform: scaleX(1);
+}
+
 .transcriptCommandSummary {
   display: grid;
   justify-items: start;
@@ -6132,6 +6196,56 @@ ol.assistantText__list li::before {
   }
 }
 
+@keyframes transcriptContextCompactionLine {
+  0% {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+  62% {
+    opacity: 0.8;
+    transform: scaleX(1);
+  }
+  100% {
+    opacity: 0.72;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes transcriptContextCompactionFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes transcriptContextCompactionInk {
+  0%,
+  100% {
+    background-position: 0% 50%;
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  50% {
+    background-position: 100% 50%;
+    filter: drop-shadow(0 0 10px rgba(103, 232, 249, 0.18));
+  }
+}
+
+@keyframes transcriptContextCompactionSettle {
+  from {
+    opacity: 0.98;
+    transform: translateY(-1px);
+  }
+  to {
+    opacity: 0.72;
+    transform: translateY(0);
+  }
+}
+
 @keyframes transcriptBrainSegmentPulse {
   0% {
     transform: scale(1);
@@ -6274,11 +6388,18 @@ ol.assistantText__list li::before {
   .transcriptCodeActEvent--agent-complete,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__command,
   .transcriptCodeActEvent--brainSegment-changing .transcriptCodeActEvent__text,
+  .transcriptContextCompactionEvent,
+  .transcriptContextCompactionEvent__line,
+  .transcriptContextCompactionEvent__text,
   .assistantText__wordFlash,
   .questionnaireFocusScrim,
   .composerQuestionnaire,
   .composerQuestionnaire__page {
     animation: none;
+  }
+
+  .transcriptContextCompactionEvent__line {
+    transform: scaleX(1);
   }
 }
 

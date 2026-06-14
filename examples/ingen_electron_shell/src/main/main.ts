@@ -222,6 +222,7 @@ const PANELS_CHAT_BOTTOM_RECENT_CONTEXT_TOKENS = 12_000;
 const PANELS_CHAT_BOTTOM_MEMORY_TOKEN_BUDGET = 14_000;
 const PANELS_CHAT_BOTTOM_MEMORY_TEXT_BYTES = 32 * 1024;
 const PANELS_CHAT_BOTTOM_DOCUMENT_MEMORY_BYTES = 48 * 1024;
+const CONTEXT_COMPACTION_EVENT_COMMAND = "/context_compaction_";
 const PANELS_CHAT_BOTTOM_VISUAL_SNAPSHOT_SIZE = 768;
 let primaryWindow: BrowserWindow | null = null;
 const authWindows = new Map<LlmProviderConnectId, BrowserWindow>();
@@ -10721,6 +10722,16 @@ function transcriptWithoutMessage(messages: TranscriptMessage[], messageId: stri
   return messageId ? messages.filter((message) => message.id !== messageId) : messages;
 }
 
+function contextCompactionEventMessage(state: "compressing" | "compressed", seed: string): TranscriptMessage {
+  const id = `assistant-status-context-compaction-${seed}`;
+  return {
+    id,
+    role: "assistant",
+    text: `${CONTEXT_COMPACTION_EVENT_COMMAND} state="${state}"`,
+    proofHash: hashJson({ id, state, command: CONTEXT_COMPACTION_EVENT_COMMAND })
+  };
+}
+
 const ASSISTANT_PROGRESSIVE_SEED_MIN_CHARS = 1200;
 const ASSISTANT_PROGRESSIVE_SEED_TARGET_CHARS = 360;
 const ASSISTANT_PROGRESSIVE_SEED_DELAY_MS = 180;
@@ -12756,6 +12767,14 @@ async function submitChatDraftForSessionInner(
     panelsChatBottomState.uploadErrorText = "";
     panelsChatBottomState.uploadEditTargetId = "";
   }
+  const contextPlan = searchArchiveRequest ? undefined : conversationContextPlan(message.id, requestTranscriptWithUser);
+  const contextCompactionSeed = `${Date.now()}-${hashJson({ requestSessionId, userMessageId: message.id, estimatedTokens: contextPlan?.estimatedTokens ?? 0 }).slice(0, 8)}`;
+  const contextCompactionEvent = contextPlan?.shouldCompact ? contextCompactionEventMessage("compressing", contextCompactionSeed) : undefined;
+  if (contextCompactionEvent) {
+    nextTranscript = transcriptWithMessage(nextTranscript, contextCompactionEvent);
+    commitTranscript(nextTranscript);
+    emitPanelsChatBottomSnapshotEvent("context_compaction_started", requestSessionId);
+  }
   let assistantMessage: TranscriptMessage;
   if (searchArchiveRequest) {
     assistantMessage = await localSearchArchiveStatus(searchArchiveRequest);
@@ -12808,6 +12827,11 @@ async function submitChatDraftForSessionInner(
   }
   await injectAssistantGeoEntityIntoNativeMapsBeforeDisplay(assistantMessage);
   nextTranscript = await commitAssistantMessageWithProgressiveSeed(nextTranscript, assistantMessage, requestSessionId, commitTranscript);
+  if (contextCompactionEvent) {
+    nextTranscript = transcriptWithReplacedMessage(nextTranscript, contextCompactionEventMessage("compressed", contextCompactionSeed));
+    commitTranscript(nextTranscript);
+    emitPanelsChatBottomSnapshotEvent("context_compaction_completed", requestSessionId);
+  }
   // Audit anchor: archiveTranscriptMessage(activeSession, assistantMessage)
   archiveTranscriptMessage(session, assistantMessage);
   if (!searchArchiveRequest && activatedBrainSegment && activatedBrainSegment !== previousBrainSegment) {

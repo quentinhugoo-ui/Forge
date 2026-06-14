@@ -70,7 +70,8 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("providerAttachments = await providerAttachmentsFromUploads(providerUploadItems)");
     expect(mainSource).toContain("const currentAttachmentIds = new Set(pendingUploadItems.map((item) => item.id))");
     expect(mainSource).toContain("attachments: attachmentPreviews");
-    expect(mainSource).toContain("await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId, requestTranscriptWithUser)");
+    expect(mainSource).toContain("requestTranscriptWithUser");
+    expect(mainSource).toContain("liveTextSink");
     expect(mainSource).toContain("providerAttachmentCache");
   });
 
@@ -81,6 +82,13 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("PANELS_CHAT_BOTTOM_RECENT_CONTEXT_TOKENS");
     expect(mainSource).toContain("function conversationMemoryContext");
     expect(mainSource).toContain("function conversationContextPlan");
+    expect(mainSource).toContain("CONTEXT_COMPACTION_EVENT_COMMAND");
+    expect(mainSource).toContain("function contextCompactionEventMessage");
+    expect(mainSource).toContain("contextCompactionEventMessage(\"compressing\"");
+    expect(mainSource).toContain("contextCompactionEventMessage(\"compressed\"");
+    expect(mainSource).toContain("context_compaction_started");
+    expect(mainSource).toContain("context_compaction_completed");
+    expect(mainSource).toContain("!message.id.startsWith(\"assistant-status-\")");
     expect(mainSource).toContain("function estimatedPromptTokens");
     expect(mainSource).toContain("BRAIN_REINJECTED_AFTER_COMPACTION");
     expect(mainSource).toContain("brainBootManifest()");
@@ -102,7 +110,8 @@ describe("LLM multimodal attachments", () => {
     expect(mainSource).toContain("function appendTranscriptMessageForActiveSession");
     expect(mainSource).toContain("const requestSessionId = activeSession.sessionId");
     expect(mainSource).toContain("const requestTranscriptBeforeSend = [...panelsChatBottomState.transcript]");
-    expect(mainSource).toContain("buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId, requestTranscriptWithUser)");
+    expect(mainSource).toContain("requestTranscriptWithUser");
+    expect(mainSource).toContain("liveAssistantMessageId");
   });
 
   it("opens uploaded and assistant-created files from other sessions in a dedicated Files tab", () => {
@@ -777,6 +786,10 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("function agentFileModificationSummary");
     expect(rendererSource).toContain("function AnimatedModificationCounter");
     expect(rendererSource).toContain("Modification de");
+    expect(rendererSource).toContain("CONTEXT_COMPACTION_COMMAND");
+    expect(rendererSource).toContain("function TranscriptContextCompactionEventLine");
+    expect(rendererSource).toContain("Compressing context");
+    expect(rendererSource).toContain("Context compressed");
     expect(rendererSource).toContain("transcriptCodeActFileEvent__fileCard");
     expect(rendererSource).toContain("transcriptCodeActFileEvent__counter");
     expect(rendererSource).toContain("transcriptItem--assistantLoop");
@@ -789,6 +802,9 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".transcriptCodeActEvent--fileModification");
     expect(stylesSource).toContain(".transcriptCodeActFileEvent__added");
     expect(stylesSource).toContain(".transcriptCodeActFileEvent__removed");
+    expect(stylesSource).toContain(".transcriptContextCompactionEvent");
+    expect(stylesSource).toContain("transcriptContextCompactionLine");
+    expect(stylesSource).toContain("transcriptContextCompactionInk");
     expect(stylesSource).toContain(".transcriptItem--assistantLoop");
   });
 
