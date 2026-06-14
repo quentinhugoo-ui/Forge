@@ -11495,7 +11495,6 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   clearWidgetWindowShrinkTimer();
   clearWidgetTaskbarAutoHideTimer();
   clearWidgetWindowBoundsAnimationTimer();
-  restoreWidgetTaskbarState();
   resetNativeWidgetClickThrough(window);
   resetNativeWidgetWindowShape(window);
   const restoreState = widgetWindowRestoreState;

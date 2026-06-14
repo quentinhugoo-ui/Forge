@@ -82,6 +82,7 @@ const WIDGET_HANDOFF_SETTLE_MS = WIDGET_NATIVE_SHRINK_LEAD_MS + WIDGET_NATIVE_SE
 const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_NATIVE_SHRINK_LEAD_MS;
 const WIDGET_VISUAL_SETTLE_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_HANDOFF_SETTLE_MS;
 const WIDGET_TASKBAR_STEP_MS = 180;
+const WIDGET_TASKBAR_RESTORE_AFTER_EXIT_MS = 760;
 
 type WidgetLayoutLock = {
   chatLeft: number;
@@ -954,10 +955,6 @@ export function App() {
     if (!enabled) {
       void (async () => {
         const windowControls = globalThis.window?.forgeWindowControls;
-        void windowControls?.setWidgetTaskbarAutoHide?.(false).catch((error: unknown) => {
-          console.warn("Failed to restore widget taskbar state", error);
-          return false;
-        });
         const nativeWidgetRestored = await windowControls?.setWidgetMode?.(false).catch((error: unknown) => {
           console.warn("Failed to restore native widget mode", error);
           return false;
@@ -972,6 +969,12 @@ export function App() {
         if (nativeWidgetRestored === false) {
           console.warn("Native widget restore was not accepted.");
         }
+        window.setTimeout(() => {
+          void windowControls?.setWidgetTaskbarAutoHide?.(false).catch((error: unknown) => {
+            console.warn("Failed to restore widget taskbar state", error);
+            return false;
+          });
+        }, WIDGET_TASKBAR_RESTORE_AFTER_EXIT_MS);
         releaseWidgetModeTransition(sequenceToken, 420);
       })();
       return;
