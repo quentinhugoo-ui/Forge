@@ -141,6 +141,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
     pub lumen_lighting_packet: BangerNativeLumenLightingPacket,
     pub virtual_shadow_packet: BangerNativeVirtualShadowPacket,
+    pub direct_lighting_packet: BangerNativeDirectLightingPacket,
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
     pub frame_submission_packet: BangerNativeFrameSubmissionPacket,
     pub rhi_submit_packet: BangerNativeRhiSubmitPacket,
@@ -1039,6 +1040,53 @@ pub struct BangerNativeVirtualShadowEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangerNativeDirectLightingPacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub lumen_lighting_hash: String,
+    pub virtual_shadow_hash: String,
+    pub radiance_schedule_hash: String,
+    pub render_graph_hash: String,
+    pub light_cluster_count: usize,
+    pub stochastic_sample_count: u64,
+    pub shadowed_light_count: usize,
+    pub unshadowed_light_count: usize,
+    pub denoiser_tile_count: usize,
+    pub resolve_tile_count: usize,
+    pub hardware_ray_candidate_count: usize,
+    pub light_grid_hash: String,
+    pub sample_sequence_hash: String,
+    pub shadow_mask_hash: String,
+    pub denoiser_hash: String,
+    pub resolve_hash: String,
+    pub packet_hash: String,
+    pub entries: Vec<BangerNativeDirectLightingEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeDirectLightingEntry {
+    pub object_id: String,
+    pub cluster_id: String,
+    pub light_cluster_id: String,
+    pub virtual_light_id: String,
+    pub light_kind: &'static str,
+    pub light_grid_cell: [u32; 3],
+    pub sample_sequence: u64,
+    pub sample_count: u32,
+    pub shadow_page_id: String,
+    pub shadow_mask_hash: String,
+    pub contribution_hash: String,
+    pub denoiser_tile: [u32; 4],
+    pub resolve_tile: [u32; 4],
+    pub ray_tracing_candidate: bool,
+    pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangerNativeGaussianSplatLayerManifest {
     pub schema: &'static str,
     pub authority: &'static str,
@@ -1893,6 +1941,13 @@ impl BangerNativeEngine {
             &radiance_schedule_manifest,
             &render_graph_compilation,
         );
+        let direct_lighting_packet = build_direct_lighting_packet(
+            &prepared,
+            &lumen_lighting_packet,
+            &virtual_shadow_packet,
+            &radiance_schedule_manifest,
+            &render_graph_compilation,
+        );
         let gaussian_splat_layer_manifest = build_gaussian_splat_layer_manifest(
             &prepared,
             &scene_graph_submission,
@@ -1917,6 +1972,7 @@ impl BangerNativeEngine {
             &radiance_schedule_manifest,
             &lumen_lighting_packet,
             &virtual_shadow_packet,
+            &direct_lighting_packet,
             &gaussian_splat_layer_manifest,
         );
         let rhi_submit_packet =
@@ -1965,6 +2021,7 @@ impl BangerNativeEngine {
             &radiance_schedule_manifest,
             &lumen_lighting_packet,
             &virtual_shadow_packet,
+            &direct_lighting_packet,
             &gaussian_splat_layer_manifest,
             &frame_submission_packet,
             &rhi_submit_packet,
@@ -2025,6 +2082,7 @@ impl BangerNativeEngine {
             radiance_schedule_manifest,
             lumen_lighting_packet,
             virtual_shadow_packet,
+            direct_lighting_packet,
             gaussian_splat_layer_manifest,
             frame_submission_packet,
             rhi_submit_packet,
@@ -3476,6 +3534,131 @@ fn build_virtual_shadow_packet(
     }
 }
 
+fn build_direct_lighting_packet(
+    prepared: &MonsterPreparedCompute,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+) -> BangerNativeDirectLightingPacket {
+    let entries = virtual_shadow_packet
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, shadow_entry)| {
+            let lumen_entry = lumen_lighting_packet
+                .entries
+                .iter()
+                .find(|entry| entry.cluster_id == shadow_entry.cluster_id);
+            let light_kind = direct_lighting_kind(shadow_entry, lumen_entry);
+            let light_cluster_id = direct_lighting_cluster_id(shadow_entry, light_kind);
+            let sample_count = direct_lighting_sample_count(
+                shadow_entry,
+                lumen_entry,
+                radiance_schedule_manifest.light_budget,
+            );
+            let sample_sequence =
+                direct_lighting_sample_sequence(shadow_entry, &light_cluster_id, index as u32);
+            let shadow_mask_hash =
+                direct_lighting_shadow_mask_hash(shadow_entry, lumen_entry, sample_sequence);
+            let contribution_hash = direct_lighting_contribution_hash(
+                shadow_entry,
+                lumen_entry,
+                light_kind,
+                sample_count,
+                &shadow_mask_hash,
+            );
+            let denoiser_tile = direct_lighting_denoiser_tile(shadow_entry, sample_count);
+            let resolve_tile = direct_lighting_resolve_tile(shadow_entry, &denoiser_tile);
+            let ray_tracing_candidate = direct_lighting_ray_tracing_candidate(shadow_entry, lumen_entry);
+            let entry_hash = direct_lighting_entry_hash(
+                shadow_entry,
+                &light_cluster_id,
+                light_kind,
+                sample_sequence,
+                sample_count,
+                &shadow_mask_hash,
+                &contribution_hash,
+                &denoiser_tile,
+                &resolve_tile,
+                ray_tracing_candidate,
+            );
+            BangerNativeDirectLightingEntry {
+                object_id: shadow_entry.object_id.clone(),
+                cluster_id: shadow_entry.cluster_id.clone(),
+                light_cluster_id,
+                virtual_light_id: shadow_entry.virtual_light_id.clone(),
+                light_kind,
+                light_grid_cell: shadow_entry.light_grid_cell,
+                sample_sequence,
+                sample_count,
+                shadow_page_id: shadow_entry.shadow_page_id.clone(),
+                shadow_mask_hash,
+                contribution_hash,
+                denoiser_tile,
+                resolve_tile,
+                ray_tracing_candidate,
+                entry_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let light_grid_hash = direct_lighting_grid_hash(&entries);
+    let sample_sequence_hash = direct_lighting_sample_sequence_hash(&entries);
+    let shadow_mask_hash = direct_lighting_shadow_masks_hash(&entries);
+    let denoiser_hash = direct_lighting_denoiser_hash(&entries);
+    let resolve_hash = direct_lighting_resolve_hash(&entries);
+    let packet_hash = direct_lighting_packet_hash(
+        prepared,
+        lumen_lighting_packet,
+        virtual_shadow_packet,
+        radiance_schedule_manifest,
+        render_graph_compilation,
+        &light_grid_hash,
+        &sample_sequence_hash,
+        &shadow_mask_hash,
+        &denoiser_hash,
+        &resolve_hash,
+        &entries,
+    );
+    BangerNativeDirectLightingPacket {
+        schema: "forge.banger.direct_lighting_packet.v1",
+        authority: "banger_megalights_light_grid_stochastic_shadowed_resolve",
+        clean_room_basis: "local_unreal_sparse_megalights_stochastic_light_grid_resolve_denoise_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        lumen_lighting_hash: lumen_lighting_packet.packet_hash.clone(),
+        virtual_shadow_hash: virtual_shadow_packet.packet_hash.clone(),
+        radiance_schedule_hash: radiance_schedule_manifest.schedule_hash.clone(),
+        render_graph_hash: render_graph_compilation.graph_hash.clone(),
+        light_cluster_count: entries
+            .iter()
+            .map(|entry| entry.light_cluster_id.as_str())
+            .collect::<BTreeSet<_>>()
+            .len(),
+        stochastic_sample_count: entries.iter().map(|entry| entry.sample_count as u64).sum(),
+        shadowed_light_count: entries
+            .iter()
+            .filter(|entry| entry.shadow_page_id.starts_with("vshadow:"))
+            .count(),
+        unshadowed_light_count: entries
+            .iter()
+            .filter(|entry| !entry.shadow_page_id.starts_with("vshadow:"))
+            .count(),
+        denoiser_tile_count: entries.len(),
+        resolve_tile_count: entries.len(),
+        hardware_ray_candidate_count: entries
+            .iter()
+            .filter(|entry| entry.ray_tracing_candidate)
+            .count(),
+        light_grid_hash,
+        sample_sequence_hash,
+        shadow_mask_hash,
+        denoiser_hash,
+        resolve_hash,
+        packet_hash,
+        entries,
+    }
+}
+
 fn build_gaussian_splat_layer_manifest(
     prepared: &MonsterPreparedCompute,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
@@ -3994,6 +4177,7 @@ fn build_frame_submission_packet(
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
+    direct_lighting_packet: &BangerNativeDirectLightingPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> BangerNativeFrameSubmissionPacket {
     let color_target_hash = frame_submission_target_hash(
@@ -4033,6 +4217,7 @@ fn build_frame_submission_packet(
                 radiance_schedule_manifest,
                 lumen_lighting_packet,
                 virtual_shadow_packet,
+                direct_lighting_packet,
                 gaussian_splat_layer_manifest,
             );
             let output_target_hash = frame_submission_command_output_hash(
@@ -4086,6 +4271,7 @@ fn build_frame_submission_packet(
         raster_work_queue,
         lumen_lighting_packet,
         virtual_shadow_packet,
+        direct_lighting_packet,
         &color_target_hash,
         &depth_target_hash,
         &render_target_state_hash,
@@ -5217,6 +5403,7 @@ fn frame_submission_command_input_hash(
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
+    direct_lighting_packet: &BangerNativeDirectLightingPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> String {
     let mut h = Sha256::new();
@@ -5234,10 +5421,13 @@ fn frame_submission_command_input_hash(
         h.update(lumen_lighting_packet.diffuse_indirect_hash.as_bytes());
         h.update(virtual_shadow_packet.packet_hash.as_bytes());
         h.update(virtual_shadow_packet.projection_hash.as_bytes());
+        h.update(direct_lighting_packet.packet_hash.as_bytes());
+        h.update(direct_lighting_packet.resolve_hash.as_bytes());
     }
     if pass.stage == "shadow_depth" {
         h.update(virtual_shadow_packet.packet_hash.as_bytes());
         h.update(virtual_shadow_packet.page_table_hash.as_bytes());
+        h.update(direct_lighting_packet.shadow_mask_hash.as_bytes());
     }
     if pass.stage == "material_bind" {
         h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
@@ -5349,6 +5539,7 @@ fn frame_submission_packet_hash(
     raster_work_queue: &BangerNativeRasterWorkQueue,
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
+    direct_lighting_packet: &BangerNativeDirectLightingPacket,
     color_target_hash: &str,
     depth_target_hash: &str,
     render_target_state_hash: &str,
@@ -5366,6 +5557,7 @@ fn frame_submission_packet_hash(
     h.update(raster_work_queue.queue_hash.as_bytes());
     h.update(lumen_lighting_packet.packet_hash.as_bytes());
     h.update(virtual_shadow_packet.packet_hash.as_bytes());
+    h.update(direct_lighting_packet.packet_hash.as_bytes());
     h.update(color_target_hash.as_bytes());
     h.update(depth_target_hash.as_bytes());
     h.update(render_target_state_hash.as_bytes());
@@ -6614,6 +6806,258 @@ fn virtual_shadow_packet_hash(
     h.update(invalidation_hash.as_bytes());
     h.update(projection_hash.as_bytes());
     h.update(light_grid_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_kind(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+) -> &'static str {
+    if lumen_entry
+        .map(|entry| entry.trace_policy == "hardware_ray_traced_surface_cache")
+        .unwrap_or(false)
+    {
+        "hardware_ray_megalight"
+    } else if shadow_entry.ray_budget > 1024 {
+        "stochastic_many_light"
+    } else {
+        "clustered_deferred_light"
+    }
+}
+
+fn direct_lighting_cluster_id(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    light_kind: &str,
+) -> String {
+    hash_text_hex(
+        "forge.banger.direct_lighting.cluster_id.v1",
+        &format!(
+            "{}:{}:{}:{}:{}",
+            shadow_entry.virtual_light_id,
+            light_kind,
+            shadow_entry.light_grid_cell[0],
+            shadow_entry.light_grid_cell[1],
+            shadow_entry.light_grid_cell[2]
+        ),
+    )
+}
+
+fn direct_lighting_sample_count(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+    fallback_light_budget: u32,
+) -> u32 {
+    let lumen_bonus = lumen_entry
+        .map(|entry| entry.reflection_ray_count + entry.diffuse_ray_count / 16)
+        .unwrap_or(1);
+    shadow_entry
+        .ray_budget
+        .saturating_add(lumen_bonus)
+        .saturating_add(fallback_light_budget)
+        .clamp(1, 16384)
+}
+
+fn direct_lighting_sample_sequence(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    light_cluster_id: &str,
+    salt: u32,
+) -> u64 {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.sample_sequence.v1\0");
+    h.update(shadow_entry.entry_hash.as_bytes());
+    h.update(light_cluster_id.as_bytes());
+    h.update(salt.to_le_bytes());
+    let digest: [u8; 32] = h.finalize().into();
+    u64::from_le_bytes(digest[0..8].try_into().expect("direct lighting sample sequence bytes"))
+}
+
+fn direct_lighting_shadow_mask_hash(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+    sample_sequence: u64,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.shadow_mask.v1\0");
+    h.update(shadow_entry.page_table_hash.as_bytes());
+    h.update(shadow_entry.projection_hash.as_bytes());
+    h.update(sample_sequence.to_le_bytes());
+    if let Some(lumen_entry) = lumen_entry {
+        h.update(lumen_entry.trace_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_contribution_hash(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+    light_kind: &str,
+    sample_count: u32,
+    shadow_mask_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.contribution.v1\0");
+    h.update(shadow_entry.entry_hash.as_bytes());
+    h.update(light_kind.as_bytes());
+    h.update(sample_count.to_le_bytes());
+    h.update(shadow_mask_hash.as_bytes());
+    if let Some(lumen_entry) = lumen_entry {
+        h.update(lumen_entry.diffuse_ray_count.to_le_bytes());
+        h.update(lumen_entry.reflection_ray_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_denoiser_tile(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    sample_count: u32,
+) -> [u32; 4] {
+    let extent = 8 + (sample_count / 256).min(8) * 4;
+    [
+        shadow_entry.projection_tile[0] / 2,
+        shadow_entry.projection_tile[1] / 2,
+        extent.max(8),
+        extent.max(8),
+    ]
+}
+
+fn direct_lighting_resolve_tile(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    denoiser_tile: &[u32; 4],
+) -> [u32; 4] {
+    [
+        denoiser_tile[0].wrapping_add(shadow_entry.light_grid_cell[0]) % 4096,
+        denoiser_tile[1].wrapping_add(shadow_entry.light_grid_cell[1]) % 4096,
+        denoiser_tile[2],
+        denoiser_tile[3],
+    ]
+}
+
+fn direct_lighting_ray_tracing_candidate(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    lumen_entry: Option<&BangerNativeLumenLightingEntry>,
+) -> bool {
+    shadow_entry.cache_state == "persistent_cache_hit"
+        || lumen_entry
+            .map(|entry| entry.trace_policy == "hardware_ray_traced_surface_cache")
+            .unwrap_or(false)
+}
+
+fn direct_lighting_entry_hash(
+    shadow_entry: &BangerNativeVirtualShadowEntry,
+    light_cluster_id: &str,
+    light_kind: &str,
+    sample_sequence: u64,
+    sample_count: u32,
+    shadow_mask_hash: &str,
+    contribution_hash: &str,
+    denoiser_tile: &[u32; 4],
+    resolve_tile: &[u32; 4],
+    ray_tracing_candidate: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.entry.v1\0");
+    h.update(shadow_entry.entry_hash.as_bytes());
+    h.update(light_cluster_id.as_bytes());
+    h.update(light_kind.as_bytes());
+    h.update(sample_sequence.to_le_bytes());
+    h.update(sample_count.to_le_bytes());
+    h.update(shadow_mask_hash.as_bytes());
+    h.update(contribution_hash.as_bytes());
+    for value in denoiser_tile {
+        h.update(value.to_le_bytes());
+    }
+    for value in resolve_tile {
+        h.update(value.to_le_bytes());
+    }
+    h.update([ray_tracing_candidate as u8]);
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_grid_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.light_grid.v1\0");
+    for entry in entries {
+        h.update(entry.light_cluster_id.as_bytes());
+        for value in entry.light_grid_cell {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_sample_sequence_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.sample_sequences.v1\0");
+    for entry in entries {
+        h.update(entry.sample_sequence.to_le_bytes());
+        h.update(entry.sample_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_shadow_masks_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.shadow_masks.v1\0");
+    for entry in entries {
+        h.update(entry.shadow_page_id.as_bytes());
+        h.update(entry.shadow_mask_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_denoiser_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.denoiser.v1\0");
+    for entry in entries {
+        for value in entry.denoiser_tile {
+            h.update(value.to_le_bytes());
+        }
+        h.update(entry.contribution_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_resolve_hash(entries: &[BangerNativeDirectLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting.resolve.v1\0");
+    for entry in entries {
+        for value in entry.resolve_tile {
+            h.update(value.to_le_bytes());
+        }
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn direct_lighting_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
+    virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    light_grid_hash: &str,
+    sample_sequence_hash: &str,
+    shadow_mask_hash: &str,
+    denoiser_hash: &str,
+    resolve_hash: &str,
+    entries: &[BangerNativeDirectLightingEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.direct_lighting_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(lumen_lighting_packet.packet_hash.as_bytes());
+    h.update(virtual_shadow_packet.packet_hash.as_bytes());
+    h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(light_grid_hash.as_bytes());
+    h.update(sample_sequence_hash.as_bytes());
+    h.update(shadow_mask_hash.as_bytes());
+    h.update(denoiser_hash.as_bytes());
+    h.update(resolve_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
     }
@@ -10098,6 +10542,7 @@ fn render_handoff_hash(
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     virtual_shadow_packet: &BangerNativeVirtualShadowPacket,
+    direct_lighting_packet: &BangerNativeDirectLightingPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
@@ -10140,6 +10585,9 @@ fn render_handoff_hash(
     h.update(virtual_shadow_packet.packet_hash.as_bytes());
     h.update(virtual_shadow_packet.page_table_hash.as_bytes());
     h.update(virtual_shadow_packet.projection_hash.as_bytes());
+    h.update(direct_lighting_packet.packet_hash.as_bytes());
+    h.update(direct_lighting_packet.sample_sequence_hash.as_bytes());
+    h.update(direct_lighting_packet.resolve_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
     h.update(frame_submission_packet.submission_hash.as_bytes());
@@ -11455,6 +11903,84 @@ mod tests {
             .iter()
             .any(|pass| pass.stage == "shadow_depth"
                 && pass.pass_name == "virtual_shadow_depth"));
+        assert_eq!(
+            response.direct_lighting_packet.schema,
+            "forge.banger.direct_lighting_packet.v1"
+        );
+        assert_eq!(
+            response.direct_lighting_packet.authority,
+            "banger_megalights_light_grid_stochastic_shadowed_resolve"
+        );
+        assert!(response
+            .direct_lighting_packet
+            .clean_room_basis
+            .contains("local_unreal_sparse_megalights_stochastic"));
+        assert_eq!(
+            response.direct_lighting_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.direct_lighting_packet.lumen_lighting_hash,
+            response.lumen_lighting_packet.packet_hash
+        );
+        assert_eq!(
+            response.direct_lighting_packet.virtual_shadow_hash,
+            response.virtual_shadow_packet.packet_hash
+        );
+        assert_eq!(
+            response.direct_lighting_packet.radiance_schedule_hash,
+            response.radiance_schedule_manifest.schedule_hash
+        );
+        assert_eq!(
+            response.direct_lighting_packet.render_graph_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert!(response.direct_lighting_packet.light_cluster_count > 0);
+        assert!(response.direct_lighting_packet.stochastic_sample_count > 0);
+        assert_eq!(
+            response.direct_lighting_packet.shadowed_light_count
+                + response.direct_lighting_packet.unshadowed_light_count,
+            response.direct_lighting_packet.entries.len()
+        );
+        assert_eq!(
+            response.direct_lighting_packet.denoiser_tile_count,
+            response.direct_lighting_packet.entries.len()
+        );
+        assert_eq!(
+            response.direct_lighting_packet.resolve_tile_count,
+            response.direct_lighting_packet.entries.len()
+        );
+        assert_eq!(response.direct_lighting_packet.light_grid_hash.len(), 64);
+        assert_eq!(
+            response.direct_lighting_packet.sample_sequence_hash.len(),
+            64
+        );
+        assert_eq!(response.direct_lighting_packet.shadow_mask_hash.len(), 64);
+        assert_eq!(response.direct_lighting_packet.denoiser_hash.len(), 64);
+        assert_eq!(response.direct_lighting_packet.resolve_hash.len(), 64);
+        assert_eq!(response.direct_lighting_packet.packet_hash.len(), 64);
+        assert!(response
+            .direct_lighting_packet
+            .entries
+            .iter()
+            .all(|entry| entry.light_cluster_id.len() == 64
+                && entry.virtual_light_id.len() == 64
+                && entry.shadow_page_id.starts_with("vshadow:")
+                && entry.sample_sequence != 0
+                && entry.sample_count > 0
+                && entry.shadow_mask_hash.len() == 64
+                && entry.contribution_hash.len() == 64
+                && entry.denoiser_tile[2] > 0
+                && entry.denoiser_tile[3] > 0
+                && entry.resolve_tile[2] == entry.denoiser_tile[2]
+                && entry.resolve_tile[3] == entry.denoiser_tile[3]
+                && entry.entry_hash.len() == 64
+                && matches!(
+                    entry.light_kind,
+                    "hardware_ray_megalight"
+                        | "stochastic_many_light"
+                        | "clustered_deferred_light"
+                )));
         assert_eq!(
             response.gaussian_splat_layer_manifest.schema,
             "forge.banger.native_gaussian_splat_layer_manifest.v1"

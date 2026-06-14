@@ -54,6 +54,8 @@ Clean-room extraction applied in Forge:
 - Banger implementation: `BangerNativeLumenLightingPacket` binds Nanite pages, radiance probe pages and render graph lighting passes into deterministic GI/reflection hashes.
 - Virtual shadow map lesson: shadow page marking, persistent cache state, light-grid cells and projection tiles must be explicit before shadow depth submission.
 - Banger implementation: `BangerNativeVirtualShadowPacket` derives shadow pages from Lumen/Nanite visibility and binds page table, cache, invalidation, projection and light-grid hashes.
+- MegaLights/stochastic lighting lesson: direct lighting needs compact light clusters, stable sample sequences, shadow masks, denoiser tiles and resolve tiles tied to the same light-grid state.
+- Banger implementation: `BangerNativeDirectLightingPacket` derives direct-lighting samples from virtual shadow pages and binds light-grid, sampling, shadow-mask, denoise and resolve hashes.
 
 Clean-room rule:
 
