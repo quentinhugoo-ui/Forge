@@ -10711,11 +10711,15 @@ function minimizeNativeWindow(event: Electron.IpcMainInvokeEvent): boolean {
     return false;
   }
   const window = senderNativeWindow(event);
-  if (!window) {
+  if (!window || window.isDestroyed()) {
     return false;
   }
+  releaseNativeWidgetWindowControlState(window);
   if (window.isFullScreen()) {
     window.setFullScreen(false);
+  }
+  if ((process.platform === "win32" || process.platform === "darwin") && !window.isMinimizable()) {
+    window.setMinimizable(true);
   }
   console.info("Applying native window minimize", { id: window.id, title: window.getTitle() });
   window.minimize();
@@ -10846,6 +10850,17 @@ function clearWidgetWindowBoundsAnimationTimer(): void {
     clearInterval(widgetWindowBoundsAnimationTimer);
     widgetWindowBoundsAnimationTimer = null;
   }
+}
+
+function releaseNativeWidgetWindowControlState(window: BrowserWindow): void {
+  clearWidgetWindowShrinkTimer();
+  clearWidgetTaskbarAutoHideTimer();
+  widgetTaskbarAutoHideJobToken += 1;
+  clearWidgetWindowBoundsAnimationTimer();
+  resetNativeWidgetClickThrough(window);
+  resetNativeWidgetWindowShape(window);
+  widgetWindowRestoreState = null;
+  window.setAlwaysOnTop(false);
 }
 
 function easeOutCubic(value: number): number {
