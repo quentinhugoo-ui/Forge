@@ -111,6 +111,11 @@ Date: 2026-06-14
 8. Add Gaussian splat layer support as a hybrid representation, not a separate
    renderer: splat buckets, sort/group keys, proxy bounds and optional
    mesh/surfel conversion manifests.
+   Status: started in `BangerNativeGaussianSplatLayerManifest` as
+   `forge.banger.native_gaussian_splat_layer_manifest.v1`; Gaussian splats now
+   live as hybrid scene layers with bucket/sort/group keys, proxy bounds and
+   mesh/surfel conversion manifests. Real splat rasterization remains gated
+   behind the promoted renderer path.
 9. Promote Slang as the shader artifact source when available: reflection,
    WGSL/SPIR-V/HLSL/MSL targets, material ABI checks and fallback WGSL parity.
 10. Add benchmark gates for promotion: latency, VRAM pressure, cache-hit reuse,

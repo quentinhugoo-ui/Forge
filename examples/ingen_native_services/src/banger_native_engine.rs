@@ -78,6 +78,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub scene_graph_submission: BangerNativeSceneGraphSubmission,
     pub culling_manifest: BangerNativeCullingManifest,
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
+    pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
@@ -387,6 +388,54 @@ pub struct BangerNativeRadianceProbePage {
     pub residency_policy: &'static str,
     pub invalidation_hash: String,
     pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeGaussianSplatLayerManifest {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub layer_count: usize,
+    pub bucket_count: usize,
+    pub conversion_count: usize,
+    pub proxy_bounds_hash: String,
+    pub sort_key_hash: String,
+    pub group_key_hash: String,
+    pub conversion_manifest_hash: String,
+    pub manifest_hash: String,
+    pub layers: Vec<BangerNativeGaussianSplatLayer>,
+    pub conversions: Vec<BangerNativeGaussianSplatConversionManifest>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeGaussianSplatLayer {
+    pub object_id: String,
+    pub source_representation: &'static str,
+    pub layer_kind: &'static str,
+    pub bucket_id: String,
+    pub sort_key: String,
+    pub group_key: String,
+    pub proxy_bounds_min: [f32; 3],
+    pub proxy_bounds_max: [f32; 3],
+    pub proxy_bounding_sphere: [f32; 4],
+    pub splat_count_estimate: u32,
+    pub opacity_cutoff: f32,
+    pub lod_bucket: u32,
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeGaussianSplatConversionManifest {
+    pub object_id: String,
+    pub from_representation: &'static str,
+    pub target_representation: &'static str,
+    pub conversion_path: &'static str,
+    pub enabled: bool,
+    pub proxy_bounds_hash: String,
+    pub source_proof_hash: String,
+    pub conversion_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -707,6 +756,12 @@ impl BangerNativeEngine {
             &culling_manifest,
             &resource_table,
         );
+        let gaussian_splat_layer_manifest = build_gaussian_splat_layer_manifest(
+            &prepared,
+            &scene_graph_submission,
+            &culling_manifest,
+            &radiance_schedule_manifest,
+        );
         let texture_bridge_contract = build_texture_bridge_contract(
             &prepared,
             &pipeline_cache_manifest,
@@ -726,6 +781,7 @@ impl BangerNativeEngine {
             &scene_graph_submission,
             &culling_manifest,
             &radiance_schedule_manifest,
+            &gaussian_splat_layer_manifest,
         );
         let render_pass_count = render_graph.len();
         let residency_job_count = residency_jobs.len();
@@ -770,6 +826,7 @@ impl BangerNativeEngine {
             scene_graph_submission,
             culling_manifest,
             radiance_schedule_manifest,
+            gaussian_splat_layer_manifest,
             frame_graph_bindings,
             artifacts,
             verifier: BangerNativeRenderVerifier {
@@ -1342,6 +1399,126 @@ fn radiance_probe_page_from_slot(
         residency_policy: "async_compute_lighting_stream",
         invalidation_hash,
         proof_hash,
+    }
+}
+
+fn build_gaussian_splat_layer_manifest(
+    prepared: &MonsterPreparedCompute,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+) -> BangerNativeGaussianSplatLayerManifest {
+    let layers = scene_graph_submission
+        .submissions
+        .iter()
+        .filter(|node| node.visible && node.renderable && node.representation == "gaussian_splat")
+        .map(|node| gaussian_splat_layer_from_node(node, culling_manifest))
+        .collect::<Vec<_>>();
+    let conversions = scene_graph_submission
+        .submissions
+        .iter()
+        .filter(|node| node.visible && node.renderable && gaussian_splat_conversion_candidate(node.representation))
+        .map(|node| gaussian_splat_conversion_from_node(node, radiance_schedule_manifest))
+        .collect::<Vec<_>>();
+    let bucket_count = layers
+        .iter()
+        .map(|layer| layer.bucket_id.as_str())
+        .collect::<BTreeSet<_>>()
+        .len();
+    let proxy_bounds_hash = gaussian_splat_proxy_bounds_hash(&layers, &conversions);
+    let sort_key_hash = gaussian_splat_sort_key_hash(&layers);
+    let group_key_hash = gaussian_splat_group_key_hash(&layers);
+    let conversion_manifest_hash = gaussian_splat_conversion_manifest_hash(&conversions);
+    let manifest_hash = gaussian_splat_layer_manifest_hash(
+        prepared,
+        scene_graph_submission,
+        culling_manifest,
+        radiance_schedule_manifest,
+        &proxy_bounds_hash,
+        &sort_key_hash,
+        &group_key_hash,
+        &conversion_manifest_hash,
+        &layers,
+        &conversions,
+    );
+    BangerNativeGaussianSplatLayerManifest {
+        schema: "forge.banger.native_gaussian_splat_layer_manifest.v1",
+        authority: "scene_graph_hybrid_gaussian_splat_layers_no_separate_renderer",
+        layer_count: layers.len(),
+        bucket_count,
+        conversion_count: conversions.len(),
+        proxy_bounds_hash,
+        sort_key_hash,
+        group_key_hash,
+        conversion_manifest_hash,
+        manifest_hash,
+        layers,
+        conversions,
+    }
+}
+
+fn gaussian_splat_layer_from_node(
+    node: &BangerNativeSceneSubmissionNode,
+    culling_manifest: &BangerNativeCullingManifest,
+) -> BangerNativeGaussianSplatLayer {
+    let lod_bucket = culling_manifest
+        .entries
+        .iter()
+        .find(|entry| entry.object_id == node.object_id)
+        .map(|entry| entry.lod_bucket)
+        .unwrap_or(0);
+    let bucket_id = gaussian_splat_bucket_id(node, lod_bucket);
+    let sort_key = gaussian_splat_sort_key(node, lod_bucket);
+    let group_key = gaussian_splat_group_key(node);
+    let splat_count_estimate = gaussian_splat_count_estimate(node, lod_bucket);
+    let opacity_cutoff = gaussian_splat_opacity_cutoff(lod_bucket);
+    let proof_hash = gaussian_splat_layer_proof_hash(
+        node,
+        &bucket_id,
+        &sort_key,
+        &group_key,
+        splat_count_estimate,
+        opacity_cutoff,
+        lod_bucket,
+    );
+    BangerNativeGaussianSplatLayer {
+        object_id: node.object_id.clone(),
+        source_representation: node.representation,
+        layer_kind: "native_gaussian_splat_layer",
+        bucket_id,
+        sort_key,
+        group_key,
+        proxy_bounds_min: node.world_aabb_min,
+        proxy_bounds_max: node.world_aabb_max,
+        proxy_bounding_sphere: node.world_bounding_sphere,
+        splat_count_estimate,
+        opacity_cutoff,
+        lod_bucket,
+        proof_hash,
+    }
+}
+
+fn gaussian_splat_conversion_from_node(
+    node: &BangerNativeSceneSubmissionNode,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+) -> BangerNativeGaussianSplatConversionManifest {
+    let proxy_bounds_hash = gaussian_splat_conversion_proxy_bounds_hash(node);
+    let conversion_path = gaussian_splat_conversion_path(node.representation);
+    let conversion_hash = gaussian_splat_conversion_hash(
+        node,
+        conversion_path,
+        radiance_schedule_manifest,
+        &proxy_bounds_hash,
+    );
+    BangerNativeGaussianSplatConversionManifest {
+        object_id: node.object_id.clone(),
+        from_representation: node.representation,
+        target_representation: "gaussian_splat_proxy",
+        conversion_path,
+        enabled: true,
+        proxy_bounds_hash,
+        source_proof_hash: node.proof_hash.clone(),
+        conversion_hash,
     }
 }
 
@@ -2040,6 +2217,192 @@ fn radiance_schedule_hash(
     h.update(invalidation_hash.as_bytes());
     for entry in entries {
         h.update(entry.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_conversion_candidate(representation: &str) -> bool {
+    matches!(representation, "meshlet" | "surfel")
+}
+
+fn gaussian_splat_conversion_path(representation: &str) -> &'static str {
+    match representation {
+        "meshlet" => "meshlet_proxy_bounds_to_gaussian_splat_cluster",
+        "surfel" => "surfel_probe_page_to_gaussian_splat_proxy",
+        _ => "disabled_no_conversion_path",
+    }
+}
+
+fn gaussian_splat_bucket_id(node: &BangerNativeSceneSubmissionNode, lod_bucket: u32) -> String {
+    hash_text_hex(
+        "forge.banger.gaussian_splat.bucket.v1",
+        &format!("{}:{}:{lod_bucket}", node.representation, node.submission_order),
+    )
+}
+
+fn gaussian_splat_sort_key(node: &BangerNativeSceneSubmissionNode, lod_bucket: u32) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.sort_key.v1\0");
+    h.update(node.object_id.as_bytes());
+    h.update(lod_bucket.to_le_bytes());
+    for value in node.world_bounding_sphere {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_group_key(node: &BangerNativeSceneSubmissionNode) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.group_key.v1\0");
+    h.update(node.representation.as_bytes());
+    for stage in &node.render_graph_stages {
+        h.update(stage.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_count_estimate(node: &BangerNativeSceneSubmissionNode, lod_bucket: u32) -> u32 {
+    let base: u32 = match node.representation {
+        "gaussian_splat" => 4096,
+        _ => 1024,
+    };
+    base.saturating_sub(lod_bucket.saturating_mul(128)).max(64)
+}
+
+fn gaussian_splat_opacity_cutoff(lod_bucket: u32) -> f32 {
+    (0.01 + lod_bucket as f32 * 0.01).min(0.08)
+}
+
+fn gaussian_splat_layer_proof_hash(
+    node: &BangerNativeSceneSubmissionNode,
+    bucket_id: &str,
+    sort_key: &str,
+    group_key: &str,
+    splat_count_estimate: u32,
+    opacity_cutoff: f32,
+    lod_bucket: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.layer_proof.v1\0");
+    h.update(node.proof_hash.as_bytes());
+    h.update(bucket_id.as_bytes());
+    h.update(sort_key.as_bytes());
+    h.update(group_key.as_bytes());
+    h.update(splat_count_estimate.to_le_bytes());
+    h.update(opacity_cutoff.to_le_bytes());
+    h.update(lod_bucket.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_conversion_proxy_bounds_hash(node: &BangerNativeSceneSubmissionNode) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.conversion_proxy_bounds.v1\0");
+    h.update(node.object_id.as_bytes());
+    for value in node
+        .world_aabb_min
+        .iter()
+        .chain(node.world_aabb_max.iter())
+        .chain(node.world_bounding_sphere.iter())
+    {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_conversion_hash(
+    node: &BangerNativeSceneSubmissionNode,
+    conversion_path: &str,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    proxy_bounds_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.conversion.v1\0");
+    h.update(node.proof_hash.as_bytes());
+    h.update(conversion_path.as_bytes());
+    h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    h.update(proxy_bounds_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_proxy_bounds_hash(
+    layers: &[BangerNativeGaussianSplatLayer],
+    conversions: &[BangerNativeGaussianSplatConversionManifest],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.proxy_bounds.v1\0");
+    for layer in layers {
+        h.update(layer.object_id.as_bytes());
+        for value in layer
+            .proxy_bounds_min
+            .iter()
+            .chain(layer.proxy_bounds_max.iter())
+            .chain(layer.proxy_bounding_sphere.iter())
+        {
+            h.update(value.to_le_bytes());
+        }
+    }
+    for conversion in conversions {
+        h.update(conversion.proxy_bounds_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_sort_key_hash(layers: &[BangerNativeGaussianSplatLayer]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.sort_keys.v1\0");
+    for layer in layers {
+        h.update(layer.sort_key.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_group_key_hash(layers: &[BangerNativeGaussianSplatLayer]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.group_keys.v1\0");
+    for layer in layers {
+        h.update(layer.group_key.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_conversion_manifest_hash(
+    conversions: &[BangerNativeGaussianSplatConversionManifest],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.conversion_manifest.v1\0");
+    for conversion in conversions {
+        h.update(conversion.conversion_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_layer_manifest_hash(
+    prepared: &MonsterPreparedCompute,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    proxy_bounds_hash: &str,
+    sort_key_hash: &str,
+    group_key_hash: &str,
+    conversion_manifest_hash: &str,
+    layers: &[BangerNativeGaussianSplatLayer],
+    conversions: &[BangerNativeGaussianSplatConversionManifest],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_gaussian_splat_layer_manifest.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(scene_graph_submission.submission_hash.as_bytes());
+    h.update(culling_manifest.manifest_hash.as_bytes());
+    h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    h.update(proxy_bounds_hash.as_bytes());
+    h.update(sort_key_hash.as_bytes());
+    h.update(group_key_hash.as_bytes());
+    h.update(conversion_manifest_hash.as_bytes());
+    for layer in layers {
+        h.update(layer.proof_hash.as_bytes());
+    }
+    for conversion in conversions {
+        h.update(conversion.conversion_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -3154,6 +3517,7 @@ fn render_handoff_hash(
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
     culling_manifest: &BangerNativeCullingManifest,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_render_handoff.v1\0");
@@ -3171,6 +3535,8 @@ fn render_handoff_hash(
     h.update(culling_manifest.indirect_draw_buffer_hash.as_bytes());
     h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
     h.update(radiance_schedule_manifest.invalidation_hash.as_bytes());
+    h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
+    h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
     for artifact in artifacts {
         h.update(b"\0artifact\0");
         h.update(artifact.kind.as_bytes());
@@ -3557,6 +3923,38 @@ mod tests {
                 && entry.light_budget == response.radiance_schedule_manifest.light_budget
                 && entry.invalidation_hash.len() == 64
                 && entry.proof_hash.len() == 64));
+        assert_eq!(
+            response.gaussian_splat_layer_manifest.schema,
+            "forge.banger.native_gaussian_splat_layer_manifest.v1"
+        );
+        assert_eq!(
+            response.gaussian_splat_layer_manifest.layer_count,
+            response.gaussian_splat_layer_manifest.layers.len()
+        );
+        assert_eq!(
+            response.gaussian_splat_layer_manifest.conversion_count,
+            response.gaussian_splat_layer_manifest.conversions.len()
+        );
+        assert_eq!(response.gaussian_splat_layer_manifest.proxy_bounds_hash.len(), 64);
+        assert_eq!(response.gaussian_splat_layer_manifest.sort_key_hash.len(), 64);
+        assert_eq!(response.gaussian_splat_layer_manifest.group_key_hash.len(), 64);
+        assert_eq!(
+            response
+                .gaussian_splat_layer_manifest
+                .conversion_manifest_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.gaussian_splat_layer_manifest.manifest_hash.len(), 64);
+        assert!(response
+            .gaussian_splat_layer_manifest
+            .conversions
+            .iter()
+            .any(|conversion| conversion.from_representation == "meshlet"
+                && conversion.target_representation == "gaussian_splat_proxy"
+                && conversion.enabled
+                && conversion.proxy_bounds_hash.len() == 64
+                && conversion.conversion_hash.len() == 64));
         assert_eq!(response.resource_table_hash.len(), 64);
         assert_eq!(response.resource_table.slot_count, response.resource_table.slots.len());
         assert!(response.resource_table.slot_count >= response.artifacts.len());
