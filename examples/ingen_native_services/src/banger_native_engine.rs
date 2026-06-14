@@ -112,6 +112,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub proof_hash: String,
     pub manifest_hash: String,
     pub render_handoff_hash: String,
+    pub frame_handoff_manifest: BangerNativeFrameHandoffManifest,
     pub cache_miss_count: usize,
     pub fully_cached: bool,
     pub frame_blocking_allowed: bool,
@@ -155,6 +156,54 @@ pub struct BangerNativeRenderPrepareResponse {
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeFrameHandoffManifest {
+    pub schema: &'static str,
+    pub schema_version: u32,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub monster_manifest_hash: String,
+    pub proof_chain_hash: String,
+    pub render_graph_hash: String,
+    pub texture_bridge_hash: String,
+    pub frame_submission_hash: String,
+    pub rhi_submit_hash: String,
+    pub gpu_execution_hash: String,
+    pub backend_submit_hash: String,
+    pub backend_execution_hash: String,
+    pub residency_allocator_hash: String,
+    pub temporal_history_hash: String,
+    pub execution_chain_hash: String,
+    pub frame_proof_hash: String,
+    pub validation_receipt_hash: String,
+    pub manifest_hash: String,
+    pub render_graph_pass_count: usize,
+    pub rhi_step_count: usize,
+    pub gpu_phase_count: usize,
+    pub backend_pass_count: usize,
+    pub resource_transition_count: usize,
+    pub queue_proof_count: usize,
+    pub nonblank_verified: bool,
+    pub validation_receipt: BangerNativeFrameHandoffValidationReceipt,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeFrameHandoffValidationReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_graph_pass_count: usize,
+    pub checked_rhi_step_count: usize,
+    pub checked_gpu_phase_count: usize,
+    pub checked_backend_pass_count: usize,
+    pub checked_resource_transition_count: usize,
+    pub incomplete_chain_count: usize,
+    pub nonblank_gate_valid: bool,
+    pub validation_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3426,7 +3475,7 @@ impl BangerNativeEngine {
             &shader_compiler_ticket,
             target_frame_ms,
         );
-        let render_handoff_hash = render_handoff_hash(
+        let proof_chain_hash = render_handoff_hash(
             &prepared,
             &artifacts,
             &shader_compiler_ticket,
@@ -3454,6 +3503,20 @@ impl BangerNativeEngine {
             &backend_execution_packet,
             &render_graph_compilation,
         );
+        let frame_handoff_manifest = build_frame_handoff_manifest(
+            &prepared,
+            &proof_chain_hash,
+            &render_graph_compilation,
+            &texture_bridge_contract,
+            &frame_submission_packet,
+            &rhi_submit_packet,
+            &gpu_execution_receipt,
+            &backend_submit_plan,
+            &backend_execution_packet,
+            &page_residency_allocator,
+            &temporal_history_packet,
+        );
+        let render_handoff_hash = frame_handoff_manifest.manifest_hash.clone();
         let render_pass_count = render_graph.len();
         let residency_job_count = residency_jobs.len();
         let resource_table_hash = resource_table.table_hash.clone();
@@ -3470,6 +3533,7 @@ impl BangerNativeEngine {
             proof_hash: prepared.route.plan.proof_hash.clone(),
             manifest_hash: prepared.manifest_hash.clone(),
             render_handoff_hash,
+            frame_handoff_manifest,
             cache_miss_count: prepared.cache_miss_work.len(),
             fully_cached: prepared.is_fully_cached(),
             frame_blocking_allowed: prepared.route.plan.frame_blocking_allowed,
@@ -22327,6 +22391,250 @@ fn render_handoff_hash(
     hex32(h.finalize().into())
 }
 
+fn build_frame_handoff_manifest(
+    prepared: &MonsterPreparedCompute,
+    proof_chain_hash: &str,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    backend_execution_packet: &BangerNativeBackendExecutionPacket,
+    page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
+) -> BangerNativeFrameHandoffManifest {
+    let nonblank_verified = gpu_execution_receipt.validation_receipt.nonblank_gate_valid
+        && backend_execution_packet.validation_receipt.nonblank_gate_valid;
+    let execution_chain_hash = frame_handoff_execution_chain_hash(
+        render_graph_compilation,
+        texture_bridge_contract,
+        frame_submission_packet,
+        rhi_submit_packet,
+        gpu_execution_receipt,
+        backend_submit_plan,
+        backend_execution_packet,
+        page_residency_allocator,
+        temporal_history_packet,
+    );
+    let frame_proof_hash = frame_handoff_frame_proof_hash(
+        proof_chain_hash,
+        &execution_chain_hash,
+        gpu_execution_receipt,
+        backend_execution_packet,
+        nonblank_verified,
+    );
+    let validation_receipt = build_frame_handoff_validation_receipt(
+        render_graph_compilation,
+        rhi_submit_packet,
+        gpu_execution_receipt,
+        backend_execution_packet,
+        nonblank_verified,
+    );
+    let validation_receipt_hash = validation_receipt.validation_hash.clone();
+    let manifest_hash = frame_handoff_manifest_hash(
+        prepared,
+        proof_chain_hash,
+        &execution_chain_hash,
+        &frame_proof_hash,
+        &validation_receipt_hash,
+        render_graph_compilation,
+        texture_bridge_contract,
+        frame_submission_packet,
+        rhi_submit_packet,
+        gpu_execution_receipt,
+        backend_submit_plan,
+        backend_execution_packet,
+        page_residency_allocator,
+        temporal_history_packet,
+        nonblank_verified,
+    );
+    BangerNativeFrameHandoffManifest {
+        schema: "forge.banger.native_frame_handoff_manifest.v2",
+        schema_version: 2,
+        authority: "monster_banger_render_graph_rhi_backend_frame_proof_manifest",
+        clean_room_basis:
+            "local_unreal_sparse_rdg_rhi_backend_frame_proof_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        monster_manifest_hash: prepared.manifest_hash.clone(),
+        proof_chain_hash: proof_chain_hash.to_string(),
+        render_graph_hash: render_graph_compilation.graph_hash.clone(),
+        texture_bridge_hash: texture_bridge_contract.bridge_proof_hash.clone(),
+        frame_submission_hash: frame_submission_packet.submission_hash.clone(),
+        rhi_submit_hash: rhi_submit_packet.packet_hash.clone(),
+        gpu_execution_hash: gpu_execution_receipt.receipt_hash.clone(),
+        backend_submit_hash: backend_submit_plan.submit_plan_hash.clone(),
+        backend_execution_hash: backend_execution_packet.packet_hash.clone(),
+        residency_allocator_hash: page_residency_allocator.packet_hash.clone(),
+        temporal_history_hash: temporal_history_packet.packet_hash.clone(),
+        execution_chain_hash,
+        frame_proof_hash,
+        validation_receipt_hash,
+        manifest_hash,
+        render_graph_pass_count: render_graph_compilation.pass_count,
+        rhi_step_count: rhi_submit_packet.steps.len(),
+        gpu_phase_count: gpu_execution_receipt.phases.len(),
+        backend_pass_count: backend_execution_packet.passes.len(),
+        resource_transition_count: rhi_submit_packet.resource_transition_count,
+        queue_proof_count: gpu_execution_receipt.queue_proof_count,
+        nonblank_verified,
+        validation_receipt,
+    }
+}
+
+fn build_frame_handoff_validation_receipt(
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    backend_execution_packet: &BangerNativeBackendExecutionPacket,
+    nonblank_verified: bool,
+) -> BangerNativeFrameHandoffValidationReceipt {
+    let mut incomplete_chain_count = 0usize;
+    incomplete_chain_count += usize::from(render_graph_compilation.validation_issue_count > 0);
+    incomplete_chain_count += usize::from(rhi_submit_packet.validation_receipt.invalid_transition_count > 0);
+    incomplete_chain_count += usize::from(gpu_execution_receipt.validation_receipt.incomplete_phase_count > 0);
+    incomplete_chain_count += usize::from(backend_execution_packet.validation_receipt.invalid_transition_count > 0);
+    incomplete_chain_count += usize::from(!nonblank_verified);
+    let validation_hash = frame_handoff_validation_receipt_hash(
+        render_graph_compilation.pass_count,
+        rhi_submit_packet.steps.len(),
+        gpu_execution_receipt.phases.len(),
+        backend_execution_packet.passes.len(),
+        rhi_submit_packet.resource_transition_count,
+        incomplete_chain_count,
+        nonblank_verified,
+    );
+    BangerNativeFrameHandoffValidationReceipt {
+        schema: "forge.banger.frame_handoff_validation_receipt.v1",
+        authority: "render_graph_rhi_gpu_backend_handoff_consistency",
+        checked_graph_pass_count: render_graph_compilation.pass_count,
+        checked_rhi_step_count: rhi_submit_packet.steps.len(),
+        checked_gpu_phase_count: gpu_execution_receipt.phases.len(),
+        checked_backend_pass_count: backend_execution_packet.passes.len(),
+        checked_resource_transition_count: rhi_submit_packet.resource_transition_count,
+        incomplete_chain_count,
+        nonblank_gate_valid: nonblank_verified,
+        validation_hash,
+    }
+}
+
+fn frame_handoff_execution_chain_hash(
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    backend_execution_packet: &BangerNativeBackendExecutionPacket,
+    page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_handoff.execution_chain.v1\0");
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(render_graph_compilation.validation_receipt_hash.as_bytes());
+    h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
+    h.update(frame_submission_packet.submission_hash.as_bytes());
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    h.update(rhi_submit_packet.packet_hash.as_bytes());
+    h.update(rhi_submit_packet.validation_receipt_hash.as_bytes());
+    h.update(rhi_submit_packet.present_contract_hash.as_bytes());
+    h.update(gpu_execution_receipt.receipt_hash.as_bytes());
+    h.update(gpu_execution_receipt.framebuffer_proof_hash.as_bytes());
+    h.update(gpu_execution_receipt.nonblank_gate_hash.as_bytes());
+    h.update(backend_submit_plan.submit_plan_hash.as_bytes());
+    h.update(backend_execution_packet.packet_hash.as_bytes());
+    h.update(backend_execution_packet.validation_receipt_hash.as_bytes());
+    h.update(page_residency_allocator.packet_hash.as_bytes());
+    h.update(temporal_history_packet.packet_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn frame_handoff_frame_proof_hash(
+    proof_chain_hash: &str,
+    execution_chain_hash: &str,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    backend_execution_packet: &BangerNativeBackendExecutionPacket,
+    nonblank_verified: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_handoff.frame_proof.v1\0");
+    h.update(proof_chain_hash.as_bytes());
+    h.update(execution_chain_hash.as_bytes());
+    h.update(gpu_execution_receipt.queue_proof_hash.as_bytes());
+    h.update(gpu_execution_receipt.fence_proof_hash.as_bytes());
+    h.update(gpu_execution_receipt.transition_proof_hash.as_bytes());
+    h.update(gpu_execution_receipt.framebuffer_proof_hash.as_bytes());
+    h.update(backend_execution_packet.nonblank_signature_hash.as_bytes());
+    h.update(backend_execution_packet.frame_latch_hash.as_bytes());
+    h.update([nonblank_verified as u8]);
+    hex32(h.finalize().into())
+}
+
+fn frame_handoff_validation_receipt_hash(
+    checked_graph_pass_count: usize,
+    checked_rhi_step_count: usize,
+    checked_gpu_phase_count: usize,
+    checked_backend_pass_count: usize,
+    checked_resource_transition_count: usize,
+    incomplete_chain_count: usize,
+    nonblank_gate_valid: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.frame_handoff.validation_receipt.v1\0");
+    h.update((checked_graph_pass_count as u64).to_le_bytes());
+    h.update((checked_rhi_step_count as u64).to_le_bytes());
+    h.update((checked_gpu_phase_count as u64).to_le_bytes());
+    h.update((checked_backend_pass_count as u64).to_le_bytes());
+    h.update((checked_resource_transition_count as u64).to_le_bytes());
+    h.update((incomplete_chain_count as u64).to_le_bytes());
+    h.update([nonblank_gate_valid as u8]);
+    hex32(h.finalize().into())
+}
+
+fn frame_handoff_manifest_hash(
+    prepared: &MonsterPreparedCompute,
+    proof_chain_hash: &str,
+    execution_chain_hash: &str,
+    frame_proof_hash: &str,
+    validation_receipt_hash: &str,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    backend_execution_packet: &BangerNativeBackendExecutionPacket,
+    page_residency_allocator: &BangerNativePageResidencyAllocatorPacket,
+    temporal_history_packet: &BangerNativeTemporalHistoryPacket,
+    nonblank_verified: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_frame_handoff_manifest.v2\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.source_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(proof_chain_hash.as_bytes());
+    h.update(execution_chain_hash.as_bytes());
+    h.update(frame_proof_hash.as_bytes());
+    h.update(validation_receipt_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
+    h.update(frame_submission_packet.submission_hash.as_bytes());
+    h.update(rhi_submit_packet.packet_hash.as_bytes());
+    h.update(gpu_execution_receipt.receipt_hash.as_bytes());
+    h.update(backend_submit_plan.submit_plan_hash.as_bytes());
+    h.update(backend_execution_packet.packet_hash.as_bytes());
+    h.update(page_residency_allocator.packet_hash.as_bytes());
+    h.update(temporal_history_packet.packet_hash.as_bytes());
+    h.update((render_graph_compilation.pass_count as u64).to_le_bytes());
+    h.update((rhi_submit_packet.steps.len() as u64).to_le_bytes());
+    h.update((gpu_execution_receipt.phases.len() as u64).to_le_bytes());
+    h.update((backend_execution_packet.passes.len() as u64).to_le_bytes());
+    h.update([nonblank_verified as u8]);
+    hex32(h.finalize().into())
+}
+
 fn hash_text_hex(schema: &str, text: &str) -> String {
     let mut h = Sha256::new();
     h.update(schema.as_bytes());
@@ -25544,6 +25852,107 @@ mod tests {
             .iter()
             .any(|slot| slot.kind == "meshlet_page" && slot.usage == "storage_read_indirect_draw"));
         assert!(response.render_handoff_hash.len() == 64);
+        assert_eq!(
+            response.frame_handoff_manifest.schema,
+            "forge.banger.native_frame_handoff_manifest.v2"
+        );
+        assert_eq!(response.frame_handoff_manifest.schema_version, 2);
+        assert_eq!(
+            response.render_handoff_hash,
+            response.frame_handoff_manifest.manifest_hash
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.monster_manifest_hash,
+            response.manifest_hash
+        );
+        assert_eq!(response.frame_handoff_manifest.proof_chain_hash.len(), 64);
+        assert_eq!(
+            response.frame_handoff_manifest.render_graph_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.texture_bridge_hash,
+            response.texture_bridge_contract.bridge_proof_hash
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.frame_submission_hash,
+            response.frame_submission_packet.submission_hash
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.rhi_submit_hash,
+            response.rhi_submit_packet.packet_hash
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.gpu_execution_hash,
+            response.gpu_execution_receipt.receipt_hash
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.backend_submit_hash,
+            response.backend_submit_plan.submit_plan_hash
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.backend_execution_hash,
+            response.backend_execution_packet.packet_hash
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.residency_allocator_hash,
+            response.page_residency_allocator.packet_hash
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.temporal_history_hash,
+            response.temporal_history_packet.packet_hash
+        );
+        assert_eq!(response.frame_handoff_manifest.execution_chain_hash.len(), 64);
+        assert_eq!(response.frame_handoff_manifest.frame_proof_hash.len(), 64);
+        assert_eq!(response.frame_handoff_manifest.validation_receipt_hash.len(), 64);
+        assert_eq!(response.frame_handoff_manifest.manifest_hash.len(), 64);
+        assert_eq!(
+            response.frame_handoff_manifest.render_graph_pass_count,
+            response.render_graph_compilation.pass_count
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.rhi_step_count,
+            response.rhi_submit_packet.steps.len()
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.gpu_phase_count,
+            response.gpu_execution_receipt.phases.len()
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.backend_pass_count,
+            response.backend_execution_packet.passes.len()
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.resource_transition_count,
+            response.rhi_submit_packet.resource_transition_count
+        );
+        assert_eq!(
+            response.frame_handoff_manifest.queue_proof_count,
+            response.gpu_execution_receipt.queue_proof_count
+        );
+        assert!(response.frame_handoff_manifest.nonblank_verified);
+        assert_eq!(
+            response
+                .frame_handoff_manifest
+                .validation_receipt
+                .validation_hash,
+            response.frame_handoff_manifest.validation_receipt_hash
+        );
+        assert_eq!(
+            response
+                .frame_handoff_manifest
+                .validation_receipt
+                .incomplete_chain_count,
+            0
+        );
+        assert!(response
+            .frame_handoff_manifest
+            .validation_receipt
+            .nonblank_gate_valid);
     }
 
     #[test]
