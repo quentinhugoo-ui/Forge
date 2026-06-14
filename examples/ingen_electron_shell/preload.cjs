@@ -161,6 +161,10 @@ const forgeWindowControls = {
     console.info("[preload] forge:window-widget-mode", { enabled, delayMs });
     return ipcRenderer.invoke("forge:window-widget-mode", enabled, delayMs);
   },
+  setWidgetHitRegions(regions) {
+    console.info("[preload] forge:window-widget-hit-regions", { count: Array.isArray(regions) ? regions.length : 0 });
+    return ipcRenderer.invoke("forge:window-widget-hit-regions", regions);
+  },
   close() {
     console.info("[preload] forge:window-close");
     return ipcRenderer.invoke("forge:window-close");

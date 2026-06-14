@@ -82,6 +82,20 @@ type WidgetLayoutLock = {
   bottomWidth: number;
 };
 
+type WidgetHitRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+const WIDGET_HIT_REGION_SELECTORS = [
+  ".composer",
+  ".bottomControls",
+  ".composerQuestionnaire",
+  ".permissionModeMenu"
+] as const;
+
 function readWidgetLayoutLock(): WidgetLayoutLock | null {
   const composerRect = document.querySelector(".composer")?.getBoundingClientRect();
   if (!composerRect) {
@@ -94,6 +108,36 @@ function readWidgetLayoutLock(): WidgetLayoutLock | null {
     bottomLeft: Math.round(bottomControlsRect?.left ?? composerRect.left),
     bottomWidth: Math.round(bottomControlsRect?.width ?? composerRect.width)
   };
+}
+
+function widgetHitRegionForElement(element: Element, padding: number): WidgetHitRegion | null {
+  const rect = element.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  const left = Math.max(0, Math.floor(rect.left - padding));
+  const top = Math.max(0, Math.floor(rect.top - padding));
+  const right = Math.min(window.innerWidth, Math.ceil(rect.right + padding));
+  const bottom = Math.min(window.innerHeight, Math.ceil(rect.bottom + padding));
+  if (right - left < 8 || bottom - top < 8) {
+    return null;
+  }
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top
+  };
+}
+
+function readWidgetHitRegions(): WidgetHitRegion[] {
+  const elements = new Set<Element>();
+  for (const selector of WIDGET_HIT_REGION_SELECTORS) {
+    document.querySelectorAll(selector).forEach((element) => elements.add(element));
+  }
+  return Array.from(elements)
+    .map((element) => widgetHitRegionForElement(element, 12))
+    .filter((region): region is WidgetHitRegion => region !== null);
 }
 
 function shellStyleWithWidgetLock(lock: WidgetLayoutLock | null): React.CSSProperties {
@@ -319,6 +363,59 @@ export function App() {
       document.body.classList.remove("ingen-widget-mode");
     };
   }, [widgetMode]);
+
+  useEffect(() => {
+    const api = globalThis.window?.forgeWindowControls;
+    if (!api?.setWidgetHitRegions) {
+      return undefined;
+    }
+    const setWidgetHitRegions = api.setWidgetHitRegions.bind(api);
+    if (!widgetMode) {
+      void setWidgetHitRegions([]);
+      return undefined;
+    }
+
+    let animationFrame = 0;
+    const scheduleHitRegionSync = () => {
+      if (animationFrame !== 0) {
+        return;
+      }
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = 0;
+        void setWidgetHitRegions(readWidgetHitRegions());
+      });
+    };
+
+    scheduleHitRegionSync();
+    const settleTimers = [80, WIDGET_SURFACE_CLOSE_DELAY_MS + 120].map((delay) =>
+      window.setTimeout(scheduleHitRegionSync, delay)
+    );
+    const resizeObserver = new ResizeObserver(scheduleHitRegionSync);
+    resizeObserver.observe(document.body);
+    const mutationObserver = new MutationObserver(scheduleHitRegionSync);
+    mutationObserver.observe(document.body, {
+      attributeFilter: ["aria-expanded", "class", "style"],
+      attributes: true,
+      childList: true,
+      subtree: true
+    });
+    window.addEventListener("resize", scheduleHitRegionSync);
+    window.addEventListener("click", scheduleHitRegionSync, true);
+    window.addEventListener("keyup", scheduleHitRegionSync, true);
+
+    return () => {
+      if (animationFrame !== 0) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+      settleTimers.forEach((timer) => window.clearTimeout(timer));
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      window.removeEventListener("resize", scheduleHitRegionSync);
+      window.removeEventListener("click", scheduleHitRegionSync, true);
+      window.removeEventListener("keyup", scheduleHitRegionSync, true);
+      void setWidgetHitRegions([]);
+    };
+  }, [widgetLayoutLock, widgetMode]);
 
   useEffect(() => {
     if (workspaceFolder) {

@@ -4,6 +4,7 @@ interface ForgeWindowControlsApi {
   minimize: () => Promise<boolean>;
   toggleMaximize: () => Promise<boolean>;
   setWidgetMode?: (enabled: boolean, delayMs?: number) => Promise<boolean>;
+  setWidgetHitRegions?: (regions: Array<{ x: number; y: number; width: number; height: number }>) => Promise<boolean>;
   close: () => Promise<boolean>;
 }
 

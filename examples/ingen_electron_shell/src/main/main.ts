@@ -245,6 +245,7 @@ type WidgetWindowRestoreState = {
 };
 let widgetWindowRestoreState: WidgetWindowRestoreState | null = null;
 let widgetWindowShrinkTimer: ReturnType<typeof setTimeout> | null = null;
+let widgetWindowHitRegions: Electron.Rectangle[] = [];
 let nativeWebExplorerView: BrowserView | null = null;
 let nativeWebExplorerOwner: BrowserWindow | null = null;
 let nativeWebExplorerLoadedUrl = "";
@@ -9881,6 +9882,77 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.focus();
 }
 
+function sanitizeWidgetHitRegions(value: unknown, window: BrowserWindow): Electron.Rectangle[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const bounds = window.getBounds();
+  const maxWidth = Math.max(1, bounds.width);
+  const maxHeight = Math.max(1, bounds.height);
+  const regions: Electron.Rectangle[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const candidate = item as Partial<Electron.Rectangle>;
+    const x = typeof candidate.x === "number" && Number.isFinite(candidate.x) ? Math.round(candidate.x) : NaN;
+    const y = typeof candidate.y === "number" && Number.isFinite(candidate.y) ? Math.round(candidate.y) : NaN;
+    const width = typeof candidate.width === "number" && Number.isFinite(candidate.width) ? Math.round(candidate.width) : NaN;
+    const height = typeof candidate.height === "number" && Number.isFinite(candidate.height) ? Math.round(candidate.height) : NaN;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+      continue;
+    }
+    const left = Math.max(0, Math.min(maxWidth, x));
+    const top = Math.max(0, Math.min(maxHeight, y));
+    const right = Math.max(left, Math.min(maxWidth, x + Math.max(0, width)));
+    const bottom = Math.max(top, Math.min(maxHeight, y + Math.max(0, height)));
+    if (right - left < 8 || bottom - top < 8) {
+      continue;
+    }
+    regions.push({ x: left, y: top, width: right - left, height: bottom - top });
+  }
+  return regions.slice(0, 12);
+}
+
+function applyNativeWidgetWindowShape(window: BrowserWindow, regions: Electron.Rectangle[]): void {
+  const shapedWindow = window as BrowserWindow & { setShape?: (rects: Electron.Rectangle[]) => void };
+  if (typeof shapedWindow.setShape !== "function") {
+    return;
+  }
+  try {
+    shapedWindow.setShape(regions);
+  } catch (error) {
+    console.warn("Failed to apply native widget hit regions", error);
+  }
+}
+
+function resetNativeWidgetWindowShape(window: BrowserWindow): void {
+  widgetWindowHitRegions = [];
+  applyNativeWidgetWindowShape(window, []);
+}
+
+function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, regions: unknown): boolean {
+  if (!validateSender(event)) {
+    console.warn("Blocked window widget hit regions from invalid sender", event.senderFrame?.url ?? "");
+    return false;
+  }
+  const window = senderNativeWindow(event);
+  if (!window || window.isDestroyed()) {
+    return false;
+  }
+  if (widgetWindowRestoreState === null) {
+    resetNativeWidgetWindowShape(window);
+    return true;
+  }
+  const nextRegions = sanitizeWidgetHitRegions(regions, window);
+  if (nextRegions.length === 0) {
+    return true;
+  }
+  widgetWindowHitRegions = nextRegions;
+  applyNativeWidgetWindowShape(window, widgetWindowHitRegions);
+  return true;
+}
+
 function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: unknown, delayMs?: unknown): boolean {
   if (!validateSender(event)) {
     console.warn("Blocked window widget mode from invalid sender", event.senderFrame?.url ?? "");
@@ -9893,6 +9965,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
 
   if (enabled === true) {
     clearWidgetWindowShrinkTimer();
+    resetNativeWidgetWindowShape(window);
     saveWidgetWindowRestoreState(window);
     window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
     window.setAlwaysOnTop(true, "floating");
@@ -9911,6 +9984,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   }
 
   clearWidgetWindowShrinkTimer();
+  resetNativeWidgetWindowShape(window);
   const restoreState = widgetWindowRestoreState;
   widgetWindowRestoreState = null;
   window.setAlwaysOnTop(false);
@@ -9937,6 +10011,7 @@ function installWindowControlIpc(): void {
   ipcMain.handle("forge:window-toggle-maximize", (event): boolean => toggleNativeWindowMaximize(event));
   ipcMain.handle("forge:window-close", (event): boolean => closeNativeWindow(event));
   ipcMain.handle("forge:window-widget-mode", (event, enabled, delayMs): boolean => setNativeWindowWidgetMode(event, enabled, delayMs));
+  ipcMain.handle("forge:window-widget-hit-regions", (event, regions): boolean => setNativeWindowWidgetHitRegions(event, regions));
 }
 
 function terminalProof(value: unknown): string {

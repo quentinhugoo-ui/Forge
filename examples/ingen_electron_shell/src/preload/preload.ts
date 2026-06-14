@@ -207,6 +207,9 @@ const forgeWindowControls = {
   setWidgetMode(enabled: boolean, delayMs?: number): Promise<boolean> {
     return ipcRenderer.invoke("forge:window-widget-mode", enabled, delayMs);
   },
+  setWidgetHitRegions(regions: Array<{ x: number; y: number; width: number; height: number }>): Promise<boolean> {
+    return ipcRenderer.invoke("forge:window-widget-hit-regions", regions);
+  },
   close(): Promise<boolean> {
     return ipcRenderer.invoke("forge:window-close");
   }
