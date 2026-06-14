@@ -1484,13 +1484,26 @@ pub struct BangerNativeGpuExecutionReceipt {
     pub completed_phase_count: usize,
     pub command_list_count: usize,
     pub queue_lane_count: usize,
+    pub queue_proof_count: usize,
+    pub fence_proof_count: usize,
+    pub transition_proof_count: usize,
     pub frame_diagnostic_hash: String,
     pub queue_timeline_hash: String,
     pub readback_policy_hash: String,
+    pub queue_proof_hash: String,
+    pub fence_proof_hash: String,
+    pub transition_proof_hash: String,
+    pub framebuffer_proof_hash: String,
+    pub nonblank_gate_hash: String,
     pub rhi_lifecycle_hash: String,
     pub rhi_validation_hash: String,
     pub present_receipt_hash: String,
+    pub validation_receipt_hash: String,
     pub receipt_hash: String,
+    pub queue_proofs: Vec<BangerNativeGpuQueueProof>,
+    pub fence_proofs: Vec<BangerNativeGpuFenceProof>,
+    pub transition_proofs: Vec<BangerNativeGpuTransitionProof>,
+    pub validation_receipt: BangerNativeGpuExecutionValidationReceipt,
     pub phases: Vec<BangerNativeGpuExecutionPhaseReceipt>,
 }
 
@@ -1505,6 +1518,61 @@ pub struct BangerNativeGpuExecutionPhaseReceipt {
     pub completed: bool,
     pub diagnostic_hash: String,
     pub phase_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeGpuQueueProof {
+    pub queue_lane: &'static str,
+    pub queue_family: &'static str,
+    pub command_count: usize,
+    pub completed_phase_count: usize,
+    pub source_queue_packet_hash: String,
+    pub first_phase_hash: Option<String>,
+    pub last_phase_hash: Option<String>,
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeGpuFenceProof {
+    pub edge_id: u32,
+    pub from_queue: &'static str,
+    pub to_queue: &'static str,
+    pub wait_value: u64,
+    pub signal_value: u64,
+    pub source_fence_edge_hash: String,
+    pub completed: bool,
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeGpuTransitionProof {
+    pub transition_id: u32,
+    pub resource_name: String,
+    pub from_queue: &'static str,
+    pub to_queue: &'static str,
+    pub source_transition_hash: String,
+    pub command_dependency_hash: String,
+    pub completed: bool,
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeGpuExecutionValidationReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_phase_count: usize,
+    pub checked_queue_proof_count: usize,
+    pub checked_fence_proof_count: usize,
+    pub checked_transition_proof_count: usize,
+    pub incomplete_phase_count: usize,
+    pub incomplete_fence_count: usize,
+    pub incomplete_transition_count: usize,
+    pub nonblank_gate_valid: bool,
+    pub validation_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -7703,6 +7771,9 @@ fn build_gpu_execution_receipt(
         .map(|phase| phase.queue_lane)
         .collect::<BTreeSet<_>>()
         .len();
+    let queue_proofs = build_gpu_queue_proofs(rhi_submit_packet, &phases);
+    let fence_proofs = build_gpu_fence_proofs(rhi_submit_packet);
+    let transition_proofs = build_gpu_transition_proofs(rhi_submit_packet);
     let frame_diagnostic_hash = gpu_execution_frame_diagnostic_hash(
         frame_submission_packet,
         rhi_submit_packet,
@@ -7715,6 +7786,30 @@ fn build_gpu_execution_receipt(
         rhi_submit_packet,
         nonblank_frame_expected,
     );
+    let queue_proof_hash = gpu_execution_queue_proofs_hash(&queue_proofs);
+    let fence_proof_hash = gpu_execution_fence_proofs_hash(&fence_proofs);
+    let transition_proof_hash = gpu_execution_transition_proofs_hash(&transition_proofs);
+    let framebuffer_proof_hash = gpu_execution_framebuffer_proof_hash(
+        frame_submission_packet,
+        rhi_submit_packet,
+        &frame_diagnostic_hash,
+        &readback_policy_hash,
+        nonblank_frame_expected,
+    );
+    let nonblank_gate_hash = gpu_execution_nonblank_gate_hash(
+        frame_submission_packet,
+        raster_work_queue,
+        &framebuffer_proof_hash,
+        nonblank_frame_expected,
+    );
+    let validation_receipt = build_gpu_execution_validation_receipt(
+        &phases,
+        &queue_proofs,
+        &fence_proofs,
+        &transition_proofs,
+        nonblank_frame_expected,
+    );
+    let validation_receipt_hash = validation_receipt.validation_hash.clone();
     let receipt_hash = gpu_execution_receipt_hash(
         prepared,
         frame_submission_packet,
@@ -7722,13 +7817,22 @@ fn build_gpu_execution_receipt(
         &frame_diagnostic_hash,
         &queue_timeline_hash,
         &readback_policy_hash,
+        &queue_proof_hash,
+        &fence_proof_hash,
+        &transition_proof_hash,
+        &framebuffer_proof_hash,
+        &nonblank_gate_hash,
+        &validation_receipt_hash,
+        &queue_proofs,
+        &fence_proofs,
+        &transition_proofs,
         &phases,
     );
     BangerNativeGpuExecutionReceipt {
-        schema: "forge.banger.native_gpu_execution_receipt.v2",
-        schema_version: 2,
+        schema: "forge.banger.native_gpu_execution_receipt.v3",
+        schema_version: 3,
         authority: "banger_rhi_submit_to_gpu_execution_receipt",
-        clean_room_basis: "native_rhi_submit_preflight_timeline_nonblank_diagnostics_no_source_copy",
+        clean_room_basis: "native_rhi_submit_queue_fence_transition_framebuffer_proof_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
         rhi_submit_hash: rhi_submit_packet.packet_hash.clone(),
         frame_submission_hash: frame_submission_packet.submission_hash.clone(),
@@ -7739,13 +7843,26 @@ fn build_gpu_execution_receipt(
         completed_phase_count,
         command_list_count: rhi_submit_packet.command_list_count,
         queue_lane_count,
+        queue_proof_count: queue_proofs.len(),
+        fence_proof_count: fence_proofs.len(),
+        transition_proof_count: transition_proofs.len(),
         frame_diagnostic_hash,
         queue_timeline_hash,
         readback_policy_hash,
+        queue_proof_hash,
+        fence_proof_hash,
+        transition_proof_hash,
+        framebuffer_proof_hash,
+        nonblank_gate_hash,
         rhi_lifecycle_hash: rhi_submit_packet.lifecycle_hash.clone(),
         rhi_validation_hash: rhi_submit_packet.validation_receipt_hash.clone(),
         present_receipt_hash: rhi_submit_packet.present_receipt_hash.clone(),
+        validation_receipt_hash,
         receipt_hash,
+        queue_proofs,
+        fence_proofs,
+        transition_proofs,
+        validation_receipt,
         phases,
     }
 }
@@ -10848,6 +10965,170 @@ fn gpu_execution_phase_hash(
     hex32(h.finalize().into())
 }
 
+fn build_gpu_queue_proofs(
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    phases: &[BangerNativeGpuExecutionPhaseReceipt],
+) -> Vec<BangerNativeGpuQueueProof> {
+    rhi_submit_packet
+        .queue_packets
+        .iter()
+        .map(|queue| {
+            let queue_phases = phases
+                .iter()
+                .filter(|phase| phase.queue_lane == queue.queue_lane)
+                .collect::<Vec<_>>();
+            let completed_phase_count = queue_phases.iter().filter(|phase| phase.completed).count();
+            let first_phase_hash = queue_phases.first().map(|phase| phase.phase_hash.clone());
+            let last_phase_hash = queue_phases.last().map(|phase| phase.phase_hash.clone());
+            let proof_hash = gpu_queue_proof_hash(
+                queue,
+                completed_phase_count,
+                first_phase_hash.as_deref(),
+                last_phase_hash.as_deref(),
+            );
+            BangerNativeGpuQueueProof {
+                queue_lane: queue.queue_lane,
+                queue_family: queue.queue_family,
+                command_count: queue.command_count,
+                completed_phase_count,
+                source_queue_packet_hash: queue.queue_packet_hash.clone(),
+                first_phase_hash,
+                last_phase_hash,
+                proof_hash,
+            }
+        })
+        .collect()
+}
+
+fn build_gpu_fence_proofs(
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+) -> Vec<BangerNativeGpuFenceProof> {
+    rhi_submit_packet
+        .queue_fence_edges
+        .iter()
+        .map(|edge| {
+            let completed = edge.signal_value >= edge.wait_value
+                && edge.source_step_hash.len() == 64
+                && edge.target_step_hash.len() == 64;
+            let proof_hash = gpu_fence_proof_hash(edge, completed);
+            BangerNativeGpuFenceProof {
+                edge_id: edge.edge_id,
+                from_queue: edge.from_queue,
+                to_queue: edge.to_queue,
+                wait_value: edge.wait_value,
+                signal_value: edge.signal_value,
+                source_fence_edge_hash: edge.edge_hash.clone(),
+                completed,
+                proof_hash,
+            }
+        })
+        .collect()
+}
+
+fn build_gpu_transition_proofs(
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+) -> Vec<BangerNativeGpuTransitionProof> {
+    rhi_submit_packet
+        .resource_transitions
+        .iter()
+        .map(|transition| {
+            let completed = transition.transition_hash.len() == 64
+                && transition.command_dependency_hash.len() == 64;
+            let proof_hash = gpu_transition_proof_hash(transition, completed);
+            BangerNativeGpuTransitionProof {
+                transition_id: transition.transition_id,
+                resource_name: transition.resource_name.clone(),
+                from_queue: transition.from_queue,
+                to_queue: transition.to_queue,
+                source_transition_hash: transition.transition_hash.clone(),
+                command_dependency_hash: transition.command_dependency_hash.clone(),
+                completed,
+                proof_hash,
+            }
+        })
+        .collect()
+}
+
+fn gpu_queue_proof_hash(
+    queue: &BangerNativeRhiQueuePacket,
+    completed_phase_count: usize,
+    first_phase_hash: Option<&str>,
+    last_phase_hash: Option<&str>,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.queue_proof.v1\0");
+    h.update(queue.queue_packet_hash.as_bytes());
+    h.update(queue.queue_lane.as_bytes());
+    h.update(queue.queue_family.as_bytes());
+    h.update((queue.command_count as u64).to_le_bytes());
+    h.update((completed_phase_count as u64).to_le_bytes());
+    if let Some(first_phase_hash) = first_phase_hash {
+        h.update(first_phase_hash.as_bytes());
+    }
+    if let Some(last_phase_hash) = last_phase_hash {
+        h.update(last_phase_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gpu_fence_proof_hash(edge: &BangerNativeRhiQueueFenceEdge, completed: bool) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.fence_proof.v1\0");
+    h.update(edge.edge_hash.as_bytes());
+    h.update(edge.wait_value.to_le_bytes());
+    h.update(edge.signal_value.to_le_bytes());
+    h.update([completed as u8]);
+    hex32(h.finalize().into())
+}
+
+fn gpu_transition_proof_hash(
+    transition: &BangerNativeRhiResourceTransition,
+    completed: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.transition_proof.v1\0");
+    h.update(transition.transition_hash.as_bytes());
+    h.update(transition.resource_hash.as_bytes());
+    h.update(transition.command_dependency_hash.as_bytes());
+    h.update([completed as u8]);
+    hex32(h.finalize().into())
+}
+
+fn gpu_execution_queue_proofs_hash(queue_proofs: &[BangerNativeGpuQueueProof]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.queue_proofs.v1\0");
+    for proof in queue_proofs {
+        h.update(proof.proof_hash.as_bytes());
+        h.update(proof.source_queue_packet_hash.as_bytes());
+        h.update((proof.completed_phase_count as u64).to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gpu_execution_fence_proofs_hash(fence_proofs: &[BangerNativeGpuFenceProof]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.fence_proofs.v1\0");
+    for proof in fence_proofs {
+        h.update(proof.proof_hash.as_bytes());
+        h.update(proof.source_fence_edge_hash.as_bytes());
+        h.update([proof.completed as u8]);
+    }
+    hex32(h.finalize().into())
+}
+
+fn gpu_execution_transition_proofs_hash(
+    transition_proofs: &[BangerNativeGpuTransitionProof],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.transition_proofs.v1\0");
+    for proof in transition_proofs {
+        h.update(proof.proof_hash.as_bytes());
+        h.update(proof.source_transition_hash.as_bytes());
+        h.update([proof.completed as u8]);
+    }
+    hex32(h.finalize().into())
+}
+
 fn gpu_execution_frame_diagnostic_hash(
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
@@ -10899,6 +11180,106 @@ fn gpu_execution_readback_policy_hash(
     hex32(h.finalize().into())
 }
 
+fn gpu_execution_framebuffer_proof_hash(
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    frame_diagnostic_hash: &str,
+    readback_policy_hash: &str,
+    nonblank_frame_expected: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.framebuffer_proof.v1\0");
+    h.update(frame_submission_packet.color_target_hash.as_bytes());
+    h.update(frame_submission_packet.depth_target_hash.as_bytes());
+    h.update(frame_submission_packet.render_target_state_hash.as_bytes());
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    h.update(rhi_submit_packet.present_contract_hash.as_bytes());
+    h.update(rhi_submit_packet.present_hash.as_bytes());
+    h.update(frame_diagnostic_hash.as_bytes());
+    h.update(readback_policy_hash.as_bytes());
+    h.update([nonblank_frame_expected as u8]);
+    hex32(h.finalize().into())
+}
+
+fn gpu_execution_nonblank_gate_hash(
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    raster_work_queue: &BangerNativeRasterWorkQueue,
+    framebuffer_proof_hash: &str,
+    nonblank_frame_expected: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.nonblank_gate.v1\0");
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    h.update(raster_work_queue.queue_hash.as_bytes());
+    h.update(raster_work_queue.total_index_count.to_le_bytes());
+    h.update(raster_work_queue.total_threadgroup_count.to_le_bytes());
+    h.update(framebuffer_proof_hash.as_bytes());
+    h.update([nonblank_frame_expected as u8]);
+    hex32(h.finalize().into())
+}
+
+fn build_gpu_execution_validation_receipt(
+    phases: &[BangerNativeGpuExecutionPhaseReceipt],
+    queue_proofs: &[BangerNativeGpuQueueProof],
+    fence_proofs: &[BangerNativeGpuFenceProof],
+    transition_proofs: &[BangerNativeGpuTransitionProof],
+    nonblank_frame_expected: bool,
+) -> BangerNativeGpuExecutionValidationReceipt {
+    let incomplete_phase_count = phases.iter().filter(|phase| !phase.completed).count();
+    let incomplete_fence_count = fence_proofs.iter().filter(|proof| !proof.completed).count();
+    let incomplete_transition_count = transition_proofs
+        .iter()
+        .filter(|proof| !proof.completed)
+        .count();
+    let nonblank_gate_valid = nonblank_frame_expected && incomplete_phase_count == 0;
+    let validation_hash = gpu_execution_validation_receipt_hash(
+        phases.len(),
+        queue_proofs.len(),
+        fence_proofs.len(),
+        transition_proofs.len(),
+        incomplete_phase_count,
+        incomplete_fence_count,
+        incomplete_transition_count,
+        nonblank_gate_valid,
+    );
+    BangerNativeGpuExecutionValidationReceipt {
+        schema: "forge.banger.gpu_execution_validation_receipt.v1",
+        authority: "gpu_queue_fence_transition_framebuffer_nonblank_validation",
+        checked_phase_count: phases.len(),
+        checked_queue_proof_count: queue_proofs.len(),
+        checked_fence_proof_count: fence_proofs.len(),
+        checked_transition_proof_count: transition_proofs.len(),
+        incomplete_phase_count,
+        incomplete_fence_count,
+        incomplete_transition_count,
+        nonblank_gate_valid,
+        validation_hash,
+    }
+}
+
+fn gpu_execution_validation_receipt_hash(
+    checked_phase_count: usize,
+    checked_queue_proof_count: usize,
+    checked_fence_proof_count: usize,
+    checked_transition_proof_count: usize,
+    incomplete_phase_count: usize,
+    incomplete_fence_count: usize,
+    incomplete_transition_count: usize,
+    nonblank_gate_valid: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.validation_receipt.v1\0");
+    h.update((checked_phase_count as u64).to_le_bytes());
+    h.update((checked_queue_proof_count as u64).to_le_bytes());
+    h.update((checked_fence_proof_count as u64).to_le_bytes());
+    h.update((checked_transition_proof_count as u64).to_le_bytes());
+    h.update((incomplete_phase_count as u64).to_le_bytes());
+    h.update((incomplete_fence_count as u64).to_le_bytes());
+    h.update((incomplete_transition_count as u64).to_le_bytes());
+    h.update([nonblank_gate_valid as u8]);
+    hex32(h.finalize().into())
+}
+
 fn gpu_execution_receipt_hash(
     prepared: &MonsterPreparedCompute,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
@@ -10906,10 +11287,19 @@ fn gpu_execution_receipt_hash(
     frame_diagnostic_hash: &str,
     queue_timeline_hash: &str,
     readback_policy_hash: &str,
+    queue_proof_hash: &str,
+    fence_proof_hash: &str,
+    transition_proof_hash: &str,
+    framebuffer_proof_hash: &str,
+    nonblank_gate_hash: &str,
+    validation_receipt_hash: &str,
+    queue_proofs: &[BangerNativeGpuQueueProof],
+    fence_proofs: &[BangerNativeGpuFenceProof],
+    transition_proofs: &[BangerNativeGpuTransitionProof],
     phases: &[BangerNativeGpuExecutionPhaseReceipt],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_gpu_execution_receipt.v2\0");
+    h.update(b"forge.banger.native_gpu_execution_receipt.v3\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(frame_submission_packet.submission_hash.as_bytes());
@@ -10920,6 +11310,21 @@ fn gpu_execution_receipt_hash(
     h.update(frame_diagnostic_hash.as_bytes());
     h.update(queue_timeline_hash.as_bytes());
     h.update(readback_policy_hash.as_bytes());
+    h.update(queue_proof_hash.as_bytes());
+    h.update(fence_proof_hash.as_bytes());
+    h.update(transition_proof_hash.as_bytes());
+    h.update(framebuffer_proof_hash.as_bytes());
+    h.update(nonblank_gate_hash.as_bytes());
+    h.update(validation_receipt_hash.as_bytes());
+    for proof in queue_proofs {
+        h.update(proof.proof_hash.as_bytes());
+    }
+    for proof in fence_proofs {
+        h.update(proof.proof_hash.as_bytes());
+    }
+    for proof in transition_proofs {
+        h.update(proof.proof_hash.as_bytes());
+    }
     for phase in phases {
         h.update(phase.phase_hash.as_bytes());
     }
@@ -21891,6 +22296,12 @@ fn render_handoff_hash(
     h.update(gpu_execution_receipt.receipt_hash.as_bytes());
     h.update(gpu_execution_receipt.frame_diagnostic_hash.as_bytes());
     h.update(gpu_execution_receipt.queue_timeline_hash.as_bytes());
+    h.update(gpu_execution_receipt.queue_proof_hash.as_bytes());
+    h.update(gpu_execution_receipt.fence_proof_hash.as_bytes());
+    h.update(gpu_execution_receipt.transition_proof_hash.as_bytes());
+    h.update(gpu_execution_receipt.framebuffer_proof_hash.as_bytes());
+    h.update(gpu_execution_receipt.nonblank_gate_hash.as_bytes());
+    h.update(gpu_execution_receipt.validation_receipt_hash.as_bytes());
     h.update(backend_submit_plan.submit_plan_hash.as_bytes());
     h.update(backend_submit_plan.swapchain_contract_hash.as_bytes());
     h.update(backend_submit_plan.backend_barrier_plan_hash.as_bytes());
@@ -23527,9 +23938,9 @@ mod tests {
             .any(|step| step.phase == "present"));
         assert_eq!(
             response.gpu_execution_receipt.schema,
-            "forge.banger.native_gpu_execution_receipt.v2"
+            "forge.banger.native_gpu_execution_receipt.v3"
         );
-        assert_eq!(response.gpu_execution_receipt.schema_version, 2);
+        assert_eq!(response.gpu_execution_receipt.schema_version, 3);
         assert_eq!(
             response.gpu_execution_receipt.authority,
             "banger_rhi_submit_to_gpu_execution_receipt"
@@ -23554,6 +23965,10 @@ mod tests {
             response.gpu_execution_receipt.present_hash,
             response.rhi_submit_packet.present_hash
         );
+        assert!(response
+            .gpu_execution_receipt
+            .clean_room_basis
+            .contains("queue_fence_transition_framebuffer"));
         assert!(response.gpu_execution_receipt.nonblank_frame_expected);
         assert_eq!(
             response.gpu_execution_receipt.submitted_step_count,
@@ -23568,9 +23983,26 @@ mod tests {
             response.rhi_submit_packet.command_list_count
         );
         assert!(response.gpu_execution_receipt.queue_lane_count > 0);
+        assert_eq!(
+            response.gpu_execution_receipt.queue_proof_count,
+            response.rhi_submit_packet.queue_packets.len()
+        );
+        assert_eq!(
+            response.gpu_execution_receipt.fence_proof_count,
+            response.rhi_submit_packet.queue_fence_edges.len()
+        );
+        assert_eq!(
+            response.gpu_execution_receipt.transition_proof_count,
+            response.rhi_submit_packet.resource_transitions.len()
+        );
         assert_eq!(response.gpu_execution_receipt.frame_diagnostic_hash.len(), 64);
         assert_eq!(response.gpu_execution_receipt.queue_timeline_hash.len(), 64);
         assert_eq!(response.gpu_execution_receipt.readback_policy_hash.len(), 64);
+        assert_eq!(response.gpu_execution_receipt.queue_proof_hash.len(), 64);
+        assert_eq!(response.gpu_execution_receipt.fence_proof_hash.len(), 64);
+        assert_eq!(response.gpu_execution_receipt.transition_proof_hash.len(), 64);
+        assert_eq!(response.gpu_execution_receipt.framebuffer_proof_hash.len(), 64);
+        assert_eq!(response.gpu_execution_receipt.nonblank_gate_hash.len(), 64);
         assert_eq!(
             response.gpu_execution_receipt.rhi_lifecycle_hash,
             response.rhi_submit_packet.lifecycle_hash
@@ -23583,7 +24015,91 @@ mod tests {
             response.gpu_execution_receipt.present_receipt_hash,
             response.rhi_submit_packet.present_receipt_hash
         );
+        assert_eq!(response.gpu_execution_receipt.validation_receipt_hash.len(), 64);
+        assert_eq!(
+            response
+                .gpu_execution_receipt
+                .validation_receipt
+                .validation_hash,
+            response.gpu_execution_receipt.validation_receipt_hash
+        );
+        assert_eq!(
+            response
+                .gpu_execution_receipt
+                .validation_receipt
+                .checked_phase_count,
+            response.gpu_execution_receipt.phases.len()
+        );
+        assert_eq!(
+            response
+                .gpu_execution_receipt
+                .validation_receipt
+                .checked_queue_proof_count,
+            response.gpu_execution_receipt.queue_proofs.len()
+        );
+        assert_eq!(
+            response
+                .gpu_execution_receipt
+                .validation_receipt
+                .checked_fence_proof_count,
+            response.gpu_execution_receipt.fence_proofs.len()
+        );
+        assert_eq!(
+            response
+                .gpu_execution_receipt
+                .validation_receipt
+                .checked_transition_proof_count,
+            response.gpu_execution_receipt.transition_proofs.len()
+        );
+        assert_eq!(
+            response
+                .gpu_execution_receipt
+                .validation_receipt
+                .incomplete_phase_count,
+            0
+        );
+        assert_eq!(
+            response
+                .gpu_execution_receipt
+                .validation_receipt
+                .incomplete_fence_count,
+            0
+        );
+        assert_eq!(
+            response
+                .gpu_execution_receipt
+                .validation_receipt
+                .incomplete_transition_count,
+            0
+        );
+        assert!(response
+            .gpu_execution_receipt
+            .validation_receipt
+            .nonblank_gate_valid);
         assert_eq!(response.gpu_execution_receipt.receipt_hash.len(), 64);
+        assert!(response
+            .gpu_execution_receipt
+            .queue_proofs
+            .iter()
+            .all(|proof| proof.proof_hash.len() == 64
+                && proof.source_queue_packet_hash.len() == 64
+                && !proof.queue_family.is_empty()));
+        assert!(response
+            .gpu_execution_receipt
+            .fence_proofs
+            .iter()
+            .all(|proof| proof.completed
+                && proof.proof_hash.len() == 64
+                && proof.source_fence_edge_hash.len() == 64
+                && proof.wait_value <= proof.signal_value));
+        assert!(response
+            .gpu_execution_receipt
+            .transition_proofs
+            .iter()
+            .all(|proof| proof.completed
+                && proof.proof_hash.len() == 64
+                && proof.source_transition_hash.len() == 64
+                && proof.command_dependency_hash.len() == 64));
         assert!(response
             .gpu_execution_receipt
             .phases
