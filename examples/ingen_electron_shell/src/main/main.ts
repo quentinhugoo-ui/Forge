@@ -11143,7 +11143,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
     window.setBounds(restoreState.bounds, false);
     window.maximize();
   } else {
-    window.setBounds(restoreState.bounds, true);
+    window.setBounds(restoreState.bounds, false);
   }
   window.show();
   window.focus();

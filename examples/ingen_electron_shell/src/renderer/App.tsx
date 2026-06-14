@@ -925,11 +925,22 @@ export function App() {
     setWorkspaceMenuOpen(false);
     setWorkspaceNotice(null);
     if (!enabled) {
-      setWidgetMinimizingPhase("");
-      setWidgetMode(false);
-      setWidgetLayoutLock(null);
-      void globalThis.window?.forgeWindowControls?.setWidgetTaskbarAutoHide?.(false);
-      void globalThis.window?.forgeWindowControls?.setWidgetMode?.(false);
+      void (async () => {
+        const windowControls = globalThis.window?.forgeWindowControls;
+        const nativeWidgetRestored = await windowControls?.setWidgetMode?.(false).catch((error: unknown) => {
+          console.warn("Failed to restore native widget mode", error);
+          return false;
+        });
+        if (widgetModeSequenceRef.current !== sequenceToken) {
+          return;
+        }
+        if (nativeWidgetRestored === false) {
+          console.warn("Native widget restore was not accepted.");
+        }
+        setWidgetMinimizingPhase("");
+        setWidgetMode(false);
+        setWidgetLayoutLock(null);
+      })();
       return;
     }
 
