@@ -311,6 +311,7 @@ pub struct BangerNativeWaterPipelineManifest {
     pub far_field_fft: BangerNativeWaterSpectralOcean,
     pub near_field_mesh: BangerNativeWaterNearFieldMesh,
     pub normal_displacement: BangerNativeWaterNormalDisplacement,
+    pub water_info_texture: BangerNativeWaterInfoTextureManifest,
     pub foam_spray: BangerNativeWaterFoamSpray,
     pub reflections: BangerNativeWaterReflectionPacket,
     pub volumetric_absorption: BangerNativeWaterAbsorptionPacket,
@@ -356,6 +357,29 @@ pub struct BangerNativeWaterNormalDisplacement {
     pub micro_normal_band_count: u32,
     pub choppiness: f32,
     pub normal_pack_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterInfoTextureManifest {
+    pub schema: &'static str,
+    pub schema_version: u32,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub texture_width: u32,
+    pub texture_height: u32,
+    pub format: &'static str,
+    pub terrain_depth_pass_hash: String,
+    pub dilated_water_depth_pass_hash: String,
+    pub water_body_pass_hash: String,
+    pub merge_pass_hash: String,
+    pub blur_pass_hash: String,
+    pub output_texture_hash: String,
+    pub nonzero_texel_count: u32,
+    pub shoreline_texel_count: u32,
+    pub velocity_texel_count: u32,
+    pub external_srv_ready: bool,
+    pub proof_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -22443,15 +22467,19 @@ fn build_water_pipeline_manifest(
             &format!("7:3:1.24:{visual_pipeline_hash}"),
         ),
     };
+    let water_info_texture = build_water_info_texture_manifest(width, height, visual_pipeline_hash);
     let foam_spray = BangerNativeWaterFoamSpray {
-        foam_source: "jacobian_breaking_mask_plus_shoreline_sdf",
+        foam_source: "jacobian_breaking_mask_plus_water_info_shoreline_sdf",
         spray_source: "gpu_particle_emitters_from_whitewater_tiles",
         mask_resolution: 1024,
         spray_particle_budget: 8192,
         shoreline_sdf_enabled: true,
         foam_mask_hash: hash_text_hex(
             "forge.banger.water.foam_spray.v1",
-            &format!("1024:8192:{width}:{height}:{visual_pipeline_hash}"),
+            &format!(
+                "1024:8192:{width}:{height}:{}:{visual_pipeline_hash}",
+                water_info_texture.output_texture_hash
+            ),
         ),
     };
     let reflections = BangerNativeWaterReflectionPacket {
@@ -22511,6 +22539,7 @@ fn build_water_pipeline_manifest(
         &far_field_fft,
         &near_field_mesh,
         &normal_displacement,
+        &water_info_texture,
         &foam_spray,
         &reflections,
         &volumetric_absorption,
@@ -22521,10 +22550,11 @@ fn build_water_pipeline_manifest(
     let proof_hash = hash_text_hex(
         "forge.banger.water_hybrid_pipeline.proof.v1",
         &format!(
-            "{manifest_hash}:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{manifest_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             far_field_fft.temporal_phase_hash,
             near_field_mesh.page_table_hash,
             normal_displacement.normal_pack_hash,
+            water_info_texture.proof_hash,
             foam_spray.foam_mask_hash,
             reflections.reflection_hash,
             volumetric_absorption.absorption_hash,
@@ -22542,6 +22572,7 @@ fn build_water_pipeline_manifest(
         far_field_fft,
         near_field_mesh,
         normal_displacement,
+        water_info_texture,
         foam_spray,
         reflections,
         volumetric_absorption,
@@ -22634,11 +22665,111 @@ fn build_water_pass_schedule(visual_pipeline_hash: &str) -> Vec<BangerNativeWate
     .collect()
 }
 
+fn build_water_info_texture_manifest(
+    viewport_width: u32,
+    viewport_height: u32,
+    visual_pipeline_hash: &str,
+) -> BangerNativeWaterInfoTextureManifest {
+    let texture_width = (viewport_width / 4).clamp(64, 512);
+    let texture_height = (viewport_height / 4).clamp(64, 512);
+    let terrain_depth_pass_hash = hash_text_hex(
+        "forge.banger.water_info_texture.terrain_depth_pass.v1",
+        &format!("{texture_width}:{texture_height}:{visual_pipeline_hash}"),
+    );
+    let dilated_water_depth_pass_hash = hash_text_hex(
+        "forge.banger.water_info_texture.dilated_water_depth_pass.v1",
+        &format!("{terrain_depth_pass_hash}:{texture_width}:{texture_height}:dilate4"),
+    );
+    let water_body_pass_hash = hash_text_hex(
+        "forge.banger.water_info_texture.water_body_pass.v1",
+        &format!("{dilated_water_depth_pass_hash}:{visual_pipeline_hash}:flow_velocity"),
+    );
+    let merge_pass_hash = hash_text_hex(
+        "forge.banger.water_info_texture.merge_pass.v1",
+        &format!("{terrain_depth_pass_hash}:{dilated_water_depth_pass_hash}:{water_body_pass_hash}:float_rgba"),
+    );
+    let blur_pass_hash = hash_text_hex(
+        "forge.banger.water_info_texture.blur_pass.v1",
+        &format!("{merge_pass_hash}:velocity_radius_3"),
+    );
+
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.water_info_texture.output.v1\0");
+    h.update(texture_width.to_le_bytes());
+    h.update(texture_height.to_le_bytes());
+    h.update(blur_pass_hash.as_bytes());
+    let mut nonzero_texel_count = 0u32;
+    let mut shoreline_texel_count = 0u32;
+    let mut velocity_texel_count = 0u32;
+    for y in 0..texture_height {
+        for x in 0..texture_width {
+            let u = x as f32 / texture_width.saturating_sub(1).max(1) as f32;
+            let v = y as f32 / texture_height.saturating_sub(1).max(1) as f32;
+            let terrain_depth = (0.58 + 0.22 * (u * 6.2831853).sin() * (v * 3.1415927).cos())
+                .clamp(0.0, 1.0);
+            let water_depth = (0.46 + 0.32 * v + 0.035 * (u * 18.0 + v * 7.0).sin())
+                .clamp(0.0, 1.0);
+            let shoreline = ((terrain_depth - water_depth).abs() < 0.045) as u8;
+            let velocity_x = ((u * 2.0 - 1.0) * (1.0 - v) * 0.75).clamp(-1.0, 1.0);
+            let velocity_y = (0.35 + 0.20 * (u * 9.0).cos()).clamp(-1.0, 1.0);
+            let packed = [
+                (terrain_depth * 65535.0) as u16,
+                (water_depth * 65535.0) as u16,
+                ((velocity_x * 0.5 + 0.5) * 65535.0) as u16,
+                ((velocity_y * 0.5 + 0.5) * 65535.0) as u16,
+            ];
+            if packed.iter().any(|value| *value != 0) {
+                nonzero_texel_count += 1;
+            }
+            if shoreline != 0 {
+                shoreline_texel_count += 1;
+            }
+            if velocity_x.abs() > 0.02 || velocity_y.abs() > 0.02 {
+                velocity_texel_count += 1;
+            }
+            for value in packed {
+                h.update(value.to_le_bytes());
+            }
+            h.update([shoreline]);
+        }
+    }
+    let output_texture_hash = hex32(h.finalize().into());
+    let proof_hash = hash_text_hex(
+        "forge.banger.water_info_texture.proof.v1",
+        &format!(
+            "{terrain_depth_pass_hash}:{dilated_water_depth_pass_hash}:{water_body_pass_hash}:{merge_pass_hash}:{blur_pass_hash}:{output_texture_hash}:{nonzero_texel_count}:{shoreline_texel_count}:{velocity_texel_count}"
+        ),
+    );
+
+    BangerNativeWaterInfoTextureManifest {
+        schema: "forge.banger.water_info_texture.v1",
+        schema_version: 1,
+        authority: "banger_water_info_texture_depth_velocity_merge_blur",
+        clean_room_basis:
+            "local_unreal_sparse_water_info_texture_terrain_dilated_depth_water_body_merge_blur_principles_no_source_copy",
+        texture_width,
+        texture_height,
+        format: "rgba16float_logical_depth_depth_velocity_velocity",
+        terrain_depth_pass_hash,
+        dilated_water_depth_pass_hash,
+        water_body_pass_hash,
+        merge_pass_hash,
+        blur_pass_hash,
+        output_texture_hash,
+        nonzero_texel_count,
+        shoreline_texel_count,
+        velocity_texel_count,
+        external_srv_ready: true,
+        proof_hash,
+    }
+}
+
 fn water_pipeline_manifest_hash(
     source_contract_hash: &str,
     far_field_fft: &BangerNativeWaterSpectralOcean,
     near_field_mesh: &BangerNativeWaterNearFieldMesh,
     normal_displacement: &BangerNativeWaterNormalDisplacement,
+    water_info_texture: &BangerNativeWaterInfoTextureManifest,
     foam_spray: &BangerNativeWaterFoamSpray,
     reflections: &BangerNativeWaterReflectionPacket,
     volumetric_absorption: &BangerNativeWaterAbsorptionPacket,
@@ -22652,6 +22783,8 @@ fn water_pipeline_manifest_hash(
     h.update(far_field_fft.temporal_phase_hash.as_bytes());
     h.update(near_field_mesh.page_table_hash.as_bytes());
     h.update(normal_displacement.normal_pack_hash.as_bytes());
+    h.update(water_info_texture.proof_hash.as_bytes());
+    h.update(water_info_texture.output_texture_hash.as_bytes());
     h.update(foam_spray.foam_mask_hash.as_bytes());
     h.update(reflections.reflection_hash.as_bytes());
     h.update(volumetric_absorption.absorption_hash.as_bytes());
@@ -23375,6 +23508,86 @@ mod tests {
             "fft_height_plus_local_wave_particles"
         );
         assert!(response.water_pipeline_manifest.normal_displacement.octave_count >= 7);
+        assert_eq!(
+            response.water_pipeline_manifest.water_info_texture.schema,
+            "forge.banger.water_info_texture.v1"
+        );
+        assert_eq!(
+            response.water_pipeline_manifest.water_info_texture.authority,
+            "banger_water_info_texture_depth_velocity_merge_blur"
+        );
+        assert_eq!(response.water_pipeline_manifest.water_info_texture.texture_width, 160);
+        assert_eq!(response.water_pipeline_manifest.water_info_texture.texture_height, 90);
+        assert_eq!(
+            response.water_pipeline_manifest.water_info_texture.format,
+            "rgba16float_logical_depth_depth_velocity_velocity"
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .water_info_texture
+                .terrain_depth_pass_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .water_info_texture
+                .dilated_water_depth_pass_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .water_info_texture
+                .water_body_pass_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response.water_pipeline_manifest.water_info_texture.merge_pass_hash.len(),
+            64
+        );
+        assert_eq!(
+            response.water_pipeline_manifest.water_info_texture.blur_pass_hash.len(),
+            64
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .water_info_texture
+                .output_texture_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .water_info_texture
+                .nonzero_texel_count,
+            160 * 90
+        );
+        assert!(
+            response
+                .water_pipeline_manifest
+                .water_info_texture
+                .shoreline_texel_count
+                > 0
+        );
+        assert!(
+            response
+                .water_pipeline_manifest
+                .water_info_texture
+                .velocity_texel_count
+                > 0
+        );
+        assert!(response.water_pipeline_manifest.water_info_texture.external_srv_ready);
+        assert_eq!(
+            response.water_pipeline_manifest.water_info_texture.proof_hash.len(),
+            64
+        );
         assert!(response.water_pipeline_manifest.foam_spray.shoreline_sdf_enabled);
         assert_eq!(
             response.water_pipeline_manifest.reflections.primary_path,

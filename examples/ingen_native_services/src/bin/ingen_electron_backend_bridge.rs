@@ -89,6 +89,8 @@ struct BangerPreviewFrameMetrics {
     water_pipeline_hash: String,
     water_pass_count: usize,
     water_virtual_page_count: u32,
+    water_info_texture_hash: String,
+    water_info_shoreline_texel_count: u32,
 }
 
 #[derive(Serialize)]
@@ -346,6 +348,15 @@ fn banger_preview_frame() -> BangerPreviewFrameProjection {
             + render.water_pipeline_manifest.virtual_page_budget.voxel_pages
             + render.water_pipeline_manifest.virtual_page_budget.foam_tiles
             + render.water_pipeline_manifest.virtual_page_budget.reflection_tiles,
+        water_info_texture_hash: render
+            .water_pipeline_manifest
+            .water_info_texture
+            .output_texture_hash
+            .clone(),
+        water_info_shoreline_texel_count: render
+            .water_pipeline_manifest
+            .water_info_texture
+            .shoreline_texel_count,
     };
     let mut frame = BangerPreviewFrameProjection {
         accepted: true,
@@ -1381,6 +1392,8 @@ mod tests {
         assert_eq!(frame.metrics.water_pipeline_hash.len(), 64);
         assert_eq!(frame.metrics.water_pass_count, 8);
         assert!(frame.metrics.water_virtual_page_count > 0);
+        assert_eq!(frame.metrics.water_info_texture_hash.len(), 64);
+        assert!(frame.metrics.water_info_shoreline_texel_count > 0);
         assert!(frame.metrics.promotion_allowed);
     }
 
