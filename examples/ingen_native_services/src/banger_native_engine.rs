@@ -5,6 +5,7 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::{self, Command},
+    sync::mpsc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -202,6 +203,11 @@ pub struct BangerNativePresentLoopBootstrapResponse {
     pub render_pass_count: u32,
     pub submitted_frame_count: u32,
     pub clear_color: [f64; 4],
+    pub readback_byte_count: u64,
+    pub readback_checksum_hash: String,
+    pub nonblack_pixel_sample_count: u32,
+    pub nonzero_tile_count: u32,
+    pub readback_proof_hash: String,
     pub frame_hash: String,
     pub present_loop_hash: String,
     pub proof_hash: String,
@@ -1602,8 +1608,13 @@ impl BangerNativeEngine {
         let proof_hash = hash_text_hex(
             "forge.banger.native_present_loop_bootstrap.proof.v1",
             &format!(
-                "{present_loop_hash}:{frame_hash}:{}:{}:{}",
-                render.render_pass_count, render.submitted_frame_count, gpu_probe.adapters.len()
+                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}",
+                render.render_pass_count,
+                render.submitted_frame_count,
+                gpu_probe.adapters.len(),
+                render.readback_byte_count,
+                render.readback_checksum_hash,
+                render.readback_proof_hash
             ),
         );
 
@@ -1632,6 +1643,11 @@ impl BangerNativeEngine {
             render_pass_count: render.render_pass_count,
             submitted_frame_count: render.submitted_frame_count,
             clear_color: render.clear_color,
+            readback_byte_count: render.readback_byte_count,
+            readback_checksum_hash: render.readback_checksum_hash,
+            nonblack_pixel_sample_count: render.nonblack_pixel_sample_count,
+            nonzero_tile_count: render.nonzero_tile_count,
+            readback_proof_hash: render.readback_proof_hash,
             frame_hash,
             present_loop_hash,
             proof_hash,
@@ -12575,6 +12591,11 @@ struct WgpuPresentBootstrap {
     render_pass_count: u32,
     submitted_frame_count: u32,
     clear_color: [f64; 4],
+    readback_byte_count: u64,
+    readback_checksum_hash: String,
+    nonblack_pixel_sample_count: u32,
+    nonzero_tile_count: u32,
+    readback_proof_hash: String,
 }
 
 fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBootstrap, String> {
@@ -12649,6 +12670,16 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     let clear_color = [0.015, 0.018, 0.024, 1.0];
+    let bytes_per_pixel = 4u32;
+    let unpadded_bytes_per_row = width.saturating_mul(bytes_per_pixel);
+    let padded_bytes_per_row = align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let readback_byte_count = u64::from(padded_bytes_per_row).saturating_mul(u64::from(height));
+    let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-bootstrap-readback"),
+        size: readback_byte_count,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("banger-native-present-bootstrap-encoder"),
     });
@@ -12676,10 +12707,56 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             multiview_mask: None,
         });
     }
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &target,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback_buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
     queue.submit(Some(encoder.finish()));
     device
         .poll(wgpu::PollType::wait_indefinitely())
         .map_err(|error| format!("Banger present loop GPU poll failed: {error}"))?;
+    let readback_slice = readback_buffer.slice(..);
+    let (sender, receiver) = mpsc::channel();
+    readback_slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = sender.send(result);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|error| format!("Banger present loop readback poll failed: {error}"))?;
+    receiver
+        .recv()
+        .map_err(|err| format!("Banger present loop readback callback failed: {err}"))?
+        .map_err(|err| format!("Banger present loop readback map failed: {err}"))?;
+    let readback_view = readback_slice.get_mapped_range();
+    let readback_metrics = present_loop_readback_metrics(
+        &readback_view,
+        width,
+        height,
+        unpadded_bytes_per_row,
+        padded_bytes_per_row,
+    );
+    drop(readback_view);
+    readback_buffer.unmap();
+    if readback_metrics.nonblack_pixel_sample_count == 0 || readback_metrics.nonzero_tile_count == 0 {
+        return Err("Banger present loop readback produced a black frame".to_string());
+    }
 
     Ok(WgpuPresentBootstrap {
         selected_adapter: Some(selected_adapter),
@@ -12692,7 +12769,97 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         render_pass_count: 1,
         submitted_frame_count: 1,
         clear_color,
+        readback_byte_count,
+        readback_checksum_hash: readback_metrics.checksum_hash,
+        nonblack_pixel_sample_count: readback_metrics.nonblack_pixel_sample_count,
+        nonzero_tile_count: readback_metrics.nonzero_tile_count,
+        readback_proof_hash: readback_metrics.proof_hash,
     })
+}
+
+struct PresentLoopReadbackMetrics {
+    checksum_hash: String,
+    nonblack_pixel_sample_count: u32,
+    nonzero_tile_count: u32,
+    proof_hash: String,
+}
+
+fn align_to(value: u32, alignment: u32) -> u32 {
+    if alignment == 0 {
+        value
+    } else {
+        value.div_ceil(alignment).saturating_mul(alignment)
+    }
+}
+
+fn present_loop_readback_metrics(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+) -> PresentLoopReadbackMetrics {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.readback_checksum.v1\0");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(unpadded_bytes_per_row.to_le_bytes());
+    h.update(padded_bytes_per_row.to_le_bytes());
+    let mut nonblack_pixel_sample_count = 0u32;
+    let mut tile_has_value = BTreeSet::new();
+    for y in 0..height {
+        let row_start = y as usize * padded_bytes_per_row as usize;
+        let row_end = row_start.saturating_add(unpadded_bytes_per_row as usize);
+        if row_end > bytes.len() {
+            break;
+        }
+        let row = &bytes[row_start..row_end];
+        h.update(row);
+        for (x, pixel) in row.chunks_exact(4).enumerate() {
+            if pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0 {
+                nonblack_pixel_sample_count = nonblack_pixel_sample_count.saturating_add(1);
+                tile_has_value.insert(((x as u32) / 16, y / 16));
+            }
+        }
+    }
+    let checksum_hash = hex32(h.finalize().into());
+    let nonzero_tile_count = tile_has_value.len() as u32;
+    let proof_hash = present_loop_readback_proof_hash(
+        width,
+        height,
+        unpadded_bytes_per_row,
+        padded_bytes_per_row,
+        &checksum_hash,
+        nonblack_pixel_sample_count,
+        nonzero_tile_count,
+    );
+    PresentLoopReadbackMetrics {
+        checksum_hash,
+        nonblack_pixel_sample_count,
+        nonzero_tile_count,
+        proof_hash,
+    }
+}
+
+fn present_loop_readback_proof_hash(
+    width: u32,
+    height: u32,
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+    checksum_hash: &str,
+    nonblack_pixel_sample_count: u32,
+    nonzero_tile_count: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.readback_proof.v1\0");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(unpadded_bytes_per_row.to_le_bytes());
+    h.update(padded_bytes_per_row.to_le_bytes());
+    h.update(checksum_hash.as_bytes());
+    h.update(nonblack_pixel_sample_count.to_le_bytes());
+    h.update(nonzero_tile_count.to_le_bytes());
+    hex32(h.finalize().into())
 }
 
 fn present_loop_frame_hash(
@@ -13039,6 +13206,11 @@ mod tests {
         assert_eq!(response.alpha_mode, "Opaque");
         assert_eq!(response.render_pass_count, 1);
         assert_eq!(response.submitted_frame_count, 1);
+        assert_eq!(response.readback_byte_count, 640 * 360 * 4);
+        assert_eq!(response.readback_checksum_hash.len(), 64);
+        assert!(response.nonblack_pixel_sample_count > 0);
+        assert!(response.nonzero_tile_count > 0);
+        assert_eq!(response.readback_proof_hash.len(), 64);
         assert_eq!(response.frame_hash.len(), 64);
         assert_eq!(response.present_loop_hash.len(), 64);
         assert_eq!(response.proof_hash.len(), 64);
