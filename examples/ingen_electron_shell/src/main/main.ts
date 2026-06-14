@@ -5245,7 +5245,23 @@ function compactAgentActionResult(result: AgentActionResult): string {
   });
 }
 
+function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
+  return request.action === "list" || request.action === "search" || request.action === "run_readonly_command";
+}
+
+function textLooksLikeFilesystemMutationGoal(text: string): boolean {
+  return /\b(organis|organize|ranger|range|classer|trier|tri|dossier|folder|deplacer|déplacer|move|renommer|rename|copier|copy|supprimer|delete|nettoyer|clean|bureau|desktop)\b/i.test(text);
+}
+
+function agentActionStepNeedsMutationFollowUp(originalUserText: string, request: AgentActionRequest, result: AgentActionResult): boolean {
+  if (!result.accepted || !agentActionRequestIsDiscovery(request) || !textLooksLikeFilesystemMutationGoal(originalUserText)) {
+    return false;
+  }
+  return Boolean(result.items?.length || result.matches?.length || result.stdoutPreview?.trim());
+}
+
 function agentActionLoopContinuationUserText(originalUserText: string, request: AgentActionRequest, result: AgentActionResult, step: number): string {
+  const mustContinueAfterDiscovery = agentActionStepNeedsMutationFollowUp(originalUserText, request, result);
   return [
     AGENT_ACTION_RESULT_PREFIX,
     `step=${step + 1}`,
@@ -5253,8 +5269,34 @@ function agentActionLoopContinuationUserText(originalUserText: string, request: 
     `result=${compactAgentActionResult(result)}`,
     "",
     "Continue la boucle agentique en francais.",
-    "Si l'objectif demande encore une action locale, ecris un court paragraphe de progression puis exactement une ligne AGENT_ACTION_JSON.",
-    "Si l'objectif est atteint, donne un resume final compact de ce qui a ete fait et n'emets pas AGENT_ACTION_JSON.",
+    mustContinueAfterDiscovery
+      ? "OBLIGATION: l'objectif utilisateur implique une modification locale; une action de lecture seule ne suffit pas. Tu dois maintenant choisir la prochaine action concrete et emettre exactement une ligne AGENT_ACTION_JSON."
+      : "Si l'objectif demande encore une action locale, ecris un court paragraphe de progression puis exactement une ligne AGENT_ACTION_JSON.",
+    "Pour ranger/organiser un bureau: apres la liste, cree les dossiers utiles si necessaire, puis deplace ou copie les elements pertinents. Ne t'arrete pas apres un simple inventaire.",
+    "Style de progression: varie les ouvertures, evite de commencer chaque paragraphe par 'Je vais', et prefere le present concret: constat bref, decision, action.",
+    "La ligne de controle doit commencer par AGENT_ACTION_JSON en colonne 1, sans prose avant.",
+    mustContinueAfterDiscovery
+      ? "Interdit dans ce tour: resume final, proposition seulement verbale, ou dire que tu vas faire l'action sans AGENT_ACTION_JSON."
+      : "Si l'objectif est atteint, donne un resume final compact de ce qui a ete fait et n'emets pas AGENT_ACTION_JSON.",
+    "",
+    `Objectif utilisateur initial:\n${originalUserText}`
+  ].join("\n");
+}
+
+function agentActionForcedContinuationUserText(originalUserText: string, request: AgentActionRequest, result: AgentActionResult, previousAssistantText: string, step: number): string {
+  return [
+    "AGENT_ACTION_FORCED_CONTINUATION v1",
+    `step=${step + 1}`,
+    `last_request=${JSON.stringify(request)}`,
+    `last_result=${compactAgentActionResult(result)}`,
+    "",
+    "Le loop ne doit pas s'arreter ici: la derniere action etait seulement une action de decouverte, pas une modification.",
+    "Ecris un court paragraphe de progression, puis exactement une ligne AGENT_ACTION_JSON qui execute la prochaine action locale concrete.",
+    "Pour organiser un bureau, l'action suivante doit etre par exemple create_directory, move_path, copy_path ou rename_path selon les elements listes.",
+    "Style: ne commence pas par 'Je vais'. Varie avec une observation ou une decision concrete, puis passe directement a l'action.",
+    "La ligne AGENT_ACTION_JSON doit commencer en colonne 1. Ne donne pas de resume final dans ce tour.",
+    "",
+    `Derniere reponse assistant sans action:\n${trimUtf8Bytes(previousAssistantText, 2000)}`,
     "",
     `Objectif utilisateur initial:\n${originalUserText}`
   ].join("\n");
@@ -5308,6 +5350,30 @@ async function executeAssistantAgentActionLoop(params: {
       text: [assistantMessage.text, continuation.text].filter((part) => part.trim().length > 0).join("\n\n"),
       proofHash: hashJson({ agentActionLoopStep: step + 1, previousProofHash: assistantMessage.proofHash, continuationProofHash: continuation.proofHash })
     };
+    if (agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result) && !extractAgentActionJsonRequest(assistantMessage.text)) {
+      const forcedLiveSink = createAssistantLiveTextSink({
+        baseTranscript: params.baseTranscript,
+        assistantMessageId: assistantMessage.id,
+        requestSessionId: params.requestSessionId,
+        commitTranscript: params.commitTranscript,
+        prefixText: assistantMessage.text
+      });
+      const forcedContinuation = await buildAssistantTranscriptMessage(
+        agentActionForcedContinuationUserText(params.originalUserText, extracted.request, result, continuation.text, step),
+        params.providerAttachments,
+        params.userMessageId,
+        params.moduleId,
+        transcriptWithMessage(params.baseTranscript, assistantMessage),
+        forcedLiveSink,
+        assistantMessage.id
+      );
+      assistantMessage = {
+        ...forcedContinuation,
+        id: assistantMessage.id,
+        text: [assistantMessage.text, forcedContinuation.text].filter((part) => part.trim().length > 0).join("\n\n"),
+        proofHash: hashJson({ agentActionLoopForcedContinuationStep: step + 1, previousProofHash: assistantMessage.proofHash, continuationProofHash: forcedContinuation.proofHash })
+      };
+    }
   }
   const strippedText = removeAgentActionJsonFragments(assistantMessage.text)
     .replace(/\n{3,}/g, "\n\n")
@@ -10543,6 +10609,10 @@ function delayAssistantProgressiveSeed(ms: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
+function assistantTextContainsAgentActionEvents(text: string): boolean {
+  return /\/agent_(?:list|search|create_directory|rename_path|move_path|copy_path|delete_empty_directory|delete_tree|readonly_shell|shell)_/.test(text);
+}
+
 async function commitAssistantMessageWithProgressiveSeed(
   baseTranscript: TranscriptMessage[],
   assistantMessage: TranscriptMessage,
@@ -10550,7 +10620,7 @@ async function commitAssistantMessageWithProgressiveSeed(
   commitTranscript: (transcript: TranscriptMessage[]) => void
 ): Promise<TranscriptMessage[]> {
   const text = assistantMessage.text;
-  if (text.length < ASSISTANT_PROGRESSIVE_SEED_MIN_CHARS) {
+  if (text.length < ASSISTANT_PROGRESSIVE_SEED_MIN_CHARS || assistantTextContainsAgentActionEvents(text)) {
     const finalTranscript = transcriptWithMessage(baseTranscript, assistantMessage);
     commitTranscript(finalTranscript);
     return finalTranscript;

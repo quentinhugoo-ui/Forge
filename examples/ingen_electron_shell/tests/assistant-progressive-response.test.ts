@@ -43,6 +43,9 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("extractAgentActionJsonRequest(assistantMessage.text)");
     expect(mainSource).toContain("executeAgentActionRequest(agentActionHostConfig(), extracted.request)");
     expect(mainSource).toContain("agentActionLoopContinuationUserText");
+    expect(mainSource).toContain("agentActionStepNeedsMutationFollowUp");
+    expect(mainSource).toContain("agentActionForcedContinuationUserText");
+    expect(mainSource).toContain("AGENT_ACTION_FORCED_CONTINUATION v1");
     expect(mainSource).toContain("params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage))");
     expect(mainSource).toContain("assistantMessage = await executeAssistantAgentActionLoop({");
     expect(agentActionLoopSource).toContain("let markerIndex = text.indexOf(AGENT_ACTION_JSON_PREFIX)");
