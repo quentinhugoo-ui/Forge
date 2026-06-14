@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   createAgentActionHostManifest,
   agentActionHostPromptManifest,
+  agentActionRoutingHint,
   executeAgentActionRequest,
   type AgentActionHostConfig
 } from "../src/main/agent-action-host";
@@ -55,6 +56,15 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("loop_stream=When local action is needed");
     expect(promptManifest).toContain("action_request_format=AGENT_ACTION_JSON");
     expect(promptManifest).toContain("tool_truth=Never claim an action was executed");
+  });
+
+  it("keeps a compact stable routing hint separate from the runtime manifest", () => {
+    const hint = agentActionRoutingHint();
+    expect(hint).toContain("LOCAL_ACTION_TOOLS v1");
+    expect(hint).toContain("families=fs.list fs.search");
+    expect(hint).toContain("format=Emit AGENT_ACTION_JSON");
+    expect(hint).not.toContain("workspace_root=");
+    expect(hint).not.toContain("protected_roots=");
   });
 
   it("keeps filesystem operations inside the workspace", async () => {

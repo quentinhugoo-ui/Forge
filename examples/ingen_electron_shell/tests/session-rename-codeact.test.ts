@@ -14,10 +14,14 @@ describe("session rename CodeAct", () => {
     expect(brainSource).toContain('/\\"nomduchat\\"_renamechat_');
     expect(brainSource).toContain("standalone internal line");
     expect(brainSource).toContain("never merge it with visible prose");
+    expect(brainSource).toContain("Local action tools exist for user requests");
+    expect(brainSource).toContain("Local action tools exist for repo inspection");
     expect(generatedSource).toContain('export const BRAIN_RENAME_SESSION_COMMAND = "/rename_session_" as const;');
     expect(generatedSource).toContain("BRAIN_RENAME_SESSION_COMMAND_DESCRIPTION");
     expect(generatedSource).toContain("standalone Brain-owned compact line");
     expect(generatedSource).toContain("never merge it with visible prose");
+    expect(generatedSource).toContain("Local action tools exist for user requests");
+    expect(generatedSource).toContain("Local action tools exist for repo inspection");
     expect(mainSource).toContain("Au premier message utilisateur de cette session");
     expect(mainSource).toContain('/"Titre"_renamechat_');
     expect(mainSource).toContain("une ligne interne seule");

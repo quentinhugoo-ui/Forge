@@ -48,6 +48,15 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   run_command: "/agent_shell_"
 };
 
+export function agentActionRoutingHint(): string {
+  return [
+    "LOCAL_ACTION_TOOLS v1",
+    "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, or run local commands on the workspace/computer.",
+    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
+    "format=Emit AGENT_ACTION_JSON only when real execution is needed, then wait for AGENT_ACTION_RESULT. Never fake tool events."
+  ].join("\n");
+}
+
 export interface AgentActionHostConfig {
   workspaceRoot: string;
   workspaceActive: boolean;

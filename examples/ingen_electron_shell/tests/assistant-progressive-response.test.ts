@@ -45,4 +45,14 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage))");
     expect(mainSource).toContain("assistantMessage = await executeAssistantAgentActionLoop({");
   });
+
+  it("injects the heavy local action manifest lazily", () => {
+    expect(mainSource).toContain("function shouldInjectFullAgentActionManifest");
+    expect(mainSource).toContain("textLooksLikeLocalActionIntent(userText)");
+    expect(mainSource).toContain("transcriptHasRecentAgentActionLoop(transcript)");
+    expect(mainSource).toContain("shouldInjectFullAgentActionManifest(userText, transcript)");
+    expect(mainSource).toContain("? [agentActionRoutingHint(), agentActionHostPromptManifest(agentActionHostConfig())].join(\"\\n\")");
+    expect(mainSource).toContain(": \"\"");
+    expect(mainSource).toContain("agentActionContextManifest(userText, transcript)");
+  });
 });

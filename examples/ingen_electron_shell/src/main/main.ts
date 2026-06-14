@@ -104,6 +104,7 @@ import {
 import {
   agentActionEventCommandForRequest,
   agentActionHostPromptManifest,
+  agentActionRoutingHint,
   createAgentActionHostManifest,
   executeAgentActionRequest,
   type AgentActionHostConfig
@@ -4106,8 +4107,39 @@ function agentActionHostConfig(): AgentActionHostConfig {
   };
 }
 
-function agentActionContextManifest(): string {
-  return agentActionHostPromptManifest(agentActionHostConfig());
+function textLooksLikeLocalActionIntent(text: string): boolean {
+  const normalized = text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return /\b(?:ordinateur|bureau|desktop|fichier|fichiers|dossier|dossiers|repertoire|repertoires|workspace|repo|projet|terminal|powershell|cmd|shell|commande|commandes|chercher|rechercher|trouver|lister|copier|copie|deplacer|renommer|creer|ecrire|modifier|supprimer|effacer|ouvrir|telecharger|sauvegarder|enregistrer|git|npm|cargo|test|build)\b/.test(normalized) ||
+    normalized.includes("agent_action_result") ||
+    normalized.includes("agent_action_json");
+}
+
+function transcriptHasRecentAgentActionLoop(transcript: TranscriptMessage[] = panelsChatBottomState.transcript): boolean {
+  return [...transcript]
+    .reverse()
+    .slice(0, 6)
+    .some((message) =>
+      /AGENT_ACTION_RESULT|AGENT_ACTION_JSON|\/agent_(?:list|search|create_directory|rename_path|move_path|copy_path|delete_empty_directory|delete_tree|readonly_shell|shell)_/i.test(message.text)
+    );
+}
+
+function shouldInjectFullAgentActionManifest(
+  userText = "",
+  transcript: TranscriptMessage[] = panelsChatBottomState.transcript
+): boolean {
+  return textLooksLikeLocalActionIntent(userText) || transcriptHasRecentAgentActionLoop(transcript);
+}
+
+function agentActionContextManifest(
+  userText = "",
+  transcript: TranscriptMessage[] = panelsChatBottomState.transcript
+): string {
+  return shouldInjectFullAgentActionManifest(userText, transcript)
+    ? [agentActionRoutingHint(), agentActionHostPromptManifest(agentActionHostConfig())].join("\n")
+    : "";
 }
 
 function brainSegmentManifest(): string {
@@ -4161,7 +4193,12 @@ function selfDirectedModeManifest(): string {
   ].join("\n");
 }
 
-function codexDirectInstructions(reasoning: string, moduleId = ""): string {
+function codexDirectInstructions(
+  reasoning: string,
+  moduleId = "",
+  userText = "",
+  transcript: TranscriptMessage[] = panelsChatBottomState.transcript
+): string {
   return [
     `@forge:direct:v1 p=Codex lang=fr tools=codeact effort=${reasoning}`,
     "style=francais naturel, concis; reponds directement.",
@@ -4169,7 +4206,7 @@ function codexDirectInstructions(reasoning: string, moduleId = ""): string {
     brainBootManifest(),
     brainIdentityMemoryManifest(),
     workspaceContextManifest(),
-    agentActionContextManifest(),
+    agentActionContextManifest(userText, transcript),
     brainSegmentManifest(),
     selfDirectedModeManifest(),
     webExplorerCodeActInstructions(moduleId)
@@ -4604,7 +4641,7 @@ async function runCodexOAuthDirect(
     model,
     store: false,
     stream: true,
-    instructions: codexDirectInstructions(reasoning, moduleId),
+    instructions: codexDirectInstructions(reasoning, moduleId, userText, transcript),
     input: await openAiResponseConversationInput(userText, attachments, userMessageId, transcript),
     text: {
       verbosity: textVerbosity
@@ -4721,7 +4758,7 @@ async function runClaudeCodePrint(
     brainBootManifest(),
     brainIdentityMemoryManifest(),
     workspaceContextManifest(),
-    agentActionContextManifest(),
+    agentActionContextManifest(userText, transcript),
     brainSegmentManifest(),
     selfDirectedModeManifest(),
     webExplorerCodeActInstructions(moduleId),
@@ -4799,7 +4836,7 @@ async function runOpenRouterChatCompletion(
           brainBootManifest(),
           brainIdentityMemoryManifest(),
           workspaceContextManifest(),
-          agentActionContextManifest(),
+          agentActionContextManifest(userText, transcript),
           brainSegmentManifest(),
           selfDirectedModeManifest(),
           webExplorerCodeActInstructions(moduleId)
