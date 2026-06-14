@@ -777,8 +777,9 @@ button {
   height: 34px;
   padding: 0;
   color: #00adef;
-  background: color-mix(in oklab, var(--forge-chat-bg), transparent 12%);
-  border: 1px solid color-mix(in oklab, #00adef, transparent 72%);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
   opacity: 0;
   pointer-events: none;
   transform: translateY(8px);
@@ -789,9 +790,16 @@ button {
 }
 
 .widgetWindowsButton svg {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   fill: currentColor;
+}
+
+.widgetWindowsButton:hover,
+.widgetWindowsButton:focus-visible {
+  color: color-mix(in oklab, #00adef, #ffffff 16%);
+  background: transparent;
+  outline: 0;
 }
 
 .shell--widget-mode .widgetWindowsButton {
@@ -7181,7 +7189,7 @@ ol.assistantText__list li::before {
   height: 20px !important;
   min-height: 20px;
   padding: 0 !important;
-  color: color-mix(in oklab, var(--forge-muted), transparent 18%) !important;
+  color: color-mix(in oklab, var(--forge-muted), #ffffff 6%) !important;
   background: transparent !important;
   border: 0 !important;
   cursor: pointer;
@@ -7201,13 +7209,13 @@ ol.assistantText__list li::before {
 
 .bottomControls__widgetButton:hover,
 .bottomControls__widgetButton:focus-visible {
-  color: var(--forge-text) !important;
+  color: color-mix(in oklab, var(--forge-text), transparent 24%) !important;
   opacity: 1;
   transform: translateY(-1px);
 }
 
 .bottomControls__widgetButton--active {
-  color: var(--forge-text) !important;
+  color: #f5f5f2 !important;
   opacity: 1;
 }
 
