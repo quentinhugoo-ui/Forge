@@ -77,14 +77,6 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     void import("cesium")
       .then(async (Cesium) => {
         if (cancelled) return;
-        const initialView = tilesConfig?.initialView ?? {
-          longitude: 2.3522,
-          latitude: 48.8566,
-          heightMeters: 4_200_000,
-          headingDegrees: 0,
-          pitchDegrees: -28,
-          rollDegrees: 0
-        };
         const baseLayer = Cesium.ImageryLayer.fromProviderAsync(
           Cesium.TileMapServiceImageryProvider.fromUrl(
             Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII")
@@ -105,22 +97,19 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
           sceneModePicker: false,
           selectionIndicator: false,
           shouldAnimate: false,
+          skyAtmosphere: false,
+          skyBox: false,
           timeline: false
         });
         const cesiumViewer = viewer as any;
         setCesiumMounted(true);
         cesiumViewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#05070a");
         cesiumViewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#2f6f9f");
-        cesiumViewer.scene.globe.enableLighting = true;
-        cesiumViewer.scene.skyAtmosphere.show = true;
-        const { longitude, latitude, heightMeters, headingDegrees, pitchDegrees, rollDegrees } = initialView;
+        cesiumViewer.scene.globe.enableLighting = false;
+        cesiumViewer.scene.globe.show = true;
+        cesiumViewer.resize();
         cesiumViewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, Math.max(heightMeters, 4_200_000)),
-          orientation: {
-            heading: Cesium.Math.toRadians(headingDegrees),
-            pitch: Cesium.Math.toRadians(-28),
-            roll: Cesium.Math.toRadians(rollDegrees)
-          }
+          destination: Cesium.Rectangle.fromDegrees(-180, -75, 180, 75)
         });
         cesiumViewer.scene.requestRender();
         if (!tilesConfig?.accepted || !tilesConfig.rootTilesetUrl) {
@@ -140,14 +129,6 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
           : new tilesetFactory({ url: tilesConfig.rootTilesetUrl, ...tilesetOptions });
         if (cancelled) return;
         cesiumViewer.scene.primitives.add(tileset);
-        cesiumViewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, heightMeters),
-          orientation: {
-            heading: Cesium.Math.toRadians(headingDegrees),
-            pitch: Cesium.Math.toRadians(pitchDegrees),
-            roll: Cesium.Math.toRadians(rollDegrees)
-          }
-        });
         cesiumViewer.scene.requestRender();
       })
       .catch((error) => {

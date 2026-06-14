@@ -17,7 +17,11 @@ describe("Banger Cesium viewport contract", () => {
 
   it("keeps Cesium fail-visible instead of returning a black silent canvas", () => {
     expect(routerSource).toContain("requestRenderMode: false");
+    expect(routerSource).toContain("skyAtmosphere: false");
+    expect(routerSource).toContain("skyBox: false");
+    expect(routerSource).toContain("Cesium.Rectangle.fromDegrees(-180, -75, 180, 75)");
     expect(routerSource).toContain("scene.globe.baseColor");
+    expect(routerSource).toContain("scene.globe.show = true");
     expect(routerSource).toContain('console.error("Banger Cesium viewport failed to mount.", error)');
     expect(stylesSource).toContain(".bangerCesiumViewport::before");
     expect(stylesSource).toContain(".bangerCesiumViewport--mounted::before");
