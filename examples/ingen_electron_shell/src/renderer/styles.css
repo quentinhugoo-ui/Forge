@@ -9645,6 +9645,8 @@ ol.assistantText__list li::before {
   opacity: 0.96;
   overflow: visible;
   isolation: isolate;
+  transform: scale(0.87);
+  transform-origin: center;
 }
 
 .brainBlob__canvas,
