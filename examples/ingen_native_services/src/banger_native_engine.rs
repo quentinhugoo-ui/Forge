@@ -270,6 +270,8 @@ pub struct BangerNativePresentLoopBootstrapResponse {
     pub depth_readback_hash: String,
     pub depth_readback_proof_hash: String,
     pub screen_coverage_hash: String,
+    pub water_pipeline_hash: String,
+    pub water_pipeline_manifest: BangerNativeWaterPipelineManifest,
     pub mesh_vertex_count: u32,
     pub mesh_triangle_count: u32,
     pub draw_call_count: u32,
@@ -296,6 +298,133 @@ pub struct BangerNativePresentLoopBootstrapResponse {
     pub present_loop_hash: String,
     pub proof_hash: String,
     pub verifier: BangerNativeRenderVerifier,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterPipelineManifest {
+    pub schema: &'static str,
+    pub schema_version: u32,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub far_field_fft: BangerNativeWaterSpectralOcean,
+    pub near_field_mesh: BangerNativeWaterNearFieldMesh,
+    pub normal_displacement: BangerNativeWaterNormalDisplacement,
+    pub foam_spray: BangerNativeWaterFoamSpray,
+    pub reflections: BangerNativeWaterReflectionPacket,
+    pub volumetric_absorption: BangerNativeWaterAbsorptionPacket,
+    pub sdf_voxel_interaction: BangerNativeWaterSdfVoxelPacket,
+    pub pass_schedule: Vec<BangerNativeWaterPass>,
+    pub virtual_page_budget: BangerNativeWaterPageBudget,
+    pub manifest_hash: String,
+    pub proof_hash: String,
+    pub promotion_gate: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterSpectralOcean {
+    pub spectrum_model: &'static str,
+    pub cascade_count: u32,
+    pub fft_resolution: u32,
+    pub displacement_texture_count: u32,
+    pub slope_texture_count: u32,
+    pub temporal_phase_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterNearFieldMesh {
+    pub topology: &'static str,
+    pub grid_resolution: u32,
+    pub vertex_count: u32,
+    pub triangle_count: u32,
+    pub meshlet_page_count: u32,
+    pub lod_ring_count: u32,
+    pub hzb_culling_enabled: bool,
+    pub indirect_draw_enabled: bool,
+    pub page_table_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterNormalDisplacement {
+    pub displacement_source: &'static str,
+    pub normal_source: &'static str,
+    pub octave_count: u32,
+    pub micro_normal_band_count: u32,
+    pub choppiness: f32,
+    pub normal_pack_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterFoamSpray {
+    pub foam_source: &'static str,
+    pub spray_source: &'static str,
+    pub mask_resolution: u32,
+    pub spray_particle_budget: u32,
+    pub shoreline_sdf_enabled: bool,
+    pub foam_mask_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterReflectionPacket {
+    pub primary_path: &'static str,
+    pub fallback_path: &'static str,
+    pub ray_step_budget: u32,
+    pub roughness_mip_count: u32,
+    pub reflection_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterAbsorptionPacket {
+    pub model: &'static str,
+    pub depth_source: &'static str,
+    pub scattering_lut_resolution: u32,
+    pub caustics_enabled: bool,
+    pub absorption_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterSdfVoxelPacket {
+    pub purpose: &'static str,
+    pub sdf_brick_resolution: u32,
+    pub voxel_page_resolution: u32,
+    pub brick_count: u32,
+    pub page_count: u32,
+    pub collision_enabled: bool,
+    pub submerged_object_cutout_enabled: bool,
+    pub near_shore_foam_enabled: bool,
+    pub sdf_voxel_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterPass {
+    pub pass_index: u32,
+    pub name: &'static str,
+    pub queue: &'static str,
+    pub input_kind: &'static str,
+    pub output_kind: &'static str,
+    pub unreal_basis: &'static str,
+    pub pass_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeWaterPageBudget {
+    pub meshlet_pages: u32,
+    pub sdf_bricks: u32,
+    pub voxel_pages: u32,
+    pub foam_tiles: u32,
+    pub reflection_tiles: u32,
+    pub estimated_vram_mb: u32,
+    pub budget_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2782,7 +2911,7 @@ impl BangerNativeEngine {
         let proof_hash = hash_text_hex(
             "forge.banger.native_present_loop_bootstrap.proof.v1",
             &format!(
-                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 render.render_pass_count,
                 render.submitted_frame_count,
                 gpu_probe.adapters.len(),
@@ -2790,6 +2919,7 @@ impl BangerNativeEngine {
                 render.readback_checksum_hash,
                 render.visual_signature_hash,
                 render.screen_coverage_hash,
+                render.water_pipeline_hash,
                 render.camera_contract_hash,
                 render.view_projection_hash,
                 render.frame_witness_hash,
@@ -2843,6 +2973,8 @@ impl BangerNativeEngine {
             depth_readback_hash: render.depth_readback_hash,
             depth_readback_proof_hash: render.depth_readback_proof_hash,
             screen_coverage_hash: render.screen_coverage_hash,
+            water_pipeline_hash: render.water_pipeline_hash,
+            water_pipeline_manifest: render.water_pipeline_manifest,
             mesh_vertex_count: render.mesh_vertex_count,
             mesh_triangle_count: render.mesh_triangle_count,
             draw_call_count: render.draw_call_count,
@@ -21059,6 +21191,8 @@ struct WgpuPresentBootstrap {
     depth_readback_hash: String,
     depth_readback_proof_hash: String,
     screen_coverage_hash: String,
+    water_pipeline_hash: String,
+    water_pipeline_manifest: BangerNativeWaterPipelineManifest,
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
@@ -21224,6 +21358,9 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     let depth_target_hash = present_loop_depth_target_hash(width, height, "Depth32Float", &visual_pipeline_hash);
     let mesh_vertex_count = 3u32 + 96u32 * 96u32 * 6u32;
     let mesh_triangle_count = mesh_vertex_count / 3;
+    let water_pipeline_manifest =
+        build_water_pipeline_manifest(width, height, mesh_vertex_count, mesh_triangle_count, &visual_pipeline_hash);
+    let water_pipeline_hash = water_pipeline_manifest.manifest_hash.clone();
     let draw_call_count = 1u32;
     let camera_position = [0.0, 0.0, -2.4];
     let camera_target = [0.0, 0.0, 0.0];
@@ -21471,6 +21608,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         &scene_bounds_hash,
         &frame_witness_hash,
         &preview_proof_hash,
+        &water_pipeline_hash,
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
@@ -21505,6 +21643,8 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         depth_readback_hash: depth_metrics.checksum_hash,
         depth_readback_proof_hash: depth_metrics.proof_hash,
         screen_coverage_hash,
+        water_pipeline_hash,
+        water_pipeline_manifest,
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
@@ -22255,6 +22395,274 @@ fn present_loop_depth_target_hash(
     hex32(h.finalize().into())
 }
 
+fn build_water_pipeline_manifest(
+    width: u32,
+    height: u32,
+    mesh_vertex_count: u32,
+    mesh_triangle_count: u32,
+    visual_pipeline_hash: &str,
+) -> BangerNativeWaterPipelineManifest {
+    let water_mesh_triangle_count = mesh_triangle_count.saturating_sub(1);
+    let source_contract_hash = hash_text_hex(
+        "forge.banger.water_hybrid_pipeline.source_contract.v1",
+        &format!("{width}:{height}:{mesh_vertex_count}:{mesh_triangle_count}:{visual_pipeline_hash}"),
+    );
+    let far_field_fft = BangerNativeWaterSpectralOcean {
+        spectrum_model: "tessendorf_jonswap_directional_fft",
+        cascade_count: 4,
+        fft_resolution: 512,
+        displacement_texture_count: 4,
+        slope_texture_count: 4,
+        temporal_phase_hash: hash_text_hex(
+            "forge.banger.water.fft_temporal_phase.v1",
+            &format!("{width}:{height}:4:512:{visual_pipeline_hash}"),
+        ),
+    };
+    let near_field_mesh = BangerNativeWaterNearFieldMesh {
+        topology: "camera_relative_meshlet_lod_rings",
+        grid_resolution: 96,
+        vertex_count: mesh_vertex_count.saturating_sub(3),
+        triangle_count: water_mesh_triangle_count,
+        meshlet_page_count: water_mesh_triangle_count.div_ceil(128).max(1),
+        lod_ring_count: 6,
+        hzb_culling_enabled: true,
+        indirect_draw_enabled: true,
+        page_table_hash: hash_text_hex(
+            "forge.banger.water.near_field_page_table.v1",
+            &format!("{water_mesh_triangle_count}:96:6:{visual_pipeline_hash}"),
+        ),
+    };
+    let normal_displacement = BangerNativeWaterNormalDisplacement {
+        displacement_source: "fft_height_plus_local_wave_particles",
+        normal_source: "multiscale_slope_fft_micro_normal",
+        octave_count: 7,
+        micro_normal_band_count: 3,
+        choppiness: 1.24,
+        normal_pack_hash: hash_text_hex(
+            "forge.banger.water.normal_displacement.v1",
+            &format!("7:3:1.24:{visual_pipeline_hash}"),
+        ),
+    };
+    let foam_spray = BangerNativeWaterFoamSpray {
+        foam_source: "jacobian_breaking_mask_plus_shoreline_sdf",
+        spray_source: "gpu_particle_emitters_from_whitewater_tiles",
+        mask_resolution: 1024,
+        spray_particle_budget: 8192,
+        shoreline_sdf_enabled: true,
+        foam_mask_hash: hash_text_hex(
+            "forge.banger.water.foam_spray.v1",
+            &format!("1024:8192:{width}:{height}:{visual_pipeline_hash}"),
+        ),
+    };
+    let reflections = BangerNativeWaterReflectionPacket {
+        primary_path: "screen_space_ray_trace_hzb",
+        fallback_path: "radiance_cache_environment_probe",
+        ray_step_budget: 48,
+        roughness_mip_count: 6,
+        reflection_hash: hash_text_hex(
+            "forge.banger.water.reflection_packet.v1",
+            &format!("ssr_hzb:48:6:{visual_pipeline_hash}"),
+        ),
+    };
+    let volumetric_absorption = BangerNativeWaterAbsorptionPacket {
+        model: "beer_lambert_single_layer_water",
+        depth_source: "scene_depth_plus_water_depth",
+        scattering_lut_resolution: 64,
+        caustics_enabled: true,
+        absorption_hash: hash_text_hex(
+            "forge.banger.water.absorption_packet.v1",
+            &format!("beer_lambert:64:caustics:{visual_pipeline_hash}"),
+        ),
+    };
+    let sdf_voxel_interaction = BangerNativeWaterSdfVoxelPacket {
+        purpose: "collision_shoreline_submerged_cutout_near_shore_foam",
+        sdf_brick_resolution: 64,
+        voxel_page_resolution: 32,
+        brick_count: 96,
+        page_count: 128,
+        collision_enabled: true,
+        submerged_object_cutout_enabled: true,
+        near_shore_foam_enabled: true,
+        sdf_voxel_hash: hash_text_hex(
+            "forge.banger.water.sdf_voxel_interaction.v1",
+            &format!("64:32:96:128:{visual_pipeline_hash}"),
+        ),
+    };
+    let pass_schedule = build_water_pass_schedule(visual_pipeline_hash);
+    let virtual_page_budget = BangerNativeWaterPageBudget {
+        meshlet_pages: near_field_mesh.meshlet_page_count,
+        sdf_bricks: sdf_voxel_interaction.brick_count,
+        voxel_pages: sdf_voxel_interaction.page_count,
+        foam_tiles: 64,
+        reflection_tiles: 72,
+        estimated_vram_mb: 96,
+        budget_hash: hash_text_hex(
+            "forge.banger.water.page_budget.v1",
+            &format!(
+                "{}:{}:{}:64:72:96",
+                near_field_mesh.meshlet_page_count,
+                sdf_voxel_interaction.brick_count,
+                sdf_voxel_interaction.page_count
+            ),
+        ),
+    };
+    let manifest_hash = water_pipeline_manifest_hash(
+        &source_contract_hash,
+        &far_field_fft,
+        &near_field_mesh,
+        &normal_displacement,
+        &foam_spray,
+        &reflections,
+        &volumetric_absorption,
+        &sdf_voxel_interaction,
+        &pass_schedule,
+        &virtual_page_budget,
+    );
+    let proof_hash = hash_text_hex(
+        "forge.banger.water_hybrid_pipeline.proof.v1",
+        &format!(
+            "{manifest_hash}:{}:{}:{}:{}:{}:{}:{}:{}",
+            far_field_fft.temporal_phase_hash,
+            near_field_mesh.page_table_hash,
+            normal_displacement.normal_pack_hash,
+            foam_spray.foam_mask_hash,
+            reflections.reflection_hash,
+            volumetric_absorption.absorption_hash,
+            sdf_voxel_interaction.sdf_voxel_hash,
+            virtual_page_budget.budget_hash
+        ),
+    );
+    BangerNativeWaterPipelineManifest {
+        schema: "forge.banger.water_hybrid_pipeline.v1",
+        schema_version: 1,
+        authority: "banger_clean_room_unreal_inspired_water_virtual_geometry_contract",
+        clean_room_basis:
+            "local_unreal_sparse_single_layer_water_water_info_nanite_voxel_virtual_texture_rdg_principles_no_source_copy",
+        source_contract_hash,
+        far_field_fft,
+        near_field_mesh,
+        normal_displacement,
+        foam_spray,
+        reflections,
+        volumetric_absorption,
+        sdf_voxel_interaction,
+        pass_schedule,
+        virtual_page_budget,
+        manifest_hash,
+        proof_hash,
+        promotion_gate:
+            "promote_when_fft_compute_textures_meshlet_indirect_draw_sdf_voxel_collision_and_ssr_are_live_gpu_passes",
+    }
+}
+
+fn build_water_pass_schedule(visual_pipeline_hash: &str) -> Vec<BangerNativeWaterPass> {
+    [
+        (
+            "fft_spectrum_cascade_update",
+            "async_compute",
+            "wind_fetch_spectrum",
+            "displacement_slope_cascades",
+            "SingleLayerWaterCommon+RDG compute scheduling",
+        ),
+        (
+            "near_field_meshlet_lod_cull",
+            "graphics_compute",
+            "camera_relative_water_grid",
+            "visible_meshlet_indirect_args",
+            "Nanite cluster culling and HZB traversal",
+        ),
+        (
+            "sdf_voxel_interaction_update",
+            "async_compute",
+            "shoreline_collision_submerged_objects",
+            "sdf_bricks_voxel_pages_foam_seeds",
+            "Nanite voxel and WaterInfoTexture merge principles",
+        ),
+        (
+            "foam_spray_mask_emit",
+            "async_compute",
+            "sdf_voxel_plus_wave_jacobian",
+            "foam_mask_spray_emitters",
+            "WaterInfoTexture blur/merge and GPU particle emission",
+        ),
+        (
+            "water_base_shading",
+            "graphics",
+            "meshlet_water_surface_depth",
+            "single_layer_water_lit_surface",
+            "SingleLayerWater shading/composite split",
+        ),
+        (
+            "screen_ray_reflection_resolve",
+            "graphics_compute",
+            "hzb_scene_color_depth",
+            "reflection_radiance",
+            "Lumen screen tracing and HZB principles",
+        ),
+        (
+            "volumetric_absorption_caustics",
+            "graphics_compute",
+            "water_depth_reflection_radiance",
+            "absorbed_scattered_water_color",
+            "Single-layer water absorption/refraction model",
+        ),
+        (
+            "water_composite_taa_history",
+            "graphics",
+            "lit_water_color_motion",
+            "presentable_hdr_water",
+            "RDG composite with temporal history",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (name, queue, input_kind, output_kind, unreal_basis))| {
+        let pass_hash = hash_text_hex(
+            "forge.banger.water.pass.v1",
+            &format!("{index}:{name}:{queue}:{input_kind}:{output_kind}:{unreal_basis}:{visual_pipeline_hash}"),
+        );
+        BangerNativeWaterPass {
+            pass_index: index as u32,
+            name,
+            queue,
+            input_kind,
+            output_kind,
+            unreal_basis,
+            pass_hash,
+        }
+    })
+    .collect()
+}
+
+fn water_pipeline_manifest_hash(
+    source_contract_hash: &str,
+    far_field_fft: &BangerNativeWaterSpectralOcean,
+    near_field_mesh: &BangerNativeWaterNearFieldMesh,
+    normal_displacement: &BangerNativeWaterNormalDisplacement,
+    foam_spray: &BangerNativeWaterFoamSpray,
+    reflections: &BangerNativeWaterReflectionPacket,
+    volumetric_absorption: &BangerNativeWaterAbsorptionPacket,
+    sdf_voxel_interaction: &BangerNativeWaterSdfVoxelPacket,
+    pass_schedule: &[BangerNativeWaterPass],
+    virtual_page_budget: &BangerNativeWaterPageBudget,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.water_hybrid_pipeline.manifest.v1\0");
+    h.update(source_contract_hash.as_bytes());
+    h.update(far_field_fft.temporal_phase_hash.as_bytes());
+    h.update(near_field_mesh.page_table_hash.as_bytes());
+    h.update(normal_displacement.normal_pack_hash.as_bytes());
+    h.update(foam_spray.foam_mask_hash.as_bytes());
+    h.update(reflections.reflection_hash.as_bytes());
+    h.update(volumetric_absorption.absorption_hash.as_bytes());
+    h.update(sdf_voxel_interaction.sdf_voxel_hash.as_bytes());
+    for pass in pass_schedule {
+        h.update(pass.pass_hash.as_bytes());
+    }
+    h.update(virtual_page_budget.budget_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
 fn present_loop_scene3d_proof_hash(
     visual_pipeline_hash: &str,
     depth_target_hash: &str,
@@ -22267,6 +22675,7 @@ fn present_loop_scene3d_proof_hash(
     scene_bounds_hash: &str,
     frame_witness_hash: &str,
     preview_proof_hash: &str,
+    water_pipeline_hash: &str,
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
@@ -22284,6 +22693,7 @@ fn present_loop_scene3d_proof_hash(
     h.update(scene_bounds_hash.as_bytes());
     h.update(frame_witness_hash.as_bytes());
     h.update(preview_proof_hash.as_bytes());
+    h.update(water_pipeline_hash.as_bytes());
     h.update(mesh_vertex_count.to_le_bytes());
     h.update(mesh_triangle_count.to_le_bytes());
     h.update(draw_call_count.to_le_bytes());
@@ -22924,6 +23334,97 @@ mod tests {
         assert_eq!(response.depth_readback_hash.len(), 64);
         assert_eq!(response.depth_readback_proof_hash.len(), 64);
         assert_eq!(response.screen_coverage_hash.len(), 64);
+        assert_eq!(response.water_pipeline_hash.len(), 64);
+        assert_eq!(
+            response.water_pipeline_manifest.schema,
+            "forge.banger.water_hybrid_pipeline.v1"
+        );
+        assert_eq!(response.water_pipeline_manifest.schema_version, 1);
+        assert_eq!(
+            response.water_pipeline_manifest.authority,
+            "banger_clean_room_unreal_inspired_water_virtual_geometry_contract"
+        );
+        assert!(response
+            .water_pipeline_manifest
+            .clean_room_basis
+            .contains("single_layer_water"));
+        assert_eq!(
+            response.water_pipeline_manifest.source_contract_hash.len(),
+            64
+        );
+        assert_eq!(
+            response.water_pipeline_manifest.far_field_fft.spectrum_model,
+            "tessendorf_jonswap_directional_fft"
+        );
+        assert_eq!(response.water_pipeline_manifest.far_field_fft.cascade_count, 4);
+        assert_eq!(response.water_pipeline_manifest.far_field_fft.fft_resolution, 512);
+        assert_eq!(
+            response.water_pipeline_manifest.near_field_mesh.topology,
+            "camera_relative_meshlet_lod_rings"
+        );
+        assert_eq!(response.water_pipeline_manifest.near_field_mesh.grid_resolution, 96);
+        assert_eq!(
+            response.water_pipeline_manifest.near_field_mesh.triangle_count,
+            18432
+        );
+        assert!(response.water_pipeline_manifest.near_field_mesh.meshlet_page_count > 0);
+        assert!(response.water_pipeline_manifest.near_field_mesh.hzb_culling_enabled);
+        assert!(response.water_pipeline_manifest.near_field_mesh.indirect_draw_enabled);
+        assert_eq!(
+            response.water_pipeline_manifest.normal_displacement.displacement_source,
+            "fft_height_plus_local_wave_particles"
+        );
+        assert!(response.water_pipeline_manifest.normal_displacement.octave_count >= 7);
+        assert!(response.water_pipeline_manifest.foam_spray.shoreline_sdf_enabled);
+        assert_eq!(
+            response.water_pipeline_manifest.reflections.primary_path,
+            "screen_space_ray_trace_hzb"
+        );
+        assert_eq!(
+            response.water_pipeline_manifest.volumetric_absorption.model,
+            "beer_lambert_single_layer_water"
+        );
+        assert!(response.water_pipeline_manifest.volumetric_absorption.caustics_enabled);
+        assert!(response.water_pipeline_manifest.sdf_voxel_interaction.collision_enabled);
+        assert!(
+            response
+                .water_pipeline_manifest
+                .sdf_voxel_interaction
+                .submerged_object_cutout_enabled
+        );
+        assert!(response
+            .water_pipeline_manifest
+            .sdf_voxel_interaction
+            .near_shore_foam_enabled);
+        assert_eq!(response.water_pipeline_manifest.pass_schedule.len(), 8);
+        assert!(response
+            .water_pipeline_manifest
+            .pass_schedule
+            .iter()
+            .any(|pass| pass.name == "fft_spectrum_cascade_update"
+                && pass.queue == "async_compute"));
+        assert!(response
+            .water_pipeline_manifest
+            .pass_schedule
+            .iter()
+            .any(|pass| pass.name == "sdf_voxel_interaction_update"
+                && pass.output_kind == "sdf_bricks_voxel_pages_foam_seeds"));
+        assert!(response
+            .water_pipeline_manifest
+            .pass_schedule
+            .iter()
+            .any(|pass| pass.name == "screen_ray_reflection_resolve"
+                && pass.input_kind == "hzb_scene_color_depth"));
+        assert_eq!(
+            response.water_pipeline_manifest.virtual_page_budget.meshlet_pages,
+            response.water_pipeline_manifest.near_field_mesh.meshlet_page_count
+        );
+        assert!(response.water_pipeline_manifest.virtual_page_budget.estimated_vram_mb <= 128);
+        assert_eq!(
+            response.water_pipeline_manifest.manifest_hash,
+            response.water_pipeline_hash
+        );
+        assert_eq!(response.water_pipeline_manifest.proof_hash.len(), 64);
         assert_eq!(response.mesh_vertex_count, 55299);
         assert_eq!(response.mesh_triangle_count, 18433);
         assert_eq!(response.draw_call_count, 1);

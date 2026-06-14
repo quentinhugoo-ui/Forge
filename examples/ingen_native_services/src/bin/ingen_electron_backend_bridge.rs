@@ -86,6 +86,9 @@ struct BangerPreviewFrameMetrics {
     benchmark_gate_count: u32,
     promotion_allowed: bool,
     render_path: &'static str,
+    water_pipeline_hash: String,
+    water_pass_count: usize,
+    water_virtual_page_count: u32,
 }
 
 #[derive(Serialize)]
@@ -333,6 +336,16 @@ fn banger_preview_frame() -> BangerPreviewFrameProjection {
         benchmark_gate_count: 5,
         promotion_allowed: render.ok && render.nonblack_pixel_sample_count > 0 && render.depth_occupied_pixel_count > 0,
         render_path: "rust_banger_wgpu_ocean_scene_rgba8_to_bmp_data_url",
+        water_pipeline_hash: render.water_pipeline_hash.clone(),
+        water_pass_count: render.water_pipeline_manifest.pass_schedule.len(),
+        water_virtual_page_count: render
+            .water_pipeline_manifest
+            .virtual_page_budget
+            .meshlet_pages
+            + render.water_pipeline_manifest.virtual_page_budget.sdf_bricks
+            + render.water_pipeline_manifest.virtual_page_budget.voxel_pages
+            + render.water_pipeline_manifest.virtual_page_budget.foam_tiles
+            + render.water_pipeline_manifest.virtual_page_budget.reflection_tiles,
     };
     let mut frame = BangerPreviewFrameProjection {
         accepted: true,
@@ -1365,6 +1378,9 @@ mod tests {
         assert_eq!(frame.metrics.splat_count, 0);
         assert_eq!(frame.metrics.projected_splat_count, 0);
         assert!(frame.metrics.shaded_pixel_count > 0);
+        assert_eq!(frame.metrics.water_pipeline_hash.len(), 64);
+        assert_eq!(frame.metrics.water_pass_count, 8);
+        assert!(frame.metrics.water_virtual_page_count > 0);
         assert!(frame.metrics.promotion_allowed);
     }
 
