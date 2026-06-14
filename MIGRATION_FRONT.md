@@ -124,8 +124,9 @@ duplicated frames are not submitted to WebGPU/WebGL, and the hue-rotation matrix
 is a per-frame Forge artifact consumed by WebGPU/WebGL instead of being rebuilt
 inside every fragment. Stable WebGPU draw commands are recorded once as a render
 bundle and replayed instead of re-encoded every frame. The KASM frame spheres
-also produce a conservative scissor rectangle so pixels outside the possible
-blob volume do not execute the raymarch shader.
+also produce a conservative scissor rectangle, so pixels outside the possible
+blob volume do not execute the raymarch shader. Once WebGPU is active, the
+hidden CSS fallback stops its own morph and gleam animations.
 
 ## Verification
 

@@ -9723,7 +9723,16 @@ ol.assistantText__list li::before {
 }
 
 .brainBlob--webgpu .brainBlob__fallback {
+  animation: none;
+  background: none;
+  box-shadow: none;
   opacity: 0;
+}
+
+.brainBlob--webgpu .brainBlob__fallback::before,
+.brainBlob--webgpu .brainBlob__fallback::after {
+  animation: none;
+  content: none;
 }
 
 .brainBlob__fallback::before,
