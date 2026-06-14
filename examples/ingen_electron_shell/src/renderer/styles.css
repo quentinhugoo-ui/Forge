@@ -6986,14 +6986,14 @@ ol.assistantText__list li::before {
 }
 
 .composer__input {
-  grid-column: 3;
+  grid-column: 3 / 6;
   grid-row: 1;
   width: 100%;
   min-width: 0;
   min-height: 66px;
   max-height: 360px;
   height: 66px;
-  padding: 18px 8px 10px;
+  padding: 14px 48px 30px 8px;
   align-self: stretch;
   color: var(--forge-chat-text);
   font: 14px/1.45 "Geist", system-ui, sans-serif;
@@ -7001,6 +7001,7 @@ ol.assistantText__list li::before {
   border: 0;
   resize: none;
   overflow: hidden;
+  z-index: 1;
 }
 
 .composer__input::selection {
@@ -7075,7 +7076,7 @@ ol.assistantText__list li::before {
   gap: 2px;
   align-self: end;
   justify-self: end;
-  z-index: 1;
+  z-index: 4;
 }
 
 .providerDot {
@@ -7131,7 +7132,7 @@ ol.assistantText__list li::before {
   border: 0 !important;
   align-self: end;
   justify-self: end;
-  z-index: 1;
+  z-index: 4;
   transition: background 140ms ease-out;
 }
 
@@ -11310,7 +11311,7 @@ ol.assistantText__list li::before {
   .composer__input {
     min-height: 60px;
     height: 60px;
-    padding: 16px 7px 9px;
+    padding: 13px 44px 26px 7px;
   }
 
   .bottomControls {
@@ -11347,7 +11348,7 @@ ol.assistantText__list li::before {
 .shell--widget-mode .composer__input {
   min-height: 66px;
   height: 66px;
-  padding: 18px 8px 10px;
+  padding: 14px 48px 30px 8px;
 }
 
 .shell--widget-minimizing .composer__upload,

@@ -3728,6 +3728,8 @@ export function PanelsChatBottomSlice({
   const composerRef = useRef<HTMLFormElement>(null);
   const permissionControlRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const draftRef = useRef(draft);
+  const composerResetFenceRef = useRef(false);
   const burstRef = useRef<ComposerSendBurstHandle>(null);
   const composerSendBusyRef = useRef(0);
   const [brainAgentName, setBrainAgentName] = useState(() => readBrainAgentMemory().preferredFirstName);
@@ -3784,9 +3786,21 @@ export function PanelsChatBottomSlice({
   }, []);
 
   useEffect(() => {
-    if (!selfDirectedDrafting) {
-      setDraft(snapshot.composer.chatText);
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    if (selfDirectedDrafting) {
+      return;
     }
+    if (composerResetFenceRef.current) {
+      if (snapshot.composer.chatText === "") {
+        composerResetFenceRef.current = false;
+      } else if (draftRef.current === "") {
+        return;
+      }
+    }
+    setDraft(snapshot.composer.chatText);
   }, [selfDirectedDrafting, snapshot.composer.chatText]);
 
   useEffect(() => {
@@ -4154,6 +4168,10 @@ export function PanelsChatBottomSlice({
     if (!beginComposerSendBusy()) {
       return;
     }
+    if (!parallelMode) {
+      composerResetFenceRef.current = true;
+      setDraft("");
+    }
     const commit = (trackDispatchCompletion: boolean) => {
       try {
         if (parallelMode && parallelPrompts && onParallelPromptChange) {
@@ -4372,6 +4390,7 @@ export function PanelsChatBottomSlice({
               if (selfDirectedDrafting) {
                 cancelSelfDirectedDraft();
               }
+              composerResetFenceRef.current = false;
               setDraft(event.currentTarget.value);
               void dispatch({ kind: "chat_text_edited", value: event.currentTarget.value });
             }}
