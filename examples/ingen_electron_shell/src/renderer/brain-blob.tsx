@@ -257,7 +257,7 @@ const BRAIN_BLOB_WGSL = /* wgsl */ `
 const TAU: f32 = 6.28318530718;
 /* Loader contract: --time-animation 2s; colorize runs at *3. */
 const TIME_ANIM: f32 = 2.0;
-const BOUND_RADIUS: f32 = 1.12;
+const BOUND_RADIUS: f32 = 1.58;
 
 struct Uniforms {
   resolution: vec2<f32>,
@@ -480,7 +480,7 @@ out vec4 outColor;
 
 const float TAU = 6.28318530718;
 const float TIME_ANIM = 2.0;
-const float BOUND_RADIUS = 1.12;
+const float BOUND_RADIUS = 1.58;
 
 float sat(float v) { return clamp(v, 0.0, 1.0); }
 
