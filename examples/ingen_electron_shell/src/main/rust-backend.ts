@@ -99,6 +99,11 @@ export interface RustBangerPresentLoopBootstrap {
   indexCount?: number;
   sceneObjectCount?: number;
   depthFormat?: string;
+  frameTargetPolicy?: string;
+  frameTargetHash?: string;
+  depthTargetHash?: string;
+  frameTargetAllocationCount?: number;
+  surfaceResizeCount?: number;
   renderLoopPolicy?: string;
   clearColor: [number, number, number, number];
   frameUniformHash?: string;
@@ -452,6 +457,10 @@ function parseBangerPresentLoopBootstrap(stdout: string): RustBangerPresentLoopB
     (typeof parsed.indexCount === "number" && parsed.indexCount < 3) ||
     (typeof parsed.sceneObjectCount === "number" && parsed.sceneObjectCount < 1) ||
     (typeof parsed.depthFormat === "string" && parsed.depthFormat.length === 0) ||
+    (typeof parsed.frameTargetHash === "string" && parsed.frameTargetHash.length !== 64) ||
+    (typeof parsed.depthTargetHash === "string" && parsed.depthTargetHash.length !== 64) ||
+    (typeof parsed.frameTargetAllocationCount === "number" && parsed.frameTargetAllocationCount < 1) ||
+    (typeof parsed.surfaceResizeCount === "number" && parsed.surfaceResizeCount < 0) ||
     (typeof parsed.sceneMeshHash === "string" && parsed.sceneMeshHash.length !== 64) ||
     (typeof parsed.cameraUniformHash === "string" && parsed.cameraUniformHash.length !== 64)
   ) {
@@ -637,6 +646,11 @@ function shadowBangerPresentLoopBootstrap(reason: string): RustBangerPresentLoop
     indexCount: 0,
     sceneObjectCount: 0,
     depthFormat: "unavailable",
+    frameTargetPolicy: "shadow_only",
+    frameTargetHash: "",
+    depthTargetHash: "",
+    frameTargetAllocationCount: 0,
+    surfaceResizeCount: 0,
     renderLoopPolicy: "shadow_only",
     clearColor: [0, 0, 0, 1],
     frameUniformHash: "",

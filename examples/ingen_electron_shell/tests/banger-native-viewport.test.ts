@@ -43,8 +43,14 @@ describe("Banger native viewport contract", () => {
     expect(rustBackendSource).toContain("sceneObjectCount");
     expect(rustBackendSource).toContain("sceneMeshHash");
     expect(rustBackendSource).toContain("cameraUniformHash");
+    expect(rustBackendSource).toContain("frameTargetPolicy");
+    expect(rustBackendSource).toContain("frameTargetHash");
+    expect(rustBackendSource).toContain("frameTargetAllocationCount");
     expect(nativeBridgeSource).toContain("Depth24Plus");
     expect(nativeBridgeSource).toContain("draw_indexed");
     expect(nativeBridgeSource).toContain("banger_cube_vertex_bytes");
+    expect(nativeBridgeSource).toContain("BangerNativeFrameTarget");
+    expect(nativeBridgeSource).toContain("create_banger_frame_target");
+    expect(nativeBridgeSource).toContain("persistent_resize_tracked_depth_target_v1");
   });
 });

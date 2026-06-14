@@ -119,6 +119,11 @@ struct BangerNativeHostProjection {
     index_count: u32,
     scene_object_count: u32,
     depth_format: &'static str,
+    frame_target_policy: &'static str,
+    frame_target_hash: String,
+    depth_target_hash: String,
+    frame_target_allocation_count: u32,
+    surface_resize_count: u32,
     render_loop_policy: &'static str,
     clear_color: [f64; 4],
     frame_uniform_hash: String,
@@ -154,6 +159,16 @@ struct BangerNativeScenePipeline {
     depth_format: wgpu::TextureFormat,
     shader_source_hash: String,
     render_pipeline_hash: String,
+}
+
+#[cfg(target_os = "windows")]
+struct BangerNativeFrameTarget {
+    _depth_texture: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    width: u32,
+    height: u32,
+    target_hash: String,
+    depth_target_hash: String,
 }
 
 fn main() {
@@ -588,15 +603,23 @@ fn run_banger_native_host(
 
     let clear_color = [0.015, 0.018, 0.024, 1.0];
     let scene_pipeline = create_banger_first_scene_pipeline(&device, format, present_mode, alpha_mode);
+    let mut frame_target_allocation_count = 1u32;
+    let mut surface_resize_count = 0u32;
+    let mut frame_target = create_banger_frame_target(
+        &device,
+        config.width,
+        config.height,
+        scene_pipeline.depth_format,
+        frame_target_allocation_count,
+    );
     let started = Instant::now();
     let frame_uniform_hash = render_child_surface_frame(
         &surface,
         &device,
         &queue,
         &scene_pipeline,
+        &frame_target,
         clear_color,
-        config.width,
-        config.height,
         started.elapsed().as_secs_f32(),
         0,
     )?;
@@ -604,7 +627,7 @@ fn run_banger_native_host(
     let child_hash = sha256_hex(format!("{:p}", child as *mut c_void).as_bytes());
     let frame_hash = sha256_hex(
         format!(
-            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{:?}:{}:{}:{}",
+            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{}",
             config.width,
             config.height,
             format,
@@ -615,6 +638,8 @@ fn run_banger_native_host(
             scene_pipeline.scene_mesh_hash,
             scene_pipeline.index_count,
             scene_pipeline.depth_format,
+            frame_target.target_hash,
+            frame_target.depth_target_hash,
             scene_pipeline.shader_source_hash,
             scene_pipeline.render_pipeline_hash,
             frame_uniform_hash
@@ -650,6 +675,11 @@ fn run_banger_native_host(
         index_count: scene_pipeline.index_count,
         scene_object_count: 1,
         depth_format: "Depth24Plus",
+        frame_target_policy: "persistent_resize_tracked_depth_target_v1",
+        frame_target_hash: frame_target.target_hash.clone(),
+        depth_target_hash: frame_target.depth_target_hash.clone(),
+        frame_target_allocation_count,
+        surface_resize_count,
         render_loop_policy: "native_wgpu_mesh_depth_camera_loop_v1",
         clear_color,
         frame_uniform_hash: frame_uniform_hash.clone(),
@@ -694,6 +724,21 @@ fn run_banger_native_host(
                 config.width = parent_width;
                 config.height = parent_height;
                 surface.configure(&device, &config);
+                surface_resize_count += 1;
+                frame_target_allocation_count += 1;
+                frame_target = create_banger_frame_target(
+                    &device,
+                    config.width,
+                    config.height,
+                    scene_pipeline.depth_format,
+                    frame_target_allocation_count,
+                );
+                projection.viewport_width = config.width;
+                projection.viewport_height = config.height;
+                projection.frame_target_hash = frame_target.target_hash.clone();
+                projection.depth_target_hash = frame_target.depth_target_hash.clone();
+                projection.frame_target_allocation_count = frame_target_allocation_count;
+                projection.surface_resize_count = surface_resize_count;
             }
         }
         let _ = render_child_surface_frame(
@@ -701,13 +746,13 @@ fn run_banger_native_host(
             &device,
             &queue,
             &scene_pipeline,
+            &frame_target,
             clear_color,
-            config.width,
-            config.height,
             started.elapsed().as_secs_f32(),
             submitted,
         )?;
         submitted += 1;
+        projection.submitted_frame_count = submitted;
         thread::sleep(Duration::from_millis(16));
     }
 
@@ -730,13 +775,12 @@ fn render_child_surface_frame(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene_pipeline: &BangerNativeScenePipeline,
+    frame_target: &BangerNativeFrameTarget,
     clear_color: [f64; 4],
-    viewport_width: u32,
-    viewport_height: u32,
     time_seconds: f32,
     frame_index: u32,
 ) -> Result<String, String> {
-    let uniform_bytes = banger_frame_uniform_bytes(time_seconds, frame_index, viewport_width, viewport_height);
+    let uniform_bytes = banger_frame_uniform_bytes(time_seconds, frame_index, frame_target.width, frame_target.height);
     let frame_uniform_hash = sha256_hex(&uniform_bytes);
     queue.write_buffer(&scene_pipeline.uniform_buffer, 0, &uniform_bytes);
     let frame = match surface.get_current_texture() {
@@ -753,21 +797,6 @@ fn render_child_surface_frame(
         }
     };
     let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("banger-native-child-host-depth-texture"),
-        size: wgpu::Extent3d {
-            width: viewport_width.max(1),
-            height: viewport_height.max(1),
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: scene_pipeline.depth_format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("banger-native-child-host-encoder"),
     });
@@ -790,7 +819,7 @@ fn render_child_surface_frame(
             label: Some("banger-native-child-host-mesh-depth-pass"),
             color_attachments: &color_attachments,
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth_view,
+                view: &frame_target.depth_view,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -813,6 +842,67 @@ fn render_child_surface_frame(
         .map_err(|error| format!("Banger child host GPU poll failed: {error}"))?;
     frame.present();
     Ok(frame_uniform_hash)
+}
+
+#[cfg(target_os = "windows")]
+fn create_banger_frame_target(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    depth_format: wgpu::TextureFormat,
+    allocation_index: u32,
+) -> BangerNativeFrameTarget {
+    let width = width.clamp(1, 16384);
+    let height = height.clamp(1, 16384);
+    let (target_hash, depth_target_hash) =
+        banger_frame_target_hashes(width, height, depth_format, allocation_index);
+    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("banger-native-child-host-persistent-depth-texture"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: depth_format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    BangerNativeFrameTarget {
+        _depth_texture: depth_texture,
+        depth_view,
+        width,
+        height,
+        target_hash,
+        depth_target_hash,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn banger_frame_target_hashes(
+    width: u32,
+    height: u32,
+    depth_format: wgpu::TextureFormat,
+    allocation_index: u32,
+) -> (String, String) {
+    let depth_target_hash = sha256_hex(
+        format!(
+            "banger-depth-target-v1:{}:{}:{:?}:{}",
+            width, height, depth_format, allocation_index
+        )
+        .as_bytes(),
+    );
+    let target_hash = sha256_hex(
+        format!(
+            "banger-frame-target-v1:{}:{}:{:?}:{}:{}",
+            width, height, depth_format, allocation_index, depth_target_hash
+        )
+        .as_bytes(),
+    );
+    (target_hash, depth_target_hash)
 }
 
 #[cfg(target_os = "windows")]
@@ -1270,5 +1360,19 @@ mod tests {
         assert_eq!(u16::from_le_bytes(index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(sha256_hex(&vertex_bytes).len(), 64);
         assert_eq!(sha256_hex(&index_bytes).len(), 64);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn hashes_persistent_frame_targets_by_size_and_generation() {
+        let (first_target, first_depth) = banger_frame_target_hashes(1280, 720, wgpu::TextureFormat::Depth24Plus, 1);
+        let (same_target, same_depth) = banger_frame_target_hashes(1280, 720, wgpu::TextureFormat::Depth24Plus, 1);
+        let (resized_target, resized_depth) = banger_frame_target_hashes(1920, 1080, wgpu::TextureFormat::Depth24Plus, 2);
+        assert_eq!(first_target, same_target);
+        assert_eq!(first_depth, same_depth);
+        assert_ne!(first_target, resized_target);
+        assert_ne!(first_depth, resized_depth);
+        assert_eq!(first_target.len(), 64);
+        assert_eq!(first_depth.len(), 64);
     }
 }
