@@ -48,6 +48,8 @@ Clean-room extraction applied in Forge:
 - Banger implementation: `BangerNativeBackendSubmitPlan` specializes the RHI submit receipt into backend-family targets and proof hashes.
 - GPUScene lesson: renderable primitives should be compacted into persistent primitive, instance, payload and material buffers with explicit upload ranges.
 - Banger implementation: `BangerNativeGpuScenePacket` converts scene graph submissions into GPU scene primitive records and buffer hashes.
+- Nanite second-layer lesson: streaming feedback, page residency, material bins, visibility resolve and ray-tracing proxies must be tied to the same cluster visibility result.
+- Banger implementation: `BangerNativeNaniteSecondLayerPacket` derives those contracts from GPU scene primitives, meshlet visibility and resource-table residency.
 
 Clean-room rule:
 

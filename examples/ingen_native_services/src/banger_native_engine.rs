@@ -136,6 +136,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub gpu_scene_packet: BangerNativeGpuScenePacket,
     pub culling_manifest: BangerNativeCullingManifest,
     pub meshlet_visibility_packet: BangerNativeMeshletVisibilityPacket,
+    pub nanite_second_layer_packet: BangerNativeNaniteSecondLayerPacket,
     pub raster_work_queue: BangerNativeRasterWorkQueue,
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
@@ -666,6 +667,50 @@ pub struct BangerNativeMeshletVisibilityEntry {
     pub visibility_word: u64,
     pub indirect_draw_args: [u32; 5],
     pub source_culling_proof_hash: String,
+    pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeNaniteSecondLayerPacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub gpu_scene_hash: String,
+    pub visibility_packet_hash: String,
+    pub resource_table_hash: String,
+    pub material_abi_hash: String,
+    pub streaming_request_count: usize,
+    pub resident_page_count: usize,
+    pub feedback_word_count: usize,
+    pub shading_bin_count: usize,
+    pub visibility_resolve_tile_count: usize,
+    pub ray_tracing_proxy_count: usize,
+    pub streaming_feedback_hash: String,
+    pub page_residency_hash: String,
+    pub material_bin_hash: String,
+    pub visibility_resolve_hash: String,
+    pub ray_tracing_bridge_hash: String,
+    pub packet_hash: String,
+    pub entries: Vec<BangerNativeNaniteSecondLayerEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeNaniteSecondLayerEntry {
+    pub cluster_id: String,
+    pub object_id: String,
+    pub primitive_id: u32,
+    pub resource_slot: u32,
+    pub page_hash: String,
+    pub residency_state: &'static str,
+    pub requested_lod_bucket: u32,
+    pub feedback_word: u64,
+    pub material_bin_id: u32,
+    pub material_flags_word: u32,
+    pub visibility_tile: [u32; 4],
+    pub ray_tracing_proxy_hash: String,
     pub entry_hash: String,
 }
 
@@ -1716,6 +1761,13 @@ impl BangerNativeEngine {
             &resource_table,
             &render_graph_compilation,
         );
+        let nanite_second_layer_packet = build_nanite_second_layer_packet(
+            &prepared,
+            &gpu_scene_packet,
+            &meshlet_visibility_packet,
+            &resource_table,
+            &shader_compiler_ticket,
+        );
         let raster_work_queue = build_raster_work_queue(
             &prepared,
             &meshlet_visibility_packet,
@@ -1794,6 +1846,7 @@ impl BangerNativeEngine {
             &gpu_scene_packet,
             &culling_manifest,
             &meshlet_visibility_packet,
+            &nanite_second_layer_packet,
             &raster_work_queue,
             &radiance_schedule_manifest,
             &gaussian_splat_layer_manifest,
@@ -1851,6 +1904,7 @@ impl BangerNativeEngine {
             gpu_scene_packet,
             culling_manifest,
             meshlet_visibility_packet,
+            nanite_second_layer_packet,
             raster_work_queue,
             radiance_schedule_manifest,
             gaussian_splat_layer_manifest,
@@ -2686,6 +2740,113 @@ fn build_meshlet_visibility_packet(
         lod_error_buffer_hash,
         cluster_page_table_hash,
         indirect_draw_packet_hash,
+        packet_hash,
+        entries,
+    }
+}
+
+fn build_nanite_second_layer_packet(
+    prepared: &MonsterPreparedCompute,
+    gpu_scene_packet: &BangerNativeGpuScenePacket,
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    resource_table: &BangerNativeResourceTable,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+) -> BangerNativeNaniteSecondLayerPacket {
+    let entries = meshlet_visibility_packet
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, visibility)| {
+            let primitive = gpu_scene_packet
+                .primitives
+                .iter()
+                .find(|primitive| primitive.object_id == visibility.object_id);
+            let primitive_id = primitive.map(|primitive| primitive.primitive_id).unwrap_or_default();
+            let material_flags_word =
+                nanite_material_flags_word(visibility, primitive, shader_compiler_ticket);
+            let material_bin_id =
+                nanite_material_bin_id(visibility, primitive, material_flags_word, index as u32);
+            let residency_state = nanite_residency_state(visibility, resource_table);
+            let feedback_word =
+                nanite_streaming_feedback_word(visibility, primitive_id, material_bin_id, residency_state);
+            let visibility_tile = nanite_visibility_resolve_tile(visibility, index as u32);
+            let ray_tracing_proxy_hash =
+                nanite_ray_tracing_proxy_hash(visibility, primitive, material_bin_id, &visibility_tile);
+            let entry_hash = nanite_second_layer_entry_hash(
+                visibility,
+                primitive_id,
+                residency_state,
+                feedback_word,
+                material_bin_id,
+                material_flags_word,
+                &visibility_tile,
+                &ray_tracing_proxy_hash,
+            );
+            BangerNativeNaniteSecondLayerEntry {
+                cluster_id: visibility.cluster_id.clone(),
+                object_id: visibility.object_id.clone(),
+                primitive_id,
+                resource_slot: visibility.resource_slot,
+                page_hash: visibility.page_hash.clone(),
+                residency_state,
+                requested_lod_bucket: visibility.lod_bucket,
+                feedback_word,
+                material_bin_id,
+                material_flags_word,
+                visibility_tile,
+                ray_tracing_proxy_hash,
+                entry_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let streaming_feedback_hash = nanite_streaming_feedback_hash(&entries);
+    let page_residency_hash = nanite_page_residency_hash(&entries);
+    let material_bin_hash = nanite_material_bin_hash(&entries);
+    let visibility_resolve_hash = nanite_visibility_resolve_hash(&entries);
+    let ray_tracing_bridge_hash = nanite_ray_tracing_bridge_hash(&entries);
+    let packet_hash = nanite_second_layer_packet_hash(
+        prepared,
+        gpu_scene_packet,
+        meshlet_visibility_packet,
+        resource_table,
+        shader_compiler_ticket,
+        &streaming_feedback_hash,
+        &page_residency_hash,
+        &material_bin_hash,
+        &visibility_resolve_hash,
+        &ray_tracing_bridge_hash,
+        &entries,
+    );
+    BangerNativeNaniteSecondLayerPacket {
+        schema: "forge.banger.nanite_second_layer_packet.v1",
+        authority: "banger_meshlet_visibility_to_nanite_streaming_shading_resolve",
+        clean_room_basis: "local_unreal_sparse_nanite_feedback_residency_shading_resolve_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        gpu_scene_hash: gpu_scene_packet.packet_hash.clone(),
+        visibility_packet_hash: meshlet_visibility_packet.packet_hash.clone(),
+        resource_table_hash: resource_table.table_hash.clone(),
+        material_abi_hash: shader_compiler_ticket.material_abi_hash.clone(),
+        streaming_request_count: entries
+            .iter()
+            .filter(|entry| entry.residency_state != "resident_page")
+            .count(),
+        resident_page_count: entries
+            .iter()
+            .filter(|entry| entry.residency_state == "resident_page")
+            .count(),
+        feedback_word_count: entries.len(),
+        shading_bin_count: entries
+            .iter()
+            .map(|entry| entry.material_bin_id)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        visibility_resolve_tile_count: entries.len(),
+        ray_tracing_proxy_count: entries.len(),
+        streaming_feedback_hash,
+        page_residency_hash,
+        material_bin_hash,
+        visibility_resolve_hash,
+        ray_tracing_bridge_hash,
         packet_hash,
         entries,
     }
@@ -4244,6 +4405,219 @@ fn meshlet_visibility_packet_hash(
     h.update(lod_error_buffer_hash.as_bytes());
     h.update(cluster_page_table_hash.as_bytes());
     h.update(indirect_draw_packet_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn nanite_residency_state(
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    resource_table: &BangerNativeResourceTable,
+) -> &'static str {
+    resource_table
+        .slots
+        .iter()
+        .find(|slot| slot.slot == visibility.resource_slot)
+        .map(|slot| {
+            if slot.upload_lane == "resident_cache" {
+                "resident_page"
+            } else if slot.byte_len <= 4096 {
+                "streaming_request_small_page"
+            } else {
+                "streaming_request_large_page"
+            }
+        })
+        .unwrap_or("streaming_request_missing_page")
+}
+
+fn nanite_material_flags_word(
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    primitive: Option<&BangerNativeGpuScenePrimitive>,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+) -> u32 {
+    let mut flags = 0u32;
+    flags |= (visibility.raster_path == "compute_software_raster_candidate") as u32;
+    flags |= ((visibility.lod_bucket > 1) as u32) << 1;
+    flags |= primitive
+        .map(|primitive| (primitive.supports_nanite_like_streaming as u32) << 2)
+        .unwrap_or_default();
+    flags |= ((shader_compiler_ticket.material_abi.material_record_bytes >= 64) as u32) << 3;
+    flags |= ((visibility.cone_cutoff < 0.0) as u32) << 4;
+    flags
+}
+
+fn nanite_material_bin_id(
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    primitive: Option<&BangerNativeGpuScenePrimitive>,
+    material_flags_word: u32,
+    salt: u32,
+) -> u32 {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.nanite.material_bin_id.v1\0");
+    h.update(visibility.cluster_id.as_bytes());
+    h.update(visibility.page_hash.as_bytes());
+    h.update(material_flags_word.to_le_bytes());
+    h.update(salt.to_le_bytes());
+    if let Some(primitive) = primitive {
+        h.update(primitive.material_record_hash.as_bytes());
+    }
+    let digest: [u8; 32] = h.finalize().into();
+    u32::from_le_bytes(digest[0..4].try_into().expect("material bin id bytes")) % 4096
+}
+
+fn nanite_streaming_feedback_word(
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    primitive_id: u32,
+    material_bin_id: u32,
+    residency_state: &str,
+) -> u64 {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.nanite.streaming_feedback_word.v1\0");
+    h.update(visibility.visibility_word.to_le_bytes());
+    h.update(primitive_id.to_le_bytes());
+    h.update(material_bin_id.to_le_bytes());
+    h.update(visibility.lod_bucket.to_le_bytes());
+    h.update(residency_state.as_bytes());
+    let digest: [u8; 32] = h.finalize().into();
+    u64::from_le_bytes(digest[0..8].try_into().expect("feedback word bytes"))
+}
+
+fn nanite_visibility_resolve_tile(
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    index: u32,
+) -> [u32; 4] {
+    let base_x = ((visibility.visibility_word & 0xffff) as u32).wrapping_add(index * 17) % 4096;
+    let base_y = (((visibility.visibility_word >> 16) & 0xffff) as u32).wrapping_add(index * 31) % 4096;
+    let extent = 8 + visibility.lod_bucket.min(3) * 8;
+    [base_x, base_y, extent, extent]
+}
+
+fn nanite_ray_tracing_proxy_hash(
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    primitive: Option<&BangerNativeGpuScenePrimitive>,
+    material_bin_id: u32,
+    visibility_tile: &[u32; 4],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.nanite.ray_tracing_proxy.v1\0");
+    h.update(visibility.cluster_id.as_bytes());
+    h.update(visibility.page_hash.as_bytes());
+    h.update(material_bin_id.to_le_bytes());
+    for value in visibility_tile {
+        h.update(value.to_le_bytes());
+    }
+    if let Some(primitive) = primitive {
+        h.update(primitive.primitive_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn nanite_second_layer_entry_hash(
+    visibility: &BangerNativeMeshletVisibilityEntry,
+    primitive_id: u32,
+    residency_state: &str,
+    feedback_word: u64,
+    material_bin_id: u32,
+    material_flags_word: u32,
+    visibility_tile: &[u32; 4],
+    ray_tracing_proxy_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.nanite.second_layer_entry.v1\0");
+    h.update(visibility.entry_hash.as_bytes());
+    h.update(primitive_id.to_le_bytes());
+    h.update(residency_state.as_bytes());
+    h.update(feedback_word.to_le_bytes());
+    h.update(material_bin_id.to_le_bytes());
+    h.update(material_flags_word.to_le_bytes());
+    for value in visibility_tile {
+        h.update(value.to_le_bytes());
+    }
+    h.update(ray_tracing_proxy_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn nanite_streaming_feedback_hash(entries: &[BangerNativeNaniteSecondLayerEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.nanite.streaming_feedback.v1\0");
+    for entry in entries {
+        h.update(entry.cluster_id.as_bytes());
+        h.update(entry.feedback_word.to_le_bytes());
+        h.update(entry.residency_state.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn nanite_page_residency_hash(entries: &[BangerNativeNaniteSecondLayerEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.nanite.page_residency.v1\0");
+    for entry in entries {
+        h.update(entry.resource_slot.to_le_bytes());
+        h.update(entry.page_hash.as_bytes());
+        h.update(entry.residency_state.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn nanite_material_bin_hash(entries: &[BangerNativeNaniteSecondLayerEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.nanite.material_bins.v1\0");
+    for entry in entries {
+        h.update(entry.material_bin_id.to_le_bytes());
+        h.update(entry.material_flags_word.to_le_bytes());
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn nanite_visibility_resolve_hash(entries: &[BangerNativeNaniteSecondLayerEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.nanite.visibility_resolve.v1\0");
+    for entry in entries {
+        h.update(entry.cluster_id.as_bytes());
+        for value in entry.visibility_tile {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn nanite_ray_tracing_bridge_hash(entries: &[BangerNativeNaniteSecondLayerEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.nanite.ray_tracing_bridge.v1\0");
+    for entry in entries {
+        h.update(entry.ray_tracing_proxy_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn nanite_second_layer_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    gpu_scene_packet: &BangerNativeGpuScenePacket,
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    resource_table: &BangerNativeResourceTable,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    streaming_feedback_hash: &str,
+    page_residency_hash: &str,
+    material_bin_hash: &str,
+    visibility_resolve_hash: &str,
+    ray_tracing_bridge_hash: &str,
+    entries: &[BangerNativeNaniteSecondLayerEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.nanite_second_layer_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(gpu_scene_packet.packet_hash.as_bytes());
+    h.update(meshlet_visibility_packet.packet_hash.as_bytes());
+    h.update(resource_table.table_hash.as_bytes());
+    h.update(shader_compiler_ticket.material_abi_hash.as_bytes());
+    h.update(streaming_feedback_hash.as_bytes());
+    h.update(page_residency_hash.as_bytes());
+    h.update(material_bin_hash.as_bytes());
+    h.update(visibility_resolve_hash.as_bytes());
+    h.update(ray_tracing_bridge_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
     }
@@ -8777,6 +9151,7 @@ fn render_handoff_hash(
     gpu_scene_packet: &BangerNativeGpuScenePacket,
     culling_manifest: &BangerNativeCullingManifest,
     meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
     raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
@@ -8807,6 +9182,9 @@ fn render_handoff_hash(
     h.update(meshlet_visibility_packet.packet_hash.as_bytes());
     h.update(meshlet_visibility_packet.visibility_buffer_hash.as_bytes());
     h.update(meshlet_visibility_packet.indirect_draw_packet_hash.as_bytes());
+    h.update(nanite_second_layer_packet.packet_hash.as_bytes());
+    h.update(nanite_second_layer_packet.streaming_feedback_hash.as_bytes());
+    h.update(nanite_second_layer_packet.visibility_resolve_hash.as_bytes());
     h.update(raster_work_queue.queue_hash.as_bytes());
     h.update(raster_work_queue.dispatch_plan_hash.as_bytes());
     h.update(raster_work_queue.bind_table_hash.as_bytes());
@@ -9537,6 +9915,102 @@ mod tests {
                     entry.raster_path,
                     "mesh_shader_or_hardware_raster_candidate"
                         | "compute_software_raster_candidate"
+                )));
+        assert_eq!(
+            response.nanite_second_layer_packet.schema,
+            "forge.banger.nanite_second_layer_packet.v1"
+        );
+        assert_eq!(
+            response.nanite_second_layer_packet.authority,
+            "banger_meshlet_visibility_to_nanite_streaming_shading_resolve"
+        );
+        assert!(response
+            .nanite_second_layer_packet
+            .clean_room_basis
+            .contains("local_unreal_sparse_nanite"));
+        assert_eq!(
+            response.nanite_second_layer_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.nanite_second_layer_packet.gpu_scene_hash,
+            response.gpu_scene_packet.packet_hash
+        );
+        assert_eq!(
+            response.nanite_second_layer_packet.visibility_packet_hash,
+            response.meshlet_visibility_packet.packet_hash
+        );
+        assert_eq!(
+            response.nanite_second_layer_packet.resource_table_hash,
+            response.resource_table.table_hash
+        );
+        assert_eq!(
+            response.nanite_second_layer_packet.material_abi_hash,
+            response.shader_compiler_ticket.material_abi_hash
+        );
+        assert_eq!(
+            response.nanite_second_layer_packet.feedback_word_count,
+            response.nanite_second_layer_packet.entries.len()
+        );
+        assert_eq!(
+            response
+                .nanite_second_layer_packet
+                .visibility_resolve_tile_count,
+            response.nanite_second_layer_packet.entries.len()
+        );
+        assert_eq!(
+            response.nanite_second_layer_packet.ray_tracing_proxy_count,
+            response.nanite_second_layer_packet.entries.len()
+        );
+        assert_eq!(
+            response.nanite_second_layer_packet.streaming_request_count
+                + response.nanite_second_layer_packet.resident_page_count,
+            response.nanite_second_layer_packet.entries.len()
+        );
+        assert!(response.nanite_second_layer_packet.shading_bin_count > 0);
+        assert_eq!(
+            response
+                .nanite_second_layer_packet
+                .streaming_feedback_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response.nanite_second_layer_packet.page_residency_hash.len(),
+            64
+        );
+        assert_eq!(response.nanite_second_layer_packet.material_bin_hash.len(), 64);
+        assert_eq!(
+            response
+                .nanite_second_layer_packet
+                .visibility_resolve_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .nanite_second_layer_packet
+                .ray_tracing_bridge_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.nanite_second_layer_packet.packet_hash.len(), 64);
+        assert!(response
+            .nanite_second_layer_packet
+            .entries
+            .iter()
+            .all(|entry| entry.entry_hash.len() == 64
+                && entry.ray_tracing_proxy_hash.len() == 64
+                && entry.feedback_word != 0
+                && entry.material_bin_id < 4096
+                && entry.visibility_tile[2] > 0
+                && entry.visibility_tile[3] > 0
+                && matches!(
+                    entry.residency_state,
+                    "resident_page"
+                        | "streaming_request_small_page"
+                        | "streaming_request_large_page"
+                        | "streaming_request_missing_page"
                 )));
         assert_eq!(
             response.raster_work_queue.schema,
