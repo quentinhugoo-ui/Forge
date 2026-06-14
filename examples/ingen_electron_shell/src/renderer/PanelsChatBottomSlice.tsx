@@ -1298,7 +1298,16 @@ function codeActEventFromLine(line: string): TranscriptCodeActEvent | undefined 
 }
 
 function isCodeActResultHeader(line: string): boolean {
-  return /^[A-Z][A-Z0-9_]*_RESULT\b/.test(line.trim());
+  return /^[A-Z][A-Z0-9_]*_RESULT\b/.test(line.trim()) || /^R(?:e|\u00e9)sultat\s*:/i.test(line.trim());
+}
+
+function isCodeActMetadataLine(line: string): boolean {
+  const trimmed = line.trim();
+  return (
+    isCodeActResultHeader(trimmed) ||
+    /^(?:status|error|path|toPath|items?|stdout|stderr|exitCode|exit_code|proofHash|proof_hash|hash)\s*[:=]/i.test(trimmed) ||
+    (/^[{[]/.test(trimmed) && /[}\]]$/.test(trimmed))
+  );
 }
 
 function normalizeAssistantMarkdownText(text: string): string {
@@ -1497,7 +1506,7 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       skippingCodeActMetadata = false;
       continue;
     }
-    if (isCodeActResultHeader(line)) {
+    if (isCodeActMetadataLine(line)) {
       flushParagraph();
       flushList();
       skippingCodeActMetadata = true;
@@ -1505,7 +1514,7 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       continue;
     }
     if (skippingCodeActMetadata) {
-      continue;
+      skippingCodeActMetadata = false;
     }
     const fence = markdownFenceInfo(line);
     if (fence) {
@@ -1710,12 +1719,12 @@ function assistantVisibleAnimationSource(text: string): string {
       skippingCodeActMetadata = false;
       continue;
     }
-    if (isCodeActResultHeader(line)) {
+    if (isCodeActMetadataLine(line)) {
       skippingCodeActMetadata = true;
       continue;
     }
     if (skippingCodeActMetadata) {
-      continue;
+      skippingCodeActMetadata = false;
     }
     const event = codeActEventFromLine(line);
     if (event) {

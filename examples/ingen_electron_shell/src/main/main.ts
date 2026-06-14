@@ -5367,6 +5367,7 @@ async function applyDeterministicOrganizationFallback(params: {
   originalUserText: string;
   request: AgentActionRequest;
   result: AgentActionResult;
+  commitProgress?: (assistantMessage: TranscriptMessage) => void;
 }): Promise<TranscriptMessage> {
   if (!agentActionStepNeedsMutationFollowUp(params.originalUserText, params.request, params.result)) {
     return params.assistantMessage;
@@ -5382,6 +5383,7 @@ async function applyDeterministicOrganizationFallback(params: {
       "La liste est suffisante pour lancer un premier tri borné: je crée les dossiers de catégories nécessaires, puis je déplace quelques éléments évidents sans rien supprimer."
     ].filter((part) => part.trim().length > 0).join("\n\n")
   };
+  params.commitProgress?.(assistantMessage);
   for (const request of requests) {
     const result = await executeAgentActionRequest(agentActionHostConfig(), request);
     assistantMessage = {
@@ -5389,6 +5391,7 @@ async function applyDeterministicOrganizationFallback(params: {
       text: `${assistantMessage.text.trimEnd()}\n\n${agentActionEventCommandForRequest(request)}\n\n${agentActionResultSummary(result)}`.trim(),
       proofHash: hashJson({ deterministicAgentActionFallback: true, previousProofHash: assistantMessage.proofHash, request, result })
     };
+    params.commitProgress?.(assistantMessage);
     if (!result.accepted) {
       break;
     }
@@ -5427,7 +5430,8 @@ async function executeAssistantAgentActionLoop(params: {
         assistantMessage,
         originalUserText: params.originalUserText,
         request: extracted.request,
-        result
+        result,
+        commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
       });
       if (fallbackMessage.text !== assistantMessage.text) {
         params.commitTranscript(transcriptWithMessage(params.baseTranscript, fallbackMessage));
@@ -5484,7 +5488,8 @@ async function executeAssistantAgentActionLoop(params: {
           assistantMessage,
           originalUserText: params.originalUserText,
           request: extracted.request,
-          result
+          result,
+          commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
         });
         params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
       }
