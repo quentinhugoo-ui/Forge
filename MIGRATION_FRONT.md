@@ -127,6 +127,8 @@ bundle and replayed instead of re-encoded every frame. The KASM frame spheres
 also produce a content-addressed conservative scissor rectangle, so pixels
 outside the possible blob volume do not execute the raymarch shader. The blob
 canvas fills the Brain canvas instead of living in its own cropped HTML frame.
+WebGL uniform buffer lanes are materialized once per typed buffer, so hot-frame
+uploads reuse the same KASM slices instead of allocating new RAM views.
 Once WebGPU is active, the hidden CSS fallback stops its own morph and gleam
 animations.
 

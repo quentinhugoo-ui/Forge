@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   BRAIN_BLOB_MONSTER_HUE_ROW_FLOATS,
   brainBlobMonsterFrameScissor,
+  brainBlobMonsterUniformViews,
   createBrainBlobMonsterFrameCache,
   writeBrainBlobMonsterHueRows,
   type BrainBlobMonsterScissor
@@ -880,6 +881,16 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
   const scene = createBlobScene(seed);
   const uniformData = new Float32Array(BLOB_UNIFORM_FLOATS);
   uniformData[3] = seed;
+  const uniformViews = brainBlobMonsterUniformViews(uniformData, {
+    ballOffset: BLOB_BALLS_FLOAT_OFFSET,
+    ballFloats: BLOB_BALL_COUNT * 4,
+    ksOffset: BLOB_KS_FLOAT_OFFSET,
+    ksFloats: BLOB_BALL_COUNT * 4,
+    mouseOffset: BLOB_MOUSE_FLOAT_OFFSET,
+    mouseFloats: 4,
+    hueOffset: BLOB_HUE_FLOAT_OFFSET,
+    hueFloats: BRAIN_BLOB_MONSTER_HUE_ROW_FLOATS
+  });
 
   gl.enable(gl.BLEND);
   gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -922,11 +933,11 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
     gl.enable(gl.SCISSOR_TEST);
     gl.scissor(scissor.x, canvas.height - scissor.y - scissor.height, scissor.width, scissor.height);
     gl.useProgram(program);
-    gl.uniform4fv(headerLoc, uniformData.subarray(0, 4));
-    gl.uniform4fv(ballsLoc, uniformData.subarray(BLOB_BALLS_FLOAT_OFFSET, BLOB_BALLS_FLOAT_OFFSET + BLOB_BALL_COUNT * 4));
-    gl.uniform4fv(ksLoc, uniformData.subarray(BLOB_KS_FLOAT_OFFSET, BLOB_KS_FLOAT_OFFSET + BLOB_BALL_COUNT * 4));
-    gl.uniform4fv(mouseLoc, uniformData.subarray(BLOB_MOUSE_FLOAT_OFFSET, BLOB_MOUSE_FLOAT_OFFSET + 4));
-    gl.uniform4fv(hueLoc, uniformData.subarray(BLOB_HUE_FLOAT_OFFSET, BLOB_HUE_FLOAT_OFFSET + BRAIN_BLOB_MONSTER_HUE_ROW_FLOATS));
+    gl.uniform4fv(headerLoc, uniformViews.header);
+    gl.uniform4fv(ballsLoc, uniformViews.balls);
+    gl.uniform4fv(ksLoc, uniformViews.ks);
+    gl.uniform4fv(mouseLoc, uniformViews.mouse);
+    gl.uniform4fv(hueLoc, uniformViews.hue);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.disable(gl.SCISSOR_TEST);
     if (!firstFrameSubmitted) {

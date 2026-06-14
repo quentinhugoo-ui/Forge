@@ -49,6 +49,14 @@ export interface BrainBlobMonsterScissorInput {
   paddingPixels: number;
 }
 
+export interface BrainBlobMonsterUniformViews {
+  header: Float32Array;
+  balls: Float32Array;
+  ks: Float32Array;
+  mouse: Float32Array;
+  hue: Float32Array;
+}
+
 type BrainBlobMonsterFrameCache = {
   quantizeTime(timeSeconds: number): number;
   probe(input: BrainBlobMonsterFrameInput): BrainBlobMonsterFrameProbe;
@@ -86,6 +94,7 @@ function clampNumber(value: number, min: number, max: number): number {
 const BRAIN_BLOB_MONSTER_HUE_PERIOD_TICKS = BRAIN_BLOB_MONSTER_FRAME_HZ * 6;
 const brainBlobMonsterHueRowsByTick = new Map<number, Float32Array>();
 const brainBlobMonsterScissorByAddress = new Map<string, BrainBlobMonsterScissor>();
+const brainBlobMonsterUniformViewsByBuffer = new WeakMap<Float32Array, BrainBlobMonsterUniformViews>();
 
 export function brainBlobMonsterColorizeAngle(timeSeconds: number): number {
   const phase = ((timeSeconds / 6) % 1 + 1) % 1;
@@ -136,6 +145,32 @@ export function writeBrainBlobMonsterHueRows(timeSeconds: number, out: Float32Ar
     brainBlobMonsterHueRowsByTick.set(tick, rows);
   }
   out.set(rows, offset);
+}
+
+export function brainBlobMonsterUniformViews(
+  data: Float32Array,
+  layout: {
+    ballOffset: number;
+    ballFloats: number;
+    ksOffset: number;
+    ksFloats: number;
+    mouseOffset: number;
+    mouseFloats: number;
+    hueOffset: number;
+    hueFloats: number;
+  }
+): BrainBlobMonsterUniformViews {
+  const cached = brainBlobMonsterUniformViewsByBuffer.get(data);
+  if (cached) return cached;
+  const views = {
+    header: data.subarray(0, 4),
+    balls: data.subarray(layout.ballOffset, layout.ballOffset + layout.ballFloats),
+    ks: data.subarray(layout.ksOffset, layout.ksOffset + layout.ksFloats),
+    mouse: data.subarray(layout.mouseOffset, layout.mouseOffset + layout.mouseFloats),
+    hue: data.subarray(layout.hueOffset, layout.hueOffset + layout.hueFloats)
+  };
+  brainBlobMonsterUniformViewsByBuffer.set(data, views);
+  return views;
 }
 
 export function brainBlobMonsterScissorAddress(input: BrainBlobMonsterScissorInput): string {

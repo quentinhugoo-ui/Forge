@@ -8,6 +8,7 @@ import {
   brainBlobMonsterHuePeriodAddress,
   brainBlobMonsterFrameScissor,
   brainBlobMonsterScissorAddress,
+  brainBlobMonsterUniformViews,
   createBrainBlobMonsterFrameCache,
   writeBrainBlobMonsterHueRows
 } from "../src/renderer/brain-blob-cache";
@@ -137,5 +138,27 @@ describe("Brain blob Monster frame cache", () => {
     expect(first.y).toBeGreaterThanOrEqual(0);
     expect(first.width).toBeGreaterThan(1);
     expect(first.height).toBeGreaterThan(1);
+  });
+
+  it("materializes uniform lanes once for the same KASM typed buffer", () => {
+    const data = new Float32Array(100);
+    const layout = {
+      ballOffset: 4,
+      ballFloats: 40,
+      ksOffset: 44,
+      ksFloats: 40,
+      mouseOffset: 84,
+      mouseFloats: 4,
+      hueOffset: 88,
+      hueFloats: 12
+    };
+
+    const first = brainBlobMonsterUniformViews(data, layout);
+    const second = brainBlobMonsterUniformViews(data, layout);
+
+    expect(second).toBe(first);
+    expect(first.header.buffer).toBe(data.buffer);
+    expect(first.balls.byteOffset).toBe(data.byteOffset + layout.ballOffset * Float32Array.BYTES_PER_ELEMENT);
+    expect(first.hue.length).toBe(layout.hueFloats);
   });
 });
