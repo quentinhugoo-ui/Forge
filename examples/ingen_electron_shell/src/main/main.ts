@@ -10624,16 +10624,14 @@ type WindowsTaskbarStateProbe = {
   ok: boolean;
   state: number;
   target: number;
-  taskbarVisible: boolean;
-  taskbarWindowCount: number;
+  taskbarHandleFound: boolean;
 };
 
-function runWindowsTaskbarAutoHideProbe(targetState?: number, taskbarVisible?: boolean): WindowsTaskbarStateProbe | null {
+function runWindowsTaskbarAutoHideProbe(targetState?: number): WindowsTaskbarStateProbe | null {
   if (process.platform !== "win32") {
     return null;
   }
   const desiredState = targetState === undefined ? "$null" : String(Math.max(0, Math.round(targetState)));
-  const desiredTaskbarVisible = taskbarVisible === undefined ? "$null" : taskbarVisible ? "$true" : "$false";
   const script = `
 $ErrorActionPreference = "Stop"
 $source = @"
@@ -10660,86 +10658,30 @@ public static class InGenTaskbarState {
   public static extern UIntPtr SHAppBarMessage(UInt32 dwMessage, ref APPBARDATA pData);
   [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
   public static extern IntPtr FindWindow(String lpClassName, String lpWindowName);
-  [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
-  public static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, String lpszClass, String lpszWindow);
-  [DllImport("user32.dll", SetLastError=true)]
-  public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll", SetLastError=true)]
-  public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
-  [DllImport("user32.dll", SetLastError=true)]
-  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, Int32 X, Int32 Y, Int32 cx, Int32 cy, UInt32 uFlags);
   public const UInt32 ABM_GETSTATE = 0x00000004;
   public const UInt32 ABM_SETSTATE = 0x0000000A;
   public const Int32 ABS_AUTOHIDE = 0x0000001;
-  public const Int32 SW_HIDE = 0;
-  public const Int32 SW_SHOW = 5;
-  public const UInt32 SWP_NOSIZE = 0x0001;
-  public const UInt32 SWP_NOMOVE = 0x0002;
-  public const UInt32 SWP_NOZORDER = 0x0004;
-  public const UInt32 SWP_NOACTIVATE = 0x0010;
-  public const UInt32 SWP_SHOWWINDOW = 0x0040;
-  public const UInt32 SWP_HIDEWINDOW = 0x0080;
 }
 "@
 Add-Type -TypeDefinition $source
-function Get-InGenTaskbarHandles {
-  $handles = New-Object System.Collections.Generic.List[IntPtr]
-  $primary = [InGenTaskbarState]::FindWindow("Shell_TrayWnd", $null)
-  if ($primary -ne [IntPtr]::Zero) {
-    [void]$handles.Add($primary)
-  }
-  $previous = [IntPtr]::Zero
-  while ($true) {
-    $next = [InGenTaskbarState]::FindWindowEx([IntPtr]::Zero, $previous, "Shell_SecondaryTrayWnd", $null)
-    if ($next -eq [IntPtr]::Zero) {
-      break
-    }
-    [void]$handles.Add($next)
-    $previous = $next
-  }
-  $handles
-}
-function Set-InGenTaskbarWindowsVisible([bool]$visible) {
-  $windowFlag = if ($visible) { [InGenTaskbarState]::SWP_SHOWWINDOW } else { [InGenTaskbarState]::SWP_HIDEWINDOW }
-  $positionFlags = [InGenTaskbarState]::SWP_NOSIZE -bor [InGenTaskbarState]::SWP_NOMOVE -bor [InGenTaskbarState]::SWP_NOZORDER -bor [InGenTaskbarState]::SWP_NOACTIVATE -bor $windowFlag
-  $showCommand = if ($visible) { [InGenTaskbarState]::SW_SHOW } else { [InGenTaskbarState]::SW_HIDE }
-  $handles = Get-InGenTaskbarHandles
-  foreach ($handle in $handles) {
-    [void][InGenTaskbarState]::SetWindowPos($handle, [IntPtr]::Zero, 0, 0, 0, 0, $positionFlags)
-    [void][InGenTaskbarState]::ShowWindow($handle, $showCommand)
-  }
-  $handles.Count
-}
-function Test-InGenPrimaryTaskbarVisible {
-  $primary = [InGenTaskbarState]::FindWindow("Shell_TrayWnd", $null)
-  if ($primary -eq [IntPtr]::Zero) {
-    return $false
-  }
-  [InGenTaskbarState]::IsWindowVisible($primary)
-}
+$taskbarHandle = [InGenTaskbarState]::FindWindow("Shell_TrayWnd", $null)
 $data = New-Object InGenTaskbarState+APPBARDATA
 $data.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][InGenTaskbarState+APPBARDATA])
+$data.hWnd = $taskbarHandle
 $current = [int]([InGenTaskbarState]::SHAppBarMessage([InGenTaskbarState]::ABM_GETSTATE, [ref]$data).ToUInt32())
 $desiredState = ${desiredState}
-$desiredTaskbarVisible = ${desiredTaskbarVisible}
 $target = $current
 if ($null -ne $desiredState) {
   $target = [int]$desiredState
   $data.lParam = [IntPtr]$target
   [void][InGenTaskbarState]::SHAppBarMessage([InGenTaskbarState]::ABM_SETSTATE, [ref]$data)
-  Start-Sleep -Milliseconds 80
-}
-if ($null -ne $desiredTaskbarVisible) {
-  [void](Set-InGenTaskbarWindowsVisible ([bool]$desiredTaskbarVisible))
-  Start-Sleep -Milliseconds 80
-}
-if ($null -ne $desiredState) {
+  Start-Sleep -Milliseconds 160
   $data = New-Object InGenTaskbarState+APPBARDATA
   $data.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][InGenTaskbarState+APPBARDATA])
+  $data.hWnd = $taskbarHandle
   $target = [int]([InGenTaskbarState]::SHAppBarMessage([InGenTaskbarState]::ABM_GETSTATE, [ref]$data).ToUInt32())
 }
-$handles = Get-InGenTaskbarHandles
-@{ ok = $true; state = $current; target = $target; taskbarVisible = (Test-InGenPrimaryTaskbarVisible); taskbarWindowCount = $handles.Count } | ConvertTo-Json -Compress
+@{ ok = $true; state = $current; target = $target; taskbarHandleFound = ($taskbarHandle -ne [IntPtr]::Zero) } | ConvertTo-Json -Compress
 `;
   const encoded = Buffer.from(script, "utf16le").toString("base64");
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], {
@@ -10758,15 +10700,13 @@ $handles = Get-InGenTaskbarHandles
       parsed.ok === true &&
       typeof parsed.state === "number" &&
       typeof parsed.target === "number" &&
-      typeof parsed.taskbarVisible === "boolean" &&
-      typeof parsed.taskbarWindowCount === "number"
+      typeof parsed.taskbarHandleFound === "boolean"
     ) {
       return {
         ok: true,
         state: parsed.state,
         target: parsed.target,
-        taskbarVisible: parsed.taskbarVisible,
-        taskbarWindowCount: parsed.taskbarWindowCount
+        taskbarHandleFound: parsed.taskbarHandleFound
       };
     }
   } catch (error) {
@@ -10791,11 +10731,11 @@ function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boole
     : hidden
       ? current.target | WINDOWS_TASKBAR_AUTOHIDE_FLAG
       : current.target & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG;
-  const result = runWindowsTaskbarAutoHideProbe(targetState, !hidden);
+  const result = runWindowsTaskbarAutoHideProbe(targetState);
   if (!result) {
     return false;
   }
-  widgetTaskbarHidden = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0 && result.taskbarVisible === false;
+  widgetTaskbarHidden = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0;
   if (restoreOriginal) {
     widgetTaskbarOriginalState = null;
     widgetTaskbarHidden = false;
