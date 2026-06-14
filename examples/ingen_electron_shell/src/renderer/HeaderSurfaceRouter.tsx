@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import type {
   BangerGoogleTilesConfigResult,
-  BangerPreviewFrameResult,
   HeaderSurfaceContract,
   HeaderSurfaceSnapshot
 } from "../shared/ipc-contract";
@@ -49,22 +48,7 @@ function WebExplorerSurface({ surfaces }: { surfaces: HeaderSurfaceContract[] })
 
 function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const cesiumHostRef = useRef<HTMLDivElement | null>(null);
-  const [frame, setFrame] = useState<BangerPreviewFrameResult | null>(null);
   const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
-  const [tilesFailed, setTilesFailed] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    void globalThis.window?.forgeShell?.getBangerPreviewFrame?.()
-      .then((result) => {
-        if (active) {
-          setFrame(result ?? null);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -81,24 +65,36 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
 
   useEffect(() => {
     const host = cesiumHostRef.current;
-    if (!host || !tilesConfig?.accepted || !tilesConfig.rootTilesetUrl) {
+    if (!host) {
       return;
     }
 
     let cancelled = false;
     let viewer: { destroy: () => void; isDestroyed?: () => boolean } | null = null;
-    setTilesFailed(false);
 
     void import("cesium")
       .then(async (Cesium) => {
         if (cancelled) return;
-        Cesium.RequestScheduler.requestsByServer["tile.googleapis.com:443"] = tilesConfig.requestBudget;
+        const initialView = tilesConfig?.initialView ?? {
+          longitude: 2.3522,
+          latitude: 48.8566,
+          heightMeters: 4_200_000,
+          headingDegrees: 0,
+          pitchDegrees: -28,
+          rollDegrees: 0
+        };
+        const baseLayer = Cesium.ImageryLayer.fromProviderAsync(
+          Cesium.TileMapServiceImageryProvider.fromUrl(
+            Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII")
+          )
+        );
+        Cesium.RequestScheduler.requestsByServer["tile.googleapis.com:443"] = tilesConfig?.requestBudget ?? 18;
         viewer = new Cesium.Viewer(host, {
           animation: false,
+          baseLayer,
           baseLayerPicker: false,
           fullscreenButton: false,
           geocoder: false,
-          globe: false,
           homeButton: false,
           infoBox: false,
           navigationHelpButton: false,
@@ -109,6 +105,22 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
           shouldAnimate: false,
           timeline: false
         });
+        const cesiumViewer = viewer as any;
+        cesiumViewer.scene.globe.enableLighting = true;
+        cesiumViewer.scene.skyAtmosphere.show = true;
+        const { longitude, latitude, heightMeters, headingDegrees, pitchDegrees, rollDegrees } = initialView;
+        cesiumViewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, Math.max(heightMeters, 4_200_000)),
+          orientation: {
+            heading: Cesium.Math.toRadians(headingDegrees),
+            pitch: Cesium.Math.toRadians(-28),
+            roll: Cesium.Math.toRadians(rollDegrees)
+          }
+        });
+        cesiumViewer.scene.requestRender();
+        if (!tilesConfig?.accepted || !tilesConfig.rootTilesetUrl) {
+          return;
+        }
         const tilesetFactory = Cesium.Cesium3DTileset as unknown as {
           fromUrl?: (url: string, options: Record<string, unknown>) => Promise<unknown>;
           new(options: Record<string, unknown>): unknown;
@@ -122,9 +134,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
           ? await tilesetFactory.fromUrl(tilesConfig.rootTilesetUrl, tilesetOptions)
           : new tilesetFactory({ url: tilesConfig.rootTilesetUrl, ...tilesetOptions });
         if (cancelled) return;
-        const cesiumViewer = viewer as any;
         cesiumViewer.scene.primitives.add(tileset);
-        const { longitude, latitude, heightMeters, headingDegrees, pitchDegrees, rollDegrees } = tilesConfig.initialView;
         cesiumViewer.camera.setView({
           destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, heightMeters),
           orientation: {
@@ -136,9 +146,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
         cesiumViewer.scene.requestRender();
       })
       .catch(() => {
-        if (!cancelled) {
-          setTilesFailed(true);
-        }
+        // Keep the Banger canvas available even if the external tiles provider is still cold.
       });
 
     return () => {
@@ -149,21 +157,9 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     };
   }, [tilesConfig]);
 
-  const acceptedFrame = frame?.accepted && frame.frameDataUrl ? frame : null;
-  const showGoogleTiles = Boolean(tilesConfig?.accepted && tilesConfig.rootTilesetUrl && !tilesFailed);
-
   return (
     <section className="surface surface--banger" aria-label={surface.label}>
-      {showGoogleTiles ? <div ref={cesiumHostRef} className="bangerCesiumViewport" aria-label="Banger Google Photorealistic 3D Tiles viewport" /> : null}
-      {!showGoogleTiles && acceptedFrame ? (
-        <img
-          className="nativeViewportSlot__frame"
-          src={acceptedFrame.frameDataUrl}
-          alt="Banger Gaussian splat native preview frame"
-          width={acceptedFrame.width}
-          height={acceptedFrame.height}
-        />
-      ) : null}
+      <div ref={cesiumHostRef} className="bangerCesiumViewport" aria-label="Banger Cesium geospatial viewport" />
     </section>
   );
 }
