@@ -1685,8 +1685,15 @@ function groupAssistantCodeActEvents(blocks: AssistantMarkdownBlock[]): Assistan
   return grouped;
 }
 
+function assistantRenderableText(text: string): string {
+  return text
+    .replace(/\/(["'`])[^"'`\r\n]{1,120}\1_renamechat_/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function assistantVisibleAnimationSource(text: string): string {
-  const normalized = normalizeAssistantMarkdownText(text);
+  const normalized = normalizeAssistantMarkdownText(assistantRenderableText(text));
   const lines = normalized.split("\n");
   let offset = 0;
   let lastVisibleEnd = 0;
@@ -2767,9 +2774,10 @@ function AssistantMarkdownText({
 }
 
 function StaticAssistantText({ message, onUseMathInCompute }: { message: TranscriptMessage; onUseMathInCompute?: AssistantMathUseHandler }) {
+  const renderableText = useMemo(() => assistantRenderableText(message.text), [message.text]);
   return (
-    <div className="assistantText" aria-label={message.text}>
-      <AssistantMarkdownText messageId={message.id} text={message.text} writing={false} onUseMathInCompute={onUseMathInCompute} />
+    <div className="assistantText" aria-label={renderableText}>
+      <AssistantMarkdownText messageId={message.id} text={renderableText} writing={false} onUseMathInCompute={onUseMathInCompute} />
     </div>
   );
 }
@@ -2784,7 +2792,8 @@ function AnimatedAssistantText({
   onUseMathInCompute?: AssistantMathUseHandler;
 }) {
   const textRef = useRef<HTMLDivElement>(null);
-  const animationSource = useMemo(() => assistantVisibleAnimationSource(message.text), [message.text]);
+  const renderableText = useMemo(() => assistantRenderableText(message.text), [message.text]);
+  const animationSource = useMemo(() => assistantVisibleAnimationSource(renderableText), [renderableText]);
   const revealBreakpoints = useMemo(() => assistantRevealBreakpoints(animationSource), [animationSource]);
   const totalCharacters = animationSource.length;
   const totalRevealSteps = revealBreakpoints.length;
@@ -2865,7 +2874,7 @@ function AnimatedAssistantText({
   const visibleText = animationSource.slice(0, visibleCharacters);
 
   return (
-    <div className="assistantText" aria-label={message.text} ref={textRef}>
+    <div className="assistantText" aria-label={renderableText} ref={textRef}>
       <AssistantMarkdownText messageId={message.id} text={visibleText} writing={writing} onUseMathInCompute={onUseMathInCompute} />
     </div>
   );

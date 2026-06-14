@@ -80,6 +80,7 @@ import {
   type WorkspaceActionResult,
   type WorkspaceChoiceResult,
   type AgentActionHostManifest,
+  type AgentActionPathEntry,
   type AgentActionRequest,
   type AgentActionResult,
   type NativeTerminalBounds,
@@ -5302,6 +5303,106 @@ function agentActionForcedContinuationUserText(originalUserText: string, request
   ].join("\n");
 }
 
+const AGENT_ACTION_ORGANIZE_CATEGORY_NAMES = new Set(["Documents", "Images", "Videos", "Audio", "Archives", "Code", "Applications", "Dossiers", "Autres"]);
+
+function agentActionOrganizeCategory(item: AgentActionPathEntry): string {
+  if (item.kind === "directory") {
+    return "Dossiers";
+  }
+  const extension = extname(item.name).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".tiff"].includes(extension)) return "Images";
+  if ([".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"].includes(extension)) return "Videos";
+  if ([".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"].includes(extension)) return "Audio";
+  if ([".zip", ".rar", ".7z", ".tar", ".gz"].includes(extension)) return "Archives";
+  if ([".js", ".ts", ".tsx", ".jsx", ".py", ".rs", ".go", ".java", ".cpp", ".c", ".h", ".json", ".toml", ".yaml", ".yml", ".html", ".css"].includes(extension)) return "Code";
+  if ([".exe", ".msi", ".app", ".bat", ".cmd", ".ps1"].includes(extension)) return "Applications";
+  if ([".pdf", ".doc", ".docx", ".txt", ".md", ".rtf", ".xls", ".xlsx", ".ppt", ".pptx", ".csv"].includes(extension)) return "Documents";
+  return "Autres";
+}
+
+function agentActionPathInBase(basePath: string, ...parts: string[]): string {
+  if (!basePath || basePath === ".") {
+    return join(...parts);
+  }
+  return join(basePath, ...parts);
+}
+
+function deterministicOrganizationRequestsFromList(request: AgentActionRequest, result: AgentActionResult): AgentActionRequest[] {
+  if (!result.accepted || request.action !== "list" || !result.items?.length) {
+    return [];
+  }
+  const existingDirectories = new Set(
+    result.items
+      .filter((item) => item.kind === "directory")
+      .map((item) => item.name.toLowerCase())
+  );
+  const movableItems = result.items
+    .filter((item) => !item.name.startsWith("."))
+    .filter((item) => !(item.kind === "directory" && AGENT_ACTION_ORGANIZE_CATEGORY_NAMES.has(item.name)));
+  const requests: AgentActionRequest[] = [];
+  const plannedDirectories = new Set(existingDirectories);
+  const basePath = result.path ?? request.path ?? ".";
+  for (const item of movableItems.slice(0, 12)) {
+    const category = agentActionOrganizeCategory(item);
+    if (!plannedDirectories.has(category.toLowerCase())) {
+      requests.push({
+        action: "create_directory",
+        scope: request.scope,
+        path: agentActionPathInBase(basePath, category),
+        confirmed: request.scope === "computer" ? true : undefined
+      });
+      plannedDirectories.add(category.toLowerCase());
+    }
+    requests.push({
+      action: "move_path",
+      scope: request.scope,
+      path: item.path,
+      toPath: agentActionPathInBase(basePath, category, item.name),
+      confirmed: request.scope === "computer" ? true : undefined
+    });
+  }
+  return requests.slice(0, 8);
+}
+
+async function applyDeterministicOrganizationFallback(params: {
+  assistantMessage: TranscriptMessage;
+  originalUserText: string;
+  request: AgentActionRequest;
+  result: AgentActionResult;
+}): Promise<TranscriptMessage> {
+  if (!agentActionStepNeedsMutationFollowUp(params.originalUserText, params.request, params.result)) {
+    return params.assistantMessage;
+  }
+  const requests = deterministicOrganizationRequestsFromList(params.request, params.result);
+  if (requests.length === 0) {
+    return params.assistantMessage;
+  }
+  let assistantMessage = {
+    ...params.assistantMessage,
+    text: [
+      params.assistantMessage.text,
+      "La liste est suffisante pour lancer un premier tri borné: je crée les dossiers de catégories nécessaires, puis je déplace quelques éléments évidents sans rien supprimer."
+    ].filter((part) => part.trim().length > 0).join("\n\n")
+  };
+  for (const request of requests) {
+    const result = await executeAgentActionRequest(agentActionHostConfig(), request);
+    assistantMessage = {
+      ...assistantMessage,
+      text: [
+        assistantMessage.text,
+        agentActionEventCommandForRequest(request),
+        "",
+        agentActionResultSummary(result)
+      ].filter((part) => part.length > 0).join("\n").trim(),
+      proofHash: hashJson({ deterministicAgentActionFallback: true, previousProofHash: assistantMessage.proofHash, request, result })
+    };
+    if (!result.accepted) {
+      break;
+    }
+  }
+  return assistantMessage;
+}
+
 async function executeAssistantAgentActionLoop(params: {
   assistantMessage: TranscriptMessage;
   baseTranscript: TranscriptMessage[];
@@ -5373,6 +5474,15 @@ async function executeAssistantAgentActionLoop(params: {
         text: [assistantMessage.text, forcedContinuation.text].filter((part) => part.trim().length > 0).join("\n\n"),
         proofHash: hashJson({ agentActionLoopForcedContinuationStep: step + 1, previousProofHash: assistantMessage.proofHash, continuationProofHash: forcedContinuation.proofHash })
       };
+      if (!extractAgentActionJsonRequest(assistantMessage.text)) {
+        assistantMessage = await applyDeterministicOrganizationFallback({
+          assistantMessage,
+          originalUserText: params.originalUserText,
+          request: extracted.request,
+          result
+        });
+        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+      }
     }
   }
   const strippedText = removeAgentActionJsonFragments(assistantMessage.text)
