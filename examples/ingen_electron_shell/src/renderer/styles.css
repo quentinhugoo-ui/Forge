@@ -71,6 +71,7 @@ button {
   --chat-canvas-bottom: 138px;
   --transcript-bottom-breathing-room: 48px;
   --sidebar-motion: 340ms cubic-bezier(0.22, 1, 0.36, 1);
+  --widget-exit-motion: 860ms cubic-bezier(0.22, 1, 0.36, 1);
   width: 100vw;
   height: 100vh;
   background: var(--forge-bg);
@@ -11054,6 +11055,24 @@ ol.assistantText__list li::before {
   pointer-events: none;
   transition: transform var(--sidebar-motion);
   will-change: transform;
+}
+
+.shell--widget-minimizing .titlebar,
+.shell--widget-minimizing .workspaceHeader,
+.shell--widget-minimizing .rightPanel,
+.shell--widget-minimizing .canvasSurfaces,
+.shell--widget-minimizing .canvasSplitPane,
+.shell--widget-minimizing .canvasPlanetRail,
+.shell--widget-minimizing .canvasFilesPane,
+.shell--widget-minimizing .canvasTerminalPane,
+.shell--widget-minimizing .canvasCover,
+.shell--widget-minimizing .profileCanvas,
+.shell--widget-minimizing .chatCanvas,
+.shell--widget-minimizing .parallelTranscriptGrid,
+.shell--widget-minimizing .workspaceRequiredVeil,
+.shell--widget-minimizing .sidebarLedger,
+.shell--widget-minimizing .shadowLedger {
+  transition: transform var(--widget-exit-motion), opacity var(--widget-exit-motion);
 }
 
 .shell--widget-minimizing .titlebar,
