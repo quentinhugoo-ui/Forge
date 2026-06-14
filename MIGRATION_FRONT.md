@@ -107,6 +107,21 @@ Security defaults:
 - Right panel stays visually empty unless a feature explicitly owns its content.
 - Product state belongs in stores backed by typed snapshots, not static fixtures.
 
+## Compute Frugality
+
+Every recurring renderer workload must be treated like a Forge action:
+
+- define a stable input contract and content address before heavy work,
+- skip CPU, GPU, RAM and UI updates when the address is unchanged,
+- expose cache hits as runtime proof, not as a hidden optimization,
+- measure impact with hardware counters through Hardware, including a short
+  baseline-vs-optimized phase when safe,
+- keep the optimized mode as the default after measurement.
+
+The Brain blob is the reference pattern: frame state is content-addressed,
+duplicated frames are not submitted to WebGPU/WebGL, and Hardware compares CPU
+and GPU averages between baseline and optimized phases.
+
 ## Verification
 
 Minimum frontend gate:

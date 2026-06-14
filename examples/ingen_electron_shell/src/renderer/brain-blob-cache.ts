@@ -2,6 +2,7 @@ export const BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA = "forge.monster.brain_blob.f
 export const BRAIN_BLOB_MONSTER_FRAME_HZ = 60;
 
 export type BrainBlobMonsterLane = "webgpu" | "webgl2";
+export type BrainBlobMonsterRuntimeMode = "optimized" | "baseline";
 
 export interface BrainBlobMonsterFrameInput {
   lane: BrainBlobMonsterLane;
@@ -34,6 +35,7 @@ export interface BrainBlobMonsterFrameCacheStats {
 export interface BrainBlobMonsterRuntimeStats extends BrainBlobMonsterFrameCacheStats {
   schema: typeof BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA;
   lane: BrainBlobMonsterLane | "unknown";
+  mode: BrainBlobMonsterRuntimeMode;
   reusePercent: number;
   submittedFps: number;
   sampledAt: number;
@@ -61,9 +63,12 @@ function fnv1a64Hex(input: string): string {
 }
 
 const brainBlobMonsterStatsListeners = new Set<() => void>();
+const brainBlobMonsterModeListeners = new Set<() => void>();
+let brainBlobMonsterRuntimeMode: BrainBlobMonsterRuntimeMode = "optimized";
 let brainBlobMonsterRuntimeStats: BrainBlobMonsterRuntimeStats = {
   schema: BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA,
   lane: "unknown",
+  mode: "optimized",
   acceptedFrames: 0,
   reusedFrames: 0,
   uniqueFrames: 0,
@@ -82,6 +87,25 @@ export function subscribeBrainBlobMonsterRuntimeStats(listener: () => void): () 
 
 export function getBrainBlobMonsterRuntimeStats(): BrainBlobMonsterRuntimeStats {
   return brainBlobMonsterRuntimeStats;
+}
+
+export function subscribeBrainBlobMonsterRuntimeMode(listener: () => void): () => void {
+  brainBlobMonsterModeListeners.add(listener);
+  return () => {
+    brainBlobMonsterModeListeners.delete(listener);
+  };
+}
+
+export function getBrainBlobMonsterRuntimeMode(): BrainBlobMonsterRuntimeMode {
+  return brainBlobMonsterRuntimeMode;
+}
+
+export function setBrainBlobMonsterRuntimeMode(mode: BrainBlobMonsterRuntimeMode): void {
+  if (brainBlobMonsterRuntimeMode === mode) return;
+  brainBlobMonsterRuntimeMode = mode;
+  for (const listener of brainBlobMonsterModeListeners) {
+    listener();
+  }
 }
 
 function publishBrainBlobMonsterRuntimeStats(next: BrainBlobMonsterRuntimeStats): void {
@@ -134,13 +158,16 @@ export function createBrainBlobMonsterFrameCache(): BrainBlobMonsterFrameCache {
     },
     probe(input) {
       const { address, timeTick } = brainBlobMonsterFrameAddress(input);
-      const reused = address === lastAddress;
+      const cacheHit = address === lastAddress;
+      const reused = brainBlobMonsterRuntimeMode === "optimized" && cacheHit;
       const now = performance.now();
       acceptedFrames += 1;
       if (reused) {
         reusedFrames += 1;
       } else {
-        uniqueFrames += 1;
+        if (!cacheHit) {
+          uniqueFrames += 1;
+        }
         windowSubmittedFrames += 1;
         lastAddress = address;
       }
@@ -150,6 +177,7 @@ export function createBrainBlobMonsterFrameCache(): BrainBlobMonsterFrameCache {
         publishBrainBlobMonsterRuntimeStats({
           schema: BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA,
           lane: input.lane,
+          mode: brainBlobMonsterRuntimeMode,
           ...stats,
           reusePercent: stats.acceptedFrames > 0 ? (stats.reusedFrames / stats.acceptedFrames) * 100 : 0,
           submittedFps: elapsedSeconds >= 0.25 ? windowSubmittedFrames / elapsedSeconds : 0,

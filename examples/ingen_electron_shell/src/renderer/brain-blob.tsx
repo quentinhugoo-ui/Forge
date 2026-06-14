@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createBrainBlobMonsterFrameCache } from "./brain-blob-cache";
+import { createBrainBlobMonsterFrameCache, getBrainBlobMonsterRuntimeMode } from "./brain-blob-cache";
 
 /* Brain page background: a soft 3D gooey blob raymarched as an SDF metaball
    scene, ported from the Uiverse "andrew-manzyk" loader. The seven blurred
@@ -763,7 +763,7 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
         pointerStrength: nextPointerStrength,
         pointerOver: pointer.over
       });
-      if (frameProbe.reused) return;
+      if (getBrainBlobMonsterRuntimeMode() === "optimized" && frameProbe.reused) return;
       pointerStrength = nextPointerStrength;
       uniformData[0] = canvas.width;
       uniformData[1] = canvas.height;
@@ -876,7 +876,7 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
       pointerStrength: nextPointerStrength,
       pointerOver: pointer.over
     });
-    if (frameProbe.reused) return;
+    if (getBrainBlobMonsterRuntimeMode() === "optimized" && frameProbe.reused) return;
     pointerStrength = nextPointerStrength;
     uniformData[0] = canvas.width;
     uniformData[1] = canvas.height;

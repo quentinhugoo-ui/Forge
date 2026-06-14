@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA,
   BRAIN_BLOB_MONSTER_FRAME_HZ,
   brainBlobMonsterFrameAddress,
   createBrainBlobMonsterFrameCache,
   getBrainBlobMonsterRuntimeStats,
+  setBrainBlobMonsterRuntimeMode,
   subscribeBrainBlobMonsterRuntimeStats
 } from "../src/renderer/brain-blob-cache";
 
@@ -21,6 +22,10 @@ const baseFrame = {
 };
 
 describe("Brain blob Monster frame cache", () => {
+  afterEach(() => {
+    setBrainBlobMonsterRuntimeMode("optimized");
+  });
+
   it("content-addresses identical quantized frame inputs", () => {
     const tickTime = 18 / BRAIN_BLOB_MONSTER_FRAME_HZ;
     const first = brainBlobMonsterFrameAddress({
@@ -72,8 +77,31 @@ describe("Brain blob Monster frame cache", () => {
     expect(publishCount).toBeGreaterThan(0);
     expect(stats.schema).toBe(BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA);
     expect(stats.lane).toBe("webgpu");
+    expect(stats.mode).toBe("optimized");
     expect(stats.uniqueFrames).toBeGreaterThan(0);
     expect(stats.submittedFps).toBeGreaterThanOrEqual(0);
+  });
+
+  it("forces identical frame work during baseline measurement", () => {
+    const cache = createBrainBlobMonsterFrameCache();
+    const timeSeconds = cache.quantizeTime(4);
+    cache.probe({
+      ...baseFrame,
+      timeSeconds
+    });
+    setBrainBlobMonsterRuntimeMode("baseline");
+    const baselineRepeat = cache.probe({
+      ...baseFrame,
+      timeSeconds
+    });
+    setBrainBlobMonsterRuntimeMode("optimized");
+    const optimizedRepeat = cache.probe({
+      ...baseFrame,
+      timeSeconds
+    });
+
+    expect(baselineRepeat.reused).toBe(false);
+    expect(optimizedRepeat.reused).toBe(true);
   });
 
   it("separates shader lanes so WebGPU and WebGL never share frame proofs", () => {
