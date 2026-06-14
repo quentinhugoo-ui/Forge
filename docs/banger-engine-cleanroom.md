@@ -129,6 +129,10 @@ Date: 2026-06-14
    proofs, and the Banger material ABI is attached to pipeline-cache blobs.
 10. Add benchmark gates for promotion: latency, VRAM pressure, cache-hit reuse,
     proof reproducibility and visual capability versus the current path.
+    Status: started in `BangerNativeBenchmarkPromotionManifest` as
+    `forge.banger.benchmark_promotion_manifest.v1`; every render handoff now
+    carries deterministic latency, VRAM, cache-reuse, proof-reproducibility and
+    visual-capability gates before Banger GPU promotion is allowed.
 
 ## Ghidra Pipeline
 

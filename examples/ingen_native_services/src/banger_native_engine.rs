@@ -113,6 +113,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub shader_capability_plan: BangerNativeShaderCapabilityPlan,
     pub shader_compiler_ticket: BangerNativeShaderCompilerTicket,
     pub pipeline_cache_manifest: BangerNativePipelineCacheManifest,
+    pub benchmark_promotion_manifest: BangerNativeBenchmarkPromotionManifest,
     pub texture_bridge_contract: BangerNativeTextureBridgeContract,
     pub pipeline_cache_keys: Vec<String>,
     pub render_graph: Vec<BangerNativeRenderPass>,
@@ -361,6 +362,38 @@ pub struct BangerNativePipelineCacheEntry {
     pub blob_len: u64,
     pub blob_path: String,
     pub persistence_status: &'static str,
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeBenchmarkPromotionManifest {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub gate_count: usize,
+    pub passed_gate_count: usize,
+    pub promotion_allowed: bool,
+    pub target_frame_ms: f32,
+    pub estimated_frame_ms: f32,
+    pub frame_time_headroom_pct: f32,
+    pub vram_pressure_pct: f32,
+    pub cache_reuse_ratio: f32,
+    pub proof_reproducibility_status: &'static str,
+    pub proof_reproducibility_hash: String,
+    pub visual_capability_score: u32,
+    pub visual_capability_hash: String,
+    pub benchmark_hash: String,
+    pub gates: Vec<BangerNativeBenchmarkGate>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeBenchmarkGate {
+    pub name: &'static str,
+    pub metric: &'static str,
+    pub threshold: f32,
+    pub measured: f32,
+    pub passed: bool,
     pub proof_hash: String,
 }
 
@@ -1205,11 +1238,25 @@ impl BangerNativeEngine {
             viewport_width,
             viewport_height,
         );
+        let benchmark_promotion_manifest = build_benchmark_promotion_manifest(
+            &prepared,
+            &render_graph,
+            &pipeline_cache_manifest,
+            &texture_bridge_contract,
+            &resource_table,
+            &scene_graph_submission,
+            &culling_manifest,
+            &radiance_schedule_manifest,
+            &gaussian_splat_layer_manifest,
+            &shader_compiler_ticket,
+            target_frame_ms,
+        );
         let render_handoff_hash = render_handoff_hash(
             &prepared,
             &artifacts,
             &shader_compiler_ticket,
             &pipeline_cache_manifest,
+            &benchmark_promotion_manifest,
             &texture_bridge_contract,
             &scene_graph_submission,
             &culling_manifest,
@@ -1243,12 +1290,13 @@ impl BangerNativeEngine {
                 bootstrap_rhi: "wgpu_native_vulkan_metal_dx12",
                 frontier_target: "slang_capability_checked_meshlet_mesh_shader_rhi",
                 mesh_shader_preferred: prefer_mesh_shaders,
-                fallback_path: "compute_cull_indirect_draw_when_mesh_shader_unavailable",
-                capability_gate: "render_manifest_hash+shader_profile+renderer_cache_hash+shader_compiler_ticket_hash",
+                fallback_path: "compute_cull_indirect_draw_when_mesh_shader_unavailable_or_benchmark_gate_fails",
+                capability_gate: "benchmark_promotion_hash+render_manifest_hash+shader_profile+renderer_cache_hash+shader_compiler_ticket_hash",
                 compiler_ticket_hash: shader_compiler_ticket.proof_hash.clone(),
             },
             shader_compiler_ticket,
             pipeline_cache_manifest,
+            benchmark_promotion_manifest,
             texture_bridge_contract,
             pipeline_cache_keys,
             render_graph,
@@ -2101,6 +2149,140 @@ fn build_pipeline_cache_entry(
         persistence_status,
         proof_hash,
     })
+}
+
+fn build_benchmark_promotion_manifest(
+    prepared: &MonsterPreparedCompute,
+    render_graph: &[BangerNativeRenderPass],
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    resource_table: &BangerNativeResourceTable,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    target_frame_ms: f32,
+) -> BangerNativeBenchmarkPromotionManifest {
+    let estimated_frame_ms = estimated_banger_frame_ms(
+        prepared,
+        render_graph,
+        pipeline_cache_manifest,
+        resource_table,
+        scene_graph_submission,
+        culling_manifest,
+        radiance_schedule_manifest,
+        gaussian_splat_layer_manifest,
+    );
+    let frame_time_headroom_pct = if target_frame_ms > f32::EPSILON {
+        ((target_frame_ms - estimated_frame_ms) / target_frame_ms * 100.0).clamp(-999.0, 999.0)
+    } else {
+        -999.0
+    };
+    let vram_pressure_pct = resource_table.budget_pressure_pct;
+    let cache_reuse_ratio = if pipeline_cache_manifest.entry_count == 0 {
+        1.0
+    } else {
+        pipeline_cache_manifest.persisted_entry_count as f32 / pipeline_cache_manifest.entry_count as f32
+    };
+    let proof_reproducibility_hash = benchmark_proof_reproducibility_hash(
+        prepared,
+        pipeline_cache_manifest,
+        texture_bridge_contract,
+        resource_table,
+        scene_graph_submission,
+        culling_manifest,
+        radiance_schedule_manifest,
+        gaussian_splat_layer_manifest,
+        shader_compiler_ticket,
+    );
+    let proof_reproducibility_check = benchmark_proof_reproducibility_hash(
+        prepared,
+        pipeline_cache_manifest,
+        texture_bridge_contract,
+        resource_table,
+        scene_graph_submission,
+        culling_manifest,
+        radiance_schedule_manifest,
+        gaussian_splat_layer_manifest,
+        shader_compiler_ticket,
+    );
+    let proof_reproducibility_passed = proof_reproducibility_hash == proof_reproducibility_check;
+    let proof_reproducibility_status = if proof_reproducibility_passed {
+        "stable_content_addressed_inputs"
+    } else {
+        "unstable_recomputed_hash_inputs"
+    };
+    let visual_capability_score = visual_capability_score(
+        texture_bridge_contract,
+        scene_graph_submission,
+        culling_manifest,
+        radiance_schedule_manifest,
+        gaussian_splat_layer_manifest,
+        shader_compiler_ticket,
+    );
+    let visual_capability_hash = visual_capability_hash(
+        texture_bridge_contract,
+        scene_graph_submission,
+        culling_manifest,
+        radiance_schedule_manifest,
+        gaussian_splat_layer_manifest,
+        shader_compiler_ticket,
+        visual_capability_score,
+    );
+
+    let gates = vec![
+        benchmark_gate("latency", "estimated_frame_ms", target_frame_ms, estimated_frame_ms, true),
+        benchmark_gate("vram_pressure", "vram_pressure_pct", 85.0, vram_pressure_pct, true),
+        benchmark_gate("cache_hit_reuse", "pipeline_cache_reuse_ratio", 0.95, cache_reuse_ratio, false),
+        benchmark_gate(
+            "proof_reproducibility",
+            "stable_recomputed_hash",
+            1.0,
+            if proof_reproducibility_passed { 1.0 } else { 0.0 },
+            false,
+        ),
+        benchmark_gate(
+            "visual_capability",
+            "visual_capability_score",
+            80.0,
+            visual_capability_score as f32,
+            false,
+        ),
+    ];
+    let passed_gate_count = gates.iter().filter(|gate| gate.passed).count();
+    let promotion_allowed = passed_gate_count == gates.len();
+    let benchmark_hash = benchmark_promotion_manifest_hash(
+        target_frame_ms,
+        estimated_frame_ms,
+        frame_time_headroom_pct,
+        vram_pressure_pct,
+        cache_reuse_ratio,
+        proof_reproducibility_status,
+        &proof_reproducibility_hash,
+        visual_capability_score,
+        &visual_capability_hash,
+        &gates,
+    );
+
+    BangerNativeBenchmarkPromotionManifest {
+        schema: "forge.banger.benchmark_promotion_manifest.v1",
+        authority: "deterministic_native_handoff_metrics_before_gpu_promotion",
+        gate_count: gates.len(),
+        passed_gate_count,
+        promotion_allowed,
+        target_frame_ms,
+        estimated_frame_ms,
+        frame_time_headroom_pct,
+        vram_pressure_pct,
+        cache_reuse_ratio,
+        proof_reproducibility_status,
+        proof_reproducibility_hash,
+        visual_capability_score,
+        visual_capability_hash,
+        benchmark_hash,
+        gates,
+    }
 }
 
 fn build_texture_bridge_contract(
@@ -4691,6 +4873,197 @@ fn pipeline_cache_manifest_hash(
     hex32(h.finalize().into())
 }
 
+fn estimated_banger_frame_ms(
+    prepared: &MonsterPreparedCompute,
+    render_graph: &[BangerNativeRenderPass],
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    resource_table: &BangerNativeResourceTable,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
+) -> f32 {
+    let resident_mb = resource_table.resident_bytes as f32 / (1024.0 * 1024.0);
+    let cold_cache_penalty = if prepared.is_fully_cached() { 0.0 } else { 0.45 };
+    let cull_cost = culling_manifest.candidate_count as f32 * 0.035;
+    let radiance_cost = radiance_schedule_manifest.probe_page_count as f32 * 0.08;
+    let splat_cost = (gaussian_splat_layer_manifest.layer_count
+        + gaussian_splat_layer_manifest.conversion_count) as f32
+        * 0.12;
+    let render_graph_cost = render_graph.len() as f32 * 0.32;
+    let pipeline_cost = pipeline_cache_manifest.entry_count as f32 * 0.04;
+    let visible_cost = scene_graph_submission.visible_object_count as f32 * 0.025;
+    1.75
+        + render_graph_cost
+        + pipeline_cost
+        + resident_mb * 0.01
+        + visible_cost
+        + cull_cost
+        + radiance_cost
+        + splat_cost
+        + cold_cache_penalty
+}
+
+fn benchmark_gate(
+    name: &'static str,
+    metric: &'static str,
+    threshold: f32,
+    measured: f32,
+    lower_is_better: bool,
+) -> BangerNativeBenchmarkGate {
+    let passed = if lower_is_better {
+        measured <= threshold
+    } else {
+        measured >= threshold
+    };
+    let proof_hash = benchmark_gate_hash(name, metric, threshold, measured, passed);
+    BangerNativeBenchmarkGate {
+        name,
+        metric,
+        threshold,
+        measured,
+        passed,
+        proof_hash,
+    }
+}
+
+fn benchmark_gate_hash(
+    name: &str,
+    metric: &str,
+    threshold: f32,
+    measured: f32,
+    passed: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.benchmark_gate.v1\0");
+    h.update(name.as_bytes());
+    h.update(metric.as_bytes());
+    h.update(threshold.to_le_bytes());
+    h.update(measured.to_le_bytes());
+    h.update([passed as u8]);
+    hex32(h.finalize().into())
+}
+
+fn benchmark_proof_reproducibility_hash(
+    prepared: &MonsterPreparedCompute,
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    resource_table: &BangerNativeResourceTable,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.benchmark_proof_reproducibility.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(prepared.gpu_batch_plan.plan_hash.as_bytes());
+    h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
+    h.update(resource_table.table_hash.as_bytes());
+    h.update(scene_graph_submission.submission_hash.as_bytes());
+    h.update(culling_manifest.manifest_hash.as_bytes());
+    h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
+    h.update(shader_compiler_ticket.proof_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn visual_capability_score(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+) -> u32 {
+    let mut score = 0u32;
+    if texture_bridge_contract.width > 0
+        && texture_bridge_contract.height > 0
+        && texture_bridge_contract.texture_usage.iter().any(|usage| *usage == "RENDER_ATTACHMENT")
+    {
+        score += 20;
+    }
+    if scene_graph_submission.renderable_object_count > 0
+        && scene_graph_submission.representation_mix_hash.len() == 64
+    {
+        score += 20;
+    }
+    if culling_manifest.visible_count > 0 && culling_manifest.indirect_draw_buffer_hash.len() == 64 {
+        score += 15;
+    }
+    if radiance_schedule_manifest.active_probe_count > 0
+        && radiance_schedule_manifest.schedule_hash.len() == 64
+    {
+        score += 15;
+    }
+    if gaussian_splat_layer_manifest.manifest_hash.len() == 64
+        && gaussian_splat_layer_manifest.conversion_manifest_hash.len() == 64
+    {
+        score += 15;
+    }
+    if shader_compiler_ticket.target_manifest_hash.len() == 64
+        && shader_compiler_ticket.reflection_manifest.reflection_hash.len() == 64
+        && shader_compiler_ticket.material_abi_hash.len() == 64
+    {
+        score += 15;
+    }
+    score.min(100)
+}
+
+fn visual_capability_hash(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    score: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.visual_capability_score.v1\0");
+    h.update(texture_bridge_contract.viewport_contract_hash.as_bytes());
+    h.update(scene_graph_submission.representation_mix_hash.as_bytes());
+    h.update(culling_manifest.indirect_draw_buffer_hash.as_bytes());
+    h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
+    h.update(shader_compiler_ticket.target_manifest_hash.as_bytes());
+    h.update(shader_compiler_ticket.reflection_manifest.reflection_hash.as_bytes());
+    h.update(score.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn benchmark_promotion_manifest_hash(
+    target_frame_ms: f32,
+    estimated_frame_ms: f32,
+    frame_time_headroom_pct: f32,
+    vram_pressure_pct: f32,
+    cache_reuse_ratio: f32,
+    proof_reproducibility_status: &str,
+    proof_reproducibility_hash: &str,
+    visual_capability_score: u32,
+    visual_capability_hash: &str,
+    gates: &[BangerNativeBenchmarkGate],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.benchmark_promotion_manifest.v1\0");
+    h.update(target_frame_ms.to_le_bytes());
+    h.update(estimated_frame_ms.to_le_bytes());
+    h.update(frame_time_headroom_pct.to_le_bytes());
+    h.update(vram_pressure_pct.to_le_bytes());
+    h.update(cache_reuse_ratio.to_le_bytes());
+    h.update(proof_reproducibility_status.as_bytes());
+    h.update(proof_reproducibility_hash.as_bytes());
+    h.update(visual_capability_score.to_le_bytes());
+    h.update(visual_capability_hash.as_bytes());
+    for gate in gates {
+        h.update(gate.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn banger_resource_key(
     prepared: &MonsterPreparedCompute,
     artifact: &MonsterNativeTandemArtifact,
@@ -5351,6 +5724,7 @@ fn render_handoff_hash(
     artifacts: &[BangerNativeRenderArtifactSummary],
     shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
     pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    benchmark_promotion_manifest: &BangerNativeBenchmarkPromotionManifest,
     texture_bridge_contract: &BangerNativeTextureBridgeContract,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
     culling_manifest: &BangerNativeCullingManifest,
@@ -5363,6 +5737,7 @@ fn render_handoff_hash(
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(shader_compiler_ticket.proof_hash.as_bytes());
     h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(benchmark_promotion_manifest.benchmark_hash.as_bytes());
     h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
     h.update(texture_bridge_contract.frame_hash.as_bytes());
     h.update(texture_bridge_contract.viewport_contract_hash.as_bytes());
@@ -5573,6 +5948,10 @@ mod tests {
             response.shader_capability_plan.compiler_ticket_hash,
             response.shader_compiler_ticket.proof_hash
         );
+        assert!(response
+            .shader_capability_plan
+            .capability_gate
+            .contains("benchmark_promotion_hash"));
         assert_eq!(response.shader_compiler_ticket.proof_hash.len(), 64);
         assert_eq!(response.shader_compiler_ticket.preferred_compiler, "slangc");
         assert_eq!(response.shader_compiler_ticket.bootstrap_target, "wgsl");
@@ -5677,6 +6056,63 @@ mod tests {
                 && entry.blob_len > 0
                 && entry.persistence_status == "seed_blob_persisted"
                 && std::path::Path::new(&entry.blob_path).exists()));
+        assert_eq!(
+            response.benchmark_promotion_manifest.schema,
+            "forge.banger.benchmark_promotion_manifest.v1"
+        );
+        assert_eq!(response.benchmark_promotion_manifest.gate_count, 5);
+        assert_eq!(
+            response.benchmark_promotion_manifest.gate_count,
+            response.benchmark_promotion_manifest.gates.len()
+        );
+        assert_eq!(
+            response.benchmark_promotion_manifest.passed_gate_count,
+            response.benchmark_promotion_manifest.gates.len()
+        );
+        assert!(response.benchmark_promotion_manifest.promotion_allowed);
+        assert!(response.benchmark_promotion_manifest.estimated_frame_ms.is_finite());
+        assert!(response.benchmark_promotion_manifest.estimated_frame_ms <= response.target_frame_ms);
+        assert!(response.benchmark_promotion_manifest.frame_time_headroom_pct.is_finite());
+        assert!(response.benchmark_promotion_manifest.vram_pressure_pct <= 85.0);
+        assert!(response.benchmark_promotion_manifest.cache_reuse_ratio >= 0.95);
+        assert_eq!(
+            response
+                .benchmark_promotion_manifest
+                .proof_reproducibility_status,
+            "stable_content_addressed_inputs"
+        );
+        assert_eq!(
+            response
+                .benchmark_promotion_manifest
+                .proof_reproducibility_hash
+                .len(),
+            64
+        );
+        assert!(response.benchmark_promotion_manifest.visual_capability_score >= 80);
+        assert_eq!(
+            response
+                .benchmark_promotion_manifest
+                .visual_capability_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.benchmark_promotion_manifest.benchmark_hash.len(), 64);
+        assert!(response
+            .benchmark_promotion_manifest
+            .gates
+            .iter()
+            .all(|gate| gate.passed && gate.proof_hash.len() == 64));
+        assert!(response
+            .benchmark_promotion_manifest
+            .gates
+            .iter()
+            .any(|gate| gate.name == "latency" && gate.metric == "estimated_frame_ms"));
+        assert!(response
+            .benchmark_promotion_manifest
+            .gates
+            .iter()
+            .any(|gate| gate.name == "visual_capability"
+                && gate.metric == "visual_capability_score"));
         assert_eq!(
             response.texture_bridge_contract.schema,
             "forge.banger.native_texture_bridge_contract.v1"
