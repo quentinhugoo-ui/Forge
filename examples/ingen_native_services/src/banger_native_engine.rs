@@ -207,6 +207,8 @@ pub struct BangerNativePresentLoopBootstrapResponse {
     pub readback_checksum_hash: String,
     pub nonblack_pixel_sample_count: u32,
     pub nonzero_tile_count: u32,
+    pub unique_color_sample_count: u32,
+    pub visual_signature_hash: String,
     pub readback_proof_hash: String,
     pub frame_hash: String,
     pub present_loop_hash: String,
@@ -1591,6 +1593,7 @@ impl BangerNativeEngine {
             render.present_mode,
             render.alpha_mode,
             render.clear_color,
+            &render.visual_signature_hash,
             &parent_window_handle_hash,
         );
         let present_loop_hash = present_loop_bootstrap_hash(
@@ -1608,12 +1611,13 @@ impl BangerNativeEngine {
         let proof_hash = hash_text_hex(
             "forge.banger.native_present_loop_bootstrap.proof.v1",
             &format!(
-                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}",
+                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}",
                 render.render_pass_count,
                 render.submitted_frame_count,
                 gpu_probe.adapters.len(),
                 render.readback_byte_count,
                 render.readback_checksum_hash,
+                render.visual_signature_hash,
                 render.readback_proof_hash
             ),
         );
@@ -1647,6 +1651,8 @@ impl BangerNativeEngine {
             readback_checksum_hash: render.readback_checksum_hash,
             nonblack_pixel_sample_count: render.nonblack_pixel_sample_count,
             nonzero_tile_count: render.nonzero_tile_count,
+            unique_color_sample_count: render.unique_color_sample_count,
+            visual_signature_hash: render.visual_signature_hash,
             readback_proof_hash: render.readback_proof_hash,
             frame_hash,
             present_loop_hash,
@@ -12595,6 +12601,8 @@ struct WgpuPresentBootstrap {
     readback_checksum_hash: String,
     nonblack_pixel_sample_count: u32,
     nonzero_tile_count: u32,
+    unique_color_sample_count: u32,
+    visual_signature_hash: String,
     readback_proof_hash: String,
 }
 
@@ -12670,6 +12678,52 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     let clear_color = [0.015, 0.018, 0.024, 1.0];
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-present-bootstrap-visual-shader"),
+        source: wgpu::ShaderSource::Wgsl(banger_present_bootstrap_wgsl().into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("banger-native-present-bootstrap-pipeline-layout"),
+        bind_group_layouts: &[],
+        immediate_size: 0,
+    });
+    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("banger-native-present-bootstrap-visual-pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: swapchain_format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    let visual_pipeline_hash = hash_text_hex(
+        "forge.banger.native_present_loop.visual_shader.v1",
+        banger_present_bootstrap_wgsl(),
+    );
     let bytes_per_pixel = 4u32;
     let unpadded_bytes_per_row = width.saturating_mul(bytes_per_pixel);
     let padded_bytes_per_row = align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
@@ -12698,7 +12752,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
                 store: wgpu::StoreOp::Store,
             },
         })];
-        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("banger-native-present-bootstrap-clear-pass"),
             color_attachments: &color_attachments,
             depth_stencil_attachment: None,
@@ -12706,6 +12760,8 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        pass.set_pipeline(&render_pipeline);
+        pass.draw(0..3, 0..1);
     }
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
@@ -12754,9 +12810,20 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     );
     drop(readback_view);
     readback_buffer.unmap();
-    if readback_metrics.nonblack_pixel_sample_count == 0 || readback_metrics.nonzero_tile_count == 0 {
-        return Err("Banger present loop readback produced a black frame".to_string());
+    if readback_metrics.nonblack_pixel_sample_count == 0
+        || readback_metrics.nonzero_tile_count == 0
+        || readback_metrics.unique_color_sample_count < 2
+    {
+        return Err("Banger present loop readback produced a flat or black frame".to_string());
     }
+    let visual_signature_hash = present_loop_visual_signature_hash(
+        width,
+        height,
+        &visual_pipeline_hash,
+        &readback_metrics.checksum_hash,
+        readback_metrics.unique_color_sample_count,
+        readback_metrics.nonzero_tile_count,
+    );
 
     Ok(WgpuPresentBootstrap {
         selected_adapter: Some(selected_adapter),
@@ -12773,6 +12840,8 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         readback_checksum_hash: readback_metrics.checksum_hash,
         nonblack_pixel_sample_count: readback_metrics.nonblack_pixel_sample_count,
         nonzero_tile_count: readback_metrics.nonzero_tile_count,
+        unique_color_sample_count: readback_metrics.unique_color_sample_count,
+        visual_signature_hash,
         readback_proof_hash: readback_metrics.proof_hash,
     })
 }
@@ -12781,7 +12850,41 @@ struct PresentLoopReadbackMetrics {
     checksum_hash: String,
     nonblack_pixel_sample_count: u32,
     nonzero_tile_count: u32,
+    unique_color_sample_count: u32,
     proof_hash: String,
+}
+
+fn banger_present_bootstrap_wgsl() -> &'static str {
+    r#"
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec3<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-0.72, -0.58),
+        vec2<f32>(0.72, -0.50),
+        vec2<f32>(0.02, 0.74)
+    );
+    var colors = array<vec3<f32>, 3>(
+        vec3<f32>(0.08, 0.80, 0.98),
+        vec3<f32>(1.00, 0.72, 0.18),
+        vec3<f32>(0.62, 0.26, 1.00)
+    );
+    var out: VertexOut;
+    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    out.color = colors[vertex_index];
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let vignette = 0.88 + 0.12 * in.position.w;
+    return vec4<f32>(in.color * vignette, 1.0);
+}
+"#
 }
 
 fn align_to(value: u32, alignment: u32) -> u32 {
@@ -12807,6 +12910,7 @@ fn present_loop_readback_metrics(
     h.update(padded_bytes_per_row.to_le_bytes());
     let mut nonblack_pixel_sample_count = 0u32;
     let mut tile_has_value = BTreeSet::new();
+    let mut sampled_colors = BTreeSet::new();
     for y in 0..height {
         let row_start = y as usize * padded_bytes_per_row as usize;
         let row_end = row_start.saturating_add(unpadded_bytes_per_row as usize);
@@ -12819,11 +12923,15 @@ fn present_loop_readback_metrics(
             if pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0 {
                 nonblack_pixel_sample_count = nonblack_pixel_sample_count.saturating_add(1);
                 tile_has_value.insert(((x as u32) / 16, y / 16));
+                if x % 16 == 0 && y % 16 == 0 {
+                    sampled_colors.insert((pixel[0] >> 3, pixel[1] >> 3, pixel[2] >> 3));
+                }
             }
         }
     }
     let checksum_hash = hex32(h.finalize().into());
     let nonzero_tile_count = tile_has_value.len() as u32;
+    let unique_color_sample_count = sampled_colors.len() as u32;
     let proof_hash = present_loop_readback_proof_hash(
         width,
         height,
@@ -12832,11 +12940,13 @@ fn present_loop_readback_metrics(
         &checksum_hash,
         nonblack_pixel_sample_count,
         nonzero_tile_count,
+        unique_color_sample_count,
     );
     PresentLoopReadbackMetrics {
         checksum_hash,
         nonblack_pixel_sample_count,
         nonzero_tile_count,
+        unique_color_sample_count,
         proof_hash,
     }
 }
@@ -12849,6 +12959,7 @@ fn present_loop_readback_proof_hash(
     checksum_hash: &str,
     nonblack_pixel_sample_count: u32,
     nonzero_tile_count: u32,
+    unique_color_sample_count: u32,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_present_loop.readback_proof.v1\0");
@@ -12858,6 +12969,26 @@ fn present_loop_readback_proof_hash(
     h.update(padded_bytes_per_row.to_le_bytes());
     h.update(checksum_hash.as_bytes());
     h.update(nonblack_pixel_sample_count.to_le_bytes());
+    h.update(nonzero_tile_count.to_le_bytes());
+    h.update(unique_color_sample_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn present_loop_visual_signature_hash(
+    width: u32,
+    height: u32,
+    visual_pipeline_hash: &str,
+    checksum_hash: &str,
+    unique_color_sample_count: u32,
+    nonzero_tile_count: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.visual_signature.v1\0");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(visual_pipeline_hash.as_bytes());
+    h.update(checksum_hash.as_bytes());
+    h.update(unique_color_sample_count.to_le_bytes());
     h.update(nonzero_tile_count.to_le_bytes());
     hex32(h.finalize().into())
 }
@@ -12871,6 +13002,7 @@ fn present_loop_frame_hash(
     present_mode: &str,
     alpha_mode: &str,
     clear_color: [f64; 4],
+    visual_signature_hash: &str,
     parent_window_handle_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
@@ -12885,6 +13017,7 @@ fn present_loop_frame_hash(
     for value in clear_color {
         h.update(value.to_le_bytes());
     }
+    h.update(visual_signature_hash.as_bytes());
     h.update(parent_window_handle_hash.as_bytes());
     hex32(h.finalize().into())
 }
@@ -13210,6 +13343,8 @@ mod tests {
         assert_eq!(response.readback_checksum_hash.len(), 64);
         assert!(response.nonblack_pixel_sample_count > 0);
         assert!(response.nonzero_tile_count > 0);
+        assert!(response.unique_color_sample_count >= 2);
+        assert_eq!(response.visual_signature_hash.len(), 64);
         assert_eq!(response.readback_proof_hash.len(), 64);
         assert_eq!(response.frame_hash.len(), 64);
         assert_eq!(response.present_loop_hash.len(), 64);
