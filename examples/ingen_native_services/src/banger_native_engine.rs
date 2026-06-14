@@ -209,13 +209,18 @@ pub struct BangerNativePresentLoopBootstrapResponse {
     pub nonzero_tile_count: u32,
     pub unique_color_sample_count: u32,
     pub visual_signature_hash: String,
+    pub color_coverage_bounds: [u32; 4],
+    pub color_coverage_ratio: f32,
     pub depth_target_hash: String,
     pub depth_readback_byte_count: u64,
     pub depth_occupied_pixel_count: u32,
     pub depth_min: f32,
     pub depth_max: f32,
+    pub depth_coverage_bounds: [u32; 4],
+    pub depth_coverage_ratio: f32,
     pub depth_readback_hash: String,
     pub depth_readback_proof_hash: String,
+    pub screen_coverage_hash: String,
     pub mesh_vertex_count: u32,
     pub mesh_triangle_count: u32,
     pub draw_call_count: u32,
@@ -1623,13 +1628,14 @@ impl BangerNativeEngine {
         let proof_hash = hash_text_hex(
             "forge.banger.native_present_loop_bootstrap.proof.v1",
             &format!(
-                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 render.render_pass_count,
                 render.submitted_frame_count,
                 gpu_probe.adapters.len(),
                 render.readback_byte_count,
                 render.readback_checksum_hash,
                 render.visual_signature_hash,
+                render.screen_coverage_hash,
                 render.depth_readback_proof_hash,
                 render.scene3d_proof_hash,
                 render.readback_proof_hash
@@ -1667,13 +1673,18 @@ impl BangerNativeEngine {
             nonzero_tile_count: render.nonzero_tile_count,
             unique_color_sample_count: render.unique_color_sample_count,
             visual_signature_hash: render.visual_signature_hash,
+            color_coverage_bounds: render.color_coverage_bounds,
+            color_coverage_ratio: render.color_coverage_ratio,
             depth_target_hash: render.depth_target_hash,
             depth_readback_byte_count: render.depth_readback_byte_count,
             depth_occupied_pixel_count: render.depth_occupied_pixel_count,
             depth_min: render.depth_min,
             depth_max: render.depth_max,
+            depth_coverage_bounds: render.depth_coverage_bounds,
+            depth_coverage_ratio: render.depth_coverage_ratio,
             depth_readback_hash: render.depth_readback_hash,
             depth_readback_proof_hash: render.depth_readback_proof_hash,
+            screen_coverage_hash: render.screen_coverage_hash,
             mesh_vertex_count: render.mesh_vertex_count,
             mesh_triangle_count: render.mesh_triangle_count,
             draw_call_count: render.draw_call_count,
@@ -12628,13 +12639,18 @@ struct WgpuPresentBootstrap {
     nonzero_tile_count: u32,
     unique_color_sample_count: u32,
     visual_signature_hash: String,
+    color_coverage_bounds: [u32; 4],
+    color_coverage_ratio: f32,
     depth_target_hash: String,
     depth_readback_byte_count: u64,
     depth_occupied_pixel_count: u32,
     depth_min: f32,
     depth_max: f32,
+    depth_coverage_bounds: [u32; 4],
+    depth_coverage_ratio: f32,
     depth_readback_hash: String,
     depth_readback_proof_hash: String,
+    screen_coverage_hash: String,
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
@@ -12950,11 +12966,22 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         readback_metrics.unique_color_sample_count,
         readback_metrics.nonzero_tile_count,
     );
+    let screen_coverage_hash = present_loop_screen_coverage_hash(
+        width,
+        height,
+        readback_metrics.coverage_bounds,
+        readback_metrics.coverage_ratio,
+        depth_metrics.coverage_bounds,
+        depth_metrics.coverage_ratio,
+        &visual_signature_hash,
+        &depth_metrics.proof_hash,
+    );
     let scene3d_proof_hash = present_loop_scene3d_proof_hash(
         &visual_pipeline_hash,
         &depth_target_hash,
         &visual_signature_hash,
         &depth_metrics.proof_hash,
+        &screen_coverage_hash,
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
@@ -12977,13 +13004,18 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         nonzero_tile_count: readback_metrics.nonzero_tile_count,
         unique_color_sample_count: readback_metrics.unique_color_sample_count,
         visual_signature_hash,
+        color_coverage_bounds: readback_metrics.coverage_bounds,
+        color_coverage_ratio: readback_metrics.coverage_ratio,
         depth_target_hash,
         depth_readback_byte_count,
         depth_occupied_pixel_count: depth_metrics.occupied_pixel_count,
         depth_min: depth_metrics.depth_min,
         depth_max: depth_metrics.depth_max,
+        depth_coverage_bounds: depth_metrics.coverage_bounds,
+        depth_coverage_ratio: depth_metrics.coverage_ratio,
         depth_readback_hash: depth_metrics.checksum_hash,
         depth_readback_proof_hash: depth_metrics.proof_hash,
+        screen_coverage_hash,
         mesh_vertex_count,
         mesh_triangle_count,
         draw_call_count,
@@ -12997,6 +13029,8 @@ struct PresentLoopReadbackMetrics {
     nonblack_pixel_sample_count: u32,
     nonzero_tile_count: u32,
     unique_color_sample_count: u32,
+    coverage_bounds: [u32; 4],
+    coverage_ratio: f32,
     proof_hash: String,
 }
 
@@ -13005,7 +13039,58 @@ struct PresentLoopDepthReadbackMetrics {
     occupied_pixel_count: u32,
     depth_min: f32,
     depth_max: f32,
+    coverage_bounds: [u32; 4],
+    coverage_ratio: f32,
     proof_hash: String,
+}
+
+struct PresentLoopCoverageAccumulator {
+    width: u32,
+    height: u32,
+    min_x: u32,
+    min_y: u32,
+    max_x: u32,
+    max_y: u32,
+    any: bool,
+}
+
+impl PresentLoopCoverageAccumulator {
+    fn new(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            min_x: width,
+            min_y: height,
+            max_x: 0,
+            max_y: 0,
+            any: false,
+        }
+    }
+
+    fn push(&mut self, x: u32, y: u32) {
+        self.any = true;
+        self.min_x = self.min_x.min(x);
+        self.min_y = self.min_y.min(y);
+        self.max_x = self.max_x.max(x);
+        self.max_y = self.max_y.max(y);
+    }
+
+    fn bounds(&self) -> [u32; 4] {
+        if self.any {
+            [self.min_x, self.min_y, self.max_x, self.max_y]
+        } else {
+            [0, 0, 0, 0]
+        }
+    }
+
+    fn ratio(&self) -> f32 {
+        if !self.any || self.width == 0 || self.height == 0 {
+            return 0.0;
+        }
+        let width = self.max_x.saturating_sub(self.min_x).saturating_add(1);
+        let height = self.max_y.saturating_sub(self.min_y).saturating_add(1);
+        (width as f32 * height as f32) / (self.width as f32 * self.height as f32)
+    }
 }
 
 fn banger_present_bootstrap_wgsl() -> &'static str {
@@ -13088,6 +13173,7 @@ fn present_loop_readback_metrics(
     let mut nonblack_pixel_sample_count = 0u32;
     let mut tile_has_value = BTreeSet::new();
     let mut sampled_colors = BTreeSet::new();
+    let mut coverage = PresentLoopCoverageAccumulator::new(width, height);
     for y in 0..height {
         let row_start = y as usize * padded_bytes_per_row as usize;
         let row_end = row_start.saturating_add(unpadded_bytes_per_row as usize);
@@ -13100,6 +13186,7 @@ fn present_loop_readback_metrics(
             if pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0 {
                 nonblack_pixel_sample_count = nonblack_pixel_sample_count.saturating_add(1);
                 tile_has_value.insert(((x as u32) / 16, y / 16));
+                coverage.push(x as u32, y);
                 if x % 16 == 0 && y % 16 == 0 {
                     sampled_colors.insert((pixel[0] >> 3, pixel[1] >> 3, pixel[2] >> 3));
                 }
@@ -13109,6 +13196,8 @@ fn present_loop_readback_metrics(
     let checksum_hash = hex32(h.finalize().into());
     let nonzero_tile_count = tile_has_value.len() as u32;
     let unique_color_sample_count = sampled_colors.len() as u32;
+    let coverage_bounds = coverage.bounds();
+    let coverage_ratio = coverage.ratio();
     let proof_hash = present_loop_readback_proof_hash(
         width,
         height,
@@ -13118,12 +13207,16 @@ fn present_loop_readback_metrics(
         nonblack_pixel_sample_count,
         nonzero_tile_count,
         unique_color_sample_count,
+        coverage_bounds,
+        coverage_ratio,
     );
     PresentLoopReadbackMetrics {
         checksum_hash,
         nonblack_pixel_sample_count,
         nonzero_tile_count,
         unique_color_sample_count,
+        coverage_bounds,
+        coverage_ratio,
         proof_hash,
     }
 }
@@ -13137,6 +13230,8 @@ fn present_loop_readback_proof_hash(
     nonblack_pixel_sample_count: u32,
     nonzero_tile_count: u32,
     unique_color_sample_count: u32,
+    coverage_bounds: [u32; 4],
+    coverage_ratio: f32,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_present_loop.readback_proof.v1\0");
@@ -13148,6 +13243,10 @@ fn present_loop_readback_proof_hash(
     h.update(nonblack_pixel_sample_count.to_le_bytes());
     h.update(nonzero_tile_count.to_le_bytes());
     h.update(unique_color_sample_count.to_le_bytes());
+    for value in coverage_bounds {
+        h.update(value.to_le_bytes());
+    }
+    h.update(coverage_ratio.to_le_bytes());
     hex32(h.finalize().into())
 }
 
@@ -13167,6 +13266,7 @@ fn present_loop_depth_readback_metrics(
     let mut occupied_pixel_count = 0u32;
     let mut depth_min = 1.0f32;
     let mut depth_max = 0.0f32;
+    let mut coverage = PresentLoopCoverageAccumulator::new(width, height);
     for y in 0..height {
         let row_start = y as usize * padded_bytes_per_row as usize;
         let row_end = row_start.saturating_add(unpadded_bytes_per_row as usize);
@@ -13175,12 +13275,13 @@ fn present_loop_depth_readback_metrics(
         }
         let row = &bytes[row_start..row_end];
         h.update(row);
-        for pixel in row.chunks_exact(4) {
+        for (x, pixel) in row.chunks_exact(4).enumerate() {
             let depth = f32::from_le_bytes([pixel[0], pixel[1], pixel[2], pixel[3]]);
             if depth.is_finite() && (0.0..0.999).contains(&depth) {
                 occupied_pixel_count = occupied_pixel_count.saturating_add(1);
                 depth_min = depth_min.min(depth);
                 depth_max = depth_max.max(depth);
+                coverage.push(x as u32, y);
             }
         }
     }
@@ -13189,6 +13290,8 @@ fn present_loop_depth_readback_metrics(
         depth_max = 1.0;
     }
     let checksum_hash = hex32(h.finalize().into());
+    let coverage_bounds = coverage.bounds();
+    let coverage_ratio = coverage.ratio();
     let proof_hash = present_loop_depth_readback_proof_hash(
         width,
         height,
@@ -13198,12 +13301,16 @@ fn present_loop_depth_readback_metrics(
         occupied_pixel_count,
         depth_min,
         depth_max,
+        coverage_bounds,
+        coverage_ratio,
     );
     PresentLoopDepthReadbackMetrics {
         checksum_hash,
         occupied_pixel_count,
         depth_min,
         depth_max,
+        coverage_bounds,
+        coverage_ratio,
         proof_hash,
     }
 }
@@ -13217,6 +13324,8 @@ fn present_loop_depth_readback_proof_hash(
     occupied_pixel_count: u32,
     depth_min: f32,
     depth_max: f32,
+    coverage_bounds: [u32; 4],
+    coverage_ratio: f32,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_present_loop.depth_readback_proof.v1\0");
@@ -13228,6 +13337,10 @@ fn present_loop_depth_readback_proof_hash(
     h.update(occupied_pixel_count.to_le_bytes());
     h.update(depth_min.to_le_bytes());
     h.update(depth_max.to_le_bytes());
+    for value in coverage_bounds {
+        h.update(value.to_le_bytes());
+    }
+    h.update(coverage_ratio.to_le_bytes());
     hex32(h.finalize().into())
 }
 
@@ -13247,6 +13360,33 @@ fn present_loop_visual_signature_hash(
     h.update(checksum_hash.as_bytes());
     h.update(unique_color_sample_count.to_le_bytes());
     h.update(nonzero_tile_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn present_loop_screen_coverage_hash(
+    width: u32,
+    height: u32,
+    color_coverage_bounds: [u32; 4],
+    color_coverage_ratio: f32,
+    depth_coverage_bounds: [u32; 4],
+    depth_coverage_ratio: f32,
+    visual_signature_hash: &str,
+    depth_readback_proof_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.screen_coverage.v1\0");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    for value in color_coverage_bounds {
+        h.update(value.to_le_bytes());
+    }
+    h.update(color_coverage_ratio.to_le_bytes());
+    for value in depth_coverage_bounds {
+        h.update(value.to_le_bytes());
+    }
+    h.update(depth_coverage_ratio.to_le_bytes());
+    h.update(visual_signature_hash.as_bytes());
+    h.update(depth_readback_proof_hash.as_bytes());
     hex32(h.finalize().into())
 }
 
@@ -13270,6 +13410,7 @@ fn present_loop_scene3d_proof_hash(
     depth_target_hash: &str,
     visual_signature_hash: &str,
     depth_readback_proof_hash: &str,
+    screen_coverage_hash: &str,
     mesh_vertex_count: u32,
     mesh_triangle_count: u32,
     draw_call_count: u32,
@@ -13280,6 +13421,7 @@ fn present_loop_scene3d_proof_hash(
     h.update(depth_target_hash.as_bytes());
     h.update(visual_signature_hash.as_bytes());
     h.update(depth_readback_proof_hash.as_bytes());
+    h.update(screen_coverage_hash.as_bytes());
     h.update(mesh_vertex_count.to_le_bytes());
     h.update(mesh_triangle_count.to_le_bytes());
     h.update(draw_call_count.to_le_bytes());
@@ -13640,14 +13782,21 @@ mod tests {
         assert!(response.nonzero_tile_count > 0);
         assert!(response.unique_color_sample_count >= 2);
         assert_eq!(response.visual_signature_hash.len(), 64);
+        assert!(response.color_coverage_ratio > 0.0);
+        assert!(response.color_coverage_bounds[0] <= response.color_coverage_bounds[2]);
+        assert!(response.color_coverage_bounds[1] <= response.color_coverage_bounds[3]);
         assert_eq!(response.depth_target_hash.len(), 64);
         assert_eq!(response.depth_readback_byte_count, 640 * 360 * 4);
         assert!(response.depth_occupied_pixel_count > 0);
         assert!(response.depth_min < 0.999);
         assert!(response.depth_max <= 1.0);
         assert!(response.depth_min <= response.depth_max);
+        assert!(response.depth_coverage_ratio > 0.0);
+        assert!(response.depth_coverage_bounds[0] <= response.depth_coverage_bounds[2]);
+        assert!(response.depth_coverage_bounds[1] <= response.depth_coverage_bounds[3]);
         assert_eq!(response.depth_readback_hash.len(), 64);
         assert_eq!(response.depth_readback_proof_hash.len(), 64);
+        assert_eq!(response.screen_coverage_hash.len(), 64);
         assert_eq!(response.mesh_vertex_count, 36);
         assert_eq!(response.mesh_triangle_count, 12);
         assert_eq!(response.draw_call_count, 1);
