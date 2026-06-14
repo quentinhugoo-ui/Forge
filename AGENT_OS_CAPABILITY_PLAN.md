@@ -333,6 +333,8 @@ Acceptance:
 - The UI never says work was done when no observed state changed.
 - Benchmarks prove success, retry and safe blocking behavior.
 
+Status: implemented for the planned scope. Runtime events already render English labels, running-to-completed transitions, expandable command trees, file modification counters, context compaction markers and final loop summaries. The shared `AGENT_ACTION_BENCHMARK_SUITE` now records the required local-agent benchmark contract across filesystem, code, install/update, GUI, browser, document, Windows setting, process/service, scheduler, WSL/dev, Git/PR, cloud, blocked-danger, context compaction and final-summary cases. Scheduler, PR and cloud write execution remain planned backends; the benchmark suite deliberately marks them as retry/blocked unless a verified runtime route exists.
+
 ## Public Interfaces
 
 Core shared types:
