@@ -448,6 +448,38 @@ export interface AgentActionResult {
   error?: IpcError;
 }
 
+export type AgentActionLoopOutcome =
+  | "running"
+  | "completed"
+  | "needs_approval"
+  | "blocked"
+  | "failed_after_retries"
+  | "max_steps"
+  | "cancelled";
+
+export interface AgentActionLoopObservation {
+  step: number;
+  capabilityId: AgentActionCapabilityId;
+  request: AgentActionRequest;
+  accepted: boolean;
+  resultProofHash?: string;
+  summary: string;
+  error?: string;
+}
+
+export interface AgentActionLoopState {
+  schema: "ingen.agent_action_loop.state.v1";
+  objective: string;
+  stepCount: number;
+  toolSteps: number;
+  retryCount: number;
+  approvals: string[];
+  observations: AgentActionLoopObservation[];
+  lastResult?: AgentActionResult;
+  finalStatus: AgentActionLoopOutcome;
+  proofHash: string;
+}
+
 export type AgentRuntimeEventKind =
   | "text_delta"
   | "tool_call_started"

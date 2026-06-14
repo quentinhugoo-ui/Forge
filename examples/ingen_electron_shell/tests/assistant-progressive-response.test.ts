@@ -72,8 +72,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("const fallbackMessage = await applyDeterministicOrganizationFallback");
     expect(mainSource).toContain("function emitAgentLoopDiagnosticSummary");
     expect(mainSource).toContain('outcome: "completed"');
-    expect(mainSource).toContain('outcome: "blocked"');
-    expect(mainSource).toContain('outcome: "deterministic_fallback"');
+    expect(mainSource).toContain('outcome: reportableAgentActionLoopOutcome(loopState, "blocked")');
     expect(mainSource).toContain('outcome: "max_steps"');
     expect(mainSource).toContain("tool_steps=");
     expect(mainSource).toContain("params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage))");
@@ -181,6 +180,23 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("window.webContents.send(\"forge:agent-runtime-event\", runtimeEvent)");
     expect(mainSource).toContain("!message.id.startsWith(\"assistant-status-\")");
     expect(mainSource).not.toContain("providerConversationMessages(\n  event");
+  });
+
+  it("uses a universal action-loop state instead of the desktop fallback as the normal path", () => {
+    expect(ipcContractSource).toContain('schema: "ingen.agent_action_loop.state.v1"');
+    expect(ipcContractSource).toContain("export type AgentActionLoopOutcome");
+    expect(ipcContractSource).toContain("export interface AgentActionLoopState");
+    expect(mainSource).toContain("type AgentActionLoopState");
+    expect(mainSource).toContain("const AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK");
+    expect(mainSource).toContain("function createAgentActionLoopState");
+    expect(mainSource).toContain("function agentActionLoopWithResult");
+    expect(mainSource).toContain("function agentActionLoopWithStatus");
+    expect(mainSource).toContain("function reportableAgentActionLoopOutcome");
+    expect(mainSource).toContain("function ensureAgentActionLoopFinalSummary");
+    expect(mainSource).toContain("Final summary: agent loop ${state.finalStatus}");
+    expect(mainSource).toContain("AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK && agentActionStepNeedsMutationFollowUp");
+    expect(mainSource).toContain('outcome: reportableAgentActionLoopOutcome(loopState, "blocked")');
+    expect(mainSource).not.toContain('outcome: "deterministic_fallback"');
   });
 
   it("keeps filesystem move events separate from file content edit counters", () => {

@@ -87,6 +87,8 @@ import {
   type WorkspaceChoiceResult,
   type AgentActionCapabilityId,
   type AgentActionHostManifest,
+  type AgentActionLoopOutcome,
+  type AgentActionLoopState,
   type AgentActionPathEntry,
   type AgentActionRequest,
   type AgentActionResult,
@@ -5404,6 +5406,7 @@ function modelNameFromError(message: string, fallbackModel: string): string {
 const ASSISTANT_PROVIDER_UNAVAILABLE_TEXT = "Provider unavailable. Check connection, auth, or quota.";
 const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1";
 const AGENT_ACTION_LOOP_MAX_STEPS = 6;
+const AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK = process.env.INGEN_AGENT_ACTION_COMPAT_FALLBACK === "1";
 const AGENT_ACTION_RESULT_ITEM_LIMIT = 10;
 const AGENT_ACTION_RESULT_MATCH_LIMIT = 8;
 const AGENT_ACTION_RESULT_PREVIEW_BYTES = 6_000;
@@ -5572,6 +5575,109 @@ function renderCompletedPendingAgentActionText(text: string, result: AgentAction
   return `${text.trimEnd()}\n\n${agentActionResultSummary(result)}`.trim();
 }
 
+function createAgentActionLoopState(objective: string): AgentActionLoopState {
+  const state: AgentActionLoopState = {
+    schema: "ingen.agent_action_loop.state.v1",
+    objective,
+    stepCount: 0,
+    toolSteps: 0,
+    retryCount: 0,
+    approvals: [],
+    observations: [],
+    finalStatus: "running",
+    proofHash: ""
+  };
+  state.proofHash = hashJson({ ...state, proofHash: "" });
+  return state;
+}
+
+function agentActionResultNeedsApproval(result: AgentActionResult): boolean {
+  return !result.accepted && /confirmed:true|approval|permission|confirmation|user confirmation|requires confirmation/i.test(result.error?.message ?? "");
+}
+
+function agentActionLoopOutcomeAfterFailure(state: AgentActionLoopState, result: AgentActionResult): AgentActionLoopOutcome {
+  if (agentActionResultNeedsApproval(result)) {
+    return "needs_approval";
+  }
+  return state.retryCount > 0 ? "failed_after_retries" : "blocked";
+}
+
+function agentActionLoopWithResult(
+  state: AgentActionLoopState,
+  request: AgentActionRequest,
+  result: AgentActionResult,
+  step: number
+): AgentActionLoopState {
+  const capabilityId = AGENT_ACTION_CAPABILITY_BY_ACTION[request.action];
+  const approvals = agentActionResultNeedsApproval(result)
+    ? [...new Set([...state.approvals, capabilityId])]
+    : state.approvals;
+  const nextState: AgentActionLoopState = {
+    ...state,
+    stepCount: step + 1,
+    toolSteps: state.toolSteps + 1,
+    retryCount: result.accepted ? state.retryCount : state.retryCount + 1,
+    approvals,
+    observations: [
+      ...state.observations,
+      {
+        step: step + 1,
+        capabilityId,
+        request,
+        accepted: result.accepted,
+        resultProofHash: result.proofHash,
+        summary: agentRuntimeToolResultSummary(result),
+        error: result.error?.message
+      }
+    ],
+    lastResult: result,
+    finalStatus: "running",
+    proofHash: ""
+  };
+  nextState.proofHash = hashJson({ ...nextState, proofHash: "" });
+  return nextState;
+}
+
+function agentActionLoopWithStatus(state: AgentActionLoopState, finalStatus: AgentActionLoopOutcome): AgentActionLoopState {
+  const nextState: AgentActionLoopState = {
+    ...state,
+    finalStatus,
+    proofHash: ""
+  };
+  nextState.proofHash = hashJson({ ...nextState, proofHash: "" });
+  return nextState;
+}
+
+function reportableAgentActionLoopOutcome(
+  state: AgentActionLoopState,
+  fallback: Exclude<AgentActionLoopOutcome, "running" | "cancelled">
+): Exclude<AgentActionLoopOutcome, "running" | "cancelled"> {
+  return state.finalStatus === "running" || state.finalStatus === "cancelled" ? fallback : state.finalStatus;
+}
+
+function textHasAgentActionFinalSummary(text: string): boolean {
+  return /\b(?:Final summary|Conclusion)\s*:/i.test(text);
+}
+
+function agentActionLoopFinalSummaryText(state: AgentActionLoopState): string {
+  const lastObservation = state.observations.at(-1);
+  const approvals = state.approvals.length > 0 ? ` Approval needed for: ${state.approvals.join(", ")}.` : "";
+  const last = lastObservation ? ` Last result: ${lastObservation.summary}` : "";
+  return `Final summary: agent loop ${state.finalStatus}; tool steps=${state.toolSteps}; retries=${state.retryCount}.${last}${approvals}`;
+}
+
+function ensureAgentActionLoopFinalSummary(message: TranscriptMessage, state: AgentActionLoopState): TranscriptMessage {
+  if (state.toolSteps === 0 || extractAgentActionJsonRequest(message.text) || textHasAgentActionFinalSummary(message.text)) {
+    return message;
+  }
+  const text = `${removeAgentActionJsonFragments(message.text).trimEnd()}\n\n${agentActionLoopFinalSummaryText(state)}`.trim();
+  return {
+    ...message,
+    text,
+    proofHash: hashJson({ agentActionLoopFinalSummary: true, previousProofHash: message.proofHash, state })
+  };
+}
+
 function compactAgentActionItems(result: AgentActionResult): AgentActionResult["items"] {
   return result.items
     ?.slice(0, AGENT_ACTION_RESULT_ITEM_LIMIT)
@@ -5631,13 +5737,14 @@ function agentActionSelectedCapabilityContext(request: AgentActionRequest, resul
 function emitAgentLoopDiagnosticSummary(params: {
   agentEvents: AgentRuntimeEventQueue;
   messageId: string;
-  outcome: "completed" | "blocked" | "deterministic_fallback" | "max_steps";
+  outcome: Exclude<AgentActionLoopOutcome, "running" | "cancelled">;
   toolSteps: number;
+  loopState?: AgentActionLoopState;
 }): void {
   params.agentEvents.emit({
     kind: "final_summary",
     messageId: params.messageId,
-    summary: `Agent loop ${params.outcome}; tool_steps=${params.toolSteps}`
+    summary: `Agent loop ${params.outcome}; tool_steps=${params.toolSteps}${params.loopState ? `; proof=${params.loopState.proofHash}` : ""}`
   });
 }
 
@@ -6039,17 +6146,21 @@ async function executeAssistantAgentActionLoop(params: {
   commitTranscript: (transcript: TranscriptMessage[]) => void;
 }): Promise<TranscriptMessage> {
   let assistantMessage = params.assistantMessage;
-  let toolSteps = 0;
+  let loopState = createAgentActionLoopState(params.originalUserText);
   for (let step = 0; step < AGENT_ACTION_LOOP_MAX_STEPS; step += 1) {
     const extracted = extractAgentActionJsonRequest(assistantMessage.text);
     if (!extracted) {
-      if (toolSteps > 0) {
+      if (loopState.toolSteps > 0) {
+        loopState = agentActionLoopWithStatus(loopState, loopState.finalStatus === "running" ? "completed" : loopState.finalStatus);
+        assistantMessage = ensureAgentActionLoopFinalSummary(assistantMessage, loopState);
         emitAgentLoopDiagnosticSummary({
           agentEvents: params.agentEvents,
           messageId: assistantMessage.id,
-          outcome: "completed",
-          toolSteps
+          outcome: reportableAgentActionLoopOutcome(loopState, "completed"),
+          toolSteps: loopState.toolSteps,
+          loopState
         });
+        params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
       }
       return assistantMessage;
     }
@@ -6072,11 +6183,11 @@ async function executeAssistantAgentActionLoop(params: {
       toolCall,
       result
     });
-    toolSteps += 1;
+    loopState = agentActionLoopWithResult(loopState, extracted.request, result, step);
     assistantMessage = {
       ...assistantMessage,
       text: renderCompletedPendingAgentActionText(assistantMessage.text, result),
-      proofHash: hashJson({ agentActionLoopStep: step + 1, previousProofHash: assistantMessage.proofHash, request: extracted.request, result })
+      proofHash: hashJson({ agentActionLoopStep: step + 1, previousProofHash: assistantMessage.proofHash, request: extracted.request, result, loopState })
     };
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
     if (!result.accepted) {
@@ -6108,15 +6219,19 @@ async function executeAssistantAgentActionLoop(params: {
           continue;
         }
       }
+      loopState = agentActionLoopWithStatus(loopState, agentActionLoopOutcomeAfterFailure(loopState, result));
+      assistantMessage = ensureAgentActionLoopFinalSummary(assistantMessage, loopState);
       emitAgentLoopDiagnosticSummary({
         agentEvents: params.agentEvents,
         messageId: assistantMessage.id,
-        outcome: "blocked",
-        toolSteps
+        outcome: reportableAgentActionLoopOutcome(loopState, "blocked"),
+        toolSteps: loopState.toolSteps,
+        loopState
       });
+      params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
       return assistantMessage;
     }
-    if (agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result)) {
+    if (AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK && agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result)) {
       const fallbackMessage = await applyDeterministicOrganizationFallback({
         assistantMessage,
         originalUserText: params.originalUserText,
@@ -6130,8 +6245,9 @@ async function executeAssistantAgentActionLoop(params: {
         emitAgentLoopDiagnosticSummary({
           agentEvents: params.agentEvents,
           messageId: fallbackMessage.id,
-          outcome: "deterministic_fallback",
-          toolSteps
+          outcome: "completed",
+          toolSteps: loopState.toolSteps,
+          loopState: agentActionLoopWithStatus(loopState, "completed")
         });
         return fallbackMessage;
       }
@@ -6182,14 +6298,19 @@ async function executeAssistantAgentActionLoop(params: {
         proofHash: hashJson({ agentActionLoopForcedContinuationStep: step + 1, previousProofHash: assistantMessage.proofHash, continuationProofHash: forcedContinuation.proofHash })
       };
       if (!extractAgentActionJsonRequest(assistantMessage.text)) {
-        assistantMessage = await applyDeterministicOrganizationFallback({
-          assistantMessage,
-          originalUserText: params.originalUserText,
-          request: extracted.request,
-          result,
-          agentEvents: params.agentEvents,
-          commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
-        });
+        if (AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK) {
+          assistantMessage = await applyDeterministicOrganizationFallback({
+            assistantMessage,
+            originalUserText: params.originalUserText,
+            request: extracted.request,
+            result,
+            agentEvents: params.agentEvents,
+            commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
+          });
+        } else {
+          loopState = agentActionLoopWithStatus(loopState, "blocked");
+          assistantMessage = ensureAgentActionLoopFinalSummary(assistantMessage, loopState);
+        }
         params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
       }
     }
@@ -6197,16 +6318,18 @@ async function executeAssistantAgentActionLoop(params: {
   const strippedText = removeAgentActionJsonFragments(assistantMessage.text)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  loopState = agentActionLoopWithStatus(loopState, "max_steps");
   emitAgentLoopDiagnosticSummary({
     agentEvents: params.agentEvents,
     messageId: assistantMessage.id,
     outcome: "max_steps",
-    toolSteps
+    toolSteps: loopState.toolSteps,
+    loopState
   });
   return {
     ...assistantMessage,
-    text: `${strippedText}\n\nResume final: boucle d'actions interrompue apres ${AGENT_ACTION_LOOP_MAX_STEPS} etapes pour garder le controle local.`,
-    proofHash: hashJson({ agentActionLoopMaxSteps: AGENT_ACTION_LOOP_MAX_STEPS, previousProofHash: assistantMessage.proofHash })
+    text: `${strippedText}\n\nFinal summary: agent loop max_steps; stopped after ${AGENT_ACTION_LOOP_MAX_STEPS} local-action steps to keep control explicit.`,
+    proofHash: hashJson({ agentActionLoopMaxSteps: AGENT_ACTION_LOOP_MAX_STEPS, previousProofHash: assistantMessage.proofHash, loopState })
   };
 }
 

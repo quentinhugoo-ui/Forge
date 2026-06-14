@@ -187,6 +187,8 @@ Acceptance:
 - Read-only discovery does not satisfy a mutation request.
 - The loop tries a safe alternative before blocking.
 
+Status: implemented for the planned scope. The normal path now carries `AgentActionLoopState`, explicit terminal outcomes, result observations, retry/approval accounting, proof hashes and mandatory English final summaries after tool-using tasks. Deterministic desktop organization is quarantined behind `INGEN_AGENT_ACTION_COMPAT_FALLBACK=1` as compatibility behavior, while normal mutation follow-up stays inside the universal loop and blocks with a final status when the model stops without the required next action.
+
 ### 4. Windows Execution Layer
 
 Goal: make Windows-native control reliable through structured adapters, not ad hoc shell text.
