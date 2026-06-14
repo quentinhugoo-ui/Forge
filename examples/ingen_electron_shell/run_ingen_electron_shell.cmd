@@ -54,7 +54,13 @@ if errorlevel 1 set NEED_BACKEND_REBUILD=1
 if "%NEED_BACKEND_REBUILD%"=="1" (
   echo Building Rust backend bridge... >> "%LOG%"
   C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%REPO_ROOT%\scripts\forge-cargo.ps1" build --manifest-path "%REPO_ROOT%\examples\ingen_native_services\Cargo.toml" --bin ingen_electron_backend_bridge >> "%LOG%" 2>>&1
-  if errorlevel 1 goto fail
+  if errorlevel 1 (
+    if exist "%FORGE_ELECTRON_BACKEND_EXE%" (
+      echo Backend rebuild failed. Falling back to the existing backend bridge. >> "%LOG%"
+    ) else (
+      goto fail
+    )
+  )
 )
 
 if not exist "%~dp0dist-electron\main\main.js" set NEED_ELECTRON_REBUILD=1
@@ -66,20 +72,31 @@ if errorlevel 1 set NEED_ELECTRON_REBUILD=1
 if "%NEED_ELECTRON_REBUILD%"=="1" (
   echo Building Electron main process... >> "%LOG%"
   call npx.cmd tsc -p tsconfig.electron.json >> "%LOG%" 2>>&1
-  if errorlevel 1 goto fail
+  if errorlevel 1 goto electron_build_failed
 
   if not exist "%~dp0src\shared\generated\forge-ipc.generated.ts" (
     echo Generating Electron IPC contract... >> "%LOG%"
     call npm.cmd run generate:ipc >> "%LOG%" 2>>&1
-    if errorlevel 1 goto fail
+    if errorlevel 1 goto electron_build_failed
   )
 
   echo Building Electron renderer... >> "%LOG%"
   call npx.cmd vite build >> "%LOG%" 2>>&1
-  if errorlevel 1 goto fail
+  if errorlevel 1 goto electron_build_failed
 ) else (
   echo Using existing Electron build. Set FORGE_ELECTRON_FORCE_REBUILD=1 to rebuild. >> "%LOG%"
 )
+
+goto start_electron
+
+:electron_build_failed
+if exist "%~dp0dist-electron\main\main.js" (
+  if exist "%~dp0dist\renderer\index.html" (
+    echo Electron rebuild failed. Falling back to the existing Electron build. >> "%LOG%"
+    goto start_electron
+  )
+)
+goto fail
 
 :start_electron
 echo Starting Electron... >> "%LOG%"
