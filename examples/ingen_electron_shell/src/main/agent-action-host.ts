@@ -20,7 +20,7 @@ const WINDOWS_DESTRUCTIVE_BLOCK_ROOTS = [
   "C:\\Program Files (x86)",
   "C:\\ProgramData"
 ];
-const MAX_PREVIEW_CHARS = 24_000;
+const MAX_PREVIEW_CHARS = 12_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const AGENT_ACTION_EVENT_HINTS = [
   "fs.list:/agent_list_",

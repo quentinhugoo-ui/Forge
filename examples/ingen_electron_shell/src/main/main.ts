@@ -4260,9 +4260,11 @@ function textLooksLikeLocalActionIntent(text: string): boolean {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
-  return /\b(?:ordinateur|bureau|desktop|fichier|fichiers|dossier|dossiers|repertoire|repertoires|workspace|repo|projet|terminal|powershell|cmd|shell|commande|commandes|chercher|rechercher|trouver|lister|copier|copie|deplacer|renommer|creer|ecrire|modifier|supprimer|effacer|ouvrir|telecharger|sauvegarder|enregistrer|git|npm|cargo|test|build)\b/.test(normalized) ||
-    normalized.includes("agent_action_result") ||
-    normalized.includes("agent_action_json");
+  return /\b(?:ordinateur|bureau|desktop|fichier|fichiers|dossier|dossiers|repertoire|repertoires|workspace|repo|projet|terminal|powershell|cmd|shell|commande|commandes|chercher|rechercher|trouver|lister|copier|copie|deplacer|renommer|creer|ecrire|modifier|supprimer|effacer|ouvrir|telecharger|sauvegarder|enregistrer|git|npm|cargo|test|build)\b/.test(normalized);
+}
+
+function textIsAgentActionContinuation(text: string): boolean {
+  return /\bAGENT_ACTION_(?:RESULT|FORCED_CONTINUATION)\b/i.test(text);
 }
 
 function transcriptHasRecentAgentActionLoop(transcript: TranscriptMessage[] = panelsChatBottomState.transcript): boolean {
@@ -4278,16 +4280,44 @@ function shouldInjectFullAgentActionManifest(
   userText = "",
   transcript: TranscriptMessage[] = panelsChatBottomState.transcript
 ): boolean {
-  return textLooksLikeLocalActionIntent(userText) || transcriptHasRecentAgentActionLoop(transcript);
+  return textLooksLikeLocalActionIntent(userText) && !textIsAgentActionContinuation(userText);
+}
+
+function shouldInjectCompactAgentActionManifest(
+  userText = "",
+  transcript: TranscriptMessage[] = panelsChatBottomState.transcript
+): boolean {
+  return !shouldInjectFullAgentActionManifest(userText, transcript) &&
+    (textIsAgentActionContinuation(userText) || transcriptHasRecentAgentActionLoop(transcript));
+}
+
+function agentActionContinuationManifest(): string {
+  const config = agentActionHostConfig();
+  const manifest = createAgentActionHostManifest(config);
+  return [
+    "AGENT_ACTION_HOST_CONTINUATION v1",
+    `workspace_active=${manifest.workspace.active}`,
+    `workspace_root=${manifest.workspace.root}`,
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
+    "format=Continue with one short natural progress paragraph, then exactly one AGENT_ACTION_JSON line when another local action is needed.",
+    "action_request_format=AGENT_ACTION_JSON {\"action\":\"move_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
+    "result_policy=Use the compact AGENT_ACTION_RESULT from the previous round as ground truth; do not ask for the full listing again unless the compact result is insufficient.",
+    "stop_policy=If the objective is done, return only a compact final summary and do not emit AGENT_ACTION_JSON.",
+    `proof=${manifest.proofHash}`
+  ].join("\n");
 }
 
 function agentActionContextManifest(
   userText = "",
   transcript: TranscriptMessage[] = panelsChatBottomState.transcript
 ): string {
-  return shouldInjectFullAgentActionManifest(userText, transcript)
-    ? [agentActionRoutingHint(), agentActionHostPromptManifest(agentActionHostConfig())].join("\n")
-    : "";
+  if (shouldInjectFullAgentActionManifest(userText, transcript)) {
+    return [agentActionRoutingHint(), agentActionHostPromptManifest(agentActionHostConfig())].join("\n");
+  }
+  if (shouldInjectCompactAgentActionManifest(userText, transcript)) {
+    return [agentActionRoutingHint(), agentActionContinuationManifest()].join("\n");
+  }
+  return "";
 }
 
 function brainSegmentManifest(): string {
@@ -5309,6 +5339,10 @@ function modelNameFromError(message: string, fallbackModel: string): string {
 const ASSISTANT_PROVIDER_UNAVAILABLE_TEXT = "Provider unavailable. Check connection, auth, or quota.";
 const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1";
 const AGENT_ACTION_LOOP_MAX_STEPS = 6;
+const AGENT_ACTION_RESULT_ITEM_LIMIT = 10;
+const AGENT_ACTION_RESULT_MATCH_LIMIT = 8;
+const AGENT_ACTION_RESULT_PREVIEW_BYTES = 6_000;
+const AGENT_ACTION_RESULT_MATCH_TEXT_BYTES = 320;
 const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], AgentActionCapabilityId> = {
   list: "fs.list",
   search: "fs.search",
@@ -5473,6 +5507,26 @@ function renderCompletedPendingAgentActionText(text: string, result: AgentAction
   return `${text.trimEnd()}\n\n${agentActionResultSummary(result)}`.trim();
 }
 
+function compactAgentActionItems(result: AgentActionResult): AgentActionResult["items"] {
+  return result.items
+    ?.slice(0, AGENT_ACTION_RESULT_ITEM_LIMIT)
+    .map((item) => ({
+      name: item.name,
+      path: item.path,
+      kind: item.kind
+    }));
+}
+
+function compactAgentActionMatches(result: AgentActionResult): AgentActionResult["matches"] {
+  return result.matches
+    ?.slice(0, AGENT_ACTION_RESULT_MATCH_LIMIT)
+    .map((match) => ({
+      path: match.path,
+      line: match.line,
+      text: trimUtf8Bytes(match.text, AGENT_ACTION_RESULT_MATCH_TEXT_BYTES)
+    }));
+}
+
 function compactAgentActionResult(result: AgentActionResult): string {
   return JSON.stringify({
     accepted: result.accepted,
@@ -5480,13 +5534,15 @@ function compactAgentActionResult(result: AgentActionResult): string {
     path: result.path,
     toPath: result.toPath,
     itemCount: result.items?.length,
-    items: result.items?.slice(0, 20),
+    items: compactAgentActionItems(result),
+    omittedItems: Math.max(0, (result.items?.length ?? 0) - AGENT_ACTION_RESULT_ITEM_LIMIT),
     matchCount: result.matches?.length,
-    matches: result.matches?.slice(0, 12),
+    matches: compactAgentActionMatches(result),
+    omittedMatches: Math.max(0, (result.matches?.length ?? 0) - AGENT_ACTION_RESULT_MATCH_LIMIT),
     commandLine: result.commandLine,
     exitCode: result.exitCode,
-    stdoutPreview: result.stdoutPreview,
-    stderrPreview: result.stderrPreview,
+    stdoutPreview: result.stdoutPreview ? trimUtf8Bytes(result.stdoutPreview, AGENT_ACTION_RESULT_PREVIEW_BYTES) : undefined,
+    stderrPreview: result.stderrPreview ? trimUtf8Bytes(result.stderrPreview, AGENT_ACTION_RESULT_PREVIEW_BYTES) : undefined,
     error: result.error?.message,
     proofHash: result.proofHash
   });

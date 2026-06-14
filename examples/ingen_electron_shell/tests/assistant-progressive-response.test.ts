@@ -108,11 +108,27 @@ describe("assistant progressive response feed", () => {
 
   it("injects the heavy local action manifest lazily", () => {
     expect(mainSource).toContain("function shouldInjectFullAgentActionManifest");
+    expect(mainSource).toContain("function shouldInjectCompactAgentActionManifest");
+    expect(mainSource).toContain("function agentActionContinuationManifest");
     expect(mainSource).toContain("textLooksLikeLocalActionIntent(userText)");
+    expect(mainSource).toContain("textIsAgentActionContinuation(userText)");
     expect(mainSource).toContain("transcriptHasRecentAgentActionLoop(transcript)");
     expect(mainSource).toContain("shouldInjectFullAgentActionManifest(userText, transcript)");
-    expect(mainSource).toContain("? [agentActionRoutingHint(), agentActionHostPromptManifest(agentActionHostConfig())].join(\"\\n\")");
+    expect(mainSource).toContain("shouldInjectCompactAgentActionManifest(userText, transcript)");
+    expect(mainSource).toContain("return [agentActionRoutingHint(), agentActionHostPromptManifest(agentActionHostConfig())].join(\"\\n\")");
+    expect(mainSource).toContain("[agentActionRoutingHint(), agentActionContinuationManifest()].join(\"\\n\")");
     expect(mainSource).toContain(": \"\"");
     expect(mainSource).toContain("agentActionContextManifest(userText, transcript)");
+  });
+
+  it("keeps loop continuation results compact before reinjection", () => {
+    expect(mainSource).toContain("const AGENT_ACTION_RESULT_ITEM_LIMIT = 10");
+    expect(mainSource).toContain("const AGENT_ACTION_RESULT_MATCH_LIMIT = 8");
+    expect(mainSource).toContain("const AGENT_ACTION_RESULT_PREVIEW_BYTES = 6_000");
+    expect(mainSource).toContain("function compactAgentActionItems");
+    expect(mainSource).toContain("function compactAgentActionMatches");
+    expect(mainSource).toContain("omittedItems");
+    expect(mainSource).toContain("omittedMatches");
+    expect(mainSource).toContain("trimUtf8Bytes(result.stdoutPreview, AGENT_ACTION_RESULT_PREVIEW_BYTES)");
   });
 });
