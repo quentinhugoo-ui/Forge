@@ -3979,31 +3979,38 @@ button {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
 }
 
-.chatCanvas__messages::-webkit-scrollbar {
+.panelsChatBottom ::-webkit-scrollbar {
   width: 4px;
+  height: 4px;
 }
 
-.chatCanvas__messages::-webkit-scrollbar-track {
+.panelsChatBottom ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.chatCanvas__messages::-webkit-scrollbar-button,
-.chatCanvas__messages::-webkit-scrollbar-button:single-button,
-.chatCanvas__messages::-webkit-scrollbar-button:vertical:start,
-.chatCanvas__messages::-webkit-scrollbar-button:vertical:end {
+.panelsChatBottom ::-webkit-scrollbar-button,
+.panelsChatBottom ::-webkit-scrollbar-button:single-button,
+.panelsChatBottom ::-webkit-scrollbar-button:vertical:start,
+.panelsChatBottom ::-webkit-scrollbar-button:vertical:end,
+.panelsChatBottom ::-webkit-scrollbar-button:horizontal:start,
+.panelsChatBottom ::-webkit-scrollbar-button:horizontal:end {
   display: none;
   width: 0;
   height: 0;
 }
 
-.chatCanvas__messages::-webkit-scrollbar-thumb {
+.panelsChatBottom ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.panelsChatBottom ::-webkit-scrollbar-thumb {
   background: var(--forge-chat-bg);
   border: 0;
   border-radius: 0;
   transition: background 140ms ease-out;
 }
 
-.chatCanvas__messages::-webkit-scrollbar-thumb:hover {
+.panelsChatBottom ::-webkit-scrollbar-thumb:hover {
   background: color-mix(in oklab, var(--forge-chat-bg), var(--forge-text) 18%);
 }
 
