@@ -6986,7 +6986,7 @@ ol.assistantText__list li::before {
   left: var(--chat-left);
   bottom: var(--bottom-controls-bottom);
   display: grid;
-  grid-template-columns: max-content 22px minmax(0, 1fr) max-content 30px;
+  grid-template-columns: max-content 34px minmax(0, 1fr) max-content 30px;
   align-items: center;
   gap: 7px;
   width: var(--chat-width);
@@ -7010,8 +7010,8 @@ ol.assistantText__list li::before {
   justify-self: start;
   display: grid !important;
   place-items: center;
-  width: 22px;
-  min-width: 22px;
+  width: 34px;
+  min-width: 34px;
   height: 20px !important;
   min-height: 20px;
   padding: 0 !important;
@@ -7020,10 +7020,17 @@ ol.assistantText__list li::before {
   border: 0 !important;
   cursor: pointer;
   opacity: 0.82;
+  font: 760 10px/1 "Geist", system-ui, sans-serif !important;
+  letter-spacing: 0;
+  text-transform: uppercase;
   transition:
     color 140ms ease-out,
     opacity 140ms ease-out,
     transform 160ms ease-out;
+}
+
+.bottomControls__widgetButton strong {
+  font: inherit;
 }
 
 .bottomControls__widgetButton:hover,

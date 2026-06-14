@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, FolderPlus, List, ListChecks, MoveRight, PanelBottomOpen, Pencil, RefreshCw, Search, Terminal, Trash2, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
+import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, FolderPlus, List, ListChecks, MoveRight, Pencil, RefreshCw, Search, Terminal, Trash2, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import type { Camera, Object3D } from "three";
 import type { BrainCodeActCommand, ComposerUploadPreview, PanelsChatBottomCommand, PanelsChatBottomSnapshot, TranscriptMessage } from "../shared/ipc-contract";
 import {
@@ -4466,7 +4466,7 @@ export function PanelsChatBottomSlice({
           title="Mode widget"
           aria-label="Passer en mode widget"
         >
-          <PanelBottomOpen aria-hidden="true" size={13} strokeWidth={1.8} />
+          <strong>MINI</strong>
         </button>
         <div className="bottomControls__models">
           <button
