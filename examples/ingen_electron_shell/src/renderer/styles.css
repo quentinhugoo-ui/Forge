@@ -3835,10 +3835,10 @@ button {
   position: fixed;
   left: calc(var(--workspace-left) + 24px);
   top: 96px;
-  bottom: var(--chat-canvas-bottom);
+  bottom: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: calc(var(--workspace-width) - 48px);
+  width: calc(100vw - var(--workspace-left) - 24px);
   gap: 8px;
   pointer-events: auto;
   transition: left var(--sidebar-motion), width var(--sidebar-motion);
@@ -3968,12 +3968,13 @@ button {
   min-height: 0;
   isolation: isolate;
   padding-top: 46px;
-  padding-bottom: var(--transcript-bottom-breathing-room);
+  padding-right: calc(var(--workspace-right) + 24px);
+  padding-bottom: calc(var(--chat-canvas-bottom) + var(--transcript-bottom-breathing-room));
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--forge-chat-bg) transparent;
   scroll-behavior: smooth;
-  scroll-padding-bottom: var(--transcript-bottom-breathing-room);
+  scroll-padding-bottom: calc(var(--chat-canvas-bottom) + var(--transcript-bottom-breathing-room));
   mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.76) 8px, black 14px, black calc(100% - 14px), rgba(0, 0, 0, 0.76) calc(100% - 8px), transparent 100%);
 }
