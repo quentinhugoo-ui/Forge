@@ -506,6 +506,50 @@ export interface AgentComputerUsePolicy {
   proofHash: string;
 }
 
+export type AgentBrowserWebAction = "inspect_url" | "download" | "open_url";
+
+export interface AgentBrowserPageSummary {
+  schema: "ingen.browser.page_summary.v1";
+  action: AgentBrowserWebAction;
+  url: string;
+  finalUrl: string;
+  statusCode?: number;
+  ok?: boolean;
+  contentType?: string;
+  title?: string;
+  byteLength?: number;
+  linkCount?: number;
+  formCount?: number;
+  downloadCandidateCount?: number;
+  screenshotStatus: "available" | "planned" | "blocked";
+  domStatus: "available" | "planned" | "blocked";
+  networkLogStatus: "available" | "planned" | "blocked";
+  proofHash: string;
+}
+
+export interface AgentBrowserDownloadArtifact {
+  schema: "ingen.browser.download_artifact.v1";
+  url: string;
+  path: string;
+  bytes: number;
+  sha256: string;
+  contentType?: string;
+  suggestedFilename?: string;
+  proofHash: string;
+}
+
+export interface AgentBrowserWebPolicy {
+  schema: "ingen.browser_web.policy.v1";
+  executableActions: AgentActionKind[];
+  inspectionRequiresConfirmation: boolean;
+  navigationRequiresConfirmation: boolean;
+  downloadRequiresConfirmation: boolean;
+  submissionRequiresConfirmation: boolean;
+  credentialPromptPolicy: "never_fill_or_submit_without_user";
+  artifactPolicy: "persist_downloads_with_size_and_sha256";
+  proofHash: string;
+}
+
 export interface AgentActionCapability extends AgentCapabilityAtlasEntry {
   requiresApproval: boolean;
   description: string;
@@ -532,6 +576,7 @@ export interface AgentActionHostManifest {
   windowsExecution: AgentWindowsExecutionPolicy;
   verification: AgentVerificationPolicy;
   computerUse: AgentComputerUsePolicy;
+  browserWeb: AgentBrowserWebPolicy;
   runtime: AgentActionRuntimeManifestSummary;
   proofHash: string;
 }
@@ -551,7 +596,10 @@ export type AgentActionKind =
   | "computer_appshot"
   | "computer_focus_window"
   | "computer_clipboard_read"
-  | "computer_clipboard_write";
+  | "computer_clipboard_write"
+  | "browser_inspect_url"
+  | "browser_download"
+  | "browser_open_url";
 
 export type AgentActionScope = "workspace" | "computer";
 
@@ -566,6 +614,7 @@ export interface AgentActionRequest {
   executionAdapter?: AgentWindowsExecutionAdapterId;
   windowTitle?: string;
   text?: string;
+  url?: string;
   maxResults?: number;
   confirmed?: boolean;
   recursive?: boolean;
@@ -607,6 +656,8 @@ export interface AgentActionResult {
   verification?: AgentVerificationResult;
   computerUse?: AgentComputerUseSnapshot;
   appshot?: AgentAppshotArtifact;
+  browserPage?: AgentBrowserPageSummary;
+  download?: AgentBrowserDownloadArtifact;
   userPresenceRequired?: boolean;
   failureCategory?: AgentFailureCategory;
   retryRoutes?: AgentRetryStrategyId[];
@@ -724,7 +775,10 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "computer_appshot",
     "computer_focus_window",
     "computer_clipboard_read",
-    "computer_clipboard_write"
+    "computer_clipboard_write",
+    "browser_inspect_url",
+    "browser_download",
+    "browser_open_url"
   ];
   if (!actions.includes(candidate.action as AgentActionKind)) {
     return false;
@@ -738,7 +792,7 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
   ) {
     return false;
   }
-  for (const key of ["path", "toPath", "query", "command"] as const) {
+  for (const key of ["path", "toPath", "query", "command", "url"] as const) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
       return false;
     }

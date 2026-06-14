@@ -7,6 +7,7 @@ import {
   createAgentCapabilityAtlas,
   createAgentActionHostManifest,
   createAgentActionRuntimeManifestSummary,
+  createBrowserWebPolicy,
   createComputerUsePolicy,
   createAgentVerificationPolicy,
   createWindowsExecutionPolicy,
@@ -52,6 +53,8 @@ describe("agent action host", () => {
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("fs.delete_tree");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.full");
     expect(manifest.capabilities.map((capability) => capability.id)).toContain("shell.readonly");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("browser.inspect_url");
+    expect(manifest.capabilities.map((capability) => capability.id)).toContain("browser.download");
     expect(manifest.capabilityAtlas.length).toBeGreaterThanOrEqual(15);
     expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("windows.wmi");
     expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("browser.cdp");
@@ -73,6 +76,8 @@ describe("agent action host", () => {
     expect(manifest.verification.mutationCompletionRule).toBe("verified_or_blocked");
     expect(manifest.computerUse.schema).toBe("ingen.computer_use.policy.v1");
     expect(manifest.computerUse.executableActions).toContain("computer_inspect");
+    expect(manifest.browserWeb.schema).toBe("ingen.browser_web.policy.v1");
+    expect(manifest.browserWeb.executableActions).toContain("browser_download");
     expect([...manifest.runtime.installedToolIds, ...manifest.runtime.missingToolIds]).toContain("winget");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
 
@@ -105,6 +110,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("failure_categories=denied|missing_tool|bad_path|timeout|permission|protected_root|command_error|unverifiable|partial_success");
     expect(promptManifest).toContain("retry_strategies=api_cli|powershell|cmd|windows_command|wmi_cim|registry|settings_uri|browser_cdp|gui_computer_use|manual_approval");
     expect(promptManifest).toContain("computer_use=foreground_required_for_risky_gui_actions pacing=single_action_then_verify");
+    expect(promptManifest).toContain("browser_web=download:confirmed navigation:confirmed submission:confirmed");
     expect(promptManifest).toContain("windows.wmi:planned/none");
     expect(promptManifest).toContain("office.com:planned/prompt");
     expect(promptManifest).toContain("capability_policy=Use the atlas for reasoning");
@@ -146,7 +152,10 @@ describe("agent action host", () => {
       "computer.inspect",
       "computer.appshot",
       "computer.focus_window",
-      "computer.clipboard"
+      "computer.clipboard",
+      "browser.inspect_url",
+      "browser.download",
+      "browser.open_url"
     ]);
     expect(summary.availableFamilies).toContain("shell.full");
     expect(summary.plannedFamilies).toContain("windows.settings");
@@ -231,6 +240,24 @@ describe("agent action host", () => {
     expect(policy.pacingPolicy).toBe("single_action_then_verify");
     expect(policy.forbiddenPrompts).toContain("credential");
     expect(policy.forbiddenPrompts).toContain("uac");
+  });
+
+  it("publishes a browser/web policy for verified downloads and gated navigation", () => {
+    const policy = createBrowserWebPolicy({
+      workspaceRoot: "C:\\repo",
+      workspaceActive: true,
+      cwd: "C:\\repo",
+      platform: "win32"
+    });
+
+    expect(policy.proofHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(policy.executableActions).toEqual(["browser_inspect_url", "browser_download", "browser_open_url"]);
+    expect(policy.inspectionRequiresConfirmation).toBe(false);
+    expect(policy.downloadRequiresConfirmation).toBe(true);
+    expect(policy.navigationRequiresConfirmation).toBe(true);
+    expect(policy.submissionRequiresConfirmation).toBe(true);
+    expect(policy.credentialPromptPolicy).toBe("never_fill_or_submit_without_user");
+    expect(policy.artifactPolicy).toBe("persist_downloads_with_size_and_sha256");
   });
 
   it("detects local tool availability and renders selected capability detail on demand", () => {
@@ -522,6 +549,47 @@ describe("agent action host", () => {
       });
       expect(clipboard.accepted).toBe(false);
       expect(clipboard.userPresenceRequired).toBe(true);
+    });
+  });
+
+  it("inspects web state and verifies confirmed download artifacts", async () => {
+    await withTempWorkspace(async (config) => {
+      const html = "<!doctype html><title>Agent Web Fixture</title><a href=\"/file.txt\" download>Download</a><form></form>";
+      const url = `data:text/html,${encodeURIComponent(html)}`;
+
+      const inspected = await executeAgentActionRequest(config, {
+        action: "browser_inspect_url",
+        url
+      });
+      expect(inspected.accepted).toBe(true);
+      expect(inspected.browserPage?.schema).toBe("ingen.browser.page_summary.v1");
+      expect(inspected.browserPage?.title).toBe("Agent Web Fixture");
+      expect(inspected.browserPage?.linkCount).toBe(1);
+      expect(inspected.browserPage?.formCount).toBe(1);
+      expect(inspected.browserPage?.domStatus).toBe("available");
+      expect(inspected.verification?.passed).toBe(true);
+
+      const unconfirmed = await executeAgentActionRequest(config, {
+        action: "browser_download",
+        url,
+        path: "downloads/page.html"
+      });
+      expect(unconfirmed.accepted).toBe(false);
+      expect(unconfirmed.userPresenceRequired).toBe(true);
+      expect(unconfirmed.error?.message).toContain("confirmed:true");
+
+      const downloaded = await executeAgentActionRequest(config, {
+        action: "browser_download",
+        url,
+        path: "downloads/page.html",
+        confirmed: true
+      });
+      expect(downloaded.accepted).toBe(true);
+      expect(downloaded.download?.schema).toBe("ingen.browser.download_artifact.v1");
+      expect(downloaded.download?.path).toBe("downloads\\page.html");
+      expect(downloaded.download?.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(downloaded.verification?.passed).toBe(true);
+      await expect(readFile(join(config.workspaceRoot, "downloads", "page.html"), "utf8")).resolves.toBe(html);
     });
   });
 

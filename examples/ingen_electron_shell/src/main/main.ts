@@ -5562,7 +5562,10 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   computer_appshot: "computer.appshot",
   computer_focus_window: "computer.focus_window",
   computer_clipboard_read: "computer.clipboard_read",
-  computer_clipboard_write: "computer.clipboard_write"
+  computer_clipboard_write: "computer.clipboard_write",
+  browser_inspect_url: "browser.inspect_url",
+  browser_download: "browser.download",
+  browser_open_url: "browser.open_url"
 };
 
 function friendlyAssistantErrorText(params: {
@@ -5658,12 +5661,16 @@ function emitAgentRuntimeToolCallStarted(params: {
       : params.request.action === "computer_appshot" ||
         params.request.action === "computer_focus_window" ||
         params.request.action === "computer_clipboard_read" ||
-        params.request.action === "computer_clipboard_write"
+        params.request.action === "computer_clipboard_write" ||
+        params.request.action === "browser_open_url"
       ? "external_ui"
+      : params.request.action === "browser_download"
+      ? "computer_write"
       : params.request.action === "list" ||
         params.request.action === "search" ||
         params.request.action === "run_readonly_command" ||
-        params.request.action === "computer_inspect"
+        params.request.action === "computer_inspect" ||
+        params.request.action === "browser_inspect_url"
       ? "read"
       : "workspace_write",
     status: "pending",
@@ -5881,6 +5888,8 @@ function compactAgentActionResult(result: AgentActionResult): string {
         }
       : undefined,
     appshot: result.appshot,
+    browserPage: result.browserPage,
+    download: result.download,
     userPresenceRequired: result.userPresenceRequired,
     verification: result.verification
       ? {
@@ -5934,7 +5943,13 @@ function emitAgentLoopDiagnosticSummary(params: {
 }
 
 function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
-  return request.action === "list" || request.action === "search" || request.action === "run_readonly_command" || request.action === "computer_inspect";
+  return (
+    request.action === "list" ||
+    request.action === "search" ||
+    request.action === "run_readonly_command" ||
+    request.action === "computer_inspect" ||
+    request.action === "browser_inspect_url"
+  );
 }
 
 function textLooksLikeFilesystemMutationGoal(text: string): boolean {

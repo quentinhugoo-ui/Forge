@@ -13,6 +13,9 @@ export const AGENT_APPSHOT_COMMAND = "/agent_appshot_";
 export const AGENT_FOCUS_WINDOW_COMMAND = "/agent_focus_window_";
 export const AGENT_CLIPBOARD_READ_COMMAND = "/agent_clipboard_read_";
 export const AGENT_CLIPBOARD_WRITE_COMMAND = "/agent_clipboard_write_";
+export const AGENT_BROWSER_INSPECT_COMMAND = "/agent_browser_inspect_";
+export const AGENT_BROWSER_DOWNLOAD_COMMAND = "/agent_browser_download_";
+export const AGENT_BROWSER_OPEN_COMMAND = "/agent_browser_open_";
 
 export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_LIST_COMMAND,
@@ -29,7 +32,10 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_APPSHOT_COMMAND,
   AGENT_FOCUS_WINDOW_COMMAND,
   AGENT_CLIPBOARD_READ_COMMAND,
-  AGENT_CLIPBOARD_WRITE_COMMAND
+  AGENT_CLIPBOARD_WRITE_COMMAND,
+  AGENT_BROWSER_INSPECT_COMMAND,
+  AGENT_BROWSER_DOWNLOAD_COMMAND,
+  AGENT_BROWSER_OPEN_COMMAND
 ] as const;
 
 export type AgentActionEventCommand = (typeof AGENT_ACTION_EVENT_COMMANDS)[number];
@@ -56,7 +62,10 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_APPSHOT_COMMAND, "confirmed appshot captured"],
   [AGENT_FOCUS_WINDOW_COMMAND, "confirmed window focus requested"],
   [AGENT_CLIPBOARD_READ_COMMAND, "confirmed clipboard text inspected"],
-  [AGENT_CLIPBOARD_WRITE_COMMAND, "confirmed clipboard text replaced"]
+  [AGENT_CLIPBOARD_WRITE_COMMAND, "confirmed clipboard text replaced"],
+  [AGENT_BROWSER_INSPECT_COMMAND, "web page state inspected"],
+  [AGENT_BROWSER_DOWNLOAD_COMMAND, "confirmed web download verified"],
+  [AGENT_BROWSER_OPEN_COMMAND, "confirmed browser navigation requested"]
 ]);
 
 export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand][] = [
@@ -74,7 +83,10 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["computer.appshot", AGENT_APPSHOT_COMMAND],
   ["computer.focus_window", AGENT_FOCUS_WINDOW_COMMAND],
   ["computer.clipboard_read", AGENT_CLIPBOARD_READ_COMMAND],
-  ["computer.clipboard_write", AGENT_CLIPBOARD_WRITE_COMMAND]
+  ["computer.clipboard_write", AGENT_CLIPBOARD_WRITE_COMMAND],
+  ["browser.inspect_url", AGENT_BROWSER_INSPECT_COMMAND],
+  ["browser.download", AGENT_BROWSER_DOWNLOAD_COMMAND],
+  ["browser.open_url", AGENT_BROWSER_OPEN_COMMAND]
 ] as const;
 
 const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
@@ -92,7 +104,10 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["computer_appshot", AGENT_APPSHOT_COMMAND],
   ["computer_focus_window", AGENT_FOCUS_WINDOW_COMMAND],
   ["computer_clipboard_read", AGENT_CLIPBOARD_READ_COMMAND],
-  ["computer_clipboard_write", AGENT_CLIPBOARD_WRITE_COMMAND]
+  ["computer_clipboard_write", AGENT_CLIPBOARD_WRITE_COMMAND],
+  ["browser_inspect_url", AGENT_BROWSER_INSPECT_COMMAND],
+  ["browser_download", AGENT_BROWSER_DOWNLOAD_COMMAND],
+  ["browser_open_url", AGENT_BROWSER_OPEN_COMMAND]
 ]);
 
 const AGENT_ACTION_EVENT_BY_TOOL = new Map<string, AgentActionEventCommand>(AGENT_ACTION_EVENT_HINTS);

@@ -157,7 +157,11 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "computer_appshot", path: ".ingen-agent-artifacts/shot.png", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "computer_focus_window", windowTitle: "InGen", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "computer_clipboard_write", text: "hello", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "browser_inspect_url", url: "https://example.com" })).toBe(true);
+    expect(isAgentActionRequest({ action: "browser_download", url: "https://example.com/file.zip", path: "downloads/file.zip", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "browser_open_url", url: "https://example.com", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "computer_focus_window", windowTitle: 42, confirmed: true })).toBe(false);
+    expect(isAgentActionRequest({ action: "browser_inspect_url", url: 42 })).toBe(false);
     expect(isAgentActionRequest({ action: "delete_empty_directory", path: "tmp", confirmed: "yes" })).toBe(false);
     expect(isAgentActionRequest({ action: "list", scope: "galaxy", path: "." })).toBe(false);
     expect(isAgentActionRequest({ action: "raw_shell", command: "powershell.exe" })).toBe(false);

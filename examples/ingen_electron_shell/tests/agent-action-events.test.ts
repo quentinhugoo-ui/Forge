@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_BROWSER_DOWNLOAD_COMMAND,
+  AGENT_BROWSER_INSPECT_COMMAND,
+  AGENT_BROWSER_OPEN_COMMAND,
   AGENT_COPY_PATH_COMMAND,
   AGENT_DELETE_TREE_COMMAND,
   AGENT_APPSHOT_COMMAND,
@@ -29,6 +32,9 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION action="computer_inspect"')?.command).toBe(AGENT_COMPUTER_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="computer.appshot"')?.command).toBe(AGENT_APPSHOT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="computer.focus_window"')?.command).toBe(AGENT_FOCUS_WINDOW_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="browser_inspect_url"')?.command).toBe(AGENT_BROWSER_INSPECT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION tool="browser.download"')?.command).toBe(AGENT_BROWSER_DOWNLOAD_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION capability="browser.open_url"')?.command).toBe(AGENT_BROWSER_OPEN_COMMAND);
   });
 
   it("keeps path metadata for file modification event cards", () => {

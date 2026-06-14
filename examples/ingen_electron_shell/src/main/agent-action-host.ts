@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, readdir, readFile, rename, rm, rmdir, stat } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, parse, relative, resolve } from "node:path";
 import type {
   AgentAppshotArtifact,
@@ -14,6 +14,9 @@ import type {
   AgentActionRuntimeManifestSummary,
   AgentCapabilityAtlasEntry,
   AgentCapabilityVerification,
+  AgentBrowserDownloadArtifact,
+  AgentBrowserPageSummary,
+  AgentBrowserWebPolicy,
   AgentComputerDisplaySummary,
   AgentComputerUsePolicy,
   AgentComputerUseSnapshot,
@@ -78,7 +81,10 @@ const AGENT_ACTION_EVENT_HINTS = [
   "computer.appshot:/agent_appshot_",
   "computer.focus_window:/agent_focus_window_",
   "computer.clipboard_read:/agent_clipboard_read_",
-  "computer.clipboard_write:/agent_clipboard_write_"
+  "computer.clipboard_write:/agent_clipboard_write_",
+  "browser.inspect_url:/agent_browser_inspect_",
+  "browser.download:/agent_browser_download_",
+  "browser.open_url:/agent_browser_open_"
 ];
 
 const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string> = {
@@ -96,7 +102,10 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   computer_appshot: "/agent_appshot_",
   computer_focus_window: "/agent_focus_window_",
   computer_clipboard_read: "/agent_clipboard_read_",
-  computer_clipboard_write: "/agent_clipboard_write_"
+  computer_clipboard_write: "/agent_clipboard_write_",
+  browser_inspect_url: "/agent_browser_inspect_",
+  browser_download: "/agent_browser_download_",
+  browser_open_url: "/agent_browser_open_"
 };
 
 const WINDOWS_EXECUTION_ADAPTERS: AgentWindowsExecutionAdapterId[] = ["powershell", "cmd", "windows_command", "shell_full"];
@@ -496,6 +505,8 @@ function result(
     verification: patch.verification,
     computerUse: patch.computerUse,
     appshot: patch.appshot,
+    browserPage: patch.browserPage,
+    download: patch.download,
     userPresenceRequired: patch.userPresenceRequired,
     failureCategory,
     retryRoutes: patch.retryRoutes ?? retryRoutesForFailure(failureCategory),
@@ -755,6 +766,22 @@ export function createComputerUsePolicy(_config: AgentActionHostConfig): AgentCo
     userPresenceMode: "foreground_required_for_risky_gui_actions",
     pacingPolicy: "single_action_then_verify",
     forbiddenPrompts: ["security", "payment", "credential", "destructive", "uac"],
+    proofHash: ""
+  };
+  policy.proofHash = hashJson({ ...policy, proofHash: "" });
+  return policy;
+}
+
+export function createBrowserWebPolicy(_config: AgentActionHostConfig): AgentBrowserWebPolicy {
+  const policy: AgentBrowserWebPolicy = {
+    schema: "ingen.browser_web.policy.v1",
+    executableActions: ["browser_inspect_url", "browser_download", "browser_open_url"],
+    inspectionRequiresConfirmation: false,
+    navigationRequiresConfirmation: true,
+    downloadRequiresConfirmation: true,
+    submissionRequiresConfirmation: true,
+    credentialPromptPolicy: "never_fill_or_submit_without_user",
+    artifactPolicy: "persist_downloads_with_size_and_sha256",
     proofHash: ""
   };
   policy.proofHash = hashJson({ ...policy, proofHash: "" });
@@ -1022,6 +1049,60 @@ function createExecutableActionCapabilities(): AgentActionCapability[] {
       writes: true,
       description: "Read or replace clipboard text after explicit confirmation.",
       notes: "Clipboard may contain secrets; reads and writes require confirmed:true."
+    }),
+    actionCapability({
+      id: "browser.inspect_url",
+      family: "browser.cdp",
+      surface: "browser.web",
+      title: "Inspect URL",
+      status: "available",
+      risk: "read",
+      operations: ["fetch page metadata", "summarize title", "count links and forms", "detect download candidates"],
+      underlyingTools: ["fetch", "HTTP headers", "HTML summary parser", "CDP planned"],
+      fallbacks: ["browser.open_url", "shell.full curl", "GUI/computer_use"],
+      verification: ["browser_state", "command_exit"],
+      approval: "none",
+      executableActionIds: ["browser.inspect_url"],
+      requiresApproval: false,
+      writes: false,
+      description: "Inspect a URL through a bounded HTTP read and return compact page state.",
+      notes: "Does not submit forms, fill credentials or click external pages."
+    }),
+    actionCapability({
+      id: "browser.download",
+      family: "browser.cdp",
+      surface: "browser.web",
+      title: "Download URL artifact",
+      status: "available",
+      risk: "computer_write",
+      operations: ["download file", "persist artifact", "compute size", "compute sha256"],
+      underlyingTools: ["fetch", "node:fs/writeFile", "artifact hash", "Electron DownloadItem planned"],
+      fallbacks: ["Playwright download", "browser.open_url", "shell.full curl"],
+      verification: ["filesystem", "artifact_hash", "browser_state"],
+      approval: "prompt",
+      executableActionIds: ["browser.download"],
+      requiresApproval: true,
+      writes: true,
+      description: "Download a URL to a workspace or confirmed computer path and verify the artifact hash.",
+      notes: "Requires confirmed:true; executing downloaded files is a separate approval-gated task."
+    }),
+    actionCapability({
+      id: "browser.open_url",
+      family: "browser.cdp",
+      surface: "browser.web",
+      title: "Open URL",
+      status: "available",
+      risk: "external_ui",
+      operations: ["open URL with OS/browser", "hand off to foreground browser"],
+      underlyingTools: ["PowerShell Start-Process", "msedge/chrome default browser", "contained WebExplorer planned"],
+      fallbacks: ["manual open", "computer.focus_window", "CDP target activation planned"],
+      verification: ["command_exit", "manual_confirmation"],
+      approval: "prompt",
+      executableActionIds: ["browser.open_url"],
+      requiresApproval: true,
+      writes: true,
+      description: "Open a URL in the default browser after explicit confirmation.",
+      notes: "External navigation can expose data or trigger account state; never submit forms without user approval."
     })
   ];
 }
@@ -1474,6 +1555,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
   const windowsExecution = createWindowsExecutionPolicy(config);
   const verification = createAgentVerificationPolicy(config);
   const computerUse = createComputerUsePolicy(config);
+  const browserWeb = createBrowserWebPolicy(config);
   const runtime = createAgentActionRuntimeManifestSummary(config);
   const manifest: AgentActionHostManifest = {
     schema: "ingen.agent_action_host.manifest.v1",
@@ -1496,6 +1578,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
     windowsExecution,
     verification,
     computerUse,
+    browserWeb,
     runtime,
     proofHash: ""
   };
@@ -1533,7 +1616,8 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `failure_categories=${manifest.verification.failureCategories.join("|")}`,
     `retry_strategies=${manifest.verification.retryStrategies.map((strategy) => strategy.id).join("|")}`,
     `computer_use=${manifest.computerUse.userPresenceMode} pacing=${manifest.computerUse.pacingPolicy} forbidden=${manifest.computerUse.forbiddenPrompts.join("|")}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write",
+    `browser_web=download:${manifest.browserWeb.downloadRequiresConfirmation ? "confirmed" : "open"} navigation:${manifest.browserWeb.navigationRequiresConfirmation ? "confirmed" : "open"} submission:${manifest.browserWeb.submissionRequiresConfirmation ? "confirmed" : "open"} artifact:${manifest.browserWeb.artifactPolicy}`,
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -1547,7 +1631,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
-    "planned=browser.playwright full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop mcp",
+    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop mcp",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -2029,6 +2113,26 @@ function appshotArtifact(input: Omit<AgentAppshotArtifact, "schema" | "proofHash
   return artifact;
 }
 
+function browserPageSummary(input: Omit<AgentBrowserPageSummary, "schema" | "proofHash">): AgentBrowserPageSummary {
+  const summary: AgentBrowserPageSummary = {
+    schema: "ingen.browser.page_summary.v1",
+    ...input,
+    proofHash: ""
+  };
+  summary.proofHash = hashJson({ ...summary, proofHash: "" });
+  return summary;
+}
+
+function browserDownloadArtifact(input: Omit<AgentBrowserDownloadArtifact, "schema" | "proofHash">): AgentBrowserDownloadArtifact {
+  const artifact: AgentBrowserDownloadArtifact = {
+    schema: "ingen.browser.download_artifact.v1",
+    ...input,
+    proofHash: ""
+  };
+  artifact.proofHash = hashJson({ ...artifact, proofHash: "" });
+  return artifact;
+}
+
 function executeWindowsCommand(config: AgentActionHostConfig, request: AgentActionRequest, readonly: boolean): WindowsCommandExecution {
   const command = request.command?.trim() ?? "";
   const args = request.args ?? [];
@@ -2437,6 +2541,292 @@ $actual = Get-Clipboard -Raw
   });
 }
 
+function parseAgentUrl(request: AgentActionRequest, requireHttp = true): URL | IpcError {
+  const rawUrl = request.url?.trim() || request.query?.trim() || "";
+  if (!rawUrl) {
+    return actionError("bad_payload", "URL is required.", request);
+  }
+  try {
+    const url = new URL(rawUrl);
+    const allowed = requireHttp ? ["http:", "https:", "data:"] : ["http:", "https:"];
+    if (!allowed.includes(url.protocol)) {
+      return actionError("bad_payload", `Unsupported URL protocol: ${url.protocol}`, { url: rawUrl });
+    }
+    return url;
+  } catch {
+    return actionError("bad_payload", "URL is invalid.", { url: rawUrl });
+  }
+}
+
+function isIpcError(value: URL | IpcError): value is IpcError {
+  return "code" in value && "proofHash" in value;
+}
+
+function browserFetchTimeout(request: AgentActionRequest): number {
+  return Math.max(500, Math.min(60_000, request.timeoutMs ?? 20_000));
+}
+
+async function fetchWithTimeout(url: URL, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "InGen-AgentActionHost/1.0"
+      }
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function htmlTitle(text: string): string | undefined {
+  const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(text);
+  if (!match) {
+    return undefined;
+  }
+  return match[1].replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function countPattern(text: string, pattern: RegExp): number {
+  return Array.from(text.matchAll(pattern)).length;
+}
+
+function suggestedDownloadFilename(url: URL, contentDisposition: string | null): string {
+  const dispositionName = /filename\*?=(?:UTF-8''|")?([^";\r\n]+)/i.exec(contentDisposition ?? "")?.[1];
+  const decodedDisposition = dispositionName ? decodeURIComponent(dispositionName.replace(/^"|"$/g, "")) : "";
+  const urlName = basename(decodeURIComponent(url.pathname || "")).trim();
+  const candidate = decodedDisposition || urlName || "download.bin";
+  const sanitized = candidate.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").slice(0, 180);
+  return sanitized || "download.bin";
+}
+
+async function browserInspectUrlAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const url = parseAgentUrl(request);
+  if (isIpcError(url)) {
+    return result(config, request, { accepted: false, error: url });
+  }
+  const timeoutMs = browserFetchTimeout(request);
+  const startedAt = Date.now();
+  try {
+    const response = await fetchWithTimeout(url, timeoutMs);
+    const contentType = response.headers.get("content-type") ?? undefined;
+    const contentLength = Number(response.headers.get("content-length") ?? "0");
+    const shouldReadBody = url.protocol === "data:" || !contentLength || contentLength <= 2_000_000;
+    const body = shouldReadBody ? Buffer.from(await response.arrayBuffer()) : Buffer.alloc(0);
+    const text = contentType?.includes("text/html") || contentType?.includes("text/") || url.protocol === "data:" ? body.toString("utf8") : "";
+    const page = browserPageSummary({
+      action: "inspect_url",
+      url: url.toString(),
+      finalUrl: response.url || url.toString(),
+      statusCode: response.status,
+      ok: response.ok,
+      contentType,
+      title: htmlTitle(text),
+      byteLength: shouldReadBody ? body.byteLength : contentLength,
+      linkCount: text ? countPattern(text, /<a\b/gi) : undefined,
+      formCount: text ? countPattern(text, /<form\b/gi) : undefined,
+      downloadCandidateCount: text ? countPattern(text, /\bdownload\b/gi) : undefined,
+      screenshotStatus: "planned",
+      domStatus: text ? "available" : "planned",
+      networkLogStatus: "planned"
+    });
+    const verification = verificationResult([
+      verificationProbe({
+        id: "browser.inspect.response",
+        kind: "browser_state",
+        target: page.finalUrl,
+        expectation: "HTTP response state returned",
+        actual: `status=${page.statusCode ?? "unknown"} bytes=${page.byteLength ?? 0}`,
+        passed: typeof page.statusCode === "number" || url.protocol === "data:"
+      })
+    ]);
+    return result(config, request, {
+      accepted: true,
+      commandLine: `fetch ${url.toString()}`,
+      routeId: "browser.inspect_url",
+      durationMs: Math.max(0, Date.now() - startedAt),
+      timeoutMs,
+      stdoutPreview: text.slice(0, MAX_PREVIEW_CHARS),
+      observedChanges: [`browser_status:${page.statusCode ?? "data"}`, `browser_bytes:${page.byteLength ?? 0}`],
+      verification,
+      browserPage: page
+    });
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === "AbortError";
+    return result(config, request, {
+      accepted: false,
+      commandLine: `fetch ${url.toString()}`,
+      routeId: "browser.inspect_url",
+      durationMs: Math.max(0, Date.now() - startedAt),
+      timeoutMs,
+      timedOut,
+      failureCategory: timedOut ? "timeout" : "command_error",
+      error: actionError("rust_unavailable", timedOut ? `URL inspection timed out after ${timeoutMs}ms.` : error instanceof Error ? error.message : String(error), {
+        url: url.toString()
+      })
+    });
+  }
+}
+
+async function browserDownloadAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Download requires confirmed:true and will be persisted with size and sha256.", request)
+    });
+  }
+  const url = parseAgentUrl(request);
+  if (isIpcError(url)) {
+    return result(config, request, { accepted: false, error: url });
+  }
+  const timeoutMs = browserFetchTimeout(request);
+  const startedAt = Date.now();
+  try {
+    const response = await fetchWithTimeout(url, timeoutMs);
+    if (!response.ok && url.protocol !== "data:") {
+      return result(config, request, {
+        accepted: false,
+        commandLine: `fetch ${url.toString()} > <download>`,
+        routeId: "browser.download",
+        durationMs: Math.max(0, Date.now() - startedAt),
+        timeoutMs,
+        failureCategory: "command_error",
+        error: actionError("rust_unavailable", `Download response was HTTP ${response.status}.`, { url: url.toString(), status: response.status })
+      });
+    }
+    const suggestedFilename = suggestedDownloadFilename(url, response.headers.get("content-disposition"));
+    const targetPath = resolveActionPath(
+      config,
+      { ...request, scope: request.scope ?? "workspace" },
+      request.path ?? `.ingen-agent-artifacts/downloads/${suggestedFilename}`
+    );
+    if (typeof targetPath !== "string") {
+      return result(config, request, { accepted: false, error: targetPath });
+    }
+    await mkdir(dirname(targetPath), { recursive: true });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    await writeFile(targetPath, bytes, { flag: "wx" });
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const artifact = browserDownloadArtifact({
+      url: url.toString(),
+      path: pathLabel(config, request, targetPath),
+      bytes: bytes.length,
+      sha256,
+      contentType: response.headers.get("content-type") ?? undefined,
+      suggestedFilename
+    });
+    const verification = verificationResult([
+      await filesystemProbe("browser.download.exists", targetPath, "file"),
+      verificationProbe({
+        id: "browser.download.hash",
+        kind: "artifact_hash",
+        target: targetPath,
+        expectation: "sha256 computed for persisted download",
+        actual: sha256,
+        passed: /^[a-f0-9]{64}$/.test(sha256)
+      })
+    ]);
+    return result(config, request, {
+      accepted: true,
+      path: artifact.path,
+      commandLine: `fetch ${url.toString()} > ${artifact.path}`,
+      routeId: "browser.download",
+      durationMs: Math.max(0, Date.now() - startedAt),
+      timeoutMs,
+      artifacts: [artifact.path],
+      observedChanges: [`download:${artifact.bytes}`, `sha256:${artifact.sha256}`],
+      verification,
+      download: artifact,
+      value: charDeltaValue(bytes.length, 0),
+      userPresenceRequired: true
+    });
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === "AbortError";
+    return result(config, request, {
+      accepted: false,
+      commandLine: `fetch ${url.toString()} > <download>`,
+      routeId: "browser.download",
+      durationMs: Math.max(0, Date.now() - startedAt),
+      timeoutMs,
+      timedOut,
+      failureCategory: timedOut ? "timeout" : "command_error",
+      error: actionError("rust_unavailable", timedOut ? `Download timed out after ${timeoutMs}ms.` : error instanceof Error ? error.message : String(error), {
+        url: url.toString()
+      })
+    });
+  }
+}
+
+async function browserOpenUrlAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Opening an external browser URL requires confirmed:true.", request)
+    });
+  }
+  const url = parseAgentUrl(request, false);
+  if (isIpcError(url)) {
+    return result(config, request, { accepted: false, error: url });
+  }
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$url = ${powerShellString(url.toString())}
+Start-Process $url
+[pscustomobject]@{ opened = $true; url = $url } | ConvertTo-Json -Compress
+`;
+  const execution = executePowerShellJson(script, 8_000);
+  if (!execution.accepted) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: "powershell.exe -EncodedCommand <browser.open_url>",
+      executionAdapter: "powershell",
+      routeId: "browser.open_url",
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut,
+      stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: execution.timedOut ? "timeout" : "command_error",
+      error: execution.error
+    });
+  }
+  const parsed = parseJsonObject<{ opened: boolean; url: string }>(execution.stdout);
+  const page = browserPageSummary({
+    action: "open_url",
+    url: parsed.url,
+    finalUrl: parsed.url,
+    screenshotStatus: "planned",
+    domStatus: "planned",
+    networkLogStatus: "planned"
+  });
+  return result(config, request, {
+    accepted: true,
+    commandLine: "powershell.exe -EncodedCommand <browser.open_url>",
+    executionAdapter: "powershell",
+    routeId: "browser.open_url",
+    exitCode: execution.exitCode,
+    observedChanges: [`browser_opened:${parsed.url}`],
+    verification: verificationResult([
+      verificationProbe({
+        id: "browser.open_url.start_process",
+        kind: "browser_state",
+        target: parsed.url,
+        expectation: "Start-Process accepted URL handoff",
+        actual: `opened=${parsed.opened === true}`,
+        passed: parsed.opened === true
+      })
+    ]),
+    browserPage: page,
+    userPresenceRequired: true
+  });
+}
+
 export async function executeAgentActionRequest(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   try {
     switch (request.action) {
@@ -2469,6 +2859,12 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return await computerClipboardReadAction(config, request);
       case "computer_clipboard_write":
         return await computerClipboardWriteAction(config, request);
+      case "browser_inspect_url":
+        return await browserInspectUrlAction(config, request);
+      case "browser_download":
+        return await browserDownloadAction(config, request);
+      case "browser_open_url":
+        return await browserOpenUrlAction(config, request);
       default:
         return result(config, request, {
           accepted: false,

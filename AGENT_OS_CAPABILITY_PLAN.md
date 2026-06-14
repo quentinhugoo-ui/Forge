@@ -268,6 +268,8 @@ Acceptance:
 - It asks for confirmation before external submissions, purchases, account changes or credential prompts.
 - Downloads are referenced by path and artifact hash.
 
+Status: implemented for the planned scope. The host now exposes `AgentBrowserWebPolicy`, executable web actions for bounded URL inspection, confirmed URL downloads with persisted artifact size and SHA-256, and confirmed external browser navigation. Page summaries include status, content type, title, link/form/download-candidate counts and planned screenshot/DOM/network-log fields. Deep CDP sessions, contained WebExplorer DOM control, Playwright network logs and form submission automation remain planned backends rather than fake direct execution.
+
 ### 8. Documents, Office, Media And Data
 
 Goal: support ordinary computer work beyond code.
