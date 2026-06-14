@@ -5774,7 +5774,8 @@ function modelNameFromError(message: string, fallbackModel: string): string {
 
 const ASSISTANT_PROVIDER_UNAVAILABLE_TEXT = "Provider unavailable. Check connection, auth, or quota.";
 const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1";
-const AGENT_ACTION_LOOP_MAX_STEPS = 6;
+const AGENT_ACTION_LOOP_DEFAULT_MAX_STEPS = 6;
+const AGENT_ACTION_LOOP_FILE_MUTATION_MAX_STEPS = 24;
 const AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK = process.env.INGEN_AGENT_ACTION_COMPAT_FALLBACK === "1";
 const AGENT_ACTION_RESULT_ITEM_LIMIT = 10;
 const AGENT_ACTION_RESULT_MATCH_LIMIT = 8;
@@ -6330,6 +6331,14 @@ function agentActionStepNeedsMutationFollowUp(originalUserText: string, request:
   return Boolean(result.items?.length || result.matches?.length || result.stdoutPreview?.trim());
 }
 
+function agentActionLoopMaxStepsForObjective(originalUserText: string): number {
+  return textLooksLikeFilesystemMutationGoal(originalUserText) ? AGENT_ACTION_LOOP_FILE_MUTATION_MAX_STEPS : AGENT_ACTION_LOOP_DEFAULT_MAX_STEPS;
+}
+
+function agentActionShouldRunFileOrganizationFallback(originalUserText: string, request: AgentActionRequest, result: AgentActionResult): boolean {
+  return agentActionStepNeedsMutationFollowUp(originalUserText, request, result) && agentActionFileOrganizationRequests(originalUserText, request, result).length > 0;
+}
+
 function agentActionLoopContinuationUserText(originalUserText: string, request: AgentActionRequest, result: AgentActionResult, step: number): string {
   const mustContinueAfterDiscovery = agentActionStepNeedsMutationFollowUp(originalUserText, request, result);
   return [
@@ -6714,7 +6723,8 @@ async function executeAssistantAgentActionLoop(params: {
 }): Promise<TranscriptMessage> {
   let assistantMessage = params.assistantMessage;
   let loopState = createAgentActionLoopState(params.originalUserText);
-  for (let step = 0; step < AGENT_ACTION_LOOP_MAX_STEPS; step += 1) {
+  const maxSteps = agentActionLoopMaxStepsForObjective(params.originalUserText);
+  for (let step = 0; step < maxSteps; step += 1) {
     const extracted = extractAgentActionJsonRequest(assistantMessage.text);
     if (!extracted) {
       if (loopState.toolSteps > 0) {
@@ -6758,7 +6768,7 @@ async function executeAssistantAgentActionLoop(params: {
     };
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
     if (!result.accepted) {
-      if (step + 1 < AGENT_ACTION_LOOP_MAX_STEPS) {
+      if (step + 1 < maxSteps) {
         const failureLiveSink = createAssistantLiveTextSink({
           baseTranscript: params.baseTranscript,
           assistantMessageId: assistantMessage.id,
@@ -6798,7 +6808,10 @@ async function executeAssistantAgentActionLoop(params: {
       params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
       return assistantMessage;
     }
-    if (AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK && agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result)) {
+    if (
+      (AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK || agentActionShouldRunFileOrganizationFallback(params.originalUserText, extracted.request, result)) &&
+      agentActionStepNeedsMutationFollowUp(params.originalUserText, extracted.request, result)
+    ) {
       const fallbackMessage = await applyDeterministicOrganizationFallback({
         assistantMessage,
         originalUserText: params.originalUserText,
@@ -6885,6 +6898,33 @@ async function executeAssistantAgentActionLoop(params: {
   const strippedText = removeAgentActionJsonFragments(assistantMessage.text)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  const lastObservation = loopState.observations.at(-1);
+  if (
+    lastObservation?.request &&
+    loopState.lastResult &&
+    agentActionShouldRunFileOrganizationFallback(params.originalUserText, lastObservation.request, loopState.lastResult)
+  ) {
+    const fallbackMessage = await applyDeterministicOrganizationFallback({
+      assistantMessage: {
+        ...assistantMessage,
+        text: `${strippedText}\n\nLa limite de boucle approche, mais la derniere liste contient encore des elements classables. Je bascule sur le fallback fichier borne pour terminer les deplacements evidents avec verification.`
+      },
+      originalUserText: params.originalUserText,
+      request: lastObservation.request,
+      result: loopState.lastResult,
+      agentEvents: params.agentEvents,
+      commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
+    });
+    params.commitTranscript(transcriptWithMessage(params.baseTranscript, fallbackMessage));
+    emitAgentLoopDiagnosticSummary({
+      agentEvents: params.agentEvents,
+      messageId: fallbackMessage.id,
+      outcome: "completed",
+      toolSteps: loopState.toolSteps,
+      loopState: agentActionLoopWithStatus(loopState, "completed")
+    });
+    return fallbackMessage;
+  }
   loopState = agentActionLoopWithStatus(loopState, "max_steps");
   emitAgentLoopDiagnosticSummary({
     agentEvents: params.agentEvents,
@@ -6895,8 +6935,8 @@ async function executeAssistantAgentActionLoop(params: {
   });
   return {
     ...assistantMessage,
-    text: `${strippedText}\n\nFinal summary: agent loop max_steps; stopped after ${AGENT_ACTION_LOOP_MAX_STEPS} local-action steps to keep control explicit.`,
-    proofHash: hashJson({ agentActionLoopMaxSteps: AGENT_ACTION_LOOP_MAX_STEPS, previousProofHash: assistantMessage.proofHash, loopState })
+    text: `${strippedText}\n\nFinal summary: agent loop max_steps; incomplete after ${maxSteps} local-action steps. No further action was executed after this guard fired.`,
+    proofHash: hashJson({ agentActionLoopMaxSteps: maxSteps, previousProofHash: assistantMessage.proofHash, loopState })
   };
 }
 

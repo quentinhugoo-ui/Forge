@@ -169,6 +169,12 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("agentActionLoopFailureContinuationStep");
     expect(mainSource).toContain("AGENT_ACTION_RESULT_PREFIX");
     expect(mainSource).toContain("compactAgentActionResult(result)");
+    expect(mainSource).toContain("AGENT_ACTION_LOOP_DEFAULT_MAX_STEPS");
+    expect(mainSource).toContain("AGENT_ACTION_LOOP_FILE_MUTATION_MAX_STEPS");
+    expect(mainSource).toContain("function agentActionLoopMaxStepsForObjective");
+    expect(mainSource).toContain("function agentActionShouldRunFileOrganizationFallback");
+    expect(mainSource).toContain("La limite de boucle approche");
+    expect(mainSource).toContain("No further action was executed after this guard fired.");
     expect(mainSource).toContain("function agentActionSelectedCapabilityContext");
     expect(mainSource).toContain("agentActionCapabilityDetailManifest(agentActionHostConfig(), capabilityId)");
     expect(mainSource).toContain("AGENT_ACTION_COMPACTION_STATE v1");
@@ -195,7 +201,8 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function reportableAgentActionLoopOutcome");
     expect(mainSource).toContain("function ensureAgentActionLoopFinalSummary");
     expect(mainSource).toContain("Final summary: agent loop ${state.finalStatus}");
-    expect(mainSource).toContain("AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK && agentActionStepNeedsMutationFollowUp");
+    expect(mainSource).toContain("AGENT_ACTION_COMPAT_DETERMINISTIC_FALLBACK || agentActionShouldRunFileOrganizationFallback");
+    expect(mainSource).toContain("Final summary: agent loop max_steps; incomplete after ${maxSteps} local-action steps.");
     expect(mainSource).toContain('outcome: reportableAgentActionLoopOutcome(loopState, "blocked")');
     expect(mainSource).not.toContain('outcome: "deterministic_fallback"');
   });

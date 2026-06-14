@@ -994,6 +994,7 @@ export function App() {
         return;
       }
       setWidgetMinimizingPhase("sides");
+      setWidgetMode(true);
       if (snapshot.leftPanelOpen) {
         void headerShadowStore
           .dispatchControl({ id: "left-panel", command: "toggle_left_panel" })
@@ -1004,7 +1005,6 @@ export function App() {
       if (widgetModeSequenceRef.current !== sequenceToken) {
         return;
       }
-      setWidgetMode(true);
       await waitForWidgetMotion(WIDGET_HANDOFF_SETTLE_MS);
       if (widgetModeSequenceRef.current !== sequenceToken) {
         return;
