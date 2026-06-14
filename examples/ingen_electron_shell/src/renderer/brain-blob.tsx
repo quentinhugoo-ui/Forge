@@ -68,8 +68,8 @@ const BLOB_MOUSE_FLOAT_OFFSET = 84;
 
 /* Camera the shaders ray-march with; mirrored on the CPU to project the cursor
    onto the blob's z = 0 plane. Keep in sync with the shader `ro`/focal. */
-const BLOB_FOCAL = 1.3;
-const BLOB_CAM_Z = 2.6;
+const BLOB_FOCAL = 1.72;
+const BLOB_CAM_Z = 2.28;
 const BLOB_CAM_Y = 0.03;
 const BLOB_POINTER_REACH = 0.78;
 
@@ -382,8 +382,8 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
   let colorOne = vec3<f32>(1.0, 0.749, 0.282);
   let colorTwo = vec3<f32>(0.745, 0.290, 0.114);
 
-  let ro = vec3<f32>(0.0, 0.03, -2.6);
-  let rd = normalize(vec3<f32>(uv.x, upY, 1.3));
+  let ro = vec3<f32>(0.0, 0.03, -2.28);
+  let rd = normalize(vec3<f32>(uv.x, upY, 1.72));
 
   /* Bounding-sphere clip: rays that miss the blob volume skip the march. */
   let b = dot(-ro, rd);
@@ -567,8 +567,8 @@ void main() {
   vec3 colorOne = vec3(1.0, 0.749, 0.282);
   vec3 colorTwo = vec3(0.745, 0.290, 0.114);
 
-  vec3 ro = vec3(0.0, 0.03, -2.6);
-  vec3 rd = normalize(vec3(uv.x, upY, 1.3));
+  vec3 ro = vec3(0.0, 0.03, -2.28);
+  vec3 rd = normalize(vec3(uv.x, upY, 1.72));
 
   float b = dot(-ro, rd);
   float h2 = dot(ro, ro) - b * b;

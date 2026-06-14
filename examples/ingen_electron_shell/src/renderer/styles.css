@@ -9628,13 +9628,13 @@ ol.assistantText__list li::before {
   --brain-blob-gleam: 50%;
   --brain-blob-gleam-opacity: 0.34;
   position: fixed;
-  right: clamp(-90px, -5vw, 24px);
-  bottom: clamp(-330px, -24vh, -170px);
+  right: clamp(-190px, -11vw, -100px);
+  bottom: clamp(-420px, -36vh, -280px);
   z-index: 0;
   display: grid;
   place-items: center;
-  width: clamp(860px, 74vw, 1320px);
-  height: clamp(860px, 102vh, 1320px);
+  width: clamp(860px, 76vw, 1180px);
+  height: clamp(780px, 106vh, 1060px);
   pointer-events: none;
   opacity: 0.96;
   overflow: visible;
@@ -9666,10 +9666,6 @@ ol.assistantText__list li::before {
     drop-shadow(0 0 20px var(--color-three));
 }
 
-.brainBlob--webgpu .brainBlob__fallback {
-  opacity: 0;
-}
-
 .brainBlob__fallback {
   border-radius: 48% 52% 58% 42% / 55% 47% 53% 45%;
   background:
@@ -9687,6 +9683,10 @@ ol.assistantText__list li::before {
   transform: scale(0.72);
   transition: opacity 260ms ease-out;
   animation: brainBlobFallbackMorph var(--brain-blob-time) cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.brainBlob--webgpu .brainBlob__fallback {
+  opacity: 0;
 }
 
 .brainBlob__fallback::before,
