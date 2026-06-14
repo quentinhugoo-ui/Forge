@@ -418,7 +418,7 @@ export function App() {
     };
 
     scheduleHitRegionSync();
-    const settleTimers = [80, WIDGET_NATIVE_SHRINK_DELAY_MS + 140, WIDGET_VISUAL_SETTLE_DELAY_MS + 120].map((delay) =>
+    const settleTimers = [80, WIDGET_NATIVE_SHRINK_LEAD_MS + 120, WIDGET_HANDOFF_SETTLE_MS + 120].map((delay) =>
       window.setTimeout(scheduleHitRegionSync, delay)
     );
     const resizeObserver = new ResizeObserver(scheduleHitRegionSync);

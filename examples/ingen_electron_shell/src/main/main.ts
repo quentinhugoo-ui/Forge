@@ -10361,7 +10361,7 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   const bounds = widgetWindowBounds(window);
   console.info("Applying native widget window bounds", { id: window.id, bounds });
   clearWidgetWindowBoundsAnimationTimer();
-  window.setBounds(bounds, true);
+  window.setBounds(bounds, false);
   window.show();
   window.focus();
 }
