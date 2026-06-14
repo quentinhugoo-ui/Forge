@@ -44,6 +44,15 @@ pub struct BangerNewObjectPrepareRequest {
     pub viewport_height: Option<u32>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerGaussianSplatAssetPrepareRequest {
+    pub asset_id: Option<String>,
+    pub ply_path: String,
+    pub max_splats: Option<usize>,
+    pub bucket_count: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeRenderPrepareResponse {
@@ -105,6 +114,59 @@ pub struct BangerNewObjectPrepareResponse {
     pub promotion_gate: &'static str,
     pub editable_scene_manifest: BangerEditableSceneManifest,
     pub verifier: BangerNativeRenderVerifier,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerGaussianSplatAssetPrepareResponse {
+    pub ok: bool,
+    pub schema: &'static str,
+    pub asset_id: String,
+    pub source_path: String,
+    pub source_hash: String,
+    pub splat_count: usize,
+    pub truncated: bool,
+    pub ply_format: &'static str,
+    pub property_count: usize,
+    pub bounds_min: [f32; 3],
+    pub bounds_max: [f32; 3],
+    pub bounding_sphere: [f32; 4],
+    pub positions_buffer_hash: String,
+    pub covariance_buffer_hash: String,
+    pub opacity_buffer_hash: String,
+    pub sh_buffer_hash: String,
+    pub sort_key_hash: String,
+    pub bucket_manifest_hash: String,
+    pub gpu_layout_hash: String,
+    pub asset_manifest_hash: String,
+    pub gpu_layout: BangerGaussianSplatGpuLayout,
+    pub buckets: Vec<BangerGaussianSplatAssetBucket>,
+    pub verifier: BangerNativeRenderVerifier,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerGaussianSplatGpuLayout {
+    pub schema: &'static str,
+    pub position_format: &'static str,
+    pub covariance_format: &'static str,
+    pub opacity_format: &'static str,
+    pub color_format: &'static str,
+    pub sort_key_format: &'static str,
+    pub bytes_per_splat: u32,
+    pub layout_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerGaussianSplatAssetBucket {
+    pub bucket_id: u32,
+    pub first_splat: u32,
+    pub splat_count: u32,
+    pub sort_key_hash: String,
+    pub bounds_min: [f32; 3],
+    pub bounds_max: [f32; 3],
+    pub proof_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -655,6 +717,110 @@ impl BangerNativeEngine {
                     "cargo test --manifest-path examples\\ingen_native_services\\Cargo.toml banger_native_engine::tests::prepares_newobject_contract_as_scene_manifest_edit",
                 rollback_path:
                     "remove prepare_newobject_contract and keep the native_tandem_render handoff manifest from step 1",
+            },
+        })
+    }
+
+    pub fn prepare_gaussian_splat_asset(
+        request: BangerGaussianSplatAssetPrepareRequest,
+    ) -> Result<BangerGaussianSplatAssetPrepareResponse, String> {
+        let asset_id =
+            sanitize_scene_id(request.asset_id.as_deref().unwrap_or("gaussian_splat_asset"));
+        let ply_path = PathBuf::from(&request.ply_path);
+        let bytes = fs::read(&ply_path).map_err(|err| {
+            format!(
+                "failed to read Gaussian splat PLY {}: {err}",
+                ply_path.display()
+            )
+        })?;
+        let source_hash = hash_bytes_hex("forge.banger.gaussian_splat.source_ply.v1", &bytes);
+        let mut parsed = parse_gaussian_splat_ply(&bytes)?;
+        let max_splats = request.max_splats.unwrap_or(parsed.splats.len()).max(1);
+        let truncated = parsed.splats.len() > max_splats;
+        parsed.splats.truncate(max_splats);
+        if parsed.splats.is_empty() {
+            return Err("Gaussian splat PLY contains no vertex splats".to_string());
+        }
+
+        let positions = gaussian_splat_positions_buffer(&parsed.splats);
+        let covariance = gaussian_splat_covariance_buffer(&parsed.splats);
+        let opacity = gaussian_splat_opacity_buffer(&parsed.splats);
+        let sh = gaussian_splat_sh_buffer(&parsed.splats);
+        let sort_keys = gaussian_splat_asset_sort_key_buffer(&parsed.splats);
+        let positions_buffer_hash =
+            hash_bytes_hex("forge.banger.gaussian_splat.positions_buffer.v1", &positions);
+        let covariance_buffer_hash =
+            hash_bytes_hex("forge.banger.gaussian_splat.covariance_buffer.v1", &covariance);
+        let opacity_buffer_hash =
+            hash_bytes_hex("forge.banger.gaussian_splat.opacity_buffer.v1", &opacity);
+        let sh_buffer_hash = hash_bytes_hex("forge.banger.gaussian_splat.sh_buffer.v1", &sh);
+        let sort_key_hash =
+            hash_bytes_hex("forge.banger.gaussian_splat.sort_key_buffer.v1", &sort_keys);
+        let (bounds_min, bounds_max) = gaussian_splat_asset_bounds(&parsed.splats);
+        let bounding_sphere = bounding_sphere(bounds_min, bounds_max);
+        let bucket_count = request.bucket_count.unwrap_or(32).clamp(1, 4096);
+        let buckets = gaussian_splat_asset_buckets(&parsed.splats, bucket_count);
+        let bucket_manifest_hash = gaussian_splat_asset_bucket_manifest_hash(&buckets);
+        let gpu_layout_hash = gaussian_splat_gpu_layout_hash();
+        let gpu_layout = BangerGaussianSplatGpuLayout {
+            schema: "forge.banger.gaussian_splat_gpu_layout.v1",
+            position_format: "float32x3",
+            covariance_format: "scale_log_float32x3+rotation_quat_float32x4",
+            opacity_format: "sigmoid_float32",
+            color_format: "spherical_harmonics_l3_dc_rest_float32",
+            sort_key_format: "depth_desc_u32_stable_index_u32",
+            bytes_per_splat: 12 + 28 + 4 + 192 + 8,
+            layout_hash: gpu_layout_hash.clone(),
+        };
+        let asset_manifest_hash = gaussian_splat_asset_manifest_hash(
+            &asset_id,
+            &source_hash,
+            parsed.format,
+            parsed.property_names.len(),
+            parsed.splats.len(),
+            truncated,
+            bounds_min,
+            bounds_max,
+            &positions_buffer_hash,
+            &covariance_buffer_hash,
+            &opacity_buffer_hash,
+            &sh_buffer_hash,
+            &sort_key_hash,
+            &bucket_manifest_hash,
+            &gpu_layout_hash,
+        );
+
+        Ok(BangerGaussianSplatAssetPrepareResponse {
+            ok: true,
+            schema: "forge.banger.gaussian_splat_asset_manifest.v1",
+            asset_id,
+            source_path: ply_path.to_string_lossy().to_string(),
+            source_hash,
+            splat_count: parsed.splats.len(),
+            truncated,
+            ply_format: parsed.format,
+            property_count: parsed.property_names.len(),
+            bounds_min,
+            bounds_max,
+            bounding_sphere,
+            positions_buffer_hash,
+            covariance_buffer_hash,
+            opacity_buffer_hash,
+            sh_buffer_hash,
+            sort_key_hash,
+            bucket_manifest_hash,
+            gpu_layout_hash,
+            asset_manifest_hash,
+            gpu_layout,
+            buckets,
+            verifier: BangerNativeRenderVerifier {
+                wall: "latency+memory+proof_quality",
+                frontier_hypothesis:
+                    "Banger consumes real 3DGS PLY assets as content-addressed GPU buffers before any rasterizer promotion.",
+                local_gate:
+                    "forge-cargo test --manifest-path examples\\ingen_native_services\\Cargo.toml banger_native_engine::tests::prepares_real_gaussian_splat_ply_asset_buffers",
+                rollback_path:
+                    "remove prepare_gaussian_splat_asset and keep gaussian_splat_layer_manifest as the hybrid scene placeholder",
             },
         })
     }
@@ -2407,6 +2573,527 @@ fn gaussian_splat_layer_manifest_hash(
     hex32(h.finalize().into())
 }
 
+#[derive(Debug, Clone, Copy)]
+enum PlyScalarType {
+    F32,
+    F64,
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+}
+
+#[derive(Debug, Clone)]
+struct PlyVertexProperty {
+    name: String,
+    scalar_type: PlyScalarType,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedPlySplatAsset {
+    format: &'static str,
+    property_names: Vec<String>,
+    splats: Vec<ParsedGaussianSplat>,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedGaussianSplat {
+    position: [f32; 3],
+    scale_log: [f32; 3],
+    rotation: [f32; 4],
+    opacity: f32,
+    sh_dc: [f32; 3],
+    sh_rest: [f32; 45],
+}
+
+fn parse_gaussian_splat_ply(bytes: &[u8]) -> Result<ParsedPlySplatAsset, String> {
+    let header_marker = find_subslice(bytes, b"end_header")
+        .ok_or_else(|| "PLY header is missing end_header".to_string())?;
+    let header_end = advance_ply_header_end(bytes, header_marker + b"end_header".len());
+    let header = std::str::from_utf8(&bytes[..header_end])
+        .map_err(|err| format!("PLY header is not valid UTF-8: {err}"))?;
+    let (format, vertex_count, properties) = parse_ply_header(header)?;
+    if vertex_count == 0 {
+        return Err("PLY vertex element is empty".to_string());
+    }
+    let payload = &bytes[header_end..];
+    let splats = match format {
+        "ply_ascii_1_0" => parse_ascii_gaussian_splats(payload, vertex_count, &properties)?,
+        "ply_binary_little_endian_1_0" => {
+            parse_binary_little_gaussian_splats(payload, vertex_count, &properties)?
+        }
+        _ => return Err(format!("unsupported Gaussian splat PLY format: {format}")),
+    };
+    Ok(ParsedPlySplatAsset {
+        format,
+        property_names: properties.iter().map(|property| property.name.clone()).collect(),
+        splats,
+    })
+}
+
+fn parse_ply_header(header: &str) -> Result<(&'static str, usize, Vec<PlyVertexProperty>), String> {
+    let mut lines = header.lines();
+    if lines.next().map(str::trim) != Some("ply") {
+        return Err("PLY file must start with 'ply'".to_string());
+    }
+    let mut format = None;
+    let mut vertex_count = None;
+    let mut properties = Vec::new();
+    let mut inside_vertex = false;
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("comment ") {
+            continue;
+        }
+        let parts = line.split_whitespace().collect::<Vec<_>>();
+        match parts.as_slice() {
+            ["format", "ascii", "1.0"] => format = Some("ply_ascii_1_0"),
+            ["format", "binary_little_endian", "1.0"] => {
+                format = Some("ply_binary_little_endian_1_0")
+            }
+            ["format", other, version] => {
+                return Err(format!("unsupported PLY format {other} {version}"));
+            }
+            ["element", "vertex", count] => {
+                vertex_count = Some(
+                    count
+                        .parse::<usize>()
+                        .map_err(|err| format!("invalid PLY vertex count {count}: {err}"))?,
+                );
+                inside_vertex = true;
+            }
+            ["element", ..] => inside_vertex = false,
+            ["property", "list", ..] if inside_vertex => {
+                return Err("Gaussian splat vertex properties must be scalar, not list".to_string());
+            }
+            ["property", scalar_type, name] if inside_vertex => {
+                properties.push(PlyVertexProperty {
+                    name: (*name).to_string(),
+                    scalar_type: parse_ply_scalar_type(scalar_type)?,
+                });
+            }
+            ["end_header"] => break,
+            _ => {}
+        }
+    }
+    let format = format.ok_or_else(|| "PLY header is missing format".to_string())?;
+    let vertex_count =
+        vertex_count.ok_or_else(|| "PLY header is missing element vertex".to_string())?;
+    if properties.is_empty() {
+        return Err("PLY vertex element has no scalar properties".to_string());
+    }
+    for required in ["x", "y", "z"] {
+        if !properties.iter().any(|property| property.name == required) {
+            return Err(format!("Gaussian splat PLY is missing required property {required}"));
+        }
+    }
+    Ok((format, vertex_count, properties))
+}
+
+fn parse_ply_scalar_type(raw: &str) -> Result<PlyScalarType, String> {
+    match raw {
+        "float" | "float32" => Ok(PlyScalarType::F32),
+        "double" | "float64" => Ok(PlyScalarType::F64),
+        "uchar" | "uint8" => Ok(PlyScalarType::U8),
+        "char" | "int8" => Ok(PlyScalarType::I8),
+        "ushort" | "uint16" => Ok(PlyScalarType::U16),
+        "short" | "int16" => Ok(PlyScalarType::I16),
+        "uint" | "uint32" => Ok(PlyScalarType::U32),
+        "int" | "int32" => Ok(PlyScalarType::I32),
+        _ => Err(format!("unsupported PLY scalar type: {raw}")),
+    }
+}
+
+fn parse_ascii_gaussian_splats(
+    payload: &[u8],
+    vertex_count: usize,
+    properties: &[PlyVertexProperty],
+) -> Result<Vec<ParsedGaussianSplat>, String> {
+    let text = std::str::from_utf8(payload)
+        .map_err(|err| format!("ASCII PLY payload is not UTF-8: {err}"))?;
+    let mut values = text.split_whitespace();
+    let mut splats = Vec::with_capacity(vertex_count);
+    for vertex_index in 0..vertex_count {
+        let mut vertex = Vec::with_capacity(properties.len());
+        for property in properties {
+            let raw = values.next().ok_or_else(|| {
+                format!(
+                    "ASCII PLY ended while reading vertex {vertex_index} property {}",
+                    property.name
+                )
+            })?;
+            vertex.push((
+                property.name.as_str(),
+                raw.parse::<f32>()
+                    .map_err(|err| format!("invalid ASCII PLY float {raw}: {err}"))?,
+            ));
+        }
+        splats.push(parsed_gaussian_splat_from_properties(&vertex)?);
+    }
+    Ok(splats)
+}
+
+fn parse_binary_little_gaussian_splats(
+    payload: &[u8],
+    vertex_count: usize,
+    properties: &[PlyVertexProperty],
+) -> Result<Vec<ParsedGaussianSplat>, String> {
+    let stride = properties
+        .iter()
+        .map(|property| ply_scalar_size(property.scalar_type))
+        .sum::<usize>();
+    let expected = vertex_count
+        .checked_mul(stride)
+        .ok_or_else(|| "binary PLY vertex payload is too large".to_string())?;
+    if payload.len() < expected {
+        return Err(format!(
+            "binary PLY payload has {} bytes but {expected} are required",
+            payload.len()
+        ));
+    }
+    let mut splats = Vec::with_capacity(vertex_count);
+    let mut offset = 0;
+    for _ in 0..vertex_count {
+        let mut vertex = Vec::with_capacity(properties.len());
+        for property in properties {
+            let value = read_ply_scalar_as_f32(payload, offset, property.scalar_type)?;
+            offset += ply_scalar_size(property.scalar_type);
+            vertex.push((property.name.as_str(), value));
+        }
+        splats.push(parsed_gaussian_splat_from_properties(&vertex)?);
+    }
+    Ok(splats)
+}
+
+fn parsed_gaussian_splat_from_properties(
+    properties: &[(&str, f32)],
+) -> Result<ParsedGaussianSplat, String> {
+    let position = [
+        required_ply_property(properties, "x")?,
+        required_ply_property(properties, "y")?,
+        required_ply_property(properties, "z")?,
+    ];
+    let scale_log = [
+        optional_ply_property(properties, "scale_0", -8.0),
+        optional_ply_property(properties, "scale_1", -8.0),
+        optional_ply_property(properties, "scale_2", -8.0),
+    ];
+    let rotation = normalize_quaternion([
+        optional_ply_property(properties, "rot_0", 1.0),
+        optional_ply_property(properties, "rot_1", 0.0),
+        optional_ply_property(properties, "rot_2", 0.0),
+        optional_ply_property(properties, "rot_3", 0.0),
+    ]);
+    let mut sh_rest = [0.0; 45];
+    for (index, value) in sh_rest.iter_mut().enumerate() {
+        *value = optional_ply_property(properties, &format!("f_rest_{index}"), 0.0);
+    }
+    Ok(ParsedGaussianSplat {
+        position,
+        scale_log,
+        rotation,
+        opacity: sigmoid(optional_ply_property(properties, "opacity", 0.0)),
+        sh_dc: [
+            optional_ply_property(properties, "f_dc_0", 0.0),
+            optional_ply_property(properties, "f_dc_1", 0.0),
+            optional_ply_property(properties, "f_dc_2", 0.0),
+        ],
+        sh_rest,
+    })
+}
+
+fn gaussian_splat_positions_buffer(splats: &[ParsedGaussianSplat]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(splats.len() * 12);
+    for splat in splats {
+        push_f32s(&mut out, &splat.position);
+    }
+    out
+}
+
+fn gaussian_splat_covariance_buffer(splats: &[ParsedGaussianSplat]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(splats.len() * 28);
+    for splat in splats {
+        push_f32s(&mut out, &splat.scale_log);
+        push_f32s(&mut out, &splat.rotation);
+    }
+    out
+}
+
+fn gaussian_splat_opacity_buffer(splats: &[ParsedGaussianSplat]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(splats.len() * 4);
+    for splat in splats {
+        out.extend_from_slice(&splat.opacity.to_le_bytes());
+    }
+    out
+}
+
+fn gaussian_splat_sh_buffer(splats: &[ParsedGaussianSplat]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(splats.len() * 192);
+    for splat in splats {
+        push_f32s(&mut out, &splat.sh_dc);
+        push_f32s(&mut out, &splat.sh_rest);
+    }
+    out
+}
+
+fn gaussian_splat_asset_sort_key_buffer(splats: &[ParsedGaussianSplat]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(splats.len() * 8);
+    for (index, splat) in splats.iter().enumerate() {
+        out.extend_from_slice(&depth_desc_sort_key(splat.position[2]).to_le_bytes());
+        out.extend_from_slice(&(index as u32).to_le_bytes());
+    }
+    out
+}
+
+fn gaussian_splat_asset_bounds(splats: &[ParsedGaussianSplat]) -> ([f32; 3], [f32; 3]) {
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for splat in splats {
+        let radius = gaussian_splat_radius(splat);
+        for axis in 0..3 {
+            min[axis] = min[axis].min(splat.position[axis] - radius);
+            max[axis] = max[axis].max(splat.position[axis] + radius);
+        }
+    }
+    (min, max)
+}
+
+fn gaussian_splat_asset_buckets(
+    splats: &[ParsedGaussianSplat],
+    bucket_count: u32,
+) -> Vec<BangerGaussianSplatAssetBucket> {
+    let mut indices = (0..splats.len()).collect::<Vec<_>>();
+    indices.sort_by(|left, right| {
+        splats[*right]
+            .position[2]
+            .partial_cmp(&splats[*left].position[2])
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.cmp(right))
+    });
+    let bucket_total = (bucket_count as usize).min(splats.len()).max(1);
+    let bucket_size = (splats.len() + bucket_total - 1) / bucket_total;
+    indices
+        .chunks(bucket_size)
+        .enumerate()
+        .map(|(bucket_index, chunk)| {
+            let bucket_splats = chunk
+                .iter()
+                .map(|index| splats[*index].clone())
+                .collect::<Vec<_>>();
+            let (bounds_min, bounds_max) = gaussian_splat_asset_bounds(&bucket_splats);
+            let sort_key_hash = gaussian_splat_bucket_sort_key_hash(chunk, splats);
+            let proof_hash = gaussian_splat_asset_bucket_proof_hash(
+                bucket_index as u32,
+                (bucket_index * bucket_size) as u32,
+                chunk.len() as u32,
+                bounds_min,
+                bounds_max,
+                &sort_key_hash,
+            );
+            BangerGaussianSplatAssetBucket {
+                bucket_id: bucket_index as u32,
+                first_splat: (bucket_index * bucket_size) as u32,
+                splat_count: chunk.len() as u32,
+                sort_key_hash,
+                bounds_min,
+                bounds_max,
+                proof_hash,
+            }
+        })
+        .collect()
+}
+
+fn gaussian_splat_radius(splat: &ParsedGaussianSplat) -> f32 {
+    splat
+        .scale_log
+        .iter()
+        .map(|value| value.exp().abs())
+        .fold(0.0001, f32::max)
+}
+
+fn gaussian_splat_gpu_layout_hash() -> String {
+    hash_text_hex(
+        "forge.banger.gaussian_splat_gpu_layout.v1",
+        "position=float32x3;covariance=scale_log_float32x3+rotation_quat_float32x4;opacity=sigmoid_float32;color=sh_l3_48xf32;sort=depth_desc_u32+stable_index_u32",
+    )
+}
+
+fn gaussian_splat_asset_manifest_hash(
+    asset_id: &str,
+    source_hash: &str,
+    ply_format: &str,
+    property_count: usize,
+    splat_count: usize,
+    truncated: bool,
+    bounds_min: [f32; 3],
+    bounds_max: [f32; 3],
+    positions_buffer_hash: &str,
+    covariance_buffer_hash: &str,
+    opacity_buffer_hash: &str,
+    sh_buffer_hash: &str,
+    sort_key_hash: &str,
+    bucket_manifest_hash: &str,
+    gpu_layout_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat_asset_manifest.v1\0");
+    h.update(asset_id.as_bytes());
+    h.update(source_hash.as_bytes());
+    h.update(ply_format.as_bytes());
+    h.update((property_count as u64).to_le_bytes());
+    h.update((splat_count as u64).to_le_bytes());
+    h.update([truncated as u8]);
+    for value in bounds_min.iter().chain(bounds_max.iter()) {
+        h.update(value.to_le_bytes());
+    }
+    h.update(positions_buffer_hash.as_bytes());
+    h.update(covariance_buffer_hash.as_bytes());
+    h.update(opacity_buffer_hash.as_bytes());
+    h.update(sh_buffer_hash.as_bytes());
+    h.update(sort_key_hash.as_bytes());
+    h.update(bucket_manifest_hash.as_bytes());
+    h.update(gpu_layout_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_asset_bucket_manifest_hash(
+    buckets: &[BangerGaussianSplatAssetBucket],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat_bucket_manifest.v1\0");
+    for bucket in buckets {
+        h.update(bucket.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_bucket_sort_key_hash(
+    indices: &[usize],
+    splats: &[ParsedGaussianSplat],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat_bucket_sort_key.v1\0");
+    for index in indices {
+        h.update(depth_desc_sort_key(splats[*index].position[2]).to_le_bytes());
+        h.update((*index as u32).to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_asset_bucket_proof_hash(
+    bucket_id: u32,
+    first_splat: u32,
+    splat_count: u32,
+    bounds_min: [f32; 3],
+    bounds_max: [f32; 3],
+    sort_key_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat_asset_bucket.v1\0");
+    h.update(bucket_id.to_le_bytes());
+    h.update(first_splat.to_le_bytes());
+    h.update(splat_count.to_le_bytes());
+    for value in bounds_min.iter().chain(bounds_max.iter()) {
+        h.update(value.to_le_bytes());
+    }
+    h.update(sort_key_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn required_ply_property(properties: &[(&str, f32)], name: &str) -> Result<f32, String> {
+    properties
+        .iter()
+        .find_map(|(property_name, value)| (*property_name == name).then_some(*value))
+        .ok_or_else(|| format!("Gaussian splat PLY is missing required property {name}"))
+}
+
+fn optional_ply_property(properties: &[(&str, f32)], name: &str, fallback: f32) -> f32 {
+    properties
+        .iter()
+        .find_map(|(property_name, value)| (*property_name == name).then_some(*value))
+        .unwrap_or(fallback)
+}
+
+fn push_f32s(out: &mut Vec<u8>, values: &[f32]) {
+    for value in values {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
+fn normalize_quaternion(mut value: [f32; 4]) -> [f32; 4] {
+    let len = value.iter().map(|component| component * component).sum::<f32>().sqrt();
+    if len > f32::EPSILON {
+        for component in &mut value {
+            *component /= len;
+        }
+        value
+    } else {
+        [1.0, 0.0, 0.0, 0.0]
+    }
+}
+
+fn sigmoid(value: f32) -> f32 {
+    1.0 / (1.0 + (-value).exp())
+}
+
+fn depth_desc_sort_key(value: f32) -> u32 {
+    let bits = value.to_bits();
+    let asc = if bits & 0x8000_0000 != 0 {
+        !bits
+    } else {
+        bits ^ 0x8000_0000
+    };
+    !asc
+}
+
+fn ply_scalar_size(scalar_type: PlyScalarType) -> usize {
+    match scalar_type {
+        PlyScalarType::F32 | PlyScalarType::U32 | PlyScalarType::I32 => 4,
+        PlyScalarType::F64 => 8,
+        PlyScalarType::U8 | PlyScalarType::I8 => 1,
+        PlyScalarType::U16 | PlyScalarType::I16 => 2,
+    }
+}
+
+fn read_ply_scalar_as_f32(
+    payload: &[u8],
+    offset: usize,
+    scalar_type: PlyScalarType,
+) -> Result<f32, String> {
+    let end = offset + ply_scalar_size(scalar_type);
+    let bytes = payload
+        .get(offset..end)
+        .ok_or_else(|| "binary PLY scalar read exceeded payload".to_string())?;
+    Ok(match scalar_type {
+        PlyScalarType::F32 => f32::from_le_bytes(bytes.try_into().expect("f32 scalar width")),
+        PlyScalarType::F64 => {
+            f64::from_le_bytes(bytes.try_into().expect("f64 scalar width")) as f32
+        }
+        PlyScalarType::U8 => bytes[0] as f32,
+        PlyScalarType::I8 => i8::from_le_bytes(bytes.try_into().expect("i8 scalar width")) as f32,
+        PlyScalarType::U16 => u16::from_le_bytes(bytes.try_into().expect("u16 scalar width")) as f32,
+        PlyScalarType::I16 => i16::from_le_bytes(bytes.try_into().expect("i16 scalar width")) as f32,
+        PlyScalarType::U32 => u32::from_le_bytes(bytes.try_into().expect("u32 scalar width")) as f32,
+        PlyScalarType::I32 => i32::from_le_bytes(bytes.try_into().expect("i32 scalar width")) as f32,
+    })
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|window| window == needle)
+}
+
+fn advance_ply_header_end(bytes: &[u8], mut offset: usize) -> usize {
+    if bytes.get(offset) == Some(&b'\r') {
+        offset += 1;
+    }
+    if bytes.get(offset) == Some(&b'\n') {
+        offset += 1;
+    }
+    offset
+}
+
 fn scene_representation_mix(
     submissions: &[BangerNativeSceneSubmissionNode],
 ) -> Vec<BangerNativeRepresentationMixEntry> {
@@ -3558,6 +4245,14 @@ fn hash_text_hex(schema: &str, text: &str) -> String {
     hex32(h.finalize().into())
 }
 
+fn hash_bytes_hex(schema: &str, bytes: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(schema.as_bytes());
+    h.update(b"\0");
+    h.update(bytes);
+    hex32(h.finalize().into())
+}
+
 fn hex32(bytes: [u8; 32]) -> String {
     let mut out = String::with_capacity(64);
     for byte in bytes {
@@ -3999,6 +4694,80 @@ mod tests {
             .iter()
             .any(|slot| slot.kind == "meshlet_page" && slot.usage == "storage_read_indirect_draw"));
         assert!(response.render_handoff_hash.len() == 64);
+    }
+
+    #[test]
+    fn prepares_real_gaussian_splat_ply_asset_buffers() {
+        let path = fresh_tmp_path("banger-native-engine", "gaussian-splat-ply");
+        let _tmp = TmpDir::new(path.clone());
+        fs::create_dir_all(&path).expect("tmp dir");
+        let ply_path = path.join("scan_room.ply");
+        fs::write(
+            &ply_path,
+            r#"ply
+format ascii 1.0
+element vertex 2
+property float x
+property float y
+property float z
+property float f_dc_0
+property float f_dc_1
+property float f_dc_2
+property float opacity
+property float scale_0
+property float scale_1
+property float scale_2
+property float rot_0
+property float rot_1
+property float rot_2
+property float rot_3
+end_header
+0 0 0 0.2 0.3 0.4 0.0 -2 -2 -2 1 0 0 0
+1 2 3 0.5 0.6 0.7 1.0 -1 -1 -1 0.70710677 0 0.70710677 0
+"#,
+        )
+        .expect("write ply");
+
+        let response =
+            BangerNativeEngine::prepare_gaussian_splat_asset(BangerGaussianSplatAssetPrepareRequest {
+                asset_id: Some("scan_room".to_string()),
+                ply_path: ply_path.to_string_lossy().to_string(),
+                max_splats: None,
+                bucket_count: Some(2),
+            })
+            .expect("gaussian splat asset");
+
+        assert!(response.ok);
+        assert_eq!(response.schema, "forge.banger.gaussian_splat_asset_manifest.v1");
+        assert_eq!(response.asset_id, "scan_room");
+        assert_eq!(response.splat_count, 2);
+        assert!(!response.truncated);
+        assert_eq!(response.ply_format, "ply_ascii_1_0");
+        assert_eq!(response.property_count, 14);
+        assert_eq!(response.buckets.len(), 2);
+        assert_eq!(
+            response.gpu_layout.covariance_format,
+            "scale_log_float32x3+rotation_quat_float32x4"
+        );
+        assert_eq!(response.gpu_layout.bytes_per_splat, 244);
+        assert_eq!(response.source_hash.len(), 64);
+        assert_eq!(response.positions_buffer_hash.len(), 64);
+        assert_eq!(response.covariance_buffer_hash.len(), 64);
+        assert_eq!(response.opacity_buffer_hash.len(), 64);
+        assert_eq!(response.sh_buffer_hash.len(), 64);
+        assert_eq!(response.sort_key_hash.len(), 64);
+        assert_eq!(response.bucket_manifest_hash.len(), 64);
+        assert_eq!(response.gpu_layout_hash.len(), 64);
+        assert_eq!(response.asset_manifest_hash.len(), 64);
+        assert!(response.bounds_min.iter().all(|value| value.is_finite()));
+        assert!(response.bounds_max.iter().all(|value| value.is_finite()));
+        assert!(response.bounding_sphere.iter().all(|value| value.is_finite()));
+        assert!(response
+            .buckets
+            .iter()
+            .all(|bucket| bucket.splat_count > 0
+                && bucket.sort_key_hash.len() == 64
+                && bucket.proof_hash.len() == 64));
     }
 
     #[test]
