@@ -651,7 +651,6 @@ pub struct BangerNativeSceneSubmissionNode {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeGpuScenePacket {
     pub schema: &'static str,
-    pub schema_version: u32,
     pub authority: &'static str,
     pub clean_room_basis: &'static str,
     pub source_contract_hash: String,
@@ -669,16 +668,8 @@ pub struct BangerNativeGpuScenePacket {
     pub instance_payload_data_hash: String,
     pub material_table_hash: String,
     pub upload_ranges_hash: String,
-    pub upload_allocator_hash: String,
-    pub instance_ranges_hash: String,
-    pub payload_flags_hash: String,
-    pub validation_receipt_hash: String,
     pub packet_hash: String,
     pub primitives: Vec<BangerNativeGpuScenePrimitive>,
-    pub upload_ranges: Vec<BangerNativeGpuSceneUploadRange>,
-    pub instance_ranges: Vec<BangerNativeGpuSceneInstanceRange>,
-    pub payload_flags: Vec<BangerNativeGpuScenePayloadFlags>,
-    pub validation_receipt: BangerNativeGpuSceneValidationReceipt,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -695,7 +686,6 @@ pub struct BangerNativeGpuScenePrimitive {
     pub instance_count: u32,
     pub payload_data_offset: u32,
     pub payload_float4_count: u32,
-    pub payload_flags_word: u32,
     pub resource_slots: Vec<u32>,
     pub material_record_hash: String,
     pub primitive_flags_word: u32,
@@ -703,67 +693,6 @@ pub struct BangerNativeGpuScenePrimitive {
     pub transform_hash: String,
     pub upload_range_hash: String,
     pub primitive_hash: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BangerNativeGpuSceneUploadRange {
-    pub primitive_id: u32,
-    pub object_id: String,
-    pub primitive_scene_data_offset: u32,
-    pub primitive_scene_data_count: u32,
-    pub instance_scene_data_offset: u32,
-    pub instance_count: u32,
-    pub payload_data_offset: u32,
-    pub payload_float4_count: u32,
-    pub payload_flags_word: u32,
-    pub dirty_flags_word: u32,
-    pub upload_hash: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BangerNativeGpuSceneInstanceRange {
-    pub primitive_id: u32,
-    pub object_id: String,
-    pub instance_scene_data_offset: u32,
-    pub instance_count: u32,
-    pub transform_hash: String,
-    pub previous_transform_hash: String,
-    pub local_bounds_hash: String,
-    pub range_hash: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BangerNativeGpuScenePayloadFlags {
-    pub primitive_id: u32,
-    pub object_id: String,
-    pub has_transform: bool,
-    pub has_previous_transform: bool,
-    pub has_material_payload: bool,
-    pub has_custom_data: bool,
-    pub has_local_bounds: bool,
-    pub has_skinning: bool,
-    pub has_debug_data: bool,
-    pub flags_word: u32,
-    pub payload_hash: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BangerNativeGpuSceneValidationReceipt {
-    pub schema: &'static str,
-    pub authority: &'static str,
-    pub checked_primitive_count: usize,
-    pub checked_upload_range_count: usize,
-    pub checked_instance_range_count: usize,
-    pub checked_payload_flag_count: usize,
-    pub mismatched_range_count: usize,
-    pub missing_payload_flag_count: usize,
-    pub monotonic_upload_ranges: bool,
-    pub validation_hash: String,
-    pub issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2971,154 +2900,75 @@ fn build_gpu_scene_packet(
 ) -> BangerNativeGpuScenePacket {
     let mut next_instance_offset = 0u32;
     let mut next_payload_offset = 0u32;
-    let mut primitives = Vec::new();
-    let mut upload_ranges = Vec::new();
-    let mut instance_ranges = Vec::new();
-    let mut payload_flags = Vec::new();
-    for (index, node) in scene_graph_submission.submissions.iter().enumerate() {
-        let primitive_id = index as u32;
-        let instance_count = gpu_scene_instance_count(node);
-        let payload_float4_count = gpu_scene_payload_float4_count(node, resource_table);
-        let primitive_scene_data_offset = primitive_id;
-        let instance_scene_data_offset = next_instance_offset;
-        let payload_data_offset = next_payload_offset;
-        next_instance_offset = next_instance_offset.saturating_add(instance_count);
-        next_payload_offset = next_payload_offset.saturating_add(payload_float4_count);
-        let supports_gpu_scene = node.renderable && !node.resource_slots.is_empty();
-        let supports_nanite_like_streaming =
-            matches!(node.representation, "meshlet" | "sdf" | "voxel" | "gaussian_splat");
-        let material_record_hash =
-            gpu_scene_material_record_hash(node, shader_compiler_ticket, resource_table);
-        let primitive_flags_word =
-            gpu_scene_primitive_flags_word(node, supports_gpu_scene, supports_nanite_like_streaming);
-        let payload_flags_word =
-            gpu_scene_payload_flags_word(node, supports_gpu_scene, supports_nanite_like_streaming);
-        let dirty_flags_word = gpu_scene_dirty_flags_word(node, supports_gpu_scene);
-        let bounds_hash = gpu_scene_bounds_hash(node);
-        let transform_hash = gpu_scene_transform_hash(node);
-        let previous_transform_hash = gpu_scene_previous_transform_hash(node);
-        let local_bounds_hash = gpu_scene_local_bounds_hash(node);
-        let upload_hash = gpu_scene_upload_range_v2_hash(
-            primitive_id,
-            node,
-            primitive_scene_data_offset,
-            1,
-            instance_scene_data_offset,
-            instance_count,
-            payload_data_offset,
-            payload_float4_count,
-            payload_flags_word,
-            dirty_flags_word,
-        );
-        let upload_range_hash = gpu_scene_upload_range_hash(
-            node,
-            instance_scene_data_offset,
-            instance_count,
-            payload_data_offset,
-            payload_float4_count,
-        );
-        let instance_range_hash = gpu_scene_instance_range_hash(
-            primitive_id,
-            node,
-            instance_scene_data_offset,
-            instance_count,
-            &transform_hash,
-            &previous_transform_hash,
-            &local_bounds_hash,
-        );
-        let payload_hash = gpu_scene_payload_flags_entry_hash(
-            primitive_id,
-            node,
-            payload_flags_word,
-            &material_record_hash,
-            &bounds_hash,
-            &transform_hash,
-        );
-        let primitive_hash = gpu_scene_primitive_hash(
-            primitive_id,
-            node,
-            supports_gpu_scene,
-            supports_nanite_like_streaming,
-            instance_scene_data_offset,
-            instance_count,
-            payload_data_offset,
-            payload_float4_count,
-            payload_flags_word,
-            &material_record_hash,
-            primitive_flags_word,
-            &bounds_hash,
-            &transform_hash,
-            &upload_range_hash,
-        );
-        upload_ranges.push(BangerNativeGpuSceneUploadRange {
-            primitive_id,
-            object_id: node.object_id.clone(),
-            primitive_scene_data_offset,
-            primitive_scene_data_count: 1,
-            instance_scene_data_offset,
-            instance_count,
-            payload_data_offset,
-            payload_float4_count,
-            payload_flags_word,
-            dirty_flags_word,
-            upload_hash,
-        });
-        instance_ranges.push(BangerNativeGpuSceneInstanceRange {
-            primitive_id,
-            object_id: node.object_id.clone(),
-            instance_scene_data_offset,
-            instance_count,
-            transform_hash: transform_hash.clone(),
-            previous_transform_hash,
-            local_bounds_hash,
-            range_hash: instance_range_hash,
-        });
-        payload_flags.push(BangerNativeGpuScenePayloadFlags {
-            primitive_id,
-            object_id: node.object_id.clone(),
-            has_transform: payload_flags_word & 0b0000_0001 != 0,
-            has_previous_transform: payload_flags_word & 0b0000_0010 != 0,
-            has_material_payload: payload_flags_word & 0b0000_0100 != 0,
-            has_custom_data: payload_flags_word & 0b0000_1000 != 0,
-            has_local_bounds: payload_flags_word & 0b0001_0000 != 0,
-            has_skinning: payload_flags_word & 0b0010_0000 != 0,
-            has_debug_data: payload_flags_word & 0b0100_0000 != 0,
-            flags_word: payload_flags_word,
-            payload_hash,
-        });
-        primitives.push(BangerNativeGpuScenePrimitive {
-            primitive_id,
-            object_id: node.object_id.clone(),
-            representation: node.representation,
-            supports_gpu_scene,
-            supports_nanite_like_streaming,
-            visible: node.visible,
-            renderable: node.renderable,
-            instance_scene_data_offset,
-            instance_count,
-            payload_data_offset,
-            payload_float4_count,
-            payload_flags_word,
-            resource_slots: node.resource_slots.clone(),
-            material_record_hash,
-            primitive_flags_word,
-            bounds_hash,
-            transform_hash,
-            upload_range_hash,
-            primitive_hash,
-        });
-    }
+    let primitives = scene_graph_submission
+        .submissions
+        .iter()
+        .enumerate()
+        .map(|(index, node)| {
+            let instance_count = gpu_scene_instance_count(node);
+            let payload_float4_count = gpu_scene_payload_float4_count(node, resource_table);
+            let instance_scene_data_offset = next_instance_offset;
+            let payload_data_offset = next_payload_offset;
+            next_instance_offset = next_instance_offset.saturating_add(instance_count);
+            next_payload_offset = next_payload_offset.saturating_add(payload_float4_count);
+            let supports_gpu_scene = node.renderable && !node.resource_slots.is_empty();
+            let supports_nanite_like_streaming =
+                matches!(node.representation, "meshlet" | "sdf" | "voxel" | "gaussian_splat");
+            let material_record_hash =
+                gpu_scene_material_record_hash(node, shader_compiler_ticket, resource_table);
+            let primitive_flags_word =
+                gpu_scene_primitive_flags_word(node, supports_gpu_scene, supports_nanite_like_streaming);
+            let bounds_hash = gpu_scene_bounds_hash(node);
+            let transform_hash = gpu_scene_transform_hash(node);
+            let upload_range_hash = gpu_scene_upload_range_hash(
+                node,
+                instance_scene_data_offset,
+                instance_count,
+                payload_data_offset,
+                payload_float4_count,
+            );
+            let primitive_hash = gpu_scene_primitive_hash(
+                index as u32,
+                node,
+                supports_gpu_scene,
+                supports_nanite_like_streaming,
+                instance_scene_data_offset,
+                instance_count,
+                payload_data_offset,
+                payload_float4_count,
+                &material_record_hash,
+                primitive_flags_word,
+                &bounds_hash,
+                &transform_hash,
+                &upload_range_hash,
+            );
+            BangerNativeGpuScenePrimitive {
+                primitive_id: index as u32,
+                object_id: node.object_id.clone(),
+                representation: node.representation,
+                supports_gpu_scene,
+                supports_nanite_like_streaming,
+                visible: node.visible,
+                renderable: node.renderable,
+                instance_scene_data_offset,
+                instance_count,
+                payload_data_offset,
+                payload_float4_count,
+                resource_slots: node.resource_slots.clone(),
+                material_record_hash,
+                primitive_flags_word,
+                bounds_hash,
+                transform_hash,
+                upload_range_hash,
+                primitive_hash,
+            }
+        })
+        .collect::<Vec<_>>();
     let primitive_scene_data_hash = gpu_scene_primitive_scene_data_hash(&primitives);
     let instance_scene_data_hash = gpu_scene_instance_scene_data_hash(&primitives);
     let instance_payload_data_hash = gpu_scene_instance_payload_data_hash(&primitives);
     let material_table_hash = gpu_scene_material_table_hash(&primitives, shader_compiler_ticket);
-    let upload_ranges_hash = gpu_scene_upload_ranges_hash(&upload_ranges);
-    let upload_allocator_hash = gpu_scene_upload_allocator_hash(&upload_ranges);
-    let instance_ranges_hash = gpu_scene_instance_ranges_hash(&instance_ranges);
-    let payload_flags_hash = gpu_scene_payload_flags_table_hash(&payload_flags);
-    let validation_receipt =
-        build_gpu_scene_validation_receipt(&primitives, &upload_ranges, &instance_ranges, &payload_flags);
-    let validation_receipt_hash = validation_receipt.validation_hash.clone();
+    let upload_ranges_hash = gpu_scene_upload_ranges_hash(&primitives);
     let packet_hash = gpu_scene_packet_hash(
         prepared,
         scene_graph_submission,
@@ -3129,15 +2979,10 @@ fn build_gpu_scene_packet(
         &instance_payload_data_hash,
         &material_table_hash,
         &upload_ranges_hash,
-        &upload_allocator_hash,
-        &instance_ranges_hash,
-        &payload_flags_hash,
-        &validation_receipt_hash,
         &primitives,
     );
     BangerNativeGpuScenePacket {
-        schema: "forge.banger.native_gpu_scene_packet.v2",
-        schema_version: 2,
+        schema: "forge.banger.native_gpu_scene_packet.v1",
         authority: "banger_scene_graph_to_gpu_scene_buffers",
         clean_room_basis: "local_unreal_sparse_gpu_scene_primitive_instance_upload_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
@@ -3167,16 +3012,8 @@ fn build_gpu_scene_packet(
         instance_payload_data_hash,
         material_table_hash,
         upload_ranges_hash,
-        upload_allocator_hash,
-        instance_ranges_hash,
-        payload_flags_hash,
-        validation_receipt_hash,
         packet_hash,
         primitives,
-        upload_ranges,
-        instance_ranges,
-        payload_flags,
-        validation_receipt,
     }
 }
 
@@ -11216,32 +11053,6 @@ fn gpu_scene_primitive_flags_word(
     flags
 }
 
-fn gpu_scene_payload_flags_word(
-    node: &BangerNativeSceneSubmissionNode,
-    supports_gpu_scene: bool,
-    supports_nanite_like_streaming: bool,
-) -> u32 {
-    let mut flags = 0u32;
-    flags |= (node.renderable as u32) << 0;
-    flags |= ((node.renderable && node.visible) as u32) << 1;
-    flags |= ((supports_gpu_scene && !node.resource_slots.is_empty()) as u32) << 2;
-    flags |= ((node.resource_slots.len() > 1) as u32) << 3;
-    flags |= (node.renderable as u32) << 4;
-    flags |= ((supports_nanite_like_streaming && node.representation == "meshlet") as u32) << 5;
-    flags |= (node.parent_id.is_some() as u32) << 6;
-    flags
-}
-
-fn gpu_scene_dirty_flags_word(node: &BangerNativeSceneSubmissionNode, supports_gpu_scene: bool) -> u32 {
-    let mut flags = 0u32;
-    flags |= (node.visible as u32) << 0;
-    flags |= (node.renderable as u32) << 1;
-    flags |= (supports_gpu_scene as u32) << 2;
-    flags |= ((!node.resource_slots.is_empty()) as u32) << 3;
-    flags |= (node.parent_id.is_some() as u32) << 4;
-    flags
-}
-
 fn gpu_scene_bounds_hash(node: &BangerNativeSceneSubmissionNode) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.gpu_scene.bounds.v1\0");
@@ -11254,32 +11065,6 @@ fn gpu_scene_bounds_hash(node: &BangerNativeSceneSubmissionNode) -> String {
     {
         h.update(value.to_le_bytes());
     }
-    hex32(h.finalize().into())
-}
-
-fn gpu_scene_previous_transform_hash(node: &BangerNativeSceneSubmissionNode) -> String {
-    let mut h = Sha256::new();
-    h.update(b"forge.banger.gpu_scene.previous_transform_ref.v1\0");
-    h.update(node.object_id.as_bytes());
-    h.update(node.world_transform_hash.as_bytes());
-    h.update(node.proof_hash.as_bytes());
-    hex32(h.finalize().into())
-}
-
-fn gpu_scene_local_bounds_hash(node: &BangerNativeSceneSubmissionNode) -> String {
-    let mut h = Sha256::new();
-    h.update(b"forge.banger.gpu_scene.local_bounds_from_world_aabb.v1\0");
-    h.update(node.object_id.as_bytes());
-    h.update(node.representation.as_bytes());
-    for value in node
-        .world_aabb_min
-        .iter()
-        .chain(node.world_aabb_max.iter())
-        .chain(node.world_bounding_sphere.iter())
-    {
-        h.update(value.to_le_bytes());
-    }
-    h.update(node.proof_hash.as_bytes());
     hex32(h.finalize().into())
 }
 
@@ -11310,77 +11095,6 @@ fn gpu_scene_upload_range_hash(
     hex32(h.finalize().into())
 }
 
-fn gpu_scene_upload_range_v2_hash(
-    primitive_id: u32,
-    node: &BangerNativeSceneSubmissionNode,
-    primitive_scene_data_offset: u32,
-    primitive_scene_data_count: u32,
-    instance_scene_data_offset: u32,
-    instance_count: u32,
-    payload_data_offset: u32,
-    payload_float4_count: u32,
-    payload_flags_word: u32,
-    dirty_flags_word: u32,
-) -> String {
-    let mut h = Sha256::new();
-    h.update(b"forge.banger.gpu_scene.upload_range.v2\0");
-    h.update(primitive_id.to_le_bytes());
-    h.update(node.object_id.as_bytes());
-    h.update(primitive_scene_data_offset.to_le_bytes());
-    h.update(primitive_scene_data_count.to_le_bytes());
-    h.update(instance_scene_data_offset.to_le_bytes());
-    h.update(instance_count.to_le_bytes());
-    h.update(payload_data_offset.to_le_bytes());
-    h.update(payload_float4_count.to_le_bytes());
-    h.update(payload_flags_word.to_le_bytes());
-    h.update(dirty_flags_word.to_le_bytes());
-    h.update(node.proof_hash.as_bytes());
-    hex32(h.finalize().into())
-}
-
-fn gpu_scene_instance_range_hash(
-    primitive_id: u32,
-    node: &BangerNativeSceneSubmissionNode,
-    instance_scene_data_offset: u32,
-    instance_count: u32,
-    transform_hash: &str,
-    previous_transform_hash: &str,
-    local_bounds_hash: &str,
-) -> String {
-    let mut h = Sha256::new();
-    h.update(b"forge.banger.gpu_scene.instance_range.v1\0");
-    h.update(primitive_id.to_le_bytes());
-    h.update(node.object_id.as_bytes());
-    h.update(instance_scene_data_offset.to_le_bytes());
-    h.update(instance_count.to_le_bytes());
-    h.update(transform_hash.as_bytes());
-    h.update(previous_transform_hash.as_bytes());
-    h.update(local_bounds_hash.as_bytes());
-    h.update(node.proof_hash.as_bytes());
-    hex32(h.finalize().into())
-}
-
-fn gpu_scene_payload_flags_entry_hash(
-    primitive_id: u32,
-    node: &BangerNativeSceneSubmissionNode,
-    payload_flags_word: u32,
-    material_record_hash: &str,
-    bounds_hash: &str,
-    transform_hash: &str,
-) -> String {
-    let mut h = Sha256::new();
-    h.update(b"forge.banger.gpu_scene.payload_flags.v1\0");
-    h.update(primitive_id.to_le_bytes());
-    h.update(node.object_id.as_bytes());
-    h.update(node.representation.as_bytes());
-    h.update(payload_flags_word.to_le_bytes());
-    h.update(material_record_hash.as_bytes());
-    h.update(bounds_hash.as_bytes());
-    h.update(transform_hash.as_bytes());
-    h.update(node.proof_hash.as_bytes());
-    hex32(h.finalize().into())
-}
-
 fn gpu_scene_primitive_hash(
     primitive_id: u32,
     node: &BangerNativeSceneSubmissionNode,
@@ -11390,7 +11104,6 @@ fn gpu_scene_primitive_hash(
     instance_count: u32,
     payload_data_offset: u32,
     payload_float4_count: u32,
-    payload_flags_word: u32,
     material_record_hash: &str,
     primitive_flags_word: u32,
     bounds_hash: &str,
@@ -11408,7 +11121,6 @@ fn gpu_scene_primitive_hash(
     h.update(instance_count.to_le_bytes());
     h.update(payload_data_offset.to_le_bytes());
     h.update(payload_float4_count.to_le_bytes());
-    h.update(payload_flags_word.to_le_bytes());
     h.update(material_record_hash.as_bytes());
     h.update(primitive_flags_word.to_le_bytes());
     h.update(bounds_hash.as_bytes());
@@ -11450,7 +11162,6 @@ fn gpu_scene_instance_payload_data_hash(primitives: &[BangerNativeGpuScenePrimit
         h.update(primitive.primitive_id.to_le_bytes());
         h.update(primitive.payload_data_offset.to_le_bytes());
         h.update(primitive.payload_float4_count.to_le_bytes());
-        h.update(primitive.payload_flags_word.to_le_bytes());
         h.update(primitive.material_record_hash.as_bytes());
     }
     hex32(h.finalize().into())
@@ -11470,170 +11181,11 @@ fn gpu_scene_material_table_hash(
     hex32(h.finalize().into())
 }
 
-fn gpu_scene_upload_ranges_hash(upload_ranges: &[BangerNativeGpuSceneUploadRange]) -> String {
+fn gpu_scene_upload_ranges_hash(primitives: &[BangerNativeGpuScenePrimitive]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.gpu_scene.upload_ranges.v2\0");
-    for range in upload_ranges {
-        h.update(range.upload_hash.as_bytes());
-    }
-    hex32(h.finalize().into())
-}
-
-fn gpu_scene_upload_allocator_hash(upload_ranges: &[BangerNativeGpuSceneUploadRange]) -> String {
-    let mut h = Sha256::new();
-    h.update(b"forge.banger.gpu_scene.upload_allocator.v1\0");
-    for range in upload_ranges {
-        h.update(range.primitive_id.to_le_bytes());
-        h.update(range.primitive_scene_data_offset.to_le_bytes());
-        h.update(range.primitive_scene_data_count.to_le_bytes());
-        h.update(range.instance_scene_data_offset.to_le_bytes());
-        h.update(range.instance_count.to_le_bytes());
-        h.update(range.payload_data_offset.to_le_bytes());
-        h.update(range.payload_float4_count.to_le_bytes());
-        h.update(range.dirty_flags_word.to_le_bytes());
-        h.update(range.upload_hash.as_bytes());
-    }
-    hex32(h.finalize().into())
-}
-
-fn gpu_scene_instance_ranges_hash(instance_ranges: &[BangerNativeGpuSceneInstanceRange]) -> String {
-    let mut h = Sha256::new();
-    h.update(b"forge.banger.gpu_scene.instance_ranges.v1\0");
-    for range in instance_ranges {
-        h.update(range.primitive_id.to_le_bytes());
-        h.update(range.instance_scene_data_offset.to_le_bytes());
-        h.update(range.instance_count.to_le_bytes());
-        h.update(range.transform_hash.as_bytes());
-        h.update(range.previous_transform_hash.as_bytes());
-        h.update(range.local_bounds_hash.as_bytes());
-        h.update(range.range_hash.as_bytes());
-    }
-    hex32(h.finalize().into())
-}
-
-fn gpu_scene_payload_flags_table_hash(payload_flags: &[BangerNativeGpuScenePayloadFlags]) -> String {
-    let mut h = Sha256::new();
-    h.update(b"forge.banger.gpu_scene.payload_flags_table.v1\0");
-    for flags in payload_flags {
-        h.update(flags.primitive_id.to_le_bytes());
-        h.update(flags.flags_word.to_le_bytes());
-        h.update(flags.payload_hash.as_bytes());
-    }
-    hex32(h.finalize().into())
-}
-
-fn build_gpu_scene_validation_receipt(
-    primitives: &[BangerNativeGpuScenePrimitive],
-    upload_ranges: &[BangerNativeGpuSceneUploadRange],
-    instance_ranges: &[BangerNativeGpuSceneInstanceRange],
-    payload_flags: &[BangerNativeGpuScenePayloadFlags],
-) -> BangerNativeGpuSceneValidationReceipt {
-    let mut issues = Vec::new();
-    let mut mismatched_range_count = 0usize;
-    let mut missing_payload_flag_count = 0usize;
-    let mut expected_instance_offset = 0u32;
-    let mut expected_payload_offset = 0u32;
-    let mut monotonic_upload_ranges = true;
+    h.update(b"forge.banger.gpu_scene.upload_ranges.v1\0");
     for primitive in primitives {
-        let upload_range = upload_ranges
-            .iter()
-            .find(|range| range.primitive_id == primitive.primitive_id);
-        let instance_range = instance_ranges
-            .iter()
-            .find(|range| range.primitive_id == primitive.primitive_id);
-        let payload_flag = payload_flags
-            .iter()
-            .find(|flags| flags.primitive_id == primitive.primitive_id);
-        if let Some(range) = upload_range {
-            let range_matches = range.object_id == primitive.object_id
-                && range.instance_scene_data_offset == primitive.instance_scene_data_offset
-                && range.instance_count == primitive.instance_count
-                && range.payload_data_offset == primitive.payload_data_offset
-                && range.payload_float4_count == primitive.payload_float4_count
-                && range.payload_flags_word == primitive.payload_flags_word;
-            if !range_matches {
-                mismatched_range_count += 1;
-                issues.push(format!("primitive:{}:upload_range_mismatch", primitive.primitive_id));
-            }
-            if range.instance_scene_data_offset != expected_instance_offset
-                || range.payload_data_offset != expected_payload_offset
-            {
-                monotonic_upload_ranges = false;
-                issues.push(format!("primitive:{}:non_monotonic_upload_range", primitive.primitive_id));
-            }
-            expected_instance_offset = expected_instance_offset.saturating_add(range.instance_count);
-            expected_payload_offset =
-                expected_payload_offset.saturating_add(range.payload_float4_count);
-        } else {
-            mismatched_range_count += 1;
-            monotonic_upload_ranges = false;
-            issues.push(format!("primitive:{}:missing_upload_range", primitive.primitive_id));
-        }
-        if instance_range
-            .map(|range| {
-                range.object_id == primitive.object_id
-                    && range.instance_scene_data_offset == primitive.instance_scene_data_offset
-                    && range.instance_count == primitive.instance_count
-            })
-            != Some(true)
-        {
-            mismatched_range_count += 1;
-            issues.push(format!("primitive:{}:instance_range_mismatch", primitive.primitive_id));
-        }
-        if payload_flag
-            .map(|flags| flags.object_id == primitive.object_id && flags.flags_word == primitive.payload_flags_word)
-            != Some(true)
-        {
-            missing_payload_flag_count += 1;
-            issues.push(format!("primitive:{}:payload_flags_mismatch", primitive.primitive_id));
-        }
-    }
-    let validation_hash = gpu_scene_validation_receipt_hash(
-        primitives.len(),
-        upload_ranges.len(),
-        instance_ranges.len(),
-        payload_flags.len(),
-        mismatched_range_count,
-        missing_payload_flag_count,
-        monotonic_upload_ranges,
-        &issues,
-    );
-    BangerNativeGpuSceneValidationReceipt {
-        schema: "forge.banger.gpu_scene_validation_receipt.v1",
-        authority: "gpu_scene_upload_range_payload_flag_consistency",
-        checked_primitive_count: primitives.len(),
-        checked_upload_range_count: upload_ranges.len(),
-        checked_instance_range_count: instance_ranges.len(),
-        checked_payload_flag_count: payload_flags.len(),
-        mismatched_range_count,
-        missing_payload_flag_count,
-        monotonic_upload_ranges,
-        validation_hash,
-        issues,
-    }
-}
-
-fn gpu_scene_validation_receipt_hash(
-    checked_primitive_count: usize,
-    checked_upload_range_count: usize,
-    checked_instance_range_count: usize,
-    checked_payload_flag_count: usize,
-    mismatched_range_count: usize,
-    missing_payload_flag_count: usize,
-    monotonic_upload_ranges: bool,
-    issues: &[String],
-) -> String {
-    let mut h = Sha256::new();
-    h.update(b"forge.banger.gpu_scene.validation_receipt.v1\0");
-    h.update((checked_primitive_count as u64).to_le_bytes());
-    h.update((checked_upload_range_count as u64).to_le_bytes());
-    h.update((checked_instance_range_count as u64).to_le_bytes());
-    h.update((checked_payload_flag_count as u64).to_le_bytes());
-    h.update((mismatched_range_count as u64).to_le_bytes());
-    h.update((missing_payload_flag_count as u64).to_le_bytes());
-    h.update([monotonic_upload_ranges as u8]);
-    for issue in issues {
-        h.update(issue.as_bytes());
+        h.update(primitive.upload_range_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -11648,14 +11200,10 @@ fn gpu_scene_packet_hash(
     instance_payload_data_hash: &str,
     material_table_hash: &str,
     upload_ranges_hash: &str,
-    upload_allocator_hash: &str,
-    instance_ranges_hash: &str,
-    payload_flags_hash: &str,
-    validation_receipt_hash: &str,
     primitives: &[BangerNativeGpuScenePrimitive],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_gpu_scene_packet.v2\0");
+    h.update(b"forge.banger.native_gpu_scene_packet.v1\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(scene_graph_submission.submission_hash.as_bytes());
@@ -11666,10 +11214,6 @@ fn gpu_scene_packet_hash(
     h.update(instance_payload_data_hash.as_bytes());
     h.update(material_table_hash.as_bytes());
     h.update(upload_ranges_hash.as_bytes());
-    h.update(upload_allocator_hash.as_bytes());
-    h.update(instance_ranges_hash.as_bytes());
-    h.update(payload_flags_hash.as_bytes());
-    h.update(validation_receipt_hash.as_bytes());
     for primitive in primitives {
         h.update(primitive.primitive_hash.as_bytes());
     }
@@ -15059,9 +14603,8 @@ mod tests {
                 && node.proof_hash.len() == 64));
         assert_eq!(
             response.gpu_scene_packet.schema,
-            "forge.banger.native_gpu_scene_packet.v2"
+            "forge.banger.native_gpu_scene_packet.v1"
         );
-        assert_eq!(response.gpu_scene_packet.schema_version, 2);
         assert_eq!(
             response.gpu_scene_packet.authority,
             "banger_scene_graph_to_gpu_scene_buffers"
@@ -15103,54 +14646,13 @@ mod tests {
         assert_eq!(response.gpu_scene_packet.instance_payload_data_hash.len(), 64);
         assert_eq!(response.gpu_scene_packet.material_table_hash.len(), 64);
         assert_eq!(response.gpu_scene_packet.upload_ranges_hash.len(), 64);
-        assert_eq!(response.gpu_scene_packet.upload_allocator_hash.len(), 64);
-        assert_eq!(response.gpu_scene_packet.instance_ranges_hash.len(), 64);
-        assert_eq!(response.gpu_scene_packet.payload_flags_hash.len(), 64);
-        assert_eq!(response.gpu_scene_packet.validation_receipt_hash.len(), 64);
         assert_eq!(response.gpu_scene_packet.packet_hash.len(), 64);
-        assert_eq!(
-            response.gpu_scene_packet.upload_ranges.len(),
-            response.gpu_scene_packet.primitive_count
-        );
-        assert_eq!(
-            response.gpu_scene_packet.instance_ranges.len(),
-            response.gpu_scene_packet.primitive_count
-        );
-        assert_eq!(
-            response.gpu_scene_packet.payload_flags.len(),
-            response.gpu_scene_packet.primitive_count
-        );
-        assert_eq!(
-            response.gpu_scene_packet.validation_receipt.validation_hash,
-            response.gpu_scene_packet.validation_receipt_hash
-        );
-        assert_eq!(
-            response.gpu_scene_packet.validation_receipt.checked_primitive_count,
-            response.gpu_scene_packet.primitive_count
-        );
-        assert_eq!(
-            response.gpu_scene_packet.validation_receipt.mismatched_range_count,
-            0
-        );
-        assert_eq!(
-            response
-                .gpu_scene_packet
-                .validation_receipt
-                .missing_payload_flag_count,
-            0
-        );
-        assert!(response
-            .gpu_scene_packet
-            .validation_receipt
-            .monotonic_upload_ranges);
-        assert!(response.gpu_scene_packet.validation_receipt.issues.is_empty());
         assert!(response
             .gpu_scene_packet
             .primitives
             .iter()
             .any(|primitive| primitive.supports_gpu_scene
                 && primitive.supports_nanite_like_streaming
-                && primitive.payload_flags_word != 0
                 && primitive.material_record_hash.len() == 64
                 && primitive.primitive_hash.len() == 64));
         assert!(response
@@ -15160,28 +14662,6 @@ mod tests {
             .all(|primitive| primitive.bounds_hash.len() == 64
                 && primitive.transform_hash.len() == 64
                 && primitive.upload_range_hash.len() == 64));
-        assert!(response
-            .gpu_scene_packet
-            .upload_ranges
-            .iter()
-            .all(|range| range.primitive_scene_data_count == 1 && range.upload_hash.len() == 64));
-        assert!(response
-            .gpu_scene_packet
-            .instance_ranges
-            .iter()
-            .all(|range| range.range_hash.len() == 64
-                && range.transform_hash.len() == 64
-                && range.previous_transform_hash.len() == 64
-                && range.local_bounds_hash.len() == 64));
-        assert!(response
-            .gpu_scene_packet
-            .payload_flags
-            .iter()
-            .any(|flags| flags.has_transform
-                && flags.has_previous_transform
-                && flags.has_material_payload
-                && flags.has_local_bounds
-                && flags.payload_hash.len() == 64));
         assert_eq!(
             response.culling_manifest.schema,
             "forge.banger.native_culling_manifest.v1"
