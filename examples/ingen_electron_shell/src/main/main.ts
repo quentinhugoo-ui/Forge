@@ -224,7 +224,7 @@ const PANELS_CHAT_BOTTOM_MAX_VIDEO_SUBTITLE_CUES = 160;
 const TRANSPARENT_WINDOW_BACKGROUND = "#00000000";
 const WIDGET_WINDOW_HEIGHT = 174;
 const WIDGET_WINDOW_BOTTOM_GAP = 0;
-const WIDGET_WINDOW_AUTOHIDE_BOTTOM_GAP = 10;
+const WIDGET_WINDOW_AUTOHIDE_BOTTOM_GAP = 2;
 const WIDGET_WINDOW_SHRINK_DELAY_MS = 720;
 const WIDGET_TASKBAR_SLIDE_MS = 320;
 const WINDOWS_TASKBAR_AUTOHIDE_FLAG = 0x1;
@@ -10740,9 +10740,10 @@ function widgetWindowBounds(window: BrowserWindow, options: { taskbarHidden?: bo
   const display = screen.getDisplayMatching(window.getBounds());
   const { workArea } = display;
   const targetTaskbarHidden = options.taskbarHidden ?? widgetTaskbarHidden;
+  const verticalArea = targetTaskbarHidden ? display.bounds : workArea;
   const restoreBounds = widgetWindowRestoreState?.bounds ?? window.getBounds();
   const width = Math.min(workArea.width, Math.max(520, restoreBounds.width));
-  const height = Math.min(WIDGET_WINDOW_HEIGHT, Math.max(136, workArea.height - 24));
+  const height = Math.min(WIDGET_WINDOW_HEIGHT, Math.max(136, verticalArea.height - 24));
   const bottomGap = targetTaskbarHidden ? WIDGET_WINDOW_AUTOHIDE_BOTTOM_GAP : WIDGET_WINDOW_BOTTOM_GAP;
   const x = Math.min(
     Math.max(restoreBounds.x, workArea.x),
@@ -10750,7 +10751,7 @@ function widgetWindowBounds(window: BrowserWindow, options: { taskbarHidden?: bo
   );
   return {
     x,
-    y: workArea.y + workArea.height - height - bottomGap,
+    y: verticalArea.y + verticalArea.height - height - bottomGap,
     width,
     height
   };
@@ -10891,10 +10892,10 @@ function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
   window.setMinimumSize(420, 128);
   window.setAlwaysOnTop(true, "floating");
-  window.setBounds(bounds, false);
   window.show();
   window.moveTop();
   window.focus();
+  animateNativeWidgetWindowBounds(window, bounds);
 }
 
 function armNativeWidgetTaskbarAutoHide(window: BrowserWindow): void {
