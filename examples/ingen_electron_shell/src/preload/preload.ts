@@ -5,6 +5,7 @@ import type {
   ForgeTerminalApi,
   HeaderCommand,
   LlmProviderConnectId,
+  AgentRuntimeEvent,
   PanelsChatBottomCommand,
   PanelsChatBottomSnapshotEvent,
   RightPanelCommand,
@@ -80,6 +81,13 @@ const forgeShell: ForgeShellApi = {
     };
     ipcRenderer.on("forge:llm-provider-event", handler);
     return () => ipcRenderer.removeListener("forge:llm-provider-event", handler);
+  },
+  onAgentRuntimeEvent(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      listener(payload as AgentRuntimeEvent);
+    };
+    ipcRenderer.on("forge:agent-runtime-event", handler);
+    return () => ipcRenderer.removeListener("forge:agent-runtime-event", handler);
   },
   onPanelsChatBottomSnapshotEvent(listener) {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {

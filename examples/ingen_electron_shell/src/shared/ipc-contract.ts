@@ -401,6 +401,63 @@ export interface AgentActionResult {
   error?: IpcError;
 }
 
+export type AgentRuntimeEventKind =
+  | "text_delta"
+  | "tool_call_started"
+  | "tool_result"
+  | "tool_call_completed"
+  | "approval_requested"
+  | "compaction_started"
+  | "compaction_completed"
+  | "final_summary";
+
+export interface AgentRuntimeToolCall {
+  id: string;
+  name: string;
+  request?: AgentActionRequest;
+  risk?: AgentActionRisk;
+  status: "pending" | "completed" | "failed";
+  startedAt: number;
+  completedAt?: number;
+}
+
+export interface AgentRuntimeToolResult {
+  accepted: boolean;
+  action?: AgentActionKind;
+  summary: string;
+  path?: string;
+  toPath?: string;
+  itemCount?: number;
+  matchCount?: number;
+  commandLine?: string;
+  exitCode?: number | null;
+  proofHash?: string;
+  error?: string;
+}
+
+export interface AgentRuntimeCompactionState {
+  state: "compressing" | "compressed";
+  seed: string;
+  estimatedTokens?: number;
+}
+
+export interface AgentRuntimeEvent {
+  schema: "ingen.agent_runtime.event.v1";
+  kind: AgentRuntimeEventKind;
+  sessionId: string;
+  messageId?: string;
+  sequence: number;
+  at: number;
+  agentName?: string;
+  provider?: LlmProviderConnectId;
+  textDelta?: string;
+  toolCall?: AgentRuntimeToolCall;
+  toolResult?: AgentRuntimeToolResult;
+  compaction?: AgentRuntimeCompactionState;
+  summary?: string;
+  proofHash: string;
+}
+
 export function isAgentActionRequest(value: unknown): value is AgentActionRequest {
   if (!value || typeof value !== "object") {
     return false;
@@ -451,6 +508,31 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     return false;
   }
   return true;
+}
+
+export function isAgentRuntimeEvent(value: unknown): value is AgentRuntimeEvent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Partial<AgentRuntimeEvent>;
+  const kinds: AgentRuntimeEventKind[] = [
+    "text_delta",
+    "tool_call_started",
+    "tool_result",
+    "tool_call_completed",
+    "approval_requested",
+    "compaction_started",
+    "compaction_completed",
+    "final_summary"
+  ];
+  return (
+    candidate.schema === "ingen.agent_runtime.event.v1" &&
+    typeof candidate.sessionId === "string" &&
+    typeof candidate.sequence === "number" &&
+    typeof candidate.at === "number" &&
+    typeof candidate.proofHash === "string" &&
+    kinds.includes(candidate.kind as AgentRuntimeEventKind)
+  );
 }
 
 export interface NativeWebExplorerBounds {
@@ -783,6 +865,7 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   resetLlmProvider?: (provider: LlmProviderConnectId) => Promise<LlmProviderConnectResult>;
   getLlmProviderRuntimeSnapshot?: () => Promise<LlmProviderRuntimeSnapshot>;
   onLlmProviderEvent?: (listener: (event: LlmProviderRuntimeEvent) => void) => () => void;
+  onAgentRuntimeEvent?: (listener: (event: AgentRuntimeEvent) => void) => () => void;
   onPanelsChatBottomSnapshotEvent?: (listener: (event: PanelsChatBottomSnapshotEvent) => void) => () => void;
   chooseWorkspaceFolder?: () => Promise<WorkspaceChoiceResult>;
   getWorkspaceFolder?: () => Promise<WorkspaceChoiceResult>;

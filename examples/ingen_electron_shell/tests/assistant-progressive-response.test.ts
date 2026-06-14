@@ -13,9 +13,13 @@ const agentActionLoopSource = readFileSync(join(root, "src", "main", "agent-acti
 describe("assistant progressive response feed", () => {
   it("pushes transcript snapshot events while a chat command is still running", () => {
     expect(ipcContractSource).toContain("export interface PanelsChatBottomSnapshotEvent");
+    expect(ipcContractSource).toContain("export interface AgentRuntimeEvent");
+    expect(ipcContractSource).toContain('schema: "ingen.agent_runtime.event.v1"');
     expect(preloadSource).toContain('ipcRenderer.on("forge:panels-chat-bottom-snapshot-event"');
+    expect(preloadSource).toContain('ipcRenderer.on("forge:agent-runtime-event"');
     expect(storeSource).toContain("api?.onPanelsChatBottomSnapshotEvent?.");
     expect(mainSource).toContain('webContents.send("forge:panels-chat-bottom-snapshot-event"');
+    expect(mainSource).toContain('webContents.send("forge:agent-runtime-event"');
   });
 
   it("seeds large assistant messages before committing the full final response", () => {
@@ -48,6 +52,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function executeAssistantAgentActionLoop");
     expect(mainSource).toContain("extractAgentActionJsonRequest(assistantMessage.text)");
     expect(mainSource).toContain("executeAgentActionRequest(agentActionHostConfig(), extracted.request)");
+    expect(mainSource).toContain("emitAgentRuntimeToolCallStarted");
+    expect(mainSource).toContain('kind: "tool_call_started"');
+    expect(mainSource).toContain('kind: "tool_result"');
+    expect(mainSource).toContain('kind: "tool_call_completed"');
     expect(mainSource).toContain("agentActionLoopContinuationUserText");
     expect(mainSource).toContain("agentActionStepNeedsMutationFollowUp");
     expect(mainSource).toContain("agentActionForcedContinuationUserText");
@@ -85,6 +93,7 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("shouldStop: (text) => Boolean(extractAgentActionJsonRequest(text))");
     expect(mainSource).toContain("liveTextSink");
     expect(mainSource).toContain("continuationLiveSink");
+    expect(mainSource).toContain('kind: "text_delta"');
   });
 
   it("injects the heavy local action manifest lazily", () => {

@@ -17,6 +17,7 @@ import {
   isNativeSection,
   isPanelsChatBottomCommand,
   isAgentActionRequest,
+  isAgentRuntimeEvent,
   type ForgeShellApi,
   type HeaderCommand,
   type HeaderSurfaceSnapshot,
@@ -39,6 +40,8 @@ describe("typed header IPC contract", () => {
     expect(searchArchiveMethod).toBe("searchArchive");
     const agentActionMethod: keyof ForgeShellApi = "executeAgentAction";
     expect(agentActionMethod).toBe("executeAgentAction");
+    const agentRuntimeEventMethod: keyof ForgeShellApi = "onAgentRuntimeEvent";
+    expect(agentRuntimeEventMethod).toBe("onAgentRuntimeEvent");
   });
 
   it("accepts versioned commands with request ids", () => {
@@ -151,6 +154,38 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "delete_empty_directory", path: "tmp", confirmed: "yes" })).toBe(false);
     expect(isAgentActionRequest({ action: "list", scope: "galaxy", path: "." })).toBe(false);
     expect(isAgentActionRequest({ action: "raw_shell", command: "powershell.exe" })).toBe(false);
+  });
+
+  it("accepts versioned agent runtime events and rejects loose variants", () => {
+    expect(
+      isAgentRuntimeEvent({
+        schema: "ingen.agent_runtime.event.v1",
+        kind: "tool_call_started",
+        sessionId: "session-1",
+        messageId: "assistant-1",
+        sequence: 1,
+        at: 1710000000000,
+        toolCall: {
+          id: "tool-1",
+          name: "fs.list",
+          request: { action: "list", path: "." },
+          status: "pending",
+          startedAt: 1710000000000
+        },
+        proofHash: "runtime-proof"
+      })
+    ).toBe(true);
+    expect(isAgentRuntimeEvent({ kind: "tool_call_started", sessionId: "session-1" })).toBe(false);
+    expect(
+      isAgentRuntimeEvent({
+        schema: "ingen.agent_runtime.event.v1",
+        kind: "raw_json",
+        sessionId: "session-1",
+        sequence: 1,
+        at: 1710000000000,
+        proofHash: "runtime-proof"
+      })
+    ).toBe(false);
   });
 
   it("accepts typed canvas surface snapshots and rejects loose commands", () => {

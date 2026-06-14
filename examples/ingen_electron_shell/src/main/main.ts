@@ -64,6 +64,7 @@ import {
   type LlmProviderConnectResult,
   type LlmProviderRuntimeEvent,
   type LlmProviderRuntimeSnapshot,
+  type AgentRuntimeEvent,
   type PanelsChatBottomSnapshotEvent,
   type PanelsChatBottomCommand,
   type PanelsChatBottomCommandResult,
@@ -82,6 +83,7 @@ import {
   type TranscriptMessage,
   type WorkspaceActionResult,
   type WorkspaceChoiceResult,
+  type AgentActionCapabilityId,
   type AgentActionHostManifest,
   type AgentActionPathEntry,
   type AgentActionRequest,
@@ -1607,6 +1609,27 @@ function emitPanelsChatBottomSnapshotEvent(
     proofHash: hashJson({ channel: "panels_chat_bottom", reason, sessionId, at: Date.now() })
   };
   window.webContents.send("forge:panels-chat-bottom-snapshot-event", event);
+}
+
+let agentRuntimeEventSequence = 0;
+
+function emitAgentRuntimeEvent(
+  event: Omit<AgentRuntimeEvent, "schema" | "sequence" | "at" | "proofHash"> &
+    Partial<Pick<AgentRuntimeEvent, "sequence" | "at" | "proofHash">>
+): void {
+  const window = primaryWindow;
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+  const runtimeEvent: AgentRuntimeEvent = {
+    schema: "ingen.agent_runtime.event.v1",
+    sequence: event.sequence ?? ++agentRuntimeEventSequence,
+    at: event.at ?? Date.now(),
+    proofHash: "",
+    ...event
+  };
+  runtimeEvent.proofHash = event.proofHash ?? hashJson({ ...runtimeEvent, proofHash: "" });
+  window.webContents.send("forge:agent-runtime-event", runtimeEvent);
 }
 
 function runtimeEventFromProviderProfile(profile: ProviderRuntimeProfile, prefix?: string): LlmProviderRuntimeEvent {
@@ -5179,6 +5202,18 @@ function modelNameFromError(message: string, fallbackModel: string): string {
 const ASSISTANT_PROVIDER_UNAVAILABLE_TEXT = "Provider unavailable. Check connection, auth, or quota.";
 const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1";
 const AGENT_ACTION_LOOP_MAX_STEPS = 6;
+const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], AgentActionCapabilityId> = {
+  list: "fs.list",
+  search: "fs.search",
+  create_directory: "fs.create_directory",
+  rename_path: "fs.rename",
+  move_path: "fs.move",
+  copy_path: "fs.copy",
+  delete_empty_directory: "fs.delete_empty_directory",
+  delete_tree: "fs.delete_tree",
+  run_readonly_command: "shell.readonly",
+  run_command: "shell.full"
+};
 
 function friendlyAssistantErrorText(params: {
   userText: string;
@@ -5196,6 +5231,14 @@ function friendlyAssistantErrorText(params: {
     return `${failingModel || "Selected model"} cannot read images. Choose a vision model.`;
   }
   return ASSISTANT_PROVIDER_UNAVAILABLE_TEXT;
+}
+
+function agentRuntimeAgentName(): string {
+  return brainIdentityContext.agentFirstName || "Agent";
+}
+
+function agentRuntimeProvider(): LlmProviderConnectId {
+  return providerProfileFromComposer(panelsChatBottomState.selectedProvider).connectId;
 }
 
 function agentActionResultSummary(result: AgentActionResult): string {
@@ -5219,6 +5262,107 @@ function agentActionResultSummary(result: AgentActionResult): string {
     return `Resultat: action appliquee sur ${result.path}${charDelta}.`;
   }
   return `Resultat: action appliquee${charDelta}.`;
+}
+
+function agentRuntimeToolResultSummary(result: AgentActionResult): string {
+  if (!result.accepted) {
+    return `Action blocked: ${result.error?.message ?? "rejected by the action host"}.`;
+  }
+  if (result.items) {
+    return `Listed ${result.items.length} item${result.items.length === 1 ? "" : "s"}${result.path ? ` in ${result.path}` : ""}.`;
+  }
+  if (result.matches) {
+    return `Found ${result.matches.length} bounded match${result.matches.length === 1 ? "" : "es"}.`;
+  }
+  if (result.commandLine) {
+    return `Command completed with exit code ${result.exitCode ?? "unknown"}.`;
+  }
+  if (result.toPath) {
+    return `${result.path ?? "path"} -> ${result.toPath}.`;
+  }
+  if (result.path) {
+    return `Action applied on ${result.path}.`;
+  }
+  return "Action applied.";
+}
+
+function agentRuntimeToolCallId(messageId: string, step: number, request: AgentActionRequest): string {
+  return `agent-tool-${messageId}-${step}-${hashJson(request).slice(0, 10)}`;
+}
+
+function emitAgentRuntimeToolCallStarted(params: {
+  sessionId: string;
+  messageId: string;
+  step: number;
+  request: AgentActionRequest;
+}): NonNullable<AgentRuntimeEvent["toolCall"]> {
+  const startedAt = Date.now();
+  const toolCall: NonNullable<AgentRuntimeEvent["toolCall"]> = {
+    id: agentRuntimeToolCallId(params.messageId, params.step, params.request),
+    name: AGENT_ACTION_CAPABILITY_BY_ACTION[params.request.action],
+    request: params.request,
+    risk: params.request.action === "delete_empty_directory" || params.request.action === "delete_tree"
+      ? "destructive"
+      : params.request.action === "run_command"
+      ? "computer_write"
+      : params.request.action === "list" || params.request.action === "search" || params.request.action === "run_readonly_command"
+      ? "read"
+      : "workspace_write",
+    status: "pending",
+    startedAt
+  };
+  emitAgentRuntimeEvent({
+    kind: "tool_call_started",
+    sessionId: params.sessionId,
+    messageId: params.messageId,
+    agentName: agentRuntimeAgentName(),
+    provider: agentRuntimeProvider(),
+    toolCall
+  });
+  return toolCall;
+}
+
+function emitAgentRuntimeToolResult(params: {
+  sessionId: string;
+  messageId: string;
+  toolCall: NonNullable<AgentRuntimeEvent["toolCall"]>;
+  result: AgentActionResult;
+}): void {
+  const toolResult: NonNullable<AgentRuntimeEvent["toolResult"]> = {
+    accepted: params.result.accepted,
+    action: params.result.action,
+    summary: agentRuntimeToolResultSummary(params.result),
+    path: params.result.path,
+    toPath: params.result.toPath,
+    itemCount: params.result.items?.length,
+    matchCount: params.result.matches?.length,
+    commandLine: params.result.commandLine,
+    exitCode: params.result.exitCode,
+    proofHash: params.result.proofHash,
+    error: params.result.error?.message
+  };
+  emitAgentRuntimeEvent({
+    kind: "tool_result",
+    sessionId: params.sessionId,
+    messageId: params.messageId,
+    agentName: agentRuntimeAgentName(),
+    provider: agentRuntimeProvider(),
+    toolCall: params.toolCall,
+    toolResult
+  });
+  emitAgentRuntimeEvent({
+    kind: "tool_call_completed",
+    sessionId: params.sessionId,
+    messageId: params.messageId,
+    agentName: agentRuntimeAgentName(),
+    provider: agentRuntimeProvider(),
+    toolCall: {
+      ...params.toolCall,
+      status: params.result.accepted ? "completed" : "failed",
+      completedAt: Date.now()
+    },
+    toolResult
+  });
 }
 
 function renderPendingAgentActionText(text: string, extracted: ExtractedAgentAction): string {
@@ -5373,6 +5517,7 @@ async function applyDeterministicOrganizationFallback(params: {
   originalUserText: string;
   request: AgentActionRequest;
   result: AgentActionResult;
+  requestSessionId: string;
   commitProgress?: (assistantMessage: TranscriptMessage) => void;
 }): Promise<TranscriptMessage> {
   if (!agentActionStepNeedsMutationFollowUp(params.originalUserText, params.request, params.result)) {
@@ -5390,7 +5535,13 @@ async function applyDeterministicOrganizationFallback(params: {
     ].filter((part) => part.trim().length > 0).join("\n\n")
   };
   params.commitProgress?.(assistantMessage);
-  for (const request of requests) {
+  for (const [index, request] of requests.entries()) {
+    const toolCall = emitAgentRuntimeToolCallStarted({
+      sessionId: params.requestSessionId,
+      messageId: params.assistantMessage.id,
+      step: index + 1,
+      request
+    });
     assistantMessage = {
       ...assistantMessage,
       text: `${assistantMessage.text.trimEnd()}\n\n${agentActionEventCommandForRequest(request)}`.trim(),
@@ -5398,6 +5549,12 @@ async function applyDeterministicOrganizationFallback(params: {
     };
     params.commitProgress?.(assistantMessage);
     const result = await executeAgentActionRequest(agentActionHostConfig(), request);
+    emitAgentRuntimeToolResult({
+      sessionId: params.requestSessionId,
+      messageId: params.assistantMessage.id,
+      toolCall,
+      result
+    });
     assistantMessage = {
       ...assistantMessage,
       text: renderCompletedPendingAgentActionText(assistantMessage.text, result),
@@ -5427,6 +5584,12 @@ async function executeAssistantAgentActionLoop(params: {
     if (!extracted) {
       return assistantMessage;
     }
+    const toolCall = emitAgentRuntimeToolCallStarted({
+      sessionId: params.requestSessionId,
+      messageId: assistantMessage.id,
+      step: step + 1,
+      request: extracted.request
+    });
     assistantMessage = {
       ...assistantMessage,
       text: renderPendingAgentActionText(assistantMessage.text, extracted),
@@ -5434,6 +5597,12 @@ async function executeAssistantAgentActionLoop(params: {
     };
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
     const result = await executeAgentActionRequest(agentActionHostConfig(), extracted.request);
+    emitAgentRuntimeToolResult({
+      sessionId: params.requestSessionId,
+      messageId: assistantMessage.id,
+      toolCall,
+      result
+    });
     assistantMessage = {
       ...assistantMessage,
       text: renderCompletedPendingAgentActionText(assistantMessage.text, result),
@@ -5449,6 +5618,7 @@ async function executeAssistantAgentActionLoop(params: {
         originalUserText: params.originalUserText,
         request: extracted.request,
         result,
+        requestSessionId: params.requestSessionId,
         commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
       });
       if (fallbackMessage.text !== assistantMessage.text) {
@@ -5507,6 +5677,7 @@ async function executeAssistantAgentActionLoop(params: {
           originalUserText: params.originalUserText,
           request: extracted.request,
           result,
+          requestSessionId: params.requestSessionId,
           commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
         });
         params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
@@ -5516,6 +5687,14 @@ async function executeAssistantAgentActionLoop(params: {
   const strippedText = removeAgentActionJsonFragments(assistantMessage.text)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  emitAgentRuntimeEvent({
+    kind: "final_summary",
+    sessionId: params.requestSessionId,
+    messageId: assistantMessage.id,
+    agentName: agentRuntimeAgentName(),
+    provider: agentRuntimeProvider(),
+    summary: `Agent action loop stopped after ${AGENT_ACTION_LOOP_MAX_STEPS} steps to preserve local control.`
+  });
   return {
     ...assistantMessage,
     text: `${strippedText}\n\nResume final: boucle d'actions interrompue apres ${AGENT_ACTION_LOOP_MAX_STEPS} etapes pour garder le controle local.`,
@@ -10810,7 +10989,19 @@ function createAssistantLiveTextSink(params: {
       if (!trimmed || trimmed === lastText) {
         return;
       }
+      const previousText = lastText;
       lastText = trimmed;
+      const textDelta = previousText && trimmed.startsWith(previousText)
+        ? trimmed.slice(previousText.length)
+        : trimmed;
+      emitAgentRuntimeEvent({
+        kind: "text_delta",
+        sessionId: params.requestSessionId,
+        messageId: params.assistantMessageId,
+        agentName: agentRuntimeAgentName(),
+        provider: agentRuntimeProvider(),
+        textDelta
+      });
       const liveMessage: TranscriptMessage = {
         id: params.assistantMessageId,
         role: "assistant",
@@ -12773,6 +12964,18 @@ async function submitChatDraftForSessionInner(
   if (contextCompactionEvent) {
     nextTranscript = transcriptWithMessage(nextTranscript, contextCompactionEvent);
     commitTranscript(nextTranscript);
+    emitAgentRuntimeEvent({
+      kind: "compaction_started",
+      sessionId: requestSessionId,
+      messageId: contextCompactionEvent.id,
+      agentName: agentRuntimeAgentName(),
+      provider: agentRuntimeProvider(),
+      compaction: {
+        state: "compressing",
+        seed: contextCompactionSeed,
+        estimatedTokens: contextPlan?.estimatedTokens
+      }
+    });
     emitPanelsChatBottomSnapshotEvent("context_compaction_started", requestSessionId);
   }
   let assistantMessage: TranscriptMessage;
@@ -12830,6 +13033,18 @@ async function submitChatDraftForSessionInner(
   if (contextCompactionEvent) {
     nextTranscript = transcriptWithReplacedMessage(nextTranscript, contextCompactionEventMessage("compressed", contextCompactionSeed));
     commitTranscript(nextTranscript);
+    emitAgentRuntimeEvent({
+      kind: "compaction_completed",
+      sessionId: requestSessionId,
+      messageId: contextCompactionEvent.id,
+      agentName: agentRuntimeAgentName(),
+      provider: agentRuntimeProvider(),
+      compaction: {
+        state: "compressed",
+        seed: contextCompactionSeed,
+        estimatedTokens: contextPlan?.estimatedTokens
+      }
+    });
     emitPanelsChatBottomSnapshotEvent("context_compaction_completed", requestSessionId);
   }
   // Audit anchor: archiveTranscriptMessage(activeSession, assistantMessage)
