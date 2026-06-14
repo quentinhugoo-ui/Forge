@@ -89,6 +89,11 @@ Date: 2026-06-14
 5. Promote scene graph authority: parent/child transforms, local/world matrix
    propagation, object visibility and representation mix become the native
    source for viewport fit and render submission.
+   Status: started in `BangerNativeSceneGraphSubmission` as
+   `forge.banger.native_scene_graph_submission.v1`; local/world transform
+   propagation, visibility, representation mix, viewport fit bounds and render
+   submission hashes now come from the editable scene graph. Meshlet culling
+   and indirect draw reuse remain the next gate.
 6. Add meshlet/virtual-geometry culling manifests: cone bounds, LOD error,
    visibility result hash, indirect draw buffer hash and cache-hit reuse.
 7. Add surfel/radiance-cache scheduling: probe pages, temporal epoch, light

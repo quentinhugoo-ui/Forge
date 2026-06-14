@@ -75,6 +75,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub resource_table_hash: String,
     pub resource_table: BangerNativeResourceTable,
     pub editable_scene_manifest: BangerEditableSceneManifest,
+    pub scene_graph_submission: BangerNativeSceneGraphSubmission,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
@@ -257,9 +258,63 @@ pub struct BangerNativeViewportContract {
     pub resize_policy: &'static str,
     pub scene_graph_hash: String,
     pub scene_bounds_hash: String,
+    pub viewport_fit_hash: String,
     pub target_frame_ms: f32,
     pub min_extent: u32,
     pub max_extent: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeSceneGraphSubmission {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub scene_id: String,
+    pub object_count: usize,
+    pub visible_object_count: usize,
+    pub renderable_object_count: usize,
+    pub hidden_object_count: usize,
+    pub root_object_id: String,
+    pub transform_propagation_hash: String,
+    pub visibility_hash: String,
+    pub representation_mix_hash: String,
+    pub viewport_fit_hash: String,
+    pub render_submission_hash: String,
+    pub submission_hash: String,
+    pub fit_bounds_min: [f32; 3],
+    pub fit_bounds_max: [f32; 3],
+    pub fit_bounding_sphere: [f32; 4],
+    pub representation_mix: Vec<BangerNativeRepresentationMixEntry>,
+    pub submissions: Vec<BangerNativeSceneSubmissionNode>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRepresentationMixEntry {
+    pub representation: &'static str,
+    pub object_count: usize,
+    pub renderable_count: usize,
+    pub weight: f32,
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeSceneSubmissionNode {
+    pub object_id: String,
+    pub parent_id: Option<String>,
+    pub representation: &'static str,
+    pub visible: bool,
+    pub renderable: bool,
+    pub submission_order: u32,
+    pub local_transform_hash: String,
+    pub world_transform_hash: String,
+    pub world_aabb_min: [f32; 3],
+    pub world_aabb_max: [f32; 3],
+    pub world_bounding_sphere: [f32; 4],
+    pub resource_slots: Vec<u32>,
+    pub render_graph_stages: Vec<&'static str>,
+    pub proof_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -293,6 +348,8 @@ pub struct BangerEditableSceneObject {
     pub world_transform: [f32; 16],
     pub local_transform_hash: String,
     pub world_transform_hash: String,
+    pub visible: bool,
+    pub renderable: bool,
     pub aabb_min: [f32; 3],
     pub aabb_max: [f32; 3],
     pub bounding_sphere: [f32; 4],
@@ -564,11 +621,18 @@ impl BangerNativeEngine {
             &pipeline_cache_keys,
             &resource_table,
         );
+        let scene_graph_submission = build_scene_graph_submission(
+            &prepared,
+            &editable_scene_manifest,
+            &resource_table,
+            &frame_graph_bindings,
+        );
         let texture_bridge_contract = build_texture_bridge_contract(
             &prepared,
             &pipeline_cache_manifest,
             &resource_table,
             &editable_scene_manifest,
+            &scene_graph_submission,
             target_frame_ms,
             viewport_width,
             viewport_height,
@@ -579,6 +643,7 @@ impl BangerNativeEngine {
             &shader_compiler_ticket,
             &pipeline_cache_manifest,
             &texture_bridge_contract,
+            &scene_graph_submission,
         );
         let render_pass_count = render_graph.len();
         let residency_job_count = residency_jobs.len();
@@ -620,6 +685,7 @@ impl BangerNativeEngine {
             resource_table_hash,
             resource_table,
             editable_scene_manifest,
+            scene_graph_submission,
             frame_graph_bindings,
             artifacts,
             verifier: BangerNativeRenderVerifier {
@@ -663,6 +729,8 @@ fn build_editable_scene_manifest(
         world_transform: root_transform,
         local_transform_hash: transform_hash("local", &root_transform),
         world_transform_hash: transform_hash("world", &root_transform),
+        visible: true,
+        renderable: false,
         aabb_min: root_min,
         aabb_max: root_max,
         bounding_sphere: bounding_sphere(root_min, root_max),
@@ -715,6 +783,8 @@ fn editable_scene_object_from_artifact(
         world_transform: transform,
         local_transform_hash: transform_hash("local", &transform),
         world_transform_hash: transform_hash("world", &transform),
+        visible: true,
+        renderable: renderable_kind(artifact.kind),
         aabb_min,
         aabb_max,
         bounding_sphere: bounding_sphere(aabb_min, aabb_max),
@@ -768,6 +838,8 @@ fn pending_newobject_scene_object(
         world_transform: transform,
         local_transform_hash: transform_hash("local", &transform),
         world_transform_hash: transform_hash("world", &transform),
+        visible: true,
+        renderable: renderable_representation(representation),
         aabb_min,
         aabb_max,
         bounding_sphere: bounding_sphere(aabb_min, aabb_max),
@@ -869,6 +941,131 @@ fn build_frame_graph_bindings(
             }
         })
         .collect()
+}
+
+fn build_scene_graph_submission(
+    prepared: &MonsterPreparedCompute,
+    editable_scene_manifest: &BangerEditableSceneManifest,
+    resource_table: &BangerNativeResourceTable,
+    frame_graph_bindings: &[BangerNativeFrameGraphBinding],
+) -> BangerNativeSceneGraphSubmission {
+    let mut objects = editable_scene_manifest.objects.clone();
+    propagate_scene_graph_world_transforms(&mut objects);
+    let submissions = objects
+        .iter()
+        .enumerate()
+        .map(|(index, object)| scene_submission_node(object, index, resource_table, frame_graph_bindings))
+        .collect::<Vec<_>>();
+    let visible_object_count = submissions.iter().filter(|node| node.visible).count();
+    let renderable_object_count = submissions
+        .iter()
+        .filter(|node| node.visible && node.renderable)
+        .count();
+    let hidden_object_count = submissions.len().saturating_sub(visible_object_count);
+    let representation_mix = scene_representation_mix(&submissions);
+    let (fit_bounds_min, fit_bounds_max) = scene_submission_fit_bounds(&submissions);
+    let fit_bounding_sphere = bounding_sphere(fit_bounds_min, fit_bounds_max);
+    let transform_propagation_hash = scene_transform_propagation_hash(&objects);
+    let visibility_hash = scene_visibility_hash(&submissions);
+    let representation_mix_hash = scene_representation_mix_hash(&representation_mix);
+    let viewport_fit_hash = scene_viewport_fit_hash(
+        editable_scene_manifest,
+        &fit_bounds_min,
+        &fit_bounds_max,
+        &fit_bounding_sphere,
+        &visibility_hash,
+        &representation_mix_hash,
+    );
+    let render_submission_hash = scene_render_submission_hash(&submissions, resource_table);
+    let submission_hash = scene_graph_submission_hash(
+        prepared,
+        editable_scene_manifest,
+        &transform_propagation_hash,
+        &visibility_hash,
+        &representation_mix_hash,
+        &viewport_fit_hash,
+        &render_submission_hash,
+    );
+    let root_object_id = editable_scene_manifest
+        .objects
+        .iter()
+        .find(|object| object.parent_id.is_none())
+        .map(|object| object.object_id.clone())
+        .unwrap_or_else(|| format!("{}:root", editable_scene_manifest.scene_id));
+    BangerNativeSceneGraphSubmission {
+        schema: "forge.banger.native_scene_graph_submission.v1",
+        authority: "editable_scene_manifest_local_to_world_visibility_representation_mix",
+        scene_id: editable_scene_manifest.scene_id.clone(),
+        object_count: submissions.len(),
+        visible_object_count,
+        renderable_object_count,
+        hidden_object_count,
+        root_object_id,
+        transform_propagation_hash,
+        visibility_hash,
+        representation_mix_hash,
+        viewport_fit_hash,
+        render_submission_hash,
+        submission_hash,
+        fit_bounds_min,
+        fit_bounds_max,
+        fit_bounding_sphere,
+        representation_mix,
+        submissions,
+    }
+}
+
+fn scene_submission_node(
+    object: &BangerEditableSceneObject,
+    index: usize,
+    resource_table: &BangerNativeResourceTable,
+    frame_graph_bindings: &[BangerNativeFrameGraphBinding],
+) -> BangerNativeSceneSubmissionNode {
+    let (world_aabb_min, world_aabb_max) =
+        transform_aabb(object.aabb_min, object.aabb_max, &object.world_transform);
+    let resource_slots = object
+        .source_artifact_name
+        .as_ref()
+        .map(|name| {
+            resource_table
+                .slots
+                .iter()
+                .filter(|slot| slot.artifact_name == *name)
+                .map(|slot| slot.slot)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let render_graph_stages = frame_graph_bindings
+        .iter()
+        .filter(|binding| binding.resource_slots.iter().any(|slot| resource_slots.contains(slot)))
+        .map(|binding| binding.stage)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let proof_hash = scene_submission_node_hash(
+        object,
+        index as u32,
+        &world_aabb_min,
+        &world_aabb_max,
+        &resource_slots,
+        &render_graph_stages,
+    );
+    BangerNativeSceneSubmissionNode {
+        object_id: object.object_id.clone(),
+        parent_id: object.parent_id.clone(),
+        representation: object.representation,
+        visible: object.visible,
+        renderable: object.renderable,
+        submission_order: index as u32,
+        local_transform_hash: object.local_transform_hash.clone(),
+        world_transform_hash: object.world_transform_hash.clone(),
+        world_aabb_min,
+        world_aabb_max,
+        world_bounding_sphere: bounding_sphere(world_aabb_min, world_aabb_max),
+        resource_slots,
+        render_graph_stages,
+        proof_hash,
+    }
 }
 
 fn build_pipeline_cache_manifest(
@@ -1016,6 +1213,7 @@ fn build_texture_bridge_contract(
     pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
     resource_table: &BangerNativeResourceTable,
     editable_scene_manifest: &BangerEditableSceneManifest,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
     target_frame_ms: f32,
     viewport_width: Option<u32>,
     viewport_height: Option<u32>,
@@ -1040,7 +1238,7 @@ fn build_texture_bridge_contract(
     let resize_proof_hash = texture_bridge_resize_proof_hash(
         width,
         height,
-        &editable_scene_manifest.bounds_hash,
+        &scene_graph_submission.viewport_fit_hash,
         resource_table,
     );
     let camera_control_proof_hash = texture_bridge_camera_control_proof_hash(
@@ -1055,12 +1253,14 @@ fn build_texture_bridge_contract(
         &resize_proof_hash,
         &camera_control_proof_hash,
         editable_scene_manifest,
+        scene_graph_submission,
     );
     let frame_hash = texture_bridge_frame_hash(
         prepared,
         pipeline_cache_manifest,
         resource_table,
         editable_scene_manifest,
+        scene_graph_submission,
         width,
         height,
         &device_queue_hash,
@@ -1106,6 +1306,7 @@ fn build_texture_bridge_contract(
             resize_policy: "recreate_or_rebind_render_target_on_extent_change",
             scene_graph_hash: editable_scene_manifest.graph_hash.clone(),
             scene_bounds_hash: editable_scene_manifest.bounds_hash.clone(),
+            viewport_fit_hash: scene_graph_submission.viewport_fit_hash.clone(),
             target_frame_ms,
             min_extent: 1,
             max_extent: 16_384,
@@ -1137,14 +1338,14 @@ fn texture_bridge_device_queue_hash(
 fn texture_bridge_resize_proof_hash(
     width: u32,
     height: u32,
-    scene_bounds_hash: &str,
+    viewport_fit_hash: &str,
     resource_table: &BangerNativeResourceTable,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_texture_bridge.resize_proof.v1\0");
     h.update(width.to_le_bytes());
     h.update(height.to_le_bytes());
-    h.update(scene_bounds_hash.as_bytes());
+    h.update(viewport_fit_hash.as_bytes());
     h.update(resource_table.table_hash.as_bytes());
     h.update(resource_table.resident_bytes.to_le_bytes());
     hex32(h.finalize().into())
@@ -1177,6 +1378,7 @@ fn texture_bridge_viewport_contract_hash(
     resize_proof_hash: &str,
     camera_control_proof_hash: &str,
     editable_scene_manifest: &BangerEditableSceneManifest,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_texture_bridge.viewport_contract.v1\0");
@@ -1188,6 +1390,8 @@ fn texture_bridge_viewport_contract_hash(
     h.update(editable_scene_manifest.manifest_hash.as_bytes());
     h.update(editable_scene_manifest.graph_hash.as_bytes());
     h.update(editable_scene_manifest.bounds_hash.as_bytes());
+    h.update(scene_graph_submission.viewport_fit_hash.as_bytes());
+    h.update(scene_graph_submission.render_submission_hash.as_bytes());
     hex32(h.finalize().into())
 }
 
@@ -1196,6 +1400,7 @@ fn texture_bridge_frame_hash(
     pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
     resource_table: &BangerNativeResourceTable,
     editable_scene_manifest: &BangerEditableSceneManifest,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
     width: u32,
     height: u32,
     device_queue_hash: &str,
@@ -1208,6 +1413,7 @@ fn texture_bridge_frame_hash(
     h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
     h.update(resource_table.table_hash.as_bytes());
     h.update(editable_scene_manifest.manifest_hash.as_bytes());
+    h.update(scene_graph_submission.submission_hash.as_bytes());
     h.update(width.to_le_bytes());
     h.update(height.to_le_bytes());
     h.update(device_queue_hash.as_bytes());
@@ -1240,6 +1446,86 @@ fn texture_bridge_proof_hash(
     h.update(camera_control_proof_hash.as_bytes());
     h.update(device_queue_hash.as_bytes());
     hex32(h.finalize().into())
+}
+
+fn renderable_kind(kind: &str) -> bool {
+    !matches!(kind, "material_payload")
+}
+
+fn renderable_representation(representation: &str) -> bool {
+    !matches!(representation, "material_graph")
+}
+
+fn scene_representation_mix(
+    submissions: &[BangerNativeSceneSubmissionNode],
+) -> Vec<BangerNativeRepresentationMixEntry> {
+    let total = submissions
+        .iter()
+        .filter(|node| node.visible && node.renderable)
+        .count()
+        .max(1) as f32;
+    let mut representations = BTreeSet::new();
+    for node in submissions.iter().filter(|node| node.visible) {
+        representations.insert(node.representation);
+    }
+    representations
+        .into_iter()
+        .map(|representation| {
+            let object_count = submissions
+                .iter()
+                .filter(|node| node.visible && node.representation == representation)
+                .count();
+            let renderable_count = submissions
+                .iter()
+                .filter(|node| {
+                    node.visible && node.renderable && node.representation == representation
+                })
+                .count();
+            let weight = renderable_count as f32 / total;
+            let proof_hash =
+                representation_mix_entry_hash(representation, object_count, renderable_count, weight);
+            BangerNativeRepresentationMixEntry {
+                representation,
+                object_count,
+                renderable_count,
+                weight,
+                proof_hash,
+            }
+        })
+        .collect()
+}
+
+fn scene_submission_fit_bounds(
+    submissions: &[BangerNativeSceneSubmissionNode],
+) -> ([f32; 3], [f32; 3]) {
+    merged_bounds(
+        submissions
+            .iter()
+            .filter(|node| node.visible && node.renderable)
+            .map(|node| (node.world_aabb_min, node.world_aabb_max)),
+    )
+}
+
+fn propagate_scene_graph_world_transforms(objects: &mut [BangerEditableSceneObject]) {
+    for object in objects.iter_mut() {
+        object.world_transform = object.local_transform;
+        object.local_transform_hash = transform_hash("local", &object.local_transform);
+        object.world_transform_hash = transform_hash("world", &object.world_transform);
+    }
+    for _ in 0..objects.len() {
+        let snapshot = objects
+            .iter()
+            .map(|object| (object.object_id.clone(), object.world_transform))
+            .collect::<Vec<_>>();
+        for object in objects.iter_mut() {
+            if let Some(parent_id) = &object.parent_id {
+                if let Some((_, parent_world)) = snapshot.iter().find(|(id, _)| id == parent_id) {
+                    object.world_transform = mat4_mul(parent_world, &object.local_transform);
+                    object.world_transform_hash = transform_hash("world", &object.world_transform);
+                }
+            }
+        }
+    }
 }
 
 fn scene_role_for_kind(kind: &str) -> &'static str {
@@ -1384,6 +1670,44 @@ fn bounding_sphere(min: [f32; 3], max: [f32; 3]) -> [f32; 4] {
     [center[0], center[1], center[2], (dx * dx + dy * dy + dz * dz).sqrt()]
 }
 
+fn transform_aabb(min: [f32; 3], max: [f32; 3], transform: &[f32; 16]) -> ([f32; 3], [f32; 3]) {
+    let corners = [
+        [min[0], min[1], min[2]],
+        [min[0], min[1], max[2]],
+        [min[0], max[1], min[2]],
+        [min[0], max[1], max[2]],
+        [max[0], min[1], min[2]],
+        [max[0], min[1], max[2]],
+        [max[0], max[1], min[2]],
+        [max[0], max[1], max[2]],
+    ];
+    merged_bounds(corners.into_iter().map(|corner| {
+        let point = transform_point(transform, corner);
+        (point, point)
+    }))
+}
+
+fn transform_point(transform: &[f32; 16], point: [f32; 3]) -> [f32; 3] {
+    [
+        transform[0] * point[0] + transform[4] * point[1] + transform[8] * point[2] + transform[12],
+        transform[1] * point[0] + transform[5] * point[1] + transform[9] * point[2] + transform[13],
+        transform[2] * point[0] + transform[6] * point[1] + transform[10] * point[2] + transform[14],
+    ]
+}
+
+fn mat4_mul(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+    let mut out = [0.0f32; 16];
+    for col in 0..4 {
+        for row in 0..4 {
+            out[col * 4 + row] = a[row] * b[col * 4]
+                + a[4 + row] * b[col * 4 + 1]
+                + a[8 + row] * b[col * 4 + 2]
+                + a[12 + row] * b[col * 4 + 3];
+        }
+    }
+    out
+}
+
 fn identity_transform() -> [f32; 16] {
     [
         1.0, 0.0, 0.0, 0.0,
@@ -1428,6 +1752,8 @@ fn editable_object_hash(object: &BangerEditableSceneObject) -> String {
     h.update(object.renderer_cache_hash.as_bytes());
     h.update(object.local_transform_hash.as_bytes());
     h.update(object.world_transform_hash.as_bytes());
+    h.update([object.visible as u8]);
+    h.update([object.renderable as u8]);
     for value in object.aabb_min.iter().chain(object.aabb_max.iter()).chain(object.bounding_sphere.iter()) {
         h.update(value.to_le_bytes());
     }
@@ -1447,6 +1773,8 @@ fn editable_scene_graph_hash(scene_id: &str, objects: &[BangerEditableSceneObjec
             h.update(parent_id.as_bytes());
         }
         h.update(object.representation.as_bytes());
+        h.update([object.visible as u8]);
+        h.update([object.renderable as u8]);
         h.update(object.proof_hash.as_bytes());
     }
     hex32(h.finalize().into())
@@ -1458,6 +1786,8 @@ fn editable_scene_bounds_hash(scene_id: &str, objects: &[BangerEditableSceneObje
     h.update(scene_id.as_bytes());
     for object in objects {
         h.update(object.object_id.as_bytes());
+        h.update([object.visible as u8]);
+        h.update([object.renderable as u8]);
         for value in object.aabb_min.iter().chain(object.aabb_max.iter()).chain(object.bounding_sphere.iter()) {
             h.update(value.to_le_bytes());
         }
@@ -1500,6 +1830,154 @@ fn editable_scene_manifest_hash(
     for object in objects {
         h.update(object.proof_hash.as_bytes());
     }
+    hex32(h.finalize().into())
+}
+
+fn representation_mix_entry_hash(
+    representation: &str,
+    object_count: usize,
+    renderable_count: usize,
+    weight: f32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_graph.representation_mix_entry.v1\0");
+    h.update(representation.as_bytes());
+    h.update((object_count as u64).to_le_bytes());
+    h.update((renderable_count as u64).to_le_bytes());
+    h.update(weight.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn scene_submission_node_hash(
+    object: &BangerEditableSceneObject,
+    submission_order: u32,
+    world_aabb_min: &[f32; 3],
+    world_aabb_max: &[f32; 3],
+    resource_slots: &[u32],
+    render_graph_stages: &[&'static str],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_graph.submission_node.v1\0");
+    h.update(object.object_id.as_bytes());
+    if let Some(parent_id) = &object.parent_id {
+        h.update(parent_id.as_bytes());
+    }
+    h.update(object.representation.as_bytes());
+    h.update([object.visible as u8]);
+    h.update([object.renderable as u8]);
+    h.update(submission_order.to_le_bytes());
+    h.update(object.local_transform_hash.as_bytes());
+    h.update(object.world_transform_hash.as_bytes());
+    for value in world_aabb_min.iter().chain(world_aabb_max.iter()) {
+        h.update(value.to_le_bytes());
+    }
+    for slot in resource_slots {
+        h.update(slot.to_le_bytes());
+    }
+    for stage in render_graph_stages {
+        h.update(stage.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_transform_propagation_hash(objects: &[BangerEditableSceneObject]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_graph.transform_propagation.v1\0");
+    for object in objects {
+        h.update(object.object_id.as_bytes());
+        if let Some(parent_id) = &object.parent_id {
+            h.update(parent_id.as_bytes());
+        }
+        h.update(object.local_transform_hash.as_bytes());
+        h.update(object.world_transform_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_visibility_hash(submissions: &[BangerNativeSceneSubmissionNode]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_graph.visibility.v1\0");
+    for node in submissions {
+        h.update(node.object_id.as_bytes());
+        h.update([node.visible as u8]);
+        h.update([node.renderable as u8]);
+        h.update(node.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_representation_mix_hash(mix: &[BangerNativeRepresentationMixEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_graph.representation_mix.v1\0");
+    for entry in mix {
+        h.update(entry.representation.as_bytes());
+        h.update((entry.object_count as u64).to_le_bytes());
+        h.update((entry.renderable_count as u64).to_le_bytes());
+        h.update(entry.weight.to_le_bytes());
+        h.update(entry.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_viewport_fit_hash(
+    editable_scene_manifest: &BangerEditableSceneManifest,
+    fit_bounds_min: &[f32; 3],
+    fit_bounds_max: &[f32; 3],
+    fit_bounding_sphere: &[f32; 4],
+    visibility_hash: &str,
+    representation_mix_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_graph.viewport_fit.v1\0");
+    h.update(editable_scene_manifest.graph_hash.as_bytes());
+    h.update(editable_scene_manifest.bounds_hash.as_bytes());
+    h.update(visibility_hash.as_bytes());
+    h.update(representation_mix_hash.as_bytes());
+    for value in fit_bounds_min.iter().chain(fit_bounds_max.iter()).chain(fit_bounding_sphere.iter()) {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_render_submission_hash(
+    submissions: &[BangerNativeSceneSubmissionNode],
+    resource_table: &BangerNativeResourceTable,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_graph.render_submission.v1\0");
+    h.update(resource_table.table_hash.as_bytes());
+    for node in submissions.iter().filter(|node| node.visible && node.renderable) {
+        h.update(node.proof_hash.as_bytes());
+        h.update(node.world_transform_hash.as_bytes());
+        for slot in &node.resource_slots {
+            h.update(slot.to_le_bytes());
+        }
+        for stage in &node.render_graph_stages {
+            h.update(stage.as_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn scene_graph_submission_hash(
+    prepared: &MonsterPreparedCompute,
+    editable_scene_manifest: &BangerEditableSceneManifest,
+    transform_propagation_hash: &str,
+    visibility_hash: &str,
+    representation_mix_hash: &str,
+    viewport_fit_hash: &str,
+    render_submission_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_scene_graph_submission.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(editable_scene_manifest.manifest_hash.as_bytes());
+    h.update(transform_propagation_hash.as_bytes());
+    h.update(visibility_hash.as_bytes());
+    h.update(representation_mix_hash.as_bytes());
+    h.update(viewport_fit_hash.as_bytes());
+    h.update(render_submission_hash.as_bytes());
     hex32(h.finalize().into())
 }
 
@@ -2085,6 +2563,7 @@ fn render_handoff_hash(
     shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
     pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
     texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_render_handoff.v1\0");
@@ -2095,6 +2574,8 @@ fn render_handoff_hash(
     h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
     h.update(texture_bridge_contract.frame_hash.as_bytes());
     h.update(texture_bridge_contract.viewport_contract_hash.as_bytes());
+    h.update(scene_graph_submission.submission_hash.as_bytes());
+    h.update(scene_graph_submission.render_submission_hash.as_bytes());
     for artifact in artifacts {
         h.update(b"\0artifact\0");
         h.update(artifact.kind.as_bytes());
@@ -2386,6 +2867,43 @@ mod tests {
             response.texture_bridge_contract.viewport.scene_bounds_hash,
             response.editable_scene_manifest.bounds_hash
         );
+        assert_eq!(
+            response.scene_graph_submission.schema,
+            "forge.banger.native_scene_graph_submission.v1"
+        );
+        assert_eq!(
+            response.scene_graph_submission.object_count,
+            response.editable_scene_manifest.object_count
+        );
+        assert!(response.scene_graph_submission.visible_object_count >= response.artifacts.len());
+        assert!(response.scene_graph_submission.renderable_object_count > 0);
+        assert_eq!(response.scene_graph_submission.hidden_object_count, 0);
+        assert_eq!(response.scene_graph_submission.transform_propagation_hash.len(), 64);
+        assert_eq!(response.scene_graph_submission.visibility_hash.len(), 64);
+        assert_eq!(response.scene_graph_submission.representation_mix_hash.len(), 64);
+        assert_eq!(response.scene_graph_submission.viewport_fit_hash.len(), 64);
+        assert_eq!(response.scene_graph_submission.render_submission_hash.len(), 64);
+        assert_eq!(response.scene_graph_submission.submission_hash.len(), 64);
+        assert_eq!(
+            response.texture_bridge_contract.viewport.viewport_fit_hash,
+            response.scene_graph_submission.viewport_fit_hash
+        );
+        assert!(response
+            .scene_graph_submission
+            .representation_mix
+            .iter()
+            .any(|entry| entry.representation == "meshlet"
+                && entry.object_count > 0
+                && entry.proof_hash.len() == 64));
+        assert!(response
+            .scene_graph_submission
+            .submissions
+            .iter()
+            .any(|node| node.renderable
+                && node.visible
+                && !node.resource_slots.is_empty()
+                && !node.render_graph_stages.is_empty()
+                && node.proof_hash.len() == 64));
         assert_eq!(response.resource_table_hash.len(), 64);
         assert_eq!(response.resource_table.slot_count, response.resource_table.slots.len());
         assert!(response.resource_table.slot_count >= response.artifacts.len());
@@ -2421,6 +2939,7 @@ mod tests {
             .all(|object| object.proof_hash.len() == 64
                 && object.local_transform_hash.len() == 64
                 && object.world_transform_hash.len() == 64
+                && object.visible
                 && object.bounding_sphere[3].is_finite()
                 && object.bounding_sphere[3] >= 0.0));
         assert!(response
