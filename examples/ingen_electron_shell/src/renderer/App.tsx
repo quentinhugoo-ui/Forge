@@ -204,6 +204,7 @@ export function App() {
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
   const [widgetMode, setWidgetMode] = useState(false);
+  const [widgetModeTransitioning, setWidgetModeTransitioning] = useState(false);
   const [widgetMinimizingPhase, setWidgetMinimizingPhase] = useState<WidgetMinimizingPhase>("");
   const [widgetLayoutLock, setWidgetLayoutLock] = useState<WidgetLayoutLock | null>(null);
   const canvasMapsOpenRef = useRef(false);
@@ -233,6 +234,7 @@ export function App() {
   const parallelSidebarBirthTimerRef = useRef<number | null>(null);
   const widgetSurfaceCloseTimerRef = useRef<number | null>(null);
   const widgetModeSequenceRef = useRef(0);
+  const widgetModeTransitioningRef = useRef(false);
   const previousActiveSessionIdRef = useRef(panelsChatSnapshot.activeSessionId);
   const mapsOwnerSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -915,7 +917,27 @@ export function App() {
     []
   );
 
+  const releaseWidgetModeTransition = useCallback((sequenceToken: number, delayMs = 0) => {
+    const release = () => {
+      if (widgetModeSequenceRef.current !== sequenceToken) {
+        return;
+      }
+      widgetModeTransitioningRef.current = false;
+      setWidgetModeTransitioning(false);
+    };
+    if (delayMs > 0) {
+      window.setTimeout(release, delayMs);
+      return;
+    }
+    release();
+  }, []);
+
   const setWidgetModeEnabled = useCallback((enabled: boolean) => {
+    if (widgetModeTransitioningRef.current) {
+      return;
+    }
+    widgetModeTransitioningRef.current = true;
+    setWidgetModeTransitioning(true);
     const sequenceToken = widgetModeSequenceRef.current + 1;
     widgetModeSequenceRef.current = sequenceToken;
     if (widgetSurfaceCloseTimerRef.current !== null) {
@@ -940,6 +962,7 @@ export function App() {
         setWidgetMinimizingPhase("");
         setWidgetMode(false);
         setWidgetLayoutLock(null);
+        releaseWidgetModeTransition(sequenceToken, 420);
       })();
       return;
     }
@@ -1003,8 +1026,9 @@ export function App() {
       if (nativeWidgetAccepted === false) {
         console.warn("Native widget mode was not accepted.");
       }
+      releaseWidgetModeTransition(sequenceToken);
     })();
-  }, [activeProfileCanvas, closeProfileCanvas, snapshot.leftPanelOpen]);
+  }, [activeProfileCanvas, closeProfileCanvas, releaseWidgetModeTransition, snapshot.leftPanelOpen]);
   const topControls = useMemo(() => snapshot.topControls.filter((control) => control.visible), [snapshot]);
   const workspaceControls = useMemo(
     () => snapshot.workspaceControls.filter((control) => control.visible),
@@ -1280,7 +1304,8 @@ export function App() {
           webExplorerOpen={canvasWebExplorerOpen}
           composerModule={composerModuleId ?? (canvasWebExplorerOpen ? webExplorerModuleId : null)}
           onComposerModuleChange={setComposerModuleId}
-          widgetMode={widgetMode}
+          widgetMode={widgetMode || widgetMinimizingPhase !== ""}
+          widgetModeTransitioning={widgetModeTransitioning}
           onWidgetModeChange={setWidgetModeEnabled}
         />
       ) : null}

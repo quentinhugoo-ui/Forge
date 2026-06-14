@@ -11013,6 +11013,16 @@ if ($null -ne $desiredState) {
   $data.hWnd = $taskbarHandle
   $target = [int]([InGenTaskbarState]::SHAppBarMessage([InGenTaskbarState]::ABM_GETSTATE, [ref]$data).ToUInt32())
 }
+if ($registryFound -and $null -ne $desiredRegistryByte) {
+  $settings = [byte[]](Get-ItemProperty -LiteralPath $registryPath -Name Settings).Settings
+  if ($settings.Length -gt 8) {
+    $settings[8] = [byte]$desiredRegistryByte
+    Set-ItemProperty -LiteralPath $registryPath -Name Settings -Value $settings
+    $registryByte = [int]$settings[8]
+    Send-InGenTraySettingsChanged
+    Start-Sleep -Milliseconds 220
+  }
+}
 if ($registryFound) {
   $settings = [byte[]](Get-ItemProperty -LiteralPath $registryPath -Name Settings).Settings
   if ($settings.Length -gt 8) {
@@ -11188,18 +11198,29 @@ function restoreWidgetTaskbarState(): boolean {
   const targetRegistryByte = current.registryPathFound && current.registryByte >= 0
     ? current.registryByte & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG
     : undefined;
-  const result = runWindowsTaskbarAutoHideProbe(targetState, targetRegistryByte);
+  let result = runWindowsTaskbarAutoHideProbe(targetState, targetRegistryByte);
   widgetTaskbarOriginalState = null;
   widgetTaskbarOriginalRegistryByte = null;
   widgetTaskbarHidden = false;
   if (!result) {
     return false;
   }
-  const stateVisible = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
-  const registryVisible =
+  let stateVisible = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
+  let registryVisible =
     !result.registryPathFound ||
     result.registryByte < 0 ||
     (result.registryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
+  if (!stateVisible || !registryVisible) {
+    const retryResult = runWindowsTaskbarAutoHideProbe(targetState, targetRegistryByte);
+    if (retryResult) {
+      result = retryResult;
+      stateVisible = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
+      registryVisible =
+        !result.registryPathFound ||
+        result.registryByte < 0 ||
+        (result.registryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
+    }
+  }
   traceWidgetTaskbarStep("restore-taskbar-visible", {
     stateVisible,
     registryVisible,

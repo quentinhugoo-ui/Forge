@@ -3521,6 +3521,7 @@ interface PanelsChatBottomSliceProps {
   composerModule?: SidebarModuleId | null;
   onComposerModuleChange?: (id: SidebarModuleId | null) => void;
   widgetMode?: boolean;
+  widgetModeTransitioning?: boolean;
   onWidgetModeChange?: (enabled: boolean) => void;
 }
 
@@ -3710,6 +3711,7 @@ export function PanelsChatBottomSlice({
   composerModule = null,
   onComposerModuleChange,
   widgetMode = false,
+  widgetModeTransitioning = false,
   onWidgetModeChange
 }: PanelsChatBottomSliceProps = {}) {
   const { snapshot } = usePanelsChatBottomStore();
@@ -3896,7 +3898,7 @@ export function PanelsChatBottomSlice({
     void dispatch({ kind: "attach_dropped_files", filePaths }).then(() => inputRef.current?.focus());
   };
   const toggleWidgetMode = () => {
-    if (!onWidgetModeChange) {
+    if (!onWidgetModeChange || widgetModeTransitioning) {
       return;
     }
     if (widgetMode) {
@@ -4534,6 +4536,7 @@ export function PanelsChatBottomSlice({
           title="Mode widget"
           aria-label="Passer en mode widget"
           aria-pressed={widgetMode}
+          disabled={widgetModeTransitioning}
           onClick={toggleWidgetMode}
         >
           <strong>MINI</strong>
