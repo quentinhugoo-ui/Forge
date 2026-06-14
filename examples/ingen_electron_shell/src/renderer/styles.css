@@ -9637,13 +9637,13 @@ ol.assistantText__list li::before {
   --brain-blob-gleam: 50%;
   --brain-blob-gleam-opacity: 0.34;
   position: fixed;
-  right: clamp(16px, 5vw, 110px);
-  bottom: clamp(-220px, -17vh, -120px);
+  right: clamp(-90px, -5vw, 24px);
+  bottom: clamp(-330px, -24vh, -170px);
   z-index: 0;
   display: grid;
   place-items: center;
-  width: clamp(720px, 64vw, 1100px);
-  height: clamp(720px, 86vh, 1100px);
+  width: clamp(860px, 74vw, 1320px);
+  height: clamp(860px, 102vh, 1320px);
   pointer-events: none;
   opacity: 0.96;
   overflow: visible;
