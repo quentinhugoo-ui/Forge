@@ -491,16 +491,27 @@ pub struct BangerNativePageResidencyEntry {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativePipelineCacheManifest {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub cache_root: String,
     pub selected_adapter_hash: String,
     pub selected_adapter_label: String,
     pub backend: String,
     pub driver_hash: String,
     pub driver_info_hash: String,
+    pub descriptor_abi_hash: String,
+    pub shader_stage_set_hash: String,
+    pub backend_capability_hash: String,
+    pub usage_telemetry_hash: String,
+    pub prewarm_plan_hash: String,
+    pub eviction_policy_hash: String,
     pub entry_count: usize,
     pub persisted_entry_count: usize,
+    pub prewarm_entry_count: usize,
+    pub eviction_candidate_count: usize,
+    pub usage_sample_count: usize,
     pub manifest_hash: String,
     pub promotion_status: &'static str,
+    pub telemetry_receipt: BangerNativePipelineCacheTelemetryReceipt,
     pub entries: Vec<BangerNativePipelineCacheEntry>,
 }
 
@@ -508,6 +519,7 @@ pub struct BangerNativePipelineCacheManifest {
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativePipelineCacheEntry {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub pass_name: &'static str,
     pub artifact_name: String,
     pub artifact_kind: &'static str,
@@ -519,12 +531,47 @@ pub struct BangerNativePipelineCacheEntry {
     pub shader_target_manifest_hash: String,
     pub material_abi_hash: String,
     pub render_pass_abi_hash: String,
+    pub descriptor_abi_hash: String,
+    pub shader_stage_hashes: Vec<BangerNativePipelineShaderStageHash>,
+    pub shader_stage_set_hash: String,
+    pub backend_capability_bits: u32,
+    pub usage_count: u32,
+    pub last_used_frame: u64,
+    pub prewarm_order: u32,
+    pub eviction_reason: &'static str,
+    pub usage_telemetry_hash: String,
+    pub prewarm_hash: String,
+    pub eviction_hash: String,
     pub renderer_variant_hash: String,
     pub blob_hash: String,
     pub blob_len: u64,
     pub blob_path: String,
     pub persistence_status: &'static str,
     pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePipelineShaderStageHash {
+    pub stage: &'static str,
+    pub stage_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePipelineCacheTelemetryReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub usage_sample_count: usize,
+    pub prewarm_entry_count: usize,
+    pub eviction_candidate_count: usize,
+    pub descriptor_abi_hash: String,
+    pub shader_stage_set_hash: String,
+    pub backend_capability_hash: String,
+    pub usage_telemetry_hash: String,
+    pub prewarm_plan_hash: String,
+    pub eviction_policy_hash: String,
+    pub receipt_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -5184,23 +5231,63 @@ fn build_pipeline_cache_manifest(
             prepared,
             artifact,
             pass,
+            index,
             &pipeline_cache_key,
             shader_compiler_ticket,
             &cache_root,
             &selected_adapter_hash,
             &driver_hash,
+            &backend,
         )?);
     }
     let persisted_entry_count = entries
         .iter()
         .filter(|entry| entry.persistence_status == "seed_blob_persisted")
         .count();
+    let prewarm_entry_count = entries.len();
+    let eviction_candidate_count = entries
+        .iter()
+        .filter(|entry| entry.eviction_reason == "cold_entry_candidate")
+        .count();
+    let usage_sample_count = entries.len();
+    let descriptor_abi_hash = pipeline_cache_descriptor_abi_manifest_hash(&entries);
+    let shader_stage_set_hash = pipeline_cache_shader_stage_manifest_hash(&entries);
+    let backend_capability_hash = pipeline_cache_backend_capability_manifest_hash(&entries);
+    let usage_telemetry_hash = pipeline_cache_usage_telemetry_manifest_hash(&entries);
+    let prewarm_plan_hash = pipeline_cache_prewarm_plan_hash(&entries);
+    let eviction_policy_hash = pipeline_cache_eviction_policy_hash(&entries);
+    let receipt_hash = pipeline_cache_telemetry_receipt_hash(
+        usage_sample_count,
+        prewarm_entry_count,
+        eviction_candidate_count,
+        &descriptor_abi_hash,
+        &shader_stage_set_hash,
+        &backend_capability_hash,
+        &usage_telemetry_hash,
+        &prewarm_plan_hash,
+        &eviction_policy_hash,
+    );
+    let telemetry_receipt = BangerNativePipelineCacheTelemetryReceipt {
+        schema: "forge.banger.native_pipeline_cache_telemetry_receipt.v1",
+        authority: "descriptor_abi_shader_stage_backend_usage_prewarm_eviction",
+        usage_sample_count,
+        prewarm_entry_count,
+        eviction_candidate_count,
+        descriptor_abi_hash: descriptor_abi_hash.clone(),
+        shader_stage_set_hash: shader_stage_set_hash.clone(),
+        backend_capability_hash: backend_capability_hash.clone(),
+        usage_telemetry_hash: usage_telemetry_hash.clone(),
+        prewarm_plan_hash: prewarm_plan_hash.clone(),
+        eviction_policy_hash: eviction_policy_hash.clone(),
+        receipt_hash,
+    };
     let manifest_hash = pipeline_cache_manifest_hash(
         prepared,
         &entries,
         &selected_adapter_hash,
         &driver_hash,
         &driver_info_hash,
+        &telemetry_receipt,
     );
     let promotion_status = if persisted_entry_count == entries.len() {
         "seed_blobs_persisted_driver_blob_api_deferred"
@@ -5208,17 +5295,28 @@ fn build_pipeline_cache_manifest(
         "manifest_ready_blob_persistence_partial"
     };
     Ok(BangerNativePipelineCacheManifest {
-        schema: "forge.banger.native_pipeline_cache_manifest.v1",
+        schema: "forge.banger.native_pipeline_cache_manifest.v2",
+        schema_version: 2,
         cache_root: cache_root.to_string_lossy().to_string(),
         selected_adapter_hash,
         selected_adapter_label,
         backend,
         driver_hash,
         driver_info_hash,
+        descriptor_abi_hash,
+        shader_stage_set_hash,
+        backend_capability_hash,
+        usage_telemetry_hash,
+        prewarm_plan_hash,
+        eviction_policy_hash,
         entry_count: entries.len(),
         persisted_entry_count,
+        prewarm_entry_count,
+        eviction_candidate_count,
+        usage_sample_count,
         manifest_hash,
         promotion_status,
+        telemetry_receipt,
         entries,
     })
 }
@@ -5227,17 +5325,43 @@ fn build_pipeline_cache_entry(
     prepared: &MonsterPreparedCompute,
     artifact: &MonsterNativeTandemArtifact,
     pass: &BangerNativeRenderPass,
+    prewarm_order: usize,
     pipeline_cache_key: &str,
     shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
     cache_root: &Path,
     adapter_hash: &str,
     driver_hash: &str,
+    backend: &str,
 ) -> Result<BangerNativePipelineCacheEntry, String> {
     let shader_source_hash = shader_compiler_ticket.mini_probe_source_hash.clone();
     let shader_reflection_hash = shader_reflection_hash(shader_compiler_ticket, artifact, pass);
     let shader_target_manifest_hash = shader_compiler_ticket.target_manifest_hash.clone();
     let material_abi_hash = shader_compiler_ticket.material_abi_hash.clone();
     let render_pass_abi_hash = render_pass_abi_hash(artifact, pass);
+    let descriptor_abi_hash = pipeline_descriptor_abi_hash(
+        artifact,
+        pass,
+        shader_compiler_ticket,
+        &shader_reflection_hash,
+        &render_pass_abi_hash,
+    );
+    let shader_stage_hashes = pipeline_shader_stage_hashes(shader_compiler_ticket, artifact, pass);
+    let shader_stage_set_hash = pipeline_shader_stage_set_hash(&shader_stage_hashes);
+    let backend_capability_bits = pipeline_backend_capability_bits(backend, artifact, pass);
+    let usage_count = pipeline_cache_usage_count(prepared, artifact, pass);
+    let last_used_frame = pipeline_cache_last_used_frame(prepared, artifact, pass);
+    let prewarm_order = prewarm_order as u32;
+    let usage_telemetry_hash =
+        pipeline_cache_usage_telemetry_hash(artifact, pass, usage_count, last_used_frame);
+    let prewarm_hash = pipeline_cache_entry_prewarm_hash(
+        pipeline_cache_key,
+        prewarm_order,
+        &descriptor_abi_hash,
+        &shader_stage_set_hash,
+    );
+    let eviction_reason = pipeline_cache_eviction_reason(usage_count);
+    let eviction_hash =
+        pipeline_cache_entry_eviction_hash(pipeline_cache_key, eviction_reason, usage_count);
     let blob_bytes = pipeline_cache_seed_blob_bytes(
         prepared,
         artifact,
@@ -5250,6 +5374,12 @@ fn build_pipeline_cache_entry(
         &shader_target_manifest_hash,
         &material_abi_hash,
         &render_pass_abi_hash,
+        &descriptor_abi_hash,
+        &shader_stage_set_hash,
+        backend_capability_bits,
+        &usage_telemetry_hash,
+        &prewarm_hash,
+        &eviction_hash,
     );
     let blob_hash = hex32(Sha256::digest(&blob_bytes).into());
     let blob_path = cache_root.join(format!("{}.bpcache", &blob_hash[..32]));
@@ -5266,10 +5396,17 @@ fn build_pipeline_cache_entry(
         &shader_target_manifest_hash,
         &material_abi_hash,
         &render_pass_abi_hash,
+        &descriptor_abi_hash,
+        &shader_stage_set_hash,
+        backend_capability_bits,
+        &usage_telemetry_hash,
+        &prewarm_hash,
+        &eviction_hash,
         &blob_hash,
     );
     Ok(BangerNativePipelineCacheEntry {
-        schema: "forge.banger.native_pipeline_cache_entry.v1",
+        schema: "forge.banger.native_pipeline_cache_entry.v2",
+        schema_version: 2,
         pass_name: pass.name,
         artifact_name: artifact.name.clone(),
         artifact_kind: artifact.kind,
@@ -5281,6 +5418,17 @@ fn build_pipeline_cache_entry(
         shader_target_manifest_hash,
         material_abi_hash,
         render_pass_abi_hash,
+        descriptor_abi_hash,
+        shader_stage_hashes,
+        shader_stage_set_hash,
+        backend_capability_bits,
+        usage_count,
+        last_used_frame,
+        prewarm_order,
+        eviction_reason,
+        usage_telemetry_hash,
+        prewarm_hash,
+        eviction_hash,
         renderer_variant_hash: artifact.renderer_variant_hash.clone(),
         blob_hash,
         blob_len: blob_bytes.len() as u64,
@@ -6538,6 +6686,7 @@ fn texture_bridge_frame_hash(
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(pipeline_cache_manifest.telemetry_receipt.receipt_hash.as_bytes());
     h.update(resource_table.table_hash.as_bytes());
     h.update(editable_scene_manifest.manifest_hash.as_bytes());
     h.update(scene_graph_submission.submission_hash.as_bytes());
@@ -8185,6 +8334,7 @@ fn backend_descriptor_heap_hash(
     h.update(b"forge.banger.backend_submit.descriptor_heap.v1\0");
     h.update(backend_family.as_bytes());
     h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(pipeline_cache_manifest.descriptor_abi_hash.as_bytes());
     h.update(frame_submission_packet.command_buffer_hash.as_bytes());
     for command in &frame_submission_packet.commands {
         h.update(command.input_hash.as_bytes());
@@ -8208,11 +8358,16 @@ fn backend_pipeline_state_cache_hash(
     h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
     h.update(pipeline_cache_manifest.driver_hash.as_bytes());
     h.update(pipeline_cache_manifest.driver_info_hash.as_bytes());
+    h.update(pipeline_cache_manifest.telemetry_receipt.receipt_hash.as_bytes());
+    h.update(pipeline_cache_manifest.prewarm_plan_hash.as_bytes());
     h.update(frame_submission_packet.frame_schedule_hash.as_bytes());
     for entry in &pipeline_cache_manifest.entries {
         h.update(entry.pipeline_cache_key.as_bytes());
         h.update(entry.blob_hash.as_bytes());
         h.update(entry.render_pass_abi_hash.as_bytes());
+        h.update(entry.descriptor_abi_hash.as_bytes());
+        h.update(entry.shader_stage_set_hash.as_bytes());
+        h.update(entry.prewarm_hash.as_bytes());
     }
     for target in targets {
         h.update(target.pipeline_state_count.to_le_bytes());
@@ -8274,6 +8429,7 @@ fn backend_submit_plan_hash(
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(pipeline_cache_manifest.telemetry_receipt.receipt_hash.as_bytes());
     h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
     h.update(frame_submission_packet.submission_hash.as_bytes());
     h.update(rhi_submit_packet.packet_hash.as_bytes());
@@ -13163,6 +13319,200 @@ fn shader_reflection_hash(
     hex32(h.finalize().into())
 }
 
+fn pipeline_descriptor_abi_hash(
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    shader_reflection_hash: &str,
+    render_pass_abi_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_descriptor_abi.v1\0");
+    h.update(shader_compiler_ticket.material_abi_hash.as_bytes());
+    h.update(shader_compiler_ticket.reflection_manifest.reflection_hash.as_bytes());
+    h.update(shader_reflection_hash.as_bytes());
+    h.update(render_pass_abi_hash.as_bytes());
+    h.update(artifact.kind.as_bytes());
+    h.update(artifact.layout.as_bytes());
+    h.update(resource_heap_for_kind(artifact.kind).as_bytes());
+    h.update(resource_usage_for_kind(artifact.kind).as_bytes());
+    h.update(read_barrier_for_stage(pass.stage).as_bytes());
+    h.update(write_barrier_for_stage(pass.stage).as_bytes());
+    h.update(pass.cache_class.as_bytes());
+    h.update(pass.residency_policy.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn pipeline_shader_stage_hashes(
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+) -> Vec<BangerNativePipelineShaderStageHash> {
+    let mut stages = vec![BangerNativePipelineShaderStageHash {
+        stage: "vertex_or_mesh",
+        stage_hash: pipeline_shader_stage_hash(
+            shader_compiler_ticket,
+            artifact,
+            pass,
+            "vertex_or_mesh",
+        ),
+    }];
+    if pass.async_compute_candidate || pass.stage.contains("compute") {
+        stages.push(BangerNativePipelineShaderStageHash {
+            stage: "compute",
+            stage_hash: pipeline_shader_stage_hash(shader_compiler_ticket, artifact, pass, "compute"),
+        });
+    } else {
+        stages.push(BangerNativePipelineShaderStageHash {
+            stage: "fragment",
+            stage_hash: pipeline_shader_stage_hash(shader_compiler_ticket, artifact, pass, "fragment"),
+        });
+    }
+    if artifact.kind == "meshlet_page" || pass.consumes_kind == "meshlet_page" {
+        stages.push(BangerNativePipelineShaderStageHash {
+            stage: "amplification_meshlet",
+            stage_hash: pipeline_shader_stage_hash(
+                shader_compiler_ticket,
+                artifact,
+                pass,
+                "amplification_meshlet",
+            ),
+        });
+    }
+    stages
+}
+
+fn pipeline_shader_stage_hash(
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+    stage: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_shader_stage.v1\0");
+    h.update(stage.as_bytes());
+    h.update(shader_compiler_ticket.proof_hash.as_bytes());
+    h.update(shader_compiler_ticket.promoted_target.as_bytes());
+    h.update(shader_compiler_ticket.mini_probe_source_hash.as_bytes());
+    h.update(artifact.artifact_hash.as_bytes());
+    h.update(artifact.renderer_variant_hash.as_bytes());
+    h.update(pass.proof_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn pipeline_shader_stage_set_hash(stages: &[BangerNativePipelineShaderStageHash]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_shader_stage_set.v1\0");
+    for stage in stages {
+        h.update(stage.stage.as_bytes());
+        h.update(stage.stage_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn pipeline_backend_capability_bits(
+    backend: &str,
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+) -> u32 {
+    let backend_lower = backend.to_ascii_lowercase();
+    let mut bits = 0u32;
+    if backend_lower != "backend_unavailable" {
+        bits |= 1 << 0;
+    }
+    if backend_lower.contains("vulkan") || backend_lower.contains("dx12") || backend_lower.contains("d3d12") {
+        bits |= 1 << 1;
+    }
+    if artifact.kind == "meshlet_page" || pass.consumes_kind == "meshlet_page" {
+        bits |= 1 << 2;
+    }
+    if pass.async_compute_candidate {
+        bits |= 1 << 3;
+    }
+    if pass.cache_class.contains("shadow") || pass.name.contains("shadow") {
+        bits |= 1 << 4;
+    }
+    bits
+}
+
+fn pipeline_cache_usage_count(
+    prepared: &MonsterPreparedCompute,
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+) -> u32 {
+    let page_pressure = artifact.page_count.max(1).min(u32::MAX as u64) as u32;
+    let cache_bonus = if prepared.is_fully_cached() { 3 } else { 1 };
+    let async_bonus = if pass.async_compute_candidate { 2 } else { 0 };
+    page_pressure
+        .saturating_add(cache_bonus)
+        .saturating_add(async_bonus)
+        .clamp(1, 4096)
+}
+
+fn pipeline_cache_last_used_frame(
+    prepared: &MonsterPreparedCompute,
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+) -> u64 {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.last_used_frame.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(artifact.artifact_hash.as_bytes());
+    h.update(pass.proof_hash.as_bytes());
+    temporal_epoch_from_hash(&hex32(h.finalize().into())) % 1_000_000
+}
+
+fn pipeline_cache_usage_telemetry_hash(
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+    usage_count: u32,
+    last_used_frame: u64,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.usage_telemetry.v1\0");
+    h.update(artifact.artifact_hash.as_bytes());
+    h.update(pass.proof_hash.as_bytes());
+    h.update(usage_count.to_le_bytes());
+    h.update(last_used_frame.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_entry_prewarm_hash(
+    pipeline_cache_key: &str,
+    prewarm_order: u32,
+    descriptor_abi_hash: &str,
+    shader_stage_set_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.prewarm_entry.v1\0");
+    h.update(pipeline_cache_key.as_bytes());
+    h.update(prewarm_order.to_le_bytes());
+    h.update(descriptor_abi_hash.as_bytes());
+    h.update(shader_stage_set_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_eviction_reason(usage_count: u32) -> &'static str {
+    if usage_count <= 1 {
+        "cold_entry_candidate"
+    } else {
+        "retain_hot_entry"
+    }
+}
+
+fn pipeline_cache_entry_eviction_hash(
+    pipeline_cache_key: &str,
+    eviction_reason: &str,
+    usage_count: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.eviction_entry.v1\0");
+    h.update(pipeline_cache_key.as_bytes());
+    h.update(eviction_reason.as_bytes());
+    h.update(usage_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
 fn render_pass_abi_hash(
     artifact: &MonsterNativeTandemArtifact,
     pass: &BangerNativeRenderPass,
@@ -13195,10 +13545,16 @@ fn pipeline_cache_seed_blob_bytes(
     shader_target_manifest_hash: &str,
     material_abi_hash: &str,
     render_pass_abi_hash: &str,
+    descriptor_abi_hash: &str,
+    shader_stage_set_hash: &str,
+    backend_capability_bits: u32,
+    usage_telemetry_hash: &str,
+    prewarm_hash: &str,
+    eviction_hash: &str,
 ) -> Vec<u8> {
     format!(
         concat!(
-            "schema=forge.banger.native_pipeline_cache_seed_blob.v1\n",
+            "schema=forge.banger.native_pipeline_cache_seed_blob.v2\n",
             "manifest_hash={}\n",
             "compute_ir_hash={}\n",
             "pipeline_cache_key={}\n",
@@ -13210,6 +13566,12 @@ fn pipeline_cache_seed_blob_bytes(
             "shader_target_manifest_hash={}\n",
             "material_abi_hash={}\n",
             "render_pass_abi_hash={}\n",
+            "descriptor_abi_hash={}\n",
+            "shader_stage_set_hash={}\n",
+            "backend_capability_bits={}\n",
+            "usage_telemetry_hash={}\n",
+            "prewarm_hash={}\n",
+            "eviction_hash={}\n",
             "artifact_kind={}\n",
             "artifact_layout={}\n",
             "artifact_hash={}\n",
@@ -13228,6 +13590,12 @@ fn pipeline_cache_seed_blob_bytes(
         shader_target_manifest_hash,
         material_abi_hash,
         render_pass_abi_hash,
+        descriptor_abi_hash,
+        shader_stage_set_hash,
+        backend_capability_bits,
+        usage_telemetry_hash,
+        prewarm_hash,
+        eviction_hash,
         artifact.kind,
         artifact.layout,
         artifact.artifact_hash,
@@ -13275,10 +13643,16 @@ fn pipeline_cache_entry_proof_hash(
     shader_target_manifest_hash: &str,
     material_abi_hash: &str,
     render_pass_abi_hash: &str,
+    descriptor_abi_hash: &str,
+    shader_stage_set_hash: &str,
+    backend_capability_bits: u32,
+    usage_telemetry_hash: &str,
+    prewarm_hash: &str,
+    eviction_hash: &str,
     blob_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_pipeline_cache_entry.v1\0");
+    h.update(b"forge.banger.native_pipeline_cache_entry.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(artifact.renderer_variant_hash.as_bytes());
@@ -13291,7 +13665,106 @@ fn pipeline_cache_entry_proof_hash(
     h.update(shader_target_manifest_hash.as_bytes());
     h.update(material_abi_hash.as_bytes());
     h.update(render_pass_abi_hash.as_bytes());
+    h.update(descriptor_abi_hash.as_bytes());
+    h.update(shader_stage_set_hash.as_bytes());
+    h.update(backend_capability_bits.to_le_bytes());
+    h.update(usage_telemetry_hash.as_bytes());
+    h.update(prewarm_hash.as_bytes());
+    h.update(eviction_hash.as_bytes());
     h.update(blob_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_descriptor_abi_manifest_hash(entries: &[BangerNativePipelineCacheEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.descriptor_abi_manifest.v1\0");
+    for entry in entries {
+        h.update(entry.pipeline_cache_key.as_bytes());
+        h.update(entry.descriptor_abi_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_shader_stage_manifest_hash(entries: &[BangerNativePipelineCacheEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.shader_stage_manifest.v1\0");
+    for entry in entries {
+        h.update(entry.pipeline_cache_key.as_bytes());
+        h.update(entry.shader_stage_set_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_backend_capability_manifest_hash(
+    entries: &[BangerNativePipelineCacheEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.backend_capability_manifest.v1\0");
+    for entry in entries {
+        h.update(entry.pipeline_cache_key.as_bytes());
+        h.update(entry.backend_capability_bits.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_usage_telemetry_manifest_hash(
+    entries: &[BangerNativePipelineCacheEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.usage_telemetry_manifest.v1\0");
+    for entry in entries {
+        h.update(entry.pipeline_cache_key.as_bytes());
+        h.update(entry.usage_telemetry_hash.as_bytes());
+        h.update(entry.usage_count.to_le_bytes());
+        h.update(entry.last_used_frame.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_prewarm_plan_hash(entries: &[BangerNativePipelineCacheEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.prewarm_plan.v1\0");
+    for entry in entries {
+        h.update(entry.prewarm_order.to_le_bytes());
+        h.update(entry.pipeline_cache_key.as_bytes());
+        h.update(entry.prewarm_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_eviction_policy_hash(entries: &[BangerNativePipelineCacheEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.eviction_policy.v1\0");
+    for entry in entries {
+        h.update(entry.pipeline_cache_key.as_bytes());
+        h.update(entry.eviction_reason.as_bytes());
+        h.update(entry.eviction_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_telemetry_receipt_hash(
+    usage_sample_count: usize,
+    prewarm_entry_count: usize,
+    eviction_candidate_count: usize,
+    descriptor_abi_hash: &str,
+    shader_stage_set_hash: &str,
+    backend_capability_hash: &str,
+    usage_telemetry_hash: &str,
+    prewarm_plan_hash: &str,
+    eviction_policy_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.telemetry_receipt.v1\0");
+    h.update((usage_sample_count as u64).to_le_bytes());
+    h.update((prewarm_entry_count as u64).to_le_bytes());
+    h.update((eviction_candidate_count as u64).to_le_bytes());
+    h.update(descriptor_abi_hash.as_bytes());
+    h.update(shader_stage_set_hash.as_bytes());
+    h.update(backend_capability_hash.as_bytes());
+    h.update(usage_telemetry_hash.as_bytes());
+    h.update(prewarm_plan_hash.as_bytes());
+    h.update(eviction_policy_hash.as_bytes());
     hex32(h.finalize().into())
 }
 
@@ -13301,15 +13774,23 @@ fn pipeline_cache_manifest_hash(
     adapter_hash: &str,
     driver_hash: &str,
     driver_info_hash: &str,
+    telemetry_receipt: &BangerNativePipelineCacheTelemetryReceipt,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_pipeline_cache_manifest.v1\0");
+    h.update(b"forge.banger.native_pipeline_cache_manifest.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(prepared.gpu_batch_plan.plan_hash.as_bytes());
     h.update(adapter_hash.as_bytes());
     h.update(driver_hash.as_bytes());
     h.update(driver_info_hash.as_bytes());
+    h.update(telemetry_receipt.receipt_hash.as_bytes());
+    h.update(telemetry_receipt.descriptor_abi_hash.as_bytes());
+    h.update(telemetry_receipt.shader_stage_set_hash.as_bytes());
+    h.update(telemetry_receipt.backend_capability_hash.as_bytes());
+    h.update(telemetry_receipt.usage_telemetry_hash.as_bytes());
+    h.update(telemetry_receipt.prewarm_plan_hash.as_bytes());
+    h.update(telemetry_receipt.eviction_policy_hash.as_bytes());
     for entry in entries {
         h.update(entry.proof_hash.as_bytes());
         h.update(entry.blob_hash.as_bytes());
@@ -13406,6 +13887,7 @@ fn benchmark_proof_reproducibility_hash(
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(prepared.gpu_batch_plan.plan_hash.as_bytes());
     h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(pipeline_cache_manifest.telemetry_receipt.receipt_hash.as_bytes());
     h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
     h.update(resource_table.table_hash.as_bytes());
     h.update(scene_graph_submission.submission_hash.as_bytes());
@@ -15907,6 +16389,8 @@ fn render_handoff_hash(
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(shader_compiler_ticket.proof_hash.as_bytes());
     h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(pipeline_cache_manifest.telemetry_receipt.receipt_hash.as_bytes());
+    h.update(pipeline_cache_manifest.prewarm_plan_hash.as_bytes());
     h.update(benchmark_promotion_manifest.benchmark_hash.as_bytes());
     h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
     h.update(texture_bridge_contract.frame_hash.as_bytes());
@@ -16488,27 +16972,67 @@ mod tests {
             .all(|alias| alias.alias_hash.len() == 64 && alias.aliasable_bytes > 0));
         assert_eq!(
             response.pipeline_cache_manifest.schema,
-            "forge.banger.native_pipeline_cache_manifest.v1"
+            "forge.banger.native_pipeline_cache_manifest.v2"
         );
+        assert_eq!(response.pipeline_cache_manifest.schema_version, 2);
         assert_eq!(response.pipeline_cache_manifest.entry_count, response.artifacts.len());
         assert_eq!(
             response.pipeline_cache_manifest.persisted_entry_count,
+            response.pipeline_cache_manifest.entry_count
+        );
+        assert_eq!(
+            response.pipeline_cache_manifest.prewarm_entry_count,
+            response.pipeline_cache_manifest.entry_count
+        );
+        assert_eq!(
+            response.pipeline_cache_manifest.usage_sample_count,
             response.pipeline_cache_manifest.entry_count
         );
         assert_eq!(response.pipeline_cache_manifest.manifest_hash.len(), 64);
         assert_eq!(response.pipeline_cache_manifest.selected_adapter_hash.len(), 64);
         assert_eq!(response.pipeline_cache_manifest.driver_hash.len(), 64);
         assert_eq!(response.pipeline_cache_manifest.driver_info_hash.len(), 64);
+        assert_eq!(response.pipeline_cache_manifest.descriptor_abi_hash.len(), 64);
+        assert_eq!(response.pipeline_cache_manifest.shader_stage_set_hash.len(), 64);
+        assert_eq!(response.pipeline_cache_manifest.backend_capability_hash.len(), 64);
+        assert_eq!(response.pipeline_cache_manifest.usage_telemetry_hash.len(), 64);
+        assert_eq!(response.pipeline_cache_manifest.prewarm_plan_hash.len(), 64);
+        assert_eq!(response.pipeline_cache_manifest.eviction_policy_hash.len(), 64);
+        assert_eq!(
+            response.pipeline_cache_manifest.telemetry_receipt.receipt_hash.len(),
+            64
+        );
+        assert_eq!(
+            response
+                .pipeline_cache_manifest
+                .telemetry_receipt
+                .usage_sample_count,
+            response.pipeline_cache_manifest.entry_count
+        );
         assert!(response
             .pipeline_cache_manifest
             .entries
             .iter()
-            .all(|entry| entry.shader_source_hash.len() == 64
+            .all(|entry| entry.schema == "forge.banger.native_pipeline_cache_entry.v2"
+                && entry.schema_version == 2
+                && entry.shader_source_hash.len() == 64
                 && entry.shader_reflection_hash.len() == 64
                 && entry.shader_target_manifest_hash
                     == response.shader_compiler_ticket.target_manifest_hash
                 && entry.material_abi_hash == response.shader_compiler_ticket.material_abi_hash
                 && entry.render_pass_abi_hash.len() == 64
+                && entry.descriptor_abi_hash.len() == 64
+                && !entry.shader_stage_hashes.is_empty()
+                && entry
+                    .shader_stage_hashes
+                    .iter()
+                    .all(|stage| !stage.stage.is_empty() && stage.stage_hash.len() == 64)
+                && entry.shader_stage_set_hash.len() == 64
+                && entry.usage_count > 0
+                && entry.last_used_frame < 1_000_000
+                && entry.prewarm_hash.len() == 64
+                && entry.eviction_hash.len() == 64
+                && entry.usage_telemetry_hash.len() == 64
                 && entry.blob_hash.len() == 64
                 && entry.blob_len > 0
                 && entry.persistence_status == "seed_blob_persisted"
