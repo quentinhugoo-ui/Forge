@@ -184,6 +184,13 @@ function waitForWidgetMotion(ms: number): Promise<void> {
 function clearDocumentWidgetModeClasses(): void {
   document.documentElement.classList.remove("ingen-widget-mode");
   document.body.classList.remove("ingen-widget-mode");
+  document.querySelector(".shell")?.classList.remove(
+    "shell--widget-mode",
+    "shell--widget-minimizing",
+    "shell--widget-minimizing-sides",
+    "shell--widget-minimizing-header",
+    "shell--widget-minimizing-canvas"
+  );
 }
 
 function sectionGroup(section: NativeSection): string {
@@ -212,6 +219,7 @@ export function App() {
   const [widgetModeTransitioning, setWidgetModeTransitioning] = useState(false);
   const [widgetMinimizingPhase, setWidgetMinimizingPhase] = useState<WidgetMinimizingPhase>("");
   const [widgetLayoutLock, setWidgetLayoutLock] = useState<WidgetLayoutLock | null>(null);
+  const [widgetRestoring, setWidgetRestoring] = useState(false);
   const canvasMapsOpenRef = useRef(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
   const [mapsParallelIndex, setMapsParallelIndex] = useState(0);
@@ -381,21 +389,21 @@ export function App() {
     isLlmProviderCanvas ? "shell--llm-provider" : "",
     isBrainCanvas ? "shell--brain-canvas" : "",
     isBangerPage ? "shell--banger-page" : "",
-    widgetMinimizingPhase !== "" ? "shell--widget-minimizing shell--widget-minimizing-sides" : "",
-    widgetMinimizingPhase === "header" || widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-header" : "",
-    widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-canvas" : "",
-    widgetMode ? "shell--widget-mode" : "",
+    !widgetRestoring && widgetMinimizingPhase !== "" ? "shell--widget-minimizing shell--widget-minimizing-sides" : "",
+    !widgetRestoring && (widgetMinimizingPhase === "header" || widgetMinimizingPhase === "canvas") ? "shell--widget-minimizing-header" : "",
+    !widgetRestoring && widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-canvas" : "",
+    !widgetRestoring && widgetMode ? "shell--widget-mode" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
 
   useEffect(() => {
-    const widgetSurfaceVisible = widgetMode || widgetMinimizingPhase !== "";
+    const widgetSurfaceVisible = !widgetRestoring && (widgetMode || widgetMinimizingPhase !== "");
     document.documentElement.classList.toggle("ingen-widget-mode", widgetSurfaceVisible);
     document.body.classList.toggle("ingen-widget-mode", widgetSurfaceVisible);
     return () => {
       clearDocumentWidgetModeClasses();
     };
-  }, [widgetMinimizingPhase, widgetMode]);
+  }, [widgetMinimizingPhase, widgetMode, widgetRestoring]);
 
   useEffect(() => {
     const api = globalThis.window?.forgeWindowControls;
@@ -952,15 +960,16 @@ export function App() {
     setWorkspaceNotice(null);
     if (!enabled) {
       void (async () => {
+        setWidgetRestoring(true);
+        clearDocumentWidgetModeClasses();
+        setWidgetMinimizingPhase("");
+        setWidgetMode(false);
+        setWidgetLayoutLock(null);
         const windowControls = globalThis.window?.forgeWindowControls;
         const nativeWidgetRestore = windowControls?.setWidgetMode?.(false).catch((error: unknown) => {
           console.warn("Failed to restore native widget mode", error);
           return false;
         });
-        clearDocumentWidgetModeClasses();
-        setWidgetMinimizingPhase("");
-        setWidgetMode(false);
-        setWidgetLayoutLock(null);
         const nativeWidgetRestored = await nativeWidgetRestore;
         if (widgetModeSequenceRef.current !== sequenceToken) {
           return;
@@ -968,12 +977,14 @@ export function App() {
         if (nativeWidgetRestored === false) {
           console.warn("Native widget restore was not accepted.");
         }
+        setWidgetRestoring(false);
         releaseWidgetModeTransition(sequenceToken, 420);
       })();
       return;
     }
 
     void (async () => {
+      setWidgetRestoring(false);
       setWidgetLayoutLock(readWidgetLayoutLock());
       setWidgetMinimizingPhase("sides");
       setWidgetMode(false);
@@ -1310,7 +1321,7 @@ export function App() {
           webExplorerOpen={canvasWebExplorerOpen}
           composerModule={composerModuleId ?? (canvasWebExplorerOpen ? webExplorerModuleId : null)}
           onComposerModuleChange={setComposerModuleId}
-          widgetMode={widgetMode || widgetMinimizingPhase !== ""}
+          widgetMode={!widgetRestoring && (widgetMode || widgetMinimizingPhase !== "")}
           widgetModeTransitioning={widgetModeTransitioning}
           onWidgetModeChange={setWidgetModeEnabled}
         />
