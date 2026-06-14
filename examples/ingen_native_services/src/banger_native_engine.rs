@@ -53,6 +53,42 @@ pub struct BangerGaussianSplatAssetPrepareRequest {
     pub bucket_count: Option<u32>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerGaussianSplatRasterizeRequest {
+    pub asset_id: Option<String>,
+    pub ply_path: String,
+    pub width: u32,
+    pub height: u32,
+    pub camera_position: Option<[f32; 3]>,
+    pub camera_target: Option<[f32; 3]>,
+    pub camera_up: Option<[f32; 3]>,
+    pub fov_y_degrees: Option<f32>,
+    pub near_plane: Option<f32>,
+    pub max_splats: Option<usize>,
+    pub tile_size: Option<u32>,
+    pub background_rgba: Option<[f32; 4]>,
+}
+
+impl Default for BangerGaussianSplatRasterizeRequest {
+    fn default() -> Self {
+        Self {
+            asset_id: None,
+            ply_path: String::new(),
+            width: 512,
+            height: 512,
+            camera_position: None,
+            camera_target: None,
+            camera_up: None,
+            fov_y_degrees: None,
+            near_plane: None,
+            max_splats: None,
+            tile_size: None,
+            background_rgba: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BangerNativeRenderPrepareResponse {
@@ -166,6 +202,45 @@ pub struct BangerGaussianSplatAssetBucket {
     pub sort_key_hash: String,
     pub bounds_min: [f32; 3],
     pub bounds_max: [f32; 3],
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerGaussianSplatRasterizeResponse {
+    pub ok: bool,
+    pub schema: &'static str,
+    pub asset_id: String,
+    pub source_hash: String,
+    pub width: u32,
+    pub height: u32,
+    pub tile_size: u32,
+    pub tile_count: u32,
+    pub splat_count: usize,
+    pub projected_splat_count: usize,
+    pub rasterized_splat_count: usize,
+    pub shaded_pixel_count: u32,
+    pub camera_hash: String,
+    pub tile_manifest_hash: String,
+    pub projected_manifest_hash: String,
+    pub rgba8_hash: String,
+    pub raster_proof_hash: String,
+    pub rgba8: Vec<u8>,
+    pub tiles: Vec<BangerGaussianSplatRasterTile>,
+    pub verifier: BangerNativeRenderVerifier,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerGaussianSplatRasterTile {
+    pub tile_id: u32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub splat_count: u32,
+    pub contribution_count: u32,
+    pub depth_sort_hash: String,
     pub proof_hash: String,
 }
 
@@ -821,6 +896,133 @@ impl BangerNativeEngine {
                     "forge-cargo test --manifest-path examples\\ingen_native_services\\Cargo.toml banger_native_engine::tests::prepares_real_gaussian_splat_ply_asset_buffers",
                 rollback_path:
                     "remove prepare_gaussian_splat_asset and keep gaussian_splat_layer_manifest as the hybrid scene placeholder",
+            },
+        })
+    }
+
+    pub fn rasterize_gaussian_splat_asset(
+        request: BangerGaussianSplatRasterizeRequest,
+    ) -> Result<BangerGaussianSplatRasterizeResponse, String> {
+        let asset_id =
+            sanitize_scene_id(request.asset_id.as_deref().unwrap_or("gaussian_splat_raster"));
+        let width = request.width.clamp(1, 4096);
+        let height = request.height.clamp(1, 4096);
+        let tile_size = request.tile_size.unwrap_or(16).clamp(4, 64);
+        let ply_path = PathBuf::from(&request.ply_path);
+        let bytes = fs::read(&ply_path).map_err(|err| {
+            format!(
+                "failed to read Gaussian splat PLY {}: {err}",
+                ply_path.display()
+            )
+        })?;
+        let source_hash = hash_bytes_hex("forge.banger.gaussian_splat.source_ply.v1", &bytes);
+        let mut parsed = parse_gaussian_splat_ply(&bytes)?;
+        let max_splats = request.max_splats.unwrap_or(parsed.splats.len()).max(1);
+        parsed.splats.truncate(max_splats);
+        if parsed.splats.is_empty() {
+            return Err("Gaussian splat PLY contains no vertex splats".to_string());
+        }
+
+        let camera = GaussianSplatCamera::new(
+            request.camera_position.unwrap_or([0.0, 0.0, -4.0]),
+            request.camera_target.unwrap_or([0.0, 0.0, 0.0]),
+            request.camera_up.unwrap_or([0.0, 1.0, 0.0]),
+            request.fov_y_degrees.unwrap_or(55.0),
+            request.near_plane.unwrap_or(0.01),
+            width,
+            height,
+        )?;
+        let background = request.background_rgba.unwrap_or([0.0, 0.0, 0.0, 0.0]);
+        let projected = project_gaussian_splats(&parsed.splats, &camera);
+        let tile_grid = GaussianSplatTileGrid::new(width, height, tile_size);
+        let tile_lists = gaussian_splat_tile_lists(&projected, &tile_grid);
+        let mut tiles = Vec::with_capacity(tile_lists.len());
+        let mut rgba = vec![0u8; width as usize * height as usize * 4];
+        let mut rasterized = vec![false; projected.len()];
+        let mut shaded_pixel_count = 0u32;
+
+        for (tile_index, tile_splats) in tile_lists.iter().enumerate() {
+            let tile_bounds = tile_grid.tile_bounds(tile_index as u32);
+            let contribution_count = rasterize_gaussian_splat_tile(
+                tile_bounds,
+                tile_splats,
+                &projected,
+                &mut rasterized,
+                width,
+                &mut rgba,
+                background,
+            );
+            shaded_pixel_count = shaded_pixel_count.saturating_add(contribution_count);
+            let depth_sort_hash = gaussian_splat_raster_tile_sort_hash(tile_splats, &projected);
+            let proof_hash = gaussian_splat_raster_tile_proof_hash(
+                tile_index as u32,
+                tile_bounds,
+                tile_splats.len() as u32,
+                contribution_count,
+                &depth_sort_hash,
+            );
+            tiles.push(BangerGaussianSplatRasterTile {
+                tile_id: tile_index as u32,
+                x: tile_bounds.x0,
+                y: tile_bounds.y0,
+                width: tile_bounds.x1 - tile_bounds.x0,
+                height: tile_bounds.y1 - tile_bounds.y0,
+                splat_count: tile_splats.len() as u32,
+                contribution_count,
+                depth_sort_hash,
+                proof_hash,
+            });
+        }
+
+        let rgba8_hash = hash_bytes_hex("forge.banger.gaussian_splat.rgba8.v1", &rgba);
+        let camera_hash = gaussian_splat_camera_hash(&camera);
+        let tile_manifest_hash = gaussian_splat_raster_tile_manifest_hash(&tiles);
+        let projected_manifest_hash = gaussian_splat_projected_manifest_hash(&projected);
+        let rasterized_splat_count = rasterized.iter().filter(|value| **value).count();
+        let raster_proof_hash = gaussian_splat_raster_proof_hash(
+            &asset_id,
+            &source_hash,
+            width,
+            height,
+            tile_size,
+            parsed.splats.len(),
+            projected.len(),
+            rasterized_splat_count,
+            shaded_pixel_count,
+            &camera_hash,
+            &tile_manifest_hash,
+            &projected_manifest_hash,
+            &rgba8_hash,
+        );
+
+        Ok(BangerGaussianSplatRasterizeResponse {
+            ok: true,
+            schema: "forge.banger.gaussian_splat_rasterizer.v1",
+            asset_id,
+            source_hash,
+            width,
+            height,
+            tile_size,
+            tile_count: tiles.len() as u32,
+            splat_count: parsed.splats.len(),
+            projected_splat_count: projected.len(),
+            rasterized_splat_count,
+            shaded_pixel_count,
+            camera_hash,
+            tile_manifest_hash,
+            projected_manifest_hash,
+            rgba8_hash,
+            raster_proof_hash,
+            rgba8: rgba,
+            tiles,
+            verifier: BangerNativeRenderVerifier {
+                wall: "latency+memory+proof_quality",
+                frontier_hypothesis:
+                    "A reference 3DGS rasterizer projects anisotropic covariances into tiled EWA splats with deterministic alpha compositing before GPU promotion.",
+                local_gate:
+                    "forge-cargo test --manifest-path examples\\ingen_native_services\\Cargo.toml banger_native_engine::tests::rasterizes_real_gaussian_splat_ply_to_rgba8",
+                rollback_path:
+                    "remove rasterize_gaussian_splat_asset while keeping the verified PLY buffer import path",
             },
         })
     }
@@ -3094,6 +3296,559 @@ fn advance_ply_header_end(bytes: &[u8], mut offset: usize) -> usize {
     offset
 }
 
+#[derive(Debug, Clone)]
+struct GaussianSplatCamera {
+    position: [f32; 3],
+    forward: [f32; 3],
+    right: [f32; 3],
+    up: [f32; 3],
+    fov_y_degrees: f32,
+    near_plane: f32,
+    width: u32,
+    height: u32,
+    focal_y: f32,
+    focal_x: f32,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectedGaussianSplat {
+    source_index: usize,
+    center: [f32; 2],
+    depth: f32,
+    inv_cov2: [f32; 3],
+    radius_px: f32,
+    bbox: [u32; 4],
+    color: [f32; 3],
+    opacity: f32,
+    proof_hash: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GaussianSplatTileBounds {
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+}
+
+#[derive(Debug, Clone)]
+struct GaussianSplatTileGrid {
+    width: u32,
+    height: u32,
+    tile_size: u32,
+    tiles_x: u32,
+    tiles_y: u32,
+}
+
+impl GaussianSplatCamera {
+    fn new(
+        position: [f32; 3],
+        target: [f32; 3],
+        up_hint: [f32; 3],
+        fov_y_degrees: f32,
+        near_plane: f32,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, String> {
+        let forward = normalize3(sub3(target, position))
+            .ok_or_else(|| "Gaussian splat camera target must differ from position".to_string())?;
+        let right = normalize3(cross3(forward, up_hint))
+            .ok_or_else(|| "Gaussian splat camera up vector is parallel to view".to_string())?;
+        let up = normalize3(cross3(right, forward))
+            .ok_or_else(|| "Gaussian splat camera basis is degenerate".to_string())?;
+        let fov_y_degrees = fov_y_degrees.clamp(5.0, 160.0);
+        let fov_y = fov_y_degrees.to_radians();
+        let focal_y = height as f32 / (2.0 * (fov_y * 0.5).tan());
+        let focal_x = focal_y;
+        Ok(Self {
+            position,
+            forward,
+            right,
+            up,
+            fov_y_degrees,
+            near_plane: near_plane.max(0.0001),
+            width,
+            height,
+            focal_y,
+            focal_x,
+        })
+    }
+}
+
+impl GaussianSplatTileGrid {
+    fn new(width: u32, height: u32, tile_size: u32) -> Self {
+        Self {
+            width,
+            height,
+            tile_size,
+            tiles_x: width.div_ceil(tile_size),
+            tiles_y: height.div_ceil(tile_size),
+        }
+    }
+
+    fn len(&self) -> usize {
+        (self.tiles_x * self.tiles_y) as usize
+    }
+
+    fn tile_bounds(&self, tile_id: u32) -> GaussianSplatTileBounds {
+        let tile_x = tile_id % self.tiles_x;
+        let tile_y = tile_id / self.tiles_x;
+        let x0 = tile_x * self.tile_size;
+        let y0 = tile_y * self.tile_size;
+        GaussianSplatTileBounds {
+            x0,
+            y0,
+            x1: (x0 + self.tile_size).min(self.width),
+            y1: (y0 + self.tile_size).min(self.height),
+        }
+    }
+}
+
+fn project_gaussian_splats(
+    splats: &[ParsedGaussianSplat],
+    camera: &GaussianSplatCamera,
+) -> Vec<ProjectedGaussianSplat> {
+    let mut projected = Vec::with_capacity(splats.len());
+    for (index, splat) in splats.iter().enumerate() {
+        let camera_pos = world_to_camera(splat.position, camera);
+        if camera_pos[2] <= camera.near_plane {
+            continue;
+        }
+        let screen_x = camera.width as f32 * 0.5 + camera.focal_x * camera_pos[0] / camera_pos[2];
+        let screen_y = camera.height as f32 * 0.5 - camera.focal_y * camera_pos[1] / camera_pos[2];
+        let Some((cov2, radius_px)) = gaussian_splat_projected_covariance(splat, camera, camera_pos) else {
+            continue;
+        };
+        let Some(inv_cov2) = invert_cov2(cov2) else {
+            continue;
+        };
+        if radius_px < 0.25 {
+            continue;
+        }
+        let x0 = (screen_x - radius_px).floor().max(0.0) as u32;
+        let y0 = (screen_y - radius_px).floor().max(0.0) as u32;
+        let x1 = (screen_x + radius_px).ceil().min(camera.width as f32) as u32;
+        let y1 = (screen_y + radius_px).ceil().min(camera.height as f32) as u32;
+        if x0 >= x1 || y0 >= y1 {
+            continue;
+        }
+        let view_dir = normalize3(sub3(camera.position, splat.position)).unwrap_or([0.0, 0.0, 1.0]);
+        let color = evaluate_gaussian_splat_sh(splat, view_dir);
+        let proof_hash = projected_gaussian_splat_hash(
+            index,
+            [screen_x, screen_y],
+            camera_pos[2],
+            inv_cov2,
+            radius_px,
+            [x0, y0, x1, y1],
+            color,
+            splat.opacity,
+        );
+        projected.push(ProjectedGaussianSplat {
+            source_index: index,
+            center: [screen_x, screen_y],
+            depth: camera_pos[2],
+            inv_cov2,
+            radius_px,
+            bbox: [x0, y0, x1, y1],
+            color,
+            opacity: splat.opacity.min(0.995),
+            proof_hash,
+        });
+    }
+    projected
+}
+
+fn gaussian_splat_tile_lists(
+    projected: &[ProjectedGaussianSplat],
+    tile_grid: &GaussianSplatTileGrid,
+) -> Vec<Vec<usize>> {
+    let mut tiles = vec![Vec::new(); tile_grid.len()];
+    for (projected_index, splat) in projected.iter().enumerate() {
+        let min_tile_x = splat.bbox[0] / tile_grid.tile_size;
+        let min_tile_y = splat.bbox[1] / tile_grid.tile_size;
+        let max_tile_x = (splat.bbox[2].saturating_sub(1) / tile_grid.tile_size)
+            .min(tile_grid.tiles_x.saturating_sub(1));
+        let max_tile_y = (splat.bbox[3].saturating_sub(1) / tile_grid.tile_size)
+            .min(tile_grid.tiles_y.saturating_sub(1));
+        for tile_y in min_tile_y..=max_tile_y {
+            for tile_x in min_tile_x..=max_tile_x {
+                let tile_index = (tile_y * tile_grid.tiles_x + tile_x) as usize;
+                tiles[tile_index].push(projected_index);
+            }
+        }
+    }
+    for tile in &mut tiles {
+        tile.sort_by(|left, right| {
+            projected[*right]
+                .depth
+                .partial_cmp(&projected[*left].depth)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| projected[*left].source_index.cmp(&projected[*right].source_index))
+        });
+    }
+    tiles
+}
+
+fn rasterize_gaussian_splat_tile(
+    tile_bounds: GaussianSplatTileBounds,
+    tile_splats: &[usize],
+    projected: &[ProjectedGaussianSplat],
+    rasterized: &mut [bool],
+    image_width: u32,
+    rgba: &mut [u8],
+    background: [f32; 4],
+) -> u32 {
+    let mut contribution_count = 0u32;
+    for y in tile_bounds.y0..tile_bounds.y1 {
+        for x in tile_bounds.x0..tile_bounds.x1 {
+            let mut dst = [
+                background[0].clamp(0.0, 1.0),
+                background[1].clamp(0.0, 1.0),
+                background[2].clamp(0.0, 1.0),
+                background[3].clamp(0.0, 1.0),
+            ];
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let mut pixel_touched = false;
+            for projected_index in tile_splats {
+                let splat = &projected[*projected_index];
+                let dx = px - splat.center[0];
+                let dy = py - splat.center[1];
+                if dx.abs() > splat.radius_px || dy.abs() > splat.radius_px {
+                    continue;
+                }
+                let power = -0.5
+                    * (splat.inv_cov2[0] * dx * dx
+                        + 2.0 * splat.inv_cov2[1] * dx * dy
+                        + splat.inv_cov2[2] * dy * dy);
+                if power < -12.5 {
+                    continue;
+                }
+                let alpha = (splat.opacity * power.exp()).clamp(0.0, 0.995);
+                if alpha < 1.0 / 255.0 {
+                    continue;
+                }
+                dst[0] = splat.color[0] * alpha + dst[0] * (1.0 - alpha);
+                dst[1] = splat.color[1] * alpha + dst[1] * (1.0 - alpha);
+                dst[2] = splat.color[2] * alpha + dst[2] * (1.0 - alpha);
+                dst[3] = alpha + dst[3] * (1.0 - alpha);
+                rasterized[*projected_index] = true;
+                pixel_touched = true;
+            }
+            if pixel_touched {
+                contribution_count = contribution_count.saturating_add(1);
+            }
+            let offset = ((y * image_width + x) * 4) as usize;
+            rgba[offset] = float_to_u8(dst[0]);
+            rgba[offset + 1] = float_to_u8(dst[1]);
+            rgba[offset + 2] = float_to_u8(dst[2]);
+            rgba[offset + 3] = float_to_u8(dst[3]);
+        }
+    }
+    contribution_count
+}
+
+fn gaussian_splat_projected_covariance(
+    splat: &ParsedGaussianSplat,
+    camera: &GaussianSplatCamera,
+    camera_pos: [f32; 3],
+) -> Option<([f32; 3], f32)> {
+    let world_cov = gaussian_splat_world_covariance(splat);
+    let camera_cov = covariance_to_camera(world_cov, camera);
+    let z = camera_pos[2].max(camera.near_plane);
+    let j = [
+        [camera.focal_x / z, 0.0, -camera.focal_x * camera_pos[0] / (z * z)],
+        [0.0, -camera.focal_y / z, camera.focal_y * camera_pos[1] / (z * z)],
+    ];
+    let cov2 = [
+        dot3(mul_mat3_vec(camera_cov, j[0]), j[0]).max(0.3),
+        dot3(mul_mat3_vec(camera_cov, j[0]), j[1]),
+        dot3(mul_mat3_vec(camera_cov, j[1]), j[1]).max(0.3),
+    ];
+    let trace = cov2[0] + cov2[2];
+    let det_term = ((cov2[0] - cov2[2]) * (cov2[0] - cov2[2]) + 4.0 * cov2[1] * cov2[1])
+        .max(0.0)
+        .sqrt();
+    let lambda_max = ((trace + det_term) * 0.5).max(0.3);
+    let radius_px = 3.0 * lambda_max.sqrt();
+    if radius_px.is_finite() && cov2.iter().all(|value| value.is_finite()) {
+        Some((cov2, radius_px.min(512.0)))
+    } else {
+        None
+    }
+}
+
+fn gaussian_splat_world_covariance(splat: &ParsedGaussianSplat) -> [[f32; 3]; 3] {
+    let rotation = quaternion_to_mat3(splat.rotation);
+    let scale = [
+        splat.scale_log[0].exp().max(0.0001),
+        splat.scale_log[1].exp().max(0.0001),
+        splat.scale_log[2].exp().max(0.0001),
+    ];
+    let mut cov = [[0.0; 3]; 3];
+    for i in 0..3 {
+        for j in 0..3 {
+            cov[i][j] = rotation[i][0] * scale[0] * scale[0] * rotation[j][0]
+                + rotation[i][1] * scale[1] * scale[1] * rotation[j][1]
+                + rotation[i][2] * scale[2] * scale[2] * rotation[j][2];
+        }
+    }
+    cov
+}
+
+fn covariance_to_camera(world_cov: [[f32; 3]; 3], camera: &GaussianSplatCamera) -> [[f32; 3]; 3] {
+    let basis = [camera.right, camera.up, camera.forward];
+    let mut out = [[0.0; 3]; 3];
+    for i in 0..3 {
+        for j in 0..3 {
+            out[i][j] = dot3(mul_mat3_vec(world_cov, basis[i]), basis[j]);
+        }
+    }
+    out
+}
+
+fn invert_cov2(cov2: [f32; 3]) -> Option<[f32; 3]> {
+    let det = cov2[0] * cov2[2] - cov2[1] * cov2[1];
+    if det <= 1e-8 || !det.is_finite() {
+        return None;
+    }
+    Some([cov2[2] / det, -cov2[1] / det, cov2[0] / det])
+}
+
+fn evaluate_gaussian_splat_sh(splat: &ParsedGaussianSplat, view_dir: [f32; 3]) -> [f32; 3] {
+    const C0: f32 = 0.2820948;
+    const C1: f32 = 0.48860252;
+    const C2: [f32; 5] = [1.0925485, -1.0925485, 0.31539157, -1.0925485, 0.54627424];
+    const C3: [f32; 7] = [
+        -0.5900436,
+        2.8906114,
+        -0.4570458,
+        0.37317634,
+        -0.4570458,
+        1.4453057,
+        -0.5900436,
+    ];
+    let x = view_dir[0];
+    let y = view_dir[1];
+    let z = view_dir[2];
+    let xx = x * x;
+    let yy = y * y;
+    let zz = z * z;
+    let xy = x * y;
+    let yz = y * z;
+    let xz = x * z;
+    let mut out = [0.0; 3];
+    for channel in 0..3 {
+        let coeff = |basis: usize| splat.sh_rest[basis * 3 + channel];
+        let mut value = C0 * splat.sh_dc[channel];
+        value += -C1 * y * coeff(0) + C1 * z * coeff(1) - C1 * x * coeff(2);
+        value += C2[0] * xy * coeff(3)
+            + C2[1] * yz * coeff(4)
+            + C2[2] * (2.0 * zz - xx - yy) * coeff(5)
+            + C2[3] * xz * coeff(6)
+            + C2[4] * (xx - yy) * coeff(7);
+        value += C3[0] * y * (3.0 * xx - yy) * coeff(8)
+            + C3[1] * xy * z * coeff(9)
+            + C3[2] * y * (4.0 * zz - xx - yy) * coeff(10)
+            + C3[3] * z * (2.0 * zz - 3.0 * xx - 3.0 * yy) * coeff(11)
+            + C3[4] * x * (4.0 * zz - xx - yy) * coeff(12)
+            + C3[5] * z * (xx - yy) * coeff(13)
+            + C3[6] * x * (xx - 3.0 * yy) * coeff(14);
+        out[channel] = (value + 0.5).clamp(0.0, 1.0);
+    }
+    out
+}
+
+fn gaussian_splat_camera_hash(camera: &GaussianSplatCamera) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.camera.v1\0");
+    for value in camera
+        .position
+        .iter()
+        .chain(camera.forward.iter())
+        .chain(camera.right.iter())
+        .chain(camera.up.iter())
+    {
+        h.update(value.to_le_bytes());
+    }
+    h.update(camera.fov_y_degrees.to_le_bytes());
+    h.update(camera.near_plane.to_le_bytes());
+    h.update(camera.width.to_le_bytes());
+    h.update(camera.height.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_projected_manifest_hash(projected: &[ProjectedGaussianSplat]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.projected_manifest.v1\0");
+    for splat in projected {
+        h.update(splat.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn projected_gaussian_splat_hash(
+    source_index: usize,
+    center: [f32; 2],
+    depth: f32,
+    inv_cov2: [f32; 3],
+    radius_px: f32,
+    bbox: [u32; 4],
+    color: [f32; 3],
+    opacity: f32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.projected.v1\0");
+    h.update((source_index as u64).to_le_bytes());
+    for value in center.iter().chain(inv_cov2.iter()).chain(color.iter()) {
+        h.update(value.to_le_bytes());
+    }
+    h.update(depth.to_le_bytes());
+    h.update(radius_px.to_le_bytes());
+    for value in bbox {
+        h.update(value.to_le_bytes());
+    }
+    h.update(opacity.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_raster_tile_sort_hash(
+    tile_splats: &[usize],
+    projected: &[ProjectedGaussianSplat],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.raster_tile_sort.v1\0");
+    for projected_index in tile_splats {
+        let splat = &projected[*projected_index];
+        h.update((splat.source_index as u64).to_le_bytes());
+        h.update(splat.depth.to_le_bytes());
+        h.update(splat.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_raster_tile_proof_hash(
+    tile_id: u32,
+    tile_bounds: GaussianSplatTileBounds,
+    splat_count: u32,
+    contribution_count: u32,
+    depth_sort_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.raster_tile.v1\0");
+    h.update(tile_id.to_le_bytes());
+    h.update(tile_bounds.x0.to_le_bytes());
+    h.update(tile_bounds.y0.to_le_bytes());
+    h.update(tile_bounds.x1.to_le_bytes());
+    h.update(tile_bounds.y1.to_le_bytes());
+    h.update(splat_count.to_le_bytes());
+    h.update(contribution_count.to_le_bytes());
+    h.update(depth_sort_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_raster_tile_manifest_hash(tiles: &[BangerGaussianSplatRasterTile]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat.raster_tile_manifest.v1\0");
+    for tile in tiles {
+        h.update(tile.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gaussian_splat_raster_proof_hash(
+    asset_id: &str,
+    source_hash: &str,
+    width: u32,
+    height: u32,
+    tile_size: u32,
+    splat_count: usize,
+    projected_splat_count: usize,
+    rasterized_splat_count: usize,
+    shaded_pixel_count: u32,
+    camera_hash: &str,
+    tile_manifest_hash: &str,
+    projected_manifest_hash: &str,
+    rgba8_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gaussian_splat_rasterizer.v1\0");
+    h.update(asset_id.as_bytes());
+    h.update(source_hash.as_bytes());
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(tile_size.to_le_bytes());
+    h.update((splat_count as u64).to_le_bytes());
+    h.update((projected_splat_count as u64).to_le_bytes());
+    h.update((rasterized_splat_count as u64).to_le_bytes());
+    h.update(shaded_pixel_count.to_le_bytes());
+    h.update(camera_hash.as_bytes());
+    h.update(tile_manifest_hash.as_bytes());
+    h.update(projected_manifest_hash.as_bytes());
+    h.update(rgba8_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn world_to_camera(point: [f32; 3], camera: &GaussianSplatCamera) -> [f32; 3] {
+    let rel = sub3(point, camera.position);
+    [dot3(rel, camera.right), dot3(rel, camera.up), dot3(rel, camera.forward)]
+}
+
+fn quaternion_to_mat3(q: [f32; 4]) -> [[f32; 3]; 3] {
+    let [w, x, y, z] = normalize_quaternion(q);
+    [
+        [
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y - z * w),
+            2.0 * (x * z + y * w),
+        ],
+        [
+            2.0 * (x * y + z * w),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z - x * w),
+        ],
+        [
+            2.0 * (x * z - y * w),
+            2.0 * (y * z + x * w),
+            1.0 - 2.0 * (x * x + y * y),
+        ],
+    ]
+}
+
+fn mul_mat3_vec(matrix: [[f32; 3]; 3], value: [f32; 3]) -> [f32; 3] {
+    [
+        dot3(matrix[0], value),
+        dot3(matrix[1], value),
+        dot3(matrix[2], value),
+    ]
+}
+
+fn sub3(left: [f32; 3], right: [f32; 3]) -> [f32; 3] {
+    [left[0] - right[0], left[1] - right[1], left[2] - right[2]]
+}
+
+fn cross3(left: [f32; 3], right: [f32; 3]) -> [f32; 3] {
+    [
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    ]
+}
+
+fn dot3(left: [f32; 3], right: [f32; 3]) -> f32 {
+    left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+}
+
+fn normalize3(value: [f32; 3]) -> Option<[f32; 3]> {
+    let len = dot3(value, value).sqrt();
+    (len > f32::EPSILON).then_some([value[0] / len, value[1] / len, value[2] / len])
+}
+
+fn float_to_u8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 fn scene_representation_mix(
     submissions: &[BangerNativeSceneSubmissionNode],
 ) -> Vec<BangerNativeRepresentationMixEntry> {
@@ -4768,6 +5523,87 @@ end_header
             .all(|bucket| bucket.splat_count > 0
                 && bucket.sort_key_hash.len() == 64
                 && bucket.proof_hash.len() == 64));
+    }
+
+    #[test]
+    fn rasterizes_real_gaussian_splat_ply_to_rgba8() {
+        let path = fresh_tmp_path("banger-native-engine", "gaussian-splat-raster");
+        let _tmp = TmpDir::new(path.clone());
+        fs::create_dir_all(&path).expect("tmp dir");
+        let ply_path = path.join("raster_room.ply");
+        fs::write(
+            &ply_path,
+            r#"ply
+format ascii 1.0
+element vertex 3
+property float x
+property float y
+property float z
+property float f_dc_0
+property float f_dc_1
+property float f_dc_2
+property float opacity
+property float scale_0
+property float scale_1
+property float scale_2
+property float rot_0
+property float rot_1
+property float rot_2
+property float rot_3
+end_header
+0 0 0 1.4 0.0 0.0 4.0 -1.15 -1.15 -1.15 1 0 0 0
+0.25 0.1 0.2 0.0 1.2 0.0 3.0 -1.35 -1.35 -1.35 1 0 0 0
+-0.3 -0.1 -0.1 0.0 0.0 1.2 3.0 -1.45 -1.45 -1.45 1 0 0 0
+"#,
+        )
+        .expect("write raster ply");
+
+        let response = BangerNativeEngine::rasterize_gaussian_splat_asset(
+            BangerGaussianSplatRasterizeRequest {
+                asset_id: Some("raster_room".to_string()),
+                ply_path: ply_path.to_string_lossy().to_string(),
+                width: 64,
+                height: 64,
+                camera_position: Some([0.0, 0.0, -4.0]),
+                camera_target: Some([0.0, 0.0, 0.0]),
+                camera_up: Some([0.0, 1.0, 0.0]),
+                fov_y_degrees: Some(45.0),
+                near_plane: Some(0.01),
+                max_splats: None,
+                tile_size: Some(16),
+                background_rgba: Some([0.0, 0.0, 0.0, 0.0]),
+            },
+        )
+        .expect("rasterize gaussian splat");
+
+        assert!(response.ok);
+        assert_eq!(response.schema, "forge.banger.gaussian_splat_rasterizer.v1");
+        assert_eq!(response.width, 64);
+        assert_eq!(response.height, 64);
+        assert_eq!(response.tile_size, 16);
+        assert_eq!(response.tile_count, 16);
+        assert_eq!(response.splat_count, 3);
+        assert_eq!(response.projected_splat_count, 3);
+        assert!(response.rasterized_splat_count > 0);
+        assert!(response.shaded_pixel_count > 0);
+        assert_eq!(response.rgba8.len(), 64 * 64 * 4);
+        assert_eq!(response.camera_hash.len(), 64);
+        assert_eq!(response.tile_manifest_hash.len(), 64);
+        assert_eq!(response.projected_manifest_hash.len(), 64);
+        assert_eq!(response.rgba8_hash.len(), 64);
+        assert_eq!(response.raster_proof_hash.len(), 64);
+        assert!(response
+            .tiles
+            .iter()
+            .any(|tile| tile.splat_count > 0 && tile.contribution_count > 0));
+        let alpha_sum: u32 = response
+            .rgba8
+            .chunks_exact(4)
+            .map(|pixel| pixel[3] as u32)
+            .sum();
+        assert!(alpha_sum > 0);
+        let center = ((32 * 64 + 32) * 4) as usize;
+        assert!(response.rgba8[center + 3] > 0);
     }
 
     #[test]
