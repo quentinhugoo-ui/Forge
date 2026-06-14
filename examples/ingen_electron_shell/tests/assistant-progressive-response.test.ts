@@ -140,6 +140,10 @@ describe("assistant progressive response feed", () => {
 
   it("has diagnostics for desktop organization, tool-result resumption, compaction, and event/prompt separation", () => {
     expect(mainSource).toContain("function deterministicOrganizationRequestsFromList");
+    expect(mainSource).toContain("AGENT_ACTION_DESKTOP_VISIBLE_EXTENSIONS");
+    expect(mainSource).toContain("function agentActionShouldStayVisibleOnDesktop");
+    expect(mainSource).toContain("function deterministicOrganizationProgressText");
+    expect(mainSource).toContain("function deterministicOrganizationFinalText");
     expect(mainSource).toContain("agentActionOrganizeCategory(item)");
     expect(mainSource).toContain("action: \"create_directory\"");
     expect(mainSource).toContain("action: \"move_path\"");
@@ -152,5 +156,13 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("window.webContents.send(\"forge:agent-runtime-event\", runtimeEvent)");
     expect(mainSource).toContain("!message.id.startsWith(\"assistant-status-\")");
     expect(mainSource).not.toContain("providerConversationMessages(\n  event");
+  });
+
+  it("keeps filesystem move events separate from file content edit counters", () => {
+    expect(animationSource).toContain("function isAgentFileModificationCommand");
+    expect(animationSource).toContain("return command === AGENT_COPY_PATH_COMMAND");
+    expect(animationSource).toContain("return delta.addedChars > 0 || delta.removedChars > 0 ? delta : undefined");
+    expect(animationSource).toContain("Modified");
+    expect(animationSource).not.toContain("Modification de");
   });
 });

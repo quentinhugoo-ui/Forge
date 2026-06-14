@@ -495,7 +495,19 @@ async function createDirectoryAction(config: AgentActionHostConfig, request: Age
   if (typeof resolved !== "string") {
     return result(config, request, { accepted: false, error: resolved });
   }
-  await mkdir(resolved, { recursive: false });
+  try {
+    await mkdir(resolved, { recursive: false });
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+    if (code !== "EEXIST") {
+      throw error;
+    }
+    const existing = await stat(resolved);
+    if (!existing.isDirectory()) {
+      throw error;
+    }
+    return result(config, request, { accepted: true, path: pathLabel(config, request, resolved), value: "directory already exists" });
+  }
   return result(config, request, { accepted: true, path: pathLabel(config, request, resolved), value: charDeltaValue(0, 0) });
 }
 

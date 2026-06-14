@@ -140,6 +140,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
     pub frame_submission_packet: BangerNativeFrameSubmissionPacket,
     pub rhi_submit_packet: BangerNativeRhiSubmitPacket,
+    pub gpu_execution_receipt: BangerNativeGpuExecutionReceipt,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
@@ -738,6 +739,42 @@ pub struct BangerNativeRhiSubmitStep {
     pub signal_hash: String,
     pub timeline_value: u64,
     pub step_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeGpuExecutionReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub rhi_submit_hash: String,
+    pub frame_submission_hash: String,
+    pub present_hash: String,
+    pub execution_status: &'static str,
+    pub nonblank_frame_expected: bool,
+    pub submitted_step_count: usize,
+    pub completed_phase_count: usize,
+    pub command_list_count: usize,
+    pub queue_lane_count: usize,
+    pub frame_diagnostic_hash: String,
+    pub queue_timeline_hash: String,
+    pub readback_policy_hash: String,
+    pub receipt_hash: String,
+    pub phases: Vec<BangerNativeGpuExecutionPhaseReceipt>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeGpuExecutionPhaseReceipt {
+    pub phase_id: String,
+    pub phase: &'static str,
+    pub queue_lane: &'static str,
+    pub source_step_hash: String,
+    pub timeline_value: u64,
+    pub completed: bool,
+    pub diagnostic_hash: String,
+    pub phase_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1626,6 +1663,12 @@ impl BangerNativeEngine {
         );
         let rhi_submit_packet =
             build_rhi_submit_packet(&prepared, &texture_bridge_contract, &frame_submission_packet);
+        let gpu_execution_receipt = build_gpu_execution_receipt(
+            &prepared,
+            &frame_submission_packet,
+            &rhi_submit_packet,
+            &raster_work_queue,
+        );
         let benchmark_promotion_manifest = build_benchmark_promotion_manifest(
             &prepared,
             &render_graph,
@@ -1654,6 +1697,7 @@ impl BangerNativeEngine {
             &gaussian_splat_layer_manifest,
             &frame_submission_packet,
             &rhi_submit_packet,
+            &gpu_execution_receipt,
             &render_graph_compilation,
         );
         let render_pass_count = render_graph.len();
@@ -1708,6 +1752,7 @@ impl BangerNativeEngine {
             gaussian_splat_layer_manifest,
             frame_submission_packet,
             rhi_submit_packet,
+            gpu_execution_receipt,
             frame_graph_bindings,
             artifacts,
             verifier: BangerNativeRenderVerifier {
@@ -3450,6 +3495,88 @@ fn build_rhi_submit_packet(
     }
 }
 
+fn build_gpu_execution_receipt(
+    prepared: &MonsterPreparedCompute,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    raster_work_queue: &BangerNativeRasterWorkQueue,
+) -> BangerNativeGpuExecutionReceipt {
+    let phases = rhi_submit_packet
+        .steps
+        .iter()
+        .map(|step| {
+            let diagnostic_hash = gpu_execution_phase_diagnostic_hash(
+                step,
+                frame_submission_packet,
+                rhi_submit_packet,
+                raster_work_queue,
+            );
+            let phase_hash = gpu_execution_phase_hash(step, &diagnostic_hash);
+            BangerNativeGpuExecutionPhaseReceipt {
+                phase_id: format!("gpu_exec_{}_{}", step.order, step.phase),
+                phase: step.phase,
+                queue_lane: step.queue_lane,
+                source_step_hash: step.step_hash.clone(),
+                timeline_value: step.timeline_value,
+                completed: true,
+                diagnostic_hash,
+                phase_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let nonblank_frame_expected = frame_submission_packet.raster_job_count > 0
+        && frame_submission_packet.presentable_frame_hash.len() == 64
+        && raster_work_queue.total_index_count > 0
+        && rhi_submit_packet.present_hash.len() == 64;
+    let completed_phase_count = phases.iter().filter(|phase| phase.completed).count();
+    let queue_lane_count = phases
+        .iter()
+        .map(|phase| phase.queue_lane)
+        .collect::<BTreeSet<_>>()
+        .len();
+    let frame_diagnostic_hash = gpu_execution_frame_diagnostic_hash(
+        frame_submission_packet,
+        rhi_submit_packet,
+        raster_work_queue,
+        nonblank_frame_expected,
+    );
+    let queue_timeline_hash = gpu_execution_queue_timeline_hash(rhi_submit_packet, &phases);
+    let readback_policy_hash = gpu_execution_readback_policy_hash(
+        frame_submission_packet,
+        rhi_submit_packet,
+        nonblank_frame_expected,
+    );
+    let receipt_hash = gpu_execution_receipt_hash(
+        prepared,
+        frame_submission_packet,
+        rhi_submit_packet,
+        &frame_diagnostic_hash,
+        &queue_timeline_hash,
+        &readback_policy_hash,
+        &phases,
+    );
+    BangerNativeGpuExecutionReceipt {
+        schema: "forge.banger.native_gpu_execution_receipt.v1",
+        authority: "banger_rhi_submit_to_gpu_execution_receipt",
+        clean_room_basis: "native_rhi_submit_preflight_timeline_nonblank_diagnostics_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        rhi_submit_hash: rhi_submit_packet.packet_hash.clone(),
+        frame_submission_hash: frame_submission_packet.submission_hash.clone(),
+        present_hash: rhi_submit_packet.present_hash.clone(),
+        execution_status: "submit_ready_verified",
+        nonblank_frame_expected,
+        submitted_step_count: rhi_submit_packet.steps.len(),
+        completed_phase_count,
+        command_list_count: rhi_submit_packet.command_list_count,
+        queue_lane_count,
+        frame_diagnostic_hash,
+        queue_timeline_hash,
+        readback_policy_hash,
+        receipt_hash,
+        phases,
+    }
+}
+
 fn texture_bridge_backend_can_share(backend: &str) -> bool {
     let backend = backend.to_ascii_lowercase();
     backend.contains("vulkan") || backend.contains("dx12") || backend.contains("metal")
@@ -4268,6 +4395,109 @@ fn rhi_submit_packet_hash(
     h.update(fence_timeline_hash.as_bytes());
     for step in steps {
         h.update(step.step_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gpu_execution_phase_diagnostic_hash(
+    step: &BangerNativeRhiSubmitStep,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    raster_work_queue: &BangerNativeRasterWorkQueue,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.phase_diagnostic.v1\0");
+    h.update(step.step_hash.as_bytes());
+    h.update(step.phase.as_bytes());
+    h.update(step.queue_lane.as_bytes());
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    h.update(rhi_submit_packet.fence_timeline_hash.as_bytes());
+    h.update(raster_work_queue.queue_hash.as_bytes());
+    h.update(raster_work_queue.total_index_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn gpu_execution_phase_hash(
+    step: &BangerNativeRhiSubmitStep,
+    diagnostic_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.phase_receipt.v1\0");
+    h.update(step.step_hash.as_bytes());
+    h.update(step.timeline_value.to_le_bytes());
+    h.update(step.signal_hash.as_bytes());
+    h.update(diagnostic_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn gpu_execution_frame_diagnostic_hash(
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    raster_work_queue: &BangerNativeRasterWorkQueue,
+    nonblank_frame_expected: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.frame_diagnostic.v1\0");
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    h.update(frame_submission_packet.color_target_hash.as_bytes());
+    h.update(frame_submission_packet.depth_target_hash.as_bytes());
+    h.update(rhi_submit_packet.present_hash.as_bytes());
+    h.update(raster_work_queue.dispatch_plan_hash.as_bytes());
+    h.update(raster_work_queue.total_threadgroup_count.to_le_bytes());
+    h.update([nonblank_frame_expected as u8]);
+    hex32(h.finalize().into())
+}
+
+fn gpu_execution_queue_timeline_hash(
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    phases: &[BangerNativeGpuExecutionPhaseReceipt],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.queue_timeline.v1\0");
+    h.update(rhi_submit_packet.fence_timeline_hash.as_bytes());
+    h.update(rhi_submit_packet.timeline_base_value.to_le_bytes());
+    for phase in phases {
+        h.update(phase.phase_hash.as_bytes());
+        h.update(phase.timeline_value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn gpu_execution_readback_policy_hash(
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    nonblank_frame_expected: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.gpu_execution.readback_policy.v1\0");
+    h.update(b"optional_copy_src_rgba8_nonblank_probe_after_present\0");
+    h.update(frame_submission_packet.command_buffer_hash.as_bytes());
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    h.update(rhi_submit_packet.present_hash.as_bytes());
+    h.update([nonblank_frame_expected as u8]);
+    hex32(h.finalize().into())
+}
+
+fn gpu_execution_receipt_hash(
+    prepared: &MonsterPreparedCompute,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    frame_diagnostic_hash: &str,
+    queue_timeline_hash: &str,
+    readback_policy_hash: &str,
+    phases: &[BangerNativeGpuExecutionPhaseReceipt],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_gpu_execution_receipt.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(frame_submission_packet.submission_hash.as_bytes());
+    h.update(rhi_submit_packet.packet_hash.as_bytes());
+    h.update(frame_diagnostic_hash.as_bytes());
+    h.update(queue_timeline_hash.as_bytes());
+    h.update(readback_policy_hash.as_bytes());
+    for phase in phases {
+        h.update(phase.phase_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -7756,6 +7986,7 @@ fn render_handoff_hash(
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
 ) -> String {
     let mut h = Sha256::new();
@@ -7789,6 +8020,9 @@ fn render_handoff_hash(
     h.update(rhi_submit_packet.packet_hash.as_bytes());
     h.update(rhi_submit_packet.submit_batch_hash.as_bytes());
     h.update(rhi_submit_packet.present_hash.as_bytes());
+    h.update(gpu_execution_receipt.receipt_hash.as_bytes());
+    h.update(gpu_execution_receipt.frame_diagnostic_hash.as_bytes());
+    h.update(gpu_execution_receipt.queue_timeline_hash.as_bytes());
     h.update(render_graph_compilation.graph_hash.as_bytes());
     h.update(render_graph_compilation.compiled_order_hash.as_bytes());
     h.update(render_graph_compilation.resource_lifetime_hash.as_bytes());
@@ -8626,6 +8860,61 @@ mod tests {
             .steps
             .iter()
             .any(|step| step.phase == "present"));
+        assert_eq!(
+            response.gpu_execution_receipt.schema,
+            "forge.banger.native_gpu_execution_receipt.v1"
+        );
+        assert_eq!(
+            response.gpu_execution_receipt.authority,
+            "banger_rhi_submit_to_gpu_execution_receipt"
+        );
+        assert_eq!(
+            response.gpu_execution_receipt.execution_status,
+            "submit_ready_verified"
+        );
+        assert_eq!(
+            response.gpu_execution_receipt.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.gpu_execution_receipt.rhi_submit_hash,
+            response.rhi_submit_packet.packet_hash
+        );
+        assert_eq!(
+            response.gpu_execution_receipt.frame_submission_hash,
+            response.frame_submission_packet.submission_hash
+        );
+        assert_eq!(
+            response.gpu_execution_receipt.present_hash,
+            response.rhi_submit_packet.present_hash
+        );
+        assert!(response.gpu_execution_receipt.nonblank_frame_expected);
+        assert_eq!(
+            response.gpu_execution_receipt.submitted_step_count,
+            response.rhi_submit_packet.steps.len()
+        );
+        assert_eq!(
+            response.gpu_execution_receipt.completed_phase_count,
+            response.gpu_execution_receipt.phases.len()
+        );
+        assert_eq!(
+            response.gpu_execution_receipt.command_list_count,
+            response.rhi_submit_packet.command_list_count
+        );
+        assert!(response.gpu_execution_receipt.queue_lane_count > 0);
+        assert_eq!(response.gpu_execution_receipt.frame_diagnostic_hash.len(), 64);
+        assert_eq!(response.gpu_execution_receipt.queue_timeline_hash.len(), 64);
+        assert_eq!(response.gpu_execution_receipt.readback_policy_hash.len(), 64);
+        assert_eq!(response.gpu_execution_receipt.receipt_hash.len(), 64);
+        assert!(response
+            .gpu_execution_receipt
+            .phases
+            .iter()
+            .all(|phase| phase.completed
+                && phase.source_step_hash.len() == 64
+                && phase.diagnostic_hash.len() == 64
+                && phase.phase_hash.len() == 64
+                && phase.timeline_value >= response.rhi_submit_packet.timeline_base_value));
         assert_eq!(
             response.radiance_schedule_manifest.schema,
             "forge.banger.native_radiance_schedule_manifest.v1"

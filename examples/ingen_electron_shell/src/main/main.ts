@@ -5633,6 +5633,7 @@ function agentActionForcedContinuationUserText(originalUserText: string, request
 }
 
 const AGENT_ACTION_ORGANIZE_CATEGORY_NAMES = new Set(["Documents", "Images", "Videos", "Audio", "Archives", "Code", "Applications", "Dossiers", "Autres"]);
+const AGENT_ACTION_DESKTOP_VISIBLE_EXTENSIONS = new Set([".exe", ".msi", ".lnk", ".url", ".appref-ms"]);
 
 function agentActionOrganizeCategory(item: AgentActionPathEntry): string {
   if (item.kind === "directory") {
@@ -5647,6 +5648,13 @@ function agentActionOrganizeCategory(item: AgentActionPathEntry): string {
   if ([".exe", ".msi", ".app", ".bat", ".cmd", ".ps1"].includes(extension)) return "Applications";
   if ([".pdf", ".doc", ".docx", ".txt", ".md", ".rtf", ".xls", ".xlsx", ".ppt", ".pptx", ".csv"].includes(extension)) return "Documents";
   return "Autres";
+}
+
+function agentActionShouldStayVisibleOnDesktop(item: AgentActionPathEntry): boolean {
+  if (item.kind !== "file") {
+    return true;
+  }
+  return AGENT_ACTION_DESKTOP_VISIBLE_EXTENSIONS.has(extname(item.name).toLowerCase());
 }
 
 function agentActionPathInBase(basePath: string, ...parts: string[]): string {
@@ -5667,6 +5675,7 @@ function deterministicOrganizationRequestsFromList(request: AgentActionRequest, 
   );
   const movableItems = result.items
     .filter((item) => !item.name.startsWith("."))
+    .filter((item) => !agentActionShouldStayVisibleOnDesktop(item))
     .filter((item) => !(item.kind === "directory" && AGENT_ACTION_ORGANIZE_CATEGORY_NAMES.has(item.name)));
   const requests: AgentActionRequest[] = [];
   const plannedDirectories = new Set(existingDirectories);
@@ -5693,6 +5702,42 @@ function deterministicOrganizationRequestsFromList(request: AgentActionRequest, 
   return requests.slice(0, 8);
 }
 
+function deterministicOrganizationProgressText(request: AgentActionRequest, index: number, total: number): string {
+  const position = total > 1 ? ` (${index + 1}/${total})` : "";
+  const target = request.toPath ?? request.path ?? "the selected path";
+  switch (request.action) {
+    case "create_directory":
+      return `Catégorie prête${position}: je vérifie le dossier ${target} avant les déplacements.`;
+    case "move_path":
+      return `Élément classé${position}: ${request.path ?? "un élément"} part vers ${target}.`;
+    case "copy_path":
+      return `Copie bornée${position}: ${request.path ?? "un élément"} est dupliqué vers ${target}.`;
+    case "rename_path":
+      return `Nom clarifié${position}: ${request.path ?? "un élément"} devient ${target}.`;
+    default:
+      return `Action locale${position}: ${AGENT_ACTION_CAPABILITY_BY_ACTION[request.action]} s'exécute maintenant.`;
+  }
+}
+
+function deterministicOrganizationFinalText(results: AgentActionResult[]): string {
+  const accepted = results.filter((result) => result.accepted);
+  const failed = results.find((result) => !result.accepted);
+  const created = accepted.filter((result) => result.action === "create_directory").length;
+  const moved = accepted.filter((result) => result.action === "move_path").length;
+  const copied = accepted.filter((result) => result.action === "copy_path").length;
+  const renamed = accepted.filter((result) => result.action === "rename_path").length;
+  const parts = [
+    created ? `${created} dossier${created > 1 ? "s" : ""} prêt${created > 1 ? "s" : ""}` : "",
+    moved ? `${moved} élément${moved > 1 ? "s" : ""} déplacé${moved > 1 ? "s" : ""}` : "",
+    copied ? `${copied} élément${copied > 1 ? "s" : ""} copié${copied > 1 ? "s" : ""}` : "",
+    renamed ? `${renamed} élément${renamed > 1 ? "s" : ""} renommé${renamed > 1 ? "s" : ""}` : ""
+  ].filter(Boolean);
+  if (parts.length === 0) {
+    return `Conclusion: aucune modification locale n'a été appliquée.${failed ? ` Blocage: ${failed.error?.message ?? "action refusée par le host"}.` : ""}`;
+  }
+  return `Conclusion: ${parts.join(", ")}.${failed ? ` La suite s'est arrêtée sur un blocage: ${failed.error?.message ?? "action refusée par le host"}.` : ""}`;
+}
+
 async function applyDeterministicOrganizationFallback(params: {
   assistantMessage: TranscriptMessage;
   originalUserText: string;
@@ -5706,7 +5751,13 @@ async function applyDeterministicOrganizationFallback(params: {
   }
   const requests = deterministicOrganizationRequestsFromList(params.request, params.result);
   if (requests.length === 0) {
-    return params.assistantMessage;
+    const assistantMessage = {
+      ...params.assistantMessage,
+      text: `${params.assistantMessage.text.trimEnd()}\n\nConclusion: aucun élément non-application n'a été déplacé; les applications, raccourcis et dossiers visibles restent en place.`.trim(),
+      proofHash: hashJson({ deterministicAgentActionFallbackNoop: true, previousProofHash: params.assistantMessage.proofHash })
+    };
+    params.commitProgress?.(assistantMessage);
+    return assistantMessage;
   }
   let assistantMessage = {
     ...params.assistantMessage,
@@ -5715,6 +5766,7 @@ async function applyDeterministicOrganizationFallback(params: {
       "La liste est suffisante pour lancer un premier tri borné: je crée les dossiers de catégories nécessaires, puis je déplace quelques éléments évidents sans rien supprimer."
     ].filter((part) => part.trim().length > 0).join("\n\n")
   };
+  const results: AgentActionResult[] = [];
   params.commitProgress?.(assistantMessage);
   for (const [index, request] of requests.entries()) {
     const toolCall = emitAgentRuntimeToolCallStarted({
@@ -5725,7 +5777,11 @@ async function applyDeterministicOrganizationFallback(params: {
     });
     assistantMessage = {
       ...assistantMessage,
-      text: `${assistantMessage.text.trimEnd()}\n\n${agentActionEventCommandForRequest(request)}`.trim(),
+      text: [
+        assistantMessage.text,
+        deterministicOrganizationProgressText(request, index, requests.length),
+        agentActionEventCommandForRequest(request)
+      ].filter((part) => part.trim().length > 0).join("\n\n"),
       proofHash: hashJson({ deterministicAgentActionFallbackPending: true, previousProofHash: assistantMessage.proofHash, request })
     };
     params.commitProgress?.(assistantMessage);
@@ -5736,6 +5792,7 @@ async function applyDeterministicOrganizationFallback(params: {
       toolCall,
       result
     });
+    results.push(result);
     assistantMessage = {
       ...assistantMessage,
       text: renderCompletedPendingAgentActionText(assistantMessage.text, result),
@@ -5746,6 +5803,12 @@ async function applyDeterministicOrganizationFallback(params: {
       break;
     }
   }
+  assistantMessage = {
+    ...assistantMessage,
+    text: `${assistantMessage.text.trimEnd()}\n\n${deterministicOrganizationFinalText(results)}`.trim(),
+    proofHash: hashJson({ deterministicAgentActionFallbackFinal: true, previousProofHash: assistantMessage.proofHash, results })
+  };
+  params.commitProgress?.(assistantMessage);
   return assistantMessage;
 }
 

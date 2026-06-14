@@ -93,6 +93,13 @@ describe("agent action host", () => {
       expect(created.accepted).toBe(true);
       expect(created.value).toBe("chars +0 -0");
 
+      const alreadyCreated = await executeAgentActionRequest(config, {
+        action: "create_directory",
+        path: "alpha"
+      });
+      expect(alreadyCreated.accepted).toBe(true);
+      expect(alreadyCreated.value).toBe("directory already exists");
+
       const renamed = await executeAgentActionRequest(config, {
         action: "rename_path",
         path: "alpha",
