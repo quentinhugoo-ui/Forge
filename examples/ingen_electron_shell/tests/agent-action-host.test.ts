@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   createAgentCapabilityAtlas,
   createAgentActionHostManifest,
+  createAgentActionRuntimeManifestSummary,
   agentActionEventCommandForRequest,
   agentActionHostPromptManifest,
   agentActionRoutingHint,
@@ -47,6 +48,12 @@ describe("agent action host", () => {
     expect(manifest.capabilityAtlas.length).toBeGreaterThanOrEqual(15);
     expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("windows.wmi");
     expect(manifest.capabilityAtlas.map((capability) => capability.family)).toContain("browser.cdp");
+    expect(manifest.runtime.schema).toBe("ingen.agent_action_runtime_manifest.summary.v1");
+    expect(manifest.runtime.manifestHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest.runtime.atlasHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest.runtime.injectionPolicy).toBe("full_on_local_intent_compact_delta_on_continuation");
+    expect(manifest.runtime.resultReinjectionPolicy).toBe("compact_tool_result_is_ground_truth_each_round");
+    expect(manifest.runtime.executableActionIds).toContain("shell.full");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
 
     const promptManifest = agentActionHostPromptManifest({
@@ -59,6 +66,11 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("fs.delete_tree:/agent_delete_tree_");
     expect(promptManifest).toContain("shell.full:/agent_shell_");
     expect(promptManifest).toContain("capability_atlas=count:");
+    expect(promptManifest).toContain("manifest_hash=");
+    expect(promptManifest).toContain("atlas_hash=");
+    expect(promptManifest).toContain("injection_policy=full_on_local_intent_compact_delta_on_continuation");
+    expect(promptManifest).toContain("prompt_budget=compact_by_default_detail_on_selected_capability");
+    expect(promptManifest).toContain("result_reinjection=compact_tool_result_is_ground_truth_each_round");
     expect(promptManifest).toContain("windows.wmi:planned/none");
     expect(promptManifest).toContain("office.com:planned/prompt");
     expect(promptManifest).toContain("capability_policy=Use the atlas for reasoning");
@@ -71,6 +83,35 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("starts with AGENT_ACTION_JSON at column 1");
     expect(promptManifest).toContain("action_request_format=AGENT_ACTION_JSON");
     expect(promptManifest).toContain("tool_truth=Never claim an action was executed");
+  });
+
+  it("publishes a compact runtime manifest summary for delta prompt injection", () => {
+    const summary = createAgentActionRuntimeManifestSummary({
+      workspaceRoot: "C:\\repo",
+      workspaceActive: true,
+      cwd: "C:\\repo",
+      platform: "win32"
+    });
+
+    expect(summary.manifestHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(summary.atlasHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(summary.executableActionIds).toEqual([
+      "fs.list",
+      "fs.search",
+      "fs.create_directory",
+      "fs.rename",
+      "fs.move",
+      "fs.copy",
+      "fs.delete_empty_directory",
+      "fs.delete_tree",
+      "shell.readonly",
+      "shell.full"
+    ]);
+    expect(summary.availableFamilies).toContain("shell.full");
+    expect(summary.plannedFamilies).toContain("windows.settings");
+    expect(summary.blockedFamilies).toContain("windows.credentials");
+    expect(summary.approvalGatedFamilies).toContain("browser.cdp");
+    expect(summary.promptBudget).toBe("compact_by_default_detail_on_selected_capability");
   });
 
   it("publishes a broad non-executable Windows capability atlas", () => {

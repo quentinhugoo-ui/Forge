@@ -334,6 +334,20 @@ export interface AgentCapabilityAtlasEntry {
   executableActionIds?: AgentActionCapabilityId[];
 }
 
+export interface AgentActionRuntimeManifestSummary {
+  schema: "ingen.agent_action_runtime_manifest.summary.v1";
+  manifestHash: string;
+  atlasHash: string;
+  executableActionIds: AgentActionCapabilityId[];
+  availableFamilies: AgentCapabilityFamily[];
+  plannedFamilies: AgentCapabilityFamily[];
+  blockedFamilies: AgentCapabilityFamily[];
+  approvalGatedFamilies: AgentCapabilityFamily[];
+  injectionPolicy: "full_on_local_intent_compact_delta_on_continuation";
+  promptBudget: "compact_by_default_detail_on_selected_capability";
+  resultReinjectionPolicy: "compact_tool_result_is_ground_truth_each_round";
+}
+
 export interface AgentActionCapability extends AgentCapabilityAtlasEntry {
   requiresApproval: boolean;
   description: string;
@@ -356,6 +370,7 @@ export interface AgentActionHostManifest {
   };
   capabilities: AgentActionCapability[];
   capabilityAtlas: AgentCapabilityAtlasEntry[];
+  runtime: AgentActionRuntimeManifestSummary;
   proofHash: string;
 }
 

@@ -9,6 +9,7 @@ import type {
   AgentActionRequest,
   AgentActionResult,
   AgentActionSearchMatch,
+  AgentActionRuntimeManifestSummary,
   AgentCapabilityAtlasEntry,
   IpcError
 } from "../shared/ipc-contract.js";
@@ -744,9 +745,34 @@ function compactCapabilityAtlasLine(atlas: AgentCapabilityAtlasEntry[]): string 
   return `capability_atlas=count:${atlas.length} families=${familySummary} planned_or_blocked=${plannedFamilies}`;
 }
 
+function uniqueSortedFamilies(entries: AgentCapabilityAtlasEntry[]): string[] {
+  return [...new Set(entries.map((entry) => entry.family))].sort();
+}
+
+export function createAgentActionRuntimeManifestSummary(config: AgentActionHostConfig): AgentActionRuntimeManifestSummary {
+  const capabilities = createExecutableActionCapabilities();
+  const capabilityAtlas = createAgentCapabilityAtlas(config);
+  const summary: AgentActionRuntimeManifestSummary = {
+    schema: "ingen.agent_action_runtime_manifest.summary.v1",
+    manifestHash: "",
+    atlasHash: hashJson(capabilityAtlas),
+    executableActionIds: capabilities.map((capability) => capability.id),
+    availableFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status === "available")),
+    plannedFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status === "planned")),
+    blockedFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status === "blocked")),
+    approvalGatedFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.approval === "prompt" || entry.approval === "confirmed")),
+    injectionPolicy: "full_on_local_intent_compact_delta_on_continuation",
+    promptBudget: "compact_by_default_detail_on_selected_capability",
+    resultReinjectionPolicy: "compact_tool_result_is_ground_truth_each_round"
+  };
+  summary.manifestHash = hashJson({ ...summary, manifestHash: "" });
+  return summary;
+}
+
 export function createAgentActionHostManifest(config: AgentActionHostConfig): AgentActionHostManifest {
   const capabilities = createExecutableActionCapabilities();
   const capabilityAtlas = createAgentCapabilityAtlas(config);
+  const runtime = createAgentActionRuntimeManifestSummary(config);
   const manifest: AgentActionHostManifest = {
     schema: "ingen.agent_action_host.manifest.v1",
     workspace: {
@@ -764,6 +790,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
     },
     capabilities,
     capabilityAtlas,
+    runtime,
     proofHash: ""
   };
   manifest.proofHash = hashJson({ ...manifest, proofHash: "" });
@@ -781,8 +808,16 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `recursive_delete=${manifest.permissions.recursiveDelete}`,
     `shell=${manifest.permissions.shell}`,
     `protected_roots=${manifest.workspace.protectedRoots.join("|")}`,
+    `manifest_hash=${manifest.runtime.manifestHash}`,
+    `atlas_hash=${manifest.runtime.atlasHash}`,
+    `injection_policy=${manifest.runtime.injectionPolicy}`,
+    `prompt_budget=${manifest.runtime.promptBudget}`,
+    `result_reinjection=${manifest.runtime.resultReinjectionPolicy}`,
     "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
+    `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
+    `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
+    `approval_gated_families=${manifest.runtime.approvalGatedFamilies.join("|")}`,
     "capability_policy=Use the atlas for reasoning, not as fake execution. Prefer structured app/API/CLI routes first, then confirmed shell.full, then GUI/computer-use only when the task cannot be completed through a safer route.",
     "capability_limits=Planned or blocked atlas entries are not direct AGENT_ACTION_JSON actions. Use available executable actions only, or explain the missing backend/approval boundary.",
     "windows_reach=shell.full can use PowerShell/cmd plus Windows-native tools such as winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process and ms-settings URIs when confirmed:true is warranted.",

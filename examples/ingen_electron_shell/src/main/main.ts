@@ -4315,10 +4315,19 @@ function agentActionContinuationManifest(): string {
     "AGENT_ACTION_HOST_CONTINUATION v1",
     `workspace_active=${manifest.workspace.active}`,
     `workspace_root=${manifest.workspace.root}`,
+    `manifest_hash=${manifest.runtime.manifestHash}`,
+    `atlas_hash=${manifest.runtime.atlasHash}`,
+    `delta_policy=${manifest.runtime.injectionPolicy}`,
+    `prompt_budget=${manifest.runtime.promptBudget}`,
+    `result_reinjection=${manifest.runtime.resultReinjectionPolicy}`,
     "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
+    `planned_families_delta=${manifest.runtime.plannedFamilies.join("|")}`,
+    `blocked_families_delta=${manifest.runtime.blockedFamilies.join("|")}`,
+    `approval_gated_families_delta=${manifest.runtime.approvalGatedFamilies.join("|")}`,
     "format=Continue with one short natural progress paragraph, then exactly one AGENT_ACTION_JSON line when another local action is needed.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"move_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "result_policy=Use the compact AGENT_ACTION_RESULT from the previous round as ground truth; do not ask for the full listing again unless the compact result is insufficient.",
+    "selected_capability_policy=Use AGENT_ACTION_SELECTED_CAPABILITY from the previous tool result to pick verification and fallbacks; do not request the full atlas unless the selected capability is insufficient.",
     "stop_policy=If the objective is done, return only a compact final summary and do not emit AGENT_ACTION_JSON.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -5565,6 +5574,31 @@ function compactAgentActionResult(result: AgentActionResult): string {
   });
 }
 
+function agentActionSelectedCapabilityContext(request: AgentActionRequest, result: AgentActionResult): string {
+  const manifest = createAgentActionHostManifest(agentActionHostConfig());
+  const capabilityId = AGENT_ACTION_CAPABILITY_BY_ACTION[request.action];
+  const capability = manifest.capabilityAtlas.find((entry) => entry.id === capabilityId);
+  const recoveryFamilies = manifest.runtime.approvalGatedFamilies
+    .filter((family) => !capability || family !== capability.family)
+    .slice(0, 10)
+    .join("|");
+  return [
+    "AGENT_ACTION_SELECTED_CAPABILITY v1",
+    `manifest_hash=${manifest.runtime.manifestHash}`,
+    `atlas_hash=${manifest.runtime.atlasHash}`,
+    `capability=${capability?.id ?? capabilityId}`,
+    `family=${capability?.family ?? "unknown"}`,
+    `status=${capability?.status ?? "unknown"}`,
+    `risk=${capability?.risk ?? "unknown"}`,
+    `approval=${capability?.approval ?? "unknown"}`,
+    `verification=${capability?.verification.join("|") ?? "command_exit"}`,
+    `fallbacks=${capability?.fallbacks.join("|") ?? "shell.full"}`,
+    result.accepted
+      ? "next=verify whether the user objective is now satisfied; continue only if another local action is still required."
+      : `next=read the error, then choose a different safe route when possible. recovery_families=${recoveryFamilies}`
+  ].join("\n");
+}
+
 function emitAgentLoopDiagnosticSummary(params: {
   agentEvents: AgentRuntimeEventQueue;
   messageId: string;
@@ -5600,6 +5634,7 @@ function agentActionLoopContinuationUserText(originalUserText: string, request: 
     `step=${step + 1}`,
     `request=${JSON.stringify(request)}`,
     `result=${compactAgentActionResult(result)}`,
+    agentActionSelectedCapabilityContext(request, result),
     "",
     "Continue la boucle agentique en francais.",
     mustContinueAfterDiscovery
@@ -5623,6 +5658,7 @@ function agentActionForcedContinuationUserText(originalUserText: string, request
     `step=${step + 1}`,
     `last_request=${JSON.stringify(request)}`,
     `last_result=${compactAgentActionResult(result)}`,
+    agentActionSelectedCapabilityContext(request, result),
     "",
     "Le loop ne doit pas s'arreter ici: la derniere action etait seulement une action de decouverte, pas une modification.",
     "Ecris un court paragraphe de progression, puis exactement une ligne AGENT_ACTION_JSON qui execute la prochaine action locale concrete.",
@@ -5643,6 +5679,7 @@ function agentActionFailureContinuationUserText(originalUserText: string, reques
     `step=${step + 1}`,
     `failed_request=${JSON.stringify(request)}`,
     `failed_result=${compactAgentActionResult(result)}`,
+    agentActionSelectedCapabilityContext(request, result),
     "",
     "La derniere action locale a echoue ou a ete refusee. Ne conclus pas trop vite.",
     "Lis l'erreur, puis tente une autre strategie si elle est raisonnable et autorisee: autre action fichier, commande PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, start ms-settings, ou un outil Windows natif accessible par shell.full.",

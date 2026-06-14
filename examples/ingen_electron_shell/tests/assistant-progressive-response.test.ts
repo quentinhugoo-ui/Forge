@@ -116,6 +116,11 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("function shouldInjectFullAgentActionManifest");
     expect(mainSource).toContain("function shouldInjectCompactAgentActionManifest");
     expect(mainSource).toContain("function agentActionContinuationManifest");
+    expect(mainSource).toContain("manifest.runtime.manifestHash");
+    expect(mainSource).toContain("manifest.runtime.atlasHash");
+    expect(mainSource).toContain("delta_policy=${manifest.runtime.injectionPolicy}");
+    expect(mainSource).toContain("prompt_budget=${manifest.runtime.promptBudget}");
+    expect(mainSource).toContain("selected_capability_policy=Use AGENT_ACTION_SELECTED_CAPABILITY");
     expect(mainSource).toContain("textLooksLikeLocalActionIntent(userText)");
     expect(mainSource).toContain("textIsAgentActionContinuation(userText)");
     expect(mainSource).toContain("transcriptHasRecentAgentActionLoop(transcript)");
@@ -161,6 +166,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("agentActionLoopFailureContinuationStep");
     expect(mainSource).toContain("AGENT_ACTION_RESULT_PREFIX");
     expect(mainSource).toContain("compactAgentActionResult(result)");
+    expect(mainSource).toContain("function agentActionSelectedCapabilityContext");
+    expect(mainSource).toContain("AGENT_ACTION_SELECTED_CAPABILITY v1");
+    expect(mainSource).toContain("result.accepted\n      ? \"next=verify whether the user objective is now satisfied");
+    expect(mainSource).toContain("agentActionSelectedCapabilityContext(request, result)");
     expect(mainSource).toContain("agentEvents.emit({\n      kind: \"compaction_started\"");
     expect(mainSource).toContain("agentEvents.emit({\n      kind: \"compaction_completed\"");
     expect(mainSource).toContain("window.webContents.send(\"forge:agent-runtime-event\", runtimeEvent)");
