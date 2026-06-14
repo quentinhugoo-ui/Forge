@@ -9116,7 +9116,7 @@ ol.assistantText__list li::before {
 
 .hardwareDashboard {
   display: block;
-  width: min(100%, 720px);
+  width: min(100%, 560px);
   min-width: 0;
 }
 
@@ -9143,11 +9143,11 @@ ol.assistantText__list li::before {
   grid-template-columns: minmax(0, 1fr) 72px 6px;
   align-items: stretch;
   gap: 10px;
-  height: 112px;
+  height: 142px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 10px 12px;
+  padding: 12px 12px 10px;
   border: 1px solid color-mix(in oklab, var(--forge-line), transparent 46%);
   background: color-mix(in oklab, var(--forge-sidebar-bg), #000 7%);
   color: var(--forge-accent);
@@ -9155,8 +9155,8 @@ ol.assistantText__list li::before {
 
 .hardwareGauge__main {
   display: grid;
-  grid-template-rows: auto 48px auto;
-  gap: 5px;
+  grid-template-rows: auto 76px auto;
+  gap: 6px;
   min-width: 0;
   min-height: 0;
 }
@@ -9200,7 +9200,7 @@ ol.assistantText__list li::before {
 
 .hardwareGauge__screen {
   align-self: auto;
-  height: 48px;
+  height: 76px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -9231,6 +9231,7 @@ ol.assistantText__list li::before {
 }
 
 .hardwareGauge__activityLine,
+.hardwareGauge__activityPeak,
 .hardwareGauge__temperatureLine {
   fill: none;
   stroke-linecap: round;
@@ -9238,15 +9239,22 @@ ol.assistantText__list li::before {
   vector-effect: non-scaling-stroke;
 }
 
+.hardwareGauge__activityPeak {
+  stroke: #ff9c00;
+  stroke-width: 1.35;
+  opacity: 0.78;
+  filter: drop-shadow(0 0 7px rgba(255, 156, 0, 0.38));
+}
+
 .hardwareGauge__activityLine {
   stroke: #f1b735;
-  stroke-width: 1.55;
-  opacity: 0.82;
+  stroke-width: 1.35;
+  opacity: 0.9;
   filter: drop-shadow(0 0 7px rgba(241, 183, 53, 0.34));
 }
 
 .hardwareGauge__temperatureLine {
-  stroke-width: 2.2;
+  stroke-width: 2.35;
   filter: drop-shadow(0 0 8px rgba(255, 72, 55, 0.42));
 }
 
@@ -9330,9 +9338,17 @@ ol.assistantText__list li::before {
 
   .hardwareGauge {
     grid-template-columns: minmax(0, 1fr) 64px 5px;
-    height: 108px;
+    height: 134px;
     min-height: 0;
     padding: 10px;
+  }
+
+  .hardwareGauge__main {
+    grid-template-rows: auto 72px auto;
+  }
+
+  .hardwareGauge__screen {
+    height: 72px;
   }
 
   .hardwareGauge__readout span {

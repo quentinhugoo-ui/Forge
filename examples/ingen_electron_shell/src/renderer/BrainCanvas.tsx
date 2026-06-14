@@ -949,6 +949,54 @@ function hardwareGaugeSeriesPath(
     .join(" ");
 }
 
+function hardwareGaugeStepPath(
+  samples: HardwareGaugeSample[],
+  readValue: (sample: HardwareGaugeSample) => number | null,
+  min: number,
+  max: number,
+  width = 278,
+  height = 82
+): string {
+  const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
+  if (visible.length === 0 || max <= min) return "";
+  const denominator = Math.max(1, visible.length - 1);
+  return visible
+    .map((sample, index) => {
+      const rawValue = readValue(sample);
+      const value = rawValue === null ? min : clampNumber(rawValue, min, max);
+      const x = (index / denominator) * width;
+      const y = height - ((value - min) / (max - min)) * height;
+      if (index === 0) return `M ${x.toFixed(1)} ${y.toFixed(1)}`;
+      const previousX = ((index - 1) / denominator) * width;
+      return `H ${((previousX + x) / 2).toFixed(1)} V ${y.toFixed(1)} H ${x.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+function hardwareGaugePeakPath(
+  samples: HardwareGaugeSample[],
+  readValue: (sample: HardwareGaugeSample) => number | null,
+  min: number,
+  max: number,
+  width = 278,
+  height = 82
+): string {
+  const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
+  if (visible.length === 0 || max <= min) return "";
+  const denominator = Math.max(1, visible.length - 1);
+  return visible
+    .map((sample, index) => {
+      const rawValue = readValue(sample);
+      if (rawValue === null) return "";
+      const value = clampNumber(rawValue, min, max);
+      const x = (index / denominator) * width;
+      const y = height - ((value - min) / (max - min)) * height;
+      return `M ${x.toFixed(1)} ${height} L ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
 function hardwareGaugeAreaPath(
   samples: HardwareGaugeSample[],
   readValue: (sample: HardwareGaugeSample) => number | null,
@@ -973,11 +1021,15 @@ function hardwareTemperatureAreaPath(samples: HardwareGaugeSample[], min: number
 }
 
 function hardwareActivityPath(samples: HardwareGaugeSample[]): string {
-  return hardwareGaugeSeriesPath(samples, (sample) => sample.percent, 0, 100);
+  return hardwareGaugeStepPath(samples, (sample) => sample.percent, 0, 100);
 }
 
 function hardwareActivityAreaPath(samples: HardwareGaugeSample[]): string {
   return hardwareGaugeAreaPath(samples, (sample) => sample.percent, 0, 100);
+}
+
+function hardwareActivityPeakPath(samples: HardwareGaugeSample[]): string {
+  return hardwareGaugePeakPath(samples, (sample) => sample.percent, 0, 100);
 }
 
 function hardwareTemperatureMinMax(samples: HardwareGaugeSample[]): { min: number | null; max: number | null } {
@@ -1072,6 +1124,7 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
   const temperatureAreaPath = hardwareTemperatureAreaPath(samples, card.min, card.max);
   const activityLinePath = hardwareActivityPath(samples);
   const activityAreaPath = hardwareActivityAreaPath(samples);
+  const activityPeakPath = hardwareActivityPeakPath(samples);
   const minMax = hardwareTemperatureMinMax(samples);
   const isUnavailable = card.temperature.value === null;
   return (
@@ -1106,6 +1159,7 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
             {temperatureAreaPath ? (
               <path className="hardwareGauge__temperatureArea" d={temperatureAreaPath} fill={`url(#hardwareGaugeTempFill-${card.id})`} />
             ) : null}
+            {activityPeakPath ? <path className="hardwareGauge__activityPeak" d={activityPeakPath} /> : null}
             {activityLinePath ? <path className="hardwareGauge__activityLine" d={activityLinePath} /> : null}
             {temperatureLinePath ? (
               <path className="hardwareGauge__temperatureLine" d={temperatureLinePath} stroke={`url(#hardwareGaugeTempStroke-${card.id})`} />
