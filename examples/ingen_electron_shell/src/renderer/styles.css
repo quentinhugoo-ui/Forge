@@ -11334,6 +11334,7 @@ ol.assistantText__list li::before {
   min-height: 82px;
   height: auto;
   padding: 8px;
+  transform: translate3d(0, var(--widget-chat-drop, 48px), 0);
   transition: transform var(--widget-side-exit-motion), left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
@@ -11372,6 +11373,7 @@ ol.assistantText__list li::before {
   grid-template-columns: max-content 34px minmax(0, 1fr) max-content 30px;
   gap: 7px;
   width: var(--chat-width);
+  transform: translate3d(0, var(--widget-chat-drop, 48px), 0);
   transition: transform var(--widget-side-exit-motion), left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
