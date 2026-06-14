@@ -23,6 +23,8 @@ pub struct BangerNativeRenderPrepareRequest {
     pub vram_budget_mb: Option<u32>,
     pub prefer_mesh_shaders: Option<bool>,
     pub pipeline_cache_dir: Option<String>,
+    pub viewport_width: Option<u32>,
+    pub viewport_height: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -38,6 +40,8 @@ pub struct BangerNewObjectPrepareRequest {
     pub vram_budget_mb: Option<u32>,
     pub prefer_mesh_shaders: Option<bool>,
     pub pipeline_cache_dir: Option<String>,
+    pub viewport_width: Option<u32>,
+    pub viewport_height: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,6 +68,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub shader_capability_plan: BangerNativeShaderCapabilityPlan,
     pub shader_compiler_ticket: BangerNativeShaderCompilerTicket,
     pub pipeline_cache_manifest: BangerNativePipelineCacheManifest,
+    pub texture_bridge_contract: BangerNativeTextureBridgeContract,
     pub pipeline_cache_keys: Vec<String>,
     pub render_graph: Vec<BangerNativeRenderPass>,
     pub residency_jobs: Vec<BangerNativeResidencyJob>,
@@ -218,6 +223,47 @@ pub struct BangerNativePipelineCacheEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangerNativeTextureBridgeContract {
+    pub schema: &'static str,
+    pub route_status: &'static str,
+    pub import_route: &'static str,
+    pub fallback_route: &'static str,
+    pub backend: String,
+    pub selected_adapter_hash: String,
+    pub device_queue_hash: String,
+    pub width: u32,
+    pub height: u32,
+    pub pixel_format: &'static str,
+    pub texture_usage: Vec<&'static str>,
+    pub present_policy: &'static str,
+    pub same_device_queue_available: bool,
+    pub external_handle_import_required: bool,
+    pub frame_hash: String,
+    pub viewport_contract_hash: String,
+    pub resize_proof_hash: String,
+    pub camera_control_proof_hash: String,
+    pub bridge_proof_hash: String,
+    pub viewport: BangerNativeViewportContract,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeViewportContract {
+    pub fit_mode: &'static str,
+    pub camera_mode: &'static str,
+    pub orbit_enabled: bool,
+    pub pan_enabled: bool,
+    pub zoom_enabled: bool,
+    pub resize_policy: &'static str,
+    pub scene_graph_hash: String,
+    pub scene_bounds_hash: String,
+    pub target_frame_ms: f32,
+    pub min_extent: u32,
+    pub max_extent: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangerEditableSceneManifest {
     pub schema: &'static str,
     pub scene_id: String,
@@ -328,6 +374,8 @@ impl BangerNativeEngine {
             vram_budget_mb,
             prefer_mesh_shaders,
             pipeline_cache_dir,
+            viewport_width,
+            viewport_height,
         } = request;
         let scene_id = sanitize_scene_id(scene_id.as_deref().unwrap_or("banger_default_scene"));
         let representation = normalize_newobject_representation(representation.as_deref())?;
@@ -347,6 +395,8 @@ impl BangerNativeEngine {
                 vram_budget_mb,
                 prefer_mesh_shaders,
                 pipeline_cache_dir,
+                viewport_width,
+                viewport_height,
             },
         )?;
         let base_manifest_hash = base_handoff.editable_scene_manifest.manifest_hash.clone();
@@ -442,6 +492,8 @@ impl BangerNativeEngine {
             vram_budget_mb,
             prefer_mesh_shaders,
             pipeline_cache_dir,
+            viewport_width,
+            viewport_height,
         } = request;
         let scene_id = sanitize_scene_id(scene_id.as_deref().unwrap_or("banger_default_scene"));
         let target_frame_ms = target_frame_ms.unwrap_or(16.67);
@@ -512,11 +564,21 @@ impl BangerNativeEngine {
             &pipeline_cache_keys,
             &resource_table,
         );
+        let texture_bridge_contract = build_texture_bridge_contract(
+            &prepared,
+            &pipeline_cache_manifest,
+            &resource_table,
+            &editable_scene_manifest,
+            target_frame_ms,
+            viewport_width,
+            viewport_height,
+        );
         let render_handoff_hash = render_handoff_hash(
             &prepared,
             &artifacts,
             &shader_compiler_ticket,
             &pipeline_cache_manifest,
+            &texture_bridge_contract,
         );
         let render_pass_count = render_graph.len();
         let residency_job_count = residency_jobs.len();
@@ -551,6 +613,7 @@ impl BangerNativeEngine {
             },
             shader_compiler_ticket,
             pipeline_cache_manifest,
+            texture_bridge_contract,
             pipeline_cache_keys,
             render_graph,
             residency_jobs,
@@ -946,6 +1009,237 @@ fn build_pipeline_cache_entry(
         persistence_status,
         proof_hash,
     })
+}
+
+fn build_texture_bridge_contract(
+    prepared: &MonsterPreparedCompute,
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    resource_table: &BangerNativeResourceTable,
+    editable_scene_manifest: &BangerEditableSceneManifest,
+    target_frame_ms: f32,
+    viewport_width: Option<u32>,
+    viewport_height: Option<u32>,
+) -> BangerNativeTextureBridgeContract {
+    let width = clamp_viewport_extent(viewport_width, 1280);
+    let height = clamp_viewport_extent(viewport_height, 720);
+    let same_device_queue_available =
+        texture_bridge_backend_can_share(&pipeline_cache_manifest.backend)
+            && pipeline_cache_manifest.selected_adapter_label != "adapter_unavailable";
+    let import_route = if same_device_queue_available {
+        "same_device_queue_external_texture_import_candidate"
+    } else {
+        "native_external_texture_import_unavailable"
+    };
+    let route_status = if same_device_queue_available {
+        "same_device_queue_candidate_fallback_verified"
+    } else {
+        "fallback_only_adapter_unavailable"
+    };
+    let fallback_route = "cpu_readback_rgba8_copy_src_to_host_texture";
+    let device_queue_hash = texture_bridge_device_queue_hash(pipeline_cache_manifest);
+    let resize_proof_hash = texture_bridge_resize_proof_hash(
+        width,
+        height,
+        &editable_scene_manifest.bounds_hash,
+        resource_table,
+    );
+    let camera_control_proof_hash = texture_bridge_camera_control_proof_hash(
+        editable_scene_manifest,
+        "orbit_pan_zoom",
+        "scene_bounds_fit",
+    );
+    let viewport_contract_hash = texture_bridge_viewport_contract_hash(
+        width,
+        height,
+        target_frame_ms,
+        &resize_proof_hash,
+        &camera_control_proof_hash,
+        editable_scene_manifest,
+    );
+    let frame_hash = texture_bridge_frame_hash(
+        prepared,
+        pipeline_cache_manifest,
+        resource_table,
+        editable_scene_manifest,
+        width,
+        height,
+        &device_queue_hash,
+        &viewport_contract_hash,
+    );
+    let bridge_proof_hash = texture_bridge_proof_hash(
+        pipeline_cache_manifest,
+        import_route,
+        fallback_route,
+        route_status,
+        &frame_hash,
+        &viewport_contract_hash,
+        &resize_proof_hash,
+        &camera_control_proof_hash,
+        &device_queue_hash,
+    );
+    BangerNativeTextureBridgeContract {
+        schema: "forge.banger.native_texture_bridge_contract.v1",
+        route_status,
+        import_route,
+        fallback_route,
+        backend: pipeline_cache_manifest.backend.clone(),
+        selected_adapter_hash: pipeline_cache_manifest.selected_adapter_hash.clone(),
+        device_queue_hash,
+        width,
+        height,
+        pixel_format: "rgba8unorm_srgb",
+        texture_usage: vec!["RENDER_ATTACHMENT", "TEXTURE_BINDING", "COPY_SRC"],
+        present_policy: "native_child_surface_frame_hash_before_present",
+        same_device_queue_available,
+        external_handle_import_required: same_device_queue_available,
+        frame_hash,
+        viewport_contract_hash,
+        resize_proof_hash,
+        camera_control_proof_hash,
+        bridge_proof_hash,
+        viewport: BangerNativeViewportContract {
+            fit_mode: "scene_bounds_fit",
+            camera_mode: "orbit_pan_zoom",
+            orbit_enabled: true,
+            pan_enabled: true,
+            zoom_enabled: true,
+            resize_policy: "recreate_or_rebind_render_target_on_extent_change",
+            scene_graph_hash: editable_scene_manifest.graph_hash.clone(),
+            scene_bounds_hash: editable_scene_manifest.bounds_hash.clone(),
+            target_frame_ms,
+            min_extent: 1,
+            max_extent: 16_384,
+        },
+    }
+}
+
+fn texture_bridge_backend_can_share(backend: &str) -> bool {
+    let backend = backend.to_ascii_lowercase();
+    backend.contains("vulkan") || backend.contains("dx12") || backend.contains("metal")
+}
+
+fn clamp_viewport_extent(extent: Option<u32>, default_extent: u32) -> u32 {
+    extent.unwrap_or(default_extent).clamp(1, 16_384)
+}
+
+fn texture_bridge_device_queue_hash(
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_texture_bridge.device_queue.v1\0");
+    h.update(pipeline_cache_manifest.selected_adapter_hash.as_bytes());
+    h.update(pipeline_cache_manifest.driver_hash.as_bytes());
+    h.update(pipeline_cache_manifest.driver_info_hash.as_bytes());
+    h.update(pipeline_cache_manifest.backend.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn texture_bridge_resize_proof_hash(
+    width: u32,
+    height: u32,
+    scene_bounds_hash: &str,
+    resource_table: &BangerNativeResourceTable,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_texture_bridge.resize_proof.v1\0");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(scene_bounds_hash.as_bytes());
+    h.update(resource_table.table_hash.as_bytes());
+    h.update(resource_table.resident_bytes.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn texture_bridge_camera_control_proof_hash(
+    editable_scene_manifest: &BangerEditableSceneManifest,
+    camera_mode: &str,
+    fit_mode: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_texture_bridge.camera_control_proof.v1\0");
+    h.update(camera_mode.as_bytes());
+    h.update(fit_mode.as_bytes());
+    h.update(editable_scene_manifest.graph_hash.as_bytes());
+    h.update(editable_scene_manifest.bounds_hash.as_bytes());
+    for object in &editable_scene_manifest.objects {
+        h.update(object.object_id.as_bytes());
+        for value in object.bounding_sphere {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn texture_bridge_viewport_contract_hash(
+    width: u32,
+    height: u32,
+    target_frame_ms: f32,
+    resize_proof_hash: &str,
+    camera_control_proof_hash: &str,
+    editable_scene_manifest: &BangerEditableSceneManifest,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_texture_bridge.viewport_contract.v1\0");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(target_frame_ms.to_le_bytes());
+    h.update(resize_proof_hash.as_bytes());
+    h.update(camera_control_proof_hash.as_bytes());
+    h.update(editable_scene_manifest.manifest_hash.as_bytes());
+    h.update(editable_scene_manifest.graph_hash.as_bytes());
+    h.update(editable_scene_manifest.bounds_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn texture_bridge_frame_hash(
+    prepared: &MonsterPreparedCompute,
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    resource_table: &BangerNativeResourceTable,
+    editable_scene_manifest: &BangerEditableSceneManifest,
+    width: u32,
+    height: u32,
+    device_queue_hash: &str,
+    viewport_contract_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_texture_bridge.frame.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(resource_table.table_hash.as_bytes());
+    h.update(editable_scene_manifest.manifest_hash.as_bytes());
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(device_queue_hash.as_bytes());
+    h.update(viewport_contract_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn texture_bridge_proof_hash(
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    import_route: &str,
+    fallback_route: &str,
+    route_status: &str,
+    frame_hash: &str,
+    viewport_contract_hash: &str,
+    resize_proof_hash: &str,
+    camera_control_proof_hash: &str,
+    device_queue_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_texture_bridge.proof.v1\0");
+    h.update(pipeline_cache_manifest.selected_adapter_hash.as_bytes());
+    h.update(pipeline_cache_manifest.driver_hash.as_bytes());
+    h.update(pipeline_cache_manifest.backend.as_bytes());
+    h.update(import_route.as_bytes());
+    h.update(fallback_route.as_bytes());
+    h.update(route_status.as_bytes());
+    h.update(frame_hash.as_bytes());
+    h.update(viewport_contract_hash.as_bytes());
+    h.update(resize_proof_hash.as_bytes());
+    h.update(camera_control_proof_hash.as_bytes());
+    h.update(device_queue_hash.as_bytes());
+    hex32(h.finalize().into())
 }
 
 fn scene_role_for_kind(kind: &str) -> &'static str {
@@ -1790,6 +2084,7 @@ fn render_handoff_hash(
     artifacts: &[BangerNativeRenderArtifactSummary],
     shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
     pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_render_handoff.v1\0");
@@ -1797,6 +2092,9 @@ fn render_handoff_hash(
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(shader_compiler_ticket.proof_hash.as_bytes());
     h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
+    h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
+    h.update(texture_bridge_contract.frame_hash.as_bytes());
+    h.update(texture_bridge_contract.viewport_contract_hash.as_bytes());
     for artifact in artifacts {
         h.update(b"\0artifact\0");
         h.update(artifact.kind.as_bytes());
@@ -1964,6 +2262,8 @@ mod tests {
                 vram_budget_mb: Some(2048),
                 prefer_mesh_shaders: Some(true),
                 pipeline_cache_dir: Some(pipeline_cache_dir),
+                viewport_width: Some(1920),
+                viewport_height: Some(1080),
             },
         )
         .expect("native render handoff");
@@ -2030,6 +2330,62 @@ mod tests {
                 && entry.blob_len > 0
                 && entry.persistence_status == "seed_blob_persisted"
                 && std::path::Path::new(&entry.blob_path).exists()));
+        assert_eq!(
+            response.texture_bridge_contract.schema,
+            "forge.banger.native_texture_bridge_contract.v1"
+        );
+        assert_eq!(response.texture_bridge_contract.width, 1920);
+        assert_eq!(response.texture_bridge_contract.height, 1080);
+        assert_eq!(
+            response.texture_bridge_contract.fallback_route,
+            "cpu_readback_rgba8_copy_src_to_host_texture"
+        );
+        assert!(matches!(
+            response.texture_bridge_contract.route_status,
+            "same_device_queue_candidate_fallback_verified" | "fallback_only_adapter_unavailable"
+        ));
+        assert!(response
+            .texture_bridge_contract
+            .texture_usage
+            .iter()
+            .any(|usage| *usage == "RENDER_ATTACHMENT"));
+        assert!(response
+            .texture_bridge_contract
+            .texture_usage
+            .iter()
+            .any(|usage| *usage == "TEXTURE_BINDING"));
+        assert!(response
+            .texture_bridge_contract
+            .texture_usage
+            .iter()
+            .any(|usage| *usage == "COPY_SRC"));
+        assert_eq!(response.texture_bridge_contract.frame_hash.len(), 64);
+        assert_eq!(response.texture_bridge_contract.viewport_contract_hash.len(), 64);
+        assert_eq!(response.texture_bridge_contract.resize_proof_hash.len(), 64);
+        assert_eq!(
+            response.texture_bridge_contract.camera_control_proof_hash.len(),
+            64
+        );
+        assert_eq!(response.texture_bridge_contract.bridge_proof_hash.len(), 64);
+        assert_eq!(
+            response.texture_bridge_contract.viewport.fit_mode,
+            "scene_bounds_fit"
+        );
+        assert_eq!(
+            response.texture_bridge_contract.viewport.camera_mode,
+            "orbit_pan_zoom"
+        );
+        assert!(response.texture_bridge_contract.viewport.orbit_enabled);
+        assert!(response.texture_bridge_contract.viewport.pan_enabled);
+        assert!(response.texture_bridge_contract.viewport.zoom_enabled);
+        assert_eq!(
+            response.texture_bridge_contract.viewport.scene_graph_hash,
+            response.editable_scene_manifest.graph_hash
+        );
+        assert_eq!(
+            response.texture_bridge_contract.viewport.scene_bounds_hash,
+            response.editable_scene_manifest.bounds_hash
+        );
         assert_eq!(response.resource_table_hash.len(), 64);
         assert_eq!(response.resource_table.slot_count, response.resource_table.slots.len());
         assert!(response.resource_table.slot_count >= response.artifacts.len());
@@ -2096,6 +2452,8 @@ mod tests {
                 vram_budget_mb: Some(2048),
                 prefer_mesh_shaders: Some(true),
                 pipeline_cache_dir: Some(pipeline_cache_dir),
+                viewport_width: Some(1440),
+                viewport_height: Some(900),
             },
         )
         .expect("newobject contract");

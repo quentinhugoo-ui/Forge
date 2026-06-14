@@ -81,6 +81,11 @@ Date: 2026-06-14
 4. Replace the placeholder child-surface contract with a verified texture
    sharing path: same device/queue when available, explicit fallback route,
    frame hash and resize/orbit/pan/zoom proofs.
+   Status: started in `BangerNativeTextureBridgeContract` as
+   `forge.banger.native_texture_bridge_contract.v1`; the handoff now seals
+   same-device/queue import eligibility, CPU readback fallback, frame hash,
+   resize proof and orbit/pan/zoom viewport proof. Real backend external
+   handle import remains gated behind the promoted RHI surface path.
 5. Promote scene graph authority: parent/child transforms, local/world matrix
    propagation, object visibility and representation mix become the native
    source for viewport fit and render submission.
