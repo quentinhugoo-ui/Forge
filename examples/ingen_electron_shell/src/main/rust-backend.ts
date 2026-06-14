@@ -97,7 +97,10 @@ export interface RustBangerPresentLoopBootstrap {
   drawCallCount?: number;
   vertexCount?: number;
   indexCount?: number;
+  instanceCount?: number;
   sceneObjectCount?: number;
+  sceneGraphHash?: string;
+  instanceBufferHash?: string;
   depthFormat?: string;
   frameTargetPolicy?: string;
   frameTargetHash?: string;
@@ -455,7 +458,10 @@ function parseBangerPresentLoopBootstrap(stdout: string): RustBangerPresentLoopB
     (typeof parsed.drawCallCount === "number" && parsed.drawCallCount < 1) ||
     (typeof parsed.vertexCount === "number" && parsed.vertexCount < 3) ||
     (typeof parsed.indexCount === "number" && parsed.indexCount < 3) ||
+    (typeof parsed.instanceCount === "number" && parsed.instanceCount < 1) ||
     (typeof parsed.sceneObjectCount === "number" && parsed.sceneObjectCount < 1) ||
+    (typeof parsed.sceneGraphHash === "string" && parsed.sceneGraphHash.length !== 64) ||
+    (typeof parsed.instanceBufferHash === "string" && parsed.instanceBufferHash.length !== 64) ||
     (typeof parsed.depthFormat === "string" && parsed.depthFormat.length === 0) ||
     (typeof parsed.frameTargetHash === "string" && parsed.frameTargetHash.length !== 64) ||
     (typeof parsed.depthTargetHash === "string" && parsed.depthTargetHash.length !== 64) ||
@@ -644,7 +650,10 @@ function shadowBangerPresentLoopBootstrap(reason: string): RustBangerPresentLoop
     drawCallCount: 0,
     vertexCount: 0,
     indexCount: 0,
+    instanceCount: 0,
     sceneObjectCount: 0,
+    sceneGraphHash: "",
+    instanceBufferHash: "",
     depthFormat: "unavailable",
     frameTargetPolicy: "shadow_only",
     frameTargetHash: "",

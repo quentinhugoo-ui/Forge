@@ -865,7 +865,10 @@ export interface BangerPresentLoopBootstrapResult {
   drawCallCount?: number;
   vertexCount?: number;
   indexCount?: number;
+  instanceCount?: number;
   sceneObjectCount?: number;
+  sceneGraphHash?: string;
+  instanceBufferHash?: string;
   depthFormat?: string;
   frameTargetPolicy?: string;
   frameTargetHash?: string;

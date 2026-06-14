@@ -117,7 +117,10 @@ struct BangerNativeHostProjection {
     draw_call_count: u32,
     vertex_count: u32,
     index_count: u32,
+    instance_count: u32,
     scene_object_count: u32,
+    scene_graph_hash: String,
+    instance_buffer_hash: String,
     depth_format: &'static str,
     frame_target_policy: &'static str,
     frame_target_hash: String,
@@ -153,9 +156,13 @@ struct BangerNativeScenePipeline {
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
+    instance_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
+    instance_count: u32,
     scene_mesh_hash: String,
+    scene_graph_hash: String,
+    instance_buffer_hash: String,
     depth_format: wgpu::TextureFormat,
     shader_source_hash: String,
     render_pipeline_hash: String,
@@ -627,7 +634,7 @@ fn run_banger_native_host(
     let child_hash = sha256_hex(format!("{:p}", child as *mut c_void).as_bytes());
     let frame_hash = sha256_hex(
         format!(
-            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{}",
+            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{}",
             config.width,
             config.height,
             format,
@@ -636,7 +643,9 @@ fn run_banger_native_host(
             parent_hash,
             child_hash,
             scene_pipeline.scene_mesh_hash,
+            scene_pipeline.scene_graph_hash,
             scene_pipeline.index_count,
+            scene_pipeline.instance_count,
             scene_pipeline.depth_format,
             frame_target.target_hash,
             frame_target.depth_target_hash,
@@ -673,14 +682,17 @@ fn run_banger_native_host(
         draw_call_count: 1,
         vertex_count: 8,
         index_count: scene_pipeline.index_count,
-        scene_object_count: 1,
+        instance_count: scene_pipeline.instance_count,
+        scene_object_count: scene_pipeline.instance_count,
+        scene_graph_hash: scene_pipeline.scene_graph_hash.clone(),
+        instance_buffer_hash: scene_pipeline.instance_buffer_hash.clone(),
         depth_format: "Depth24Plus",
         frame_target_policy: "persistent_resize_tracked_depth_target_v1",
         frame_target_hash: frame_target.target_hash.clone(),
         depth_target_hash: frame_target.depth_target_hash.clone(),
         frame_target_allocation_count,
         surface_resize_count,
-        render_loop_policy: "native_wgpu_mesh_depth_camera_loop_v1",
+        render_loop_policy: "native_wgpu_instanced_mesh_depth_camera_loop_v1",
         clear_color,
         frame_uniform_hash: frame_uniform_hash.clone(),
         camera_uniform_hash: frame_uniform_hash,
@@ -692,8 +704,8 @@ fn run_banger_native_host(
         proof_hash: String::new(),
         host_pid: std::process::id(),
         verifier: BangerNativeHostVerifier {
-            wall: "native_surface+depth+scene_submission",
-            frontier_hypothesis: "Banger can promote the child surface from a liveness triangle to a native indexed mesh pass with camera uniforms and depth.",
+            wall: "scene_submission+draw_call_scaling",
+            frontier_hypothesis: "Banger can submit multiple scene objects through one native instanced indexed draw while preserving deterministic scene hashes.",
             local_gate: "forge-cargo run --manifest-path examples\\ingen_native_services\\Cargo.toml --bin ingen_electron_backend_bridge -- --banger-native-host",
             rollback_path: "fall back to --banger-present-loop-bootstrap offscreen target",
         },
@@ -833,8 +845,9 @@ fn render_child_surface_frame(
         pass.set_pipeline(&scene_pipeline.render_pipeline);
         pass.set_bind_group(0, &scene_pipeline.bind_group, &[]);
         pass.set_vertex_buffer(0, scene_pipeline.vertex_buffer.slice(..));
+        pass.set_vertex_buffer(1, scene_pipeline.instance_buffer.slice(..));
         pass.set_index_buffer(scene_pipeline.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        pass.draw_indexed(0..scene_pipeline.index_count, 0, 0..1);
+        pass.draw_indexed(0..scene_pipeline.index_count, 0, 0..scene_pipeline.instance_count);
     }
     queue.submit(Some(encoder.finish()));
     device
@@ -926,11 +939,22 @@ fn create_banger_first_scene_pipeline(
     });
     let vertex_bytes = banger_cube_vertex_bytes();
     let index_bytes = banger_cube_index_bytes();
+    let instance_bytes = banger_scene_instance_bytes();
+    let instance_buffer_hash = sha256_hex(&instance_bytes);
     let scene_mesh_hash = sha256_hex(
         format!(
             "banger-cube-mesh-v1:{}:{}",
             sha256_hex(&vertex_bytes),
             sha256_hex(&index_bytes)
+        )
+        .as_bytes(),
+    );
+    let scene_graph_hash = sha256_hex(
+        format!(
+            "banger-scene-graph-v1:{}:{}:{}",
+            scene_mesh_hash,
+            instance_buffer_hash,
+            instance_bytes.len() / 80
         )
         .as_bytes(),
     );
@@ -945,6 +969,12 @@ fn create_banger_first_scene_pipeline(
         "banger-native-cube-index-buffer",
         wgpu::BufferUsages::INDEX,
         &index_bytes,
+    );
+    let instance_buffer = banger_create_mapped_buffer(
+        device,
+        "banger-native-scene-instance-buffer",
+        wgpu::BufferUsages::VERTEX,
+        &instance_bytes,
     );
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("banger-native-frame-bind-group-layout"),
@@ -984,22 +1014,55 @@ fn create_banger_first_scene_pipeline(
             module: &shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
-            buffers: &[wgpu::VertexBufferLayout {
-                array_stride: 24,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &[
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 0,
-                        shader_location: 0,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 12,
-                        shader_location: 1,
-                    },
-                ],
-            }],
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride: 24,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 0,
+                            shader_location: 0,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 12,
+                            shader_location: 1,
+                        },
+                    ],
+                },
+                wgpu::VertexBufferLayout {
+                    array_stride: 80,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 0,
+                            shader_location: 2,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 16,
+                            shader_location: 3,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 32,
+                            shader_location: 4,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 48,
+                            shader_location: 5,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 64,
+                            shader_location: 6,
+                        },
+                    ],
+                },
+            ],
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -1029,8 +1092,8 @@ fn create_banger_first_scene_pipeline(
     });
     let render_pipeline_hash = sha256_hex(
         format!(
-            "banger-first-scene-pipeline:{}:{}:{:?}:{:?}:{:?}:mesh_depth_camera_v1",
-            shader_source_hash, scene_mesh_hash, format, present_mode, alpha_mode
+            "banger-first-scene-pipeline:{}:{}:{}:{:?}:{:?}:{:?}:instanced_mesh_depth_camera_v1",
+            shader_source_hash, scene_mesh_hash, scene_graph_hash, format, present_mode, alpha_mode
         )
         .as_bytes(),
     );
@@ -1039,9 +1102,13 @@ fn create_banger_first_scene_pipeline(
         uniform_buffer,
         bind_group,
         vertex_buffer,
+        instance_buffer,
         index_buffer,
         index_count: (index_bytes.len() / 2) as u32,
+        instance_count: (instance_bytes.len() / 80) as u32,
         scene_mesh_hash,
+        scene_graph_hash,
+        instance_buffer_hash,
         depth_format: wgpu::TextureFormat::Depth24Plus,
         shader_source_hash,
         render_pipeline_hash,
@@ -1068,10 +1135,19 @@ struct VertexOut {
 };
 
 @vertex
-fn vs_main(@location(0) position: vec3<f32>, @location(1) color: vec3<f32>) -> VertexOut {
+fn vs_main(
+    @location(0) position: vec3<f32>,
+    @location(1) color: vec3<f32>,
+    @location(2) model_0: vec4<f32>,
+    @location(3) model_1: vec4<f32>,
+    @location(4) model_2: vec4<f32>,
+    @location(5) model_3: vec4<f32>,
+    @location(6) instance_tint: vec4<f32>,
+) -> VertexOut {
     let t = frame.time_seconds;
     let yaw = t * 0.62;
     let pitch = 0.32 + 0.12 * sin(t * 0.45);
+    let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
     let rotated_y = vec3<f32>(
         position.x * cos(yaw) + position.z * sin(yaw),
         position.y,
@@ -1082,10 +1158,11 @@ fn vs_main(@location(0) position: vec3<f32>, @location(1) color: vec3<f32>) -> V
         rotated_y.y * cos(pitch) - rotated_y.z * sin(pitch),
         rotated_y.y * sin(pitch) + rotated_y.z * cos(pitch)
     );
+    let world = model * vec4<f32>(rotated, 1.0);
     var out: VertexOut;
-    out.position = frame.view_proj * vec4<f32>(rotated, 1.0);
-    out.color = color;
-    out.normal_hint = normalize(rotated);
+    out.position = frame.view_proj * world;
+    out.color = color * instance_tint.rgb;
+    out.normal_hint = normalize((model * vec4<f32>(rotated, 0.0)).xyz);
     return out;
 }
 
@@ -1173,6 +1250,35 @@ fn banger_cube_index_bytes() -> Vec<u8> {
         bytes.extend_from_slice(&index.to_le_bytes());
     }
     bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_scene_instance_bytes() -> Vec<u8> {
+    let instances: [([f32; 3], f32, [f32; 4]); 3] = [
+        ([-1.45, -0.12, 0.0], 0.64, [1.00, 0.76, 0.28, 1.0]),
+        ([0.0, 0.18, -0.15], 0.82, [0.72, 1.00, 0.54, 1.0]),
+        ([1.48, -0.04, 0.12], 0.58, [0.42, 0.72, 1.00, 1.0]),
+    ];
+    let mut bytes = Vec::with_capacity(instances.len() * 80);
+    for (translation, scale, tint) in instances {
+        for value in banger_model_matrix(translation, scale) {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in tint {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn banger_model_matrix(translation: [f32; 3], scale: f32) -> [f32; 16] {
+    [
+        scale, 0.0, 0.0, 0.0,
+        0.0, scale, 0.0, 0.0,
+        0.0, 0.0, scale, 0.0,
+        translation[0], translation[1], translation[2], 1.0,
+    ]
 }
 
 #[cfg(target_os = "windows")]
@@ -1335,6 +1441,8 @@ mod tests {
         assert!(source.contains("view_proj"));
         assert!(source.contains("@location(0) position"));
         assert!(source.contains("@location(1) color"));
+        assert!(source.contains("@location(2) model_0"));
+        assert!(source.contains("@location(6) instance_tint"));
         assert!(source.contains("FrameUniform"));
         assert!(source.contains("@group(0) @binding(0)"));
         assert_eq!(sha256_hex(source.as_bytes()).len(), 64);
@@ -1360,6 +1468,16 @@ mod tests {
         assert_eq!(u16::from_le_bytes(index_bytes[0..2].try_into().unwrap()), 0);
         assert_eq!(sha256_hex(&vertex_bytes).len(), 64);
         assert_eq!(sha256_hex(&index_bytes).len(), 64);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packs_banger_scene_instances_for_one_indexed_draw() {
+        let instance_bytes = banger_scene_instance_bytes();
+        assert_eq!(instance_bytes.len(), 3 * 80);
+        assert_eq!(f32::from_le_bytes(instance_bytes[0..4].try_into().unwrap()), 0.64);
+        assert_eq!(f32::from_le_bytes(instance_bytes[64..68].try_into().unwrap()), 1.0);
+        assert_eq!(sha256_hex(&instance_bytes).len(), 64);
     }
 
     #[cfg(target_os = "windows")]
