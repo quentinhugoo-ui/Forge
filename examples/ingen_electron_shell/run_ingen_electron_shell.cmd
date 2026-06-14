@@ -35,6 +35,14 @@ for %%F in (workspace.json llm-provider-runtime.json llm-providers.json llm-runt
 )
 echo Electron userData: %INGEN_ELECTRON_USER_DATA_DIR% >> "%LOG%"
 
+if not "%FORGE_ELECTRON_FORCE_REBUILD%"=="1" if not "%DESKTOP_AUTO_REBUILD%"=="1" (
+  if exist "%FORGE_ELECTRON_EXE%" if exist "%~dp0dist-electron\main\main.js" if exist "%~dp0dist\renderer\index.html" if exist "%FORGE_ELECTRON_BACKEND_EXE%" if exist "%FORGE_WINDOWS_TASKBAR_HELPER_EXE%" (
+    echo Desktop fast path: starting existing Electron build. >> "%LOG%"
+    start "" /D "%~dp0" "%FORGE_ELECTRON_EXE%" . "--user-data-dir=%INGEN_ELECTRON_USER_DATA_DIR%" >> "%LOG%" 2>>&1
+    exit /b 0
+  )
+)
+
 C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root = (Resolve-Path -LiteralPath '%~dp0').Path.TrimEnd('\'); $electron = '%FORGE_ELECTRON_EXE%'; $running = Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -eq $electron -and $_.CommandLine -like ('*' + $root + '*') } | Select-Object -First 1; if ($running) { exit 0 } exit 1"
 if not errorlevel 1 set APP_ALREADY_RUNNING=1
 
@@ -145,7 +153,7 @@ if not exist "%FORGE_ELECTRON_EXE%" (
   echo Electron executable is still missing after repair. Run npm install in %~dp0. >> "%LOG%"
   goto fail
 )
-C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Start-Process -FilePath '%FORGE_ELECTRON_EXE%' -ArgumentList @('.', '--user-data-dir=%INGEN_ELECTRON_USER_DATA_DIR%') -WorkingDirectory '%~dp0' -WindowStyle Normal" >> "%LOG%" 2>>&1
+start "" /D "%~dp0" "%FORGE_ELECTRON_EXE%" . "--user-data-dir=%INGEN_ELECTRON_USER_DATA_DIR%" >> "%LOG%" 2>>&1
 if errorlevel 1 goto fail
 if "%OWN_BUILD_LOCK%"=="1" if exist "%BUILD_LOCK%" rmdir "%BUILD_LOCK%" 2>nul
 exit /b 0
