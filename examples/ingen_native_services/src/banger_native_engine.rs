@@ -209,6 +209,11 @@ pub struct BangerNativePresentLoopBootstrapResponse {
     pub nonzero_tile_count: u32,
     pub unique_color_sample_count: u32,
     pub visual_signature_hash: String,
+    pub depth_target_hash: String,
+    pub mesh_vertex_count: u32,
+    pub mesh_triangle_count: u32,
+    pub draw_call_count: u32,
+    pub scene3d_proof_hash: String,
     pub readback_proof_hash: String,
     pub frame_hash: String,
     pub present_loop_hash: String,
@@ -1594,6 +1599,7 @@ impl BangerNativeEngine {
             render.alpha_mode,
             render.clear_color,
             &render.visual_signature_hash,
+            &render.scene3d_proof_hash,
             &parent_window_handle_hash,
         );
         let present_loop_hash = present_loop_bootstrap_hash(
@@ -1611,13 +1617,14 @@ impl BangerNativeEngine {
         let proof_hash = hash_text_hex(
             "forge.banger.native_present_loop_bootstrap.proof.v1",
             &format!(
-                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}",
+                "{present_loop_hash}:{frame_hash}:{}:{}:{}:{}:{}:{}:{}:{}",
                 render.render_pass_count,
                 render.submitted_frame_count,
                 gpu_probe.adapters.len(),
                 render.readback_byte_count,
                 render.readback_checksum_hash,
                 render.visual_signature_hash,
+                render.scene3d_proof_hash,
                 render.readback_proof_hash
             ),
         );
@@ -1653,6 +1660,11 @@ impl BangerNativeEngine {
             nonzero_tile_count: render.nonzero_tile_count,
             unique_color_sample_count: render.unique_color_sample_count,
             visual_signature_hash: render.visual_signature_hash,
+            depth_target_hash: render.depth_target_hash,
+            mesh_vertex_count: render.mesh_vertex_count,
+            mesh_triangle_count: render.mesh_triangle_count,
+            draw_call_count: render.draw_call_count,
+            scene3d_proof_hash: render.scene3d_proof_hash,
             readback_proof_hash: render.readback_proof_hash,
             frame_hash,
             present_loop_hash,
@@ -12603,6 +12615,11 @@ struct WgpuPresentBootstrap {
     nonzero_tile_count: u32,
     unique_color_sample_count: u32,
     visual_signature_hash: String,
+    depth_target_hash: String,
+    mesh_vertex_count: u32,
+    mesh_triangle_count: u32,
+    draw_call_count: u32,
+    scene3d_proof_hash: String,
     readback_proof_hash: String,
 }
 
@@ -12677,6 +12694,22 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         view_formats: &[],
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_format = wgpu::TextureFormat::Depth32Float;
+    let depth_target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("banger-native-present-bootstrap-depth"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: depth_format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let depth_view = depth_target.create_view(&wgpu::TextureViewDescriptor::default());
     let clear_color = [0.015, 0.018, 0.024, 1.0];
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("banger-native-present-bootstrap-visual-shader"),
@@ -12705,7 +12738,13 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             unclipped_depth: false,
             conservative: false,
         },
-        depth_stencil: None,
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: depth_format,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module: &shader,
@@ -12724,6 +12763,10 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         "forge.banger.native_present_loop.visual_shader.v1",
         banger_present_bootstrap_wgsl(),
     );
+    let depth_target_hash = present_loop_depth_target_hash(width, height, "Depth32Float", &visual_pipeline_hash);
+    let mesh_vertex_count = 36u32;
+    let mesh_triangle_count = mesh_vertex_count / 3;
+    let draw_call_count = 1u32;
     let bytes_per_pixel = 4u32;
     let unpadded_bytes_per_row = width.saturating_mul(bytes_per_pixel);
     let padded_bytes_per_row = align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
@@ -12753,15 +12796,22 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             },
         })];
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("banger-native-present-bootstrap-clear-pass"),
+            label: Some("banger-native-present-bootstrap-scene3d-pass"),
             color_attachments: &color_attachments,
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
         });
         pass.set_pipeline(&render_pipeline);
-        pass.draw(0..3, 0..1);
+        pass.draw(0..mesh_vertex_count, 0..1);
     }
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
@@ -12824,6 +12874,14 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         readback_metrics.unique_color_sample_count,
         readback_metrics.nonzero_tile_count,
     );
+    let scene3d_proof_hash = present_loop_scene3d_proof_hash(
+        &visual_pipeline_hash,
+        &depth_target_hash,
+        &visual_signature_hash,
+        mesh_vertex_count,
+        mesh_triangle_count,
+        draw_call_count,
+    );
 
     Ok(WgpuPresentBootstrap {
         selected_adapter: Some(selected_adapter),
@@ -12842,6 +12900,11 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         nonzero_tile_count: readback_metrics.nonzero_tile_count,
         unique_color_sample_count: readback_metrics.unique_color_sample_count,
         visual_signature_hash,
+        depth_target_hash,
+        mesh_vertex_count,
+        mesh_triangle_count,
+        draw_call_count,
+        scene3d_proof_hash,
         readback_proof_hash: readback_metrics.proof_hash,
     })
 }
@@ -12863,26 +12926,49 @@ struct VertexOut {
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-0.72, -0.58),
-        vec2<f32>(0.72, -0.50),
-        vec2<f32>(0.02, 0.74)
+    var positions = array<vec3<f32>, 36>(
+        vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.5,  0.5,  0.5),
+        vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>( 0.5,  0.5,  0.5), vec3<f32>(-0.5,  0.5,  0.5),
+        vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>(-0.5,  0.5, -0.5),
+        vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>(-0.5,  0.5, -0.5), vec3<f32>( 0.5,  0.5, -0.5),
+        vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>(-0.5,  0.5,  0.5),
+        vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>(-0.5,  0.5,  0.5), vec3<f32>(-0.5,  0.5, -0.5),
+        vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>( 0.5,  0.5, -0.5),
+        vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.5,  0.5, -0.5), vec3<f32>( 0.5,  0.5,  0.5),
+        vec3<f32>(-0.5,  0.5,  0.5), vec3<f32>( 0.5,  0.5,  0.5), vec3<f32>( 0.5,  0.5, -0.5),
+        vec3<f32>(-0.5,  0.5,  0.5), vec3<f32>( 0.5,  0.5, -0.5), vec3<f32>(-0.5,  0.5, -0.5),
+        vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5,  0.5),
+        vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>(-0.5, -0.5,  0.5)
     );
     var colors = array<vec3<f32>, 3>(
         vec3<f32>(0.08, 0.80, 0.98),
         vec3<f32>(1.00, 0.72, 0.18),
         vec3<f32>(0.62, 0.26, 1.00)
     );
+    let source = positions[vertex_index];
+    let yaw = 0.62;
+    let pitch = -0.42;
+    let yawed = vec3<f32>(
+        source.x * cos(yaw) + source.z * sin(yaw),
+        source.y,
+        -source.x * sin(yaw) + source.z * cos(yaw)
+    );
+    let rotated = vec3<f32>(
+        yawed.x,
+        yawed.y * cos(pitch) - yawed.z * sin(pitch),
+        yawed.y * sin(pitch) + yawed.z * cos(pitch)
+    );
+    let camera_z = rotated.z + 2.4;
+    let projected = vec2<f32>(rotated.x, rotated.y) * (1.35 / camera_z);
     var out: VertexOut;
-    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
-    out.color = colors[vertex_index];
+    out.position = vec4<f32>(projected, 0.36 + rotated.z * 0.18, 1.0);
+    out.color = colors[(vertex_index / 12u) % 3u] * (0.72 + 0.28 * clamp(rotated.z + 0.8, 0.0, 1.0));
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let vignette = 0.88 + 0.12 * in.position.w;
-    return vec4<f32>(in.color * vignette, 1.0);
+    return vec4<f32>(in.color, 1.0);
 }
 "#
 }
@@ -12993,6 +13079,40 @@ fn present_loop_visual_signature_hash(
     hex32(h.finalize().into())
 }
 
+fn present_loop_depth_target_hash(
+    width: u32,
+    height: u32,
+    depth_format: &str,
+    visual_pipeline_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.depth_target.v1\0");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(depth_format.as_bytes());
+    h.update(visual_pipeline_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn present_loop_scene3d_proof_hash(
+    visual_pipeline_hash: &str,
+    depth_target_hash: &str,
+    visual_signature_hash: &str,
+    mesh_vertex_count: u32,
+    mesh_triangle_count: u32,
+    draw_call_count: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.scene3d_proof.v1\0");
+    h.update(visual_pipeline_hash.as_bytes());
+    h.update(depth_target_hash.as_bytes());
+    h.update(visual_signature_hash.as_bytes());
+    h.update(mesh_vertex_count.to_le_bytes());
+    h.update(mesh_triangle_count.to_le_bytes());
+    h.update(draw_call_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
 fn present_loop_frame_hash(
     width: u32,
     height: u32,
@@ -13003,6 +13123,7 @@ fn present_loop_frame_hash(
     alpha_mode: &str,
     clear_color: [f64; 4],
     visual_signature_hash: &str,
+    scene3d_proof_hash: &str,
     parent_window_handle_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
@@ -13018,6 +13139,7 @@ fn present_loop_frame_hash(
         h.update(value.to_le_bytes());
     }
     h.update(visual_signature_hash.as_bytes());
+    h.update(scene3d_proof_hash.as_bytes());
     h.update(parent_window_handle_hash.as_bytes());
     hex32(h.finalize().into())
 }
@@ -13345,6 +13467,11 @@ mod tests {
         assert!(response.nonzero_tile_count > 0);
         assert!(response.unique_color_sample_count >= 2);
         assert_eq!(response.visual_signature_hash.len(), 64);
+        assert_eq!(response.depth_target_hash.len(), 64);
+        assert_eq!(response.mesh_vertex_count, 36);
+        assert_eq!(response.mesh_triangle_count, 12);
+        assert_eq!(response.draw_call_count, 1);
+        assert_eq!(response.scene3d_proof_hash.len(), 64);
         assert_eq!(response.readback_proof_hash.len(), 64);
         assert_eq!(response.frame_hash.len(), 64);
         assert_eq!(response.present_loop_hash.len(), 64);
