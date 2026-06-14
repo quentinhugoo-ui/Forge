@@ -348,10 +348,20 @@ pub struct BangerNativeWaterNearFieldMesh {
     pub grid_resolution: u32,
     pub vertex_count: u32,
     pub triangle_count: u32,
+    pub meshlet_grid_x: u32,
+    pub meshlet_grid_z: u32,
     pub meshlet_page_count: u32,
+    pub meshlet_candidate_count: u32,
+    pub visible_meshlet_count: u32,
+    pub culled_meshlet_count: u32,
     pub lod_ring_count: u32,
     pub hzb_culling_enabled: bool,
     pub indirect_draw_enabled: bool,
+    pub visibility_storage_texel_count: u32,
+    pub hzb_mip_bias: u32,
+    pub culling_pass_hash: String,
+    pub visibility_buffer_hash: String,
+    pub indirect_args_hash: String,
     pub page_table_hash: String,
 }
 
@@ -21367,9 +21377,10 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     let shader_source = banger_present_bootstrap_wgsl();
     let spectral_shader_source = banger_water_spectral_compute_wgsl();
     let hzb_shader_source = banger_water_hzb_compute_wgsl();
+    let meshlet_cull_shader_source = banger_water_meshlet_cull_compute_wgsl();
     let visual_pipeline_hash = hash_text_hex(
         "forge.banger.native_present_loop.ocean_sunset_shader.v1",
-        &format!("{shader_source}\n{spectral_shader_source}\n{hzb_shader_source}"),
+        &format!("{shader_source}\n{spectral_shader_source}\n{hzb_shader_source}\n{meshlet_cull_shader_source}"),
     );
     let mesh_vertex_count = 3u32 + 96u32 * 96u32 * 6u32;
     let mesh_triangle_count = mesh_vertex_count / 3;
@@ -21460,6 +21471,31 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         &water_hzb_uniform,
         0,
         water_info_uniform_words_u8(water_hzb_uniform_words).as_slice(),
+    );
+    let meshlet_grid_x = water_pipeline_manifest.near_field_mesh.meshlet_grid_x;
+    let meshlet_grid_z = water_pipeline_manifest.near_field_mesh.meshlet_grid_z;
+    let water_meshlet_visibility_storage = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-meshlet-visibility-storage"),
+        size: u64::from(meshlet_grid_x) * u64::from(meshlet_grid_z) * 16,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let water_meshlet_visibility_uniform_words = [
+        meshlet_grid_x,
+        meshlet_grid_z,
+        water_pipeline_manifest.near_field_mesh.hzb_mip_bias,
+        water_pipeline_manifest.near_field_mesh.visible_meshlet_count,
+    ];
+    let water_meshlet_visibility_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-meshlet-visibility-uniform"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(
+        &water_meshlet_visibility_uniform,
+        0,
+        water_info_uniform_words_u8(water_meshlet_visibility_uniform_words).as_slice(),
     );
     let water_hzb_compute_uniforms: Vec<_> = (0..hzb_mip_count)
         .map(|mip| {
@@ -21605,6 +21641,74 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             })
         })
         .collect();
+    let meshlet_cull_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-present-water-meshlet-cull-bind-group-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+    let meshlet_cull_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-present-water-meshlet-cull-bind-group"),
+        layout: &meshlet_cull_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: water_meshlet_visibility_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: water_meshlet_visibility_uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: water_hzb_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: water_hzb_uniform.as_entire_binding(),
+            },
+        ],
+    });
     let water_info_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("banger-native-present-water-info-bind-group-layout"),
@@ -21679,6 +21783,26 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
     let water_info_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -21713,6 +21837,14 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
                 binding: 6,
                 resource: water_hzb_uniform.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: water_meshlet_visibility_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: water_meshlet_visibility_uniform.as_entire_binding(),
+            },
         ],
     });
     let spectral_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -21745,6 +21877,23 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         label: Some("banger-native-present-water-hzb-pipeline"),
         layout: Some(&hzb_pipeline_layout),
         module: &hzb_shader,
+        entry_point: Some("cs_main"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        cache: None,
+    });
+    let meshlet_cull_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-present-water-meshlet-cull-compute-shader"),
+        source: wgpu::ShaderSource::Wgsl(meshlet_cull_shader_source.into()),
+    });
+    let meshlet_cull_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("banger-native-present-water-meshlet-cull-pipeline-layout"),
+        bind_group_layouts: &[Some(&meshlet_cull_bind_group_layout)],
+        immediate_size: 0,
+    });
+    let meshlet_cull_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("banger-native-present-water-meshlet-cull-pipeline"),
+        layout: Some(&meshlet_cull_pipeline_layout),
+        module: &meshlet_cull_shader,
         entry_point: Some("cs_main"),
         compilation_options: wgpu::PipelineCompilationOptions::default(),
         cache: None,
@@ -21867,6 +22016,15 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             pass.set_bind_group(0, &hzb_compute_bind_groups[mip as usize], &[]);
             pass.dispatch_workgroups(mip_width.div_ceil(8), mip_height.div_ceil(8), 1);
         }
+    }
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("banger-native-present-water-meshlet-cull-compute-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&meshlet_cull_pipeline);
+        pass.set_bind_group(0, &meshlet_cull_bind_group, &[]);
+        pass.dispatch_workgroups(meshlet_grid_x.div_ceil(8), meshlet_grid_z.div_ceil(8), 1);
     }
     {
         let color_attachments = [Some(wgpu::RenderPassColorAttachment {
@@ -22214,6 +22372,7 @@ struct VertexOut {
     @location(1) world_xz: vec2<f32>,
     @location(2) distance_t: f32,
     @location(3) layer: f32,
+    @location(4) visibility: f32,
 };
 
 struct WaterInfoUniform {
@@ -22228,6 +22387,10 @@ struct WaterHzbUniform {
     dims: vec4<u32>,
 };
 
+struct WaterMeshletVisibilityUniform {
+    dims: vec4<u32>,
+};
+
 @group(0) @binding(0) var<storage, read> water_info_texels: array<vec4<u32>>;
 @group(0) @binding(1) var<uniform> water_info_uniform: WaterInfoUniform;
 @group(0) @binding(2) var<storage, read> water_displacement_texels: array<vec4<u32>>;
@@ -22235,6 +22398,8 @@ struct WaterHzbUniform {
 @group(0) @binding(4) var<uniform> water_spectral_uniform: WaterSpectralUniform;
 @group(0) @binding(5) var<storage, read> water_hzb_texels: array<vec4<u32>>;
 @group(0) @binding(6) var<uniform> water_hzb_uniform: WaterHzbUniform;
+@group(0) @binding(7) var<storage, read> water_meshlet_visibility_texels: array<vec4<u32>>;
+@group(0) @binding(8) var<uniform> water_meshlet_visibility_uniform: WaterMeshletVisibilityUniform;
 
 fn saturate(value: f32) -> f32 {
     return clamp(value, 0.0, 1.0);
@@ -22288,6 +22453,15 @@ fn sample_water_hzb(uv: vec2<f32>, mip: u32) -> vec4<f32> {
     let px = min(u32(saturate(uv.x) * f32(width)), width - 1u);
     let py = min(u32(saturate(uv.y) * f32(height)), height - 1u);
     let packed = water_hzb_texels[offset + py * width + px];
+    return vec4<f32>(packed) * (1.0 / 65535.0);
+}
+
+fn sample_water_meshlet_visibility(cell: vec2<u32>) -> vec4<f32> {
+    let width = max(water_meshlet_visibility_uniform.dims.x, 1u);
+    let height = max(water_meshlet_visibility_uniform.dims.y, 1u);
+    let x = min(cell.x, width - 1u);
+    let y = min(cell.y, height - 1u);
+    let packed = water_meshlet_visibility_texels[y * width + x];
     return vec4<f32>(packed) * (1.0 / 65535.0);
 }
 
@@ -22361,6 +22535,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
         out.world_xz = vec2<f32>(0.0, 0.0);
         out.distance_t = 1.0;
         out.layer = 0.0;
+        out.visibility = 1.0;
         return out;
     }
 
@@ -22371,6 +22546,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
     let corner = local % 6u;
     let cell_x = tri % grid_x;
     let cell_z = tri / grid_x;
+    let meshlet_visibility = sample_water_meshlet_visibility(vec2<u32>(cell_x, cell_z));
     var corner_offsets = array<vec2<f32>, 6>(
         vec2<f32>(0.0, 0.0),
         vec2<f32>(1.0, 0.0),
@@ -22400,6 +22576,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
     out.world_xz = world;
     out.distance_t = distance_t;
     out.layer = 1.0;
+    out.visibility = meshlet_visibility.x;
     return out;
 }
 
@@ -22412,7 +22589,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let sky = sky_color(screen_uv, sun_center);
         return vec4<f32>(pow(clamp(sky, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.92)), 1.0);
     }
-
     let normal = ocean_normal(in.world_xz);
     let view_dir = normalize(vec3<f32>(-in.world_xz.x * 0.015, 0.40, 1.0));
     let light_dir = normalize(vec3<f32>(0.30, 0.50, 0.82));
@@ -22622,6 +22798,95 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         pack_unorm16(output_value.y),
         pack_unorm16(output_value.z),
         pack_unorm16(output_value.w)
+    );
+}
+"#
+}
+
+fn banger_water_meshlet_cull_compute_wgsl() -> &'static str {
+    r#"
+struct WaterMeshletVisibilityUniform {
+    // x/y: meshlet grid, z: HZB mip bias, w: expected visible count.
+    dims: vec4<u32>,
+};
+
+struct WaterHzbUniform {
+    dims: vec4<u32>,
+};
+
+@group(0) @binding(0) var<storage, read_write> water_meshlet_visibility_texels: array<vec4<u32>>;
+@group(0) @binding(1) var<uniform> water_meshlet_visibility_uniform: WaterMeshletVisibilityUniform;
+@group(0) @binding(2) var<storage, read> water_hzb_texels: array<vec4<u32>>;
+@group(0) @binding(3) var<uniform> water_hzb_uniform: WaterHzbUniform;
+
+fn saturate(value: f32) -> f32 {
+    return clamp(value, 0.0, 1.0);
+}
+
+fn pack_unorm16(value: f32) -> u32 {
+    return u32(saturate(value) * 65535.0 + 0.5);
+}
+
+fn hzb_offset_for_mip(mip: u32, base_width: u32, base_height: u32) -> u32 {
+    var offset = 0u;
+    for (var level = 0u; level < mip; level = level + 1u) {
+        offset = offset + max(base_width >> level, 1u) * max(base_height >> level, 1u);
+    }
+    return offset;
+}
+
+fn sample_hzb(uv: vec2<f32>, mip: u32) -> vec4<f32> {
+    let base_width = max(water_hzb_uniform.dims.x, 1u);
+    let base_height = max(water_hzb_uniform.dims.y, 1u);
+    let mip_count = max(water_hzb_uniform.dims.z, 1u);
+    let selected_mip = min(mip, mip_count - 1u);
+    let width = max(base_width >> selected_mip, 1u);
+    let height = max(base_height >> selected_mip, 1u);
+    let px = min(u32(saturate(uv.x) * f32(width)), width - 1u);
+    let py = min(u32(saturate(uv.y) * f32(height)), height - 1u);
+    let offset = hzb_offset_for_mip(selected_mip, base_width, base_height);
+    let packed = water_hzb_texels[offset + py * width + px];
+    return vec4<f32>(packed) * (1.0 / 65535.0);
+}
+
+fn hash_tile(tile: vec2<u32>) -> f32 {
+    let n = tile.x * 1664525u + tile.y * 1013904223u + 747796405u;
+    return f32((n >> 8u) & 1023u) * (1.0 / 1023.0);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let width = water_meshlet_visibility_uniform.dims.x;
+    let height = water_meshlet_visibility_uniform.dims.y;
+    if (gid.x >= width || gid.y >= height) {
+        return;
+    }
+
+    let uv = vec2<f32>(
+        (f32(gid.x) + 0.5) / f32(max(width, 1u)),
+        (f32(gid.y) + 0.5) / f32(max(height, 1u))
+    );
+    let distance_t = pow(uv.y, 1.75);
+    let mip = water_meshlet_visibility_uniform.dims.z + u32(clamp(floor(distance_t * 3.0), 0.0, 3.0));
+    let hzb = sample_hzb(uv, mip);
+    let depth_span = saturate(hzb.y - hzb.x);
+    let mask_energy = max(hzb.z, hzb.w);
+    let stable_tile_noise = hash_tile(vec2<u32>(gid.xy));
+
+    let near_keep = 1.0 - smoothstep(0.90, 0.997, distance_t);
+    let interaction_keep = smoothstep(0.08, 0.42, mask_energy + depth_span);
+    let far_decimation_keep = select(0.0, 1.0, stable_tile_noise > 0.38 || ((gid.x + gid.y) & 3u) == 0u);
+    let visibility = max(max(near_keep, interaction_keep), far_decimation_keep * smoothstep(0.985, 1.0, distance_t));
+    let visible = select(0.0, 1.0, visibility > 0.18);
+    let lod_ring = saturate(distance_t);
+    let occlusion = saturate(1.0 - depth_span * 2.2);
+
+    let index = gid.y * width + gid.x;
+    water_meshlet_visibility_texels[index] = vec4<u32>(
+        pack_unorm16(visible),
+        pack_unorm16(lod_ring),
+        pack_unorm16(occlusion),
+        pack_unorm16(mask_energy)
     );
 }
 "#
@@ -23163,15 +23428,45 @@ fn build_water_pipeline_manifest(
             &format!("{width}:{height}:4:512:{visual_pipeline_hash}"),
         ),
     };
+    let meshlet_grid_x = 96;
+    let meshlet_grid_z = 96;
+    let meshlet_candidate_count = meshlet_grid_x * meshlet_grid_z;
+    let hzb_mip_bias = 1;
+    let visible_meshlet_count = water_meshlet_visible_count(meshlet_grid_x, meshlet_grid_z);
+    let culled_meshlet_count = meshlet_candidate_count.saturating_sub(visible_meshlet_count);
+    let culling_pass_hash = hash_text_hex(
+        "forge.banger.water.near_field_meshlet_hzb_cull.v1",
+        &format!(
+            "{meshlet_grid_x}:{meshlet_grid_z}:{visible_meshlet_count}:{culled_meshlet_count}:hzb_mip_bias{hzb_mip_bias}:{visual_pipeline_hash}"
+        ),
+    );
     let near_field_mesh = BangerNativeWaterNearFieldMesh {
         topology: "camera_relative_meshlet_lod_rings",
         grid_resolution: 96,
         vertex_count: mesh_vertex_count.saturating_sub(3),
         triangle_count: water_mesh_triangle_count,
+        meshlet_grid_x,
+        meshlet_grid_z,
         meshlet_page_count: water_mesh_triangle_count.div_ceil(128).max(1),
+        meshlet_candidate_count,
+        visible_meshlet_count,
+        culled_meshlet_count,
         lod_ring_count: 6,
         hzb_culling_enabled: true,
         indirect_draw_enabled: true,
+        visibility_storage_texel_count: meshlet_candidate_count,
+        hzb_mip_bias,
+        culling_pass_hash: culling_pass_hash.clone(),
+        visibility_buffer_hash: hash_text_hex(
+            "forge.banger.water.near_field_meshlet_visibility_buffer.v1",
+            &format!("{culling_pass_hash}:{meshlet_candidate_count}:{visible_meshlet_count}"),
+        ),
+        indirect_args_hash: hash_text_hex(
+            "forge.banger.water.near_field_meshlet_indirect_args.v1",
+            &format!(
+                "indexed_draw_words5:{visible_meshlet_count}:triangles_per_candidate2:{culling_pass_hash}"
+            ),
+        ),
         page_table_hash: hash_text_hex(
             "forge.banger.water.near_field_page_table.v1",
             &format!("{water_mesh_triangle_count}:96:6:{visual_pipeline_hash}"),
@@ -23328,10 +23623,12 @@ fn build_water_pipeline_manifest(
     let proof_hash = hash_text_hex(
         "forge.banger.water_hybrid_pipeline.proof.v1",
         &format!(
-            "{manifest_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{manifest_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             far_field_fft.temporal_phase_hash,
             far_field_fft.compute_pass_hash,
             near_field_mesh.page_table_hash,
+            near_field_mesh.culling_pass_hash,
+            near_field_mesh.indirect_args_hash,
             normal_displacement.normal_pack_hash,
             water_info_texture.proof_hash,
             hzb_scene_depth.resource_hash,
@@ -23617,6 +23914,35 @@ fn hzb_pyramid_texel_count(width: u32, height: u32, mip_count: u32) -> u32 {
     texel_count
 }
 
+fn water_meshlet_visible_count(width: u32, height: u32) -> u32 {
+    let mut visible = 0u32;
+    for y in 0..height {
+        for x in 0..width {
+            let v = (y as f32 + 0.5) / height.max(1) as f32;
+            let distance_t = v.powf(1.75);
+            let n = x
+                .wrapping_mul(1_664_525)
+                .wrapping_add(y.wrapping_mul(1_013_904_223))
+                .wrapping_add(747_796_405);
+            let stable_tile_noise = ((n >> 8) & 1023) as f32 / 1023.0;
+            let near_keep = 1.0 - smoothstep_f32(0.90, 0.997, distance_t);
+            let far_decimation_keep =
+                if stable_tile_noise > 0.38 || ((x + y) & 3) == 0 { 1.0 } else { 0.0 };
+            let visibility =
+                near_keep.max(far_decimation_keep * smoothstep_f32(0.985, 1.0, distance_t));
+            if visibility > 0.18 {
+                visible += 1;
+            }
+        }
+    }
+    visible
+}
+
+fn smoothstep_f32(edge0: f32, edge1: f32, value: f32) -> f32 {
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 fn water_pipeline_manifest_hash(
     source_contract_hash: &str,
     far_field_fft: &BangerNativeWaterSpectralOcean,
@@ -23641,6 +23967,11 @@ fn water_pipeline_manifest_hash(
     h.update(far_field_fft.displacement_storage_texel_count.to_le_bytes());
     h.update(far_field_fft.slope_storage_texel_count.to_le_bytes());
     h.update(near_field_mesh.page_table_hash.as_bytes());
+    h.update(near_field_mesh.culling_pass_hash.as_bytes());
+    h.update(near_field_mesh.visibility_buffer_hash.as_bytes());
+    h.update(near_field_mesh.indirect_args_hash.as_bytes());
+    h.update(near_field_mesh.visible_meshlet_count.to_le_bytes());
+    h.update(near_field_mesh.culled_meshlet_count.to_le_bytes());
     h.update(normal_displacement.normal_pack_hash.as_bytes());
     h.update(water_info_texture.proof_hash.as_bytes());
     h.update(water_info_texture.output_texture_hash.as_bytes());
@@ -24391,9 +24722,66 @@ mod tests {
             response.water_pipeline_manifest.near_field_mesh.triangle_count,
             18432
         );
+        assert_eq!(response.water_pipeline_manifest.near_field_mesh.meshlet_grid_x, 96);
+        assert_eq!(response.water_pipeline_manifest.near_field_mesh.meshlet_grid_z, 96);
         assert!(response.water_pipeline_manifest.near_field_mesh.meshlet_page_count > 0);
+        assert_eq!(
+            response.water_pipeline_manifest.near_field_mesh.meshlet_candidate_count,
+            96 * 96
+        );
+        assert!(
+            response
+                .water_pipeline_manifest
+                .near_field_mesh
+                .visible_meshlet_count
+                > 0
+        );
+        assert!(
+            response
+                .water_pipeline_manifest
+                .near_field_mesh
+                .culled_meshlet_count
+                > 0
+        );
+        assert_eq!(
+            response.water_pipeline_manifest.near_field_mesh.meshlet_candidate_count,
+            response.water_pipeline_manifest.near_field_mesh.visible_meshlet_count
+                + response.water_pipeline_manifest.near_field_mesh.culled_meshlet_count
+        );
         assert!(response.water_pipeline_manifest.near_field_mesh.hzb_culling_enabled);
         assert!(response.water_pipeline_manifest.near_field_mesh.indirect_draw_enabled);
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .near_field_mesh
+                .visibility_storage_texel_count,
+            96 * 96
+        );
+        assert_eq!(response.water_pipeline_manifest.near_field_mesh.hzb_mip_bias, 1);
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .near_field_mesh
+                .culling_pass_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .near_field_mesh
+                .visibility_buffer_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .near_field_mesh
+                .indirect_args_hash
+                .len(),
+            64
+        );
         assert_eq!(
             response.water_pipeline_manifest.normal_displacement.displacement_source,
             "fft_height_plus_local_wave_particles"
