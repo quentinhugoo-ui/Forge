@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rename, rm, rmdir, stat } from "node:fs/promises";
-import { isAbsolute, parse, relative, resolve } from "node:path";
+import { basename, isAbsolute, parse, relative, resolve } from "node:path";
 import type {
   AgentActionCapability,
   AgentActionHostManifest,
@@ -12,6 +12,9 @@ import type {
   AgentActionInstalledTool,
   AgentActionRuntimeManifestSummary,
   AgentCapabilityAtlasEntry,
+  AgentWindowsExecutionAdapterId,
+  AgentWindowsExecutionPolicy,
+  AgentWindowsRouteCatalogEntry,
   IpcError
 } from "../shared/ipc-contract.js";
 
@@ -25,6 +28,7 @@ const WINDOWS_DESTRUCTIVE_BLOCK_ROOTS = [
 ];
 const MAX_PREVIEW_CHARS = 12_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
+const MAX_COMMAND_TIMEOUT_MS = 600_000;
 const AGENT_ACTION_TOOL_DETECTION_TIMEOUT_MS = 450;
 const AGENT_ACTION_TOOL_DETECTION_COMMANDS: readonly { id: string; command: string }[] = [
   { id: "powershell", command: "powershell.exe" },
@@ -72,6 +76,209 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   run_readonly_command: "/agent_readonly_shell_",
   run_command: "/agent_shell_"
 };
+
+const WINDOWS_EXECUTION_ADAPTERS: AgentWindowsExecutionAdapterId[] = ["powershell", "cmd", "windows_command", "shell_full"];
+
+const WINDOWS_ROUTE_CATALOG: AgentWindowsRouteCatalogEntry[] = [
+  {
+    id: "powershell.inline",
+    adapter: "powershell",
+    commands: ["powershell.exe", "pwsh.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "Get-ChildItem, Get-Process, Get-Service, Get-CimInstance, Get-ExecutionPolicy",
+    gatedWriteScenario: "New-Item, Move-Item, Set-ItemProperty, Start-Process after confirmed:true",
+    verification: ["command_exit", "filesystem", "process_state", "registry_state", "service_state"],
+    notes: "Preferred Windows structured shell route for native cmdlets and CIM/WMI."
+  },
+  {
+    id: "cmd.inline",
+    adapter: "cmd",
+    commands: ["cmd.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "dir, where, ver, assoc, ftype",
+    gatedWriteScenario: "mkdir, ren, move, copy after confirmed:true",
+    verification: ["command_exit", "filesystem"],
+    notes: "Use for batch, cmd built-ins, and legacy Windows command behavior."
+  },
+  {
+    id: "winget.package",
+    adapter: "windows_command",
+    commands: ["winget.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "winget list or winget search",
+    gatedWriteScenario: "winget install, upgrade or uninstall after confirmed:true",
+    verification: ["command_exit", "package_state"],
+    notes: "Package-management route; installs and upgrades require explicit confirmation."
+  },
+  {
+    id: "registry.reg",
+    adapter: "windows_command",
+    commands: ["reg.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "reg query",
+    gatedWriteScenario: "reg add, delete or import after confirmed:true",
+    verification: ["command_exit", "registry_state"],
+    notes: "Registry writes are sensitive and must stay explicit."
+  },
+  {
+    id: "scheduler.schtasks",
+    adapter: "windows_command",
+    commands: ["schtasks.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "schtasks /Query",
+    gatedWriteScenario: "schtasks /Create, /Change or /Delete after confirmed:true",
+    verification: ["command_exit", "process_state"],
+    notes: "Task Scheduler route; persisted automations need confirmation."
+  },
+  {
+    id: "network.netsh",
+    adapter: "windows_command",
+    commands: ["netsh.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "netsh interface show interface",
+    gatedWriteScenario: "firewall or interface changes after confirmed:true",
+    verification: ["command_exit"],
+    notes: "Network and firewall route; avoid silent connectivity changes."
+  },
+  {
+    id: "deployment.dism",
+    adapter: "windows_command",
+    commands: ["dism.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "dism /Online /Get-Features",
+    gatedWriteScenario: "feature enable/disable after confirmed:true",
+    verification: ["command_exit"],
+    notes: "Windows component route; may require admin/UAC."
+  },
+  {
+    id: "services.sc",
+    adapter: "windows_command",
+    commands: ["sc.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "sc.exe query",
+    gatedWriteScenario: "sc.exe start, stop, config or delete after confirmed:true",
+    verification: ["command_exit", "service_state"],
+    notes: "Windows service route; service mutation is approval-gated."
+  },
+  {
+    id: "processes.tasklist",
+    adapter: "windows_command",
+    commands: ["tasklist.exe"],
+    risk: "read",
+    approval: "none",
+    readScenario: "tasklist /FO CSV",
+    gatedWriteScenario: "none; use taskkill route for process termination",
+    verification: ["command_exit", "process_state"],
+    notes: "Read-only process inventory route."
+  },
+  {
+    id: "processes.taskkill",
+    adapter: "windows_command",
+    commands: ["taskkill.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "tasklist before taskkill",
+    gatedWriteScenario: "taskkill /PID or /IM after confirmed:true",
+    verification: ["command_exit", "process_state"],
+    notes: "Process termination route; do not kill system/security processes silently."
+  },
+  {
+    id: "files.robocopy",
+    adapter: "windows_command",
+    commands: ["robocopy.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "robocopy /L dry-run",
+    gatedWriteScenario: "robocopy copy/mirror after confirmed:true; mirror/delete needs extra care",
+    verification: ["command_exit", "filesystem"],
+    notes: "Large file copy/sync route; dry-run first for destructive switches."
+  },
+  {
+    id: "security.icacls",
+    adapter: "windows_command",
+    commands: ["icacls.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "icacls path",
+    gatedWriteScenario: "icacls grant/remove/reset after confirmed:true",
+    verification: ["command_exit", "filesystem"],
+    notes: "ACL mutation is security-sensitive and may require admin."
+  },
+  {
+    id: "certificates.certutil",
+    adapter: "windows_command",
+    commands: ["certutil.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "certutil -hashfile or -store",
+    gatedWriteScenario: "certificate import/delete after confirmed:true",
+    verification: ["command_exit", "artifact_hash"],
+    notes: "Certificate route; trust-store writes are sensitive."
+  },
+  {
+    id: "events.wevtutil",
+    adapter: "windows_command",
+    commands: ["wevtutil.exe"],
+    risk: "read",
+    approval: "none",
+    readScenario: "wevtutil qe System /c:20",
+    gatedWriteScenario: "log clear/export after confirmed:true",
+    verification: ["command_exit", "event_log"],
+    notes: "Event Log route for diagnostics."
+  },
+  {
+    id: "virtualization.wsl",
+    adapter: "windows_command",
+    commands: ["wsl.exe"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "wsl.exe --status or --list --verbose",
+    gatedWriteScenario: "install/import/unregister after confirmed:true",
+    verification: ["command_exit", "process_state"],
+    notes: "WSL route; distribution changes need explicit confirmation."
+  },
+  {
+    id: "shell.start_process",
+    adapter: "powershell",
+    commands: ["Start-Process"],
+    risk: "external_ui",
+    approval: "confirmed",
+    readScenario: "Start-Process with -PassThru for an approved local target",
+    gatedWriteScenario: "launch installers, Settings pages, elevated tools after confirmed:true",
+    verification: ["command_exit", "process_state", "manual_confirmation"],
+    notes: "GUI/process launch route through PowerShell."
+  },
+  {
+    id: "settings.ms_settings",
+    adapter: "windows_command",
+    commands: ["ms-settings:"],
+    risk: "external_ui",
+    approval: "prompt",
+    readScenario: "open a Settings URI for user-visible inspection",
+    gatedWriteScenario: "user confirms changes in Settings UI",
+    verification: ["manual_confirmation", "ui_state"],
+    notes: "Settings URI opens UI; the app must not claim the user changed settings without verification."
+  },
+  {
+    id: "shell.full",
+    adapter: "shell_full",
+    commands: ["*"],
+    risk: "computer_write",
+    approval: "confirmed",
+    readScenario: "arbitrary CLI read after safer structured routes are unsuitable",
+    gatedWriteScenario: "arbitrary shell mutation after confirmed:true",
+    verification: ["command_exit", "manual_confirmation"],
+    notes: "Universal fallback route; structured Windows routes are preferred."
+  }
+];
 
 export function agentActionRoutingHint(): string {
   return [
@@ -125,9 +332,16 @@ function result(
     items: patch.items,
     matches: patch.matches,
     commandLine: patch.commandLine,
+    executionAdapter: patch.executionAdapter,
+    routeId: patch.routeId,
     exitCode: patch.exitCode,
+    durationMs: patch.durationMs,
+    timeoutMs: patch.timeoutMs,
+    timedOut: patch.timedOut,
     stdoutPreview: patch.stdoutPreview,
     stderrPreview: patch.stderrPreview,
+    artifacts: patch.artifacts,
+    observedChanges: patch.observedChanges,
     value: patch.value,
     proofHash: "",
     error: patch.error
@@ -247,6 +461,23 @@ export function detectAgentActionInstalledTools(config: AgentActionHostConfig): 
   });
   agentActionToolDetectionCache = { platform: config.platform, tools };
   return tools;
+}
+
+export function createWindowsExecutionPolicy(_config: AgentActionHostConfig): AgentWindowsExecutionPolicy {
+  const policy: AgentWindowsExecutionPolicy = {
+    schema: "ingen.windows_execution.policy.v1",
+    adapters: WINDOWS_EXECUTION_ADAPTERS,
+    routeCatalog: WINDOWS_ROUTE_CATALOG,
+    defaultTimeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
+    maxTimeoutMs: MAX_COMMAND_TIMEOUT_MS,
+    stdoutPreviewBytes: MAX_PREVIEW_CHARS,
+    stderrPreviewBytes: MAX_PREVIEW_CHARS,
+    confirmationPolicy: "computer_writes_and_shell_full_require_confirmed_true",
+    cancellationPolicy: "timeout_kills_child_and_reports_timed_out",
+    proofHash: ""
+  };
+  policy.proofHash = hashJson({ ...policy, proofHash: "" });
+  return policy;
 }
 
 function atlasEntry(entry: AgentCapabilityAtlasEntry): AgentCapabilityAtlasEntry {
@@ -849,11 +1080,13 @@ export function createAgentActionRuntimeManifestSummary(config: AgentActionHostC
   const capabilities = createExecutableActionCapabilities();
   const capabilityAtlas = createAgentCapabilityAtlas(config);
   const installedTools = detectAgentActionInstalledTools(config);
+  const windowsExecution = createWindowsExecutionPolicy(config);
   const summary: AgentActionRuntimeManifestSummary = {
     schema: "ingen.agent_action_runtime_manifest.summary.v1",
     manifestHash: "",
     atlasHash: hashJson(capabilityAtlas),
     installedToolsHash: hashJson(installedTools),
+    windowsExecutionHash: windowsExecution.proofHash,
     executableActionIds: capabilities.map((capability) => capability.id),
     availableFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status === "available")),
     plannedFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status === "planned")),
@@ -861,6 +1094,7 @@ export function createAgentActionRuntimeManifestSummary(config: AgentActionHostC
     approvalGatedFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.approval === "prompt" || entry.approval === "confirmed")),
     installedToolIds: installedTools.filter((tool) => tool.available).map((tool) => tool.id).sort(),
     missingToolIds: installedTools.filter((tool) => !tool.available).map((tool) => tool.id).sort(),
+    windowsRouteIds: windowsExecution.routeCatalog.map((route) => route.id),
     promptTokenEstimate: {
       fullManifest: estimatePromptTokens(JSON.stringify(capabilityAtlas)),
       compactContinuation: estimatePromptTokens([
@@ -882,6 +1116,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
   const capabilities = createExecutableActionCapabilities();
   const capabilityAtlas = createAgentCapabilityAtlas(config);
   const installedTools = detectAgentActionInstalledTools(config);
+  const windowsExecution = createWindowsExecutionPolicy(config);
   const runtime = createAgentActionRuntimeManifestSummary(config);
   const manifest: AgentActionHostManifest = {
     schema: "ingen.agent_action_host.manifest.v1",
@@ -901,6 +1136,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
     capabilities,
     capabilityAtlas,
     installedTools,
+    windowsExecution,
     runtime,
     proofHash: ""
   };
@@ -921,6 +1157,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `protected_roots=${manifest.workspace.protectedRoots.join("|")}`,
     `manifest_hash=${manifest.runtime.manifestHash}`,
     `atlas_hash=${manifest.runtime.atlasHash}`,
+    `windows_execution_hash=${manifest.runtime.windowsExecutionHash}`,
     `injection_policy=${manifest.runtime.injectionPolicy}`,
     `prompt_budget=${manifest.runtime.promptBudget}`,
     `result_reinjection=${manifest.runtime.resultReinjectionPolicy}`,
@@ -929,6 +1166,9 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `token_estimate_selected_capability=${manifest.runtime.promptTokenEstimate.selectedCapabilityDetail}`,
     `installed_tools=${manifest.runtime.installedToolIds.join("|")}`,
     `missing_tools=${manifest.runtime.missingToolIds.join("|")}`,
+    `windows_adapters=${manifest.windowsExecution.adapters.join("|")}`,
+    `windows_routes=${manifest.runtime.windowsRouteIds.join("|")}`,
+    `windows_timeout=default:${manifest.windowsExecution.defaultTimeoutMs} max:${manifest.windowsExecution.maxTimeoutMs} cancellation:${manifest.windowsExecution.cancellationPolicy}`,
     "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
@@ -936,7 +1176,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `approval_gated_families=${manifest.runtime.approvalGatedFamilies.join("|")}`,
     "capability_policy=Use the atlas for reasoning, not as fake execution. Prefer structured app/API/CLI routes first, then confirmed shell.full, then GUI/computer-use only when the task cannot be completed through a safer route.",
     "capability_limits=Planned or blocked atlas entries are not direct AGENT_ACTION_JSON actions. Use available executable actions only, or explain the missing backend/approval boundary.",
-    "windows_reach=shell.full can use PowerShell/cmd plus Windows-native tools such as winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process and ms-settings URIs when confirmed:true is warranted.",
+    "windows_reach=Prefer typed adapters powershell|cmd|windows_command before shell_full. Route IDs include winget.package, registry.reg, scheduler.schtasks, network.netsh, deployment.dism, services.sc, processes.tasklist, processes.taskkill, files.robocopy, security.icacls, certificates.certutil, events.wevtutil, virtualization.wsl, shell.start_process, settings.ms_settings.",
     `events=${AGENT_ACTION_EVENT_HINTS.join(" ")}`,
     "loop_stream=When local action is needed, write one short progress paragraph first, then emit exactly one AGENT_ACTION_JSON line that starts with AGENT_ACTION_JSON at column 1. After the app returns AGENT_ACTION_RESULT, continue with another short paragraph plus another AGENT_ACTION_JSON if more work remains, or finish with a compact summary.",
     "retry=If AGENT_ACTION_RESULT reports failure, inspect the error and try a different safe route before declaring the task blocked.",
@@ -1218,6 +1458,140 @@ function readonlyCommandAllowed(command: string, args: string[] = []): boolean {
   return ["status", "diff", "branch", "rev-parse", "log", "show"].includes(subcommand);
 }
 
+function commandTimeout(request: AgentActionRequest): number {
+  return Math.max(100, Math.min(MAX_COMMAND_TIMEOUT_MS, request.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS));
+}
+
+function commandBase(command: string): string {
+  const trimmed = command.trim().replace(/^"+|"+$/g, "");
+  if (trimmed.toLowerCase().startsWith("ms-settings:")) {
+    return "ms-settings:";
+  }
+  return basename(trimmed).toLowerCase();
+}
+
+function quoteCommandArg(value: string): string {
+  return /^[A-Za-z0-9_./:=+-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+function renderCommandLine(command: string, args: string[]): string {
+  return [command, ...args].map(quoteCommandArg).join(" ");
+}
+
+function routeForWindowsCommand(command: string): AgentWindowsRouteCatalogEntry {
+  const base = commandBase(command);
+  const route = WINDOWS_ROUTE_CATALOG.find((entry) =>
+    entry.commands.some((candidate) => candidate === "*" || candidate.toLowerCase() === base || candidate.toLowerCase() === command.trim().toLowerCase())
+  );
+  return route ?? WINDOWS_ROUTE_CATALOG.find((entry) => entry.id === "shell.full")!;
+}
+
+function inferWindowsExecutionAdapter(request: AgentActionRequest, command: string): AgentWindowsExecutionAdapterId {
+  if (request.executionAdapter) {
+    return request.executionAdapter;
+  }
+  const base = commandBase(command);
+  if (base === "powershell.exe" || base === "pwsh.exe") {
+    return "powershell";
+  }
+  if (base === "cmd.exe") {
+    return "cmd";
+  }
+  const route = routeForWindowsCommand(command);
+  return route.id === "shell.full" ? "shell_full" : route.adapter;
+}
+
+function commandTimedOut(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      String((error as { code?: unknown }).code).toUpperCase() === "ETIMEDOUT"
+  );
+}
+
+function commandObservedChanges(params: {
+  accepted: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  durationMs: number;
+  timedOut: boolean;
+}): string[] {
+  const changes = [
+    `exit_code:${params.exitCode ?? "unknown"}`,
+    `stdout_bytes:${Buffer.byteLength(params.stdout, "utf8")}`,
+    `stderr_bytes:${Buffer.byteLength(params.stderr, "utf8")}`,
+    `duration_ms:${params.durationMs}`
+  ];
+  if (params.timedOut) {
+    changes.push("timed_out:true");
+  }
+  changes.push(params.accepted ? "command_status:completed" : "command_status:failed");
+  return changes;
+}
+
+type WindowsCommandExecution = {
+  accepted: boolean;
+  commandLine: string;
+  executionAdapter: AgentWindowsExecutionAdapterId;
+  routeId: string;
+  exitCode: number | null;
+  durationMs: number;
+  timeoutMs: number;
+  timedOut: boolean;
+  stdoutPreview: string;
+  stderrPreview: string;
+  artifacts: string[];
+  observedChanges: string[];
+  error?: IpcError;
+};
+
+function executeWindowsCommand(config: AgentActionHostConfig, request: AgentActionRequest, readonly: boolean): WindowsCommandExecution {
+  const command = request.command?.trim() ?? "";
+  const args = request.args ?? [];
+  const timeoutMs = readonly ? Math.min(commandTimeout(request), 15_000) : commandTimeout(request);
+  const startedAt = Date.now();
+  const child = spawnSync(command, args, {
+    cwd: readonly || request.scope === "computer" ? config.cwd : config.workspaceRoot,
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: timeoutMs,
+    windowsHide: true
+  });
+  const durationMs = Math.max(0, Date.now() - startedAt);
+  const stdout = child.stdout ?? "";
+  const stderr = child.stderr ?? "";
+  const exitCode = child.status ?? null;
+  const timedOut = commandTimedOut(child.error);
+  const accepted = !child.error && child.status === 0;
+  const executionAdapter = inferWindowsExecutionAdapter(request, command);
+  const route = routeForWindowsCommand(command);
+  const commandLine = renderCommandLine(command, args);
+  const error = accepted
+    ? undefined
+    : actionError(
+        "rust_unavailable",
+        timedOut ? `Command timed out after ${timeoutMs}ms.` : child.error?.message ?? `Command exited with status ${exitCode ?? "unknown"}.`,
+        { command, args, stderr, exitCode, timedOut, routeId: route.id, executionAdapter }
+      );
+  return {
+    accepted,
+    commandLine,
+    executionAdapter,
+    routeId: route.id === "shell.full" && executionAdapter !== "shell_full" ? `${executionAdapter}.inline` : route.id,
+    exitCode,
+    durationMs,
+    timeoutMs,
+    timedOut,
+    stdoutPreview: stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: stderr.slice(0, MAX_PREVIEW_CHARS),
+    artifacts: [],
+    observedChanges: commandObservedChanges({ accepted, stdout, stderr, exitCode, durationMs, timedOut }),
+    error
+  };
+}
+
 function runReadonlyCommandAction(config: AgentActionHostConfig, request: AgentActionRequest): AgentActionResult {
   const command = request.command?.trim() ?? "";
   const args = request.args ?? [];
@@ -1227,35 +1601,7 @@ function runReadonlyCommandAction(config: AgentActionHostConfig, request: AgentA
       error: actionError("bad_payload", "Command is not in the read-only allowlist.", { command, args })
     });
   }
-  const child = spawnSync(command, args, {
-    cwd: config.cwd,
-    encoding: "utf8",
-    stdio: "pipe",
-    timeout: 15_000,
-    windowsHide: true
-  });
-  if (child.error) {
-    return result(config, request, {
-      accepted: false,
-      commandLine: [command, ...args].join(" "),
-      error: actionError("rust_unavailable", child.error.message, { command, args })
-    });
-  }
-  return result(config, request, {
-    accepted: child.status === 0,
-    commandLine: [command, ...args].join(" "),
-    exitCode: child.status,
-    stdoutPreview: (child.stdout ?? "").slice(0, MAX_PREVIEW_CHARS),
-    stderrPreview: (child.stderr ?? "").slice(0, MAX_PREVIEW_CHARS),
-    error:
-      child.status === 0
-        ? undefined
-        : actionError("rust_unavailable", `Command exited with status ${child.status ?? "unknown"}.`, { command, args, stderr: child.stderr })
-  });
-}
-
-function commandTimeout(request: AgentActionRequest): number {
-  return Math.max(100, Math.min(600_000, request.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS));
+  return result(config, request, executeWindowsCommand(config, request, true));
 }
 
 function runCommandAction(config: AgentActionHostConfig, request: AgentActionRequest): AgentActionResult {
@@ -1273,31 +1619,7 @@ function runCommandAction(config: AgentActionHostConfig, request: AgentActionReq
       error: actionError("bad_payload", "Command is required.", request)
     });
   }
-  const child = spawnSync(command, args, {
-    cwd: request.scope === "computer" ? config.cwd : config.workspaceRoot,
-    encoding: "utf8",
-    stdio: "pipe",
-    timeout: commandTimeout(request),
-    windowsHide: true
-  });
-  if (child.error) {
-    return result(config, request, {
-      accepted: false,
-      commandLine: [command, ...args].join(" "),
-      error: actionError("rust_unavailable", child.error.message, { command, args })
-    });
-  }
-  return result(config, request, {
-    accepted: child.status === 0,
-    commandLine: [command, ...args].join(" "),
-    exitCode: child.status,
-    stdoutPreview: (child.stdout ?? "").slice(0, MAX_PREVIEW_CHARS),
-    stderrPreview: (child.stderr ?? "").slice(0, MAX_PREVIEW_CHARS),
-    error:
-      child.status === 0
-        ? undefined
-        : actionError("rust_unavailable", `Command exited with status ${child.status ?? "unknown"}.`, { command, args, stderr: child.stderr })
-  });
+  return result(config, request, executeWindowsCommand(config, request, false));
 }
 
 export async function executeAgentActionRequest(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {

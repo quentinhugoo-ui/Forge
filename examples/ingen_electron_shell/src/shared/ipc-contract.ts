@@ -339,6 +339,7 @@ export interface AgentActionRuntimeManifestSummary {
   manifestHash: string;
   atlasHash: string;
   installedToolsHash: string;
+  windowsExecutionHash: string;
   executableActionIds: AgentActionCapabilityId[];
   availableFamilies: AgentCapabilityFamily[];
   plannedFamilies: AgentCapabilityFamily[];
@@ -346,6 +347,7 @@ export interface AgentActionRuntimeManifestSummary {
   approvalGatedFamilies: AgentCapabilityFamily[];
   installedToolIds: string[];
   missingToolIds: string[];
+  windowsRouteIds: string[];
   promptTokenEstimate: {
     fullManifest: number;
     compactContinuation: number;
@@ -361,6 +363,33 @@ export interface AgentActionInstalledTool {
   command: string;
   available: boolean;
   detectedPath?: string;
+}
+
+export type AgentWindowsExecutionAdapterId = "powershell" | "cmd" | "windows_command" | "shell_full";
+
+export interface AgentWindowsRouteCatalogEntry {
+  id: string;
+  adapter: AgentWindowsExecutionAdapterId;
+  commands: string[];
+  risk: AgentActionRisk;
+  approval: AgentCapabilityApproval;
+  readScenario: string;
+  gatedWriteScenario: string;
+  verification: AgentCapabilityVerification[];
+  notes: string;
+}
+
+export interface AgentWindowsExecutionPolicy {
+  schema: "ingen.windows_execution.policy.v1";
+  adapters: AgentWindowsExecutionAdapterId[];
+  routeCatalog: AgentWindowsRouteCatalogEntry[];
+  defaultTimeoutMs: number;
+  maxTimeoutMs: number;
+  stdoutPreviewBytes: number;
+  stderrPreviewBytes: number;
+  confirmationPolicy: "computer_writes_and_shell_full_require_confirmed_true";
+  cancellationPolicy: "timeout_kills_child_and_reports_timed_out";
+  proofHash: string;
 }
 
 export interface AgentActionCapability extends AgentCapabilityAtlasEntry {
@@ -386,6 +415,7 @@ export interface AgentActionHostManifest {
   capabilities: AgentActionCapability[];
   capabilityAtlas: AgentCapabilityAtlasEntry[];
   installedTools: AgentActionInstalledTool[];
+  windowsExecution: AgentWindowsExecutionPolicy;
   runtime: AgentActionRuntimeManifestSummary;
   proofHash: string;
 }
@@ -412,6 +442,7 @@ export interface AgentActionRequest {
   query?: string;
   command?: string;
   args?: string[];
+  executionAdapter?: AgentWindowsExecutionAdapterId;
   maxResults?: number;
   confirmed?: boolean;
   recursive?: boolean;
@@ -440,9 +471,16 @@ export interface AgentActionResult {
   items?: AgentActionPathEntry[];
   matches?: AgentActionSearchMatch[];
   commandLine?: string;
+  executionAdapter?: AgentWindowsExecutionAdapterId;
+  routeId?: string;
   exitCode?: number | null;
+  durationMs?: number;
+  timeoutMs?: number;
+  timedOut?: boolean;
   stdoutPreview?: string;
   stderrPreview?: string;
+  artifacts?: string[];
+  observedChanges?: string[];
   value?: string;
   proofHash: string;
   error?: IpcError;
@@ -558,6 +596,12 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     return false;
   }
   if (candidate.scope !== undefined && candidate.scope !== "workspace" && candidate.scope !== "computer") {
+    return false;
+  }
+  if (
+    candidate.executionAdapter !== undefined &&
+    !["powershell", "cmd", "windows_command", "shell_full"].includes(candidate.executionAdapter)
+  ) {
     return false;
   }
   for (const key of ["path", "toPath", "query", "command"] as const) {

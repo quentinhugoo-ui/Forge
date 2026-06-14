@@ -7,6 +7,7 @@ import {
   createAgentCapabilityAtlas,
   createAgentActionHostManifest,
   createAgentActionRuntimeManifestSummary,
+  createWindowsExecutionPolicy,
   detectAgentActionInstalledTools,
   agentActionEventCommandForRequest,
   agentActionHostPromptManifest,
@@ -54,10 +55,15 @@ describe("agent action host", () => {
     expect(manifest.runtime.manifestHash).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.runtime.atlasHash).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.runtime.installedToolsHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest.runtime.windowsExecutionHash).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.runtime.injectionPolicy).toBe("full_on_local_intent_compact_delta_on_continuation");
     expect(manifest.runtime.resultReinjectionPolicy).toBe("compact_tool_result_is_ground_truth_each_round");
     expect(manifest.runtime.executableActionIds).toContain("shell.full");
     expect(manifest.installedTools.length).toBeGreaterThan(5);
+    expect(manifest.windowsExecution.schema).toBe("ingen.windows_execution.policy.v1");
+    expect(manifest.windowsExecution.adapters).toEqual(["powershell", "cmd", "windows_command", "shell_full"]);
+    expect(manifest.windowsExecution.routeCatalog.map((route) => route.id)).toContain("scheduler.schtasks");
+    expect(manifest.windowsExecution.routeCatalog.map((route) => route.id)).toContain("settings.ms_settings");
     expect([...manifest.runtime.installedToolIds, ...manifest.runtime.missingToolIds]).toContain("winget");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
 
@@ -73,6 +79,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("capability_atlas=count:");
     expect(promptManifest).toContain("manifest_hash=");
     expect(promptManifest).toContain("atlas_hash=");
+    expect(promptManifest).toContain("windows_execution_hash=");
     expect(promptManifest).toContain("injection_policy=full_on_local_intent_compact_delta_on_continuation");
     expect(promptManifest).toContain("prompt_budget=compact_by_default_detail_on_selected_capability");
     expect(promptManifest).toContain("result_reinjection=compact_tool_result_is_ground_truth_each_round");
@@ -81,12 +88,15 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("token_estimate_selected_capability=");
     expect(promptManifest).toContain("installed_tools=");
     expect(promptManifest).toContain("missing_tools=");
+    expect(promptManifest).toContain("windows_adapters=powershell|cmd|windows_command|shell_full");
+    expect(promptManifest).toContain("windows_routes=powershell.inline|cmd.inline|winget.package");
+    expect(promptManifest).toContain("windows_timeout=default:");
     expect(promptManifest).toContain("windows.wmi:planned/none");
     expect(promptManifest).toContain("office.com:planned/prompt");
     expect(promptManifest).toContain("capability_policy=Use the atlas for reasoning");
     expect(promptManifest).toContain("Prefer structured app/API/CLI routes first, then confirmed shell.full, then GUI/computer-use");
     expect(promptManifest).toContain("capability_limits=Planned or blocked atlas entries are not direct AGENT_ACTION_JSON actions");
-    expect(promptManifest).toContain("windows_reach=shell.full can use PowerShell/cmd");
+    expect(promptManifest).toContain("windows_reach=Prefer typed adapters powershell|cmd|windows_command before shell_full");
     expect(promptManifest).toContain("retry=If AGENT_ACTION_RESULT reports failure");
     expect(promptManifest).toContain("loop_stream=When local action is needed");
     expect(promptManifest).toContain("loop_style=Use varied, concrete progress notes");
@@ -106,6 +116,7 @@ describe("agent action host", () => {
     expect(summary.manifestHash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.atlasHash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.installedToolsHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(summary.windowsExecutionHash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.executableActionIds).toEqual([
       "fs.list",
       "fs.search",
@@ -126,6 +137,47 @@ describe("agent action host", () => {
     expect(summary.promptTokenEstimate.fullManifest).toBeGreaterThan(summary.promptTokenEstimate.compactContinuation);
     expect(summary.promptTokenEstimate.selectedCapabilityDetail).toBeGreaterThan(0);
     expect([...summary.installedToolIds, ...summary.missingToolIds]).toContain("powershell");
+    expect(summary.windowsRouteIds).toContain("registry.reg");
+    expect(summary.windowsRouteIds).toContain("files.robocopy");
+  });
+
+  it("publishes a typed Windows execution route catalog", () => {
+    const policy = createWindowsExecutionPolicy({
+      workspaceRoot: "C:\\repo",
+      workspaceActive: true,
+      cwd: "C:\\repo",
+      platform: "win32"
+    });
+    const byId = new Map(policy.routeCatalog.map((route) => [route.id, route]));
+
+    expect(policy.proofHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(policy.confirmationPolicy).toBe("computer_writes_and_shell_full_require_confirmed_true");
+    expect(policy.cancellationPolicy).toBe("timeout_kills_child_and_reports_timed_out");
+    for (const id of [
+      "winget.package",
+      "registry.reg",
+      "scheduler.schtasks",
+      "network.netsh",
+      "deployment.dism",
+      "services.sc",
+      "processes.tasklist",
+      "processes.taskkill",
+      "files.robocopy",
+      "security.icacls",
+      "certificates.certutil",
+      "events.wevtutil",
+      "virtualization.wsl",
+      "shell.start_process",
+      "settings.ms_settings"
+    ]) {
+      expect(byId.has(id)).toBe(true);
+      expect(byId.get(id)?.readScenario).toBeTruthy();
+      expect(byId.get(id)?.gatedWriteScenario).toBeTruthy();
+      expect(byId.get(id)?.verification.length).toBeGreaterThan(0);
+    }
+    expect(byId.get("processes.tasklist")?.approval).toBe("none");
+    expect(byId.get("registry.reg")?.approval).toBe("confirmed");
+    expect(byId.get("shell.full")?.adapter).toBe("shell_full");
   });
 
   it("detects local tool availability and renders selected capability detail on demand", () => {
@@ -337,6 +389,68 @@ describe("agent action host", () => {
       });
       expect(accepted.accepted).toBe(true);
       expect(accepted.stdoutPreview).toContain("agent-host");
+      expect(accepted.executionAdapter).toBe("shell_full");
+      expect(accepted.routeId).toBe("shell.full");
+      expect(accepted.durationMs).toBeGreaterThanOrEqual(0);
+      expect(accepted.timeoutMs).toBeGreaterThanOrEqual(100);
+      expect(accepted.timedOut).toBe(false);
+      expect(accepted.observedChanges).toContain("command_status:completed");
+    });
+  });
+
+  it("reports command timeout and structured execution metadata", async () => {
+    await withTempWorkspace(async (config) => {
+      const timedOut = await executeAgentActionRequest(config, {
+        action: "run_command",
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => {}, 2000)"],
+        confirmed: true,
+        timeoutMs: 100
+      });
+
+      expect(timedOut.accepted).toBe(false);
+      expect(timedOut.executionAdapter).toBe("shell_full");
+      expect(timedOut.routeId).toBe("shell.full");
+      expect(timedOut.timeoutMs).toBe(100);
+      expect(timedOut.timedOut).toBe(true);
+      expect(timedOut.error?.message).toContain("timed out");
+      expect(timedOut.observedChanges).toContain("timed_out:true");
+    });
+  });
+
+  const windowsIt = process.platform === "win32" ? it : it.skip;
+
+  windowsIt("classifies PowerShell, CMD and native Windows command adapters", async () => {
+    await withTempWorkspace(async (config) => {
+      const powershell = await executeAgentActionRequest(config, {
+        action: "run_command",
+        command: "powershell.exe",
+        args: ["-NoProfile", "-Command", "Write-Output agent-powershell"],
+        confirmed: true
+      });
+      expect(powershell.executionAdapter).toBe("powershell");
+      expect(powershell.routeId).toBe("powershell.inline");
+      expect(powershell.stdoutPreview).toContain("agent-powershell");
+
+      const cmd = await executeAgentActionRequest(config, {
+        action: "run_command",
+        command: "cmd.exe",
+        args: ["/d", "/s", "/c", "echo agent-cmd"],
+        confirmed: true
+      });
+      expect(cmd.executionAdapter).toBe("cmd");
+      expect(cmd.routeId).toBe("cmd.inline");
+      expect(cmd.stdoutPreview).toContain("agent-cmd");
+
+      const tasklist = await executeAgentActionRequest(config, {
+        action: "run_command",
+        command: "tasklist.exe",
+        args: ["/?"],
+        confirmed: true
+      });
+      expect(tasklist.executionAdapter).toBe("windows_command");
+      expect(tasklist.routeId).toBe("processes.tasklist");
+      expect(tasklist.commandLine).toContain("tasklist.exe");
     });
   });
 

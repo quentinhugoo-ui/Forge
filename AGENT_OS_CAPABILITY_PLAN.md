@@ -207,6 +207,8 @@ Acceptance:
 - Failed command output is reinjected for retry.
 - `shell.full` remains available but structured adapters are preferred when possible.
 
+Status: implemented for the planned scope. The host now exposes `AgentWindowsExecutionPolicy`, typed adapters (`powershell`, `cmd`, `windows_command`, `shell_full`), a Windows route catalog, timeout/cancellation policy, command confirmation policy and structured command results with adapter, route id, duration, timeout, timeout flag, stdout/stderr previews, artifacts and observed changes. `run_command` stays the confirmed universal execution action, while prompt/runtime manifests tell the model to prefer typed Windows routes before `shell_full`.
+
 ### 5. Verification And Retry Engine
 
 Goal: guarantee that the app checks whether work actually happened.

@@ -5711,9 +5711,17 @@ function compactAgentActionResult(result: AgentActionResult): string {
     matches: compactAgentActionMatches(result),
     omittedMatches: Math.max(0, (result.matches?.length ?? 0) - AGENT_ACTION_RESULT_MATCH_LIMIT),
     commandLine: result.commandLine,
+    executionAdapter: result.executionAdapter,
+    routeId: result.routeId,
     exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    timeoutMs: result.timeoutMs,
+    timedOut: result.timedOut,
     stdoutPreview: result.stdoutPreview ? trimUtf8Bytes(result.stdoutPreview, AGENT_ACTION_RESULT_PREVIEW_BYTES) : undefined,
     stderrPreview: result.stderrPreview ? trimUtf8Bytes(result.stderrPreview, AGENT_ACTION_RESULT_PREVIEW_BYTES) : undefined,
+    artifacts: result.artifacts,
+    observedChanges: result.observedChanges,
+    value: result.value,
     error: result.error?.message,
     proofHash: result.proofHash
   });
