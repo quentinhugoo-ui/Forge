@@ -1,14 +1,11 @@
 use ingen_native_services::banger_native_engine::{
-    BangerGaussianSplatRasterizeRequest, BangerNativeEngine,
-    BangerNativePresentLoopBootstrapRequest,
+    BangerNativeEngine, BangerNativePresentLoopBootstrapRequest,
 };
 use ingen_native_services::gpu_adapter_probe::{native_gpu_adapter_probe, NativeGpuAdapterProbe};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::env;
-use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -315,45 +312,32 @@ fn proof_hash<T: Serialize>(value: &T) -> String {
 }
 
 fn banger_preview_frame() -> BangerPreviewFrameProjection {
-    let width = 320;
-    let height = 200;
-    let ply_path = preview_splat_path();
-    fs::create_dir_all(ply_path.parent().expect("preview ply parent")).expect("create banger preview dir");
-    fs::write(&ply_path, preview_splat_ply()).expect("write banger preview ply");
-
-    let raster = BangerNativeEngine::rasterize_gaussian_splat_asset(BangerGaussianSplatRasterizeRequest {
-        asset_id: Some("electron_header_banger_preview".to_string()),
-        ply_path: ply_path.to_string_lossy().to_string(),
-        width,
-        height,
-        camera_position: Some([0.0, 0.08, -4.25]),
-        camera_target: Some([0.0, 0.02, 0.0]),
-        camera_up: Some([0.0, 1.0, 0.0]),
-        fov_y_degrees: Some(42.0),
-        near_plane: Some(0.01),
-        max_splats: None,
-        tile_size: Some(16),
-        background_rgba: Some([0.015, 0.018, 0.024, 1.0]),
+    let render = BangerNativeEngine::bootstrap_present_loop(BangerNativePresentLoopBootstrapRequest {
+        parent_window_handle: None,
+        viewport_width: Some(640),
+        viewport_height: Some(360),
+        target_frame_ms: Some(16.67),
     })
-    .expect("rasterize banger preview splats");
-
-    let bmp = rgba8_to_bmp(width, height, &raster.rgba8);
+    .expect("render Banger wgpu preview frame");
+    let width = render.preview_width;
+    let height = render.preview_height;
+    let bmp = rgba8_to_bmp(width, height, &render.preview_rgba8);
     let frame_hash = sha256_hex(&bmp);
-    let scene_hash = sha256_hex(preview_splat_ply().as_bytes());
+    let scene_hash = render.scene3d_proof_hash.clone();
     let metrics = BangerPreviewFrameMetrics {
-        splat_count: raster.splat_count,
-        projected_splat_count: raster.projected_splat_count,
-        rasterized_splat_count: raster.rasterized_splat_count,
-        shaded_pixel_count: raster.shaded_pixel_count,
-        tile_count: raster.tile_count,
+        splat_count: 0,
+        projected_splat_count: 0,
+        rasterized_splat_count: 0,
+        shaded_pixel_count: render.nonblack_pixel_sample_count,
+        tile_count: render.nonzero_tile_count,
         benchmark_gate_count: 5,
-        promotion_allowed: raster.ok && raster.projected_splat_count > 0 && raster.shaded_pixel_count > 0,
-        render_path: "rust_banger_gaussian_splat_rgba8_to_bmp_data_url",
+        promotion_allowed: render.ok && render.nonblack_pixel_sample_count > 0 && render.depth_occupied_pixel_count > 0,
+        render_path: "rust_banger_wgpu_ocean_scene_rgba8_to_bmp_data_url",
     };
     let mut frame = BangerPreviewFrameProjection {
         accepted: true,
         schema: "forge.banger.visible_preview_frame.v1",
-        source: "examples/ingen_native_services/banger_preview_frame",
+        source: "examples/ingen_native_services/banger_wgpu_present_loop_preview_frame",
         width,
         height,
         frame_data_url: format!("data:image/bmp;base64,{}", base64_encode(&bmp)),
@@ -364,46 +348,6 @@ fn banger_preview_frame() -> BangerPreviewFrameProjection {
     };
     frame.proof_hash = proof_hash(&frame);
     frame
-}
-
-fn preview_splat_path() -> PathBuf {
-    env::temp_dir()
-        .join("forge-banger-preview-frame")
-        .join("electron_header_banger_preview.ply")
-}
-
-fn preview_splat_ply() -> &'static str {
-    r#"ply
-format ascii 1.0
-element vertex 12
-property float x
-property float y
-property float z
-property float f_dc_0
-property float f_dc_1
-property float f_dc_2
-property float opacity
-property float scale_0
-property float scale_1
-property float scale_2
-property float rot_0
-property float rot_1
-property float rot_2
-property float rot_3
-end_header
-0.00 0.00 0.00 1.55 0.18 0.10 4.4 -1.14 -1.20 -1.32 1 0 0 0
-0.34 0.06 0.10 0.12 1.35 0.30 3.9 -1.33 -1.25 -1.45 1 0 0 0
--0.34 -0.07 0.04 0.14 0.38 1.42 3.8 -1.38 -1.28 -1.48 1 0 0 0
-0.02 0.36 0.14 1.26 0.98 0.18 3.6 -1.42 -1.36 -1.54 1 0 0 0
-0.00 -0.34 0.16 0.18 1.08 1.24 3.5 -1.44 -1.40 -1.56 1 0 0 0
-0.46 0.26 0.28 1.36 0.38 0.86 3.2 -1.58 -1.50 -1.68 1 0 0 0
--0.46 0.23 0.22 0.28 1.22 0.88 3.2 -1.58 -1.50 -1.68 1 0 0 0
-0.42 -0.28 0.24 1.12 0.80 0.20 3.1 -1.60 -1.55 -1.70 1 0 0 0
--0.42 -0.28 0.24 0.20 0.72 1.22 3.1 -1.60 -1.55 -1.70 1 0 0 0
-0.00 0.02 0.48 1.42 1.28 1.02 2.9 -1.72 -1.64 -1.82 1 0 0 0
-0.18 -0.02 -0.22 0.90 0.30 1.18 3.4 -1.50 -1.42 -1.60 1 0 0 0
--0.18 0.03 -0.20 0.30 1.10 1.04 3.4 -1.50 -1.42 -1.60 1 0 0 0
-"#
 }
 
 fn rgba8_to_bmp(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
@@ -1407,18 +1351,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn emits_banger_preview_frame_from_native_rasterizer() {
+    fn emits_banger_preview_frame_from_native_present_loop() {
         let frame = banger_preview_frame();
         assert!(frame.accepted);
         assert_eq!(frame.schema, "forge.banger.visible_preview_frame.v1");
-        assert_eq!(frame.width, 320);
-        assert_eq!(frame.height, 200);
+        assert_eq!(frame.width, 512);
+        assert_eq!(frame.height, 288);
         assert!(frame.frame_data_url.starts_with("data:image/bmp;base64,Qk"));
         assert_eq!(frame.frame_hash.len(), 64);
         assert_eq!(frame.scene_hash.len(), 64);
         assert_eq!(frame.proof_hash.len(), 64);
-        assert_eq!(frame.metrics.splat_count, 12);
-        assert!(frame.metrics.projected_splat_count > 0);
+        assert_eq!(frame.metrics.render_path, "rust_banger_wgpu_ocean_scene_rgba8_to_bmp_data_url");
+        assert_eq!(frame.metrics.splat_count, 0);
+        assert_eq!(frame.metrics.projected_splat_count, 0);
         assert!(frame.metrics.shaded_pixel_count > 0);
         assert!(frame.metrics.promotion_allowed);
     }

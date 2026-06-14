@@ -21222,7 +21222,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         banger_present_bootstrap_wgsl(),
     );
     let depth_target_hash = present_loop_depth_target_hash(width, height, "Depth32Float", &visual_pipeline_hash);
-    let mesh_vertex_count = 3u32;
+    let mesh_vertex_count = 3u32 + 96u32 * 96u32 * 6u32;
     let mesh_triangle_count = mesh_vertex_count / 3;
     let draw_call_count = 1u32;
     let camera_position = [0.0, 0.0, -2.4];
@@ -21404,8 +21404,8 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         depth_metrics.coverage_bounds,
     );
     let frame_witness_hash = present_loop_frame_witness_hash(&frame_witness_samples);
-    let preview_width = width.min(96).max(1);
-    let preview_height = height.min(54).max(1);
+    let preview_width = width.min(512).max(1);
+    let preview_height = height.min(288).max(1);
     let preview_rgba8 = present_loop_preview_rgba8(
         &readback_view,
         width,
@@ -21602,21 +21602,10 @@ fn banger_present_bootstrap_wgsl() -> &'static str {
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) world_xz: vec2<f32>,
+    @location(2) distance_t: f32,
+    @location(3) layer: f32,
 };
-
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>( 3.0, -1.0),
-        vec2<f32>(-1.0,  3.0)
-    );
-    let p = positions[vertex_index];
-    var out: VertexOut;
-    out.position = vec4<f32>(p, 0.24, 1.0);
-    out.uv = p * 0.5 + vec2<f32>(0.5, 0.5);
-    return out;
-}
 
 fn saturate(value: f32) -> f32 {
     return clamp(value, 0.0, 1.0);
@@ -21639,18 +21628,19 @@ fn noise(p: vec2<f32>) -> f32 {
 }
 
 fn ocean_height(p: vec2<f32>) -> f32 {
-    let swell_a = sin(dot(p, vec2<f32>(0.78, 0.23)) * 2.7 + 0.42) * 0.55;
-    let swell_b = sin(dot(p, vec2<f32>(-0.34, 0.91)) * 5.2 + 1.85) * 0.28;
-    let ripple = sin(dot(p, vec2<f32>(1.45, 0.64)) * 12.0 + 2.7) * 0.10;
-    return swell_a + swell_b + ripple + (noise(p * 1.7) - 0.5) * 0.18;
+    let swell_a = sin(dot(p, vec2<f32>(0.78, 0.23)) * 0.82 + 0.42) * 0.72;
+    let swell_b = sin(dot(p, vec2<f32>(-0.34, 0.91)) * 1.55 + 1.85) * 0.38;
+    let chop = sin(dot(p, vec2<f32>(1.45, 0.64)) * 4.6 + 2.7) * 0.16;
+    let ripple = sin(dot(p, vec2<f32>(-1.90, 0.22)) * 9.0 + 0.7) * 0.055;
+    return swell_a + swell_b + chop + ripple + (noise(p * 0.55) - 0.5) * 0.24;
 }
 
 fn ocean_normal(p: vec2<f32>) -> vec3<f32> {
-    let e = 0.045;
+    let e = 0.12;
     let h = ocean_height(p);
     let hx = ocean_height(p + vec2<f32>(e, 0.0));
     let hy = ocean_height(p + vec2<f32>(0.0, e));
-    return normalize(vec3<f32>(h - hx, 0.34, h - hy));
+    return normalize(vec3<f32>(h - hx, 0.55, h - hy));
 }
 
 fn sun_disk_sdf(uv: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
@@ -21676,38 +21666,85 @@ fn sky_color(uv: vec2<f32>, sun_center: vec2<f32>) -> vec3<f32> {
     return color + vec3<f32>(0.36, 0.10, 0.16) * band * 0.22;
 }
 
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+    var sky_positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0)
+    );
+    var out: VertexOut;
+    if (vertex_index < 3u) {
+        let p = sky_positions[vertex_index];
+        out.position = vec4<f32>(p, 0.98, 1.0);
+        out.uv = p * 0.5 + vec2<f32>(0.5, 0.5);
+        out.world_xz = vec2<f32>(0.0, 0.0);
+        out.distance_t = 1.0;
+        out.layer = 0.0;
+        return out;
+    }
+
+    let grid_x = 96u;
+    let grid_z = 96u;
+    let local = vertex_index - 3u;
+    let tri = local / 6u;
+    let corner = local % 6u;
+    let cell_x = tri % grid_x;
+    let cell_z = tri / grid_x;
+    var corner_offsets = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 1.0)
+    );
+    let c = corner_offsets[corner];
+    let gx = (f32(cell_x) + c.x) / f32(grid_x);
+    let gz = (f32(cell_z) + c.y) / f32(grid_z);
+    let distance_t = pow(gz, 1.75);
+    let z = mix(4.0, 86.0, distance_t);
+    let x = mix(-44.0, 44.0, gx) * mix(0.22, 1.0, smoothstep(0.0, 0.65, distance_t));
+    let world = vec2<f32>(x, z);
+    let h = ocean_height(world);
+    let ndc_x = x / (z * 0.34);
+    let ndc_y = mix(-1.16, -0.08, pow(gz, 0.48)) + h * mix(0.055, 0.010, distance_t);
+    out.position = vec4<f32>(ndc_x, ndc_y, mix(0.12, 0.86, distance_t), 1.0);
+    out.uv = vec2<f32>(ndc_x * 0.5 + 0.5, ndc_y * 0.5 + 0.5);
+    out.world_xz = world;
+    out.distance_t = distance_t;
+    out.layer = 1.0;
+    return out;
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let uv = clamp(in.uv, vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0));
-    let horizon = 0.47 + sin(uv.x * 6.2831853) * 0.006;
+    let screen_uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0));
     let sun_center = vec2<f32>(0.68, 0.54);
 
-    if (uv.y >= horizon) {
-        let sky = sky_color(uv, sun_center);
+    if (in.layer < 0.5) {
+        let sky = sky_color(screen_uv, sun_center);
         return vec4<f32>(pow(clamp(sky, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.92)), 1.0);
     }
 
-    let water_t = saturate((horizon - uv.y) / horizon);
-    let perspective = 1.0 / max(0.055, water_t);
-    let world = vec2<f32>((uv.x - 0.5) * perspective * 1.35, perspective * 0.46);
-    let normal = ocean_normal(world);
-    let view_dir = normalize(vec3<f32>(uv.x - 0.5, 0.62, 0.92));
+    let normal = ocean_normal(in.world_xz);
+    let view_dir = normalize(vec3<f32>(-in.world_xz.x * 0.015, 0.40, 1.0));
     let light_dir = normalize(vec3<f32>(0.30, 0.50, 0.82));
     let fresnel = pow(1.0 - saturate(dot(normal, view_dir)), 4.2);
     let specular = pow(saturate(dot(reflect(-light_dir, normal), view_dir)), 84.0);
-    let sun_path = exp(-abs(uv.x - sun_center.x) * (9.0 + water_t * 16.0)) * smoothstep(0.0, 0.95, water_t);
-    let wave_glint = smoothstep(0.72, 1.0, sin(ocean_height(world) * 5.4 + world.y * 2.1) * 0.5 + 0.5);
-    let foam = smoothstep(0.86, 1.0, abs(normal.x) + abs(normal.z)) * smoothstep(0.25, 1.0, water_t);
+    let sun_path = exp(-abs(screen_uv.x - sun_center.x) * (8.0 + in.distance_t * 18.0)) * smoothstep(0.05, 0.95, 1.0 - in.distance_t);
+    let wave_glint = smoothstep(0.58, 1.0, sin(ocean_height(in.world_xz) * 3.1 + in.world_xz.y * 0.72) * 0.5 + 0.5);
+    let foam = smoothstep(0.72, 1.0, abs(normal.x) + abs(normal.z)) * smoothstep(0.0, 0.35, 1.0 - in.distance_t);
 
-    let deep = vec3<f32>(0.015, 0.095, 0.19);
-    let near = vec3<f32>(0.02, 0.26, 0.34);
-    let reflected = sky_color(vec2<f32>(uv.x + normal.x * 0.07, horizon + water_t * 0.42), sun_center);
-    var color = mix(near, deep, smoothstep(0.0, 0.9, water_t));
-    color = mix(color, reflected, 0.18 + fresnel * 0.34);
+    let deep = vec3<f32>(0.010, 0.055, 0.13);
+    let near = vec3<f32>(0.02, 0.23, 0.30);
+    let reflected = sky_color(vec2<f32>(screen_uv.x + normal.x * 0.08, 0.50 + (1.0 - in.distance_t) * 0.22), sun_center);
+    var color = mix(near, deep, smoothstep(0.0, 0.92, in.distance_t));
+    color = mix(color, reflected, 0.16 + fresnel * 0.42);
     color += vec3<f32>(1.0, 0.38, 0.08) * sun_path * (0.24 + 0.42 * wave_glint);
     color += vec3<f32>(1.0, 0.78, 0.52) * specular * 0.55;
-    color = mix(color, vec3<f32>(0.64, 0.88, 0.92), foam * 0.10);
-    color *= 0.80 + 0.20 * smoothstep(0.0, 0.75, water_t);
+    color = mix(color, vec3<f32>(0.64, 0.88, 0.92), foam * 0.18);
+    color *= 0.72 + 0.28 * smoothstep(0.0, 0.85, 1.0 - in.distance_t);
     return vec4<f32>(pow(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.92)), 1.0);
 }
 "#
@@ -22887,8 +22924,8 @@ mod tests {
         assert_eq!(response.depth_readback_hash.len(), 64);
         assert_eq!(response.depth_readback_proof_hash.len(), 64);
         assert_eq!(response.screen_coverage_hash.len(), 64);
-        assert_eq!(response.mesh_vertex_count, 3);
-        assert_eq!(response.mesh_triangle_count, 1);
+        assert_eq!(response.mesh_vertex_count, 55299);
+        assert_eq!(response.mesh_triangle_count, 18433);
         assert_eq!(response.draw_call_count, 1);
         assert_eq!(response.camera_position, [0.0, 0.0, -2.4]);
         assert_eq!(response.camera_target, [0.0, 0.0, 0.0]);
@@ -22910,8 +22947,8 @@ mod tests {
             (sample.color_rgba8[0] != 0 || sample.color_rgba8[1] != 0 || sample.color_rgba8[2] != 0)
                 && sample.depth < 0.999
         }));
-        assert_eq!(response.preview_width, 96);
-        assert_eq!(response.preview_height, 54);
+        assert_eq!(response.preview_width, 512);
+        assert_eq!(response.preview_height, 288);
         assert_eq!(
             response.preview_byte_count,
             response.preview_width as usize * response.preview_height as usize * 4
