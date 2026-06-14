@@ -89,11 +89,12 @@ type WidgetHitRegion = {
   height: number;
 };
 
-const WIDGET_HIT_REGION_SELECTORS = [
-  ".composer",
-  ".bottomControls",
-  ".composerQuestionnaire",
-  ".permissionModeMenu"
+const WIDGET_HIT_REGION_TARGETS = [
+  { selector: ".composer", padding: 1 },
+  { selector: ".bottomControls button", padding: 1 },
+  { selector: ".permissionModeControl", padding: 1 },
+  { selector: ".composerQuestionnaire", padding: 1 },
+  { selector: ".permissionModeMenu", padding: 1 }
 ] as const;
 
 function readWidgetLayoutLock(): WidgetLayoutLock | null {
@@ -131,13 +132,21 @@ function widgetHitRegionForElement(element: Element, padding: number): WidgetHit
 }
 
 function readWidgetHitRegions(): WidgetHitRegion[] {
-  const elements = new Set<Element>();
-  for (const selector of WIDGET_HIT_REGION_SELECTORS) {
-    document.querySelectorAll(selector).forEach((element) => elements.add(element));
+  const regions: WidgetHitRegion[] = [];
+  const seen = new Set<Element>();
+  for (const target of WIDGET_HIT_REGION_TARGETS) {
+    document.querySelectorAll(target.selector).forEach((element) => {
+      if (seen.has(element)) {
+        return;
+      }
+      seen.add(element);
+      const region = widgetHitRegionForElement(element, target.padding);
+      if (region) {
+        regions.push(region);
+      }
+    });
   }
-  return Array.from(elements)
-    .map((element) => widgetHitRegionForElement(element, 12))
-    .filter((region): region is WidgetHitRegion => region !== null);
+  return regions;
 }
 
 function widgetPointInRegions(x: number, y: number, regions: WidgetHitRegion[]): boolean {
