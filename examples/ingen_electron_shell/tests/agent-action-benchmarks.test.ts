@@ -1,10 +1,30 @@
+import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { runAgentActionBenchmarkSuite } from "../src/main/agent-action-benchmark-runner";
 import {
   AGENT_ACTION_BENCHMARK_SUITE,
   REQUIRED_AGENT_ACTION_BENCHMARK_SURFACES,
   agentActionBenchmarkSurfaceCoverage,
   missingAgentActionBenchmarkSurfaces
 } from "../src/shared/agent-action-benchmarks";
+import type { AgentActionHostConfig } from "../src/main/agent-action-host";
+
+async function withTempWorkspace<T>(run: (config: AgentActionHostConfig) => Promise<T>): Promise<T> {
+  const root = join(tmpdir(), `ingen-agent-action-benchmark-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  await mkdir(root, { recursive: true });
+  try {
+    return await run({
+      workspaceRoot: root,
+      workspaceActive: true,
+      cwd: root,
+      platform: process.platform
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 describe("agent action benchmark suite", () => {
   it("covers every required local-agent surface", () => {
@@ -58,5 +78,28 @@ describe("agent action benchmark suite", () => {
       eventLabel: "agent loop summarized"
     });
     expect(AGENT_ACTION_BENCHMARK_SUITE.find((benchmark) => benchmark.id === "document.write_and_inspect")?.proofRule).toContain("result.value");
+  });
+
+  it("runs available benchmark cases and fails planned cases cleanly", async () => {
+    await withTempWorkspace(async (config) => {
+      const results = await runAgentActionBenchmarkSuite(config);
+      expect(results.length).toBe(AGENT_ACTION_BENCHMARK_SUITE.length);
+      const byId = new Map(results.map((result) => [result.id, result]));
+      expect(byId.get("filesystem.organize.safe_moves")).toMatchObject({ status: "success" });
+      expect(byId.get("code.run.tests.after_edit")).toMatchObject({ status: "success" });
+      expect(byId.get("document.write_and_inspect")).toMatchObject({ status: "success" });
+      expect(byId.get("cloud.cli.write")).toMatchObject({ status: "blocked" });
+      expect(byId.get("blocked.danger.credentials")).toMatchObject({ status: "blocked" });
+      expect(results.some((result) => result.status === "planned")).toBe(true);
+      for (const result of results) {
+        if (result.status === "planned" || result.status === "blocked") {
+          expect(result.result?.accepted ?? false).toBe(false);
+        }
+        if (result.status === "success") {
+          expect(result.result?.verification?.passed).not.toBe(false);
+          expect(result.result?.audit?.logSha256).toMatch(/^[a-f0-9]{64}$/);
+        }
+      }
+    });
   });
 });
