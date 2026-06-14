@@ -50,6 +50,9 @@ describe("assistant progressive response feed", () => {
     expect(agentActionLoopSource).toContain('export const AGENT_ACTION_JSON_PREFIX = "AGENT_ACTION_JSON"');
     expect(mainSource).toContain('const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1"');
     expect(mainSource).toContain("function executeAssistantAgentActionLoop");
+    expect(mainSource).toContain("interface AgentRuntimeEventQueue");
+    expect(mainSource).toContain("function createAgentRuntimeEventQueue");
+    expect(mainSource).toContain("agentEvents: AgentRuntimeEventQueue");
     expect(mainSource).toContain("extractAgentActionJsonRequest(assistantMessage.text)");
     expect(mainSource).toContain("executeAgentActionRequest(agentActionHostConfig(), extracted.request)");
     expect(mainSource).toContain("emitAgentRuntimeToolCallStarted");
@@ -77,6 +80,11 @@ describe("assistant progressive response feed", () => {
 
   it("streams provider text into the transcript and cuts over to tools live", () => {
     expect(mainSource).toContain("interface ProviderLiveTextSink");
+    expect(mainSource).toContain("interface AssistantProviderAdapter");
+    expect(mainSource).toContain("const ASSISTANT_PROVIDER_ADAPTERS");
+    expect(mainSource).toContain("function assistantProviderAdapterFor");
+    expect(mainSource).toContain("const adapter = assistantProviderAdapterFor(profile)");
+    expect(mainSource).toContain("const run = await adapter.run");
     expect(mainSource).toContain("async function readCodexDirectEventStream(response: Response, liveSink?: ProviderLiveTextSink)");
     expect(mainSource).toContain("liveSink?.onText(finalText.trimEnd())");
     expect(mainSource).toContain("liveSink?.shouldStop?.(finalText)");
@@ -86,7 +94,9 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("async function readOpenRouterChatCompletionStream(response: Response, liveSink?: ProviderLiveTextSink)");
     expect(mainSource).toContain("function openRouterStreamDeltaText");
     expect(mainSource).toContain("body.stream = true");
-    expect(mainSource).toContain("runOpenRouterChatCompletion(profile, providerUserText, attachments, userMessageId, moduleId, transcript, liveSink)");
+    expect(mainSource).toContain("runOpenRouterChatCompletion(");
+    expect(mainSource).toContain("params.profile");
+    expect(mainSource).toContain("params.providerUserText");
     expect(mainSource).toContain("function createAssistantLiveTextSink");
     expect(mainSource).toContain("removeRenameSessionCodeActLines(agentActionLiveVisibleText(text))");
     expect(mainSource).toContain("transcriptWithReplacedMessage(params.baseTranscript, liveMessage)");

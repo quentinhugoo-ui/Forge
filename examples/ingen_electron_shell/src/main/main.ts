@@ -1612,11 +1612,17 @@ function emitPanelsChatBottomSnapshotEvent(
 }
 
 let agentRuntimeEventSequence = 0;
+type AgentRuntimeEventDraft = Omit<AgentRuntimeEvent, "schema" | "sequence" | "at" | "proofHash"> &
+  Partial<Pick<AgentRuntimeEvent, "sequence" | "at" | "proofHash">>;
 
-function emitAgentRuntimeEvent(
-  event: Omit<AgentRuntimeEvent, "schema" | "sequence" | "at" | "proofHash"> &
-    Partial<Pick<AgentRuntimeEvent, "sequence" | "at" | "proofHash">>
-): void {
+interface AgentRuntimeEventQueue {
+  sessionId: string;
+  agentName: string;
+  provider: LlmProviderConnectId;
+  emit: (event: Omit<AgentRuntimeEventDraft, "sessionId" | "agentName" | "provider">) => void;
+}
+
+function emitAgentRuntimeEvent(event: AgentRuntimeEventDraft): void {
   const window = primaryWindow;
   if (!window || window.isDestroyed()) {
     return;
@@ -1630,6 +1636,25 @@ function emitAgentRuntimeEvent(
   };
   runtimeEvent.proofHash = event.proofHash ?? hashJson({ ...runtimeEvent, proofHash: "" });
   window.webContents.send("forge:agent-runtime-event", runtimeEvent);
+}
+
+function createAgentRuntimeEventQueue(params: {
+  sessionId: string;
+  agentName?: string;
+  provider?: LlmProviderConnectId;
+}): AgentRuntimeEventQueue {
+  const queue: AgentRuntimeEventQueue = {
+    sessionId: params.sessionId,
+    agentName: params.agentName?.trim() || agentRuntimeAgentName(),
+    provider: params.provider ?? agentRuntimeProvider(),
+    emit: (event) => emitAgentRuntimeEvent({
+      ...event,
+      sessionId: queue.sessionId,
+      agentName: queue.agentName,
+      provider: queue.provider
+    })
+  };
+  return queue;
 }
 
 function runtimeEventFromProviderProfile(profile: ProviderRuntimeProfile, prefix?: string): LlmProviderRuntimeEvent {
@@ -3232,6 +3257,86 @@ interface ProviderTextRun {
 interface ProviderLiveTextSink {
   onText: (text: string) => void;
   shouldStop?: (text: string) => boolean;
+}
+
+interface AssistantProviderRunParams {
+  profile: ProviderRuntimeProfile;
+  rawUserText: string;
+  providerUserText: string;
+  attachments: ProviderAttachment[];
+  userMessageId: string;
+  moduleId: string;
+  transcript: TranscriptMessage[];
+  liveSink?: ProviderLiveTextSink;
+}
+
+interface AssistantProviderAdapter {
+  id: LlmProviderConnectId;
+  run: (params: AssistantProviderRunParams) => Promise<ProviderTextRun>;
+  unavailableReason: (profile: ProviderRuntimeProfile) => string;
+}
+
+const ASSISTANT_PROVIDER_ADAPTERS: Record<LlmProviderConnectId, AssistantProviderAdapter> = {
+  codex: {
+    id: "codex",
+    run: (params) =>
+      runCodexSubscriptionExec(
+        params.profile,
+        params.providerUserText,
+        params.attachments,
+        params.moduleId,
+        params.userMessageId,
+        params.transcript,
+        params.liveSink
+      ),
+    unavailableReason: (profile) =>
+      profile.connected
+        ? "Codex est connecte pour la session et le catalogue. La prochaine etape doit etre un pont Codex local/subscription, pas un appel API OpenAI facture a l'usage."
+        : `${profile.label} n'est pas encore connecte.`
+  },
+  claude: {
+    id: "claude",
+    run: (params) =>
+      runClaudeCodePrint(
+        params.profile,
+        userTextWithAttachmentContext(params.providerUserText, params.attachments),
+        params.moduleId,
+        params.userMessageId,
+        params.transcript,
+        params.liveSink
+      ),
+    unavailableReason: (profile) =>
+      profile.connected
+        ? `${profile.label} est connecte, mais son runtime conversationnel direct n'est pas encore cable dans ce composer.`
+        : `${profile.label} n'est pas encore connecte.`
+  },
+  openrouter: {
+    id: "openrouter",
+    run: async (params) => {
+      const text = await runOpenRouterChatCompletion(
+        params.profile,
+        params.providerUserText,
+        params.attachments,
+        params.userMessageId,
+        params.moduleId,
+        params.transcript,
+        params.liveSink
+      );
+      const model = selectedComposerModel(params.profile) || "selected model";
+      return {
+        text,
+        runtime: `openrouter chat completion / ${model}`
+      };
+    },
+    unavailableReason: (profile) =>
+      profile.connected
+        ? `${profile.label} est connecte, mais son runtime conversationnel direct n'est pas encore cable dans ce composer.`
+        : `${profile.label} n'est pas encore connecte.`
+  }
+};
+
+function assistantProviderAdapterFor(profile: ProviderRuntimeProfile): AssistantProviderAdapter {
+  return ASSISTANT_PROVIDER_ADAPTERS[profile.connectId];
 }
 
 type CodexLocalAuth = {
@@ -5291,7 +5396,7 @@ function agentRuntimeToolCallId(messageId: string, step: number, request: AgentA
 }
 
 function emitAgentRuntimeToolCallStarted(params: {
-  sessionId: string;
+  agentEvents: AgentRuntimeEventQueue;
   messageId: string;
   step: number;
   request: AgentActionRequest;
@@ -5311,19 +5416,16 @@ function emitAgentRuntimeToolCallStarted(params: {
     status: "pending",
     startedAt
   };
-  emitAgentRuntimeEvent({
+  params.agentEvents.emit({
     kind: "tool_call_started",
-    sessionId: params.sessionId,
     messageId: params.messageId,
-    agentName: agentRuntimeAgentName(),
-    provider: agentRuntimeProvider(),
     toolCall
   });
   return toolCall;
 }
 
 function emitAgentRuntimeToolResult(params: {
-  sessionId: string;
+  agentEvents: AgentRuntimeEventQueue;
   messageId: string;
   toolCall: NonNullable<AgentRuntimeEvent["toolCall"]>;
   result: AgentActionResult;
@@ -5341,21 +5443,15 @@ function emitAgentRuntimeToolResult(params: {
     proofHash: params.result.proofHash,
     error: params.result.error?.message
   };
-  emitAgentRuntimeEvent({
+  params.agentEvents.emit({
     kind: "tool_result",
-    sessionId: params.sessionId,
     messageId: params.messageId,
-    agentName: agentRuntimeAgentName(),
-    provider: agentRuntimeProvider(),
     toolCall: params.toolCall,
     toolResult
   });
-  emitAgentRuntimeEvent({
+  params.agentEvents.emit({
     kind: "tool_call_completed",
-    sessionId: params.sessionId,
     messageId: params.messageId,
-    agentName: agentRuntimeAgentName(),
-    provider: agentRuntimeProvider(),
     toolCall: {
       ...params.toolCall,
       status: params.result.accepted ? "completed" : "failed",
@@ -5517,7 +5613,7 @@ async function applyDeterministicOrganizationFallback(params: {
   originalUserText: string;
   request: AgentActionRequest;
   result: AgentActionResult;
-  requestSessionId: string;
+  agentEvents: AgentRuntimeEventQueue;
   commitProgress?: (assistantMessage: TranscriptMessage) => void;
 }): Promise<TranscriptMessage> {
   if (!agentActionStepNeedsMutationFollowUp(params.originalUserText, params.request, params.result)) {
@@ -5537,7 +5633,7 @@ async function applyDeterministicOrganizationFallback(params: {
   params.commitProgress?.(assistantMessage);
   for (const [index, request] of requests.entries()) {
     const toolCall = emitAgentRuntimeToolCallStarted({
-      sessionId: params.requestSessionId,
+      agentEvents: params.agentEvents,
       messageId: params.assistantMessage.id,
       step: index + 1,
       request
@@ -5550,7 +5646,7 @@ async function applyDeterministicOrganizationFallback(params: {
     params.commitProgress?.(assistantMessage);
     const result = await executeAgentActionRequest(agentActionHostConfig(), request);
     emitAgentRuntimeToolResult({
-      sessionId: params.requestSessionId,
+      agentEvents: params.agentEvents,
       messageId: params.assistantMessage.id,
       toolCall,
       result
@@ -5575,7 +5671,7 @@ async function executeAssistantAgentActionLoop(params: {
   providerAttachments: ProviderAttachment[];
   userMessageId: string;
   moduleId: string;
-  requestSessionId: string;
+  agentEvents: AgentRuntimeEventQueue;
   commitTranscript: (transcript: TranscriptMessage[]) => void;
 }): Promise<TranscriptMessage> {
   let assistantMessage = params.assistantMessage;
@@ -5585,7 +5681,7 @@ async function executeAssistantAgentActionLoop(params: {
       return assistantMessage;
     }
     const toolCall = emitAgentRuntimeToolCallStarted({
-      sessionId: params.requestSessionId,
+      agentEvents: params.agentEvents,
       messageId: assistantMessage.id,
       step: step + 1,
       request: extracted.request
@@ -5598,7 +5694,7 @@ async function executeAssistantAgentActionLoop(params: {
     params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
     const result = await executeAgentActionRequest(agentActionHostConfig(), extracted.request);
     emitAgentRuntimeToolResult({
-      sessionId: params.requestSessionId,
+      agentEvents: params.agentEvents,
       messageId: assistantMessage.id,
       toolCall,
       result
@@ -5618,7 +5714,7 @@ async function executeAssistantAgentActionLoop(params: {
         originalUserText: params.originalUserText,
         request: extracted.request,
         result,
-        requestSessionId: params.requestSessionId,
+        agentEvents: params.agentEvents,
         commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
       });
       if (fallbackMessage.text !== assistantMessage.text) {
@@ -5629,7 +5725,7 @@ async function executeAssistantAgentActionLoop(params: {
     const continuationLiveSink = createAssistantLiveTextSink({
       baseTranscript: params.baseTranscript,
       assistantMessageId: assistantMessage.id,
-      requestSessionId: params.requestSessionId,
+      agentEvents: params.agentEvents,
       commitTranscript: params.commitTranscript,
       prefixText: assistantMessage.text
     });
@@ -5652,7 +5748,7 @@ async function executeAssistantAgentActionLoop(params: {
       const forcedLiveSink = createAssistantLiveTextSink({
         baseTranscript: params.baseTranscript,
         assistantMessageId: assistantMessage.id,
-        requestSessionId: params.requestSessionId,
+        agentEvents: params.agentEvents,
         commitTranscript: params.commitTranscript,
         prefixText: assistantMessage.text
       });
@@ -5677,7 +5773,7 @@ async function executeAssistantAgentActionLoop(params: {
           originalUserText: params.originalUserText,
           request: extracted.request,
           result,
-          requestSessionId: params.requestSessionId,
+          agentEvents: params.agentEvents,
           commitProgress: (message) => params.commitTranscript(transcriptWithMessage(params.baseTranscript, message))
         });
         params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
@@ -5687,12 +5783,9 @@ async function executeAssistantAgentActionLoop(params: {
   const strippedText = removeAgentActionJsonFragments(assistantMessage.text)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  emitAgentRuntimeEvent({
+  params.agentEvents.emit({
     kind: "final_summary",
-    sessionId: params.requestSessionId,
     messageId: assistantMessage.id,
-    agentName: agentRuntimeAgentName(),
-    provider: agentRuntimeProvider(),
     summary: `Agent action loop stopped after ${AGENT_ACTION_LOOP_MAX_STEPS} steps to preserve local control.`
   });
   return {
@@ -5722,9 +5815,19 @@ async function buildAssistantTranscriptMessage(
   const reasoning = selectedComposerReasoning(profile);
   const attachmentProofs = attachmentProofSummary(attachments);
   const providerUserText = providerUserTextForTurn(userText, attachments, userMessageId, transcript);
+  const adapter = assistantProviderAdapterFor(profile);
   try {
-    if (profile.connectId === "codex" && profile.connected) {
-      const run = await runCodexSubscriptionExec(profile, providerUserText, attachments, moduleId, userMessageId, transcript, liveSink);
+    if (profile.connected) {
+      const run = await adapter.run({
+        profile,
+        rawUserText: userText,
+        providerUserText,
+        attachments,
+        userMessageId,
+        moduleId,
+        transcript,
+        liveSink
+      });
       return {
         id: assistantMessageId,
         role: "assistant",
@@ -5732,29 +5835,7 @@ async function buildAssistantTranscriptMessage(
         proofHash: hashJson({ provider: profile.connectId, model, reasoning, runtime: run.runtime, userText, providerUserText, attachments: attachmentProofs, text: run.text })
       };
     }
-    if (profile.connectId === "claude" && profile.connected) {
-      const run = await runClaudeCodePrint(profile, userTextWithAttachmentContext(providerUserText, attachments), moduleId, userMessageId, transcript, liveSink);
-      return {
-        id: assistantMessageId,
-        role: "assistant",
-        text: run.text,
-        proofHash: hashJson({ provider: profile.connectId, model, reasoning, runtime: run.runtime, userText, providerUserText, attachments: attachmentProofs, text: run.text })
-      };
-    }
-    if (profile.connectId === "openrouter" && profile.connected) {
-      const text = await runOpenRouterChatCompletion(profile, providerUserText, attachments, userMessageId, moduleId, transcript, liveSink);
-      return {
-        id: assistantMessageId,
-        role: "assistant",
-        text,
-        proofHash: hashJson({ provider: profile.connectId, model, reasoning, userText, providerUserText, attachments: attachmentProofs, text })
-      };
-    }
-    const reason = profile.connectId === "codex" && profile.connected
-      ? "Codex est connecte pour la session et le catalogue. La prochaine etape doit etre un pont Codex local/subscription, pas un appel API OpenAI facture a l'usage."
-      : profile.connected
-        ? `${profile.label} est connecte, mais son runtime conversationnel direct n'est pas encore cable dans ce composer.`
-        : `${profile.label} n'est pas encore connecte.`;
+    const reason = adapter.unavailableReason(profile);
     const text = ASSISTANT_PROVIDER_UNAVAILABLE_TEXT;
     return {
       id: `assistant-error-${Date.now()}`,
@@ -10975,7 +11056,7 @@ async function commitAssistantMessageWithProgressiveSeed(
 function createAssistantLiveTextSink(params: {
   baseTranscript: TranscriptMessage[];
   assistantMessageId: string;
-  requestSessionId: string;
+  agentEvents: AgentRuntimeEventQueue;
   commitTranscript: (transcript: TranscriptMessage[]) => void;
   prefixText?: string;
 }): ProviderLiveTextSink {
@@ -10994,12 +11075,9 @@ function createAssistantLiveTextSink(params: {
       const textDelta = previousText && trimmed.startsWith(previousText)
         ? trimmed.slice(previousText.length)
         : trimmed;
-      emitAgentRuntimeEvent({
+      params.agentEvents.emit({
         kind: "text_delta",
-        sessionId: params.requestSessionId,
         messageId: params.assistantMessageId,
-        agentName: agentRuntimeAgentName(),
-        provider: agentRuntimeProvider(),
         textDelta
       });
       const liveMessage: TranscriptMessage = {
@@ -11009,7 +11087,7 @@ function createAssistantLiveTextSink(params: {
         proofHash: hashJson({ liveAssistantMessage: params.assistantMessageId, text: trimmed })
       };
       params.commitTranscript(transcriptWithReplacedMessage(params.baseTranscript, liveMessage));
-      emitPanelsChatBottomSnapshotEvent("assistant_progressive_seed", params.requestSessionId);
+      emitPanelsChatBottomSnapshotEvent("assistant_progressive_seed", params.agentEvents.sessionId);
     },
     shouldStop: (text) => Boolean(extractAgentActionJsonRequest(text))
   };
@@ -12961,15 +13039,13 @@ async function submitChatDraftForSessionInner(
   const contextPlan = searchArchiveRequest ? undefined : conversationContextPlan(message.id, requestTranscriptWithUser);
   const contextCompactionSeed = `${Date.now()}-${hashJson({ requestSessionId, userMessageId: message.id, estimatedTokens: contextPlan?.estimatedTokens ?? 0 }).slice(0, 8)}`;
   const contextCompactionEvent = contextPlan?.shouldCompact ? contextCompactionEventMessage("compressing", contextCompactionSeed) : undefined;
+  const agentEvents = createAgentRuntimeEventQueue({ sessionId: requestSessionId });
   if (contextCompactionEvent) {
     nextTranscript = transcriptWithMessage(nextTranscript, contextCompactionEvent);
     commitTranscript(nextTranscript);
-    emitAgentRuntimeEvent({
+    agentEvents.emit({
       kind: "compaction_started",
-      sessionId: requestSessionId,
       messageId: contextCompactionEvent.id,
-      agentName: agentRuntimeAgentName(),
-      provider: agentRuntimeProvider(),
       compaction: {
         state: "compressing",
         seed: contextCompactionSeed,
@@ -12986,7 +13062,7 @@ async function submitChatDraftForSessionInner(
     const liveTextSink = createAssistantLiveTextSink({
       baseTranscript: nextTranscript,
       assistantMessageId: liveAssistantMessageId,
-      requestSessionId,
+      agentEvents,
       commitTranscript
     });
     // Audit anchor: await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId)
@@ -13007,7 +13083,7 @@ async function submitChatDraftForSessionInner(
     providerAttachments,
     userMessageId: message.id,
     moduleId,
-    requestSessionId,
+    agentEvents,
     commitTranscript
   });
   assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, draft, moduleId);
@@ -13033,12 +13109,9 @@ async function submitChatDraftForSessionInner(
   if (contextCompactionEvent) {
     nextTranscript = transcriptWithReplacedMessage(nextTranscript, contextCompactionEventMessage("compressed", contextCompactionSeed));
     commitTranscript(nextTranscript);
-    emitAgentRuntimeEvent({
+    agentEvents.emit({
       kind: "compaction_completed",
-      sessionId: requestSessionId,
       messageId: contextCompactionEvent.id,
-      agentName: agentRuntimeAgentName(),
-      provider: agentRuntimeProvider(),
       compaction: {
         state: "compressed",
         seed: contextCompactionSeed,
@@ -13065,7 +13138,7 @@ async function submitChatDraftForSessionInner(
       providerAttachments,
       userMessageId: message.id,
       moduleId,
-      requestSessionId,
+      agentEvents,
       commitTranscript
     });
     continuationMessage = await executeAssistantModuleCodeActs(continuationMessage, moduleId, parallelSessionIndex);
