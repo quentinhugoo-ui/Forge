@@ -135,6 +135,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub scene_graph_submission: BangerNativeSceneGraphSubmission,
     pub culling_manifest: BangerNativeCullingManifest,
     pub meshlet_visibility_packet: BangerNativeMeshletVisibilityPacket,
+    pub raster_work_queue: BangerNativeRasterWorkQueue,
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
@@ -613,6 +614,47 @@ pub struct BangerNativeMeshletVisibilityEntry {
     pub indirect_draw_args: [u32; 5],
     pub source_culling_proof_hash: String,
     pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRasterWorkQueue {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub visibility_packet_hash: String,
+    pub render_graph_hash: String,
+    pub resource_table_hash: String,
+    pub hardware_job_count: usize,
+    pub compute_job_count: usize,
+    pub total_threadgroup_count: u32,
+    pub total_index_count: u32,
+    pub queue_barrier_hash: String,
+    pub bind_table_hash: String,
+    pub dispatch_plan_hash: String,
+    pub queue_hash: String,
+    pub jobs: Vec<BangerNativeRasterWorkItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRasterWorkItem {
+    pub job_id: String,
+    pub cluster_id: String,
+    pub object_id: String,
+    pub queue_lane: &'static str,
+    pub pass_name: &'static str,
+    pub pipeline_cache_key: String,
+    pub resource_slot: u32,
+    pub page_hash: String,
+    pub visibility_word: u64,
+    pub threadgroup_count: u32,
+    pub indirect_draw_args: [u32; 5],
+    pub read_barrier: &'static str,
+    pub write_barrier: &'static str,
+    pub bind_group_hash: String,
+    pub job_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1462,6 +1504,13 @@ impl BangerNativeEngine {
             &resource_table,
             &render_graph_compilation,
         );
+        let raster_work_queue = build_raster_work_queue(
+            &prepared,
+            &meshlet_visibility_packet,
+            &render_graph_compilation,
+            &frame_graph_bindings,
+            &resource_table,
+        );
         let radiance_schedule_manifest = build_radiance_schedule_manifest(
             &prepared,
             &scene_graph_submission,
@@ -1507,6 +1556,7 @@ impl BangerNativeEngine {
             &scene_graph_submission,
             &culling_manifest,
             &meshlet_visibility_packet,
+            &raster_work_queue,
             &radiance_schedule_manifest,
             &gaussian_splat_layer_manifest,
             &render_graph_compilation,
@@ -1558,6 +1608,7 @@ impl BangerNativeEngine {
             scene_graph_submission,
             culling_manifest,
             meshlet_visibility_packet,
+            raster_work_queue,
             radiance_schedule_manifest,
             gaussian_splat_layer_manifest,
             frame_graph_bindings,
@@ -2265,6 +2316,134 @@ fn build_meshlet_visibility_packet(
         indirect_draw_packet_hash,
         packet_hash,
         entries,
+    }
+}
+
+fn build_raster_work_queue(
+    prepared: &MonsterPreparedCompute,
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    frame_graph_bindings: &[BangerNativeFrameGraphBinding],
+    resource_table: &BangerNativeResourceTable,
+) -> BangerNativeRasterWorkQueue {
+    let fallback_binding = frame_graph_bindings.first();
+    let visibility_binding = frame_graph_bindings
+        .iter()
+        .find(|binding| binding.stage == "visibility_cull")
+        .or(fallback_binding);
+    let visibility_pass = render_graph_compilation
+        .compiled_passes
+        .iter()
+        .find(|pass| pass.stage == "visibility_cull")
+        .or_else(|| render_graph_compilation.compiled_passes.first());
+    let jobs = meshlet_visibility_packet
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let queue_lane = raster_work_queue_lane(entry.raster_path);
+            let threadgroup_count = raster_work_threadgroup_count(entry, queue_lane);
+            let binding = visibility_binding;
+            let pass_name = visibility_pass
+                .map(|pass| pass.pass_name)
+                .or_else(|| binding.map(|binding| binding.pass_name))
+                .unwrap_or("meshlet_visibility");
+            let pipeline_cache_key = binding
+                .map(|binding| binding.pipeline_cache_key.clone())
+                .unwrap_or_else(|| render_graph_compilation.graph_hash.clone());
+            let read_barrier = binding
+                .map(|binding| binding.read_barrier)
+                .unwrap_or("storage_read_indirect_draw");
+            let write_barrier = binding
+                .map(|binding| binding.write_barrier)
+                .unwrap_or("visibility_indirect_write");
+            let slot_hash = resource_table
+                .slots
+                .iter()
+                .find(|slot| slot.slot == entry.resource_slot)
+                .map(|slot| slot.resource_key.as_str())
+                .unwrap_or(entry.page_hash.as_str());
+            let bind_group_hash = raster_work_bind_group_hash(
+                entry,
+                &pipeline_cache_key,
+                slot_hash,
+                read_barrier,
+                write_barrier,
+            );
+            let job_id = format!("raster_job_{index:04}_{}", entry.cluster_id);
+            let job_hash = raster_work_item_hash(
+                &job_id,
+                entry,
+                queue_lane,
+                pass_name,
+                &pipeline_cache_key,
+                threadgroup_count,
+                read_barrier,
+                write_barrier,
+                &bind_group_hash,
+            );
+            BangerNativeRasterWorkItem {
+                job_id,
+                cluster_id: entry.cluster_id.clone(),
+                object_id: entry.object_id.clone(),
+                queue_lane,
+                pass_name,
+                pipeline_cache_key,
+                resource_slot: entry.resource_slot,
+                page_hash: entry.page_hash.clone(),
+                visibility_word: entry.visibility_word,
+                threadgroup_count,
+                indirect_draw_args: entry.indirect_draw_args,
+                read_barrier,
+                write_barrier,
+                bind_group_hash,
+                job_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let hardware_job_count = jobs
+        .iter()
+        .filter(|job| job.queue_lane == "graphics_mesh_shader")
+        .count();
+    let compute_job_count = jobs.len().saturating_sub(hardware_job_count);
+    let total_threadgroup_count = jobs
+        .iter()
+        .map(|job| job.threadgroup_count)
+        .fold(0u32, u32::saturating_add);
+    let total_index_count = jobs
+        .iter()
+        .map(|job| job.indirect_draw_args[0].saturating_mul(job.indirect_draw_args[1].max(1)))
+        .fold(0u32, u32::saturating_add);
+    let queue_barrier_hash = raster_work_queue_barrier_hash(&jobs);
+    let bind_table_hash = raster_work_bind_table_hash(&jobs);
+    let dispatch_plan_hash = raster_work_dispatch_plan_hash(&jobs);
+    let queue_hash = raster_work_queue_hash(
+        prepared,
+        meshlet_visibility_packet,
+        render_graph_compilation,
+        resource_table,
+        &queue_barrier_hash,
+        &bind_table_hash,
+        &dispatch_plan_hash,
+        &jobs,
+    );
+    BangerNativeRasterWorkQueue {
+        schema: "forge.banger.native_raster_work_queue.v1",
+        authority: "monster_kasm_meshlet_visibility_to_banger_raster_queue",
+        clean_room_basis: "local_unreal_sparse_nanite_visibility_raster_queue_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        visibility_packet_hash: meshlet_visibility_packet.packet_hash.clone(),
+        render_graph_hash: render_graph_compilation.graph_hash.clone(),
+        resource_table_hash: resource_table.table_hash.clone(),
+        hardware_job_count,
+        compute_job_count,
+        total_threadgroup_count,
+        total_index_count,
+        queue_barrier_hash,
+        bind_table_hash,
+        dispatch_plan_hash,
+        queue_hash,
+        jobs,
     }
 }
 
@@ -3204,6 +3383,138 @@ fn meshlet_visibility_packet_hash(
     h.update(indirect_draw_packet_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn raster_work_queue_lane(raster_path: &str) -> &'static str {
+    if raster_path == "mesh_shader_or_hardware_raster_candidate" {
+        "graphics_mesh_shader"
+    } else {
+        "async_compute_raster"
+    }
+}
+
+fn raster_work_threadgroup_count(
+    entry: &BangerNativeMeshletVisibilityEntry,
+    queue_lane: &str,
+) -> u32 {
+    let primitive_work = entry.indirect_draw_args[0].max(1);
+    let cluster_instances = entry.indirect_draw_args[1].max(1);
+    let wave = if queue_lane == "graphics_mesh_shader" { 32 } else { 64 };
+    primitive_work
+        .saturating_mul(cluster_instances)
+        .saturating_add(wave - 1)
+        / wave
+}
+
+fn raster_work_bind_group_hash(
+    entry: &BangerNativeMeshletVisibilityEntry,
+    pipeline_cache_key: &str,
+    slot_hash: &str,
+    read_barrier: &str,
+    write_barrier: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.raster_work.bind_group.v1\0");
+    h.update(entry.cluster_id.as_bytes());
+    h.update(entry.page_hash.as_bytes());
+    h.update(pipeline_cache_key.as_bytes());
+    h.update(slot_hash.as_bytes());
+    h.update(read_barrier.as_bytes());
+    h.update(write_barrier.as_bytes());
+    h.update(entry.visibility_word.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn raster_work_item_hash(
+    job_id: &str,
+    entry: &BangerNativeMeshletVisibilityEntry,
+    queue_lane: &str,
+    pass_name: &str,
+    pipeline_cache_key: &str,
+    threadgroup_count: u32,
+    read_barrier: &str,
+    write_barrier: &str,
+    bind_group_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.raster_work.item.v1\0");
+    h.update(job_id.as_bytes());
+    h.update(entry.entry_hash.as_bytes());
+    h.update(queue_lane.as_bytes());
+    h.update(pass_name.as_bytes());
+    h.update(pipeline_cache_key.as_bytes());
+    h.update(threadgroup_count.to_le_bytes());
+    for arg in entry.indirect_draw_args {
+        h.update(arg.to_le_bytes());
+    }
+    h.update(read_barrier.as_bytes());
+    h.update(write_barrier.as_bytes());
+    h.update(bind_group_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn raster_work_queue_barrier_hash(jobs: &[BangerNativeRasterWorkItem]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.raster_work.queue_barriers.v1\0");
+    for job in jobs {
+        h.update(job.job_id.as_bytes());
+        h.update(job.read_barrier.as_bytes());
+        h.update(job.write_barrier.as_bytes());
+        h.update(job.queue_lane.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn raster_work_bind_table_hash(jobs: &[BangerNativeRasterWorkItem]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.raster_work.bind_table.v1\0");
+    for job in jobs {
+        h.update(job.job_id.as_bytes());
+        h.update(job.pipeline_cache_key.as_bytes());
+        h.update(job.bind_group_hash.as_bytes());
+        h.update(job.page_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn raster_work_dispatch_plan_hash(jobs: &[BangerNativeRasterWorkItem]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.raster_work.dispatch_plan.v1\0");
+    for job in jobs {
+        h.update(job.job_id.as_bytes());
+        h.update(job.queue_lane.as_bytes());
+        h.update(job.threadgroup_count.to_le_bytes());
+        for arg in job.indirect_draw_args {
+            h.update(arg.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn raster_work_queue_hash(
+    prepared: &MonsterPreparedCompute,
+    meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    resource_table: &BangerNativeResourceTable,
+    queue_barrier_hash: &str,
+    bind_table_hash: &str,
+    dispatch_plan_hash: &str,
+    jobs: &[BangerNativeRasterWorkItem],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_raster_work_queue.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(meshlet_visibility_packet.packet_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(resource_table.table_hash.as_bytes());
+    h.update(queue_barrier_hash.as_bytes());
+    h.update(bind_table_hash.as_bytes());
+    h.update(dispatch_plan_hash.as_bytes());
+    for job in jobs {
+        h.update(job.job_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -6687,6 +6998,7 @@ fn render_handoff_hash(
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
     culling_manifest: &BangerNativeCullingManifest,
     meshlet_visibility_packet: &BangerNativeMeshletVisibilityPacket,
+    raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
@@ -6709,6 +7021,9 @@ fn render_handoff_hash(
     h.update(meshlet_visibility_packet.packet_hash.as_bytes());
     h.update(meshlet_visibility_packet.visibility_buffer_hash.as_bytes());
     h.update(meshlet_visibility_packet.indirect_draw_packet_hash.as_bytes());
+    h.update(raster_work_queue.queue_hash.as_bytes());
+    h.update(raster_work_queue.dispatch_plan_hash.as_bytes());
+    h.update(raster_work_queue.bind_table_hash.as_bytes());
     h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
     h.update(radiance_schedule_manifest.invalidation_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
@@ -7364,6 +7679,57 @@ mod tests {
                     "mesh_shader_or_hardware_raster_candidate"
                         | "compute_software_raster_candidate"
                 )));
+        assert_eq!(
+            response.raster_work_queue.schema,
+            "forge.banger.native_raster_work_queue.v1"
+        );
+        assert_eq!(
+            response.raster_work_queue.authority,
+            "monster_kasm_meshlet_visibility_to_banger_raster_queue"
+        );
+        assert!(response
+            .raster_work_queue
+            .clean_room_basis
+            .contains("local_unreal_sparse_nanite"));
+        assert_eq!(
+            response.raster_work_queue.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.raster_work_queue.visibility_packet_hash,
+            response.meshlet_visibility_packet.packet_hash
+        );
+        assert_eq!(
+            response.raster_work_queue.render_graph_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert_eq!(
+            response.raster_work_queue.resource_table_hash,
+            response.resource_table.table_hash
+        );
+        assert_eq!(
+            response.raster_work_queue.hardware_job_count + response.raster_work_queue.compute_job_count,
+            response.raster_work_queue.jobs.len()
+        );
+        assert_eq!(
+            response.raster_work_queue.jobs.len(),
+            response.meshlet_visibility_packet.visible_cluster_count
+        );
+        assert!(response.raster_work_queue.total_threadgroup_count > 0);
+        assert!(response.raster_work_queue.total_index_count > 0);
+        assert_eq!(response.raster_work_queue.queue_barrier_hash.len(), 64);
+        assert_eq!(response.raster_work_queue.bind_table_hash.len(), 64);
+        assert_eq!(response.raster_work_queue.dispatch_plan_hash.len(), 64);
+        assert_eq!(response.raster_work_queue.queue_hash.len(), 64);
+        assert!(response
+            .raster_work_queue
+            .jobs
+            .iter()
+            .all(|job| job.job_hash.len() == 64
+                && job.bind_group_hash.len() == 64
+                && job.threadgroup_count > 0
+                && job.indirect_draw_args[0] > 0
+                && matches!(job.queue_lane, "graphics_mesh_shader" | "async_compute_raster")));
         assert_eq!(
             response.radiance_schedule_manifest.schema,
             "forge.banger.native_radiance_schedule_manifest.v1"
