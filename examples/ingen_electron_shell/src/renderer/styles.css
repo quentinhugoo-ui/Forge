@@ -1,4 +1,4 @@
-@font-face {
+﻿@font-face {
   font-family: "Geist";
   src: url("/fonts/Geist-Variable.ttf") format("truetype");
   font-display: swap;
@@ -11110,6 +11110,11 @@ ol.assistantText__list li::before {
 .shell--widget-minimizing .bottomControls__widgetButton--active {
   color: color-mix(in oklab, var(--forge-muted), transparent 18%) !important;
   opacity: 0.82;
+}
+
+.shell--widget-mode .bottomControls .bottomControls__widgetButton.bottomControls__widgetButton--active {
+  color: #ffffff !important;
+  opacity: 1;
 }
 
 .shell--widget-minimizing-header .titlebar,
