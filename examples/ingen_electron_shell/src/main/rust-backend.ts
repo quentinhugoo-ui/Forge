@@ -96,7 +96,9 @@ export interface RustBangerPresentLoopBootstrap {
   submittedFrameCount: number;
   drawCallCount?: number;
   vertexCount?: number;
+  renderLoopPolicy?: string;
   clearColor: [number, number, number, number];
+  frameUniformHash?: string;
   shaderSourceHash?: string;
   renderPipelineHash?: string;
   frameHash: string;
@@ -622,7 +624,9 @@ function shadowBangerPresentLoopBootstrap(reason: string): RustBangerPresentLoop
     submittedFrameCount: 0,
     drawCallCount: 0,
     vertexCount: 0,
+    renderLoopPolicy: "shadow_only",
     clearColor: [0, 0, 0, 1],
+    frameUniformHash: "",
     shaderSourceHash: "",
     renderPipelineHash: "",
     frameHash: "",
