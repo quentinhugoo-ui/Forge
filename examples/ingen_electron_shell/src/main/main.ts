@@ -841,7 +841,7 @@ function hashJson(value: unknown): string {
 type CpuTimes = ReturnType<typeof cpus>[number]["times"];
 
 let previousCpuTimes: CpuTimes[] | null = null;
-const NVIDIA_SMI_TIMEOUT_MS = 4500;
+const NVIDIA_SMI_TIMEOUT_MS = 900;
 type HardwareThermalSource = HardwareTelemetrySnapshot["thermal"]["source"];
 type TemperatureReading = { label: string; value: number; source: HardwareThermalSource };
 type ThermalTemperatures = { cpu: number | null; system: number | null; source: HardwareThermalSource };
@@ -1455,7 +1455,11 @@ function refreshCachedThermalTemperatures(): Promise<ThermalTemperatures> {
   return thermalRefreshPromise;
 }
 
-async function queryThermalTemperaturesCached(): Promise<ThermalTemperatures> {
+function emptyThermalTemperatures(): ThermalTemperatures {
+  return { cpu: null, system: null, source: "unavailable" };
+}
+
+function queryThermalTemperaturesCached(): ThermalTemperatures {
   const now = Date.now();
   if (
     cachedThermalTemperatures &&
@@ -1470,7 +1474,10 @@ async function queryThermalTemperaturesCached(): Promise<ThermalTemperatures> {
     });
     return cachedThermalTemperatures;
   }
-  return refresh;
+  void refresh.catch((error) => {
+    console.warn("Hardware thermal refresh failed.", error);
+  });
+  return emptyThermalTemperatures();
 }
 
 function topProcessSnapshot(): HardwareProcessSnapshot[] {
@@ -1501,7 +1508,7 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
   const linuxGpus = process.platform === "linux" && enrichedNvidiaGpus.length === 0 && windowsGpus.length === 0
     ? mergeGpuSensorFallbacks(drmGpus, linuxHwmonGpus)
     : [];
-  const thermalTemperatures = await queryThermalTemperaturesCached();
+  const thermalTemperatures = queryThermalTemperaturesCached();
   const gpuNotes =
     nvidiaGpus.length === 0 && windowsGpus.length > 0
       ? ["Windows system fallback identifies adapters through Win32_VideoController; live GPU load, thermals, fan and power require vendor telemetry."]
