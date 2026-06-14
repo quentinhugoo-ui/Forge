@@ -10814,19 +10814,6 @@ function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boole
   return true;
 }
 
-function moveNativeWidgetWindowForTaskbar(window: BrowserWindow): void {
-  if (widgetWindowRestoreState === null || window.isDestroyed()) {
-    return;
-  }
-  const targetBounds = widgetWindowBounds(window, { taskbarHidden: widgetTaskbarHidden });
-  console.info("Animating native widget window for taskbar state", {
-    id: window.id,
-    taskbarHidden: widgetTaskbarHidden,
-    targetBounds
-  });
-  animateNativeWidgetWindowBounds(window, targetBounds);
-}
-
 function restoreWidgetTaskbarState(): boolean {
   if (widgetTaskbarOriginalState === null) {
     return true;
@@ -10847,17 +10834,9 @@ function setNativeWindowWidgetTaskbarAutoHide(event: Electron.IpcMainInvokeEvent
     if (widgetWindowRestoreState === null) {
       return false;
     }
-    const accepted = setWidgetTaskbarHidden(true);
-    if (accepted) {
-      moveNativeWidgetWindowForTaskbar(window);
-    }
-    return accepted;
+    return setWidgetTaskbarHidden(true);
   }
-  const accepted = restoreWidgetTaskbarState();
-  if (accepted) {
-    moveNativeWidgetWindowForTaskbar(window);
-  }
-  return accepted;
+  return restoreWidgetTaskbarState();
 }
 
 function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): boolean {
@@ -10868,14 +10847,7 @@ function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): bo
   if (widgetWindowRestoreState === null) {
     return false;
   }
-  const accepted = setWidgetTaskbarHidden(!widgetTaskbarHidden);
-  if (accepted) {
-    const window = senderNativeWindow(event);
-    if (window && !window.isDestroyed()) {
-      moveNativeWidgetWindowForTaskbar(window);
-    }
-  }
-  return accepted;
+  return setWidgetTaskbarHidden(!widgetTaskbarHidden);
 }
 
 function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, regions: unknown): boolean {
