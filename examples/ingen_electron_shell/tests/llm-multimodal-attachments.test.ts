@@ -785,7 +785,7 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("isAgentFileModificationCommand(event.command)");
     expect(rendererSource).toContain("function agentFileModificationSummary");
     expect(rendererSource).toContain("function AnimatedModificationCounter");
-    expect(rendererSource).toContain("Modification de");
+    expect(rendererSource).toContain("Modified");
     expect(rendererSource).toContain("CONTEXT_COMPACTION_COMMAND");
     expect(rendererSource).toContain("function TranscriptContextCompactionEventLine");
     expect(rendererSource).toContain("Compressing context");
