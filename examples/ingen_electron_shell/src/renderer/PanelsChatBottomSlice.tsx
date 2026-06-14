@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, ListChecks, Pencil, RefreshCw, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
+import { Ban, ChevronLeft, ChevronRight, ChevronsUpDown, Copy, FolderPlus, List, ListChecks, MoveRight, Pencil, RefreshCw, Search, Terminal, Trash2, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import type { Camera, Object3D } from "three";
 import type { BrainCodeActCommand, ComposerUploadPreview, PanelsChatBottomCommand, PanelsChatBottomSnapshot, TranscriptMessage } from "../shared/ipc-contract";
 import {
@@ -30,6 +30,22 @@ import {
   BRAIN_WEB_COMMAND
 } from "../shared/ipc-contract";
 import { ComposerSendBurst, type ComposerSendBurstHandle } from "./ComposerSendBurst";
+import {
+  AGENT_COPY_PATH_COMMAND,
+  AGENT_CREATE_DIRECTORY_COMMAND,
+  AGENT_DELETE_EMPTY_DIRECTORY_COMMAND,
+  AGENT_DELETE_TREE_COMMAND,
+  AGENT_LIST_COMMAND,
+  AGENT_MOVE_PATH_COMMAND,
+  AGENT_READONLY_SHELL_COMMAND,
+  AGENT_RENAME_PATH_COMMAND,
+  AGENT_SEARCH_COMMAND,
+  AGENT_SHELL_COMMAND,
+  agentActionEventFromLine,
+  agentActionEventText,
+  agentActionEventCommandFromToken,
+  type AgentActionEventCommand
+} from "./agent-action-events";
 import { BRAIN_AGENT_MEMORY_UPDATED_EVENT, readBrainAgentMemory } from "./brain-user-memory-store";
 import { panelsChatBottomStore, usePanelsChatBottomStore } from "./panels-chat-bottom-store";
 import { ProviderLogo } from "./ProviderLogo";
@@ -1187,7 +1203,7 @@ type AssistantMarkdownBlock =
   | { kind: "event"; event: TranscriptCodeActEvent }
   | { kind: "event_group"; events: TranscriptCodeActEvent[] };
 
-type TranscriptCodeActCommand = BrainCodeActCommand | `/compute_${string}_`;
+type TranscriptCodeActCommand = BrainCodeActCommand | AgentActionEventCommand | `/compute_${string}_`;
 type AssistantTableAlignment = "left" | "center" | "right";
 type AssistantCalloutTone = "info" | "warning" | "success" | "assumption";
 
@@ -1209,6 +1225,7 @@ interface AssistantMacroListItem {
 interface TranscriptCodeActEvent {
   command: TranscriptCodeActCommand;
   text: string;
+  detail?: string;
 }
 
 const BRAIN_CODEACT_COMMAND_SET = new Set<string>(BRAIN_CODEACT_COMMANDS);
@@ -1256,6 +1273,10 @@ function isDynamicComputeCommand(value: string): value is `/compute_${string}_` 
 }
 
 function codeActEventText(command: TranscriptCodeActCommand): string {
+  const agentActionText = agentActionEventCommandFromToken(command);
+  if (agentActionText) {
+    return agentActionEventText(agentActionText);
+  }
   if (isDynamicComputeCommand(command)) {
     const label = dynamicComputeLabel(command);
     return `${label || "named"} compute executed`;
@@ -1265,6 +1286,10 @@ function codeActEventText(command: TranscriptCodeActCommand): string {
 
 function readCodeActCommand(value: string): TranscriptCodeActCommand | undefined {
   const trimmed = value.trim().replace(/^["'`]+|["'`,;]+$/g, "");
+  const agentActionCommand = agentActionEventCommandFromToken(trimmed);
+  if (agentActionCommand) {
+    return agentActionCommand;
+  }
   if (BRAIN_CODEACT_COMMAND_SET.has(trimmed)) {
     return trimmed as BrainCodeActCommand;
   }
@@ -1276,6 +1301,10 @@ function readCodeActCommand(value: string): TranscriptCodeActCommand | undefined
 
 function codeActEventFromLine(line: string): TranscriptCodeActEvent | undefined {
   const trimmed = line.trim();
+  const agentActionEvent = agentActionEventFromLine(trimmed);
+  if (agentActionEvent) {
+    return agentActionEvent;
+  }
   const commandAssignment = /(?:^|\s)command\s*=\s*("([^"]+)"|'([^']+)'|([^\s]+))/.exec(trimmed);
   const assignedCommand = commandAssignment ? readCodeActCommand(commandAssignment[2] ?? commandAssignment[3] ?? commandAssignment[4] ?? "") : undefined;
   if (assignedCommand) {
@@ -1308,6 +1337,15 @@ function isCodeActMetadataLine(line: string): boolean {
     /^(?:status|error|path|toPath|items?|stdout|stderr|exitCode|exit_code|proofHash|proof_hash|hash)\s*[:=]/i.test(trimmed) ||
     (/^[{[]/.test(trimmed) && /[}\]]$/.test(trimmed))
   );
+}
+
+function codeActMetadataDisplayText(line: string): string {
+  const trimmed = line.trim();
+  const result = /^R(?:e|\u00e9)sultat\s*:\s*(.*)$/i.exec(trimmed);
+  if (result) {
+    return `Result: ${result[1]}`.trim();
+  }
+  return trimmed;
 }
 
 function normalizeAssistantMarkdownText(text: string): string {
@@ -1482,6 +1520,7 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
   let list: { ordered: boolean; items: string[] } | null = null;
   let skippingCodeActMetadata = false;
   let sawCodeActMetadata = false;
+  let lastEvent: TranscriptCodeActEvent | null = null;
 
   const flushParagraph = () => {
     const body = paragraph.join(" ").replace(/\s+/g, " ").trim();
@@ -1504,9 +1543,13 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       flushParagraph();
       flushList();
       skippingCodeActMetadata = false;
+      lastEvent = null;
       continue;
     }
     if (isCodeActMetadataLine(line)) {
+      if (lastEvent) {
+        lastEvent.detail = codeActMetadataDisplayText(line);
+      }
       flushParagraph();
       flushList();
       skippingCodeActMetadata = true;
@@ -1515,6 +1558,7 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
     }
     if (skippingCodeActMetadata) {
       skippingCodeActMetadata = false;
+      lastEvent = null;
     }
     const fence = markdownFenceInfo(line);
     if (fence) {
@@ -1540,6 +1584,7 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
       flushParagraph();
       flushList();
       blocks.push({ kind: "event", event });
+      lastEvent = event;
       if (event.command === BRAIN_QUESTIONNAIRE_COMMAND) {
         sawCodeActMetadata = true;
         break;
@@ -2567,7 +2612,31 @@ function CalendarCodeActIcon() {
   );
 }
 
+function AgentActionCodeActIcon({ command }: { command: AgentActionEventCommand }) {
+  if (command === AGENT_LIST_COMMAND) return <List />;
+  if (command === AGENT_SEARCH_COMMAND) return <Search />;
+  if (command === AGENT_CREATE_DIRECTORY_COMMAND) return <FolderPlus />;
+  if (command === AGENT_RENAME_PATH_COMMAND) return <Pencil />;
+  if (command === AGENT_MOVE_PATH_COMMAND) return <MoveRight />;
+  if (command === AGENT_COPY_PATH_COMMAND) return <Copy />;
+  if (command === AGENT_DELETE_EMPTY_DIRECTORY_COMMAND || command === AGENT_DELETE_TREE_COMMAND) return <Trash2 />;
+  if (command === AGENT_READONLY_SHELL_COMMAND || command === AGENT_SHELL_COMMAND) return <Terminal />;
+  return <GenericCodeActIcon />;
+}
+
+function isAgentActionCommand(command: TranscriptCodeActCommand): command is AgentActionEventCommand {
+  return Boolean(agentActionEventCommandFromToken(command));
+}
+
+function agentActionTone(command: AgentActionEventCommand): "read" | "write" | "destructive" | "shell" {
+  if (command === AGENT_DELETE_EMPTY_DIRECTORY_COMMAND || command === AGENT_DELETE_TREE_COMMAND) return "destructive";
+  if (command === AGENT_READONLY_SHELL_COMMAND || command === AGENT_SHELL_COMMAND) return "shell";
+  if (command === AGENT_LIST_COMMAND || command === AGENT_SEARCH_COMMAND) return "read";
+  return "write";
+}
+
 function CodeActEventIcon({ command, brainSegmentPhase = "changed" }: { command: TranscriptCodeActCommand; brainSegmentPhase?: "changing" | "changed" }) {
+  if (isAgentActionCommand(command)) return <AgentActionCodeActIcon command={command} />;
   if (command === BRAIN_GMAIL_COMMAND || command === BRAIN_GMAIL_COM_COMMAND) return <ModuleLogo id="gmail" />;
   if (command === BRAIN_AIRBNB_COMMAND) return <ModuleLogo id="airbnb" />;
   if (command === BRAIN_SCIENCE_COMMAND || command === BRAIN_CODING_COMMAND) return <BrainSegmentCodeActIcon phase={brainSegmentPhase} />;
@@ -2597,6 +2666,7 @@ function brainSegmentEventText(command: TranscriptCodeActCommand, phase: "changi
 
 function TranscriptCodeActEventLine({ event }: { event: TranscriptCodeActEvent }) {
   const isBrainSegment = isBrainSegmentCommand(event.command);
+  const agentCommand = isAgentActionCommand(event.command) ? event.command : undefined;
   const [brainSegmentPhase, setBrainSegmentPhase] = useState<"changing" | "changed">(isBrainSegment ? "changing" : "changed");
 
   useEffect(() => {
@@ -2610,7 +2680,9 @@ function TranscriptCodeActEventLine({ event }: { event: TranscriptCodeActEvent }
 
   const eventClassName = isBrainSegment
     ? `transcriptCodeActEvent transcriptCodeActEvent--brainSegment transcriptCodeActEvent--brainSegment-${brainSegmentPhase}`
-    : "transcriptCodeActEvent";
+    : agentCommand
+      ? `transcriptCodeActEvent transcriptCodeActEvent--agent transcriptCodeActEvent--agent-${agentActionTone(agentCommand)}`
+      : "transcriptCodeActEvent";
   const text = isBrainSegment ? brainSegmentEventText(event.command, brainSegmentPhase) : event.text;
 
   return (
@@ -2624,17 +2696,61 @@ function TranscriptCodeActEventLine({ event }: { event: TranscriptCodeActEvent }
   );
 }
 
-function TranscriptCommandSummaryLine({ count }: { count: number }) {
+function TranscriptCommandSummaryLine({ events }: { events: TranscriptCodeActEvent[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const treeId = useId();
+  const count = events.length;
+  const treeHeight = Math.max(24, count * 28);
   return (
-    <div className="transcriptCommandSummaryLine" role="status">
-      <span className="transcriptCommandSummaryLine__icon" aria-hidden="true">
-        <svg viewBox="0 0 16 16">
-          <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
-          <path d="m5.2 6.1 2.1 1.9-2.1 1.9" />
-          <path d="M8.7 10h2.4" />
-        </svg>
-      </span>
-      <span>{count} {count > 1 ? "commandes exécutées" : "commande exécutée"}</span>
+    <div className="transcriptCommandSummary">
+      <button
+        aria-controls={treeId}
+        aria-expanded={expanded}
+        className="transcriptCommandSummaryLine"
+        onClick={() => setExpanded((value) => !value)}
+        type="button"
+      >
+        <span className="transcriptCommandSummaryLine__icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16">
+            <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+            <path d="m5.2 6.1 2.1 1.9-2.1 1.9" />
+            <path d="M8.7 10h2.4" />
+          </svg>
+        </span>
+        <span>{count} {count > 1 ? "commands executed" : "command executed"}</span>
+        <span className="transcriptCommandSummaryLine__chevron" aria-hidden="true">
+          <svg viewBox="0 0 16 16">
+            <path d="m4.5 6.5 3.5 3 3.5-3" />
+          </svg>
+        </span>
+      </button>
+      {expanded ? (
+        <div
+          aria-label="Executed command tree"
+          className="transcriptCommandTree"
+          id={treeId}
+          style={{ "--transcript-command-tree-height": `${treeHeight}px` } as CSSProperties}
+        >
+          <svg className="transcriptCommandTree__rail" viewBox={`0 0 33 ${treeHeight}`} preserveAspectRatio="none" aria-hidden="true">
+            <path className="transcriptCommandTree__trunk" d={`M1 0 V${treeHeight}`} />
+            {events.map((_, index) => {
+              const y = 12 + index * 28;
+              return <path className="transcriptCommandTree__branch" d={`M1 ${y} H32`} key={index} />;
+            })}
+          </svg>
+          <div className="transcriptCommandTree__rows">
+            {events.map((event, index) => (
+              <div className="transcriptCommandTree__row" key={`${event.command}-${index}`}>
+                <code>{event.command}</code>
+                <span>
+                  <span className="transcriptCommandTree__eventText">{event.text}</span>
+                  {event.detail ? <span className="transcriptCommandTree__detail">{event.detail}</span> : null}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2655,7 +2771,7 @@ function AssistantMarkdownText({
     <div className="assistantText__body">
       {blocks.map((block, index) => {
         if (block.kind === "event_group") {
-          return <TranscriptCommandSummaryLine count={block.events.length} key={`${messageId}-event-group-${index}`} />;
+          return <TranscriptCommandSummaryLine events={block.events} key={`${messageId}-event-group-${index}`} />;
         }
         if (block.kind === "event") {
           return <TranscriptCodeActEventLine event={block.event} key={`${messageId}-event-${index}-${block.event.command}`} />;

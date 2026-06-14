@@ -607,7 +607,8 @@ describe("LLM multimodal attachments", () => {
   });
 
   it("keeps CodeAct result metadata from creating duplicate Canvas events", () => {
-    expect(rendererSource).toContain("if (isCodeActResultHeader(line))");
+    expect(rendererSource).toContain("if (isCodeActMetadataLine(line))");
+    expect(rendererSource).toContain("codeActMetadataDisplayText(line)");
     expect(rendererSource).toContain("if (skippingCodeActMetadata)");
     expect(rendererSource).toContain("const event = codeActEventFromLine(line)");
     expect(rendererSource).not.toContain("const TRANSCRIPT_CODEACT_COMMANDS = [...BRAIN_CODEACT_COMMANDS, BRAIN_AIRBNB_COMMAND]");
@@ -766,10 +767,13 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("event_group");
     expect(rendererSource).toContain("function groupAssistantCodeActEvents");
     expect(rendererSource).toContain("function TranscriptCommandSummaryLine");
-    expect(rendererSource).toContain("commandes exécutées");
+    expect(rendererSource).toContain("commands executed");
+    expect(rendererSource).toContain("Executed command tree");
     expect(rendererSource).toContain("transcriptItem--assistantLoop");
     expect(stylesSource).toContain(".transcriptCommandSummaryLine");
     expect(stylesSource).toContain(".transcriptCommandSummaryLine__icon");
+    expect(stylesSource).toContain(".transcriptCommandTree");
+    expect(stylesSource).toContain(".transcriptCommandTree__branch");
     expect(stylesSource).toContain(".transcriptItem--assistantLoop");
   });
 

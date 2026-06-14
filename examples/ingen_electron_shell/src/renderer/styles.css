@@ -4271,17 +4271,38 @@ button {
   white-space: nowrap;
 }
 
+.transcriptCommandSummary {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
 .transcriptCommandSummaryLine {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-height: 22px;
   margin: 1px 0 0 2px;
+  padding: 0;
   color: #85898c;
   font-size: 13px;
   font-weight: 520;
   line-height: 1.25;
+  font-family: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
   animation: assistantParagraphInk 160ms ease-out both;
+}
+
+.transcriptCommandSummaryLine:hover,
+.transcriptCommandSummaryLine:focus-visible {
+  color: #b4babd;
+}
+
+.transcriptCommandSummaryLine:focus-visible {
+  outline: 1px solid color-mix(in oklab, #8fb7ff 58%, transparent);
+  outline-offset: 3px;
 }
 
 .transcriptCommandSummaryLine__icon {
@@ -4301,6 +4322,120 @@ button {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.35px;
+}
+
+.transcriptCommandSummaryLine__chevron {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: currentColor;
+  opacity: 0.72;
+  transition: transform 160ms ease-out, opacity 160ms ease-out;
+}
+
+.transcriptCommandSummaryLine[aria-expanded="true"] .transcriptCommandSummaryLine__chevron {
+  opacity: 1;
+  transform: rotate(180deg);
+}
+
+.transcriptCommandSummaryLine__chevron svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.55px;
+}
+
+.transcriptCommandTree {
+  --transcript-command-row-height: 28px;
+  position: relative;
+  min-width: min(760px, calc(100vw - 124px));
+  height: var(--transcript-command-tree-height);
+  margin: 3px 0 6px 18px;
+  animation: assistantParagraphInk 160ms ease-out both;
+}
+
+.transcriptCommandTree__rail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 33px;
+  height: var(--transcript-command-tree-height);
+  overflow: visible;
+}
+
+.transcriptCommandTree__rail path {
+  fill: none;
+  stroke: #45494b;
+  stroke-width: 2;
+  stroke-linecap: square;
+  vector-effect: non-scaling-stroke;
+}
+
+.transcriptCommandTree__trunk {
+  stroke-dasharray: 260;
+  stroke-dashoffset: 0;
+}
+
+.transcriptCommandTree__branch {
+  stroke-dasharray: 31;
+  stroke-dashoffset: 0;
+}
+
+.transcriptCommandTree__rows {
+  position: absolute;
+  top: 0;
+  left: 44px;
+  right: 0;
+  display: grid;
+  gap: 0;
+}
+
+.transcriptCommandTree__row {
+  display: grid;
+  grid-template-columns: minmax(154px, 196px) minmax(0, 1fr);
+  align-items: center;
+  min-height: var(--transcript-command-row-height);
+  column-gap: 12px;
+}
+
+.transcriptCommandTree__row code {
+  overflow: hidden;
+  color: #aeb4b7;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcriptCommandTree__row > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.transcriptCommandTree__eventText,
+.transcriptCommandTree__detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcriptCommandTree__eventText {
+  color: #b8bec1;
+  font-size: 13px;
+}
+
+.transcriptCommandTree__detail {
+  color: #7f8588;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10.5px;
 }
 
 .transcriptCodeActEvent__icon {
