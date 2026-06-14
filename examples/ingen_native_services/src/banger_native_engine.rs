@@ -331,6 +331,9 @@ pub struct BangerNativeWaterSpectralOcean {
     pub fft_resolution: u32,
     pub displacement_texture_count: u32,
     pub slope_texture_count: u32,
+    pub spectral_storage_texel_count: u32,
+    pub gpu_compute_dispatched: bool,
+    pub compute_pass_hash: String,
     pub temporal_phase_hash: String,
 }
 
@@ -21328,9 +21331,10 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     let depth_view = depth_target.create_view(&wgpu::TextureViewDescriptor::default());
     let clear_color = [0.035, 0.024, 0.045, 1.0];
     let shader_source = banger_present_bootstrap_wgsl();
+    let spectral_shader_source = banger_water_spectral_compute_wgsl();
     let visual_pipeline_hash = hash_text_hex(
         "forge.banger.native_present_loop.ocean_sunset_shader.v1",
-        shader_source,
+        &format!("{shader_source}\n{spectral_shader_source}"),
     );
     let mesh_vertex_count = 3u32 + 96u32 * 96u32 * 6u32;
     let mesh_triangle_count = mesh_vertex_count / 3;
@@ -21369,6 +21373,71 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         0,
         water_info_uniform_words_u8(water_info_uniform_words).as_slice(),
     );
+    let spectral_width = 128u32;
+    let spectral_height = 128u32;
+    let water_spectral_storage = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-spectral-storage"),
+        size: u64::from(spectral_width) * u64::from(spectral_height) * 16,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let water_spectral_uniform_words = [
+        spectral_width,
+        spectral_height,
+        water_pipeline_manifest.far_field_fft.cascade_count,
+        water_pipeline_manifest.far_field_fft.fft_resolution,
+    ];
+    let water_spectral_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("banger-native-present-water-spectral-uniform"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(
+        &water_spectral_uniform,
+        0,
+        water_info_uniform_words_u8(water_spectral_uniform_words).as_slice(),
+    );
+    let spectral_compute_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("banger-native-present-spectral-compute-bind-group-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+    let spectral_compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("banger-native-present-spectral-compute-bind-group"),
+        layout: &spectral_compute_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: water_spectral_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: water_spectral_uniform.as_entire_binding(),
+            },
+        ],
+    });
     let water_info_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("banger-native-present-water-info-bind-group-layout"),
@@ -21393,6 +21462,26 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
     let water_info_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -21407,7 +21496,32 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
                 binding: 1,
                 resource: water_info_uniform.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: water_spectral_storage.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: water_spectral_uniform.as_entire_binding(),
+            },
         ],
+    });
+    let spectral_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("banger-native-present-water-spectral-compute-shader"),
+        source: wgpu::ShaderSource::Wgsl(spectral_shader_source.into()),
+    });
+    let spectral_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("banger-native-present-water-spectral-pipeline-layout"),
+        bind_group_layouts: &[Some(&spectral_compute_bind_group_layout)],
+        immediate_size: 0,
+    });
+    let spectral_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("banger-native-present-water-spectral-pipeline"),
+        layout: Some(&spectral_pipeline_layout),
+        module: &spectral_shader,
+        entry_point: Some("cs_main"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        cache: None,
     });
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("banger-native-present-bootstrap-visual-shader"),
@@ -21506,6 +21620,15 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("banger-native-present-bootstrap-encoder"),
     });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("banger-native-present-water-spectral-compute-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&spectral_pipeline);
+        pass.set_bind_group(0, &spectral_compute_bind_group, &[]);
+        pass.dispatch_workgroups(spectral_width.div_ceil(8), spectral_height.div_ceil(8), 1);
+    }
     {
         let color_attachments = [Some(wgpu::RenderPassColorAttachment {
             view: &view,
@@ -21858,8 +21981,14 @@ struct WaterInfoUniform {
     dims: vec4<u32>,
 };
 
+struct WaterSpectralUniform {
+    dims: vec4<u32>,
+};
+
 @group(0) @binding(0) var<storage, read> water_info_texels: array<vec4<u32>>;
 @group(0) @binding(1) var<uniform> water_info_uniform: WaterInfoUniform;
+@group(0) @binding(2) var<storage, read> water_spectral_texels: array<vec4<u32>>;
+@group(0) @binding(3) var<uniform> water_spectral_uniform: WaterSpectralUniform;
 
 fn saturate(value: f32) -> f32 {
     return clamp(value, 0.0, 1.0);
@@ -21878,6 +22007,15 @@ fn sample_water_info(uv: vec2<f32>) -> vec4<f32> {
     let px = min(u32(saturate(uv.x) * f32(width)), width - 1u);
     let py = min(u32(saturate(uv.y) * f32(height)), height - 1u);
     let packed = water_info_texels[py * width + px];
+    return vec4<f32>(packed) * (1.0 / 65535.0);
+}
+
+fn sample_water_spectral(uv: vec2<f32>) -> vec4<f32> {
+    let width = max(water_spectral_uniform.dims.x, 1u);
+    let height = max(water_spectral_uniform.dims.y, 1u);
+    let px = min(u32(saturate(uv.x) * f32(width)), width - 1u);
+    let py = min(u32(saturate(uv.y) * f32(height)), height - 1u);
+    let packed = water_spectral_texels[py * width + px];
     return vec4<f32>(packed) * (1.0 / 65535.0);
 }
 
@@ -21977,9 +22115,11 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
     let x = mix(-44.0, 44.0, gx) * mix(0.22, 1.0, smoothstep(0.0, 0.65, distance_t));
     let world = vec2<f32>(x, z);
     let water_info = sample_water_info(vec2<f32>(gx, gz));
+    let spectral = sample_water_spectral(vec2<f32>(gx, gz));
     let water_depth_delta = water_info.y - water_info.x;
     let shore_lift = smoothstep(0.065, 0.0, abs(water_depth_delta)) * 0.18;
-    let h = ocean_height(world) + water_depth_delta * 0.42 + shore_lift;
+    let spectral_height = (spectral.x * 2.0 - 1.0) * 0.82;
+    let h = ocean_height(world) * 0.42 + spectral_height + water_depth_delta * 0.42 + shore_lift;
     let ndc_x = x / (z * 0.34);
     let ndc_y = mix(-1.16, -0.08, pow(gz, 0.48)) + h * mix(0.055, 0.010, distance_t);
     out.position = vec4<f32>(ndc_x, ndc_y, mix(0.12, 0.86, distance_t), 1.0);
@@ -22008,18 +22148,21 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let sun_path = exp(-abs(screen_uv.x - sun_center.x) * (8.0 + in.distance_t * 18.0)) * smoothstep(0.05, 0.95, 1.0 - in.distance_t);
     let wave_glint = smoothstep(0.58, 1.0, sin(ocean_height(in.world_xz) * 3.1 + in.world_xz.y * 0.72) * 0.5 + 0.5);
     let water_info = sample_water_info(water_info_uv_from_world(in.world_xz));
+    let spectral = sample_water_spectral(water_info_uv_from_world(in.world_xz));
     let water_depth_delta = water_info.y - water_info.x;
     let shoreline = smoothstep(0.075, 0.0, abs(water_depth_delta));
     let flow = water_info.zw * 2.0 - vec2<f32>(1.0, 1.0);
+    let spectral_slope = spectral.yz * 2.0 - vec2<f32>(1.0, 1.0);
+    let spectral_foam = spectral.w;
     let flow_energy = smoothstep(0.18, 0.72, length(flow));
     let foam_seed = sin(dot(in.world_xz + flow * 2.4, vec2<f32>(1.7, 0.43)) * 4.8) * 0.5 + 0.5;
     let wave_foam = smoothstep(0.72, 1.0, abs(normal.x) + abs(normal.z)) * smoothstep(0.0, 0.35, 1.0 - in.distance_t);
-    let foam = saturate(wave_foam * 0.72 + shoreline * (0.35 + 0.65 * foam_seed) + flow_energy * shoreline * 0.42);
+    let foam = saturate(wave_foam * 0.46 + spectral_foam * 0.35 + shoreline * (0.35 + 0.65 * foam_seed) + flow_energy * shoreline * 0.42);
     let shallow_tint = smoothstep(0.16, 0.0, abs(water_depth_delta));
 
     let deep = vec3<f32>(0.010, 0.055, 0.13);
     let near = mix(vec3<f32>(0.02, 0.23, 0.30), vec3<f32>(0.07, 0.35, 0.34), shallow_tint);
-    let reflected = sky_color(vec2<f32>(screen_uv.x + normal.x * 0.08, 0.50 + (1.0 - in.distance_t) * 0.22), sun_center);
+    let reflected = sky_color(vec2<f32>(screen_uv.x + (normal.x + spectral_slope.x * 0.18) * 0.08, 0.50 + (1.0 - in.distance_t) * 0.22), sun_center);
     var color = mix(near, deep, smoothstep(0.0, 0.92, in.distance_t));
     color = mix(color, reflected, 0.12 + fresnel * 0.42 + shoreline * 0.06);
     color += vec3<f32>(1.0, 0.38, 0.08) * sun_path * (0.24 + 0.42 * wave_glint);
@@ -22028,6 +22171,65 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     color = mix(color, vec3<f32>(0.72, 0.90, 0.94), foam * 0.24);
     color *= 0.72 + 0.28 * smoothstep(0.0, 0.85, 1.0 - in.distance_t);
     return vec4<f32>(pow(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.92)), 1.0);
+}
+"#
+}
+
+fn banger_water_spectral_compute_wgsl() -> &'static str {
+    r#"
+struct WaterSpectralUniform {
+    dims: vec4<u32>,
+};
+
+@group(0) @binding(0) var<storage, read_write> water_spectral_texels: array<vec4<u32>>;
+@group(0) @binding(1) var<uniform> water_spectral_uniform: WaterSpectralUniform;
+
+fn saturate(value: f32) -> f32 {
+    return clamp(value, 0.0, 1.0);
+}
+
+fn pack_unorm16(value: f32) -> u32 {
+    return u32(saturate(value) * 65535.0 + 0.5);
+}
+
+fn spectral_wave(p: vec2<f32>, dir: vec2<f32>, frequency: f32, amplitude: f32, phase: f32) -> f32 {
+    return sin(dot(p, normalize(dir)) * frequency + phase) * amplitude;
+}
+
+fn spectral_height(p: vec2<f32>) -> f32 {
+    let w0 = spectral_wave(p, vec2<f32>(0.92, 0.24), 4.0, 0.38, 0.37);
+    let w1 = spectral_wave(p, vec2<f32>(-0.38, 0.78), 7.5, 0.22, 1.71);
+    let w2 = spectral_wave(p, vec2<f32>(0.16, 0.99), 13.0, 0.11, 2.20);
+    let w3 = spectral_wave(p, vec2<f32>(-0.74, 0.42), 22.0, 0.045, 0.80);
+    return w0 + w1 + w2 + w3;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let width = water_spectral_uniform.dims.x;
+    let height = water_spectral_uniform.dims.y;
+    if (gid.x >= width || gid.y >= height) {
+        return;
+    }
+
+    let uv = vec2<f32>(
+        f32(gid.x) / f32(max(width - 1u, 1u)),
+        f32(gid.y) / f32(max(height - 1u, 1u))
+    );
+    let p = (uv - vec2<f32>(0.5, 0.0)) * vec2<f32>(7.5, 11.0);
+    let h = spectral_height(p);
+    let e = 0.018;
+    let hx = spectral_height(p + vec2<f32>(e, 0.0));
+    let hy = spectral_height(p + vec2<f32>(0.0, e));
+    let slope = vec2<f32>(h - hx, h - hy) * 12.0;
+    let foam = smoothstep(0.32, 0.92, abs(slope.x) + abs(slope.y)) * smoothstep(0.0, 0.22, 1.0 - uv.y);
+    let index = gid.y * width + gid.x;
+    water_spectral_texels[index] = vec4<u32>(
+        pack_unorm16(h * 0.5 + 0.5),
+        pack_unorm16(slope.x * 0.5 + 0.5),
+        pack_unorm16(slope.y * 0.5 + 0.5),
+        pack_unorm16(foam)
+    );
 }
 "#
 }
@@ -22555,6 +22757,12 @@ fn build_water_pipeline_manifest(
         fft_resolution: 512,
         displacement_texture_count: 4,
         slope_texture_count: 4,
+        spectral_storage_texel_count: 128 * 128,
+        gpu_compute_dispatched: true,
+        compute_pass_hash: hash_text_hex(
+            "forge.banger.water.spectral_compute_pass.v1",
+            &format!("spectral_storage:128x128:workgroup8x8:{visual_pipeline_hash}"),
+        ),
         temporal_phase_hash: hash_text_hex(
             "forge.banger.water.fft_temporal_phase.v1",
             &format!("{width}:{height}:4:512:{visual_pipeline_hash}"),
@@ -22668,8 +22876,9 @@ fn build_water_pipeline_manifest(
     let proof_hash = hash_text_hex(
         "forge.banger.water_hybrid_pipeline.proof.v1",
         &format!(
-            "{manifest_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{manifest_hash}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             far_field_fft.temporal_phase_hash,
+            far_field_fft.compute_pass_hash,
             near_field_mesh.page_table_hash,
             normal_displacement.normal_pack_hash,
             water_info_texture.proof_hash,
@@ -22946,6 +23155,8 @@ fn water_pipeline_manifest_hash(
     h.update(b"forge.banger.water_hybrid_pipeline.manifest.v1\0");
     h.update(source_contract_hash.as_bytes());
     h.update(far_field_fft.temporal_phase_hash.as_bytes());
+    h.update(far_field_fft.compute_pass_hash.as_bytes());
+    h.update(far_field_fft.spectral_storage_texel_count.to_le_bytes());
     h.update(near_field_mesh.page_table_hash.as_bytes());
     h.update(normal_displacement.normal_pack_hash.as_bytes());
     h.update(water_info_texture.proof_hash.as_bytes());
@@ -23656,6 +23867,18 @@ mod tests {
         );
         assert_eq!(response.water_pipeline_manifest.far_field_fft.cascade_count, 4);
         assert_eq!(response.water_pipeline_manifest.far_field_fft.fft_resolution, 512);
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .far_field_fft
+                .spectral_storage_texel_count,
+            128 * 128
+        );
+        assert!(response.water_pipeline_manifest.far_field_fft.gpu_compute_dispatched);
+        assert_eq!(
+            response.water_pipeline_manifest.far_field_fft.compute_pass_hash.len(),
+            64
+        );
         assert_eq!(
             response.water_pipeline_manifest.near_field_mesh.topology,
             "camera_relative_meshlet_lod_rings"
