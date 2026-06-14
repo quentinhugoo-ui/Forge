@@ -25,6 +25,14 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION action="run_command" command="powershell.exe"')?.command).toBe(AGENT_SHELL_COMMAND);
   });
 
+  it("keeps path metadata for file modification event cards", () => {
+    expect(agentActionEventFromLine(`${AGENT_COPY_PATH_COMMAND} path="src/App.tsx" toPath="src/App.copy.tsx"`)).toMatchObject({
+      command: AGENT_COPY_PATH_COMMAND,
+      path: "src/App.tsx",
+      toPath: "src/App.copy.tsx"
+    });
+  });
+
   it("ignores unrelated prose", () => {
     expect(agentActionEventFromLine("Je vais chercher dans les fichiers avant de modifier.")).toBeUndefined();
   });

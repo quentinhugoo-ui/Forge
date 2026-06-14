@@ -103,6 +103,10 @@ function result(
   return envelope;
 }
 
+function charDeltaValue(added: number, removed: number): string {
+  return `chars +${Math.max(0, Math.trunc(added))} -${Math.max(0, Math.trunc(removed))}`;
+}
+
 function canonicalPath(value: string): string {
   return process.platform === "win32" ? resolve(value).toLowerCase() : resolve(value);
 }
@@ -359,7 +363,12 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
 }
 
 export function agentActionEventCommandForRequest(request: AgentActionRequest): string {
-  return AGENT_ACTION_EVENT_BY_ACTION[request.action];
+  const command = AGENT_ACTION_EVENT_BY_ACTION[request.action];
+  const attributes = [
+    request.path ? `path=${JSON.stringify(request.path)}` : "",
+    request.toPath ? `toPath=${JSON.stringify(request.toPath)}` : ""
+  ].filter(Boolean);
+  return [command, ...attributes].join(" ");
 }
 
 async function listAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
@@ -487,7 +496,7 @@ async function createDirectoryAction(config: AgentActionHostConfig, request: Age
     return result(config, request, { accepted: false, error: resolved });
   }
   await mkdir(resolved, { recursive: false });
-  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved) });
+  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved), value: charDeltaValue(0, 0) });
 }
 
 async function renameOrMoveAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
@@ -509,7 +518,8 @@ async function renameOrMoveAction(config: AgentActionHostConfig, request: AgentA
   return result(config, request, {
     accepted: true,
     path: pathLabel(config, request, from),
-    toPath: pathLabel(config, request, to)
+    toPath: pathLabel(config, request, to),
+    value: charDeltaValue(0, 0)
   });
 }
 
@@ -528,11 +538,14 @@ async function copyAction(config: AgentActionHostConfig, request: AgentActionReq
   if (typeof to !== "string") {
     return result(config, request, { accepted: false, error: to });
   }
+  const fromInfo = await stat(from);
+  const addedChars = fromInfo.isFile() ? fromInfo.size : 0;
   await cp(from, to, { recursive: request.recursive === true, force: false, errorOnExist: true });
   return result(config, request, {
     accepted: true,
     path: pathLabel(config, request, from),
-    toPath: pathLabel(config, request, to)
+    toPath: pathLabel(config, request, to),
+    value: charDeltaValue(addedChars, 0)
   });
 }
 
@@ -569,7 +582,7 @@ async function deleteEmptyDirectoryAction(config: AgentActionHostConfig, request
     });
   }
   await rmdir(resolved);
-  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved) });
+  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved), value: charDeltaValue(0, 0) });
 }
 
 async function deleteTreeAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
@@ -591,7 +604,7 @@ async function deleteTreeAction(config: AgentActionHostConfig, request: AgentAct
     });
   }
   await rm(resolved, { recursive: true, force: false });
-  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved) });
+  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved), value: charDeltaValue(0, 0) });
 }
 
 function readonlyCommandAllowed(command: string, args: string[] = []): boolean {

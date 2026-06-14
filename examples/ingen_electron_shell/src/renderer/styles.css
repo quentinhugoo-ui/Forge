@@ -4313,6 +4313,64 @@ button {
   color: #8d9396;
 }
 
+.transcriptCodeActEvent--fileModification {
+  gap: 7px;
+  width: fit-content;
+  max-width: min(780px, calc(100% - 8px));
+  color: #8f9699;
+}
+
+.transcriptCodeActFileEvent__icon {
+  color: #9aa2a6;
+}
+
+.transcriptCodeActFileEvent__label {
+  flex: 0 0 auto;
+  color: #8c9397;
+  font-size: 13px;
+  font-weight: 510;
+  line-height: 1.2;
+}
+
+.transcriptCodeActFileEvent__fileCard {
+  min-width: 0;
+  max-width: min(360px, 42vw);
+  overflow: hidden;
+  padding: 2px 7px 2px;
+  color: #8dc4ff;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid color-mix(in oklab, #8dc4ff, transparent 62%);
+  border-radius: 6px;
+  background: color-mix(in oklab, #8dc4ff, transparent 94%);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, #8dc4ff, transparent 90%);
+}
+
+.transcriptCodeActFileEvent__counter {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 7px;
+  margin-left: 2px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.transcriptCodeActFileEvent__added {
+  color: #35d486;
+}
+
+.transcriptCodeActFileEvent__removed {
+  color: #ff756f;
+}
+
 .transcriptCodeActEvent__command {
   position: absolute;
   left: -138px;

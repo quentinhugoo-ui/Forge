@@ -773,6 +773,12 @@ describe("LLM multimodal attachments", () => {
     expect(rendererSource).toContain("is using");
     expect(rendererSource).toContain("transcriptCodeActEvent--agent-pending");
     expect(rendererSource).toContain("transcriptCodeActEvent--agent-complete");
+    expect(rendererSource).toContain("isAgentFileModificationCommand(event.command)");
+    expect(rendererSource).toContain("function agentFileModificationSummary");
+    expect(rendererSource).toContain("function AnimatedModificationCounter");
+    expect(rendererSource).toContain("Modification de");
+    expect(rendererSource).toContain("transcriptCodeActFileEvent__fileCard");
+    expect(rendererSource).toContain("transcriptCodeActFileEvent__counter");
     expect(rendererSource).toContain("transcriptItem--assistantLoop");
     expect(stylesSource).toContain(".transcriptCommandSummaryLine");
     expect(stylesSource).toContain(".transcriptCommandSummaryLine__icon");
@@ -780,6 +786,9 @@ describe("LLM multimodal attachments", () => {
     expect(stylesSource).toContain(".transcriptCommandTree__branch");
     expect(stylesSource).toContain("transcriptAgentEventPulse");
     expect(stylesSource).toContain("transcriptAgentEventSettle");
+    expect(stylesSource).toContain(".transcriptCodeActEvent--fileModification");
+    expect(stylesSource).toContain(".transcriptCodeActFileEvent__added");
+    expect(stylesSource).toContain(".transcriptCodeActFileEvent__removed");
     expect(stylesSource).toContain(".transcriptItem--assistantLoop");
   });
 

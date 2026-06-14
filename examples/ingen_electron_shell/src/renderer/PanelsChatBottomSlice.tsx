@@ -1226,6 +1226,8 @@ interface TranscriptCodeActEvent {
   command: TranscriptCodeActCommand;
   text: string;
   detail?: string;
+  path?: string;
+  toPath?: string;
 }
 
 const BRAIN_CODEACT_COMMAND_SET = new Set<string>(BRAIN_CODEACT_COMMANDS);
@@ -1708,6 +1710,9 @@ function assistantMarkdownBlocks(text: string): AssistantMarkdownBlock[] {
 }
 
 function shouldGroupAsCodexCommandEvent(event: TranscriptCodeActEvent): boolean {
+  if (isAgentActionCommand(event.command) && isAgentFileModificationCommand(event.command)) {
+    return false;
+  }
   return !isBrainSegmentCommand(event.command);
 }
 
@@ -2669,10 +2674,108 @@ function activeAgentEventText(agentName: string, command: TranscriptCodeActComma
   return `${label} is using ${command}`;
 }
 
+interface AgentFileModificationSummary {
+  fileName: string;
+  path: string;
+  addedChars: number;
+  removedChars: number;
+}
+
+function isAgentFileModificationCommand(command: AgentActionEventCommand): boolean {
+  return (
+    command === AGENT_CREATE_DIRECTORY_COMMAND ||
+    command === AGENT_RENAME_PATH_COMMAND ||
+    command === AGENT_MOVE_PATH_COMMAND ||
+    command === AGENT_COPY_PATH_COMMAND ||
+    command === AGENT_DELETE_EMPTY_DIRECTORY_COMMAND ||
+    command === AGENT_DELETE_TREE_COMMAND ||
+    command === AGENT_SHELL_COMMAND
+  );
+}
+
+function fileNameFromEventPath(path: string): string {
+  return path.replace(/[\\/]+$/g, "").split(/[\\/]/).filter(Boolean).at(-1) || path || "file";
+}
+
+function eventResultPath(detail?: string): string | undefined {
+  if (!detail) {
+    return undefined;
+  }
+  const normalized = detail.replace(/^R(?:esult|esultat):\s*/i, "").replace(/\s+chars\s+\+\d+\s+-\d+\.?$/i, "").trim();
+  const moved = /^(.+?)\s*->\s*(.+?)\.?$/.exec(normalized);
+  if (moved) {
+    return moved[2].replace(/\.$/, "").trim();
+  }
+  const applied = /^action applied on\s+(.+?)\.?$/i.exec(normalized) ?? /^action appliquee sur\s+(.+?)\.?$/i.exec(normalized);
+  if (applied) {
+    return applied[1].replace(/\.$/, "").trim();
+  }
+  return undefined;
+}
+
+function eventModificationDelta(detail?: string): { addedChars: number; removedChars: number } {
+  const match = /chars\s+\+(\d+)\s+-(\d+)/i.exec(detail ?? "");
+  return {
+    addedChars: match ? Number(match[1]) : 0,
+    removedChars: match ? Number(match[2]) : 0
+  };
+}
+
+function agentFileModificationSummary(event: TranscriptCodeActEvent, command: AgentActionEventCommand): AgentFileModificationSummary | undefined {
+  if (!isAgentFileModificationCommand(command)) {
+    return undefined;
+  }
+  const path = event.toPath ?? eventResultPath(event.detail) ?? event.path;
+  if (!path) {
+    return undefined;
+  }
+  const delta = eventModificationDelta(event.detail);
+  return {
+    fileName: fileNameFromEventPath(path),
+    path,
+    ...delta
+  };
+}
+
+function AnimatedModificationCounter({ addedChars, removedChars }: { addedChars: number; removedChars: number }) {
+  const [display, setDisplay] = useState({ addedChars, removedChars });
+
+  useEffect(() => {
+    if (prefersReducedMotion()) {
+      setDisplay({ addedChars, removedChars });
+      return;
+    }
+    const start = performance.now();
+    const from = display;
+    let frame = 0;
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - start) / 320);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay({
+        addedChars: Math.round(from.addedChars + (addedChars - from.addedChars) * eased),
+        removedChars: Math.round(from.removedChars + (removedChars - from.removedChars) * eased)
+      });
+      if (progress < 1) {
+        frame = requestAnimationFrame(tick);
+      }
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [addedChars, removedChars]);
+
+  return (
+    <span className="transcriptCodeActFileEvent__counter" aria-label={`${addedChars} characters added, ${removedChars} characters removed`}>
+      <span className="transcriptCodeActFileEvent__added">+{display.addedChars}</span>
+      <span className="transcriptCodeActFileEvent__removed">-{display.removedChars}</span>
+    </span>
+  );
+}
+
 function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: string; event: TranscriptCodeActEvent; writing: boolean }) {
   const isBrainSegment = isBrainSegmentCommand(event.command);
   const agentCommand = isAgentActionCommand(event.command) ? event.command : undefined;
   const isPendingAgentEvent = writing && Boolean(agentCommand) && !event.detail;
+  const fileModification = agentCommand ? agentFileModificationSummary(event, agentCommand) : undefined;
   const [brainSegmentPhase, setBrainSegmentPhase] = useState<"changing" | "changed">(isBrainSegment ? "changing" : "changed");
 
   useEffect(() => {
@@ -2687,13 +2790,29 @@ function TranscriptCodeActEventLine({ agentName, event, writing }: { agentName: 
   const eventClassName = isBrainSegment
     ? `transcriptCodeActEvent transcriptCodeActEvent--brainSegment transcriptCodeActEvent--brainSegment-${brainSegmentPhase}`
     : agentCommand
-      ? `transcriptCodeActEvent transcriptCodeActEvent--agent transcriptCodeActEvent--agent-${agentActionTone(agentCommand)}${isPendingAgentEvent ? " transcriptCodeActEvent--agent-pending" : " transcriptCodeActEvent--agent-complete"}`
+      ? `transcriptCodeActEvent transcriptCodeActEvent--agent transcriptCodeActEvent--agent-${agentActionTone(agentCommand)}${fileModification ? " transcriptCodeActEvent--fileModification" : ""}${isPendingAgentEvent ? " transcriptCodeActEvent--agent-pending" : " transcriptCodeActEvent--agent-complete"}`
       : "transcriptCodeActEvent";
   const text = isBrainSegment
     ? brainSegmentEventText(event.command, brainSegmentPhase)
     : isPendingAgentEvent
       ? activeAgentEventText(agentName, event.command)
       : event.text;
+
+  if (fileModification) {
+    return (
+      <div className={eventClassName}>
+        <code className="transcriptCodeActEvent__command">{event.command}</code>
+        <span className="transcriptCodeActEvent__icon transcriptCodeActFileEvent__icon" aria-hidden="true">
+          <Pencil size={13} strokeWidth={1.85} />
+        </span>
+        <span className="transcriptCodeActFileEvent__label">Modification de</span>
+        <span className="transcriptCodeActFileEvent__fileCard" title={fileModification.path}>
+          {fileModification.fileName}
+        </span>
+        <AnimatedModificationCounter addedChars={fileModification.addedChars} removedChars={fileModification.removedChars} />
+      </div>
+    );
+  }
 
   return (
     <div className={eventClassName}>

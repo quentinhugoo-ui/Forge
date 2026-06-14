@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createAgentActionHostManifest,
+  agentActionEventCommandForRequest,
   agentActionHostPromptManifest,
   agentActionRoutingHint,
   executeAgentActionRequest,
@@ -90,6 +91,7 @@ describe("agent action host", () => {
         path: "alpha"
       });
       expect(created.accepted).toBe(true);
+      expect(created.value).toBe("chars +0 -0");
 
       const renamed = await executeAgentActionRequest(config, {
         action: "rename_path",
@@ -98,6 +100,7 @@ describe("agent action host", () => {
       });
       expect(renamed.accepted).toBe(true);
       expect(renamed.toPath).toBe("beta");
+      expect(renamed.value).toBe("chars +0 -0");
 
       await mkdir(join(config.workspaceRoot, "nested"));
       const moved = await executeAgentActionRequest(config, {
@@ -120,7 +123,12 @@ describe("agent action host", () => {
         confirmed: true
       });
       expect(deleted.accepted).toBe(true);
+      expect(deleted.value).toBe("chars +0 -0");
     });
+  });
+
+  it("adds path metadata to transcript event commands", () => {
+    expect(agentActionEventCommandForRequest({ action: "copy_path", path: "a.txt", toPath: "b.txt" })).toBe('/agent_copy_path_ path="a.txt" toPath="b.txt"');
   });
 
   it("copies and recursively deletes confirmed directory trees", async () => {

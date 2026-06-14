@@ -27,6 +27,8 @@ export type AgentActionEventCommand = (typeof AGENT_ACTION_EVENT_COMMANDS)[numbe
 export interface AgentActionTranscriptEvent {
   command: AgentActionEventCommand;
   text: string;
+  path?: string;
+  toPath?: string;
 }
 
 const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
@@ -100,22 +102,55 @@ function assignmentValues(line: string): string[] {
   return values;
 }
 
+function assignmentValue(line: string, key: string): string | undefined {
+  const pattern = new RegExp(`(?:^|[\\s,{])${key}\\s*[:=]\\s*("((?:\\\\.|[^"])*)"|'([^']*)'|([^\\s,;}]+))`);
+  const match = pattern.exec(line);
+  const value = match?.[2] ?? match?.[3] ?? match?.[4];
+  if (!value) {
+    return undefined;
+  }
+  if (match?.[2] !== undefined) {
+    try {
+      return JSON.parse(`"${value}"`) as string;
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function eventWithPathMetadata(command: AgentActionEventCommand, line: string): AgentActionTranscriptEvent {
+  const event: AgentActionTranscriptEvent = {
+    command,
+    text: agentActionEventText(command)
+  };
+  const path = assignmentValue(line, "path");
+  const toPath = assignmentValue(line, "toPath");
+  if (path) {
+    event.path = path;
+  }
+  if (toPath) {
+    event.toPath = toPath;
+  }
+  return event;
+}
+
 export function agentActionEventFromLine(line: string): AgentActionTranscriptEvent | undefined {
   const trimmed = line.trim();
   const firstToken = trimmed.split(/\s+/, 1)[0] ?? "";
   const directCommand = agentActionEventCommandFromToken(firstToken);
   if (directCommand) {
-    return { command: directCommand, text: agentActionEventText(directCommand) };
+    return eventWithPathMetadata(directCommand, trimmed);
   }
   for (const value of assignmentValues(trimmed)) {
     const assignedCommand = agentActionEventCommandFromToken(value);
     if (assignedCommand) {
-      return { command: assignedCommand, text: agentActionEventText(assignedCommand) };
+      return eventWithPathMetadata(assignedCommand, trimmed);
     }
   }
   for (const [toolId, command] of AGENT_ACTION_EVENT_HINTS) {
     if (trimmed.includes(toolId)) {
-      return { command, text: agentActionEventText(command) };
+      return eventWithPathMetadata(command, trimmed);
     }
   }
   return undefined;

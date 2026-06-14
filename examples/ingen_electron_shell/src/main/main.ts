@@ -5198,6 +5198,7 @@ function friendlyAssistantErrorText(params: {
 }
 
 function agentActionResultSummary(result: AgentActionResult): string {
+  const charDelta = typeof result.value === "string" && /^chars \+\d+ -\d+$/.test(result.value) ? ` ${result.value}` : "";
   if (!result.accepted) {
     return `Resultat: action bloquee - ${result.error?.message ?? "rejetee par le host d'action"}.`;
   }
@@ -5211,12 +5212,12 @@ function agentActionResultSummary(result: AgentActionResult): string {
     return `Resultat: commande terminee avec code ${result.exitCode ?? "inconnu"}.`;
   }
   if (result.toPath) {
-    return `Resultat: ${result.path ?? "chemin"} -> ${result.toPath}.`;
+    return `Resultat: ${result.path ?? "chemin"} -> ${result.toPath}${charDelta}.`;
   }
   if (result.path) {
-    return `Resultat: action appliquee sur ${result.path}.`;
+    return `Resultat: action appliquee sur ${result.path}${charDelta}.`;
   }
-  return "Resultat: action appliquee.";
+  return `Resultat: action appliquee${charDelta}.`;
 }
 
 function renderPendingAgentActionText(text: string, extracted: ExtractedAgentAction): string {
