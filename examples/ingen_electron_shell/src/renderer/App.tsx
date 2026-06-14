@@ -405,8 +405,21 @@ export function App() {
     }
 
     let animationFrame = 0;
+    let armTimer = 0;
+    const hitRegionsReadyAt = performance.now() + WIDGET_NATIVE_SHRINK_LEAD_MS + 120;
     void setWidgetClickThrough?.(false);
+    void setWidgetHitRegions([]);
     const scheduleHitRegionSync = () => {
+      const remainingDelay = hitRegionsReadyAt - performance.now();
+      if (remainingDelay > 0) {
+        if (armTimer === 0) {
+          armTimer = window.setTimeout(() => {
+            armTimer = 0;
+            scheduleHitRegionSync();
+          }, Math.ceil(remainingDelay));
+        }
+        return;
+      }
       if (animationFrame !== 0) {
         return;
       }
@@ -417,8 +430,7 @@ export function App() {
       });
     };
 
-    scheduleHitRegionSync();
-    const settleTimers = [80, WIDGET_NATIVE_SHRINK_LEAD_MS + 120, WIDGET_HANDOFF_SETTLE_MS + 120].map((delay) =>
+    const settleTimers = [WIDGET_NATIVE_SHRINK_LEAD_MS + 120, WIDGET_HANDOFF_SETTLE_MS + 120].map((delay) =>
       window.setTimeout(scheduleHitRegionSync, delay)
     );
     const resizeObserver = new ResizeObserver(scheduleHitRegionSync);
@@ -437,6 +449,9 @@ export function App() {
     return () => {
       if (animationFrame !== 0) {
         window.cancelAnimationFrame(animationFrame);
+      }
+      if (armTimer !== 0) {
+        window.clearTimeout(armTimer);
       }
       settleTimers.forEach((timer) => window.clearTimeout(timer));
       resizeObserver.disconnect();
