@@ -841,6 +841,39 @@ export interface BangerPreviewFrameResult {
   error?: IpcError;
 }
 
+export interface BangerPresentLoopBootstrapResult {
+  ok: boolean;
+  schema: "forge.banger.native_present_loop_bootstrap.v1";
+  engine: "banger_rust_native_engine";
+  lane: "native_tandem_render";
+  nativeDomain: "render_3d";
+  routeStatus: string;
+  parentWindowHandleHash: string;
+  viewportWidth: number;
+  viewportHeight: number;
+  targetFrameMs: number;
+  selectedAdapter?: HardwareGpuSnapshot | Record<string, unknown> | null;
+  adapterCount: number;
+  backend: string;
+  surfaceKind: string;
+  swapchainFormat: string;
+  presentMode: string;
+  alphaMode: string;
+  renderPassCount: number;
+  submittedFrameCount: number;
+  clearColor: [number, number, number, number];
+  frameHash: string;
+  presentLoopHash: string;
+  proofHash: string;
+  verifier: {
+    wall: string;
+    frontierHypothesis: string;
+    localGate: string;
+    rollbackPath: string;
+  };
+  error?: IpcError;
+}
+
 export interface BangerGoogleTilesConfigResult {
   accepted: boolean;
   schema: "forge.banger.google_photorealistic_tiles_config.v1";
@@ -873,6 +906,7 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   executeAgentAction?: (request: AgentActionRequest) => Promise<AgentActionResult>;
   getHardwareTelemetrySnapshot?: () => Promise<HardwareTelemetrySnapshot>;
   getBangerPreviewFrame?: () => Promise<BangerPreviewFrameResult>;
+  getBangerPresentLoopBootstrap?: () => Promise<BangerPresentLoopBootstrapResult>;
   getBangerGoogleTilesConfig?: () => Promise<BangerGoogleTilesConfigResult>;
   showWorkspaceInExplorer?: () => Promise<WorkspaceActionResult>;
   copyWorkspacePath?: () => Promise<WorkspaceActionResult>;

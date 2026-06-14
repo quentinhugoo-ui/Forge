@@ -70,6 +70,15 @@ pub struct BangerGaussianSplatRasterizeRequest {
     pub background_rgba: Option<[f32; 4]>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePresentLoopBootstrapRequest {
+    pub parent_window_handle: Option<String>,
+    pub viewport_width: Option<u32>,
+    pub viewport_height: Option<u32>,
+    pub target_frame_ms: Option<f32>,
+}
+
 impl Default for BangerGaussianSplatRasterizeRequest {
     fn default() -> Self {
         Self {
@@ -150,6 +159,35 @@ pub struct BangerNewObjectPrepareResponse {
     pub gpu_page_promotion_allowed: bool,
     pub promotion_gate: &'static str,
     pub editable_scene_manifest: BangerEditableSceneManifest,
+    pub verifier: BangerNativeRenderVerifier,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePresentLoopBootstrapResponse {
+    pub ok: bool,
+    pub schema: &'static str,
+    pub engine: &'static str,
+    pub lane: &'static str,
+    pub native_domain: &'static str,
+    pub route_status: &'static str,
+    pub parent_window_handle_hash: String,
+    pub viewport_width: u32,
+    pub viewport_height: u32,
+    pub target_frame_ms: f32,
+    pub selected_adapter: Option<NativeGpuAdapter>,
+    pub adapter_count: usize,
+    pub backend: String,
+    pub surface_kind: &'static str,
+    pub swapchain_format: &'static str,
+    pub present_mode: &'static str,
+    pub alpha_mode: &'static str,
+    pub render_pass_count: u32,
+    pub submitted_frame_count: u32,
+    pub clear_color: [f64; 4],
+    pub frame_hash: String,
+    pub present_loop_hash: String,
+    pub proof_hash: String,
     pub verifier: BangerNativeRenderVerifier,
 }
 
@@ -772,6 +810,93 @@ pub struct BangerNativeRenderVerifier {
 pub struct BangerNativeEngine;
 
 impl BangerNativeEngine {
+    pub fn bootstrap_present_loop(
+        request: BangerNativePresentLoopBootstrapRequest,
+    ) -> Result<BangerNativePresentLoopBootstrapResponse, String> {
+        let viewport_width = request.viewport_width.unwrap_or(1280).clamp(64, 16384);
+        let viewport_height = request.viewport_height.unwrap_or(720).clamp(64, 16384);
+        let target_frame_ms = request.target_frame_ms.unwrap_or(16.67).clamp(4.0, 1000.0);
+        let parent_window_handle_hash = request
+            .parent_window_handle
+            .as_deref()
+            .filter(|handle| !handle.trim().is_empty())
+            .map(|handle| hash_text_hex("forge.banger.native_present_loop.parent_window.v1", handle.trim()))
+            .unwrap_or_else(|| "no_parent_window_handle".to_string());
+        let gpu_probe = native_gpu_adapter_probe();
+        let render = run_wgpu_present_bootstrap(viewport_width, viewport_height)?;
+        let selected_adapter = render.selected_adapter.clone().or(gpu_probe.selected);
+        let backend = render.backend.clone();
+        let frame_hash = present_loop_frame_hash(
+            viewport_width,
+            viewport_height,
+            target_frame_ms,
+            &backend,
+            render.swapchain_format,
+            render.present_mode,
+            render.alpha_mode,
+            render.clear_color,
+            &parent_window_handle_hash,
+        );
+        let present_loop_hash = present_loop_bootstrap_hash(
+            &frame_hash,
+            viewport_width,
+            viewport_height,
+            target_frame_ms,
+            &backend,
+            render.surface_kind,
+            render.swapchain_format,
+            render.present_mode,
+            render.alpha_mode,
+            &parent_window_handle_hash,
+        );
+        let proof_hash = hash_text_hex(
+            "forge.banger.native_present_loop_bootstrap.proof.v1",
+            &format!(
+                "{present_loop_hash}:{frame_hash}:{}:{}:{}",
+                render.render_pass_count, render.submitted_frame_count, gpu_probe.adapters.len()
+            ),
+        );
+
+        Ok(BangerNativePresentLoopBootstrapResponse {
+            ok: true,
+            schema: "forge.banger.native_present_loop_bootstrap.v1",
+            engine: "banger_rust_native_engine",
+            lane: "native_tandem_render",
+            native_domain: "render_3d",
+            route_status: if request.parent_window_handle.is_some() {
+                "child_surface_parent_handle_hash_bound"
+            } else {
+                "offscreen_present_ready_child_surface_pending"
+            },
+            parent_window_handle_hash,
+            viewport_width,
+            viewport_height,
+            target_frame_ms,
+            selected_adapter,
+            adapter_count: gpu_probe.adapters.len().max(render.adapter_count),
+            backend,
+            surface_kind: render.surface_kind,
+            swapchain_format: render.swapchain_format,
+            present_mode: render.present_mode,
+            alpha_mode: render.alpha_mode,
+            render_pass_count: render.render_pass_count,
+            submitted_frame_count: render.submitted_frame_count,
+            clear_color: render.clear_color,
+            frame_hash,
+            present_loop_hash,
+            proof_hash,
+            verifier: BangerNativeRenderVerifier {
+                wall: "latency+native_surface+ui_branching",
+                frontier_hypothesis:
+                    "Banger owns a Rust/wgpu present loop contract before Electron receives a child-window swapchain.",
+                local_gate:
+                    "forge-cargo test --manifest-path examples\\ingen_native_services\\Cargo.toml banger_native_engine::tests::bootstraps_native_present_loop_contract",
+                rollback_path:
+                    "remove bootstrap_present_loop and keep the static native preview frame IPC",
+            },
+        })
+    }
+
     pub fn prepare_newobject_contract(
         monster: &MonsterNode,
         request: BangerNewObjectPrepareRequest,
@@ -5719,6 +5844,192 @@ fn banger_pipeline_cache_key(
     hex32(h.finalize().into())
 }
 
+#[derive(Debug)]
+struct WgpuPresentBootstrap {
+    selected_adapter: Option<NativeGpuAdapter>,
+    adapter_count: usize,
+    backend: String,
+    surface_kind: &'static str,
+    swapchain_format: &'static str,
+    present_mode: &'static str,
+    alpha_mode: &'static str,
+    render_pass_count: u32,
+    submitted_frame_count: u32,
+    clear_color: [f64; 4],
+}
+
+fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBootstrap, String> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        flags: Default::default(),
+        memory_budget_thresholds: Default::default(),
+        backend_options: Default::default(),
+        display: Default::default(),
+    });
+    let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+        .into_iter()
+        .filter(|adapter| !matches!(adapter.get_info().device_type, wgpu::DeviceType::Cpu))
+        .collect::<Vec<_>>();
+    if adapters.is_empty() {
+        return Err("no non-CPU wgpu adapter available for Banger present loop".to_string());
+    }
+    adapters.sort_by_key(|adapter| {
+        let info = adapter.get_info();
+        if info.vendor == 0x10de || info.name.to_ascii_lowercase().contains("nvidia") {
+            return 0u8;
+        }
+        match info.device_type {
+            wgpu::DeviceType::DiscreteGpu => 1,
+            wgpu::DeviceType::IntegratedGpu => 2,
+            wgpu::DeviceType::VirtualGpu => 3,
+            wgpu::DeviceType::Other => 4,
+            wgpu::DeviceType::Cpu => 5,
+        }
+    });
+    let adapter_count = adapters.len();
+    let adapter = adapters
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Banger present loop adapter selection failed".to_string())?;
+    let info = adapter.get_info();
+    let selected_adapter = NativeGpuAdapter {
+        name: info.name.clone(),
+        vendor_id: info.vendor,
+        device_id: info.device,
+        backend: format!("{:?}", info.backend),
+        device_type: format!("{:?}", info.device_type),
+        driver: info.driver.clone(),
+        driver_info: info.driver_info.clone(),
+        selected: true,
+        score: 0,
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("banger-native-present-bootstrap-device"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::downlevel_defaults(),
+        memory_hints: wgpu::MemoryHints::default(),
+        experimental_features: wgpu::ExperimentalFeatures::default(),
+        trace: wgpu::Trace::Off,
+    }))
+    .map_err(|error| format!("Banger present loop device request failed: {error}"))?;
+
+    let swapchain_format = wgpu::TextureFormat::Bgra8UnormSrgb;
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("banger-native-present-bootstrap-target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: swapchain_format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let clear_color = [0.015, 0.018, 0.024, 1.0];
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("banger-native-present-bootstrap-encoder"),
+    });
+    {
+        let color_attachments = [Some(wgpu::RenderPassColorAttachment {
+            view: &view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color {
+                    r: clear_color[0],
+                    g: clear_color[1],
+                    b: clear_color[2],
+                    a: clear_color[3],
+                }),
+                store: wgpu::StoreOp::Store,
+            },
+        })];
+        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("banger-native-present-bootstrap-clear-pass"),
+            color_attachments: &color_attachments,
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+    }
+    queue.submit(Some(encoder.finish()));
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|error| format!("Banger present loop GPU poll failed: {error}"))?;
+
+    Ok(WgpuPresentBootstrap {
+        selected_adapter: Some(selected_adapter),
+        adapter_count,
+        backend: format!("{:?}", info.backend),
+        surface_kind: "wgpu_offscreen_target_pending_child_surface",
+        swapchain_format: "Bgra8UnormSrgb",
+        present_mode: "AutoVsync",
+        alpha_mode: "Opaque",
+        render_pass_count: 1,
+        submitted_frame_count: 1,
+        clear_color,
+    })
+}
+
+fn present_loop_frame_hash(
+    width: u32,
+    height: u32,
+    target_frame_ms: f32,
+    backend: &str,
+    swapchain_format: &str,
+    present_mode: &str,
+    alpha_mode: &str,
+    clear_color: [f64; 4],
+    parent_window_handle_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop.frame.v1\0");
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(target_frame_ms.to_le_bytes());
+    h.update(backend.as_bytes());
+    h.update(swapchain_format.as_bytes());
+    h.update(present_mode.as_bytes());
+    h.update(alpha_mode.as_bytes());
+    for value in clear_color {
+        h.update(value.to_le_bytes());
+    }
+    h.update(parent_window_handle_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn present_loop_bootstrap_hash(
+    frame_hash: &str,
+    width: u32,
+    height: u32,
+    target_frame_ms: f32,
+    backend: &str,
+    surface_kind: &str,
+    swapchain_format: &str,
+    present_mode: &str,
+    alpha_mode: &str,
+    parent_window_handle_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_present_loop_bootstrap.v1\0");
+    h.update(frame_hash.as_bytes());
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(target_frame_ms.to_le_bytes());
+    h.update(backend.as_bytes());
+    h.update(surface_kind.as_bytes());
+    h.update(swapchain_format.as_bytes());
+    h.update(present_mode.as_bytes());
+    h.update(alpha_mode.as_bytes());
+    h.update(parent_window_handle_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
 fn render_handoff_hash(
     prepared: &MonsterPreparedCompute,
     artifacts: &[BangerNativeRenderArtifactSummary],
@@ -5907,6 +6218,36 @@ artifact_handoff:
 mod tests {
     use super::*;
     use scan::{fresh_tmp_path, MemoryGovernor, Store, TmpDir};
+
+    #[test]
+    fn bootstraps_native_present_loop_contract() {
+        let response = BangerNativeEngine::bootstrap_present_loop(
+            BangerNativePresentLoopBootstrapRequest {
+                parent_window_handle: None,
+                viewport_width: Some(640),
+                viewport_height: Some(360),
+                target_frame_ms: Some(16.67),
+            },
+        )
+        .expect("native present loop bootstrap");
+
+        assert!(response.ok);
+        assert_eq!(response.schema, "forge.banger.native_present_loop_bootstrap.v1");
+        assert_eq!(response.lane, "native_tandem_render");
+        assert_eq!(response.native_domain, "render_3d");
+        assert_eq!(response.viewport_width, 640);
+        assert_eq!(response.viewport_height, 360);
+        assert_eq!(response.surface_kind, "wgpu_offscreen_target_pending_child_surface");
+        assert_eq!(response.swapchain_format, "Bgra8UnormSrgb");
+        assert_eq!(response.present_mode, "AutoVsync");
+        assert_eq!(response.alpha_mode, "Opaque");
+        assert_eq!(response.render_pass_count, 1);
+        assert_eq!(response.submitted_frame_count, 1);
+        assert_eq!(response.frame_hash.len(), 64);
+        assert_eq!(response.present_loop_hash.len(), 64);
+        assert_eq!(response.proof_hash.len(), 64);
+        assert!(response.selected_adapter.is_some());
+    }
 
     #[test]
     fn prepares_verified_native_banger_render_handoff() {

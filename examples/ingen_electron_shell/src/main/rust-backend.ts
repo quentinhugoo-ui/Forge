@@ -73,6 +73,43 @@ export interface RustBangerPreviewFrame {
   };
 }
 
+export interface RustBangerPresentLoopBootstrap {
+  ok: boolean;
+  schema: "forge.banger.native_present_loop_bootstrap.v1";
+  engine: "banger_rust_native_engine";
+  lane: "native_tandem_render";
+  nativeDomain: "render_3d";
+  routeStatus: string;
+  parentWindowHandleHash: string;
+  viewportWidth: number;
+  viewportHeight: number;
+  targetFrameMs: number;
+  selectedAdapter?: Record<string, unknown> | null;
+  adapterCount: number;
+  backend: string;
+  surfaceKind: string;
+  swapchainFormat: string;
+  presentMode: string;
+  alphaMode: string;
+  renderPassCount: number;
+  submittedFrameCount: number;
+  clearColor: [number, number, number, number];
+  frameHash: string;
+  presentLoopHash: string;
+  proofHash: string;
+  verifier: {
+    wall: string;
+    frontierHypothesis: string;
+    localGate: string;
+    rollbackPath: string;
+  };
+  error?: {
+    code: string;
+    message: string;
+    proofHash: string;
+  };
+}
+
 let cachedProjection: RustBackendProjection | null = shadowProjection("startup snapshot; native bridge refresh pending");
 let cachedAt = 0;
 let refreshInFlight: Promise<RustBackendProjection> | null = null;
@@ -136,8 +173,42 @@ export async function loadRustBangerPreviewFrame(shellRoot: string): Promise<Rus
   }
 }
 
-async function runBackendExe(exePath: string, args: string[] = []): Promise<string> {
+export async function loadRustBangerPresentLoopBootstrap(
+  shellRoot: string,
+  options: { parentWindowHandle?: string; width?: number; height?: number } = {}
+): Promise<RustBangerPresentLoopBootstrap> {
+  const repoRoot = join(shellRoot, "..", "..");
+  const bridgeExe = process.env.FORGE_ELECTRON_BACKEND_EXE;
+  const env = {
+    ...process.env,
+    ...(options.parentWindowHandle ? { FORGE_BANGER_PARENT_HWND: options.parentWindowHandle } : {}),
+    ...(options.width ? { FORGE_BANGER_VIEWPORT_WIDTH: String(Math.round(options.width)) } : {}),
+    ...(options.height ? { FORGE_BANGER_VIEWPORT_HEIGHT: String(Math.round(options.height)) } : {})
+  };
+  try {
+    const stdout =
+      bridgeExe && existsSync(bridgeExe)
+        ? await runBackendExe(bridgeExe, ["--banger-present-loop-bootstrap"], env)
+        : process.env.FORGE_ELECTRON_ALLOW_CARGO_BACKEND === "1"
+          ? await runBackendViaForgeCargo(repoRoot, ["--banger-present-loop-bootstrap"], env)
+          : null;
+    if (!stdout) {
+      return shadowBangerPresentLoopBootstrap("native bridge binary unavailable; cargo backend disabled");
+    }
+    return parseBangerPresentLoopBootstrap(stdout);
+  } catch (error) {
+    console.error("Rust Banger present loop bootstrap failed.", error);
+    return shadowBangerPresentLoopBootstrap("native present loop bootstrap failed; child surface pending");
+  }
+}
+
+async function runBackendExe(
+  exePath: string,
+  args: string[] = [],
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
   const { stdout } = await execFileAsync(exePath, args, {
+    env,
     timeout: 20_000,
     windowsHide: true,
     maxBuffer: 1024 * 1024
@@ -145,7 +216,11 @@ async function runBackendExe(exePath: string, args: string[] = []): Promise<stri
   return stdout;
 }
 
-async function runBackendViaForgeCargo(repoRoot: string, bridgeArgs: string[] = []): Promise<string> {
+async function runBackendViaForgeCargo(
+  repoRoot: string,
+  bridgeArgs: string[] = [],
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
   const powershell = join(
     process.env.SystemRoot ?? "C:\\Windows",
     "System32",
@@ -171,6 +246,7 @@ async function runBackendViaForgeCargo(repoRoot: string, bridgeArgs: string[] = 
     ],
     {
       cwd: repoRoot,
+      env,
       timeout: 90_000,
       windowsHide: true,
       maxBuffer: 4 * 1024 * 1024
@@ -203,6 +279,34 @@ function parseBangerPreviewFrame(stdout: string): RustBangerPreviewFrame {
     throw new Error("Rust Banger preview frame failed validation.");
   }
   return parsed as RustBangerPreviewFrame;
+}
+
+function parseBangerPresentLoopBootstrap(stdout: string): RustBangerPresentLoopBootstrap {
+  const line = stdout
+    .trim()
+    .split(/\r?\n/)
+    .reverse()
+    .find((entry) => entry.trim().startsWith("{"));
+  if (!line) {
+    throw new Error("Rust backend did not return a JSON Banger present loop bootstrap.");
+  }
+  const parsed = JSON.parse(line) as Partial<RustBangerPresentLoopBootstrap>;
+  if (
+    parsed.schema !== "forge.banger.native_present_loop_bootstrap.v1" ||
+    parsed.ok !== true ||
+    parsed.lane !== "native_tandem_render" ||
+    parsed.nativeDomain !== "render_3d" ||
+    typeof parsed.backend !== "string" ||
+    typeof parsed.surfaceKind !== "string" ||
+    typeof parsed.frameHash !== "string" ||
+    typeof parsed.presentLoopHash !== "string" ||
+    typeof parsed.proofHash !== "string" ||
+    typeof parsed.submittedFrameCount !== "number" ||
+    parsed.submittedFrameCount < 1
+  ) {
+    throw new Error("Rust Banger present loop bootstrap failed validation.");
+  }
+  return parsed as RustBangerPresentLoopBootstrap;
 }
 
 function parseProjection(stdout: string): RustBackendProjection {
@@ -354,6 +458,49 @@ function shadowBangerPreviewFrame(reason: string): RustBangerPreviewFrame {
   };
   frame.proofHash = hashJson({ ...frame, proofHash: "" });
   return frame;
+}
+
+function shadowBangerPresentLoopBootstrap(reason: string): RustBangerPresentLoopBootstrap {
+  const bootstrap: RustBangerPresentLoopBootstrap = {
+    ok: false,
+    schema: "forge.banger.native_present_loop_bootstrap.v1",
+    engine: "banger_rust_native_engine",
+    lane: "native_tandem_render",
+    nativeDomain: "render_3d",
+    routeStatus: "shadow_only",
+    parentWindowHandleHash: "unavailable",
+    viewportWidth: 0,
+    viewportHeight: 0,
+    targetFrameMs: 16.67,
+    selectedAdapter: null,
+    adapterCount: 0,
+    backend: "unavailable",
+    surfaceKind: "child_surface_pending",
+    swapchainFormat: "unavailable",
+    presentMode: "unavailable",
+    alphaMode: "unavailable",
+    renderPassCount: 0,
+    submittedFrameCount: 0,
+    clearColor: [0, 0, 0, 1],
+    frameHash: "",
+    presentLoopHash: "",
+    proofHash: "",
+    verifier: {
+      wall: "native_surface",
+      frontierHypothesis: "shadow bootstrap keeps Electron non-blocking until the Rust bridge is available.",
+      localGate: "npx tsc -p tsconfig.json --noEmit",
+      rollbackPath: "remove getBangerPresentLoopBootstrap IPC"
+    },
+    error: {
+      code: "rust_unavailable",
+      message: reason,
+      proofHash: hashJson({ bangerPresentLoop: false, reason })
+    }
+  };
+  bootstrap.proofHash = hashJson({ ...bootstrap, proofHash: "" });
+  bootstrap.frameHash = hashJson({ frame: "shadow", proofHash: bootstrap.proofHash });
+  bootstrap.presentLoopHash = hashJson({ presentLoop: "shadow", frameHash: bootstrap.frameHash });
+  return bootstrap;
 }
 
 function hashJson(value: unknown): string {

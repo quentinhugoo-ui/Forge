@@ -11,8 +11,10 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain('"--surface-width": "100vw"');
     expect(routerSource).toContain('"--surface-height": "100vh"');
     expect(routerSource).toContain("getBangerPreviewFrame");
+    expect(routerSource).toContain("getBangerPresentLoopBootstrap");
     expect(routerSource).toContain('"nativeViewportSlot nativeViewportSlot--live"');
     expect(routerSource).toContain('data-native-contract={surface.nativeContract}');
+    expect(routerSource).toContain('data-present-loop={presentLoop?.routeStatus ?? "pending"}');
     expect(routerSource).not.toContain("native raster frame loading");
   });
 

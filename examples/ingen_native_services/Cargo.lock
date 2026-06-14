@@ -291,10 +291,12 @@ dependencies = [
 name = "ingen-native-services"
 version = "0.1.0"
 dependencies = [
+ "pollster",
  "scan",
  "serde",
  "serde_json",
  "sha2",
+ "wgpu",
 ]
 
 [[package]]

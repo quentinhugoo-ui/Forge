@@ -1,4 +1,7 @@
-use ingen_native_services::banger_native_engine::{BangerGaussianSplatRasterizeRequest, BangerNativeEngine};
+use ingen_native_services::banger_native_engine::{
+    BangerGaussianSplatRasterizeRequest, BangerNativeEngine,
+    BangerNativePresentLoopBootstrapRequest,
+};
 use ingen_native_services::gpu_adapter_probe::{native_gpu_adapter_probe, NativeGpuAdapterProbe};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -87,6 +90,17 @@ struct BangerPreviewFrameMetrics {
 }
 
 fn main() {
+    if env::args().any(|argument| argument == "--banger-present-loop-bootstrap") {
+        let frame = BangerNativeEngine::bootstrap_present_loop(BangerNativePresentLoopBootstrapRequest {
+            parent_window_handle: env::var("FORGE_BANGER_PARENT_HWND").ok(),
+            viewport_width: env::var("FORGE_BANGER_VIEWPORT_WIDTH").ok().and_then(|value| value.parse().ok()),
+            viewport_height: env::var("FORGE_BANGER_VIEWPORT_HEIGHT").ok().and_then(|value| value.parse().ok()),
+            target_frame_ms: env::var("FORGE_BANGER_TARGET_FRAME_MS").ok().and_then(|value| value.parse().ok()),
+        })
+        .expect("bootstrap banger native present loop");
+        println!("{}", serde_json::to_string(&frame).expect("serialize banger present loop bootstrap"));
+        return;
+    }
     if env::args().any(|argument| argument == "--banger-preview-frame") {
         let frame = banger_preview_frame();
         println!("{}", serde_json::to_string(&frame).expect("serialize banger preview frame"));

@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type {
+  BangerPresentLoopBootstrapResult,
   BangerPreviewFrameResult,
   HeaderSurfaceContract,
   HeaderSurfaceSnapshot
@@ -47,6 +48,7 @@ function WebExplorerSurface({ surfaces }: { surfaces: HeaderSurfaceContract[] })
 
 function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const [previewFrame, setPreviewFrame] = useState<BangerPreviewFrameResult | null>(null);
+  const [presentLoop, setPresentLoop] = useState<BangerPresentLoopBootstrapResult | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -58,6 +60,15 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
       })
       .catch((error) => {
         console.error("Banger native preview frame failed to load.", error);
+      });
+    void globalThis.window?.forgeShell?.getBangerPresentLoopBootstrap?.()
+      .then((result) => {
+        if (active) {
+          setPresentLoop(result ?? null);
+        }
+      })
+      .catch((error) => {
+        console.error("Banger native present loop failed to bootstrap.", error);
       });
     return () => {
       active = false;
@@ -72,6 +83,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
         className={hasNativeFrame ? "nativeViewportSlot nativeViewportSlot--live" : "nativeViewportSlot"}
         aria-label="Banger native renderer surface"
         data-native-contract={surface.nativeContract}
+        data-present-loop={presentLoop?.routeStatus ?? "pending"}
         data-render-path={previewFrame?.metrics.renderPath ?? "rust-banger-wgpu-child-window"}
       >
         {hasNativeFrame ? (

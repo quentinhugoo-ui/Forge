@@ -11,8 +11,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { inflateRawSync } from "node:zlib";
 import {
   cachedRustBackendProjection,
+  loadRustBangerPresentLoopBootstrap,
   loadRustBangerPreviewFrame,
   refreshRustBackendProjection,
+  type RustBangerPresentLoopBootstrap,
   type RustBangerPreviewFrame,
   type RustBackendProjection
 } from "./rust-backend.js";
@@ -13458,6 +13460,23 @@ function installIpc(): void {
       return loadRustBangerPreviewFrame(shellRoot);
     }
     return loadRustBangerPreviewFrame(shellRoot);
+  });
+  ipcMain.handle("forge:get-banger-present-loop-bootstrap", async (event): Promise<RustBangerPresentLoopBootstrap> => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const bounds = owner?.getBounds();
+    const parentWindowHandle = owner ? nativeWindowHandleDecimal(owner) : undefined;
+    if (!validateSender(event)) {
+      return loadRustBangerPresentLoopBootstrap(shellRoot, {
+        parentWindowHandle,
+        width: bounds?.width,
+        height: bounds?.height
+      });
+    }
+    return loadRustBangerPresentLoopBootstrap(shellRoot, {
+      parentWindowHandle,
+      width: bounds?.width,
+      height: bounds?.height
+    });
   });
   ipcMain.handle("forge:get-banger-google-tiles-config", async (event): Promise<BangerGoogleTilesConfigResult> => {
     const schema = "forge.banger.google_photorealistic_tiles_config.v1" as const;
