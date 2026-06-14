@@ -10,7 +10,8 @@ import {
 import {
   agentActionLiveVisibleText,
   extractAgentActionJsonRequest,
-  removeAgentActionJsonFragment
+  removeAgentActionJsonFragment,
+  removeAgentActionJsonFragments
 } from "../src/main/agent-action-loop";
 import type { AgentActionRequest } from "../src/shared/ipc-contract";
 
@@ -50,6 +51,36 @@ describe("agent action loop parser", () => {
 
     expect(agentActionLiveVisibleText(partial)).toBe("Je regarde d'abord le bureau.");
     expect(agentActionLiveVisibleText(complete)).toBe("Je regarde d'abord le bureau.");
+  });
+
+  it("normalizes common model action aliases instead of leaking control JSON", () => {
+    const text = [
+      "Le dossier de destination est cree; je lis maintenant le bureau.",
+      'AGENT_ACTION_JSON {"action":"list_directory","scope":"workspace","path":"C:\\\\Users\\\\quent\\\\Desktop","confirmed":true}'
+    ].join("\n");
+
+    const extracted = extractAgentActionJsonRequest(text);
+
+    expect(extracted?.request).toEqual({
+      action: "list",
+      scope: "computer",
+      path: "C:\\Users\\quent\\Desktop",
+      confirmed: true
+    });
+    expect(agentActionLiveVisibleText(text)).toBe("Le dossier de destination est cree; je lis maintenant le bureau.");
+    expect(removeAgentActionJsonFragments(text)).not.toContain("AGENT_ACTION_JSON");
+  });
+
+  it("removes malformed control JSON from visible text even when it cannot execute it", () => {
+    const text = [
+      "Je tente une action locale, mais le nom d'action est invalide.",
+      'AGENT_ACTION_JSON {"action":"totally_unknown","path":"."}',
+      "Final summary: agent loop completed; tool steps=1."
+    ].join("\n");
+
+    expect(extractAgentActionJsonRequest(text)).toBeUndefined();
+    expect(agentActionLiveVisibleText(text)).not.toContain("AGENT_ACTION_JSON");
+    expect(removeAgentActionJsonFragments(text)).toBe("Je tente une action locale, mais le nom d'action est invalide.\nFinal summary: agent loop completed; tool steps=1.");
   });
 
   it("executes a realistic paragraph-action-result loop without fake completion", async () => {
