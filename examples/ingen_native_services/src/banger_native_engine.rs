@@ -21168,7 +21168,7 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         view_formats: &[],
     });
     let depth_view = depth_target.create_view(&wgpu::TextureViewDescriptor::default());
-    let clear_color = [0.015, 0.018, 0.024, 1.0];
+    let clear_color = [0.035, 0.024, 0.045, 1.0];
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("banger-native-present-bootstrap-visual-shader"),
         source: wgpu::ShaderSource::Wgsl(banger_present_bootstrap_wgsl().into()),
@@ -21218,11 +21218,11 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         cache: None,
     });
     let visual_pipeline_hash = hash_text_hex(
-        "forge.banger.native_present_loop.visual_shader.v1",
+        "forge.banger.native_present_loop.ocean_sunset_shader.v1",
         banger_present_bootstrap_wgsl(),
     );
     let depth_target_hash = present_loop_depth_target_hash(width, height, "Depth32Float", &visual_pipeline_hash);
-    let mesh_vertex_count = 36u32;
+    let mesh_vertex_count = 3u32;
     let mesh_triangle_count = mesh_vertex_count / 3;
     let draw_call_count = 1u32;
     let camera_position = [0.0, 0.0, -2.4];
@@ -21601,54 +21601,114 @@ fn banger_present_bootstrap_wgsl() -> &'static str {
     r#"
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
-    @location(0) color: vec3<f32>,
+    @location(0) uv: vec2<f32>,
 };
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
-    var positions = array<vec3<f32>, 36>(
-        vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.5,  0.5,  0.5),
-        vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>( 0.5,  0.5,  0.5), vec3<f32>(-0.5,  0.5,  0.5),
-        vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>(-0.5,  0.5, -0.5),
-        vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>(-0.5,  0.5, -0.5), vec3<f32>( 0.5,  0.5, -0.5),
-        vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>(-0.5, -0.5,  0.5), vec3<f32>(-0.5,  0.5,  0.5),
-        vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>(-0.5,  0.5,  0.5), vec3<f32>(-0.5,  0.5, -0.5),
-        vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>( 0.5,  0.5, -0.5),
-        vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>( 0.5,  0.5, -0.5), vec3<f32>( 0.5,  0.5,  0.5),
-        vec3<f32>(-0.5,  0.5,  0.5), vec3<f32>( 0.5,  0.5,  0.5), vec3<f32>( 0.5,  0.5, -0.5),
-        vec3<f32>(-0.5,  0.5,  0.5), vec3<f32>( 0.5,  0.5, -0.5), vec3<f32>(-0.5,  0.5, -0.5),
-        vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5,  0.5),
-        vec3<f32>(-0.5, -0.5, -0.5), vec3<f32>( 0.5, -0.5,  0.5), vec3<f32>(-0.5, -0.5,  0.5)
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0)
     );
-    var colors = array<vec3<f32>, 3>(
-        vec3<f32>(0.08, 0.80, 0.98),
-        vec3<f32>(1.00, 0.72, 0.18),
-        vec3<f32>(0.62, 0.26, 1.00)
-    );
-    let source = positions[vertex_index];
-    let yaw = 0.62;
-    let pitch = -0.42;
-    let yawed = vec3<f32>(
-        source.x * cos(yaw) + source.z * sin(yaw),
-        source.y,
-        -source.x * sin(yaw) + source.z * cos(yaw)
-    );
-    let rotated = vec3<f32>(
-        yawed.x,
-        yawed.y * cos(pitch) - yawed.z * sin(pitch),
-        yawed.y * sin(pitch) + yawed.z * cos(pitch)
-    );
-    let camera_z = rotated.z + 2.4;
-    let projected = vec2<f32>(rotated.x, rotated.y) * (1.35 / camera_z);
+    let p = positions[vertex_index];
     var out: VertexOut;
-    out.position = vec4<f32>(projected, 0.36 + rotated.z * 0.18, 1.0);
-    out.color = colors[(vertex_index / 12u) % 3u] * (0.72 + 0.28 * clamp(rotated.z + 0.8, 0.0, 1.0));
+    out.position = vec4<f32>(p, 0.24, 1.0);
+    out.uv = p * 0.5 + vec2<f32>(0.5, 0.5);
     return out;
+}
+
+fn saturate(value: f32) -> f32 {
+    return clamp(value, 0.0, 1.0);
+}
+
+fn hash12(p: vec2<f32>) -> f32 {
+    let h = dot(p, vec2<f32>(127.1, 311.7));
+    return fract(sin(h) * 43758.5453);
+}
+
+fn noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash12(i);
+    let b = hash12(i + vec2<f32>(1.0, 0.0));
+    let c = hash12(i + vec2<f32>(0.0, 1.0));
+    let d = hash12(i + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+fn ocean_height(p: vec2<f32>) -> f32 {
+    let swell_a = sin(dot(p, vec2<f32>(0.78, 0.23)) * 2.7 + 0.42) * 0.55;
+    let swell_b = sin(dot(p, vec2<f32>(-0.34, 0.91)) * 5.2 + 1.85) * 0.28;
+    let ripple = sin(dot(p, vec2<f32>(1.45, 0.64)) * 12.0 + 2.7) * 0.10;
+    return swell_a + swell_b + ripple + (noise(p * 1.7) - 0.5) * 0.18;
+}
+
+fn ocean_normal(p: vec2<f32>) -> vec3<f32> {
+    let e = 0.045;
+    let h = ocean_height(p);
+    let hx = ocean_height(p + vec2<f32>(e, 0.0));
+    let hy = ocean_height(p + vec2<f32>(0.0, e));
+    return normalize(vec3<f32>(h - hx, 0.34, h - hy));
+}
+
+fn sun_disk_sdf(uv: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
+    let stretched = (uv - center) * vec2<f32>(1.0, 1.35);
+    return length(stretched) - radius;
+}
+
+fn sky_color(uv: vec2<f32>, sun_center: vec2<f32>) -> vec3<f32> {
+    let v = saturate((uv.y - 0.42) / 0.58);
+    let horizon = vec3<f32>(1.0, 0.40, 0.12);
+    let upper = vec3<f32>(0.16, 0.07, 0.34);
+    let zenith = vec3<f32>(0.035, 0.055, 0.16);
+    var color = mix(horizon, upper, smoothstep(0.0, 0.65, v));
+    color = mix(color, zenith, smoothstep(0.55, 1.0, v));
+
+    let sdf = sun_disk_sdf(uv, sun_center, 0.082);
+    let disk = 1.0 - smoothstep(-0.006, 0.006, sdf);
+    let glow = exp(-max(sdf, 0.0) * 14.0);
+    color += vec3<f32>(1.0, 0.62, 0.20) * glow * 0.52;
+    color = mix(color, vec3<f32>(1.0, 0.74, 0.35), disk);
+
+    let band = smoothstep(0.02, 0.0, abs(uv.y - 0.49)) * (0.35 + 0.65 * noise(vec2<f32>(uv.x * 14.0, 2.0)));
+    return color + vec3<f32>(0.36, 0.10, 0.16) * band * 0.22;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0);
+    let uv = clamp(in.uv, vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0));
+    let horizon = 0.47 + sin(uv.x * 6.2831853) * 0.006;
+    let sun_center = vec2<f32>(0.68, 0.54);
+
+    if (uv.y >= horizon) {
+        let sky = sky_color(uv, sun_center);
+        return vec4<f32>(pow(clamp(sky, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.92)), 1.0);
+    }
+
+    let water_t = saturate((horizon - uv.y) / horizon);
+    let perspective = 1.0 / max(0.055, water_t);
+    let world = vec2<f32>((uv.x - 0.5) * perspective * 1.35, perspective * 0.46);
+    let normal = ocean_normal(world);
+    let view_dir = normalize(vec3<f32>(uv.x - 0.5, 0.62, 0.92));
+    let light_dir = normalize(vec3<f32>(0.30, 0.50, 0.82));
+    let fresnel = pow(1.0 - saturate(dot(normal, view_dir)), 4.2);
+    let specular = pow(saturate(dot(reflect(-light_dir, normal), view_dir)), 84.0);
+    let sun_path = exp(-abs(uv.x - sun_center.x) * (9.0 + water_t * 16.0)) * smoothstep(0.0, 0.95, water_t);
+    let wave_glint = smoothstep(0.72, 1.0, sin(ocean_height(world) * 5.4 + world.y * 2.1) * 0.5 + 0.5);
+    let foam = smoothstep(0.86, 1.0, abs(normal.x) + abs(normal.z)) * smoothstep(0.25, 1.0, water_t);
+
+    let deep = vec3<f32>(0.015, 0.095, 0.19);
+    let near = vec3<f32>(0.02, 0.26, 0.34);
+    let reflected = sky_color(vec2<f32>(uv.x + normal.x * 0.07, horizon + water_t * 0.42), sun_center);
+    var color = mix(near, deep, smoothstep(0.0, 0.9, water_t));
+    color = mix(color, reflected, 0.18 + fresnel * 0.34);
+    color += vec3<f32>(1.0, 0.38, 0.08) * sun_path * (0.24 + 0.42 * wave_glint);
+    color += vec3<f32>(1.0, 0.78, 0.52) * specular * 0.55;
+    color = mix(color, vec3<f32>(0.64, 0.88, 0.92), foam * 0.10);
+    color *= 0.80 + 0.20 * smoothstep(0.0, 0.75, water_t);
+    return vec4<f32>(pow(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.92)), 1.0);
 }
 "#
 }
@@ -22827,8 +22887,8 @@ mod tests {
         assert_eq!(response.depth_readback_hash.len(), 64);
         assert_eq!(response.depth_readback_proof_hash.len(), 64);
         assert_eq!(response.screen_coverage_hash.len(), 64);
-        assert_eq!(response.mesh_vertex_count, 36);
-        assert_eq!(response.mesh_triangle_count, 12);
+        assert_eq!(response.mesh_vertex_count, 3);
+        assert_eq!(response.mesh_triangle_count, 1);
         assert_eq!(response.draw_call_count, 1);
         assert_eq!(response.camera_position, [0.0, 0.0, -2.4]);
         assert_eq!(response.camera_target, [0.0, 0.0, 0.0]);
@@ -22863,6 +22923,12 @@ mod tests {
             .preview_rgba8
             .chunks_exact(4)
             .any(|pixel| pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0));
+        assert!(response.preview_rgba8.chunks_exact(4).any(|pixel| {
+            pixel[2] > 170 && pixel[1] > 75 && pixel[0] < 145
+        }));
+        assert!(response.preview_rgba8.chunks_exact(4).any(|pixel| {
+            pixel[0] > pixel[2].saturating_add(20) && pixel[0] > pixel[1].saturating_add(12)
+        }));
         assert_eq!(response.scene3d_proof_hash.len(), 64);
         assert_eq!(response.readback_proof_hash.len(), 64);
         assert_eq!(response.frame_hash.len(), 64);
