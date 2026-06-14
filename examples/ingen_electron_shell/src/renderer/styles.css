@@ -9628,8 +9628,8 @@ ol.assistantText__list li::before {
   --brain-blob-gleam: 50%;
   --brain-blob-gleam-opacity: 0.34;
   position: fixed;
-  right: clamp(-190px, -11vw, -100px);
-  bottom: clamp(-420px, -36vh, -280px);
+  right: clamp(-230px, -14vw, -140px);
+  bottom: clamp(-450px, -40vh, -315px);
   z-index: 0;
   display: grid;
   place-items: center;
