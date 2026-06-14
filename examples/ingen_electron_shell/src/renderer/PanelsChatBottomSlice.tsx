@@ -1688,6 +1688,7 @@ function groupAssistantCodeActEvents(blocks: AssistantMarkdownBlock[]): Assistan
 function assistantRenderableText(text: string): string {
   return text
     .replace(/\/(["'`])[^"'`\r\n]{1,120}\1_renamechat_/g, "")
+    .replace(/(^|\n)\s*\/(["'`])[^"'`\r\n]{0,120}(?:\2(?:_renamechat_?)?|_renamechat_?)?\s*$/g, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

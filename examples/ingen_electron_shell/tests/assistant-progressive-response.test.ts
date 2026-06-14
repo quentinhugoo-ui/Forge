@@ -28,6 +28,8 @@ describe("assistant progressive response feed", () => {
   it("keeps the existing assistant writing animation implementation untouched", () => {
     expect(animationSource).toContain("function assistantRenderableText");
     expect(animationSource).toContain("_renamechat_");
+    expect(animationSource).toContain("_renamechat_?)?");
+    expect(animationSource).toContain("\\s*$");
     expect(animationSource).toContain("assistantRenderableText(text)");
     expect(animationSource).toContain("function AnimatedAssistantText");
     expect(animationSource).toContain("const renderableText = useMemo(() => assistantRenderableText(message.text), [message.text]);");
