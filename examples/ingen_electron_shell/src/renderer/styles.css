@@ -164,7 +164,8 @@ button {
   --workspace-right: calc(var(--canvas-files-pane-right) + var(--canvas-files-pane-width) + 18px);
 }
 
-.shell--widget-mode {
+.shell--widget-mode,
+.shell--widget-minimizing {
   --left-panel-offset: 0px;
   --main-left: 0px;
   --right-panel-gutter: 0px;
@@ -191,7 +192,9 @@ button {
   isolation: isolate;
   pointer-events: none;
   user-select: none;
-  transition: opacity 220ms ease-out, transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translate3d(0, 0, 0);
+  transition: transform var(--sidebar-motion), opacity var(--sidebar-motion);
+  will-change: transform;
 }
 
 .titlebar__cluster,
@@ -445,7 +448,9 @@ button {
   display: block;
   height: 52px;
   background: transparent;
-  transition: left var(--sidebar-motion), opacity 220ms ease-out, transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translate3d(0, 0, 0);
+  transition: left var(--sidebar-motion), opacity var(--sidebar-motion), transform var(--sidebar-motion);
+  will-change: transform;
 }
 
 .workspaceHeader__menuHost {
@@ -11014,52 +11019,84 @@ ol.assistantText__list li::before {
 }
 
 /* MINI uses the left sidebar close motion as the single reference rhythm. */
+.shell--widget-minimizing .titlebar,
 .shell--widget-mode .titlebar,
+.shell--widget-minimizing .workspaceHeader,
 .shell--widget-mode .workspaceHeader,
+.shell--widget-minimizing .leftPanel,
 .shell--widget-mode .leftPanel,
+.shell--widget-minimizing .rightPanel,
 .shell--widget-mode .rightPanel,
+.shell--widget-minimizing .canvasSurfaces,
 .shell--widget-mode .canvasSurfaces,
+.shell--widget-minimizing .canvasSplitPane,
 .shell--widget-mode .canvasSplitPane,
+.shell--widget-minimizing .canvasPlanetRail,
 .shell--widget-mode .canvasPlanetRail,
+.shell--widget-minimizing .canvasFilesPane,
 .shell--widget-mode .canvasFilesPane,
+.shell--widget-minimizing .canvasTerminalPane,
 .shell--widget-mode .canvasTerminalPane,
+.shell--widget-minimizing .canvasCover,
 .shell--widget-mode .canvasCover,
+.shell--widget-minimizing .profileCanvas,
 .shell--widget-mode .profileCanvas,
+.shell--widget-minimizing .chatCanvas,
 .shell--widget-mode .chatCanvas,
+.shell--widget-minimizing .parallelTranscriptGrid,
 .shell--widget-mode .parallelTranscriptGrid,
+.shell--widget-minimizing .workspaceRequiredVeil,
 .shell--widget-mode .workspaceRequiredVeil,
+.shell--widget-minimizing .sidebarLedger,
 .shell--widget-mode .sidebarLedger,
+.shell--widget-minimizing .shadowLedger,
 .shell--widget-mode .shadowLedger {
   pointer-events: none;
   transition: transform var(--sidebar-motion);
   will-change: transform;
 }
 
+.shell--widget-minimizing .titlebar,
 .shell--widget-mode .titlebar,
+.shell--widget-minimizing .workspaceHeader,
 .shell--widget-mode .workspaceHeader {
   transform: translate3d(0, calc(-100% - 72px), 0);
 }
 
+.shell--widget-minimizing .leftPanel,
 .shell--widget-mode .leftPanel {
   transform: translate3d(calc(-100% - 18px), 0, 0);
 }
 
+.shell--widget-minimizing .rightPanel,
 .shell--widget-mode .rightPanel,
+.shell--widget-minimizing .canvasSplitPane,
 .shell--widget-mode .canvasSplitPane,
+.shell--widget-minimizing .canvasPlanetRail,
 .shell--widget-mode .canvasPlanetRail,
+.shell--widget-minimizing .canvasFilesPane,
 .shell--widget-mode .canvasFilesPane,
+.shell--widget-minimizing .canvasTerminalPane,
 .shell--widget-mode .canvasTerminalPane {
   opacity: 1;
   transform: translate3d(calc(100vw + 96px), 0, 0);
 }
 
+.shell--widget-minimizing .canvasSurfaces,
 .shell--widget-mode .canvasSurfaces,
+.shell--widget-minimizing .canvasCover,
 .shell--widget-mode .canvasCover,
+.shell--widget-minimizing .profileCanvas,
 .shell--widget-mode .profileCanvas,
+.shell--widget-minimizing .chatCanvas,
 .shell--widget-mode .chatCanvas,
+.shell--widget-minimizing .parallelTranscriptGrid,
 .shell--widget-mode .parallelTranscriptGrid,
+.shell--widget-minimizing .workspaceRequiredVeil,
 .shell--widget-mode .workspaceRequiredVeil,
+.shell--widget-minimizing .sidebarLedger,
 .shell--widget-mode .sidebarLedger,
+.shell--widget-minimizing .shadowLedger,
 .shell--widget-mode .shadowLedger {
   transform: translate3d(0, calc(100vh + 96px), 0);
 }

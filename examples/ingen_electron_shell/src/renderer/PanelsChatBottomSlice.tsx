@@ -80,6 +80,10 @@ function targetInsideComposer(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest(".composer"));
 }
 
+function fileDropEffectForTarget(target: EventTarget | null): DataTransfer["dropEffect"] {
+  return targetInsideComposer(target) ? "copy" : "none";
+}
+
 function useVisibleAutoplayVideo(videoRef: RefObject<HTMLVideoElement | null>, sourceKey: string) {
   useEffect(() => {
     const video = videoRef.current;
@@ -3822,7 +3826,7 @@ export function PanelsChatBottomSlice({
       }
       event.preventDefault();
       if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = "none";
+        event.dataTransfer.dropEffect = fileDropEffectForTarget(event.target);
       }
     };
     window.addEventListener("dragover", preventExternalFileNavigation);
@@ -3868,7 +3872,7 @@ export function PanelsChatBottomSlice({
   const permissionMode = snapshot.composer.permissionMode;
   const canvasMessages = snapshot.transcript.filter((message) => message.role !== "system");
   const activeQuestionnaire = useMemo(() => latestQuestionnaireFromMessages(canvasMessages), [canvasMessages]);
-  const activeDropPhase = fileDropPhase !== "idle" ? fileDropPhase : moduleDropPhase;
+  const activeDropPhase = moduleDropPhase;
   const composerSendBusy = composerSendBusyCount > 0;
   const beginComposerSendBusy = useCallback(() => {
     if (composerSendBusyRef.current > 0) {
@@ -4200,7 +4204,7 @@ export function PanelsChatBottomSlice({
         }
         event.preventDefault();
         fileDragDepthRef.current += 1;
-        setFileDropPhase(targetInsideComposer(event.target) ? "over" : "armed");
+        setFileDropPhase(targetInsideComposer(event.target) ? "over" : "idle");
       }}
       onDragOver={(event) => {
         if (!hasDraggedFiles(event.dataTransfer)) {
@@ -4208,9 +4212,9 @@ export function PanelsChatBottomSlice({
         }
         event.preventDefault();
         if (event.dataTransfer) {
-          event.dataTransfer.dropEffect = "copy";
+          event.dataTransfer.dropEffect = fileDropEffectForTarget(event.target);
         }
-        setFileDropPhase(targetInsideComposer(event.target) ? "over" : "armed");
+        setFileDropPhase(targetInsideComposer(event.target) ? "over" : "idle");
       }}
       onDragLeave={(event) => {
         if (!hasDraggedFiles(event.dataTransfer)) {
@@ -4228,7 +4232,9 @@ export function PanelsChatBottomSlice({
         event.preventDefault();
         fileDragDepthRef.current = 0;
         setFileDropPhase("idle");
-        attachDroppedFiles(droppedFilePaths(event.dataTransfer));
+        if (targetInsideComposer(event.target)) {
+          attachDroppedFiles(droppedFilePaths(event.dataTransfer));
+        }
       }}
     >
       {!composerOnly ? (

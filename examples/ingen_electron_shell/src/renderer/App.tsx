@@ -74,6 +74,7 @@ const GOOGLE_EARTH_DOM_DEFAULT_URL =
   "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
 const WIDGET_SURFACE_CLOSE_DELAY_MS = 720;
 const WIDGET_SIDEBAR_SETTLE_MS = 360;
+const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + 80;
 
 type WidgetLayoutLock = {
   chatLeft: number;
@@ -90,7 +91,7 @@ type WidgetHitRegion = {
 };
 
 const WIDGET_HIT_REGION_TARGETS = [
-  { selector: ".composer", padding: 1 },
+  { selector: ".composer", padding: 6 },
   { selector: ".widgetWindowsButton", padding: 1 },
   { selector: ".bottomControls button", padding: 1 },
   { selector: ".permissionModeControl", padding: 1 },
@@ -152,16 +153,6 @@ function readWidgetHitRegions(): WidgetHitRegion[] {
   return regions;
 }
 
-function widgetPointInRegions(x: number, y: number, regions: WidgetHitRegion[]): boolean {
-  return regions.some(
-    (region) =>
-      x >= region.x &&
-      x <= region.x + region.width &&
-      y >= region.y &&
-      y <= region.y + region.height
-  );
-}
-
 function shellStyleWithWidgetLock(lock: WidgetLayoutLock | null): React.CSSProperties {
   const style = cssTokenStyle();
   if (!lock) {
@@ -205,6 +196,7 @@ export function App() {
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
   const [widgetMode, setWidgetMode] = useState(false);
+  const [widgetMinimizing, setWidgetMinimizing] = useState(false);
   const [widgetLayoutLock, setWidgetLayoutLock] = useState<WidgetLayoutLock | null>(null);
   const canvasMapsOpenRef = useRef(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
@@ -373,18 +365,20 @@ export function App() {
     isLlmProviderCanvas ? "shell--llm-provider" : "",
     isBrainCanvas ? "shell--brain-canvas" : "",
     isBangerPage ? "shell--banger-page" : "",
+    widgetMinimizing ? "shell--widget-minimizing" : "",
     widgetMode ? "shell--widget-mode" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
 
   useEffect(() => {
-    document.documentElement.classList.toggle("ingen-widget-mode", widgetMode);
-    document.body.classList.toggle("ingen-widget-mode", widgetMode);
+    const widgetSurfaceVisible = widgetMode || widgetMinimizing;
+    document.documentElement.classList.toggle("ingen-widget-mode", widgetSurfaceVisible);
+    document.body.classList.toggle("ingen-widget-mode", widgetSurfaceVisible);
     return () => {
       document.documentElement.classList.remove("ingen-widget-mode");
       document.body.classList.remove("ingen-widget-mode");
     };
-  }, [widgetMode]);
+  }, [widgetMinimizing, widgetMode]);
 
   useEffect(() => {
     const api = globalThis.window?.forgeWindowControls;
@@ -400,15 +394,7 @@ export function App() {
     }
 
     let animationFrame = 0;
-    let lastPointer: { x: number; y: number } | null = null;
-    let clickThrough = false;
-    const setClickThrough = (enabled: boolean) => {
-      if (clickThrough === enabled) {
-        return;
-      }
-      clickThrough = enabled;
-      void setWidgetClickThrough?.(enabled);
-    };
+    void setWidgetClickThrough?.(false);
     const scheduleHitRegionSync = () => {
       if (animationFrame !== 0) {
         return;
@@ -417,20 +403,7 @@ export function App() {
         animationFrame = 0;
         const regions = readWidgetHitRegions();
         void setWidgetHitRegions(regions);
-        if (lastPointer) {
-          setClickThrough(!widgetPointInRegions(lastPointer.x, lastPointer.y, regions));
-        }
       });
-    };
-    const handlePointerMove = (event: MouseEvent | PointerEvent) => {
-      lastPointer = { x: event.clientX, y: event.clientY };
-      const regions = readWidgetHitRegions();
-      void setWidgetHitRegions(regions);
-      setClickThrough(!widgetPointInRegions(event.clientX, event.clientY, regions));
-    };
-    const handlePointerLeave = () => {
-      lastPointer = null;
-      setClickThrough(true);
     };
 
     scheduleHitRegionSync();
@@ -449,9 +422,6 @@ export function App() {
     window.addEventListener("resize", scheduleHitRegionSync);
     window.addEventListener("click", scheduleHitRegionSync, true);
     window.addEventListener("keyup", scheduleHitRegionSync, true);
-    window.addEventListener("mousemove", handlePointerMove, true);
-    window.addEventListener("pointermove", handlePointerMove, true);
-    window.addEventListener("mouseleave", handlePointerLeave, true);
 
     return () => {
       if (animationFrame !== 0) {
@@ -463,9 +433,6 @@ export function App() {
       window.removeEventListener("resize", scheduleHitRegionSync);
       window.removeEventListener("click", scheduleHitRegionSync, true);
       window.removeEventListener("keyup", scheduleHitRegionSync, true);
-      window.removeEventListener("mousemove", handlePointerMove, true);
-      window.removeEventListener("pointermove", handlePointerMove, true);
-      window.removeEventListener("mouseleave", handlePointerLeave, true);
       void setWidgetHitRegions([]);
       void setWidgetClickThrough?.(false);
     };
@@ -930,6 +897,7 @@ export function App() {
     setWorkspaceMenuOpen(false);
     setWorkspaceNotice(null);
     if (!enabled) {
+      setWidgetMinimizing(false);
       setWidgetMode(false);
       setWidgetLayoutLock(null);
       void globalThis.window?.forgeWindowControls?.setWidgetMode?.(false);
@@ -943,11 +911,14 @@ export function App() {
         await waitForWidgetMotion(WIDGET_SIDEBAR_SETTLE_MS);
       }
       setWidgetLayoutLock(readWidgetLayoutLock());
-      setWidgetMode(true);
-      void globalThis.window?.forgeWindowControls?.setWidgetMode?.(true, WIDGET_SURFACE_CLOSE_DELAY_MS);
+      setWidgetMinimizing(true);
+      setWidgetMode(false);
+      void globalThis.window?.forgeWindowControls?.setWidgetMode?.(true, WIDGET_NATIVE_SHRINK_DELAY_MS);
 
       widgetSurfaceCloseTimerRef.current = window.setTimeout(() => {
         widgetSurfaceCloseTimerRef.current = null;
+        setWidgetMode(true);
+        setWidgetMinimizing(false);
         setCanvasSplitOpen(false);
         setCanvasFilesOpen(false);
         setCanvasTerminalOpen(false);
