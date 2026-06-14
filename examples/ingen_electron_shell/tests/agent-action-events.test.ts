@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_COPY_PATH_COMMAND,
   AGENT_DELETE_TREE_COMMAND,
+  AGENT_APPSHOT_COMMAND,
+  AGENT_COMPUTER_INSPECT_COMMAND,
+  AGENT_FOCUS_WINDOW_COMMAND,
   AGENT_LIST_COMMAND,
   AGENT_READONLY_SHELL_COMMAND,
   AGENT_SEARCH_COMMAND,
@@ -23,6 +26,9 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION capability="shell.readonly" command="rg"')?.command).toBe(AGENT_READONLY_SHELL_COMMAND);
     expect(agentActionEventFromLine("executeAgentAction fs.delete_tree confirmed=true")?.command).toBe(AGENT_DELETE_TREE_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="run_command" command="powershell.exe"')?.command).toBe(AGENT_SHELL_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="computer_inspect"')?.command).toBe(AGENT_COMPUTER_INSPECT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION tool="computer.appshot"')?.command).toBe(AGENT_APPSHOT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION capability="computer.focus_window"')?.command).toBe(AGENT_FOCUS_WINDOW_COMMAND);
   });
 
   it("keeps path metadata for file modification event cards", () => {

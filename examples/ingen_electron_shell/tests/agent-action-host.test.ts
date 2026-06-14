@@ -7,6 +7,7 @@ import {
   createAgentCapabilityAtlas,
   createAgentActionHostManifest,
   createAgentActionRuntimeManifestSummary,
+  createComputerUsePolicy,
   createAgentVerificationPolicy,
   createWindowsExecutionPolicy,
   detectAgentActionInstalledTools,
@@ -34,6 +35,8 @@ async function withTempWorkspace<T>(run: (config: AgentActionHostConfig, root: s
 }
 
 describe("agent action host", () => {
+  const windowsIt = process.platform === "win32" ? it : it.skip;
+
   it("publishes bounded local-agent capabilities", () => {
     const manifest = createAgentActionHostManifest({
       workspaceRoot: "C:\\repo",
@@ -68,6 +71,8 @@ describe("agent action host", () => {
     expect(manifest.windowsExecution.routeCatalog.map((route) => route.id)).toContain("settings.ms_settings");
     expect(manifest.verification.schema).toBe("ingen.agent_verification.policy.v1");
     expect(manifest.verification.mutationCompletionRule).toBe("verified_or_blocked");
+    expect(manifest.computerUse.schema).toBe("ingen.computer_use.policy.v1");
+    expect(manifest.computerUse.executableActions).toContain("computer_inspect");
     expect([...manifest.runtime.installedToolIds, ...manifest.runtime.missingToolIds]).toContain("winget");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
 
@@ -99,6 +104,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("verification_policy=verified_or_blocked");
     expect(promptManifest).toContain("failure_categories=denied|missing_tool|bad_path|timeout|permission|protected_root|command_error|unverifiable|partial_success");
     expect(promptManifest).toContain("retry_strategies=api_cli|powershell|cmd|windows_command|wmi_cim|registry|settings_uri|browser_cdp|gui_computer_use|manual_approval");
+    expect(promptManifest).toContain("computer_use=foreground_required_for_risky_gui_actions pacing=single_action_then_verify");
     expect(promptManifest).toContain("windows.wmi:planned/none");
     expect(promptManifest).toContain("office.com:planned/prompt");
     expect(promptManifest).toContain("capability_policy=Use the atlas for reasoning");
@@ -136,7 +142,11 @@ describe("agent action host", () => {
       "fs.delete_empty_directory",
       "fs.delete_tree",
       "shell.readonly",
-      "shell.full"
+      "shell.full",
+      "computer.inspect",
+      "computer.appshot",
+      "computer.focus_window",
+      "computer.clipboard"
     ]);
     expect(summary.availableFamilies).toContain("shell.full");
     expect(summary.plannedFamilies).toContain("windows.settings");
@@ -206,6 +216,23 @@ describe("agent action host", () => {
     expect(policy.protectedBoundaryRule).toBe("block_without_retry");
   });
 
+  it("publishes a foreground computer-use policy", () => {
+    const policy = createComputerUsePolicy({
+      workspaceRoot: "C:\\repo",
+      workspaceActive: true,
+      cwd: "C:\\repo",
+      platform: "win32"
+    });
+
+    expect(policy.proofHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(policy.executableActions).toContain("computer_appshot");
+    expect(policy.interactionRequiresConfirmation).toBe(true);
+    expect(policy.userPresenceMode).toBe("foreground_required_for_risky_gui_actions");
+    expect(policy.pacingPolicy).toBe("single_action_then_verify");
+    expect(policy.forbiddenPrompts).toContain("credential");
+    expect(policy.forbiddenPrompts).toContain("uac");
+  });
+
   it("detects local tool availability and renders selected capability detail on demand", () => {
     const config: AgentActionHostConfig = {
       workspaceRoot: "C:\\repo",
@@ -265,6 +292,7 @@ describe("agent action host", () => {
     expect(hint).toContain("LOCAL_ACTION_TOOLS v1");
     expect(hint).toContain("families=fs.list fs.search");
     expect(hint).toContain("windows_reach=shell.full can invoke PowerShell");
+    expect(hint).toContain("computer_use=Inspect GUI first");
     expect(hint).toContain("retry=If a tool fails");
     expect(hint).toContain("format=Emit AGENT_ACTION_JSON");
     expect(hint).toContain("loop_style=Write natural progress notes");
@@ -455,6 +483,48 @@ describe("agent action host", () => {
     });
   });
 
+  windowsIt("inspects GUI state with bounded display and window summaries", async () => {
+    await withTempWorkspace(async (config) => {
+      const inspected = await executeAgentActionRequest(config, {
+        action: "computer_inspect",
+        maxResults: 10
+      });
+
+      expect(inspected.accepted).toBe(true);
+      expect(inspected.computerUse?.schema).toBe("ingen.computer_use.snapshot.v1");
+      expect(inspected.computerUse?.action).toBe("inspect");
+      expect(inspected.computerUse?.displays.length).toBeGreaterThan(0);
+      expect(inspected.computerUse?.accessibilityTreeStatus).toBe("planned");
+      expect(inspected.computerUse?.ocrStatus).toBe("planned");
+      expect(inspected.verification?.passed).toBe(true);
+    });
+  });
+
+  it("requires confirmation for privacy-sensitive GUI and clipboard actions", async () => {
+    await withTempWorkspace(async (config) => {
+      const appshot = await executeAgentActionRequest(config, {
+        action: "computer_appshot"
+      });
+      expect(appshot.accepted).toBe(false);
+      expect(appshot.userPresenceRequired).toBe(true);
+      expect(appshot.error?.message).toContain("confirmed:true");
+
+      const focus = await executeAgentActionRequest(config, {
+        action: "computer_focus_window",
+        windowTitle: "InGen"
+      });
+      expect(focus.accepted).toBe(false);
+      expect(focus.userPresenceRequired).toBe(true);
+
+      const clipboard = await executeAgentActionRequest(config, {
+        action: "computer_clipboard_write",
+        text: "hello"
+      });
+      expect(clipboard.accepted).toBe(false);
+      expect(clipboard.userPresenceRequired).toBe(true);
+    });
+  });
+
   it("reports command timeout and structured execution metadata", async () => {
     await withTempWorkspace(async (config) => {
       const timedOut = await executeAgentActionRequest(config, {
@@ -478,8 +548,6 @@ describe("agent action host", () => {
       expect(timedOut.verification?.passed).toBe(false);
     });
   });
-
-  const windowsIt = process.platform === "win32" ? it : it.skip;
 
   windowsIt("classifies PowerShell, CMD and native Windows command adapters", async () => {
     await withTempWorkspace(async (config) => {

@@ -248,6 +248,8 @@ Acceptance:
 - It verifies by screenshot or accessibility tree after interaction.
 - It does not approve security, payment, credential or destructive prompts for the user.
 
+Status: implemented for the planned scope. The host now exposes `AgentComputerUsePolicy`, executable GUI actions for bounded inspection, confirmed appshot capture, confirmed window focus and confirmed clipboard read/write. GUI actions use foreground user-presence mode, single-action-then-verify pacing, explicit forbidden prompt categories, and structured verification/artifact results. Full OCR, full UI Automation trees and low-level mouse/keyboard/scroll/drag-drop remain planned backends rather than fake direct execution.
+
 ### 7. Browser, Web And Downloads
 
 Goal: make web workflows controllable and verifiable.

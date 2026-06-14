@@ -5557,7 +5557,12 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   delete_empty_directory: "fs.delete_empty_directory",
   delete_tree: "fs.delete_tree",
   run_readonly_command: "shell.readonly",
-  run_command: "shell.full"
+  run_command: "shell.full",
+  computer_inspect: "computer.inspect",
+  computer_appshot: "computer.appshot",
+  computer_focus_window: "computer.focus_window",
+  computer_clipboard_read: "computer.clipboard_read",
+  computer_clipboard_write: "computer.clipboard_write"
 };
 
 function friendlyAssistantErrorText(params: {
@@ -5650,7 +5655,15 @@ function emitAgentRuntimeToolCallStarted(params: {
       ? "destructive"
       : params.request.action === "run_command"
       ? "computer_write"
-      : params.request.action === "list" || params.request.action === "search" || params.request.action === "run_readonly_command"
+      : params.request.action === "computer_appshot" ||
+        params.request.action === "computer_focus_window" ||
+        params.request.action === "computer_clipboard_read" ||
+        params.request.action === "computer_clipboard_write"
+      ? "external_ui"
+      : params.request.action === "list" ||
+        params.request.action === "search" ||
+        params.request.action === "run_readonly_command" ||
+        params.request.action === "computer_inspect"
       ? "read"
       : "workspace_write",
     status: "pending",
@@ -5857,6 +5870,18 @@ function compactAgentActionResult(result: AgentActionResult): string {
     stderrPreview: result.stderrPreview ? trimUtf8Bytes(result.stderrPreview, AGENT_ACTION_RESULT_PREVIEW_BYTES) : undefined,
     artifacts: result.artifacts,
     observedChanges: result.observedChanges,
+    computerUse: result.computerUse
+      ? {
+          action: result.computerUse.action,
+          displays: result.computerUse.displays.slice(0, 4),
+          windows: result.computerUse.windows.slice(0, 12),
+          accessibilityTreeStatus: result.computerUse.accessibilityTreeStatus,
+          ocrStatus: result.computerUse.ocrStatus,
+          proofHash: result.computerUse.proofHash
+        }
+      : undefined,
+    appshot: result.appshot,
+    userPresenceRequired: result.userPresenceRequired,
     verification: result.verification
       ? {
           passed: result.verification.passed,
@@ -5909,7 +5934,7 @@ function emitAgentLoopDiagnosticSummary(params: {
 }
 
 function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
-  return request.action === "list" || request.action === "search" || request.action === "run_readonly_command";
+  return request.action === "list" || request.action === "search" || request.action === "run_readonly_command" || request.action === "computer_inspect";
 }
 
 function textLooksLikeFilesystemMutationGoal(text: string): boolean {

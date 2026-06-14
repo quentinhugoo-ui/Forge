@@ -8,6 +8,11 @@ export const AGENT_DELETE_EMPTY_DIRECTORY_COMMAND = "/agent_delete_empty_directo
 export const AGENT_DELETE_TREE_COMMAND = "/agent_delete_tree_";
 export const AGENT_READONLY_SHELL_COMMAND = "/agent_readonly_shell_";
 export const AGENT_SHELL_COMMAND = "/agent_shell_";
+export const AGENT_COMPUTER_INSPECT_COMMAND = "/agent_computer_inspect_";
+export const AGENT_APPSHOT_COMMAND = "/agent_appshot_";
+export const AGENT_FOCUS_WINDOW_COMMAND = "/agent_focus_window_";
+export const AGENT_CLIPBOARD_READ_COMMAND = "/agent_clipboard_read_";
+export const AGENT_CLIPBOARD_WRITE_COMMAND = "/agent_clipboard_write_";
 
 export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_LIST_COMMAND,
@@ -19,7 +24,12 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_DELETE_EMPTY_DIRECTORY_COMMAND,
   AGENT_DELETE_TREE_COMMAND,
   AGENT_READONLY_SHELL_COMMAND,
-  AGENT_SHELL_COMMAND
+  AGENT_SHELL_COMMAND,
+  AGENT_COMPUTER_INSPECT_COMMAND,
+  AGENT_APPSHOT_COMMAND,
+  AGENT_FOCUS_WINDOW_COMMAND,
+  AGENT_CLIPBOARD_READ_COMMAND,
+  AGENT_CLIPBOARD_WRITE_COMMAND
 ] as const;
 
 export type AgentActionEventCommand = (typeof AGENT_ACTION_EVENT_COMMANDS)[number];
@@ -41,7 +51,12 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_DELETE_EMPTY_DIRECTORY_COMMAND, "empty directory deleted"],
   [AGENT_DELETE_TREE_COMMAND, "directory tree deleted"],
   [AGENT_READONLY_SHELL_COMMAND, "read-only shell command inspected the workspace"],
-  [AGENT_SHELL_COMMAND, "confirmed shell command executed"]
+  [AGENT_SHELL_COMMAND, "confirmed shell command executed"],
+  [AGENT_COMPUTER_INSPECT_COMMAND, "computer GUI state inspected"],
+  [AGENT_APPSHOT_COMMAND, "confirmed appshot captured"],
+  [AGENT_FOCUS_WINDOW_COMMAND, "confirmed window focus requested"],
+  [AGENT_CLIPBOARD_READ_COMMAND, "confirmed clipboard text inspected"],
+  [AGENT_CLIPBOARD_WRITE_COMMAND, "confirmed clipboard text replaced"]
 ]);
 
 export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand][] = [
@@ -54,7 +69,12 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["fs.delete_empty_directory", AGENT_DELETE_EMPTY_DIRECTORY_COMMAND],
   ["fs.delete_tree", AGENT_DELETE_TREE_COMMAND],
   ["shell.readonly", AGENT_READONLY_SHELL_COMMAND],
-  ["shell.full", AGENT_SHELL_COMMAND]
+  ["shell.full", AGENT_SHELL_COMMAND],
+  ["computer.inspect", AGENT_COMPUTER_INSPECT_COMMAND],
+  ["computer.appshot", AGENT_APPSHOT_COMMAND],
+  ["computer.focus_window", AGENT_FOCUS_WINDOW_COMMAND],
+  ["computer.clipboard_read", AGENT_CLIPBOARD_READ_COMMAND],
+  ["computer.clipboard_write", AGENT_CLIPBOARD_WRITE_COMMAND]
 ] as const;
 
 const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
@@ -67,7 +87,12 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["delete_empty_directory", AGENT_DELETE_EMPTY_DIRECTORY_COMMAND],
   ["delete_tree", AGENT_DELETE_TREE_COMMAND],
   ["run_readonly_command", AGENT_READONLY_SHELL_COMMAND],
-  ["run_command", AGENT_SHELL_COMMAND]
+  ["run_command", AGENT_SHELL_COMMAND],
+  ["computer_inspect", AGENT_COMPUTER_INSPECT_COMMAND],
+  ["computer_appshot", AGENT_APPSHOT_COMMAND],
+  ["computer_focus_window", AGENT_FOCUS_WINDOW_COMMAND],
+  ["computer_clipboard_read", AGENT_CLIPBOARD_READ_COMMAND],
+  ["computer_clipboard_write", AGENT_CLIPBOARD_WRITE_COMMAND]
 ]);
 
 const AGENT_ACTION_EVENT_BY_TOOL = new Map<string, AgentActionEventCommand>(AGENT_ACTION_EVENT_HINTS);

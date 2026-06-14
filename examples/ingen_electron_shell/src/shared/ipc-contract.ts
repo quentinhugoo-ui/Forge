@@ -451,6 +451,61 @@ export interface AgentVerificationPolicy {
   proofHash: string;
 }
 
+export type AgentComputerUseAction =
+  | "inspect"
+  | "appshot"
+  | "focus_window"
+  | "clipboard_read"
+  | "clipboard_write";
+
+export interface AgentComputerDisplaySummary {
+  id: string;
+  primary: boolean;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scaleFactor?: number;
+}
+
+export interface AgentComputerWindowSummary {
+  pid: number;
+  processName: string;
+  title: string;
+  focused?: boolean;
+}
+
+export interface AgentComputerUseSnapshot {
+  schema: "ingen.computer_use.snapshot.v1";
+  action: AgentComputerUseAction;
+  displays: AgentComputerDisplaySummary[];
+  windows: AgentComputerWindowSummary[];
+  accessibilityTreeStatus: "available" | "planned" | "blocked";
+  ocrStatus: "available" | "planned" | "blocked";
+  proofHash: string;
+}
+
+export interface AgentAppshotArtifact {
+  schema: "ingen.computer_use.appshot.v1";
+  path: string;
+  width: number;
+  height: number;
+  bytes: number;
+  sha256: string;
+  proofHash: string;
+}
+
+export interface AgentComputerUsePolicy {
+  schema: "ingen.computer_use.policy.v1";
+  executableActions: AgentActionKind[];
+  inspectionRequiresConfirmation: boolean;
+  interactionRequiresConfirmation: boolean;
+  userPresenceMode: "foreground_required_for_risky_gui_actions";
+  pacingPolicy: "single_action_then_verify";
+  forbiddenPrompts: string[];
+  proofHash: string;
+}
+
 export interface AgentActionCapability extends AgentCapabilityAtlasEntry {
   requiresApproval: boolean;
   description: string;
@@ -476,6 +531,7 @@ export interface AgentActionHostManifest {
   installedTools: AgentActionInstalledTool[];
   windowsExecution: AgentWindowsExecutionPolicy;
   verification: AgentVerificationPolicy;
+  computerUse: AgentComputerUsePolicy;
   runtime: AgentActionRuntimeManifestSummary;
   proofHash: string;
 }
@@ -490,7 +546,12 @@ export type AgentActionKind =
   | "delete_empty_directory"
   | "delete_tree"
   | "run_readonly_command"
-  | "run_command";
+  | "run_command"
+  | "computer_inspect"
+  | "computer_appshot"
+  | "computer_focus_window"
+  | "computer_clipboard_read"
+  | "computer_clipboard_write";
 
 export type AgentActionScope = "workspace" | "computer";
 
@@ -503,6 +564,8 @@ export interface AgentActionRequest {
   command?: string;
   args?: string[];
   executionAdapter?: AgentWindowsExecutionAdapterId;
+  windowTitle?: string;
+  text?: string;
   maxResults?: number;
   confirmed?: boolean;
   recursive?: boolean;
@@ -542,6 +605,9 @@ export interface AgentActionResult {
   artifacts?: string[];
   observedChanges?: string[];
   verification?: AgentVerificationResult;
+  computerUse?: AgentComputerUseSnapshot;
+  appshot?: AgentAppshotArtifact;
+  userPresenceRequired?: boolean;
   failureCategory?: AgentFailureCategory;
   retryRoutes?: AgentRetryStrategyId[];
   value?: string;
@@ -653,7 +719,12 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "delete_empty_directory",
     "delete_tree",
     "run_readonly_command",
-    "run_command"
+    "run_command",
+    "computer_inspect",
+    "computer_appshot",
+    "computer_focus_window",
+    "computer_clipboard_read",
+    "computer_clipboard_write"
   ];
   if (!actions.includes(candidate.action as AgentActionKind)) {
     return false;
@@ -668,6 +739,11 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     return false;
   }
   for (const key of ["path", "toPath", "query", "command"] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
+      return false;
+    }
+  }
+  for (const key of ["windowTitle", "text"] as const) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
       return false;
     }

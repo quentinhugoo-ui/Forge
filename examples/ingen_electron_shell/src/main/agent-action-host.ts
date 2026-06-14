@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rename, rm, rmdir, stat } from "node:fs/promises";
-import { basename, isAbsolute, parse, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, parse, relative, resolve } from "node:path";
 import type {
+  AgentAppshotArtifact,
   AgentActionCapability,
   AgentActionHostManifest,
   AgentActionPathEntry,
@@ -13,6 +14,10 @@ import type {
   AgentActionRuntimeManifestSummary,
   AgentCapabilityAtlasEntry,
   AgentCapabilityVerification,
+  AgentComputerDisplaySummary,
+  AgentComputerUsePolicy,
+  AgentComputerUseSnapshot,
+  AgentComputerWindowSummary,
   AgentFailureCategory,
   AgentRetryStrategy,
   AgentRetryStrategyId,
@@ -68,7 +73,12 @@ const AGENT_ACTION_EVENT_HINTS = [
   "fs.delete_empty_directory:/agent_delete_empty_directory_",
   "fs.delete_tree:/agent_delete_tree_",
   "shell.readonly:/agent_readonly_shell_",
-  "shell.full:/agent_shell_"
+  "shell.full:/agent_shell_",
+  "computer.inspect:/agent_computer_inspect_",
+  "computer.appshot:/agent_appshot_",
+  "computer.focus_window:/agent_focus_window_",
+  "computer.clipboard_read:/agent_clipboard_read_",
+  "computer.clipboard_write:/agent_clipboard_write_"
 ];
 
 const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string> = {
@@ -81,7 +91,12 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   delete_empty_directory: "/agent_delete_empty_directory_",
   delete_tree: "/agent_delete_tree_",
   run_readonly_command: "/agent_readonly_shell_",
-  run_command: "/agent_shell_"
+  run_command: "/agent_shell_",
+  computer_inspect: "/agent_computer_inspect_",
+  computer_appshot: "/agent_appshot_",
+  computer_focus_window: "/agent_focus_window_",
+  computer_clipboard_read: "/agent_clipboard_read_",
+  computer_clipboard_write: "/agent_clipboard_write_"
 };
 
 const WINDOWS_EXECUTION_ADAPTERS: AgentWindowsExecutionAdapterId[] = ["powershell", "cmd", "windows_command", "shell_full"];
@@ -376,8 +391,9 @@ export function agentActionRoutingHint(): string {
   return [
     "LOCAL_ACTION_TOOLS v1",
     "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, run commands, control Windows settings/tools, install/update software, download assets, or operate the workspace/computer.",
-    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
+    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write",
     "windows_reach=shell.full can invoke PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process, ms-settings URIs, installers, CLIs, and other native Windows tools when confirmed:true is appropriate.",
+    "computer_use=Inspect GUI first, then act once, then verify by appshot/window state. Never approve security, payment, credential, destructive, or UAC prompts for the user.",
     "format=Emit AGENT_ACTION_JSON only when real execution is needed, then wait for AGENT_ACTION_RESULT. The AGENT_ACTION_JSON marker must start its own line, with no prose before it. Never fake tool events.",
     "retry=If a tool fails, read AGENT_ACTION_RESULT and try another safe available route before concluding blocked.",
     "loop_style=Write natural progress notes with varied openings. Avoid repeating 'Je vais'; prefer present-tense observation, decision, then action."
@@ -478,6 +494,9 @@ function result(
     artifacts: patch.artifacts,
     observedChanges: patch.observedChanges,
     verification: patch.verification,
+    computerUse: patch.computerUse,
+    appshot: patch.appshot,
+    userPresenceRequired: patch.userPresenceRequired,
     failureCategory,
     retryRoutes: patch.retryRoutes ?? retryRoutesForFailure(failureCategory),
     value: patch.value,
@@ -721,6 +740,27 @@ export function createAgentVerificationPolicy(_config: AgentActionHostConfig): A
   return policy;
 }
 
+export function createComputerUsePolicy(_config: AgentActionHostConfig): AgentComputerUsePolicy {
+  const policy: AgentComputerUsePolicy = {
+    schema: "ingen.computer_use.policy.v1",
+    executableActions: [
+      "computer_inspect",
+      "computer_appshot",
+      "computer_focus_window",
+      "computer_clipboard_read",
+      "computer_clipboard_write"
+    ],
+    inspectionRequiresConfirmation: false,
+    interactionRequiresConfirmation: true,
+    userPresenceMode: "foreground_required_for_risky_gui_actions",
+    pacingPolicy: "single_action_then_verify",
+    forbiddenPrompts: ["security", "payment", "credential", "destructive", "uac"],
+    proofHash: ""
+  };
+  policy.proofHash = hashJson({ ...policy, proofHash: "" });
+  return policy;
+}
+
 function atlasEntry(entry: AgentCapabilityAtlasEntry): AgentCapabilityAtlasEntry {
   return entry;
 }
@@ -910,6 +950,78 @@ function createExecutableActionCapabilities(): AgentActionCapability[] {
       writes: true,
       description: "Execute an arbitrary local command only when confirmed:true is set. This is the universal Windows escape hatch for settings, installers, updates, downloads, CLIs, system tools and app automation.",
       notes: "Prefer structured APIs first; use shell.full as the confirmed universal Windows escape hatch."
+    }),
+    actionCapability({
+      id: "computer.inspect",
+      family: "computer.gui",
+      surface: "computer.gui",
+      title: "Inspect GUI state",
+      status: "available",
+      risk: "read",
+      operations: ["list displays", "list visible windows", "summarize GUI affordances"],
+      underlyingTools: ["PowerShell Get-Process", "System.Windows.Forms.Screen", "UI Automation planned"],
+      fallbacks: ["shell.full Get-Process", "manual screenshot"],
+      verification: ["process_state", "ui_state"],
+      approval: "none",
+      executableActionIds: ["computer.inspect"],
+      requiresApproval: false,
+      writes: false,
+      description: "Inspect foreground computer state with bounded display and window summaries.",
+      notes: "Does not click or type; use before any GUI interaction."
+    }),
+    actionCapability({
+      id: "computer.appshot",
+      family: "computer.gui",
+      surface: "computer.gui",
+      title: "Capture appshot",
+      status: "available",
+      risk: "external_ui",
+      operations: ["capture primary screen image", "write screenshot artifact", "hash screenshot artifact"],
+      underlyingTools: ["PowerShell System.Drawing.CopyFromScreen", "Electron desktopCapturer planned"],
+      fallbacks: ["manual screenshot", "contained app screenshot"],
+      verification: ["artifact_hash", "ui_state"],
+      approval: "prompt",
+      executableActionIds: ["computer.appshot"],
+      requiresApproval: true,
+      writes: true,
+      description: "Capture a confirmed screenshot artifact for visual verification.",
+      notes: "Screen capture is privacy-sensitive and requires confirmed:true."
+    }),
+    actionCapability({
+      id: "computer.focus_window",
+      family: "computer.gui",
+      surface: "computer.gui",
+      title: "Focus window",
+      status: "available",
+      risk: "external_ui",
+      operations: ["activate visible window", "bring app foreground"],
+      underlyingTools: ["Microsoft.VisualBasic Interaction.AppActivate"],
+      fallbacks: ["Alt-Tab via future computer-use", "manual focus"],
+      verification: ["process_state", "ui_state"],
+      approval: "prompt",
+      executableActionIds: ["computer.focus_window"],
+      requiresApproval: true,
+      writes: true,
+      description: "Bring a matching visible window to the foreground after confirmation.",
+      notes: "One foreground action at a time; verify after focus."
+    }),
+    actionCapability({
+      id: "computer.clipboard",
+      family: "computer.clipboard",
+      surface: "computer.gui",
+      title: "Read or write clipboard",
+      status: "available",
+      risk: "external_ui",
+      operations: ["read clipboard text", "write clipboard text"],
+      underlyingTools: ["PowerShell Get-Clipboard", "PowerShell Set-Clipboard"],
+      fallbacks: ["manual clipboard action"],
+      verification: ["ui_state", "manual_confirmation"],
+      approval: "prompt",
+      executableActionIds: ["computer.clipboard_read", "computer.clipboard_write"],
+      requiresApproval: true,
+      writes: true,
+      description: "Read or replace clipboard text after explicit confirmation.",
+      notes: "Clipboard may contain secrets; reads and writes require confirmed:true."
     })
   ];
 }
@@ -1361,6 +1473,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
   const installedTools = detectAgentActionInstalledTools(config);
   const windowsExecution = createWindowsExecutionPolicy(config);
   const verification = createAgentVerificationPolicy(config);
+  const computerUse = createComputerUsePolicy(config);
   const runtime = createAgentActionRuntimeManifestSummary(config);
   const manifest: AgentActionHostManifest = {
     schema: "ingen.agent_action_host.manifest.v1",
@@ -1382,6 +1495,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
     installedTools,
     windowsExecution,
     verification,
+    computerUse,
     runtime,
     proofHash: ""
   };
@@ -1418,7 +1532,8 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `verification_policy=${manifest.verification.mutationCompletionRule} protected_boundary=${manifest.verification.protectedBoundaryRule}`,
     `failure_categories=${manifest.verification.failureCategories.join("|")}`,
     `retry_strategies=${manifest.verification.retryStrategies.map((strategy) => strategy.id).join("|")}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
+    `computer_use=${manifest.computerUse.userPresenceMode} pacing=${manifest.computerUse.pacingPolicy} forbidden=${manifest.computerUse.forbiddenPrompts.join("|")}`,
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -1432,7 +1547,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
-    "planned=browser.playwright computer_use mcp",
+    "planned=browser.playwright full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop mcp",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -1850,6 +1965,70 @@ type WindowsCommandExecution = {
   error?: IpcError;
 };
 
+function powerShellEncodedCommand(script: string): string {
+  return Buffer.from(script, "utf16le").toString("base64");
+}
+
+function powerShellString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function executePowerShellJson(script: string, timeoutMs = 10_000): { accepted: boolean; stdout: string; stderr: string; exitCode: number | null; timedOut: boolean; error?: IpcError } {
+  const child = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", powerShellEncodedCommand(script)],
+    {
+      encoding: "utf8",
+      stdio: "pipe",
+      timeout: timeoutMs,
+      windowsHide: true
+    }
+  );
+  const timedOut = commandTimedOut(child.error);
+  const stdout = child.stdout ?? "";
+  const stderr = child.stderr ?? "";
+  const exitCode = child.status ?? null;
+  const accepted = !child.error && child.status === 0;
+  return {
+    accepted,
+    stdout,
+    stderr,
+    exitCode,
+    timedOut,
+    error: accepted
+      ? undefined
+      : actionError(
+          "rust_unavailable",
+          timedOut ? `PowerShell command timed out after ${timeoutMs}ms.` : child.error?.message ?? `PowerShell exited with status ${exitCode ?? "unknown"}.`,
+          { stderr, exitCode, timedOut }
+        )
+  };
+}
+
+function parseJsonObject<T>(text: string): T {
+  return JSON.parse(text.trim()) as T;
+}
+
+function computerUseSnapshot(input: Omit<AgentComputerUseSnapshot, "schema" | "proofHash">): AgentComputerUseSnapshot {
+  const snapshot: AgentComputerUseSnapshot = {
+    schema: "ingen.computer_use.snapshot.v1",
+    ...input,
+    proofHash: ""
+  };
+  snapshot.proofHash = hashJson({ ...snapshot, proofHash: "" });
+  return snapshot;
+}
+
+function appshotArtifact(input: Omit<AgentAppshotArtifact, "schema" | "proofHash">): AgentAppshotArtifact {
+  const artifact: AgentAppshotArtifact = {
+    schema: "ingen.computer_use.appshot.v1",
+    ...input,
+    proofHash: ""
+  };
+  artifact.proofHash = hashJson({ ...artifact, proofHash: "" });
+  return artifact;
+}
+
 function executeWindowsCommand(config: AgentActionHostConfig, request: AgentActionRequest, readonly: boolean): WindowsCommandExecution {
   const command = request.command?.trim() ?? "";
   const args = request.args ?? [];
@@ -1926,6 +2105,338 @@ function runCommandAction(config: AgentActionHostConfig, request: AgentActionReq
   return result(config, request, executeWindowsCommand(config, request, false));
 }
 
+async function computerInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const maxResults = clampMaxResults(request.maxResults, 40);
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+Add-Type -AssemblyName System.Windows.Forms
+$screens = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
+  [pscustomobject]@{
+    id = $_.DeviceName
+    primary = $_.Primary
+    x = $_.Bounds.X
+    y = $_.Bounds.Y
+    width = $_.Bounds.Width
+    height = $_.Bounds.Height
+    scaleFactor = 1
+  }
+}
+$windows = Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object -First ${maxResults} | ForEach-Object {
+  [pscustomobject]@{
+    pid = $_.Id
+    processName = $_.ProcessName
+    title = $_.MainWindowTitle
+    focused = $false
+  }
+}
+[pscustomobject]@{
+  displays = @($screens)
+  windows = @($windows)
+} | ConvertTo-Json -Depth 5 -Compress
+`;
+  const execution = executePowerShellJson(script, 8_000);
+  if (!execution.accepted) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: "powershell.exe -EncodedCommand <computer.inspect>",
+      executionAdapter: "powershell",
+      routeId: "computer.inspect",
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut,
+      stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: execution.timedOut ? "timeout" : "command_error",
+      error: execution.error
+    });
+  }
+  const parsed = parseJsonObject<{ displays?: AgentComputerDisplaySummary[]; windows?: AgentComputerWindowSummary[] }>(execution.stdout);
+  const snapshot = computerUseSnapshot({
+    action: "inspect",
+    displays: Array.isArray(parsed.displays) ? parsed.displays : [],
+    windows: Array.isArray(parsed.windows) ? parsed.windows : [],
+    accessibilityTreeStatus: "planned",
+    ocrStatus: "planned"
+  });
+  const verification = verificationResult([
+    verificationProbe({
+      id: "computer.inspect.window_inventory",
+      kind: "ui_state",
+      expectation: "display and window inventory returned",
+      actual: `displays=${snapshot.displays.length} windows=${snapshot.windows.length}`,
+      passed: snapshot.displays.length > 0
+    })
+  ]);
+  return result(config, request, {
+    accepted: true,
+    commandLine: "powershell.exe -EncodedCommand <computer.inspect>",
+    executionAdapter: "powershell",
+    routeId: "computer.inspect",
+    exitCode: execution.exitCode,
+    stdoutPreview: execution.stdout.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`displays:${snapshot.displays.length}`, `windows:${snapshot.windows.length}`],
+    verification,
+    computerUse: snapshot
+  });
+}
+
+async function computerAppshotAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Screen capture requires confirmed:true because it may expose private information.", request)
+    });
+  }
+  const artifactPath = resolveActionPath(
+    config,
+    { ...request, scope: request.scope ?? "workspace" },
+    request.path ?? `.ingen-agent-artifacts/appshot-${Date.now()}.png`
+  );
+  if (typeof artifactPath !== "string") {
+    return result(config, request, { accepted: false, error: artifactPath });
+  }
+  await mkdir(dirname(artifactPath), { recursive: true });
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$path = ${powerShellString(artifactPath)}
+$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bitmap = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+try {
+  $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+  $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+} finally {
+  $graphics.Dispose()
+  $bitmap.Dispose()
+}
+$item = Get-Item -LiteralPath $path
+[pscustomobject]@{ path = $item.FullName; width = $bounds.Width; height = $bounds.Height; bytes = $item.Length } | ConvertTo-Json -Compress
+`;
+  const execution = executePowerShellJson(script, 12_000);
+  if (!execution.accepted) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: "powershell.exe -EncodedCommand <computer.appshot>",
+      executionAdapter: "powershell",
+      routeId: "computer.appshot",
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut,
+      stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: execution.timedOut ? "timeout" : "command_error",
+      error: execution.error
+    });
+  }
+  const parsed = parseJsonObject<{ path: string; width: number; height: number; bytes: number }>(execution.stdout);
+  const bytes = await readFile(parsed.path);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const artifact = appshotArtifact({
+    path: pathLabel(config, request, parsed.path),
+    width: parsed.width,
+    height: parsed.height,
+    bytes: parsed.bytes,
+    sha256
+  });
+  const verification = verificationResult([
+    await filesystemProbe("appshot.artifact_exists", parsed.path, "file"),
+    verificationProbe({
+      id: "appshot.artifact_hash",
+      kind: "artifact_hash",
+      target: parsed.path,
+      expectation: "sha256 computed",
+      actual: sha256,
+      passed: /^[a-f0-9]{64}$/.test(sha256)
+    })
+  ]);
+  return result(config, request, {
+    accepted: true,
+    path: artifact.path,
+    commandLine: "powershell.exe -EncodedCommand <computer.appshot>",
+    executionAdapter: "powershell",
+    routeId: "computer.appshot",
+    exitCode: execution.exitCode,
+    artifacts: [artifact.path],
+    observedChanges: [`appshot:${artifact.width}x${artifact.height}`, `bytes:${artifact.bytes}`],
+    verification,
+    appshot: artifact,
+    userPresenceRequired: true
+  });
+}
+
+async function computerFocusWindowAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Window focus requires confirmed:true and foreground user presence.", request)
+    });
+  }
+  const title = request.windowTitle?.trim() || request.query?.trim() || "";
+  if (!title) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "windowTitle or query is required to focus a window.", request)
+    });
+  }
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+Add-Type -AssemblyName Microsoft.VisualBasic
+$needle = ${powerShellString(title)}
+$process = Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle -like "*$needle*" } | Select-Object -First 1
+if (-not $process) { throw "No visible window matched '$needle'." }
+$ok = [Microsoft.VisualBasic.Interaction]::AppActivate([int]$process.Id)
+[pscustomobject]@{ pid = $process.Id; processName = $process.ProcessName; title = $process.MainWindowTitle; focused = [bool]$ok } | ConvertTo-Json -Compress
+`;
+  const execution = executePowerShellJson(script, 8_000);
+  if (!execution.accepted) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: "powershell.exe -EncodedCommand <computer.focus_window>",
+      executionAdapter: "powershell",
+      routeId: "computer.focus_window",
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut,
+      stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: execution.timedOut ? "timeout" : "unverifiable",
+      error: execution.error
+    });
+  }
+  const focused = parseJsonObject<AgentComputerWindowSummary>(execution.stdout);
+  const verification = verificationResult([
+    verificationProbe({
+      id: "computer.focus_window.appactivate",
+      kind: "ui_state",
+      target: focused.title,
+      expectation: "AppActivate returned true",
+      actual: `focused=${focused.focused === true}`,
+      passed: focused.focused === true
+    })
+  ]);
+  const snapshot = computerUseSnapshot({
+    action: "focus_window",
+    displays: [],
+    windows: [focused],
+    accessibilityTreeStatus: "planned",
+    ocrStatus: "planned"
+  });
+  return result(config, request, {
+    accepted: true,
+    commandLine: "powershell.exe -EncodedCommand <computer.focus_window>",
+    executionAdapter: "powershell",
+    routeId: "computer.focus_window",
+    exitCode: execution.exitCode,
+    observedChanges: [`focused_window:${focused.processName}:${focused.pid}`],
+    verification,
+    computerUse: snapshot,
+    userPresenceRequired: true
+  });
+}
+
+async function computerClipboardReadAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Clipboard read requires confirmed:true because clipboard may contain secrets.", request)
+    });
+  }
+  const execution = executePowerShellJson("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); [pscustomobject]@{ text = (Get-Clipboard -Raw) } | ConvertTo-Json -Compress", 5_000);
+  if (!execution.accepted) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: "powershell.exe -EncodedCommand <computer.clipboard_read>",
+      executionAdapter: "powershell",
+      routeId: "computer.clipboard_read",
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut,
+      stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: execution.timedOut ? "timeout" : "unverifiable",
+      error: execution.error
+    });
+  }
+  const parsed = parseJsonObject<{ text?: string }>(execution.stdout);
+  const text = parsed.text ?? "";
+  return result(config, request, {
+    accepted: true,
+    commandLine: "powershell.exe -EncodedCommand <computer.clipboard_read>",
+    executionAdapter: "powershell",
+    routeId: "computer.clipboard_read",
+    exitCode: execution.exitCode,
+    stdoutPreview: text.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`clipboard_chars:${text.length}`],
+    verification: verificationResult([
+      verificationProbe({
+        id: "computer.clipboard_read.text",
+        kind: "ui_state",
+        expectation: "clipboard text returned",
+        actual: `chars=${text.length}`,
+        passed: true
+      })
+    ]),
+    userPresenceRequired: true
+  });
+}
+
+async function computerClipboardWriteAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Clipboard write requires confirmed:true.", request)
+    });
+  }
+  const text = request.text ?? "";
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$value = ${powerShellString(text)}
+Set-Clipboard -Value $value
+$actual = Get-Clipboard -Raw
+[pscustomobject]@{ chars = $actual.Length; verified = ($actual -eq $value) } | ConvertTo-Json -Compress
+`;
+  const execution = executePowerShellJson(script, 5_000);
+  if (!execution.accepted) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: "powershell.exe -EncodedCommand <computer.clipboard_write>",
+      executionAdapter: "powershell",
+      routeId: "computer.clipboard_write",
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut,
+      stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: execution.timedOut ? "timeout" : "unverifiable",
+      error: execution.error
+    });
+  }
+  const parsed = parseJsonObject<{ chars: number; verified: boolean }>(execution.stdout);
+  return result(config, request, {
+    accepted: true,
+    commandLine: "powershell.exe -EncodedCommand <computer.clipboard_write>",
+    executionAdapter: "powershell",
+    routeId: "computer.clipboard_write",
+    exitCode: execution.exitCode,
+    observedChanges: [`clipboard_written_chars:${parsed.chars}`],
+    verification: verificationResult([
+      verificationProbe({
+        id: "computer.clipboard_write.verify",
+        kind: "ui_state",
+        expectation: "clipboard equals requested text",
+        actual: `verified=${parsed.verified}`,
+        passed: parsed.verified === true
+      })
+    ]),
+    value: charDeltaValue(text.length, 0),
+    userPresenceRequired: true
+  });
+}
+
 export async function executeAgentActionRequest(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   try {
     switch (request.action) {
@@ -1948,6 +2459,16 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return runReadonlyCommandAction(config, request);
       case "run_command":
         return runCommandAction(config, request);
+      case "computer_inspect":
+        return await computerInspectAction(config, request);
+      case "computer_appshot":
+        return await computerAppshotAction(config, request);
+      case "computer_focus_window":
+        return await computerFocusWindowAction(config, request);
+      case "computer_clipboard_read":
+        return await computerClipboardReadAction(config, request);
+      case "computer_clipboard_write":
+        return await computerClipboardWriteAction(config, request);
       default:
         return result(config, request, {
           accepted: false,

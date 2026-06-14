@@ -153,6 +153,11 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "run_command", scope: "computer", command: "powershell.exe", args: ["-NoProfile"], executionAdapter: "powershell", timeoutMs: 1000, confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "run_command", command: "cmd.exe", executionAdapter: "cmd", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "run_command", command: "cmd.exe", executionAdapter: "telnet", confirmed: true })).toBe(false);
+    expect(isAgentActionRequest({ action: "computer_inspect", maxResults: 10 })).toBe(true);
+    expect(isAgentActionRequest({ action: "computer_appshot", path: ".ingen-agent-artifacts/shot.png", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "computer_focus_window", windowTitle: "InGen", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "computer_clipboard_write", text: "hello", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "computer_focus_window", windowTitle: 42, confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "delete_empty_directory", path: "tmp", confirmed: "yes" })).toBe(false);
     expect(isAgentActionRequest({ action: "list", scope: "galaxy", path: "." })).toBe(false);
     expect(isAgentActionRequest({ action: "raw_shell", command: "powershell.exe" })).toBe(false);
