@@ -10757,6 +10757,25 @@ function widgetWindowBounds(window: BrowserWindow, options: { taskbarHidden?: bo
   };
 }
 
+function boundsLookLikeWidget(bounds: Electron.Rectangle, display = screen.getDisplayMatching(bounds)): boolean {
+  const { workArea } = display;
+  const nearBottom = bounds.y >= workArea.y + workArea.height - (WIDGET_WINDOW_HEIGHT + 140);
+  const shortEnough = bounds.height <= WIDGET_WINDOW_HEIGHT + 80;
+  const wideEnough = bounds.width >= Math.min(520, workArea.width) || bounds.width >= workArea.width * 0.45;
+  return nearBottom && shortEnough && wideEnough;
+}
+
+function normalWindowRestoreBounds(window: BrowserWindow): Electron.Rectangle {
+  const display = screen.getDisplayMatching(window.getBounds());
+  const { workArea } = display;
+  return {
+    x: workArea.x,
+    y: workArea.y,
+    width: workArea.width,
+    height: workArea.height
+  };
+}
+
 function clearWidgetWindowShrinkTimer(): void {
   if (widgetWindowShrinkTimer !== null) {
     clearTimeout(widgetWindowShrinkTimer);
@@ -10818,12 +10837,22 @@ function saveWidgetWindowRestoreState(window: BrowserWindow): void {
     return;
   }
   const [minWidth, minHeight] = window.getMinimumSize();
+  const currentBounds = window.getBounds();
+  const restoreBounds = boundsLookLikeWidget(currentBounds)
+    ? normalWindowRestoreBounds(window)
+    : currentBounds;
   widgetWindowRestoreState = {
-    bounds: window.getBounds(),
+    bounds: restoreBounds,
     minimumSize: [minWidth, minHeight],
-    maximized: window.isMaximized(),
+    maximized: window.isMaximized() && !boundsLookLikeWidget(currentBounds),
     fullScreen: window.isFullScreen()
   };
+  traceWidgetTaskbarStep("save-widget-restore-state", {
+    id: window.id,
+    currentBounds,
+    restoreBounds,
+    currentLookedLikeWidget: boundsLookLikeWidget(currentBounds)
+  });
 }
 
 function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
@@ -11419,17 +11448,39 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   window.setAlwaysOnTop(false);
   window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
   if (!restoreState) {
+    const fallbackBounds = normalWindowRestoreBounds(window);
+    window.setMinimumSize(1180, 760);
+    window.setBounds(fallbackBounds, false);
+    window.show();
+    window.focus();
+    traceWidgetTaskbarStep("restore-widget-without-state", { id: window.id, fallbackBounds });
     return true;
   }
-  window.setMinimumSize(restoreState.minimumSize[0], restoreState.minimumSize[1]);
+  const restoreStateBoundsLookLikeWidget = boundsLookLikeWidget(restoreState.bounds);
+  const restoreBounds = restoreStateBoundsLookLikeWidget
+    ? normalWindowRestoreBounds(window)
+    : restoreState.bounds;
+  if (restoreStateBoundsLookLikeWidget) {
+    window.setMinimumSize(1180, 760);
+  } else {
+    window.setMinimumSize(restoreState.minimumSize[0], restoreState.minimumSize[1]);
+  }
   if (restoreState.fullScreen) {
     window.setFullScreen(true);
   } else if (restoreState.maximized) {
-    window.setBounds(restoreState.bounds, false);
+    window.setBounds(restoreBounds, false);
     window.maximize();
   } else {
-    window.setBounds(restoreState.bounds, false);
+    window.setBounds(restoreBounds, false);
   }
+  traceWidgetTaskbarStep("restore-widget-window-bounds", {
+    id: window.id,
+    requestedBounds: restoreState.bounds,
+    restoreBounds,
+    restoredFromWidgetBounds: restoreStateBoundsLookLikeWidget,
+    maximized: restoreState.maximized,
+    fullScreen: restoreState.fullScreen
+  });
   window.show();
   window.focus();
   return true;
