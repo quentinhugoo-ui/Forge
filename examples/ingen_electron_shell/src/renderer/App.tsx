@@ -76,7 +76,8 @@ const WIDGET_SIDE_EXIT_MS = 420;
 const WIDGET_HEADER_EXIT_MS = 360;
 const WIDGET_CANVAS_EXIT_MS = 860;
 const WIDGET_SURFACE_CLOSE_DELAY_MS = WIDGET_SIDE_EXIT_MS + WIDGET_HEADER_EXIT_MS + WIDGET_CANVAS_EXIT_MS;
-const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + 80;
+const WIDGET_HANDOFF_SETTLE_MS = 180;
+const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_HANDOFF_SETTLE_MS;
 
 type WidgetLayoutLock = {
   chatLeft: number;
@@ -414,7 +415,7 @@ export function App() {
     };
 
     scheduleHitRegionSync();
-    const settleTimers = [80, WIDGET_SURFACE_CLOSE_DELAY_MS + 120].map((delay) =>
+    const settleTimers = [80, WIDGET_SURFACE_CLOSE_DELAY_MS + 120, WIDGET_NATIVE_SHRINK_DELAY_MS + 120].map((delay) =>
       window.setTimeout(scheduleHitRegionSync, delay)
     );
     const resizeObserver = new ResizeObserver(scheduleHitRegionSync);
@@ -941,6 +942,10 @@ export function App() {
         return;
       }
       setWidgetMode(true);
+      await waitForWidgetMotion(WIDGET_HANDOFF_SETTLE_MS);
+      if (widgetModeSequenceRef.current !== sequenceToken) {
+        return;
+      }
       setWidgetMinimizingPhase("");
       setCanvasSplitOpen(false);
       setCanvasFilesOpen(false);
