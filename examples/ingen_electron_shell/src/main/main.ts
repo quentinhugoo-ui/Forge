@@ -5574,6 +5574,9 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   document_convert_text: "document.convert_text",
   dev_repo_status: "dev.repo_status",
   dev_git_diff: "dev.git_diff",
+  dev_git_commit: "dev.git_commit",
+  dev_git_push: "dev.git_push",
+  dev_github_pr_create: "dev.github_pr_create",
   dev_run_check: "dev.run_check",
   automation_record: "automation.record"
 };
@@ -5673,6 +5676,9 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "computer_clipboard_read" ||
         params.request.action === "computer_clipboard_write" ||
         params.request.action === "browser_open_url"
+      ? "external_ui"
+      : params.request.action === "dev_git_push" ||
+        params.request.action === "dev_github_pr_create"
       ? "external_ui"
       : params.request.action === "browser_download"
       ? "computer_write"
@@ -10644,6 +10650,15 @@ type WindowsTaskbarStateProbe = {
   state: number;
   target: number;
   taskbarHandleFound: boolean;
+  screenWidth: number;
+  screenHeight: number;
+  taskbarRect: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  };
+  taskbarVisiblyHidden: boolean;
   registryPathFound: boolean;
   registryByte: number;
 };
@@ -10680,11 +10695,17 @@ public static class InGenTaskbarState {
   public static extern UIntPtr SHAppBarMessage(UInt32 dwMessage, ref APPBARDATA pData);
   [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
   public static extern IntPtr FindWindow(String lpClassName, String lpWindowName);
+  [DllImport("user32.dll", SetLastError=true)]
+  public static extern Boolean GetWindowRect(IntPtr hWnd, out RECT lpRect);
+  [DllImport("user32.dll", SetLastError=true)]
+  public static extern Int32 GetSystemMetrics(Int32 nIndex);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
   public static extern IntPtr SendMessageTimeout(IntPtr hWnd, UInt32 Msg, UIntPtr wParam, String lParam, UInt32 fuFlags, UInt32 uTimeout, out UIntPtr lpdwResult);
   public const UInt32 ABM_GETSTATE = 0x00000004;
   public const UInt32 ABM_SETSTATE = 0x0000000A;
   public const Int32 ABS_AUTOHIDE = 0x0000001;
+  public const Int32 SM_CXSCREEN = 0;
+  public const Int32 SM_CYSCREEN = 1;
   public static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
   public const UInt32 WM_SETTINGCHANGE = 0x001A;
   public const UInt32 SMTO_ABORTIFHUNG = 0x0002;
@@ -10723,7 +10744,7 @@ if ($null -ne $desiredState) {
   $target = [int]$desiredState
   $data.lParam = [IntPtr]$target
   [void][InGenTaskbarState]::SHAppBarMessage([InGenTaskbarState]::ABM_SETSTATE, [ref]$data)
-  Start-Sleep -Milliseconds 160
+  Start-Sleep -Milliseconds 650
   $data = New-Object InGenTaskbarState+APPBARDATA
   $data.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][InGenTaskbarState+APPBARDATA])
   $data.hWnd = $taskbarHandle
@@ -10735,7 +10756,32 @@ if ($registryFound) {
     $registryByte = [int]$settings[8]
   }
 }
-@{ ok = $true; state = $current; target = $target; taskbarHandleFound = ($taskbarHandle -ne [IntPtr]::Zero); registryPathFound = $registryFound; registryByte = $registryByte } | ConvertTo-Json -Compress
+$screenWidth = [InGenTaskbarState]::GetSystemMetrics([InGenTaskbarState]::SM_CXSCREEN)
+$screenHeight = [InGenTaskbarState]::GetSystemMetrics([InGenTaskbarState]::SM_CYSCREEN)
+$rect = New-Object InGenTaskbarState+RECT
+$rectFound = $false
+if ($taskbarHandle -ne [IntPtr]::Zero) {
+  $rectFound = [InGenTaskbarState]::GetWindowRect($taskbarHandle, [ref]$rect)
+}
+$hiddenTolerance = 4
+$visiblyHidden = $rectFound -and (
+  $rect.top -ge ($screenHeight - $hiddenTolerance) -or
+  $rect.bottom -le $hiddenTolerance -or
+  $rect.left -ge ($screenWidth - $hiddenTolerance) -or
+  $rect.right -le $hiddenTolerance
+)
+@{
+  ok = $true
+  state = $current
+  target = $target
+  taskbarHandleFound = ($taskbarHandle -ne [IntPtr]::Zero)
+  screenWidth = $screenWidth
+  screenHeight = $screenHeight
+  taskbarRect = @{ left = $rect.left; top = $rect.top; right = $rect.right; bottom = $rect.bottom }
+  taskbarVisiblyHidden = $visiblyHidden
+  registryPathFound = $registryFound
+  registryByte = $registryByte
+} | ConvertTo-Json -Compress
 `;
   const encoded = Buffer.from(script, "utf16le").toString("base64");
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], {
@@ -10755,6 +10801,15 @@ if ($registryFound) {
       typeof parsed.state === "number" &&
       typeof parsed.target === "number" &&
       typeof parsed.taskbarHandleFound === "boolean" &&
+      typeof parsed.screenWidth === "number" &&
+      typeof parsed.screenHeight === "number" &&
+      typeof parsed.taskbarRect === "object" &&
+      parsed.taskbarRect !== null &&
+      typeof (parsed.taskbarRect as Partial<WindowsTaskbarStateProbe["taskbarRect"]>).left === "number" &&
+      typeof (parsed.taskbarRect as Partial<WindowsTaskbarStateProbe["taskbarRect"]>).top === "number" &&
+      typeof (parsed.taskbarRect as Partial<WindowsTaskbarStateProbe["taskbarRect"]>).right === "number" &&
+      typeof (parsed.taskbarRect as Partial<WindowsTaskbarStateProbe["taskbarRect"]>).bottom === "number" &&
+      typeof parsed.taskbarVisiblyHidden === "boolean" &&
       typeof parsed.registryPathFound === "boolean" &&
       typeof parsed.registryByte === "number"
     ) {
@@ -10763,6 +10818,10 @@ if ($registryFound) {
         state: parsed.state,
         target: parsed.target,
         taskbarHandleFound: parsed.taskbarHandleFound,
+        screenWidth: parsed.screenWidth,
+        screenHeight: parsed.screenHeight,
+        taskbarRect: parsed.taskbarRect as WindowsTaskbarStateProbe["taskbarRect"],
+        taskbarVisiblyHidden: parsed.taskbarVisiblyHidden,
         registryPathFound: parsed.registryPathFound,
         registryByte: parsed.registryByte
       };
@@ -10806,6 +10865,35 @@ function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boole
   widgetTaskbarHidden = result.registryPathFound && result.registryByte >= 0
     ? (result.registryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0
     : (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0;
+  const targetHidden = (targetState & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0;
+  const verifiedState = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === (targetState & WINDOWS_TASKBAR_AUTOHIDE_FLAG);
+  const verifiedRegistry =
+    targetRegistryByte === undefined ||
+    !result.registryPathFound ||
+    result.registryByte < 0 ||
+    (result.registryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === (targetRegistryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG);
+  const verifiedVisual = !targetHidden || result.taskbarVisiblyHidden;
+  const verified = verifiedState && verifiedRegistry && verifiedVisual;
+  console.info("Windows taskbar auto-hide probe", {
+    requestedHidden: targetHidden,
+    verified,
+    verifiedState,
+    verifiedRegistry,
+    verifiedVisual,
+    appBarState: result.target,
+    registryByte: result.registryByte,
+    screen: { width: result.screenWidth, height: result.screenHeight },
+    taskbarRect: result.taskbarRect
+  });
+  if (!verified) {
+    console.warn("Windows taskbar auto-hide probe did not reach the requested visible state.", {
+      requestedHidden: targetHidden,
+      appBarState: result.target,
+      registryByte: result.registryByte,
+      taskbarRect: result.taskbarRect,
+      screen: { width: result.screenWidth, height: result.screenHeight }
+    });
+  }
   if (restoreOriginal) {
     widgetTaskbarOriginalState = null;
     widgetTaskbarOriginalRegistryByte = null;
