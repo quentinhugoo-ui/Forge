@@ -181,6 +181,11 @@ function waitForWidgetMotion(ms: number): Promise<void> {
   });
 }
 
+function clearDocumentWidgetModeClasses(): void {
+  document.documentElement.classList.remove("ingen-widget-mode");
+  document.body.classList.remove("ingen-widget-mode");
+}
+
 function sectionGroup(section: NativeSection): string {
   if (section === "trading") {
     return "PAPERTRADING";
@@ -388,8 +393,7 @@ export function App() {
     document.documentElement.classList.toggle("ingen-widget-mode", widgetSurfaceVisible);
     document.body.classList.toggle("ingen-widget-mode", widgetSurfaceVisible);
     return () => {
-      document.documentElement.classList.remove("ingen-widget-mode");
-      document.body.classList.remove("ingen-widget-mode");
+      clearDocumentWidgetModeClasses();
     };
   }, [widgetMinimizingPhase, widgetMode]);
 
@@ -949,19 +953,21 @@ export function App() {
     if (!enabled) {
       void (async () => {
         const windowControls = globalThis.window?.forgeWindowControls;
-        const nativeWidgetRestored = await windowControls?.setWidgetMode?.(false).catch((error: unknown) => {
+        const nativeWidgetRestore = windowControls?.setWidgetMode?.(false).catch((error: unknown) => {
           console.warn("Failed to restore native widget mode", error);
           return false;
         });
+        clearDocumentWidgetModeClasses();
+        setWidgetMinimizingPhase("");
+        setWidgetMode(false);
+        setWidgetLayoutLock(null);
+        const nativeWidgetRestored = await nativeWidgetRestore;
         if (widgetModeSequenceRef.current !== sequenceToken) {
           return;
         }
         if (nativeWidgetRestored === false) {
           console.warn("Native widget restore was not accepted.");
         }
-        setWidgetMinimizingPhase("");
-        setWidgetMode(false);
-        setWidgetLayoutLock(null);
         releaseWidgetModeTransition(sequenceToken, 420);
       })();
       return;
