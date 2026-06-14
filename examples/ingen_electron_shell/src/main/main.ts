@@ -4972,13 +4972,113 @@ function parseClaudeStreamOutput(output: string): string {
   return result;
 }
 
+function openRouterChatCompletionText(parsed: unknown): string {
+  const choices = parsed && typeof parsed === "object" && Array.isArray((parsed as { choices?: unknown }).choices)
+    ? (parsed as { choices: unknown[] }).choices
+    : [];
+  const first = choices[0];
+  const message = first && typeof first === "object" ? (first as { message?: unknown }).message : undefined;
+  return message && typeof message === "object" ? contentText((message as { content?: unknown }).content) : "";
+}
+
+function openRouterStreamContentText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value
+    .map((part) => {
+      if (typeof part === "string") {
+        return part;
+      }
+      if (part && typeof part === "object") {
+        const record = part as Record<string, unknown>;
+        return typeof record.text === "string" ? record.text : typeof record.content === "string" ? record.content : "";
+      }
+      return "";
+    })
+    .join("");
+}
+
+function openRouterStreamDeltaText(event: unknown): string {
+  const choices = event && typeof event === "object" && Array.isArray((event as { choices?: unknown }).choices)
+    ? (event as { choices: unknown[] }).choices
+    : [];
+  const first = choices[0];
+  const delta = first && typeof first === "object" ? (first as { delta?: unknown }).delta : undefined;
+  return delta && typeof delta === "object" ? openRouterStreamContentText((delta as { content?: unknown }).content) : "";
+}
+
+function openRouterStreamErrorText(event: unknown): string {
+  if (!event || typeof event !== "object" || !("error" in event)) {
+    return "";
+  }
+  const error = (event as { error?: unknown }).error;
+  if (!error) {
+    return "OpenRouter stream failed.";
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (typeof error === "object" && "message" in error && typeof (error as { message?: unknown }).message === "string") {
+    return (error as { message: string }).message;
+  }
+  return JSON.stringify(error);
+}
+
+async function readOpenRouterChatCompletionStream(response: Response, liveSink?: ProviderLiveTextSink): Promise<string> {
+  const body = response.body;
+  if (!body) {
+    const parsed = JSON.parse(await response.text()) as unknown;
+    return openRouterChatCompletionText(parsed).trim();
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const buffer = { text: "" };
+  let finalText = "";
+  const emitEvents = async () => {
+    for (const event of drainCodexSseEvents(buffer)) {
+      const errorText = openRouterStreamErrorText(event);
+      if (errorText) {
+        throw new Error(errorText);
+      }
+      finalText += openRouterStreamDeltaText(event);
+      if (finalText.trim()) {
+        liveSink?.onText(finalText.trimEnd());
+      }
+      if (liveSink?.shouldStop?.(finalText)) {
+        await reader.cancel().catch(() => undefined);
+        return true;
+      }
+    }
+    return false;
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer.text += decoder.decode(value, { stream: true });
+    if (await emitEvents()) {
+      return finalText.trim();
+    }
+  }
+  buffer.text += decoder.decode();
+  buffer.text += "\n\n";
+  await emitEvents();
+  return finalText.trim();
+}
+
 async function runOpenRouterChatCompletion(
   profile: ProviderRuntimeProfile,
   userText: string,
   attachments: ProviderAttachment[],
   userMessageId: string,
   moduleId = "",
-  transcript: TranscriptMessage[] = panelsChatBottomState.transcript
+  transcript: TranscriptMessage[] = panelsChatBottomState.transcript,
+  liveSink?: ProviderLiveTextSink
 ): Promise<string> {
   const model = selectedComposerModel(profile);
   const effort = normalizedReasoningEffort(selectedComposerReasoning(profile));
@@ -5019,6 +5119,28 @@ async function runOpenRouterChatCompletion(
       exclude: true
     };
   }
+  if (liveSink) {
+    body.stream = true;
+    const response = await net.fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${openRouterApiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/quentinhugoo-ui/Forge",
+        "X-Title": "InGen Electron Shell"
+      },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `OpenRouter request failed with ${response.status}`);
+    }
+    const content = await readOpenRouterChatCompletionStream(response, liveSink);
+    if (!content) {
+      throw new Error("OpenRouter returned an empty assistant message.");
+    }
+    return content;
+  }
   const parsed = await openRouterFetchJson("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -5029,12 +5151,7 @@ async function runOpenRouterChatCompletion(
     },
     body: JSON.stringify(body)
   });
-  const choices = parsed && typeof parsed === "object" && Array.isArray((parsed as { choices?: unknown }).choices)
-    ? (parsed as { choices: unknown[] }).choices
-    : [];
-  const first = choices[0];
-  const message = first && typeof first === "object" ? (first as { message?: unknown }).message : undefined;
-  const content = message && typeof message === "object" ? contentText((message as { content?: unknown }).content) : "";
+  const content = openRouterChatCompletionText(parsed);
   if (!content) {
     throw new Error("OpenRouter returned an empty assistant message.");
   }
@@ -5281,7 +5398,7 @@ async function buildAssistantTranscriptMessage(
       };
     }
     if (profile.connectId === "openrouter" && profile.connected) {
-      const text = await runOpenRouterChatCompletion(profile, providerUserText, attachments, userMessageId, moduleId, transcript);
+      const text = await runOpenRouterChatCompletion(profile, providerUserText, attachments, userMessageId, moduleId, transcript, liveSink);
       return {
         id: assistantMessageId,
         role: "assistant",

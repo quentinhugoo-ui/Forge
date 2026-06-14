@@ -54,6 +54,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("await reader.cancel().catch(() => undefined)");
     expect(mainSource).toContain("function runProviderCommandStreamingText");
     expect(mainSource).toContain("claudeStreamLineText");
+    expect(mainSource).toContain("async function readOpenRouterChatCompletionStream(response: Response, liveSink?: ProviderLiveTextSink)");
+    expect(mainSource).toContain("function openRouterStreamDeltaText");
+    expect(mainSource).toContain("body.stream = true");
+    expect(mainSource).toContain("runOpenRouterChatCompletion(profile, providerUserText, attachments, userMessageId, moduleId, transcript, liveSink)");
     expect(mainSource).toContain("function createAssistantLiveTextSink");
     expect(mainSource).toContain("transcriptWithReplacedMessage(params.baseTranscript, liveMessage)");
     expect(mainSource).toContain("shouldStop: (text) => Boolean(extractAgentActionJsonRequest(text))");
