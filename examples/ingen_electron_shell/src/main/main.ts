@@ -975,9 +975,9 @@ function queryNvidiaGpus(): HardwareGpuSnapshot[] {
 
 function vendorFromGpuName(name: string): HardwareGpuSnapshot["vendor"] {
   const normalized = name.toLowerCase();
-  if (normalized.includes("nvidia")) return "nvidia";
-  if (normalized.includes("amd") || normalized.includes("radeon")) return "amd";
-  if (normalized.includes("intel")) return "intel";
+  if (normalized.includes("nvidia") || normalized.includes("nouveau")) return "nvidia";
+  if (normalized.includes("amd") || normalized.includes("radeon") || normalized.includes("amdgpu")) return "amd";
+  if (normalized.includes("intel") || normalized.includes("i915") || normalized === "xe") return "intel";
   if (normalized.includes("apple")) return "apple";
   return "unknown";
 }
@@ -1045,6 +1045,126 @@ async function readFirstNumericFile(paths: string[], radix: 10 | 16 = 10): Promi
   return null;
 }
 
+async function readOptionalTextFile(filePath: string): Promise<string | null> {
+  try {
+    const value = (await readFile(filePath, "utf8")).trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function linuxMillidegreesToCelsius(value: number | null): number | null {
+  if (value === null) return null;
+  return roundMetric(Math.abs(value) > 1000 ? value / 1000 : value);
+}
+
+function linuxMicrowattsToWatts(value: number | null): number | null {
+  if (value === null) return null;
+  return roundMetric(value / 1_000_000);
+}
+
+interface LinuxHwmonProbe {
+  name: string;
+  temperatures: Array<{ label: string; value: number }>;
+  fanRpm: number | null;
+  powerWatts: number | null;
+}
+
+async function queryLinuxHwmonProbes(): Promise<LinuxHwmonProbe[]> {
+  if (process.platform !== "linux") {
+    return [];
+  }
+  try {
+    const { readdir } = await import("node:fs/promises");
+    const entries = await readdir("/sys/class/hwmon", { withFileTypes: true });
+    const probes: LinuxHwmonProbe[] = [];
+    for (const entry of entries.filter((item) => item.isDirectory() || item.isSymbolicLink())) {
+      const base = `/sys/class/hwmon/${entry.name}`;
+      const files = await readdir(base).catch(() => []);
+      const name = (await readOptionalTextFile(`${base}/name`)) ?? entry.name;
+      const temperatures: LinuxHwmonProbe["temperatures"] = [];
+      for (const file of files.filter((candidate) => /^temp\d+_input$/.test(candidate))) {
+        const index = file.match(/^temp(\d+)_input$/)?.[1];
+        if (!index) continue;
+        const value = linuxMillidegreesToCelsius(await readFirstNumericFile([`${base}/${file}`]));
+        if (value === null || value < -40 || value > 130) continue;
+        const label = (await readOptionalTextFile(`${base}/temp${index}_label`)) ?? `${name} temp ${index}`;
+        temperatures.push({ label, value });
+      }
+      const fanValues = await Promise.all(
+        files
+          .filter((candidate) => /^fan\d+_input$/.test(candidate))
+          .map((file) => readFirstNumericFile([`${base}/${file}`]))
+      );
+      const fanRpm = fanValues.find((value): value is number => value !== null && value >= 0) ?? null;
+      const powerValues = await Promise.all(
+        files
+          .filter((candidate) => /^power\d+_(input|average)$/.test(candidate))
+          .map((file) => readFirstNumericFile([`${base}/${file}`]))
+      );
+      const powerWatts = linuxMicrowattsToWatts(powerValues.find((value): value is number => value !== null && value > 0) ?? null);
+      if (temperatures.length > 0 || fanRpm !== null || powerWatts !== null) {
+        probes.push({ name, temperatures, fanRpm, powerWatts });
+      }
+    }
+    return probes;
+  } catch {
+    return [];
+  }
+}
+
+function linuxHwmonLooksLikeGpu(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return ["amdgpu", "nouveau", "nvidia", "i915", "xe"].some((token) => normalized.includes(token));
+}
+
+function linuxHwmonLooksLikeCpu(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return ["coretemp", "k10temp", "zenpower", "cpu", "x86_pkg_temp", "acpitz"].some((token) => normalized.includes(token));
+}
+
+async function queryLinuxHwmonGpus(): Promise<HardwareGpuSnapshot[]> {
+  const probes = await queryLinuxHwmonProbes();
+  return probes
+    .filter((probe) => linuxHwmonLooksLikeGpu(probe.name))
+    .map((probe): HardwareGpuSnapshot => {
+      const temperature = probe.temperatures.length > 0 ? Math.max(...probe.temperatures.map((item) => item.value)) : null;
+      return {
+        name: `${probe.name} sensor`,
+        vendor: vendorFromGpuName(probe.name),
+        source: "linux-drm",
+        utilization: hardwareMetric("GPU load", null, "%"),
+        memoryUsed: hardwareMetric("VRAM used", null, "GB"),
+        memoryTotal: hardwareMetric("VRAM total", null, "GB"),
+        temperature: hardwareMetric("GPU temperature", temperature, "C", metricStatusTemperature(temperature)),
+        fanSpeed: hardwareMetric("Fan speed", roundMetric(probe.fanRpm), "RPM"),
+        powerDraw: hardwareMetric("Power draw", probe.powerWatts, "W")
+      };
+    });
+}
+
+function mergeGpuSensorFallbacks(
+  primary: HardwareGpuSnapshot[],
+  supplemental: HardwareGpuSnapshot[]
+): HardwareGpuSnapshot[] {
+  if (primary.length === 0) return supplemental;
+  if (supplemental.length === 0) return primary;
+  return primary.map((gpu, index) => {
+    const fallback =
+      supplemental.find((candidate) => candidate.vendor !== "unknown" && candidate.vendor === gpu.vendor) ??
+      supplemental[index] ??
+      null;
+    if (!fallback) return gpu;
+    return {
+      ...gpu,
+      temperature: gpu.temperature.value === null ? fallback.temperature : gpu.temperature,
+      fanSpeed: gpu.fanSpeed.value === null ? fallback.fanSpeed : gpu.fanSpeed,
+      powerDraw: gpu.powerDraw.value === null ? fallback.powerDraw : gpu.powerDraw
+    };
+  });
+}
+
 async function queryLinuxDrmGpu(): Promise<HardwareGpuSnapshot[]> {
   if (process.platform !== "linux") {
     return [];
@@ -1085,6 +1205,17 @@ async function queryLinuxDrmGpu(): Promise<HardwareGpuSnapshot[]> {
 async function queryLinuxSystemTemperature(): Promise<number | null> {
   if (process.platform !== "linux") {
     return null;
+  }
+  const hwmonProbes = await queryLinuxHwmonProbes();
+  const cpuTemperatures = hwmonProbes
+    .filter((probe) => linuxHwmonLooksLikeCpu(probe.name))
+    .flatMap((probe) => probe.temperatures);
+  if (cpuTemperatures.length > 0) {
+    const packageTemperatures = cpuTemperatures.filter((temperature) =>
+      /package|tctl|tdie|cpu/i.test(temperature.label)
+    );
+    const selected = packageTemperatures.length > 0 ? packageTemperatures : cpuTemperatures;
+    return roundMetric(Math.max(...selected.map((temperature) => temperature.value)));
   }
   try {
     const { readdir } = await import("node:fs/promises");
@@ -1169,8 +1300,13 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
   const usedMemoryGb = Math.max(0, totalMemoryGb - freeMemoryGb);
   const memoryPercent = totalMemoryGb > 0 ? (usedMemoryGb / totalMemoryGb) * 100 : null;
   const nvidiaGpus = queryNvidiaGpus();
+  const linuxHwmonGpus = process.platform === "linux" ? await queryLinuxHwmonGpus() : [];
   const windowsGpus = nvidiaGpus.length > 0 ? [] : queryWindowsVideoControllers();
   const drmGpus = nvidiaGpus.length > 0 || windowsGpus.length > 0 ? [] : await queryLinuxDrmGpu();
+  const enrichedNvidiaGpus = process.platform === "linux" ? mergeGpuSensorFallbacks(nvidiaGpus, linuxHwmonGpus) : nvidiaGpus;
+  const linuxGpus = process.platform === "linux" && enrichedNvidiaGpus.length === 0 && windowsGpus.length === 0
+    ? mergeGpuSensorFallbacks(drmGpus, linuxHwmonGpus)
+    : [];
   const systemTemperature = await querySystemTemperature();
   const gpuNotes =
     nvidiaGpus.length === 0 && windowsGpus.length > 0
@@ -1197,7 +1333,7 @@ async function hardwareTelemetrySnapshot(): Promise<HardwareTelemetrySnapshot> {
       systemTemperature: hardwareMetric("System temperature", systemTemperature.value, "C", metricStatusTemperature(systemTemperature.value)),
       source: systemTemperature.source
     },
-    gpus: [...nvidiaGpus, ...windowsGpus, ...drmGpus],
+    gpus: [...enrichedNvidiaGpus, ...windowsGpus, ...linuxGpus],
     topProcesses: topProcessSnapshot(),
     governor: {
       profile: "balanced",

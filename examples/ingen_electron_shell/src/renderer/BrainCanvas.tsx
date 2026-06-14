@@ -988,7 +988,7 @@ function HardwareGpuPanel({ gpu }: { gpu: HardwareGpuSnapshot }) {
         <HardwareMetricTile glyph="memory" metric={gpu.memoryUsed} />
         <HardwareMetricTile glyph="memory" metric={gpu.memoryTotal} />
         <HardwareMetricTile glyph="thermometer" metric={gpu.temperature} />
-        <HardwareMetricTile glyph="fan" metric={gpu.fanSpeed} unavailableHint="OEM/driver sensor not exposed" />
+        <HardwareMetricTile glyph="fan" metric={gpu.fanSpeed} unavailableHint="No public OS/driver fan sensor" />
         <HardwareMetricTile glyph="zap" metric={gpu.powerDraw} />
       </div>
     </section>
@@ -1000,10 +1000,10 @@ function hardwareVisibleNotes(snapshot: HardwareTelemetrySnapshot): string[] {
     .filter((note) => !note.toLowerCase().includes("fan and power-profile writes"))
     .map((note) => note.replace("locked", "unavailable"));
   if (snapshot.thermal.systemTemperature.value === null) {
-    notes.push("System temperature is unavailable when Windows, macOS, Linux, or the OEM firmware does not expose a safe read-only sensor.");
+    notes.push("System temperature is unavailable when the OS or driver does not expose a safe read-only sensor.");
   }
   if (snapshot.gpus.some((gpu) => gpu.fanSpeed.value === null)) {
-    notes.push("Fan speed is unavailable on many laptop GPUs because NVIDIA/OEM drivers return no public read-only fan sensor.");
+    notes.push("Fan speed is unavailable when the OS, kernel driver, or GPU driver does not expose a public read-only tachometer sensor.");
   }
   return Array.from(new Set(notes));
 }
