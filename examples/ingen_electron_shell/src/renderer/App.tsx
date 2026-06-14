@@ -104,11 +104,13 @@ function readWidgetLayoutLock(): WidgetLayoutLock | null {
     return null;
   }
   const bottomControlsRect = document.querySelector(".bottomControls")?.getBoundingClientRect();
+  const chatWidth = Math.round(composerRect.width);
+  const bottomWidth = Math.round(bottomControlsRect?.width ?? composerRect.width);
   return {
-    chatLeft: Math.round(composerRect.left),
-    chatWidth: Math.round(composerRect.width),
-    bottomLeft: Math.round(bottomControlsRect?.left ?? composerRect.left),
-    bottomWidth: Math.round(bottomControlsRect?.width ?? composerRect.width)
+    chatLeft: Math.round((window.innerWidth - chatWidth) / 2),
+    chatWidth,
+    bottomLeft: Math.round((window.innerWidth - bottomWidth) / 2),
+    bottomWidth
   };
 }
 
@@ -935,16 +937,8 @@ export function App() {
     }
 
     void (async () => {
-      if (activeProfileCanvas) {
-        await closeProfileCanvas();
-      }
       if (snapshot.leftPanelOpen) {
         await headerShadowStore.dispatchControl({ id: "left-panel", command: "toggle_left_panel" });
-        await Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot()]);
-        await waitForWidgetMotion(WIDGET_SIDEBAR_SETTLE_MS);
-      }
-      if (snapshot.rightPanelOpen) {
-        await headerShadowStore.dispatchControl({ id: "plan", command: "toggle_right_panel", route: "right-panel" });
         await Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot()]);
         await waitForWidgetMotion(WIDGET_SIDEBAR_SETTLE_MS);
       }
@@ -965,9 +959,12 @@ export function App() {
         setParallelPrompts([""]);
         void globalThis.window?.forgeShell?.hideNativeWebExplorer?.();
         void globalThis.window?.forgeShell?.hideNativeMaps?.();
+        if (activeProfileCanvas) {
+          void closeProfileCanvas();
+        }
       }, WIDGET_SURFACE_CLOSE_DELAY_MS);
     })();
-  }, [activeProfileCanvas, closeProfileCanvas, snapshot.leftPanelOpen, snapshot.rightPanelOpen]);
+  }, [activeProfileCanvas, closeProfileCanvas, snapshot.leftPanelOpen]);
   const topControls = useMemo(() => snapshot.topControls.filter((control) => control.visible), [snapshot]);
   const workspaceControls = useMemo(
     () => snapshot.workspaceControls.filter((control) => control.visible),

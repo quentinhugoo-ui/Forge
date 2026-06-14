@@ -760,17 +760,26 @@ button {
 .shell--widget-mode .leftPanel {
   pointer-events: none;
   transform: translateX(calc(-100% - 18px));
+  transition-property: transform;
+  transition-delay: 0ms;
+  transition-duration: 760ms;
+  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
 }
 
 .shell--widget-mode .rightPanel {
+  opacity: 1;
   pointer-events: none;
   transform: translateX(calc(100% + 18px));
+  transition-property: transform;
+  transition-delay: 0ms;
+  transition-duration: 760ms;
+  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
 }
 
 .shell--widget-mode .canvasCover,
+.shell--widget-mode .profileCanvas,
 .shell--widget-mode .chatCanvas,
 .shell--widget-mode .parallelTranscriptGrid,
-.shell--widget-mode .canvasSurfaces,
 .shell--widget-mode .workspaceRequiredVeil,
 .shell--widget-mode .sidebarLedger,
 .shell--widget-mode .shadowLedger {
@@ -778,6 +787,31 @@ button {
   transform: translateY(calc(100vh + 96px));
   transition-property: transform;
   transition-delay: 260ms;
+  transition-duration: 760ms;
+  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+}
+
+.shell--widget-mode .canvasSurfaces {
+  pointer-events: none;
+}
+
+.shell--widget-mode .canvasSurfaces__primary {
+  pointer-events: none;
+  transform: translateY(calc(100vh + 96px));
+  transition-property: transform;
+  transition-delay: 260ms;
+  transition-duration: 760ms;
+  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+}
+
+.shell--widget-mode .canvasSplitPane,
+.shell--widget-mode .canvasPlanetRail,
+.shell--widget-mode .canvasFilesPane,
+.shell--widget-mode .canvasTerminalPane {
+  pointer-events: none;
+  transform: translateX(calc(100vw + 96px));
+  transition-property: transform;
+  transition-delay: 0ms;
   transition-duration: 760ms;
   transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
 }
