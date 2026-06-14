@@ -14,6 +14,8 @@ describe("Banger native viewport contract", () => {
     expect(routerSource).toContain('"--surface-height": "100vh"');
     expect(routerSource).toContain("getBangerPreviewFrame");
     expect(routerSource).toContain("getBangerPresentLoopBootstrap");
+    expect(routerSource).toContain("presentLoop.previewFrameDataUrl");
+    expect(routerSource).toContain("rust_banger_wgpu_present_loop_rgba8_to_bmp_data_url");
     expect(routerSource).toContain('"nativeViewportSlot nativeViewportSlot--live"');
     expect(routerSource).toContain('data-native-contract={surface.nativeContract}');
     expect(routerSource).toContain('data-present-loop={presentLoop?.routeStatus ?? "pending"}');
@@ -38,6 +40,8 @@ describe("Banger native viewport contract", () => {
     expect(rustBackendSource).toContain("FORGE_BANGER_PARENT_HWND");
     expect(rustBackendSource).toContain("shaderSourceHash");
     expect(rustBackendSource).toContain("renderPipelineHash");
+    expect(rustBackendSource).toContain("bangerPreviewRgba8ToBmpDataUrl");
+    expect(rustBackendSource).toContain("falling back to offscreen present-loop preview");
     expect(rustBackendSource).toContain("renderLoopPolicy");
     expect(rustBackendSource).toContain("indexCount");
     expect(rustBackendSource).toContain("instanceCount");

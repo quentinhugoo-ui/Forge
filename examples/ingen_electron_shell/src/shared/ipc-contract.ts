@@ -1591,6 +1591,13 @@ export interface BangerPresentLoopBootstrapResult {
   sceneMeshHash?: string;
   shaderSourceHash?: string;
   renderPipelineHash?: string;
+  previewWidth?: number;
+  previewHeight?: number;
+  previewByteCount?: number;
+  previewRgbaHash?: string;
+  previewProofHash?: string;
+  previewRgba8?: number[];
+  previewFrameDataUrl?: string;
   frameHash: string;
   presentLoopHash: string;
   proofHash: string;

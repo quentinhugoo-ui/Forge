@@ -114,6 +114,13 @@ export interface RustBangerPresentLoopBootstrap {
   sceneMeshHash?: string;
   shaderSourceHash?: string;
   renderPipelineHash?: string;
+  previewWidth?: number;
+  previewHeight?: number;
+  previewByteCount?: number;
+  previewRgbaHash?: string;
+  previewProofHash?: string;
+  previewRgba8?: number[];
+  previewFrameDataUrl?: string;
   frameHash: string;
   presentLoopHash: string;
   proofHash: string;
@@ -213,7 +220,10 @@ export async function loadRustBangerPresentLoopBootstrap(
       return null;
     });
     if (host) {
-      return host;
+      if (host.previewFrameDataUrl) {
+        return host;
+      }
+      console.warn("Rust Banger native host has no preview frame; falling back to offscreen present-loop preview.");
     }
   }
   const env = {
@@ -472,7 +482,58 @@ function parseBangerPresentLoopBootstrap(stdout: string): RustBangerPresentLoopB
   ) {
     throw new Error("Rust Banger present loop bootstrap failed validation.");
   }
-  return parsed as RustBangerPresentLoopBootstrap;
+  const bootstrap = parsed as RustBangerPresentLoopBootstrap;
+  if (
+    typeof bootstrap.previewWidth === "number" &&
+    typeof bootstrap.previewHeight === "number" &&
+    Array.isArray(bootstrap.previewRgba8)
+  ) {
+    bootstrap.previewFrameDataUrl = bangerPreviewRgba8ToBmpDataUrl(
+      bootstrap.previewWidth,
+      bootstrap.previewHeight,
+      bootstrap.previewRgba8
+    );
+  }
+  return bootstrap;
+}
+
+function bangerPreviewRgba8ToBmpDataUrl(width: number, height: number, rgba8: number[]): string {
+  const safeWidth = Math.max(1, Math.floor(width));
+  const safeHeight = Math.max(1, Math.floor(height));
+  const pixelCount = safeWidth * safeHeight;
+  if (rgba8.length < pixelCount * 4) {
+    throw new Error("Rust Banger present loop preview buffer is shorter than expected.");
+  }
+  const rowStride = Math.ceil((safeWidth * 3) / 4) * 4;
+  const pixelBytes = rowStride * safeHeight;
+  const fileBytes = 54 + pixelBytes;
+  const bmp = Buffer.alloc(fileBytes);
+  bmp.write("BM", 0, "ascii");
+  bmp.writeUInt32LE(fileBytes, 2);
+  bmp.writeUInt32LE(54, 10);
+  bmp.writeUInt32LE(40, 14);
+  bmp.writeInt32LE(safeWidth, 18);
+  bmp.writeInt32LE(safeHeight, 22);
+  bmp.writeUInt16LE(1, 26);
+  bmp.writeUInt16LE(24, 28);
+  bmp.writeUInt32LE(pixelBytes, 34);
+  for (let y = 0; y < safeHeight; y += 1) {
+    const sourceY = safeHeight - 1 - y;
+    const destRow = 54 + y * rowStride;
+    for (let x = 0; x < safeWidth; x += 1) {
+      const source = (sourceY * safeWidth + x) * 4;
+      const dest = destRow + x * 3;
+      bmp[dest] = clampByte(rgba8[source]);
+      bmp[dest + 1] = clampByte(rgba8[source + 1]);
+      bmp[dest + 2] = clampByte(rgba8[source + 2]);
+    }
+  }
+  return `data:image/bmp;base64,${bmp.toString("base64")}`;
+}
+
+function clampByte(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(255, Math.round(value)));
 }
 
 function parseProjection(stdout: string): RustBackendProjection {

@@ -75,7 +75,13 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     };
   }, []);
 
-  const hasNativeFrame = previewFrame?.accepted === true && previewFrame.frameDataUrl.length > 0;
+  const presentLoopFrameDataUrl = presentLoop?.ok === true ? presentLoop.previewFrameDataUrl ?? "" : "";
+  const splatFrameDataUrl = previewFrame?.accepted === true ? previewFrame.frameDataUrl : "";
+  const nativeFrameDataUrl = presentLoopFrameDataUrl || splatFrameDataUrl;
+  const hasNativeFrame = nativeFrameDataUrl.length > 0;
+  const renderPath = presentLoopFrameDataUrl
+    ? "rust_banger_wgpu_present_loop_rgba8_to_bmp_data_url"
+    : previewFrame?.metrics.renderPath ?? "rust-banger-wgpu-child-window";
 
   return (
     <section className="surface surface--banger" aria-label={surface.label}>
@@ -84,12 +90,12 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
         aria-label="Banger native renderer surface"
         data-native-contract={surface.nativeContract}
         data-present-loop={presentLoop?.routeStatus ?? "pending"}
-        data-render-path={previewFrame?.metrics.renderPath ?? "rust-banger-wgpu-child-window"}
+        data-render-path={renderPath}
       >
         {hasNativeFrame ? (
           <img
             className="nativeViewportSlot__frame"
-            src={previewFrame.frameDataUrl}
+            src={nativeFrameDataUrl}
             alt=""
             draggable={false}
           />
