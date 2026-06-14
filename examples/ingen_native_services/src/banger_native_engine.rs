@@ -1630,18 +1630,27 @@ pub struct BangerNativeVirtualShadowPacket {
     pub cached_page_count: usize,
     pub invalidated_page_count: usize,
     pub light_page_count: usize,
+    pub clipmap_range_count: usize,
+    pub hzb_invalidation_count: usize,
+    pub page_pool_pressure_count: usize,
     pub shadow_ray_budget: u64,
     pub max_page_age_frames: u32,
     pub page_pool_pressure_pct: f32,
     pub page_table_hash: String,
     pub cache_hash: String,
     pub invalidation_hash: String,
+    pub hzb_invalidation_hash: String,
     pub page_age_hash: String,
     pub page_pressure_hash: String,
+    pub clipmap_range_hash: String,
+    pub cache_metadata_hash: String,
     pub projection_hash: String,
     pub light_grid_hash: String,
+    pub validation_receipt_hash: String,
     pub packet_hash: String,
     pub entries: Vec<BangerNativeVirtualShadowEntry>,
+    pub clipmap_ranges: Vec<BangerNativeVirtualShadowClipmapRange>,
+    pub validation_receipt: BangerNativeVirtualShadowValidationReceipt,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1652,21 +1661,58 @@ pub struct BangerNativeVirtualShadowEntry {
     pub shadow_page_id: String,
     pub source_surface_page_id: String,
     pub virtual_light_id: String,
+    pub per_light_page_table_id: String,
     pub virtual_map_id: u32,
     pub clipmap_level: u32,
+    pub clipmap_range_id: String,
     pub page_coord: [u32; 3],
     pub resolution: u32,
     pub cache_state: &'static str,
     pub invalidation_reason: &'static str,
+    pub invalidation_mask: u32,
     pub page_age_frames: u32,
+    pub page_age_bucket: u32,
     pub page_pool_pressure_pct: f32,
+    pub depth_range_shift: f32,
+    pub hzb_resource_id: String,
+    pub hzb_input_hash: String,
     pub light_grid_cell: [u32; 3],
     pub projection_tile: [u32; 4],
     pub ray_budget: u32,
     pub page_table_hash: String,
     pub cache_hash: String,
+    pub cache_metadata_hash: String,
+    pub hzb_invalidation_hash: String,
     pub projection_hash: String,
     pub entry_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualShadowClipmapRange {
+    pub range_id: String,
+    pub virtual_light_id: String,
+    pub clipmap_level: u32,
+    pub first_page_coord: [u32; 3],
+    pub page_count: usize,
+    pub min_page_age_frames: u32,
+    pub max_page_age_frames: u32,
+    pub invalidated_page_count: usize,
+    pub range_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeVirtualShadowValidationReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_page_count: usize,
+    pub checked_range_count: usize,
+    pub invalid_page_count: usize,
+    pub hzb_invalidation_count: usize,
+    pub page_pool_pressure_count: usize,
+    pub all_pages_have_ranges: bool,
+    pub validation_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -5110,13 +5156,28 @@ fn build_virtual_shadow_packet(
             let resolution = virtual_shadow_resolution(clipmap_level, lumen_entry);
             let cache_state = virtual_shadow_cache_state(lumen_entry, matching_nanite);
             let invalidation_reason = virtual_shadow_invalidation_reason(lumen_entry, cache_state);
+            let invalidation_mask = virtual_shadow_invalidation_mask(invalidation_reason);
             let page_age_frames = virtual_shadow_page_age_frames(lumen_entry, cache_state);
+            let page_age_bucket = virtual_shadow_page_age_bucket(page_age_frames);
             let page_pool_pressure_pct =
                 virtual_shadow_page_pool_pressure_pct(lumen_entry, page_age_frames, cache_state);
+            let depth_range_shift = virtual_shadow_depth_range_shift(lumen_entry, clipmap_level);
             let light_grid_cell = virtual_shadow_light_grid_cell(lumen_entry, index as u32);
             let projection_tile = virtual_shadow_projection_tile(lumen_entry, &page_coord, resolution);
             let ray_budget = virtual_shadow_ray_budget(lumen_entry, radiance_schedule_manifest.light_budget);
             let virtual_light_id = virtual_shadow_light_id(lumen_entry, virtual_map_id);
+            let per_light_page_table_id =
+                virtual_shadow_per_light_page_table_id(&virtual_light_id, virtual_map_id);
+            let clipmap_range_id = virtual_shadow_clipmap_range_id(&virtual_light_id, clipmap_level);
+            let hzb_resource_id = virtual_shadow_hzb_resource_id(lumen_entry, &light_grid_cell);
+            let hzb_input_hash = virtual_shadow_hzb_input_hash(
+                lumen_entry,
+                &hzb_resource_id,
+                &page_coord,
+                resolution,
+                invalidation_mask,
+                depth_range_shift,
+            );
             let shadow_page_id = format!(
                 "vshadow:{}:{}:{}:{}",
                 virtual_map_id, clipmap_level, page_coord[0], page_coord[1]
@@ -5135,6 +5196,22 @@ fn build_virtual_shadow_packet(
                 page_age_frames,
                 page_pool_pressure_pct,
                 &page_table_hash,
+            );
+            let cache_metadata_hash = virtual_shadow_cache_metadata_hash(
+                lumen_entry,
+                &per_light_page_table_id,
+                &clipmap_range_id,
+                page_age_bucket,
+                invalidation_mask,
+                depth_range_shift,
+                &hzb_input_hash,
+            );
+            let hzb_invalidation_hash = virtual_shadow_hzb_invalidation_entry_hash(
+                lumen_entry,
+                &hzb_resource_id,
+                &hzb_input_hash,
+                invalidation_mask,
+                depth_range_shift,
             );
             let projection_hash = virtual_shadow_projection_entry_hash(
                 lumen_entry,
@@ -5159,6 +5236,8 @@ fn build_virtual_shadow_packet(
                 ray_budget,
                 &page_table_hash,
                 &cache_hash,
+                &cache_metadata_hash,
+                &hzb_invalidation_hash,
                 &projection_hash,
             );
             BangerNativeVirtualShadowEntry {
@@ -5167,29 +5246,44 @@ fn build_virtual_shadow_packet(
                 shadow_page_id,
                 source_surface_page_id: lumen_entry.surface_page_id.clone(),
                 virtual_light_id,
+                per_light_page_table_id,
                 virtual_map_id,
                 clipmap_level,
+                clipmap_range_id,
                 page_coord,
                 resolution,
                 cache_state,
                 invalidation_reason,
+                invalidation_mask,
                 page_age_frames,
+                page_age_bucket,
                 page_pool_pressure_pct,
+                depth_range_shift,
+                hzb_resource_id,
+                hzb_input_hash,
                 light_grid_cell,
                 projection_tile,
                 ray_budget,
                 page_table_hash,
                 cache_hash,
+                cache_metadata_hash,
+                hzb_invalidation_hash,
                 projection_hash,
                 entry_hash,
             }
         })
         .collect::<Vec<_>>();
+    let clipmap_ranges = build_virtual_shadow_clipmap_ranges(&entries);
+    let validation_receipt = build_virtual_shadow_validation_receipt(&entries, &clipmap_ranges);
+    let validation_receipt_hash = validation_receipt.validation_hash.clone();
     let page_table_hash = virtual_shadow_page_table_hash(&entries);
     let cache_hash = virtual_shadow_cache_hash(&entries);
     let invalidation_hash = virtual_shadow_invalidation_hash(&entries);
+    let hzb_invalidation_hash = virtual_shadow_hzb_invalidation_hash(&entries);
     let page_age_hash = virtual_shadow_page_age_hash(&entries);
     let page_pressure_hash = virtual_shadow_page_pressure_hash(&entries);
+    let clipmap_range_hash = virtual_shadow_clipmap_ranges_hash(&clipmap_ranges);
+    let cache_metadata_hash = virtual_shadow_cache_metadata_table_hash(&entries);
     let projection_hash = virtual_shadow_projection_hash(&entries);
     let light_grid_hash = virtual_shadow_light_grid_hash(&entries);
     let packet_hash = virtual_shadow_packet_hash(
@@ -5201,17 +5295,22 @@ fn build_virtual_shadow_packet(
         &page_table_hash,
         &cache_hash,
         &invalidation_hash,
+        &hzb_invalidation_hash,
         &page_age_hash,
         &page_pressure_hash,
+        &clipmap_range_hash,
+        &cache_metadata_hash,
         &projection_hash,
         &light_grid_hash,
+        &validation_receipt_hash,
         &entries,
+        &clipmap_ranges,
     );
     BangerNativeVirtualShadowPacket {
-        schema: "forge.banger.virtual_shadow_packet.v2",
-        schema_version: 2,
+        schema: "forge.banger.virtual_shadow_packet.v3",
+        schema_version: 3,
         authority: "banger_virtual_shadow_page_cache_light_grid_projection",
-        clean_room_basis: "local_unreal_sparse_virtual_shadow_map_page_marking_cache_projection_principles_no_source_copy",
+        clean_room_basis: "local_unreal_sparse_virtual_shadow_map_page_cache_clipmap_hzb_invalidation_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
         nanite_second_layer_hash: nanite_second_layer_packet.packet_hash.clone(),
         lumen_lighting_hash: lumen_lighting_packet.packet_hash.clone(),
@@ -5231,18 +5330,27 @@ fn build_virtual_shadow_packet(
             .map(|entry| entry.virtual_light_id.as_str())
             .collect::<BTreeSet<_>>()
             .len(),
+        clipmap_range_count: clipmap_ranges.len(),
+        hzb_invalidation_count: validation_receipt.hzb_invalidation_count,
+        page_pool_pressure_count: validation_receipt.page_pool_pressure_count,
         shadow_ray_budget: entries.iter().map(|entry| entry.ray_budget as u64).sum(),
         max_page_age_frames: entries.iter().map(|entry| entry.page_age_frames).max().unwrap_or_default(),
         page_pool_pressure_pct: virtual_shadow_packet_pressure_pct(&entries),
         page_table_hash,
         cache_hash,
         invalidation_hash,
+        hzb_invalidation_hash,
         page_age_hash,
         page_pressure_hash,
+        clipmap_range_hash,
+        cache_metadata_hash,
         projection_hash,
         light_grid_hash,
+        validation_receipt_hash,
         packet_hash,
         entries,
+        clipmap_ranges,
+        validation_receipt,
     }
 }
 
@@ -10524,6 +10632,16 @@ fn virtual_shadow_invalidation_reason(
     }
 }
 
+fn virtual_shadow_invalidation_mask(invalidation_reason: &str) -> u32 {
+    match invalidation_reason {
+        "geometry_page_streaming" => 0b0000_0100,
+        "temporal_epoch_new" => 0b0000_0010,
+        "light_budget_pressure" => 0b0011_0000,
+        "stable_cache_reuse" => 0,
+        _ => 0b1000_0000,
+    }
+}
+
 fn virtual_shadow_page_age_frames(
     entry: &BangerNativeLumenLightingEntry,
     cache_state: &str,
@@ -10532,6 +10650,16 @@ fn virtual_shadow_page_age_frames(
         "persistent_cache_hit" => entry.temporal_reuse_frames.saturating_add(2),
         "cache_warm" => entry.temporal_reuse_frames.max(1),
         _ => 0,
+    }
+}
+
+fn virtual_shadow_page_age_bucket(page_age_frames: u32) -> u32 {
+    match page_age_frames {
+        0 => 0,
+        1..=2 => 1,
+        3..=7 => 2,
+        8..=15 => 3,
+        _ => 4,
     }
 }
 
@@ -10547,6 +10675,17 @@ fn virtual_shadow_page_pool_pressure_pct(
     let age_relief = (page_age_frames as f32 * 4.0).min(24.0);
     let cache_penalty = if cache_state == "page_mark_required" { 30.0 } else { 0.0 };
     (ray_pressure + cache_penalty - age_relief).clamp(0.0, 100.0)
+}
+
+fn virtual_shadow_depth_range_shift(
+    entry: &BangerNativeLumenLightingEntry,
+    clipmap_level: u32,
+) -> f32 {
+    let ray_span = entry
+        .diffuse_ray_count
+        .saturating_add(entry.reflection_ray_count) as f32;
+    let clipmap_scale = (clipmap_level + 1) as f32;
+    (ray_span / 8192.0 / clipmap_scale).clamp(0.0, 1.0)
 }
 
 fn virtual_shadow_light_grid_cell(
@@ -10591,6 +10730,58 @@ fn virtual_shadow_light_id(entry: &BangerNativeLumenLightingEntry, virtual_map_i
     )
 }
 
+fn virtual_shadow_per_light_page_table_id(virtual_light_id: &str, virtual_map_id: u32) -> String {
+    hash_text_hex(
+        "forge.banger.virtual_shadow.per_light_page_table_id.v1",
+        &format!("{}:{}", virtual_light_id, virtual_map_id),
+    )
+}
+
+fn virtual_shadow_clipmap_range_id(virtual_light_id: &str, clipmap_level: u32) -> String {
+    hash_text_hex(
+        "forge.banger.virtual_shadow.clipmap_range_id.v1",
+        &format!("{}:{}", virtual_light_id, clipmap_level),
+    )
+}
+
+fn virtual_shadow_hzb_resource_id(
+    entry: &BangerNativeLumenLightingEntry,
+    light_grid_cell: &[u32; 3],
+) -> String {
+    hash_text_hex(
+        "forge.banger.virtual_shadow.hzb_resource_id.v1",
+        &format!(
+            "{}:{}:{}:{}:{}",
+            entry.source_probe_page_id,
+            entry.screen_probe_hash,
+            light_grid_cell[0],
+            light_grid_cell[1],
+            light_grid_cell[2]
+        ),
+    )
+}
+
+fn virtual_shadow_hzb_input_hash(
+    entry: &BangerNativeLumenLightingEntry,
+    hzb_resource_id: &str,
+    page_coord: &[u32; 3],
+    resolution: u32,
+    invalidation_mask: u32,
+    depth_range_shift: f32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.hzb_input.v1\0");
+    h.update(entry.screen_probe_hash.as_bytes());
+    h.update(hzb_resource_id.as_bytes());
+    for value in page_coord {
+        h.update(value.to_le_bytes());
+    }
+    h.update(resolution.to_le_bytes());
+    h.update(invalidation_mask.to_le_bytes());
+    h.update(depth_range_shift.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
 fn virtual_shadow_page_table_entry_hash(
     entry: &BangerNativeLumenLightingEntry,
     shadow_page_id: &str,
@@ -10607,6 +10798,44 @@ fn virtual_shadow_page_table_entry_hash(
         h.update(value.to_le_bytes());
     }
     h.update(resolution.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_cache_metadata_hash(
+    entry: &BangerNativeLumenLightingEntry,
+    per_light_page_table_id: &str,
+    clipmap_range_id: &str,
+    page_age_bucket: u32,
+    invalidation_mask: u32,
+    depth_range_shift: f32,
+    hzb_input_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.cache_metadata.v1\0");
+    h.update(entry.surface_cache_hash.as_bytes());
+    h.update(per_light_page_table_id.as_bytes());
+    h.update(clipmap_range_id.as_bytes());
+    h.update(page_age_bucket.to_le_bytes());
+    h.update(invalidation_mask.to_le_bytes());
+    h.update(depth_range_shift.to_le_bytes());
+    h.update(hzb_input_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_hzb_invalidation_entry_hash(
+    entry: &BangerNativeLumenLightingEntry,
+    hzb_resource_id: &str,
+    hzb_input_hash: &str,
+    invalidation_mask: u32,
+    depth_range_shift: f32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.hzb_invalidation_entry.v1\0");
+    h.update(entry.entry_hash.as_bytes());
+    h.update(hzb_resource_id.as_bytes());
+    h.update(hzb_input_hash.as_bytes());
+    h.update(invalidation_mask.to_le_bytes());
+    h.update(depth_range_shift.to_le_bytes());
     hex32(h.finalize().into())
 }
 
@@ -10665,10 +10894,12 @@ fn virtual_shadow_entry_hash(
     ray_budget: u32,
     page_table_hash: &str,
     cache_hash: &str,
+    cache_metadata_hash: &str,
+    hzb_invalidation_hash: &str,
     projection_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.virtual_shadow.entry.v2\0");
+    h.update(b"forge.banger.virtual_shadow.entry.v3\0");
     h.update(entry.entry_hash.as_bytes());
     h.update(shadow_page_id.as_bytes());
     h.update(virtual_light_id.as_bytes());
@@ -10691,15 +10922,102 @@ fn virtual_shadow_entry_hash(
     h.update(ray_budget.to_le_bytes());
     h.update(page_table_hash.as_bytes());
     h.update(cache_hash.as_bytes());
+    h.update(cache_metadata_hash.as_bytes());
+    h.update(hzb_invalidation_hash.as_bytes());
     h.update(projection_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn build_virtual_shadow_clipmap_ranges(
+    entries: &[BangerNativeVirtualShadowEntry],
+) -> Vec<BangerNativeVirtualShadowClipmapRange> {
+    let mut grouped: BTreeMap<String, Vec<&BangerNativeVirtualShadowEntry>> = BTreeMap::new();
+    for entry in entries {
+        grouped
+            .entry(entry.clipmap_range_id.clone())
+            .or_default()
+            .push(entry);
+    }
+    grouped
+        .into_iter()
+        .map(|(range_id, range_entries)| {
+            let first = range_entries[0];
+            let first_page_coord = range_entries
+                .iter()
+                .map(|entry| entry.page_coord)
+                .min()
+                .unwrap_or(first.page_coord);
+            let min_page_age_frames = range_entries
+                .iter()
+                .map(|entry| entry.page_age_frames)
+                .min()
+                .unwrap_or_default();
+            let max_page_age_frames = range_entries
+                .iter()
+                .map(|entry| entry.page_age_frames)
+                .max()
+                .unwrap_or_default();
+            let invalidated_page_count = range_entries
+                .iter()
+                .filter(|entry| entry.invalidation_mask != 0)
+                .count();
+            let range_hash = virtual_shadow_clipmap_range_hash(
+                &range_id,
+                &first.virtual_light_id,
+                first.clipmap_level,
+                &first_page_coord,
+                range_entries.len(),
+                min_page_age_frames,
+                max_page_age_frames,
+                invalidated_page_count,
+            );
+            BangerNativeVirtualShadowClipmapRange {
+                range_id,
+                virtual_light_id: first.virtual_light_id.clone(),
+                clipmap_level: first.clipmap_level,
+                first_page_coord,
+                page_count: range_entries.len(),
+                min_page_age_frames,
+                max_page_age_frames,
+                invalidated_page_count,
+                range_hash,
+            }
+        })
+        .collect()
+}
+
+fn virtual_shadow_clipmap_range_hash(
+    range_id: &str,
+    virtual_light_id: &str,
+    clipmap_level: u32,
+    first_page_coord: &[u32; 3],
+    page_count: usize,
+    min_page_age_frames: u32,
+    max_page_age_frames: u32,
+    invalidated_page_count: usize,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.clipmap_range.v1\0");
+    h.update(range_id.as_bytes());
+    h.update(virtual_light_id.as_bytes());
+    h.update(clipmap_level.to_le_bytes());
+    for value in first_page_coord {
+        h.update(value.to_le_bytes());
+    }
+    h.update((page_count as u64).to_le_bytes());
+    h.update(min_page_age_frames.to_le_bytes());
+    h.update(max_page_age_frames.to_le_bytes());
+    h.update((invalidated_page_count as u64).to_le_bytes());
     hex32(h.finalize().into())
 }
 
 fn virtual_shadow_page_table_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.virtual_shadow.page_table.v1\0");
+    h.update(b"forge.banger.virtual_shadow.page_table.v2\0");
     for entry in entries {
         h.update(entry.shadow_page_id.as_bytes());
+        h.update(entry.per_light_page_table_id.as_bytes());
+        h.update(entry.clipmap_range_id.as_bytes());
         h.update(entry.page_table_hash.as_bytes());
         h.update(entry.virtual_map_id.to_le_bytes());
     }
@@ -10720,20 +11038,33 @@ fn virtual_shadow_cache_hash(entries: &[BangerNativeVirtualShadowEntry]) -> Stri
 
 fn virtual_shadow_invalidation_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.virtual_shadow.invalidation.v1\0");
+    h.update(b"forge.banger.virtual_shadow.invalidation.v2\0");
     for entry in entries {
         h.update(entry.invalidation_reason.as_bytes());
+        h.update(entry.invalidation_mask.to_le_bytes());
         h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_hzb_invalidation_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.hzb_invalidation.v1\0");
+    for entry in entries {
+        h.update(entry.hzb_resource_id.as_bytes());
+        h.update(entry.hzb_input_hash.as_bytes());
+        h.update(entry.hzb_invalidation_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
 
 fn virtual_shadow_page_age_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.virtual_shadow.page_age.v1\0");
+    h.update(b"forge.banger.virtual_shadow.page_age.v2\0");
     for entry in entries {
         h.update(entry.shadow_page_id.as_bytes());
         h.update(entry.page_age_frames.to_le_bytes());
+        h.update(entry.page_age_bucket.to_le_bytes());
         h.update(entry.cache_state.as_bytes());
     }
     hex32(h.finalize().into())
@@ -10746,6 +11077,31 @@ fn virtual_shadow_page_pressure_hash(entries: &[BangerNativeVirtualShadowEntry])
         h.update(entry.shadow_page_id.as_bytes());
         h.update(entry.page_pool_pressure_pct.to_le_bytes());
         h.update(entry.invalidation_reason.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_clipmap_ranges_hash(
+    ranges: &[BangerNativeVirtualShadowClipmapRange],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.clipmap_ranges.v1\0");
+    for range in ranges {
+        h.update(range.range_id.as_bytes());
+        h.update(range.range_hash.as_bytes());
+        h.update((range.page_count as u64).to_le_bytes());
+        h.update((range.invalidated_page_count as u64).to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn virtual_shadow_cache_metadata_table_hash(entries: &[BangerNativeVirtualShadowEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.cache_metadata_table.v1\0");
+    for entry in entries {
+        h.update(entry.shadow_page_id.as_bytes());
+        h.update(entry.cache_metadata_hash.as_bytes());
+        h.update(entry.depth_range_shift.to_le_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -10786,6 +11142,71 @@ fn virtual_shadow_light_grid_hash(entries: &[BangerNativeVirtualShadowEntry]) ->
     hex32(h.finalize().into())
 }
 
+fn build_virtual_shadow_validation_receipt(
+    entries: &[BangerNativeVirtualShadowEntry],
+    clipmap_ranges: &[BangerNativeVirtualShadowClipmapRange],
+) -> BangerNativeVirtualShadowValidationReceipt {
+    let range_ids = clipmap_ranges
+        .iter()
+        .map(|range| range.range_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let invalid_page_count = entries
+        .iter()
+        .filter(|entry| entry.invalidation_mask != 0)
+        .count();
+    let hzb_invalidation_count = entries
+        .iter()
+        .filter(|entry| {
+            entry.invalidation_mask & 0b0011_0000 != 0 || entry.depth_range_shift > 0.25
+        })
+        .count();
+    let page_pool_pressure_count = entries
+        .iter()
+        .filter(|entry| entry.page_pool_pressure_pct >= 50.0)
+        .count();
+    let all_pages_have_ranges = entries
+        .iter()
+        .all(|entry| range_ids.contains(entry.clipmap_range_id.as_str()));
+    let validation_hash = virtual_shadow_validation_receipt_hash(
+        entries.len(),
+        clipmap_ranges.len(),
+        invalid_page_count,
+        hzb_invalidation_count,
+        page_pool_pressure_count,
+        all_pages_have_ranges,
+    );
+    BangerNativeVirtualShadowValidationReceipt {
+        schema: "forge.banger.virtual_shadow_validation_receipt.v1",
+        authority: "virtual_shadow_page_cache_clipmap_hzb_validation",
+        checked_page_count: entries.len(),
+        checked_range_count: clipmap_ranges.len(),
+        invalid_page_count,
+        hzb_invalidation_count,
+        page_pool_pressure_count,
+        all_pages_have_ranges,
+        validation_hash,
+    }
+}
+
+fn virtual_shadow_validation_receipt_hash(
+    checked_page_count: usize,
+    checked_range_count: usize,
+    invalid_page_count: usize,
+    hzb_invalidation_count: usize,
+    page_pool_pressure_count: usize,
+    all_pages_have_ranges: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.virtual_shadow.validation_receipt.v1\0");
+    h.update((checked_page_count as u64).to_le_bytes());
+    h.update((checked_range_count as u64).to_le_bytes());
+    h.update((invalid_page_count as u64).to_le_bytes());
+    h.update((hzb_invalidation_count as u64).to_le_bytes());
+    h.update((page_pool_pressure_count as u64).to_le_bytes());
+    h.update([all_pages_have_ranges as u8]);
+    hex32(h.finalize().into())
+}
+
 fn virtual_shadow_packet_hash(
     prepared: &MonsterPreparedCompute,
     nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
@@ -10795,14 +11216,19 @@ fn virtual_shadow_packet_hash(
     page_table_hash: &str,
     cache_hash: &str,
     invalidation_hash: &str,
+    hzb_invalidation_hash: &str,
     page_age_hash: &str,
     page_pressure_hash: &str,
+    clipmap_range_hash: &str,
+    cache_metadata_hash: &str,
     projection_hash: &str,
     light_grid_hash: &str,
+    validation_receipt_hash: &str,
     entries: &[BangerNativeVirtualShadowEntry],
+    clipmap_ranges: &[BangerNativeVirtualShadowClipmapRange],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.virtual_shadow_packet.v2\0");
+    h.update(b"forge.banger.virtual_shadow_packet.v3\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(nanite_second_layer_packet.packet_hash.as_bytes());
@@ -10812,12 +11238,19 @@ fn virtual_shadow_packet_hash(
     h.update(page_table_hash.as_bytes());
     h.update(cache_hash.as_bytes());
     h.update(invalidation_hash.as_bytes());
+    h.update(hzb_invalidation_hash.as_bytes());
     h.update(page_age_hash.as_bytes());
     h.update(page_pressure_hash.as_bytes());
+    h.update(clipmap_range_hash.as_bytes());
+    h.update(cache_metadata_hash.as_bytes());
     h.update(projection_hash.as_bytes());
     h.update(light_grid_hash.as_bytes());
+    h.update(validation_receipt_hash.as_bytes());
     for entry in entries {
         h.update(entry.entry_hash.as_bytes());
+    }
+    for range in clipmap_ranges {
+        h.update(range.range_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -19852,9 +20285,9 @@ mod tests {
                 )));
         assert_eq!(
             response.virtual_shadow_packet.schema,
-            "forge.banger.virtual_shadow_packet.v2"
+            "forge.banger.virtual_shadow_packet.v3"
         );
-        assert_eq!(response.virtual_shadow_packet.schema_version, 2);
+        assert_eq!(response.virtual_shadow_packet.schema_version, 3);
         assert_eq!(
             response.virtual_shadow_packet.authority,
             "banger_virtual_shadow_page_cache_light_grid_projection"
@@ -19896,6 +20329,28 @@ mod tests {
                 <= response.virtual_shadow_packet.virtual_page_count
         );
         assert!(response.virtual_shadow_packet.light_page_count > 0);
+        assert_eq!(
+            response.virtual_shadow_packet.clipmap_range_count,
+            response.virtual_shadow_packet.clipmap_ranges.len()
+        );
+        assert!(
+            response.virtual_shadow_packet.clipmap_range_count
+                <= response.virtual_shadow_packet.virtual_page_count
+        );
+        assert_eq!(
+            response.virtual_shadow_packet.hzb_invalidation_count,
+            response
+                .virtual_shadow_packet
+                .validation_receipt
+                .hzb_invalidation_count
+        );
+        assert_eq!(
+            response.virtual_shadow_packet.page_pool_pressure_count,
+            response
+                .virtual_shadow_packet
+                .validation_receipt
+                .page_pool_pressure_count
+        );
         assert!(response.virtual_shadow_packet.shadow_ray_budget > 0);
         if response.virtual_shadow_packet.cached_page_count > 0 {
             assert!(response.virtual_shadow_packet.max_page_age_frames >= 1);
@@ -19904,11 +20359,50 @@ mod tests {
         assert_eq!(response.virtual_shadow_packet.page_table_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.cache_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.invalidation_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.hzb_invalidation_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.page_age_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.page_pressure_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.clipmap_range_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.cache_metadata_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.projection_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.light_grid_hash.len(), 64);
+        assert_eq!(response.virtual_shadow_packet.validation_receipt_hash.len(), 64);
         assert_eq!(response.virtual_shadow_packet.packet_hash.len(), 64);
+        assert_eq!(
+            response
+                .virtual_shadow_packet
+                .validation_receipt
+                .validation_hash,
+            response.virtual_shadow_packet.validation_receipt_hash
+        );
+        assert_eq!(
+            response
+                .virtual_shadow_packet
+                .validation_receipt
+                .checked_page_count,
+            response.virtual_shadow_packet.virtual_page_count
+        );
+        assert_eq!(
+            response
+                .virtual_shadow_packet
+                .validation_receipt
+                .checked_range_count,
+            response.virtual_shadow_packet.clipmap_range_count
+        );
+        assert!(response
+            .virtual_shadow_packet
+            .validation_receipt
+            .all_pages_have_ranges);
+        assert!(response
+            .virtual_shadow_packet
+            .clipmap_ranges
+            .iter()
+            .all(|range| range.range_id.len() == 64
+                && range.virtual_light_id.len() == 64
+                && range.page_count > 0
+                && range.min_page_age_frames <= range.max_page_age_frames
+                && range.invalidated_page_count <= range.page_count
+                && range.range_hash.len() == 64));
         assert!(response
             .virtual_shadow_packet
             .entries
@@ -19916,13 +20410,22 @@ mod tests {
             .all(|entry| entry.shadow_page_id.starts_with("vshadow:")
                 && entry.source_surface_page_id.starts_with("surface:")
                 && entry.virtual_light_id.len() == 64
+                && entry.per_light_page_table_id.len() == 64
+                && entry.clipmap_range_id.len() == 64
                 && entry.resolution >= 64
                 && entry.projection_tile[2] == entry.resolution
                 && entry.projection_tile[3] == entry.resolution
                 && entry.ray_budget > 0
+                && entry.page_age_bucket <= 4
                 && entry.page_pool_pressure_pct >= 0.0
+                && entry.depth_range_shift >= 0.0
+                && entry.depth_range_shift <= 1.0
+                && entry.hzb_resource_id.len() == 64
+                && entry.hzb_input_hash.len() == 64
                 && entry.page_table_hash.len() == 64
                 && entry.cache_hash.len() == 64
+                && entry.cache_metadata_hash.len() == 64
+                && entry.hzb_invalidation_hash.len() == 64
                 && entry.projection_hash.len() == 64
                 && entry.entry_hash.len() == 64
                 && matches!(
