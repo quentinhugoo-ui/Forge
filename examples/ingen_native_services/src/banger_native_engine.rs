@@ -77,6 +77,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub editable_scene_manifest: BangerEditableSceneManifest,
     pub scene_graph_submission: BangerNativeSceneGraphSubmission,
     pub culling_manifest: BangerNativeCullingManifest,
+    pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
@@ -354,6 +355,37 @@ pub struct BangerNativeCullingEntry {
     pub indirect_draw_args: [u32; 5],
     pub visibility_result_hash: String,
     pub indirect_draw_hash: String,
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRadianceScheduleManifest {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub temporal_epoch: u64,
+    pub probe_page_count: usize,
+    pub active_probe_count: u64,
+    pub light_budget: u32,
+    pub async_compute_residency_policy: &'static str,
+    pub invalidation_hash: String,
+    pub schedule_hash: String,
+    pub entries: Vec<BangerNativeRadianceProbePage>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRadianceProbePage {
+    pub probe_page_id: String,
+    pub source_slot: u32,
+    pub source_page_hash: String,
+    pub probe_count: u32,
+    pub temporal_reuse_frames: u32,
+    pub light_budget: u32,
+    pub update_priority: u32,
+    pub async_compute: bool,
+    pub residency_policy: &'static str,
+    pub invalidation_hash: String,
     pub proof_hash: String,
 }
 
@@ -669,6 +701,12 @@ impl BangerNativeEngine {
         );
         let culling_manifest =
             build_culling_manifest(&prepared, &scene_graph_submission, &resource_table);
+        let radiance_schedule_manifest = build_radiance_schedule_manifest(
+            &prepared,
+            &scene_graph_submission,
+            &culling_manifest,
+            &resource_table,
+        );
         let texture_bridge_contract = build_texture_bridge_contract(
             &prepared,
             &pipeline_cache_manifest,
@@ -687,6 +725,7 @@ impl BangerNativeEngine {
             &texture_bridge_contract,
             &scene_graph_submission,
             &culling_manifest,
+            &radiance_schedule_manifest,
         );
         let render_pass_count = render_graph.len();
         let residency_job_count = residency_jobs.len();
@@ -730,6 +769,7 @@ impl BangerNativeEngine {
             editable_scene_manifest,
             scene_graph_submission,
             culling_manifest,
+            radiance_schedule_manifest,
             frame_graph_bindings,
             artifacts,
             verifier: BangerNativeRenderVerifier {
@@ -1205,6 +1245,102 @@ fn culling_entry_from_submission(
         indirect_draw_args,
         visibility_result_hash,
         indirect_draw_hash,
+        proof_hash,
+    }
+}
+
+fn build_radiance_schedule_manifest(
+    prepared: &MonsterPreparedCompute,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    resource_table: &BangerNativeResourceTable,
+) -> BangerNativeRadianceScheduleManifest {
+    let temporal_epoch = temporal_epoch_from_hash(&prepared.manifest_hash);
+    let light_budget = radiance_light_budget(scene_graph_submission, culling_manifest);
+    let temporal_reuse_frames = if prepared.is_fully_cached() { 4 } else { 1 };
+    let entries = resource_table
+        .slots
+        .iter()
+        .filter(|slot| slot.kind == "surfel_radiance_cache")
+        .map(|slot| {
+            radiance_probe_page_from_slot(
+                prepared,
+                slot,
+                scene_graph_submission,
+                culling_manifest,
+                temporal_epoch,
+                light_budget,
+                temporal_reuse_frames,
+            )
+        })
+        .collect::<Vec<_>>();
+    let active_probe_count = entries
+        .iter()
+        .map(|entry| entry.probe_count as u64)
+        .sum::<u64>();
+    let invalidation_hash =
+        radiance_manifest_invalidation_hash(scene_graph_submission, culling_manifest, &entries);
+    let schedule_hash = radiance_schedule_hash(
+        prepared,
+        scene_graph_submission,
+        culling_manifest,
+        temporal_epoch,
+        light_budget,
+        &invalidation_hash,
+        &entries,
+    );
+    BangerNativeRadianceScheduleManifest {
+        schema: "forge.banger.native_radiance_schedule_manifest.v1",
+        authority: "surfel_radiance_cache_probe_pages_temporal_light_budget_async_compute",
+        temporal_epoch,
+        probe_page_count: entries.len(),
+        active_probe_count,
+        light_budget,
+        async_compute_residency_policy: "async_compute_lighting_stream_temporal_reuse",
+        invalidation_hash,
+        schedule_hash,
+        entries,
+    }
+}
+
+fn radiance_probe_page_from_slot(
+    prepared: &MonsterPreparedCompute,
+    slot: &BangerNativeResourceSlot,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    temporal_epoch: u64,
+    light_budget: u32,
+    temporal_reuse_frames: u32,
+) -> BangerNativeRadianceProbePage {
+    let probe_count = ((slot.byte_len / 64).max(1).min(u32::MAX as u64)) as u32;
+    let update_priority = radiance_update_priority(slot, culling_manifest);
+    let invalidation_hash = radiance_probe_invalidation_hash(
+        prepared,
+        slot,
+        scene_graph_submission,
+        culling_manifest,
+        temporal_epoch,
+        light_budget,
+    );
+    let proof_hash = radiance_probe_page_proof_hash(
+        slot,
+        probe_count,
+        temporal_reuse_frames,
+        light_budget,
+        update_priority,
+        &invalidation_hash,
+    );
+    BangerNativeRadianceProbePage {
+        probe_page_id: format!("radiance:{}:{}", slot.slot, slot.page_index),
+        source_slot: slot.slot,
+        source_page_hash: slot.page_hash.clone(),
+        probe_count,
+        temporal_reuse_frames,
+        light_budget,
+        update_priority,
+        async_compute: true,
+        residency_policy: "async_compute_lighting_stream",
+        invalidation_hash,
         proof_hash,
     }
 }
@@ -1793,6 +1929,115 @@ fn culling_manifest_hash(
     h.update(visibility_result_hash.as_bytes());
     h.update(indirect_draw_buffer_hash.as_bytes());
     h.update(cache_reuse_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn temporal_epoch_from_hash(hash: &str) -> u64 {
+    let mut bytes = [0u8; 8];
+    for (index, slot) in bytes.iter_mut().enumerate() {
+        let start = index * 2;
+        *slot = hash
+            .get(start..start + 2)
+            .and_then(|part| u8::from_str_radix(part, 16).ok())
+            .unwrap_or(0);
+    }
+    u64::from_le_bytes(bytes)
+}
+
+fn radiance_light_budget(
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+) -> u32 {
+    let visible = scene_graph_submission.visible_object_count.max(1) as u32;
+    let cull_visible = culling_manifest.visible_count.max(1) as u32;
+    (visible.saturating_mul(2).saturating_add(cull_visible)).clamp(4, 256)
+}
+
+fn radiance_update_priority(
+    slot: &BangerNativeResourceSlot,
+    culling_manifest: &BangerNativeCullingManifest,
+) -> u32 {
+    let lod_pressure = culling_manifest.max_lod_error.ceil().max(0.0) as u32;
+    let page_pressure = (slot.page_index as u32).min(16);
+    1 + lod_pressure + page_pressure
+}
+
+fn radiance_probe_invalidation_hash(
+    prepared: &MonsterPreparedCompute,
+    slot: &BangerNativeResourceSlot,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    temporal_epoch: u64,
+    light_budget: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance_probe.invalidation.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(slot.resource_key.as_bytes());
+    h.update(slot.page_hash.as_bytes());
+    h.update(scene_graph_submission.viewport_fit_hash.as_bytes());
+    h.update(culling_manifest.visibility_result_hash.as_bytes());
+    h.update(temporal_epoch.to_le_bytes());
+    h.update(light_budget.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn radiance_probe_page_proof_hash(
+    slot: &BangerNativeResourceSlot,
+    probe_count: u32,
+    temporal_reuse_frames: u32,
+    light_budget: u32,
+    update_priority: u32,
+    invalidation_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance_probe.page_proof.v1\0");
+    h.update(slot.resource_key.as_bytes());
+    h.update(slot.page_hash.as_bytes());
+    h.update(probe_count.to_le_bytes());
+    h.update(temporal_reuse_frames.to_le_bytes());
+    h.update(light_budget.to_le_bytes());
+    h.update(update_priority.to_le_bytes());
+    h.update(invalidation_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn radiance_manifest_invalidation_hash(
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    entries: &[BangerNativeRadianceProbePage],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance_schedule.invalidation.v1\0");
+    h.update(scene_graph_submission.submission_hash.as_bytes());
+    h.update(culling_manifest.manifest_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.invalidation_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn radiance_schedule_hash(
+    prepared: &MonsterPreparedCompute,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
+    temporal_epoch: u64,
+    light_budget: u32,
+    invalidation_hash: &str,
+    entries: &[BangerNativeRadianceProbePage],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_radiance_schedule_manifest.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(scene_graph_submission.submission_hash.as_bytes());
+    h.update(culling_manifest.manifest_hash.as_bytes());
+    h.update(temporal_epoch.to_le_bytes());
+    h.update(light_budget.to_le_bytes());
+    h.update(invalidation_hash.as_bytes());
     for entry in entries {
         h.update(entry.proof_hash.as_bytes());
     }
@@ -2908,6 +3153,7 @@ fn render_handoff_hash(
     texture_bridge_contract: &BangerNativeTextureBridgeContract,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
     culling_manifest: &BangerNativeCullingManifest,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_render_handoff.v1\0");
@@ -2923,6 +3169,8 @@ fn render_handoff_hash(
     h.update(culling_manifest.manifest_hash.as_bytes());
     h.update(culling_manifest.visibility_result_hash.as_bytes());
     h.update(culling_manifest.indirect_draw_buffer_hash.as_bytes());
+    h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    h.update(radiance_schedule_manifest.invalidation_hash.as_bytes());
     for artifact in artifacts {
         h.update(b"\0artifact\0");
         h.update(artifact.kind.as_bytes());
@@ -3280,6 +3528,34 @@ mod tests {
                 && entry.cache_reuse_key.len() == 64
                 && entry.visibility_result_hash.len() == 64
                 && entry.indirect_draw_hash.len() == 64
+                && entry.proof_hash.len() == 64));
+        assert_eq!(
+            response.radiance_schedule_manifest.schema,
+            "forge.banger.native_radiance_schedule_manifest.v1"
+        );
+        assert!(response.radiance_schedule_manifest.temporal_epoch > 0);
+        assert!(response.radiance_schedule_manifest.probe_page_count > 0);
+        assert!(response.radiance_schedule_manifest.active_probe_count > 0);
+        assert!(response.radiance_schedule_manifest.light_budget >= 4);
+        assert_eq!(
+            response.radiance_schedule_manifest.async_compute_residency_policy,
+            "async_compute_lighting_stream_temporal_reuse"
+        );
+        assert_eq!(response.radiance_schedule_manifest.invalidation_hash.len(), 64);
+        assert_eq!(response.radiance_schedule_manifest.schedule_hash.len(), 64);
+        assert_eq!(
+            response.radiance_schedule_manifest.probe_page_count,
+            response.radiance_schedule_manifest.entries.len()
+        );
+        assert!(response
+            .radiance_schedule_manifest
+            .entries
+            .iter()
+            .all(|entry| entry.async_compute
+                && entry.residency_policy == "async_compute_lighting_stream"
+                && entry.probe_count > 0
+                && entry.light_budget == response.radiance_schedule_manifest.light_budget
+                && entry.invalidation_hash.len() == 64
                 && entry.proof_hash.len() == 64));
         assert_eq!(response.resource_table_hash.len(), 64);
         assert_eq!(response.resource_table.slot_count, response.resource_table.slots.len());

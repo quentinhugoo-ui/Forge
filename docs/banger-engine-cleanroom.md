@@ -103,6 +103,11 @@ Date: 2026-06-14
    dispatch remains gated behind the promoted renderer path.
 7. Add surfel/radiance-cache scheduling: probe pages, temporal epoch, light
    budget, invalidation hash and async-compute residency policy.
+   Status: started in `BangerNativeRadianceScheduleManifest` as
+   `forge.banger.native_radiance_schedule_manifest.v1`; surfel probe pages now
+   carry deterministic temporal epochs, light budgets, invalidation hashes and
+   async-compute residency policies. Real GI dispatch and denoised reuse remain
+   behind the promoted renderer path.
 8. Add Gaussian splat layer support as a hybrid representation, not a separate
    renderer: splat buckets, sort/group keys, proxy bounds and optional
    mesh/surfel conversion manifests.
