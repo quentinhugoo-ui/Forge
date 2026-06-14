@@ -155,7 +155,7 @@ export function App() {
   // closable from the workspace-header cross.
   const isFullPageCanvas = isLlmProviderCanvas || isBrainCanvas;
   const isBangerPage = snapshot.activeSection === "banger" && !isFullPageCanvas;
-  const renderPanelsChatBottom = globalThis.location?.port !== "5176" && !isFullPageCanvas && !isBangerPage;
+  const renderPanelsChatBottom = globalThis.location?.port !== "5176" && !isFullPageCanvas;
   const canvasSurfaceOpen =
     canvasSplitOpen ||
     canvasFilesOpen ||
@@ -965,6 +965,7 @@ export function App() {
       ) : null}
       {renderPanelsChatBottom ? (
         <PanelsChatBottomSlice
+          composerOnly={isBangerPage}
           parallelPrompts={parallelPrompts}
           onParallelPromptChange={updateParallelPrompt}
           webExplorerOpen={canvasWebExplorerOpen}

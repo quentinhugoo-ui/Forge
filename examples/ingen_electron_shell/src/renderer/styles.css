@@ -2945,7 +2945,7 @@ button {
   position: fixed;
   left: var(--surface-left);
   top: var(--surface-top);
-  z-index: 18;
+  z-index: 1;
   width: var(--surface-width);
   height: var(--surface-height);
   min-width: 0;
@@ -2954,7 +2954,7 @@ button {
 }
 
 .shell--banger-page .surfaceRouter {
-  box-shadow: 0 0 0 1px var(--forge-line);
+  pointer-events: none;
 }
 
 .surface {
@@ -3056,6 +3056,16 @@ button {
   border-radius: 4px;
   background: var(--forge-surface-inset);
   text-align: center;
+}
+
+.surface--banger {
+  background: #05070a;
+}
+
+.surface--banger .nativeViewportSlot__frame {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .nativeViewportSlot--live {

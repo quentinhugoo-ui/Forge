@@ -3213,6 +3213,7 @@ function TranscriptCanvas({
 }
 
 interface PanelsChatBottomSliceProps {
+  composerOnly?: boolean;
   parallelPrompts?: string[];
   onParallelPromptChange?: (index: number, value: string) => void;
   webExplorerOpen?: boolean;
@@ -3399,6 +3400,7 @@ function BottomControlsFlipText({ value }: { value: string }) {
 }
 
 export function PanelsChatBottomSlice({
+  composerOnly = false,
   parallelPrompts,
   onParallelPromptChange,
   webExplorerOpen = false,
@@ -3917,36 +3919,38 @@ export function PanelsChatBottomSlice({
         attachDroppedFiles(droppedFilePaths(event.dataTransfer));
       }}
     >
-      {parallelMode && parallelPrompts ? (
-        <div className={`parallelTranscriptGrid parallelTranscriptGrid--count${parallelPrompts.length}`}>
-          {parallelPrompts.map((_prompt, index) => {
-            const lane = snapshot.parallelLanes.find((candidate) => candidate.index === index);
-            const laneMessages = index === 0 ? canvasMessages : lane?.transcript.filter((message) => message.role !== "system") ?? [];
-            return (
-              <TranscriptCanvas
-                activeSessionId={index === 0 ? snapshot.activeSessionId : lane?.sessionId ?? `parallel-${index}`}
-                messages={laneMessages}
-                agentName={brainAgentName}
-                parallelSessionIndex={index}
-                className="chatCanvas chatCanvas--parallelPane"
-                key={`parallel-transcript-${index}`}
-                onEditImage={stageImageForEdit}
-                onUseMathInCompute={useMathInCompute}
-              />
-            );
-          })}
-        </div>
-      ) : (
-        <TranscriptCanvas
-          key={snapshot.activeSessionId || "draft-session"}
-          activeSessionId={snapshot.activeSessionId}
-          messages={canvasMessages}
-          agentName={brainAgentName}
-          parallelSessionIndex={0}
-          onEditImage={stageImageForEdit}
-          onUseMathInCompute={useMathInCompute}
-        />
-      )}
+      {!composerOnly ? (
+        parallelMode && parallelPrompts ? (
+          <div className={`parallelTranscriptGrid parallelTranscriptGrid--count${parallelPrompts.length}`}>
+            {parallelPrompts.map((_prompt, index) => {
+              const lane = snapshot.parallelLanes.find((candidate) => candidate.index === index);
+              const laneMessages = index === 0 ? canvasMessages : lane?.transcript.filter((message) => message.role !== "system") ?? [];
+              return (
+                <TranscriptCanvas
+                  activeSessionId={index === 0 ? snapshot.activeSessionId : lane?.sessionId ?? `parallel-${index}`}
+                  messages={laneMessages}
+                  agentName={brainAgentName}
+                  parallelSessionIndex={index}
+                  className="chatCanvas chatCanvas--parallelPane"
+                  key={`parallel-transcript-${index}`}
+                  onEditImage={stageImageForEdit}
+                  onUseMathInCompute={useMathInCompute}
+                />
+              );
+            })}
+          </div>
+        ) : (
+          <TranscriptCanvas
+            key={snapshot.activeSessionId || "draft-session"}
+            activeSessionId={snapshot.activeSessionId}
+            messages={canvasMessages}
+            agentName={brainAgentName}
+            parallelSessionIndex={0}
+            onEditImage={stageImageForEdit}
+            onUseMathInCompute={useMathInCompute}
+          />
+        )
+      ) : null}
       <div
         className={activeDropPhase !== "idle" ? "composerDropScrim composerDropScrim--active" : "composerDropScrim"}
         aria-hidden="true"
