@@ -398,8 +398,12 @@ pub struct BangerNativeWaterHzbPacket {
     pub mip_count: u32,
     pub logical_texel_count: u32,
     pub format: &'static str,
+    pub mip_reduction_pass_count: u32,
+    pub reduction_kernel: &'static str,
     pub meshlet_culling_enabled: bool,
     pub ssr_refraction_enabled: bool,
+    pub base_pass_hash: String,
+    pub reduction_pass_hash: String,
     pub compute_pass_hash: String,
     pub resource_hash: String,
 }
@@ -21457,6 +21461,22 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
         0,
         water_info_uniform_words_u8(water_hzb_uniform_words).as_slice(),
     );
+    let water_hzb_compute_uniforms: Vec<_> = (0..hzb_mip_count)
+        .map(|mip| {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("banger-native-present-water-hzb-compute-mip-uniform"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(
+                &buffer,
+                0,
+                water_info_uniform_words_u8([hzb_width, hzb_height, hzb_mip_count, mip]).as_slice(),
+            );
+            buffer
+        })
+        .collect();
     let spectral_compute_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("banger-native-present-spectral-compute-bind-group-layout"),
@@ -21557,28 +21577,34 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
                 },
             ],
         });
-    let hzb_compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("banger-native-present-water-hzb-compute-bind-group"),
-        layout: &hzb_compute_bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: water_hzb_storage.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: water_hzb_uniform.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: water_info_storage.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: water_info_uniform.as_entire_binding(),
-            },
-        ],
-    });
+    let hzb_compute_bind_groups: Vec<_> = water_hzb_compute_uniforms
+        .iter()
+        .enumerate()
+        .map(|(mip, uniform)| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("banger-native-present-water-hzb-compute-mip-{mip}-bind-group")),
+                layout: &hzb_compute_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: water_hzb_storage.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: water_info_storage.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: water_info_uniform.as_entire_binding(),
+                    },
+                ],
+            })
+        })
+        .collect();
     let water_info_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("banger-native-present-water-info-bind-group-layout"),
@@ -21835,8 +21861,12 @@ fn run_wgpu_present_bootstrap(width: u32, height: u32) -> Result<WgpuPresentBoot
             timestamp_writes: None,
         });
         pass.set_pipeline(&hzb_pipeline);
-        pass.set_bind_group(0, &hzb_compute_bind_group, &[]);
-        pass.dispatch_workgroups(hzb_width.div_ceil(8), hzb_height.div_ceil(8), 1);
+        for mip in 0..hzb_mip_count {
+            let mip_width = (hzb_width >> mip).max(1);
+            let mip_height = (hzb_height >> mip).max(1);
+            pass.set_bind_group(0, &hzb_compute_bind_groups[mip as usize], &[]);
+            pass.dispatch_workgroups(mip_width.div_ceil(8), mip_height.div_ceil(8), 1);
+        }
     }
     {
         let color_attachments = [Some(wgpu::RenderPassColorAttachment {
@@ -22497,6 +22527,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn banger_water_hzb_compute_wgsl() -> &'static str {
     r#"
 struct WaterHzbUniform {
+    // x/y: base size, z: mip count, w: active mip for this dispatch.
     dims: vec4<u32>,
 };
 
@@ -22525,6 +22556,10 @@ fn hzb_offset_for_mip(mip: u32, base_width: u32, base_height: u32) -> u32 {
     return offset;
 }
 
+fn hzb_mip_size(mip: u32, base_width: u32, base_height: u32) -> vec2<u32> {
+    return vec2<u32>(max(base_width >> mip, 1u), max(base_height >> mip, 1u));
+}
+
 fn sample_water_info(uv: vec2<f32>) -> vec4<f32> {
     let width = max(water_info_uniform.dims.x, 1u);
     let height = max(water_info_uniform.dims.y, 1u);
@@ -22534,20 +22569,30 @@ fn sample_water_info(uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(packed) * (1.0 / 65535.0);
 }
 
+fn load_hzb(mip: u32, xy: vec2<u32>, base_width: u32, base_height: u32) -> vec4<f32> {
+    let size = hzb_mip_size(mip, base_width, base_height);
+    let clamped_xy = min(xy, size - vec2<u32>(1u, 1u));
+    let offset = hzb_offset_for_mip(mip, base_width, base_height);
+    let packed = water_hzb_texels[offset + clamped_xy.y * size.x + clamped_xy.x];
+    return vec4<f32>(packed) * (1.0 / 65535.0);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let base_width = water_hzb_uniform.dims.x;
     let base_height = water_hzb_uniform.dims.y;
     let mip_count = water_hzb_uniform.dims.z;
-    for (var mip = 0u; mip < mip_count; mip = mip + 1u) {
-        let width = max(base_width >> mip, 1u);
-        let height = max(base_height >> mip, 1u);
-        if (gid.x >= width || gid.y >= height) {
-            continue;
-        }
+    let mip = min(water_hzb_uniform.dims.w, max(mip_count, 1u) - 1u);
+    let size = hzb_mip_size(mip, base_width, base_height);
+    if (gid.x >= size.x || gid.y >= size.y) {
+        return;
+    }
+
+    var output_value: vec4<f32>;
+    if (mip == 0u) {
         let uv = vec2<f32>(
-            f32(gid.x) / f32(max(width - 1u, 1u)),
-            f32(gid.y) / f32(max(height - 1u, 1u))
+            f32(gid.x) / f32(max(size.x - 1u, 1u)),
+            f32(gid.y) / f32(max(size.y - 1u, 1u))
         );
         let info = sample_water_info(uv);
         let scene_depth_without_water = saturate(0.18 + uv.y * 0.72 + info.x * 0.08);
@@ -22556,14 +22601,28 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let max_depth = max(scene_depth_without_water, water_depth);
         let refraction_mask = smoothstep(0.015, 0.16, abs(scene_depth_without_water - water_depth));
         let shoreline_mask = smoothstep(0.075, 0.0, abs(info.y - info.x));
-        let offset = hzb_offset_for_mip(mip, base_width, base_height);
-        water_hzb_texels[offset + gid.y * width + gid.x] = vec4<u32>(
-            pack_unorm16(min_depth),
-            pack_unorm16(max_depth),
-            pack_unorm16(refraction_mask),
-            pack_unorm16(shoreline_mask)
+        output_value = vec4<f32>(min_depth, max_depth, refraction_mask, shoreline_mask);
+    } else {
+        let parent_mip = mip - 1u;
+        let parent_xy = vec2<u32>(gid.xy) * 2u;
+        let a = load_hzb(parent_mip, parent_xy, base_width, base_height);
+        let b = load_hzb(parent_mip, parent_xy + vec2<u32>(1u, 0u), base_width, base_height);
+        let c = load_hzb(parent_mip, parent_xy + vec2<u32>(0u, 1u), base_width, base_height);
+        let d = load_hzb(parent_mip, parent_xy + vec2<u32>(1u, 1u), base_width, base_height);
+        output_value = vec4<f32>(
+            min(min(a.x, b.x), min(c.x, d.x)),
+            max(max(a.y, b.y), max(c.y, d.y)),
+            max(max(a.z, b.z), max(c.z, d.z)),
+            max(max(a.w, b.w), max(c.w, d.w))
         );
     }
+    let offset = hzb_offset_for_mip(mip, base_width, base_height);
+    water_hzb_texels[offset + gid.y * size.x + gid.x] = vec4<u32>(
+        pack_unorm16(output_value.x),
+        pack_unorm16(output_value.y),
+        pack_unorm16(output_value.z),
+        pack_unorm16(output_value.w)
+    );
 }
 "#
 }
@@ -23134,9 +23193,20 @@ fn build_water_pipeline_manifest(
     let hzb_height = (height / 4).clamp(64, 256);
     let hzb_mip_count = 7;
     let hzb_logical_texel_count = hzb_pyramid_texel_count(hzb_width, hzb_height, hzb_mip_count);
+    let hzb_base_pass_hash = hash_text_hex(
+        "forge.banger.water.hzb_scene_depth_base_pass.v1",
+        &format!("mip0:scene_without_water_depth:{hzb_width}:{hzb_height}:{visual_pipeline_hash}"),
+    );
+    let hzb_reduction_pass_hash = hash_text_hex(
+        "forge.banger.water.hzb_scene_depth_reduce_pass.v1",
+        &format!(
+            "mip1_to_{}:kernel2x2_minmax_mask_reduce:{hzb_width}:{hzb_height}:{visual_pipeline_hash}",
+            hzb_mip_count.saturating_sub(1)
+        ),
+    );
     let hzb_compute_pass_hash = hash_text_hex(
         "forge.banger.water.hzb_scene_depth_compute.v1",
-        &format!("scene_without_water_depth:{hzb_width}:{hzb_height}:{hzb_mip_count}:{visual_pipeline_hash}"),
+        &format!("{hzb_base_pass_hash}:{hzb_reduction_pass_hash}:{hzb_logical_texel_count}"),
     );
     let hzb_scene_depth = BangerNativeWaterHzbPacket {
         source_depth: "scene_depth_without_water_plus_water_depth_bounds",
@@ -23145,12 +23215,16 @@ fn build_water_pipeline_manifest(
         mip_count: hzb_mip_count,
         logical_texel_count: hzb_logical_texel_count,
         format: "rgba16_logical_min_depth_max_depth_refraction_mask_shoreline_mask",
+        mip_reduction_pass_count: hzb_mip_count,
+        reduction_kernel: "mip0_depth_bounds_then_2x2_min_depth_max_depth_max_masks",
         meshlet_culling_enabled: true,
         ssr_refraction_enabled: true,
+        base_pass_hash: hzb_base_pass_hash,
+        reduction_pass_hash: hzb_reduction_pass_hash,
         compute_pass_hash: hzb_compute_pass_hash.clone(),
         resource_hash: hash_text_hex(
             "forge.banger.water.hzb_scene_depth_resource.v1",
-            &format!("{hzb_compute_pass_hash}:{hzb_logical_texel_count}:rgba16"),
+            &format!("{hzb_compute_pass_hash}:{hzb_logical_texel_count}:rgba16:mip_reduced"),
         ),
     };
     let foam_spray = BangerNativeWaterFoamSpray {
@@ -23570,8 +23644,11 @@ fn water_pipeline_manifest_hash(
     h.update(normal_displacement.normal_pack_hash.as_bytes());
     h.update(water_info_texture.proof_hash.as_bytes());
     h.update(water_info_texture.output_texture_hash.as_bytes());
+    h.update(hzb_scene_depth.base_pass_hash.as_bytes());
+    h.update(hzb_scene_depth.reduction_pass_hash.as_bytes());
     h.update(hzb_scene_depth.compute_pass_hash.as_bytes());
     h.update(hzb_scene_depth.resource_hash.as_bytes());
+    h.update(hzb_scene_depth.mip_reduction_pass_count.to_le_bytes());
     h.update(foam_spray.foam_mask_hash.as_bytes());
     h.update(reflections.reflection_hash.as_bytes());
     h.update(volumetric_absorption.absorption_hash.as_bytes());
@@ -24405,6 +24482,20 @@ mod tests {
         assert_eq!(response.water_pipeline_manifest.hzb_scene_depth.width, 160);
         assert_eq!(response.water_pipeline_manifest.hzb_scene_depth.height, 90);
         assert_eq!(response.water_pipeline_manifest.hzb_scene_depth.mip_count, 7);
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .hzb_scene_depth
+                .mip_reduction_pass_count,
+            7
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .hzb_scene_depth
+                .reduction_kernel,
+            "mip0_depth_bounds_then_2x2_min_depth_max_depth_max_masks"
+        );
         assert!(
             response
                 .water_pipeline_manifest
@@ -24414,6 +24505,22 @@ mod tests {
         );
         assert!(response.water_pipeline_manifest.hzb_scene_depth.meshlet_culling_enabled);
         assert!(response.water_pipeline_manifest.hzb_scene_depth.ssr_refraction_enabled);
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .hzb_scene_depth
+                .base_pass_hash
+                .len(),
+            64
+        );
+        assert_eq!(
+            response
+                .water_pipeline_manifest
+                .hzb_scene_depth
+                .reduction_pass_hash
+                .len(),
+            64
+        );
         assert_eq!(
             response
                 .water_pipeline_manifest
