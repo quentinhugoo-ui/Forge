@@ -214,7 +214,8 @@ function createBlobScene(seed: number): BlobScene {
       }
       prevOver = over;
       const kBase = mix(0.18, 0.3, roundness(t));
-      mass.forEach((ball, i) => {
+      for (let i = 0; i < mass.length; i += 1) {
+        const ball = mass[i];
         const a = ball.phase + t * ball.speed;
         const breath = 1 + Math.sin(t * ball.breathW + ball.phase * 2) * 0.14;
         const cosA = Math.cos(a) * ball.orbit;
@@ -225,8 +226,9 @@ function createBlobScene(seed: number): BlobScene {
         out[o + 2] = ball.pivot[2] + ball.u[2] * cosA + ball.v[2] * sinA;
         out[o + 3] = ball.radius * breath;
         out[BLOB_KS_FLOAT_OFFSET + i * 4] = kBase;
-      });
-      droplets.forEach((droplet, j) => {
+      }
+      for (let j = 0; j < droplets.length; j += 1) {
+        const droplet = droplets[j];
         const cph = (t / droplet.cycle + droplet.cyclePhase) % 1;
         /* Rest -> tear away -> free flight -> get caught and pulled back. */
         let ext = 0;
@@ -272,7 +274,7 @@ function createBlobScene(seed: number): BlobScene {
             out[BLOB_KS_FLOAT_OFFSET + i * 4] = mix(0.16, 0.02, sstep(0, 0.3, fp));
           }
         }
-      });
+      }
     }
   };
 }
@@ -281,6 +283,7 @@ const BRAIN_BLOB_WGSL = /* wgsl */ `
 const TAU: f32 = 6.28318530718;
 const BOUND_RADIUS: f32 = 1.58;
 const VIEW_CENTER: vec2<f32> = vec2<f32>(0.62, 0.68);
+const MOUSE_DEFORM_ENABLED: f32 = 1.0;
 
 struct Uniforms {
   resolution: vec2<f32>,
@@ -339,6 +342,9 @@ fn membraneTex(p: vec3<f32>, t: f32) -> f32 {
 /* Cursor poke: a local swell of the membrane toward the pointer on the
    camera-facing side, with a faint ripple. mouse = (worldX, worldY, strength). */
 fn mouseDeform(p: vec3<f32>, t: f32) -> f32 {
+  if (MOUSE_DEFORM_ENABLED <= 0.5) {
+    return 0.0;
+  }
   let s = uniforms.mouse.z;
   if (s <= 0.001) {
     return 0.0;
@@ -353,7 +359,7 @@ fn field(p: vec3<f32>, t: f32) -> f32 {
   var d = 1e5;
   for (var i = 0; i < 10; i = i + 1) {
     let b = uniforms.balls[i];
-    d = smin(d, length(p - b.xyz) - b.w, max(uniforms.ks[i].x, 0.0001));
+    d = smin(d, length(p - b.xyz) - b.w, uniforms.ks[i].x);
   }
   return d + wobble(p, t) + mouseDeform(p, t);
 }
@@ -462,6 +468,11 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
+const BRAIN_BLOB_WGSL_STATIC_MOUSE = BRAIN_BLOB_WGSL.replace(
+  "const MOUSE_DEFORM_ENABLED: f32 = 1.0;",
+  "const MOUSE_DEFORM_ENABLED: f32 = 0.0;"
+);
+
 const BRAIN_BLOB_GLSL_VERTEX = `#version 300 es
 void main() {
   vec2 pos = vec2(-1.0, -1.0);
@@ -486,6 +497,7 @@ out vec4 outColor;
 const float TAU = 6.28318530718;
 const float BOUND_RADIUS = 1.58;
 const vec2 VIEW_CENTER = vec2(0.62, 0.68);
+const float MOUSE_DEFORM_ENABLED = 1.0;
 
 float sat(float v) { return clamp(v, 0.0, 1.0); }
 
@@ -516,6 +528,7 @@ float membraneTex(vec3 p, float t) {
 // Cursor poke: a local swell of the membrane toward the pointer on the
 // camera-facing side, with a faint ripple. uMouse = (worldX, worldY, strength).
 float mouseDeform(vec3 p, float t) {
+  if (MOUSE_DEFORM_ENABLED <= 0.5) { return 0.0; }
   float s = uMouse.z;
   if (s <= 0.001) { return 0.0; }
   float r = length(p.xy - uMouse.xy);
@@ -528,7 +541,7 @@ float field(vec3 p, float t) {
   float d = 1e5;
   for (int i = 0; i < 10; i++) {
     vec4 b = uBalls[i];
-    d = smin(d, length(p - b.xyz) - b.w, max(uKs[i].x, 0.0001));
+    d = smin(d, length(p - b.xyz) - b.w, uKs[i].x);
   }
   return d + wobble(p, t) + mouseDeform(p, t);
 }
@@ -631,6 +644,11 @@ void main() {
 }
 `;
 
+const BRAIN_BLOB_GLSL_FRAGMENT_STATIC_MOUSE = BRAIN_BLOB_GLSL_FRAGMENT.replace(
+  "const float MOUSE_DEFORM_ENABLED = 1.0;",
+  "const float MOUSE_DEFORM_ENABLED = 0.0;"
+);
+
 function fitBlobFramebuffer(canvas: HTMLCanvasElement): boolean {
   const rect = canvas.getBoundingClientRect();
   const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -713,43 +731,54 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
       size: uniformData.byteLength,
       usage: WEBGPU_BUFFER_USAGE.UNIFORM | WEBGPU_BUFFER_USAGE.COPY_DST
     });
-    const shader = device.createShaderModule({ label: "brain-blob-shader", code: BRAIN_BLOB_WGSL });
-    const pipeline = device.createRenderPipeline({
-      label: "brain-blob-pipeline",
-      layout: "auto",
-      vertex: { module: shader, entryPoint: "vertexMain" },
-      fragment: {
-        module: shader,
-        entryPoint: "sceneMain",
-        targets: [
-          {
-            format,
-            blend: {
-              color: { operation: "add", srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha" },
-              alpha: { operation: "add", srcFactor: "one", dstFactor: "one-minus-src-alpha" }
+    const createDrawLane = (mode: "static" | "mouse", code: string) => {
+      const shader = device.createShaderModule({ label: `brain-blob-${mode}-shader`, code });
+      const pipeline = device.createRenderPipeline({
+        label: `brain-blob-${mode}-pipeline`,
+        layout: "auto",
+        vertex: { module: shader, entryPoint: "vertexMain" },
+        fragment: {
+          module: shader,
+          entryPoint: "sceneMain",
+          targets: [
+            {
+              format,
+              blend: {
+                color: { operation: "add", srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha" },
+                alpha: { operation: "add", srcFactor: "one", dstFactor: "one-minus-src-alpha" }
+              }
             }
-          }
-        ]
-      },
-      primitive: { topology: "triangle-list" }
-    });
-    const bindGroup = device.createBindGroup({
-      label: "brain-blob-bind-group",
-      layout: (pipeline as { getBindGroupLayout(index: number): unknown }).getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
-    });
-    const renderBundle = device.createRenderBundleEncoder
-      ? (() => {
-          const bundleEncoder = device.createRenderBundleEncoder!({
-            label: "brain-blob-monster-render-bundle",
-            colorFormats: [format]
-          });
-          bundleEncoder.setPipeline(pipeline);
-          bundleEncoder.setBindGroup(0, bindGroup);
-          bundleEncoder.draw(3, 1);
-          return bundleEncoder.finish({ label: "brain-blob-monster-render-bundle" });
-        })()
-      : null;
+          ]
+        },
+        primitive: { topology: "triangle-list" }
+      });
+      const bindGroup = device.createBindGroup({
+        label: `brain-blob-${mode}-bind-group`,
+        layout: (pipeline as { getBindGroupLayout(index: number): unknown }).getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
+      });
+      const renderBundle = device.createRenderBundleEncoder
+        ? (() => {
+            const bundleEncoder = device.createRenderBundleEncoder!({
+              label: `brain-blob-monster-${mode}-render-bundle`,
+              colorFormats: [format]
+            });
+            bundleEncoder.setPipeline(pipeline);
+            bundleEncoder.setBindGroup(0, bindGroup);
+            bundleEncoder.draw(3, 1);
+            return bundleEncoder.finish({ label: `brain-blob-monster-${mode}-render-bundle` });
+          })()
+        : null;
+      return {
+        mode,
+        pipeline,
+        bindGroup,
+        renderBundle,
+        shaderHash: `${BRAIN_BLOB_SHADER_CONTRACT}:wgsl:${mode}`
+      };
+    };
+    const staticDrawLane = createDrawLane("static", BRAIN_BLOB_WGSL_STATIC_MOUSE);
+    const mouseDrawLane = createDrawLane("mouse", BRAIN_BLOB_WGSL);
 
     let configured = false;
     let deviceLost = false;
@@ -771,9 +800,10 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
       if (!configured || deviceLost) return;
       const t = frameCache.quantizeTime(timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset);
       const nextPointerStrength = pointerStrength + ((pointer.over ? 1 : 0) - pointerStrength) * 0.16;
+      const drawLane = nextPointerStrength > 0.001 || pointer.over ? mouseDrawLane : staticDrawLane;
       const frameProbe = frameCache.probe({
         lane: "webgpu",
-        shaderHash: `${BRAIN_BLOB_SHADER_CONTRACT}:wgsl`,
+        shaderHash: drawLane.shaderHash,
         canvasWidth: canvas.width,
         canvasHeight: canvas.height,
         timeSeconds: t,
@@ -809,11 +839,11 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
         ]
       });
       pass.setScissorRect?.(scissor.x, scissor.y, scissor.width, scissor.height);
-      if (renderBundle && pass.executeBundles) {
-        pass.executeBundles([renderBundle]);
+      if (drawLane.renderBundle && pass.executeBundles) {
+        pass.executeBundles([drawLane.renderBundle]);
       } else {
-        pass.setPipeline(pipeline);
-        pass.setBindGroup(0, bindGroup);
+        pass.setPipeline(drawLane.pipeline);
+        pass.setBindGroup(0, drawLane.bindGroup);
         pass.draw(3, 1);
       }
       pass.end();
@@ -856,26 +886,36 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
     }
     return shader;
   };
-  const vs = compile(gl.VERTEX_SHADER, BRAIN_BLOB_GLSL_VERTEX);
-  const fs = compile(gl.FRAGMENT_SHADER, BRAIN_BLOB_GLSL_FRAGMENT);
-  if (!vs || !fs) return null;
-  const program = gl.createProgram();
-  if (!program) return null;
-  gl.attachShader(program, vs);
-  gl.attachShader(program, fs);
-  gl.linkProgram(program);
-  gl.deleteShader(vs);
-  gl.deleteShader(fs);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    console.warn("Brain blob WebGL program failed.", gl.getProgramInfoLog(program));
-    gl.deleteProgram(program);
-    return null;
-  }
-  const headerLoc = gl.getUniformLocation(program, "uHeader");
-  const ballsLoc = gl.getUniformLocation(program, "uBalls");
-  const ksLoc = gl.getUniformLocation(program, "uKs");
-  const mouseLoc = gl.getUniformLocation(program, "uMouse");
-  const hueLoc = gl.getUniformLocation(program, "uHue");
+  const createProgramLane = (mode: "static" | "mouse", fragmentSource: string) => {
+    const vs = compile(gl.VERTEX_SHADER, BRAIN_BLOB_GLSL_VERTEX);
+    const fs = compile(gl.FRAGMENT_SHADER, fragmentSource);
+    if (!vs || !fs) return null;
+    const program = gl.createProgram();
+    if (!program) return null;
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("Brain blob WebGL program failed.", gl.getProgramInfoLog(program));
+      gl.deleteProgram(program);
+      return null;
+    }
+    return {
+      mode,
+      program,
+      headerLoc: gl.getUniformLocation(program, "uHeader"),
+      ballsLoc: gl.getUniformLocation(program, "uBalls"),
+      ksLoc: gl.getUniformLocation(program, "uKs"),
+      mouseLoc: gl.getUniformLocation(program, "uMouse"),
+      hueLoc: gl.getUniformLocation(program, "uHue"),
+      shaderHash: `${BRAIN_BLOB_SHADER_CONTRACT}:glsl:${mode}`
+    };
+  };
+  const staticProgramLane = createProgramLane("static", BRAIN_BLOB_GLSL_FRAGMENT_STATIC_MOUSE);
+  const mouseProgramLane = createProgramLane("mouse", BRAIN_BLOB_GLSL_FRAGMENT);
+  if (!staticProgramLane || !mouseProgramLane) return null;
 
   const seed = Math.random() * 1000;
   const scene = createBlobScene(seed);
@@ -902,9 +942,10 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
     if (gl.isContextLost()) return;
     const t = frameCache.quantizeTime(timeSeconds * BRAIN_BLOB_TIME_SCALE + scene.timeOffset);
     const nextPointerStrength = pointerStrength + ((pointer.over ? 1 : 0) - pointerStrength) * 0.16;
+    const programLane = nextPointerStrength > 0.001 || pointer.over ? mouseProgramLane : staticProgramLane;
     const frameProbe = frameCache.probe({
       lane: "webgl2",
-      shaderHash: `${BRAIN_BLOB_SHADER_CONTRACT}:glsl`,
+      shaderHash: programLane.shaderHash,
       canvasWidth: canvas.width,
       canvasHeight: canvas.height,
       timeSeconds: t,
@@ -932,12 +973,12 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.enable(gl.SCISSOR_TEST);
     gl.scissor(scissor.x, canvas.height - scissor.y - scissor.height, scissor.width, scissor.height);
-    gl.useProgram(program);
-    gl.uniform4fv(headerLoc, uniformViews.header);
-    gl.uniform4fv(ballsLoc, uniformViews.balls);
-    gl.uniform4fv(ksLoc, uniformViews.ks);
-    gl.uniform4fv(mouseLoc, uniformViews.mouse);
-    gl.uniform4fv(hueLoc, uniformViews.hue);
+    gl.useProgram(programLane.program);
+    gl.uniform4fv(programLane.headerLoc, uniformViews.header);
+    gl.uniform4fv(programLane.ballsLoc, uniformViews.balls);
+    gl.uniform4fv(programLane.ksLoc, uniformViews.ks);
+    gl.uniform4fv(programLane.mouseLoc, uniformViews.mouse);
+    gl.uniform4fv(programLane.hueLoc, uniformViews.hue);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.disable(gl.SCISSOR_TEST);
     if (!firstFrameSubmitted) {
@@ -949,7 +990,8 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
   return {
     destroy() {
       pump.destroy();
-      gl.deleteProgram(program);
+      gl.deleteProgram(staticProgramLane.program);
+      gl.deleteProgram(mouseProgramLane.program);
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     }
   };

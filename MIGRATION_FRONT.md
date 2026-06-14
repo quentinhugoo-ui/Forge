@@ -129,6 +129,11 @@ outside the possible blob volume do not execute the raymarch shader. The blob
 canvas fills the Brain canvas instead of living in its own cropped HTML frame.
 WebGL uniform buffer lanes are materialized once per typed buffer, so hot-frame
 uploads reuse the same KASM slices instead of allocating new RAM views.
+Per-ball smooth-min constants are validated by the frame program before upload,
+so the fragment shader does not reclamp the same value inside every SDF sample.
+Mouse deformation uses two content-addressed shader lanes; idle frames run a
+static variant where the deformation branch compiles away, and hover frames swap
+to the interactive variant without changing the visual contract.
 Once WebGPU is active, the hidden CSS fallback stops its own morph and gleam
 animations.
 
