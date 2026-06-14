@@ -1194,9 +1194,15 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
                 <stop offset="62%" stopColor="#ff8a00" stopOpacity="0.12" />
                 <stop offset="100%" stopColor="#f1b735" stopOpacity="0.02" />
               </linearGradient>
-              <linearGradient id={`hardwareGaugeActivityFill-${card.id}`} x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="#f1b735" stopOpacity="0.22" />
-                <stop offset="100%" stopColor="#f1b735" stopOpacity="0.02" />
+              <linearGradient id={`hardwareGaugeActivityFill-${card.id}`} x1="0" x2="0" y1="82" y2="0" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#ff9c00" stopOpacity="0" />
+                <stop offset="42%" stopColor="#ff9c00" stopOpacity="0.1" />
+                <stop offset="100%" stopColor="#ffd05c" stopOpacity="0.34" />
+              </linearGradient>
+              <linearGradient id={`hardwareGaugeActivityStroke-${card.id}`} x1="0" x2="0" y1="82" y2="0" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#ff9c00" stopOpacity="0.02" />
+                <stop offset="38%" stopColor="#ff9c00" stopOpacity="0.34" />
+                <stop offset="100%" stopColor="#ffd05c" stopOpacity="0.95" />
               </linearGradient>
             </defs>
             <path className="hardwareGauge__gridLine" d="M 0 20.5 H 278 M 0 41 H 278 M 0 61.5 H 278" />
@@ -1206,8 +1212,12 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
             {temperatureAreaPath ? (
               <path className="hardwareGauge__temperatureArea" d={temperatureAreaPath} fill={`url(#hardwareGaugeTempFill-${card.id})`} />
             ) : null}
-            {activityPeakPath ? <path className="hardwareGauge__activityPeak" d={activityPeakPath} /> : null}
-            {activityLinePath ? <path className="hardwareGauge__activityLine" d={activityLinePath} /> : null}
+            {activityPeakPath ? (
+              <path className="hardwareGauge__activityPeak" d={activityPeakPath} stroke={`url(#hardwareGaugeActivityStroke-${card.id})`} />
+            ) : null}
+            {activityLinePath ? (
+              <path className="hardwareGauge__activityLine" d={activityLinePath} stroke={`url(#hardwareGaugeActivityStroke-${card.id})`} />
+            ) : null}
             {temperatureLinePath ? (
               <path className="hardwareGauge__temperatureLine" d={temperatureLinePath} stroke={`url(#hardwareGaugeTempStroke-${card.id})`} />
             ) : null}

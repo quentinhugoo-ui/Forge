@@ -9225,9 +9225,13 @@ ol.assistantText__list li::before {
   vector-effect: non-scaling-stroke;
 }
 
-.hardwareGauge__temperatureArea,
-.hardwareGauge__activityArea {
+.hardwareGauge__temperatureArea {
   opacity: 0.92;
+}
+
+.hardwareGauge__activityArea {
+  opacity: 1;
+  filter: drop-shadow(0 0 9px rgba(255, 156, 0, 0.18));
 }
 
 .hardwareGauge__activityLine,
@@ -9240,16 +9244,14 @@ ol.assistantText__list li::before {
 }
 
 .hardwareGauge__activityPeak {
-  stroke: #ff9c00;
   stroke-width: 1.35;
-  opacity: 0.78;
-  filter: drop-shadow(0 0 7px rgba(255, 156, 0, 0.38));
+  opacity: 1;
+  filter: drop-shadow(0 0 8px rgba(255, 156, 0, 0.42));
 }
 
 .hardwareGauge__activityLine {
-  stroke: #f1b735;
   stroke-width: 1.35;
-  opacity: 0.9;
+  opacity: 1;
   filter: drop-shadow(0 0 7px rgba(241, 183, 53, 0.34));
 }
 
