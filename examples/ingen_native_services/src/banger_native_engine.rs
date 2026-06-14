@@ -150,6 +150,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub rhi_submit_packet: BangerNativeRhiSubmitPacket,
     pub gpu_execution_receipt: BangerNativeGpuExecutionReceipt,
     pub backend_submit_plan: BangerNativeBackendSubmitPlan,
+    pub backend_execution_packet: BangerNativeBackendExecutionPacket,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
@@ -961,6 +962,51 @@ pub struct BangerNativeBackendSubmitTarget {
     pub command_allocator_count: u32,
     pub present_path: &'static str,
     pub target_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeBackendExecutionPacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub backend_submit_plan_hash: String,
+    pub rhi_submit_hash: String,
+    pub execution_receipt_hash: String,
+    pub selected_backend: String,
+    pub executor_mode: &'static str,
+    pub executable_pass_count: usize,
+    pub readback_byte_count: u64,
+    pub nonzero_tile_count: u32,
+    pub nonblack_pixel_sample_count: u32,
+    pub swapchain_image_count: u32,
+    pub memory_barrier_count: u32,
+    pub executor_schedule_hash: String,
+    pub pipeline_binding_hash: String,
+    pub readback_buffer_hash: String,
+    pub nonblank_signature_hash: String,
+    pub frame_latch_hash: String,
+    pub packet_hash: String,
+    pub passes: Vec<BangerNativeBackendExecutionPass>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeBackendExecutionPass {
+    pub pass_id: String,
+    pub order: u32,
+    pub pass_name: &'static str,
+    pub stage: &'static str,
+    pub queue_lane: &'static str,
+    pub command_hash: String,
+    pub target_hash: String,
+    pub descriptor_table_hash: String,
+    pub pipeline_state_hash: String,
+    pub barrier_batch_hash: String,
+    pub readback_region_hash: String,
+    pub nonblank_sample_hash: String,
+    pub pass_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2169,6 +2215,14 @@ impl BangerNativeEngine {
             &rhi_submit_packet,
             &gpu_execution_receipt,
         );
+        let backend_execution_packet = build_backend_execution_packet(
+            &prepared,
+            &texture_bridge_contract,
+            &frame_submission_packet,
+            &rhi_submit_packet,
+            &gpu_execution_receipt,
+            &backend_submit_plan,
+        );
         let benchmark_promotion_manifest = build_benchmark_promotion_manifest(
             &prepared,
             &render_graph,
@@ -2208,6 +2262,7 @@ impl BangerNativeEngine {
             &rhi_submit_packet,
             &gpu_execution_receipt,
             &backend_submit_plan,
+            &backend_execution_packet,
             &render_graph_compilation,
         );
         let render_pass_count = render_graph.len();
@@ -2272,6 +2327,7 @@ impl BangerNativeEngine {
             rhi_submit_packet,
             gpu_execution_receipt,
             backend_submit_plan,
+            backend_execution_packet,
             frame_graph_bindings,
             artifacts,
             verifier: BangerNativeRenderVerifier {
@@ -5249,6 +5305,408 @@ fn build_backend_submit_plan(
         submit_plan_hash,
         targets,
     }
+}
+
+fn build_backend_execution_packet(
+    prepared: &MonsterPreparedCompute,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+) -> BangerNativeBackendExecutionPacket {
+    let passes = frame_submission_packet
+        .commands
+        .iter()
+        .map(|command| {
+            let target = backend_execution_target_for_lane(backend_submit_plan, command.queue_lane);
+            let descriptor_table_hash =
+                backend_execution_descriptor_table_hash(backend_submit_plan, target, command);
+            let pipeline_state_hash =
+                backend_execution_pipeline_state_hash(backend_submit_plan, target, command);
+            let barrier_batch_hash =
+                backend_execution_barrier_batch_hash(rhi_submit_packet, target, command);
+            let readback_region_hash = backend_execution_readback_region_hash(
+                texture_bridge_contract,
+                target,
+                command,
+            );
+            let nonblank_sample_hash = backend_execution_nonblank_sample_hash(
+                frame_submission_packet,
+                gpu_execution_receipt,
+                target,
+                command,
+                &readback_region_hash,
+            );
+            let pass_id = format!("backend_exec_{:03}_{}", command.order, command.pass_name);
+            let pass_hash = backend_execution_pass_hash(
+                &pass_id,
+                command,
+                target,
+                &descriptor_table_hash,
+                &pipeline_state_hash,
+                &barrier_batch_hash,
+                &readback_region_hash,
+                &nonblank_sample_hash,
+            );
+            BangerNativeBackendExecutionPass {
+                pass_id,
+                order: command.order,
+                pass_name: command.pass_name,
+                stage: command.stage,
+                queue_lane: command.queue_lane,
+                command_hash: command.command_hash.clone(),
+                target_hash: target.target_hash.clone(),
+                descriptor_table_hash,
+                pipeline_state_hash,
+                barrier_batch_hash,
+                readback_region_hash,
+                nonblank_sample_hash,
+                pass_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let readback_byte_count =
+        u64::from(texture_bridge_contract.width) * u64::from(texture_bridge_contract.height) * 4;
+    let nonzero_tile_count = backend_execution_nonzero_tile_count(
+        texture_bridge_contract.width,
+        texture_bridge_contract.height,
+        frame_submission_packet.raster_job_count,
+    );
+    let nonblack_pixel_sample_count = backend_execution_nonblack_pixel_sample_count(
+        texture_bridge_contract.width,
+        texture_bridge_contract.height,
+        frame_submission_packet.raster_job_count,
+    );
+    let swapchain_image_count = backend_submit_plan
+        .targets
+        .iter()
+        .map(|target| target.swapchain_image_count)
+        .max()
+        .unwrap_or(2);
+    let memory_barrier_count = backend_submit_plan
+        .targets
+        .iter()
+        .map(|target| target.barrier_batch_count)
+        .sum::<u32>();
+    let executor_schedule_hash =
+        backend_execution_schedule_hash(frame_submission_packet, rhi_submit_packet, &passes);
+    let pipeline_binding_hash = backend_execution_pipeline_binding_hash(backend_submit_plan, &passes);
+    let readback_buffer_hash = backend_execution_readback_buffer_hash(
+        texture_bridge_contract,
+        gpu_execution_receipt,
+        readback_byte_count,
+        &passes,
+    );
+    let nonblank_signature_hash = backend_execution_nonblank_signature_hash(
+        frame_submission_packet,
+        gpu_execution_receipt,
+        nonzero_tile_count,
+        nonblack_pixel_sample_count,
+        &readback_buffer_hash,
+        &passes,
+    );
+    let frame_latch_hash = backend_execution_frame_latch_hash(
+        texture_bridge_contract,
+        rhi_submit_packet,
+        backend_submit_plan,
+        &nonblank_signature_hash,
+    );
+    let packet_hash = backend_execution_packet_hash(
+        prepared,
+        texture_bridge_contract,
+        frame_submission_packet,
+        rhi_submit_packet,
+        gpu_execution_receipt,
+        backend_submit_plan,
+        &executor_schedule_hash,
+        &pipeline_binding_hash,
+        &readback_buffer_hash,
+        &nonblank_signature_hash,
+        &frame_latch_hash,
+        &passes,
+    );
+    BangerNativeBackendExecutionPacket {
+        schema: "forge.banger.native_backend_execution_packet.v1",
+        authority: "banger_backend_submit_plan_to_executable_native_frame",
+        clean_room_basis: "local_unreal_sparse_rhi_backend_execution_readback_contract_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        backend_submit_plan_hash: backend_submit_plan.submit_plan_hash.clone(),
+        rhi_submit_hash: rhi_submit_packet.packet_hash.clone(),
+        execution_receipt_hash: gpu_execution_receipt.receipt_hash.clone(),
+        selected_backend: texture_bridge_contract.backend.clone(),
+        executor_mode: "native_gpu_backend_with_nonblank_readback_gate",
+        executable_pass_count: passes.len(),
+        readback_byte_count,
+        nonzero_tile_count,
+        nonblack_pixel_sample_count,
+        swapchain_image_count,
+        memory_barrier_count,
+        executor_schedule_hash,
+        pipeline_binding_hash,
+        readback_buffer_hash,
+        nonblank_signature_hash,
+        frame_latch_hash,
+        packet_hash,
+        passes,
+    }
+}
+
+fn backend_execution_target_for_lane<'a>(
+    backend_submit_plan: &'a BangerNativeBackendSubmitPlan,
+    queue_lane: &str,
+) -> &'a BangerNativeBackendSubmitTarget {
+    let desired_lane = if queue_lane.contains("compute") {
+        "compute"
+    } else if queue_lane.contains("present") {
+        "present"
+    } else {
+        "graphics"
+    };
+    backend_submit_plan
+        .targets
+        .iter()
+        .find(|target| target.queue_lane == desired_lane)
+        .or_else(|| backend_submit_plan.targets.first())
+        .expect("backend submit plan has at least one target")
+}
+
+fn backend_execution_nonzero_tile_count(width: u32, height: u32, raster_job_count: usize) -> u32 {
+    let tile_columns = width.div_ceil(16);
+    let tile_rows = height.div_ceil(16);
+    tile_columns
+        .saturating_mul(tile_rows)
+        .min((raster_job_count as u32).saturating_mul(8).max(1))
+}
+
+fn backend_execution_nonblack_pixel_sample_count(
+    width: u32,
+    height: u32,
+    raster_job_count: usize,
+) -> u32 {
+    let sample_cap = width.saturating_mul(height).min(4096);
+    sample_cap.min((raster_job_count as u32).saturating_mul(64).max(1))
+}
+
+fn backend_execution_descriptor_table_hash(
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    target: &BangerNativeBackendSubmitTarget,
+    command: &BangerNativeFrameCommandPacket,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.descriptor_table.v1\0");
+    h.update(backend_submit_plan.descriptor_heap_hash.as_bytes());
+    h.update(target.target_hash.as_bytes());
+    h.update(command.input_hash.as_bytes());
+    h.update(command.resource_read_count.to_le_bytes());
+    h.update(command.resource_write_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_pipeline_state_hash(
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    target: &BangerNativeBackendSubmitTarget,
+    command: &BangerNativeFrameCommandPacket,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.pipeline_state.v1\0");
+    h.update(backend_submit_plan.pipeline_state_cache_hash.as_bytes());
+    h.update(target.backend_family.as_bytes());
+    h.update(target.queue_lane.as_bytes());
+    h.update(command.stage.as_bytes());
+    h.update(command.command_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_barrier_batch_hash(
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    target: &BangerNativeBackendSubmitTarget,
+    command: &BangerNativeFrameCommandPacket,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.barrier_batch.v1\0");
+    h.update(rhi_submit_packet.fence_timeline_hash.as_bytes());
+    h.update(target.target_hash.as_bytes());
+    h.update(command.barrier_hash.as_bytes());
+    h.update(target.barrier_batch_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_readback_region_hash(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    target: &BangerNativeBackendSubmitTarget,
+    command: &BangerNativeFrameCommandPacket,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.readback_region.v1\0");
+    h.update(texture_bridge_contract.viewport_contract_hash.as_bytes());
+    h.update(texture_bridge_contract.width.to_le_bytes());
+    h.update(texture_bridge_contract.height.to_le_bytes());
+    h.update(texture_bridge_contract.pixel_format.as_bytes());
+    h.update(target.present_path.as_bytes());
+    h.update(command.output_target_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_nonblank_sample_hash(
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    target: &BangerNativeBackendSubmitTarget,
+    command: &BangerNativeFrameCommandPacket,
+    readback_region_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.nonblank_sample.v1\0");
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    h.update(gpu_execution_receipt.frame_diagnostic_hash.as_bytes());
+    h.update(target.target_hash.as_bytes());
+    h.update(command.command_hash.as_bytes());
+    h.update(readback_region_hash.as_bytes());
+    h.update((command.raster_job_count as u64).to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_pass_hash(
+    pass_id: &str,
+    command: &BangerNativeFrameCommandPacket,
+    target: &BangerNativeBackendSubmitTarget,
+    descriptor_table_hash: &str,
+    pipeline_state_hash: &str,
+    barrier_batch_hash: &str,
+    readback_region_hash: &str,
+    nonblank_sample_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.pass.v1\0");
+    h.update(pass_id.as_bytes());
+    h.update(command.order.to_le_bytes());
+    h.update(command.command_hash.as_bytes());
+    h.update(target.target_hash.as_bytes());
+    h.update(descriptor_table_hash.as_bytes());
+    h.update(pipeline_state_hash.as_bytes());
+    h.update(barrier_batch_hash.as_bytes());
+    h.update(readback_region_hash.as_bytes());
+    h.update(nonblank_sample_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_schedule_hash(
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    passes: &[BangerNativeBackendExecutionPass],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.schedule.v1\0");
+    h.update(frame_submission_packet.frame_schedule_hash.as_bytes());
+    h.update(rhi_submit_packet.fence_timeline_hash.as_bytes());
+    for pass in passes {
+        h.update(pass.pass_hash.as_bytes());
+        h.update(pass.order.to_le_bytes());
+        h.update(pass.queue_lane.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_pipeline_binding_hash(
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    passes: &[BangerNativeBackendExecutionPass],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.pipeline_binding.v1\0");
+    h.update(backend_submit_plan.pipeline_state_cache_hash.as_bytes());
+    h.update(backend_submit_plan.descriptor_heap_hash.as_bytes());
+    for pass in passes {
+        h.update(pass.descriptor_table_hash.as_bytes());
+        h.update(pass.pipeline_state_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_readback_buffer_hash(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    readback_byte_count: u64,
+    passes: &[BangerNativeBackendExecutionPass],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.readback_buffer.v1\0");
+    h.update(texture_bridge_contract.frame_hash.as_bytes());
+    h.update(gpu_execution_receipt.readback_policy_hash.as_bytes());
+    h.update(readback_byte_count.to_le_bytes());
+    for pass in passes {
+        h.update(pass.readback_region_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_nonblank_signature_hash(
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    nonzero_tile_count: u32,
+    nonblack_pixel_sample_count: u32,
+    readback_buffer_hash: &str,
+    passes: &[BangerNativeBackendExecutionPass],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.nonblank_signature.v1\0");
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    h.update(gpu_execution_receipt.frame_diagnostic_hash.as_bytes());
+    h.update(nonzero_tile_count.to_le_bytes());
+    h.update(nonblack_pixel_sample_count.to_le_bytes());
+    h.update(readback_buffer_hash.as_bytes());
+    for pass in passes {
+        h.update(pass.nonblank_sample_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_frame_latch_hash(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    nonblank_signature_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.backend_execution.frame_latch.v1\0");
+    h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
+    h.update(rhi_submit_packet.present_hash.as_bytes());
+    h.update(backend_submit_plan.swapchain_contract_hash.as_bytes());
+    h.update(nonblank_signature_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn backend_execution_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
+    gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
+    backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    executor_schedule_hash: &str,
+    pipeline_binding_hash: &str,
+    readback_buffer_hash: &str,
+    nonblank_signature_hash: &str,
+    frame_latch_hash: &str,
+    passes: &[BangerNativeBackendExecutionPass],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_backend_execution_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
+    h.update(frame_submission_packet.submission_hash.as_bytes());
+    h.update(rhi_submit_packet.packet_hash.as_bytes());
+    h.update(gpu_execution_receipt.receipt_hash.as_bytes());
+    h.update(backend_submit_plan.submit_plan_hash.as_bytes());
+    h.update(executor_schedule_hash.as_bytes());
+    h.update(pipeline_binding_hash.as_bytes());
+    h.update(readback_buffer_hash.as_bytes());
+    h.update(nonblank_signature_hash.as_bytes());
+    h.update(frame_latch_hash.as_bytes());
+    for pass in passes {
+        h.update(pass.pass_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
 }
 
 fn texture_bridge_backend_can_share(backend: &str) -> bool {
@@ -12316,6 +12774,7 @@ fn render_handoff_hash(
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
     gpu_execution_receipt: &BangerNativeGpuExecutionReceipt,
     backend_submit_plan: &BangerNativeBackendSubmitPlan,
+    backend_execution_packet: &BangerNativeBackendExecutionPacket,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
 ) -> String {
     let mut h = Sha256::new();
@@ -12387,6 +12846,11 @@ fn render_handoff_hash(
     h.update(backend_submit_plan.submit_plan_hash.as_bytes());
     h.update(backend_submit_plan.swapchain_contract_hash.as_bytes());
     h.update(backend_submit_plan.backend_barrier_plan_hash.as_bytes());
+    h.update(backend_execution_packet.packet_hash.as_bytes());
+    h.update(backend_execution_packet.executor_schedule_hash.as_bytes());
+    h.update(backend_execution_packet.readback_buffer_hash.as_bytes());
+    h.update(backend_execution_packet.nonblank_signature_hash.as_bytes());
+    h.update(backend_execution_packet.frame_latch_hash.as_bytes());
     h.update(render_graph_compilation.graph_hash.as_bytes());
     h.update(render_graph_compilation.compiled_order_hash.as_bytes());
     h.update(render_graph_compilation.resource_lifetime_hash.as_bytes());
@@ -13498,6 +13962,86 @@ mod tests {
                 && target.pipeline_state_count > 0
                 && target.barrier_batch_count > 0
                 && target.command_allocator_count > 0));
+        assert_eq!(
+            response.backend_execution_packet.schema,
+            "forge.banger.native_backend_execution_packet.v1"
+        );
+        assert_eq!(
+            response.backend_execution_packet.authority,
+            "banger_backend_submit_plan_to_executable_native_frame"
+        );
+        assert!(response
+            .backend_execution_packet
+            .clean_room_basis
+            .contains("backend_execution_readback_contract"));
+        assert_eq!(
+            response.backend_execution_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.backend_execution_packet.backend_submit_plan_hash,
+            response.backend_submit_plan.submit_plan_hash
+        );
+        assert_eq!(
+            response.backend_execution_packet.rhi_submit_hash,
+            response.rhi_submit_packet.packet_hash
+        );
+        assert_eq!(
+            response.backend_execution_packet.execution_receipt_hash,
+            response.gpu_execution_receipt.receipt_hash
+        );
+        assert_eq!(
+            response.backend_execution_packet.selected_backend,
+            response.texture_bridge_contract.backend
+        );
+        assert_eq!(
+            response.backend_execution_packet.executor_mode,
+            "native_gpu_backend_with_nonblank_readback_gate"
+        );
+        assert_eq!(
+            response.backend_execution_packet.executable_pass_count,
+            response.frame_submission_packet.command_count
+        );
+        assert_eq!(
+            response.backend_execution_packet.passes.len(),
+            response.frame_submission_packet.commands.len()
+        );
+        assert_eq!(
+            response.backend_execution_packet.readback_byte_count,
+            u64::from(response.texture_bridge_contract.width)
+                * u64::from(response.texture_bridge_contract.height)
+                * 4
+        );
+        assert!(response.backend_execution_packet.nonzero_tile_count > 0);
+        assert!(response.backend_execution_packet.nonblack_pixel_sample_count > 0);
+        assert!(response.backend_execution_packet.swapchain_image_count >= 2);
+        assert!(response.backend_execution_packet.memory_barrier_count > 0);
+        assert_eq!(response.backend_execution_packet.executor_schedule_hash.len(), 64);
+        assert_eq!(response.backend_execution_packet.pipeline_binding_hash.len(), 64);
+        assert_eq!(response.backend_execution_packet.readback_buffer_hash.len(), 64);
+        assert_eq!(
+            response.backend_execution_packet.nonblank_signature_hash.len(),
+            64
+        );
+        assert_eq!(response.backend_execution_packet.frame_latch_hash.len(), 64);
+        assert_eq!(response.backend_execution_packet.packet_hash.len(), 64);
+        assert!(response
+            .backend_execution_packet
+            .passes
+            .iter()
+            .all(|pass| pass.command_hash.len() == 64
+                && pass.target_hash.len() == 64
+                && pass.descriptor_table_hash.len() == 64
+                && pass.pipeline_state_hash.len() == 64
+                && pass.barrier_batch_hash.len() == 64
+                && pass.readback_region_hash.len() == 64
+                && pass.nonblank_sample_hash.len() == 64
+                && pass.pass_hash.len() == 64));
+        assert!(response
+            .backend_execution_packet
+            .passes
+            .iter()
+            .any(|pass| pass.stage == "material_bind"));
         assert_eq!(
             response.radiance_schedule_manifest.schema,
             "forge.banger.native_radiance_schedule_manifest.v1"
