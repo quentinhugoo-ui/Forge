@@ -1,8 +1,8 @@
-export const BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA = "forge.monster.brain_blob.frame_cache.v1";
+export const BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA = "forge.monster.brain_blob.frame_cache.v2";
 export const BRAIN_BLOB_MONSTER_FRAME_HZ = 60;
+export const BRAIN_BLOB_MONSTER_HUE_ROW_FLOATS = 12;
 
 export type BrainBlobMonsterLane = "webgpu" | "webgl2";
-export type BrainBlobMonsterRuntimeMode = "optimized" | "baseline";
 
 export interface BrainBlobMonsterFrameInput {
   lane: BrainBlobMonsterLane;
@@ -32,15 +32,6 @@ export interface BrainBlobMonsterFrameCacheStats {
   lastAddress: string;
 }
 
-export interface BrainBlobMonsterRuntimeStats extends BrainBlobMonsterFrameCacheStats {
-  schema: typeof BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA;
-  lane: BrainBlobMonsterLane | "unknown";
-  mode: BrainBlobMonsterRuntimeMode;
-  reusePercent: number;
-  submittedFps: number;
-  sampledAt: number;
-}
-
 type BrainBlobMonsterFrameCache = {
   quantizeTime(timeSeconds: number): number;
   probe(input: BrainBlobMonsterFrameInput): BrainBlobMonsterFrameProbe;
@@ -62,57 +53,67 @@ function fnv1a64Hex(input: string): string {
   return hash.toString(16).padStart(16, "0");
 }
 
-const brainBlobMonsterStatsListeners = new Set<() => void>();
-const brainBlobMonsterModeListeners = new Set<() => void>();
-let brainBlobMonsterRuntimeMode: BrainBlobMonsterRuntimeMode = "optimized";
-let brainBlobMonsterRuntimeStats: BrainBlobMonsterRuntimeStats = {
-  schema: BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA,
-  lane: "unknown",
-  mode: "optimized",
-  acceptedFrames: 0,
-  reusedFrames: 0,
-  uniqueFrames: 0,
-  lastAddress: "",
-  reusePercent: 0,
-  submittedFps: 0,
-  sampledAt: 0
-};
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
 
-export function subscribeBrainBlobMonsterRuntimeStats(listener: () => void): () => void {
-  brainBlobMonsterStatsListeners.add(listener);
-  return () => {
-    brainBlobMonsterStatsListeners.delete(listener);
+function mix(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+const BRAIN_BLOB_MONSTER_HUE_PERIOD_TICKS = BRAIN_BLOB_MONSTER_FRAME_HZ * 6;
+const brainBlobMonsterHueRowsByTick = new Map<number, Float32Array>();
+
+export function brainBlobMonsterColorizeAngle(timeSeconds: number): number {
+  const phase = ((timeSeconds / 6) % 1 + 1) % 1;
+  if (phase < 0.2) return mix(0, -0.5235988, smoothstep(0, 0.2, phase));
+  if (phase < 0.4) return mix(-0.5235988, -1.0471976, smoothstep(0.2, 0.4, phase));
+  if (phase < 0.6) return mix(-1.0471976, -1.5707963, smoothstep(0.4, 0.6, phase));
+  if (phase < 0.8) return mix(-1.5707963, -0.7853982, smoothstep(0.6, 0.8, phase));
+  return mix(-0.7853982, 0, smoothstep(0.8, 1, phase));
+}
+
+function computeBrainBlobMonsterHueRows(timeSeconds: number): Float32Array {
+  const angle = brainBlobMonsterColorizeAngle(timeSeconds);
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const wx = 0.213;
+  const wy = 0.715;
+  const wz = 0.072;
+  return new Float32Array([
+    wx + c * (1 - wx) + s * -wx,
+    wy + c * -wy + s * -wy,
+    wz + c * -wz + s * (1 - wz),
+    0,
+    wx + c * -wx + s * 0.143,
+    wy + c * (1 - wy) + s * 0.14,
+    wz + c * -wz + s * -0.283,
+    0,
+    wx + c * -wx + s * -(1 - wx),
+    wy + c * -wy + s * wy,
+    wz + c * (1 - wz) + s * wz,
+    0
+  ]);
+}
+
+export function brainBlobMonsterHuePeriodAddress(timeSeconds: number): { address: string; tick: number } {
+  const tick = ((quantizeFinite(timeSeconds, BRAIN_BLOB_MONSTER_FRAME_HZ) % BRAIN_BLOB_MONSTER_HUE_PERIOD_TICKS)
+    + BRAIN_BLOB_MONSTER_HUE_PERIOD_TICKS) % BRAIN_BLOB_MONSTER_HUE_PERIOD_TICKS;
+  return {
+    address: `monster:brain-blob:hue:${tick.toString(16).padStart(3, "0")}`,
+    tick
   };
 }
 
-export function getBrainBlobMonsterRuntimeStats(): BrainBlobMonsterRuntimeStats {
-  return brainBlobMonsterRuntimeStats;
-}
-
-export function subscribeBrainBlobMonsterRuntimeMode(listener: () => void): () => void {
-  brainBlobMonsterModeListeners.add(listener);
-  return () => {
-    brainBlobMonsterModeListeners.delete(listener);
-  };
-}
-
-export function getBrainBlobMonsterRuntimeMode(): BrainBlobMonsterRuntimeMode {
-  return brainBlobMonsterRuntimeMode;
-}
-
-export function setBrainBlobMonsterRuntimeMode(mode: BrainBlobMonsterRuntimeMode): void {
-  if (brainBlobMonsterRuntimeMode === mode) return;
-  brainBlobMonsterRuntimeMode = mode;
-  for (const listener of brainBlobMonsterModeListeners) {
-    listener();
+export function writeBrainBlobMonsterHueRows(timeSeconds: number, out: Float32Array, offset: number): void {
+  const { tick } = brainBlobMonsterHuePeriodAddress(timeSeconds);
+  let rows = brainBlobMonsterHueRowsByTick.get(tick);
+  if (!rows) {
+    rows = computeBrainBlobMonsterHueRows(tick / BRAIN_BLOB_MONSTER_FRAME_HZ);
+    brainBlobMonsterHueRowsByTick.set(tick, rows);
   }
-}
-
-function publishBrainBlobMonsterRuntimeStats(next: BrainBlobMonsterRuntimeStats): void {
-  brainBlobMonsterRuntimeStats = next;
-  for (const listener of brainBlobMonsterStatsListeners) {
-    listener();
-  }
+  out.set(rows, offset);
 }
 
 export function brainBlobMonsterFrameAddress(input: BrainBlobMonsterFrameInput): { address: string; timeTick: number } {
@@ -141,9 +142,6 @@ export function createBrainBlobMonsterFrameCache(): BrainBlobMonsterFrameCache {
   let reusedFrames = 0;
   let uniqueFrames = 0;
   let lastAddress = "";
-  let windowStartedAt = performance.now();
-  let windowSubmittedFrames = 0;
-  let lastPublishedAt = 0;
 
   const snapshotStats = (): BrainBlobMonsterFrameCacheStats => ({
     acceptedFrames,
@@ -158,36 +156,13 @@ export function createBrainBlobMonsterFrameCache(): BrainBlobMonsterFrameCache {
     },
     probe(input) {
       const { address, timeTick } = brainBlobMonsterFrameAddress(input);
-      const cacheHit = address === lastAddress;
-      const reused = brainBlobMonsterRuntimeMode === "optimized" && cacheHit;
-      const now = performance.now();
+      const reused = address === lastAddress;
       acceptedFrames += 1;
       if (reused) {
         reusedFrames += 1;
       } else {
-        if (!cacheHit) {
-          uniqueFrames += 1;
-        }
-        windowSubmittedFrames += 1;
+        uniqueFrames += 1;
         lastAddress = address;
-      }
-      if (now - lastPublishedAt >= 250 || !lastPublishedAt) {
-        const elapsedSeconds = Math.max(0.001, (now - windowStartedAt) / 1000);
-        const stats = snapshotStats();
-        publishBrainBlobMonsterRuntimeStats({
-          schema: BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA,
-          lane: input.lane,
-          mode: brainBlobMonsterRuntimeMode,
-          ...stats,
-          reusePercent: stats.acceptedFrames > 0 ? (stats.reusedFrames / stats.acceptedFrames) * 100 : 0,
-          submittedFps: elapsedSeconds >= 0.25 ? windowSubmittedFrames / elapsedSeconds : 0,
-          sampledAt: Date.now()
-        });
-        lastPublishedAt = now;
-        if (now - windowStartedAt >= 2000) {
-          windowStartedAt = now;
-          windowSubmittedFrames = 0;
-        }
       }
       return {
         schema: BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA,

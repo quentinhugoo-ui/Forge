@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { createBrainBlobMonsterFrameCache, getBrainBlobMonsterRuntimeMode } from "./brain-blob-cache";
+import {
+  BRAIN_BLOB_MONSTER_HUE_ROW_FLOATS,
+  createBrainBlobMonsterFrameCache,
+  writeBrainBlobMonsterHueRows
+} from "./brain-blob-cache";
 
 /* Brain page background: a soft 3D gooey blob raymarched as an SDF metaball
    scene, ported from the Uiverse "andrew-manzyk" loader. The seven blurred
@@ -17,20 +21,30 @@ type WebGpuQueue = {
   writeBuffer(buffer: WebGpuBuffer, bufferOffset: number, data: WebGpuBufferData, dataOffset?: number, size?: number): void;
   submit(commandBuffers: unknown[]): void;
 };
+type WebGpuRenderPass = {
+  setPipeline(pipeline: unknown): void;
+  setBindGroup(index: number, bindGroup: unknown): void;
+  draw(vertexCount: number, instanceCount: number): void;
+  executeBundles?(bundles: unknown[]): void;
+  setScissorRect?(x: number, y: number, width: number, height: number): void;
+  end(): void;
+};
+type WebGpuRenderBundleEncoder = {
+  setPipeline(pipeline: unknown): void;
+  setBindGroup(index: number, bindGroup: unknown): void;
+  draw(vertexCount: number, instanceCount: number): void;
+  finish(descriptor?: { label?: string }): unknown;
+};
 type WebGpuDevice = {
   queue: WebGpuQueue;
   lost: Promise<unknown>;
   createBuffer(descriptor: { label?: string; size: number; usage: number }): WebGpuBuffer;
   createShaderModule(descriptor: { label?: string; code: string }): unknown;
   createRenderPipeline(descriptor: Record<string, unknown>): unknown;
+  createRenderBundleEncoder?(descriptor: { label?: string; colorFormats: string[] }): WebGpuRenderBundleEncoder;
   createBindGroup(descriptor: { label?: string; layout: unknown; entries: Array<{ binding: number; resource: unknown }> }): unknown;
   createCommandEncoder(descriptor?: { label?: string }): {
-    beginRenderPass(descriptor: Record<string, unknown>): {
-      setPipeline(pipeline: unknown): void;
-      setBindGroup(index: number, bindGroup: unknown): void;
-      draw(vertexCount: number, instanceCount: number): void;
-      end(): void;
-    };
+    beginRenderPass(descriptor: Record<string, unknown>): WebGpuRenderPass;
     finish(): unknown;
   };
   destroy?: () => void;
@@ -63,10 +77,11 @@ const BRAIN_BLOB_TIME_SCALE = 0.6;
    pointer vec4 (worldX, worldY, strength, _). */
 const BLOB_BALL_COUNT = 10;
 const BLOB_MASS_COUNT = 7;
-const BLOB_UNIFORM_FLOATS = 88;
+const BLOB_UNIFORM_FLOATS = 88 + BRAIN_BLOB_MONSTER_HUE_ROW_FLOATS;
 const BLOB_BALLS_FLOAT_OFFSET = 4;
 const BLOB_KS_FLOAT_OFFSET = 44;
 const BLOB_MOUSE_FLOAT_OFFSET = 84;
+const BLOB_HUE_FLOAT_OFFSET = 88;
 
 /* Camera the shaders ray-march with; mirrored on the CPU to project the cursor
    onto the blob's z = 0 plane. Keep in sync with the shader `ro`/focal. */
@@ -74,9 +89,12 @@ const BLOB_FOCAL = 1.72;
 const BLOB_CAM_Z = 2.28;
 const BLOB_CAM_Y = 0.03;
 const BLOB_POINTER_REACH = 0.78;
+const BLOB_SCISSOR_PADDING_WORLD = 0.42;
+const BLOB_SCISSOR_PADDING_PIXELS = 24;
 
 /* Live cursor shared between the React component and the render loop. */
 type BlobPointer = { x: number; y: number; over: boolean };
+type BlobScissor = { x: number; y: number; width: number; height: number };
 
 const BLOB_TAU = Math.PI * 2;
 /* Loader contract: --time-animation 2s; orbits run at 45% for the soft feel. */
@@ -92,6 +110,10 @@ const BLOB_MASS_PIVOTS: ReadonlyArray<readonly [number, number, number]> = [
 ];
 const BLOB_MASS_DIRS = [0, -1, 1, -1, -1, 1, 1] as const;
 const BLOB_MASS_DELAYS = [0, 0, 1 / 3, 0, 1 / 2, 0, 1 / 1.5] as const;
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
 type BlobScene = { timeOffset: number; update(t: number, out: Float32Array, pointer: BlobPointer | null): void };
 
@@ -257,8 +279,6 @@ function createBlobScene(seed: number): BlobScene {
 
 const BRAIN_BLOB_WGSL = /* wgsl */ `
 const TAU: f32 = 6.28318530718;
-/* Loader contract: --time-animation 2s; colorize runs at *3. */
-const TIME_ANIM: f32 = 2.0;
 const BOUND_RADIUS: f32 = 1.58;
 
 struct Uniforms {
@@ -268,6 +288,7 @@ struct Uniforms {
   balls: array<vec4<f32>, 10>,
   ks: array<vec4<f32>, 10>,
   mouse: vec4<f32>,
+  hueRows: array<vec4<f32>, 3>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -345,32 +366,12 @@ fn fieldNormal(p: vec3<f32>, t: f32) -> vec3<f32> {
   ));
 }
 
-fn hueRotate(color: vec3<f32>, angle: f32) -> vec3<f32> {
-  let c = cos(angle);
-  let s = sin(angle);
-  let weights = vec3<f32>(0.213, 0.715, 0.072);
+fn hueRotate(color: vec3<f32>) -> vec3<f32> {
   return vec3<f32>(
-    dot(color, vec3<f32>(weights.x + c * (1.0 - weights.x) + s * (-weights.x), weights.y + c * (-weights.y) + s * (-weights.y), weights.z + c * (-weights.z) + s * (1.0 - weights.z))),
-    dot(color, vec3<f32>(weights.x + c * (-weights.x) + s * 0.143, weights.y + c * (1.0 - weights.y) + s * 0.140, weights.z + c * (-weights.z) + s * -0.283)),
-    dot(color, vec3<f32>(weights.x + c * (-weights.x) + s * (-(1.0 - weights.x)), weights.y + c * (-weights.y) + s * weights.y, weights.z + c * (1.0 - weights.z) + s * weights.z))
+    dot(color, uniforms.hueRows[0].xyz),
+    dot(color, uniforms.hueRows[1].xyz),
+    dot(color, uniforms.hueRows[2].xyz)
   );
-}
-
-fn colorizeAngle(time: f32) -> f32 {
-  let phase = fract(time / (TIME_ANIM * 3.0));
-  if (phase < 0.2) {
-    return mix(0.0, -0.5235988, smoothstep(0.0, 0.2, phase));
-  }
-  if (phase < 0.4) {
-    return mix(-0.5235988, -1.0471976, smoothstep(0.2, 0.4, phase));
-  }
-  if (phase < 0.6) {
-    return mix(-1.0471976, -1.5707963, smoothstep(0.4, 0.6, phase));
-  }
-  if (phase < 0.8) {
-    return mix(-1.5707963, -0.7853982, smoothstep(0.6, 0.8, phase));
-  }
-  return mix(-0.7853982, 0.0, smoothstep(0.8, 1.0, phase));
 }
 
 @fragment
@@ -455,7 +456,7 @@ fn sceneMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 
   /* No viewing frame: the blob's own transparency bounds it, so it can fill
      the whole canvas without a cropped edge. */
-  let rgb = max(hueRotate(color, colorizeAngle(t)), vec3<f32>(0.0));
+  let rgb = max(hueRotate(color), vec3<f32>(0.0));
   return vec4<f32>(min(rgb, vec3<f32>(1.0)), saturate(alpha));
 }
 `;
@@ -478,10 +479,10 @@ uniform vec4 uHeader;
 uniform vec4 uBalls[10];
 uniform vec4 uKs[10];
 uniform vec4 uMouse;
+uniform vec4 uHue[3];
 out vec4 outColor;
 
 const float TAU = 6.28318530718;
-const float TIME_ANIM = 2.0;
 const float BOUND_RADIUS = 1.58;
 
 float sat(float v) { return clamp(v, 0.0, 1.0); }
@@ -539,24 +540,12 @@ vec3 fieldNormal(vec3 p, float t) {
   ));
 }
 
-vec3 hueRotate(vec3 color, float angle) {
-  float c = cos(angle);
-  float s = sin(angle);
-  vec3 w = vec3(0.213, 0.715, 0.072);
+vec3 hueRotate(vec3 color) {
   return vec3(
-    dot(color, vec3(w.x + c * (1.0 - w.x) + s * (-w.x), w.y + c * (-w.y) + s * (-w.y), w.z + c * (-w.z) + s * (1.0 - w.z))),
-    dot(color, vec3(w.x + c * (-w.x) + s * 0.143, w.y + c * (1.0 - w.y) + s * 0.140, w.z + c * (-w.z) + s * -0.283)),
-    dot(color, vec3(w.x + c * (-w.x) + s * (-(1.0 - w.x)), w.y + c * (-w.y) + s * w.y, w.z + c * (1.0 - w.z) + s * w.z))
+    dot(color, uHue[0].xyz),
+    dot(color, uHue[1].xyz),
+    dot(color, uHue[2].xyz)
   );
-}
-
-float colorizeAngle(float time) {
-  float phase = fract(time / (TIME_ANIM * 3.0));
-  if (phase < 0.2) { return mix(0.0, -0.5235988, smoothstep(0.0, 0.2, phase)); }
-  if (phase < 0.4) { return mix(-0.5235988, -1.0471976, smoothstep(0.2, 0.4, phase)); }
-  if (phase < 0.6) { return mix(-1.0471976, -1.5707963, smoothstep(0.4, 0.6, phase)); }
-  if (phase < 0.8) { return mix(-1.5707963, -0.7853982, smoothstep(0.6, 0.8, phase)); }
-  return mix(-0.7853982, 0.0, smoothstep(0.8, 1.0, phase));
 }
 
 void main() {
@@ -635,7 +624,7 @@ void main() {
 
   // No viewing frame: the blob's own transparency bounds it, so it can fill
   // the whole canvas without a cropped edge.
-  vec3 rgb = max(hueRotate(color, colorizeAngle(t)), vec3(0.0));
+  vec3 rgb = max(hueRotate(color), vec3(0.0));
   outColor = vec4(min(rgb, vec3(1.0)), sat(alpha));
 }
 `;
@@ -653,6 +642,48 @@ function fitBlobFramebuffer(canvas: HTMLCanvasElement): boolean {
   canvas.width = width;
   canvas.height = height;
   return true;
+}
+
+function brainBlobMonsterFrameScissor(canvas: HTMLCanvasElement, uniforms: Float32Array): BlobScissor {
+  const width = canvas.width;
+  const height = canvas.height;
+  const shortSide = Math.max(1, Math.min(width, height));
+  let minX = width;
+  let minY = height;
+  let maxX = 0;
+  let maxY = 0;
+
+  for (let index = 0; index < BLOB_BALL_COUNT; index += 1) {
+    const offset = BLOB_BALLS_FLOAT_OFFSET + index * 4;
+    const x = uniforms[offset];
+    const y = uniforms[offset + 1] - BLOB_CAM_Y;
+    const zDistance = uniforms[offset + 2] + BLOB_CAM_Z;
+    const radius = uniforms[offset + 3] + BLOB_SCISSOR_PADDING_WORLD;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(zDistance) || !Number.isFinite(radius)) {
+      return { x: 0, y: 0, width, height };
+    }
+    const nearDistance = Math.max(0.35, zDistance - radius);
+    const scale = (BLOB_FOCAL / nearDistance) * shortSide;
+    const screenX = width * 0.5 + (x / zDistance) * BLOB_FOCAL * shortSide;
+    const screenY = height * 0.5 - (y / zDistance) * BLOB_FOCAL * shortSide;
+    const screenRadius = radius * scale;
+    minX = Math.min(minX, screenX - screenRadius);
+    maxX = Math.max(maxX, screenX + screenRadius);
+    minY = Math.min(minY, screenY - screenRadius);
+    maxY = Math.max(maxY, screenY + screenRadius);
+  }
+
+  if (minX >= maxX || minY >= maxY) return { x: 0, y: 0, width, height };
+  const x = clampNumber(Math.floor(minX - BLOB_SCISSOR_PADDING_PIXELS), 0, width);
+  const y = clampNumber(Math.floor(minY - BLOB_SCISSOR_PADDING_PIXELS), 0, height);
+  const right = clampNumber(Math.ceil(maxX + BLOB_SCISSOR_PADDING_PIXELS), 0, width);
+  const bottom = clampNumber(Math.ceil(maxY + BLOB_SCISSOR_PADDING_PIXELS), 0, height);
+  return {
+    x,
+    y,
+    width: Math.max(1, right - x),
+    height: Math.max(1, bottom - y)
+  };
 }
 
 type BlobFramePump = { destroy(): void };
@@ -730,6 +761,18 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
       layout: (pipeline as { getBindGroupLayout(index: number): unknown }).getBindGroupLayout(0),
       entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
     });
+    const renderBundle = device.createRenderBundleEncoder
+      ? (() => {
+          const bundleEncoder = device.createRenderBundleEncoder!({
+            label: "brain-blob-monster-render-bundle",
+            colorFormats: [format]
+          });
+          bundleEncoder.setPipeline(pipeline);
+          bundleEncoder.setBindGroup(0, bindGroup);
+          bundleEncoder.draw(3, 1);
+          return bundleEncoder.finish({ label: "brain-blob-monster-render-bundle" });
+        })()
+      : null;
 
     let configured = false;
     let deviceLost = false;
@@ -763,7 +806,7 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
         pointerStrength: nextPointerStrength,
         pointerOver: pointer.over
       });
-      if (getBrainBlobMonsterRuntimeMode() === "optimized" && frameProbe.reused) return;
+      if (frameProbe.reused) return;
       pointerStrength = nextPointerStrength;
       uniformData[0] = canvas.width;
       uniformData[1] = canvas.height;
@@ -772,6 +815,8 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
       uniformData[BLOB_MOUSE_FLOAT_OFFSET + 1] = pointer.y;
       uniformData[BLOB_MOUSE_FLOAT_OFFSET + 2] = pointerStrength;
       scene.update(t, uniformData, pointer);
+      writeBrainBlobMonsterHueRows(t, uniformData, BLOB_HUE_FLOAT_OFFSET);
+      const scissor = brainBlobMonsterFrameScissor(canvas, uniformData);
       device.queue.writeBuffer(uniformBuffer, 0, uniformData);
 
       const encoder = device.createCommandEncoder({ label: "brain-blob-frame" });
@@ -786,9 +831,14 @@ function initBrainBlobWebGpu(canvas: HTMLCanvasElement, pointer: BlobPointer, on
           }
         ]
       });
-      pass.setPipeline(pipeline);
-      pass.setBindGroup(0, bindGroup);
-      pass.draw(3, 1);
+      pass.setScissorRect?.(scissor.x, scissor.y, scissor.width, scissor.height);
+      if (renderBundle && pass.executeBundles) {
+        pass.executeBundles([renderBundle]);
+      } else {
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.draw(3, 1);
+      }
       pass.end();
       device.queue.submit([encoder.finish()]);
       if (!firstFrameSubmitted) {
@@ -848,6 +898,7 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
   const ballsLoc = gl.getUniformLocation(program, "uBalls");
   const ksLoc = gl.getUniformLocation(program, "uKs");
   const mouseLoc = gl.getUniformLocation(program, "uMouse");
+  const hueLoc = gl.getUniformLocation(program, "uHue");
 
   const seed = Math.random() * 1000;
   const scene = createBlobScene(seed);
@@ -876,7 +927,7 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
       pointerStrength: nextPointerStrength,
       pointerOver: pointer.over
     });
-    if (getBrainBlobMonsterRuntimeMode() === "optimized" && frameProbe.reused) return;
+    if (frameProbe.reused) return;
     pointerStrength = nextPointerStrength;
     uniformData[0] = canvas.width;
     uniformData[1] = canvas.height;
@@ -885,16 +936,23 @@ function initBrainBlobWebGl(canvas: HTMLCanvasElement, pointer: BlobPointer, onF
     uniformData[BLOB_MOUSE_FLOAT_OFFSET + 1] = pointer.y;
     uniformData[BLOB_MOUSE_FLOAT_OFFSET + 2] = pointerStrength;
     scene.update(t, uniformData, pointer);
+    writeBrainBlobMonsterHueRows(t, uniformData, BLOB_HUE_FLOAT_OFFSET);
+    const scissor = brainBlobMonsterFrameScissor(canvas, uniformData);
 
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 0);
+    gl.disable(gl.SCISSOR_TEST);
     gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(scissor.x, canvas.height - scissor.y - scissor.height, scissor.width, scissor.height);
     gl.useProgram(program);
     gl.uniform4fv(headerLoc, uniformData.subarray(0, 4));
     gl.uniform4fv(ballsLoc, uniformData.subarray(BLOB_BALLS_FLOAT_OFFSET, BLOB_BALLS_FLOAT_OFFSET + BLOB_BALL_COUNT * 4));
     gl.uniform4fv(ksLoc, uniformData.subarray(BLOB_KS_FLOAT_OFFSET, BLOB_KS_FLOAT_OFFSET + BLOB_BALL_COUNT * 4));
     gl.uniform4fv(mouseLoc, uniformData.subarray(BLOB_MOUSE_FLOAT_OFFSET, BLOB_MOUSE_FLOAT_OFFSET + 4));
+    gl.uniform4fv(hueLoc, uniformData.subarray(BLOB_HUE_FLOAT_OFFSET, BLOB_HUE_FLOAT_OFFSET + BRAIN_BLOB_MONSTER_HUE_ROW_FLOATS));
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.disable(gl.SCISSOR_TEST);
     if (!firstFrameSubmitted) {
       firstFrameSubmitted = true;
       onFirstFrame?.();

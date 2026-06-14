@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   BRAIN_CODEACT_COMMAND_DESCRIPTIONS,
   BRAIN_RENAME_SESSION_COMMAND,
@@ -8,11 +8,6 @@ import {
   type SidebarSessionItem
 } from "../shared/ipc-contract";
 import { BrainBlob } from "./brain-blob";
-import {
-  getBrainBlobMonsterRuntimeStats,
-  setBrainBlobMonsterRuntimeMode,
-  subscribeBrainBlobMonsterRuntimeStats
-} from "./brain-blob-cache";
 import {
   readBrainAgentMemory,
   readBrainUserLocationMemory,
@@ -836,9 +831,6 @@ const HARDWARE_POLL_MS = 100;
 const HARDWARE_REQUEST_TIMEOUT_MS = 1200;
 const HARDWARE_GAUGE_HISTORY_LIMIT = 96;
 const HARDWARE_GAUGE_MIN_TEMP_SPAN_C = 18;
-const HARDWARE_BLOB_BASELINE_MS = 4000;
-const HARDWARE_BLOB_OPTIMIZED_MS = 12000;
-const HARDWARE_BLOB_PROOF_LIMIT = 240;
 
 type HardwareGaugeSample = {
   sampledAt: number;
@@ -847,14 +839,6 @@ type HardwareGaugeSample = {
 };
 
 type HardwareMonitorCardId = "gpu" | "cpu" | "system";
-type HardwareBlobProofPhase = "baseline" | "optimized";
-
-type HardwareBlobProofSample = {
-  sampledAt: number;
-  phase: HardwareBlobProofPhase;
-  cpuPercent: number | null;
-  gpuPercent: number | null;
-};
 
 type HardwareMonitorCardView = {
   id: HardwareMonitorCardId;
@@ -1106,26 +1090,6 @@ function hardwareTemperatureMinMax(samples: HardwareGaugeSample[]): { min: numbe
   };
 }
 
-function averageBlobProofPercent(
-  samples: HardwareBlobProofSample[],
-  phase: HardwareBlobProofPhase,
-  readValue: (sample: HardwareBlobProofSample) => number | null
-): number | null {
-  const values = samples
-    .filter((sample) => sample.phase === phase)
-    .map(readValue)
-    .filter((value): value is number => value !== null && Number.isFinite(value));
-  if (values.length < 3) return null;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function compactSavedPercent(value: number | null): string {
-  if (value === null) return "--";
-  const rounded = Math.round(value);
-  if (rounded === 0) return "0";
-  return rounded > 0 ? `-${rounded}` : `+${Math.abs(rounded)}`;
-}
-
 function rendererFallbackHardwareSnapshot(reason: string): HardwareTelemetrySnapshot {
   const cores = typeof navigator.hardwareConcurrency === "number" ? navigator.hardwareConcurrency : 0;
   const navigatorMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
@@ -1334,85 +1298,15 @@ function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; s
   );
 }
 
-function HardwareBlobWorkMeter({
-  proofPhase,
-  proofSamples
-}: {
-  proofPhase: HardwareBlobProofPhase;
-  proofSamples: HardwareBlobProofSample[];
-}) {
-  const blobStats = useSyncExternalStore(
-    subscribeBrainBlobMonsterRuntimeStats,
-    getBrainBlobMonsterRuntimeStats,
-    getBrainBlobMonsterRuntimeStats
-  );
-  const baselineCpu = averageBlobProofPercent(proofSamples, "baseline", (sample) => sample.cpuPercent);
-  const optimizedCpu = averageBlobProofPercent(proofSamples, "optimized", (sample) => sample.cpuPercent);
-  const baselineGpu = averageBlobProofPercent(proofSamples, "baseline", (sample) => sample.gpuPercent);
-  const optimizedGpu = averageBlobProofPercent(proofSamples, "optimized", (sample) => sample.gpuPercent);
-  const cpuSaved = baselineCpu !== null && optimizedCpu !== null ? baselineCpu - optimizedCpu : null;
-  const gpuSaved = baselineGpu !== null && optimizedGpu !== null ? baselineGpu - optimizedGpu : null;
-  return (
-    <section className="hardwareBlobMeter" aria-label="Blob hardware work">
-      <div>
-        <span>CPU saved</span>
-        <strong>{compactSavedPercent(cpuSaved)}</strong>
-        <em>pts</em>
-      </div>
-      <div>
-        <span>GPU saved</span>
-        <strong>{compactSavedPercent(gpuSaved)}</strong>
-        <em>pts</em>
-      </div>
-      <div>
-        <span>Blob skip</span>
-        <strong>{Math.round(blobStats.reusePercent)}</strong>
-        <em>%</em>
-      </div>
-      <div>
-        <span>Proof phase</span>
-        <strong>{proofPhase === "baseline" ? "B" : "O"}</strong>
-        <em>{blobStats.lane}</em>
-      </div>
-    </section>
-  );
-}
-
 function HardwareSpace() {
   const [snapshot, setSnapshot] = useState<HardwareTelemetrySnapshot | null>(null);
   const [error, setError] = useState("");
   const stableSnapshotRef = useRef<HardwareTelemetrySnapshot | null>(null);
-  const proofPhaseRef = useRef<HardwareBlobProofPhase>("baseline");
-  const [proofPhase, setProofPhase] = useState<HardwareBlobProofPhase>("baseline");
-  const [proofSamples, setProofSamples] = useState<HardwareBlobProofSample[]>([]);
   const [history, setHistory] = useState<Record<HardwareMonitorCardId, HardwareGaugeSample[]>>({
     gpu: [],
     cpu: [],
     system: []
   });
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-    const enterPhase = (phase: HardwareBlobProofPhase) => {
-      if (cancelled) return;
-      proofPhaseRef.current = phase;
-      setProofPhase(phase);
-      setBrainBlobMonsterRuntimeMode(phase);
-      timer = window.setTimeout(
-        () => enterPhase(phase === "baseline" ? "optimized" : "baseline"),
-        phase === "baseline" ? HARDWARE_BLOB_BASELINE_MS : HARDWARE_BLOB_OPTIMIZED_MS
-      );
-    };
-    enterPhase("baseline");
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) {
-        window.clearTimeout(timer);
-      }
-      setBrainBlobMonsterRuntimeMode("optimized");
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1437,15 +1331,6 @@ function HardwareSpace() {
             const sampledAt = new Date(stable.sampledAt).getTime();
             const sampleTime = Number.isFinite(sampledAt) ? sampledAt : Date.now();
             const cards = hardwareCardViews(stable);
-            setProofSamples((current) => [
-              ...current,
-              {
-                sampledAt: sampleTime,
-                phase: proofPhaseRef.current,
-                cpuPercent: stable.cpu.utilization.value,
-                gpuPercent: stable.gpus[0]?.utilization.value ?? null
-              }
-            ].slice(-HARDWARE_BLOB_PROOF_LIMIT));
             setHistory((current) => {
               const updated = { ...current };
               for (const card of cards) {
@@ -1505,7 +1390,6 @@ function HardwareSpace() {
             <HardwareGaugeCard card={card} samples={history[card.id] ?? []} key={card.id} />
           ))}
         </section>
-        <HardwareBlobWorkMeter proofPhase={proofPhase} proofSamples={proofSamples} />
       </div>
     </div>
   );

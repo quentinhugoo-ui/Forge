@@ -1,12 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA,
   BRAIN_BLOB_MONSTER_FRAME_HZ,
+  BRAIN_BLOB_MONSTER_HUE_ROW_FLOATS,
   brainBlobMonsterFrameAddress,
+  brainBlobMonsterColorizeAngle,
+  brainBlobMonsterHuePeriodAddress,
   createBrainBlobMonsterFrameCache,
-  getBrainBlobMonsterRuntimeStats,
-  setBrainBlobMonsterRuntimeMode,
-  subscribeBrainBlobMonsterRuntimeStats
+  writeBrainBlobMonsterHueRows
 } from "../src/renderer/brain-blob-cache";
 
 const baseFrame = {
@@ -22,10 +23,6 @@ const baseFrame = {
 };
 
 describe("Brain blob Monster frame cache", () => {
-  afterEach(() => {
-    setBrainBlobMonsterRuntimeMode("optimized");
-  });
-
   it("content-addresses identical quantized frame inputs", () => {
     const tickTime = 18 / BRAIN_BLOB_MONSTER_FRAME_HZ;
     const first = brainBlobMonsterFrameAddress({
@@ -60,50 +57,6 @@ describe("Brain blob Monster frame cache", () => {
     expect(second.stats.reusedFrames).toBe(1);
   });
 
-  it("publishes runtime stats for the Hardware meter", () => {
-    const cache = createBrainBlobMonsterFrameCache();
-    let publishCount = 0;
-    const unsubscribe = subscribeBrainBlobMonsterRuntimeStats(() => {
-      publishCount += 1;
-    });
-
-    cache.probe({
-      ...baseFrame,
-      timeSeconds: cache.quantizeTime(2)
-    });
-    const stats = getBrainBlobMonsterRuntimeStats();
-    unsubscribe();
-
-    expect(publishCount).toBeGreaterThan(0);
-    expect(stats.schema).toBe(BRAIN_BLOB_MONSTER_FRAME_CACHE_SCHEMA);
-    expect(stats.lane).toBe("webgpu");
-    expect(stats.mode).toBe("optimized");
-    expect(stats.uniqueFrames).toBeGreaterThan(0);
-    expect(stats.submittedFps).toBeGreaterThanOrEqual(0);
-  });
-
-  it("forces identical frame work during baseline measurement", () => {
-    const cache = createBrainBlobMonsterFrameCache();
-    const timeSeconds = cache.quantizeTime(4);
-    cache.probe({
-      ...baseFrame,
-      timeSeconds
-    });
-    setBrainBlobMonsterRuntimeMode("baseline");
-    const baselineRepeat = cache.probe({
-      ...baseFrame,
-      timeSeconds
-    });
-    setBrainBlobMonsterRuntimeMode("optimized");
-    const optimizedRepeat = cache.probe({
-      ...baseFrame,
-      timeSeconds
-    });
-
-    expect(baselineRepeat.reused).toBe(false);
-    expect(optimizedRepeat.reused).toBe(true);
-  });
-
   it("separates shader lanes so WebGPU and WebGL never share frame proofs", () => {
     const webGpu = brainBlobMonsterFrameAddress({
       ...baseFrame,
@@ -117,5 +70,39 @@ describe("Brain blob Monster frame cache", () => {
     });
 
     expect(webGpu.address).not.toBe(webGl.address);
+  });
+
+  it("materializes the shader hue rotation as a per-frame Forge artifact", () => {
+    const out = new Float32Array(120);
+    const offset = 32;
+    const timeSeconds = 1.75;
+    writeBrainBlobMonsterHueRows(timeSeconds, out, offset);
+    const angle = brainBlobMonsterColorizeAngle(timeSeconds);
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const weights = [0.213, 0.715, 0.072] as const;
+    const expected = [
+      weights[0] + c * (1 - weights[0]) + s * -weights[0],
+      weights[1] + c * -weights[1] + s * -weights[1],
+      weights[2] + c * -weights[2] + s * (1 - weights[2]),
+      0,
+      weights[0] + c * -weights[0] + s * 0.143,
+      weights[1] + c * (1 - weights[1]) + s * 0.14,
+      weights[2] + c * -weights[2] + s * -0.283,
+      0,
+      weights[0] + c * -weights[0] + s * -(1 - weights[0]),
+      weights[1] + c * -weights[1] + s * weights[1],
+      weights[2] + c * (1 - weights[2]) + s * weights[2],
+      0
+    ];
+
+    expect(out.subarray(offset, offset + BRAIN_BLOB_MONSTER_HUE_ROW_FLOATS)).toEqual(new Float32Array(expected));
+  });
+
+  it("reuses hue artifacts across the exact six-second animation period", () => {
+    const first = brainBlobMonsterHuePeriodAddress(1.75);
+    const second = brainBlobMonsterHuePeriodAddress(7.75);
+
+    expect(first).toEqual(second);
   });
 });

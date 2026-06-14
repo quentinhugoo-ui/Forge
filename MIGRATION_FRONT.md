@@ -113,14 +113,19 @@ Every recurring renderer workload must be treated like a Forge action:
 
 - define a stable input contract and content address before heavy work,
 - skip CPU, GPU, RAM and UI updates when the address is unchanged,
-- expose cache hits as runtime proof, not as a hidden optimization,
-- measure impact with hardware counters through Hardware, including a short
-  baseline-vs-optimized phase when safe,
-- keep the optimized mode as the default after measurement.
+- materialize frame-wide constants once per content address instead of repeating
+  them per pixel or per UI pass,
+- measure impact outside the product UI with hardware counters when validating a
+  renderer optimization,
+- keep the production path optimized by default.
 
 The Brain blob is the reference pattern: frame state is content-addressed,
-duplicated frames are not submitted to WebGPU/WebGL, and Hardware compares CPU
-and GPU averages between baseline and optimized phases.
+duplicated frames are not submitted to WebGPU/WebGL, and the hue-rotation matrix
+is a per-frame Forge artifact consumed by WebGPU/WebGL instead of being rebuilt
+inside every fragment. Stable WebGPU draw commands are recorded once as a render
+bundle and replayed instead of re-encoded every frame. The KASM frame spheres
+also produce a conservative scissor rectangle so pixels outside the possible
+blob volume do not execute the raymarch shader.
 
 ## Verification
 
