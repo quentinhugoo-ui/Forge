@@ -40,6 +40,8 @@ Clean-room extraction applied in Forge:
 - Banger implementation: `BangerNativeRasterWorkQueue` converts meshlet visibility into graphics/compute raster jobs with bind table, barrier and dispatch-plan hashes.
 - RHI submit lesson: the backend should consume a frame submission packet with explicit render targets, command buffers and presentable-frame proof instead of rebuilding frame state from scattered manifests.
 - Banger implementation: `BangerNativeFrameSubmissionPacket` fuses render graph order, raster queue jobs and texture bridge targets into a native submission contract.
+- Dynamic RHI lesson: context recording, command-list finalization, ordered submit, fences and present are a single verifiable lifecycle.
+- Banger implementation: `BangerNativeRhiSubmitPacket` turns the frame submission into acquire/finalize/submit/present steps with timeline and fence hashes.
 
 Clean-room rule:
 

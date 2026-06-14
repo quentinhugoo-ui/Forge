@@ -139,6 +139,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
     pub frame_submission_packet: BangerNativeFrameSubmissionPacket,
+    pub rhi_submit_packet: BangerNativeRhiSubmitPacket,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
@@ -699,6 +700,44 @@ pub struct BangerNativeFrameCommandPacket {
     pub output_target_hash: String,
     pub barrier_hash: String,
     pub command_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRhiSubmitPacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub frame_submission_hash: String,
+    pub texture_bridge_hash: String,
+    pub backend: String,
+    pub selected_adapter_hash: String,
+    pub command_list_count: usize,
+    pub submit_batch_count: usize,
+    pub submitted_queue_count: usize,
+    pub timeline_base_value: u64,
+    pub acquire_backbuffer_hash: String,
+    pub finalized_command_lists_hash: String,
+    pub submit_batch_hash: String,
+    pub present_hash: String,
+    pub fence_timeline_hash: String,
+    pub packet_hash: String,
+    pub steps: Vec<BangerNativeRhiSubmitStep>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRhiSubmitStep {
+    pub step_id: String,
+    pub order: u32,
+    pub phase: &'static str,
+    pub queue_lane: &'static str,
+    pub command_hash: Option<String>,
+    pub wait_hash: String,
+    pub signal_hash: String,
+    pub timeline_value: u64,
+    pub step_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1585,6 +1624,8 @@ impl BangerNativeEngine {
             &radiance_schedule_manifest,
             &gaussian_splat_layer_manifest,
         );
+        let rhi_submit_packet =
+            build_rhi_submit_packet(&prepared, &texture_bridge_contract, &frame_submission_packet);
         let benchmark_promotion_manifest = build_benchmark_promotion_manifest(
             &prepared,
             &render_graph,
@@ -1612,6 +1653,7 @@ impl BangerNativeEngine {
             &radiance_schedule_manifest,
             &gaussian_splat_layer_manifest,
             &frame_submission_packet,
+            &rhi_submit_packet,
             &render_graph_compilation,
         );
         let render_pass_count = render_graph.len();
@@ -1665,6 +1707,7 @@ impl BangerNativeEngine {
             radiance_schedule_manifest,
             gaussian_splat_layer_manifest,
             frame_submission_packet,
+            rhi_submit_packet,
             frame_graph_bindings,
             artifacts,
             verifier: BangerNativeRenderVerifier {
@@ -3235,6 +3278,178 @@ fn build_frame_submission_packet(
     }
 }
 
+fn build_rhi_submit_packet(
+    prepared: &MonsterPreparedCompute,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+) -> BangerNativeRhiSubmitPacket {
+    let timeline_base_value = rhi_timeline_base_value(frame_submission_packet);
+    let acquire_backbuffer_hash = rhi_acquire_backbuffer_hash(
+        texture_bridge_contract,
+        frame_submission_packet,
+        timeline_base_value,
+    );
+    let mut steps = Vec::new();
+    let acquire_wait_hash = rhi_wait_hash("external_present_wait", &texture_bridge_contract.frame_hash, 0);
+    let acquire_signal_hash =
+        rhi_signal_hash("acquire_backbuffer", &acquire_backbuffer_hash, timeline_base_value);
+    let acquire_step_hash = rhi_submit_step_hash(
+        "rhi_step_000_acquire_backbuffer",
+        0,
+        "acquire_backbuffer",
+        "present",
+        None,
+        &acquire_wait_hash,
+        &acquire_signal_hash,
+        timeline_base_value,
+    );
+    steps.push(BangerNativeRhiSubmitStep {
+        step_id: "rhi_step_000_acquire_backbuffer".to_string(),
+        order: 0,
+        phase: "acquire_backbuffer",
+        queue_lane: "present",
+        command_hash: None,
+        wait_hash: acquire_wait_hash,
+        signal_hash: acquire_signal_hash,
+        timeline_value: timeline_base_value,
+        step_hash: acquire_step_hash,
+    });
+    for command in &frame_submission_packet.commands {
+        let timeline_value = timeline_base_value + command.order as u64 + 1;
+        let step_id = format!("rhi_step_{:03}_finalize_{}", command.order + 1, command.pass_name);
+        let wait_hash = rhi_wait_hash(
+            command.queue_lane,
+            steps
+                .last()
+                .map(|step| step.signal_hash.as_str())
+                .unwrap_or(&acquire_backbuffer_hash),
+            timeline_value.saturating_sub(1),
+        );
+        let signal_hash = rhi_signal_hash(command.queue_lane, &command.command_hash, timeline_value);
+        let step_hash = rhi_submit_step_hash(
+            &step_id,
+            command.order + 1,
+            "finalize_command_list",
+            command.queue_lane,
+            Some(&command.command_hash),
+            &wait_hash,
+            &signal_hash,
+            timeline_value,
+        );
+        steps.push(BangerNativeRhiSubmitStep {
+            step_id,
+            order: command.order + 1,
+            phase: "finalize_command_list",
+            queue_lane: command.queue_lane,
+            command_hash: Some(command.command_hash.clone()),
+            wait_hash,
+            signal_hash,
+            timeline_value,
+            step_hash,
+        });
+    }
+    let finalized_command_lists_hash = rhi_finalized_command_lists_hash(&steps);
+    let submit_timeline = timeline_base_value + frame_submission_packet.command_count as u64 + 1;
+    let submit_batch_hash = rhi_submit_batch_hash(
+        frame_submission_packet,
+        &finalized_command_lists_hash,
+        submit_timeline,
+    );
+    let submit_wait_hash = rhi_wait_hash(
+        "submit_batch",
+        steps
+            .last()
+            .map(|step| step.signal_hash.as_str())
+            .unwrap_or(&finalized_command_lists_hash),
+        submit_timeline.saturating_sub(1),
+    );
+    let submit_signal_hash = rhi_signal_hash("submit_batch", &submit_batch_hash, submit_timeline);
+    let submit_step_hash = rhi_submit_step_hash(
+        "rhi_step_submit_batch",
+        frame_submission_packet.command_count as u32 + 1,
+        "submit_command_lists",
+        "rhi_submit",
+        None,
+        &submit_wait_hash,
+        &submit_signal_hash,
+        submit_timeline,
+    );
+    steps.push(BangerNativeRhiSubmitStep {
+        step_id: "rhi_step_submit_batch".to_string(),
+        order: frame_submission_packet.command_count as u32 + 1,
+        phase: "submit_command_lists",
+        queue_lane: "rhi_submit",
+        command_hash: None,
+        wait_hash: submit_wait_hash,
+        signal_hash: submit_signal_hash.clone(),
+        timeline_value: submit_timeline,
+        step_hash: submit_step_hash,
+    });
+    let present_timeline = submit_timeline + 1;
+    let present_hash = rhi_present_hash(
+        texture_bridge_contract,
+        frame_submission_packet,
+        &submit_batch_hash,
+        present_timeline,
+    );
+    let present_wait_hash = rhi_wait_hash("present", &submit_signal_hash, submit_timeline);
+    let present_signal_hash = rhi_signal_hash("present", &present_hash, present_timeline);
+    let present_step_hash = rhi_submit_step_hash(
+        "rhi_step_present",
+        frame_submission_packet.command_count as u32 + 2,
+        "present",
+        "present",
+        None,
+        &present_wait_hash,
+        &present_signal_hash,
+        present_timeline,
+    );
+    steps.push(BangerNativeRhiSubmitStep {
+        step_id: "rhi_step_present".to_string(),
+        order: frame_submission_packet.command_count as u32 + 2,
+        phase: "present",
+        queue_lane: "present",
+        command_hash: None,
+        wait_hash: present_wait_hash,
+        signal_hash: present_signal_hash,
+        timeline_value: present_timeline,
+        step_hash: present_step_hash,
+    });
+    let fence_timeline_hash = rhi_fence_timeline_hash(&steps);
+    let packet_hash = rhi_submit_packet_hash(
+        prepared,
+        texture_bridge_contract,
+        frame_submission_packet,
+        &acquire_backbuffer_hash,
+        &finalized_command_lists_hash,
+        &submit_batch_hash,
+        &present_hash,
+        &fence_timeline_hash,
+        &steps,
+    );
+    BangerNativeRhiSubmitPacket {
+        schema: "forge.banger.native_rhi_submit_packet.v1",
+        authority: "banger_frame_submission_to_native_rhi_submit",
+        clean_room_basis: "local_unreal_sparse_dynamic_rhi_finalize_submit_present_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        frame_submission_hash: frame_submission_packet.submission_hash.clone(),
+        texture_bridge_hash: texture_bridge_contract.bridge_proof_hash.clone(),
+        backend: texture_bridge_contract.backend.clone(),
+        selected_adapter_hash: texture_bridge_contract.selected_adapter_hash.clone(),
+        command_list_count: frame_submission_packet.command_count,
+        submit_batch_count: 1,
+        submitted_queue_count: frame_submission_packet.submitted_queue_count,
+        timeline_base_value,
+        acquire_backbuffer_hash,
+        finalized_command_lists_hash,
+        submit_batch_hash,
+        present_hash,
+        fence_timeline_hash,
+        packet_hash,
+        steps,
+    }
+}
+
 fn texture_bridge_backend_can_share(backend: &str) -> bool {
     let backend = backend.to_ascii_lowercase();
     backend.contains("vulkan") || backend.contains("dx12") || backend.contains("metal")
@@ -3901,6 +4116,158 @@ fn frame_submission_packet_hash(
     h.update(presentable_frame_hash.as_bytes());
     for command in commands {
         h.update(command.command_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn rhi_timeline_base_value(frame_submission_packet: &BangerNativeFrameSubmissionPacket) -> u64 {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.timeline_base.v1\0");
+    h.update(frame_submission_packet.submission_hash.as_bytes());
+    h.update(frame_submission_packet.command_buffer_hash.as_bytes());
+    let digest: [u8; 32] = h.finalize().into();
+    u64::from_le_bytes(digest[0..8].try_into().expect("timeline base bytes")) & 0x0000_FFFF_FFFF_FFFF
+}
+
+fn rhi_acquire_backbuffer_hash(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    timeline_value: u64,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.acquire_backbuffer.v1\0");
+    h.update(texture_bridge_contract.device_queue_hash.as_bytes());
+    h.update(texture_bridge_contract.viewport_contract_hash.as_bytes());
+    h.update(frame_submission_packet.color_target_hash.as_bytes());
+    h.update(frame_submission_packet.depth_target_hash.as_bytes());
+    h.update(timeline_value.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn rhi_wait_hash(queue_lane: &str, dependency_hash: &str, timeline_value: u64) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.wait.v1\0");
+    h.update(queue_lane.as_bytes());
+    h.update(dependency_hash.as_bytes());
+    h.update(timeline_value.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn rhi_signal_hash(queue_lane: &str, payload_hash: &str, timeline_value: u64) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.signal.v1\0");
+    h.update(queue_lane.as_bytes());
+    h.update(payload_hash.as_bytes());
+    h.update(timeline_value.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn rhi_submit_step_hash(
+    step_id: &str,
+    order: u32,
+    phase: &str,
+    queue_lane: &str,
+    command_hash: Option<&str>,
+    wait_hash: &str,
+    signal_hash: &str,
+    timeline_value: u64,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.submit_step.v1\0");
+    h.update(step_id.as_bytes());
+    h.update(order.to_le_bytes());
+    h.update(phase.as_bytes());
+    h.update(queue_lane.as_bytes());
+    if let Some(command_hash) = command_hash {
+        h.update(command_hash.as_bytes());
+    }
+    h.update(wait_hash.as_bytes());
+    h.update(signal_hash.as_bytes());
+    h.update(timeline_value.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn rhi_finalized_command_lists_hash(steps: &[BangerNativeRhiSubmitStep]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.finalized_command_lists.v1\0");
+    for step in steps
+        .iter()
+        .filter(|step| step.phase == "finalize_command_list")
+    {
+        h.update(step.step_hash.as_bytes());
+        if let Some(command_hash) = &step.command_hash {
+            h.update(command_hash.as_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn rhi_submit_batch_hash(
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    finalized_command_lists_hash: &str,
+    timeline_value: u64,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.submit_batch.v1\0");
+    h.update(frame_submission_packet.command_buffer_hash.as_bytes());
+    h.update(frame_submission_packet.frame_schedule_hash.as_bytes());
+    h.update(finalized_command_lists_hash.as_bytes());
+    h.update(timeline_value.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn rhi_present_hash(
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    submit_batch_hash: &str,
+    timeline_value: u64,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.present.v1\0");
+    h.update(texture_bridge_contract.present_policy.as_bytes());
+    h.update(texture_bridge_contract.import_route.as_bytes());
+    h.update(texture_bridge_contract.fallback_route.as_bytes());
+    h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
+    h.update(submit_batch_hash.as_bytes());
+    h.update(timeline_value.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn rhi_fence_timeline_hash(steps: &[BangerNativeRhiSubmitStep]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.rhi.fence_timeline.v1\0");
+    for step in steps {
+        h.update(step.wait_hash.as_bytes());
+        h.update(step.signal_hash.as_bytes());
+        h.update(step.timeline_value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn rhi_submit_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    texture_bridge_contract: &BangerNativeTextureBridgeContract,
+    frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    acquire_backbuffer_hash: &str,
+    finalized_command_lists_hash: &str,
+    submit_batch_hash: &str,
+    present_hash: &str,
+    fence_timeline_hash: &str,
+    steps: &[BangerNativeRhiSubmitStep],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_rhi_submit_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
+    h.update(frame_submission_packet.submission_hash.as_bytes());
+    h.update(acquire_backbuffer_hash.as_bytes());
+    h.update(finalized_command_lists_hash.as_bytes());
+    h.update(submit_batch_hash.as_bytes());
+    h.update(present_hash.as_bytes());
+    h.update(fence_timeline_hash.as_bytes());
+    for step in steps {
+        h.update(step.step_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -7388,6 +7755,7 @@ fn render_handoff_hash(
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
+    rhi_submit_packet: &BangerNativeRhiSubmitPacket,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
 ) -> String {
     let mut h = Sha256::new();
@@ -7418,6 +7786,9 @@ fn render_handoff_hash(
     h.update(frame_submission_packet.submission_hash.as_bytes());
     h.update(frame_submission_packet.presentable_frame_hash.as_bytes());
     h.update(frame_submission_packet.command_buffer_hash.as_bytes());
+    h.update(rhi_submit_packet.packet_hash.as_bytes());
+    h.update(rhi_submit_packet.submit_batch_hash.as_bytes());
+    h.update(rhi_submit_packet.present_hash.as_bytes());
     h.update(render_graph_compilation.graph_hash.as_bytes());
     h.update(render_graph_compilation.compiled_order_hash.as_bytes());
     h.update(render_graph_compilation.resource_lifetime_hash.as_bytes());
@@ -8185,6 +8556,76 @@ mod tests {
                     command.queue_lane,
                     "graphics_mesh_shader" | "async_compute_raster" | "graphics" | "async_compute"
                 )));
+        assert_eq!(
+            response.rhi_submit_packet.schema,
+            "forge.banger.native_rhi_submit_packet.v1"
+        );
+        assert_eq!(
+            response.rhi_submit_packet.authority,
+            "banger_frame_submission_to_native_rhi_submit"
+        );
+        assert!(response
+            .rhi_submit_packet
+            .clean_room_basis
+            .contains("dynamic_rhi_finalize_submit_present"));
+        assert_eq!(
+            response.rhi_submit_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.rhi_submit_packet.frame_submission_hash,
+            response.frame_submission_packet.submission_hash
+        );
+        assert_eq!(
+            response.rhi_submit_packet.texture_bridge_hash,
+            response.texture_bridge_contract.bridge_proof_hash
+        );
+        assert_eq!(
+            response.rhi_submit_packet.backend,
+            response.texture_bridge_contract.backend
+        );
+        assert_eq!(
+            response.rhi_submit_packet.selected_adapter_hash,
+            response.texture_bridge_contract.selected_adapter_hash
+        );
+        assert_eq!(
+            response.rhi_submit_packet.command_list_count,
+            response.frame_submission_packet.command_count
+        );
+        assert_eq!(response.rhi_submit_packet.submit_batch_count, 1);
+        assert_eq!(
+            response.rhi_submit_packet.submitted_queue_count,
+            response.frame_submission_packet.submitted_queue_count
+        );
+        assert!(response.rhi_submit_packet.timeline_base_value > 0);
+        assert_eq!(response.rhi_submit_packet.acquire_backbuffer_hash.len(), 64);
+        assert_eq!(response.rhi_submit_packet.finalized_command_lists_hash.len(), 64);
+        assert_eq!(response.rhi_submit_packet.submit_batch_hash.len(), 64);
+        assert_eq!(response.rhi_submit_packet.present_hash.len(), 64);
+        assert_eq!(response.rhi_submit_packet.fence_timeline_hash.len(), 64);
+        assert_eq!(response.rhi_submit_packet.packet_hash.len(), 64);
+        assert_eq!(
+            response.rhi_submit_packet.steps.len(),
+            response.frame_submission_packet.command_count + 3
+        );
+        assert!(response
+            .rhi_submit_packet
+            .steps
+            .iter()
+            .all(|step| step.wait_hash.len() == 64
+                && step.signal_hash.len() == 64
+                && step.step_hash.len() == 64
+                && step.timeline_value >= response.rhi_submit_packet.timeline_base_value));
+        assert!(response
+            .rhi_submit_packet
+            .steps
+            .iter()
+            .any(|step| step.phase == "submit_command_lists"));
+        assert!(response
+            .rhi_submit_packet
+            .steps
+            .iter()
+            .any(|step| step.phase == "present"));
         assert_eq!(
             response.radiance_schedule_manifest.schema,
             "forge.banger.native_radiance_schedule_manifest.v1"
