@@ -81,6 +81,7 @@ const WIDGET_NATIVE_SETTLE_MS = 260;
 const WIDGET_HANDOFF_SETTLE_MS = WIDGET_NATIVE_SHRINK_LEAD_MS + WIDGET_NATIVE_SETTLE_MS;
 const WIDGET_NATIVE_SHRINK_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_NATIVE_SHRINK_LEAD_MS;
 const WIDGET_VISUAL_SETTLE_DELAY_MS = WIDGET_SURFACE_CLOSE_DELAY_MS + WIDGET_HANDOFF_SETTLE_MS;
+const WIDGET_TASKBAR_STEP_MS = 180;
 
 type WidgetLayoutLock = {
   chatLeft: number;
@@ -953,18 +954,28 @@ export function App() {
     if (!enabled) {
       void (async () => {
         const windowControls = globalThis.window?.forgeWindowControls;
-        const nativeWidgetRestore = windowControls?.setWidgetMode?.(false).catch((error: unknown) => {
+        await windowControls?.setWidgetTaskbarAutoHide?.(false).catch((error: unknown) => {
+          console.warn("Failed to restore widget taskbar state", error);
+          return false;
+        });
+        if (widgetModeSequenceRef.current !== sequenceToken) {
+          return;
+        }
+        await waitForWidgetMotion(WIDGET_TASKBAR_STEP_MS);
+        if (widgetModeSequenceRef.current !== sequenceToken) {
+          return;
+        }
+        const nativeWidgetRestored = await windowControls?.setWidgetMode?.(false).catch((error: unknown) => {
           console.warn("Failed to restore native widget mode", error);
           return false;
         });
+        if (widgetModeSequenceRef.current !== sequenceToken) {
+          return;
+        }
         clearDocumentWidgetModeClasses();
         setWidgetMinimizingPhase("");
         setWidgetMode(false);
         setWidgetLayoutLock(null);
-        const nativeWidgetRestored = await nativeWidgetRestore;
-        if (widgetModeSequenceRef.current !== sequenceToken) {
-          return;
-        }
         if (nativeWidgetRestored === false) {
           console.warn("Native widget restore was not accepted.");
         }
@@ -1031,6 +1042,16 @@ export function App() {
       }
       if (nativeWidgetAccepted === false) {
         console.warn("Native widget mode was not accepted.");
+      }
+      if (nativeWidgetAccepted !== false) {
+        await waitForWidgetMotion(WIDGET_TASKBAR_STEP_MS);
+        if (widgetModeSequenceRef.current !== sequenceToken) {
+          return;
+        }
+        await windowControls?.setWidgetTaskbarAutoHide?.(true).catch((error: unknown) => {
+          console.warn("Failed to hide Windows taskbar after widget handoff", error);
+          return false;
+        });
       }
       releaseWidgetModeTransition(sequenceToken);
     })();

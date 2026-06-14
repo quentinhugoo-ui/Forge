@@ -10920,7 +10920,6 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.setBounds(bounds, false);
   window.show();
   window.focus();
-  armNativeWidgetTaskbarAutoHide(window);
 }
 
 function settleNativeWidgetWindowBounds(window: BrowserWindow): void {
