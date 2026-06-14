@@ -5813,6 +5813,11 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   document_write_json: "document.write_json",
   document_write_csv: "document.write_csv",
   document_convert_text: "document.convert_text",
+  document_pdf_extract_text: "document.pdf_extract_text",
+  document_office_inspect: "document.office_inspect",
+  document_office_export_pdf: "document.office_export_pdf",
+  document_image_ocr: "document.image_ocr",
+  document_media_metadata: "document.media_metadata",
   dev_repo_status: "dev.repo_status",
   dev_git_diff: "dev.git_diff",
   dev_git_commit: "dev.git_commit",
@@ -5930,7 +5935,10 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "browser_open_url" ||
         params.request.action === "browser_screenshot" ||
         params.request.action === "browser_click" ||
-        params.request.action === "browser_type_text"
+        params.request.action === "browser_type_text" ||
+        params.request.action === "document_office_inspect" ||
+        params.request.action === "document_office_export_pdf" ||
+        params.request.action === "document_image_ocr"
       ? "external_ui"
       : params.request.action === "dev_git_push" ||
         params.request.action === "dev_github_pr_create"
@@ -5949,6 +5957,8 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "browser_inspect_url" ||
         params.request.action === "browser_playwright_inspect" ||
         params.request.action === "document_inspect" ||
+        params.request.action === "document_pdf_extract_text" ||
+        params.request.action === "document_media_metadata" ||
         params.request.action === "dev_repo_status" ||
         params.request.action === "dev_git_diff" ||
         params.request.action === "virtualization_inspect"

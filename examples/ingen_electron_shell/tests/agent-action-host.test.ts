@@ -337,7 +337,18 @@ describe("agent action host", () => {
     });
 
     expect(policy.proofHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(policy.executableActions).toEqual(["document_inspect", "document_write_text", "document_write_json", "document_write_csv", "document_convert_text"]);
+    expect(policy.executableActions).toEqual([
+      "document_inspect",
+      "document_write_text",
+      "document_write_json",
+      "document_write_csv",
+      "document_convert_text",
+      "document_pdf_extract_text",
+      "document_office_inspect",
+      "document_office_export_pdf",
+      "document_image_ocr",
+      "document_media_metadata"
+    ]);
     expect(policy.workspaceWritesRequireConfirmation).toBe(false);
     expect(policy.computerScopeWritesRequireConfirmation).toBe(true);
     expect(policy.officeComRequiresConfirmation).toBe(true);
@@ -848,6 +859,96 @@ describe("agent action host", () => {
       expect(converted.toPath).toBe("notes\\source.txt");
       expect(converted.documentMedia?.kind).toBe("text");
       await expect(readFile(join(config.workspaceRoot, "notes", "source.txt"), "utf8")).resolves.toContain("Title");
+    });
+  });
+
+  it("executes document/media backends only with runtime proof or a clean block", async () => {
+    await withTempWorkspace(async (config) => {
+      const pdfObjects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        "<< /Length 44 >>\nstream\nBT /F1 24 Tf 50 100 Td (Hello PDF) Tj ET\nendstream",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+      ];
+      let pdf = "%PDF-1.4\n";
+      const offsets: number[] = [];
+      for (let index = 0; index < pdfObjects.length; index += 1) {
+        offsets.push(Buffer.byteLength(pdf, "utf8"));
+        pdf += `${index + 1} 0 obj\n${pdfObjects[index]}\nendobj\n`;
+      }
+      const xrefOffset = Buffer.byteLength(pdf, "utf8");
+      pdf += `xref\n0 ${pdfObjects.length + 1}\n0000000000 65535 f \n`;
+      pdf += offsets.map((offset) => `${offset.toString().padStart(10, "0")} 00000 n \n`).join("");
+      pdf += `trailer\n<< /Root 1 0 R /Size ${pdfObjects.length + 1} >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+      await writeFile(join(config.workspaceRoot, "sample.pdf"), pdf, "utf8");
+
+      const extracted = await executeAgentActionRequest(config, {
+        action: "document_pdf_extract_text",
+        path: "sample.pdf",
+        toPath: "sample.txt"
+      });
+      if (extracted.accepted) {
+        expect(extracted.documentMedia?.pageCount).toBe(1);
+        expect(extracted.stdoutPreview).toContain("Hello PDF");
+        expect(extracted.toPath).toBe("sample.txt");
+        expect(extracted.verification?.passed).toBe(true);
+      } else {
+        expect(extracted.verification?.passed).toBe(false);
+        expect(extracted.error?.message).toBeTruthy();
+      }
+
+      await writeFile(join(config.workspaceRoot, "scan.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/l6s9TAAAAABJRU5ErkJggg==", "base64"));
+      const imageOcrBlocked = await executeAgentActionRequest(config, {
+        action: "document_image_ocr",
+        path: "scan.png"
+      });
+      expect(imageOcrBlocked.accepted).toBe(false);
+      expect(imageOcrBlocked.userPresenceRequired).toBe(true);
+
+      const imageOcr = await executeAgentActionRequest(config, {
+        action: "document_image_ocr",
+        path: "scan.png",
+        confirmed: true
+      });
+      if (imageOcr.accepted) {
+        expect(imageOcr.commandLine).toContain("tesseract");
+        expect(imageOcr.verification?.passed).toBe(true);
+        expect(imageOcr.documentMedia?.ocrTextChars).toBeGreaterThanOrEqual(0);
+      } else {
+        expect(imageOcr.verification?.passed).toBe(false);
+        expect(imageOcr.error?.message).toBeTruthy();
+      }
+
+      const officeBlocked = await executeAgentActionRequest(config, {
+        action: "document_office_inspect",
+        path: "sample.docx"
+      });
+      expect(officeBlocked.accepted).toBe(false);
+      expect(officeBlocked.userPresenceRequired).toBe(true);
+      expect(officeBlocked.error?.message).toContain("confirmed:true");
+
+      const macroBlocked = await executeAgentActionRequest(config, {
+        action: "document_office_inspect",
+        path: "sample.docx",
+        confirmed: true,
+        macroExecutionConfirmed: true
+      });
+      expect(macroBlocked.accepted).toBe(false);
+      expect(macroBlocked.error?.message).toContain("Macro execution is blocked");
+
+      const metadata = await executeAgentActionRequest(config, {
+        action: "document_media_metadata",
+        path: "scan.png"
+      });
+      if (metadata.accepted) {
+        expect(metadata.commandLine).toContain("ffprobe");
+        expect(metadata.verification?.passed).toBe(true);
+        expect(metadata.documentMedia?.mediaStreams).toBeGreaterThanOrEqual(0);
+      } else {
+        expect(metadata.verification?.passed).toBe(false);
+        expect(metadata.error?.message).toBeTruthy();
+      }
     });
   });
 

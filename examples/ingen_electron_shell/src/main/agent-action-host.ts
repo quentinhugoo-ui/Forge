@@ -73,7 +73,9 @@ const AGENT_ACTION_TOOL_DETECTION_COMMANDS: readonly { id: string; command: stri
   { id: "npm", command: "npm.cmd" },
   { id: "cargo", command: "cargo.exe" },
   { id: "python", command: "python.exe" },
-  { id: "code", command: "code.cmd" }
+  { id: "code", command: "code.cmd" },
+  { id: "ffprobe", command: "ffprobe.exe" },
+  { id: "tesseract", command: "tesseract.exe" }
 ];
 let agentActionToolDetectionCache: { platform: NodeJS.Platform; tools: AgentActionInstalledTool[] } | undefined;
 const AGENT_ACTION_EVENT_HINTS = [
@@ -111,6 +113,11 @@ const AGENT_ACTION_EVENT_HINTS = [
   "document.write_json:/agent_document_write_",
   "document.write_csv:/agent_document_write_",
   "document.convert_text:/agent_document_convert_",
+  "document.pdf_extract_text:/agent_document_pdf_extract_",
+  "document.office_inspect:/agent_document_office_inspect_",
+  "document.office_export_pdf:/agent_document_office_export_pdf_",
+  "document.image_ocr:/agent_document_image_ocr_",
+  "document.media_metadata:/agent_document_media_metadata_",
   "dev.repo_status:/agent_dev_status_",
   "dev.git_diff:/agent_dev_diff_",
   "dev.git_commit:/agent_dev_commit_",
@@ -160,6 +167,11 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   document_write_json: "/agent_document_write_",
   document_write_csv: "/agent_document_write_",
   document_convert_text: "/agent_document_convert_",
+  document_pdf_extract_text: "/agent_document_pdf_extract_",
+  document_office_inspect: "/agent_document_office_inspect_",
+  document_office_export_pdf: "/agent_document_office_export_pdf_",
+  document_image_ocr: "/agent_document_image_ocr_",
+  document_media_metadata: "/agent_document_media_metadata_",
   dev_repo_status: "/agent_dev_status_",
   dev_git_diff: "/agent_dev_diff_",
   dev_git_commit: "/agent_dev_commit_",
@@ -960,7 +972,18 @@ export function createBrowserWebPolicy(_config: AgentActionHostConfig): AgentBro
 export function createDocumentMediaPolicy(_config: AgentActionHostConfig): AgentDocumentMediaPolicy {
   const policy: AgentDocumentMediaPolicy = {
     schema: "ingen.document_media.policy.v1",
-    executableActions: ["document_inspect", "document_write_text", "document_write_json", "document_write_csv", "document_convert_text"],
+    executableActions: [
+      "document_inspect",
+      "document_write_text",
+      "document_write_json",
+      "document_write_csv",
+      "document_convert_text",
+      "document_pdf_extract_text",
+      "document_office_inspect",
+      "document_office_export_pdf",
+      "document_image_ocr",
+      "document_media_metadata"
+    ],
     workspaceWritesRequireConfirmation: false,
     computerScopeWritesRequireConfirmation: true,
     officeComRequiresConfirmation: true,
@@ -4679,7 +4702,11 @@ function documentKindForPath(path: string): AgentDocumentMediaKind {
 }
 
 function documentParserStatus(kind: AgentDocumentMediaKind): "available" | "planned" | "blocked" {
-  return ["text", "markdown", "json", "csv"].includes(kind) ? "available" : "planned";
+  return ["text", "markdown", "json", "csv", "pdf", "image", "audio", "video"].includes(kind) ? "available" : "planned";
+}
+
+function documentConversionStatus(kind: AgentDocumentMediaKind): "available" | "planned" | "blocked" {
+  return ["text", "markdown", "pdf", "office", "image"].includes(kind) ? "available" : "planned";
 }
 
 function textLineCount(text: string): number {
@@ -4754,6 +4781,11 @@ function stripMarkdownToText(text: string): string {
     .trimEnd();
 }
 
+function finalizeDocumentMediaSummary(summary: AgentDocumentMediaSummary): AgentDocumentMediaSummary {
+  summary.proofHash = hashJson({ ...summary, proofHash: "" });
+  return summary;
+}
+
 function documentMediaSummaryFromBytes(params: {
   action: AgentDocumentMediaSummary["action"];
   path: string;
@@ -4773,7 +4805,7 @@ function documentMediaSummaryFromBytes(params: {
     bytes: params.bytes.length,
     sha256,
     parserStatus,
-    conversionStatus: ["text", "markdown"].includes(kind) ? "available" : "planned",
+    conversionStatus: documentConversionStatus(kind),
     proofHash: ""
   };
   if (parserStatus === "available") {
@@ -4989,6 +5021,699 @@ async function documentConvertTextAction(config: AgentActionHostConfig, request:
     verification,
     documentMedia: summary,
     value: charDeltaValue(converted.length, 0)
+  });
+}
+
+function requireConfirmedDocumentTool(config: AgentActionHostConfig, request: AgentActionRequest, reason: string): AgentActionResult | undefined {
+  if (request.confirmed === true) {
+    return undefined;
+  }
+  return result(config, request, {
+    accepted: false,
+    userPresenceRequired: true,
+    failureCategory: "denied",
+    error: actionError("bad_payload", `${reason} requires confirmed:true.`, request)
+  });
+}
+
+function validateNoMacroExecution(config: AgentActionHostConfig, request: AgentActionRequest): AgentActionResult | undefined {
+  if (request.macroExecutionConfirmed !== true) {
+    return undefined;
+  }
+  return result(config, request, {
+    accepted: false,
+    userPresenceRequired: true,
+    failureCategory: "denied",
+    error: actionError("bad_payload", "Macro execution is blocked by the document/media policy; Office COM opens files with macros force-disabled.", request)
+  });
+}
+
+async function documentPdfExtractTextAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (requiresComputerWriteConfirmation(request) && request.toPath) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Computer-scope PDF text extraction writes require confirmed:true.", request)
+    });
+  }
+  const sourcePath = resolveActionPath(config, request, request.path);
+  if (typeof sourcePath !== "string") {
+    return result(config, request, { accepted: false, error: sourcePath });
+  }
+  const sourceSummary = await documentMediaSummaryForPath(config, request, "pdf_extract_text", sourcePath);
+  if (sourceSummary.kind !== "pdf") {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "bad_path",
+      documentMedia: sourceSummary,
+      error: actionError("bad_payload", "document_pdf_extract_text requires a .pdf source path.", { kind: sourceSummary.kind })
+    });
+  }
+  const startedAt = Date.now();
+  try {
+    const pdfjsModule = "pdfjs-dist/legacy/build/pdf.mjs";
+    const pdfjs = (await import(pdfjsModule)) as {
+      getDocument(input: Record<string, unknown>): { promise: Promise<{ numPages: number; getPage(pageNumber: number): Promise<{ getTextContent(): Promise<{ items: unknown[] }> }> }> };
+    };
+    const pdfBytes = await readFile(sourcePath);
+    const loadingTask = pdfjs.getDocument({
+      data: new Uint8Array(pdfBytes),
+      disableWorker: true,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      stopAtErrors: false
+    });
+    const document = await loadingTask.promise;
+    const maxPages = Math.min(document.numPages, clampMaxResults(request.maxResults, document.numPages));
+    const pages: string[] = [];
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items
+        .map((item) => (item && typeof item === "object" && "str" in item ? String((item as { str?: unknown }).str ?? "") : ""))
+        .filter(Boolean)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      pages.push(text);
+    }
+    const extracted = pages.join("\n\n").trimEnd();
+    sourceSummary.pageCount = document.numPages;
+    sourceSummary.textCharCount = extracted.length;
+    sourceSummary.charCount = extracted.length;
+    sourceSummary.lineCount = textLineCount(extracted);
+    finalizeDocumentMediaSummary(sourceSummary);
+    const probes: AgentVerificationProbe[] = [
+      await filesystemProbe("document.pdf.source_exists", sourcePath, "file"),
+      verificationProbe({
+        id: "document.pdf.text_extract",
+        kind: "event_log",
+        target: sourcePath,
+        expectation: "PDF parsed and text extraction completed before success",
+        actual: `pages=${document.numPages} extracted_chars=${extracted.length}`,
+        passed: document.numPages >= 0 && extracted.length >= 0
+      }),
+      verificationProbe({
+        id: "document.pdf.source_hash",
+        kind: "artifact_hash",
+        target: sourcePath,
+        expectation: "source PDF sha256 computed",
+        actual: sourceSummary.sha256,
+        passed: /^[a-f0-9]{64}$/.test(sourceSummary.sha256)
+      })
+    ];
+    const artifacts: string[] = [];
+    let toLabel: string | undefined;
+    if (request.toPath) {
+      const outputPath = resolveActionPath(config, request, request.toPath);
+      if (typeof outputPath !== "string") {
+        return result(config, request, { accepted: false, error: outputPath });
+      }
+      await mkdir(dirname(outputPath), { recursive: true });
+      await writeFile(outputPath, extracted, "utf8");
+      const outputSummary = await documentMediaSummaryForPath(config, request, "pdf_extract_text", outputPath);
+      toLabel = outputSummary.path;
+      artifacts.push(outputSummary.path);
+      probes.push(
+        await filesystemProbe("document.pdf.output_exists", outputPath, "file"),
+        verificationProbe({
+          id: "document.pdf.output_hash",
+          kind: "artifact_hash",
+          target: outputPath,
+          expectation: "extracted text artifact hash computed",
+          actual: outputSummary.sha256,
+          passed: /^[a-f0-9]{64}$/.test(outputSummary.sha256)
+        })
+      );
+    }
+    return result(config, request, {
+      accepted: true,
+      path: sourceSummary.path,
+      toPath: toLabel,
+      artifacts,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      stdoutPreview: extracted.slice(0, MAX_PREVIEW_CHARS),
+      observedChanges: [`pdf_pages:${document.numPages}`, `extracted_chars:${extracted.length}`, `source_sha256:${sourceSummary.sha256}`],
+      verification: verificationResult(probes),
+      documentMedia: sourceSummary,
+      value: charDeltaValue(extracted.length, 0)
+    });
+  } catch (error) {
+    sourceSummary.parserStatus = "blocked";
+    finalizeDocumentMediaSummary(sourceSummary);
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "command_error",
+      durationMs: Math.max(0, Date.now() - startedAt),
+      documentMedia: sourceSummary,
+      verification: verificationResult([
+        await filesystemProbe("document.pdf.source_exists", sourcePath, "file"),
+        verificationProbe({
+          id: "document.pdf.extract_runtime",
+          kind: "event_log",
+          target: sourcePath,
+          expectation: "PDF.js extraction must succeed before reporting success",
+          actual: error instanceof Error ? error.message : String(error),
+          passed: false
+        })
+      ]),
+      error: actionError("rust_unavailable", error instanceof Error ? `PDF text extraction failed: ${error.message}` : "PDF text extraction failed.", error)
+    });
+  }
+}
+
+function officeApplicationForPath(path: string): "word" | "excel" | "powerpoint" | undefined {
+  const extension = parse(path).ext.toLowerCase();
+  if ([".doc", ".docx", ".docm", ".rtf"].includes(extension)) return "word";
+  if ([".xls", ".xlsx", ".xlsm"].includes(extension)) return "excel";
+  if ([".ppt", ".pptx", ".pptm"].includes(extension)) return "powerpoint";
+  return undefined;
+}
+
+function parseOfficeJson(stdout: string): Record<string, unknown> {
+  const trimmed = stdout.trim();
+  return trimmed ? (JSON.parse(trimmed) as Record<string, unknown>) : {};
+}
+
+function officeInspectScript(application: "word" | "excel" | "powerpoint", sourcePath: string): string {
+  const path = powerShellString(sourcePath);
+  if (application === "word") {
+    return `
+$ErrorActionPreference = 'Stop'
+$app = New-Object -ComObject Word.Application
+$doc = $null
+try {
+  $app.Visible = $false
+  try { $app.AutomationSecurity = 3 } catch {}
+  $doc = $app.Documents.Open(${path}, $false, $true)
+  [ordered]@{
+    application = 'word'
+    pageCount = $doc.ComputeStatistics(2)
+    wordCount = $doc.ComputeStatistics(0)
+    macroStatus = 'force_disabled'
+  } | ConvertTo-Json -Compress
+} finally {
+  if ($doc -ne $null) { $doc.Close($false) | Out-Null }
+  $app.Quit() | Out-Null
+  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($app) | Out-Null
+}
+`;
+  }
+  if (application === "excel") {
+    return `
+$ErrorActionPreference = 'Stop'
+$app = New-Object -ComObject Excel.Application
+$workbook = $null
+try {
+  $app.Visible = $false
+  $app.DisplayAlerts = $false
+  try { $app.AutomationSecurity = 3 } catch {}
+  $workbook = $app.Workbooks.Open(${path}, 0, $true)
+  [ordered]@{
+    application = 'excel'
+    sheetCount = $workbook.Worksheets.Count
+    macroStatus = 'force_disabled'
+  } | ConvertTo-Json -Compress
+} finally {
+  if ($workbook -ne $null) { $workbook.Close($false) | Out-Null }
+  $app.Quit() | Out-Null
+  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($app) | Out-Null
+}
+`;
+  }
+  return `
+$ErrorActionPreference = 'Stop'
+$app = New-Object -ComObject PowerPoint.Application
+$presentation = $null
+try {
+  try { $app.AutomationSecurity = 3 } catch {}
+  $presentation = $app.Presentations.Open(${path}, $true, $false, $false)
+  [ordered]@{
+    application = 'powerpoint'
+    slideCount = $presentation.Slides.Count
+    macroStatus = 'force_disabled'
+  } | ConvertTo-Json -Compress
+} finally {
+  if ($presentation -ne $null) { $presentation.Close() | Out-Null }
+  $app.Quit() | Out-Null
+  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($app) | Out-Null
+}
+`;
+}
+
+function officeExportPdfScript(application: "word" | "excel" | "powerpoint", sourcePath: string, outputPath: string): string {
+  const source = powerShellString(sourcePath);
+  const output = powerShellString(outputPath);
+  if (application === "word") {
+    return `
+$ErrorActionPreference = 'Stop'
+$app = New-Object -ComObject Word.Application
+$doc = $null
+try {
+  $app.Visible = $false
+  try { $app.AutomationSecurity = 3 } catch {}
+  $doc = $app.Documents.Open(${source}, $false, $true)
+  $doc.ExportAsFixedFormat(${output}, 17, $false)
+  [ordered]@{ application = 'word'; macroStatus = 'force_disabled'; output = ${output} } | ConvertTo-Json -Compress
+} finally {
+  if ($doc -ne $null) { $doc.Close($false) | Out-Null }
+  $app.Quit() | Out-Null
+  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($app) | Out-Null
+}
+`;
+  }
+  if (application === "excel") {
+    return `
+$ErrorActionPreference = 'Stop'
+$app = New-Object -ComObject Excel.Application
+$workbook = $null
+try {
+  $app.Visible = $false
+  $app.DisplayAlerts = $false
+  try { $app.AutomationSecurity = 3 } catch {}
+  $workbook = $app.Workbooks.Open(${source}, 0, $true)
+  $workbook.ExportAsFixedFormat(0, ${output})
+  [ordered]@{ application = 'excel'; macroStatus = 'force_disabled'; output = ${output} } | ConvertTo-Json -Compress
+} finally {
+  if ($workbook -ne $null) { $workbook.Close($false) | Out-Null }
+  $app.Quit() | Out-Null
+  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($app) | Out-Null
+}
+`;
+  }
+  return `
+$ErrorActionPreference = 'Stop'
+$app = New-Object -ComObject PowerPoint.Application
+$presentation = $null
+try {
+  try { $app.AutomationSecurity = 3 } catch {}
+  $presentation = $app.Presentations.Open(${source}, $true, $false, $false)
+  $presentation.SaveAs(${output}, 32)
+  [ordered]@{ application = 'powerpoint'; macroStatus = 'force_disabled'; output = ${output} } | ConvertTo-Json -Compress
+} finally {
+  if ($presentation -ne $null) { $presentation.Close() | Out-Null }
+  $app.Quit() | Out-Null
+  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($app) | Out-Null
+}
+`;
+}
+
+async function documentOfficeInspectAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const macroBlocked = validateNoMacroExecution(config, request);
+  if (macroBlocked) return macroBlocked;
+  const confirmationBlocked = requireConfirmedDocumentTool(config, request, "Office COM inspection");
+  if (confirmationBlocked) return confirmationBlocked;
+  if (config.platform !== "win32") {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "missing_tool",
+      error: actionError("rust_unavailable", "Office COM inspection is available only on Windows.", request)
+    });
+  }
+  const sourcePath = resolveActionPath(config, request, request.path);
+  if (typeof sourcePath !== "string") {
+    return result(config, request, { accepted: false, error: sourcePath });
+  }
+  const application = officeApplicationForPath(sourcePath);
+  const summary = await documentMediaSummaryForPath(config, request, "office_inspect", sourcePath);
+  if (!application) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "bad_path",
+      documentMedia: summary,
+      error: actionError("bad_payload", "document_office_inspect supports Word, Excel and PowerPoint files.", { extension: summary.extension })
+    });
+  }
+  const startedAt = Date.now();
+  const inspected = executePowerShellJson(officeInspectScript(application, sourcePath), Math.min(commandTimeout(request), 90_000));
+  const commandLine = "powershell.exe -EncodedCommand <document.office_inspect>";
+  let accepted = inspected.accepted && !inspected.timedOut;
+  if (accepted) {
+    try {
+      const parsed = parseOfficeJson(inspected.stdout);
+      summary.officeApplication = application;
+      summary.macroStatus = "force_disabled";
+      summary.pageCount = typeof parsed.pageCount === "number" ? parsed.pageCount : undefined;
+      summary.wordCount = typeof parsed.wordCount === "number" ? parsed.wordCount : undefined;
+      summary.sheetCount = typeof parsed.sheetCount === "number" ? parsed.sheetCount : undefined;
+      summary.slideCount = typeof parsed.slideCount === "number" ? parsed.slideCount : undefined;
+      finalizeDocumentMediaSummary(summary);
+    } catch {
+      accepted = false;
+    }
+  }
+  return result(config, request, {
+    accepted,
+    path: summary.path,
+    commandLine,
+    executionAdapter: "powershell",
+    routeId: "document.office_inspect",
+    exitCode: inspected.exitCode,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    timedOut: inspected.timedOut,
+    stdoutPreview: inspected.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: inspected.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`office_application:${application}`, `macro_status:force_disabled`, `source_sha256:${summary.sha256}`],
+    verification: verificationResult([
+      await filesystemProbe("document.office.source_exists", sourcePath, "file"),
+      commandExitProbe({ commandLine, accepted, exitCode: inspected.exitCode, timedOut: inspected.timedOut }),
+      verificationProbe({
+        id: "document.office.macro_policy",
+        kind: "event_log",
+        target: sourcePath,
+        expectation: "Office COM macro automation security forced disabled",
+        actual: "macro_status=force_disabled",
+        passed: accepted
+      })
+    ]),
+    documentMedia: summary,
+    userPresenceRequired: true,
+    failureCategory: accepted ? undefined : "command_error",
+    error: accepted ? undefined : inspected.error ?? actionError("rust_unavailable", `Office COM inspection exited with status ${inspected.exitCode ?? "unknown"}.`, inspected.stderr)
+  });
+}
+
+async function documentOfficeExportPdfAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const macroBlocked = validateNoMacroExecution(config, request);
+  if (macroBlocked) return macroBlocked;
+  const confirmationBlocked = requireConfirmedDocumentTool(config, request, "Office COM PDF export");
+  if (confirmationBlocked) return confirmationBlocked;
+  if (config.platform !== "win32") {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "missing_tool",
+      error: actionError("rust_unavailable", "Office COM PDF export is available only on Windows.", request)
+    });
+  }
+  const sourcePath = resolveActionPath(config, request, request.path);
+  if (typeof sourcePath !== "string") {
+    return result(config, request, { accepted: false, error: sourcePath });
+  }
+  const outputPath = resolveActionPath(config, request, request.toPath ?? `${sourcePath}.pdf`);
+  if (typeof outputPath !== "string") {
+    return result(config, request, { accepted: false, error: outputPath });
+  }
+  const application = officeApplicationForPath(sourcePath);
+  const sourceSummary = await documentMediaSummaryForPath(config, request, "office_export_pdf", sourcePath);
+  if (!application) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "bad_path",
+      documentMedia: sourceSummary,
+      error: actionError("bad_payload", "document_office_export_pdf supports Word, Excel and PowerPoint files.", { extension: sourceSummary.extension })
+    });
+  }
+  await mkdir(dirname(outputPath), { recursive: true });
+  const startedAt = Date.now();
+  const exported = executePowerShellJson(officeExportPdfScript(application, sourcePath, outputPath), Math.min(commandTimeout(request), 120_000));
+  const commandLine = "powershell.exe -EncodedCommand <document.office_export_pdf>";
+  const accepted = exported.accepted && !exported.timedOut;
+  let outputSummary: AgentDocumentMediaSummary | undefined;
+  if (accepted) {
+    outputSummary = await documentMediaSummaryForPath(config, request, "office_export_pdf", outputPath);
+    outputSummary.officeApplication = application;
+    outputSummary.macroStatus = "force_disabled";
+    finalizeDocumentMediaSummary(outputSummary);
+  }
+  const probes: AgentVerificationProbe[] = [
+    await filesystemProbe("document.office.source_exists", sourcePath, "file"),
+    commandExitProbe({ commandLine, accepted, exitCode: exported.exitCode, timedOut: exported.timedOut }),
+    verificationProbe({
+      id: "document.office.macro_policy",
+      kind: "event_log",
+      target: sourcePath,
+      expectation: "Office COM macro automation security forced disabled",
+      actual: "macro_status=force_disabled",
+      passed: accepted
+    })
+  ];
+  if (accepted && outputSummary) {
+    probes.push(
+      await filesystemProbe("document.office.output_pdf_exists", outputPath, "file"),
+      verificationProbe({
+        id: "document.office.output_pdf_hash",
+        kind: "artifact_hash",
+        target: outputPath,
+        expectation: "exported PDF sha256 computed",
+        actual: outputSummary.sha256,
+        passed: /^[a-f0-9]{64}$/.test(outputSummary.sha256) && outputSummary.kind === "pdf"
+      })
+    );
+  }
+  return result(config, request, {
+    accepted,
+    path: sourceSummary.path,
+    toPath: outputSummary?.path ?? pathLabel(config, request, outputPath),
+    commandLine,
+    executionAdapter: "powershell",
+    routeId: "document.office_export_pdf",
+    exitCode: exported.exitCode,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    timedOut: exported.timedOut,
+    stdoutPreview: exported.stdout.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: exported.stderr.slice(0, MAX_PREVIEW_CHARS),
+    artifacts: outputSummary ? [outputSummary.path] : [],
+    observedChanges: [`office_application:${application}`, `macro_status:force_disabled`, `source_sha256:${sourceSummary.sha256}`].concat(
+      outputSummary ? [`output_sha256:${outputSummary.sha256}`] : []
+    ),
+    verification: verificationResult(probes),
+    documentMedia: outputSummary ?? sourceSummary,
+    userPresenceRequired: true,
+    failureCategory: accepted ? undefined : "command_error",
+    error: accepted ? undefined : exported.error ?? actionError("rust_unavailable", `Office COM PDF export exited with status ${exported.exitCode ?? "unknown"}.`, exported.stderr)
+  });
+}
+
+async function documentImageOcrAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const confirmationBlocked = requireConfirmedDocumentTool(config, request, "Image OCR");
+  if (confirmationBlocked) return confirmationBlocked;
+  if (requiresComputerWriteConfirmation(request) && request.toPath) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "Computer-scope image OCR writes require confirmed:true.", request)
+    });
+  }
+  const sourcePath = resolveActionPath(config, request, request.path);
+  if (typeof sourcePath !== "string") {
+    return result(config, request, { accepted: false, error: sourcePath });
+  }
+  const summary = await documentMediaSummaryForPath(config, request, "image_ocr", sourcePath);
+  if (summary.kind !== "image") {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "bad_path",
+      documentMedia: summary,
+      error: actionError("bad_payload", "document_image_ocr requires an image source path.", { kind: summary.kind })
+    });
+  }
+  const tesseract = detectToolPath(config, "tesseract.exe");
+  if (!tesseract) {
+    summary.parserStatus = "blocked";
+    finalizeDocumentMediaSummary(summary);
+    return result(config, request, {
+      accepted: false,
+      commandLine: "where.exe tesseract.exe",
+      failureCategory: "missing_tool",
+      documentMedia: summary,
+      error: actionError("rust_unavailable", "No local OCR engine was detected. Install tesseract.exe or provide a supported OCR backend.", request),
+      verification: verificationResult([
+        await filesystemProbe("document.image.source_exists", sourcePath, "file"),
+        verificationProbe({
+          id: "document.image.ocr_engine",
+          kind: "command_exit",
+          target: "tesseract.exe",
+          expectation: "OCR engine detected before claiming OCR success",
+          actual: "missing",
+          passed: false
+        })
+      ])
+    });
+  }
+  const language = request.query && /^[A-Za-z0-9_+/.-]+$/.test(request.query) ? request.query : "eng";
+  const args = [sourcePath, "-", "-l", language];
+  const startedAt = Date.now();
+  const ocr = spawnSync(tesseract, args, {
+    cwd: config.cwd,
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: Math.min(commandTimeout(request), 90_000),
+    windowsHide: true
+  });
+  const timedOut = commandTimedOut(ocr.error);
+  const accepted = !ocr.error && ocr.status === 0 && !timedOut;
+  const text = ocr.stdout ?? "";
+  const commandLine = renderCommandLine(tesseract, args);
+  summary.ocrTextChars = text.length;
+  summary.textCharCount = text.length;
+  summary.charCount = text.length;
+  summary.lineCount = textLineCount(text);
+  summary.parserStatus = accepted ? "available" : "blocked";
+  finalizeDocumentMediaSummary(summary);
+  const probes: AgentVerificationProbe[] = [
+    await filesystemProbe("document.image.source_exists", sourcePath, "file"),
+    commandExitProbe({ commandLine, accepted, exitCode: ocr.status ?? null, timedOut }),
+    verificationProbe({
+      id: "document.image.source_hash",
+      kind: "artifact_hash",
+      target: sourcePath,
+      expectation: "source image sha256 computed",
+      actual: summary.sha256,
+      passed: /^[a-f0-9]{64}$/.test(summary.sha256)
+    })
+  ];
+  const artifacts: string[] = [];
+  let toLabel: string | undefined;
+  if (accepted && request.toPath) {
+    const outputPath = resolveActionPath(config, request, request.toPath);
+    if (typeof outputPath !== "string") {
+      return result(config, request, { accepted: false, error: outputPath });
+    }
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, text, "utf8");
+    const outputSummary = await documentMediaSummaryForPath(config, request, "image_ocr", outputPath);
+    toLabel = outputSummary.path;
+    artifacts.push(outputSummary.path);
+    probes.push(
+      await filesystemProbe("document.image.ocr_output_exists", outputPath, "file"),
+      verificationProbe({
+        id: "document.image.ocr_output_hash",
+        kind: "artifact_hash",
+        target: outputPath,
+        expectation: "OCR text artifact hash computed",
+        actual: outputSummary.sha256,
+        passed: /^[a-f0-9]{64}$/.test(outputSummary.sha256)
+      })
+    );
+  }
+  return result(config, request, {
+    accepted,
+    path: summary.path,
+    toPath: toLabel,
+    commandLine,
+    routeId: "document.image_ocr",
+    exitCode: ocr.status ?? null,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    timedOut,
+    stdoutPreview: text.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: (ocr.stderr ?? "").slice(0, MAX_PREVIEW_CHARS),
+    artifacts,
+    observedChanges: [`ocr_chars:${text.length}`, `source_sha256:${summary.sha256}`],
+    verification: verificationResult(probes),
+    documentMedia: summary,
+    userPresenceRequired: true,
+    value: charDeltaValue(text.length, 0),
+    failureCategory: accepted ? undefined : "command_error",
+    error: accepted ? undefined : actionError("rust_unavailable", ocr.error?.message ?? `OCR exited with status ${ocr.status ?? "unknown"}.`, { stderr: ocr.stderr, timedOut })
+  });
+}
+
+async function documentMediaMetadataAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const sourcePath = resolveActionPath(config, request, request.path);
+  if (typeof sourcePath !== "string") {
+    return result(config, request, { accepted: false, error: sourcePath });
+  }
+  const summary = await documentMediaSummaryForPath(config, request, "media_metadata", sourcePath);
+  if (!["image", "audio", "video"].includes(summary.kind)) {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "bad_path",
+      documentMedia: summary,
+      error: actionError("bad_payload", "document_media_metadata requires an image, audio or video path.", { kind: summary.kind })
+    });
+  }
+  const ffprobe = detectToolPath(config, "ffprobe.exe");
+  if (!ffprobe) {
+    summary.parserStatus = "blocked";
+    finalizeDocumentMediaSummary(summary);
+    return result(config, request, {
+      accepted: false,
+      commandLine: "where.exe ffprobe.exe",
+      failureCategory: "missing_tool",
+      documentMedia: summary,
+      error: actionError("rust_unavailable", "ffprobe.exe was not detected; media metadata cannot be verified.", request),
+      verification: verificationResult([
+        await filesystemProbe("document.media.source_exists", sourcePath, "file"),
+        verificationProbe({
+          id: "document.media.ffprobe",
+          kind: "command_exit",
+          target: "ffprobe.exe",
+          expectation: "ffprobe detected before claiming media metadata success",
+          actual: "missing",
+          passed: false
+        })
+      ])
+    });
+  }
+  const args = ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", sourcePath];
+  const startedAt = Date.now();
+  const probed = spawnSync(ffprobe, args, {
+    cwd: config.cwd,
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: Math.min(commandTimeout(request), 45_000),
+    windowsHide: true
+  });
+  const timedOut = commandTimedOut(probed.error);
+  const accepted = !probed.error && probed.status === 0 && !timedOut;
+  const commandLine = renderCommandLine(ffprobe, args);
+  let parseError: unknown;
+  if (accepted) {
+    try {
+      const parsed = JSON.parse(probed.stdout ?? "{}") as {
+        format?: { duration?: string; format_name?: string };
+        streams?: Array<{ width?: number; height?: number }>;
+      };
+      const duration = Number(parsed.format?.duration);
+      summary.mediaDurationSeconds = Number.isFinite(duration) ? duration : undefined;
+      summary.mediaStreams = Array.isArray(parsed.streams) ? parsed.streams.length : 0;
+      summary.mediaFormat = parsed.format?.format_name;
+      const dimensionalStream = parsed.streams?.find((stream) => typeof stream.width === "number" || typeof stream.height === "number");
+      summary.width = dimensionalStream?.width;
+      summary.height = dimensionalStream?.height;
+      finalizeDocumentMediaSummary(summary);
+    } catch (error) {
+      parseError = error;
+    }
+  }
+  const finalAccepted = accepted && !parseError;
+  if (!finalAccepted) {
+    summary.parserStatus = "blocked";
+    finalizeDocumentMediaSummary(summary);
+  }
+  return result(config, request, {
+    accepted: finalAccepted,
+    path: summary.path,
+    commandLine,
+    routeId: "document.media_metadata",
+    exitCode: probed.status ?? null,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    timedOut,
+    stdoutPreview: (probed.stdout ?? "").slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: (probed.stderr ?? "").slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [
+      `media_kind:${summary.kind}`,
+      `streams:${summary.mediaStreams ?? "unknown"}`,
+      `format:${summary.mediaFormat ?? "unknown"}`,
+      `source_sha256:${summary.sha256}`
+    ],
+    verification: verificationResult([
+      await filesystemProbe("document.media.source_exists", sourcePath, "file"),
+      commandExitProbe({ commandLine, accepted: finalAccepted, exitCode: probed.status ?? null, timedOut }),
+      verificationProbe({
+        id: "document.media.source_hash",
+        kind: "artifact_hash",
+        target: sourcePath,
+        expectation: "source media sha256 computed",
+        actual: summary.sha256,
+        passed: /^[a-f0-9]{64}$/.test(summary.sha256)
+      })
+    ]),
+    documentMedia: summary,
+    failureCategory: finalAccepted ? undefined : "command_error",
+    error: finalAccepted
+      ? undefined
+      : parseError instanceof Error
+        ? actionError("rust_unavailable", `ffprobe returned invalid JSON: ${parseError.message}`, probed.stdout)
+        : actionError("rust_unavailable", probed.error?.message ?? `ffprobe exited with status ${probed.status ?? "unknown"}.`, { stderr: probed.stderr, timedOut })
   });
 }
 
@@ -6193,6 +6918,16 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return await documentWriteCsvAction(config, request);
       case "document_convert_text":
         return await documentConvertTextAction(config, request);
+      case "document_pdf_extract_text":
+        return await documentPdfExtractTextAction(config, request);
+      case "document_office_inspect":
+        return await documentOfficeInspectAction(config, request);
+      case "document_office_export_pdf":
+        return await documentOfficeExportPdfAction(config, request);
+      case "document_image_ocr":
+        return await documentImageOcrAction(config, request);
+      case "document_media_metadata":
+        return await documentMediaMetadataAction(config, request);
       case "dev_repo_status":
         return await devRepoStatusAction(config, request);
       case "dev_git_diff":

@@ -293,7 +293,7 @@ Acceptance:
 - Large outputs are stored on disk and summarized compactly.
 - Office COM and macros remain prompt-gated.
 
-Status: implemented for the planned scope. The host now exposes `AgentDocumentMediaPolicy`, executable document/data actions for artifact inspection, UTF-8 text/Markdown writes, JSON validation and pretty-write, RFC-4180-style CSV validation/write, and bounded text/Markdown conversion. Results include readback verification, size, SHA-256, parser status and compact document/media summaries. Rich Office COM, macros, PDF parsing, OCR, image/audio/video codecs and proprietary conversions remain planned or prompt-gated backends rather than fake direct execution.
+Status: executable for the local backends that have runtime proof. The host now exposes `AgentDocumentMediaPolicy`, executable document/data actions for artifact inspection, UTF-8 text/Markdown writes, JSON validation and pretty-write, RFC-4180-style CSV validation/write, bounded text/Markdown conversion, PDF text extraction through PDF.js, prompt-gated Office COM inspection/export-to-PDF, prompt-gated image OCR through `tesseract.exe`, and image/audio/video metadata through `ffprobe.exe`. Results include readback verification, command exit checks, size, SHA-256, parser status and compact document/media summaries. Office macros are explicitly blocked; Office COM opens files with automation security forced disabled. Missing local tools return `missing_tool` or blocked results instead of fake success. Proprietary conversions beyond Office PDF export remain planned/prompt-gated.
 
 ### 9. Developer, Cloud, MCP And Automation Surfaces
 

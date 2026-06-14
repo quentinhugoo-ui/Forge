@@ -174,6 +174,11 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "document_write_text", path: "report.md", content: "# Report" })).toBe(true);
     expect(isAgentActionRequest({ action: "document_write_json", path: "data.json", content: "{\"ok\":true}" })).toBe(true);
     expect(isAgentActionRequest({ action: "document_convert_text", path: "report.md", toPath: "report.txt" })).toBe(true);
+    expect(isAgentActionRequest({ action: "document_pdf_extract_text", path: "report.pdf", toPath: "report.txt" })).toBe(true);
+    expect(isAgentActionRequest({ action: "document_office_inspect", path: "report.docx", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "document_office_export_pdf", path: "report.docx", toPath: "report.pdf", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "document_image_ocr", path: "scan.png", query: "eng", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "document_media_metadata", path: "clip.mp4" })).toBe(true);
     expect(isAgentActionRequest({ action: "dev_repo_status" })).toBe(true);
     expect(isAgentActionRequest({ action: "dev_git_diff" })).toBe(true);
     expect(isAgentActionRequest({ action: "dev_git_commit", title: "Commit message", paths: ["src/file.ts"], confirmed: true })).toBe(true);
@@ -194,6 +199,7 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "browser_click", url: "https://example.com", selector: 42, confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "browser_click", url: "https://example.com", selector: "button", confirmed: true, formSubmissionConfirmed: "yes" })).toBe(false);
     expect(isAgentActionRequest({ action: "document_write_text", path: "report.md", content: 42 })).toBe(false);
+    expect(isAgentActionRequest({ action: "document_office_inspect", path: "report.docx", macroExecutionConfirmed: "yes" })).toBe(false);
     expect(isAgentActionRequest({ action: "dev_git_commit", title: "Bad", paths: [42], confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "dev_github_pr_create", title: "Bad", draft: "yes", confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "virtualization_inspect", provider: "xhyve" })).toBe(false);

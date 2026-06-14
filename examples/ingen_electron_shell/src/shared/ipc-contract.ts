@@ -610,7 +610,17 @@ export interface AgentBrowserWebPolicy {
   proofHash: string;
 }
 
-export type AgentDocumentMediaAction = "inspect" | "write_text" | "write_json" | "write_csv" | "convert_text";
+export type AgentDocumentMediaAction =
+  | "inspect"
+  | "write_text"
+  | "write_json"
+  | "write_csv"
+  | "convert_text"
+  | "pdf_extract_text"
+  | "office_inspect"
+  | "office_export_pdf"
+  | "image_ocr"
+  | "media_metadata";
 export type AgentDocumentMediaKind =
   | "text"
   | "markdown"
@@ -639,6 +649,19 @@ export interface AgentDocumentMediaSummary {
   csvRows?: number;
   csvColumns?: number;
   markdownHeadingCount?: number;
+  pageCount?: number;
+  wordCount?: number;
+  sheetCount?: number;
+  slideCount?: number;
+  textCharCount?: number;
+  ocrTextChars?: number;
+  mediaDurationSeconds?: number;
+  mediaStreams?: number;
+  mediaFormat?: string;
+  width?: number;
+  height?: number;
+  officeApplication?: "word" | "excel" | "powerpoint";
+  macroStatus?: "blocked" | "force_disabled" | "not_applicable";
   parserStatus: "available" | "planned" | "blocked";
   conversionStatus: "available" | "planned" | "blocked";
   proofHash: string;
@@ -788,6 +811,11 @@ export type AgentActionKind =
   | "document_write_json"
   | "document_write_csv"
   | "document_convert_text"
+  | "document_pdf_extract_text"
+  | "document_office_inspect"
+  | "document_office_export_pdf"
+  | "document_image_ocr"
+  | "document_media_metadata"
   | "dev_repo_status"
   | "dev_git_diff"
   | "dev_git_commit"
@@ -842,6 +870,7 @@ export interface AgentActionRequest {
   selector?: string;
   formSubmissionConfirmed?: boolean;
   confirmed?: boolean;
+  macroExecutionConfirmed?: boolean;
   recursive?: boolean;
   timeoutMs?: number;
 }
@@ -1036,6 +1065,11 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "document_write_json",
     "document_write_csv",
     "document_convert_text",
+    "document_pdf_extract_text",
+    "document_office_inspect",
+    "document_office_export_pdf",
+    "document_image_ocr",
+    "document_media_metadata",
     "dev_repo_status",
     "dev_git_diff",
     "dev_git_commit",
@@ -1119,6 +1153,9 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     return false;
   }
   if (candidate.confirmed !== undefined && typeof candidate.confirmed !== "boolean") {
+    return false;
+  }
+  if (candidate.macroExecutionConfirmed !== undefined && typeof candidate.macroExecutionConfirmed !== "boolean") {
     return false;
   }
   if (candidate.recursive !== undefined && typeof candidate.recursive !== "boolean") {

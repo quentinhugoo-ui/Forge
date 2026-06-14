@@ -30,6 +30,11 @@ export const AGENT_BROWSER_PLAYWRIGHT_DOWNLOAD_COMMAND = "/agent_browser_playwri
 export const AGENT_DOCUMENT_INSPECT_COMMAND = "/agent_document_inspect_";
 export const AGENT_DOCUMENT_WRITE_COMMAND = "/agent_document_write_";
 export const AGENT_DOCUMENT_CONVERT_COMMAND = "/agent_document_convert_";
+export const AGENT_DOCUMENT_PDF_EXTRACT_COMMAND = "/agent_document_pdf_extract_";
+export const AGENT_DOCUMENT_OFFICE_INSPECT_COMMAND = "/agent_document_office_inspect_";
+export const AGENT_DOCUMENT_OFFICE_EXPORT_PDF_COMMAND = "/agent_document_office_export_pdf_";
+export const AGENT_DOCUMENT_IMAGE_OCR_COMMAND = "/agent_document_image_ocr_";
+export const AGENT_DOCUMENT_MEDIA_METADATA_COMMAND = "/agent_document_media_metadata_";
 export const AGENT_DEV_STATUS_COMMAND = "/agent_dev_status_";
 export const AGENT_DEV_DIFF_COMMAND = "/agent_dev_diff_";
 export const AGENT_DEV_COMMIT_COMMAND = "/agent_dev_commit_";
@@ -76,6 +81,11 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_DOCUMENT_INSPECT_COMMAND,
   AGENT_DOCUMENT_WRITE_COMMAND,
   AGENT_DOCUMENT_CONVERT_COMMAND,
+  AGENT_DOCUMENT_PDF_EXTRACT_COMMAND,
+  AGENT_DOCUMENT_OFFICE_INSPECT_COMMAND,
+  AGENT_DOCUMENT_OFFICE_EXPORT_PDF_COMMAND,
+  AGENT_DOCUMENT_IMAGE_OCR_COMMAND,
+  AGENT_DOCUMENT_MEDIA_METADATA_COMMAND,
   AGENT_DEV_STATUS_COMMAND,
   AGENT_DEV_DIFF_COMMAND,
   AGENT_DEV_COMMIT_COMMAND,
@@ -132,6 +142,11 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_DOCUMENT_INSPECT_COMMAND, "document/media artifact inspected"],
   [AGENT_DOCUMENT_WRITE_COMMAND, "document/data artifact written and verified"],
   [AGENT_DOCUMENT_CONVERT_COMMAND, "document text converted and verified"],
+  [AGENT_DOCUMENT_PDF_EXTRACT_COMMAND, "PDF text extracted with runtime proof"],
+  [AGENT_DOCUMENT_OFFICE_INSPECT_COMMAND, "confirmed Office document inspected"],
+  [AGENT_DOCUMENT_OFFICE_EXPORT_PDF_COMMAND, "confirmed Office PDF export verified"],
+  [AGENT_DOCUMENT_IMAGE_OCR_COMMAND, "confirmed image OCR completed"],
+  [AGENT_DOCUMENT_MEDIA_METADATA_COMMAND, "media metadata inspected"],
   [AGENT_DEV_STATUS_COMMAND, "repository status inspected"],
   [AGENT_DEV_DIFF_COMMAND, "repository diff inspected"],
   [AGENT_DEV_COMMIT_COMMAND, "confirmed Git commit verified"],
@@ -181,6 +196,11 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["document.write_json", AGENT_DOCUMENT_WRITE_COMMAND],
   ["document.write_csv", AGENT_DOCUMENT_WRITE_COMMAND],
   ["document.convert_text", AGENT_DOCUMENT_CONVERT_COMMAND],
+  ["document.pdf_extract_text", AGENT_DOCUMENT_PDF_EXTRACT_COMMAND],
+  ["document.office_inspect", AGENT_DOCUMENT_OFFICE_INSPECT_COMMAND],
+  ["document.office_export_pdf", AGENT_DOCUMENT_OFFICE_EXPORT_PDF_COMMAND],
+  ["document.image_ocr", AGENT_DOCUMENT_IMAGE_OCR_COMMAND],
+  ["document.media_metadata", AGENT_DOCUMENT_MEDIA_METADATA_COMMAND],
   ["dev.repo_status", AGENT_DEV_STATUS_COMMAND],
   ["dev.git_diff", AGENT_DEV_DIFF_COMMAND],
   ["dev.git_commit", AGENT_DEV_COMMIT_COMMAND],
@@ -230,6 +250,11 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["document_write_json", AGENT_DOCUMENT_WRITE_COMMAND],
   ["document_write_csv", AGENT_DOCUMENT_WRITE_COMMAND],
   ["document_convert_text", AGENT_DOCUMENT_CONVERT_COMMAND],
+  ["document_pdf_extract_text", AGENT_DOCUMENT_PDF_EXTRACT_COMMAND],
+  ["document_office_inspect", AGENT_DOCUMENT_OFFICE_INSPECT_COMMAND],
+  ["document_office_export_pdf", AGENT_DOCUMENT_OFFICE_EXPORT_PDF_COMMAND],
+  ["document_image_ocr", AGENT_DOCUMENT_IMAGE_OCR_COMMAND],
+  ["document_media_metadata", AGENT_DOCUMENT_MEDIA_METADATA_COMMAND],
   ["dev_repo_status", AGENT_DEV_STATUS_COMMAND],
   ["dev_git_diff", AGENT_DEV_DIFF_COMMAND],
   ["dev_git_commit", AGENT_DEV_COMMIT_COMMAND],
