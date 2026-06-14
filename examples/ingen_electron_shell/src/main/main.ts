@@ -5721,6 +5721,22 @@ function compactAgentActionResult(result: AgentActionResult): string {
     stderrPreview: result.stderrPreview ? trimUtf8Bytes(result.stderrPreview, AGENT_ACTION_RESULT_PREVIEW_BYTES) : undefined,
     artifacts: result.artifacts,
     observedChanges: result.observedChanges,
+    verification: result.verification
+      ? {
+          passed: result.verification.passed,
+          probes: result.verification.probes.map((probe) => ({
+            id: probe.id,
+            kind: probe.kind,
+            target: probe.target,
+            expectation: probe.expectation,
+            actual: trimUtf8Bytes(probe.actual, 600),
+            passed: probe.passed
+          })),
+          proofHash: result.verification.proofHash
+        }
+      : undefined,
+    failureCategory: result.failureCategory,
+    retryRoutes: result.retryRoutes,
     value: result.value,
     error: result.error?.message,
     proofHash: result.proofHash

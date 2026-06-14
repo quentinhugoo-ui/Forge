@@ -226,6 +226,8 @@ Acceptance:
 - At least one alternate route is attempted for recoverable failures.
 - Protected-root, credential and UAC boundaries block immediately.
 
+Status: implemented for the planned scope. The host now exposes `AgentVerificationPolicy`, probe kinds, retry strategies and failure categories. Filesystem mutations create independent verification probes before returning success, command execution creates `command_exit` probes, verification failure forces `accepted:false`, protected roots produce `protected_root` without retry routes, and compact tool-result reinjection includes verification, failure category and retry route hints for the next loop turn.
+
 ### 6. Computer Use And GUI Control
 
 Goal: control apps and Windows surfaces that do not expose clean APIs.

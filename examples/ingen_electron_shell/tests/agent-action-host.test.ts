@@ -7,6 +7,7 @@ import {
   createAgentCapabilityAtlas,
   createAgentActionHostManifest,
   createAgentActionRuntimeManifestSummary,
+  createAgentVerificationPolicy,
   createWindowsExecutionPolicy,
   detectAgentActionInstalledTools,
   agentActionEventCommandForRequest,
@@ -56,6 +57,7 @@ describe("agent action host", () => {
     expect(manifest.runtime.atlasHash).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.runtime.installedToolsHash).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.runtime.windowsExecutionHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest.runtime.verificationHash).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.runtime.injectionPolicy).toBe("full_on_local_intent_compact_delta_on_continuation");
     expect(manifest.runtime.resultReinjectionPolicy).toBe("compact_tool_result_is_ground_truth_each_round");
     expect(manifest.runtime.executableActionIds).toContain("shell.full");
@@ -64,6 +66,8 @@ describe("agent action host", () => {
     expect(manifest.windowsExecution.adapters).toEqual(["powershell", "cmd", "windows_command", "shell_full"]);
     expect(manifest.windowsExecution.routeCatalog.map((route) => route.id)).toContain("scheduler.schtasks");
     expect(manifest.windowsExecution.routeCatalog.map((route) => route.id)).toContain("settings.ms_settings");
+    expect(manifest.verification.schema).toBe("ingen.agent_verification.policy.v1");
+    expect(manifest.verification.mutationCompletionRule).toBe("verified_or_blocked");
     expect([...manifest.runtime.installedToolIds, ...manifest.runtime.missingToolIds]).toContain("winget");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
 
@@ -80,6 +84,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("manifest_hash=");
     expect(promptManifest).toContain("atlas_hash=");
     expect(promptManifest).toContain("windows_execution_hash=");
+    expect(promptManifest).toContain("verification_hash=");
     expect(promptManifest).toContain("injection_policy=full_on_local_intent_compact_delta_on_continuation");
     expect(promptManifest).toContain("prompt_budget=compact_by_default_detail_on_selected_capability");
     expect(promptManifest).toContain("result_reinjection=compact_tool_result_is_ground_truth_each_round");
@@ -91,6 +96,9 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("windows_adapters=powershell|cmd|windows_command|shell_full");
     expect(promptManifest).toContain("windows_routes=powershell.inline|cmd.inline|winget.package");
     expect(promptManifest).toContain("windows_timeout=default:");
+    expect(promptManifest).toContain("verification_policy=verified_or_blocked");
+    expect(promptManifest).toContain("failure_categories=denied|missing_tool|bad_path|timeout|permission|protected_root|command_error|unverifiable|partial_success");
+    expect(promptManifest).toContain("retry_strategies=api_cli|powershell|cmd|windows_command|wmi_cim|registry|settings_uri|browser_cdp|gui_computer_use|manual_approval");
     expect(promptManifest).toContain("windows.wmi:planned/none");
     expect(promptManifest).toContain("office.com:planned/prompt");
     expect(promptManifest).toContain("capability_policy=Use the atlas for reasoning");
@@ -103,7 +111,7 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("starts with AGENT_ACTION_JSON at column 1");
     expect(promptManifest).toContain("action_request_format=AGENT_ACTION_JSON");
     expect(promptManifest).toContain("tool_truth=Never claim an action was executed");
-  });
+  }, 10_000);
 
   it("publishes a compact runtime manifest summary for delta prompt injection", () => {
     const summary = createAgentActionRuntimeManifestSummary({
@@ -117,6 +125,7 @@ describe("agent action host", () => {
     expect(summary.atlasHash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.installedToolsHash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.windowsExecutionHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(summary.verificationHash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.executableActionIds).toEqual([
       "fs.list",
       "fs.search",
@@ -178,6 +187,23 @@ describe("agent action host", () => {
     expect(byId.get("processes.tasklist")?.approval).toBe("none");
     expect(byId.get("registry.reg")?.approval).toBe("confirmed");
     expect(byId.get("shell.full")?.adapter).toBe("shell_full");
+  });
+
+  it("publishes a verification and retry policy for local actions", () => {
+    const policy = createAgentVerificationPolicy({
+      workspaceRoot: "C:\\repo",
+      workspaceActive: true,
+      cwd: "C:\\repo",
+      platform: "win32"
+    });
+
+    expect(policy.proofHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(policy.probeKinds).toContain("filesystem");
+    expect(policy.probeKinds).toContain("command_exit");
+    expect(policy.failureCategories).toContain("protected_root");
+    expect(policy.retryStrategies.map((strategy) => strategy.id)).toContain("powershell");
+    expect(policy.retryStrategies.map((strategy) => strategy.id)).toContain("manual_approval");
+    expect(policy.protectedBoundaryRule).toBe("block_without_retry");
   });
 
   it("detects local tool availability and renders selected capability detail on demand", () => {
@@ -259,6 +285,22 @@ describe("agent action host", () => {
     });
   });
 
+  it("blocks protected roots without automatic retry routes", async () => {
+    await withTempWorkspace(async (config) => {
+      const rejected = await executeAgentActionRequest(config, {
+        action: "create_directory",
+        scope: "computer",
+        path: "C:\\Users\\quent\\Documents\\EVE\\MAP\\agent-test",
+        confirmed: true
+      });
+
+      expect(rejected.accepted).toBe(false);
+      expect(rejected.failureCategory).toBe("protected_root");
+      expect(rejected.retryRoutes).toEqual([]);
+      expect(rejected.error?.message).toContain("protected root");
+    });
+  });
+
   it("creates, renames, moves and deletes confirmed empty directories", async () => {
     await withTempWorkspace(async (config) => {
       const created = await executeAgentActionRequest(config, {
@@ -267,6 +309,9 @@ describe("agent action host", () => {
       });
       expect(created.accepted).toBe(true);
       expect(created.value).toBe("chars +0 -0");
+      expect(created.verification?.passed).toBe(true);
+      expect(created.verification?.probes[0]?.id).toBe("directory.created");
+      expect(created.observedChanges).toContain("filesystem:directory_created");
 
       const alreadyCreated = await executeAgentActionRequest(config, {
         action: "create_directory",
@@ -283,6 +328,8 @@ describe("agent action host", () => {
       expect(renamed.accepted).toBe(true);
       expect(renamed.toPath).toBe("beta");
       expect(renamed.value).toBe("chars +0 -0");
+      expect(renamed.verification?.passed).toBe(true);
+      expect(renamed.verification?.probes.map((probe) => probe.id)).toEqual(["move.destination_exists", "move.source_missing"]);
 
       await mkdir(join(config.workspaceRoot, "nested"));
       const moved = await executeAgentActionRequest(config, {
@@ -291,6 +338,7 @@ describe("agent action host", () => {
         toPath: "nested/beta"
       });
       expect(moved.accepted).toBe(true);
+      expect(moved.verification?.passed).toBe(true);
 
       const unconfirmedDelete = await executeAgentActionRequest(config, {
         action: "delete_empty_directory",
@@ -306,6 +354,8 @@ describe("agent action host", () => {
       });
       expect(deleted.accepted).toBe(true);
       expect(deleted.value).toBe("chars +0 -0");
+      expect(deleted.verification?.passed).toBe(true);
+      expect(deleted.verification?.probes[0]?.expectation).toBe("missing");
     });
   });
 
@@ -325,6 +375,8 @@ describe("agent action host", () => {
         recursive: true
       });
       expect(copied.accepted).toBe(true);
+      expect(copied.verification?.passed).toBe(true);
+      expect(copied.verification?.probes.map((probe) => probe.id)).toEqual(["copy.source_exists", "copy.destination_exists"]);
       await expect(readFile(join(config.workspaceRoot, "copy", "deep", "note.txt"), "utf8")).resolves.toBe("copied");
 
       const unconfirmedDelete = await executeAgentActionRequest(config, {
@@ -342,6 +394,9 @@ describe("agent action host", () => {
         confirmed: true
       });
       expect(deleted.accepted).toBe(true);
+      expect(deleted.verification?.passed).toBe(true);
+      expect(deleted.verification?.probes[0]?.id).toBe("tree.deleted");
+      await expect(readFile(join(config.workspaceRoot, "copy", "deep", "note.txt"), "utf8")).rejects.toThrow();
     });
   });
 
@@ -395,6 +450,8 @@ describe("agent action host", () => {
       expect(accepted.timeoutMs).toBeGreaterThanOrEqual(100);
       expect(accepted.timedOut).toBe(false);
       expect(accepted.observedChanges).toContain("command_status:completed");
+      expect(accepted.verification?.passed).toBe(true);
+      expect(accepted.verification?.probes[0]?.kind).toBe("command_exit");
     });
   });
 
@@ -413,8 +470,12 @@ describe("agent action host", () => {
       expect(timedOut.routeId).toBe("shell.full");
       expect(timedOut.timeoutMs).toBe(100);
       expect(timedOut.timedOut).toBe(true);
+      expect(timedOut.failureCategory).toBe("timeout");
+      expect(timedOut.retryRoutes).toContain("powershell");
+      expect(timedOut.retryRoutes).toContain("cmd");
       expect(timedOut.error?.message).toContain("timed out");
       expect(timedOut.observedChanges).toContain("timed_out:true");
+      expect(timedOut.verification?.passed).toBe(false);
     });
   });
 

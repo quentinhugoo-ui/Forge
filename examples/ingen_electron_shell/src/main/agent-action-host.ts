@@ -12,6 +12,13 @@ import type {
   AgentActionInstalledTool,
   AgentActionRuntimeManifestSummary,
   AgentCapabilityAtlasEntry,
+  AgentCapabilityVerification,
+  AgentFailureCategory,
+  AgentRetryStrategy,
+  AgentRetryStrategyId,
+  AgentVerificationPolicy,
+  AgentVerificationProbe,
+  AgentVerificationResult,
   AgentWindowsExecutionAdapterId,
   AgentWindowsExecutionPolicy,
   AgentWindowsRouteCatalogEntry,
@@ -280,6 +287,91 @@ const WINDOWS_ROUTE_CATALOG: AgentWindowsRouteCatalogEntry[] = [
   }
 ];
 
+const AGENT_FAILURE_CATEGORIES: AgentFailureCategory[] = [
+  "denied",
+  "missing_tool",
+  "bad_path",
+  "timeout",
+  "permission",
+  "protected_root",
+  "command_error",
+  "unverifiable",
+  "partial_success"
+];
+
+const AGENT_RETRY_STRATEGIES: AgentRetryStrategy[] = [
+  {
+    id: "api_cli",
+    label: "Structured app/API/CLI route",
+    appliesTo: ["missing_tool", "command_error", "unverifiable", "partial_success"],
+    requiresApproval: "none",
+    notes: "Prefer a typed local API or CLI before falling back to raw shell."
+  },
+  {
+    id: "powershell",
+    label: "PowerShell route",
+    appliesTo: ["bad_path", "permission", "command_error", "timeout", "unverifiable", "partial_success"],
+    requiresApproval: "confirmed",
+    notes: "Use PowerShell cmdlets for Windows-native filesystem, registry, services and CIM/WMI operations."
+  },
+  {
+    id: "cmd",
+    label: "CMD route",
+    appliesTo: ["bad_path", "command_error", "timeout"],
+    requiresApproval: "confirmed",
+    notes: "Use CMD for legacy built-ins, batch files and simple Windows shell fallbacks."
+  },
+  {
+    id: "windows_command",
+    label: "Native Windows command route",
+    appliesTo: ["missing_tool", "command_error", "timeout", "partial_success"],
+    requiresApproval: "confirmed",
+    notes: "Use reg, schtasks, netsh, sc, robocopy, icacls, certutil, wevtutil, wsl or other cataloged commands."
+  },
+  {
+    id: "wmi_cim",
+    label: "WMI/CIM route",
+    appliesTo: ["unverifiable", "command_error", "partial_success"],
+    requiresApproval: "prompt",
+    notes: "Use CIM/WMI when process, service, hardware or OS state needs structured verification."
+  },
+  {
+    id: "registry",
+    label: "Registry route",
+    appliesTo: ["unverifiable", "command_error", "permission"],
+    requiresApproval: "confirmed",
+    notes: "Use only for registry-backed settings after explicit confirmation."
+  },
+  {
+    id: "settings_uri",
+    label: "Windows Settings URI route",
+    appliesTo: ["permission", "unverifiable"],
+    requiresApproval: "prompt",
+    notes: "Open Settings UI when no safe CLI/API can mutate the target."
+  },
+  {
+    id: "browser_cdp",
+    label: "Browser CDP route",
+    appliesTo: ["unverifiable", "partial_success"],
+    requiresApproval: "prompt",
+    notes: "Use for browser state verification once CDP is wired."
+  },
+  {
+    id: "gui_computer_use",
+    label: "GUI/computer-use route",
+    appliesTo: ["permission", "unverifiable", "partial_success"],
+    requiresApproval: "prompt",
+    notes: "Last resort for UI-only tasks."
+  },
+  {
+    id: "manual_approval",
+    label: "Manual approval route",
+    appliesTo: ["denied", "permission", "protected_root"],
+    requiresApproval: "prompt",
+    notes: "Stop and ask the user when policy, UAC, credentials or protected roots are involved."
+  }
+];
+
 export function agentActionRoutingHint(): string {
   return [
     "LOCAL_ACTION_TOOLS v1",
@@ -317,14 +409,57 @@ function actionError(code: IpcError["code"], message: string, input: unknown): I
   };
 }
 
+function categorizeFailure(params: { error?: IpcError; timedOut?: boolean; verification?: AgentVerificationResult }): AgentFailureCategory | undefined {
+  if (params.timedOut) {
+    return "timeout";
+  }
+  if (params.verification && !params.verification.passed) {
+    return "unverifiable";
+  }
+  const message = params.error?.message ?? "";
+  if (!message) {
+    return undefined;
+  }
+  if (/protected root|system root|drive root|workspace root/i.test(message)) {
+    return "protected_root";
+  }
+  if (/confirmed:true|confirmation|approval|denied/i.test(message)) {
+    return "denied";
+  }
+  if (/outside the active workspace|bad path|not found|ENOENT|path/i.test(message)) {
+    return "bad_path";
+  }
+  if (/permission|EACCES|EPERM|UAC|administrator/i.test(message)) {
+    return "permission";
+  }
+  if (/not recognized|not found|ENOENT|spawn/i.test(message)) {
+    return "missing_tool";
+  }
+  return "command_error";
+}
+
+function retryRoutesForFailure(category: AgentFailureCategory | undefined): AgentRetryStrategyId[] {
+  if (!category) {
+    return [];
+  }
+  if (category === "protected_root") {
+    return [];
+  }
+  return AGENT_RETRY_STRATEGIES.filter((strategy) => strategy.appliesTo.includes(category)).map((strategy) => strategy.id);
+}
+
 function result(
   config: AgentActionHostConfig,
   request: AgentActionRequest,
   patch: Omit<Partial<AgentActionResult>, "schema" | "action" | "cwd" | "proofHash">
 ): AgentActionResult {
+  const verificationFailed = patch.verification !== undefined && !patch.verification.passed;
+  const accepted = (patch.accepted ?? false) && !verificationFailed;
+  const error = patch.error ?? (verificationFailed ? actionError("rust_unavailable", "Independent verification failed.", patch.verification) : undefined);
+  const failureCategory = patch.failureCategory ?? categorizeFailure({ error, timedOut: patch.timedOut, verification: patch.verification });
   const envelope: AgentActionResult = {
     schema: "ingen.agent_action_host.result.v1",
-    accepted: patch.accepted ?? false,
+    accepted,
     action: request.action,
     cwd: config.cwd,
     path: patch.path,
@@ -342,9 +477,12 @@ function result(
     stderrPreview: patch.stderrPreview,
     artifacts: patch.artifacts,
     observedChanges: patch.observedChanges,
+    verification: patch.verification,
+    failureCategory,
+    retryRoutes: patch.retryRoutes ?? retryRoutesForFailure(failureCategory),
     value: patch.value,
     proofHash: "",
-    error: patch.error
+    error
   };
   envelope.proofHash = hashJson({ ...envelope, proofHash: "" });
   return envelope;
@@ -352,6 +490,82 @@ function result(
 
 function charDeltaValue(added: number, removed: number): string {
   return `chars +${Math.max(0, Math.trunc(added))} -${Math.max(0, Math.trunc(removed))}`;
+}
+
+function verificationProbe(params: {
+  id: string;
+  kind: AgentCapabilityVerification;
+  target?: string;
+  expectation: string;
+  actual: string;
+  passed: boolean;
+}): AgentVerificationProbe {
+  const probe: AgentVerificationProbe = {
+    ...params,
+    proofHash: ""
+  };
+  probe.proofHash = hashJson({ ...probe, proofHash: "" });
+  return probe;
+}
+
+function verificationResult(probes: AgentVerificationProbe[]): AgentVerificationResult {
+  const verification: AgentVerificationResult = {
+    schema: "ingen.agent_verification.result.v1",
+    passed: probes.every((probe) => probe.passed),
+    probes,
+    proofHash: ""
+  };
+  verification.proofHash = hashJson({ ...verification, proofHash: "" });
+  return verification;
+}
+
+async function filesystemProbe(id: string, target: string, expectation: "exists" | "missing" | "directory" | "file" | "empty_directory"): Promise<AgentVerificationProbe> {
+  try {
+    const info = await stat(target);
+    const entries = expectation === "empty_directory" && info.isDirectory() ? await readdir(target) : [];
+    const passed =
+      expectation === "exists" ||
+      (expectation === "directory" && info.isDirectory()) ||
+      (expectation === "file" && info.isFile()) ||
+      (expectation === "empty_directory" && info.isDirectory() && entries.length === 0);
+    const actual = info.isDirectory()
+      ? `directory entries=${entries.length}`
+      : info.isFile()
+        ? `file bytes=${info.size}`
+        : "other";
+    return verificationProbe({
+      id,
+      kind: "filesystem",
+      target,
+      expectation,
+      actual,
+      passed
+    });
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+    const missing = code === "ENOENT";
+    return verificationProbe({
+      id,
+      kind: "filesystem",
+      target,
+      expectation,
+      actual: missing ? "missing" : error instanceof Error ? error.message : String(error),
+      passed: expectation === "missing" && missing
+    });
+  }
+}
+
+function commandExitVerification(execution: { commandLine: string; accepted: boolean; exitCode: number | null; timedOut: boolean }): AgentVerificationResult {
+  return verificationResult([
+    verificationProbe({
+      id: "command.exit",
+      kind: "command_exit",
+      target: execution.commandLine,
+      expectation: "exit_code=0 and timed_out=false",
+      actual: `exit_code=${execution.exitCode ?? "unknown"} timed_out=${execution.timedOut}`,
+      passed: execution.accepted && execution.exitCode === 0 && !execution.timedOut
+    })
+  ]);
 }
 
 function canonicalPath(value: string): string {
@@ -474,6 +688,33 @@ export function createWindowsExecutionPolicy(_config: AgentActionHostConfig): Ag
     stderrPreviewBytes: MAX_PREVIEW_CHARS,
     confirmationPolicy: "computer_writes_and_shell_full_require_confirmed_true",
     cancellationPolicy: "timeout_kills_child_and_reports_timed_out",
+    proofHash: ""
+  };
+  policy.proofHash = hashJson({ ...policy, proofHash: "" });
+  return policy;
+}
+
+export function createAgentVerificationPolicy(_config: AgentActionHostConfig): AgentVerificationPolicy {
+  const policy: AgentVerificationPolicy = {
+    schema: "ingen.agent_verification.policy.v1",
+    probeKinds: [
+      "filesystem",
+      "command_exit",
+      "process_state",
+      "service_state",
+      "registry_state",
+      "package_state",
+      "browser_state",
+      "ui_state",
+      "event_log",
+      "artifact_hash",
+      "mcp_result",
+      "manual_confirmation"
+    ],
+    retryStrategies: AGENT_RETRY_STRATEGIES,
+    failureCategories: AGENT_FAILURE_CATEGORIES,
+    mutationCompletionRule: "verified_or_blocked",
+    protectedBoundaryRule: "block_without_retry",
     proofHash: ""
   };
   policy.proofHash = hashJson({ ...policy, proofHash: "" });
@@ -1081,12 +1322,14 @@ export function createAgentActionRuntimeManifestSummary(config: AgentActionHostC
   const capabilityAtlas = createAgentCapabilityAtlas(config);
   const installedTools = detectAgentActionInstalledTools(config);
   const windowsExecution = createWindowsExecutionPolicy(config);
+  const verification = createAgentVerificationPolicy(config);
   const summary: AgentActionRuntimeManifestSummary = {
     schema: "ingen.agent_action_runtime_manifest.summary.v1",
     manifestHash: "",
     atlasHash: hashJson(capabilityAtlas),
     installedToolsHash: hashJson(installedTools),
     windowsExecutionHash: windowsExecution.proofHash,
+    verificationHash: verification.proofHash,
     executableActionIds: capabilities.map((capability) => capability.id),
     availableFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status === "available")),
     plannedFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status === "planned")),
@@ -1117,6 +1360,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
   const capabilityAtlas = createAgentCapabilityAtlas(config);
   const installedTools = detectAgentActionInstalledTools(config);
   const windowsExecution = createWindowsExecutionPolicy(config);
+  const verification = createAgentVerificationPolicy(config);
   const runtime = createAgentActionRuntimeManifestSummary(config);
   const manifest: AgentActionHostManifest = {
     schema: "ingen.agent_action_host.manifest.v1",
@@ -1137,6 +1381,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
     capabilityAtlas,
     installedTools,
     windowsExecution,
+    verification,
     runtime,
     proofHash: ""
   };
@@ -1158,6 +1403,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `manifest_hash=${manifest.runtime.manifestHash}`,
     `atlas_hash=${manifest.runtime.atlasHash}`,
     `windows_execution_hash=${manifest.runtime.windowsExecutionHash}`,
+    `verification_hash=${manifest.runtime.verificationHash}`,
     `injection_policy=${manifest.runtime.injectionPolicy}`,
     `prompt_budget=${manifest.runtime.promptBudget}`,
     `result_reinjection=${manifest.runtime.resultReinjectionPolicy}`,
@@ -1169,6 +1415,9 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `windows_adapters=${manifest.windowsExecution.adapters.join("|")}`,
     `windows_routes=${manifest.runtime.windowsRouteIds.join("|")}`,
     `windows_timeout=default:${manifest.windowsExecution.defaultTimeoutMs} max:${manifest.windowsExecution.maxTimeoutMs} cancellation:${manifest.windowsExecution.cancellationPolicy}`,
+    `verification_policy=${manifest.verification.mutationCompletionRule} protected_boundary=${manifest.verification.protectedBoundaryRule}`,
+    `failure_categories=${manifest.verification.failureCategories.join("|")}`,
+    `retry_strategies=${manifest.verification.retryStrategies.map((strategy) => strategy.id).join("|")}`,
     "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
@@ -1333,9 +1582,23 @@ async function createDirectoryAction(config: AgentActionHostConfig, request: Age
     if (!existing.isDirectory()) {
       throw error;
     }
-    return result(config, request, { accepted: true, path: pathLabel(config, request, resolved), value: "directory already exists" });
+    const verification = verificationResult([await filesystemProbe("directory.exists", resolved, "directory")]);
+    return result(config, request, {
+      accepted: true,
+      path: pathLabel(config, request, resolved),
+      value: "directory already exists",
+      verification,
+      observedChanges: ["filesystem:directory_exists"]
+    });
   }
-  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved), value: charDeltaValue(0, 0) });
+  const verification = verificationResult([await filesystemProbe("directory.created", resolved, "directory")]);
+  return result(config, request, {
+    accepted: true,
+    path: pathLabel(config, request, resolved),
+    value: charDeltaValue(0, 0),
+    verification,
+    observedChanges: ["filesystem:directory_created"]
+  });
 }
 
 async function renameOrMoveAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
@@ -1353,11 +1616,30 @@ async function renameOrMoveAction(config: AgentActionHostConfig, request: AgentA
   if (typeof to !== "string") {
     return result(config, request, { accepted: false, error: to });
   }
-  await rename(from, to);
+  const observedChanges: string[] = [];
+  try {
+    await rename(from, to);
+    observedChanges.push("route:filesystem.rename");
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+    if (request.action !== "move_path" || code !== "EXDEV") {
+      throw error;
+    }
+    await cp(from, to, { recursive: true, force: false, errorOnExist: true });
+    await rm(from, { recursive: true, force: false });
+    observedChanges.push("route:filesystem.copy_rm_fallback");
+  }
+  const verification = verificationResult([
+    await filesystemProbe("move.destination_exists", to, "exists"),
+    await filesystemProbe("move.source_missing", from, "missing")
+  ]);
   return result(config, request, {
     accepted: true,
     path: pathLabel(config, request, from),
     toPath: pathLabel(config, request, to),
+    verification,
+    observedChanges,
+    retryRoutes: observedChanges.includes("route:filesystem.copy_rm_fallback") ? ["api_cli", "powershell", "cmd"] : undefined,
     value: charDeltaValue(0, 0)
   });
 }
@@ -1380,10 +1662,16 @@ async function copyAction(config: AgentActionHostConfig, request: AgentActionReq
   const fromInfo = await stat(from);
   const addedChars = fromInfo.isFile() ? fromInfo.size : 0;
   await cp(from, to, { recursive: request.recursive === true, force: false, errorOnExist: true });
+  const verification = verificationResult([
+    await filesystemProbe("copy.source_exists", from, "exists"),
+    await filesystemProbe("copy.destination_exists", to, fromInfo.isDirectory() ? "directory" : fromInfo.isFile() ? "file" : "exists")
+  ]);
   return result(config, request, {
     accepted: true,
     path: pathLabel(config, request, from),
     toPath: pathLabel(config, request, to),
+    verification,
+    observedChanges: ["filesystem:copy_completed"],
     value: charDeltaValue(addedChars, 0)
   });
 }
@@ -1421,7 +1709,14 @@ async function deleteEmptyDirectoryAction(config: AgentActionHostConfig, request
     });
   }
   await rmdir(resolved);
-  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved), value: charDeltaValue(0, 0) });
+  const verification = verificationResult([await filesystemProbe("directory.deleted", resolved, "missing")]);
+  return result(config, request, {
+    accepted: true,
+    path: pathLabel(config, request, resolved),
+    value: charDeltaValue(0, 0),
+    verification,
+    observedChanges: ["filesystem:empty_directory_deleted"]
+  });
 }
 
 async function deleteTreeAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
@@ -1443,7 +1738,14 @@ async function deleteTreeAction(config: AgentActionHostConfig, request: AgentAct
     });
   }
   await rm(resolved, { recursive: true, force: false });
-  return result(config, request, { accepted: true, path: pathLabel(config, request, resolved), value: charDeltaValue(0, 0) });
+  const verification = verificationResult([await filesystemProbe("tree.deleted", resolved, "missing")]);
+  return result(config, request, {
+    accepted: true,
+    path: pathLabel(config, request, resolved),
+    value: charDeltaValue(0, 0),
+    verification,
+    observedChanges: ["filesystem:tree_deleted"]
+  });
 }
 
 function readonlyCommandAllowed(command: string, args: string[] = []): boolean {
@@ -1544,6 +1846,7 @@ type WindowsCommandExecution = {
   stderrPreview: string;
   artifacts: string[];
   observedChanges: string[];
+  verification: AgentVerificationResult;
   error?: IpcError;
 };
 
@@ -1588,6 +1891,7 @@ function executeWindowsCommand(config: AgentActionHostConfig, request: AgentActi
     stderrPreview: stderr.slice(0, MAX_PREVIEW_CHARS),
     artifacts: [],
     observedChanges: commandObservedChanges({ accepted, stdout, stderr, exitCode, durationMs, timedOut }),
+    verification: commandExitVerification({ commandLine, accepted, exitCode, timedOut }),
     error
   };
 }

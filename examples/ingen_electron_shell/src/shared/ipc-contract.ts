@@ -340,6 +340,7 @@ export interface AgentActionRuntimeManifestSummary {
   atlasHash: string;
   installedToolsHash: string;
   windowsExecutionHash: string;
+  verificationHash: string;
   executableActionIds: AgentActionCapabilityId[];
   availableFamilies: AgentCapabilityFamily[];
   plannedFamilies: AgentCapabilityFamily[];
@@ -392,6 +393,64 @@ export interface AgentWindowsExecutionPolicy {
   proofHash: string;
 }
 
+export type AgentFailureCategory =
+  | "denied"
+  | "missing_tool"
+  | "bad_path"
+  | "timeout"
+  | "permission"
+  | "protected_root"
+  | "command_error"
+  | "unverifiable"
+  | "partial_success";
+
+export type AgentRetryStrategyId =
+  | "api_cli"
+  | "powershell"
+  | "cmd"
+  | "windows_command"
+  | "wmi_cim"
+  | "registry"
+  | "settings_uri"
+  | "browser_cdp"
+  | "gui_computer_use"
+  | "manual_approval";
+
+export interface AgentVerificationProbe {
+  id: string;
+  kind: AgentCapabilityVerification;
+  target?: string;
+  expectation: string;
+  actual: string;
+  passed: boolean;
+  proofHash: string;
+}
+
+export interface AgentVerificationResult {
+  schema: "ingen.agent_verification.result.v1";
+  passed: boolean;
+  probes: AgentVerificationProbe[];
+  proofHash: string;
+}
+
+export interface AgentRetryStrategy {
+  id: AgentRetryStrategyId;
+  label: string;
+  appliesTo: AgentFailureCategory[];
+  requiresApproval: AgentCapabilityApproval;
+  notes: string;
+}
+
+export interface AgentVerificationPolicy {
+  schema: "ingen.agent_verification.policy.v1";
+  probeKinds: AgentCapabilityVerification[];
+  retryStrategies: AgentRetryStrategy[];
+  failureCategories: AgentFailureCategory[];
+  mutationCompletionRule: "verified_or_blocked";
+  protectedBoundaryRule: "block_without_retry";
+  proofHash: string;
+}
+
 export interface AgentActionCapability extends AgentCapabilityAtlasEntry {
   requiresApproval: boolean;
   description: string;
@@ -416,6 +475,7 @@ export interface AgentActionHostManifest {
   capabilityAtlas: AgentCapabilityAtlasEntry[];
   installedTools: AgentActionInstalledTool[];
   windowsExecution: AgentWindowsExecutionPolicy;
+  verification: AgentVerificationPolicy;
   runtime: AgentActionRuntimeManifestSummary;
   proofHash: string;
 }
@@ -481,6 +541,9 @@ export interface AgentActionResult {
   stderrPreview?: string;
   artifacts?: string[];
   observedChanges?: string[];
+  verification?: AgentVerificationResult;
+  failureCategory?: AgentFailureCategory;
+  retryRoutes?: AgentRetryStrategyId[];
   value?: string;
   proofHash: string;
   error?: IpcError;
