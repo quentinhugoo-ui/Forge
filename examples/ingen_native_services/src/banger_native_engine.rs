@@ -2178,6 +2178,9 @@ pub struct BangerNativeRenderGraphCompilation {
     pub external_resource_count: usize,
     pub barrier_batch_count: usize,
     pub transient_alias_count: usize,
+    pub pass_resource_state_count: usize,
+    pub subresource_transition_count: usize,
+    pub external_access_op_count: usize,
     pub validation_issue_count: usize,
     pub compiled_order_hash: String,
     pub resource_lifetime_hash: String,
@@ -2185,6 +2188,9 @@ pub struct BangerNativeRenderGraphCompilation {
     pub pass_access_hash: String,
     pub external_resource_hash: String,
     pub transient_alias_hash: String,
+    pub pass_resource_state_hash: String,
+    pub subresource_transition_hash: String,
+    pub external_access_op_hash: String,
     pub validation_receipt_hash: String,
     pub graph_hash: String,
     pub resources: Vec<BangerNativeRenderGraphResource>,
@@ -2193,6 +2199,9 @@ pub struct BangerNativeRenderGraphCompilation {
     pub barrier_batches: Vec<BangerNativeRenderGraphBarrierBatch>,
     pub external_resources: Vec<BangerNativeRenderGraphExternalResource>,
     pub transient_aliases: Vec<BangerNativeRenderGraphTransientAlias>,
+    pub pass_resource_states: Vec<BangerNativeRenderGraphPassResourceState>,
+    pub subresource_transitions: Vec<BangerNativeRenderGraphSubresourceTransition>,
+    pub external_access_ops: Vec<BangerNativeRenderGraphExternalAccessOp>,
     pub validation_receipt: BangerNativeRenderGraphValidationReceipt,
 }
 
@@ -2295,16 +2304,70 @@ pub struct BangerNativeRenderGraphTransientAlias {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangerNativeRenderGraphPassResourceState {
+    pub pass_name: &'static str,
+    pub resource_name: String,
+    pub resource_hash: String,
+    pub pipeline: &'static str,
+    pub access: &'static str,
+    pub view_kind: &'static str,
+    pub reference_count: u32,
+    pub produced: bool,
+    pub render_pass_only_write: bool,
+    pub no_uav_barrier: bool,
+    pub external_access_mode: &'static str,
+    pub state_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRenderGraphSubresourceTransition {
+    pub transition_id: u32,
+    pub from_pass: &'static str,
+    pub to_pass: &'static str,
+    pub resource_name: String,
+    pub resource_hash: String,
+    pub before_access: &'static str,
+    pub after_access: &'static str,
+    pub before_queue: &'static str,
+    pub after_queue: &'static str,
+    pub subresource_range: &'static str,
+    pub transition_flags: &'static str,
+    pub no_uav_barrier: bool,
+    pub transition_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRenderGraphExternalAccessOp {
+    pub op_id: u32,
+    pub pass_name: &'static str,
+    pub resource_name: String,
+    pub resource_hash: String,
+    pub route: &'static str,
+    pub access_before: &'static str,
+    pub access_after: &'static str,
+    pub mode: &'static str,
+    pub op_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangerNativeRenderGraphValidationReceipt {
     pub schema: &'static str,
     pub authority: &'static str,
     pub checked_pass_count: usize,
     pub checked_resource_count: usize,
     pub checked_edge_count: usize,
+    pub checked_state_count: usize,
+    pub checked_transition_count: usize,
+    pub checked_external_access_op_count: usize,
     pub missing_producer_count: usize,
     pub illegal_write_count: usize,
     pub dependency_cycle_count: usize,
     pub external_route_issue_count: usize,
+    pub missing_transition_count: usize,
+    pub illegal_external_access_count: usize,
     pub validation_hash: String,
     pub issues: Vec<String>,
 }
@@ -3529,6 +3592,10 @@ fn compile_banger_render_graph(
         let transient_aliasable = !external_export && resident_bytes > 0;
         let transient_alias_group =
             render_graph_transient_alias_group(index as u32, resident_bytes, upload_bytes, transient_aliasable);
+        let last_stage = render_graph
+            .get(index + 1)
+            .map(|next_pass| next_pass.stage)
+            .unwrap_or(pass.stage);
         let resource_hash = banger_render_graph_resource_hash(
             &resource_name,
             pass,
@@ -3548,7 +3615,7 @@ fn compile_banger_render_graph(
             kind: pass.consumes_kind,
             producer_pass: pass.name,
             first_stage: pass.stage,
-            last_stage: pass.stage,
+            last_stage,
             access_mode,
             queue_kind,
             slot_count: slots.len(),
@@ -3687,11 +3754,19 @@ fn compile_banger_render_graph(
             }
         })
         .collect::<Vec<_>>();
+    let pass_resource_states =
+        build_render_graph_pass_resource_states(&compiled_passes, &resources, &external_resources);
+    let subresource_transitions = build_render_graph_subresource_transitions(&edges);
+    let external_access_ops =
+        build_render_graph_external_access_ops(&external_resources, &compiled_passes);
     let validation_receipt = build_render_graph_validation_receipt(
         &compiled_passes,
         &resources,
         &edges,
         &external_resources,
+        &pass_resource_states,
+        &subresource_transitions,
+        &external_access_ops,
     );
     let compiled_order_hash = banger_render_graph_order_hash(&compiled_passes);
     let resource_lifetime_hash = banger_render_graph_lifetime_hash(&resources);
@@ -3699,6 +3774,10 @@ fn compile_banger_render_graph(
     let pass_access_hash = banger_render_graph_pass_access_hash(&compiled_passes);
     let external_resource_hash = banger_render_graph_external_resources_hash(&external_resources);
     let transient_alias_hash = banger_render_graph_transient_aliases_hash(&transient_aliases);
+    let pass_resource_state_hash = banger_render_graph_pass_resource_states_hash(&pass_resource_states);
+    let subresource_transition_hash =
+        banger_render_graph_subresource_transitions_hash(&subresource_transitions);
+    let external_access_op_hash = banger_render_graph_external_access_ops_hash(&external_access_ops);
     let validation_receipt_hash = validation_receipt.validation_hash.clone();
     let monster_kasm_contract_hash = banger_render_graph_kasm_contract_hash(prepared, render_graph);
     let graph_hash = banger_render_graph_manifest_hash(
@@ -3709,6 +3788,9 @@ fn compile_banger_render_graph(
         &pass_access_hash,
         &external_resource_hash,
         &transient_alias_hash,
+        &pass_resource_state_hash,
+        &subresource_transition_hash,
+        &external_access_op_hash,
         &validation_receipt_hash,
         &monster_kasm_contract_hash,
         &compiled_passes,
@@ -3717,10 +3799,13 @@ fn compile_banger_render_graph(
         &barrier_batches,
         &external_resources,
         &transient_aliases,
+        &pass_resource_states,
+        &subresource_transitions,
+        &external_access_ops,
     );
     BangerNativeRenderGraphCompilation {
-        schema: "forge.banger.native_render_graph_compilation.v2",
-        schema_version: 2,
+        schema: "forge.banger.native_render_graph_compilation.v3",
+        schema_version: 3,
         authority: "monster_kasm_to_banger_native_render_graph",
         clean_room_basis: "local_unreal_sparse_study_rdg_rhi_meshpass_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
@@ -3737,6 +3822,9 @@ fn compile_banger_render_graph(
         external_resource_count: external_resources.len(),
         barrier_batch_count: barrier_batches.len(),
         transient_alias_count: transient_aliases.len(),
+        pass_resource_state_count: pass_resource_states.len(),
+        subresource_transition_count: subresource_transitions.len(),
+        external_access_op_count: external_access_ops.len(),
         validation_issue_count: validation_receipt.issues.len(),
         compiled_order_hash,
         resource_lifetime_hash,
@@ -3744,6 +3832,9 @@ fn compile_banger_render_graph(
         pass_access_hash,
         external_resource_hash,
         transient_alias_hash,
+        pass_resource_state_hash,
+        subresource_transition_hash,
+        external_access_op_hash,
         validation_receipt_hash,
         graph_hash,
         resources,
@@ -3752,6 +3843,9 @@ fn compile_banger_render_graph(
         barrier_batches,
         external_resources,
         transient_aliases,
+        pass_resource_states,
+        subresource_transitions,
+        external_access_ops,
         validation_receipt,
     }
 }
@@ -18401,17 +18495,342 @@ fn banger_render_graph_transient_aliases_hash(
     hex32(h.finalize().into())
 }
 
+fn build_render_graph_pass_resource_states(
+    passes: &[BangerNativeRenderGraphCompiledPass],
+    resources: &[BangerNativeRenderGraphResource],
+    external_resources: &[BangerNativeRenderGraphExternalResource],
+) -> Vec<BangerNativeRenderGraphPassResourceState> {
+    passes
+        .iter()
+        .zip(resources.iter())
+        .map(|(pass, resource)| {
+            let external_access_mode = external_resources
+                .iter()
+                .find(|external| external.resource_hash == resource.resource_hash)
+                .map(|external| external.route)
+                .unwrap_or("tracked_internal");
+            let view_kind = render_graph_resource_view_kind(resource.kind, resource.access_mode);
+            let pipeline = render_graph_pipeline_kind(pass.queue_kind);
+            let reference_count = (pass.reads.len() + pass.writes.len()).max(1) as u32;
+            let render_pass_only_write = render_graph_pass_only_write(resource.access_mode);
+            let no_uav_barrier = render_graph_no_uav_barrier(resource.access_mode, resource.queue_kind);
+            let state_hash = banger_render_graph_pass_resource_state_hash(
+                pass,
+                resource,
+                pipeline,
+                view_kind,
+                reference_count,
+                render_pass_only_write,
+                no_uav_barrier,
+                external_access_mode,
+            );
+            BangerNativeRenderGraphPassResourceState {
+                pass_name: pass.pass_name,
+                resource_name: resource.name.clone(),
+                resource_hash: resource.resource_hash.clone(),
+                pipeline,
+                access: resource.access_mode,
+                view_kind,
+                reference_count,
+                produced: !pass.writes.is_empty(),
+                render_pass_only_write,
+                no_uav_barrier,
+                external_access_mode,
+                state_hash,
+            }
+        })
+        .collect()
+}
+
+fn build_render_graph_subresource_transitions(
+    edges: &[BangerNativeRenderGraphEdge],
+) -> Vec<BangerNativeRenderGraphSubresourceTransition> {
+    edges
+        .iter()
+        .enumerate()
+        .map(|(index, edge)| {
+            let subresource_range = render_graph_subresource_range(edge.resource_name.as_str());
+            let transition_flags = render_graph_transition_flags(edge);
+            let no_uav_barrier = edge.read_access == edge.write_access
+                && !edge.async_boundary
+                && !edge.write_access.contains("write");
+            let transition_hash = banger_render_graph_subresource_transition_hash(
+                index as u32,
+                edge,
+                subresource_range,
+                transition_flags,
+                no_uav_barrier,
+            );
+            BangerNativeRenderGraphSubresourceTransition {
+                transition_id: index as u32,
+                from_pass: edge.from_pass,
+                to_pass: edge.to_pass,
+                resource_name: edge.resource_name.clone(),
+                resource_hash: edge.resource_hash.clone(),
+                before_access: edge.read_access,
+                after_access: edge.write_access,
+                before_queue: edge.from_queue,
+                after_queue: edge.to_queue,
+                subresource_range,
+                transition_flags,
+                no_uav_barrier,
+                transition_hash,
+            }
+        })
+        .collect()
+}
+
+fn build_render_graph_external_access_ops(
+    external_resources: &[BangerNativeRenderGraphExternalResource],
+    passes: &[BangerNativeRenderGraphCompiledPass],
+) -> Vec<BangerNativeRenderGraphExternalAccessOp> {
+    external_resources
+        .iter()
+        .enumerate()
+        .map(|(index, external)| {
+            let pass_name = passes
+                .iter()
+                .find(|pass| pass.writes.iter().any(|write| write == &external.resource_name))
+                .map(|pass| pass.pass_name)
+                .unwrap_or("external_access_resolve");
+            let access_before = if external.import_required {
+                "external_access"
+            } else {
+                external.access_mode
+            };
+            let access_after = if external.export_required {
+                "external_access"
+            } else {
+                external.access_mode
+            };
+            let mode = render_graph_external_access_mode(external);
+            let op_hash = banger_render_graph_external_access_op_hash(
+                index as u32,
+                pass_name,
+                external,
+                access_before,
+                access_after,
+                mode,
+            );
+            BangerNativeRenderGraphExternalAccessOp {
+                op_id: index as u32,
+                pass_name,
+                resource_name: external.resource_name.clone(),
+                resource_hash: external.resource_hash.clone(),
+                route: external.route,
+                access_before,
+                access_after,
+                mode,
+                op_hash,
+            }
+        })
+        .collect()
+}
+
+fn render_graph_resource_view_kind(kind: &str, access_mode: &str) -> &'static str {
+    match kind {
+        "shadow_page" => "texture_depth_array_view",
+        "surfel_radiance_cache" => "storage_texture_view",
+        "meshlet_page" => "storage_buffer_view",
+        "material_payload" => "uniform_buffer_view",
+        "sdf_brick" | "voxel_page" => "sparse_page_buffer_view",
+        _ if access_mode.contains("storage") => "storage_buffer_view",
+        _ => "shader_resource_view",
+    }
+}
+
+fn render_graph_pipeline_kind(queue_kind: &str) -> &'static str {
+    match queue_kind {
+        "async_compute" => "async_compute_pipeline",
+        "compute" => "compute_pipeline",
+        "copy" => "copy_pipeline",
+        _ => "graphics_pipeline",
+    }
+}
+
+fn render_graph_pass_only_write(access_mode: &str) -> bool {
+    matches!(access_mode, "copy_write_then_shader_read" | "storage_read_indirect_write")
+}
+
+fn render_graph_no_uav_barrier(access_mode: &str, queue_kind: &str) -> bool {
+    queue_kind != "copy" && !matches!(access_mode, "storage_read_write" | "storage_read_indirect_write")
+}
+
+fn render_graph_subresource_range(resource_name: &str) -> &'static str {
+    if resource_name.contains("shadow") {
+        "depth_array_all_mips"
+    } else if resource_name.contains("radiance") {
+        "radiance_clipmap_all_levels"
+    } else if resource_name.contains("material") {
+        "material_table_full_range"
+    } else {
+        "full_resource"
+    }
+}
+
+fn render_graph_transition_flags(edge: &BangerNativeRenderGraphEdge) -> &'static str {
+    if edge.async_boundary {
+        "async_compute_fence_transition"
+    } else if edge.from_queue == "copy" || edge.to_queue == "copy" {
+        "copy_queue_ownership_transition"
+    } else if edge.write_access.contains("write") {
+        "uav_or_render_target_barrier"
+    } else {
+        "read_only_state_merge"
+    }
+}
+
+fn render_graph_external_access_mode(
+    external: &BangerNativeRenderGraphExternalResource,
+) -> &'static str {
+    match (external.import_required, external.export_required) {
+        (true, true) => "import_then_extract",
+        (true, false) => "import_before_graph",
+        (false, true) => "extract_after_graph",
+        (false, false) => "tracked_internal",
+    }
+}
+
+fn banger_render_graph_pass_resource_state_hash(
+    pass: &BangerNativeRenderGraphCompiledPass,
+    resource: &BangerNativeRenderGraphResource,
+    pipeline: &str,
+    view_kind: &str,
+    reference_count: u32,
+    render_pass_only_write: bool,
+    no_uav_barrier: bool,
+    external_access_mode: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_pass_resource_state.v1\0");
+    h.update(pass.pass_hash.as_bytes());
+    h.update(resource.resource_hash.as_bytes());
+    h.update(pipeline.as_bytes());
+    h.update(resource.access_mode.as_bytes());
+    h.update(view_kind.as_bytes());
+    h.update(reference_count.to_le_bytes());
+    h.update([!pass.writes.is_empty() as u8]);
+    h.update([render_pass_only_write as u8]);
+    h.update([no_uav_barrier as u8]);
+    h.update(external_access_mode.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_pass_resource_states_hash(
+    states: &[BangerNativeRenderGraphPassResourceState],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_pass_resource_states.v1\0");
+    for state in states {
+        h.update(state.pass_name.as_bytes());
+        h.update(state.resource_hash.as_bytes());
+        h.update(state.pipeline.as_bytes());
+        h.update(state.access.as_bytes());
+        h.update(state.view_kind.as_bytes());
+        h.update(state.reference_count.to_le_bytes());
+        h.update([state.produced as u8]);
+        h.update([state.render_pass_only_write as u8]);
+        h.update([state.no_uav_barrier as u8]);
+        h.update(state.external_access_mode.as_bytes());
+        h.update(state.state_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_subresource_transition_hash(
+    transition_id: u32,
+    edge: &BangerNativeRenderGraphEdge,
+    subresource_range: &str,
+    transition_flags: &str,
+    no_uav_barrier: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_subresource_transition.v1\0");
+    h.update(transition_id.to_le_bytes());
+    h.update(edge.edge_hash.as_bytes());
+    h.update(edge.resource_hash.as_bytes());
+    h.update(edge.read_access.as_bytes());
+    h.update(edge.write_access.as_bytes());
+    h.update(edge.from_queue.as_bytes());
+    h.update(edge.to_queue.as_bytes());
+    h.update(subresource_range.as_bytes());
+    h.update(transition_flags.as_bytes());
+    h.update([no_uav_barrier as u8]);
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_subresource_transitions_hash(
+    transitions: &[BangerNativeRenderGraphSubresourceTransition],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_subresource_transitions.v1\0");
+    for transition in transitions {
+        h.update(transition.transition_id.to_le_bytes());
+        h.update(transition.resource_hash.as_bytes());
+        h.update(transition.before_access.as_bytes());
+        h.update(transition.after_access.as_bytes());
+        h.update(transition.transition_flags.as_bytes());
+        h.update([transition.no_uav_barrier as u8]);
+        h.update(transition.transition_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_external_access_op_hash(
+    op_id: u32,
+    pass_name: &str,
+    external: &BangerNativeRenderGraphExternalResource,
+    access_before: &str,
+    access_after: &str,
+    mode: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_external_access_op.v1\0");
+    h.update(op_id.to_le_bytes());
+    h.update(pass_name.as_bytes());
+    h.update(external.external_hash.as_bytes());
+    h.update(external.resource_hash.as_bytes());
+    h.update(external.route.as_bytes());
+    h.update(access_before.as_bytes());
+    h.update(access_after.as_bytes());
+    h.update(mode.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn banger_render_graph_external_access_ops_hash(
+    ops: &[BangerNativeRenderGraphExternalAccessOp],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_render_graph_external_access_ops.v1\0");
+    for op in ops {
+        h.update(op.op_id.to_le_bytes());
+        h.update(op.pass_name.as_bytes());
+        h.update(op.resource_hash.as_bytes());
+        h.update(op.route.as_bytes());
+        h.update(op.access_before.as_bytes());
+        h.update(op.access_after.as_bytes());
+        h.update(op.mode.as_bytes());
+        h.update(op.op_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn build_render_graph_validation_receipt(
     passes: &[BangerNativeRenderGraphCompiledPass],
     resources: &[BangerNativeRenderGraphResource],
     edges: &[BangerNativeRenderGraphEdge],
     external_resources: &[BangerNativeRenderGraphExternalResource],
+    pass_resource_states: &[BangerNativeRenderGraphPassResourceState],
+    subresource_transitions: &[BangerNativeRenderGraphSubresourceTransition],
+    external_access_ops: &[BangerNativeRenderGraphExternalAccessOp],
 ) -> BangerNativeRenderGraphValidationReceipt {
     let mut issues = Vec::new();
     let mut missing_producer_count = 0usize;
     let mut illegal_write_count = 0usize;
     let dependency_cycle_count = 0usize;
     let mut external_route_issue_count = 0usize;
+    let mut missing_transition_count = 0usize;
+    let mut illegal_external_access_count = 0usize;
     for pass in passes {
         if pass.writes.is_empty() {
             illegal_write_count += 1;
@@ -18426,6 +18845,12 @@ fn build_render_graph_validation_receipt(
             missing_producer_count += 1;
             issues.push(format!("resource:{}:missing_producer", resource.name));
         }
+        if !pass_resource_states
+            .iter()
+            .any(|state| state.resource_hash == resource.resource_hash)
+        {
+            issues.push(format!("resource:{}:missing_pass_state", resource.name));
+        }
         if resource.external_import || resource.external_export {
             let has_external = external_resources
                 .iter()
@@ -18434,33 +18859,71 @@ fn build_render_graph_validation_receipt(
                 external_route_issue_count += 1;
                 issues.push(format!("resource:{}:missing_external_route", resource.name));
             }
+            let has_external_op = external_access_ops
+                .iter()
+                .any(|op| op.resource_hash == resource.resource_hash);
+            if !has_external_op {
+                illegal_external_access_count += 1;
+                issues.push(format!("resource:{}:missing_external_access_op", resource.name));
+            }
         }
     }
     for edge in edges {
         if edge.from_pass == edge.to_pass {
             issues.push(format!("edge:{}:self_dependency", edge.from_pass));
         }
+        if !subresource_transitions
+            .iter()
+            .any(|transition| transition.resource_hash == edge.resource_hash)
+        {
+            missing_transition_count += 1;
+            issues.push(format!(
+                "edge:{}->{}:missing_subresource_transition",
+                edge.from_pass, edge.to_pass
+            ));
+        }
+    }
+    for state in pass_resource_states {
+        if state.produced && state.reference_count == 0 {
+            issues.push(format!("state:{}:zero_reference_count", state.pass_name));
+        }
+    }
+    for op in external_access_ops {
+        if op.access_before != "external_access" && op.access_after != "external_access" {
+            illegal_external_access_count += 1;
+            issues.push(format!("external_op:{}:no_external_side", op.resource_name));
+        }
     }
     let validation_hash = banger_render_graph_validation_receipt_hash(
         passes.len(),
         resources.len(),
         edges.len(),
+        pass_resource_states.len(),
+        subresource_transitions.len(),
+        external_access_ops.len(),
         missing_producer_count,
         illegal_write_count,
         dependency_cycle_count,
         external_route_issue_count,
+        missing_transition_count,
+        illegal_external_access_count,
         &issues,
     );
     BangerNativeRenderGraphValidationReceipt {
-        schema: "forge.banger.native_render_graph_validation_receipt.v1",
-        authority: "render_graph_lifetime_barrier_external_route_consistency",
+        schema: "forge.banger.native_render_graph_validation_receipt.v2",
+        authority: "render_graph_lifetime_barrier_external_access_state_consistency",
         checked_pass_count: passes.len(),
         checked_resource_count: resources.len(),
         checked_edge_count: edges.len(),
+        checked_state_count: pass_resource_states.len(),
+        checked_transition_count: subresource_transitions.len(),
+        checked_external_access_op_count: external_access_ops.len(),
         missing_producer_count,
         illegal_write_count,
         dependency_cycle_count,
         external_route_issue_count,
+        missing_transition_count,
+        illegal_external_access_count,
         validation_hash,
         issues,
     }
@@ -18470,21 +18933,31 @@ fn banger_render_graph_validation_receipt_hash(
     checked_pass_count: usize,
     checked_resource_count: usize,
     checked_edge_count: usize,
+    checked_state_count: usize,
+    checked_transition_count: usize,
+    checked_external_access_op_count: usize,
     missing_producer_count: usize,
     illegal_write_count: usize,
     dependency_cycle_count: usize,
     external_route_issue_count: usize,
+    missing_transition_count: usize,
+    illegal_external_access_count: usize,
     issues: &[String],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_render_graph_validation_receipt.v1\0");
+    h.update(b"forge.banger.native_render_graph_validation_receipt.v2\0");
     h.update((checked_pass_count as u64).to_le_bytes());
     h.update((checked_resource_count as u64).to_le_bytes());
     h.update((checked_edge_count as u64).to_le_bytes());
+    h.update((checked_state_count as u64).to_le_bytes());
+    h.update((checked_transition_count as u64).to_le_bytes());
+    h.update((checked_external_access_op_count as u64).to_le_bytes());
     h.update((missing_producer_count as u64).to_le_bytes());
     h.update((illegal_write_count as u64).to_le_bytes());
     h.update((dependency_cycle_count as u64).to_le_bytes());
     h.update((external_route_issue_count as u64).to_le_bytes());
+    h.update((missing_transition_count as u64).to_le_bytes());
+    h.update((illegal_external_access_count as u64).to_le_bytes());
     for issue in issues {
         h.update(issue.as_bytes());
     }
@@ -18519,6 +18992,9 @@ fn banger_render_graph_manifest_hash(
     pass_access_hash: &str,
     external_resource_hash: &str,
     transient_alias_hash: &str,
+    pass_resource_state_hash: &str,
+    subresource_transition_hash: &str,
+    external_access_op_hash: &str,
     validation_receipt_hash: &str,
     monster_kasm_contract_hash: &str,
     passes: &[BangerNativeRenderGraphCompiledPass],
@@ -18527,9 +19003,12 @@ fn banger_render_graph_manifest_hash(
     barrier_batches: &[BangerNativeRenderGraphBarrierBatch],
     external_resources: &[BangerNativeRenderGraphExternalResource],
     transient_aliases: &[BangerNativeRenderGraphTransientAlias],
+    pass_resource_states: &[BangerNativeRenderGraphPassResourceState],
+    subresource_transitions: &[BangerNativeRenderGraphSubresourceTransition],
+    external_access_ops: &[BangerNativeRenderGraphExternalAccessOp],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_render_graph_compilation.v2\0");
+    h.update(b"forge.banger.native_render_graph_compilation.v3\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(compiled_order_hash.as_bytes());
     h.update(resource_lifetime_hash.as_bytes());
@@ -18537,6 +19016,9 @@ fn banger_render_graph_manifest_hash(
     h.update(pass_access_hash.as_bytes());
     h.update(external_resource_hash.as_bytes());
     h.update(transient_alias_hash.as_bytes());
+    h.update(pass_resource_state_hash.as_bytes());
+    h.update(subresource_transition_hash.as_bytes());
+    h.update(external_access_op_hash.as_bytes());
     h.update(validation_receipt_hash.as_bytes());
     h.update(monster_kasm_contract_hash.as_bytes());
     for pass in passes {
@@ -18556,6 +19038,15 @@ fn banger_render_graph_manifest_hash(
     }
     for alias in transient_aliases {
         h.update(alias.alias_hash.as_bytes());
+    }
+    for state in pass_resource_states {
+        h.update(state.state_hash.as_bytes());
+    }
+    for transition in subresource_transitions {
+        h.update(transition.transition_hash.as_bytes());
+    }
+    for op in external_access_ops {
+        h.update(op.op_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -20894,9 +21385,9 @@ mod tests {
         assert_eq!(response.pipeline_cache_keys.len(), response.artifacts.len());
         assert_eq!(
             response.render_graph_compilation.schema,
-            "forge.banger.native_render_graph_compilation.v2"
+            "forge.banger.native_render_graph_compilation.v3"
         );
-        assert_eq!(response.render_graph_compilation.schema_version, 2);
+        assert_eq!(response.render_graph_compilation.schema_version, 3);
         assert_eq!(
             response.render_graph_compilation.authority,
             "monster_kasm_to_banger_native_render_graph"
@@ -20932,6 +21423,9 @@ mod tests {
         assert_eq!(response.render_graph_compilation.pass_access_hash.len(), 64);
         assert_eq!(response.render_graph_compilation.external_resource_hash.len(), 64);
         assert_eq!(response.render_graph_compilation.transient_alias_hash.len(), 64);
+        assert_eq!(response.render_graph_compilation.pass_resource_state_hash.len(), 64);
+        assert_eq!(response.render_graph_compilation.subresource_transition_hash.len(), 64);
+        assert_eq!(response.render_graph_compilation.external_access_op_hash.len(), 64);
         assert_eq!(response.render_graph_compilation.validation_receipt_hash.len(), 64);
         assert_eq!(
             response.render_graph_compilation.barrier_batch_count,
@@ -20946,12 +21440,54 @@ mod tests {
             response.render_graph_compilation.transient_aliases.len()
         );
         assert_eq!(
+            response.render_graph_compilation.pass_resource_state_count,
+            response.render_graph_compilation.pass_resource_states.len()
+        );
+        assert_eq!(
+            response.render_graph_compilation.subresource_transition_count,
+            response.render_graph_compilation.subresource_transitions.len()
+        );
+        assert_eq!(
+            response.render_graph_compilation.external_access_op_count,
+            response.render_graph_compilation.external_access_ops.len()
+        );
+        assert_eq!(
+            response.render_graph_compilation.pass_resource_state_count,
+            response.render_graph_compilation.resource_count
+        );
+        assert_eq!(
+            response.render_graph_compilation.subresource_transition_count,
+            response.render_graph_compilation.edge_count
+        );
+        assert_eq!(
+            response.render_graph_compilation.external_access_op_count,
+            response.render_graph_compilation.external_resource_count
+        );
+        assert_eq!(
             response.render_graph_compilation.validation_receipt.validation_hash,
             response.render_graph_compilation.validation_receipt_hash
         );
         assert_eq!(
             response.render_graph_compilation.validation_receipt.checked_pass_count,
             response.render_graph_compilation.pass_count
+        );
+        assert_eq!(
+            response.render_graph_compilation.validation_receipt.checked_state_count,
+            response.render_graph_compilation.pass_resource_state_count
+        );
+        assert_eq!(
+            response
+                .render_graph_compilation
+                .validation_receipt
+                .checked_transition_count,
+            response.render_graph_compilation.subresource_transition_count
+        );
+        assert_eq!(
+            response
+                .render_graph_compilation
+                .validation_receipt
+                .checked_external_access_op_count,
+            response.render_graph_compilation.external_access_op_count
         );
         assert_eq!(response.render_graph_compilation.validation_issue_count, 0);
         assert_eq!(
@@ -20966,6 +21502,20 @@ mod tests {
                 .render_graph_compilation
                 .validation_receipt
                 .illegal_write_count,
+            0
+        );
+        assert_eq!(
+            response
+                .render_graph_compilation
+                .validation_receipt
+                .missing_transition_count,
+            0
+        );
+        assert_eq!(
+            response
+                .render_graph_compilation
+                .validation_receipt
+                .illegal_external_access_count,
             0
         );
         assert!(response
@@ -21016,6 +21566,29 @@ mod tests {
             .transient_aliases
             .iter()
             .all(|alias| alias.alias_hash.len() == 64 && alias.aliasable_bytes > 0));
+        assert!(response
+            .render_graph_compilation
+            .pass_resource_states
+            .iter()
+            .all(|state| state.state_hash.len() == 64
+                && !state.pipeline.is_empty()
+                && !state.view_kind.is_empty()
+                && state.reference_count > 0
+                && !state.external_access_mode.is_empty()));
+        assert!(response
+            .render_graph_compilation
+            .subresource_transitions
+            .iter()
+            .all(|transition| transition.transition_hash.len() == 64
+                && !transition.subresource_range.is_empty()
+                && !transition.transition_flags.is_empty()));
+        assert!(response
+            .render_graph_compilation
+            .external_access_ops
+            .iter()
+            .all(|op| op.op_hash.len() == 64
+                && !op.mode.is_empty()
+                && (op.access_before == "external_access" || op.access_after == "external_access")));
         assert_eq!(
             response.pipeline_cache_manifest.schema,
             "forge.banger.native_pipeline_cache_manifest.v2"
