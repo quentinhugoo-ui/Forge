@@ -34,6 +34,7 @@ import type {
   AgentFailureCategory,
   AgentRetryStrategy,
   AgentRetryStrategyId,
+  AgentRuntimeAuditSummary,
   AgentVerificationPolicy,
   AgentVerificationProbe,
   AgentVerificationResult,
@@ -603,6 +604,7 @@ function result(
     virtualization: patch.virtualization,
     cloud: patch.cloud,
     automation: patch.automation,
+    audit: patch.audit,
     userPresenceRequired: patch.userPresenceRequired,
     failureCategory,
     retryRoutes: patch.retryRoutes ?? retryRoutesForFailure(failureCategory),
@@ -5925,6 +5927,100 @@ async function appendAutomationLedger(config: AgentActionHostConfig, entry: Agen
   };
 }
 
+type AgentRuntimeAuditEntry = {
+  schema: "ingen.agent_runtime_audit.entry.v1";
+  kind: "started" | "result" | "verification" | "blocked" | "summary";
+  action: AgentActionRequest["action"];
+  at: string;
+  requestHash: string;
+  accepted?: boolean;
+  failureCategory?: AgentFailureCategory;
+  commandLine?: string;
+  exitCode?: number | null;
+  stdoutPreview?: string;
+  stderrPreview?: string;
+  artifacts?: string[];
+  verificationProofHash?: string;
+  resultProofHash?: string;
+  proofHash: string;
+};
+
+function runtimeAuditPath(config: AgentActionHostConfig): string {
+  return resolve(config.workspaceRoot, ".ingen-agent-artifacts", "agent-action-runtime.jsonl");
+}
+
+function runtimeAuditEntry(input: Omit<AgentRuntimeAuditEntry, "schema" | "proofHash">): AgentRuntimeAuditEntry {
+  const entry: AgentRuntimeAuditEntry = {
+    schema: "ingen.agent_runtime_audit.entry.v1",
+    ...input,
+    proofHash: ""
+  };
+  entry.proofHash = hashJson({ ...entry, proofHash: "" });
+  return entry;
+}
+
+function runtimeAuditSummary(input: Omit<AgentRuntimeAuditSummary, "schema" | "proofHash">): AgentRuntimeAuditSummary {
+  const summary: AgentRuntimeAuditSummary = {
+    schema: "ingen.agent_runtime_audit.summary.v1",
+    ...input,
+    proofHash: ""
+  };
+  summary.proofHash = hashJson({ ...summary, proofHash: "" });
+  return summary;
+}
+
+async function appendRuntimeAuditEntries(
+  config: AgentActionHostConfig,
+  request: AgentActionRequest,
+  startedEntry: AgentRuntimeAuditEntry,
+  actionResult: AgentActionResult
+): Promise<AgentRuntimeAuditSummary> {
+  const auditPath = runtimeAuditPath(config);
+  await mkdir(dirname(auditPath), { recursive: true });
+  const resultEntry = runtimeAuditEntry({
+    kind: actionResult.accepted ? "result" : "blocked",
+    action: request.action,
+    at: new Date().toISOString(),
+    requestHash: startedEntry.requestHash,
+    accepted: actionResult.accepted,
+    failureCategory: actionResult.failureCategory,
+    commandLine: actionResult.commandLine,
+    exitCode: actionResult.exitCode,
+    stdoutPreview: actionResult.stdoutPreview,
+    stderrPreview: actionResult.stderrPreview,
+    artifacts: actionResult.artifacts,
+    verificationProofHash: actionResult.verification?.proofHash,
+    resultProofHash: actionResult.proofHash
+  });
+  const verificationEntry = runtimeAuditEntry({
+    kind: "verification",
+    action: request.action,
+    at: new Date().toISOString(),
+    requestHash: startedEntry.requestHash,
+    accepted: actionResult.verification?.passed,
+    verificationProofHash: actionResult.verification?.proofHash,
+    resultProofHash: actionResult.proofHash
+  });
+  const summaryEntry = runtimeAuditEntry({
+    kind: "summary",
+    action: request.action,
+    at: new Date().toISOString(),
+    requestHash: startedEntry.requestHash,
+    accepted: actionResult.accepted,
+    failureCategory: actionResult.failureCategory,
+    resultProofHash: actionResult.proofHash
+  });
+  await appendFile(auditPath, `${JSON.stringify(startedEntry)}\n${JSON.stringify(resultEntry)}\n${JSON.stringify(verificationEntry)}\n${JSON.stringify(summaryEntry)}\n`, "utf8");
+  const logBytes = await readFile(auditPath);
+  return runtimeAuditSummary({
+    path: pathLabel(config, { ...request, scope: "workspace" }, auditPath),
+    startedEntryHash: startedEntry.proofHash,
+    resultEntryHash: resultEntry.proofHash,
+    summaryEntryHash: summaryEntry.proofHash,
+    logSha256: createHash("sha256").update(logBytes).digest("hex")
+  });
+}
+
 function executeNativeTool(command: string, args: string[], cwd: string, timeoutMs = 15_000): GitExecution {
   const startedAt = Date.now();
   const child = spawnSync(command, args, {
@@ -7074,7 +7170,7 @@ async function automationRecordAction(config: AgentActionHostConfig, request: Ag
   });
 }
 
-export async function executeAgentActionRequest(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+async function executeAgentActionRequestInner(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
   try {
     switch (request.action) {
       case "list":
@@ -7192,6 +7288,44 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
     return result(config, request, {
       accepted: false,
       error: actionError("rust_unavailable", message, request)
+    });
+  }
+}
+
+export async function executeAgentActionRequest(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const startedEntry = runtimeAuditEntry({
+    kind: "started",
+    action: request.action,
+    at: new Date().toISOString(),
+    requestHash: hashJson(request)
+  });
+  const actionResult = await executeAgentActionRequestInner(config, request);
+  try {
+    const audit = await appendRuntimeAuditEntries(config, request, startedEntry, actionResult);
+    const audited: AgentActionResult = {
+      ...actionResult,
+      artifacts: [...(actionResult.artifacts ?? []), audit.path],
+      audit,
+      proofHash: ""
+    };
+    audited.proofHash = hashJson({ ...audited, proofHash: "" });
+    return audited;
+  } catch (error) {
+    const auditProbe = verificationProbe({
+      id: "runtime.audit.append",
+      kind: "event_log",
+      target: pathLabel(config, { ...request, scope: "workspace" }, runtimeAuditPath(config)),
+      expectation: "append-only runtime audit log entry written",
+      actual: error instanceof Error ? error.message : String(error),
+      passed: false
+    });
+    const verification = verificationResult([...(actionResult.verification?.probes ?? []), auditProbe]);
+    return result(config, request, {
+      ...actionResult,
+      accepted: false,
+      verification,
+      failureCategory: "command_error",
+      error: actionError("rust_unavailable", "Runtime audit append failed; refusing to report action success without audit proof.", error)
     });
   }
 }

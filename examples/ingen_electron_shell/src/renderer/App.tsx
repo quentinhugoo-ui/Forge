@@ -954,17 +954,10 @@ export function App() {
     if (!enabled) {
       void (async () => {
         const windowControls = globalThis.window?.forgeWindowControls;
-        await windowControls?.setWidgetTaskbarAutoHide?.(false).catch((error: unknown) => {
+        void windowControls?.setWidgetTaskbarAutoHide?.(false).catch((error: unknown) => {
           console.warn("Failed to restore widget taskbar state", error);
           return false;
         });
-        if (widgetModeSequenceRef.current !== sequenceToken) {
-          return;
-        }
-        await waitForWidgetMotion(WIDGET_TASKBAR_STEP_MS);
-        if (widgetModeSequenceRef.current !== sequenceToken) {
-          return;
-        }
         const nativeWidgetRestored = await windowControls?.setWidgetMode?.(false).catch((error: unknown) => {
           console.warn("Failed to restore native widget mode", error);
           return false;

@@ -923,6 +923,16 @@ export interface AgentCloudCliSummary {
   proofHash: string;
 }
 
+export interface AgentRuntimeAuditSummary {
+  schema: "ingen.agent_runtime_audit.summary.v1";
+  path: string;
+  startedEntryHash: string;
+  resultEntryHash: string;
+  summaryEntryHash: string;
+  logSha256: string;
+  proofHash: string;
+}
+
 export interface AgentActionResult {
   schema: "ingen.agent_action_host.result.v1";
   accepted: boolean;
@@ -954,6 +964,7 @@ export interface AgentActionResult {
   virtualization?: AgentVirtualizationSummary;
   cloud?: AgentCloudCliSummary;
   automation?: AgentAutomationLedgerEntry;
+  audit?: AgentRuntimeAuditSummary;
   userPresenceRequired?: boolean;
   failureCategory?: AgentFailureCategory;
   retryRoutes?: AgentRetryStrategyId[];

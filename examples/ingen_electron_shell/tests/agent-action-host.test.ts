@@ -824,6 +824,13 @@ describe("agent action host", () => {
       expect(writtenJson.documentMedia?.jsonValid).toBe(true);
       expect(writtenJson.documentMedia?.sha256).toMatch(/^[a-f0-9]{64}$/);
       expect(writtenJson.verification?.passed).toBe(true);
+      expect(writtenJson.audit?.schema).toBe("ingen.agent_runtime_audit.summary.v1");
+      expect(writtenJson.audit?.logSha256).toMatch(/^[a-f0-9]{64}$/);
+      const auditLog = await readFile(join(config.workspaceRoot, ".ingen-agent-artifacts", "agent-action-runtime.jsonl"), "utf8");
+      expect(auditLog).toContain('"kind":"started"');
+      expect(auditLog).toContain('"kind":"result"');
+      expect(auditLog).toContain('"kind":"verification"');
+      expect(auditLog).toContain('"kind":"summary"');
       await expect(readFile(join(config.workspaceRoot, "data", "report.json"), "utf8")).resolves.toContain("\"answer\": 42");
 
       const writtenCsv = await executeAgentActionRequest(config, {
