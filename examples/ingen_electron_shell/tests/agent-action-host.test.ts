@@ -92,6 +92,8 @@ describe("agent action host", () => {
     expect(manifest.verification.mutationCompletionRule).toBe("verified_or_blocked");
     expect(manifest.computerUse.schema).toBe("ingen.computer_use.policy.v1");
     expect(manifest.computerUse.executableActions).toContain("computer_inspect");
+    expect(manifest.computerUse.executableActions).toContain("computer_ui_tree");
+    expect(manifest.computerUse.executableActions).toContain("computer_click");
     expect(manifest.browserWeb.schema).toBe("ingen.browser_web.policy.v1");
     expect(manifest.browserWeb.executableActions).toContain("browser_download");
     expect(manifest.documentMedia.schema).toBe("ingen.document_media.policy.v1");
@@ -178,6 +180,12 @@ describe("agent action host", () => {
       "computer.appshot",
       "computer.focus_window",
       "computer.clipboard",
+      "computer.ui_tree",
+      "computer.ocr",
+      "computer.click",
+      "computer.type_text",
+      "computer.scroll",
+      "computer.drag",
       "browser.inspect_url",
       "browser.download",
       "browser.open_url",
@@ -277,6 +285,8 @@ describe("agent action host", () => {
 
     expect(policy.proofHash).toMatch(/^[a-f0-9]{64}$/);
     expect(policy.executableActions).toContain("computer_appshot");
+    expect(policy.executableActions).toContain("computer_ui_tree");
+    expect(policy.executableActions).toContain("computer_drag");
     expect(policy.interactionRequiresConfirmation).toBe(true);
     expect(policy.userPresenceMode).toBe("foreground_required_for_risky_gui_actions");
     expect(policy.pacingPolicy).toBe("single_action_then_verify");
@@ -388,6 +398,7 @@ describe("agent action host", () => {
       "windows.settings",
       "windows.credentials",
       "virtualization.wsl",
+      "computer.ui_automation",
       "automation.rpa"
     ]) {
       expect(byFamily.has(family)).toBe(true);
@@ -401,6 +412,15 @@ describe("agent action host", () => {
     expect(byFamily.get("windows.settings")?.approval).toBe("prompt");
     expect(byFamily.get("browser.cdp")?.status).toBe("planned");
     expect(byFamily.get("virtualization.wsl")?.status).toBe("available");
+    expect(byFamily.get("computer.ui_automation")?.status).toBe("available");
+    expect(byFamily.get("computer.ui_automation")?.executableActionIds).toEqual([
+      "computer.ui_tree",
+      "computer.ocr",
+      "computer.click",
+      "computer.type_text",
+      "computer.scroll",
+      "computer.drag"
+    ]);
     expect(byFamily.get("virtualization.hyperv_docker")?.status).toBe("available");
     expect(byFamily.get("virtualization.wsl")?.executableActionIds).toEqual(["virtualization.inspect", "virtualization.run_command"]);
     expect(byFamily.get("office.com")?.executableActionIds).toBeUndefined();
@@ -413,7 +433,7 @@ describe("agent action host", () => {
     expect(hint).toContain("LOCAL_ACTION_TOOLS v1");
     expect(hint).toContain("families=fs.list fs.search");
     expect(hint).toContain("windows_reach=shell.full can invoke PowerShell");
-    expect(hint).toContain("computer_use=Inspect GUI first");
+    expect(hint).toContain("computer_use=Inspect GUI/UIA first");
     expect(hint).toContain("retry=If a tool fails");
     expect(hint).toContain("format=Emit AGENT_ACTION_JSON");
     expect(hint).toContain("loop_style=Write natural progress notes");
@@ -621,6 +641,26 @@ describe("agent action host", () => {
     });
   });
 
+  windowsIt("inspects a bounded UI Automation tree without input", async () => {
+    await withTempWorkspace(async (config) => {
+      const inspected = await executeAgentActionRequest(config, {
+        action: "computer_ui_tree",
+        maxResults: 20
+      });
+
+      if (!inspected.accepted) {
+        expect(["missing_tool", "timeout", "command_error", "unverifiable"]).toContain(inspected.failureCategory);
+        expect(inspected.error?.message).toBeTruthy();
+        return;
+      }
+      expect(inspected.accepted).toBe(true);
+      expect(inspected.computerUse?.action).toBe("ui_tree");
+      expect(inspected.computerUse?.accessibilityTreeStatus).toBe("available");
+      expect(inspected.computerUse?.accessibilityTree?.length).toBeGreaterThan(0);
+      expect(inspected.verification?.passed).toBe(true);
+    });
+  });
+
   it("requires confirmation for privacy-sensitive GUI and clipboard actions", async () => {
     await withTempWorkspace(async (config) => {
       const appshot = await executeAgentActionRequest(config, {
@@ -643,6 +683,27 @@ describe("agent action host", () => {
       });
       expect(clipboard.accepted).toBe(false);
       expect(clipboard.userPresenceRequired).toBe(true);
+
+      const click = await executeAgentActionRequest(config, {
+        action: "computer_click",
+        x: 10,
+        y: 10
+      });
+      expect(click.accepted).toBe(false);
+      expect(click.userPresenceRequired).toBe(true);
+
+      const typed = await executeAgentActionRequest(config, {
+        action: "computer_type_text",
+        text: "hello"
+      });
+      expect(typed.accepted).toBe(false);
+      expect(typed.userPresenceRequired).toBe(true);
+
+      const ocr = await executeAgentActionRequest(config, {
+        action: "computer_ocr"
+      });
+      expect(ocr.accepted).toBe(false);
+      expect(ocr.userPresenceRequired).toBe(true);
     });
   });
 

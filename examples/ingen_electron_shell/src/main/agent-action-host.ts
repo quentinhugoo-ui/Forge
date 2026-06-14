@@ -21,6 +21,7 @@ import type {
   AgentComputerUsePolicy,
   AgentComputerUseSnapshot,
   AgentComputerWindowSummary,
+  AgentUiAutomationNodeSummary,
   AgentDocumentMediaKind,
   AgentDocumentMediaPolicy,
   AgentDocumentMediaSummary,
@@ -90,6 +91,12 @@ const AGENT_ACTION_EVENT_HINTS = [
   "computer.focus_window:/agent_focus_window_",
   "computer.clipboard_read:/agent_clipboard_read_",
   "computer.clipboard_write:/agent_clipboard_write_",
+  "computer.ui_tree:/agent_ui_tree_",
+  "computer.ocr:/agent_ocr_",
+  "computer.click:/agent_click_",
+  "computer.type_text:/agent_type_text_",
+  "computer.scroll:/agent_scroll_",
+  "computer.drag:/agent_drag_",
   "browser.inspect_url:/agent_browser_inspect_",
   "browser.download:/agent_browser_download_",
   "browser.open_url:/agent_browser_open_",
@@ -128,6 +135,12 @@ const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string>
   computer_focus_window: "/agent_focus_window_",
   computer_clipboard_read: "/agent_clipboard_read_",
   computer_clipboard_write: "/agent_clipboard_write_",
+  computer_ui_tree: "/agent_ui_tree_",
+  computer_ocr: "/agent_ocr_",
+  computer_click: "/agent_click_",
+  computer_type_text: "/agent_type_text_",
+  computer_scroll: "/agent_scroll_",
+  computer_drag: "/agent_drag_",
   browser_inspect_url: "/agent_browser_inspect_",
   browser_download: "/agent_browser_download_",
   browser_open_url: "/agent_browser_open_",
@@ -442,9 +455,9 @@ export function agentActionRoutingHint(): string {
   return [
     "LOCAL_ACTION_TOOLS v1",
     "summary=Use local actions when the user asks to inspect, search, create, copy, move, rename, delete files/folders, write/inspect documents, run commands, control Windows settings/tools, install/update software, download assets, or operate the workspace/computer.",
-    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create",
+    "families=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create",
     "windows_reach=shell.full can invoke PowerShell, cmd.exe, winget, reg.exe, schtasks, netsh, DISM, rundll32, Start-Process, ms-settings URIs, installers, CLIs, and other native Windows tools when confirmed:true is appropriate.",
-    "computer_use=Inspect GUI first, then act once, then verify by appshot/window state. Never approve security, payment, credential, destructive, or UAC prompts for the user.",
+    "computer_use=Inspect GUI/UIA first, then act once with confirmed:true, then verify by foreground/UI state. Never approve security, payment, credential, destructive, or UAC prompts for the user.",
     "format=Emit AGENT_ACTION_JSON only when real execution is needed, then wait for AGENT_ACTION_RESULT. The AGENT_ACTION_JSON marker must start its own line, with no prose before it. Never fake tool events.",
     "retry=If a tool fails, read AGENT_ACTION_RESULT and try another safe available route before concluding blocked.",
     "loop_style=Write natural progress notes with varied openings. Avoid repeating 'Je vais'; prefer present-tense observation, decision, then action."
@@ -888,13 +901,19 @@ export function createComputerUsePolicy(_config: AgentActionHostConfig): AgentCo
       "computer_appshot",
       "computer_focus_window",
       "computer_clipboard_read",
-      "computer_clipboard_write"
+      "computer_clipboard_write",
+      "computer_ui_tree",
+      "computer_ocr",
+      "computer_click",
+      "computer_type_text",
+      "computer_scroll",
+      "computer_drag"
     ],
     inspectionRequiresConfirmation: false,
     interactionRequiresConfirmation: true,
     userPresenceMode: "foreground_required_for_risky_gui_actions",
     pacingPolicy: "single_action_then_verify",
-    forbiddenPrompts: ["security", "payment", "credential", "destructive", "uac"],
+    forbiddenPrompts: ["security", "payment", "credential", "destructive", "uac", "password", "pin", "passkey", "credit card", "checkout"],
     proofHash: ""
   };
   policy.proofHash = hashJson({ ...policy, proofHash: "" });
@@ -1223,6 +1242,114 @@ function createExecutableActionCapabilities(): AgentActionCapability[] {
       writes: true,
       description: "Read or replace clipboard text after explicit confirmation.",
       notes: "Clipboard may contain secrets; reads and writes require confirmed:true."
+    }),
+    actionCapability({
+      id: "computer.ui_tree",
+      family: "computer.ui_automation",
+      surface: "desktop_gui",
+      title: "Inspect UI Automation tree",
+      status: "available",
+      risk: "read",
+      operations: ["inspect bounded accessibility tree", "summarize controls", "capture foreground UI structure"],
+      underlyingTools: ["Windows UIAutomationClient", "PowerShell UIAutomationTypes"],
+      fallbacks: ["computer.inspect", "app-specific API", "manual screenshot"],
+      verification: ["ui_state"],
+      approval: "none",
+      executableActionIds: ["computer.ui_tree"],
+      requiresApproval: false,
+      writes: false,
+      description: "Read a bounded Windows UI Automation tree without clicking or typing.",
+      notes: "Limited to a small depth/node budget so desktop inspection cannot become an unbounded scrape."
+    }),
+    actionCapability({
+      id: "computer.ocr",
+      family: "computer.ui_automation",
+      surface: "desktop_gui",
+      title: "Run confirmed OCR",
+      status: "available",
+      risk: "external_ui",
+      operations: ["OCR confirmed screenshot or image artifact", "return extracted text with proof"],
+      underlyingTools: ["tesseract.exe when installed", "PowerShell screenshot capture"],
+      fallbacks: ["computer.ui_tree", "manual user readout"],
+      verification: ["command_exit", "artifact_hash", "ui_state"],
+      approval: "prompt",
+      executableActionIds: ["computer.ocr"],
+      requiresApproval: true,
+      writes: true,
+      description: "Run OCR only with confirmation and only when a local OCR engine is actually available.",
+      notes: "If no OCR engine is detected, the action returns missing_tool instead of a fake success."
+    }),
+    actionCapability({
+      id: "computer.click",
+      family: "computer.ui_automation",
+      surface: "desktop_gui",
+      title: "Click foreground UI",
+      status: "available",
+      risk: "external_ui",
+      operations: ["single mouse click", "before and after foreground snapshots", "forbidden prompt detection"],
+      underlyingTools: ["user32 mouse_event", "Windows Forms cursor"],
+      fallbacks: ["UI Automation InvokePattern", "manual user click"],
+      verification: ["ui_state"],
+      approval: "prompt",
+      executableActionIds: ["computer.click"],
+      requiresApproval: true,
+      writes: true,
+      description: "Perform one confirmed foreground click with strict pacing and post-action verification.",
+      notes: "Blocks UAC, payment, credential and security prompts before injecting input."
+    }),
+    actionCapability({
+      id: "computer.type_text",
+      family: "computer.ui_automation",
+      surface: "desktop_gui",
+      title: "Type foreground text",
+      status: "available",
+      risk: "external_ui",
+      operations: ["single text typing action", "before and after foreground snapshots", "forbidden prompt detection"],
+      underlyingTools: ["System.Windows.Forms.SendKeys"],
+      fallbacks: ["clipboard paste with confirmation", "manual user typing"],
+      verification: ["ui_state"],
+      approval: "prompt",
+      executableActionIds: ["computer.type_text"],
+      requiresApproval: true,
+      writes: true,
+      description: "Type confirmed text into the foreground app after blocking sensitive prompts.",
+      notes: "Never type into password, payment, UAC or credential prompts."
+    }),
+    actionCapability({
+      id: "computer.scroll",
+      family: "computer.ui_automation",
+      surface: "desktop_gui",
+      title: "Scroll foreground UI",
+      status: "available",
+      risk: "external_ui",
+      operations: ["single mouse wheel scroll", "cursor and foreground verification"],
+      underlyingTools: ["user32 mouse_event wheel"],
+      fallbacks: ["UI Automation ScrollPattern", "manual user scroll"],
+      verification: ["ui_state"],
+      approval: "prompt",
+      executableActionIds: ["computer.scroll"],
+      requiresApproval: true,
+      writes: true,
+      description: "Perform one confirmed foreground scroll and report the verified UI state.",
+      notes: "Pacing stays one action per tool call."
+    }),
+    actionCapability({
+      id: "computer.drag",
+      family: "computer.ui_automation",
+      surface: "desktop_gui",
+      title: "Drag foreground UI",
+      status: "available",
+      risk: "external_ui",
+      operations: ["single bounded drag", "cursor movement verification", "before and after foreground snapshots"],
+      underlyingTools: ["user32 mouse_event", "Windows Forms cursor"],
+      fallbacks: ["UI Automation TransformPattern", "manual user drag"],
+      verification: ["ui_state"],
+      approval: "prompt",
+      executableActionIds: ["computer.drag"],
+      requiresApproval: true,
+      writes: true,
+      description: "Perform one confirmed drag-drop gesture with strict foreground safety checks.",
+      notes: "Blocks sensitive prompts and refuses missing coordinates."
     }),
     actionCapability({
       id: "browser.inspect_url",
@@ -1777,15 +1904,16 @@ export function createAgentCapabilityAtlas(config: AgentActionHostConfig): Agent
       family: "computer.ui_automation",
       surface: "desktop_gui",
       title: "Control desktop apps through accessibility and input",
-      status: "planned",
+      status: "available",
       risk: "external_ui",
       operations: ["screenshot", "OCR", "click", "type", "drag", "inspect accessibility tree"],
-      underlyingTools: ["UI Automation", "Win32 SendInput", "screenshot/OCR"],
+      underlyingTools: ["UI Automation", "user32 mouse_event", "System.Windows.Forms.SendKeys", "tesseract.exe when installed"],
       fallbacks: ["PowerShell/CLI", "app-specific COM/API"],
       verification: ["ui_state", "manual_confirmation"],
       approval: "prompt",
       writes: true,
-      notes: "Prefer structured API/CLI first, shell second, GUI/computer-use only when needed."
+      executableActionIds: ["computer.ui_tree", "computer.ocr", "computer.click", "computer.type_text", "computer.scroll", "computer.drag"],
+      notes: "UI tree inspection is read-only; OCR and input gestures are confirmation-gated and never pass UAC, payment or credential prompts."
     }),
     atlasEntry({
       id: "automation.rpa",
@@ -2106,7 +2234,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `browser_web=download:${manifest.browserWeb.downloadRequiresConfirmation ? "confirmed" : "open"} navigation:${manifest.browserWeb.navigationRequiresConfirmation ? "confirmed" : "open"} submission:${manifest.browserWeb.submissionRequiresConfirmation ? "confirmed" : "open"} artifact:${manifest.browserWeb.artifactPolicy}`,
     `document_media=workspace_writes:${manifest.documentMedia.workspaceWritesRequireConfirmation ? "confirmed" : "open"} computer_writes:${manifest.documentMedia.computerScopeWritesRequireConfirmation ? "confirmed" : "open"} office_com:${manifest.documentMedia.officeComRequiresConfirmation ? "confirmed" : "open"} macros:${manifest.documentMedia.macroPolicy} artifact:${manifest.documentMedia.artifactPolicy}`,
     `developer_automation=repo_inspect:${manifest.developerAutomation.repoInspectionRequiresConfirmation ? "confirmed" : "open"} checks:${manifest.developerAutomation.commandChecksRequireConfirmation ? "confirmed" : "open"} git_mutation:${manifest.developerAutomation.gitMutationRequiresConfirmation ? "confirmed" : "open"} cloud_writes:${manifest.developerAutomation.cloudWritesRequireConfirmation ? "confirmed" : "open"} mcp:${manifest.developerAutomation.mcpToolCallingStatus} automation:${manifest.developerAutomation.automationPersistenceRequiresConfirmation ? "confirmed" : "open"}`,
-    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.run_check virtualization.inspect virtualization.run_command automation.schedule automation.list automation.cancel automation.record",
+    "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full computer.inspect computer.appshot computer.focus_window computer.clipboard_read computer.clipboard_write computer.ui_tree computer.ocr computer.click computer.type_text computer.scroll computer.drag browser.inspect_url browser.download browser.open_url document.inspect document.write_text document.write_json document.write_csv document.convert_text dev.repo_status dev.git_diff dev.git_commit dev.git_push dev.github_pr_create dev.run_check virtualization.inspect virtualization.run_command automation.schedule automation.list automation.cancel automation.record",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -2120,7 +2248,7 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     "loop_style=Use varied, concrete progress notes. Do not start every step with 'Je vais'. Prefer forms like 'Le bureau contient...', 'Je regroupe maintenant...', 'Prochaine action logique...', 'Ce fichier va dans...'.",
     "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
     "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
-    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes thread_wakeups hyperv_guest_command_execution full_ui_automation_tree ocr mouse_keyboard_scroll_drag_drop",
+    "planned=browser.cdp_network_logs browser.playwright contained_webexplorer_dom office.com pdf_rich_parse media_codecs mcp.tools_call cloud_cli_writes thread_wakeups hyperv_guest_command_execution semantic_screen_targeting bundled_ocr_engine",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
@@ -2553,7 +2681,7 @@ type WindowsCommandExecution = {
 };
 
 function powerShellEncodedCommand(script: string): string {
-  return Buffer.from(script, "utf16le").toString("base64");
+  return Buffer.from(`$ProgressPreference = 'SilentlyContinue'\n${script}`, "utf16le").toString("base64");
 }
 
 function powerShellString(value: string): string {
@@ -2593,7 +2721,9 @@ function executePowerShellJson(script: string, timeoutMs = 10_000): { accepted: 
 }
 
 function parseJsonObject<T>(text: string): T {
-  return JSON.parse(text.trim()) as T;
+  const trimmed = text.trim();
+  const withoutClixml = trimmed.replace(/\r?\n#< CLIXML[\s\S]*$/u, "").trim();
+  return JSON.parse(withoutClixml) as T;
 }
 
 function computerUseSnapshot(input: Omit<AgentComputerUseSnapshot, "schema" | "proofHash">): AgentComputerUseSnapshot {
@@ -2604,6 +2734,103 @@ function computerUseSnapshot(input: Omit<AgentComputerUseSnapshot, "schema" | "p
   };
   snapshot.proofHash = hashJson({ ...snapshot, proofHash: "" });
   return snapshot;
+}
+
+type ForegroundUiSnapshot = {
+  pid?: number;
+  processName?: string;
+  title?: string;
+  cursor?: { x: number; y: number };
+  forbiddenPromptDetected?: boolean;
+};
+
+const FORBIDDEN_UI_PROMPT_PATTERN =
+  /\b(uac|user account control|administrator|windows security|security warning|credential|credentials|password|pin|passkey|payment|credit card|checkout|purchase|buy now|delete permanently)\b/i;
+
+function forbiddenPromptDetected(snapshot: ForegroundUiSnapshot): boolean {
+  const haystack = `${snapshot.processName ?? ""} ${snapshot.title ?? ""}`;
+  return FORBIDDEN_UI_PROMPT_PATTERN.test(haystack) || /^(consent|credentialui|secure system)$/i.test(snapshot.processName ?? "");
+}
+
+function foregroundUiProbe(snapshot: ForegroundUiSnapshot, id: string): AgentVerificationProbe {
+  return verificationProbe({
+    id,
+    kind: "ui_state",
+    target: snapshot.title || snapshot.processName || "foreground",
+    expectation: "foreground window and cursor state captured",
+    actual: `pid=${snapshot.pid ?? "unknown"} process=${snapshot.processName ?? "unknown"} title=${snapshot.title ?? ""} cursor=${snapshot.cursor ? `${snapshot.cursor.x},${snapshot.cursor.y}` : "unknown"} forbidden=${snapshot.forbiddenPromptDetected === true}`,
+    passed: true
+  });
+}
+
+function foregroundUiSnapshot(config: AgentActionHostConfig, timeoutMs = 5_000): { accepted: boolean; snapshot?: ForegroundUiSnapshot; error?: IpcError; exitCode?: number | null; timedOut?: boolean; stderr?: string } {
+  if (config.platform !== "win32") {
+    return {
+      accepted: false,
+      error: actionError("rust_unavailable", "Foreground UI inspection is available only on win32.", { platform: config.platform })
+    };
+  }
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class InGenForeground {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", SetLastError=true)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+$hwnd = [InGenForeground]::GetForegroundWindow()
+$pidValue = [uint32]0
+[void][InGenForeground]::GetWindowThreadProcessId($hwnd, [ref]$pidValue)
+$builder = [System.Text.StringBuilder]::new(512)
+[void][InGenForeground]::GetWindowText($hwnd, $builder, $builder.Capacity)
+$process = if ($pidValue -gt 0) { Get-Process -Id $pidValue -ErrorAction SilentlyContinue } else { $null }
+$cursor = [System.Windows.Forms.Cursor]::Position
+[pscustomobject]@{
+  pid = [int]$pidValue
+  processName = if ($process) { $process.ProcessName } else { "" }
+  title = $builder.ToString()
+  cursor = [pscustomobject]@{ x = $cursor.X; y = $cursor.Y }
+} | ConvertTo-Json -Depth 5 -Compress
+`;
+  const execution = executePowerShellJson(script, timeoutMs);
+  if (!execution.accepted) {
+    return {
+      accepted: false,
+      error: execution.error,
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut,
+      stderr: execution.stderr
+    };
+  }
+  const parsed = parseJsonObject<ForegroundUiSnapshot>(execution.stdout);
+  parsed.forbiddenPromptDetected = forbiddenPromptDetected(parsed);
+  return { accepted: true, snapshot: parsed, exitCode: execution.exitCode, timedOut: execution.timedOut };
+}
+
+function requireConfirmedForegroundInput(config: AgentActionHostConfig, request: AgentActionRequest): AgentActionResult | undefined {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "Foreground UI interaction requires confirmed:true and user presence.", request)
+    });
+  }
+  if (config.platform !== "win32") {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "missing_tool",
+      error: actionError("rust_unavailable", "Foreground UI interaction is available only on win32.", request)
+    });
+  }
+  return undefined;
 }
 
 function appshotArtifact(input: Omit<AgentAppshotArtifact, "schema" | "proofHash">): AgentAppshotArtifact {
@@ -3041,6 +3268,426 @@ $actual = Get-Clipboard -Raw
     ]),
     value: charDeltaValue(text.length, 0),
     userPresenceRequired: true
+  });
+}
+
+async function computerUiTreeAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (config.platform !== "win32") {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "missing_tool",
+      error: actionError("rust_unavailable", "Windows UI Automation tree inspection is available only on win32.", request)
+    });
+  }
+  const maxNodes = clampMaxResults(request.maxResults, 80);
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class InGenUiTreeForeground {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", SetLastError=true)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+$maxNodes = ${maxNodes}
+$maxDepth = 3
+$script:count = 0
+function SafeValue([scriptblock]$block, $fallback = $null) {
+  try { & $block } catch { $fallback }
+}
+function NodeFor($element, [int]$depth) {
+  if ($null -eq $element -or $script:count -ge $maxNodes) { return $null }
+  $script:count += 1
+  $rect = SafeValue { $element.Current.BoundingRectangle } $null
+  $children = @()
+  if ($depth -lt $maxDepth) {
+    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $child = SafeValue { $walker.GetFirstChild($element) } $null
+    while ($null -ne $child -and $script:count -lt $maxNodes) {
+      $node = NodeFor $child ($depth + 1)
+      if ($null -ne $node) { $children += $node }
+      $child = SafeValue { $walker.GetNextSibling($child) } $null
+    }
+  }
+  $node = [ordered]@{
+    name = [string](SafeValue { $element.Current.Name } "")
+    automationId = [string](SafeValue { $element.Current.AutomationId } "")
+    controlType = [string]((SafeValue { $element.Current.ControlType.ProgrammaticName } "") -replace '^ControlType\\.', '')
+    className = [string](SafeValue { $element.Current.ClassName } "")
+    enabled = [bool](SafeValue { $element.Current.IsEnabled } $false)
+    focused = [bool](SafeValue { $element.Current.HasKeyboardFocus } $false)
+  }
+  if ($null -ne $rect) {
+    $node.boundingRectangle = [pscustomobject]@{ x = [int]$rect.X; y = [int]$rect.Y; width = [int]$rect.Width; height = [int]$rect.Height }
+  }
+  if ($children.Count -gt 0) { $node.children = @($children) }
+  [pscustomobject]$node
+}
+$hwnd = [InGenUiTreeForeground]::GetForegroundWindow()
+$pidValue = [uint32]0
+[void][InGenUiTreeForeground]::GetWindowThreadProcessId($hwnd, [ref]$pidValue)
+$builder = [System.Text.StringBuilder]::new(512)
+[void][InGenUiTreeForeground]::GetWindowText($hwnd, $builder, $builder.Capacity)
+$process = if ($pidValue -gt 0) { Get-Process -Id $pidValue -ErrorAction SilentlyContinue } else { $null }
+$root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+if ($null -eq $root) { $root = [System.Windows.Automation.AutomationElement]::RootElement }
+$tree = NodeFor $root 0
+[pscustomobject]@{
+  window = [pscustomobject]@{
+    pid = [int]$pidValue
+    processName = if ($process) { $process.ProcessName } else { "" }
+    title = $builder.ToString()
+    focused = $true
+  }
+  nodeCount = $script:count
+  tree = @($tree)
+} | ConvertTo-Json -Depth 12 -Compress
+`;
+  const execution = executePowerShellJson(script, 10_000);
+  if (!execution.accepted) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: "powershell.exe -EncodedCommand <computer.ui_tree>",
+      executionAdapter: "powershell",
+      routeId: "computer.ui_tree",
+      exitCode: execution.exitCode,
+      timedOut: execution.timedOut,
+      stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: execution.timedOut ? "timeout" : "missing_tool",
+      error: execution.error
+    });
+  }
+  const parsed = parseJsonObject<{
+    window?: AgentComputerWindowSummary;
+    nodeCount?: number;
+    tree?: AgentUiAutomationNodeSummary[];
+  }>(execution.stdout);
+  const tree = Array.isArray(parsed.tree) ? parsed.tree : [];
+  const snapshot = computerUseSnapshot({
+    action: "ui_tree",
+    displays: [],
+    windows: parsed.window ? [parsed.window] : [],
+    accessibilityTreeStatus: "available",
+    ocrStatus: "planned",
+    accessibilityTree: tree
+  });
+  const nodeCount = parsed.nodeCount ?? tree.length;
+  return result(config, request, {
+    accepted: true,
+    commandLine: "powershell.exe -EncodedCommand <computer.ui_tree>",
+    executionAdapter: "powershell",
+    routeId: "computer.ui_tree",
+    exitCode: execution.exitCode,
+    stdoutPreview: execution.stdout.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`ui_tree_nodes:${nodeCount}`, `foreground:${parsed.window?.processName ?? "unknown"}`],
+    verification: verificationResult([
+      verificationProbe({
+        id: "computer.ui_tree.nodes",
+        kind: "ui_state",
+        target: parsed.window?.title ?? "foreground",
+        expectation: "bounded UI Automation tree returned",
+        actual: `nodes=${nodeCount}`,
+        passed: nodeCount > 0
+      })
+    ]),
+    computerUse: snapshot
+  });
+}
+
+async function computerOcrAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  if (request.confirmed !== true) {
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      error: actionError("bad_payload", "OCR requires confirmed:true because screenshots/images may expose private information.", request)
+    });
+  }
+  if (config.platform !== "win32") {
+    return result(config, request, {
+      accepted: false,
+      failureCategory: "missing_tool",
+      error: actionError("rust_unavailable", "OCR screenshot capture is available only on win32.", request)
+    });
+  }
+  const tesseract = detectToolPath(config, "tesseract.exe");
+  if (!tesseract) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: "where.exe tesseract.exe",
+      failureCategory: "missing_tool",
+      error: actionError("rust_unavailable", "No local OCR engine was detected. Install tesseract.exe or provide a supported OCR backend.", request),
+      verification: verificationResult([
+        verificationProbe({
+          id: "computer.ocr.engine",
+          kind: "command_exit",
+          target: "tesseract.exe",
+          expectation: "OCR engine detected before claiming OCR success",
+          actual: "missing",
+          passed: false
+        })
+      ])
+    });
+  }
+  const imagePath = resolveActionPath(
+    config,
+    { ...request, scope: request.scope ?? "workspace" },
+    request.path ?? `.ingen-agent-artifacts/ocr-${Date.now()}.png`
+  );
+  if (typeof imagePath !== "string") {
+    return result(config, request, { accepted: false, error: imagePath });
+  }
+  if (!request.path) {
+    await mkdir(dirname(imagePath), { recursive: true });
+    const captureScript = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$path = ${powerShellString(imagePath)}
+$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bitmap = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+try {
+  $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+  $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+} finally {
+  $graphics.Dispose()
+  $bitmap.Dispose()
+}
+`;
+    const captured = executePowerShellJson(captureScript, 12_000);
+    if (!captured.accepted) {
+      return result(config, request, {
+        accepted: false,
+        commandLine: "powershell.exe -EncodedCommand <computer.ocr.capture>",
+        executionAdapter: "powershell",
+        routeId: "computer.ocr",
+        exitCode: captured.exitCode,
+        timedOut: captured.timedOut,
+        stderrPreview: captured.stderr.slice(0, MAX_PREVIEW_CHARS),
+        failureCategory: captured.timedOut ? "timeout" : "command_error",
+        error: captured.error
+      });
+    }
+  }
+  const imageBytes = await readFile(imagePath);
+  const imageHash = createHash("sha256").update(imageBytes).digest("hex");
+  const startedAt = Date.now();
+  const ocr = spawnSync(tesseract, [imagePath, "stdout"], {
+    cwd: config.cwd,
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: Math.min(commandTimeout(request), 60_000),
+    windowsHide: true
+  });
+  const timedOut = commandTimedOut(ocr.error);
+  const accepted = !ocr.error && ocr.status === 0;
+  const text = ocr.stdout ?? "";
+  const commandLine = renderCommandLine(tesseract, [imagePath, "stdout"]);
+  const snapshot = computerUseSnapshot({
+    action: "ocr",
+    displays: [],
+    windows: [],
+    accessibilityTreeStatus: "planned",
+    ocrStatus: accepted ? "available" : "blocked",
+    ocrText: text.slice(0, MAX_PREVIEW_CHARS)
+  });
+  return result(config, request, {
+    accepted,
+    path: pathLabel(config, request, imagePath),
+    commandLine,
+    routeId: "computer.ocr",
+    exitCode: ocr.status ?? null,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    timedOut,
+    stdoutPreview: text.slice(0, MAX_PREVIEW_CHARS),
+    stderrPreview: (ocr.stderr ?? "").slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [`ocr_chars:${text.length}`, `image_sha256:${imageHash}`],
+    verification: verificationResult([
+      await filesystemProbe("computer.ocr.image", imagePath, "file"),
+      verificationProbe({
+        id: "computer.ocr.engine_exit",
+        kind: "command_exit",
+        target: commandLine,
+        expectation: "OCR engine exit_code=0 and timed_out=false",
+        actual: `exit_code=${ocr.status ?? "unknown"} timed_out=${timedOut}`,
+        passed: accepted && !timedOut
+      }),
+      verificationProbe({
+        id: "computer.ocr.image_hash",
+        kind: "artifact_hash",
+        target: imagePath,
+        expectation: "image sha256 computed",
+        actual: imageHash,
+        passed: /^[a-f0-9]{64}$/.test(imageHash)
+      })
+    ]),
+    computerUse: snapshot,
+    userPresenceRequired: true,
+    error: accepted ? undefined : actionError("rust_unavailable", ocr.error?.message ?? `OCR exited with status ${ocr.status ?? "unknown"}.`, { stderr: ocr.stderr, timedOut })
+  });
+}
+
+function sendKeysLiteral(value: string): string {
+  return value.replace(/[+^%~()[\]{}]/g, (char) => `{${char}}`);
+}
+
+async function computerInputAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
+  const confirmationError = requireConfirmedForegroundInput(config, request);
+  if (confirmationError) {
+    return confirmationError;
+  }
+  const before = foregroundUiSnapshot(config);
+  if (!before.accepted || !before.snapshot) {
+    return result(config, request, {
+      accepted: false,
+      commandLine: "powershell.exe -EncodedCommand <computer.input.before>",
+      executionAdapter: "powershell",
+      routeId: request.action.replace("_", "."),
+      exitCode: before.exitCode,
+      timedOut: before.timedOut,
+      stderrPreview: before.stderr?.slice(0, MAX_PREVIEW_CHARS),
+      failureCategory: before.timedOut ? "timeout" : "unverifiable",
+      error: before.error
+    });
+  }
+  if (before.snapshot.forbiddenPromptDetected) {
+    const snapshot = computerUseSnapshot({
+      action: request.action.replace("computer_", "") as AgentComputerUseSnapshot["action"],
+      displays: [],
+      windows: before.snapshot.pid
+        ? [{ pid: before.snapshot.pid, processName: before.snapshot.processName ?? "", title: before.snapshot.title ?? "", focused: true }]
+        : [],
+      accessibilityTreeStatus: "blocked",
+      ocrStatus: "blocked",
+      cursor: before.snapshot.cursor,
+      forbiddenPromptDetected: true
+    });
+    return result(config, request, {
+      accepted: false,
+      userPresenceRequired: true,
+      failureCategory: "denied",
+      computerUse: snapshot,
+      verification: verificationResult([foregroundUiProbe(before.snapshot, "computer.input.forbidden_prompt")]),
+      error: actionError("bad_payload", "Foreground UI interaction is blocked on security, credential, payment or UAC prompts.", before.snapshot)
+    });
+  }
+  const button = request.button ?? "left";
+  const x = request.x;
+  const y = request.y;
+  const toX = request.toX;
+  const toY = request.toY;
+  const deltaY = request.deltaY ?? -480;
+  if ((request.action === "computer_click" || request.action === "computer_drag") && (!Number.isInteger(x) || !Number.isInteger(y))) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "x and y integer coordinates are required for click and drag.", request)
+    });
+  }
+  if (request.action === "computer_drag" && (!Number.isInteger(toX) || !Number.isInteger(toY))) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "toX and toY integer coordinates are required for drag.", request)
+    });
+  }
+  if (request.action === "computer_type_text" && !request.text) {
+    return result(config, request, {
+      accepted: false,
+      error: actionError("bad_payload", "text is required for computer_type_text.", request)
+    });
+  }
+  const routeId = request.action.replace("computer_", "computer.");
+  const actionScript =
+    request.action === "computer_type_text"
+      ? `
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait(${powerShellString(sendKeysLiteral(request.text ?? ""))})
+`
+      : `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class InGenMouseInput {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(int flags, int dx, int dy, int data, UIntPtr extraInfo);
+}
+"@
+$leftDown = 0x0002; $leftUp = 0x0004; $rightDown = 0x0008; $rightUp = 0x0010; $middleDown = 0x0020; $middleUp = 0x0040; $wheel = 0x0800
+$down = if (${powerShellString(button)} -eq 'right') { $rightDown } elseif (${powerShellString(button)} -eq 'middle') { $middleDown } else { $leftDown }
+$up = if (${powerShellString(button)} -eq 'right') { $rightUp } elseif (${powerShellString(button)} -eq 'middle') { $middleUp } else { $leftUp }
+${Number.isInteger(x) && Number.isInteger(y) ? `[void][InGenMouseInput]::SetCursorPos(${x}, ${y})` : ""}
+Start-Sleep -Milliseconds 120
+${request.action === "computer_scroll" ? `[InGenMouseInput]::mouse_event($wheel, 0, 0, ${deltaY}, [UIntPtr]::Zero)` : ""}
+${request.action === "computer_click" ? "[InGenMouseInput]::mouse_event($down, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80; [InGenMouseInput]::mouse_event($up, 0, 0, 0, [UIntPtr]::Zero)" : ""}
+${request.action === "computer_drag" ? `[InGenMouseInput]::mouse_event($down, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 120; [void][InGenMouseInput]::SetCursorPos(${toX}, ${toY}); Start-Sleep -Milliseconds 120; [InGenMouseInput]::mouse_event($up, 0, 0, 0, [UIntPtr]::Zero)` : ""}
+`;
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+${actionScript}
+Start-Sleep -Milliseconds 180
+[pscustomobject]@{ ok = $true } | ConvertTo-Json -Compress
+`;
+  const execution = executePowerShellJson(script, 8_000);
+  const after = foregroundUiSnapshot(config);
+  const actionName = request.action.replace("computer_", "") as AgentComputerUseSnapshot["action"];
+  const snapshot = computerUseSnapshot({
+    action: actionName,
+    displays: [],
+    windows: after.snapshot?.pid
+      ? [{ pid: after.snapshot.pid, processName: after.snapshot.processName ?? "", title: after.snapshot.title ?? "", focused: true }]
+      : [],
+    accessibilityTreeStatus: after.accepted ? "available" : "blocked",
+    ocrStatus: "planned",
+    cursor: after.snapshot?.cursor ?? before.snapshot.cursor,
+    inputSummary: request.action === "computer_type_text" ? `typed_chars:${request.text?.length ?? 0}` : request.action,
+    forbiddenPromptDetected: after.snapshot?.forbiddenPromptDetected
+  });
+  const verification = verificationResult([
+    foregroundUiProbe(before.snapshot, "computer.input.before"),
+    verificationProbe({
+      id: "computer.input.action_exit",
+      kind: "command_exit",
+      target: `powershell.exe -EncodedCommand <${routeId}>`,
+      expectation: "input command exit_code=0 and timed_out=false",
+      actual: `exit_code=${execution.exitCode ?? "unknown"} timed_out=${execution.timedOut}`,
+      passed: execution.accepted && execution.exitCode === 0 && !execution.timedOut
+    }),
+    after.snapshot
+      ? foregroundUiProbe(after.snapshot, "computer.input.after")
+      : verificationProbe({
+          id: "computer.input.after",
+          kind: "ui_state",
+          expectation: "post-action foreground state captured",
+          actual: after.error?.message ?? "missing",
+          passed: false
+        })
+  ]);
+  return result(config, request, {
+    accepted: execution.accepted && after.accepted,
+    commandLine: `powershell.exe -EncodedCommand <${routeId}>`,
+    executionAdapter: "powershell",
+    routeId,
+    exitCode: execution.exitCode,
+    timedOut: execution.timedOut,
+    stderrPreview: execution.stderr.slice(0, MAX_PREVIEW_CHARS),
+    observedChanges: [
+      `foreground_before:${before.snapshot.processName ?? "unknown"}`,
+      `foreground_after:${after.snapshot?.processName ?? "unknown"}`,
+      request.action === "computer_type_text" ? `typed_chars:${request.text?.length ?? 0}` : actionName
+    ],
+    verification,
+    computerUse: snapshot,
+    userPresenceRequired: true,
+    failureCategory: execution.accepted && after.accepted ? undefined : "unverifiable",
+    error: execution.accepted && after.accepted ? undefined : execution.error ?? after.error ?? actionError("rust_unavailable", "Foreground UI input could not be independently verified.", request)
   });
 }
 
@@ -4827,6 +5474,15 @@ export async function executeAgentActionRequest(config: AgentActionHostConfig, r
         return await computerClipboardReadAction(config, request);
       case "computer_clipboard_write":
         return await computerClipboardWriteAction(config, request);
+      case "computer_ui_tree":
+        return await computerUiTreeAction(config, request);
+      case "computer_ocr":
+        return await computerOcrAction(config, request);
+      case "computer_click":
+      case "computer_type_text":
+      case "computer_scroll":
+      case "computer_drag":
+        return await computerInputAction(config, request);
       case "browser_inspect_url":
         return await browserInspectUrlAction(config, request);
       case "browser_download":

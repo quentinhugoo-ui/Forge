@@ -13,6 +13,12 @@ export const AGENT_APPSHOT_COMMAND = "/agent_appshot_";
 export const AGENT_FOCUS_WINDOW_COMMAND = "/agent_focus_window_";
 export const AGENT_CLIPBOARD_READ_COMMAND = "/agent_clipboard_read_";
 export const AGENT_CLIPBOARD_WRITE_COMMAND = "/agent_clipboard_write_";
+export const AGENT_UI_TREE_COMMAND = "/agent_ui_tree_";
+export const AGENT_OCR_COMMAND = "/agent_ocr_";
+export const AGENT_CLICK_COMMAND = "/agent_click_";
+export const AGENT_TYPE_TEXT_COMMAND = "/agent_type_text_";
+export const AGENT_SCROLL_COMMAND = "/agent_scroll_";
+export const AGENT_DRAG_COMMAND = "/agent_drag_";
 export const AGENT_BROWSER_INSPECT_COMMAND = "/agent_browser_inspect_";
 export const AGENT_BROWSER_DOWNLOAD_COMMAND = "/agent_browser_download_";
 export const AGENT_BROWSER_OPEN_COMMAND = "/agent_browser_open_";
@@ -48,6 +54,12 @@ export const AGENT_ACTION_EVENT_COMMANDS = [
   AGENT_FOCUS_WINDOW_COMMAND,
   AGENT_CLIPBOARD_READ_COMMAND,
   AGENT_CLIPBOARD_WRITE_COMMAND,
+  AGENT_UI_TREE_COMMAND,
+  AGENT_OCR_COMMAND,
+  AGENT_CLICK_COMMAND,
+  AGENT_TYPE_TEXT_COMMAND,
+  AGENT_SCROLL_COMMAND,
+  AGENT_DRAG_COMMAND,
   AGENT_BROWSER_INSPECT_COMMAND,
   AGENT_BROWSER_DOWNLOAD_COMMAND,
   AGENT_BROWSER_OPEN_COMMAND,
@@ -93,6 +105,12 @@ const AGENT_ACTION_EVENT_TEXT = new Map<AgentActionEventCommand, string>([
   [AGENT_FOCUS_WINDOW_COMMAND, "confirmed window focus requested"],
   [AGENT_CLIPBOARD_READ_COMMAND, "confirmed clipboard text inspected"],
   [AGENT_CLIPBOARD_WRITE_COMMAND, "confirmed clipboard text replaced"],
+  [AGENT_UI_TREE_COMMAND, "UI Automation tree inspected"],
+  [AGENT_OCR_COMMAND, "confirmed OCR completed"],
+  [AGENT_CLICK_COMMAND, "confirmed foreground click verified"],
+  [AGENT_TYPE_TEXT_COMMAND, "confirmed foreground typing verified"],
+  [AGENT_SCROLL_COMMAND, "confirmed foreground scroll verified"],
+  [AGENT_DRAG_COMMAND, "confirmed foreground drag verified"],
   [AGENT_BROWSER_INSPECT_COMMAND, "web page state inspected"],
   [AGENT_BROWSER_DOWNLOAD_COMMAND, "confirmed web download verified"],
   [AGENT_BROWSER_OPEN_COMMAND, "confirmed browser navigation requested"],
@@ -129,6 +147,12 @@ export const AGENT_ACTION_EVENT_HINTS: readonly [string, AgentActionEventCommand
   ["computer.focus_window", AGENT_FOCUS_WINDOW_COMMAND],
   ["computer.clipboard_read", AGENT_CLIPBOARD_READ_COMMAND],
   ["computer.clipboard_write", AGENT_CLIPBOARD_WRITE_COMMAND],
+  ["computer.ui_tree", AGENT_UI_TREE_COMMAND],
+  ["computer.ocr", AGENT_OCR_COMMAND],
+  ["computer.click", AGENT_CLICK_COMMAND],
+  ["computer.type_text", AGENT_TYPE_TEXT_COMMAND],
+  ["computer.scroll", AGENT_SCROLL_COMMAND],
+  ["computer.drag", AGENT_DRAG_COMMAND],
   ["browser.inspect_url", AGENT_BROWSER_INSPECT_COMMAND],
   ["browser.download", AGENT_BROWSER_DOWNLOAD_COMMAND],
   ["browser.open_url", AGENT_BROWSER_OPEN_COMMAND],
@@ -167,6 +191,12 @@ const AGENT_ACTION_EVENT_BY_ACTION = new Map<string, AgentActionEventCommand>([
   ["computer_focus_window", AGENT_FOCUS_WINDOW_COMMAND],
   ["computer_clipboard_read", AGENT_CLIPBOARD_READ_COMMAND],
   ["computer_clipboard_write", AGENT_CLIPBOARD_WRITE_COMMAND],
+  ["computer_ui_tree", AGENT_UI_TREE_COMMAND],
+  ["computer_ocr", AGENT_OCR_COMMAND],
+  ["computer_click", AGENT_CLICK_COMMAND],
+  ["computer_type_text", AGENT_TYPE_TEXT_COMMAND],
+  ["computer_scroll", AGENT_SCROLL_COMMAND],
+  ["computer_drag", AGENT_DRAG_COMMAND],
   ["browser_inspect_url", AGENT_BROWSER_INSPECT_COMMAND],
   ["browser_download", AGENT_BROWSER_DOWNLOAD_COMMAND],
   ["browser_open_url", AGENT_BROWSER_OPEN_COMMAND],

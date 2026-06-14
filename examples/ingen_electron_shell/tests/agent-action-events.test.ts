@@ -22,11 +22,17 @@ import {
   AGENT_VIRTUALIZATION_RUN_COMMAND,
   AGENT_APPSHOT_COMMAND,
   AGENT_COMPUTER_INSPECT_COMMAND,
+  AGENT_CLICK_COMMAND,
+  AGENT_DRAG_COMMAND,
   AGENT_FOCUS_WINDOW_COMMAND,
   AGENT_LIST_COMMAND,
+  AGENT_OCR_COMMAND,
   AGENT_READONLY_SHELL_COMMAND,
+  AGENT_SCROLL_COMMAND,
   AGENT_SEARCH_COMMAND,
   AGENT_SHELL_COMMAND,
+  AGENT_TYPE_TEXT_COMMAND,
+  AGENT_UI_TREE_COMMAND,
   agentActionEventFromLine
 } from "../src/renderer/agent-action-events";
 
@@ -47,6 +53,12 @@ describe("agent action transcript events", () => {
     expect(agentActionEventFromLine('AGENT_ACTION action="computer_inspect"')?.command).toBe(AGENT_COMPUTER_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="computer.appshot"')?.command).toBe(AGENT_APPSHOT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="computer.focus_window"')?.command).toBe(AGENT_FOCUS_WINDOW_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="computer_ui_tree"')?.command).toBe(AGENT_UI_TREE_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION tool="computer.ocr"')?.command).toBe(AGENT_OCR_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="computer_click"')?.command).toBe(AGENT_CLICK_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="computer_type_text"')?.command).toBe(AGENT_TYPE_TEXT_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="computer_scroll"')?.command).toBe(AGENT_SCROLL_COMMAND);
+    expect(agentActionEventFromLine('AGENT_ACTION action="computer_drag"')?.command).toBe(AGENT_DRAG_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION action="browser_inspect_url"')?.command).toBe(AGENT_BROWSER_INSPECT_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION tool="browser.download"')?.command).toBe(AGENT_BROWSER_DOWNLOAD_COMMAND);
     expect(agentActionEventFromLine('AGENT_ACTION capability="browser.open_url"')?.command).toBe(AGENT_BROWSER_OPEN_COMMAND);

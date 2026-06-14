@@ -79,18 +79,18 @@ export const AGENT_ACTION_BENCHMARK_SUITE: readonly AgentActionBenchmarkCase[] =
     proofRule: "If the package manager fails, retry through an alternate package manager or block with the exact failure."
   },
   {
-    id: "gui.inspect.then_focus",
+    id: "gui.inspect.ui_tree.then_input",
     surface: "gui",
-    userGoal: "inspect open windows and focus the requested app",
-    primaryActionId: "computer.focus_window",
-    fallbackActionIds: ["computer.inspect", "shell.full"],
-    eventCommand: "/agent_focus_window_",
-    eventLabel: "confirmed window focus requested",
+    userGoal: "inspect a foreground desktop app and perform one confirmed UI action",
+    primaryActionId: "computer.ui_tree",
+    fallbackActionIds: ["computer.inspect", "computer.click", "computer.type_text", "computer.scroll", "computer.drag", "shell.full"],
+    eventCommand: "/agent_ui_tree_",
+    eventLabel: "UI Automation tree inspected",
     expectedOutcome: "success",
-    approval: "prompt",
+    approval: "none",
     evidence: ["human_presence", "runtime_event"],
-    observedState: "window title and focus request are reported by the runtime",
-    proofRule: "GUI work remains user-visible; runtime probes must show the inspected window before any focus command is reported."
+    observedState: "bounded UI Automation nodes or a verified prompt-gated input result are reported by the runtime",
+    proofRule: "GUI work must report UIA/input verification and must block UAC, payment, credential or security prompts before any done event."
   },
   {
     id: "browser.download.verify",

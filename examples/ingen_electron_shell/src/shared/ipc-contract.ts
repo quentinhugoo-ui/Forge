@@ -456,7 +456,13 @@ export type AgentComputerUseAction =
   | "appshot"
   | "focus_window"
   | "clipboard_read"
-  | "clipboard_write";
+  | "clipboard_write"
+  | "ui_tree"
+  | "ocr"
+  | "click"
+  | "type_text"
+  | "scroll"
+  | "drag";
 
 export interface AgentComputerDisplaySummary {
   id: string;
@@ -475,6 +481,22 @@ export interface AgentComputerWindowSummary {
   focused?: boolean;
 }
 
+export interface AgentUiAutomationNodeSummary {
+  name: string;
+  automationId?: string;
+  controlType?: string;
+  className?: string;
+  boundingRectangle?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  enabled?: boolean;
+  focused?: boolean;
+  children?: AgentUiAutomationNodeSummary[];
+}
+
 export interface AgentComputerUseSnapshot {
   schema: "ingen.computer_use.snapshot.v1";
   action: AgentComputerUseAction;
@@ -482,6 +504,11 @@ export interface AgentComputerUseSnapshot {
   windows: AgentComputerWindowSummary[];
   accessibilityTreeStatus: "available" | "planned" | "blocked";
   ocrStatus: "available" | "planned" | "blocked";
+  accessibilityTree?: AgentUiAutomationNodeSummary[];
+  ocrText?: string;
+  cursor?: { x: number; y: number };
+  inputSummary?: string;
+  forbiddenPromptDetected?: boolean;
   proofHash: string;
 }
 
@@ -709,6 +736,12 @@ export type AgentActionKind =
   | "computer_focus_window"
   | "computer_clipboard_read"
   | "computer_clipboard_write"
+  | "computer_ui_tree"
+  | "computer_ocr"
+  | "computer_click"
+  | "computer_type_text"
+  | "computer_scroll"
+  | "computer_drag"
   | "browser_inspect_url"
   | "browser_download"
   | "browser_open_url"
@@ -762,6 +795,12 @@ export interface AgentActionRequest {
   startTime?: string;
   startDate?: string;
   maxResults?: number;
+  x?: number;
+  y?: number;
+  toX?: number;
+  toY?: number;
+  deltaY?: number;
+  button?: "left" | "right" | "middle";
   confirmed?: boolean;
   recursive?: boolean;
   timeoutMs?: number;
@@ -937,6 +976,12 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
     "computer_focus_window",
     "computer_clipboard_read",
     "computer_clipboard_write",
+    "computer_ui_tree",
+    "computer_ocr",
+    "computer_click",
+    "computer_type_text",
+    "computer_scroll",
+    "computer_drag",
     "browser_inspect_url",
     "browser_download",
     "browser_open_url",
@@ -1009,6 +1054,14 @@ export function isAgentActionRequest(value: unknown): value is AgentActionReques
   }
   if (candidate.nativeFallback !== undefined && typeof candidate.nativeFallback !== "boolean") {
     return false;
+  }
+  if (candidate.button !== undefined && !["left", "right", "middle"].includes(candidate.button)) {
+    return false;
+  }
+  for (const key of ["x", "y", "toX", "toY", "deltaY"] as const) {
+    if (candidate[key] !== undefined && (!Number.isFinite(candidate[key]) || Math.trunc(candidate[key]) !== candidate[key])) {
+      return false;
+    }
   }
   if (
     candidate.maxResults !== undefined &&

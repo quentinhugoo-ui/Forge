@@ -5794,6 +5794,12 @@ const AGENT_ACTION_CAPABILITY_BY_ACTION: Record<AgentActionRequest["action"], Ag
   computer_focus_window: "computer.focus_window",
   computer_clipboard_read: "computer.clipboard_read",
   computer_clipboard_write: "computer.clipboard_write",
+  computer_ui_tree: "computer.ui_tree",
+  computer_ocr: "computer.ocr",
+  computer_click: "computer.click",
+  computer_type_text: "computer.type_text",
+  computer_scroll: "computer.scroll",
+  computer_drag: "computer.drag",
   browser_inspect_url: "browser.inspect_url",
   browser_download: "browser.download",
   browser_open_url: "browser.open_url",
@@ -5911,6 +5917,11 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "computer_focus_window" ||
         params.request.action === "computer_clipboard_read" ||
         params.request.action === "computer_clipboard_write" ||
+        params.request.action === "computer_ocr" ||
+        params.request.action === "computer_click" ||
+        params.request.action === "computer_type_text" ||
+        params.request.action === "computer_scroll" ||
+        params.request.action === "computer_drag" ||
         params.request.action === "browser_open_url"
       ? "external_ui"
       : params.request.action === "dev_git_push" ||
@@ -5925,6 +5936,7 @@ function emitAgentRuntimeToolCallStarted(params: {
         params.request.action === "search" ||
         params.request.action === "run_readonly_command" ||
         params.request.action === "computer_inspect" ||
+        params.request.action === "computer_ui_tree" ||
         params.request.action === "browser_inspect_url" ||
         params.request.action === "document_inspect" ||
         params.request.action === "dev_repo_status" ||
@@ -6143,6 +6155,10 @@ function compactAgentActionResult(result: AgentActionResult): string {
           windows: result.computerUse.windows.slice(0, 12),
           accessibilityTreeStatus: result.computerUse.accessibilityTreeStatus,
           ocrStatus: result.computerUse.ocrStatus,
+          accessibilityTreeNodes: result.computerUse.accessibilityTree?.length,
+          ocrTextChars: result.computerUse.ocrText?.length,
+          cursor: result.computerUse.cursor,
+          forbiddenPromptDetected: result.computerUse.forbiddenPromptDetected,
           proofHash: result.computerUse.proofHash
         }
       : undefined,
@@ -6210,6 +6226,7 @@ function agentActionRequestIsDiscovery(request: AgentActionRequest): boolean {
     request.action === "search" ||
     request.action === "run_readonly_command" ||
     request.action === "computer_inspect" ||
+    request.action === "computer_ui_tree" ||
     request.action === "browser_inspect_url" ||
     request.action === "document_inspect" ||
     request.action === "dev_repo_status" ||

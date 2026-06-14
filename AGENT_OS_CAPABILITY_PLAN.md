@@ -249,7 +249,9 @@ Acceptance:
 - It verifies by screenshot or accessibility tree after interaction.
 - It does not approve security, payment, credential or destructive prompts for the user.
 
-Status: implemented for the planned scope. The host now exposes `AgentComputerUsePolicy`, executable GUI actions for bounded inspection, confirmed appshot capture, confirmed window focus and confirmed clipboard read/write. GUI actions use foreground user-presence mode, single-action-then-verify pacing, explicit forbidden prompt categories, and structured verification/artifact results. Full OCR, full UI Automation trees and low-level mouse/keyboard/scroll/drag-drop remain planned backends rather than fake direct execution.
+Status: executable for the current Windows backend scope. The host now exposes `AgentComputerUsePolicy` with direct actions for bounded GUI inspection, confirmed appshot capture, confirmed window focus, confirmed clipboard read/write, read-only `computer_ui_tree`, confirmed `computer_ocr`, and prompt-gated `computer_click`, `computer_type_text`, `computer_scroll` and `computer_drag`. UI Automation tree inspection uses Windows UIAutomationClient with bounded depth/node count. OCR only succeeds when a real local `tesseract.exe` backend is detected; otherwise it returns `missing_tool` with a failed OCR-engine proof instead of a fake success. Input gestures require `confirmed:true`, foreground user presence, one-action pacing, before/after foreground snapshots and blocking for security, payment, credential, destructive, password/PIN/passkey, credit-card/checkout and UAC-like prompts.
+
+Still planned/blocked: semantic screen target selection, bundled OCR when no local OCR engine exists, high-level RPA flow recording, and any attempt to approve UAC/security/payment/credential prompts on the user's behalf.
 
 ### 7. Browser, Web And Downloads
 

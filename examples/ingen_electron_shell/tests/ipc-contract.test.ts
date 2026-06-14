@@ -157,6 +157,11 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "computer_appshot", path: ".ingen-agent-artifacts/shot.png", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "computer_focus_window", windowTitle: "InGen", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "computer_clipboard_write", text: "hello", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "computer_ui_tree", maxResults: 50 })).toBe(true);
+    expect(isAgentActionRequest({ action: "computer_click", x: 10, y: 20, button: "left", confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "computer_drag", x: 10, y: 20, toX: 30, toY: 40, confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "computer_scroll", deltaY: -240, confirmed: true })).toBe(true);
+    expect(isAgentActionRequest({ action: "computer_type_text", text: "hello", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "browser_inspect_url", url: "https://example.com" })).toBe(true);
     expect(isAgentActionRequest({ action: "browser_download", url: "https://example.com/file.zip", path: "downloads/file.zip", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "browser_open_url", url: "https://example.com", confirmed: true })).toBe(true);
@@ -178,6 +183,8 @@ describe("typed header IPC contract", () => {
     expect(isAgentActionRequest({ action: "automation_cancel", taskName: "InGenAgent_DailyCheck", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "automation_record", title: "Daily build check", confirmed: true })).toBe(true);
     expect(isAgentActionRequest({ action: "computer_focus_window", windowTitle: 42, confirmed: true })).toBe(false);
+    expect(isAgentActionRequest({ action: "computer_click", x: 10.5, y: 20, confirmed: true })).toBe(false);
+    expect(isAgentActionRequest({ action: "computer_click", x: 10, y: 20, button: "primary", confirmed: true })).toBe(false);
     expect(isAgentActionRequest({ action: "browser_inspect_url", url: 42 })).toBe(false);
     expect(isAgentActionRequest({ action: "document_write_text", path: "report.md", content: 42 })).toBe(false);
     expect(isAgentActionRequest({ action: "dev_git_commit", title: "Bad", paths: [42], confirmed: true })).toBe(false);
