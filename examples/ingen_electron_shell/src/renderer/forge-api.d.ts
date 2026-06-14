@@ -3,7 +3,7 @@ import type { ForgeShellApi, ForgeTerminalApi } from "../shared/ipc-contract";
 interface ForgeWindowControlsApi {
   minimize: () => Promise<boolean>;
   toggleMaximize: () => Promise<boolean>;
-  setWidgetMode?: (enabled: boolean) => Promise<boolean>;
+  setWidgetMode?: (enabled: boolean, delayMs?: number) => Promise<boolean>;
   close: () => Promise<boolean>;
 }
 

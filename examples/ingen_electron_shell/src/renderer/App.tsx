@@ -73,6 +73,48 @@ const WINDOW_CONTROLS = [
 const GOOGLE_EARTH_DOM_DEFAULT_URL =
   "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
 const WIDGET_SURFACE_CLOSE_DELAY_MS = 900;
+const WIDGET_SIDEBAR_SETTLE_MS = 380;
+
+type WidgetLayoutLock = {
+  chatLeft: number;
+  chatWidth: number;
+  bottomLeft: number;
+  bottomWidth: number;
+};
+
+function readWidgetLayoutLock(): WidgetLayoutLock | null {
+  const composerRect = document.querySelector(".composer")?.getBoundingClientRect();
+  if (!composerRect) {
+    return null;
+  }
+  const bottomControlsRect = document.querySelector(".bottomControls")?.getBoundingClientRect();
+  return {
+    chatLeft: Math.round(composerRect.left),
+    chatWidth: Math.round(composerRect.width),
+    bottomLeft: Math.round(bottomControlsRect?.left ?? composerRect.left),
+    bottomWidth: Math.round(bottomControlsRect?.width ?? composerRect.width)
+  };
+}
+
+function shellStyleWithWidgetLock(lock: WidgetLayoutLock | null): React.CSSProperties {
+  const style = cssTokenStyle();
+  if (!lock) {
+    return style;
+  }
+  return {
+    ...style,
+    "--widget-chat-left": `${lock.chatLeft}px`,
+    "--widget-chat-width": `${lock.chatWidth}px`,
+    "--widget-bottom-left": `${lock.bottomLeft}px`,
+    "--widget-bottom-width": `${lock.bottomWidth}px`
+  } as React.CSSProperties;
+}
+
+function waitForWidgetMotion(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
 
 function sectionGroup(section: NativeSection): string {
   if (section === "trading") {
@@ -97,6 +139,7 @@ export function App() {
   const [canvasWebExplorerOpen, setCanvasWebExplorerOpen] = useState(false);
   const [canvasMapsOpen, setCanvasMapsOpen] = useState(false);
   const [widgetMode, setWidgetMode] = useState(false);
+  const [widgetLayoutLock, setWidgetLayoutLock] = useState<WidgetLayoutLock | null>(null);
   const canvasMapsOpenRef = useRef(false);
   const [webExplorerParallelIndex, setWebExplorerParallelIndex] = useState(0);
   const [mapsParallelIndex, setMapsParallelIndex] = useState(0);
@@ -733,29 +776,14 @@ export function App() {
       window.clearTimeout(widgetSurfaceCloseTimerRef.current);
       widgetSurfaceCloseTimerRef.current = null;
     }
-    setWidgetMode(enabled);
     setWorkspaceMenuOpen(false);
     setWorkspaceNotice(null);
     if (!enabled) {
+      setWidgetMode(false);
+      setWidgetLayoutLock(null);
       void globalThis.window?.forgeWindowControls?.setWidgetMode?.(false);
       return;
     }
-
-    widgetSurfaceCloseTimerRef.current = window.setTimeout(() => {
-      widgetSurfaceCloseTimerRef.current = null;
-      setCanvasSplitOpen(false);
-      setCanvasFilesOpen(false);
-      setCanvasTerminalOpen(false);
-      setCanvasActivePane("");
-      setCanvasPlanetsOpen(false);
-      setCanvasWebExplorerOpen(false);
-      canvasMapsOpenRef.current = false;
-      setCanvasMapsOpen(false);
-      setParallelPrompts([""]);
-      void globalThis.window?.forgeShell?.hideNativeWebExplorer?.();
-      void globalThis.window?.forgeShell?.hideNativeMaps?.();
-      void globalThis.window?.forgeWindowControls?.setWidgetMode?.(true);
-    }, WIDGET_SURFACE_CLOSE_DELAY_MS);
 
     void (async () => {
       if (activeProfileCanvas) {
@@ -763,11 +791,32 @@ export function App() {
       }
       if (snapshot.leftPanelOpen) {
         await headerShadowStore.dispatchControl({ id: "left-panel", command: "toggle_left_panel" });
+        await Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot()]);
+        await waitForWidgetMotion(WIDGET_SIDEBAR_SETTLE_MS);
       }
       if (snapshot.rightPanelOpen) {
         await headerShadowStore.dispatchControl({ id: "plan", command: "toggle_right_panel", route: "right-panel" });
+        await Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot()]);
+        await waitForWidgetMotion(WIDGET_SIDEBAR_SETTLE_MS);
       }
-      await Promise.all([headerShadowStore.boot(), sidebarShadowStore.boot()]);
+      setWidgetLayoutLock(readWidgetLayoutLock());
+      setWidgetMode(true);
+      void globalThis.window?.forgeWindowControls?.setWidgetMode?.(true, WIDGET_SURFACE_CLOSE_DELAY_MS);
+
+      widgetSurfaceCloseTimerRef.current = window.setTimeout(() => {
+        widgetSurfaceCloseTimerRef.current = null;
+        setCanvasSplitOpen(false);
+        setCanvasFilesOpen(false);
+        setCanvasTerminalOpen(false);
+        setCanvasActivePane("");
+        setCanvasPlanetsOpen(false);
+        setCanvasWebExplorerOpen(false);
+        canvasMapsOpenRef.current = false;
+        setCanvasMapsOpen(false);
+        setParallelPrompts([""]);
+        void globalThis.window?.forgeShell?.hideNativeWebExplorer?.();
+        void globalThis.window?.forgeShell?.hideNativeMaps?.();
+      }, WIDGET_SURFACE_CLOSE_DELAY_MS);
     })();
   }, [activeProfileCanvas, closeProfileCanvas, snapshot.leftPanelOpen, snapshot.rightPanelOpen]);
   const topControls = useMemo(() => snapshot.topControls.filter((control) => control.visible), [snapshot]);
@@ -777,7 +826,7 @@ export function App() {
   );
 
   return (
-    <main className={shellClassName} style={cssTokenStyle()}>
+    <main className={shellClassName} style={shellStyleWithWidgetLock(widgetLayoutLock)}>
       <section className="titlebar" aria-label="InGen top controls">
         <div className="titlebar__cluster">
           {topControls.slice(0, 5).map((control) => {

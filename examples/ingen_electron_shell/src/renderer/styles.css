@@ -70,7 +70,7 @@ button {
   --bottom-controls-bottom: 12px;
   --chat-canvas-bottom: 138px;
   --transcript-bottom-breathing-room: 48px;
-  --sidebar-motion: 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  --sidebar-motion: 340ms cubic-bezier(0.22, 1, 0.36, 1);
   width: 100vw;
   height: 100vh;
   background: var(--forge-bg);
@@ -172,10 +172,10 @@ button {
   --workspace-header-left: 0px;
   --workspace-right: 0px;
   --workspace-width: 100vw;
-  --chat-width: min(780px, calc(100vw - 64px));
-  --chat-left: calc((100vw - var(--chat-width)) / 2);
-  --bottom-width: min(764px, calc(100vw - 80px));
-  --bottom-left: calc((100vw - var(--bottom-width)) / 2);
+  --chat-width: var(--widget-chat-width, min(780px, calc(100vw - 64px)));
+  --chat-left: var(--widget-chat-left, calc((100vw - var(--chat-width)) / 2));
+  --bottom-width: var(--widget-bottom-width, min(764px, calc(100vw - 80px)));
+  --bottom-left: var(--widget-bottom-left, calc((100vw - var(--bottom-width)) / 2));
   background: transparent;
 }
 
@@ -740,27 +740,29 @@ button {
 }
 
 .shell--widget-mode .titlebar {
-  opacity: 0;
   pointer-events: none;
-  transform: translateY(-44px);
-  transition-delay: 90ms;
+  transform: translateY(calc(100vh + 96px));
+  transition-property: transform;
+  transition-delay: 0ms;
+  transition-duration: 760ms;
+  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
 }
 
 .shell--widget-mode .workspaceHeader {
-  opacity: 0;
   pointer-events: none;
-  transform: translateY(-74px);
-  transition-delay: 120ms;
+  transform: translateY(calc(100vh + 96px));
+  transition-property: transform;
+  transition-delay: 40ms;
+  transition-duration: 760ms;
+  transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
 }
 
 .shell--widget-mode .leftPanel {
-  opacity: 0;
   pointer-events: none;
   transform: translateX(calc(-100% - 18px));
 }
 
 .shell--widget-mode .rightPanel {
-  opacity: 0;
   pointer-events: none;
   transform: translateX(calc(100% + 18px));
 }
@@ -772,11 +774,9 @@ button {
 .shell--widget-mode .workspaceRequiredVeil,
 .shell--widget-mode .sidebarLedger,
 .shell--widget-mode .shadowLedger {
-  opacity: 0;
   pointer-events: none;
-  filter: saturate(0.64) brightness(0.72);
   transform: translateY(calc(100vh + 96px));
-  transition-property: opacity, filter, transform;
+  transition-property: transform;
   transition-delay: 260ms;
   transition-duration: 760ms;
   transition-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
@@ -909,15 +909,15 @@ button {
   border-radius: 6px;
   background: var(--forge-sidebar-bg);
   opacity: 1;
-  transform: translateX(0);
-  transition: transform var(--sidebar-motion), opacity var(--sidebar-motion), box-shadow var(--sidebar-motion);
+  transform: translate3d(0, 0, 0);
+  transition: transform var(--sidebar-motion), box-shadow var(--sidebar-motion);
+  backface-visibility: hidden;
   will-change: transform;
 }
 
 .shell--left-collapsed .leftPanel {
-  opacity: 0;
   pointer-events: none;
-  transform: translateX(calc(-100% - 12px));
+  transform: translate3d(calc(-100% - 18px), 0, 0);
 }
 
 .sidebarTools {
@@ -6540,7 +6540,7 @@ ol.assistantText__list li::before {
   isolation: isolate;
   pointer-events: auto;
   z-index: 30;
-  transition: left var(--sidebar-motion), width var(--sidebar-motion), opacity 420ms ease-out, filter 420ms ease-out, transform 760ms cubic-bezier(0.32, 0, 0.67, 0);
+  transition: left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
 .composer--selfDirectedDrafting::before {
@@ -7140,7 +7140,7 @@ ol.assistantText__list li::before {
   padding: 0 8px;
   pointer-events: auto;
   z-index: 36;
-  transition: left var(--sidebar-motion), width var(--sidebar-motion), opacity 420ms ease-out, filter 420ms ease-out, transform 760ms cubic-bezier(0.32, 0, 0.67, 0);
+  transition: left var(--sidebar-motion), width var(--sidebar-motion);
 }
 
 .permissionModeControl {

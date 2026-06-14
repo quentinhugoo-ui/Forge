@@ -218,11 +218,10 @@ const PANELS_CHAT_BOTTOM_MAX_OPENAI_FILE_BYTES = 20 * 1024 * 1024;
 const PANELS_CHAT_BOTTOM_MAX_TEXT_PREVIEW_BYTES = 96 * 1024;
 const PANELS_CHAT_BOTTOM_MAX_VISUAL_SNAPSHOTS = 6;
 const PANELS_CHAT_BOTTOM_MAX_VIDEO_SUBTITLE_CUES = 160;
-const MAIN_WINDOW_BACKGROUND = "#0e0e0f";
 const TRANSPARENT_WINDOW_BACKGROUND = "#00000000";
-const WIDGET_WINDOW_MAX_WIDTH = 860;
 const WIDGET_WINDOW_HEIGHT = 174;
-const WIDGET_WINDOW_BOTTOM_GAP = 18;
+const WIDGET_WINDOW_BOTTOM_GAP = 0;
+const WIDGET_WINDOW_SHRINK_DELAY_MS = 900;
 const PANELS_CHAT_BOTTOM_MAX_VIDEO_SUBTITLE_BYTES = 48 * 1024;
 const PANELS_CHAT_BOTTOM_CONTEXT_TEXT_BYTES = 24 * 1024;
 const PANELS_CHAT_BOTTOM_CONTEXT_TOKEN_BUDGET = 80_000;
@@ -245,6 +244,7 @@ type WidgetWindowRestoreState = {
   fullScreen: boolean;
 };
 let widgetWindowRestoreState: WidgetWindowRestoreState | null = null;
+let widgetWindowShrinkTimer: ReturnType<typeof setTimeout> | null = null;
 let nativeWebExplorerView: BrowserView | null = null;
 let nativeWebExplorerOwner: BrowserWindow | null = null;
 let nativeWebExplorerLoadedUrl = "";
@@ -9823,17 +9823,65 @@ function closeNativeWindow(event: Electron.IpcMainInvokeEvent): boolean {
 function widgetWindowBounds(window: BrowserWindow): Electron.Rectangle {
   const display = screen.getDisplayMatching(window.getBounds());
   const { workArea } = display;
-  const width = Math.min(WIDGET_WINDOW_MAX_WIDTH, Math.max(520, workArea.width - 48));
+  const restoreBounds = widgetWindowRestoreState?.bounds ?? window.getBounds();
+  const width = Math.min(workArea.width, Math.max(520, restoreBounds.width));
   const height = Math.min(WIDGET_WINDOW_HEIGHT, Math.max(136, workArea.height - 24));
+  const x = Math.min(
+    Math.max(restoreBounds.x, workArea.x),
+    workArea.x + workArea.width - width
+  );
   return {
-    x: workArea.x + Math.round((workArea.width - width) / 2),
+    x,
     y: workArea.y + workArea.height - height - WIDGET_WINDOW_BOTTOM_GAP,
     width,
     height
   };
 }
 
-function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: unknown): boolean {
+function clearWidgetWindowShrinkTimer(): void {
+  if (widgetWindowShrinkTimer !== null) {
+    clearTimeout(widgetWindowShrinkTimer);
+    widgetWindowShrinkTimer = null;
+  }
+}
+
+function saveWidgetWindowRestoreState(window: BrowserWindow): void {
+  if (widgetWindowRestoreState !== null) {
+    return;
+  }
+  const [minWidth, minHeight] = window.getMinimumSize();
+  widgetWindowRestoreState = {
+    bounds: window.getBounds(),
+    minimumSize: [minWidth, minHeight],
+    maximized: window.isMaximized(),
+    fullScreen: window.isFullScreen()
+  };
+}
+
+function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
+  if (window.isDestroyed()) {
+    return;
+  }
+  if (window.isFullScreen()) {
+    window.setFullScreen(false);
+  }
+  if (window.isMaximized()) {
+    window.unmaximize();
+  }
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
+  window.setMinimumSize(420, 128);
+  window.setAlwaysOnTop(true, "floating");
+  const bounds = widgetWindowBounds(window);
+  console.info("Applying native widget window bounds", { id: window.id, bounds });
+  window.setBounds(bounds, true);
+  window.show();
+  window.focus();
+}
+
+function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: unknown, delayMs?: unknown): boolean {
   if (!validateSender(event)) {
     console.warn("Blocked window widget mode from invalid sender", event.senderFrame?.url ?? "");
     return false;
@@ -9844,33 +9892,29 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   }
 
   if (enabled === true) {
-    if (widgetWindowRestoreState === null) {
-      const [minWidth, minHeight] = window.getMinimumSize();
-      widgetWindowRestoreState = {
-        bounds: window.getBounds(),
-        minimumSize: [minWidth, minHeight],
-        maximized: window.isMaximized(),
-        fullScreen: window.isFullScreen()
-      };
-    }
-    if (window.isFullScreen()) {
-      window.setFullScreen(false);
-    }
-    if (window.isMaximized()) {
-      window.unmaximize();
-    }
+    clearWidgetWindowShrinkTimer();
+    saveWidgetWindowRestoreState(window);
     window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
-    window.setMinimumSize(420, 128);
     window.setAlwaysOnTop(true, "floating");
-    window.setBounds(widgetWindowBounds(window), true);
-    window.show();
+    const requestedDelay = typeof delayMs === "number" && Number.isFinite(delayMs) ? delayMs : WIDGET_WINDOW_SHRINK_DELAY_MS;
+    const shrinkDelay = Math.max(0, Math.min(2_000, Math.round(requestedDelay)));
+    console.info("Arming native widget window mode", { id: window.id, shrinkDelay, currentBounds: window.getBounds() });
+    if (shrinkDelay <= 0) {
+      applyNativeWidgetWindowBounds(window);
+    } else {
+      widgetWindowShrinkTimer = setTimeout(() => {
+        widgetWindowShrinkTimer = null;
+        applyNativeWidgetWindowBounds(window);
+      }, shrinkDelay);
+    }
     return true;
   }
 
+  clearWidgetWindowShrinkTimer();
   const restoreState = widgetWindowRestoreState;
   widgetWindowRestoreState = null;
   window.setAlwaysOnTop(false);
-  window.setBackgroundColor(MAIN_WINDOW_BACKGROUND);
+  window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
   if (!restoreState) {
     return true;
   }
@@ -9892,7 +9936,7 @@ function installWindowControlIpc(): void {
   ipcMain.handle("forge:window-minimize", (event): boolean => minimizeNativeWindow(event));
   ipcMain.handle("forge:window-toggle-maximize", (event): boolean => toggleNativeWindowMaximize(event));
   ipcMain.handle("forge:window-close", (event): boolean => closeNativeWindow(event));
-  ipcMain.handle("forge:window-widget-mode", (event, enabled): boolean => setNativeWindowWidgetMode(event, enabled));
+  ipcMain.handle("forge:window-widget-mode", (event, enabled, delayMs): boolean => setNativeWindowWidgetMode(event, enabled, delayMs));
 }
 
 function terminalProof(value: unknown): string {
@@ -14048,7 +14092,7 @@ async function createWindow(): Promise<void> {
     minWidth: labWindow ? 760 : 1180,
     minHeight: labWindow ? 560 : 760,
     frame: labWindow ? true : false,
-    thickFrame: true,
+    thickFrame: labWindow ? true : false,
     resizable: true,
     minimizable: true,
     maximizable: true,
@@ -14059,7 +14103,7 @@ async function createWindow(): Promise<void> {
     title: labWindow ? "InGen Event Text Lab" : "InGen",
     show: false,
     transparent: !labWindow,
-    backgroundColor: labWindow ? "#101112" : MAIN_WINDOW_BACKGROUND,
+    backgroundColor: labWindow ? "#101112" : TRANSPARENT_WINDOW_BACKGROUND,
     webPreferences: {
       preload: join(shellRoot, "preload.cjs"),
       contextIsolation: true,
