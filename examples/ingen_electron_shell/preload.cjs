@@ -157,6 +157,10 @@ const forgeWindowControls = {
     console.info("[preload] forge:window-toggle-maximize");
     return ipcRenderer.invoke("forge:window-toggle-maximize");
   },
+  setWidgetMode(enabled, delayMs) {
+    console.info("[preload] forge:window-widget-mode", { enabled, delayMs });
+    return ipcRenderer.invoke("forge:window-widget-mode", enabled, delayMs);
+  },
   close() {
     console.info("[preload] forge:window-close");
     return ipcRenderer.invoke("forge:window-close");
