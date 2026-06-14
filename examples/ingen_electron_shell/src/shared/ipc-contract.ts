@@ -755,6 +755,25 @@ export interface BangerPreviewFrameResult {
   error?: IpcError;
 }
 
+export interface BangerGoogleTilesConfigResult {
+  accepted: boolean;
+  schema: "forge.banger.google_photorealistic_tiles_config.v1";
+  source: "electron-main-env";
+  rootTilesetUrl: string;
+  requestBudget: number;
+  showCreditsOnScreen: true;
+  initialView: {
+    longitude: number;
+    latitude: number;
+    heightMeters: number;
+    headingDegrees: number;
+    pitchDegrees: number;
+    rollDegrees: number;
+  };
+  proofHash: string;
+  error?: IpcError;
+}
+
 export interface ForgeShellApi extends GeneratedForgeShellApi {
   connectLlmProvider: (provider: LlmProviderConnectId) => Promise<LlmProviderConnectResult>;
   resetLlmProvider?: (provider: LlmProviderConnectId) => Promise<LlmProviderConnectResult>;
@@ -767,6 +786,7 @@ export interface ForgeShellApi extends GeneratedForgeShellApi {
   executeAgentAction?: (request: AgentActionRequest) => Promise<AgentActionResult>;
   getHardwareTelemetrySnapshot?: () => Promise<HardwareTelemetrySnapshot>;
   getBangerPreviewFrame?: () => Promise<BangerPreviewFrameResult>;
+  getBangerGoogleTilesConfig?: () => Promise<BangerGoogleTilesConfigResult>;
   showWorkspaceInExplorer?: () => Promise<WorkspaceActionResult>;
   copyWorkspacePath?: () => Promise<WorkspaceActionResult>;
   copyWorkspaceBranchName?: () => Promise<WorkspaceActionResult>;

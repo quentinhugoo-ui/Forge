@@ -2954,7 +2954,7 @@ button {
 }
 
 .shell--banger-page .surfaceRouter {
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .surface {
@@ -3060,6 +3060,43 @@ button {
 
 .surface--banger {
   background: #05070a;
+}
+
+.bangerCesiumViewport {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #05070a;
+}
+
+.bangerCesiumViewport .cesium-widget,
+.bangerCesiumViewport .cesium-widget canvas {
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.surface--banger .cesium-viewer,
+.surface--banger .cesium-viewer-cesiumWidgetContainer,
+.surface--banger .cesium-widget {
+  position: absolute;
+  inset: 0;
+}
+
+.surface--banger .cesium-widget-credits {
+  right: 12px;
+  bottom: 94px;
+  max-width: min(620px, calc(100vw - 360px));
+  color: rgba(245, 247, 250, 0.82);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.surface--banger .cesium-credit-textContainer,
+.surface--banger .cesium-credit-logoContainer {
+  border-radius: 4px;
+  background: rgba(5, 7, 10, 0.62);
 }
 
 .surface--banger .nativeViewportSlot__frame {

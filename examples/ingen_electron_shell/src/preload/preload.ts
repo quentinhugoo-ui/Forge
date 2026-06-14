@@ -47,6 +47,9 @@ const forgeShell: ForgeShellApi = {
   getBangerPreviewFrame() {
     return ipcRenderer.invoke("forge:get-banger-preview-frame");
   },
+  getBangerGoogleTilesConfig() {
+    return ipcRenderer.invoke("forge:get-banger-google-tiles-config");
+  },
   dispatchCanvasSurfacesCommand(command: CanvasSurfacesCommand) {
     return ipcRenderer.invoke("forge:dispatch-canvas-surfaces-command", command);
   },

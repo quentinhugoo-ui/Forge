@@ -1,5 +1,11 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import type { BangerPreviewFrameResult, HeaderSurfaceContract, HeaderSurfaceSnapshot } from "../shared/ipc-contract";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import "cesium/Build/Cesium/Widgets/widgets.css";
+import type {
+  BangerGoogleTilesConfigResult,
+  BangerPreviewFrameResult,
+  HeaderSurfaceContract,
+  HeaderSurfaceSnapshot
+} from "../shared/ipc-contract";
 
 function statusLabel(surface: HeaderSurfaceContract): string {
   if (surface.status === "native_pending") return "native pending";
@@ -42,7 +48,10 @@ function WebExplorerSurface({ surfaces }: { surfaces: HeaderSurfaceContract[] })
 }
 
 function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
+  const cesiumHostRef = useRef<HTMLDivElement | null>(null);
   const [frame, setFrame] = useState<BangerPreviewFrameResult | null>(null);
+  const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
+  const [tilesFailed, setTilesFailed] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -57,11 +66,96 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    void globalThis.window?.forgeShell?.getBangerGoogleTilesConfig?.()
+      .then((result) => {
+        if (active) {
+          setTilesConfig(result ?? null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const host = cesiumHostRef.current;
+    if (!host || !tilesConfig?.accepted || !tilesConfig.rootTilesetUrl) {
+      return;
+    }
+
+    let cancelled = false;
+    let viewer: { destroy: () => void; isDestroyed?: () => boolean } | null = null;
+    setTilesFailed(false);
+
+    void import("cesium")
+      .then(async (Cesium) => {
+        if (cancelled) return;
+        Cesium.RequestScheduler.requestsByServer["tile.googleapis.com:443"] = tilesConfig.requestBudget;
+        viewer = new Cesium.Viewer(host, {
+          animation: false,
+          baseLayerPicker: false,
+          fullscreenButton: false,
+          geocoder: false,
+          globe: false,
+          homeButton: false,
+          infoBox: false,
+          navigationHelpButton: false,
+          requestRenderMode: true,
+          scene3DOnly: true,
+          sceneModePicker: false,
+          selectionIndicator: false,
+          shouldAnimate: false,
+          timeline: false
+        });
+        const tilesetFactory = Cesium.Cesium3DTileset as unknown as {
+          fromUrl?: (url: string, options: Record<string, unknown>) => Promise<unknown>;
+          new(options: Record<string, unknown>): unknown;
+        };
+        const tilesetOptions = {
+          showCreditsOnScreen: tilesConfig.showCreditsOnScreen,
+          skipLevelOfDetail: true,
+          dynamicScreenSpaceError: true
+        };
+        const tileset = tilesetFactory.fromUrl
+          ? await tilesetFactory.fromUrl(tilesConfig.rootTilesetUrl, tilesetOptions)
+          : new tilesetFactory({ url: tilesConfig.rootTilesetUrl, ...tilesetOptions });
+        if (cancelled) return;
+        const cesiumViewer = viewer as any;
+        cesiumViewer.scene.primitives.add(tileset);
+        const { longitude, latitude, heightMeters, headingDegrees, pitchDegrees, rollDegrees } = tilesConfig.initialView;
+        cesiumViewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, heightMeters),
+          orientation: {
+            heading: Cesium.Math.toRadians(headingDegrees),
+            pitch: Cesium.Math.toRadians(pitchDegrees),
+            roll: Cesium.Math.toRadians(rollDegrees)
+          }
+        });
+        cesiumViewer.scene.requestRender();
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTilesFailed(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (viewer && (!viewer.isDestroyed || !viewer.isDestroyed())) {
+        viewer.destroy();
+      }
+    };
+  }, [tilesConfig]);
+
   const acceptedFrame = frame?.accepted && frame.frameDataUrl ? frame : null;
+  const showGoogleTiles = Boolean(tilesConfig?.accepted && tilesConfig.rootTilesetUrl && !tilesFailed);
 
   return (
-    <section className="surface surface--banger" aria-label="Banger native child surface contract">
-      {acceptedFrame ? (
+    <section className="surface surface--banger" aria-label={surface.label}>
+      {showGoogleTiles ? <div ref={cesiumHostRef} className="bangerCesiumViewport" aria-label="Banger Google Photorealistic 3D Tiles viewport" /> : null}
+      {!showGoogleTiles && acceptedFrame ? (
         <img
           className="nativeViewportSlot__frame"
           src={acceptedFrame.frameDataUrl}

@@ -53,6 +53,7 @@ import {
   type HeaderSurfaceContract,
   type HeaderSurfaceSnapshot,
   type HeaderSnapshot,
+  type BangerGoogleTilesConfigResult,
   type HardwareGpuSnapshot,
   type HardwareMetric,
   type HardwareProcessSnapshot,
@@ -13129,6 +13130,67 @@ function installIpc(): void {
       return loadRustBangerPreviewFrame(shellRoot);
     }
     return loadRustBangerPreviewFrame(shellRoot);
+  });
+  ipcMain.handle("forge:get-banger-google-tiles-config", async (event): Promise<BangerGoogleTilesConfigResult> => {
+    const schema = "forge.banger.google_photorealistic_tiles_config.v1" as const;
+    const source = "electron-main-env" as const;
+    const initialView = {
+      longitude: -122.08409,
+      latitude: 37.42207,
+      heightMeters: 2600,
+      headingDegrees: 0,
+      pitchDegrees: -38,
+      rollDegrees: 0
+    };
+    const base = {
+      schema,
+      source,
+      rootTilesetUrl: "",
+      requestBudget: 18,
+      showCreditsOnScreen: true as const,
+      initialView
+    };
+    if (!validateSender(event)) {
+      return {
+        ...base,
+        accepted: false,
+        error: {
+          code: "bad_sender",
+          message: "Banger Google Tiles config rejected sender.",
+          proofHash: hashJson({ schema, rejected: "bad_sender" })
+        },
+        proofHash: hashJson({ schema, accepted: false, reason: "bad_sender" })
+      };
+    }
+    const apiKey = (process.env.GOOGLE_MAP_TILES_API_KEY ?? process.env.VITE_GOOGLE_MAP_TILES_API_KEY ?? "").trim();
+    if (!apiKey) {
+      return {
+        ...base,
+        accepted: false,
+        error: {
+          code: "shadow_only",
+          message: "Set GOOGLE_MAP_TILES_API_KEY to stream Google Photorealistic 3D Tiles in Banger.",
+          proofHash: hashJson({ schema, configured: false })
+        },
+        proofHash: hashJson({ schema, accepted: false, configured: false })
+      };
+    }
+    const result = {
+      ...base,
+      accepted: true,
+      rootTilesetUrl: `https://tile.googleapis.com/v1/3dtiles/root.json?key=${encodeURIComponent(apiKey)}`
+    };
+    return {
+      ...result,
+      proofHash: hashJson({
+        schema,
+        accepted: true,
+        endpoint: "https://tile.googleapis.com/v1/3dtiles/root.json",
+        keyFingerprint: hashJson(apiKey).slice(0, 16),
+        requestBudget: result.requestBudget,
+        initialView
+      })
+    };
   });
   ipcMain.handle("forge:dispatch-header-command", (event, command: unknown): HeaderCommandResult => {
     const mode = cutoverMode();
