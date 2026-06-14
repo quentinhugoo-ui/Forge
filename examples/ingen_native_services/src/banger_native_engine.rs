@@ -3,10 +3,12 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
     env, fs,
+    path::{Path, PathBuf},
     process::{self, Command},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::gpu_adapter_probe::{native_gpu_adapter_probe, NativeGpuAdapter};
 use scan::{
     MonsterEngineLane, MonsterNativeTandemArtifact, MonsterNativeTandemDomain, MonsterNode,
     MonsterPreparedCompute,
@@ -20,6 +22,7 @@ pub struct BangerNativeRenderPrepareRequest {
     pub target_frame_ms: Option<f32>,
     pub vram_budget_mb: Option<u32>,
     pub prefer_mesh_shaders: Option<bool>,
+    pub pipeline_cache_dir: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -34,6 +37,7 @@ pub struct BangerNewObjectPrepareRequest {
     pub target_frame_ms: Option<f32>,
     pub vram_budget_mb: Option<u32>,
     pub prefer_mesh_shaders: Option<bool>,
+    pub pipeline_cache_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,6 +63,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub gpu_shader_profiles: Vec<String>,
     pub shader_capability_plan: BangerNativeShaderCapabilityPlan,
     pub shader_compiler_ticket: BangerNativeShaderCompilerTicket,
+    pub pipeline_cache_manifest: BangerNativePipelineCacheManifest,
     pub pipeline_cache_keys: Vec<String>,
     pub render_graph: Vec<BangerNativeRenderPass>,
     pub residency_jobs: Vec<BangerNativeResidencyJob>,
@@ -175,6 +180,44 @@ pub struct BangerNativeResourceSlot {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangerNativePipelineCacheManifest {
+    pub schema: &'static str,
+    pub cache_root: String,
+    pub selected_adapter_hash: String,
+    pub selected_adapter_label: String,
+    pub backend: String,
+    pub driver_hash: String,
+    pub driver_info_hash: String,
+    pub entry_count: usize,
+    pub persisted_entry_count: usize,
+    pub manifest_hash: String,
+    pub promotion_status: &'static str,
+    pub entries: Vec<BangerNativePipelineCacheEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativePipelineCacheEntry {
+    pub schema: &'static str,
+    pub pass_name: &'static str,
+    pub artifact_name: String,
+    pub artifact_kind: &'static str,
+    pub pipeline_cache_key: String,
+    pub adapter_hash: String,
+    pub driver_hash: String,
+    pub shader_source_hash: String,
+    pub shader_reflection_hash: String,
+    pub render_pass_abi_hash: String,
+    pub renderer_variant_hash: String,
+    pub blob_hash: String,
+    pub blob_len: u64,
+    pub blob_path: String,
+    pub persistence_status: &'static str,
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangerEditableSceneManifest {
     pub schema: &'static str,
     pub scene_id: String,
@@ -284,6 +327,7 @@ impl BangerNativeEngine {
             target_frame_ms,
             vram_budget_mb,
             prefer_mesh_shaders,
+            pipeline_cache_dir,
         } = request;
         let scene_id = sanitize_scene_id(scene_id.as_deref().unwrap_or("banger_default_scene"));
         let representation = normalize_newobject_representation(representation.as_deref())?;
@@ -302,6 +346,7 @@ impl BangerNativeEngine {
                 target_frame_ms,
                 vram_budget_mb,
                 prefer_mesh_shaders,
+                pipeline_cache_dir,
             },
         )?;
         let base_manifest_hash = base_handoff.editable_scene_manifest.manifest_hash.clone();
@@ -396,6 +441,7 @@ impl BangerNativeEngine {
             target_frame_ms,
             vram_budget_mb,
             prefer_mesh_shaders,
+            pipeline_cache_dir,
         } = request;
         let scene_id = sanitize_scene_id(scene_id.as_deref().unwrap_or("banger_default_scene"));
         let target_frame_ms = target_frame_ms.unwrap_or(16.67);
@@ -443,6 +489,14 @@ impl BangerNativeEngine {
             .iter()
             .map(|artifact| banger_pipeline_cache_key(&prepared, artifact, prefer_mesh_shaders))
             .collect::<Vec<_>>();
+        let pipeline_cache_manifest = build_pipeline_cache_manifest(
+            &prepared,
+            &render_artifacts,
+            &render_graph,
+            &pipeline_cache_keys,
+            &shader_compiler_ticket,
+            pipeline_cache_dir.as_deref(),
+        )?;
         let resource_table = build_resource_table(
             &prepared,
             &render_artifacts,
@@ -458,7 +512,12 @@ impl BangerNativeEngine {
             &pipeline_cache_keys,
             &resource_table,
         );
-        let render_handoff_hash = render_handoff_hash(&prepared, &artifacts, &shader_compiler_ticket);
+        let render_handoff_hash = render_handoff_hash(
+            &prepared,
+            &artifacts,
+            &shader_compiler_ticket,
+            &pipeline_cache_manifest,
+        );
         let render_pass_count = render_graph.len();
         let residency_job_count = residency_jobs.len();
         let resource_table_hash = resource_table.table_hash.clone();
@@ -491,6 +550,7 @@ impl BangerNativeEngine {
                 compiler_ticket_hash: shader_compiler_ticket.proof_hash.clone(),
             },
             shader_compiler_ticket,
+            pipeline_cache_manifest,
             pipeline_cache_keys,
             render_graph,
             residency_jobs,
@@ -746,6 +806,146 @@ fn build_frame_graph_bindings(
             }
         })
         .collect()
+}
+
+fn build_pipeline_cache_manifest(
+    prepared: &MonsterPreparedCompute,
+    artifacts: &[&MonsterNativeTandemArtifact],
+    render_graph: &[BangerNativeRenderPass],
+    pipeline_cache_keys: &[String],
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    pipeline_cache_dir: Option<&str>,
+) -> Result<BangerNativePipelineCacheManifest, String> {
+    let adapter_probe = native_gpu_adapter_probe();
+    let adapter = adapter_probe.selected.as_ref();
+    let selected_adapter_hash = adapter.map(adapter_profile_hash).unwrap_or_else(|| {
+        hash_text_hex(
+            "forge.banger.pipeline_cache.adapter.v1",
+            "adapter_unavailable",
+        )
+    });
+    let selected_adapter_label = adapter
+        .map(adapter_profile_label)
+        .unwrap_or_else(|| "adapter_unavailable".to_string());
+    let backend = adapter
+        .map(|adapter| adapter.backend.clone())
+        .unwrap_or_else(|| "backend_unavailable".to_string());
+    let driver_hash = adapter
+        .map(|adapter| hash_text_hex("forge.banger.pipeline_cache.driver.v1", &adapter.driver))
+        .unwrap_or_else(|| hash_text_hex("forge.banger.pipeline_cache.driver.v1", "driver_unavailable"));
+    let driver_info_hash = adapter
+        .map(|adapter| hash_text_hex("forge.banger.pipeline_cache.driver_info.v1", &adapter.driver_info))
+        .unwrap_or_else(|| hash_text_hex("forge.banger.pipeline_cache.driver_info.v1", "driver_info_unavailable"));
+    let cache_root = pipeline_cache_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| env::temp_dir().join("forge-banger-pipeline-cache"));
+    let mut entries = Vec::new();
+    for (index, artifact) in artifacts.iter().enumerate() {
+        let pass = &render_graph[index];
+        let pipeline_cache_key = pipeline_cache_keys
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| artifact.renderer_cache_hash.clone());
+        entries.push(build_pipeline_cache_entry(
+            prepared,
+            artifact,
+            pass,
+            &pipeline_cache_key,
+            shader_compiler_ticket,
+            &cache_root,
+            &selected_adapter_hash,
+            &driver_hash,
+        )?);
+    }
+    let persisted_entry_count = entries
+        .iter()
+        .filter(|entry| entry.persistence_status == "seed_blob_persisted")
+        .count();
+    let manifest_hash = pipeline_cache_manifest_hash(
+        prepared,
+        &entries,
+        &selected_adapter_hash,
+        &driver_hash,
+        &driver_info_hash,
+    );
+    let promotion_status = if persisted_entry_count == entries.len() {
+        "seed_blobs_persisted_driver_blob_api_deferred"
+    } else {
+        "manifest_ready_blob_persistence_partial"
+    };
+    Ok(BangerNativePipelineCacheManifest {
+        schema: "forge.banger.native_pipeline_cache_manifest.v1",
+        cache_root: cache_root.to_string_lossy().to_string(),
+        selected_adapter_hash,
+        selected_adapter_label,
+        backend,
+        driver_hash,
+        driver_info_hash,
+        entry_count: entries.len(),
+        persisted_entry_count,
+        manifest_hash,
+        promotion_status,
+        entries,
+    })
+}
+
+fn build_pipeline_cache_entry(
+    prepared: &MonsterPreparedCompute,
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+    pipeline_cache_key: &str,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    cache_root: &Path,
+    adapter_hash: &str,
+    driver_hash: &str,
+) -> Result<BangerNativePipelineCacheEntry, String> {
+    let shader_source_hash = shader_compiler_ticket.mini_probe_source_hash.clone();
+    let shader_reflection_hash = shader_reflection_hash(shader_compiler_ticket, artifact, pass);
+    let render_pass_abi_hash = render_pass_abi_hash(artifact, pass);
+    let blob_bytes = pipeline_cache_seed_blob_bytes(
+        prepared,
+        artifact,
+        pass,
+        pipeline_cache_key,
+        shader_compiler_ticket,
+        adapter_hash,
+        driver_hash,
+        &shader_reflection_hash,
+        &render_pass_abi_hash,
+    );
+    let blob_hash = hex32(Sha256::digest(&blob_bytes).into());
+    let blob_path = cache_root.join(format!("{}.bpcache", &blob_hash[..32]));
+    let persistence_status = persist_pipeline_cache_seed_blob(&blob_path, &blob_bytes)?;
+    let proof_hash = pipeline_cache_entry_proof_hash(
+        prepared,
+        artifact,
+        pass,
+        pipeline_cache_key,
+        adapter_hash,
+        driver_hash,
+        &shader_source_hash,
+        &shader_reflection_hash,
+        &render_pass_abi_hash,
+        &blob_hash,
+    );
+    Ok(BangerNativePipelineCacheEntry {
+        schema: "forge.banger.native_pipeline_cache_entry.v1",
+        pass_name: pass.name,
+        artifact_name: artifact.name.clone(),
+        artifact_kind: artifact.kind,
+        pipeline_cache_key: pipeline_cache_key.to_string(),
+        adapter_hash: adapter_hash.to_string(),
+        driver_hash: driver_hash.to_string(),
+        shader_source_hash,
+        shader_reflection_hash,
+        render_pass_abi_hash,
+        renderer_variant_hash: artifact.renderer_variant_hash.clone(),
+        blob_hash,
+        blob_len: blob_bytes.len() as u64,
+        blob_path: blob_path.to_string_lossy().to_string(),
+        persistence_status,
+        proof_hash,
+    })
 }
 
 fn scene_role_for_kind(kind: &str) -> &'static str {
@@ -1057,6 +1257,188 @@ fn write_barrier_for_stage(stage: &str) -> &'static str {
         "material_bind" => "no_write",
         _ => "no_write",
     }
+}
+
+fn adapter_profile_hash(adapter: &NativeGpuAdapter) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.pipeline_cache.adapter_profile.v1\0");
+    h.update(adapter.name.as_bytes());
+    h.update(adapter.vendor_id.to_le_bytes());
+    h.update(adapter.device_id.to_le_bytes());
+    h.update(adapter.backend.as_bytes());
+    h.update(adapter.device_type.as_bytes());
+    h.update(adapter.driver.as_bytes());
+    h.update(adapter.driver_info.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn adapter_profile_label(adapter: &NativeGpuAdapter) -> String {
+    format!(
+        "{}::{}::{}::vendor={:04x}::device={:04x}",
+        adapter.name, adapter.backend, adapter.device_type, adapter.vendor_id, adapter.device_id
+    )
+}
+
+fn shader_reflection_hash(
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.shader_reflection_stub.v1\0");
+    h.update(shader_compiler_ticket.proof_hash.as_bytes());
+    h.update(shader_compiler_ticket.source_language.as_bytes());
+    h.update(shader_compiler_ticket.promoted_target.as_bytes());
+    h.update(artifact.kind.as_bytes());
+    h.update(artifact.layout.as_bytes());
+    h.update(pass.stage.as_bytes());
+    h.update(pass.writes.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn render_pass_abi_hash(
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.render_pass_abi.v1\0");
+    h.update(pass.name.as_bytes());
+    h.update(pass.stage.as_bytes());
+    h.update(pass.consumes_kind.as_bytes());
+    h.update(pass.writes.as_bytes());
+    h.update(pass.cache_class.as_bytes());
+    h.update(pass.residency_policy.as_bytes());
+    h.update(resource_heap_for_kind(artifact.kind).as_bytes());
+    h.update(resource_usage_for_kind(artifact.kind).as_bytes());
+    h.update(read_barrier_for_stage(pass.stage).as_bytes());
+    h.update(write_barrier_for_stage(pass.stage).as_bytes());
+    h.update(artifact.layout.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_seed_blob_bytes(
+    prepared: &MonsterPreparedCompute,
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+    pipeline_cache_key: &str,
+    shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    adapter_hash: &str,
+    driver_hash: &str,
+    shader_reflection_hash: &str,
+    render_pass_abi_hash: &str,
+) -> Vec<u8> {
+    format!(
+        concat!(
+            "schema=forge.banger.native_pipeline_cache_seed_blob.v1\n",
+            "manifest_hash={}\n",
+            "compute_ir_hash={}\n",
+            "pipeline_cache_key={}\n",
+            "adapter_hash={}\n",
+            "driver_hash={}\n",
+            "shader_ticket_hash={}\n",
+            "shader_source_hash={}\n",
+            "shader_reflection_hash={}\n",
+            "render_pass_abi_hash={}\n",
+            "artifact_kind={}\n",
+            "artifact_layout={}\n",
+            "artifact_hash={}\n",
+            "renderer_variant_hash={}\n",
+            "pass_name={}\n",
+            "pass_stage={}\n"
+        ),
+        prepared.manifest_hash,
+        prepared.route.plan.compute_ir_hash,
+        pipeline_cache_key,
+        adapter_hash,
+        driver_hash,
+        shader_compiler_ticket.proof_hash,
+        shader_compiler_ticket.mini_probe_source_hash,
+        shader_reflection_hash,
+        render_pass_abi_hash,
+        artifact.kind,
+        artifact.layout,
+        artifact.artifact_hash,
+        artifact.renderer_variant_hash,
+        pass.name,
+        pass.stage
+    )
+    .into_bytes()
+}
+
+fn persist_pipeline_cache_seed_blob(path: &Path, bytes: &[u8]) -> Result<&'static str, String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create pipeline cache directory failed: {err}"))?;
+    }
+    if path.exists() {
+        let existing = fs::read(path).map_err(|err| format!("read pipeline cache blob failed: {err}"))?;
+        if existing == bytes {
+            return Ok("seed_blob_persisted");
+        }
+        return Err(format!(
+            "pipeline cache blob hash collision or non-content-addressed overwrite at {}",
+            path.display()
+        ));
+    }
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let tmp_path = path.with_extension(format!("tmp-{}-{stamp}", process::id()));
+    fs::write(&tmp_path, bytes).map_err(|err| format!("write pipeline cache temp blob failed: {err}"))?;
+    fs::rename(&tmp_path, path).map_err(|err| format!("commit pipeline cache blob failed: {err}"))?;
+    Ok("seed_blob_persisted")
+}
+
+fn pipeline_cache_entry_proof_hash(
+    prepared: &MonsterPreparedCompute,
+    artifact: &MonsterNativeTandemArtifact,
+    pass: &BangerNativeRenderPass,
+    pipeline_cache_key: &str,
+    adapter_hash: &str,
+    driver_hash: &str,
+    shader_source_hash: &str,
+    shader_reflection_hash: &str,
+    render_pass_abi_hash: &str,
+    blob_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_pipeline_cache_entry.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(artifact.renderer_variant_hash.as_bytes());
+    h.update(pass.proof_hash.as_bytes());
+    h.update(pipeline_cache_key.as_bytes());
+    h.update(adapter_hash.as_bytes());
+    h.update(driver_hash.as_bytes());
+    h.update(shader_source_hash.as_bytes());
+    h.update(shader_reflection_hash.as_bytes());
+    h.update(render_pass_abi_hash.as_bytes());
+    h.update(blob_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn pipeline_cache_manifest_hash(
+    prepared: &MonsterPreparedCompute,
+    entries: &[BangerNativePipelineCacheEntry],
+    adapter_hash: &str,
+    driver_hash: &str,
+    driver_info_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_pipeline_cache_manifest.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(prepared.gpu_batch_plan.plan_hash.as_bytes());
+    h.update(adapter_hash.as_bytes());
+    h.update(driver_hash.as_bytes());
+    h.update(driver_info_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.proof_hash.as_bytes());
+        h.update(entry.blob_hash.as_bytes());
+        h.update(entry.pipeline_cache_key.as_bytes());
+    }
+    hex32(h.finalize().into())
 }
 
 fn banger_resource_key(
@@ -1407,12 +1789,14 @@ fn render_handoff_hash(
     prepared: &MonsterPreparedCompute,
     artifacts: &[BangerNativeRenderArtifactSummary],
     shader_compiler_ticket: &BangerNativeShaderCompilerTicket,
+    pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_render_handoff.v1\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(shader_compiler_ticket.proof_hash.as_bytes());
+    h.update(pipeline_cache_manifest.manifest_hash.as_bytes());
     for artifact in artifacts {
         h.update(b"\0artifact\0");
         h.update(artifact.kind.as_bytes());
@@ -1566,6 +1950,7 @@ mod tests {
     #[test]
     fn prepares_verified_native_banger_render_handoff() {
         let path = fresh_tmp_path("banger-native-engine", "handoff");
+        let pipeline_cache_dir = path.join("pipeline-cache").to_string_lossy().to_string();
         let _tmp = TmpDir::new(path.clone());
         let store = Store::open(path).expect("store");
         let monster = MonsterNode::new(store, MemoryGovernor::new(8 * 1024 * 1024));
@@ -1578,6 +1963,7 @@ mod tests {
                 target_frame_ms: Some(16.67),
                 vram_budget_mb: Some(2048),
                 prefer_mesh_shaders: Some(true),
+                pipeline_cache_dir: Some(pipeline_cache_dir),
             },
         )
         .expect("native render handoff");
@@ -1620,6 +2006,30 @@ mod tests {
             .any(|target| *target == "spirv"));
         assert!(!response.shader_compiler_ticket.compiler_version_hash.is_empty());
         assert_eq!(response.pipeline_cache_keys.len(), response.artifacts.len());
+        assert_eq!(
+            response.pipeline_cache_manifest.schema,
+            "forge.banger.native_pipeline_cache_manifest.v1"
+        );
+        assert_eq!(response.pipeline_cache_manifest.entry_count, response.artifacts.len());
+        assert_eq!(
+            response.pipeline_cache_manifest.persisted_entry_count,
+            response.pipeline_cache_manifest.entry_count
+        );
+        assert_eq!(response.pipeline_cache_manifest.manifest_hash.len(), 64);
+        assert_eq!(response.pipeline_cache_manifest.selected_adapter_hash.len(), 64);
+        assert_eq!(response.pipeline_cache_manifest.driver_hash.len(), 64);
+        assert_eq!(response.pipeline_cache_manifest.driver_info_hash.len(), 64);
+        assert!(response
+            .pipeline_cache_manifest
+            .entries
+            .iter()
+            .all(|entry| entry.shader_source_hash.len() == 64
+                && entry.shader_reflection_hash.len() == 64
+                && entry.render_pass_abi_hash.len() == 64
+                && entry.blob_hash.len() == 64
+                && entry.blob_len > 0
+                && entry.persistence_status == "seed_blob_persisted"
+                && std::path::Path::new(&entry.blob_path).exists()));
         assert_eq!(response.resource_table_hash.len(), 64);
         assert_eq!(response.resource_table.slot_count, response.resource_table.slots.len());
         assert!(response.resource_table.slot_count >= response.artifacts.len());
@@ -1668,6 +2078,7 @@ mod tests {
     #[test]
     fn prepares_newobject_contract_as_scene_manifest_edit() {
         let path = fresh_tmp_path("banger-native-engine", "newobject");
+        let pipeline_cache_dir = path.join("pipeline-cache").to_string_lossy().to_string();
         let _tmp = TmpDir::new(path.clone());
         let store = Store::open(path).expect("store");
         let monster = MonsterNode::new(store, MemoryGovernor::new(8 * 1024 * 1024));
@@ -1684,6 +2095,7 @@ mod tests {
                 target_frame_ms: Some(16.67),
                 vram_budget_mb: Some(2048),
                 prefer_mesh_shaders: Some(true),
+                pipeline_cache_dir: Some(pipeline_cache_dir),
             },
         )
         .expect("newobject contract");

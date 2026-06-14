@@ -74,6 +74,10 @@ Date: 2026-06-14
    the renderer consumes the updated editable scene manifest.
 3. Add persistent native pipeline-cache blobs keyed by adapter, driver,
    shader source hash, shader reflection and render-pass ABI.
+   Status: started in `BangerNativePipelineCacheManifest` as
+   `forge.banger.native_pipeline_cache_manifest.v1`; deterministic seed blobs
+   are persisted content-addressed now, while real driver blobs remain gated on
+   the promoted `wgpu::PipelineCache` / backend-specific API path.
 4. Replace the placeholder child-surface contract with a verified texture
    sharing path: same device/queue when available, explicit fallback route,
    frame hash and resize/orbit/pan/zoom proofs.
