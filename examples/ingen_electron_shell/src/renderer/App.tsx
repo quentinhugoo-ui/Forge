@@ -140,6 +140,16 @@ function readWidgetHitRegions(): WidgetHitRegion[] {
     .filter((region): region is WidgetHitRegion => region !== null);
 }
 
+function widgetPointInRegions(x: number, y: number, regions: WidgetHitRegion[]): boolean {
+  return regions.some(
+    (region) =>
+      x >= region.x &&
+      x <= region.x + region.width &&
+      y >= region.y &&
+      y <= region.y + region.height
+  );
+}
+
 function shellStyleWithWidgetLock(lock: WidgetLayoutLock | null): React.CSSProperties {
   const style = cssTokenStyle();
   if (!lock) {
@@ -370,20 +380,45 @@ export function App() {
       return undefined;
     }
     const setWidgetHitRegions = api.setWidgetHitRegions.bind(api);
+    const setWidgetClickThrough = api.setWidgetClickThrough?.bind(api);
     if (!widgetMode) {
       void setWidgetHitRegions([]);
+      void setWidgetClickThrough?.(false);
       return undefined;
     }
 
     let animationFrame = 0;
+    let lastPointer: { x: number; y: number } | null = null;
+    let clickThrough = false;
+    const setClickThrough = (enabled: boolean) => {
+      if (clickThrough === enabled) {
+        return;
+      }
+      clickThrough = enabled;
+      void setWidgetClickThrough?.(enabled);
+    };
     const scheduleHitRegionSync = () => {
       if (animationFrame !== 0) {
         return;
       }
       animationFrame = window.requestAnimationFrame(() => {
         animationFrame = 0;
-        void setWidgetHitRegions(readWidgetHitRegions());
+        const regions = readWidgetHitRegions();
+        void setWidgetHitRegions(regions);
+        if (lastPointer) {
+          setClickThrough(!widgetPointInRegions(lastPointer.x, lastPointer.y, regions));
+        }
       });
+    };
+    const handlePointerMove = (event: MouseEvent | PointerEvent) => {
+      lastPointer = { x: event.clientX, y: event.clientY };
+      const regions = readWidgetHitRegions();
+      void setWidgetHitRegions(regions);
+      setClickThrough(!widgetPointInRegions(event.clientX, event.clientY, regions));
+    };
+    const handlePointerLeave = () => {
+      lastPointer = null;
+      setClickThrough(true);
     };
 
     scheduleHitRegionSync();
@@ -402,6 +437,9 @@ export function App() {
     window.addEventListener("resize", scheduleHitRegionSync);
     window.addEventListener("click", scheduleHitRegionSync, true);
     window.addEventListener("keyup", scheduleHitRegionSync, true);
+    window.addEventListener("mousemove", handlePointerMove, true);
+    window.addEventListener("pointermove", handlePointerMove, true);
+    window.addEventListener("mouseleave", handlePointerLeave, true);
 
     return () => {
       if (animationFrame !== 0) {
@@ -413,7 +451,11 @@ export function App() {
       window.removeEventListener("resize", scheduleHitRegionSync);
       window.removeEventListener("click", scheduleHitRegionSync, true);
       window.removeEventListener("keyup", scheduleHitRegionSync, true);
+      window.removeEventListener("mousemove", handlePointerMove, true);
+      window.removeEventListener("pointermove", handlePointerMove, true);
+      window.removeEventListener("mouseleave", handlePointerLeave, true);
       void setWidgetHitRegions([]);
+      void setWidgetClickThrough?.(false);
     };
   }, [widgetLayoutLock, widgetMode]);
 

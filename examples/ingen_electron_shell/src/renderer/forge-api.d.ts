@@ -5,6 +5,7 @@ interface ForgeWindowControlsApi {
   toggleMaximize: () => Promise<boolean>;
   setWidgetMode?: (enabled: boolean, delayMs?: number) => Promise<boolean>;
   setWidgetHitRegions?: (regions: Array<{ x: number; y: number; width: number; height: number }>) => Promise<boolean>;
+  setWidgetClickThrough?: (enabled: boolean) => Promise<boolean>;
   close: () => Promise<boolean>;
 }
 

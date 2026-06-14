@@ -165,6 +165,10 @@ const forgeWindowControls = {
     console.info("[preload] forge:window-widget-hit-regions", { count: Array.isArray(regions) ? regions.length : 0 });
     return ipcRenderer.invoke("forge:window-widget-hit-regions", regions);
   },
+  setWidgetClickThrough(enabled) {
+    console.info("[preload] forge:window-widget-click-through", { enabled });
+    return ipcRenderer.invoke("forge:window-widget-click-through", enabled);
+  },
   close() {
     console.info("[preload] forge:window-close");
     return ipcRenderer.invoke("forge:window-close");

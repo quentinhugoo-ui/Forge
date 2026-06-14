@@ -246,6 +246,7 @@ type WidgetWindowRestoreState = {
 let widgetWindowRestoreState: WidgetWindowRestoreState | null = null;
 let widgetWindowShrinkTimer: ReturnType<typeof setTimeout> | null = null;
 let widgetWindowHitRegions: Electron.Rectangle[] = [];
+let widgetWindowClickThrough = false;
 let nativeWebExplorerView: BrowserView | null = null;
 let nativeWebExplorerOwner: BrowserWindow | null = null;
 let nativeWebExplorerLoadedUrl = "";
@@ -9931,6 +9932,19 @@ function resetNativeWidgetWindowShape(window: BrowserWindow): void {
   applyNativeWidgetWindowShape(window, []);
 }
 
+function applyNativeWidgetClickThrough(window: BrowserWindow, enabled: boolean): void {
+  if (widgetWindowClickThrough === enabled) {
+    return;
+  }
+  widgetWindowClickThrough = enabled;
+  window.setIgnoreMouseEvents(enabled, enabled ? { forward: true } : undefined);
+}
+
+function resetNativeWidgetClickThrough(window: BrowserWindow): void {
+  widgetWindowClickThrough = false;
+  window.setIgnoreMouseEvents(false);
+}
+
 function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, regions: unknown): boolean {
   if (!validateSender(event)) {
     console.warn("Blocked window widget hit regions from invalid sender", event.senderFrame?.url ?? "");
@@ -9953,6 +9967,23 @@ function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, reg
   return true;
 }
 
+function setNativeWindowWidgetClickThrough(event: Electron.IpcMainInvokeEvent, enabled: unknown): boolean {
+  if (!validateSender(event)) {
+    console.warn("Blocked window widget click-through from invalid sender", event.senderFrame?.url ?? "");
+    return false;
+  }
+  const window = senderNativeWindow(event);
+  if (!window || window.isDestroyed()) {
+    return false;
+  }
+  if (widgetWindowRestoreState === null && enabled === true) {
+    resetNativeWidgetClickThrough(window);
+    return true;
+  }
+  applyNativeWidgetClickThrough(window, enabled === true);
+  return true;
+}
+
 function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: unknown, delayMs?: unknown): boolean {
   if (!validateSender(event)) {
     console.warn("Blocked window widget mode from invalid sender", event.senderFrame?.url ?? "");
@@ -9965,6 +9996,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
 
   if (enabled === true) {
     clearWidgetWindowShrinkTimer();
+    resetNativeWidgetClickThrough(window);
     resetNativeWidgetWindowShape(window);
     saveWidgetWindowRestoreState(window);
     window.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND);
@@ -9984,6 +10016,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   }
 
   clearWidgetWindowShrinkTimer();
+  resetNativeWidgetClickThrough(window);
   resetNativeWidgetWindowShape(window);
   const restoreState = widgetWindowRestoreState;
   widgetWindowRestoreState = null;
@@ -10012,6 +10045,7 @@ function installWindowControlIpc(): void {
   ipcMain.handle("forge:window-close", (event): boolean => closeNativeWindow(event));
   ipcMain.handle("forge:window-widget-mode", (event, enabled, delayMs): boolean => setNativeWindowWidgetMode(event, enabled, delayMs));
   ipcMain.handle("forge:window-widget-hit-regions", (event, regions): boolean => setNativeWindowWidgetHitRegions(event, regions));
+  ipcMain.handle("forge:window-widget-click-through", (event, enabled): boolean => setNativeWindowWidgetClickThrough(event, enabled));
 }
 
 function terminalProof(value: unknown): string {

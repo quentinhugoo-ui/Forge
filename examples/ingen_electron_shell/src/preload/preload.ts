@@ -210,6 +210,9 @@ const forgeWindowControls = {
   setWidgetHitRegions(regions: Array<{ x: number; y: number; width: number; height: number }>): Promise<boolean> {
     return ipcRenderer.invoke("forge:window-widget-hit-regions", regions);
   },
+  setWidgetClickThrough(enabled: boolean): Promise<boolean> {
+    return ipcRenderer.invoke("forge:window-widget-click-through", enabled);
+  },
   close(): Promise<boolean> {
     return ipcRenderer.invoke("forge:window-close");
   }
