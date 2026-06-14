@@ -1462,13 +1462,30 @@ pub struct BangerNativeRadianceScheduleManifest {
     pub temporal_epoch: u64,
     pub probe_page_count: usize,
     pub active_probe_count: u64,
+    pub clipmap_count: usize,
+    pub trace_tile_count: usize,
+    pub sorted_trace_tile_count: usize,
+    pub indirect_dispatch_count: usize,
     pub light_budget: u32,
     pub async_compute_residency_policy: &'static str,
+    pub probe_atlas_hash: String,
+    pub indirection_table_hash: String,
+    pub clipmap_manifest_hash: String,
+    pub trace_tile_hash: String,
+    pub sorted_trace_tile_hash: String,
+    pub indirect_dispatch_args_hash: String,
+    pub backend_trace_path_hash: String,
     pub retention_policy_hash: String,
     pub cache_invalidation_reason_hash: String,
     pub invalidation_hash: String,
+    pub update_receipt_hash: String,
     pub schedule_hash: String,
     pub entries: Vec<BangerNativeRadianceProbePage>,
+    pub clipmaps: Vec<BangerNativeRadianceClipmap>,
+    pub trace_tiles: Vec<BangerNativeRadianceTraceTile>,
+    pub sorted_trace_tiles: Vec<BangerNativeRadianceTraceTile>,
+    pub indirect_dispatches: Vec<BangerNativeRadianceIndirectDispatch>,
+    pub update_receipt: BangerNativeRadianceUpdateReceipt,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1477,6 +1494,12 @@ pub struct BangerNativeRadianceProbePage {
     pub probe_page_id: String,
     pub source_slot: u32,
     pub source_page_hash: String,
+    pub clipmap_key: String,
+    pub probe_atlas_page_id: String,
+    pub indirection_texel: [u32; 4],
+    pub trace_tile_id: String,
+    pub trace_path: &'static str,
+    pub indirect_dispatch_args: [u32; 3],
     pub probe_count: u32,
     pub temporal_reuse_frames: u32,
     pub light_budget: u32,
@@ -1485,14 +1508,65 @@ pub struct BangerNativeRadianceProbePage {
     pub residency_policy: &'static str,
     pub retention_age_frames: u32,
     pub invalidation_reason: &'static str,
+    pub trace_tile_hash: String,
+    pub indirect_dispatch_hash: String,
     pub invalidation_hash: String,
     pub proof_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangerNativeRadianceClipmap {
+    pub clipmap_key: String,
+    pub level: u32,
+    pub origin_cell: [i32; 3],
+    pub grid_resolution: u32,
+    pub probe_page_count: usize,
+    pub world_extent: f32,
+    pub clipmap_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRadianceTraceTile {
+    pub trace_tile_id: String,
+    pub probe_page_id: String,
+    pub clipmap_key: String,
+    pub tile_coord: [u32; 3],
+    pub ray_budget: u32,
+    pub trace_path: &'static str,
+    pub sort_key: u32,
+    pub tile_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRadianceIndirectDispatch {
+    pub dispatch_id: String,
+    pub trace_tile_id: String,
+    pub dispatch_args: [u32; 3],
+    pub dispatch_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeRadianceUpdateReceipt {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub checked_probe_page_count: usize,
+    pub checked_trace_tile_count: usize,
+    pub checked_dispatch_count: usize,
+    pub sorted_trace_tile_count: usize,
+    pub invalid_dispatch_count: usize,
+    pub all_probe_pages_scheduled: bool,
+    pub receipt_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangerNativeLumenLightingPacket {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub authority: &'static str,
     pub clean_room_basis: &'static str,
     pub source_contract_hash: String,
@@ -1510,6 +1584,9 @@ pub struct BangerNativeLumenLightingPacket {
     pub surface_cache_hash: String,
     pub screen_probe_hash: String,
     pub trace_policy_hash: String,
+    pub radiance_probe_atlas_hash: String,
+    pub radiance_trace_tile_hash: String,
+    pub radiance_indirect_dispatch_args_hash: String,
     pub diffuse_indirect_hash: String,
     pub reflection_hash: String,
     pub packet_hash: String,
@@ -4689,10 +4766,12 @@ fn build_radiance_schedule_manifest(
         .slots
         .iter()
         .filter(|slot| slot.kind == "surfel_radiance_cache")
-        .map(|slot| {
+        .enumerate()
+        .map(|(index, slot)| {
             radiance_probe_page_from_slot(
                 prepared,
                 slot,
+                index as u32,
                 scene_graph_submission,
                 culling_manifest,
                 temporal_epoch,
@@ -4705,6 +4784,20 @@ fn build_radiance_schedule_manifest(
         .iter()
         .map(|entry| entry.probe_count as u64)
         .sum::<u64>();
+    let clipmaps = radiance_clipmaps_from_entries(scene_graph_submission, &entries);
+    let trace_tiles = radiance_trace_tiles_from_entries(&entries);
+    let mut sorted_trace_tiles = trace_tiles.clone();
+    sorted_trace_tiles.sort_by_key(|tile| (std::cmp::Reverse(tile.sort_key), tile.trace_tile_id.clone()));
+    let indirect_dispatches = radiance_indirect_dispatches_from_entries(&entries);
+    let probe_atlas_hash = radiance_probe_atlas_hash(&entries);
+    let indirection_table_hash = radiance_indirection_table_hash(&entries);
+    let clipmap_manifest_hash = radiance_clipmap_manifest_hash(&clipmaps);
+    let trace_tile_hash = radiance_trace_tile_manifest_hash(&trace_tiles);
+    let sorted_trace_tile_hash = radiance_sorted_trace_tile_manifest_hash(&sorted_trace_tiles);
+    let indirect_dispatch_args_hash = radiance_indirect_dispatch_args_manifest_hash(&indirect_dispatches);
+    let backend_trace_path_hash = radiance_backend_trace_path_hash(&entries);
+    let update_receipt = build_radiance_update_receipt(&entries, &trace_tiles, &indirect_dispatches);
+    let update_receipt_hash = update_receipt.receipt_hash.clone();
     let invalidation_hash =
         radiance_manifest_invalidation_hash(scene_graph_submission, culling_manifest, &entries);
     let retention_policy_hash = radiance_retention_policy_hash(&entries, temporal_reuse_frames);
@@ -4718,28 +4811,54 @@ fn build_radiance_schedule_manifest(
         &retention_policy_hash,
         &cache_invalidation_reason_hash,
         &invalidation_hash,
+        &probe_atlas_hash,
+        &indirection_table_hash,
+        &clipmap_manifest_hash,
+        &trace_tile_hash,
+        &sorted_trace_tile_hash,
+        &indirect_dispatch_args_hash,
+        &backend_trace_path_hash,
+        &update_receipt_hash,
         &entries,
     );
     BangerNativeRadianceScheduleManifest {
-        schema: "forge.banger.native_radiance_schedule_manifest.v2",
-        schema_version: 2,
-        authority: "surfel_radiance_cache_probe_pages_temporal_light_budget_async_compute",
+        schema: "forge.banger.native_radiance_schedule_manifest.v3",
+        schema_version: 3,
+        authority: "surfel_radiance_cache_clipmap_probe_atlas_trace_tile_dispatch",
         temporal_epoch,
         probe_page_count: entries.len(),
         active_probe_count,
+        clipmap_count: clipmaps.len(),
+        trace_tile_count: trace_tiles.len(),
+        sorted_trace_tile_count: sorted_trace_tiles.len(),
+        indirect_dispatch_count: indirect_dispatches.len(),
         light_budget,
         async_compute_residency_policy: "async_compute_lighting_stream_temporal_reuse",
+        probe_atlas_hash,
+        indirection_table_hash,
+        clipmap_manifest_hash,
+        trace_tile_hash,
+        sorted_trace_tile_hash,
+        indirect_dispatch_args_hash,
+        backend_trace_path_hash,
         retention_policy_hash,
         cache_invalidation_reason_hash,
         invalidation_hash,
+        update_receipt_hash,
         schedule_hash,
         entries,
+        clipmaps,
+        trace_tiles,
+        sorted_trace_tiles,
+        indirect_dispatches,
+        update_receipt,
     }
 }
 
 fn radiance_probe_page_from_slot(
     prepared: &MonsterPreparedCompute,
     slot: &BangerNativeResourceSlot,
+    schedule_index: u32,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
     culling_manifest: &BangerNativeCullingManifest,
     temporal_epoch: u64,
@@ -4750,6 +4869,23 @@ fn radiance_probe_page_from_slot(
     let update_priority = radiance_update_priority(slot, culling_manifest);
     let retention_age_frames = radiance_retention_age_frames(prepared, slot, temporal_reuse_frames);
     let invalidation_reason = radiance_invalidation_reason(slot, culling_manifest, retention_age_frames);
+    let clipmap_level = radiance_clipmap_level(slot, culling_manifest);
+    let clipmap_key = radiance_clipmap_key(scene_graph_submission, clipmap_level, temporal_epoch);
+    let probe_atlas_page_id = format!("radiance_atlas:{}:{}", slot.slot, slot.page_index);
+    let indirection_texel = radiance_indirection_texel(slot, schedule_index, clipmap_level);
+    let trace_tile_id = format!("radiance_tile:{}:{}:{}", clipmap_level, slot.slot, schedule_index);
+    let trace_path = radiance_trace_path(slot, culling_manifest, update_priority);
+    let indirect_dispatch_args = radiance_indirect_dispatch_args(probe_count, light_budget, trace_path);
+    let trace_tile_hash = radiance_trace_tile_hash(
+        &trace_tile_id,
+        &clipmap_key,
+        &indirection_texel,
+        light_budget,
+        trace_path,
+        update_priority,
+    );
+    let indirect_dispatch_hash =
+        radiance_indirect_dispatch_hash(&trace_tile_id, &indirect_dispatch_args);
     let invalidation_hash = radiance_probe_invalidation_hash(
         prepared,
         slot,
@@ -4766,14 +4902,28 @@ fn radiance_probe_page_from_slot(
         temporal_reuse_frames,
         light_budget,
         update_priority,
+        &clipmap_key,
+        &probe_atlas_page_id,
+        &indirection_texel,
+        &trace_tile_id,
+        trace_path,
+        &indirect_dispatch_args,
         retention_age_frames,
         invalidation_reason,
+        &trace_tile_hash,
+        &indirect_dispatch_hash,
         &invalidation_hash,
     );
     BangerNativeRadianceProbePage {
         probe_page_id: format!("radiance:{}:{}", slot.slot, slot.page_index),
         source_slot: slot.slot,
         source_page_hash: slot.page_hash.clone(),
+        clipmap_key,
+        probe_atlas_page_id,
+        indirection_texel,
+        trace_tile_id,
+        trace_path,
+        indirect_dispatch_args,
         probe_count,
         temporal_reuse_frames,
         light_budget,
@@ -4782,6 +4932,8 @@ fn radiance_probe_page_from_slot(
         residency_policy: "async_compute_lighting_stream",
         retention_age_frames,
         invalidation_reason,
+        trace_tile_hash,
+        indirect_dispatch_hash,
         invalidation_hash,
         proof_hash,
     }
@@ -4887,12 +5039,16 @@ fn build_lumen_lighting_packet(
         &surface_cache_hash,
         &screen_probe_hash,
         &trace_policy_hash,
+        &radiance_schedule_manifest.probe_atlas_hash,
+        &radiance_schedule_manifest.trace_tile_hash,
+        &radiance_schedule_manifest.indirect_dispatch_args_hash,
         &diffuse_indirect_hash,
         &reflection_hash,
         &entries,
     );
     BangerNativeLumenLightingPacket {
-        schema: "forge.banger.lumen_lighting_packet.v1",
+        schema: "forge.banger.lumen_lighting_packet.v2",
+        schema_version: 2,
         authority: "banger_nanite_surface_cache_screen_probe_radiance_trace",
         clean_room_basis: "local_unreal_sparse_lumen_surface_cache_screen_probe_radiance_principles_no_source_copy",
         source_contract_hash: prepared.route.plan.source_hash.clone(),
@@ -4922,6 +5078,9 @@ fn build_lumen_lighting_packet(
         surface_cache_hash,
         screen_probe_hash,
         trace_policy_hash,
+        radiance_probe_atlas_hash: radiance_schedule_manifest.probe_atlas_hash.clone(),
+        radiance_trace_tile_hash: radiance_schedule_manifest.trace_tile_hash.clone(),
+        radiance_indirect_dispatch_args_hash: radiance_schedule_manifest.indirect_dispatch_args_hash.clone(),
         diffuse_indirect_hash,
         reflection_hash,
         packet_hash,
@@ -9549,6 +9708,107 @@ fn radiance_update_priority(
     1 + lod_pressure + page_pressure
 }
 
+fn radiance_clipmap_level(
+    slot: &BangerNativeResourceSlot,
+    culling_manifest: &BangerNativeCullingManifest,
+) -> u32 {
+    let visibility_pressure = culling_manifest.max_lod_error.ceil().max(0.0) as u32;
+    (slot.page_index as u32)
+        .saturating_add(visibility_pressure)
+        .min(2)
+}
+
+fn radiance_clipmap_key(
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    clipmap_level: u32,
+    temporal_epoch: u64,
+) -> String {
+    hash_text_hex(
+        "forge.banger.radiance.clipmap_key.v1",
+        &format!(
+            "{}:{}:{}:{}",
+            scene_graph_submission.viewport_fit_hash, scene_graph_submission.visibility_hash, clipmap_level, temporal_epoch
+        ),
+    )
+}
+
+fn radiance_indirection_texel(
+    slot: &BangerNativeResourceSlot,
+    schedule_index: u32,
+    clipmap_level: u32,
+) -> [u32; 4] {
+    [
+        slot.slot.wrapping_add(schedule_index * 17) % 256,
+        (slot.page_index as u32).wrapping_add(schedule_index * 31) % 256,
+        clipmap_level,
+        schedule_index,
+    ]
+}
+
+fn radiance_trace_path(
+    slot: &BangerNativeResourceSlot,
+    culling_manifest: &BangerNativeCullingManifest,
+    update_priority: u32,
+) -> &'static str {
+    if culling_manifest.visible_count == 0 {
+        "screen_trace_reuse_only"
+    } else if update_priority > 24 || slot.upload_lane != "resident_cache" {
+        "sdf_world_trace_async_compute"
+    } else if culling_manifest.max_lod_error > 2.0 {
+        "hardware_ray_trace_candidate"
+    } else {
+        "screen_trace_then_world_trace"
+    }
+}
+
+fn radiance_indirect_dispatch_args(
+    probe_count: u32,
+    light_budget: u32,
+    trace_path: &str,
+) -> [u32; 3] {
+    let trace_multiplier = if trace_path == "hardware_ray_trace_candidate" {
+        2
+    } else {
+        1
+    };
+    let groups_x = probe_count
+        .saturating_mul(trace_multiplier)
+        .saturating_add(31)
+        / 32;
+    [groups_x.max(1), light_budget.div_ceil(8).max(1), 1]
+}
+
+fn radiance_trace_tile_hash(
+    trace_tile_id: &str,
+    clipmap_key: &str,
+    indirection_texel: &[u32; 4],
+    light_budget: u32,
+    trace_path: &str,
+    update_priority: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.trace_tile.v1\0");
+    h.update(trace_tile_id.as_bytes());
+    h.update(clipmap_key.as_bytes());
+    for value in indirection_texel {
+        h.update(value.to_le_bytes());
+    }
+    h.update(light_budget.to_le_bytes());
+    h.update(trace_path.as_bytes());
+    h.update(update_priority.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn radiance_indirect_dispatch_hash(trace_tile_id: &str, dispatch_args: &[u32; 3]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.indirect_dispatch.v1\0");
+    h.update(trace_tile_id.as_bytes());
+    for arg in dispatch_args {
+        h.update(arg.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
 fn radiance_retention_age_frames(
     prepared: &MonsterPreparedCompute,
     slot: &BangerNativeResourceSlot,
@@ -9606,21 +9866,279 @@ fn radiance_probe_page_proof_hash(
     temporal_reuse_frames: u32,
     light_budget: u32,
     update_priority: u32,
+    clipmap_key: &str,
+    probe_atlas_page_id: &str,
+    indirection_texel: &[u32; 4],
+    trace_tile_id: &str,
+    trace_path: &str,
+    indirect_dispatch_args: &[u32; 3],
     retention_age_frames: u32,
     invalidation_reason: &str,
+    trace_tile_hash: &str,
+    indirect_dispatch_hash: &str,
     invalidation_hash: &str,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.radiance_probe.page_proof.v2\0");
+    h.update(b"forge.banger.radiance_probe.page_proof.v3\0");
     h.update(slot.resource_key.as_bytes());
     h.update(slot.page_hash.as_bytes());
     h.update(probe_count.to_le_bytes());
     h.update(temporal_reuse_frames.to_le_bytes());
     h.update(light_budget.to_le_bytes());
     h.update(update_priority.to_le_bytes());
+    h.update(clipmap_key.as_bytes());
+    h.update(probe_atlas_page_id.as_bytes());
+    for value in indirection_texel {
+        h.update(value.to_le_bytes());
+    }
+    h.update(trace_tile_id.as_bytes());
+    h.update(trace_path.as_bytes());
+    for arg in indirect_dispatch_args {
+        h.update(arg.to_le_bytes());
+    }
     h.update(retention_age_frames.to_le_bytes());
     h.update(invalidation_reason.as_bytes());
+    h.update(trace_tile_hash.as_bytes());
+    h.update(indirect_dispatch_hash.as_bytes());
     h.update(invalidation_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn radiance_clipmaps_from_entries(
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    entries: &[BangerNativeRadianceProbePage],
+) -> Vec<BangerNativeRadianceClipmap> {
+    let mut grouped: BTreeMap<String, Vec<&BangerNativeRadianceProbePage>> = BTreeMap::new();
+    for entry in entries {
+        grouped.entry(entry.clipmap_key.clone()).or_default().push(entry);
+    }
+    grouped
+        .into_iter()
+        .enumerate()
+        .map(|(index, (clipmap_key, pages))| {
+            let level = pages
+                .first()
+                .map(|page| page.indirection_texel[2])
+                .unwrap_or(index as u32);
+            let origin_cell = radiance_clipmap_origin_cell(scene_graph_submission, level);
+            let grid_resolution = 32u32.saturating_mul(1u32 << level.min(2));
+            let world_extent = scene_graph_submission.fit_bounding_sphere[3].max(1.0)
+                * (level.saturating_add(1) as f32);
+            let clipmap_hash = radiance_clipmap_hash(
+                &clipmap_key,
+                level,
+                &origin_cell,
+                grid_resolution,
+                pages.len(),
+                world_extent,
+            );
+            BangerNativeRadianceClipmap {
+                clipmap_key,
+                level,
+                origin_cell,
+                grid_resolution,
+                probe_page_count: pages.len(),
+                world_extent,
+                clipmap_hash,
+            }
+        })
+        .collect()
+}
+
+fn radiance_clipmap_origin_cell(
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    level: u32,
+) -> [i32; 3] {
+    let scale = (level + 1) as f32 * 128.0;
+    [
+        (scene_graph_submission.fit_bounding_sphere[0] / scale).floor() as i32,
+        (scene_graph_submission.fit_bounding_sphere[1] / scale).floor() as i32,
+        (scene_graph_submission.fit_bounding_sphere[2] / scale).floor() as i32,
+    ]
+}
+
+fn radiance_clipmap_hash(
+    clipmap_key: &str,
+    level: u32,
+    origin_cell: &[i32; 3],
+    grid_resolution: u32,
+    probe_page_count: usize,
+    world_extent: f32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.clipmap.v1\0");
+    h.update(clipmap_key.as_bytes());
+    h.update(level.to_le_bytes());
+    for value in origin_cell {
+        h.update(value.to_le_bytes());
+    }
+    h.update(grid_resolution.to_le_bytes());
+    h.update((probe_page_count as u64).to_le_bytes());
+    h.update(world_extent.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn radiance_trace_tiles_from_entries(
+    entries: &[BangerNativeRadianceProbePage],
+) -> Vec<BangerNativeRadianceTraceTile> {
+    entries
+        .iter()
+        .map(|entry| BangerNativeRadianceTraceTile {
+            trace_tile_id: entry.trace_tile_id.clone(),
+            probe_page_id: entry.probe_page_id.clone(),
+            clipmap_key: entry.clipmap_key.clone(),
+            tile_coord: [
+                entry.indirection_texel[0],
+                entry.indirection_texel[1],
+                entry.indirection_texel[2],
+            ],
+            ray_budget: entry.light_budget,
+            trace_path: entry.trace_path,
+            sort_key: entry.update_priority.saturating_mul(1024)
+                + entry.retention_age_frames.min(1023),
+            tile_hash: entry.trace_tile_hash.clone(),
+        })
+        .collect()
+}
+
+fn radiance_indirect_dispatches_from_entries(
+    entries: &[BangerNativeRadianceProbePage],
+) -> Vec<BangerNativeRadianceIndirectDispatch> {
+    entries
+        .iter()
+        .map(|entry| BangerNativeRadianceIndirectDispatch {
+            dispatch_id: format!("dispatch:{}", entry.trace_tile_id),
+            trace_tile_id: entry.trace_tile_id.clone(),
+            dispatch_args: entry.indirect_dispatch_args,
+            dispatch_hash: entry.indirect_dispatch_hash.clone(),
+        })
+        .collect()
+}
+
+fn radiance_probe_atlas_hash(entries: &[BangerNativeRadianceProbePage]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.probe_atlas.v1\0");
+    for entry in entries {
+        h.update(entry.probe_atlas_page_id.as_bytes());
+        h.update(entry.source_page_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn radiance_indirection_table_hash(entries: &[BangerNativeRadianceProbePage]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.indirection_table.v1\0");
+    for entry in entries {
+        h.update(entry.clipmap_key.as_bytes());
+        for value in entry.indirection_texel {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn radiance_clipmap_manifest_hash(clipmaps: &[BangerNativeRadianceClipmap]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.clipmap_manifest.v1\0");
+    for clipmap in clipmaps {
+        h.update(clipmap.clipmap_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn radiance_trace_tile_manifest_hash(trace_tiles: &[BangerNativeRadianceTraceTile]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.trace_tile_manifest.v1\0");
+    for tile in trace_tiles {
+        h.update(tile.tile_hash.as_bytes());
+        h.update(tile.trace_path.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn radiance_sorted_trace_tile_manifest_hash(trace_tiles: &[BangerNativeRadianceTraceTile]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.sorted_trace_tile_manifest.v1\0");
+    for tile in trace_tiles {
+        h.update(tile.sort_key.to_le_bytes());
+        h.update(tile.tile_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn radiance_indirect_dispatch_args_manifest_hash(
+    dispatches: &[BangerNativeRadianceIndirectDispatch],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.indirect_dispatch_manifest.v1\0");
+    for dispatch in dispatches {
+        h.update(dispatch.dispatch_hash.as_bytes());
+        for arg in dispatch.dispatch_args {
+            h.update(arg.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn radiance_backend_trace_path_hash(entries: &[BangerNativeRadianceProbePage]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.backend_trace_paths.v1\0");
+    for entry in entries {
+        h.update(entry.trace_path.as_bytes());
+        h.update(entry.trace_tile_id.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn build_radiance_update_receipt(
+    entries: &[BangerNativeRadianceProbePage],
+    trace_tiles: &[BangerNativeRadianceTraceTile],
+    dispatches: &[BangerNativeRadianceIndirectDispatch],
+) -> BangerNativeRadianceUpdateReceipt {
+    let invalid_dispatch_count = dispatches
+        .iter()
+        .filter(|dispatch| dispatch.dispatch_args.iter().any(|arg| *arg == 0))
+        .count();
+    let all_probe_pages_scheduled = entries.len() == trace_tiles.len()
+        && entries.len() == dispatches.len()
+        && invalid_dispatch_count == 0;
+    let receipt_hash = radiance_update_receipt_hash(
+        entries.len(),
+        trace_tiles.len(),
+        dispatches.len(),
+        trace_tiles.len(),
+        invalid_dispatch_count,
+        all_probe_pages_scheduled,
+    );
+    BangerNativeRadianceUpdateReceipt {
+        schema: "forge.banger.radiance_update_receipt.v1",
+        authority: "probe_page_trace_tile_indirect_dispatch_consistency",
+        checked_probe_page_count: entries.len(),
+        checked_trace_tile_count: trace_tiles.len(),
+        checked_dispatch_count: dispatches.len(),
+        sorted_trace_tile_count: trace_tiles.len(),
+        invalid_dispatch_count,
+        all_probe_pages_scheduled,
+        receipt_hash,
+    }
+}
+
+fn radiance_update_receipt_hash(
+    checked_probe_page_count: usize,
+    checked_trace_tile_count: usize,
+    checked_dispatch_count: usize,
+    sorted_trace_tile_count: usize,
+    invalid_dispatch_count: usize,
+    all_probe_pages_scheduled: bool,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.radiance.update_receipt.v1\0");
+    h.update((checked_probe_page_count as u64).to_le_bytes());
+    h.update((checked_trace_tile_count as u64).to_le_bytes());
+    h.update((checked_dispatch_count as u64).to_le_bytes());
+    h.update((sorted_trace_tile_count as u64).to_le_bytes());
+    h.update((invalid_dispatch_count as u64).to_le_bytes());
+    h.update([all_probe_pages_scheduled as u8]);
     hex32(h.finalize().into())
 }
 
@@ -9674,10 +10192,18 @@ fn radiance_schedule_hash(
     retention_policy_hash: &str,
     cache_invalidation_reason_hash: &str,
     invalidation_hash: &str,
+    probe_atlas_hash: &str,
+    indirection_table_hash: &str,
+    clipmap_manifest_hash: &str,
+    trace_tile_hash: &str,
+    sorted_trace_tile_hash: &str,
+    indirect_dispatch_args_hash: &str,
+    backend_trace_path_hash: &str,
+    update_receipt_hash: &str,
     entries: &[BangerNativeRadianceProbePage],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.native_radiance_schedule_manifest.v2\0");
+    h.update(b"forge.banger.native_radiance_schedule_manifest.v3\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(scene_graph_submission.submission_hash.as_bytes());
@@ -9687,6 +10213,14 @@ fn radiance_schedule_hash(
     h.update(retention_policy_hash.as_bytes());
     h.update(cache_invalidation_reason_hash.as_bytes());
     h.update(invalidation_hash.as_bytes());
+    h.update(probe_atlas_hash.as_bytes());
+    h.update(indirection_table_hash.as_bytes());
+    h.update(clipmap_manifest_hash.as_bytes());
+    h.update(trace_tile_hash.as_bytes());
+    h.update(sorted_trace_tile_hash.as_bytes());
+    h.update(indirect_dispatch_args_hash.as_bytes());
+    h.update(backend_trace_path_hash.as_bytes());
+    h.update(update_receipt_hash.as_bytes());
     for entry in entries {
         h.update(entry.proof_hash.as_bytes());
     }
@@ -9892,12 +10426,15 @@ fn lumen_lighting_packet_hash(
     surface_cache_hash: &str,
     screen_probe_hash: &str,
     trace_policy_hash: &str,
+    radiance_probe_atlas_hash: &str,
+    radiance_trace_tile_hash: &str,
+    radiance_indirect_dispatch_args_hash: &str,
     diffuse_indirect_hash: &str,
     reflection_hash: &str,
     entries: &[BangerNativeLumenLightingEntry],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.lumen_lighting_packet.v1\0");
+    h.update(b"forge.banger.lumen_lighting_packet.v2\0");
     h.update(prepared.manifest_hash.as_bytes());
     h.update(prepared.route.plan.proof_hash.as_bytes());
     h.update(gpu_scene_packet.packet_hash.as_bytes());
@@ -9907,6 +10444,9 @@ fn lumen_lighting_packet_hash(
     h.update(surface_cache_hash.as_bytes());
     h.update(screen_probe_hash.as_bytes());
     h.update(trace_policy_hash.as_bytes());
+    h.update(radiance_probe_atlas_hash.as_bytes());
+    h.update(radiance_trace_tile_hash.as_bytes());
+    h.update(radiance_indirect_dispatch_args_hash.as_bytes());
     h.update(diffuse_indirect_hash.as_bytes());
     h.update(reflection_hash.as_bytes());
     for entry in entries {
@@ -19085,17 +19625,43 @@ mod tests {
             .any(|pass| pass.stage == "material_bind"));
         assert_eq!(
             response.radiance_schedule_manifest.schema,
-            "forge.banger.native_radiance_schedule_manifest.v2"
+            "forge.banger.native_radiance_schedule_manifest.v3"
         );
-        assert_eq!(response.radiance_schedule_manifest.schema_version, 2);
+        assert_eq!(response.radiance_schedule_manifest.schema_version, 3);
         assert!(response.radiance_schedule_manifest.temporal_epoch > 0);
         assert!(response.radiance_schedule_manifest.probe_page_count > 0);
         assert!(response.radiance_schedule_manifest.active_probe_count > 0);
+        assert!(response.radiance_schedule_manifest.clipmap_count > 0);
+        assert_eq!(
+            response.radiance_schedule_manifest.trace_tile_count,
+            response.radiance_schedule_manifest.probe_page_count
+        );
+        assert_eq!(
+            response.radiance_schedule_manifest.sorted_trace_tile_count,
+            response.radiance_schedule_manifest.trace_tile_count
+        );
+        assert_eq!(
+            response.radiance_schedule_manifest.indirect_dispatch_count,
+            response.radiance_schedule_manifest.probe_page_count
+        );
         assert!(response.radiance_schedule_manifest.light_budget >= 4);
         assert_eq!(
             response.radiance_schedule_manifest.async_compute_residency_policy,
             "async_compute_lighting_stream_temporal_reuse"
         );
+        assert_eq!(response.radiance_schedule_manifest.probe_atlas_hash.len(), 64);
+        assert_eq!(response.radiance_schedule_manifest.indirection_table_hash.len(), 64);
+        assert_eq!(response.radiance_schedule_manifest.clipmap_manifest_hash.len(), 64);
+        assert_eq!(response.radiance_schedule_manifest.trace_tile_hash.len(), 64);
+        assert_eq!(response.radiance_schedule_manifest.sorted_trace_tile_hash.len(), 64);
+        assert_eq!(
+            response
+                .radiance_schedule_manifest
+                .indirect_dispatch_args_hash
+                .len(),
+            64
+        );
+        assert_eq!(response.radiance_schedule_manifest.backend_trace_path_hash.len(), 64);
         assert_eq!(response.radiance_schedule_manifest.retention_policy_hash.len(), 64);
         assert_eq!(
             response
@@ -19105,20 +19671,81 @@ mod tests {
             64
         );
         assert_eq!(response.radiance_schedule_manifest.invalidation_hash.len(), 64);
+        assert_eq!(response.radiance_schedule_manifest.update_receipt_hash.len(), 64);
         assert_eq!(response.radiance_schedule_manifest.schedule_hash.len(), 64);
         assert_eq!(
             response.radiance_schedule_manifest.probe_page_count,
             response.radiance_schedule_manifest.entries.len()
         );
+        assert_eq!(
+            response.radiance_schedule_manifest.clipmap_count,
+            response.radiance_schedule_manifest.clipmaps.len()
+        );
+        assert_eq!(
+            response.radiance_schedule_manifest.trace_tile_count,
+            response.radiance_schedule_manifest.trace_tiles.len()
+        );
+        assert_eq!(
+            response.radiance_schedule_manifest.sorted_trace_tile_count,
+            response.radiance_schedule_manifest.sorted_trace_tiles.len()
+        );
+        assert_eq!(
+            response.radiance_schedule_manifest.indirect_dispatch_count,
+            response.radiance_schedule_manifest.indirect_dispatches.len()
+        );
+        assert_eq!(
+            response.radiance_schedule_manifest.update_receipt.receipt_hash,
+            response.radiance_schedule_manifest.update_receipt_hash
+        );
+        assert!(response
+            .radiance_schedule_manifest
+            .update_receipt
+            .all_probe_pages_scheduled);
+        assert_eq!(
+            response
+                .radiance_schedule_manifest
+                .update_receipt
+                .invalid_dispatch_count,
+            0
+        );
+        assert!(response
+            .radiance_schedule_manifest
+            .clipmaps
+            .iter()
+            .all(|clipmap| clipmap.clipmap_key.len() == 64
+                && clipmap.grid_resolution > 0
+                && clipmap.probe_page_count > 0
+                && clipmap.clipmap_hash.len() == 64));
+        assert!(response
+            .radiance_schedule_manifest
+            .trace_tiles
+            .iter()
+            .all(|tile| tile.trace_tile_id.starts_with("radiance_tile:")
+                && tile.probe_page_id.starts_with("radiance:")
+                && tile.ray_budget > 0
+                && tile.tile_hash.len() == 64));
+        assert!(response
+            .radiance_schedule_manifest
+            .indirect_dispatches
+            .iter()
+            .all(|dispatch| dispatch.dispatch_args.iter().all(|arg| *arg > 0)
+                && dispatch.dispatch_hash.len() == 64));
         assert!(response
             .radiance_schedule_manifest
             .entries
             .iter()
             .all(|entry| entry.async_compute
                 && entry.residency_policy == "async_compute_lighting_stream"
+                && entry.clipmap_key.len() == 64
+                && entry.probe_atlas_page_id.starts_with("radiance_atlas:")
+                && entry.trace_tile_id.starts_with("radiance_tile:")
+                && entry.indirection_texel[3] < response.radiance_schedule_manifest.probe_page_count as u32
+                && entry.indirect_dispatch_args.iter().all(|arg| *arg > 0)
                 && entry.probe_count > 0
                 && entry.light_budget == response.radiance_schedule_manifest.light_budget
                 && entry.retention_age_frames >= entry.temporal_reuse_frames
+                && entry.trace_tile_hash.len() == 64
+                && entry.indirect_dispatch_hash.len() == 64
                 && entry.invalidation_hash.len() == 64
                 && entry.proof_hash.len() == 64
                 && matches!(
@@ -19130,8 +19757,9 @@ mod tests {
                 )));
         assert_eq!(
             response.lumen_lighting_packet.schema,
-            "forge.banger.lumen_lighting_packet.v1"
+            "forge.banger.lumen_lighting_packet.v2"
         );
+        assert_eq!(response.lumen_lighting_packet.schema_version, 2);
         assert_eq!(
             response.lumen_lighting_packet.authority,
             "banger_nanite_surface_cache_screen_probe_radiance_trace"
@@ -19182,6 +19810,22 @@ mod tests {
         assert_eq!(response.lumen_lighting_packet.surface_cache_hash.len(), 64);
         assert_eq!(response.lumen_lighting_packet.screen_probe_hash.len(), 64);
         assert_eq!(response.lumen_lighting_packet.trace_policy_hash.len(), 64);
+        assert_eq!(
+            response.lumen_lighting_packet.radiance_probe_atlas_hash,
+            response.radiance_schedule_manifest.probe_atlas_hash
+        );
+        assert_eq!(
+            response.lumen_lighting_packet.radiance_trace_tile_hash,
+            response.radiance_schedule_manifest.trace_tile_hash
+        );
+        assert_eq!(
+            response
+                .lumen_lighting_packet
+                .radiance_indirect_dispatch_args_hash,
+            response
+                .radiance_schedule_manifest
+                .indirect_dispatch_args_hash
+        );
         assert_eq!(response.lumen_lighting_packet.diffuse_indirect_hash.len(), 64);
         assert_eq!(response.lumen_lighting_packet.reflection_hash.len(), 64);
         assert_eq!(response.lumen_lighting_packet.packet_hash.len(), 64);
