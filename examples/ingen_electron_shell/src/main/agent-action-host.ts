@@ -9,6 +9,7 @@ import type {
   AgentActionRequest,
   AgentActionResult,
   AgentActionSearchMatch,
+  AgentActionInstalledTool,
   AgentActionRuntimeManifestSummary,
   AgentCapabilityAtlasEntry,
   IpcError
@@ -24,6 +25,28 @@ const WINDOWS_DESTRUCTIVE_BLOCK_ROOTS = [
 ];
 const MAX_PREVIEW_CHARS = 12_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
+const AGENT_ACTION_TOOL_DETECTION_TIMEOUT_MS = 450;
+const AGENT_ACTION_TOOL_DETECTION_COMMANDS: readonly { id: string; command: string }[] = [
+  { id: "powershell", command: "powershell.exe" },
+  { id: "pwsh", command: "pwsh.exe" },
+  { id: "cmd", command: "cmd.exe" },
+  { id: "winget", command: "winget.exe" },
+  { id: "reg", command: "reg.exe" },
+  { id: "schtasks", command: "schtasks.exe" },
+  { id: "netsh", command: "netsh.exe" },
+  { id: "dism", command: "dism.exe" },
+  { id: "rundll32", command: "rundll32.exe" },
+  { id: "wsl", command: "wsl.exe" },
+  { id: "docker", command: "docker.exe" },
+  { id: "git", command: "git.exe" },
+  { id: "gh", command: "gh.exe" },
+  { id: "node", command: "node.exe" },
+  { id: "npm", command: "npm.cmd" },
+  { id: "cargo", command: "cargo.exe" },
+  { id: "python", command: "python.exe" },
+  { id: "code", command: "code.cmd" }
+];
+let agentActionToolDetectionCache: { platform: NodeJS.Platform; tools: AgentActionInstalledTool[] } | undefined;
 const AGENT_ACTION_EVENT_HINTS = [
   "fs.list:/agent_list_",
   "fs.search:/agent_search_",
@@ -71,6 +94,12 @@ export interface AgentActionHostConfig {
 
 function hashJson(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function estimatePromptTokens(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return Math.max(Math.ceil(trimmed.length / 4), Math.ceil(trimmed.split(/\s+/).length * 1.35));
 }
 
 function actionError(code: IpcError["code"], message: string, input: unknown): IpcError {
@@ -186,6 +215,38 @@ function pathKind(entry: { isDirectory(): boolean; isFile(): boolean }): AgentAc
 
 function clampMaxResults(value: unknown, fallback: number): number {
   return Math.max(1, Math.min(500, typeof value === "number" && Number.isInteger(value) ? value : fallback));
+}
+
+function detectToolPath(config: AgentActionHostConfig, command: string): string | undefined {
+  const detector = config.platform === "win32" ? "where.exe" : "sh";
+  const args = config.platform === "win32" ? [command] : ["-lc", `command -v ${command.replace(/'/g, "'\\''")}`];
+  const detected = spawnSync(detector, args, {
+    encoding: "utf8",
+    timeout: AGENT_ACTION_TOOL_DETECTION_TIMEOUT_MS,
+    windowsHide: true
+  });
+  if (detected.status !== 0 || detected.error) {
+    return undefined;
+  }
+  const firstLine = (detected.stdout ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  return firstLine;
+}
+
+export function detectAgentActionInstalledTools(config: AgentActionHostConfig): AgentActionInstalledTool[] {
+  if (agentActionToolDetectionCache?.platform === config.platform) {
+    return agentActionToolDetectionCache.tools;
+  }
+  const tools = AGENT_ACTION_TOOL_DETECTION_COMMANDS.map(({ id, command }) => {
+    const detectedPath = detectToolPath(config, command);
+    return {
+      id,
+      command,
+      available: Boolean(detectedPath),
+      detectedPath
+    };
+  });
+  agentActionToolDetectionCache = { platform: config.platform, tools };
+  return tools;
 }
 
 function atlasEntry(entry: AgentCapabilityAtlasEntry): AgentCapabilityAtlasEntry {
@@ -745,6 +806,41 @@ function compactCapabilityAtlasLine(atlas: AgentCapabilityAtlasEntry[]): string 
   return `capability_atlas=count:${atlas.length} families=${familySummary} planned_or_blocked=${plannedFamilies}`;
 }
 
+function capabilityDetailLines(entry: AgentCapabilityAtlasEntry): string[] {
+  return [
+    `id=${entry.id}`,
+    `family=${entry.family}`,
+    `surface=${entry.surface}`,
+    `status=${entry.status}`,
+    `risk=${entry.risk}`,
+    `approval=${entry.approval}`,
+    `writes=${entry.writes}`,
+    `operations=${entry.operations.join("|")}`,
+    `tools=${entry.underlyingTools.join("|")}`,
+    `fallbacks=${entry.fallbacks.join("|")}`,
+    `verification=${entry.verification.join("|")}`,
+    entry.executableActionIds?.length ? `executable_actions=${entry.executableActionIds.join("|")}` : "executable_actions=none",
+    `notes=${entry.notes}`
+  ];
+}
+
+export function agentActionCapabilityDetailManifest(config: AgentActionHostConfig, selector: string): string {
+  const manifest = createAgentActionHostManifest(config);
+  const normalizedSelector = selector.trim().toLowerCase();
+  const capability = manifest.capabilityAtlas.find((entry) =>
+    entry.id.toLowerCase() === normalizedSelector ||
+    entry.family.toLowerCase() === normalizedSelector ||
+    entry.executableActionIds?.some((id) => id.toLowerCase() === normalizedSelector)
+  );
+  return [
+    "AGENT_ACTION_CAPABILITY_DETAIL v1",
+    `manifest_hash=${manifest.runtime.manifestHash}`,
+    `atlas_hash=${manifest.runtime.atlasHash}`,
+    capability ? capabilityDetailLines(capability).join("\n") : `missing_selector=${selector}`,
+    "rule=Use this detail as context only. Execute only real available AGENT_ACTION_JSON actions and wait for AGENT_ACTION_RESULT."
+  ].join("\n");
+}
+
 function uniqueSortedFamilies(entries: AgentCapabilityAtlasEntry[]): string[] {
   return [...new Set(entries.map((entry) => entry.family))].sort();
 }
@@ -752,15 +848,28 @@ function uniqueSortedFamilies(entries: AgentCapabilityAtlasEntry[]): string[] {
 export function createAgentActionRuntimeManifestSummary(config: AgentActionHostConfig): AgentActionRuntimeManifestSummary {
   const capabilities = createExecutableActionCapabilities();
   const capabilityAtlas = createAgentCapabilityAtlas(config);
+  const installedTools = detectAgentActionInstalledTools(config);
   const summary: AgentActionRuntimeManifestSummary = {
     schema: "ingen.agent_action_runtime_manifest.summary.v1",
     manifestHash: "",
     atlasHash: hashJson(capabilityAtlas),
+    installedToolsHash: hashJson(installedTools),
     executableActionIds: capabilities.map((capability) => capability.id),
     availableFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status === "available")),
     plannedFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status === "planned")),
     blockedFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status === "blocked")),
     approvalGatedFamilies: uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.approval === "prompt" || entry.approval === "confirmed")),
+    installedToolIds: installedTools.filter((tool) => tool.available).map((tool) => tool.id).sort(),
+    missingToolIds: installedTools.filter((tool) => !tool.available).map((tool) => tool.id).sort(),
+    promptTokenEstimate: {
+      fullManifest: estimatePromptTokens(JSON.stringify(capabilityAtlas)),
+      compactContinuation: estimatePromptTokens([
+        "AGENT_ACTION_HOST_CONTINUATION v1",
+        capabilities.map((capability) => capability.id).join(" "),
+        uniqueSortedFamilies(capabilityAtlas.filter((entry) => entry.status !== "available")).join("|")
+      ].join("\n")),
+      selectedCapabilityDetail: Math.max(...capabilityAtlas.map((entry) => estimatePromptTokens(capabilityDetailLines(entry).join("\n"))))
+    },
     injectionPolicy: "full_on_local_intent_compact_delta_on_continuation",
     promptBudget: "compact_by_default_detail_on_selected_capability",
     resultReinjectionPolicy: "compact_tool_result_is_ground_truth_each_round"
@@ -772,6 +881,7 @@ export function createAgentActionRuntimeManifestSummary(config: AgentActionHostC
 export function createAgentActionHostManifest(config: AgentActionHostConfig): AgentActionHostManifest {
   const capabilities = createExecutableActionCapabilities();
   const capabilityAtlas = createAgentCapabilityAtlas(config);
+  const installedTools = detectAgentActionInstalledTools(config);
   const runtime = createAgentActionRuntimeManifestSummary(config);
   const manifest: AgentActionHostManifest = {
     schema: "ingen.agent_action_host.manifest.v1",
@@ -790,6 +900,7 @@ export function createAgentActionHostManifest(config: AgentActionHostConfig): Ag
     },
     capabilities,
     capabilityAtlas,
+    installedTools,
     runtime,
     proofHash: ""
   };
@@ -813,6 +924,11 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `injection_policy=${manifest.runtime.injectionPolicy}`,
     `prompt_budget=${manifest.runtime.promptBudget}`,
     `result_reinjection=${manifest.runtime.resultReinjectionPolicy}`,
+    `token_estimate_full=${manifest.runtime.promptTokenEstimate.fullManifest}`,
+    `token_estimate_compact=${manifest.runtime.promptTokenEstimate.compactContinuation}`,
+    `token_estimate_selected_capability=${manifest.runtime.promptTokenEstimate.selectedCapabilityDetail}`,
+    `installed_tools=${manifest.runtime.installedToolIds.join("|")}`,
+    `missing_tools=${manifest.runtime.missingToolIds.join("|")}`,
     "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
     compactCapabilityAtlasLine(manifest.capabilityAtlas),
     `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,

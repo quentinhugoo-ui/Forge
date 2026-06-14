@@ -120,6 +120,9 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("manifest.runtime.atlasHash");
     expect(mainSource).toContain("delta_policy=${manifest.runtime.injectionPolicy}");
     expect(mainSource).toContain("prompt_budget=${manifest.runtime.promptBudget}");
+    expect(mainSource).toContain("token_estimate_compact=${manifest.runtime.promptTokenEstimate.compactContinuation}");
+    expect(mainSource).toContain("installed_tools_delta=${manifest.runtime.installedToolIds.join(\"|\")}");
+    expect(mainSource).toContain("missing_tools_delta=${manifest.runtime.missingToolIds.join(\"|\")}");
     expect(mainSource).toContain("selected_capability_policy=Use AGENT_ACTION_SELECTED_CAPABILITY");
     expect(mainSource).toContain("textLooksLikeLocalActionIntent(userText)");
     expect(mainSource).toContain("textIsAgentActionContinuation(userText)");
@@ -167,7 +170,10 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("AGENT_ACTION_RESULT_PREFIX");
     expect(mainSource).toContain("compactAgentActionResult(result)");
     expect(mainSource).toContain("function agentActionSelectedCapabilityContext");
-    expect(mainSource).toContain("AGENT_ACTION_SELECTED_CAPABILITY v1");
+    expect(mainSource).toContain("agentActionCapabilityDetailManifest(agentActionHostConfig(), capabilityId)");
+    expect(mainSource).toContain("AGENT_ACTION_COMPACTION_STATE v1");
+    expect(mainSource).toContain("last_tool_ground_truth=");
+    expect(mainSource).toContain("After compaction, continue the same observe-act-verify-retry loop");
     expect(mainSource).toContain("result.accepted\n      ? \"next=verify whether the user objective is now satisfied");
     expect(mainSource).toContain("agentActionSelectedCapabilityContext(request, result)");
     expect(mainSource).toContain("agentEvents.emit({\n      kind: \"compaction_started\"");

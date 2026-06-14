@@ -110,6 +110,7 @@ import {
   isSidebarCommand
 } from "../shared/ipc-contract.js";
 import {
+  agentActionCapabilityDetailManifest,
   agentActionEventCommandForRequest,
   agentActionHostPromptManifest,
   agentActionRoutingHint,
@@ -222,6 +223,7 @@ const TRANSPARENT_WINDOW_BACKGROUND = "#00000000";
 const WIDGET_WINDOW_HEIGHT = 174;
 const WIDGET_WINDOW_BOTTOM_GAP = 0;
 const WIDGET_WINDOW_SHRINK_DELAY_MS = 720;
+const WIDGET_TASKBAR_SLIDE_MS = 320;
 const WINDOWS_TASKBAR_AUTOHIDE_FLAG = 0x1;
 const PANELS_CHAT_BOTTOM_MAX_VIDEO_SUBTITLE_BYTES = 48 * 1024;
 const PANELS_CHAT_BOTTOM_CONTEXT_TEXT_BYTES = 24 * 1024;
@@ -246,6 +248,7 @@ type WidgetWindowRestoreState = {
 };
 let widgetWindowRestoreState: WidgetWindowRestoreState | null = null;
 let widgetWindowShrinkTimer: ReturnType<typeof setTimeout> | null = null;
+let widgetWindowBoundsAnimationTimer: ReturnType<typeof setInterval> | null = null;
 let widgetWindowHitRegions: Electron.Rectangle[] = [];
 let widgetWindowClickThrough = false;
 let widgetTaskbarOriginalState: number | null = null;
@@ -3062,13 +3065,45 @@ function providerConversationMessages(
     });
 }
 
+function compactedAgentActionMemory(compactedMessages: PlannedConversationMessage[]): string {
+  const actionMessages = compactedMessages.filter((message) =>
+    /AGENT_ACTION_RESULT|AGENT_ACTION_JSON|AGENT_ACTION_SELECTED_CAPABILITY|\/agent_(?:list|search|create_directory|rename_path|move_path|copy_path|delete_empty_directory|delete_tree|readonly_shell|shell)_/i.test(message.content)
+  );
+  if (actionMessages.length === 0) {
+    return "";
+  }
+  const manifest = createAgentActionHostManifest(agentActionHostConfig());
+  const lastUserGoal = [...compactedMessages]
+    .reverse()
+    .find((message) => message.role === "user")?.content ?? "";
+  const lastToolGroundTruth = [...actionMessages]
+    .reverse()
+    .find((message) => /AGENT_ACTION_RESULT/i.test(message.content))?.content ?? actionMessages.at(-1)?.content ?? "";
+  return trimUtf8Bytes([
+    "AGENT_ACTION_COMPACTION_STATE v1",
+    `manifest_hash=${manifest.runtime.manifestHash}`,
+    `atlas_hash=${manifest.runtime.atlasHash}`,
+    `result_reinjection=${manifest.runtime.resultReinjectionPolicy}`,
+    `executable_actions=${manifest.runtime.executableActionIds.join("|")}`,
+    `planned_families=${manifest.runtime.plannedFamilies.join("|")}`,
+    `blocked_families=${manifest.runtime.blockedFamilies.join("|")}`,
+    `approval_gated_families=${manifest.runtime.approvalGatedFamilies.join("|")}`,
+    `installed_tools=${manifest.runtime.installedToolIds.join("|")}`,
+    `active_goal=${trimUtf8Bytes(lastUserGoal, 900)}`,
+    `last_tool_ground_truth=${trimUtf8Bytes(lastToolGroundTruth, 1400)}`,
+    "rule=After compaction, continue the same observe-act-verify-retry loop. Treat the last tool result as ground truth, verify before claiming success, and do not ask for the full atlas unless a selected capability detail is insufficient."
+  ].join("\n"), 5000);
+}
+
 function compactedConversationMemory(
   compactedMessages: PlannedConversationMessage[],
   estimatedTokens: number
 ): string {
+  const agentActionMemory = compactedAgentActionMemory(compactedMessages);
   const header = [
     "BRAIN_REINJECTED_AFTER_COMPACTION:",
     brainBootManifest(),
+    agentActionMemory,
     "",
     "CONVERSATION_COMPACTION v1",
     `estimated_transcript_tokens=${estimatedTokens}`,
@@ -4320,6 +4355,10 @@ function agentActionContinuationManifest(): string {
     `delta_policy=${manifest.runtime.injectionPolicy}`,
     `prompt_budget=${manifest.runtime.promptBudget}`,
     `result_reinjection=${manifest.runtime.resultReinjectionPolicy}`,
+    `token_estimate_compact=${manifest.runtime.promptTokenEstimate.compactContinuation}`,
+    `token_estimate_selected_capability=${manifest.runtime.promptTokenEstimate.selectedCapabilityDetail}`,
+    `installed_tools_delta=${manifest.runtime.installedToolIds.join("|")}`,
+    `missing_tools_delta=${manifest.runtime.missingToolIds.join("|")}`,
     "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
     `planned_families_delta=${manifest.runtime.plannedFamilies.join("|")}`,
     `blocked_families_delta=${manifest.runtime.blockedFamilies.join("|")}`,
@@ -5577,22 +5616,12 @@ function compactAgentActionResult(result: AgentActionResult): string {
 function agentActionSelectedCapabilityContext(request: AgentActionRequest, result: AgentActionResult): string {
   const manifest = createAgentActionHostManifest(agentActionHostConfig());
   const capabilityId = AGENT_ACTION_CAPABILITY_BY_ACTION[request.action];
-  const capability = manifest.capabilityAtlas.find((entry) => entry.id === capabilityId);
   const recoveryFamilies = manifest.runtime.approvalGatedFamilies
-    .filter((family) => !capability || family !== capability.family)
+    .filter((family) => family !== capabilityId)
     .slice(0, 10)
     .join("|");
   return [
-    "AGENT_ACTION_SELECTED_CAPABILITY v1",
-    `manifest_hash=${manifest.runtime.manifestHash}`,
-    `atlas_hash=${manifest.runtime.atlasHash}`,
-    `capability=${capability?.id ?? capabilityId}`,
-    `family=${capability?.family ?? "unknown"}`,
-    `status=${capability?.status ?? "unknown"}`,
-    `risk=${capability?.risk ?? "unknown"}`,
-    `approval=${capability?.approval ?? "unknown"}`,
-    `verification=${capability?.verification.join("|") ?? "command_exit"}`,
-    `fallbacks=${capability?.fallbacks.join("|") ?? "shell.full"}`,
+    agentActionCapabilityDetailManifest(agentActionHostConfig(), capabilityId),
     result.accepted
       ? "next=verify whether the user objective is now satisfied; continue only if another local action is still required."
       : `next=read the error, then choose a different safe route when possible. recovery_families=${recoveryFamilies}`
@@ -10100,19 +10129,21 @@ function closeNativeWindow(event: Electron.IpcMainInvokeEvent): boolean {
   return true;
 }
 
-function widgetWindowBounds(window: BrowserWindow): Electron.Rectangle {
+function widgetWindowBounds(window: BrowserWindow, options: { taskbarHidden?: boolean } = {}): Electron.Rectangle {
   const display = screen.getDisplayMatching(window.getBounds());
   const { workArea } = display;
+  const targetTaskbarHidden = options.taskbarHidden ?? widgetTaskbarHidden;
+  const verticalArea = targetTaskbarHidden ? display.bounds : workArea;
   const restoreBounds = widgetWindowRestoreState?.bounds ?? window.getBounds();
   const width = Math.min(workArea.width, Math.max(520, restoreBounds.width));
-  const height = Math.min(WIDGET_WINDOW_HEIGHT, Math.max(136, workArea.height - 24));
+  const height = Math.min(WIDGET_WINDOW_HEIGHT, Math.max(136, verticalArea.height - 24));
   const x = Math.min(
     Math.max(restoreBounds.x, workArea.x),
     workArea.x + workArea.width - width
   );
   return {
     x,
-    y: workArea.y + workArea.height - height - WIDGET_WINDOW_BOTTOM_GAP,
+    y: verticalArea.y + verticalArea.height - height - WIDGET_WINDOW_BOTTOM_GAP,
     width,
     height
   };
@@ -10123,6 +10154,48 @@ function clearWidgetWindowShrinkTimer(): void {
     clearTimeout(widgetWindowShrinkTimer);
     widgetWindowShrinkTimer = null;
   }
+}
+
+function clearWidgetWindowBoundsAnimationTimer(): void {
+  if (widgetWindowBoundsAnimationTimer !== null) {
+    clearInterval(widgetWindowBoundsAnimationTimer);
+    widgetWindowBoundsAnimationTimer = null;
+  }
+}
+
+function easeOutCubic(value: number): number {
+  return 1 - Math.pow(1 - value, 3);
+}
+
+function animateNativeWidgetWindowBounds(window: BrowserWindow, targetBounds: Electron.Rectangle, durationMs = WIDGET_TASKBAR_SLIDE_MS): void {
+  if (window.isDestroyed()) {
+    return;
+  }
+  clearWidgetWindowBoundsAnimationTimer();
+  const startBounds = window.getBounds();
+  const duration = Math.max(80, Math.min(900, Math.round(durationMs)));
+  const startedAt = Date.now();
+  const applyFrame = () => {
+    if (window.isDestroyed()) {
+      clearWidgetWindowBoundsAnimationTimer();
+      return;
+    }
+    const progress = Math.min(1, (Date.now() - startedAt) / duration);
+    const eased = easeOutCubic(progress);
+    const nextBounds = {
+      x: Math.round(startBounds.x + (targetBounds.x - startBounds.x) * eased),
+      y: Math.round(startBounds.y + (targetBounds.y - startBounds.y) * eased),
+      width: Math.round(startBounds.width + (targetBounds.width - startBounds.width) * eased),
+      height: Math.round(startBounds.height + (targetBounds.height - startBounds.height) * eased)
+    };
+    window.setBounds(nextBounds, false);
+    if (progress >= 1) {
+      clearWidgetWindowBoundsAnimationTimer();
+      window.setBounds(targetBounds, false);
+    }
+  };
+  applyFrame();
+  widgetWindowBoundsAnimationTimer = setInterval(applyFrame, 16);
 }
 
 function saveWidgetWindowRestoreState(window: BrowserWindow): void {
@@ -10156,6 +10229,7 @@ function applyNativeWidgetWindowBounds(window: BrowserWindow): void {
   window.setAlwaysOnTop(true, "floating");
   const bounds = widgetWindowBounds(window);
   console.info("Applying native widget window bounds", { id: window.id, bounds });
+  clearWidgetWindowBoundsAnimationTimer();
   window.setBounds(bounds, true);
   window.show();
   window.focus();
@@ -10329,11 +10403,24 @@ function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boole
   return true;
 }
 
-function restoreWidgetTaskbarState(): void {
-  if (widgetTaskbarOriginalState === null) {
+function moveNativeWidgetWindowForTaskbar(window: BrowserWindow): void {
+  if (widgetWindowRestoreState === null || window.isDestroyed()) {
     return;
   }
-  void setWidgetTaskbarHidden((widgetTaskbarOriginalState & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0, true);
+  const targetBounds = widgetWindowBounds(window, { taskbarHidden: widgetTaskbarHidden });
+  console.info("Animating native widget window for taskbar state", {
+    id: window.id,
+    taskbarHidden: widgetTaskbarHidden,
+    targetBounds
+  });
+  animateNativeWidgetWindowBounds(window, targetBounds);
+}
+
+function restoreWidgetTaskbarState(): boolean {
+  if (widgetTaskbarOriginalState === null) {
+    return true;
+  }
+  return setWidgetTaskbarHidden((widgetTaskbarOriginalState & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0, true);
 }
 
 function setNativeWindowWidgetTaskbarAutoHide(event: Electron.IpcMainInvokeEvent, enabled: unknown): boolean {
@@ -10341,14 +10428,25 @@ function setNativeWindowWidgetTaskbarAutoHide(event: Electron.IpcMainInvokeEvent
     console.warn("Blocked window widget taskbar auto-hide from invalid sender", event.senderFrame?.url ?? "");
     return false;
   }
+  const window = senderNativeWindow(event);
+  if (!window || window.isDestroyed()) {
+    return false;
+  }
   if (enabled === true) {
     if (widgetWindowRestoreState === null) {
       return false;
     }
-    return setWidgetTaskbarHidden(true);
+    const accepted = setWidgetTaskbarHidden(true);
+    if (accepted) {
+      moveNativeWidgetWindowForTaskbar(window);
+    }
+    return accepted;
   }
-  restoreWidgetTaskbarState();
-  return true;
+  const accepted = restoreWidgetTaskbarState();
+  if (accepted) {
+    moveNativeWidgetWindowForTaskbar(window);
+  }
+  return accepted;
 }
 
 function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): boolean {
@@ -10359,7 +10457,14 @@ function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): bo
   if (widgetWindowRestoreState === null) {
     return false;
   }
-  return setWidgetTaskbarHidden(!widgetTaskbarHidden);
+  const accepted = setWidgetTaskbarHidden(!widgetTaskbarHidden);
+  if (accepted) {
+    const window = senderNativeWindow(event);
+    if (window && !window.isDestroyed()) {
+      moveNativeWidgetWindowForTaskbar(window);
+    }
+  }
+  return accepted;
 }
 
 function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, regions: unknown): boolean {
@@ -10433,6 +10538,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
   }
 
   clearWidgetWindowShrinkTimer();
+  clearWidgetWindowBoundsAnimationTimer();
   restoreWidgetTaskbarState();
   resetNativeWidgetClickThrough(window);
   resetNativeWidgetWindowShape(window);

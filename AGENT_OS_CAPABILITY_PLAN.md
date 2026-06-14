@@ -167,7 +167,7 @@ Acceptance:
 - The manifest says which capabilities are available, planned, blocked or approval-gated.
 - Context compaction preserves the active goal, recent tool results, capability constraints and proof trail.
 
-Status: implemented. The manifest now carries runtime hashes and delta policy, and each tool-result continuation receives selected-capability context.
+Status: implemented for the planned scope. The manifest carries runtime hashes, atlas hashes, delta policy, installed/missing tool detection, prompt token estimates, selected-capability detail on tool-result continuation and agent-action compaction state.
 
 ### 3. Universal Agent Loop
 

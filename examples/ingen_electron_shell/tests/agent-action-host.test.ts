@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  agentActionCapabilityDetailManifest,
   createAgentCapabilityAtlas,
   createAgentActionHostManifest,
   createAgentActionRuntimeManifestSummary,
+  detectAgentActionInstalledTools,
   agentActionEventCommandForRequest,
   agentActionHostPromptManifest,
   agentActionRoutingHint,
@@ -51,9 +53,12 @@ describe("agent action host", () => {
     expect(manifest.runtime.schema).toBe("ingen.agent_action_runtime_manifest.summary.v1");
     expect(manifest.runtime.manifestHash).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.runtime.atlasHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest.runtime.installedToolsHash).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.runtime.injectionPolicy).toBe("full_on_local_intent_compact_delta_on_continuation");
     expect(manifest.runtime.resultReinjectionPolicy).toBe("compact_tool_result_is_ground_truth_each_round");
     expect(manifest.runtime.executableActionIds).toContain("shell.full");
+    expect(manifest.installedTools.length).toBeGreaterThan(5);
+    expect([...manifest.runtime.installedToolIds, ...manifest.runtime.missingToolIds]).toContain("winget");
     expect(manifest.proofHash).toMatch(/^[a-f0-9]{64}$/);
 
     const promptManifest = agentActionHostPromptManifest({
@@ -71,6 +76,11 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("injection_policy=full_on_local_intent_compact_delta_on_continuation");
     expect(promptManifest).toContain("prompt_budget=compact_by_default_detail_on_selected_capability");
     expect(promptManifest).toContain("result_reinjection=compact_tool_result_is_ground_truth_each_round");
+    expect(promptManifest).toContain("token_estimate_full=");
+    expect(promptManifest).toContain("token_estimate_compact=");
+    expect(promptManifest).toContain("token_estimate_selected_capability=");
+    expect(promptManifest).toContain("installed_tools=");
+    expect(promptManifest).toContain("missing_tools=");
     expect(promptManifest).toContain("windows.wmi:planned/none");
     expect(promptManifest).toContain("office.com:planned/prompt");
     expect(promptManifest).toContain("capability_policy=Use the atlas for reasoning");
@@ -95,6 +105,7 @@ describe("agent action host", () => {
 
     expect(summary.manifestHash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.atlasHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(summary.installedToolsHash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.executableActionIds).toEqual([
       "fs.list",
       "fs.search",
@@ -112,6 +123,29 @@ describe("agent action host", () => {
     expect(summary.blockedFamilies).toContain("windows.credentials");
     expect(summary.approvalGatedFamilies).toContain("browser.cdp");
     expect(summary.promptBudget).toBe("compact_by_default_detail_on_selected_capability");
+    expect(summary.promptTokenEstimate.fullManifest).toBeGreaterThan(summary.promptTokenEstimate.compactContinuation);
+    expect(summary.promptTokenEstimate.selectedCapabilityDetail).toBeGreaterThan(0);
+    expect([...summary.installedToolIds, ...summary.missingToolIds]).toContain("powershell");
+  });
+
+  it("detects local tool availability and renders selected capability detail on demand", () => {
+    const config: AgentActionHostConfig = {
+      workspaceRoot: "C:\\repo",
+      workspaceActive: true,
+      cwd: "C:\\repo",
+      platform: "win32"
+    };
+    const tools = detectAgentActionInstalledTools(config);
+    expect(tools.map((tool) => tool.id)).toContain("powershell");
+    expect(tools.map((tool) => tool.id)).toContain("winget");
+
+    const detail = agentActionCapabilityDetailManifest(config, "shell.full");
+    expect(detail).toContain("AGENT_ACTION_CAPABILITY_DETAIL v1");
+    expect(detail).toContain("id=shell.full");
+    expect(detail).toContain("family=shell.full");
+    expect(detail).toContain("fallbacks=PowerShell|cmd.exe|Windows native CLI|GUI/computer_use when available");
+    expect(detail).toContain("verification=command_exit|filesystem|process_state|registry_state|service_state|package_state");
+    expect(detail).toContain("rule=Use this detail as context only");
   });
 
   it("publishes a broad non-executable Windows capability atlas", () => {
