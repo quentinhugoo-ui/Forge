@@ -849,6 +849,7 @@ export interface BangerPresentLoopBootstrapResult {
   nativeDomain: "render_3d";
   routeStatus: string;
   parentWindowHandleHash: string;
+  childWindowHandleHash?: string;
   viewportWidth: number;
   viewportHeight: number;
   targetFrameMs: number;
@@ -865,6 +866,7 @@ export interface BangerPresentLoopBootstrapResult {
   frameHash: string;
   presentLoopHash: string;
   proofHash: string;
+  hostPid?: number;
   verifier: {
     wall: string;
     frontierHypothesis: string;

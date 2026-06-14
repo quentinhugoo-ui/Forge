@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -81,6 +81,7 @@ export interface RustBangerPresentLoopBootstrap {
   nativeDomain: "render_3d";
   routeStatus: string;
   parentWindowHandleHash: string;
+  childWindowHandleHash?: string;
   viewportWidth: number;
   viewportHeight: number;
   targetFrameMs: number;
@@ -97,6 +98,7 @@ export interface RustBangerPresentLoopBootstrap {
   frameHash: string;
   presentLoopHash: string;
   proofHash: string;
+  hostPid?: number;
   verifier: {
     wall: string;
     frontierHypothesis: string;
@@ -114,6 +116,13 @@ let cachedProjection: RustBackendProjection | null = shadowProjection("startup s
 let cachedAt = 0;
 let refreshInFlight: Promise<RustBackendProjection> | null = null;
 const cacheTtlMs = 15_000;
+let bangerNativeHost:
+  | {
+      key: string;
+      child: ChildProcessWithoutNullStreams;
+      ready: RustBangerPresentLoopBootstrap;
+    }
+  | null = null;
 
 export function cachedRustBackendProjection(): RustBackendProjection | null {
   return cachedProjection;
@@ -179,6 +188,15 @@ export async function loadRustBangerPresentLoopBootstrap(
 ): Promise<RustBangerPresentLoopBootstrap> {
   const repoRoot = join(shellRoot, "..", "..");
   const bridgeExe = process.env.FORGE_ELECTRON_BACKEND_EXE;
+  if (options.parentWindowHandle) {
+    const host = await launchRustBangerNativeHost(shellRoot, options).catch((error) => {
+      console.error("Rust Banger native host failed to launch.", error);
+      return null;
+    });
+    if (host) {
+      return host;
+    }
+  }
   const env = {
     ...process.env,
     ...(options.parentWindowHandle ? { FORGE_BANGER_PARENT_HWND: options.parentWindowHandle } : {}),
@@ -200,6 +218,121 @@ export async function loadRustBangerPresentLoopBootstrap(
     console.error("Rust Banger present loop bootstrap failed.", error);
     return shadowBangerPresentLoopBootstrap("native present loop bootstrap failed; child surface pending");
   }
+}
+
+async function launchRustBangerNativeHost(
+  shellRoot: string,
+  options: { parentWindowHandle?: string; width?: number; height?: number }
+): Promise<RustBangerPresentLoopBootstrap | null> {
+  const parentWindowHandle = options.parentWindowHandle?.trim();
+  if (!parentWindowHandle) {
+    return null;
+  }
+  const width = Math.max(64, Math.round(options.width ?? 1280));
+  const height = Math.max(64, Math.round(options.height ?? 720));
+  const key = `${parentWindowHandle}:${width}:${height}`;
+  if (bangerNativeHost && bangerNativeHost.key === key && !bangerNativeHost.child.killed) {
+    return bangerNativeHost.ready;
+  }
+  if (bangerNativeHost && !bangerNativeHost.child.killed) {
+    bangerNativeHost.child.kill();
+    bangerNativeHost = null;
+  }
+
+  const repoRoot = join(shellRoot, "..", "..");
+  const bridgeExe = process.env.FORGE_ELECTRON_BACKEND_EXE;
+  const env = {
+    ...process.env,
+    FORGE_BANGER_PARENT_HWND: parentWindowHandle,
+    FORGE_BANGER_VIEWPORT_WIDTH: String(width),
+    FORGE_BANGER_VIEWPORT_HEIGHT: String(height)
+  };
+  const spawnSpec =
+    bridgeExe && existsSync(bridgeExe)
+      ? { command: bridgeExe, args: ["--banger-native-host"], cwd: shellRoot }
+      : process.env.FORGE_ELECTRON_ALLOW_CARGO_BACKEND === "1"
+        ? {
+            command: join(
+              process.env.SystemRoot ?? "C:\\Windows",
+              "System32",
+              "WindowsPowerShell",
+              "v1.0",
+              "powershell.exe"
+            ),
+            args: [
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              join(repoRoot, "scripts", "forge-cargo.ps1"),
+              "run",
+              "--manifest-path",
+              "examples\\ingen_native_services\\Cargo.toml",
+              "--bin",
+              "ingen_electron_backend_bridge",
+              "--",
+              "--banger-native-host"
+            ],
+            cwd: repoRoot
+          }
+        : null;
+  if (!spawnSpec) {
+    return null;
+  }
+
+  const child = spawn(spawnSpec.command, spawnSpec.args, {
+    cwd: spawnSpec.cwd,
+    env,
+    windowsHide: true
+  });
+  child.stderr.on("data", (chunk) => {
+    console.warn("Banger native host stderr", chunk.toString());
+  });
+  child.once("exit", () => {
+    if (bangerNativeHost?.child === child) {
+      bangerNativeHost = null;
+    }
+  });
+  const ready = await readFirstJsonLine(child, 12_000);
+  const parsed = parseBangerPresentLoopBootstrap(ready);
+  bangerNativeHost = { key, child, ready: parsed };
+  return parsed;
+}
+
+function readFirstJsonLine(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    const timer = setTimeout(() => {
+      cleanup();
+      child.kill();
+      reject(new Error("Timed out waiting for Banger native host readiness JSON."));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.stdout.off("data", onData);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    const onData = (chunk: Buffer) => {
+      stdout += chunk.toString();
+      const line = stdout.split(/\r?\n/).find((entry) => entry.trim().startsWith("{"));
+      if (line) {
+        cleanup();
+        resolve(line);
+      }
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code: number | null) => {
+      cleanup();
+      reject(new Error(`Banger native host exited before readiness JSON with code ${code ?? "unknown"}.`));
+    };
+    child.stdout.on("data", onData);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
 }
 
 async function runBackendExe(

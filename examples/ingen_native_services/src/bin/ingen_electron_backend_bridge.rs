@@ -7,8 +7,10 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,7 +91,55 @@ struct BangerPreviewFrameMetrics {
     render_path: &'static str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerNativeHostProjection {
+    ok: bool,
+    schema: &'static str,
+    engine: &'static str,
+    lane: &'static str,
+    native_domain: &'static str,
+    route_status: &'static str,
+    parent_window_handle_hash: String,
+    child_window_handle_hash: String,
+    viewport_width: u32,
+    viewport_height: u32,
+    target_frame_ms: f32,
+    selected_adapter: Option<String>,
+    adapter_count: usize,
+    backend: String,
+    surface_kind: &'static str,
+    swapchain_format: String,
+    present_mode: String,
+    alpha_mode: String,
+    render_pass_count: u32,
+    submitted_frame_count: u32,
+    clear_color: [f64; 4],
+    frame_hash: String,
+    present_loop_hash: String,
+    proof_hash: String,
+    host_pid: u32,
+    verifier: BangerNativeHostVerifier,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BangerNativeHostVerifier {
+    wall: &'static str,
+    frontier_hypothesis: &'static str,
+    local_gate: &'static str,
+    rollback_path: &'static str,
+}
+
 fn main() {
+    if env::args().any(|argument| argument == "--banger-native-host") {
+        let parent = env::var("FORGE_BANGER_PARENT_HWND").ok();
+        let width = env::var("FORGE_BANGER_VIEWPORT_WIDTH").ok().and_then(|value| value.parse().ok()).unwrap_or(1280);
+        let height = env::var("FORGE_BANGER_VIEWPORT_HEIGHT").ok().and_then(|value| value.parse().ok()).unwrap_or(720);
+        let frame_limit = env::var("FORGE_BANGER_HOST_FRAMES").ok().and_then(|value| value.parse().ok());
+        run_banger_native_host(parent.as_deref(), width, height, frame_limit).expect("run banger native host");
+        return;
+    }
     if env::args().any(|argument| argument == "--banger-present-loop-bootstrap") {
         let frame = BangerNativeEngine::bootstrap_present_loop(BangerNativePresentLoopBootstrapRequest {
             parent_window_handle: env::var("FORGE_BANGER_PARENT_HWND").ok(),
@@ -370,6 +420,305 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(target_os = "windows")]
+fn run_banger_native_host(
+    parent_window_handle: Option<&str>,
+    width: u32,
+    height: u32,
+    frame_limit: Option<u32>,
+) -> Result<BangerNativeHostProjection, String> {
+    use raw_window_handle::{RawWindowHandle, Win32WindowHandle};
+    use std::ffi::c_void;
+    use std::num::NonZeroIsize;
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, IsWindow, RegisterClassW, ShowWindow, CS_HREDRAW,
+        CS_VREDRAW, SW_SHOW, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+    };
+
+    unsafe extern "system" fn banger_wnd_proc(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+    }
+
+    let parent = parse_hwnd(parent_window_handle)
+        .ok_or_else(|| "FORGE_BANGER_PARENT_HWND is required for the native child host".to_string())?;
+    unsafe {
+        if IsWindow(parent) == 0 {
+            return Err("FORGE_BANGER_PARENT_HWND does not reference a live Win32 window".to_string());
+        }
+    }
+
+    let class_name = wide_null("ForgeBangerNativeChildSurface");
+    let title = wide_null("Banger Native Surface");
+    let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) };
+    let wc = WNDCLASSW {
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(banger_wnd_proc),
+        hInstance: hinstance,
+        lpszClassName: class_name.as_ptr(),
+        ..Default::default()
+    };
+    unsafe {
+        RegisterClassW(&wc);
+    }
+    let child = unsafe {
+        CreateWindowExW(
+            0,
+            class_name.as_ptr(),
+            title.as_ptr(),
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+            0,
+            0,
+            width.clamp(64, 16384) as i32,
+            height.clamp(64, 16384) as i32,
+            parent,
+            std::ptr::null_mut(),
+            hinstance,
+            std::ptr::null_mut(),
+        )
+    };
+    if child.is_null() {
+        return Err("failed to create Banger Win32 child window".to_string());
+    }
+    unsafe {
+        ShowWindow(child, SW_SHOW);
+    }
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        flags: Default::default(),
+        memory_budget_thresholds: Default::default(),
+        backend_options: Default::default(),
+        display: Default::default(),
+    });
+    let mut child_handle = Win32WindowHandle::new(
+        NonZeroIsize::new(child as isize).ok_or_else(|| "Banger child HWND was null".to_string())?,
+    );
+    child_handle.hinstance = NonZeroIsize::new(hinstance as isize);
+    let surface = unsafe {
+        instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: None,
+            raw_window_handle: RawWindowHandle::Win32(child_handle),
+        })
+    }
+    .map_err(|error| format!("failed to create Banger wgpu child surface: {error}"))?;
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: Some(&surface),
+        force_fallback_adapter: false,
+    }))
+    .map_err(|error| format!("failed to select adapter for Banger child surface: {error}"))?;
+    let info = adapter.get_info();
+    let capabilities = surface.get_capabilities(&adapter);
+    let format = capabilities
+        .formats
+        .iter()
+        .copied()
+        .find(|format| format.is_srgb())
+        .or_else(|| capabilities.formats.first().copied())
+        .ok_or_else(|| "Banger child surface reported no swapchain formats".to_string())?;
+    let present_mode = capabilities
+        .present_modes
+        .iter()
+        .copied()
+        .find(|mode| *mode == wgpu::PresentMode::AutoVsync)
+        .or_else(|| capabilities.present_modes.first().copied())
+        .unwrap_or(wgpu::PresentMode::AutoVsync);
+    let alpha_mode = capabilities
+        .alpha_modes
+        .iter()
+        .copied()
+        .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
+        .or_else(|| capabilities.alpha_modes.first().copied())
+        .unwrap_or(wgpu::CompositeAlphaMode::Opaque);
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("banger-native-child-host-device"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::downlevel_defaults(),
+        memory_hints: wgpu::MemoryHints::default(),
+        experimental_features: wgpu::ExperimentalFeatures::default(),
+        trace: wgpu::Trace::Off,
+    }))
+    .map_err(|error| format!("failed to create Banger child host device: {error}"))?;
+    let config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format,
+        width: width.clamp(64, 16384),
+        height: height.clamp(64, 16384),
+        present_mode,
+        desired_maximum_frame_latency: 2,
+        alpha_mode,
+        view_formats: vec![],
+    };
+    surface.configure(&device, &config);
+
+    let clear_color = [0.015, 0.018, 0.024, 1.0];
+    render_child_surface_frame(&surface, &device, &queue, clear_color)?;
+    let parent_hash = sha256_hex(parent_window_handle.unwrap_or_default().as_bytes());
+    let child_hash = sha256_hex(format!("{:p}", child as *mut c_void).as_bytes());
+    let frame_hash = sha256_hex(
+        format!(
+            "banger-native-child-frame:{}:{}:{:?}:{:?}:{:?}:{}:{}",
+            config.width, config.height, format, present_mode, alpha_mode, parent_hash, child_hash
+        )
+        .as_bytes(),
+    );
+    let present_loop_hash = sha256_hex(
+        format!("banger-native-child-loop:{frame_hash}:{}:{}", info.name, info.driver_info).as_bytes(),
+    );
+    let mut projection = BangerNativeHostProjection {
+        ok: true,
+        schema: "forge.banger.native_present_loop_bootstrap.v1",
+        engine: "banger_rust_native_engine",
+        lane: "native_tandem_render",
+        native_domain: "render_3d",
+        route_status: "native_child_surface_host_presented",
+        parent_window_handle_hash: parent_hash,
+        child_window_handle_hash: child_hash,
+        viewport_width: config.width,
+        viewport_height: config.height,
+        target_frame_ms: 16.67,
+        selected_adapter: Some(info.name),
+        adapter_count: pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all())).len(),
+        backend: format!("{:?}", info.backend),
+        surface_kind: "win32_child_window_wgpu_surface",
+        swapchain_format: format!("{:?}", format),
+        present_mode: format!("{:?}", present_mode),
+        alpha_mode: format!("{:?}", alpha_mode),
+        render_pass_count: 1,
+        submitted_frame_count: 1,
+        clear_color,
+        frame_hash,
+        present_loop_hash,
+        proof_hash: String::new(),
+        host_pid: std::process::id(),
+        verifier: BangerNativeHostVerifier {
+            wall: "latency+native_surface+ui_branching",
+            frontier_hypothesis: "Banger owns a persistent Win32 child surface and wgpu swapchain under Electron chrome.",
+            local_gate: "forge-cargo run --manifest-path examples\\ingen_native_services\\Cargo.toml --bin ingen_electron_backend_bridge -- --banger-native-host",
+            rollback_path: "fall back to --banger-present-loop-bootstrap offscreen target",
+        },
+    };
+    projection.proof_hash = proof_hash(&projection);
+    println!("{}", serde_json::to_string(&projection).expect("serialize banger native host"));
+    io::stdout().flush().map_err(|error| format!("failed to flush Banger host readiness JSON: {error}"))?;
+
+    let requested_frames = frame_limit.unwrap_or(u32::MAX);
+    let mut submitted = 1u32;
+    while submitted < requested_frames && unsafe { IsWindow(parent) } != 0 && unsafe { IsWindow(child) } != 0 {
+        pump_win32_messages();
+        render_child_surface_frame(&surface, &device, &queue, clear_color)?;
+        submitted += 1;
+        thread::sleep(Duration::from_millis(16));
+    }
+
+    Ok(projection)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_banger_native_host(
+    _parent_window_handle: Option<&str>,
+    _width: u32,
+    _height: u32,
+    _frame_limit: Option<u32>,
+) -> Result<BangerNativeHostProjection, String> {
+    Err("Banger native child host is currently implemented for Win32 HWND surfaces".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn render_child_surface_frame(
+    surface: &wgpu::Surface<'_>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    clear_color: [f64; 4],
+) -> Result<(), String> {
+    let frame = match surface.get_current_texture() {
+        wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
+        wgpu::CurrentSurfaceTexture::Outdated => {
+            return Err("Banger child surface became outdated before resize handling was promoted".to_string())
+        }
+        wgpu::CurrentSurfaceTexture::Lost => {
+            return Err("Banger child surface was lost before surface recreation was promoted".to_string())
+        }
+        wgpu::CurrentSurfaceTexture::Validation => {
+            return Err("Banger child surface reported a validation error".to_string())
+        }
+    };
+    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("banger-native-child-host-encoder"),
+    });
+    {
+        let color_attachments = [Some(wgpu::RenderPassColorAttachment {
+            view: &view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color {
+                    r: clear_color[0],
+                    g: clear_color[1],
+                    b: clear_color[2],
+                    a: clear_color[3],
+                }),
+                store: wgpu::StoreOp::Store,
+            },
+        })];
+        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("banger-native-child-host-clear-pass"),
+            color_attachments: &color_attachments,
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+    }
+    queue.submit(Some(encoder.finish()));
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|error| format!("Banger child host GPU poll failed: {error}"))?;
+    frame.present();
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn parse_hwnd(value: Option<&str>) -> Option<windows_sys::Win32::Foundation::HWND> {
+    let raw = value?.trim();
+    let parsed = raw
+        .strip_prefix("0x")
+        .or_else(|| raw.strip_prefix("0X"))
+        .and_then(|hex| usize::from_str_radix(hex, 16).ok())
+        .or_else(|| raw.parse::<usize>().ok())?;
+    if parsed == 0 {
+        None
+    } else {
+        Some(parsed as windows_sys::Win32::Foundation::HWND)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn pump_win32_messages() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE};
+    let mut message = MSG::default();
+    while unsafe { PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) } != 0 {
+        unsafe {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 #[cfg(test)]
