@@ -3193,6 +3193,11 @@ interface ProviderTextRun {
   runtime: string;
 }
 
+interface ProviderLiveTextSink {
+  onText: (text: string) => void;
+  shouldStop?: (text: string) => boolean;
+}
+
 type CodexLocalAuth = {
   accessToken: string;
   refreshToken?: string;
@@ -4270,29 +4275,72 @@ function codexDirectResponseOutputText(value: unknown): string {
   return text;
 }
 
+function applyCodexDirectEventText(event: unknown, finalText: string): string {
+  if (!event || typeof event !== "object") {
+    return finalText;
+  }
+  const record = event as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : "";
+  if (type.includes("output_text.delta") && typeof record.delta === "string") {
+    return finalText + record.delta;
+  }
+  if (type === "response.completed") {
+    const fallback = codexDirectResponseOutputText(record.response ?? record);
+    return !finalText.trim() && fallback.trim() ? fallback : finalText;
+  }
+  if (!finalText.trim()) {
+    const fallback = codexDirectResponseOutputText(record);
+    if (fallback.trim()) {
+      return fallback;
+    }
+  }
+  return finalText;
+}
+
 function parseCodexDirectEventStream(rawText: string): string {
   const buffer = { text: `${rawText}\n\n` };
   let finalText = "";
   for (const event of drainCodexSseEvents(buffer)) {
-    if (!event || typeof event !== "object") {
-      continue;
+    finalText = applyCodexDirectEventText(event, finalText);
+  }
+  return finalText.trim();
+}
+
+async function readCodexDirectEventStream(response: Response, liveSink?: ProviderLiveTextSink): Promise<string> {
+  const body = response.body;
+  if (!body) {
+    return parseCodexDirectEventStream(await response.text());
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const buffer = { text: "" };
+  let finalText = "";
+  const emitEvents = async () => {
+    for (const event of drainCodexSseEvents(buffer)) {
+      finalText = applyCodexDirectEventText(event, finalText);
+      if (finalText.trim()) {
+        liveSink?.onText(finalText.trimEnd());
+      }
+      if (liveSink?.shouldStop?.(finalText)) {
+        await reader.cancel().catch(() => undefined);
+        return true;
+      }
     }
-    const record = event as Record<string, unknown>;
-    const type = typeof record.type === "string" ? record.type : "";
-    if (type.includes("output_text.delta") && typeof record.delta === "string") {
-      finalText += record.delta;
-    } else if (type === "response.completed") {
-      const fallback = codexDirectResponseOutputText(record.response ?? record);
-      if (!finalText.trim() && fallback.trim()) {
-        finalText = fallback;
-      }
-    } else if (!finalText.trim()) {
-      const fallback = codexDirectResponseOutputText(record);
-      if (fallback.trim()) {
-        finalText = fallback;
-      }
+    return false;
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer.text += decoder.decode(value, { stream: true });
+    if (await emitEvents()) {
+      return finalText.trim();
     }
   }
+  buffer.text += decoder.decode();
+  buffer.text += "\n\n";
+  await emitEvents();
   return finalText.trim();
 }
 
@@ -4622,7 +4670,8 @@ async function runCodexOAuthDirect(
   attachments: ProviderAttachment[],
   moduleId = "",
   userMessageId = "",
-  transcript: TranscriptMessage[] = panelsChatBottomState.transcript
+  transcript: TranscriptMessage[] = panelsChatBottomState.transcript,
+  liveSink?: ProviderLiveTextSink
 ): Promise<ProviderTextRun> {
   const auth = await readCodexLocalAuth();
   if (!auth) {
@@ -4668,13 +4717,13 @@ async function runCodexOAuthDirect(
     },
     body: JSON.stringify(payload)
   });
-  const rawText = await response.text();
   if (!response.ok) {
+    const rawText = await response.text();
     throw new Error(`Codex OAuth direct HTTP ${response.status}: ${rawText.slice(0, 360)}`);
   }
-  const text = parseCodexDirectEventStream(rawText);
+  const text = await readCodexDirectEventStream(response, liveSink);
   if (!text) {
-    throw new Error(`Codex OAuth direct returned no assistant text: ${rawText.slice(0, 360)}`);
+    throw new Error("Codex OAuth direct returned no assistant text.");
   }
   return {
     text,
@@ -4721,16 +4770,124 @@ function runProviderCommand(command: string, args: string[], input?: string): Pr
   });
 }
 
+function claudeStreamLineText(line: string): string {
+  if (!line.trim()) {
+    return "";
+  }
+  try {
+    const event = JSON.parse(line) as Record<string, unknown>;
+    const text = firstStringField(event, ["text", "content", "result"]);
+    return text && !/^(requesting|api_retry)$/i.test(text) ? text : "";
+  } catch {
+    return line.trim();
+  }
+}
+
+function runProviderCommandStreamingText(
+  command: string,
+  args: string[],
+  input: string | undefined,
+  lineText: (line: string) => string,
+  liveSink?: ProviderLiveTextSink
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: workspaceExplicitlyChosen ? activeWorkspaceDir : repoRoot,
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true
+    });
+    let stdout = "";
+    let stderr = "";
+    let stdoutLineBuffer = "";
+    const texts: string[] = [];
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const settleResolve = (value: string) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      resolve(value.trim());
+    };
+    const settleReject = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      reject(error);
+    };
+    const emitText = (text: string) => {
+      if (!text) {
+        return;
+      }
+      texts.push(text);
+      const currentText = texts.join("\n").trim();
+      if (!currentText) {
+        return;
+      }
+      liveSink?.onText(currentText);
+      if (liveSink?.shouldStop?.(currentText)) {
+        child.kill();
+        settleResolve(currentText);
+      }
+    };
+    const processStdoutLines = (chunk: string) => {
+      stdoutLineBuffer += chunk;
+      const lines = stdoutLineBuffer.split(/\r?\n/);
+      stdoutLineBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        emitText(lineText(line));
+      }
+    };
+    timeout = setTimeout(() => {
+      child.kill();
+      const tail = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n").slice(-4000);
+      settleReject(new Error(tail ? `${command} timed out.\n${tail}` : `${command} timed out.`));
+    }, 90_000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      const text = String(chunk);
+      stdout += text;
+      processStdoutLines(text);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.once("error", (error) => {
+      settleReject(error);
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      if (stdoutLineBuffer.trim()) {
+        emitText(lineText(stdoutLineBuffer));
+        stdoutLineBuffer = "";
+      }
+      const currentText = texts.join("\n").trim();
+      if (code === 0 && currentText) {
+        settleResolve(currentText);
+        return;
+      }
+      if (code === 0 && stdout.trim()) {
+        settleResolve(stdout.trim());
+        return;
+      }
+      settleReject(new Error((stderr || stdout || `${command} exited with code ${code}`).trim()));
+    });
+    child.stdin.end(input ?? "");
+  });
+}
+
 async function runCodexSubscriptionExec(
   profile: ProviderRuntimeProfile,
   userText: string,
   attachments: ProviderAttachment[],
   moduleId = "",
   userMessageId = "",
-  transcript: TranscriptMessage[] = panelsChatBottomState.transcript
+  transcript: TranscriptMessage[] = panelsChatBottomState.transcript,
+  liveSink?: ProviderLiveTextSink
 ): Promise<ProviderTextRun> {
   try {
-    return await runCodexOAuthDirect(profile, userText, attachments, moduleId, userMessageId, transcript);
+    return await runCodexOAuthDirect(profile, userText, attachments, moduleId, userMessageId, transcript, liveSink);
   } catch (directError) {
     const message = directError instanceof Error ? directError.message : String(directError);
     console.error("Codex OAuth direct runtime failed.", directError);
@@ -4743,7 +4900,8 @@ async function runClaudeCodePrint(
   userText: string,
   moduleId = "",
   userMessageId = "",
-  transcript: TranscriptMessage[] = panelsChatBottomState.transcript
+  transcript: TranscriptMessage[] = panelsChatBottomState.transcript,
+  liveSink?: ProviderLiveTextSink
 ): Promise<ProviderTextRun> {
   const command = resolveClaudeCodeCommand();
   if (!command) {
@@ -4782,8 +4940,11 @@ async function runClaudeCodePrint(
   if (effort) {
     args.push("--effort", effort);
   }
+  const text = liveSink
+    ? await runProviderCommandStreamingText(command, args, undefined, claudeStreamLineText, liveSink)
+    : parseClaudeStreamOutput(await runProviderCommand(command, args));
   return {
-    text: parseClaudeStreamOutput(await runProviderCommand(command, args)),
+    text,
     runtime: `${command} -p${model ? ` / ${model}` : ""}${effort ? ` / effort ${effort}` : ""}`
   };
 }
@@ -5044,12 +5205,21 @@ async function executeAssistantAgentActionLoop(params: {
     if (!result.accepted) {
       return assistantMessage;
     }
+    const continuationLiveSink = createAssistantLiveTextSink({
+      baseTranscript: params.baseTranscript,
+      assistantMessageId: assistantMessage.id,
+      requestSessionId: params.requestSessionId,
+      commitTranscript: params.commitTranscript,
+      prefixText: assistantMessage.text
+    });
     const continuation = await buildAssistantTranscriptMessage(
       agentActionLoopContinuationUserText(params.originalUserText, extracted.request, result, step),
       params.providerAttachments,
       params.userMessageId,
       params.moduleId,
-      transcriptWithMessage(params.baseTranscript, assistantMessage)
+      transcriptWithMessage(params.baseTranscript, assistantMessage),
+      continuationLiveSink,
+      assistantMessage.id
     );
     assistantMessage = {
       ...continuation,
@@ -5076,7 +5246,9 @@ async function buildAssistantTranscriptMessage(
   attachments: ProviderAttachment[],
   userMessageId: string,
   moduleId = "",
-  transcript: TranscriptMessage[] = panelsChatBottomState.transcript
+  transcript: TranscriptMessage[] = panelsChatBottomState.transcript,
+  liveSink?: ProviderLiveTextSink,
+  assistantMessageId = `assistant-response-${Date.now()}`
 ): Promise<TranscriptMessage> {
   let profile = providerProfileFromComposer(panelsChatBottomState.selectedProvider);
   if (profile.connectId === "codex" && !profile.connected) {
@@ -5091,18 +5263,18 @@ async function buildAssistantTranscriptMessage(
   const providerUserText = providerUserTextForTurn(userText, attachments, userMessageId, transcript);
   try {
     if (profile.connectId === "codex" && profile.connected) {
-      const run = await runCodexSubscriptionExec(profile, providerUserText, attachments, moduleId, userMessageId, transcript);
+      const run = await runCodexSubscriptionExec(profile, providerUserText, attachments, moduleId, userMessageId, transcript, liveSink);
       return {
-        id: `assistant-response-${Date.now()}`,
+        id: assistantMessageId,
         role: "assistant",
         text: run.text,
         proofHash: hashJson({ provider: profile.connectId, model, reasoning, runtime: run.runtime, userText, providerUserText, attachments: attachmentProofs, text: run.text })
       };
     }
     if (profile.connectId === "claude" && profile.connected) {
-      const run = await runClaudeCodePrint(profile, userTextWithAttachmentContext(providerUserText, attachments), moduleId, userMessageId, transcript);
+      const run = await runClaudeCodePrint(profile, userTextWithAttachmentContext(providerUserText, attachments), moduleId, userMessageId, transcript, liveSink);
       return {
-        id: `assistant-response-${Date.now()}`,
+        id: assistantMessageId,
         role: "assistant",
         text: run.text,
         proofHash: hashJson({ provider: profile.connectId, model, reasoning, runtime: run.runtime, userText, providerUserText, attachments: attachmentProofs, text: run.text })
@@ -5111,7 +5283,7 @@ async function buildAssistantTranscriptMessage(
     if (profile.connectId === "openrouter" && profile.connected) {
       const text = await runOpenRouterChatCompletion(profile, providerUserText, attachments, userMessageId, moduleId, transcript);
       return {
-        id: `assistant-response-${Date.now()}`,
+        id: assistantMessageId,
         role: "assistant",
         text,
         proofHash: hashJson({ provider: profile.connectId, model, reasoning, userText, providerUserText, attachments: attachmentProofs, text })
@@ -10325,6 +10497,36 @@ async function commitAssistantMessageWithProgressiveSeed(
   return finalTranscript;
 }
 
+function createAssistantLiveTextSink(params: {
+  baseTranscript: TranscriptMessage[];
+  assistantMessageId: string;
+  requestSessionId: string;
+  commitTranscript: (transcript: TranscriptMessage[]) => void;
+  prefixText?: string;
+}): ProviderLiveTextSink {
+  let lastText = "";
+  return {
+    onText: (text) => {
+      const trimmed = [params.prefixText?.trimEnd() ?? "", text.trimEnd()]
+        .filter((part) => part.length > 0)
+        .join("\n\n");
+      if (!trimmed || trimmed === lastText) {
+        return;
+      }
+      lastText = trimmed;
+      const liveMessage: TranscriptMessage = {
+        id: params.assistantMessageId,
+        role: "assistant",
+        text: trimmed,
+        proofHash: hashJson({ liveAssistantMessage: params.assistantMessageId, text: trimmed })
+      };
+      params.commitTranscript(transcriptWithReplacedMessage(params.baseTranscript, liveMessage));
+      emitPanelsChatBottomSnapshotEvent("assistant_progressive_seed", params.requestSessionId);
+    },
+    shouldStop: (text) => Boolean(extractAgentActionJsonRequest(text))
+  };
+}
+
 function messageOpensQuestionnaire(message: TranscriptMessage): boolean {
   return message.role === "assistant" && message.text.includes(BRAIN_QUESTIONNAIRE_COMMAND);
 }
@@ -12272,8 +12474,23 @@ async function submitChatDraftForSessionInner(
   if (searchArchiveRequest) {
     assistantMessage = await localSearchArchiveStatus(searchArchiveRequest);
   } else {
+    const liveAssistantMessageId = replaceAssistantMessageId || `assistant-response-${Date.now()}`;
+    const liveTextSink = createAssistantLiveTextSink({
+      baseTranscript: nextTranscript,
+      assistantMessageId: liveAssistantMessageId,
+      requestSessionId,
+      commitTranscript
+    });
     // Audit anchor: await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId)
-    assistantMessage = await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId, requestTranscriptWithUser);
+    assistantMessage = await buildAssistantTranscriptMessage(
+      draft,
+      providerAttachments,
+      message.id,
+      moduleId,
+      requestTranscriptWithUser,
+      liveTextSink,
+      liveAssistantMessageId
+    );
   }
   assistantMessage = await executeAssistantAgentActionLoop({
     assistantMessage,

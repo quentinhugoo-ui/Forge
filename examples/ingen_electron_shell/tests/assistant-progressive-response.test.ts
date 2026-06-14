@@ -46,6 +46,21 @@ describe("assistant progressive response feed", () => {
     expect(mainSource).toContain("assistantMessage = await executeAssistantAgentActionLoop({");
   });
 
+  it("streams provider text into the transcript and cuts over to tools live", () => {
+    expect(mainSource).toContain("interface ProviderLiveTextSink");
+    expect(mainSource).toContain("async function readCodexDirectEventStream(response: Response, liveSink?: ProviderLiveTextSink)");
+    expect(mainSource).toContain("liveSink?.onText(finalText.trimEnd())");
+    expect(mainSource).toContain("liveSink?.shouldStop?.(finalText)");
+    expect(mainSource).toContain("await reader.cancel().catch(() => undefined)");
+    expect(mainSource).toContain("function runProviderCommandStreamingText");
+    expect(mainSource).toContain("claudeStreamLineText");
+    expect(mainSource).toContain("function createAssistantLiveTextSink");
+    expect(mainSource).toContain("transcriptWithReplacedMessage(params.baseTranscript, liveMessage)");
+    expect(mainSource).toContain("shouldStop: (text) => Boolean(extractAgentActionJsonRequest(text))");
+    expect(mainSource).toContain("liveTextSink");
+    expect(mainSource).toContain("continuationLiveSink");
+  });
+
   it("injects the heavy local action manifest lazily", () => {
     expect(mainSource).toContain("function shouldInjectFullAgentActionManifest");
     expect(mainSource).toContain("textLooksLikeLocalActionIntent(userText)");
