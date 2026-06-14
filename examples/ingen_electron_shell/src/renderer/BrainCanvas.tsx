@@ -829,7 +829,8 @@ function MemorySpace() {
 
 const HARDWARE_POLL_MS = 1000;
 const HARDWARE_REQUEST_TIMEOUT_MS = 6500;
-const HARDWARE_GAUGE_HISTORY_LIMIT = 48;
+const HARDWARE_GAUGE_HISTORY_LIMIT = 96;
+const HARDWARE_GAUGE_MIN_TEMP_SPAN_C = 18;
 
 type HardwareGaugeSample = {
   sampledAt: number;
@@ -848,6 +849,11 @@ type HardwareMonitorCardView = {
   percent: HardwareMetric;
   min: number;
   max: number;
+};
+
+type HardwareGaugePoint = {
+  x: number;
+  y: number;
 };
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -927,6 +933,59 @@ function hardwareGaugeLevel(metric: HardwareMetric, min: number, max: number): n
   return clampNumber(((metric.value - min) / (max - min)) * 100, 0, 100);
 }
 
+function hardwareTemperatureDomain(
+  samples: HardwareGaugeSample[],
+  current: number | null,
+  fallbackMin: number,
+  fallbackMax: number
+): { min: number; max: number } {
+  const values = [
+    ...samples.map((sample) => sample.temperature),
+    current
+  ].filter((value): value is number => value !== null && Number.isFinite(value));
+  if (values.length === 0) return { min: fallbackMin, max: fallbackMax };
+  const observedMin = Math.min(...values);
+  const observedMax = Math.max(...values);
+  const center = (observedMin + observedMax) / 2;
+  const span = Math.max(HARDWARE_GAUGE_MIN_TEMP_SPAN_C, observedMax - observedMin + 8);
+  let min = center - span / 2;
+  let max = center + span / 2;
+  if (min < fallbackMin) {
+    max += fallbackMin - min;
+    min = fallbackMin;
+  }
+  if (max > fallbackMax) {
+    min -= max - fallbackMax;
+    max = fallbackMax;
+  }
+  return {
+    min: clampNumber(min, fallbackMin, fallbackMax - 1),
+    max: clampNumber(max, fallbackMin + 1, fallbackMax)
+  };
+}
+
+function hardwareGaugePoints(
+  samples: HardwareGaugeSample[],
+  readValue: (sample: HardwareGaugeSample) => number | null,
+  min: number,
+  max: number,
+  width = 278,
+  height = 82
+): HardwareGaugePoint[] {
+  const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
+  if (visible.length === 0 || max <= min) return [];
+  const step = width / Math.max(1, HARDWARE_GAUGE_HISTORY_LIMIT - 1);
+  const startX = width - (visible.length - 1) * step;
+  return visible
+    .map((sample, index) => {
+      const rawValue = readValue(sample);
+      const value = rawValue === null ? min : clampNumber(rawValue, min, max);
+      const x = startX + index * step;
+      const y = height - ((value - min) / (max - min)) * height;
+      return { x, y };
+    });
+}
+
 function hardwareGaugeSeriesPath(
   samples: HardwareGaugeSample[],
   readValue: (sample: HardwareGaugeSample) => number | null,
@@ -935,17 +994,8 @@ function hardwareGaugeSeriesPath(
   width = 278,
   height = 82
 ): string {
-  const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
-  if (visible.length === 0 || max <= min) return "";
-  const denominator = Math.max(1, visible.length - 1);
-  return visible
-    .map((sample, index) => {
-      const rawValue = readValue(sample);
-      const value = rawValue === null ? min : clampNumber(rawValue, min, max);
-      const x = (index / denominator) * width;
-      const y = height - ((value - min) / (max - min)) * height;
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
+  return hardwareGaugePoints(samples, readValue, min, max, width, height)
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
     .join(" ");
 }
 
@@ -957,18 +1007,12 @@ function hardwareGaugeStepPath(
   width = 278,
   height = 82
 ): string {
-  const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
-  if (visible.length === 0 || max <= min) return "";
-  const denominator = Math.max(1, visible.length - 1);
-  return visible
-    .map((sample, index) => {
-      const rawValue = readValue(sample);
-      const value = rawValue === null ? min : clampNumber(rawValue, min, max);
-      const x = (index / denominator) * width;
-      const y = height - ((value - min) / (max - min)) * height;
-      if (index === 0) return `M ${x.toFixed(1)} ${y.toFixed(1)}`;
-      const previousX = ((index - 1) / denominator) * width;
-      return `H ${((previousX + x) / 2).toFixed(1)} V ${y.toFixed(1)} H ${x.toFixed(1)}`;
+  const points = hardwareGaugePoints(samples, readValue, min, max, width, height);
+  return points
+    .map((point, index) => {
+      if (index === 0) return `M ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+      const previous = points[index - 1];
+      return `H ${((previous.x + point.x) / 2).toFixed(1)} V ${point.y.toFixed(1)} H ${point.x.toFixed(1)}`;
     })
     .join(" ");
 }
@@ -983,13 +1027,14 @@ function hardwareGaugePeakPath(
 ): string {
   const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
   if (visible.length === 0 || max <= min) return "";
-  const denominator = Math.max(1, visible.length - 1);
+  const step = width / Math.max(1, HARDWARE_GAUGE_HISTORY_LIMIT - 1);
+  const startX = width - (visible.length - 1) * step;
   return visible
     .map((sample, index) => {
       const rawValue = readValue(sample);
       if (rawValue === null) return "";
       const value = clampNumber(rawValue, min, max);
-      const x = (index / denominator) * width;
+      const x = startX + index * step;
       const y = height - ((value - min) / (max - min)) * height;
       return `M ${x.toFixed(1)} ${height} L ${x.toFixed(1)} ${y.toFixed(1)}`;
     })
@@ -1007,9 +1052,10 @@ function hardwareGaugeAreaPath(
 ): string {
   const line = hardwareGaugeSeriesPath(samples, readValue, min, max, width, height);
   if (!line) return "";
-  const visible = samples.slice(-HARDWARE_GAUGE_HISTORY_LIMIT);
-  const lastX = visible.length <= 1 ? 0 : width;
-  return `M 0 ${height} ${line.replace(/^M/, "L")} L ${lastX} ${height} Z`;
+  const points = hardwareGaugePoints(samples, readValue, min, max, width, height);
+  const first = points[0];
+  const last = points[points.length - 1];
+  return `M ${first.x.toFixed(1)} ${height} ${line.replace(/^M/, "L")} L ${last.x.toFixed(1)} ${height} Z`;
 }
 
 function hardwareTemperaturePath(samples: HardwareGaugeSample[], min: number, max: number): string {
@@ -1119,9 +1165,10 @@ async function requestHardwareTelemetry(): Promise<HardwareTelemetrySnapshot> {
 }
 
 function HardwareGaugeCard({ card, samples }: { card: HardwareMonitorCardView; samples: HardwareGaugeSample[] }) {
+  const temperatureDomain = hardwareTemperatureDomain(samples, card.temperature.value, card.min, card.max);
   const level = hardwareGaugeLevel(card.temperature, card.min, card.max);
-  const temperatureLinePath = hardwareTemperaturePath(samples, card.min, card.max);
-  const temperatureAreaPath = hardwareTemperatureAreaPath(samples, card.min, card.max);
+  const temperatureLinePath = hardwareTemperaturePath(samples, temperatureDomain.min, temperatureDomain.max);
+  const temperatureAreaPath = hardwareTemperatureAreaPath(samples, temperatureDomain.min, temperatureDomain.max);
   const activityLinePath = hardwareActivityPath(samples);
   const activityAreaPath = hardwareActivityAreaPath(samples);
   const activityPeakPath = hardwareActivityPeakPath(samples);
