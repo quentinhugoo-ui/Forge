@@ -123,6 +123,10 @@ Date: 2026-06-14
    promoted renderer path.
 9. Promote Slang as the shader artifact source when available: reflection,
    WGSL/SPIR-V/HLSL/MSL targets, material ABI checks and fallback WGSL parity.
+   Status: started in `BangerNativeShaderCompilerTicket` as a Slang-authority
+   ticket: WGSL/SPIR-V/HLSL/MSL target artifacts are declared or compiled,
+   fallback WGSL parity is hash-bound, shader reflection now carries binding
+   proofs, and the Banger material ABI is attached to pipeline-cache blobs.
 10. Add benchmark gates for promotion: latency, VRAM pressure, cache-hit reuse,
     proof reproducibility and visual capability versus the current path.
 

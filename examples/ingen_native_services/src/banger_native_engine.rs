@@ -353,6 +353,8 @@ pub struct BangerNativePipelineCacheEntry {
     pub driver_hash: String,
     pub shader_source_hash: String,
     pub shader_reflection_hash: String,
+    pub shader_target_manifest_hash: String,
+    pub material_abi_hash: String,
     pub render_pass_abi_hash: String,
     pub renderer_variant_hash: String,
     pub blob_hash: String,
@@ -659,7 +661,70 @@ pub struct BangerNativeShaderCompilerTicket {
     pub source_language: &'static str,
     pub module_strategy: &'static str,
     pub reflection_status: &'static str,
+    pub target_manifest_hash: String,
+    pub fallback_wgsl_hash: String,
+    pub fallback_wgsl_parity_hash: String,
+    pub material_abi_hash: String,
+    pub target_artifacts: Vec<BangerNativeShaderTargetArtifact>,
+    pub reflection_manifest: BangerNativeShaderReflectionManifest,
+    pub material_abi: BangerNativeShaderMaterialAbi,
     pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeShaderTargetArtifact {
+    pub target: &'static str,
+    pub output_format: &'static str,
+    pub entry_point: &'static str,
+    pub status: &'static str,
+    pub source_hash: String,
+    pub output_hash: String,
+    pub diagnostic_hash: String,
+    pub byte_len: u64,
+    pub artifact_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeShaderReflectionManifest {
+    pub schema: &'static str,
+    pub entry_point: &'static str,
+    pub stage: &'static str,
+    pub binding_count: usize,
+    pub storage_buffer_count: usize,
+    pub read_write_buffer_count: usize,
+    pub material_abi_hash: String,
+    pub reflection_hash: String,
+    pub bindings: Vec<BangerNativeShaderReflectionBinding>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeShaderReflectionBinding {
+    pub name: &'static str,
+    pub category: &'static str,
+    pub group: u32,
+    pub binding: u32,
+    pub access: &'static str,
+    pub payload_kind: &'static str,
+    pub byte_stride: u32,
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeShaderMaterialAbi {
+    pub schema: &'static str,
+    pub abi_name: &'static str,
+    pub bind_group: u32,
+    pub material_buffer_binding: u32,
+    pub texture_binding_base: u32,
+    pub sampler_binding_base: u32,
+    pub material_record_bytes: u32,
+    pub material_record_alignment: u32,
+    pub max_texture_slots: u32,
+    pub layout_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1983,6 +2048,8 @@ fn build_pipeline_cache_entry(
 ) -> Result<BangerNativePipelineCacheEntry, String> {
     let shader_source_hash = shader_compiler_ticket.mini_probe_source_hash.clone();
     let shader_reflection_hash = shader_reflection_hash(shader_compiler_ticket, artifact, pass);
+    let shader_target_manifest_hash = shader_compiler_ticket.target_manifest_hash.clone();
+    let material_abi_hash = shader_compiler_ticket.material_abi_hash.clone();
     let render_pass_abi_hash = render_pass_abi_hash(artifact, pass);
     let blob_bytes = pipeline_cache_seed_blob_bytes(
         prepared,
@@ -1993,6 +2060,8 @@ fn build_pipeline_cache_entry(
         adapter_hash,
         driver_hash,
         &shader_reflection_hash,
+        &shader_target_manifest_hash,
+        &material_abi_hash,
         &render_pass_abi_hash,
     );
     let blob_hash = hex32(Sha256::digest(&blob_bytes).into());
@@ -2007,6 +2076,8 @@ fn build_pipeline_cache_entry(
         driver_hash,
         &shader_source_hash,
         &shader_reflection_hash,
+        &shader_target_manifest_hash,
+        &material_abi_hash,
         &render_pass_abi_hash,
         &blob_hash,
     );
@@ -2020,6 +2091,8 @@ fn build_pipeline_cache_entry(
         driver_hash: driver_hash.to_string(),
         shader_source_hash,
         shader_reflection_hash,
+        shader_target_manifest_hash,
+        material_abi_hash,
         render_pass_abi_hash,
         renderer_variant_hash: artifact.renderer_variant_hash.clone(),
         blob_hash,
@@ -4450,10 +4523,12 @@ fn shader_reflection_hash(
     pass: &BangerNativeRenderPass,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"forge.banger.shader_reflection_stub.v1\0");
+    h.update(b"forge.banger.shader_reflection_manifest_bound.v1\0");
     h.update(shader_compiler_ticket.proof_hash.as_bytes());
     h.update(shader_compiler_ticket.source_language.as_bytes());
     h.update(shader_compiler_ticket.promoted_target.as_bytes());
+    h.update(shader_compiler_ticket.reflection_manifest.reflection_hash.as_bytes());
+    h.update(shader_compiler_ticket.material_abi_hash.as_bytes());
     h.update(artifact.kind.as_bytes());
     h.update(artifact.layout.as_bytes());
     h.update(pass.stage.as_bytes());
@@ -4490,6 +4565,8 @@ fn pipeline_cache_seed_blob_bytes(
     adapter_hash: &str,
     driver_hash: &str,
     shader_reflection_hash: &str,
+    shader_target_manifest_hash: &str,
+    material_abi_hash: &str,
     render_pass_abi_hash: &str,
 ) -> Vec<u8> {
     format!(
@@ -4503,6 +4580,8 @@ fn pipeline_cache_seed_blob_bytes(
             "shader_ticket_hash={}\n",
             "shader_source_hash={}\n",
             "shader_reflection_hash={}\n",
+            "shader_target_manifest_hash={}\n",
+            "material_abi_hash={}\n",
             "render_pass_abi_hash={}\n",
             "artifact_kind={}\n",
             "artifact_layout={}\n",
@@ -4519,6 +4598,8 @@ fn pipeline_cache_seed_blob_bytes(
         shader_compiler_ticket.proof_hash,
         shader_compiler_ticket.mini_probe_source_hash,
         shader_reflection_hash,
+        shader_target_manifest_hash,
+        material_abi_hash,
         render_pass_abi_hash,
         artifact.kind,
         artifact.layout,
@@ -4564,6 +4645,8 @@ fn pipeline_cache_entry_proof_hash(
     driver_hash: &str,
     shader_source_hash: &str,
     shader_reflection_hash: &str,
+    shader_target_manifest_hash: &str,
+    material_abi_hash: &str,
     render_pass_abi_hash: &str,
     blob_hash: &str,
 ) -> String {
@@ -4578,6 +4661,8 @@ fn pipeline_cache_entry_proof_hash(
     h.update(driver_hash.as_bytes());
     h.update(shader_source_hash.as_bytes());
     h.update(shader_reflection_hash.as_bytes());
+    h.update(shader_target_manifest_hash.as_bytes());
+    h.update(material_abi_hash.as_bytes());
     h.update(render_pass_abi_hash.as_bytes());
     h.update(blob_hash.as_bytes());
     hex32(h.finalize().into())
@@ -4766,20 +4851,29 @@ fn shader_compiler_ticket(
         .unwrap_or_else(|| "slangc_not_found_on_path".to_string());
     let compiler_version_hash = hex32(Sha256::digest(compiler_version_excerpt.as_bytes()).into());
     let mini_probe = run_slang_mini_probe(compiler_detected);
-    let promoted_target = if compiler_detected {
-        "slang_wgsl_manifest_v0"
+    let target_artifacts = build_slang_target_artifacts(compiler_detected, &mini_probe.source);
+    let target_manifest_hash = slang_target_manifest_hash(&target_artifacts);
+    let fallback_wgsl = banger_wgsl_mini_compute_source();
+    let fallback_wgsl_hash = hash_text_hex("forge.banger.slang_fallback_wgsl.v1", &fallback_wgsl);
+    let fallback_wgsl_parity_hash =
+        slang_fallback_wgsl_parity_hash(&fallback_wgsl_hash, &target_artifacts, &mini_probe);
+    let material_abi = banger_shader_material_abi();
+    let material_abi_hash = material_abi.layout_hash.clone();
+    let reflection_manifest = banger_shader_reflection_manifest(&material_abi_hash);
+    let promoted_target = if compiler_detected && target_artifacts.iter().any(|artifact| artifact.status == "compiled") {
+        "slang_multi_target_manifest_v1"
     } else {
-        "wgsl_inline_bootstrap"
+        "wgsl_inline_bootstrap_with_slang_abi_manifest"
     };
     let module_strategy = if compiler_detected {
-        "compile_slang_module_then_validate_wgsl_with_wgpu"
+        "compile_slang_module_to_wgsl_spirv_hlsl_msl_then_bind_reflection_manifest"
     } else {
-        "inline_wgsl_until_slangc_or_api_binding_is_available"
+        "inline_wgsl_with_slang_reflection_abi_until_slangc_or_api_binding_is_available"
     };
-    let reflection_status = if compiler_detected {
-        "command_line_compile_only_reflection_api_not_bound_yet"
+    let reflection_status = if compiler_detected && target_artifacts.iter().any(|artifact| artifact.status == "compiled") {
+        "slang_targets_compiled_reflection_manifest_bound_api_binding_next"
     } else {
-        "reflection_deferred_until_slang_api_binding"
+        "deterministic_reflection_manifest_bound_to_fallback_wgsl"
     };
 
     let mut h = Sha256::new();
@@ -4791,6 +4885,11 @@ fn shader_compiler_ticket(
     h.update(mini_probe.source_hash.as_bytes());
     h.update(mini_probe.output_hash.as_bytes());
     h.update(mini_probe.status.as_bytes());
+    h.update(target_manifest_hash.as_bytes());
+    h.update(fallback_wgsl_hash.as_bytes());
+    h.update(fallback_wgsl_parity_hash.as_bytes());
+    h.update(material_abi_hash.as_bytes());
+    h.update(reflection_manifest.reflection_hash.as_bytes());
     h.update([prefer_mesh_shaders as u8]);
     for profile in gpu_shader_profiles {
         h.update(profile.as_bytes());
@@ -4816,6 +4915,13 @@ fn shader_compiler_ticket(
         source_language: "slang",
         module_strategy,
         reflection_status,
+        target_manifest_hash,
+        fallback_wgsl_hash,
+        fallback_wgsl_parity_hash,
+        material_abi_hash,
+        target_artifacts,
+        reflection_manifest,
+        material_abi,
         proof_hash: hex32(h.finalize().into()),
     }
 }
@@ -4833,6 +4939,7 @@ fn detect_slang_version() -> Option<String> {
 }
 
 struct SlangMiniProbe {
+    source: String,
     source_hash: String,
     output_hash: String,
     status: &'static str,
@@ -4845,6 +4952,7 @@ fn run_slang_mini_probe(compiler_detected: bool) -> SlangMiniProbe {
     let source_hash = hex32(Sha256::digest(source.as_bytes()).into());
     if !compiler_detected {
         return SlangMiniProbe {
+            source,
             source_hash,
             output_hash: hex32(Sha256::digest(b"slangc_not_found").into()),
             status: "compiler_absent",
@@ -4855,6 +4963,7 @@ fn run_slang_mini_probe(compiler_detected: bool) -> SlangMiniProbe {
 
     match compile_slang_mini_probe_to_wgsl(&source) {
         Ok(wgsl) => SlangMiniProbe {
+            source,
             source_hash,
             output_hash: hex32(Sha256::digest(wgsl.as_bytes()).into()),
             status: "compiled_wgsl",
@@ -4862,6 +4971,7 @@ fn run_slang_mini_probe(compiler_detected: bool) -> SlangMiniProbe {
             wgsl: Some(wgsl),
         },
         Err(err) => SlangMiniProbe {
+            source,
             source_hash,
             output_hash: hex32(Sha256::digest(err.as_bytes()).into()),
             status: "compile_failed",
@@ -4872,6 +4982,77 @@ fn run_slang_mini_probe(compiler_detected: bool) -> SlangMiniProbe {
 }
 
 fn compile_slang_mini_probe_to_wgsl(source: &str) -> Result<String, String> {
+    compile_slang_mini_probe_to_target(source, "wgsl", "wgsl").and_then(|bytes| {
+        String::from_utf8(bytes).map_err(|err| format!("slang wgsl output is not UTF-8: {err}"))
+    })
+}
+
+fn build_slang_target_artifacts(
+    compiler_detected: bool,
+    source: &str,
+) -> Vec<BangerNativeShaderTargetArtifact> {
+    ["wgsl", "spirv", "hlsl", "msl"]
+        .into_iter()
+        .map(|target| {
+            let output_format = match target {
+                "spirv" => "spirv_binary",
+                "hlsl" => "hlsl_text",
+                "msl" => "metal_text",
+                _ => "wgsl_text",
+            };
+            slang_target_artifact(compiler_detected, source, target, output_format)
+        })
+        .collect()
+}
+
+fn slang_target_artifact(
+    compiler_detected: bool,
+    source: &str,
+    target: &'static str,
+    output_format: &'static str,
+) -> BangerNativeShaderTargetArtifact {
+    let source_hash = hash_text_hex("forge.banger.slang_shader_source.v1", source);
+    let (status, bytes, diagnostic) = if compiler_detected {
+        match compile_slang_mini_probe_to_target(source, target, output_format) {
+            Ok(bytes) => ("compiled", bytes, Vec::new()),
+            Err(err) => ("compile_failed", Vec::new(), err.into_bytes()),
+        }
+    } else {
+        (
+            "compiler_absent_fallback_declared",
+            Vec::new(),
+            b"slangc_not_found_on_path".to_vec(),
+        )
+    };
+    let output_hash = hash_bytes_hex("forge.banger.slang_target_output.v1", &bytes);
+    let diagnostic_hash = hash_bytes_hex("forge.banger.slang_target_diagnostic.v1", &diagnostic);
+    let artifact_hash = slang_target_artifact_hash(
+        target,
+        output_format,
+        status,
+        &source_hash,
+        &output_hash,
+        &diagnostic_hash,
+        bytes.len() as u64,
+    );
+    BangerNativeShaderTargetArtifact {
+        target,
+        output_format,
+        entry_point: "computeMain",
+        status,
+        source_hash,
+        output_hash,
+        diagnostic_hash,
+        byte_len: bytes.len() as u64,
+        artifact_hash,
+    }
+}
+
+fn compile_slang_mini_probe_to_target(
+    source: &str,
+    target: &str,
+    output_format: &str,
+) -> Result<Vec<u8>, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -4879,12 +5060,18 @@ fn compile_slang_mini_probe_to_wgsl(source: &str) -> Result<String, String> {
     let dir = env::temp_dir().join(format!("forge-banger-slang-probe-{}-{stamp}", process::id()));
     fs::create_dir_all(&dir).map_err(|err| format!("create temp slang probe dir failed: {err}"))?;
     let source_path = dir.join("banger_probe.slang");
-    let out_path = dir.join("banger_probe.wgsl");
+    let extension = match output_format {
+        "spirv_binary" => "spv",
+        "hlsl_text" => "hlsl",
+        "metal_text" => "metal",
+        _ => "wgsl",
+    };
+    let out_path = dir.join(format!("banger_probe.{extension}"));
     fs::write(&source_path, source).map_err(|err| format!("write slang probe failed: {err}"))?;
     let output = Command::new("slangc")
         .arg(&source_path)
         .arg("-target")
-        .arg("wgsl")
+        .arg(target)
         .arg("-entry")
         .arg("computeMain")
         .arg("-o")
@@ -4897,7 +5084,55 @@ fn compile_slang_mini_probe_to_wgsl(source: &str) -> Result<String, String> {
     if !output.status.success() {
         return Err(diagnostic);
     }
-    fs::read_to_string(&out_path).map_err(|err| format!("read slang wgsl probe failed: {err}; {diagnostic}"))
+    fs::read(&out_path).map_err(|err| format!("read slang {target} probe failed: {err}; {diagnostic}"))
+}
+
+fn slang_target_artifact_hash(
+    target: &str,
+    output_format: &str,
+    status: &str,
+    source_hash: &str,
+    output_hash: &str,
+    diagnostic_hash: &str,
+    byte_len: u64,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.slang_target_artifact.v1\0");
+    h.update(target.as_bytes());
+    h.update(output_format.as_bytes());
+    h.update(status.as_bytes());
+    h.update(source_hash.as_bytes());
+    h.update(output_hash.as_bytes());
+    h.update(diagnostic_hash.as_bytes());
+    h.update(byte_len.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn slang_target_manifest_hash(artifacts: &[BangerNativeShaderTargetArtifact]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.slang_target_manifest.v1\0");
+    for artifact in artifacts {
+        h.update(artifact.artifact_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn slang_fallback_wgsl_parity_hash(
+    fallback_wgsl_hash: &str,
+    artifacts: &[BangerNativeShaderTargetArtifact],
+    mini_probe: &SlangMiniProbe,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.slang_fallback_wgsl_parity.v1\0");
+    h.update(fallback_wgsl_hash.as_bytes());
+    h.update(mini_probe.output_hash.as_bytes());
+    h.update(mini_probe.status.as_bytes());
+    for artifact in artifacts {
+        h.update(artifact.target.as_bytes());
+        h.update(artifact.status.as_bytes());
+        h.update(artifact.output_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
 }
 
 fn banger_slang_mini_compute_source() -> String {
@@ -4912,6 +5147,167 @@ void computeMain(uint3 threadId : SV_DispatchThreadID)
 }
 "#
     .to_string()
+}
+
+fn banger_wgsl_mini_compute_source() -> String {
+    r#"@group(0) @binding(0)
+var<storage, read_write> result: array<u32>;
+
+@compute @workgroup_size(1, 1, 1)
+fn computeMain(@builtin(global_invocation_id) thread_id: vec3<u32>) {
+    let index = thread_id.x;
+    result[index] = 0x424e4753u ^ index;
+}
+"#
+    .to_string()
+}
+
+fn banger_shader_material_abi() -> BangerNativeShaderMaterialAbi {
+    let layout_hash = banger_shader_material_abi_hash(
+        "banger_material_payload_v1",
+        1,
+        0,
+        1,
+        16,
+        64,
+        16,
+        16,
+    );
+    BangerNativeShaderMaterialAbi {
+        schema: "forge.banger.shader_material_abi.v1",
+        abi_name: "banger_material_payload_v1",
+        bind_group: 1,
+        material_buffer_binding: 0,
+        texture_binding_base: 1,
+        sampler_binding_base: 16,
+        material_record_bytes: 64,
+        material_record_alignment: 16,
+        max_texture_slots: 16,
+        layout_hash,
+    }
+}
+
+fn banger_shader_reflection_manifest(material_abi_hash: &str) -> BangerNativeShaderReflectionManifest {
+    let mut bindings = vec![
+        shader_reflection_binding("result", "storage_buffer", 0, 0, "read_write", "u32_words", 4),
+        shader_reflection_binding(
+            "material_payloads",
+            "storage_buffer",
+            1,
+            0,
+            "read",
+            "banger_material_payload_v1",
+            64,
+        ),
+        shader_reflection_binding("material_textures", "texture_array", 1, 1, "sample", "rgba_sampled", 0),
+        shader_reflection_binding("material_samplers", "sampler_array", 1, 16, "sample", "filtering_sampler", 0),
+    ];
+    bindings.sort_by_key(|binding| (binding.group, binding.binding));
+    let reflection_hash = banger_shader_reflection_manifest_hash(material_abi_hash, &bindings);
+    BangerNativeShaderReflectionManifest {
+        schema: "forge.banger.shader_reflection_manifest.v1",
+        entry_point: "computeMain",
+        stage: "compute",
+        binding_count: bindings.len(),
+        storage_buffer_count: bindings
+            .iter()
+            .filter(|binding| binding.category == "storage_buffer")
+            .count(),
+        read_write_buffer_count: bindings
+            .iter()
+            .filter(|binding| binding.access == "read_write")
+            .count(),
+        material_abi_hash: material_abi_hash.to_string(),
+        reflection_hash,
+        bindings,
+    }
+}
+
+fn shader_reflection_binding(
+    name: &'static str,
+    category: &'static str,
+    group: u32,
+    binding: u32,
+    access: &'static str,
+    payload_kind: &'static str,
+    byte_stride: u32,
+) -> BangerNativeShaderReflectionBinding {
+    let proof_hash = shader_reflection_binding_hash(
+        name,
+        category,
+        group,
+        binding,
+        access,
+        payload_kind,
+        byte_stride,
+    );
+    BangerNativeShaderReflectionBinding {
+        name,
+        category,
+        group,
+        binding,
+        access,
+        payload_kind,
+        byte_stride,
+        proof_hash,
+    }
+}
+
+fn shader_reflection_binding_hash(
+    name: &str,
+    category: &str,
+    group: u32,
+    binding: u32,
+    access: &str,
+    payload_kind: &str,
+    byte_stride: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.shader_reflection_binding.v1\0");
+    h.update(name.as_bytes());
+    h.update(category.as_bytes());
+    h.update(group.to_le_bytes());
+    h.update(binding.to_le_bytes());
+    h.update(access.as_bytes());
+    h.update(payload_kind.as_bytes());
+    h.update(byte_stride.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn banger_shader_reflection_manifest_hash(
+    material_abi_hash: &str,
+    bindings: &[BangerNativeShaderReflectionBinding],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.shader_reflection_manifest.v1\0");
+    h.update(material_abi_hash.as_bytes());
+    for binding in bindings {
+        h.update(binding.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn banger_shader_material_abi_hash(
+    abi_name: &str,
+    bind_group: u32,
+    material_buffer_binding: u32,
+    texture_binding_base: u32,
+    sampler_binding_base: u32,
+    material_record_bytes: u32,
+    material_record_alignment: u32,
+    max_texture_slots: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.shader_material_abi.v1\0");
+    h.update(abi_name.as_bytes());
+    h.update(bind_group.to_le_bytes());
+    h.update(material_buffer_binding.to_le_bytes());
+    h.update(texture_binding_base.to_le_bytes());
+    h.update(sampler_binding_base.to_le_bytes());
+    h.update(material_record_bytes.to_le_bytes());
+    h.update(material_record_alignment.to_le_bytes());
+    h.update(max_texture_slots.to_le_bytes());
+    hex32(h.finalize().into())
 }
 
 fn compact_one_line(raw: &str) -> String {
@@ -5196,6 +5592,62 @@ mod tests {
             .requested_targets
             .iter()
             .any(|target| *target == "spirv"));
+        assert!(response
+            .shader_compiler_ticket
+            .requested_targets
+            .iter()
+            .any(|target| *target == "hlsl"));
+        assert!(response
+            .shader_compiler_ticket
+            .requested_targets
+            .iter()
+            .any(|target| *target == "msl"));
+        assert_eq!(response.shader_compiler_ticket.target_artifacts.len(), 4);
+        assert_eq!(response.shader_compiler_ticket.target_manifest_hash.len(), 64);
+        assert_eq!(response.shader_compiler_ticket.fallback_wgsl_hash.len(), 64);
+        assert_eq!(response.shader_compiler_ticket.fallback_wgsl_parity_hash.len(), 64);
+        assert_eq!(response.shader_compiler_ticket.material_abi_hash.len(), 64);
+        assert_eq!(
+            response.shader_compiler_ticket.material_abi.layout_hash,
+            response.shader_compiler_ticket.material_abi_hash
+        );
+        assert_eq!(
+            response.shader_compiler_ticket.reflection_manifest.schema,
+            "forge.banger.shader_reflection_manifest.v1"
+        );
+        assert_eq!(
+            response.shader_compiler_ticket.reflection_manifest.material_abi_hash,
+            response.shader_compiler_ticket.material_abi_hash
+        );
+        assert_eq!(
+            response.shader_compiler_ticket.reflection_manifest.binding_count,
+            response
+                .shader_compiler_ticket
+                .reflection_manifest
+                .bindings
+                .len()
+        );
+        assert!(response
+            .shader_compiler_ticket
+            .reflection_manifest
+            .bindings
+            .iter()
+            .any(|binding| binding.name == "result"
+                && binding.category == "storage_buffer"
+                && binding.access == "read_write"
+                && binding.proof_hash.len() == 64));
+        assert!(response
+            .shader_compiler_ticket
+            .target_artifacts
+            .iter()
+            .all(|artifact| artifact.source_hash.len() == 64
+                && artifact.output_hash.len() == 64
+                && artifact.diagnostic_hash.len() == 64
+                && artifact.artifact_hash.len() == 64
+                && matches!(
+                    artifact.status,
+                    "compiled" | "compile_failed" | "compiler_absent_fallback_declared"
+                )));
         assert!(!response.shader_compiler_ticket.compiler_version_hash.is_empty());
         assert_eq!(response.pipeline_cache_keys.len(), response.artifacts.len());
         assert_eq!(
@@ -5217,6 +5669,9 @@ mod tests {
             .iter()
             .all(|entry| entry.shader_source_hash.len() == 64
                 && entry.shader_reflection_hash.len() == 64
+                && entry.shader_target_manifest_hash
+                    == response.shader_compiler_ticket.target_manifest_hash
+                && entry.material_abi_hash == response.shader_compiler_ticket.material_abi_hash
                 && entry.render_pass_abi_hash.len() == 64
                 && entry.blob_hash.len() == 64
                 && entry.blob_len > 0
