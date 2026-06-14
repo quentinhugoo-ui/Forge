@@ -76,6 +76,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub resource_table: BangerNativeResourceTable,
     pub editable_scene_manifest: BangerEditableSceneManifest,
     pub scene_graph_submission: BangerNativeSceneGraphSubmission,
+    pub culling_manifest: BangerNativeCullingManifest,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
@@ -314,6 +315,45 @@ pub struct BangerNativeSceneSubmissionNode {
     pub world_bounding_sphere: [f32; 4],
     pub resource_slots: Vec<u32>,
     pub render_graph_stages: Vec<&'static str>,
+    pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeCullingManifest {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub culling_path: &'static str,
+    pub candidate_count: usize,
+    pub visible_count: usize,
+    pub culled_count: usize,
+    pub max_lod_error: f32,
+    pub visibility_result_hash: String,
+    pub indirect_draw_buffer_hash: String,
+    pub cache_reuse_hash: String,
+    pub manifest_hash: String,
+    pub entries: Vec<BangerNativeCullingEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeCullingEntry {
+    pub object_id: String,
+    pub representation: &'static str,
+    pub culling_basis: &'static str,
+    pub visible_after_cull: bool,
+    pub cache_hit_reuse: bool,
+    pub cache_reuse_key: String,
+    pub lod_error: f32,
+    pub lod_bucket: u32,
+    pub cone_apex: [f32; 3],
+    pub cone_axis: [f32; 3],
+    pub cone_cutoff: f32,
+    pub bounding_sphere: [f32; 4],
+    pub resource_slots: Vec<u32>,
+    pub indirect_draw_args: [u32; 5],
+    pub visibility_result_hash: String,
+    pub indirect_draw_hash: String,
     pub proof_hash: String,
 }
 
@@ -627,6 +667,8 @@ impl BangerNativeEngine {
             &resource_table,
             &frame_graph_bindings,
         );
+        let culling_manifest =
+            build_culling_manifest(&prepared, &scene_graph_submission, &resource_table);
         let texture_bridge_contract = build_texture_bridge_contract(
             &prepared,
             &pipeline_cache_manifest,
@@ -644,6 +686,7 @@ impl BangerNativeEngine {
             &pipeline_cache_manifest,
             &texture_bridge_contract,
             &scene_graph_submission,
+            &culling_manifest,
         );
         let render_pass_count = render_graph.len();
         let residency_job_count = residency_jobs.len();
@@ -686,6 +729,7 @@ impl BangerNativeEngine {
             resource_table,
             editable_scene_manifest,
             scene_graph_submission,
+            culling_manifest,
             frame_graph_bindings,
             artifacts,
             verifier: BangerNativeRenderVerifier {
@@ -1064,6 +1108,103 @@ fn scene_submission_node(
         world_bounding_sphere: bounding_sphere(world_aabb_min, world_aabb_max),
         resource_slots,
         render_graph_stages,
+        proof_hash,
+    }
+}
+
+fn build_culling_manifest(
+    prepared: &MonsterPreparedCompute,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    resource_table: &BangerNativeResourceTable,
+) -> BangerNativeCullingManifest {
+    let entries = scene_graph_submission
+        .submissions
+        .iter()
+        .filter(|node| node.visible && node.renderable && virtual_geometry_candidate(node.representation))
+        .map(|node| culling_entry_from_submission(prepared, node, resource_table))
+        .collect::<Vec<_>>();
+    let visible_count = entries.iter().filter(|entry| entry.visible_after_cull).count();
+    let culled_count = entries.len().saturating_sub(visible_count);
+    let max_lod_error = entries
+        .iter()
+        .map(|entry| entry.lod_error)
+        .fold(0.0f32, f32::max);
+    let visibility_result_hash = culling_visibility_result_hash(scene_graph_submission, &entries);
+    let indirect_draw_buffer_hash = culling_indirect_draw_buffer_hash(&entries);
+    let cache_reuse_hash = culling_cache_reuse_hash(prepared, &entries);
+    let manifest_hash = culling_manifest_hash(
+        prepared,
+        scene_graph_submission,
+        &visibility_result_hash,
+        &indirect_draw_buffer_hash,
+        &cache_reuse_hash,
+        &entries,
+    );
+    BangerNativeCullingManifest {
+        schema: "forge.banger.native_culling_manifest.v1",
+        authority: "scene_graph_submission_meshlet_virtual_geometry_cull_contract",
+        culling_path: "compute_cull_to_indirect_draw_buffer_mesh_shader_ready",
+        candidate_count: entries.len(),
+        visible_count,
+        culled_count,
+        max_lod_error,
+        visibility_result_hash,
+        indirect_draw_buffer_hash,
+        cache_reuse_hash,
+        manifest_hash,
+        entries,
+    }
+}
+
+fn culling_entry_from_submission(
+    prepared: &MonsterPreparedCompute,
+    node: &BangerNativeSceneSubmissionNode,
+    resource_table: &BangerNativeResourceTable,
+) -> BangerNativeCullingEntry {
+    let bounding_sphere = node.world_bounding_sphere;
+    let lod_error = culling_lod_error(&bounding_sphere, node.resource_slots.len());
+    let lod_bucket = culling_lod_bucket(lod_error);
+    let cone_apex = [bounding_sphere[0], bounding_sphere[1], bounding_sphere[2]];
+    let cone_axis = culling_cone_axis(&bounding_sphere);
+    let cone_cutoff = culling_cone_cutoff(node.representation, lod_bucket);
+    let visible_after_cull = node.visible && node.renderable;
+    let cache_reuse_key = culling_cache_reuse_key(prepared, node, resource_table);
+    let cache_hit_reuse = prepared.is_fully_cached() && !node.resource_slots.is_empty();
+    let indirect_draw_args = culling_indirect_draw_args(node, lod_bucket);
+    let visibility_result_hash = culling_entry_visibility_hash(
+        node,
+        visible_after_cull,
+        lod_error,
+        lod_bucket,
+        &cone_apex,
+        &cone_axis,
+        cone_cutoff,
+    );
+    let indirect_draw_hash = culling_entry_indirect_draw_hash(node, &indirect_draw_args);
+    let proof_hash = culling_entry_proof_hash(
+        node,
+        &cache_reuse_key,
+        cache_hit_reuse,
+        &visibility_result_hash,
+        &indirect_draw_hash,
+    );
+    BangerNativeCullingEntry {
+        object_id: node.object_id.clone(),
+        representation: node.representation,
+        culling_basis: culling_basis_for_representation(node.representation),
+        visible_after_cull,
+        cache_hit_reuse,
+        cache_reuse_key,
+        lod_error,
+        lod_bucket,
+        cone_apex,
+        cone_axis,
+        cone_cutoff,
+        bounding_sphere,
+        resource_slots: node.resource_slots.clone(),
+        indirect_draw_args,
+        visibility_result_hash,
+        indirect_draw_hash,
         proof_hash,
     }
 }
@@ -1454,6 +1595,208 @@ fn renderable_kind(kind: &str) -> bool {
 
 fn renderable_representation(representation: &str) -> bool {
     !matches!(representation, "material_graph")
+}
+
+fn virtual_geometry_candidate(representation: &str) -> bool {
+    matches!(representation, "meshlet" | "sdf" | "voxel" | "native_artifact")
+}
+
+fn culling_basis_for_representation(representation: &str) -> &'static str {
+    match representation {
+        "meshlet" => "meshlet_sphere_cone_lod_indirect",
+        "sdf" | "voxel" => "virtual_geometry_sphere_lod_indirect",
+        _ => "renderable_sphere_lod_indirect",
+    }
+}
+
+fn culling_lod_error(bounding_sphere: &[f32; 4], resource_slot_count: usize) -> f32 {
+    let slot_factor = resource_slot_count.max(1) as f32;
+    (bounding_sphere[3].abs() / slot_factor).max(0.0001)
+}
+
+fn culling_lod_bucket(lod_error: f32) -> u32 {
+    if lod_error < 0.125 {
+        0
+    } else if lod_error < 0.5 {
+        1
+    } else if lod_error < 1.0 {
+        2
+    } else {
+        3
+    }
+}
+
+fn culling_cone_axis(bounding_sphere: &[f32; 4]) -> [f32; 3] {
+    let len = (bounding_sphere[0] * bounding_sphere[0]
+        + bounding_sphere[1] * bounding_sphere[1]
+        + (bounding_sphere[2] - 1.0) * (bounding_sphere[2] - 1.0))
+        .sqrt()
+        .max(0.0001);
+    [
+        -bounding_sphere[0] / len,
+        -bounding_sphere[1] / len,
+        (1.0 - bounding_sphere[2]) / len,
+    ]
+}
+
+fn culling_cone_cutoff(representation: &str, lod_bucket: u32) -> f32 {
+    let base = if representation == "meshlet" { 0.25 } else { -1.0 };
+    (base - lod_bucket as f32 * 0.05).max(-1.0)
+}
+
+fn culling_indirect_draw_args(node: &BangerNativeSceneSubmissionNode, lod_bucket: u32) -> [u32; 5] {
+    let resource_count = node.resource_slots.len().max(1) as u32;
+    let index_count: u32 = match node.representation {
+        "meshlet" => 96,
+        "sdf" | "voxel" => 36,
+        _ => 24,
+    };
+    [
+        index_count.saturating_sub(lod_bucket.saturating_mul(6)).max(3),
+        resource_count,
+        0,
+        0,
+        node.submission_order,
+    ]
+}
+
+fn culling_cache_reuse_key(
+    prepared: &MonsterPreparedCompute,
+    node: &BangerNativeSceneSubmissionNode,
+    resource_table: &BangerNativeResourceTable,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.culling.cache_reuse_key.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(resource_table.table_hash.as_bytes());
+    h.update(node.object_id.as_bytes());
+    h.update(node.proof_hash.as_bytes());
+    for slot in &node.resource_slots {
+        h.update(slot.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn culling_entry_visibility_hash(
+    node: &BangerNativeSceneSubmissionNode,
+    visible_after_cull: bool,
+    lod_error: f32,
+    lod_bucket: u32,
+    cone_apex: &[f32; 3],
+    cone_axis: &[f32; 3],
+    cone_cutoff: f32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.culling.entry_visibility.v1\0");
+    h.update(node.object_id.as_bytes());
+    h.update(node.proof_hash.as_bytes());
+    h.update([visible_after_cull as u8]);
+    h.update(lod_error.to_le_bytes());
+    h.update(lod_bucket.to_le_bytes());
+    for value in cone_apex.iter().chain(cone_axis.iter()) {
+        h.update(value.to_le_bytes());
+    }
+    h.update(cone_cutoff.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn culling_entry_indirect_draw_hash(
+    node: &BangerNativeSceneSubmissionNode,
+    indirect_draw_args: &[u32; 5],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.culling.entry_indirect_draw.v1\0");
+    h.update(node.object_id.as_bytes());
+    for arg in indirect_draw_args {
+        h.update(arg.to_le_bytes());
+    }
+    for stage in &node.render_graph_stages {
+        h.update(stage.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn culling_entry_proof_hash(
+    node: &BangerNativeSceneSubmissionNode,
+    cache_reuse_key: &str,
+    cache_hit_reuse: bool,
+    visibility_result_hash: &str,
+    indirect_draw_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.culling.entry_proof.v1\0");
+    h.update(node.proof_hash.as_bytes());
+    h.update(cache_reuse_key.as_bytes());
+    h.update([cache_hit_reuse as u8]);
+    h.update(visibility_result_hash.as_bytes());
+    h.update(indirect_draw_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn culling_visibility_result_hash(
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    entries: &[BangerNativeCullingEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.culling.visibility_result.v1\0");
+    h.update(scene_graph_submission.visibility_hash.as_bytes());
+    h.update(scene_graph_submission.viewport_fit_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.object_id.as_bytes());
+        h.update([entry.visible_after_cull as u8]);
+        h.update(entry.visibility_result_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn culling_indirect_draw_buffer_hash(entries: &[BangerNativeCullingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.culling.indirect_draw_buffer.v1\0");
+    for entry in entries.iter().filter(|entry| entry.visible_after_cull) {
+        h.update(entry.object_id.as_bytes());
+        h.update(entry.indirect_draw_hash.as_bytes());
+        for arg in entry.indirect_draw_args {
+            h.update(arg.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn culling_cache_reuse_hash(
+    prepared: &MonsterPreparedCompute,
+    entries: &[BangerNativeCullingEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.culling.cache_reuse.v1\0");
+    h.update([prepared.is_fully_cached() as u8]);
+    for entry in entries {
+        h.update(entry.cache_reuse_key.as_bytes());
+        h.update([entry.cache_hit_reuse as u8]);
+    }
+    hex32(h.finalize().into())
+}
+
+fn culling_manifest_hash(
+    prepared: &MonsterPreparedCompute,
+    scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    visibility_result_hash: &str,
+    indirect_draw_buffer_hash: &str,
+    cache_reuse_hash: &str,
+    entries: &[BangerNativeCullingEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.native_culling_manifest.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(scene_graph_submission.submission_hash.as_bytes());
+    h.update(visibility_result_hash.as_bytes());
+    h.update(indirect_draw_buffer_hash.as_bytes());
+    h.update(cache_reuse_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
 }
 
 fn scene_representation_mix(
@@ -2564,6 +2907,7 @@ fn render_handoff_hash(
     pipeline_cache_manifest: &BangerNativePipelineCacheManifest,
     texture_bridge_contract: &BangerNativeTextureBridgeContract,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
+    culling_manifest: &BangerNativeCullingManifest,
 ) -> String {
     let mut h = Sha256::new();
     h.update(b"forge.banger.native_render_handoff.v1\0");
@@ -2576,6 +2920,9 @@ fn render_handoff_hash(
     h.update(texture_bridge_contract.viewport_contract_hash.as_bytes());
     h.update(scene_graph_submission.submission_hash.as_bytes());
     h.update(scene_graph_submission.render_submission_hash.as_bytes());
+    h.update(culling_manifest.manifest_hash.as_bytes());
+    h.update(culling_manifest.visibility_result_hash.as_bytes());
+    h.update(culling_manifest.indirect_draw_buffer_hash.as_bytes());
     for artifact in artifacts {
         h.update(b"\0artifact\0");
         h.update(artifact.kind.as_bytes());
@@ -2904,6 +3251,36 @@ mod tests {
                 && !node.resource_slots.is_empty()
                 && !node.render_graph_stages.is_empty()
                 && node.proof_hash.len() == 64));
+        assert_eq!(
+            response.culling_manifest.schema,
+            "forge.banger.native_culling_manifest.v1"
+        );
+        assert!(response.culling_manifest.candidate_count > 0);
+        assert_eq!(
+            response.culling_manifest.visible_count + response.culling_manifest.culled_count,
+            response.culling_manifest.candidate_count
+        );
+        assert_eq!(response.culling_manifest.visibility_result_hash.len(), 64);
+        assert_eq!(response.culling_manifest.indirect_draw_buffer_hash.len(), 64);
+        assert_eq!(response.culling_manifest.cache_reuse_hash.len(), 64);
+        assert_eq!(response.culling_manifest.manifest_hash.len(), 64);
+        assert!(response.culling_manifest.max_lod_error.is_finite());
+        assert!(response
+            .culling_manifest
+            .entries
+            .iter()
+            .any(|entry| entry.representation == "meshlet"
+                && entry.culling_basis == "meshlet_sphere_cone_lod_indirect"
+                && entry.visible_after_cull
+                && entry.lod_error.is_finite()
+                && entry.cone_axis.iter().all(|value| value.is_finite())
+                && entry.cone_cutoff.is_finite()
+                && entry.indirect_draw_args[0] > 0
+                && entry.indirect_draw_args[1] > 0
+                && entry.cache_reuse_key.len() == 64
+                && entry.visibility_result_hash.len() == 64
+                && entry.indirect_draw_hash.len() == 64
+                && entry.proof_hash.len() == 64));
         assert_eq!(response.resource_table_hash.len(), 64);
         assert_eq!(response.resource_table.slot_count, response.resource_table.slots.len());
         assert!(response.resource_table.slot_count >= response.artifacts.len());

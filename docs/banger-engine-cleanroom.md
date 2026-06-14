@@ -96,6 +96,11 @@ Date: 2026-06-14
    and indirect draw reuse remain the next gate.
 6. Add meshlet/virtual-geometry culling manifests: cone bounds, LOD error,
    visibility result hash, indirect draw buffer hash and cache-hit reuse.
+   Status: started in `BangerNativeCullingManifest` as
+   `forge.banger.native_culling_manifest.v1`; meshlet/virtual-geometry entries
+   now carry conservative cone bounds, LOD error buckets, visibility result
+   hashes, indirect draw buffer hashes and cache reuse keys. Real GPU cull
+   dispatch remains gated behind the promoted renderer path.
 7. Add surfel/radiance-cache scheduling: probe pages, temporal epoch, light
    budget, invalidation hash and async-compute residency policy.
 8. Add Gaussian splat layer support as a hybrid representation, not a separate
