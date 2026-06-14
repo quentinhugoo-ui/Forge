@@ -49,7 +49,7 @@ function WebExplorerSurface({ surfaces }: { surfaces: HeaderSurfaceContract[] })
 function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
   const cesiumHostRef = useRef<HTMLDivElement | null>(null);
   const [tilesConfig, setTilesConfig] = useState<BangerGoogleTilesConfigResult | null>(null);
-  const [cesiumMounted, setCesiumMounted] = useState(false);
+  const [cesiumLive, setCesiumLive] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -72,8 +72,9 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
 
     let cancelled = false;
     let viewer: { destroy: () => void; isDestroyed?: () => boolean } | null = null;
+    let removePostRender: (() => void) | null = null;
 
-    setCesiumMounted(false);
+    setCesiumLive(false);
     void import("cesium")
       .then(async (Cesium) => {
         if (cancelled) return;
@@ -102,11 +103,26 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
           timeline: false
         });
         const cesiumViewer = viewer as any;
-        setCesiumMounted(true);
         cesiumViewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#05070a");
         cesiumViewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#2f6f9f");
         cesiumViewer.scene.globe.enableLighting = false;
         cesiumViewer.scene.globe.show = true;
+        cesiumViewer.scene.renderError.addEventListener((_scene: unknown, error: unknown) => {
+          console.error("Banger Cesium render failed.", error);
+          setCesiumLive(false);
+        });
+        const markLiveWhenGlobeIsVisible = () => {
+          if (cancelled) return;
+          const visibleRectangle = cesiumViewer.camera.computeViewRectangle(Cesium.Ellipsoid.WGS84);
+          if (visibleRectangle) {
+            setCesiumLive(true);
+            if (removePostRender) {
+              removePostRender();
+              removePostRender = null;
+            }
+          }
+        };
+        removePostRender = cesiumViewer.scene.postRender.addEventListener(markLiveWhenGlobeIsVisible);
         cesiumViewer.resize();
         cesiumViewer.camera.setView({
           destination: Cesium.Rectangle.fromDegrees(-180, -75, 180, 75)
@@ -133,11 +149,15 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
       })
       .catch((error) => {
         console.error("Banger Cesium viewport failed to mount.", error);
+        setCesiumLive(false);
         // Keep the Banger canvas available even if the external tiles provider is still cold.
       });
 
     return () => {
       cancelled = true;
+      if (removePostRender) {
+        removePostRender();
+      }
       if (viewer && (!viewer.isDestroyed || !viewer.isDestroyed())) {
         viewer.destroy();
       }
@@ -148,7 +168,7 @@ function BangerSurface({ surface }: { surface: HeaderSurfaceContract }) {
     <section className="surface surface--banger" aria-label={surface.label}>
       <div
         ref={cesiumHostRef}
-        className={cesiumMounted ? "bangerCesiumViewport bangerCesiumViewport--mounted" : "bangerCesiumViewport"}
+        className={cesiumLive ? "bangerCesiumViewport bangerCesiumViewport--live" : "bangerCesiumViewport"}
         aria-label="Banger Cesium geospatial viewport"
       />
     </section>

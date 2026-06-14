@@ -3065,6 +3065,7 @@ button {
 .bangerCesiumViewport {
   position: absolute;
   inset: 0;
+  isolation: isolate;
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -3079,6 +3080,7 @@ button {
 .bangerCesiumViewport::before {
   position: absolute;
   inset: 0;
+  z-index: 2;
   pointer-events: none;
   content: "";
   background:
@@ -3088,12 +3090,14 @@ button {
   transition: opacity 240ms ease;
 }
 
-.bangerCesiumViewport--mounted::before {
+.bangerCesiumViewport--live::before {
   opacity: 0;
 }
 
 .bangerCesiumViewport .cesium-widget,
 .bangerCesiumViewport .cesium-widget canvas {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   outline: none;
