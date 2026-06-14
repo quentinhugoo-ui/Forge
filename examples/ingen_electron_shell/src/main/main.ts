@@ -258,6 +258,7 @@ let widgetWindowClickThrough = false;
 let widgetTaskbarOriginalState: number | null = null;
 let widgetTaskbarOriginalRegistryByte: number | null = null;
 let widgetTaskbarHidden = false;
+let widgetTaskbarAutoHideJobToken = 0;
 
 function traceWidgetTaskbarStep(step: string, detail: Record<string, unknown> = {}): void {
   try {
@@ -11056,13 +11057,10 @@ type WindowsTaskbarStateProbe = {
   registryByte: number;
 };
 
-function runWindowsTaskbarAutoHideProbe(targetState?: number, targetRegistryByte?: number): WindowsTaskbarStateProbe | null {
-  if (process.platform !== "win32") {
-    return null;
-  }
+function buildWindowsTaskbarAutoHideProbeScript(targetState?: number, targetRegistryByte?: number): string {
   const desiredState = targetState === undefined ? "$null" : String(Math.max(0, Math.round(targetState)));
   const desiredRegistryByte = targetRegistryByte === undefined ? "$null" : String(Math.max(0, Math.min(255, Math.round(targetRegistryByte))));
-  const script = `
+  return `
 $ErrorActionPreference = "Stop"
 $source = @"
 using System;
@@ -11186,19 +11184,11 @@ $visiblyHidden = $rectFound -and (
   registryByte = $registryByte
 } | ConvertTo-Json -Compress
 `;
-  const encoded = Buffer.from(script, "utf16le").toString("base64");
-  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], {
-    encoding: "utf8",
-    stdio: "pipe",
-    timeout: 8_000,
-    windowsHide: true
-  });
-  if (result.status !== 0) {
-    console.warn("Windows taskbar auto-hide command failed.", result.stderr || result.stdout);
-    return null;
-  }
+}
+
+function parseWindowsTaskbarAutoHideProbe(stdout: string): WindowsTaskbarStateProbe | null {
   try {
-    const parsed = JSON.parse(result.stdout.trim()) as Partial<WindowsTaskbarStateProbe>;
+    const parsed = JSON.parse(stdout.trim()) as Partial<WindowsTaskbarStateProbe>;
     if (
       parsed.ok === true &&
       typeof parsed.state === "number" &&
@@ -11235,6 +11225,74 @@ $visiblyHidden = $rectFound -and (
   return null;
 }
 
+function runWindowsTaskbarAutoHideProbe(targetState?: number, targetRegistryByte?: number): WindowsTaskbarStateProbe | null {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  const script = buildWindowsTaskbarAutoHideProbeScript(targetState, targetRegistryByte);
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], {
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: 8_000,
+    windowsHide: true
+  });
+  if (result.status !== 0) {
+    console.warn("Windows taskbar auto-hide command failed.", result.stderr || result.stdout);
+    return null;
+  }
+  return parseWindowsTaskbarAutoHideProbe(result.stdout);
+}
+
+function runWindowsTaskbarAutoHideProbeAsync(targetState?: number, targetRegistryByte?: number): Promise<WindowsTaskbarStateProbe | null> {
+  if (process.platform !== "win32") {
+    return Promise.resolve(null);
+  }
+  const script = buildWindowsTaskbarAutoHideProbeScript(targetState, targetRegistryByte);
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  return new Promise((resolve) => {
+    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], {
+      windowsHide: true
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (probe: WindowsTaskbarStateProbe | null): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve(probe);
+    };
+    const timeout = setTimeout(() => {
+      child.kill();
+      console.warn("Windows taskbar auto-hide command timed out.");
+      finish(null);
+    }, 8_000);
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      console.warn("Windows taskbar auto-hide command failed to start.", error);
+      finish(null);
+    });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        console.warn("Windows taskbar auto-hide command failed.", stderr || stdout);
+        finish(null);
+        return;
+      }
+      finish(parseWindowsTaskbarAutoHideProbe(stdout));
+    });
+  });
+}
+
 function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boolean {
   if (process.platform !== "win32") {
     return false;
@@ -11262,6 +11320,87 @@ function setWidgetTaskbarHidden(hidden: boolean, restoreOriginal = false): boole
         : current.registryByte & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG
       : undefined;
   const result = runWindowsTaskbarAutoHideProbe(targetState, targetRegistryByte);
+  if (!result) {
+    return false;
+  }
+  widgetTaskbarHidden = result.registryPathFound && result.registryByte >= 0
+    ? (result.registryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0
+    : (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0;
+  const targetHidden = (targetState & WINDOWS_TASKBAR_AUTOHIDE_FLAG) !== 0;
+  const verifiedState = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === (targetState & WINDOWS_TASKBAR_AUTOHIDE_FLAG);
+  const verifiedRegistry =
+    targetRegistryByte === undefined ||
+    !result.registryPathFound ||
+    result.registryByte < 0 ||
+    (result.registryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === (targetRegistryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG);
+  const verifiedVisual = !targetHidden || result.taskbarVisiblyHidden;
+  const verified = verifiedState && verifiedRegistry && verifiedVisual;
+  console.info("Windows taskbar auto-hide probe", {
+    requestedHidden: targetHidden,
+    verified,
+    verifiedState,
+    verifiedRegistry,
+    verifiedVisual,
+    appBarState: result.target,
+    registryByte: result.registryByte,
+    screen: { width: result.screenWidth, height: result.screenHeight },
+    taskbarRect: result.taskbarRect
+  });
+  traceWidgetTaskbarStep("taskbar-autohide-probe", {
+    requestedHidden: targetHidden,
+    verified,
+    verifiedState,
+    verifiedRegistry,
+    verifiedVisual,
+    appBarState: result.target,
+    registryByte: result.registryByte,
+    screen: { width: result.screenWidth, height: result.screenHeight },
+    taskbarRect: result.taskbarRect
+  });
+  if (!verified) {
+    console.warn("Windows taskbar auto-hide probe did not reach the requested visible state.", {
+      requestedHidden: targetHidden,
+      appBarState: result.target,
+      registryByte: result.registryByte,
+      taskbarRect: result.taskbarRect,
+      screen: { width: result.screenWidth, height: result.screenHeight }
+    });
+  }
+  if (restoreOriginal) {
+    widgetTaskbarOriginalState = null;
+    widgetTaskbarOriginalRegistryByte = null;
+    widgetTaskbarHidden = false;
+  }
+  return true;
+}
+
+async function setWidgetTaskbarHiddenAsync(hidden: boolean, restoreOriginal = false): Promise<boolean> {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  const current = await runWindowsTaskbarAutoHideProbeAsync();
+  if (!current) {
+    return false;
+  }
+  if (widgetTaskbarOriginalState === null) {
+    widgetTaskbarOriginalState = current.target;
+  }
+  if (widgetTaskbarOriginalRegistryByte === null && current.registryPathFound && current.registryByte >= 0) {
+    widgetTaskbarOriginalRegistryByte = current.registryByte;
+  }
+  const targetState = restoreOriginal && widgetTaskbarOriginalState !== null
+    ? widgetTaskbarOriginalState
+    : hidden
+      ? current.target | WINDOWS_TASKBAR_AUTOHIDE_FLAG
+      : current.target & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG;
+  const targetRegistryByte = restoreOriginal && widgetTaskbarOriginalRegistryByte !== null
+    ? widgetTaskbarOriginalRegistryByte
+    : current.registryPathFound && current.registryByte >= 0
+      ? hidden
+        ? current.registryByte | WINDOWS_TASKBAR_AUTOHIDE_FLAG
+        : current.registryByte & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG
+      : undefined;
+  const result = await runWindowsTaskbarAutoHideProbeAsync(targetState, targetRegistryByte);
   if (!result) {
     return false;
   }
@@ -11361,8 +11500,85 @@ function restoreWidgetTaskbarState(): boolean {
   return stateVisible && registryVisible;
 }
 
+async function restoreWidgetTaskbarStateAsync(): Promise<boolean> {
+  if (process.platform !== "win32") {
+    return true;
+  }
+  const current = await runWindowsTaskbarAutoHideProbeAsync();
+  if (!current) {
+    return false;
+  }
+  const targetState = current.target & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG;
+  const targetRegistryByte = current.registryPathFound && current.registryByte >= 0
+    ? current.registryByte & ~WINDOWS_TASKBAR_AUTOHIDE_FLAG
+    : undefined;
+  let result = await runWindowsTaskbarAutoHideProbeAsync(targetState, targetRegistryByte);
+  widgetTaskbarOriginalState = null;
+  widgetTaskbarOriginalRegistryByte = null;
+  widgetTaskbarHidden = false;
+  if (!result) {
+    return false;
+  }
+  let stateVisible = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
+  let registryVisible =
+    !result.registryPathFound ||
+    result.registryByte < 0 ||
+    (result.registryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
+  if (!stateVisible || !registryVisible) {
+    const retryResult = await runWindowsTaskbarAutoHideProbeAsync(targetState, targetRegistryByte);
+    if (retryResult) {
+      result = retryResult;
+      stateVisible = (result.target & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
+      registryVisible =
+        !result.registryPathFound ||
+        result.registryByte < 0 ||
+        (result.registryByte & WINDOWS_TASKBAR_AUTOHIDE_FLAG) === 0;
+    }
+  }
+  traceWidgetTaskbarStep("restore-taskbar-visible", {
+    stateVisible,
+    registryVisible,
+    appBarState: result.target,
+    registryByte: result.registryByte,
+    taskbarRect: result.taskbarRect
+  });
+  return stateVisible && registryVisible;
+}
+
+function scheduleNativeWidgetTaskbarAutoHide(window: BrowserWindow, hidden: boolean): boolean {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  if (hidden && widgetWindowRestoreState === null) {
+    return false;
+  }
+  clearWidgetTaskbarAutoHideTimer();
+  const token = ++widgetTaskbarAutoHideJobToken;
+  traceWidgetTaskbarStep("taskbar-autohide-scheduled", { id: window.id, hidden, token });
+  widgetTaskbarAutoHideTimer = setTimeout(() => {
+    widgetTaskbarAutoHideTimer = null;
+    void (async () => {
+      if (token !== widgetTaskbarAutoHideJobToken) {
+        return;
+      }
+      const accepted = hidden
+        ? await setWidgetTaskbarHiddenAsync(true)
+        : await restoreWidgetTaskbarStateAsync();
+      if (token !== widgetTaskbarAutoHideJobToken) {
+        return;
+      }
+      if (hidden && accepted && !window.isDestroyed() && widgetWindowRestoreState !== null) {
+        settleNativeWidgetWindowBounds(window);
+      }
+      traceWidgetTaskbarStep("taskbar-autohide-finished", { id: window.id, hidden, accepted, token });
+    })();
+  }, 0);
+  return true;
+}
+
 function finalizeWidgetTaskbarState(reason: string): void {
   clearWidgetTaskbarAutoHideTimer();
+  widgetTaskbarAutoHideJobToken += 1;
   const hadOriginalState = widgetTaskbarOriginalState !== null || widgetTaskbarOriginalRegistryByte !== null;
   const restored = restoreWidgetTaskbarState();
   const current = runWindowsTaskbarAutoHideProbe();
@@ -11393,13 +11609,9 @@ function setNativeWindowWidgetTaskbarAutoHide(event: Electron.IpcMainInvokeEvent
     if (widgetWindowRestoreState === null) {
       return false;
     }
-    const accepted = setWidgetTaskbarHidden(true);
-    if (accepted) {
-      settleNativeWidgetWindowBounds(window);
-    }
-    return accepted;
+    return scheduleNativeWidgetTaskbarAutoHide(window, true);
   }
-  return restoreWidgetTaskbarState();
+  return scheduleNativeWidgetTaskbarAutoHide(window, false);
 }
 
 function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): boolean {
@@ -11414,11 +11626,7 @@ function toggleNativeWindowWidgetTaskbar(event: Electron.IpcMainInvokeEvent): bo
   if (widgetWindowRestoreState === null) {
     return false;
   }
-  const accepted = setWidgetTaskbarHidden(!widgetTaskbarHidden);
-  if (accepted) {
-    settleNativeWidgetWindowBounds(window);
-  }
-  return accepted;
+  return scheduleNativeWidgetTaskbarAutoHide(window, !widgetTaskbarHidden);
 }
 
 function setNativeWindowWidgetHitRegions(event: Electron.IpcMainInvokeEvent, regions: unknown): boolean {
@@ -11472,6 +11680,8 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
 
   if (enabled === true) {
     clearWidgetWindowShrinkTimer();
+    clearWidgetTaskbarAutoHideTimer();
+    widgetTaskbarAutoHideJobToken += 1;
     resetNativeWidgetClickThrough(window);
     resetNativeWidgetWindowShape(window);
     saveWidgetWindowRestoreState(window);
@@ -11494,6 +11704,7 @@ function setNativeWindowWidgetMode(event: Electron.IpcMainInvokeEvent, enabled: 
 
   clearWidgetWindowShrinkTimer();
   clearWidgetTaskbarAutoHideTimer();
+  widgetTaskbarAutoHideJobToken += 1;
   clearWidgetWindowBoundsAnimationTimer();
   resetNativeWidgetClickThrough(window);
   resetNativeWidgetWindowShape(window);

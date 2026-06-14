@@ -1040,14 +1040,15 @@ export function App() {
         console.warn("Native widget mode was not accepted.");
       }
       if (nativeWidgetAccepted !== false) {
-        await waitForWidgetMotion(WIDGET_TASKBAR_STEP_MS);
-        if (widgetModeSequenceRef.current !== sequenceToken) {
-          return;
-        }
-        await windowControls?.setWidgetTaskbarAutoHide?.(true).catch((error: unknown) => {
-          console.warn("Failed to hide Windows taskbar after widget handoff", error);
-          return false;
-        });
+        window.setTimeout(() => {
+          if (widgetModeSequenceRef.current !== sequenceToken) {
+            return;
+          }
+          void windowControls?.setWidgetTaskbarAutoHide?.(true).catch((error: unknown) => {
+            console.warn("Failed to hide Windows taskbar after widget handoff", error);
+            return false;
+          });
+        }, WIDGET_TASKBAR_STEP_MS);
       }
       releaseWidgetModeTransition(sequenceToken);
     })();
