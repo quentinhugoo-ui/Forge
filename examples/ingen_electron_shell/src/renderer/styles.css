@@ -190,6 +190,18 @@ button {
   background: transparent;
 }
 
+.shell--widget-minimizing::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--forge-bg);
+  pointer-events: none;
+  transform: translate3d(0, 0, 0);
+  transition: transform var(--widget-canvas-exit-motion);
+  will-change: transform;
+}
+
 .titlebar {
   position: fixed;
   inset: 0 0 auto 0;
@@ -3344,6 +3356,7 @@ button {
   .canvasSplitCard,
   .canvasFilesPane__inner,
   .chatCanvas,
+  .shell--widget-minimizing::before,
   .composer,
   .bottomControls,
   .sidebarAction,
@@ -11123,6 +11136,10 @@ ol.assistantText__list li::before {
 .shell--widget-mode .sidebarLedger,
 .shell--widget-minimizing-canvas .shadowLedger,
 .shell--widget-mode .shadowLedger {
+  transform: translate3d(0, calc(100vh + 96px), 0);
+}
+
+.shell--widget-minimizing-canvas::before {
   transform: translate3d(0, calc(100vh + 96px), 0);
 }
 
