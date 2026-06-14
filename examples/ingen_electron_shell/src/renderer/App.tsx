@@ -73,9 +73,8 @@ const WINDOW_CONTROLS = [
 const GOOGLE_EARTH_DOM_DEFAULT_URL =
   "https://earth.google.com/web/@48.56768844,29.71746065,-845.33787847a,4386237.90060282d,35y,64.15278862h,59.46514162t,0.00000084r/data=CgRCAggBOgMKATBCAggASg0I____________ARAA";
 const WIDGET_SIDE_EXIT_MS = 420;
-const WIDGET_HEADER_EXIT_MS = 360;
 const WIDGET_CANVAS_EXIT_MS = 860;
-const WIDGET_SURFACE_CLOSE_DELAY_MS = WIDGET_CANVAS_EXIT_MS + WIDGET_SIDE_EXIT_MS + WIDGET_HEADER_EXIT_MS;
+const WIDGET_SURFACE_CLOSE_DELAY_MS = WIDGET_CANVAS_EXIT_MS + WIDGET_SIDE_EXIT_MS;
 const WIDGET_NATIVE_SHRINK_LEAD_MS = 80;
 const WIDGET_NATIVE_SETTLE_MS = 260;
 const WIDGET_HANDOFF_SETTLE_MS = WIDGET_NATIVE_SHRINK_LEAD_MS + WIDGET_NATIVE_SETTLE_MS;
@@ -390,7 +389,7 @@ export function App() {
     widgetMinimizingPhase !== "" ? "shell--widget-minimizing shell--widget-canvas-hidden" : "",
     widgetMinimizingPhase === "canvas" ? "shell--widget-minimizing-canvas" : "",
     widgetMinimizingPhase === "sides" || widgetMinimizingPhase === "header" ? "shell--widget-minimizing-sides" : "",
-    widgetMinimizingPhase === "header" ? "shell--widget-minimizing-header" : "",
+    widgetMinimizingPhase !== "" ? "shell--widget-minimizing-header" : "",
     widgetMode ? "shell--widget-mode" : "",
     workspaceGateActive ? "shell--workspace-required" : ""
   ].join(" ");
@@ -1002,12 +1001,6 @@ export function App() {
       }
 
       await waitForWidgetMotion(WIDGET_SIDE_EXIT_MS);
-      if (widgetModeSequenceRef.current !== sequenceToken) {
-        return;
-      }
-      setWidgetMinimizingPhase("header");
-
-      await waitForWidgetMotion(WIDGET_HEADER_EXIT_MS);
       if (widgetModeSequenceRef.current !== sequenceToken) {
         return;
       }

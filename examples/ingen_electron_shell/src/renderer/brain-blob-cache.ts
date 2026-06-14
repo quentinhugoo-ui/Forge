@@ -32,6 +32,23 @@ export interface BrainBlobMonsterFrameCacheStats {
   lastAddress: string;
 }
 
+export type BrainBlobMonsterScissor = { x: number; y: number; width: number; height: number };
+
+export interface BrainBlobMonsterScissorInput {
+  canvasWidth: number;
+  canvasHeight: number;
+  sphereData: ArrayLike<number>;
+  sphereOffset: number;
+  sphereCount: number;
+  cameraFocal: number;
+  cameraY: number;
+  cameraZ: number;
+  viewCenterX: number;
+  viewCenterY: number;
+  paddingWorld: number;
+  paddingPixels: number;
+}
+
 type BrainBlobMonsterFrameCache = {
   quantizeTime(timeSeconds: number): number;
   probe(input: BrainBlobMonsterFrameInput): BrainBlobMonsterFrameProbe;
@@ -62,8 +79,13 @@ function mix(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 const BRAIN_BLOB_MONSTER_HUE_PERIOD_TICKS = BRAIN_BLOB_MONSTER_FRAME_HZ * 6;
 const brainBlobMonsterHueRowsByTick = new Map<number, Float32Array>();
+const brainBlobMonsterScissorByAddress = new Map<string, BrainBlobMonsterScissor>();
 
 export function brainBlobMonsterColorizeAngle(timeSeconds: number): number {
   const phase = ((timeSeconds / 6) % 1 + 1) % 1;
@@ -114,6 +136,83 @@ export function writeBrainBlobMonsterHueRows(timeSeconds: number, out: Float32Ar
     brainBlobMonsterHueRowsByTick.set(tick, rows);
   }
   out.set(rows, offset);
+}
+
+export function brainBlobMonsterScissorAddress(input: BrainBlobMonsterScissorInput): string {
+  const payload = [
+    "forge.monster.brain_blob.scissor.v1",
+    Math.max(1, Math.round(input.canvasWidth)),
+    Math.max(1, Math.round(input.canvasHeight)),
+    quantizeFinite(input.cameraFocal, 4096),
+    quantizeFinite(input.cameraY, 4096),
+    quantizeFinite(input.cameraZ, 4096),
+    quantizeFinite(input.viewCenterX, 4096),
+    quantizeFinite(input.viewCenterY, 4096),
+    quantizeFinite(input.paddingWorld, 4096),
+    Math.max(0, Math.round(input.paddingPixels)),
+    input.sphereCount
+  ];
+  for (let index = 0; index < input.sphereCount; index += 1) {
+    const offset = input.sphereOffset + index * 4;
+    payload.push(
+      quantizeFinite(input.sphereData[offset], 4096),
+      quantizeFinite(input.sphereData[offset + 1], 4096),
+      quantizeFinite(input.sphereData[offset + 2], 4096),
+      quantizeFinite(input.sphereData[offset + 3], 4096)
+    );
+  }
+  return `monster:brain-blob:scissor:${fnv1a64Hex(payload.join("\0"))}`;
+}
+
+export function brainBlobMonsterFrameScissor(input: BrainBlobMonsterScissorInput): BrainBlobMonsterScissor {
+  const address = brainBlobMonsterScissorAddress(input);
+  const cached = brainBlobMonsterScissorByAddress.get(address);
+  if (cached) return cached;
+
+  const width = Math.max(1, Math.round(input.canvasWidth));
+  const height = Math.max(1, Math.round(input.canvasHeight));
+  const shortSide = Math.max(1, Math.min(width, height));
+  let minX = width;
+  let minY = height;
+  let maxX = 0;
+  let maxY = 0;
+
+  for (let index = 0; index < input.sphereCount; index += 1) {
+    const offset = input.sphereOffset + index * 4;
+    const x = input.sphereData[offset];
+    const y = input.sphereData[offset + 1] - input.cameraY;
+    const zDistance = input.sphereData[offset + 2] + input.cameraZ;
+    const radius = input.sphereData[offset + 3] + input.paddingWorld;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(zDistance) || !Number.isFinite(radius)) {
+      return { x: 0, y: 0, width, height };
+    }
+    const nearDistance = Math.max(0.35, zDistance - radius);
+    const scale = (input.cameraFocal / nearDistance) * shortSide;
+    const screenX = width * input.viewCenterX + (x / zDistance) * input.cameraFocal * shortSide;
+    const screenY = height * input.viewCenterY - (y / zDistance) * input.cameraFocal * shortSide;
+    const screenRadius = radius * scale;
+    minX = Math.min(minX, screenX - screenRadius);
+    maxX = Math.max(maxX, screenX + screenRadius);
+    minY = Math.min(minY, screenY - screenRadius);
+    maxY = Math.max(maxY, screenY + screenRadius);
+  }
+
+  const scissor = minX >= maxX || minY >= maxY
+    ? { x: 0, y: 0, width, height }
+    : {
+        x: clampNumber(Math.floor(minX - input.paddingPixels), 0, width),
+        y: clampNumber(Math.floor(minY - input.paddingPixels), 0, height),
+        width: 1,
+        height: 1
+      };
+  if (minX < maxX && minY < maxY) {
+    const right = clampNumber(Math.ceil(maxX + input.paddingPixels), 0, width);
+    const bottom = clampNumber(Math.ceil(maxY + input.paddingPixels), 0, height);
+    scissor.width = Math.max(1, right - scissor.x);
+    scissor.height = Math.max(1, bottom - scissor.y);
+  }
+  brainBlobMonsterScissorByAddress.set(address, scissor);
+  return scissor;
 }
 
 export function brainBlobMonsterFrameAddress(input: BrainBlobMonsterFrameInput): { address: string; timeTick: number } {

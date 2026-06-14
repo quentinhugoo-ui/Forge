@@ -6,6 +6,8 @@ import {
   brainBlobMonsterFrameAddress,
   brainBlobMonsterColorizeAngle,
   brainBlobMonsterHuePeriodAddress,
+  brainBlobMonsterFrameScissor,
+  brainBlobMonsterScissorAddress,
   createBrainBlobMonsterFrameCache,
   writeBrainBlobMonsterHueRows
 } from "../src/renderer/brain-blob-cache";
@@ -104,5 +106,36 @@ describe("Brain blob Monster frame cache", () => {
     const second = brainBlobMonsterHuePeriodAddress(7.75);
 
     expect(first).toEqual(second);
+  });
+
+  it("content-addresses repeated scissor projections for identical KASM spheres", () => {
+    const spheres = new Float32Array([
+      -0.2, 0.1, 0, 0.28,
+      0.2, -0.1, 0.05, 0.24
+    ]);
+    const input = {
+      canvasWidth: 1200,
+      canvasHeight: 800,
+      sphereData: spheres,
+      sphereOffset: 0,
+      sphereCount: 2,
+      cameraFocal: 1.72,
+      cameraY: 0.03,
+      cameraZ: 2.28,
+      viewCenterX: 0.62,
+      viewCenterY: 0.68,
+      paddingWorld: 0.42,
+      paddingPixels: 96
+    };
+    const firstAddress = brainBlobMonsterScissorAddress(input);
+    const first = brainBlobMonsterFrameScissor(input);
+    const second = brainBlobMonsterFrameScissor(input);
+
+    expect(firstAddress).toBe(brainBlobMonsterScissorAddress(input));
+    expect(second).toBe(first);
+    expect(first.x).toBeGreaterThanOrEqual(0);
+    expect(first.y).toBeGreaterThanOrEqual(0);
+    expect(first.width).toBeGreaterThan(1);
+    expect(first.height).toBeGreaterThan(1);
   });
 });
