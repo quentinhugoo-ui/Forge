@@ -57,6 +57,38 @@ monolithic Unreal clone.
    a versioned artifact, never ad-hoc shader strings in UI state.
 7. Use Unreal/Godot/O3DE as architecture references, not as source to copy.
 
+## Action Plan
+
+Date: 2026-06-14
+
+1. Promote a scene-first editable object manifest from the existing
+   `native_tandem_render` handoff: stable object ids, parent/root relation,
+   representation, transforms, bounds, editable slots and proof hashes.
+   Status: started in `BangerNativeEngine` as
+   `forge.banger.editable_scene_manifest.v1`.
+2. Route Banger `/newobject_` into the same manifest instead of creating
+   renderer-local objects: edits must produce a new Forge contract before GPU
+   pages are promoted.
+3. Add persistent native pipeline-cache blobs keyed by adapter, driver,
+   shader source hash, shader reflection and render-pass ABI.
+4. Replace the placeholder child-surface contract with a verified texture
+   sharing path: same device/queue when available, explicit fallback route,
+   frame hash and resize/orbit/pan/zoom proofs.
+5. Promote scene graph authority: parent/child transforms, local/world matrix
+   propagation, object visibility and representation mix become the native
+   source for viewport fit and render submission.
+6. Add meshlet/virtual-geometry culling manifests: cone bounds, LOD error,
+   visibility result hash, indirect draw buffer hash and cache-hit reuse.
+7. Add surfel/radiance-cache scheduling: probe pages, temporal epoch, light
+   budget, invalidation hash and async-compute residency policy.
+8. Add Gaussian splat layer support as a hybrid representation, not a separate
+   renderer: splat buckets, sort/group keys, proxy bounds and optional
+   mesh/surfel conversion manifests.
+9. Promote Slang as the shader artifact source when available: reflection,
+   WGSL/SPIR-V/HLSL/MSL targets, material ABI checks and fallback WGSL parity.
+10. Add benchmark gates for promotion: latency, VRAM pressure, cache-hit reuse,
+    proof reproducibility and visual capability versus the current path.
+
 ## Ghidra Pipeline
 
 Unreal Engine is not currently installed on this machine; only Epic Games

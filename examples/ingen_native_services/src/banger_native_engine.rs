@@ -50,6 +50,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub residency_jobs: Vec<BangerNativeResidencyJob>,
     pub resource_table_hash: String,
     pub resource_table: BangerNativeResourceTable,
+    pub editable_scene_manifest: BangerEditableSceneManifest,
     pub frame_graph_bindings: Vec<BangerNativeFrameGraphBinding>,
     pub artifacts: Vec<BangerNativeRenderArtifactSummary>,
     pub verifier: BangerNativeRenderVerifier,
@@ -133,6 +134,44 @@ pub struct BangerNativeResourceSlot {
     pub promotion_hash: String,
     #[serde(skip_serializing)]
     pub payload_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerEditableSceneManifest {
+    pub schema: &'static str,
+    pub scene_id: String,
+    pub authority: &'static str,
+    pub edit_policy: &'static str,
+    pub object_count: usize,
+    pub root_count: usize,
+    pub manifest_hash: String,
+    pub graph_hash: String,
+    pub bounds_hash: String,
+    pub objects: Vec<BangerEditableSceneObject>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerEditableSceneObject {
+    pub object_id: String,
+    pub parent_id: Option<String>,
+    pub role: &'static str,
+    pub representation: &'static str,
+    pub source_artifact_name: Option<String>,
+    pub source_artifact_kind: &'static str,
+    pub source_artifact_hash: String,
+    pub renderer_cache_hash: String,
+    pub residency_policy: &'static str,
+    pub local_transform: [f32; 16],
+    pub world_transform: [f32; 16],
+    pub local_transform_hash: String,
+    pub world_transform_hash: String,
+    pub aabb_min: [f32; 3],
+    pub aabb_max: [f32; 3],
+    pub bounding_sphere: [f32; 4],
+    pub editable_slots: Vec<&'static str>,
+    pub proof_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -258,6 +297,8 @@ impl BangerNativeEngine {
             &pipeline_cache_keys,
             vram_budget_mb,
         );
+        let editable_scene_manifest =
+            build_editable_scene_manifest(&prepared, &render_artifacts, &resource_table, &scene_id);
         let frame_graph_bindings = build_frame_graph_bindings(
             &render_artifacts,
             &render_graph,
@@ -302,6 +343,7 @@ impl BangerNativeEngine {
             residency_jobs,
             resource_table_hash,
             resource_table,
+            editable_scene_manifest,
             frame_graph_bindings,
             artifacts,
             verifier: BangerNativeRenderVerifier {
@@ -315,6 +357,96 @@ impl BangerNativeEngine {
             },
         })
     }
+}
+
+fn build_editable_scene_manifest(
+    prepared: &MonsterPreparedCompute,
+    artifacts: &[&MonsterNativeTandemArtifact],
+    resource_table: &BangerNativeResourceTable,
+    scene_id: &str,
+) -> BangerEditableSceneManifest {
+    let root_id = format!("{scene_id}:root");
+    let mut child_objects = artifacts
+        .iter()
+        .enumerate()
+        .map(|(index, artifact)| editable_scene_object_from_artifact(prepared, artifact, &root_id, scene_id, index))
+        .collect::<Vec<_>>();
+    let (root_min, root_max) = merged_bounds(child_objects.iter().map(|object| (object.aabb_min, object.aabb_max)));
+    let root_transform = identity_transform();
+    let mut root = BangerEditableSceneObject {
+        object_id: root_id,
+        parent_id: None,
+        role: "scene_authority",
+        representation: "hybrid_scene_root",
+        source_artifact_name: None,
+        source_artifact_kind: "scene_manifest",
+        source_artifact_hash: prepared.manifest_hash.clone(),
+        renderer_cache_hash: resource_table.table_hash.clone(),
+        residency_policy: "children_resident_by_artifact_policy",
+        local_transform: root_transform,
+        world_transform: root_transform,
+        local_transform_hash: transform_hash("local", &root_transform),
+        world_transform_hash: transform_hash("world", &root_transform),
+        aabb_min: root_min,
+        aabb_max: root_max,
+        bounding_sphere: bounding_sphere(root_min, root_max),
+        editable_slots: vec!["name", "children", "visibility", "representation_mix"],
+        proof_hash: String::new(),
+    };
+    root.proof_hash = editable_object_hash(&root);
+
+    let mut objects = Vec::with_capacity(child_objects.len() + 1);
+    objects.push(root);
+    objects.append(&mut child_objects);
+    let graph_hash = editable_scene_graph_hash(scene_id, &objects);
+    let bounds_hash = editable_scene_bounds_hash(scene_id, &objects);
+    let manifest_hash = editable_scene_manifest_hash(prepared, resource_table, &objects, &graph_hash, &bounds_hash);
+    BangerEditableSceneManifest {
+        schema: "forge.banger.editable_scene_manifest.v1",
+        scene_id: scene_id.to_string(),
+        authority: "monster_native_tandem_render_artifacts",
+        edit_policy: "scene_first_edits_emit_new_forge_contract_before_gpu_pages_are_promoted",
+        object_count: objects.len(),
+        root_count: 1,
+        manifest_hash,
+        graph_hash,
+        bounds_hash,
+        objects,
+    }
+}
+
+fn editable_scene_object_from_artifact(
+    prepared: &MonsterPreparedCompute,
+    artifact: &MonsterNativeTandemArtifact,
+    root_id: &str,
+    scene_id: &str,
+    index: usize,
+) -> BangerEditableSceneObject {
+    let object_id = format!("{scene_id}:{index}:{}", sanitize_scene_id(&artifact.name));
+    let transform = identity_transform();
+    let (aabb_min, aabb_max) = artifact_aabb(artifact);
+    let mut object = BangerEditableSceneObject {
+        object_id,
+        parent_id: Some(root_id.to_string()),
+        role: scene_role_for_kind(artifact.kind),
+        representation: scene_representation_for_kind(artifact.kind),
+        source_artifact_name: Some(artifact.name.clone()),
+        source_artifact_kind: artifact.kind,
+        source_artifact_hash: artifact.artifact_hash.clone(),
+        renderer_cache_hash: artifact.renderer_cache_hash.clone(),
+        residency_policy: artifact.renderer_residency_policy,
+        local_transform: transform,
+        world_transform: transform,
+        local_transform_hash: transform_hash("local", &transform),
+        world_transform_hash: transform_hash("world", &transform),
+        aabb_min,
+        aabb_max,
+        bounding_sphere: bounding_sphere(aabb_min, aabb_max),
+        editable_slots: editable_slots_for_kind(artifact.kind),
+        proof_hash: String::new(),
+    };
+    object.proof_hash = editable_object_hash_with_manifest(prepared, &object);
+    object
 }
 
 fn build_resource_table(
@@ -408,6 +540,199 @@ fn build_frame_graph_bindings(
             }
         })
         .collect()
+}
+
+fn scene_role_for_kind(kind: &str) -> &'static str {
+    match kind {
+        "sdf_brick" => "procedural_shape_field",
+        "voxel_page" => "volume_or_streaming_cell",
+        "meshlet_page" => "visible_geometry_cluster",
+        "surfel_radiance_cache" => "lighting_cache_probe_set",
+        "material_payload" => "material_variant_set",
+        _ => "native_render_artifact",
+    }
+}
+
+fn scene_representation_for_kind(kind: &str) -> &'static str {
+    match kind {
+        "sdf_brick" => "sdf",
+        "voxel_page" => "voxel",
+        "meshlet_page" => "meshlet",
+        "surfel_radiance_cache" => "surfel",
+        "material_payload" => "material_graph",
+        _ => "native_artifact",
+    }
+}
+
+fn editable_slots_for_kind(kind: &str) -> Vec<&'static str> {
+    match kind {
+        "sdf_brick" => vec!["name", "transform", "sdf_params", "material_ref", "visibility"],
+        "voxel_page" => vec!["name", "transform", "voxel_lod", "streaming_priority", "visibility"],
+        "meshlet_page" => vec!["name", "transform", "lod_bias", "material_ref", "visibility"],
+        "surfel_radiance_cache" => vec!["name", "probe_density", "bounce_budget", "temporal_reuse"],
+        "material_payload" => vec!["name", "albedo", "roughness", "metallic", "emissive"],
+        _ => vec!["name", "transform", "visibility"],
+    }
+}
+
+fn artifact_aabb(artifact: &MonsterNativeTandemArtifact) -> ([f32; 3], [f32; 3]) {
+    artifact
+        .pages
+        .first()
+        .and_then(|page| page.bytes.get(48..80))
+        .and_then(|bytes| {
+            let mut values = [0.0f32; 8];
+            for (index, slot) in values.iter_mut().enumerate() {
+                let start = index * 4;
+                let raw = bytes.get(start..start + 4)?;
+                *slot = f32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
+            }
+            Some(([values[0], values[1], values[2]], [values[3], values[4], values[5]]))
+        })
+        .unwrap_or_else(|| fallback_aabb_for_kind(artifact.kind))
+}
+
+fn fallback_aabb_for_kind(kind: &str) -> ([f32; 3], [f32; 3]) {
+    match kind {
+        "material_payload" => ([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+        "meshlet_page" => ([-0.5, -0.5, -0.25], [0.5, 0.5, 0.25]),
+        "surfel_radiance_cache" => ([-0.45, -0.45, -0.45], [0.45, 0.45, 0.45]),
+        _ => ([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]),
+    }
+}
+
+fn merged_bounds<I>(bounds: I) -> ([f32; 3], [f32; 3])
+where
+    I: IntoIterator<Item = ([f32; 3], [f32; 3])>,
+{
+    let mut seen = false;
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for (item_min, item_max) in bounds {
+        seen = true;
+        for axis in 0..3 {
+            min[axis] = min[axis].min(item_min[axis]);
+            max[axis] = max[axis].max(item_max[axis]);
+        }
+    }
+    if seen {
+        (min, max)
+    } else {
+        ([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])
+    }
+}
+
+fn bounding_sphere(min: [f32; 3], max: [f32; 3]) -> [f32; 4] {
+    let center = [
+        (min[0] + max[0]) * 0.5,
+        (min[1] + max[1]) * 0.5,
+        (min[2] + max[2]) * 0.5,
+    ];
+    let dx = max[0] - center[0];
+    let dy = max[1] - center[1];
+    let dz = max[2] - center[2];
+    [center[0], center[1], center[2], (dx * dx + dy * dy + dz * dz).sqrt()]
+}
+
+fn identity_transform() -> [f32; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
+fn transform_hash(label: &str, transform: &[f32; 16]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.scene_transform.v1\0");
+    h.update(label.as_bytes());
+    for value in transform {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn editable_object_hash_with_manifest(
+    prepared: &MonsterPreparedCompute,
+    object: &BangerEditableSceneObject,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(editable_object_hash(object).as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn editable_object_hash(object: &BangerEditableSceneObject) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.editable_scene_object.v1\0");
+    h.update(object.object_id.as_bytes());
+    if let Some(parent_id) = &object.parent_id {
+        h.update(parent_id.as_bytes());
+    }
+    h.update(object.role.as_bytes());
+    h.update(object.representation.as_bytes());
+    h.update(object.source_artifact_kind.as_bytes());
+    h.update(object.source_artifact_hash.as_bytes());
+    h.update(object.renderer_cache_hash.as_bytes());
+    h.update(object.local_transform_hash.as_bytes());
+    h.update(object.world_transform_hash.as_bytes());
+    for value in object.aabb_min.iter().chain(object.aabb_max.iter()).chain(object.bounding_sphere.iter()) {
+        h.update(value.to_le_bytes());
+    }
+    for slot in &object.editable_slots {
+        h.update(slot.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn editable_scene_graph_hash(scene_id: &str, objects: &[BangerEditableSceneObject]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.editable_scene_graph.v1\0");
+    h.update(scene_id.as_bytes());
+    for object in objects {
+        h.update(object.object_id.as_bytes());
+        if let Some(parent_id) = &object.parent_id {
+            h.update(parent_id.as_bytes());
+        }
+        h.update(object.representation.as_bytes());
+        h.update(object.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn editable_scene_bounds_hash(scene_id: &str, objects: &[BangerEditableSceneObject]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.editable_scene_bounds.v1\0");
+    h.update(scene_id.as_bytes());
+    for object in objects {
+        h.update(object.object_id.as_bytes());
+        for value in object.aabb_min.iter().chain(object.aabb_max.iter()).chain(object.bounding_sphere.iter()) {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn editable_scene_manifest_hash(
+    prepared: &MonsterPreparedCompute,
+    resource_table: &BangerNativeResourceTable,
+    objects: &[BangerEditableSceneObject],
+    graph_hash: &str,
+    bounds_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.editable_scene_manifest.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(resource_table.table_hash.as_bytes());
+    h.update(graph_hash.as_bytes());
+    h.update(bounds_hash.as_bytes());
+    for object in objects {
+        h.update(object.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
 }
 
 fn resource_heap_for_kind(kind: &str) -> &'static str {
@@ -973,6 +1298,34 @@ mod tests {
             .frame_graph_bindings
             .iter()
             .all(|binding| !binding.resource_slots.is_empty()));
+        assert_eq!(
+            response.editable_scene_manifest.schema,
+            "forge.banger.editable_scene_manifest.v1"
+        );
+        assert_eq!(
+            response.editable_scene_manifest.object_count,
+            response.artifacts.len() + 1
+        );
+        assert_eq!(response.editable_scene_manifest.root_count, 1);
+        assert_eq!(response.editable_scene_manifest.manifest_hash.len(), 64);
+        assert_eq!(response.editable_scene_manifest.graph_hash.len(), 64);
+        assert_eq!(response.editable_scene_manifest.bounds_hash.len(), 64);
+        assert!(response
+            .editable_scene_manifest
+            .objects
+            .iter()
+            .any(|object| object.representation == "meshlet"
+                && object.parent_id.as_deref() == Some("test_scene:root")
+                && object.source_artifact_name.is_some()));
+        assert!(response
+            .editable_scene_manifest
+            .objects
+            .iter()
+            .all(|object| object.proof_hash.len() == 64
+                && object.local_transform_hash.len() == 64
+                && object.world_transform_hash.len() == 64
+                && object.bounding_sphere[3].is_finite()
+                && object.bounding_sphere[3] >= 0.0));
         assert!(response
             .resource_table
             .slots
