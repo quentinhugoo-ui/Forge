@@ -50,6 +50,8 @@ Clean-room extraction applied in Forge:
 - Banger implementation: `BangerNativeGpuScenePacket` converts scene graph submissions into GPU scene primitive records and buffer hashes.
 - Nanite second-layer lesson: streaming feedback, page residency, material bins, visibility resolve and ray-tracing proxies must be tied to the same cluster visibility result.
 - Banger implementation: `BangerNativeNaniteSecondLayerPacket` derives those contracts from GPU scene primitives, meshlet visibility and resource-table residency.
+- Lumen lesson: surface cache pages, screen probes, radiance cache tiles and trace policy must be scheduled as one lighting contract, not scattered post-process state.
+- Banger implementation: `BangerNativeLumenLightingPacket` binds Nanite pages, radiance probe pages and render graph lighting passes into deterministic GI/reflection hashes.
 
 Clean-room rule:
 

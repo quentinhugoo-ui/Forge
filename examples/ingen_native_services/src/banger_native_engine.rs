@@ -139,6 +139,7 @@ pub struct BangerNativeRenderPrepareResponse {
     pub nanite_second_layer_packet: BangerNativeNaniteSecondLayerPacket,
     pub raster_work_queue: BangerNativeRasterWorkQueue,
     pub radiance_schedule_manifest: BangerNativeRadianceScheduleManifest,
+    pub lumen_lighting_packet: BangerNativeLumenLightingPacket,
     pub gaussian_splat_layer_manifest: BangerNativeGaussianSplatLayerManifest,
     pub frame_submission_packet: BangerNativeFrameSubmissionPacket,
     pub rhi_submit_packet: BangerNativeRhiSubmitPacket,
@@ -937,6 +938,54 @@ pub struct BangerNativeRadianceProbePage {
     pub residency_policy: &'static str,
     pub invalidation_hash: String,
     pub proof_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeLumenLightingPacket {
+    pub schema: &'static str,
+    pub authority: &'static str,
+    pub clean_room_basis: &'static str,
+    pub source_contract_hash: String,
+    pub gpu_scene_hash: String,
+    pub nanite_second_layer_hash: String,
+    pub radiance_schedule_hash: String,
+    pub render_graph_hash: String,
+    pub surface_cache_page_count: usize,
+    pub screen_probe_count: usize,
+    pub radiance_tile_count: usize,
+    pub hardware_trace_candidate_count: usize,
+    pub software_trace_candidate_count: usize,
+    pub reflection_ray_budget: u64,
+    pub total_probe_rays: u64,
+    pub surface_cache_hash: String,
+    pub screen_probe_hash: String,
+    pub trace_policy_hash: String,
+    pub diffuse_indirect_hash: String,
+    pub reflection_hash: String,
+    pub packet_hash: String,
+    pub entries: Vec<BangerNativeLumenLightingEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangerNativeLumenLightingEntry {
+    pub object_id: String,
+    pub cluster_id: String,
+    pub surface_page_id: String,
+    pub source_probe_page_id: String,
+    pub material_bin_id: u32,
+    pub residency_state: &'static str,
+    pub screen_probe_coord: [u32; 2],
+    pub radiance_tile: [u32; 4],
+    pub trace_policy: &'static str,
+    pub diffuse_ray_count: u32,
+    pub reflection_ray_count: u32,
+    pub temporal_reuse_frames: u32,
+    pub surface_cache_hash: String,
+    pub screen_probe_hash: String,
+    pub trace_hash: String,
+    pub entry_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1781,6 +1830,13 @@ impl BangerNativeEngine {
             &culling_manifest,
             &resource_table,
         );
+        let lumen_lighting_packet = build_lumen_lighting_packet(
+            &prepared,
+            &gpu_scene_packet,
+            &nanite_second_layer_packet,
+            &radiance_schedule_manifest,
+            &render_graph_compilation,
+        );
         let gaussian_splat_layer_manifest = build_gaussian_splat_layer_manifest(
             &prepared,
             &scene_graph_submission,
@@ -1803,6 +1859,7 @@ impl BangerNativeEngine {
             &render_graph_compilation,
             &raster_work_queue,
             &radiance_schedule_manifest,
+            &lumen_lighting_packet,
             &gaussian_splat_layer_manifest,
         );
         let rhi_submit_packet =
@@ -1849,6 +1906,7 @@ impl BangerNativeEngine {
             &nanite_second_layer_packet,
             &raster_work_queue,
             &radiance_schedule_manifest,
+            &lumen_lighting_packet,
             &gaussian_splat_layer_manifest,
             &frame_submission_packet,
             &rhi_submit_packet,
@@ -1907,6 +1965,7 @@ impl BangerNativeEngine {
             nanite_second_layer_packet,
             raster_work_queue,
             radiance_schedule_manifest,
+            lumen_lighting_packet,
             gaussian_splat_layer_manifest,
             frame_submission_packet,
             rhi_submit_packet,
@@ -3076,6 +3135,148 @@ fn radiance_probe_page_from_slot(
     }
 }
 
+fn build_lumen_lighting_packet(
+    prepared: &MonsterPreparedCompute,
+    gpu_scene_packet: &BangerNativeGpuScenePacket,
+    nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+) -> BangerNativeLumenLightingPacket {
+    let entries = nanite_second_layer_packet
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, nanite_entry)| {
+            let probe_page = if radiance_schedule_manifest.entries.is_empty() {
+                None
+            } else {
+                radiance_schedule_manifest
+                    .entries
+                    .get(index % radiance_schedule_manifest.entries.len())
+            };
+            let source_probe_page_id = probe_page
+                .map(|page| page.probe_page_id.clone())
+                .unwrap_or_else(|| "radiance:none".to_string());
+            let trace_policy = lumen_trace_policy(nanite_entry);
+            let screen_probe_coord = lumen_screen_probe_coord(nanite_entry, index as u32);
+            let radiance_tile = lumen_radiance_tile(nanite_entry, probe_page, index as u32);
+            let diffuse_ray_count = lumen_diffuse_ray_count(
+                nanite_entry,
+                probe_page,
+                radiance_schedule_manifest.light_budget,
+            );
+            let reflection_ray_count = lumen_reflection_ray_count(nanite_entry, trace_policy);
+            let temporal_reuse_frames = probe_page
+                .map(|page| page.temporal_reuse_frames)
+                .unwrap_or(1);
+            let surface_page_id = format!(
+                "surface:{}:{}:{}",
+                nanite_entry.resource_slot, nanite_entry.requested_lod_bucket, index
+            );
+            let surface_cache_hash = lumen_surface_cache_entry_hash(
+                nanite_entry,
+                &surface_page_id,
+                &source_probe_page_id,
+                &radiance_tile,
+            );
+            let screen_probe_hash =
+                lumen_screen_probe_entry_hash(nanite_entry, &screen_probe_coord, diffuse_ray_count);
+            let trace_hash = lumen_trace_entry_hash(
+                nanite_entry,
+                trace_policy,
+                diffuse_ray_count,
+                reflection_ray_count,
+                &surface_cache_hash,
+                &screen_probe_hash,
+            );
+            let entry_hash = lumen_lighting_entry_hash(
+                nanite_entry,
+                &surface_page_id,
+                &source_probe_page_id,
+                trace_policy,
+                diffuse_ray_count,
+                reflection_ray_count,
+                temporal_reuse_frames,
+                &surface_cache_hash,
+                &screen_probe_hash,
+                &trace_hash,
+            );
+            BangerNativeLumenLightingEntry {
+                object_id: nanite_entry.object_id.clone(),
+                cluster_id: nanite_entry.cluster_id.clone(),
+                surface_page_id,
+                source_probe_page_id,
+                material_bin_id: nanite_entry.material_bin_id,
+                residency_state: nanite_entry.residency_state,
+                screen_probe_coord,
+                radiance_tile,
+                trace_policy,
+                diffuse_ray_count,
+                reflection_ray_count,
+                temporal_reuse_frames,
+                surface_cache_hash,
+                screen_probe_hash,
+                trace_hash,
+                entry_hash,
+            }
+        })
+        .collect::<Vec<_>>();
+    let surface_cache_hash = lumen_surface_cache_hash(&entries);
+    let screen_probe_hash = lumen_screen_probe_hash(&entries);
+    let trace_policy_hash = lumen_trace_policy_hash(&entries);
+    let diffuse_indirect_hash = lumen_diffuse_indirect_hash(&entries);
+    let reflection_hash = lumen_reflection_hash(&entries);
+    let packet_hash = lumen_lighting_packet_hash(
+        prepared,
+        gpu_scene_packet,
+        nanite_second_layer_packet,
+        radiance_schedule_manifest,
+        render_graph_compilation,
+        &surface_cache_hash,
+        &screen_probe_hash,
+        &trace_policy_hash,
+        &diffuse_indirect_hash,
+        &reflection_hash,
+        &entries,
+    );
+    BangerNativeLumenLightingPacket {
+        schema: "forge.banger.lumen_lighting_packet.v1",
+        authority: "banger_nanite_surface_cache_screen_probe_radiance_trace",
+        clean_room_basis: "local_unreal_sparse_lumen_surface_cache_screen_probe_radiance_principles_no_source_copy",
+        source_contract_hash: prepared.route.plan.source_hash.clone(),
+        gpu_scene_hash: gpu_scene_packet.packet_hash.clone(),
+        nanite_second_layer_hash: nanite_second_layer_packet.packet_hash.clone(),
+        radiance_schedule_hash: radiance_schedule_manifest.schedule_hash.clone(),
+        render_graph_hash: render_graph_compilation.graph_hash.clone(),
+        surface_cache_page_count: entries.len(),
+        screen_probe_count: entries.len(),
+        radiance_tile_count: entries.len(),
+        hardware_trace_candidate_count: entries
+            .iter()
+            .filter(|entry| entry.trace_policy == "hardware_ray_traced_surface_cache")
+            .count(),
+        software_trace_candidate_count: entries
+            .iter()
+            .filter(|entry| entry.trace_policy != "hardware_ray_traced_surface_cache")
+            .count(),
+        reflection_ray_budget: entries
+            .iter()
+            .map(|entry| entry.reflection_ray_count as u64)
+            .sum(),
+        total_probe_rays: entries
+            .iter()
+            .map(|entry| entry.diffuse_ray_count as u64 + entry.reflection_ray_count as u64)
+            .sum(),
+        surface_cache_hash,
+        screen_probe_hash,
+        trace_policy_hash,
+        diffuse_indirect_hash,
+        reflection_hash,
+        packet_hash,
+        entries,
+    }
+}
+
 fn build_gaussian_splat_layer_manifest(
     prepared: &MonsterPreparedCompute,
     scene_graph_submission: &BangerNativeSceneGraphSubmission,
@@ -3592,6 +3793,7 @@ fn build_frame_submission_packet(
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
     raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> BangerNativeFrameSubmissionPacket {
     let color_target_hash = frame_submission_target_hash(
@@ -3629,6 +3831,7 @@ fn build_frame_submission_packet(
                 pass,
                 &pass_jobs,
                 radiance_schedule_manifest,
+                lumen_lighting_packet,
                 gaussian_splat_layer_manifest,
             );
             let output_target_hash = frame_submission_command_output_hash(
@@ -3680,6 +3883,7 @@ fn build_frame_submission_packet(
         texture_bridge_contract,
         render_graph_compilation,
         raster_work_queue,
+        lumen_lighting_packet,
         &color_target_hash,
         &depth_target_hash,
         &render_target_state_hash,
@@ -4809,6 +5013,7 @@ fn frame_submission_command_input_hash(
     pass: &BangerNativeRenderGraphCompiledPass,
     pass_jobs: &[&BangerNativeRasterWorkItem],
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
 ) -> String {
     let mut h = Sha256::new();
@@ -4822,6 +5027,8 @@ fn frame_submission_command_input_hash(
     }
     if pass.stage == "lighting_cache" {
         h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+        h.update(lumen_lighting_packet.packet_hash.as_bytes());
+        h.update(lumen_lighting_packet.diffuse_indirect_hash.as_bytes());
     }
     if pass.stage == "material_bind" {
         h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
@@ -4931,6 +5138,7 @@ fn frame_submission_packet_hash(
     texture_bridge_contract: &BangerNativeTextureBridgeContract,
     render_graph_compilation: &BangerNativeRenderGraphCompilation,
     raster_work_queue: &BangerNativeRasterWorkQueue,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     color_target_hash: &str,
     depth_target_hash: &str,
     render_target_state_hash: &str,
@@ -4946,6 +5154,7 @@ fn frame_submission_packet_hash(
     h.update(texture_bridge_contract.bridge_proof_hash.as_bytes());
     h.update(render_graph_compilation.graph_hash.as_bytes());
     h.update(raster_work_queue.queue_hash.as_bytes());
+    h.update(lumen_lighting_packet.packet_hash.as_bytes());
     h.update(color_target_hash.as_bytes());
     h.update(depth_target_hash.as_bytes());
     h.update(render_target_state_hash.as_bytes());
@@ -5680,6 +5889,228 @@ fn radiance_schedule_hash(
     h.update(invalidation_hash.as_bytes());
     for entry in entries {
         h.update(entry.proof_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn lumen_trace_policy(entry: &BangerNativeNaniteSecondLayerEntry) -> &'static str {
+    if entry.residency_state == "resident_page" && (entry.material_flags_word & 0b100) != 0 {
+        "hardware_ray_traced_surface_cache"
+    } else if (entry.material_flags_word & 0b1) != 0 {
+        "software_sdf_probe_trace"
+    } else {
+        "screen_probe_then_surface_cache"
+    }
+}
+
+fn lumen_screen_probe_coord(entry: &BangerNativeNaniteSecondLayerEntry, salt: u32) -> [u32; 2] {
+    [
+        ((entry.feedback_word & 0xffff) as u32).wrapping_add(salt * 7) % 2048,
+        (((entry.feedback_word >> 16) & 0xffff) as u32).wrapping_add(salt * 13) % 2048,
+    ]
+}
+
+fn lumen_radiance_tile(
+    entry: &BangerNativeNaniteSecondLayerEntry,
+    probe_page: Option<&BangerNativeRadianceProbePage>,
+    salt: u32,
+) -> [u32; 4] {
+    let probe_count = probe_page.map(|page| page.probe_count.max(1)).unwrap_or(1);
+    let extent = 8 + (entry.requested_lod_bucket.min(4) * 4);
+    [
+        entry.visibility_tile[0].wrapping_add(salt * 5) % 4096,
+        entry.visibility_tile[1].wrapping_add(probe_count) % 4096,
+        extent,
+        extent,
+    ]
+}
+
+fn lumen_diffuse_ray_count(
+    entry: &BangerNativeNaniteSecondLayerEntry,
+    probe_page: Option<&BangerNativeRadianceProbePage>,
+    fallback_light_budget: u32,
+) -> u32 {
+    let budget = probe_page
+        .map(|page| page.light_budget)
+        .unwrap_or(fallback_light_budget.max(1));
+    let lod_scale = 1 + entry.requested_lod_bucket.min(4);
+    budget.saturating_mul(lod_scale).clamp(1, 4096)
+}
+
+fn lumen_reflection_ray_count(
+    entry: &BangerNativeNaniteSecondLayerEntry,
+    trace_policy: &str,
+) -> u32 {
+    let base = if trace_policy == "hardware_ray_traced_surface_cache" {
+        4
+    } else {
+        1
+    };
+    (base + (entry.material_bin_id % 3)).clamp(1, 64)
+}
+
+fn lumen_surface_cache_entry_hash(
+    entry: &BangerNativeNaniteSecondLayerEntry,
+    surface_page_id: &str,
+    source_probe_page_id: &str,
+    radiance_tile: &[u32; 4],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.lumen.surface_cache_entry.v1\0");
+    h.update(entry.entry_hash.as_bytes());
+    h.update(surface_page_id.as_bytes());
+    h.update(source_probe_page_id.as_bytes());
+    for value in radiance_tile {
+        h.update(value.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn lumen_screen_probe_entry_hash(
+    entry: &BangerNativeNaniteSecondLayerEntry,
+    screen_probe_coord: &[u32; 2],
+    diffuse_ray_count: u32,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.lumen.screen_probe_entry.v1\0");
+    h.update(entry.cluster_id.as_bytes());
+    h.update(entry.feedback_word.to_le_bytes());
+    for value in screen_probe_coord {
+        h.update(value.to_le_bytes());
+    }
+    h.update(diffuse_ray_count.to_le_bytes());
+    hex32(h.finalize().into())
+}
+
+fn lumen_trace_entry_hash(
+    entry: &BangerNativeNaniteSecondLayerEntry,
+    trace_policy: &str,
+    diffuse_ray_count: u32,
+    reflection_ray_count: u32,
+    surface_cache_hash: &str,
+    screen_probe_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.lumen.trace_entry.v1\0");
+    h.update(entry.ray_tracing_proxy_hash.as_bytes());
+    h.update(trace_policy.as_bytes());
+    h.update(diffuse_ray_count.to_le_bytes());
+    h.update(reflection_ray_count.to_le_bytes());
+    h.update(surface_cache_hash.as_bytes());
+    h.update(screen_probe_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn lumen_lighting_entry_hash(
+    entry: &BangerNativeNaniteSecondLayerEntry,
+    surface_page_id: &str,
+    source_probe_page_id: &str,
+    trace_policy: &str,
+    diffuse_ray_count: u32,
+    reflection_ray_count: u32,
+    temporal_reuse_frames: u32,
+    surface_cache_hash: &str,
+    screen_probe_hash: &str,
+    trace_hash: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.lumen.lighting_entry.v1\0");
+    h.update(entry.entry_hash.as_bytes());
+    h.update(surface_page_id.as_bytes());
+    h.update(source_probe_page_id.as_bytes());
+    h.update(trace_policy.as_bytes());
+    h.update(diffuse_ray_count.to_le_bytes());
+    h.update(reflection_ray_count.to_le_bytes());
+    h.update(temporal_reuse_frames.to_le_bytes());
+    h.update(surface_cache_hash.as_bytes());
+    h.update(screen_probe_hash.as_bytes());
+    h.update(trace_hash.as_bytes());
+    hex32(h.finalize().into())
+}
+
+fn lumen_surface_cache_hash(entries: &[BangerNativeLumenLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.lumen.surface_cache.v1\0");
+    for entry in entries {
+        h.update(entry.surface_page_id.as_bytes());
+        h.update(entry.surface_cache_hash.as_bytes());
+        h.update(entry.residency_state.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn lumen_screen_probe_hash(entries: &[BangerNativeLumenLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.lumen.screen_probe.v1\0");
+    for entry in entries {
+        h.update(entry.screen_probe_hash.as_bytes());
+        for value in entry.screen_probe_coord {
+            h.update(value.to_le_bytes());
+        }
+    }
+    hex32(h.finalize().into())
+}
+
+fn lumen_trace_policy_hash(entries: &[BangerNativeLumenLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.lumen.trace_policy.v1\0");
+    for entry in entries {
+        h.update(entry.trace_policy.as_bytes());
+        h.update(entry.trace_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn lumen_diffuse_indirect_hash(entries: &[BangerNativeLumenLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.lumen.diffuse_indirect.v1\0");
+    for entry in entries {
+        h.update(entry.source_probe_page_id.as_bytes());
+        h.update(entry.diffuse_ray_count.to_le_bytes());
+        h.update(entry.temporal_reuse_frames.to_le_bytes());
+        h.update(entry.entry_hash.as_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn lumen_reflection_hash(entries: &[BangerNativeLumenLightingEntry]) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.lumen.reflection.v1\0");
+    for entry in entries {
+        h.update(entry.trace_hash.as_bytes());
+        h.update(entry.reflection_ray_count.to_le_bytes());
+    }
+    hex32(h.finalize().into())
+}
+
+fn lumen_lighting_packet_hash(
+    prepared: &MonsterPreparedCompute,
+    gpu_scene_packet: &BangerNativeGpuScenePacket,
+    nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
+    radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    render_graph_compilation: &BangerNativeRenderGraphCompilation,
+    surface_cache_hash: &str,
+    screen_probe_hash: &str,
+    trace_policy_hash: &str,
+    diffuse_indirect_hash: &str,
+    reflection_hash: &str,
+    entries: &[BangerNativeLumenLightingEntry],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(b"forge.banger.lumen_lighting_packet.v1\0");
+    h.update(prepared.manifest_hash.as_bytes());
+    h.update(prepared.route.plan.proof_hash.as_bytes());
+    h.update(gpu_scene_packet.packet_hash.as_bytes());
+    h.update(nanite_second_layer_packet.packet_hash.as_bytes());
+    h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
+    h.update(render_graph_compilation.graph_hash.as_bytes());
+    h.update(surface_cache_hash.as_bytes());
+    h.update(screen_probe_hash.as_bytes());
+    h.update(trace_policy_hash.as_bytes());
+    h.update(diffuse_indirect_hash.as_bytes());
+    h.update(reflection_hash.as_bytes());
+    for entry in entries {
+        h.update(entry.entry_hash.as_bytes());
     }
     hex32(h.finalize().into())
 }
@@ -9154,6 +9585,7 @@ fn render_handoff_hash(
     nanite_second_layer_packet: &BangerNativeNaniteSecondLayerPacket,
     raster_work_queue: &BangerNativeRasterWorkQueue,
     radiance_schedule_manifest: &BangerNativeRadianceScheduleManifest,
+    lumen_lighting_packet: &BangerNativeLumenLightingPacket,
     gaussian_splat_layer_manifest: &BangerNativeGaussianSplatLayerManifest,
     frame_submission_packet: &BangerNativeFrameSubmissionPacket,
     rhi_submit_packet: &BangerNativeRhiSubmitPacket,
@@ -9190,6 +9622,9 @@ fn render_handoff_hash(
     h.update(raster_work_queue.bind_table_hash.as_bytes());
     h.update(radiance_schedule_manifest.schedule_hash.as_bytes());
     h.update(radiance_schedule_manifest.invalidation_hash.as_bytes());
+    h.update(lumen_lighting_packet.packet_hash.as_bytes());
+    h.update(lumen_lighting_packet.surface_cache_hash.as_bytes());
+    h.update(lumen_lighting_packet.diffuse_indirect_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.manifest_hash.as_bytes());
     h.update(gaussian_splat_layer_manifest.conversion_manifest_hash.as_bytes());
     h.update(frame_submission_packet.submission_hash.as_bytes());
@@ -10341,6 +10776,84 @@ mod tests {
                 && entry.light_budget == response.radiance_schedule_manifest.light_budget
                 && entry.invalidation_hash.len() == 64
                 && entry.proof_hash.len() == 64));
+        assert_eq!(
+            response.lumen_lighting_packet.schema,
+            "forge.banger.lumen_lighting_packet.v1"
+        );
+        assert_eq!(
+            response.lumen_lighting_packet.authority,
+            "banger_nanite_surface_cache_screen_probe_radiance_trace"
+        );
+        assert!(response
+            .lumen_lighting_packet
+            .clean_room_basis
+            .contains("local_unreal_sparse_lumen"));
+        assert_eq!(
+            response.lumen_lighting_packet.source_contract_hash,
+            response.source_hash
+        );
+        assert_eq!(
+            response.lumen_lighting_packet.gpu_scene_hash,
+            response.gpu_scene_packet.packet_hash
+        );
+        assert_eq!(
+            response.lumen_lighting_packet.nanite_second_layer_hash,
+            response.nanite_second_layer_packet.packet_hash
+        );
+        assert_eq!(
+            response.lumen_lighting_packet.radiance_schedule_hash,
+            response.radiance_schedule_manifest.schedule_hash
+        );
+        assert_eq!(
+            response.lumen_lighting_packet.render_graph_hash,
+            response.render_graph_compilation.graph_hash
+        );
+        assert_eq!(
+            response.lumen_lighting_packet.surface_cache_page_count,
+            response.lumen_lighting_packet.entries.len()
+        );
+        assert_eq!(
+            response.lumen_lighting_packet.screen_probe_count,
+            response.lumen_lighting_packet.entries.len()
+        );
+        assert_eq!(
+            response.lumen_lighting_packet.radiance_tile_count,
+            response.lumen_lighting_packet.entries.len()
+        );
+        assert_eq!(
+            response.lumen_lighting_packet.hardware_trace_candidate_count
+                + response.lumen_lighting_packet.software_trace_candidate_count,
+            response.lumen_lighting_packet.entries.len()
+        );
+        assert!(response.lumen_lighting_packet.total_probe_rays > 0);
+        assert!(response.lumen_lighting_packet.reflection_ray_budget > 0);
+        assert_eq!(response.lumen_lighting_packet.surface_cache_hash.len(), 64);
+        assert_eq!(response.lumen_lighting_packet.screen_probe_hash.len(), 64);
+        assert_eq!(response.lumen_lighting_packet.trace_policy_hash.len(), 64);
+        assert_eq!(response.lumen_lighting_packet.diffuse_indirect_hash.len(), 64);
+        assert_eq!(response.lumen_lighting_packet.reflection_hash.len(), 64);
+        assert_eq!(response.lumen_lighting_packet.packet_hash.len(), 64);
+        assert!(response
+            .lumen_lighting_packet
+            .entries
+            .iter()
+            .all(|entry| entry.surface_page_id.starts_with("surface:")
+                && entry.source_probe_page_id.starts_with("radiance:")
+                && entry.diffuse_ray_count > 0
+                && entry.reflection_ray_count > 0
+                && entry.temporal_reuse_frames > 0
+                && entry.radiance_tile[2] > 0
+                && entry.radiance_tile[3] > 0
+                && entry.surface_cache_hash.len() == 64
+                && entry.screen_probe_hash.len() == 64
+                && entry.trace_hash.len() == 64
+                && entry.entry_hash.len() == 64
+                && matches!(
+                    entry.trace_policy,
+                    "hardware_ray_traced_surface_cache"
+                        | "software_sdf_probe_trace"
+                        | "screen_probe_then_surface_cache"
+                )));
         assert_eq!(
             response.gaussian_splat_layer_manifest.schema,
             "forge.banger.native_gaussian_splat_layer_manifest.v1"
