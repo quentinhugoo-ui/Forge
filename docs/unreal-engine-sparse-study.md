@@ -34,6 +34,8 @@ Clean-room extraction applied in Forge:
 - RHI lesson: command submission should consume a compact compiled plan rather than ad hoc renderer-local state.
 - MeshPass lesson: scene visibility/material/resource binding is a pass-level contract, not a side effect hidden inside a draw call.
 - Banger implementation: `BangerNativeRenderGraphCompilation` compiles Monster/KASM render artifacts into resource records, pass records, dependency edges and proof hashes.
+- Nanite lesson: virtualized geometry needs a compact visibility packet that separates cluster/page visibility, LOD error, raster path choice and indirect draw arguments.
+- Banger implementation: `BangerNativeMeshletVisibilityPacket` converts Monster/KASM scene submissions and culling manifests into meshlet cluster entries with hardware/compute raster candidates and buffer hashes.
 
 Clean-room rule:
 
