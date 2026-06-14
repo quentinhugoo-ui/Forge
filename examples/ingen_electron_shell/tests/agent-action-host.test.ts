@@ -52,6 +52,9 @@ describe("agent action host", () => {
     expect(promptManifest).toContain("events=fs.list:/agent_list_");
     expect(promptManifest).toContain("fs.delete_tree:/agent_delete_tree_");
     expect(promptManifest).toContain("shell.full:/agent_shell_");
+    expect(promptManifest).toContain("loop_stream=When local action is needed");
+    expect(promptManifest).toContain("action_request_format=AGENT_ACTION_JSON");
+    expect(promptManifest).toContain("tool_truth=Never claim an action was executed");
   });
 
   it("keeps filesystem operations inside the workspace", async () => {

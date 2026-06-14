@@ -102,6 +102,7 @@ import {
   isSidebarCommand
 } from "../shared/ipc-contract.js";
 import {
+  agentActionEventCommandForRequest,
   agentActionHostPromptManifest,
   createAgentActionHostManifest,
   executeAgentActionRequest,
@@ -4848,6 +4849,9 @@ function modelNameFromError(message: string, fallbackModel: string): string {
 }
 
 const ASSISTANT_PROVIDER_UNAVAILABLE_TEXT = "Provider unavailable. Check connection, auth, or quota.";
+const AGENT_ACTION_JSON_PREFIX = "AGENT_ACTION_JSON";
+const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1";
+const AGENT_ACTION_LOOP_MAX_STEPS = 6;
 
 function friendlyAssistantErrorText(params: {
   userText: string;
@@ -4865,6 +4869,169 @@ function friendlyAssistantErrorText(params: {
     return `${failingModel || "Selected model"} cannot read images. Choose a vision model.`;
   }
   return ASSISTANT_PROVIDER_UNAVAILABLE_TEXT;
+}
+
+interface ExtractedAgentAction {
+  request: AgentActionRequest;
+  line: string;
+}
+
+function extractAgentActionJsonRequest(text: string): ExtractedAgentAction | undefined {
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(AGENT_ACTION_JSON_PREFIX)) {
+      continue;
+    }
+    const rawJson = trimmed.slice(AGENT_ACTION_JSON_PREFIX.length).trim();
+    if (!rawJson) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      if (isAgentActionRequest(parsed)) {
+        return { request: parsed, line };
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+function removeAgentActionJsonLine(text: string, lineToRemove: string): string {
+  let removed = false;
+  return text
+    .split(/\r?\n/)
+    .filter((line) => {
+      if (!removed && line === lineToRemove) {
+        removed = true;
+        return false;
+      }
+      return true;
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function agentActionResultSummary(result: AgentActionResult): string {
+  if (!result.accepted) {
+    return `Resultat: action bloquee - ${result.error?.message ?? "rejetee par le host d'action"}.`;
+  }
+  if (result.items) {
+    return `Resultat: ${result.items.length} element${result.items.length > 1 ? "s" : ""} liste${result.items.length > 1 ? "s" : ""}${result.path ? ` dans ${result.path}` : ""}.`;
+  }
+  if (result.matches) {
+    return `Resultat: ${result.matches.length} correspondance${result.matches.length > 1 ? "s" : ""} trouvee${result.matches.length > 1 ? "s" : ""}.`;
+  }
+  if (result.commandLine) {
+    return `Resultat: commande terminee avec code ${result.exitCode ?? "inconnu"}.`;
+  }
+  if (result.toPath) {
+    return `Resultat: ${result.path ?? "chemin"} -> ${result.toPath}.`;
+  }
+  if (result.path) {
+    return `Resultat: action appliquee sur ${result.path}.`;
+  }
+  return "Resultat: action appliquee.";
+}
+
+function renderExecutedAgentActionText(text: string, extracted: ExtractedAgentAction, result: AgentActionResult): string {
+  const visibleText = removeAgentActionJsonLine(text, extracted.line);
+  const eventCommand = agentActionEventCommandForRequest(extracted.request);
+  return [
+    visibleText,
+    eventCommand,
+    "",
+    agentActionResultSummary(result)
+  ].filter((part) => part.length > 0).join("\n").trim();
+}
+
+function compactAgentActionResult(result: AgentActionResult): string {
+  return JSON.stringify({
+    accepted: result.accepted,
+    action: result.action,
+    path: result.path,
+    toPath: result.toPath,
+    itemCount: result.items?.length,
+    items: result.items?.slice(0, 20),
+    matchCount: result.matches?.length,
+    matches: result.matches?.slice(0, 12),
+    commandLine: result.commandLine,
+    exitCode: result.exitCode,
+    stdoutPreview: result.stdoutPreview,
+    stderrPreview: result.stderrPreview,
+    error: result.error?.message,
+    proofHash: result.proofHash
+  });
+}
+
+function agentActionLoopContinuationUserText(originalUserText: string, request: AgentActionRequest, result: AgentActionResult, step: number): string {
+  return [
+    AGENT_ACTION_RESULT_PREFIX,
+    `step=${step + 1}`,
+    `request=${JSON.stringify(request)}`,
+    `result=${compactAgentActionResult(result)}`,
+    "",
+    "Continue la boucle agentique en francais.",
+    "Si l'objectif demande encore une action locale, ecris un court paragraphe de progression puis exactement une ligne AGENT_ACTION_JSON.",
+    "Si l'objectif est atteint, donne un resume final compact de ce qui a ete fait et n'emets pas AGENT_ACTION_JSON.",
+    "",
+    `Objectif utilisateur initial:\n${originalUserText}`
+  ].join("\n");
+}
+
+async function executeAssistantAgentActionLoop(params: {
+  assistantMessage: TranscriptMessage;
+  baseTranscript: TranscriptMessage[];
+  originalUserText: string;
+  providerAttachments: ProviderAttachment[];
+  userMessageId: string;
+  moduleId: string;
+  requestSessionId: string;
+  commitTranscript: (transcript: TranscriptMessage[]) => void;
+}): Promise<TranscriptMessage> {
+  let assistantMessage = params.assistantMessage;
+  for (let step = 0; step < AGENT_ACTION_LOOP_MAX_STEPS; step += 1) {
+    const extracted = extractAgentActionJsonRequest(assistantMessage.text);
+    if (!extracted) {
+      return assistantMessage;
+    }
+    const result = await executeAgentActionRequest(agentActionHostConfig(), extracted.request);
+    assistantMessage = {
+      ...assistantMessage,
+      text: renderExecutedAgentActionText(assistantMessage.text, extracted, result),
+      proofHash: hashJson({ agentActionLoopStep: step + 1, previousProofHash: assistantMessage.proofHash, request: extracted.request, result })
+    };
+    params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage));
+    if (!result.accepted) {
+      return assistantMessage;
+    }
+    const continuation = await buildAssistantTranscriptMessage(
+      agentActionLoopContinuationUserText(params.originalUserText, extracted.request, result, step),
+      params.providerAttachments,
+      params.userMessageId,
+      params.moduleId,
+      transcriptWithMessage(params.baseTranscript, assistantMessage)
+    );
+    assistantMessage = {
+      ...continuation,
+      id: assistantMessage.id,
+      text: [assistantMessage.text, continuation.text].filter((part) => part.trim().length > 0).join("\n\n"),
+      proofHash: hashJson({ agentActionLoopStep: step + 1, previousProofHash: assistantMessage.proofHash, continuationProofHash: continuation.proofHash })
+    };
+  }
+  const strippedText = assistantMessage.text
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith(AGENT_ACTION_JSON_PREFIX))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return {
+    ...assistantMessage,
+    text: `${strippedText}\n\nResume final: boucle d'actions interrompue apres ${AGENT_ACTION_LOOP_MAX_STEPS} etapes pour garder le controle local.`,
+    proofHash: hashJson({ agentActionLoopMaxSteps: AGENT_ACTION_LOOP_MAX_STEPS, previousProofHash: assistantMessage.proofHash })
+  };
 }
 
 async function buildAssistantTranscriptMessage(
@@ -12071,6 +12238,16 @@ async function submitChatDraftForSessionInner(
     // Audit anchor: await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId)
     assistantMessage = await buildAssistantTranscriptMessage(draft, providerAttachments, message.id, moduleId, requestTranscriptWithUser);
   }
+  assistantMessage = await executeAssistantAgentActionLoop({
+    assistantMessage,
+    baseTranscript: nextTranscript,
+    originalUserText: draft,
+    providerAttachments,
+    userMessageId: message.id,
+    moduleId,
+    requestSessionId,
+    commitTranscript
+  });
   assistantMessage = applyGeographicTravelAirbnbFallback(assistantMessage, draft, moduleId);
   assistantMessage = await applyGeographicMapsFallback(assistantMessage, draft, moduleId, parallelSessionIndex);
   assistantMessage = await executeAssistantModuleCodeActs(assistantMessage, moduleId, parallelSessionIndex);
@@ -12102,6 +12279,16 @@ async function submitChatDraftForSessionInner(
       moduleId,
       nextTranscript
     );
+    continuationMessage = await executeAssistantAgentActionLoop({
+      assistantMessage: continuationMessage,
+      baseTranscript: nextTranscript,
+      originalUserText: continuationUserText,
+      providerAttachments,
+      userMessageId: message.id,
+      moduleId,
+      requestSessionId,
+      commitTranscript
+    });
     continuationMessage = await executeAssistantModuleCodeActs(continuationMessage, moduleId, parallelSessionIndex);
     continuationMessage = executeAssistantRenameSessionCodeAct(continuationMessage, session);
     continuationMessage = sanitizeAssistantRenameChatter(continuationMessage);

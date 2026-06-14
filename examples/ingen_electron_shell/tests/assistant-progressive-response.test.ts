@@ -34,4 +34,15 @@ describe("assistant progressive response feed", () => {
     expect(animationSource).toContain("const keepDraftResponseLive = previous.hadPending");
     expect(animationSource).not.toContain('previous.sessionId === "" && previous.hadPending');
   });
+
+  it("runs agent action requests as a visible loop stream", () => {
+    expect(mainSource).toContain('const AGENT_ACTION_JSON_PREFIX = "AGENT_ACTION_JSON"');
+    expect(mainSource).toContain('const AGENT_ACTION_RESULT_PREFIX = "AGENT_ACTION_RESULT v1"');
+    expect(mainSource).toContain("function executeAssistantAgentActionLoop");
+    expect(mainSource).toContain("extractAgentActionJsonRequest(assistantMessage.text)");
+    expect(mainSource).toContain("executeAgentActionRequest(agentActionHostConfig(), extracted.request)");
+    expect(mainSource).toContain("agentActionLoopContinuationUserText");
+    expect(mainSource).toContain("params.commitTranscript(transcriptWithMessage(params.baseTranscript, assistantMessage))");
+    expect(mainSource).toContain("assistantMessage = await executeAssistantAgentActionLoop({");
+  });
 });

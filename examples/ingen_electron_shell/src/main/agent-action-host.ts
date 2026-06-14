@@ -35,6 +35,19 @@ const AGENT_ACTION_EVENT_HINTS = [
   "shell.full:/agent_shell_"
 ];
 
+const AGENT_ACTION_EVENT_BY_ACTION: Record<AgentActionRequest["action"], string> = {
+  list: "/agent_list_",
+  search: "/agent_search_",
+  create_directory: "/agent_create_directory_",
+  rename_path: "/agent_rename_path_",
+  move_path: "/agent_move_path_",
+  copy_path: "/agent_copy_path_",
+  delete_empty_directory: "/agent_delete_empty_directory_",
+  delete_tree: "/agent_delete_tree_",
+  run_readonly_command: "/agent_readonly_shell_",
+  run_command: "/agent_shell_"
+};
+
 export interface AgentActionHostConfig {
   workspaceRoot: string;
   workspaceActive: boolean;
@@ -325,10 +338,17 @@ export function agentActionHostPromptManifest(config: AgentActionHostConfig): st
     `protected_roots=${manifest.workspace.protectedRoots.join("|")}`,
     "available=fs.list fs.search fs.create_directory fs.rename fs.move fs.copy fs.delete_empty_directory fs.delete_tree shell.readonly shell.full",
     `events=${AGENT_ACTION_EVENT_HINTS.join(" ")}`,
+    "loop_stream=When local action is needed, write one short progress paragraph first, then emit exactly one AGENT_ACTION_JSON line. After the app returns AGENT_ACTION_RESULT, continue with another short paragraph plus another AGENT_ACTION_JSON if more work remains, or finish with a compact summary.",
+    "action_request_format=AGENT_ACTION_JSON {\"action\":\"copy_path\",\"scope\":\"computer\",\"path\":\"C:\\\\from.txt\",\"toPath\":\"C:\\\\to.txt\",\"confirmed\":true}",
+    "tool_truth=Never claim an action was executed unless you emitted AGENT_ACTION_JSON and received AGENT_ACTION_RESULT from the app. The app renders the matching event icon; do not fake event lines by themselves.",
     "planned=browser.playwright computer_use mcp",
     "rule=Default to scope:\"workspace\". Use scope:\"computer\" only for explicit whole-computer requests; writes, recursive deletion and arbitrary shell require confirmed:true. Prefer structured filesystem/search actions before shell. Protected roots, external submissions and full computer-use require explicit human confirmation.",
     `proof=${manifest.proofHash}`
   ].join("\n");
+}
+
+export function agentActionEventCommandForRequest(request: AgentActionRequest): string {
+  return AGENT_ACTION_EVENT_BY_ACTION[request.action];
 }
 
 async function listAction(config: AgentActionHostConfig, request: AgentActionRequest): Promise<AgentActionResult> {
